@@ -1,0 +1,17 @@
+[package]
+name = "hello_world_app"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "hello_world_app"
+path = "src/main.rs"
+
+[dependencies]
+trueos = { path = "../trueos" }
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
