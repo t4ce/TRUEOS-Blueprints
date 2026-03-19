@@ -17,12 +17,13 @@ for you.
 Create as many Apps as you like!
 
 ### Run
-Copy the .BP them into Rood Folder of primary Filesystem Mounted. <br/>
-Use the Shell Command "run". <br/>
+Copy the .BP onto root Folder of primary File-System. <br/>
+Use Shell Command **run**. <br/>
 <br/>
 It will yield a list, find your Apps ID, <br/>
-run <id> will load your Blueprint and run whatever you decide. <br/>
+**run <id>** will load your Blueprint and run whatever you decide. <br/>
 <br/>
+
 Must have
-  Rust nightly available
-  7z, ld, objcopy, readelf installed
+  **Rust nightly available**
+  **7z, ld, objcopy, readelf** installed
