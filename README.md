@@ -1,19 +1,17 @@
-### Go into the app folder
-cd "TRUEOS Blueprints/hello_world_bp"
-
-### Build and pack
-cargo bp
+### cd "TRUEOS Blueprints/hello_world_bp"
+### cargo bp
 
 That will 
+
 ```
 build     the app against the local trueos and trueos-sys 
 run       the local trueos-blueprint tool
 produce   a .bp
 ```
+
 for you.
 
 ## Your Blueprint is now hello_world_app.bp
-
 Create as many Apps as you like!
 
 ### Run
