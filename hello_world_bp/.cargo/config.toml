@@ -1,0 +1,16 @@
+[build]
+target-dir = "target"
+
+[alias]
+bp = "run --manifest-path ../trueos-blueprint/Cargo.toml -- ."
+
+[target.'cfg(target_os = "none")']
+linker = "rust-lld"
+rustflags = [
+    "-C",
+    "link-arg=-e",
+    "-C",
+    "link-arg=main",
+    "-C",
+    "link-arg=--unresolved-symbols=ignore-all",
+]
