@@ -10,6 +10,10 @@ path = "src/main.rs"
 [dependencies]
 trueos = { path = "../trueos" }
 
+[features]
+default = []
+host-std = ["trueos/host-std"]
+
 [profile.dev]
 panic = "abort"
 

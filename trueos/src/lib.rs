@@ -1,4 +1,4 @@
-#![no_std]
+#![cfg_attr(not(feature = "host-std"), no_std)]
 
 pub use trueos_sys as sys;
 
@@ -6,15 +6,58 @@ pub mod vcabi {
     pub use trueos_sys::vcabi::*;
 }
 
+#[cfg(feature = "host-std")]
+#[path = "vclock_host.rs"]
 pub mod vclock;
+#[cfg(not(feature = "host-std"))]
+pub mod vclock;
+
+#[cfg(feature = "host-std")]
+#[path = "vfetch_host.rs"]
 pub mod vfetch;
+#[cfg(not(feature = "host-std"))]
+pub mod vfetch;
+
+#[cfg(feature = "host-std")]
+#[path = "vfs_host.rs"]
 pub mod vfs;
+#[cfg(not(feature = "host-std"))]
+pub mod vfs;
+
+#[cfg(feature = "host-std")]
+#[path = "vgfx_host.rs"]
 pub mod vgfx;
+#[cfg(not(feature = "host-std"))]
+pub mod vgfx;
+
+#[cfg(feature = "host-std")]
+#[path = "vinput_host.rs"]
+pub mod vinput;
+#[cfg(not(feature = "host-std"))]
 pub mod vinput;
 pub mod vnet;
+#[cfg(feature = "host-std")]
+#[path = "runtime_host.rs"]
 pub mod runtime;
+#[cfg(not(feature = "host-std"))]
+pub mod runtime;
+
+#[cfg(feature = "host-std")]
+#[path = "vshell_host.rs"]
 pub mod vshell;
+#[cfg(not(feature = "host-std"))]
+pub mod vshell;
+
+#[cfg(feature = "host-std")]
+#[path = "vsys_host.rs"]
 pub mod vsys;
+#[cfg(not(feature = "host-std"))]
+pub mod vsys;
+
+#[cfg(feature = "host-std")]
+#[path = "ui2_host.rs"]
+pub mod ui2;
+#[cfg(not(feature = "host-std"))]
 pub mod ui2;
 
 pub mod vled {
@@ -51,7 +94,27 @@ pub mod prelude {
     pub use crate::vsys;
 }
 
-#[cfg(not(feature = "linked-portal"))]
+#[cfg(feature = "host-std")]
+#[macro_export]
+macro_rules! portal {
+    ($main:path) => {
+        fn main() {
+            let __trueos_host_args = $crate::runtime::host_args();
+            let __trueos_host_arg_refs = __trueos_host_args
+                .iter()
+                .map(|arg| arg.as_str())
+                .collect::<std::vec::Vec<_>>();
+            $main(__trueos_host_arg_refs.as_slice())
+        }
+    };
+    ($body:block) => {
+        fn main() {
+            $body
+        }
+    };
+}
+
+#[cfg(all(not(feature = "host-std"), not(feature = "linked-portal")))]
 #[macro_export]
 macro_rules! portal {
     ($main:path) => {
@@ -99,7 +162,7 @@ macro_rules! portal {
     };
 }
 
-#[cfg(feature = "linked-portal")]
+#[cfg(all(not(feature = "host-std"), feature = "linked-portal"))]
 #[macro_export]
 macro_rules! portal {
     ($main:path) => {
