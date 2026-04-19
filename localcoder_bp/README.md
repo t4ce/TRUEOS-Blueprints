@@ -4,9 +4,8 @@ Minimal TRUEOS portal app scaffold for the future `localcoder` lift.
 
 What it does now:
 
-- exports an unmangled `main(argc, argv)` symbol for the kernel portal loader
-- runs as `no_std + alloc`
-- uses TRUEOS CABI through `trueos-v`
+- uses the `trueos` app-facing crate rather than raw ABI bindings
+- runs as `no_std + alloc` inside the current TRUEOS portal/VM hull
 - demonstrates:
   - argv/env access
   - shell output
@@ -54,4 +53,5 @@ run <id> history
 ## Notes
 
 - This is intentionally a scaffold, not a direct port of the upstream `localcoder`.
+- The low-level `trueos-sys` crate is now plumbing for the wrapper/tooling layer, not something this app imports directly.
 - The next step is to extract a host-agnostic core and grow this crate into a TRUEOS frontend.

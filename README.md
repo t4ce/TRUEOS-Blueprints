@@ -4,7 +4,7 @@
 That will 
 
 ```
-build     the app against the local trueos and trueos-sys 
+build     the app against the local trueos wrapper crate
 run       the local trueos-blueprint tool
 produce   a .bp
 ```
@@ -34,4 +34,5 @@ For local iteration on a host OS, you can build and run the same wrapper-based a
 ### cargo run --features host-std
 
 That uses the `trueos` wrapper crate with its `host-std` backend instead of the kernel CABI.
+The low-level `trueos-sys` crate remains in the workspace as internal ABI plumbing for the wrapper/tooling layer.
 The first host backend slice is aimed at `vsys`, `vshell`, and `vfs`, with safe stubs for the rest.

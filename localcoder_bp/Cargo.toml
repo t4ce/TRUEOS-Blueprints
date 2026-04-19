@@ -7,7 +7,11 @@ edition = "2024"
 path = "src/lib.rs"
 
 [dependencies]
-trueos_v = { package = "v", path = "../../TRUEOS/crates/trueos-v" }
+trueos = { path = "../trueos" }
+
+[features]
+default = []
+host-std = ["trueos/host-std"]
 
 [profile.dev]
 panic = "abort"
