@@ -1,0 +1,18 @@
+[package]
+name = "localcoder_bp"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+trueos_v = { package = "v", path = "../../TRUEOS/crates/trueos-v" }
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+lto = false
+strip = false
