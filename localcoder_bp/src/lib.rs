@@ -4,11 +4,12 @@ extern crate alloc;
 
 use alloc::{borrow::Cow, format, string::String};
 
-use trueos::{portal, venv, vfetch, vfs, vshell};
+use trueos::{portal, ui2, venv, vfetch_job, vfs, vshell};
 
 const DEFAULT_FETCH_TIMEOUT_MS: u64 = 30_000;
 
 fn app_main(args: &[&str]) {
+    open_window();
     print_line("localcoder_bp: TRUEOS portal scaffold");
     print_line(
         "localcoder_bp: commands: help | args | env [KEY] | read <PATH> | write <PATH> <TEXT> | fetch <URL> | history [START] [COUNT]",
@@ -127,39 +128,12 @@ fn fetch_command(args: &[&str]) {
         return;
     };
 
-    let op_id = match vfetch::fetch_bytes(url.as_bytes()) {
-        Ok(op_id) => op_id,
-        Err(rc) => {
-            print_line(&format!("fetch failed rc={rc}"));
-            return;
-        }
-    };
-
-    if let Err(rc) = wait_for_fetch(op_id) {
-        let _ = vfetch::fetch_bytes_discard(op_id);
-        print_line(&format!("fetch wait failed rc={rc}"));
-        return;
-    }
-
-    match vfetch::fetch_bytes_read(op_id) {
+    match vfetch_job::fetch_bytes(url.as_bytes(), DEFAULT_FETCH_TIMEOUT_MS) {
         Ok(bytes) => {
-            let _ = vfetch::fetch_bytes_discard(op_id);
             print_line(&format!("fetch {} bytes from {url}", bytes.len()));
             print_multiline_lossy(&bytes);
         }
-        Err(rc) => {
-            let _ = vfetch::fetch_bytes_discard(op_id);
-            print_line(&format!("fetch read failed rc={rc}"));
-        }
-    }
-}
-
-fn wait_for_fetch(op_id: u32) -> Result<(), i32> {
-    let rc = vfetch::fetch_bytes_wait(op_id, DEFAULT_FETCH_TIMEOUT_MS);
-    if rc == 0 {
-        Ok(())
-    } else {
-        Err(rc)
+        Err(rc) => print_line(&format!("fetch failed rc={rc}")),
     }
 }
 
@@ -220,6 +194,25 @@ fn parse_usize_ascii(text: &str) -> Option<usize> {
         value = value.checked_add((byte - b'0') as usize)?;
     }
     Some(value)
+}
+
+fn open_window() {
+    let Some(window) = ui2::OwnedWindow::create(
+        "LocalCoder BP",
+        ui2::Rect {
+            x: 144,
+            y: 144,
+            width: 640,
+            height: 360,
+        },
+    ) else {
+        print_line("localcoder_bp: ui2 window create failed");
+        return;
+    };
+
+    let _ = window.id().set_title("LocalCoder BP");
+    let _ = window.leak();
+    print_line("localcoder_bp: ui2 window ready");
 }
 
 fn print_line(line: &str) {

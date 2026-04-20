@@ -119,6 +119,12 @@ unsafe extern "C" {
         out_ptr: *mut u8,
         out_cap: usize,
     ) -> isize;
+    pub fn trueos_cabi_env_var(
+        key_ptr: *const u8,
+        key_len: usize,
+        out_ptr: *mut u8,
+        out_cap: usize,
+    ) -> isize;
     pub fn trueos_cabi_shell_qjs_init();
     pub fn trueos_cabi_shell_qjs_write(data_ptr: *const u8, data_len: usize) -> usize;
     pub fn trueos_cabi_shell_qjs_write_byte(byte: u8) -> i32;

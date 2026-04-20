@@ -17,6 +17,7 @@ pub mod vclock;
 pub mod vfetch;
 #[cfg(not(feature = "host-std"))]
 pub mod vfetch;
+pub mod vfetch_job;
 
 #[cfg(feature = "host-std")]
 #[path = "venv_host.rs"]
@@ -93,6 +94,7 @@ pub mod prelude {
     pub use crate::venv;
     pub use crate::vclock;
     pub use crate::vfetch;
+    pub use crate::vfetch_job;
     pub use crate::vfs;
     pub use crate::vgfx;
     pub use crate::vinput;

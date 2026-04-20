@@ -53,10 +53,15 @@ def capture_artifact(cmd: list[str], cwd: Path, profile: str) -> Path:
                 artifact_path = Path(filename)
 
     if artifact_path is None:
-        deps_dir = cwd / "tgt" / "86_64" / profile / "deps"
+        cargo_profile = "debug" if profile == "dev" else profile
+        deps_dir = cwd / "tgt" / "86_64" / cargo_profile / "deps"
         if deps_dir.is_dir():
             matches = sorted(
-                deps_dir.glob("localcoder_bp-*.o"),
+                (
+                    path
+                    for pattern in ("localcoder_bp-*.o", "liblocalcoder_bp-*.o")
+                    for path in deps_dir.glob(pattern)
+                ),
                 key=lambda path: path.stat().st_mtime,
             )
             if matches:
