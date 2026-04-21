@@ -1,0 +1,19 @@
+[package]
+name = "trueos-blueprint"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "trueos_blueprint"
+path = "src/lib.rs"
+
+[[bin]]
+name = "trueos-blueprint"
+path = "src/main.rs"
+
+[[example]]
+name = "hello_world"
+path = "hello_world/hello_world.rs"
+
+[dependencies]
+tokio = { path = "../TRUEOS/vendor/tokio-1.52.1", default-features = false, features = ["rt", "sync", "time", "io-util", "io-std", "fs", "macros"] }

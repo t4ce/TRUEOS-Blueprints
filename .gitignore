@@ -1,6 +1,6 @@
 bld/
 target/
-target/
+dist/
 *.img
 virglrenderer-1.0.0/
 Cargo.lock
