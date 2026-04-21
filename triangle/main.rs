@@ -53,9 +53,6 @@ fn main() {
         return;
     };
 
-    let _ = window.id().set_title(WINDOW_TITLE);
-    vsys::log_info("triangle bp: ui2 surface window ready\n");
-
     let mut points = [
         Point::new(0.0, -0.65, [0xFF, 0x52, 0x52, 0xFF]),
         Point::new(-0.7, 0.55, [0x40, 0xE3, 0x92, 0xFF]),

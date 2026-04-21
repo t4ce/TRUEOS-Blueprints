@@ -72,7 +72,7 @@ fn run() -> Result<(), String> {
             name.clone()
         }
     };
-    cargo.arg("--").arg("--emit=obj");
+    cargo.arg("--").arg("-Zno-link").arg("--emit=obj");
 
     run_command(&mut cargo, "cargo rustc")?;
 
@@ -91,7 +91,6 @@ fn run() -> Result<(), String> {
     let tmp_dir = tempdir()?;
     let linked = tmp_dir.join("module.o");
     let stripped = tmp_dir.join("module.stripped.o");
-    let payload_7z = tmp_dir.join("payload.7z");
 
     let mut ld = Command::new("ld");
     ld.arg("-r")
@@ -122,25 +121,9 @@ fn run() -> Result<(), String> {
         "objcopy",
     )?;
 
-    run_command(
-        Command::new("7z")
-            .arg("a")
-            .arg("-t7z")
-            .arg("-mx=9")
-            .arg("-m0=LZMA2")
-            .arg("-myx=0")
-            .arg("-ms=off")
-            .arg("-bd")
-            .arg("-y")
-            .arg("-siPAYLOAD.BIN")
-            .arg(&payload_7z)
-            .stdin(fs::File::open(&stripped).map_err(io_string)?),
-        "7z",
-    )?;
-
     let out = app_dir.join("dist").join(format!("{output_name}.bp"));
     fs::create_dir_all(out.parent().ok_or("bad output path")?).map_err(io_string)?;
-    write_blueprint(&out, &payload_7z, &stripped, &entry_hint_hex)?;
+    write_blueprint(&out, &stripped, &entry_hint_hex)?;
     println!("packed {} -> {}", app_obj.display(), out.display());
     Ok(())
 }
@@ -315,22 +298,20 @@ fn entry_hint_hex(linked: &Path) -> Result<String, String> {
 
 fn write_blueprint(
     out: &Path,
-    payload_7z: &Path,
     stripped: &Path,
     entry_hint_hex: &str,
 ) -> Result<(), String> {
-    let payload = fs::read(payload_7z).map_err(io_string)?;
     let raw = fs::read(stripped).map_err(io_string)?;
     let entry = u64::from_str_radix(entry_hint_hex, 16).map_err(|err| err.to_string())?;
 
-    let mut bytes = Vec::with_capacity(24 + payload.len());
+    let mut bytes = Vec::with_capacity(24 + raw.len());
     bytes.extend_from_slice(b"TRBP");
     bytes.extend_from_slice(&1u16.to_le_bytes());
-    bytes.extend_from_slice(&2u16.to_le_bytes());
+    bytes.extend_from_slice(&1u16.to_le_bytes());
     bytes.extend_from_slice(&entry.to_le_bytes());
-    bytes.extend_from_slice(&(payload.len() as u32).to_le_bytes());
     bytes.extend_from_slice(&(raw.len() as u32).to_le_bytes());
-    bytes.extend_from_slice(&payload);
+    bytes.extend_from_slice(&(raw.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(&raw);
     fs::write(out, bytes).map_err(io_string)
 }
 

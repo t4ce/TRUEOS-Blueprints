@@ -148,13 +148,20 @@ unsafe extern "C" {
     pub fn trueos_cabi_gfx_begin_frame_no_present(clear_rgb: u32) -> i32;
     pub fn trueos_cabi_gfx_draw_rgb_triangles_no_present(vtx_ptr: *const u8, vtx_len: usize)
         -> i32;
+    pub fn trueos_cabi_gfx_queue_render_rgb_triangles_to_texture(
+        tex_id: u32,
+        clear_rgb: u32,
+        vtx_ptr: *const u8,
+        vtx_len: usize,
+        repaint_window_id: u32,
+    ) -> i32;
     pub fn trueos_cabi_gfx_end_frame() -> i32;
 
     pub fn trueos_cabi_ntp_current_unix_seconds() -> u64;
     pub fn trueos_cabi_ntp_kernel_date_day_month_year(out_ptr: *mut u8, out_cap: usize) -> usize;
 
     pub fn trueos_cabi_ui2_primary_browser_window_id() -> u32;
-    pub fn trueos_cabi_ui2_window_create(
+    pub fn trueos_cabi_app_window_create(
         title_ptr: *const u8,
         title_len: usize,
         x: i32,
@@ -164,7 +171,7 @@ unsafe extern "C" {
         z: i32,
         alpha: u32,
     ) -> u32;
-    pub fn trueos_cabi_ui2_surface_window_create(
+    pub fn trueos_cabi_app_surface_window_create(
         title_ptr: *const u8,
         title_len: usize,
         x: i32,
@@ -182,6 +189,7 @@ unsafe extern "C" {
         title_ptr: *const u8,
         title_len: usize,
     ) -> i32;
+    pub fn trueos_cabi_ui2_window_request_repaint(window_id: u32) -> i32;
     pub fn trueos_cabi_ui2_window_set_icon(window_id: u32, icon_id: u32) -> i32;
     pub fn trueos_cabi_ui2_window_set_position(window_id: u32, x: i32, y: i32) -> i32;
     pub fn trueos_cabi_ui2_window_set_size(window_id: u32, width: u32, height: u32) -> i32;

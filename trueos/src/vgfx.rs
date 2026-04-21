@@ -87,6 +87,7 @@ pub fn render_rgb_triangles_to_texture(
     width: u32,
     height: u32,
     clear_rgb: u32,
+    repaint_window_id: u32,
     vertices: &[RgbVertex],
 ) -> bool {
     let clear_rgba = [
@@ -99,26 +100,19 @@ pub fn render_rgb_triangles_to_texture(
         return false;
     }
 
-    if unsafe { vcabi::trueos_cabi_gfx_begin_frame_no_present(clear_rgb) } != 0 {
-        return false;
-    }
-    if unsafe { vcabi::trueos_cabi_gfx_set_render_target(tex_id) } != 0 {
-        let _ = unsafe { vcabi::trueos_cabi_gfx_end_frame() };
-        return false;
-    }
-
     let bytes = unsafe {
         core::slice::from_raw_parts(
             vertices.as_ptr() as *const u8,
             core::mem::size_of_val(vertices),
         )
     };
-    if unsafe { vcabi::trueos_cabi_gfx_draw_rgb_triangles_no_present(bytes.as_ptr(), bytes.len()) }
-        != 0
-    {
-        let _ = unsafe { vcabi::trueos_cabi_gfx_end_frame() };
-        return false;
+    unsafe {
+        vcabi::trueos_cabi_gfx_queue_render_rgb_triangles_to_texture(
+            tex_id,
+            clear_rgb,
+            bytes.as_ptr(),
+            bytes.len(),
+            repaint_window_id,
+        ) == 0
     }
-
-    unsafe { vcabi::trueos_cabi_gfx_end_frame() == 0 }
 }

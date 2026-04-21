@@ -28,6 +28,10 @@ impl WindowId {
         unsafe { vcabi::trueos_cabi_ui2_window_set_title(self.0, title.as_ptr(), title.len()) == 0 }
     }
 
+    pub fn request_repaint(self) -> bool {
+        unsafe { vcabi::trueos_cabi_ui2_window_request_repaint(self.0) == 0 }
+    }
+
     pub fn set_icon(self, icon_id: u32) -> bool {
         unsafe { vcabi::trueos_cabi_ui2_window_set_icon(self.0, icon_id) == 0 }
     }
@@ -104,7 +108,7 @@ impl OwnedWindow {
 
     pub fn create_with_options(title: &str, rect: Rect, options: CreateOptions) -> Option<Self> {
         let raw = unsafe {
-            vcabi::trueos_cabi_ui2_window_create(
+            vcabi::trueos_cabi_app_window_create(
                 title.as_ptr(),
                 title.len(),
                 rect.x,
@@ -172,7 +176,7 @@ impl SurfaceWindow {
         blend_enabled: bool,
     ) -> Option<Self> {
         let raw = unsafe {
-            vcabi::trueos_cabi_ui2_surface_window_create(
+            vcabi::trueos_cabi_app_surface_window_create(
                 title.as_ptr(),
                 title.len(),
                 rect.x,
@@ -213,13 +217,18 @@ impl SurfaceWindow {
     }
 
     pub fn render_rgb_triangles(&self, clear_rgb: u32, vertices: &[crate::vgfx::RgbVertex]) -> bool {
-        crate::vgfx::render_rgb_triangles_to_texture(
+        let rendered = crate::vgfx::render_rgb_triangles_to_texture(
             self.tex_id,
             self.width,
             self.height,
             clear_rgb,
+            self.window.id.raw(),
             vertices,
-        )
+        );
+        if rendered {
+            let _ = self.window.id.request_repaint();
+        }
+        rendered
     }
 
     pub fn leak(mut self) -> WindowId {
