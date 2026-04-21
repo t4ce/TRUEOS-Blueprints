@@ -1,0 +1,2 @@
+[alias]
+bp = "run --bin trueos-blueprint --"

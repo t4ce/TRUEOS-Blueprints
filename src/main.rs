@@ -19,7 +19,9 @@ fn main() {
 fn run() -> Result<(), String> {
     let mut args = env::args_os().skip(1);
     let mut build_target = BuildTarget::Package;
-    let app_dir = match args.next() {
+    let first_arg = args.next();
+    let no_args = first_arg.is_none();
+    let app_dir = match first_arg {
         Some(arg) if arg == "example" || arg == "--example" => {
             let Some(name) = args.next() else {
                 return Err("missing example name after `example`".to_string());
@@ -38,6 +40,9 @@ fn run() -> Result<(), String> {
     let manifest_path = app_dir.join("Cargo.toml");
     if !manifest_path.is_file() {
         return Err(format!("missing Cargo.toml in {}", app_dir.display()));
+    }
+    if no_args {
+        build_target = default_build_target(&manifest_path)?;
     }
 
     let target_spec = default_target_spec(&app_dir)?;
@@ -245,6 +250,42 @@ fn package_name(manifest_path: &Path) -> Result<String, String> {
         "failed to read package name from {}",
         manifest_path.display()
     ))
+}
+
+fn default_build_target(manifest_path: &Path) -> Result<BuildTarget, String> {
+    if package_name(manifest_path)? != "trueos-blueprint" {
+        return Ok(BuildTarget::Package);
+    }
+
+    let examples = example_names(manifest_path)?;
+    match examples.as_slice() {
+        [name] => Ok(BuildTarget::Example(name.clone())),
+        _ if examples.iter().any(|name| name == "hello_world") => {
+            Ok(BuildTarget::Example("hello_world".to_string()))
+        }
+        [] => Ok(BuildTarget::Package),
+        _ => Err("multiple examples found; use `cargo bp --example <name>`".to_string()),
+    }
+}
+
+fn example_names(manifest_path: &Path) -> Result<Vec<String>, String> {
+    let cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
+    let mut names = Vec::new();
+    let mut in_example = false;
+    for line in cargo_toml.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            in_example = trimmed == "[[example]]";
+            continue;
+        }
+        if in_example && trimmed.starts_with("name") {
+            let Some((_, value)) = trimmed.split_once('=') else {
+                continue;
+            };
+            names.push(value.trim().trim_matches('"').to_string());
+        }
+    }
+    Ok(names)
 }
 
 fn entry_hint_hex(linked: &Path) -> Result<String, String> {
