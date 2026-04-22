@@ -4,13 +4,24 @@
 //! aligning new blueprints around. Kernel-facing capability wrappers are not
 //! reintroduced here.
 
-use std::fmt;
-use std::sync::atomic::{AtomicU8, Ordering};
+#![no_std]
 
+extern crate alloc;
+#[cfg(not(target_os = "zkvm"))]
+extern crate std;
+
+use core::fmt;
+use core::sync::atomic::{AtomicU8, Ordering};
+
+#[cfg(feature = "tokio-runtime")]
 pub use tokio;
 
 pub mod diag {
     use super::{AtomicU8, Ordering, fmt};
+    #[cfg(target_os = "zkvm")]
+    use alloc::string::String;
+    #[cfg(target_os = "zkvm")]
+    use core::fmt::Write as _;
 
     #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
     pub enum Level {
@@ -47,7 +58,7 @@ pub mod diag {
         if !enabled(level) {
             return;
         }
-        eprintln!("[trueos-blueprint:{}] {}", level.as_str(), args);
+        emit_impl(level, args);
     }
 
     pub fn error(message: &str) {
@@ -69,27 +80,52 @@ pub mod diag {
     pub fn trace(message: &str) {
         emit(Level::Trace, format_args!("{message}"));
     }
+
+    #[cfg(target_os = "zkvm")]
+    fn emit_impl(level: Level, args: fmt::Arguments<'_>) {
+        let mut line = String::new();
+        let _ = write!(&mut line, "[trueos-blueprint:{}] {}", level.as_str(), args);
+        if !line.ends_with('\n') {
+            line.push('\n');
+        }
+
+        let stream = match level {
+            Level::Error => 2,
+            Level::Warn | Level::Info | Level::Debug | Level::Trace => 1,
+        };
+        trueos::vsys::write_log_stream(stream, line.as_str());
+    }
+
+    #[cfg(not(target_os = "zkvm"))]
+    fn emit_impl(level: Level, args: fmt::Arguments<'_>) {
+        std::eprintln!("[trueos-blueprint:{}] {}", level.as_str(), args);
+    }
 }
 
+#[cfg(feature = "tokio-runtime")]
 pub mod runtime {
     pub use tokio::runtime::{Builder, Handle, Runtime};
 }
 
+#[cfg(feature = "tokio-runtime")]
 pub mod task {
     pub use tokio::spawn;
     pub use tokio::task::{JoinError, JoinHandle, JoinSet, LocalSet, yield_now};
 }
 
+#[cfg(feature = "tokio-runtime")]
 pub mod sync {
     pub use tokio::sync::{
         Barrier, Mutex, Notify, RwLock, Semaphore, broadcast, mpsc, oneshot, watch,
     };
 }
 
+#[cfg(feature = "tokio-runtime")]
 pub mod time {
     pub use tokio::time::{Duration, Instant, Interval, Sleep, interval, sleep, timeout};
 }
 
+#[cfg(feature = "tokio-runtime")]
 pub mod io {
     pub use tokio::io::{
         AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, Stderr, Stdin, Stdout,
@@ -97,52 +133,82 @@ pub mod io {
     };
 }
 
+#[cfg(feature = "tokio-runtime")]
 pub mod fs {
     pub use tokio::fs::{File, OpenOptions, create_dir, create_dir_all, read, read_to_string, write};
 }
 
 pub mod prelude {
     pub use crate::diag;
+    #[cfg(feature = "tokio-runtime")]
     pub use crate::fs;
+    #[cfg(feature = "tokio-runtime")]
     pub use crate::io;
+    #[cfg(feature = "tokio-runtime")]
     pub use crate::runtime;
+    #[cfg(feature = "tokio-runtime")]
     pub use crate::sync;
+    #[cfg(feature = "tokio-runtime")]
     pub use crate::task;
+    #[cfg(feature = "tokio-runtime")]
     pub use crate::time;
+    #[cfg(feature = "tokio-runtime")]
     pub use crate::tokio;
 }
 
 #[macro_export]
+macro_rules! log {
+    ($msg:expr, error) => {
+        $crate::diag::emit($crate::diag::Level::Error, format_args!("{}", $msg))
+    };
+    ($msg:expr, warn) => {
+        $crate::diag::emit($crate::diag::Level::Warn, format_args!("{}", $msg))
+    };
+    ($msg:expr, info) => {
+        $crate::diag::emit($crate::diag::Level::Info, format_args!("{}", $msg))
+    };
+    ($msg:expr, debug) => {
+        $crate::diag::emit($crate::diag::Level::Debug, format_args!("{}", $msg))
+    };
+    ($msg:expr, trace) => {
+        $crate::diag::emit($crate::diag::Level::Trace, format_args!("{}", $msg))
+    };
+    ($msg:expr) => {
+        $crate::diag::emit($crate::diag::Level::Trace, format_args!("{}", $msg))
+    };
+}
+
+#[macro_export]
 macro_rules! bp_error {
-    ($($arg:tt)*) => {
-        $crate::diag::emit($crate::diag::Level::Error, format_args!($($arg)*))
+    ($msg:expr) => {
+        $crate::diag::emit($crate::diag::Level::Error, format_args!("{}", $msg))
     };
 }
 
 #[macro_export]
 macro_rules! bp_warn {
-    ($($arg:tt)*) => {
-        $crate::diag::emit($crate::diag::Level::Warn, format_args!($($arg)*))
+    ($msg:expr) => {
+        $crate::diag::emit($crate::diag::Level::Warn, format_args!("{}", $msg))
     };
 }
 
 #[macro_export]
 macro_rules! bp_info {
-    ($($arg:tt)*) => {
-        $crate::diag::emit($crate::diag::Level::Info, format_args!($($arg)*))
+    ($msg:expr) => {
+        $crate::diag::emit($crate::diag::Level::Info, format_args!("{}", $msg))
     };
 }
 
 #[macro_export]
 macro_rules! bp_debug {
-    ($($arg:tt)*) => {
-        $crate::diag::emit($crate::diag::Level::Debug, format_args!($($arg)*))
+    ($msg:expr) => {
+        $crate::diag::emit($crate::diag::Level::Debug, format_args!("{}", $msg))
     };
 }
 
 #[macro_export]
 macro_rules! bp_trace {
-    ($($arg:tt)*) => {
-        $crate::diag::emit($crate::diag::Level::Trace, format_args!($($arg)*))
+    ($msg:expr) => {
+        $crate::diag::emit($crate::diag::Level::Trace, format_args!("{}", $msg))
     };
 }

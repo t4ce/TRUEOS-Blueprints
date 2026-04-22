@@ -56,12 +56,17 @@ pub fn texture_dimensions(tex_id: u32) -> Option<(u32, u32)> {
     }
 }
 
-pub fn upload_texture_rgba_image(tex_id: u32, width: u32, height: u32, pixels: &[u8]) -> bool {
+pub fn upload_texture_rgba_image_async(
+    tex_id: u32,
+    width: u32,
+    height: u32,
+    pixels: &[u8],
+) -> bool {
     if tex_id == 0 || width == 0 || height == 0 {
         return false;
     }
     unsafe {
-        vcabi::trueos_cabi_gfx_upload_texture_rgba_image(
+        vcabi::trueos_cabi_gfx_upload_texture_rgba_image_async(
             tex_id,
             width,
             height,
@@ -69,17 +74,6 @@ pub fn upload_texture_rgba_image(tex_id: u32, width: u32, height: u32, pixels: &
             pixels.len(),
         ) == 0
     }
-}
-
-pub fn ensure_texture_rgba(tex_id: u32, width: u32, height: u32, fill_rgba: [u8; 4]) -> bool {
-    if matches!(texture_dimensions(tex_id), Some((w, h)) if w == width && h == height) {
-        return true;
-    }
-    let pixels = vec![fill_rgba; (width as usize).saturating_mul(height as usize)]
-        .into_iter()
-        .flatten()
-        .collect::<Vec<u8>>();
-    upload_texture_rgba_image(tex_id, width, height, pixels.as_slice())
 }
 
 pub fn render_rgb_triangles_to_texture(
@@ -96,8 +90,25 @@ pub fn render_rgb_triangles_to_texture(
         (clear_rgb & 0xFF) as u8,
         0xFF,
     ];
-    if !ensure_texture_rgba(tex_id, width.max(1), height.max(1), clear_rgba) {
-        return false;
+    if !matches!(
+        texture_dimensions(tex_id),
+        Some((w, h)) if w == width.max(1) && h == height.max(1)
+    ) {
+        let width = width.max(1);
+        let height = height.max(1);
+        let Some(pixel_count) = (width as usize).checked_mul(height as usize) else {
+            return false;
+        };
+        let Some(byte_len) = pixel_count.checked_mul(4) else {
+            return false;
+        };
+        let mut pixels = Vec::with_capacity(byte_len);
+        for _ in 0..pixel_count {
+            pixels.extend_from_slice(&clear_rgba);
+        }
+        if !upload_texture_rgba_image_async(tex_id, width, height, pixels.as_slice()) {
+            return false;
+        }
     }
 
     let bytes = unsafe {

@@ -1,11 +1,19 @@
+#![no_std]
+#![no_main]
+
+use core::panic::PanicInfo;
 use trueos::{ui2, vgfx, vsys};
+use trueos::{panic_abort, TrueosAllocator};
+
+#[global_allocator]
+static GLOBAL_ALLOCATOR: TrueosAllocator = TrueosAllocator;
 
 const WINDOW_TITLE: &str = "Triangle BP";
 const WINDOW_X: i32 = 220;
 const WINDOW_Y: i32 = 160;
 const WINDOW_WIDTH: u32 = 384;
 const WINDOW_HEIGHT: u32 = 240;
-const TRIANGLE_TEX_ID: u32 = 0x5452_4931;
+const TRIANGLE_TEX_ID: u32 = 4_700;
 const CLEAR_RGB: u32 = 0x10141A;
 const STEP_COS: f32 = 0.9992001;
 const STEP_SIN: f32 = 0.039989334;
@@ -47,7 +55,13 @@ fn open_triangle_window() -> Option<ui2::SurfaceWindow> {
     )
 }
 
-fn main() {
+#[panic_handler]
+fn panic(_info: &PanicInfo<'_>) -> ! {
+    panic_abort("triangle bp: panic\n")
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn main() {
     let Some(window) = open_triangle_window() else {
         vsys::log_error("triangle bp: ui2 surface window create failed\n");
         return;

@@ -3,6 +3,10 @@ name = "trueos-blueprint"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = ["tokio-runtime"]
+tokio-runtime = ["dep:tokio"]
+
 [lib]
 name = "trueos_blueprint"
 path = "src/lib.rs"
@@ -21,4 +25,4 @@ path = "triangle/main.rs"
 
 [dependencies]
 trueos = { path = "trueos" }
-tokio = { path = "../TRUEOS/vendor/tokio-1.52.1", default-features = false, features = ["rt", "sync", "time", "io-util", "io-std", "fs", "macros"] }
+tokio = { path = "../TRUEOS/vendor/tokio-1.52.1", optional = true, default-features = false, features = ["rt", "sync", "time", "io-util", "io-std", "fs", "macros"] }

@@ -144,6 +144,13 @@ unsafe extern "C" {
         data_ptr: *const u8,
         data_len: usize,
     ) -> i32;
+    pub fn trueos_cabi_gfx_upload_texture_rgba_image_async(
+        tex_id: u32,
+        width: u32,
+        height: u32,
+        data_ptr: *const u8,
+        data_len: usize,
+    ) -> i32;
     pub fn trueos_cabi_gfx_set_render_target(tex_id: u32) -> i32;
     pub fn trueos_cabi_gfx_begin_frame_no_present(clear_rgb: u32) -> i32;
     pub fn trueos_cabi_gfx_draw_rgb_triangles_no_present(vtx_ptr: *const u8, vtx_len: usize)

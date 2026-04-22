@@ -9,6 +9,11 @@ enum BuildTarget {
     Example(String),
 }
 
+enum BuildFlavor {
+    TokioStd,
+    ThinNoStd,
+}
+
 fn main() {
     if let Err(err) = run() {
         eprintln!("trueos-blueprint: {err}");
@@ -45,25 +50,36 @@ fn run() -> Result<(), String> {
         build_target = default_build_target(&manifest_path)?;
     }
 
+    let build_flavor = build_flavor(&app_dir, &manifest_path, &build_target)?;
+
     let target_spec = default_target_spec(&app_dir)?;
     let target_name = target_spec
         .file_stem()
         .and_then(|s| s.to_str())
         .ok_or_else(|| format!("bad target spec path: {}", target_spec.display()))?
         .to_string();
+    let tmp_dir = tempdir(&app_dir)?;
+    let cargo_target_dir = tmp_dir.join("target");
 
     let mut cargo = Command::new("cargo");
     cargo
         .arg("+nightly")
         .arg("rustc")
         .arg("-Z")
-        .arg("build-std=core,compiler_builtins,alloc,std,panic_abort")
+        .arg(match build_flavor {
+            BuildFlavor::TokioStd => "build-std=core,compiler_builtins,alloc,std,panic_abort",
+            BuildFlavor::ThinNoStd => "build-std=core,compiler_builtins,alloc",
+        })
         .arg("-Z")
         .arg("json-target-spec")
         .arg("--target")
         .arg(&target_spec)
         .arg("--manifest-path")
         .arg(&manifest_path);
+    cargo.env("CARGO_TARGET_DIR", &cargo_target_dir);
+    if matches!(build_flavor, BuildFlavor::ThinNoStd) {
+        cargo.arg("--no-default-features");
+    }
 
     let output_name = match &build_target {
         BuildTarget::Package => package_name(&manifest_path)?,
@@ -76,7 +92,7 @@ fn run() -> Result<(), String> {
 
     run_command(&mut cargo, "cargo rustc")?;
 
-    let target_dir = app_dir.join("target").join(&target_name).join("debug");
+    let target_dir = cargo_target_dir.join(&target_name).join("debug");
     let deps_dir = target_dir.join("deps");
     if !deps_dir.is_dir() {
         return Err(format!("missing deps dir: {}", deps_dir.display()));
@@ -88,7 +104,6 @@ fn run() -> Result<(), String> {
     };
     let rlibs = collect_rlibs(&deps_dir)?;
 
-    let tmp_dir = tempdir()?;
     let linked = tmp_dir.join("module.o");
     let stripped = tmp_dir.join("module.stripped.o");
 
@@ -271,6 +286,68 @@ fn example_names(manifest_path: &Path) -> Result<Vec<String>, String> {
     Ok(names)
 }
 
+fn build_flavor(
+    app_dir: &Path,
+    manifest_path: &Path,
+    build_target: &BuildTarget,
+) -> Result<BuildFlavor, String> {
+    let source_path = match build_target {
+        BuildTarget::Package => return Ok(BuildFlavor::TokioStd),
+        BuildTarget::Example(name) => example_source_path(app_dir, manifest_path, name)?,
+    };
+    let source = fs::read_to_string(&source_path)
+        .map_err(|err| format!("failed to read {}: {err}", source_path.display()))?;
+    if source.contains("trueos_blueprint") || source.contains("tokio::") {
+        Ok(BuildFlavor::TokioStd)
+    } else {
+        Ok(BuildFlavor::ThinNoStd)
+    }
+}
+
+fn example_source_path(app_dir: &Path, manifest_path: &Path, example_name: &str) -> Result<PathBuf, String> {
+    let cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
+    let mut in_example = false;
+    let mut current_name: Option<String> = None;
+    let mut current_path: Option<String> = None;
+
+    for line in cargo_toml.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            if in_example
+                && current_name.as_deref() == Some(example_name)
+                && let Some(path) = current_path.take()
+            {
+                return Ok(app_dir.join(path));
+            }
+            in_example = trimmed == "[[example]]";
+            if in_example {
+                current_name = None;
+                current_path = None;
+            }
+            continue;
+        }
+        if !in_example {
+            continue;
+        }
+        if trimmed.starts_with("name") {
+            if let Some((_, value)) = trimmed.split_once('=') {
+                current_name = Some(value.trim().trim_matches('"').to_string());
+            }
+        } else if trimmed.starts_with("path") && let Some((_, value)) = trimmed.split_once('=') {
+            current_path = Some(value.trim().trim_matches('"').to_string());
+        }
+    }
+
+    if in_example
+        && current_name.as_deref() == Some(example_name)
+        && let Some(path) = current_path
+    {
+        return Ok(app_dir.join(path));
+    }
+
+    Err(format!("missing path for example {example_name} in {}", manifest_path.display()))
+}
+
 fn entry_hint_hex(linked: &Path) -> Result<String, String> {
     let output = Command::new("readelf")
         .arg("-Ws")
@@ -315,8 +392,9 @@ fn write_blueprint(
     fs::write(out, bytes).map_err(io_string)
 }
 
-fn tempdir() -> Result<PathBuf, String> {
-    let base = env::temp_dir();
+fn tempdir(app_dir: &Path) -> Result<PathBuf, String> {
+    let base = app_dir.join("target").join("trueos-blueprint-tmp");
+    fs::create_dir_all(&base).map_err(io_string)?;
     for attempt in 0..1024u32 {
         let candidate = base.join(format!(
             "trueos-blueprint-{}-{attempt}",
