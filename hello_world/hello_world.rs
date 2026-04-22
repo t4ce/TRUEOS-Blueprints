@@ -1,19 +1,18 @@
-use trueos_blueprint::prelude::{diag, runtime, task, time};
+#![no_std]
+#![no_main]
 
-fn main() {
-    diag::set_max_level(diag::Level::Trace);
-    trueos_blueprint::log!("hello_world: building current-thread Tokio runtime", info);
+use core::panic::PanicInfo;
+use trueos::{panic_abort, vsys, TrueosAllocator};
 
-    let runtime = runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("failed to build Tokio runtime");
+#[global_allocator]
+static GLOBAL_ALLOCATOR: TrueosAllocator = TrueosAllocator;
 
-    runtime.block_on(async {
-        trueos_blueprint::log!("hello_world: entered async body", info);
-        task::yield_now().await;
-        trueos_blueprint::log!("hello_world: after first yield", debug);
-        time::sleep(time::Duration::from_millis(1)).await;
-        trueos_blueprint::log!("hello_world: done", info);
-    });
+#[panic_handler]
+fn panic(_info: &PanicInfo<'_>) -> ! {
+    panic_abort("hello_world bp: panic\n")
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn main() {
+    vsys::log_info("hello_world bp: hello from no_std\n");
 }
