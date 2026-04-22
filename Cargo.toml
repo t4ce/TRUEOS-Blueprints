@@ -25,6 +25,10 @@ path = "hello_world/hello_world.rs"
 name = "triangle"
 path = "triangle/main.rs"
 
+[[example]]
+name = "ntp_once"
+path = "ntp_once/ntp_once.rs"
+
 [dependencies]
 trueos = { path = "trueos" }
 tokio = { path = "../TRUEOS/vendor/tokio-1.52.1", optional = true, default-features = false, features = ["rt", "sync", "time", "io-util", "io-std", "fs", "macros"] }

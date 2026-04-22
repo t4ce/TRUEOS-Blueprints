@@ -1,6 +1,8 @@
 extern crate alloc;
 
 use alloc::string::String;
+use core::fmt;
+use core::fmt::Write as _;
 
 use crate::vcabi;
 
@@ -33,6 +35,16 @@ pub fn log_error(s: &str) {
 }
 
 #[inline]
+pub fn log_infof(args: fmt::Arguments<'_>) {
+    logf(1, args);
+}
+
+#[inline]
+pub fn log_errorf(args: fmt::Arguments<'_>) {
+    logf(2, args);
+}
+
+#[inline]
 pub fn log_info_with_args(prefix: &str, args: &[&str]) {
     log_with_args(1, prefix, args);
 }
@@ -57,5 +69,14 @@ fn log_with_args(stream: u32, prefix: &str, args: &[&str]) {
         line.push('\n');
     }
 
+    write_log_stream(stream, line.as_str());
+}
+
+fn logf(stream: u32, args: fmt::Arguments<'_>) {
+    let mut line = String::new();
+    let _ = line.write_fmt(args);
+    if !line.ends_with('\n') {
+        line.push('\n');
+    }
     write_log_stream(stream, line.as_str());
 }

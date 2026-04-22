@@ -12,6 +12,7 @@ mod vcabi {
 pub mod ui2;
 pub mod vgfx;
 pub mod vgfx_hosted;
+pub mod vclock;
 pub mod vsys;
 
 pub struct TrueosAllocator;
@@ -71,6 +72,21 @@ pub mod prelude {
     pub use crate::panic_abort;
     pub use crate::TrueosAllocator;
     pub use crate::ui2;
+    pub use crate::vclock;
     pub use crate::vgfx;
     pub use crate::vsys;
+}
+
+#[macro_export]
+macro_rules! bp_info {
+    ($($arg:tt)*) => {
+        $crate::vsys::log_infof(format_args!($($arg)*))
+    };
+}
+
+#[macro_export]
+macro_rules! bp_error {
+    ($($arg:tt)*) => {
+        $crate::vsys::log_errorf(format_args!($($arg)*))
+    };
 }
