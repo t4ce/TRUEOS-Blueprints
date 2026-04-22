@@ -1,6 +1,8 @@
 #![no_std]
 
 use core::alloc::{GlobalAlloc, Layout};
+#[cfg(feature = "default-panic-handler")]
+use core::panic::PanicInfo;
 use core::ptr::null_mut;
 
 mod vcabi {
@@ -13,6 +15,10 @@ pub mod vgfx_hosted;
 pub mod vsys;
 
 pub struct TrueosAllocator;
+
+#[cfg(feature = "default-global-allocator")]
+#[global_allocator]
+static DEFAULT_GLOBAL_ALLOCATOR: TrueosAllocator = TrueosAllocator;
 
 // The thin blueprint path uses the host-exported C allocator directly.
 unsafe impl GlobalAlloc for TrueosAllocator {
@@ -53,6 +59,12 @@ pub fn panic_abort(message: &str) -> ! {
     loop {
         core::hint::spin_loop();
     }
+}
+
+#[cfg(feature = "default-panic-handler")]
+#[panic_handler]
+fn default_panic(_info: &PanicInfo<'_>) -> ! {
+    panic_abort("blueprint panic\n")
 }
 
 pub mod prelude {

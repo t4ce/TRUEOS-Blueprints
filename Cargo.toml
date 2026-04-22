@@ -6,6 +6,8 @@ edition = "2024"
 [features]
 default = ["tokio-runtime"]
 tokio-runtime = ["dep:tokio"]
+thin-default-global-allocator = ["trueos/default-global-allocator"]
+thin-default-panic-handler = ["trueos/default-panic-handler"]
 
 [lib]
 name = "trueos_blueprint"

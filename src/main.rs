@@ -14,6 +14,12 @@ enum BuildFlavor {
     ThinNoStd,
 }
 
+struct BuildSettings {
+    flavor: BuildFlavor,
+    has_global_allocator: bool,
+    has_panic_handler: bool,
+}
+
 fn main() {
     if let Err(err) = run() {
         eprintln!("trueos-blueprint: {err}");
@@ -50,7 +56,7 @@ fn run() -> Result<(), String> {
         build_target = default_build_target(&manifest_path)?;
     }
 
-    let build_flavor = build_flavor(&app_dir, &manifest_path, &build_target)?;
+    let build_settings = build_settings(&app_dir, &manifest_path, &build_target)?;
 
     let target_spec = default_target_spec(&app_dir)?;
     let target_name = target_spec
@@ -66,7 +72,7 @@ fn run() -> Result<(), String> {
         .arg("+nightly")
         .arg("rustc")
         .arg("-Z")
-        .arg(match build_flavor {
+        .arg(match build_settings.flavor {
             BuildFlavor::TokioStd => "build-std=core,compiler_builtins,alloc,std,panic_abort",
             BuildFlavor::ThinNoStd => "build-std=core,compiler_builtins,alloc",
         })
@@ -77,8 +83,18 @@ fn run() -> Result<(), String> {
         .arg("--manifest-path")
         .arg(&manifest_path);
     cargo.env("CARGO_TARGET_DIR", &cargo_target_dir);
-    if matches!(build_flavor, BuildFlavor::ThinNoStd) {
+    if matches!(build_settings.flavor, BuildFlavor::ThinNoStd) {
         cargo.arg("--no-default-features");
+        let mut extra_features = Vec::new();
+        if !build_settings.has_global_allocator {
+            extra_features.push("thin-default-global-allocator");
+        }
+        if !build_settings.has_panic_handler {
+            extra_features.push("thin-default-panic-handler");
+        }
+        if !extra_features.is_empty() {
+            cargo.arg("--features").arg(extra_features.join(","));
+        }
     }
 
     let output_name = match &build_target {
@@ -286,22 +302,33 @@ fn example_names(manifest_path: &Path) -> Result<Vec<String>, String> {
     Ok(names)
 }
 
-fn build_flavor(
+fn build_settings(
     app_dir: &Path,
     manifest_path: &Path,
     build_target: &BuildTarget,
-) -> Result<BuildFlavor, String> {
+) -> Result<BuildSettings, String> {
     let source_path = match build_target {
-        BuildTarget::Package => return Ok(BuildFlavor::TokioStd),
+        BuildTarget::Package => {
+            return Ok(BuildSettings {
+                flavor: BuildFlavor::TokioStd,
+                has_global_allocator: false,
+                has_panic_handler: false,
+            });
+        }
         BuildTarget::Example(name) => example_source_path(app_dir, manifest_path, name)?,
     };
     let source = fs::read_to_string(&source_path)
         .map_err(|err| format!("failed to read {}: {err}", source_path.display()))?;
-    if source.contains("trueos_blueprint") || source.contains("tokio::") {
-        Ok(BuildFlavor::TokioStd)
+    let flavor = if source.contains("trueos_blueprint") || source.contains("tokio::") {
+        BuildFlavor::TokioStd
     } else {
-        Ok(BuildFlavor::ThinNoStd)
-    }
+        BuildFlavor::ThinNoStd
+    };
+    Ok(BuildSettings {
+        flavor,
+        has_global_allocator: source.contains("#[global_allocator]"),
+        has_panic_handler: source.contains("#[panic_handler]"),
+    })
 }
 
 fn example_source_path(app_dir: &Path, manifest_path: &Path, example_name: &str) -> Result<PathBuf, String> {
