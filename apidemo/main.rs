@@ -46,7 +46,6 @@ pub extern "C" fn main() {
     bp_info!("apidemo: start");
     demo_vsys();
     demo_vclock();
-    demo_primary_browser_window();
     demo_owned_window();
     demo_surface_window();
     bp_info!("apidemo: done");
@@ -75,25 +74,6 @@ fn demo_vclock() {
         Some(date) => bp_info!("apidemo/vclock: date={}", date),
         None => bp_error!("apidemo/vclock: date unavailable"),
     }
-    vsys::poll_once();
-}
-
-fn demo_primary_browser_window() {
-    bp_info!("apidemo/ui2: primary browser window");
-    match ui2::primary_browser_window() {
-        Some(id) => {
-            bp_info!("apidemo/ui2: browser raw={}", id.raw());
-            let rebuilt = ui2::WindowId::new(id.raw());
-            bp_info!("apidemo/ui2: WindowId::new(raw) -> {}", rebuilt.is_some());
-            match id.info() {
-                Some(info) => log_window_info("browser", info),
-                None => bp_error!("apidemo/ui2: browser info unavailable"),
-            }
-            log_bool("browser.request_repaint", id.request_repaint());
-        }
-        None => bp_error!("apidemo/ui2: no primary browser window"),
-    }
-    bp_info!("apidemo/ui2: WindowId::new(0) -> {}", ui2::WindowId::new(0).is_some());
     vsys::poll_once();
 }
 

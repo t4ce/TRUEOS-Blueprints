@@ -167,7 +167,6 @@ unsafe extern "C" {
     pub fn trueos_cabi_ntp_current_unix_seconds() -> u64;
     pub fn trueos_cabi_ntp_kernel_date_day_month_year(out_ptr: *mut u8, out_cap: usize) -> usize;
 
-    pub fn trueos_cabi_ui2_primary_browser_window_id() -> u32;
     pub fn trueos_cabi_app_window_create(
         title_ptr: *const u8,
         title_len: usize,
