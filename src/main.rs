@@ -123,11 +123,8 @@ fn run() -> Result<(), String> {
     let linked = tmp_dir.join("module.o");
     let stripped = tmp_dir.join("module.stripped.o");
 
-    let mut ld = Command::new("ld");
+    let mut ld = tool_command(&["ld.lld", "rust-lld", "ld"])?;
     ld.arg("-r")
-        .arg("--gc-sections")
-        .arg("-e")
-        .arg("main")
         .arg("-o")
         .arg(&linked)
         .arg(&app_obj);
@@ -141,16 +138,14 @@ fn run() -> Result<(), String> {
 
     run_command(&mut ld, "ld")?;
 
-    let entry_hint_hex = entry_hint_hex(&linked)?;
+    let entry_hint_hex = entry_hint_hex(&linked);
 
-    run_command(
-        Command::new("objcopy")
-            .arg("--strip-debug")
-            .arg("--strip-unneeded")
-            .arg(&linked)
-            .arg(&stripped),
-        "objcopy",
-    )?;
+    let mut objcopy = tool_command(&["llvm-objcopy", "rust-objcopy", "objcopy"])?;
+    objcopy
+        .arg("--strip-debug")
+        .arg(&linked)
+        .arg(&stripped);
+    run_command(&mut objcopy, "objcopy")?;
 
     let out = app_dir.join("dist").join(format!("{output_name}.bp"));
     fs::create_dir_all(out.parent().ok_or("bad output path")?).map_err(io_string)?;
@@ -170,6 +165,69 @@ fn run_command(cmd: &mut Command, label: &str) -> Result<(), String> {
 
 fn io_string(err: io::Error) -> String {
     err.to_string()
+}
+
+fn tool_command(tool_names: &[&str]) -> Result<Command, String> {
+    let tool = find_tool(tool_names)?;
+    Ok(Command::new(tool))
+}
+
+fn find_tool(tool_names: &[&str]) -> Result<PathBuf, String> {
+    let mut candidates = Vec::new();
+
+    if let Some(sysroot_bin) = rust_sysroot_bin_dir() {
+        for tool_name in tool_names {
+            candidates.push(sysroot_bin.join(tool_name));
+            candidates.push(sysroot_bin.join("gcc-ld").join(tool_name));
+        }
+    }
+
+    if let Some(path_var) = env::var_os("PATH") {
+        for dir in env::split_paths(&path_var) {
+            for tool_name in tool_names {
+                candidates.push(dir.join(tool_name));
+            }
+        }
+    }
+
+    candidates
+        .into_iter()
+        .find(|candidate| candidate.is_file())
+        .ok_or_else(|| format!("missing required tool: {}", tool_names.join(" or ")))
+}
+
+fn rust_sysroot_bin_dir() -> Option<PathBuf> {
+    let output = Command::new("rustc")
+        .arg("+nightly")
+        .arg("--print")
+        .arg("sysroot")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let sysroot = String::from_utf8(output.stdout).ok()?;
+    let sysroot = PathBuf::from(sysroot.trim());
+    let host = env::var("HOST").ok().or_else(rustc_host_triple)?;
+    Some(sysroot.join("lib").join("rustlib").join(host).join("bin"))
+}
+
+fn rustc_host_triple() -> Option<String> {
+    let output = Command::new("rustc")
+        .arg("+nightly")
+        .arg("-vV")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8(output.stdout).ok()?;
+    stdout.lines().find_map(|line| {
+        line.strip_prefix("host: ")
+            .map(str::trim)
+            .filter(|host| !host.is_empty())
+            .map(ToOwned::to_owned)
+    })
 }
 
 fn latest_one(dir: &Path, pattern: &str) -> Result<PathBuf, String> {
@@ -375,29 +433,79 @@ fn example_source_path(app_dir: &Path, manifest_path: &Path, example_name: &str)
     Err(format!("missing path for example {example_name} in {}", manifest_path.display()))
 }
 
-fn entry_hint_hex(linked: &Path) -> Result<String, String> {
-    let output = Command::new("readelf")
-        .arg("-Ws")
-        .arg(linked)
-        .output()
-        .map_err(|err| format!("readelf failed to start: {err}"))?;
-    if !output.status.success() {
-        return Err(format!("readelf failed with status {}", output.status));
-    }
-    let stdout = String::from_utf8(output.stdout).map_err(|_| "readelf output is not UTF-8")?;
-    for line in stdout.lines() {
-        let cols = line.split_whitespace().collect::<Vec<_>>();
-        if cols.len() < 8 {
-            continue;
+fn entry_hint_hex(linked: &Path) -> String {
+    if let Ok(mut readelf) = tool_command(&["llvm-readelf", "readelf"]) {
+        if let Ok(output) = readelf
+            .arg("-Ws")
+            .arg(linked)
+            .output()
+        {
+            if output.status.success() {
+                if let Ok(stdout) = String::from_utf8(output.stdout) {
+                    for line in stdout.lines() {
+                        let cols = line.split_whitespace().collect::<Vec<_>>();
+                        if cols.len() < 8 {
+                            continue;
+                        }
+                        if cols[3] == "FUNC" && cols[7] == "main" {
+                            let value = cols[1].trim_start_matches("0x");
+                            let section = cols[6].parse::<u32>().unwrap_or(0);
+                            let value = u32::from_str_radix(value, 16).unwrap_or(0);
+                            return format!("{section:08x}{value:08x}");
+                        }
+                    }
+                }
+            }
         }
-        if cols[3] == "FUNC" && cols[7] == "main" {
-            let value = cols[1].trim_start_matches("0x");
-            let section = cols[6].parse::<u32>().unwrap_or(0);
-            let value = u32::from_str_radix(value, 16).unwrap_or(0);
-            return Ok(format!("{section:08x}{value:08x}"));
+    }
+
+    if let Ok(mut readobj) = tool_command(&["llvm-readobj"]) {
+        if let Ok(output) = readobj.arg("--symbols").arg(linked).output() {
+            if output.status.success() {
+                if let Ok(stdout) = String::from_utf8(output.stdout) {
+                    let mut current_value: Option<u32> = None;
+                    let mut current_section: Option<u32> = None;
+                    let mut current_is_function = false;
+                    for line in stdout.lines() {
+                        let trimmed = line.trim();
+                        if trimmed == "Symbol {" {
+                            current_value = None;
+                            current_section = None;
+                            current_is_function = false;
+                            continue;
+                        }
+                        if let Some(value) = trimmed.strip_prefix("Value: ") {
+                            current_value = u32::from_str_radix(value.trim_start_matches("0x"), 16).ok();
+                            continue;
+                        }
+                        if let Some(section) = trimmed.strip_prefix("Section: ") {
+                            let section = section
+                                .rsplit_once('(')
+                                .and_then(|(_, suffix)| suffix.strip_suffix(')'))
+                                .map(str::trim)
+                                .and_then(|value| value.strip_prefix("0x"))
+                                .and_then(|value| u32::from_str_radix(value, 16).ok());
+                            current_section = section;
+                            continue;
+                        }
+                        if trimmed == "Type: Function" {
+                            current_is_function = true;
+                            continue;
+                        }
+                        if trimmed == "Name: main" && current_is_function {
+                            return format!(
+                                "{:08x}{:08x}",
+                                current_section.unwrap_or(0),
+                                current_value.unwrap_or(0)
+                            );
+                        }
+                    }
+                }
+            }
         }
     }
-    Ok(String::from("0000000000000000"))
+
+    String::from("0000000000000000")
 }
 
 fn write_blueprint(
