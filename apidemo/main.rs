@@ -1,12 +1,7 @@
 #![no_std]
 #![no_main]
 
-use core::panic::PanicInfo;
-
-use trueos::{bp_error, bp_info, panic_abort, ui2, vclock, vgfx, vgfx_hosted, vsys, TrueosAllocator};
-
-#[global_allocator]
-static GLOBAL_ALLOCATOR: TrueosAllocator = TrueosAllocator;
+use trueos::{bp_error, bp_info, ui2, vclock, vgfx, vgfx_hosted, vsys};
 
 const MAIN_WINDOW_TITLE: &str = "API Demo";
 const MAIN_WINDOW_X: i32 = 120;
@@ -35,11 +30,6 @@ const ASYNC_PIXELS: [u8; 16] = [
     0x18, 0x24, 0x34, 0xFF, 0x26, 0x3A, 0x54, 0xFF, 0x42, 0x6B, 0x86, 0xFF, 0x5A, 0x93, 0xB8,
     0xFF,
 ];
-
-#[panic_handler]
-fn panic(_info: &PanicInfo<'_>) -> ! {
-    panic_abort("apidemo bp: panic\n")
-}
 
 #[unsafe(no_mangle)]
 pub extern "C" fn main() {

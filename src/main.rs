@@ -514,17 +514,42 @@ fn write_blueprint(
     entry_hint_hex: &str,
 ) -> Result<(), String> {
     let raw = fs::read(stripped).map_err(io_string)?;
+    let payload = compress_blueprint_payload(stripped)?;
     let entry = u64::from_str_radix(entry_hint_hex, 16).map_err(|err| err.to_string())?;
 
-    let mut bytes = Vec::with_capacity(24 + raw.len());
+    let mut bytes = Vec::with_capacity(24 + payload.len());
     bytes.extend_from_slice(b"TRBP");
     bytes.extend_from_slice(&1u16.to_le_bytes());
-    bytes.extend_from_slice(&1u16.to_le_bytes());
+    bytes.extend_from_slice(&2u16.to_le_bytes());
     bytes.extend_from_slice(&entry.to_le_bytes());
+    bytes.extend_from_slice(&(payload.len() as u32).to_le_bytes());
     bytes.extend_from_slice(&(raw.len() as u32).to_le_bytes());
-    bytes.extend_from_slice(&(raw.len() as u32).to_le_bytes());
-    bytes.extend_from_slice(&raw);
+    bytes.extend_from_slice(&payload);
     fs::write(out, bytes).map_err(io_string)
+}
+
+fn compress_blueprint_payload(stripped: &Path) -> Result<Vec<u8>, String> {
+    let archive = stripped.with_extension("7z");
+    let parent = stripped
+        .parent()
+        .ok_or_else(|| format!("missing parent dir for {}", stripped.display()))?;
+    let file_name = stripped
+        .file_name()
+        .ok_or_else(|| format!("missing file name for {}", stripped.display()))?;
+
+    let mut seven_zip = tool_command(&["7z", "7zz"])?;
+    seven_zip
+        .current_dir(parent)
+        .arg("a")
+        .arg("-t7z")
+        .arg("-mx=9")
+        .arg("-m0=LZMA2")
+        .arg("-ms=off")
+        .arg("-bd")
+        .arg(&archive)
+        .arg(file_name);
+    run_command(&mut seven_zip, "7z")?;
+    fs::read(&archive).map_err(io_string)
 }
 
 fn tempdir(app_dir: &Path) -> Result<PathBuf, String> {
