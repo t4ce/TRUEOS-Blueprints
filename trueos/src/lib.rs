@@ -13,6 +13,7 @@ pub mod ui2;
 pub mod vgfx;
 pub mod vgfx_hosted;
 pub mod vclock;
+pub mod vfetch;
 pub mod vsys;
 
 pub struct TrueosAllocator;
@@ -73,6 +74,7 @@ pub mod prelude {
     pub use crate::TrueosAllocator;
     pub use crate::ui2;
     pub use crate::vclock;
+    pub use crate::vfetch;
     pub use crate::vgfx;
     pub use crate::vsys;
 }

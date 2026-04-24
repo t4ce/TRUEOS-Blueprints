@@ -2,8 +2,8 @@
 #![no_main]
 
 use core::panic::PanicInfo;
+use trueos::{TrueosAllocator, panic_abort};
 use trueos::{ui2, vgfx, vsys};
-use trueos::{panic_abort, TrueosAllocator};
 
 #[global_allocator]
 static GLOBAL_ALLOCATOR: TrueosAllocator = TrueosAllocator;

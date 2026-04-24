@@ -18,6 +18,7 @@ struct BuildSettings {
     flavor: BuildFlavor,
     has_global_allocator: bool,
     has_panic_handler: bool,
+    needs_tokio_net: bool,
 }
 
 fn main() {
@@ -95,6 +96,8 @@ fn run() -> Result<(), String> {
         if !extra_features.is_empty() {
             cargo.arg("--features").arg(extra_features.join(","));
         }
+    } else if build_settings.needs_tokio_net {
+        cargo.arg("--features").arg("tokio-net-probe");
     }
 
     let output_name = match &build_target {
@@ -116,7 +119,9 @@ fn run() -> Result<(), String> {
 
     let app_obj = match &build_target {
         BuildTarget::Package => latest_one(&deps_dir, &format!("{output_name}-*.o"))?,
-        BuildTarget::Example(name) => latest_one(&target_dir.join("examples"), &format!("{name}-*.o"))?,
+        BuildTarget::Example(name) => {
+            latest_one(&target_dir.join("examples"), &format!("{name}-*.o"))?
+        }
     };
     let rlibs = collect_rlibs(&deps_dir)?;
 
@@ -124,10 +129,7 @@ fn run() -> Result<(), String> {
     let stripped = tmp_dir.join("module.stripped.o");
 
     let mut ld = tool_command(&["ld.lld", "rust-lld", "ld"])?;
-    ld.arg("-r")
-        .arg("-o")
-        .arg(&linked)
-        .arg(&app_obj);
+    ld.arg("-r").arg("-o").arg(&linked).arg(&app_obj);
     if !rlibs.is_empty() {
         ld.arg("--start-group");
         for rlib in &rlibs {
@@ -141,10 +143,7 @@ fn run() -> Result<(), String> {
     let entry_hint_hex = entry_hint_hex(&linked);
 
     let mut objcopy = tool_command(&["llvm-objcopy", "rust-objcopy", "objcopy"])?;
-    objcopy
-        .arg("--strip-debug")
-        .arg(&linked)
-        .arg(&stripped);
+    objcopy.arg("--strip-debug").arg(&linked).arg(&stripped);
     run_command(&mut objcopy, "objcopy")?;
 
     let out = app_dir.join("dist").join(format!("{output_name}.bp"));
@@ -155,7 +154,9 @@ fn run() -> Result<(), String> {
 }
 
 fn run_command(cmd: &mut Command, label: &str) -> Result<(), String> {
-    let status = cmd.status().map_err(|err| format!("{label} failed to start: {err}"))?;
+    let status = cmd
+        .status()
+        .map_err(|err| format!("{label} failed to start: {err}"))?;
     if status.success() {
         Ok(())
     } else {
@@ -371,6 +372,7 @@ fn build_settings(
                 flavor: BuildFlavor::TokioStd,
                 has_global_allocator: false,
                 has_panic_handler: false,
+                needs_tokio_net: false,
             });
         }
         BuildTarget::Example(name) => example_source_path(app_dir, manifest_path, name)?,
@@ -386,10 +388,15 @@ fn build_settings(
         flavor,
         has_global_allocator: source.contains("#[global_allocator]"),
         has_panic_handler: source.contains("#[panic_handler]"),
+        needs_tokio_net: source.contains("tokio::net"),
     })
 }
 
-fn example_source_path(app_dir: &Path, manifest_path: &Path, example_name: &str) -> Result<PathBuf, String> {
+fn example_source_path(
+    app_dir: &Path,
+    manifest_path: &Path,
+    example_name: &str,
+) -> Result<PathBuf, String> {
     let cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
     let mut in_example = false;
     let mut current_name: Option<String> = None;
@@ -418,7 +425,9 @@ fn example_source_path(app_dir: &Path, manifest_path: &Path, example_name: &str)
             if let Some((_, value)) = trimmed.split_once('=') {
                 current_name = Some(value.trim().trim_matches('"').to_string());
             }
-        } else if trimmed.starts_with("path") && let Some((_, value)) = trimmed.split_once('=') {
+        } else if trimmed.starts_with("path")
+            && let Some((_, value)) = trimmed.split_once('=')
+        {
             current_path = Some(value.trim().trim_matches('"').to_string());
         }
     }
@@ -430,16 +439,15 @@ fn example_source_path(app_dir: &Path, manifest_path: &Path, example_name: &str)
         return Ok(app_dir.join(path));
     }
 
-    Err(format!("missing path for example {example_name} in {}", manifest_path.display()))
+    Err(format!(
+        "missing path for example {example_name} in {}",
+        manifest_path.display()
+    ))
 }
 
 fn entry_hint_hex(linked: &Path) -> String {
     if let Ok(mut readelf) = tool_command(&["llvm-readelf", "readelf"]) {
-        if let Ok(output) = readelf
-            .arg("-Ws")
-            .arg(linked)
-            .output()
-        {
+        if let Ok(output) = readelf.arg("-Ws").arg(linked).output() {
             if output.status.success() {
                 if let Ok(stdout) = String::from_utf8(output.stdout) {
                     for line in stdout.lines() {
@@ -475,7 +483,8 @@ fn entry_hint_hex(linked: &Path) -> String {
                             continue;
                         }
                         if let Some(value) = trimmed.strip_prefix("Value: ") {
-                            current_value = u32::from_str_radix(value.trim_start_matches("0x"), 16).ok();
+                            current_value =
+                                u32::from_str_radix(value.trim_start_matches("0x"), 16).ok();
                             continue;
                         }
                         if let Some(section) = trimmed.strip_prefix("Section: ") {
@@ -508,11 +517,7 @@ fn entry_hint_hex(linked: &Path) -> String {
     String::from("0000000000000000")
 }
 
-fn write_blueprint(
-    out: &Path,
-    stripped: &Path,
-    entry_hint_hex: &str,
-) -> Result<(), String> {
+fn write_blueprint(out: &Path, stripped: &Path, entry_hint_hex: &str) -> Result<(), String> {
     let raw = fs::read(stripped).map_err(io_string)?;
     let payload = compress_blueprint_payload(stripped)?;
     let entry = u64::from_str_radix(entry_hint_hex, 16).map_err(|err| err.to_string())?;
@@ -556,10 +561,7 @@ fn tempdir(app_dir: &Path) -> Result<PathBuf, String> {
     let base = app_dir.join("target").join("trueos-blueprint-tmp");
     fs::create_dir_all(&base).map_err(io_string)?;
     for attempt in 0..1024u32 {
-        let candidate = base.join(format!(
-            "trueos-blueprint-{}-{attempt}",
-            std::process::id()
-        ));
+        let candidate = base.join(format!("trueos-blueprint-{}-{attempt}", std::process::id()));
         match fs::create_dir(&candidate) {
             Ok(()) => return Ok(candidate),
             Err(err) if err.kind() == io::ErrorKind::AlreadyExists => continue,

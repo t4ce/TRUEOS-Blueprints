@@ -128,14 +128,16 @@ pub mod time {
 #[cfg(feature = "tokio-runtime")]
 pub mod io {
     pub use tokio::io::{
-        AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, Stderr, Stdin, Stdout,
-        duplex, stderr, stdin, stdout,
+        AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, Stderr, Stdin, Stdout, duplex,
+        stderr, stdin, stdout,
     };
 }
 
 #[cfg(feature = "tokio-runtime")]
 pub mod fs {
-    pub use tokio::fs::{File, OpenOptions, create_dir, create_dir_all, read, read_to_string, write};
+    pub use tokio::fs::{
+        File, OpenOptions, create_dir, create_dir_all, read, read_to_string, write,
+    };
 }
 
 pub mod prelude {

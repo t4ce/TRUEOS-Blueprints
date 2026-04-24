@@ -22,13 +22,11 @@ const TRIANGLE: [vgfx::RgbVertex; 3] = [
 ];
 
 const ICON_PIXELS: [u8; 16] = [
-    0xF8, 0x63, 0x63, 0xFF, 0xFF, 0xD1, 0x66, 0xFF, 0x4F, 0xD8, 0x9D, 0xFF, 0x66, 0xA3, 0xFF,
-    0xFF,
+    0xF8, 0x63, 0x63, 0xFF, 0xFF, 0xD1, 0x66, 0xFF, 0x4F, 0xD8, 0x9D, 0xFF, 0x66, 0xA3, 0xFF, 0xFF,
 ];
 
 const ASYNC_PIXELS: [u8; 16] = [
-    0x18, 0x24, 0x34, 0xFF, 0x26, 0x3A, 0x54, 0xFF, 0x42, 0x6B, 0x86, 0xFF, 0x5A, 0x93, 0xB8,
-    0xFF,
+    0x18, 0x24, 0x34, 0xFF, 0x26, 0x3A, 0x54, 0xFF, 0x42, 0x6B, 0x86, 0xFF, 0x5A, 0x93, 0xB8, 0xFF,
 ];
 
 #[unsafe(no_mangle)]
@@ -91,9 +89,15 @@ fn demo_owned_window() {
     let id = window.id();
     log_bool("owned.set_title", id.set_title("API Demo Control / active"));
     log_bool("owned.set_icon", id.set_icon(ICON_TEX_ID));
-    log_bool("owned.set_position", id.set_position(MAIN_WINDOW_X + 40, MAIN_WINDOW_Y + 44));
+    log_bool(
+        "owned.set_position",
+        id.set_position(MAIN_WINDOW_X + 40, MAIN_WINDOW_Y + 44),
+    );
     log_bool("owned.set_size", id.set_size(260, 136));
-    log_bool("owned.set_decorations", id.set_decorations(ui2::WindowDecorationMode::Client));
+    log_bool(
+        "owned.set_decorations",
+        id.set_decorations(ui2::WindowDecorationMode::Client),
+    );
     log_bool("owned.set_hit_test_visible", id.set_hit_test_visible(true));
     log_bool(
         "owned.set_vertical_scrollbar_side",
@@ -177,7 +181,10 @@ fn demo_surface_window() {
         None => bp_error!("apidemo/ui2: surface info unavailable"),
     }
 
-    log_bool("hosted.ensure_texture", vgfx_hosted::ensure_texture_rgba_now(HOSTED_TEX_ID, 2, 2, [0x22, 0x2E, 0x3C, 0xFF]));
+    log_bool(
+        "hosted.ensure_texture",
+        vgfx_hosted::ensure_texture_rgba_now(HOSTED_TEX_ID, 2, 2, [0x22, 0x2E, 0x3C, 0xFF]),
+    );
     log_bool(
         "hosted.upload_texture_now",
         vgfx_hosted::upload_texture_rgba_image_now(HOSTED_TEX_ID, 2, 2, &ICON_PIXELS),
@@ -202,8 +209,14 @@ fn demo_surface_window() {
         ),
     );
     log_texture_dimensions("surface.texture_dimensions.after", surface.tex_id());
-    log_bool("surface.render_rgb_triangles", surface.render_rgb_triangles(0x1C2833, &TRIANGLE));
-    log_bool("surface.set_title", surface.id().set_title("API Demo / rendered"));
+    log_bool(
+        "surface.render_rgb_triangles",
+        surface.render_rgb_triangles(0x1C2833, &TRIANGLE),
+    );
+    log_bool(
+        "surface.set_title",
+        surface.id().set_title("API Demo / rendered"),
+    );
     log_bool("surface.set_icon", surface.id().set_icon(HOSTED_TEX_ID));
     log_bool("surface.request_repaint", surface.id().request_repaint());
 
