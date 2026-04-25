@@ -25,6 +25,7 @@ struct BuildSettings {
     has_global_allocator: bool,
     has_panic_handler: bool,
     needs_tokio_net: bool,
+    extra_features: Vec<String>,
 }
 
 fn main() {
@@ -146,6 +147,9 @@ fn build_one_target(
         .arg(&manifest_path);
     cargo.env("CARGO_TARGET_DIR", &cargo_target_dir);
     let mut extra_features = required_features.to_vec();
+    for feature in &build_settings.extra_features {
+        push_feature(&mut extra_features, feature);
+    }
     if matches!(build_settings.flavor, BuildFlavor::ThinNoStd) {
         cargo.arg("--no-default-features");
         if !build_settings.has_global_allocator {
@@ -477,29 +481,76 @@ fn build_settings(
     build_target: &BuildTarget,
 ) -> Result<BuildSettings, String> {
     let source_path = match build_target {
-        BuildTarget::Package => {
-            return Ok(BuildSettings {
-                flavor: BuildFlavor::TokioStd,
-                has_global_allocator: false,
-                has_panic_handler: false,
-                needs_tokio_net: false,
-            });
-        }
+        BuildTarget::Package => package_source_path(app_dir)?,
         BuildTarget::Example(name) => example_source_path(app_dir, manifest_path, name)?,
     };
     let source = fs::read_to_string(&source_path)
         .map_err(|err| format!("failed to read {}: {err}", source_path.display()))?;
-    let flavor = if source.contains("trueos_blueprint") || source.contains("tokio::") {
+    let needs_tokio_net = source_needs_tokio_net(&source);
+    let flavor = if needs_tokio_net
+        || source.contains("trueos_blueprint")
+        || source.contains("trueos_blueprint::")
+        || source.contains("tokio::")
+    {
         BuildFlavor::TokioStd
     } else {
         BuildFlavor::ThinNoStd
     };
+    let mut extra_features = blueprint_feature_directives(&source);
+    if needs_tokio_net {
+        push_feature(&mut extra_features, "tokio-net-probe");
+    }
     Ok(BuildSettings {
         flavor,
         has_global_allocator: source.contains("#[global_allocator]"),
         has_panic_handler: source.contains("#[panic_handler]"),
-        needs_tokio_net: source.contains("tokio::net"),
+        needs_tokio_net,
+        extra_features,
     })
+}
+
+fn package_source_path(app_dir: &Path) -> Result<PathBuf, String> {
+    for candidate in [app_dir.join("src/main.rs"), app_dir.join("src/lib.rs")] {
+        if candidate.is_file() {
+            return Ok(candidate);
+        }
+    }
+
+    Err(format!(
+        "missing package source; expected src/main.rs or src/lib.rs under {}",
+        app_dir.display()
+    ))
+}
+
+fn source_needs_tokio_net(source: &str) -> bool {
+    source.contains("tokio::net")
+        || source.contains("trueos_blueprint::net")
+        || source.contains("current_thread_net")
+        || source.contains("net::TcpListener")
+        || source.contains("net::TcpStream")
+        || source.contains("net::UdpSocket")
+        || source.contains("net::mio")
+        || source.contains("mio::net")
+        || source.contains("socket2::")
+}
+
+fn blueprint_feature_directives(source: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for line in source.lines() {
+        let Some((_, suffix)) = line.split_once("trueos-blueprint:") else {
+            continue;
+        };
+        let Some((key, value)) = suffix.split_once('=') else {
+            continue;
+        };
+        if key.trim() != "features" {
+            continue;
+        }
+        for feature in parse_string_array(value.trim()) {
+            push_feature(&mut out, &feature);
+        }
+    }
+    out
 }
 
 fn example_source_path(

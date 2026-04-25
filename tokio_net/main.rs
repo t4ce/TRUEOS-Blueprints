@@ -1,8 +1,7 @@
-use std::net::{Ipv4Addr, SocketAddr};
+use core::net::{Ipv4Addr, SocketAddr};
 
-use socket2::{Domain, Protocol, Socket, Type};
-use trueos::{bp_error, bp_info, vsys};
-use trueos_blueprint::tokio;
+use trueos::vsys;
+use trueos_blueprint::{bp_error, bp_info, net, runtime, task, time, tokio};
 
 const PROBE_WAIT_BUDGET_MS: u64 = 1_500;
 const PROBE_WAIT_SLICE_MS: u64 = 25;
@@ -11,16 +10,21 @@ const REMOTE_HTTP_HOST: &str = "example.com";
 fn main() {
     bp_info!("tokio_net: start");
 
-    let runtime = match tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .build()
-    {
+    if let Err(stage) = probe_runtime_bootstrap_surfaces() {
+        bp_error!("tokio_net: bootstrap failed stage={}", stage);
+        return;
+    }
+
+    bp_info!("tokio_net: stage runtime.current_thread_net.build");
+
+    let runtime = match runtime::current_thread_net().build() {
         Ok(rt) => rt,
         Err(err) => {
             bp_error!("tokio_net: runtime build failed: {}", err);
             return;
         }
     };
+    bp_info!("tokio_net: success runtime.current_thread_net.build");
 
     runtime.block_on(async {
         match run_probe().await {
@@ -28,6 +32,61 @@ fn main() {
             Err(stage) => bp_error!("tokio_net: failed stage={}", stage),
         }
     });
+}
+
+fn probe_runtime_bootstrap_surfaces() -> Result<(), &'static str> {
+    bp_info!("tokio_net: stage thread.current.id");
+    let thread_id = std::thread::current().id();
+    bp_info!("tokio_net: success thread.current.id id={:?}", thread_id);
+
+    bp_info!("tokio_net: stage thread.yield_now");
+    std::thread::yield_now();
+    bp_info!("tokio_net: success thread.yield_now");
+
+    bp_info!("tokio_net: stage runtime.current_thread.builder_new_plain");
+    let mut builder = tokio::runtime::Builder::new_current_thread();
+    bp_info!("tokio_net: success runtime.current_thread.builder_new_plain");
+
+    bp_info!("tokio_net: stage runtime.current_thread.builder_build_plain");
+    let runtime = builder
+        .build()
+        .map_err(|_| "runtime.current_thread.builder_build_plain")?;
+    bp_info!("tokio_net: success runtime.current_thread.build_plain");
+
+    bp_info!("tokio_net: stage runtime.current_thread.drop_plain");
+    drop(runtime);
+    bp_info!("tokio_net: success runtime.current_thread.drop_plain");
+
+    bp_info!("tokio_net: stage runtime.current_thread.build_time");
+    let runtime = runtime::current_thread()
+        .build()
+        .map_err(|_| "runtime.current_thread.build_time")?;
+    bp_info!("tokio_net: success runtime.current_thread.build_time");
+
+    bp_info!("tokio_net: stage runtime.current_thread.drop_time");
+    drop(runtime);
+    bp_info!("tokio_net: success runtime.current_thread.drop_time");
+
+    bp_info!("tokio_net: stage runtime.current_thread.builder_new_io_no_time");
+    let mut builder = tokio::runtime::Builder::new_current_thread();
+    bp_info!("tokio_net: success runtime.current_thread.builder_new_io_no_time");
+
+    bp_info!("tokio_net: stage runtime.current_thread.build_io_no_time");
+    builder.enable_io();
+    let runtime = builder
+        .build()
+        .map_err(|_| "runtime.current_thread.build_io_no_time")?;
+    bp_info!("tokio_net: success runtime.current_thread.build_io_no_time");
+
+    bp_info!("tokio_net: stage runtime.current_thread.drop_io_no_time");
+    drop(runtime);
+    bp_info!("tokio_net: success runtime.current_thread.drop_io_no_time");
+
+    bp_info!("tokio_net: stage mio.poll.wake.bootstrap");
+    probe_mio_poll_surface()?;
+    bp_info!("tokio_net: success mio.poll.wake.bootstrap");
+
+    Ok(())
 }
 
 async fn run_probe() -> Result<(), &'static str> {
@@ -52,7 +111,15 @@ async fn run_probe() -> Result<(), &'static str> {
                 stage
             );
             bp_info!("tokio_net: stage net.tcp.remote_http");
-            probe_remote_http().await?;
+            match probe_remote_http().await {
+                Ok(()) => {}
+                Err(stage) => {
+                    bp_info!(
+                        "tokio_net: note net.tcp.remote_http unavailable, fallback={}",
+                        stage
+                    );
+                }
+            }
         }
     }
 
@@ -60,17 +127,21 @@ async fn run_probe() -> Result<(), &'static str> {
 }
 
 fn probe_socket2_surface() -> Result<(), &'static str> {
-    let _socket = Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP))
-        .map_err(|_| "net.socket2.new")?;
+    let _socket = net::socket2::Socket::new(
+        net::socket2::Domain::IPV4,
+        net::socket2::Type::STREAM,
+        Some(net::socket2::Protocol::TCP),
+    )
+    .map_err(|_| "net.socket2.new")?;
     bp_info!("tokio_net: success net.socket2.new");
     Ok(())
 }
 
 fn probe_mio_poll_surface() -> Result<(), &'static str> {
-    let mut poll = mio::Poll::new().map_err(|_| "mio.poll.new")?;
-    let mut events = mio::Events::with_capacity(4);
-    let waker =
-        mio::Waker::new(poll.registry(), mio::Token(0xB170)).map_err(|_| "mio.waker.new")?;
+    let mut poll = net::mio::Poll::new().map_err(|_| "mio.poll.new")?;
+    let mut events = net::mio::Events::with_capacity(4);
+    let waker = net::mio::Waker::new(poll.registry(), net::mio::Token(0xB170))
+        .map_err(|_| "mio.waker.new")?;
     waker.wake().map_err(|_| "mio.waker.wake")?;
     poll.poll(&mut events, Some(core::time::Duration::ZERO))
         .map_err(|_| "mio.poll.poll")?;
@@ -83,19 +154,18 @@ fn probe_mio_poll_surface() -> Result<(), &'static str> {
 }
 
 async fn probe_mio_udp_bind() -> Result<(), &'static str> {
-    let deadline =
-        tokio::time::Instant::now() + tokio::time::Duration::from_millis(PROBE_WAIT_BUDGET_MS);
+    let deadline = time::Instant::now() + time::Duration::from_millis(PROBE_WAIT_BUDGET_MS);
 
     loop {
-        match mio::net::UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0).into()) {
+        match net::mio::net::UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0).into()) {
             Ok(socket) => {
                 let local = socket.local_addr().map_err(|_| "mio.net.udp.local_addr")?;
                 bp_info!("tokio_net: success mio.net.udp.bind local={}", local);
                 return Ok(());
             }
-            Err(_) if tokio::time::Instant::now() < deadline => {
+            Err(_) if time::Instant::now() < deadline => {
                 vsys::poll_once();
-                tokio::time::sleep(tokio::time::Duration::from_millis(PROBE_WAIT_SLICE_MS)).await;
+                time::sleep(time::Duration::from_millis(PROBE_WAIT_SLICE_MS)).await;
             }
             Err(_) => return Err("mio.net.udp.bind"),
         }
@@ -103,15 +173,14 @@ async fn probe_mio_udp_bind() -> Result<(), &'static str> {
 }
 
 async fn probe_udp_bind() -> Result<(), &'static str> {
-    let deadline =
-        tokio::time::Instant::now() + tokio::time::Duration::from_millis(PROBE_WAIT_BUDGET_MS);
+    let deadline = time::Instant::now() + time::Duration::from_millis(PROBE_WAIT_BUDGET_MS);
 
     loop {
         match try_probe_udp_bind().await {
             Ok(()) => return Ok(()),
-            Err(stage) if tokio::time::Instant::now() < deadline => {
+            Err(stage) if time::Instant::now() < deadline => {
                 vsys::poll_once();
-                tokio::time::sleep(tokio::time::Duration::from_millis(PROBE_WAIT_SLICE_MS)).await;
+                time::sleep(time::Duration::from_millis(PROBE_WAIT_SLICE_MS)).await;
                 if stage == "net.udp.bind" {
                     continue;
                 }
@@ -123,7 +192,7 @@ async fn probe_udp_bind() -> Result<(), &'static str> {
 }
 
 async fn try_probe_udp_bind() -> Result<(), &'static str> {
-    let socket = tokio::net::UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))
+    let socket = net::UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))
         .await
         .map_err(|_| "net.udp.bind")?;
     let local = socket.local_addr().map_err(|_| "net.udp.local_addr")?;
@@ -135,7 +204,7 @@ async fn try_probe_udp_bind() -> Result<(), &'static str> {
 async fn probe_tcp_loopback() -> Result<(), &'static str> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+    let listener = net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
         .await
         .map_err(|_| "net.tcp.loopback.bind")?;
     let listen_addr = listener
@@ -143,7 +212,7 @@ async fn probe_tcp_loopback() -> Result<(), &'static str> {
         .map_err(|_| "net.tcp.loopback.local_addr")?;
     bp_info!("tokio_net: tcp loopback listen={}", listen_addr);
 
-    let accept_task = tokio::task::spawn(async move {
+    let accept_task = task::spawn(async move {
         let (mut server, peer) = listener
             .accept()
             .await
@@ -164,9 +233,9 @@ async fn probe_tcp_loopback() -> Result<(), &'static str> {
         Ok::<SocketAddr, &'static str>(peer)
     });
 
-    tokio::task::yield_now().await;
+    task::yield_now().await;
 
-    let mut client = tokio::net::TcpStream::connect(listen_addr)
+    let mut client = net::TcpStream::connect(listen_addr)
         .await
         .map_err(|_| "net.tcp.loopback.connect")?;
     client
@@ -202,7 +271,7 @@ async fn probe_remote_http() -> Result<(), &'static str> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     let remote_http_addr = remote_http_addr();
-    let mut stream = tokio::net::TcpStream::connect(remote_http_addr)
+    let mut stream = net::TcpStream::connect(remote_http_addr)
         .await
         .map_err(|_| "net.tcp.remote.connect")?;
     stream

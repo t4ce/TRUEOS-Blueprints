@@ -105,6 +105,19 @@ pub mod diag {
 #[cfg(feature = "tokio-runtime")]
 pub mod runtime {
     pub use tokio::runtime::{Builder, Handle, Runtime};
+
+    pub fn current_thread() -> Builder {
+        let mut builder = tokio::runtime::Builder::new_current_thread();
+        builder.enable_time();
+        builder
+    }
+
+    #[cfg(feature = "tokio-net-probe")]
+    pub fn current_thread_net() -> Builder {
+        let mut builder = current_thread();
+        builder.enable_io();
+        builder
+    }
 }
 
 #[cfg(feature = "tokio-runtime")]
@@ -136,8 +149,22 @@ pub mod io {
 #[cfg(feature = "tokio-runtime")]
 pub mod fs {
     pub use tokio::fs::{
-        File, OpenOptions, create_dir, create_dir_all, read, read_to_string, write,
+        File, OpenOptions, create_dir, create_dir_all, read, read_to_string, try_exists, write,
     };
+}
+
+#[cfg(feature = "tokio-net-probe")]
+pub mod net {
+    pub use tokio::net::{TcpListener, TcpStream, ToSocketAddrs, UdpSocket, lookup_host};
+
+    pub mod mio {
+        pub use mio::{Events, Interest, Poll, Registry, Token, Waker};
+        pub use mio::{event, net};
+    }
+
+    pub mod socket2 {
+        pub use socket2::{Domain, Protocol, SockAddr, Socket, Type};
+    }
 }
 
 pub mod prelude {
@@ -146,6 +173,8 @@ pub mod prelude {
     pub use crate::fs;
     #[cfg(feature = "tokio-runtime")]
     pub use crate::io;
+    #[cfg(feature = "tokio-net-probe")]
+    pub use crate::net;
     #[cfg(feature = "tokio-runtime")]
     pub use crate::runtime;
     #[cfg(feature = "tokio-runtime")]
@@ -182,35 +211,35 @@ macro_rules! log {
 
 #[macro_export]
 macro_rules! bp_error {
-    ($msg:expr) => {
-        $crate::diag::emit($crate::diag::Level::Error, format_args!("{}", $msg))
+    ($($arg:tt)*) => {
+        $crate::diag::emit($crate::diag::Level::Error, format_args!($($arg)*))
     };
 }
 
 #[macro_export]
 macro_rules! bp_warn {
-    ($msg:expr) => {
-        $crate::diag::emit($crate::diag::Level::Warn, format_args!("{}", $msg))
+    ($($arg:tt)*) => {
+        $crate::diag::emit($crate::diag::Level::Warn, format_args!($($arg)*))
     };
 }
 
 #[macro_export]
 macro_rules! bp_info {
-    ($msg:expr) => {
-        $crate::diag::emit($crate::diag::Level::Info, format_args!("{}", $msg))
+    ($($arg:tt)*) => {
+        $crate::diag::emit($crate::diag::Level::Info, format_args!($($arg)*))
     };
 }
 
 #[macro_export]
 macro_rules! bp_debug {
-    ($msg:expr) => {
-        $crate::diag::emit($crate::diag::Level::Debug, format_args!("{}", $msg))
+    ($($arg:tt)*) => {
+        $crate::diag::emit($crate::diag::Level::Debug, format_args!($($arg)*))
     };
 }
 
 #[macro_export]
 macro_rules! bp_trace {
-    ($msg:expr) => {
-        $crate::diag::emit($crate::diag::Level::Trace, format_args!("{}", $msg))
+    ($($arg:tt)*) => {
+        $crate::diag::emit($crate::diag::Level::Trace, format_args!($($arg)*))
     };
 }

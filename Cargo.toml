@@ -28,21 +28,14 @@ name = "triangle"
 path = "triangle/main.rs"
 
 [[example]]
-name = "ntp_once"
-path = "ntp_once/ntp_once.rs"
-
-[[example]]
-name = "apidemo"
-path = "apidemo/main.rs"
-
-[[example]]
 name = "tokio_net"
 path = "tokio_net/main.rs"
+required-features = ["tokio-net-probe"]
 
 [[example]]
-name = "clone_probe"
-path = "clone_probe/main.rs"
-required-features = ["clone-probe"]
+name = "tokio_fs"
+path = "tokio_fs/main.rs"
+required-features = ["tokio-runtime"]
 
 [dependencies]
 trueos = { path = "trueos" }
