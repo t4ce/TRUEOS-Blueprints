@@ -1,0 +1,7 @@
+valid calls are:
+
+cargo apps hello_world
+
+cargo apps hello_world tokio_net ...
+
+cargo apps

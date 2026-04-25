@@ -4,6 +4,12 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+#[derive(Clone)]
+struct ExampleSpec {
+    name: String,
+    required_features: Vec<String>,
+}
+
 enum BuildTarget {
     Package,
     Example(String),
@@ -29,35 +35,84 @@ fn main() {
 }
 
 fn run() -> Result<(), String> {
-    let mut args = env::args_os().skip(1);
-    let mut build_target = BuildTarget::Package;
-    let first_arg = args.next();
-    let no_args = first_arg.is_none();
-    let app_dir = match first_arg {
-        Some(arg) if arg == "example" || arg == "--example" => {
-            let Some(name) = args.next() else {
-                return Err("missing example name after `example`".to_string());
-            };
-            build_target = BuildTarget::Example(
-                name.into_string()
-                    .map_err(|_| "example name must be valid UTF-8".to_string())?,
-            );
-            PathBuf::from(".")
-        }
-        Some(arg) => PathBuf::from(arg),
-        None => PathBuf::from("."),
-    };
+    let args: Vec<_> = env::args_os().skip(1).collect();
+    let (app_dir, requested_apps) = parse_cli_args(&args)?;
     let app_dir = fs::canonicalize(&app_dir)
         .map_err(|err| format!("failed to resolve app dir {}: {err}", app_dir.display()))?;
     let manifest_path = app_dir.join("Cargo.toml");
     if !manifest_path.is_file() {
         return Err(format!("missing Cargo.toml in {}", app_dir.display()));
     }
-    if no_args {
-        build_target = default_build_target(&manifest_path)?;
+
+    if package_name(&manifest_path)? == "trueos-blueprint" {
+        let requested_examples = if requested_apps.is_empty() {
+            example_names(&manifest_path)?
+        } else {
+            requested_apps
+        };
+
+        if requested_examples.is_empty() {
+            return build_one_target(&app_dir, &manifest_path, BuildTarget::Package, &[]);
+        }
+
+        for example_name in requested_examples {
+            let required_features = example_required_features(&manifest_path, &example_name)?;
+            build_one_target(
+                &app_dir,
+                &manifest_path,
+                BuildTarget::Example(example_name),
+                &required_features,
+            )?;
+        }
+        return Ok(());
     }
 
+    if !requested_apps.is_empty() {
+        return Err("named apps are only supported from the trueos-blueprint root".to_string());
+    }
+
+    let build_target = BuildTarget::Package;
+    let required_features = Vec::new();
+    build_one_target(&app_dir, &manifest_path, build_target, &required_features)
+}
+
+fn parse_cli_args(args: &[std::ffi::OsString]) -> Result<(PathBuf, Vec<String>), String> {
+    if args.is_empty() {
+        return Ok((PathBuf::from("."), Vec::new()));
+    }
+
+    let first = PathBuf::from(&args[0]);
+    if first.join("Cargo.toml").is_file() {
+        if args.len() > 1 {
+            return Err("directory mode does not accept app names".to_string());
+        }
+        return Ok((first, Vec::new()));
+    }
+
+    let mut app_names = Vec::with_capacity(args.len());
+    for arg in args {
+        app_names.push(
+            arg.clone()
+                .into_string()
+                .map_err(|_| "app name must be valid UTF-8".to_string())?,
+        );
+    }
+
+    Ok((PathBuf::from("."), app_names))
+}
+
+fn build_one_target(
+    app_dir: &Path,
+    manifest_path: &Path,
+    build_target: BuildTarget,
+    required_features: &[String],
+) -> Result<(), String> {
     let build_settings = build_settings(&app_dir, &manifest_path, &build_target)?;
+
+    let output_name = match &build_target {
+        BuildTarget::Package => package_name(&manifest_path)?,
+        BuildTarget::Example(name) => name.clone(),
+    };
 
     let target_spec = default_target_spec(&app_dir)?;
     let target_name = target_spec
@@ -65,8 +120,12 @@ fn run() -> Result<(), String> {
         .and_then(|s| s.to_str())
         .ok_or_else(|| format!("bad target spec path: {}", target_spec.display()))?
         .to_string();
-    let tmp_dir = tempdir(&app_dir)?;
-    let cargo_target_dir = tmp_dir.join("target");
+    let packer_target_dir = app_dir.join("target").join("trueos-blueprint");
+    let cargo_target_dir = packer_target_dir.join("cargo");
+    fs::create_dir_all(&cargo_target_dir).map_err(io_string)?;
+
+    let work_dir = workdir(&packer_target_dir, &output_name)?;
+    reset_dir(&work_dir)?;
 
     let mut cargo = Command::new("cargo");
     cargo
@@ -84,27 +143,26 @@ fn run() -> Result<(), String> {
         .arg("--manifest-path")
         .arg(&manifest_path);
     cargo.env("CARGO_TARGET_DIR", &cargo_target_dir);
+    let mut extra_features = required_features.to_vec();
     if matches!(build_settings.flavor, BuildFlavor::ThinNoStd) {
         cargo.arg("--no-default-features");
-        let mut extra_features = Vec::new();
         if !build_settings.has_global_allocator {
-            extra_features.push("thin-default-global-allocator");
+            push_feature(&mut extra_features, "thin-default-global-allocator");
         }
         if !build_settings.has_panic_handler {
-            extra_features.push("thin-default-panic-handler");
-        }
-        if !extra_features.is_empty() {
-            cargo.arg("--features").arg(extra_features.join(","));
+            push_feature(&mut extra_features, "thin-default-panic-handler");
         }
     } else if build_settings.needs_tokio_net {
-        cargo.arg("--features").arg("tokio-net-probe");
+        push_feature(&mut extra_features, "tokio-net-probe");
+    }
+    if !extra_features.is_empty() {
+        cargo.arg("--features").arg(extra_features.join(","));
     }
 
-    let output_name = match &build_target {
-        BuildTarget::Package => package_name(&manifest_path)?,
+    match &build_target {
+        BuildTarget::Package => {}
         BuildTarget::Example(name) => {
             cargo.arg("--example").arg(name);
-            name.clone()
         }
     };
     cargo.arg("--").arg("-Zno-link").arg("--emit=obj");
@@ -125,8 +183,8 @@ fn run() -> Result<(), String> {
     };
     let rlibs = collect_rlibs(&deps_dir)?;
 
-    let linked = tmp_dir.join("module.o");
-    let stripped = tmp_dir.join("module.stripped.o");
+    let linked = work_dir.join("module.o");
+    let stripped = work_dir.join("module.stripped.o");
 
     let mut ld = tool_command(&["ld.lld", "rust-lld", "ld"])?;
     ld.arg("-r").arg("-o").arg(&linked).arg(&app_obj);
@@ -151,6 +209,12 @@ fn run() -> Result<(), String> {
     write_blueprint(&out, &stripped, &entry_hint_hex)?;
     println!("packed {} -> {}", app_obj.display(), out.display());
     Ok(())
+}
+
+fn push_feature(features: &mut Vec<String>, feature: &str) {
+    if !features.iter().any(|existing| existing == feature) {
+        features.push(feature.to_string());
+    }
 }
 
 fn run_command(cmd: &mut Command, label: &str) -> Result<(), String> {
@@ -325,40 +389,84 @@ fn package_name(manifest_path: &Path) -> Result<String, String> {
     ))
 }
 
-fn default_build_target(manifest_path: &Path) -> Result<BuildTarget, String> {
-    if package_name(manifest_path)? != "trueos-blueprint" {
-        return Ok(BuildTarget::Package);
-    }
-
-    let examples = example_names(manifest_path)?;
-    match examples.as_slice() {
-        [name] => Ok(BuildTarget::Example(name.clone())),
-        _ if examples.iter().any(|name| name == "hello_world") => {
-            Ok(BuildTarget::Example("hello_world".to_string()))
-        }
-        [] => Ok(BuildTarget::Package),
-        _ => Err("multiple examples found; use `cargo bp --example <name>`".to_string()),
-    }
+fn example_names(manifest_path: &Path) -> Result<Vec<String>, String> {
+    Ok(example_specs(manifest_path)?
+        .into_iter()
+        .map(|example| example.name)
+        .collect())
 }
 
-fn example_names(manifest_path: &Path) -> Result<Vec<String>, String> {
+fn example_required_features(
+    manifest_path: &Path,
+    example_name: &str,
+) -> Result<Vec<String>, String> {
+    example_specs(manifest_path)?
+        .into_iter()
+        .find(|example| example.name == example_name)
+        .map(|example| example.required_features)
+        .ok_or_else(|| format!("unknown example `{example_name}`"))
+}
+
+fn example_specs(manifest_path: &Path) -> Result<Vec<ExampleSpec>, String> {
     let cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
-    let mut names = Vec::new();
+    let mut specs = Vec::new();
     let mut in_example = false;
+    let mut current_name: Option<String> = None;
+    let mut current_required_features = Vec::new();
     for line in cargo_toml.lines() {
         let trimmed = line.trim();
         if trimmed.starts_with('[') {
+            if in_example && let Some(name) = current_name.take() {
+                specs.push(ExampleSpec {
+                    name,
+                    required_features: core::mem::take(&mut current_required_features),
+                });
+            }
             in_example = trimmed == "[[example]]";
+            if in_example {
+                current_name = None;
+                current_required_features.clear();
+            }
             continue;
         }
-        if in_example && trimmed.starts_with("name") {
+        if !in_example {
+            continue;
+        }
+        if trimmed.starts_with("name") {
             let Some((_, value)) = trimmed.split_once('=') else {
                 continue;
             };
-            names.push(value.trim().trim_matches('"').to_string());
+            current_name = Some(value.trim().trim_matches('"').to_string());
+        } else if trimmed.starts_with("required-features") {
+            let Some((_, value)) = trimmed.split_once('=') else {
+                continue;
+            };
+            current_required_features = parse_string_array(value.trim());
         }
     }
-    Ok(names)
+    if in_example && let Some(name) = current_name {
+        specs.push(ExampleSpec {
+            name,
+            required_features: current_required_features,
+        });
+    }
+    Ok(specs)
+}
+
+fn parse_string_array(value: &str) -> Vec<String> {
+    let Some(inner) = value
+        .trim()
+        .strip_prefix('[')
+        .and_then(|rest| rest.strip_suffix(']'))
+    else {
+        return Vec::new();
+    };
+    inner
+        .split(',')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(|item| item.trim_matches('"').to_string())
+        .collect()
 }
 
 fn build_settings(
@@ -557,16 +665,25 @@ fn compress_blueprint_payload(stripped: &Path) -> Result<Vec<u8>, String> {
     fs::read(&archive).map_err(io_string)
 }
 
-fn tempdir(app_dir: &Path) -> Result<PathBuf, String> {
-    let base = app_dir.join("target").join("trueos-blueprint-tmp");
-    fs::create_dir_all(&base).map_err(io_string)?;
-    for attempt in 0..1024u32 {
-        let candidate = base.join(format!("trueos-blueprint-{}-{attempt}", std::process::id()));
-        match fs::create_dir(&candidate) {
-            Ok(()) => return Ok(candidate),
-            Err(err) if err.kind() == io::ErrorKind::AlreadyExists => continue,
-            Err(err) => return Err(err.to_string()),
-        }
+fn workdir(packer_target_dir: &Path, output_name: &str) -> Result<PathBuf, String> {
+    Ok(packer_target_dir
+        .join("work")
+        .join(sanitize_path_component(output_name)))
+}
+
+fn sanitize_path_component(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| match ch {
+            'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' | '.' => ch,
+            _ => '_',
+        })
+        .collect()
+}
+
+fn reset_dir(path: &Path) -> Result<(), String> {
+    if path.exists() {
+        fs::remove_dir_all(path).map_err(io_string)?;
     }
-    Err("failed to allocate temp dir".to_string())
+    fs::create_dir_all(path).map_err(io_string)
 }

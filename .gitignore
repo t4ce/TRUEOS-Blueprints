@@ -9,3 +9,4 @@ node_modules
 package.json
 package-lock.json
 vid/
+temp_*/

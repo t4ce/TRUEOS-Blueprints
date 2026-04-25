@@ -1,2 +1,3 @@
 [alias]
 bp = "run --bin trueos-blueprint --"
+apps = "run --bin trueos-blueprint --"
