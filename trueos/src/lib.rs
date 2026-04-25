@@ -13,7 +13,6 @@ pub mod ui2;
 pub mod vgfx;
 pub mod vgfx_hosted;
 pub mod vsys;
-pub mod compat;
 
 pub struct TrueosAllocator;
 
