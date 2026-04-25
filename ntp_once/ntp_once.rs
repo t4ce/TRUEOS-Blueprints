@@ -1,7 +1,8 @@
 #![no_std]
 #![no_main]
 
-use trueos::{bp_error, bp_info, vclock};
+use trueos::compat::vclock;
+use trueos::{bp_error, bp_info};
 
 #[unsafe(no_mangle)]
 pub extern "C" fn main() {

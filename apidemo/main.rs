@@ -1,7 +1,8 @@
 #![no_std]
 #![no_main]
 
-use trueos::{bp_error, bp_info, ui2, vclock, vgfx, vgfx_hosted, vsys};
+use trueos::compat::vclock;
+use trueos::{bp_error, bp_info, ui2, vgfx, vgfx_hosted, vsys};
 
 const MAIN_WINDOW_TITLE: &str = "API Demo";
 const MAIN_WINDOW_X: i32 = 120;

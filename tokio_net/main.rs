@@ -31,11 +31,19 @@ fn main() {
 }
 
 async fn run_probe() -> Result<(), &'static str> {
+    bp_info!("tokio_net: stage net.socket2.new");
     probe_socket2_surface()?;
+
+    bp_info!("tokio_net: stage mio.poll.wake");
     probe_mio_poll_surface()?;
+
+    bp_info!("tokio_net: stage mio.net.udp.bind");
     probe_mio_udp_bind().await?;
+
+    bp_info!("tokio_net: stage net.udp.bind");
     probe_udp_bind().await?;
 
+    bp_info!("tokio_net: stage net.tcp.loopback_roundtrip");
     match probe_tcp_loopback().await {
         Ok(()) => bp_info!("tokio_net: success net.tcp.loopback_roundtrip"),
         Err(stage) => {
@@ -43,6 +51,7 @@ async fn run_probe() -> Result<(), &'static str> {
                 "tokio_net: note net.tcp.loopback unavailable, fallback={}",
                 stage
             );
+            bp_info!("tokio_net: stage net.tcp.remote_http");
             probe_remote_http().await?;
         }
     }

@@ -121,7 +121,9 @@ fn build_one_target(
         .ok_or_else(|| format!("bad target spec path: {}", target_spec.display()))?
         .to_string();
     let packer_target_dir = app_dir.join("target").join("trueos-blueprint");
-    let cargo_target_dir = packer_target_dir.join("cargo");
+    let cargo_target_dir = packer_target_dir
+        .join("cargo")
+        .join(sanitize_path_component(&output_name));
     fs::create_dir_all(&cargo_target_dir).map_err(io_string)?;
 
     let work_dir = workdir(&packer_target_dir, &output_name)?;

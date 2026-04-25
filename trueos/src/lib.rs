@@ -12,9 +12,8 @@ mod vcabi {
 pub mod ui2;
 pub mod vgfx;
 pub mod vgfx_hosted;
-pub mod vclock;
-pub mod vfetch;
 pub mod vsys;
+pub mod compat;
 
 pub struct TrueosAllocator;
 
@@ -73,8 +72,6 @@ pub mod prelude {
     pub use crate::panic_abort;
     pub use crate::TrueosAllocator;
     pub use crate::ui2;
-    pub use crate::vclock;
-    pub use crate::vfetch;
     pub use crate::vgfx;
     pub use crate::vsys;
 }
