@@ -37,6 +37,11 @@ name = "tokio_fs"
 path = "tokio_fs/main.rs"
 required-features = ["tokio-runtime"]
 
+[[example]]
+name = "tokio_rt"
+path = "tokio_rt/main.rs"
+required-features = ["tokio-runtime"]
+
 [dependencies]
 trueos = { path = "trueos" }
 tokio = { path = "../TRUEOS/vendor/tokio-1.52.1", optional = true, default-features = false, features = ["rt", "sync", "time", "io-util", "io-std", "fs", "macros"] }
