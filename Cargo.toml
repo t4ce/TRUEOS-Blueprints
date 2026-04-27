@@ -28,6 +28,18 @@ name = "triangle"
 path = "triangle/main.rs"
 
 [[example]]
+name = "petersen"
+path = "petersen/main.rs"
+
+[[example]]
+name = "chart"
+path = "chart/main.rs"
+
+[[example]]
+name = "svg_grid"
+path = "svg_grid/main.rs"
+
+[[example]]
 name = "tokio_net"
 path = "tokio_net/main.rs"
 required-features = ["tokio-net-probe"]
@@ -55,6 +67,7 @@ serde = { version = "1.0", default-features = false, features = ["alloc", "deriv
 serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
 regex = { version = "1", default-features = false, features = ["unicode-perl"] }
 anyhow = { version = "1.0", default-features = false }
+libm = { version = "0.2", default-features = false }
 
 [patch.crates-io]
 gix-config-value = { path = "vendor/gix-config-value-0.17.2" }
