@@ -193,7 +193,12 @@ fn build_one_target(
     let stripped = work_dir.join("module.stripped.o");
 
     let mut ld = tool_command(&["ld.lld", "rust-lld", "ld"])?;
-    ld.arg("-r").arg("-o").arg(&linked).arg(&app_obj);
+    ld.arg("-r")
+        .arg("--gc-sections")
+        .arg("--undefined=main")
+        .arg("-o")
+        .arg(&linked)
+        .arg(&app_obj);
     if !rlibs.is_empty() {
         ld.arg("--start-group");
         for rlib in &rlibs {
