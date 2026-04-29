@@ -57,13 +57,31 @@ fn run() -> Result<(), String> {
         }
 
         for example_name in requested_examples {
-            let required_features = example_required_features(&manifest_path, &example_name)?;
-            build_one_target(
-                &app_dir,
-                &manifest_path,
-                BuildTarget::Example(example_name),
-                &required_features,
-            )?;
+            if let Ok(required_features) = example_required_features(&manifest_path, &example_name)
+            {
+                build_one_target(
+                    &app_dir,
+                    &manifest_path,
+                    BuildTarget::Example(example_name),
+                    &required_features,
+                )?;
+                continue;
+            }
+
+            let package_dir = app_dir.join(&example_name);
+            let package_manifest = package_dir.join("Cargo.toml");
+            if package_manifest.is_file() {
+                build_one_target_to(
+                    &package_dir,
+                    &package_manifest,
+                    BuildTarget::Package,
+                    &[],
+                    &app_dir,
+                )?;
+                continue;
+            }
+
+            return Err(format!("unknown example or package `{example_name}`"));
         }
         return Ok(());
     }
@@ -107,6 +125,22 @@ fn build_one_target(
     manifest_path: &Path,
     build_target: BuildTarget,
     required_features: &[String],
+) -> Result<(), String> {
+    build_one_target_to(
+        app_dir,
+        manifest_path,
+        build_target,
+        required_features,
+        &app_dir.join("dist"),
+    )
+}
+
+fn build_one_target_to(
+    app_dir: &Path,
+    manifest_path: &Path,
+    build_target: BuildTarget,
+    required_features: &[String],
+    output_dir: &Path,
 ) -> Result<(), String> {
     let build_settings = build_settings(&app_dir, &manifest_path, &build_target)?;
 
@@ -215,7 +249,7 @@ fn build_one_target(
     objcopy.arg("--strip-debug").arg(&linked).arg(&stripped);
     run_command(&mut objcopy, "objcopy")?;
 
-    let out = app_dir.join("dist").join(format!("{output_name}.bp"));
+    let out = output_dir.join(format!("{output_name}.bp"));
     fs::create_dir_all(out.parent().ok_or("bad output path")?).map_err(io_string)?;
     write_blueprint(&out, &stripped, &entry_hint_hex)?;
     println!("packed {} -> {}", app_obj.display(), out.display());
@@ -359,16 +393,25 @@ fn collect_rlibs(dir: &Path) -> Result<Vec<PathBuf>, String> {
 }
 
 fn default_target_spec(app_dir: &Path) -> Result<PathBuf, String> {
-    for candidate in [app_dir.join("target.json"), app_dir.join("trueos-app.json")] {
+    for candidate in [
+        app_dir.join("target.json"),
+        app_dir.join("trueos.json"),
+        app_dir.join("trueos-app.json"),
+    ] {
         if candidate.is_file() {
             return Ok(candidate);
         }
     }
 
     for ancestor in app_dir.ancestors().skip(1) {
-        let candidate = ancestor.join("target.json");
-        if candidate.is_file() {
-            return Ok(candidate);
+        for candidate in [
+            ancestor.join("target.json"),
+            ancestor.join("trueos.json"),
+            ancestor.join("trueos-app.json"),
+        ] {
+            if candidate.is_file() {
+                return Ok(candidate);
+            }
         }
     }
 
