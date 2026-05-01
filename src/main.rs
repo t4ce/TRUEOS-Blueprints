@@ -179,6 +179,12 @@ fn build_one_target_to(
         .arg(&target_spec)
         .arg("--manifest-path")
         .arg(&manifest_path);
+    if let Some(libc_patch) = find_vendor_dir(&app_dir, "libc-0.2.185") {
+        cargo.arg("--config").arg(format!(
+            "patch.crates-io.libc.path={}",
+            toml_string(&libc_patch.to_string_lossy())
+        ));
+    }
     cargo.env("CARGO_TARGET_DIR", &cargo_target_dir);
     let mut extra_features = required_features.to_vec();
     for feature in &build_settings.extra_features {
@@ -419,6 +425,32 @@ fn default_target_spec(app_dir: &Path) -> Result<PathBuf, String> {
         "cannot infer target spec from {}; expected target.json near the blueprint Cargo.toml",
         app_dir.display()
     ))
+}
+
+fn find_vendor_dir(app_dir: &Path, name: &str) -> Option<PathBuf> {
+    for ancestor in app_dir.ancestors() {
+        let candidate = ancestor.join("vendor").join(name);
+        if candidate.is_dir() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn toml_string(value: &str) -> String {
+    let mut out = String::from("\"");
+    for ch in value.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            _ => out.push(ch),
+        }
+    }
+    out.push('"');
+    out
 }
 
 fn package_name(manifest_path: &Path) -> Result<String, String> {
