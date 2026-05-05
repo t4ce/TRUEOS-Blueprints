@@ -7,6 +7,7 @@ edition = "2024"
 default = ["tokio-runtime"]
 tokio-runtime = ["dep:tokio"]
 tokio-net-probe = ["tokio-runtime", "tokio/net", "dep:mio", "dep:socket2"]
+framework-probe = ["tokio-net-probe", "dep:hyper", "dep:tower"]
 clone-probe = []
 thin-default-global-allocator = ["trueos/default-global-allocator"]
 thin-default-panic-handler = ["trueos/default-panic-handler"]
@@ -55,6 +56,16 @@ path = "tokio_rt/main.rs"
 required-features = ["tokio-runtime"]
 
 [[example]]
+name = "framework_stack"
+path = "framework_stack/main.rs"
+required-features = ["framework-probe"]
+
+[[example]]
+name = "weather"
+path = "weather/main.rs"
+required-features = ["tokio-net-probe"]
+
+[[example]]
 name = "test_some_crates"
 path = "test_some_crates/test_some_crates.rs"
 
@@ -63,15 +74,29 @@ trueos = { path = "trueos" }
 tokio = { path = "../TRUEOS/vendor/tokio-1.52.1", optional = true, default-features = false, features = ["rt", "sync", "time", "io-util", "io-std", "fs", "macros"] }
 mio = { path = "../TRUEOS/vendor/mio-1.2.0", optional = true, default-features = false, features = ["os-poll", "net"] }
 socket2 = { path = "../TRUEOS/vendor/socket2-0.6.3", optional = true, default-features = false }
+hyper = { path = "../TRUEOS/vendor/hyper-1.9.0", optional = true, default-features = false, features = ["client", "server", "http1"] }
+tower = { version = "0.5.3", optional = true, default-features = false, features = ["util"] }
 serde = { version = "1.0", default-features = false, features = ["alloc", "derive"] }
 serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
 regex = { version = "1", default-features = false, features = ["unicode-perl"] }
 anyhow = { version = "1.0", default-features = false }
 libm = { version = "0.2", default-features = false }
+trueos-weather = { path = "crates/trueos-weather" }
 
 [patch.crates-io]
+atomic-waker = { path = "../TRUEOS/vendor/atomic-waker-1.1.2" }
+bytes = { path = "../TRUEOS/vendor/bytes-1.11.1" }
+futures-channel = { path = "../TRUEOS/vendor/futures-channel-0.3.32" }
+futures-core = { path = "../TRUEOS/vendor/futures-core-0.3.32" }
 gix-config-value = { path = "vendor/gix-config-value-0.17.2" }
 gix-sec = { path = "vendor/gix-sec-0.13.3" }
+hyper = { path = "../TRUEOS/vendor/hyper-1.9.0" }
+itoa = { path = "../TRUEOS/vendor/itoa-1.0.18" }
 mio = { path = "../TRUEOS/vendor/mio-1.2.0" }
+pin-project-lite = { path = "../TRUEOS/vendor/pin-project-lite-0.2.17" }
+smallvec = { path = "../TRUEOS/vendor/smallvec-1.15.1" }
 socket2 = { path = "../TRUEOS/vendor/socket2-0.6.3" }
+tokio = { path = "../TRUEOS/vendor/tokio-1.52.1" }
 trueos-sys = { path = "../TRUEOS/crates/trueos-sys" }
+try-lock = { path = "../TRUEOS/vendor/try-lock-0.2.5" }
+want = { path = "../TRUEOS/vendor/want-0.3.1" }

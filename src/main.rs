@@ -20,6 +20,33 @@ enum BuildFlavor {
     ThinNoStd,
 }
 
+#[derive(Clone, Copy)]
+enum CargoProfile {
+    Dev,
+    Release,
+}
+
+impl CargoProfile {
+    fn target_subdir(self) -> &'static str {
+        match self {
+            CargoProfile::Dev => "debug",
+            CargoProfile::Release => "release",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            CargoProfile::Dev => "dev",
+            CargoProfile::Release => "release",
+        }
+    }
+}
+
+struct CratePatch {
+    name: String,
+    path: PathBuf,
+}
+
 struct BuildSettings {
     flavor: BuildFlavor,
     has_global_allocator: bool,
@@ -37,7 +64,7 @@ fn main() {
 
 fn run() -> Result<(), String> {
     let args: Vec<_> = env::args_os().skip(1).collect();
-    let (app_dir, requested_apps) = parse_cli_args(&args)?;
+    let (app_dir, requested_apps, cargo_profile) = parse_cli_args(&args)?;
     let app_dir = fs::canonicalize(&app_dir)
         .map_err(|err| format!("failed to resolve app dir {}: {err}", app_dir.display()))?;
     let manifest_path = app_dir.join("Cargo.toml");
@@ -53,7 +80,13 @@ fn run() -> Result<(), String> {
         };
 
         if requested_examples.is_empty() {
-            return build_one_target(&app_dir, &manifest_path, BuildTarget::Package, &[]);
+            return build_one_target(
+                &app_dir,
+                &manifest_path,
+                BuildTarget::Package,
+                &[],
+                cargo_profile,
+            );
         }
 
         for example_name in requested_examples {
@@ -64,6 +97,7 @@ fn run() -> Result<(), String> {
                     &manifest_path,
                     BuildTarget::Example(example_name),
                     &required_features,
+                    cargo_profile,
                 )?;
                 continue;
             }
@@ -77,6 +111,7 @@ fn run() -> Result<(), String> {
                     BuildTarget::Package,
                     &[],
                     &app_dir,
+                    cargo_profile,
                 )?;
                 continue;
             }
@@ -92,32 +127,49 @@ fn run() -> Result<(), String> {
 
     let build_target = BuildTarget::Package;
     let required_features = Vec::new();
-    build_one_target(&app_dir, &manifest_path, build_target, &required_features)
+    build_one_target(
+        &app_dir,
+        &manifest_path,
+        build_target,
+        &required_features,
+        cargo_profile,
+    )
 }
 
-fn parse_cli_args(args: &[std::ffi::OsString]) -> Result<(PathBuf, Vec<String>), String> {
-    if args.is_empty() {
-        return Ok((PathBuf::from("."), Vec::new()));
+fn parse_cli_args(
+    args: &[std::ffi::OsString],
+) -> Result<(PathBuf, Vec<String>, CargoProfile), String> {
+    let mut cargo_profile = CargoProfile::Dev;
+    let mut filtered_args = Vec::with_capacity(args.len());
+    for arg in args {
+        if arg == "--release" {
+            cargo_profile = CargoProfile::Release;
+        } else {
+            filtered_args.push(arg.clone());
+        }
     }
 
-    let first = PathBuf::from(&args[0]);
+    if filtered_args.is_empty() {
+        return Ok((PathBuf::from("."), Vec::new(), cargo_profile));
+    }
+
+    let first = PathBuf::from(&filtered_args[0]);
     if first.join("Cargo.toml").is_file() {
-        if args.len() > 1 {
+        if filtered_args.len() > 1 {
             return Err("directory mode does not accept app names".to_string());
         }
-        return Ok((first, Vec::new()));
+        return Ok((first, Vec::new(), cargo_profile));
     }
 
-    let mut app_names = Vec::with_capacity(args.len());
-    for arg in args {
+    let mut app_names = Vec::with_capacity(filtered_args.len());
+    for arg in filtered_args {
         app_names.push(
-            arg.clone()
-                .into_string()
+            arg.into_string()
                 .map_err(|_| "app name must be valid UTF-8".to_string())?,
         );
     }
 
-    Ok((PathBuf::from("."), app_names))
+    Ok((PathBuf::from("."), app_names, cargo_profile))
 }
 
 fn build_one_target(
@@ -125,6 +177,7 @@ fn build_one_target(
     manifest_path: &Path,
     build_target: BuildTarget,
     required_features: &[String],
+    cargo_profile: CargoProfile,
 ) -> Result<(), String> {
     build_one_target_to(
         app_dir,
@@ -132,6 +185,7 @@ fn build_one_target(
         build_target,
         required_features,
         &app_dir.join("dist"),
+        cargo_profile,
     )
 }
 
@@ -141,6 +195,7 @@ fn build_one_target_to(
     build_target: BuildTarget,
     required_features: &[String],
     output_dir: &Path,
+    cargo_profile: CargoProfile,
 ) -> Result<(), String> {
     let build_settings = build_settings(&app_dir, &manifest_path, &build_target)?;
 
@@ -164,6 +219,11 @@ fn build_one_target_to(
     let work_dir = workdir(&packer_target_dir, &output_name)?;
     reset_dir(&work_dir)?;
 
+    let source_overlay = source_overlay_patches(app_dir, manifest_path)?;
+    let cargo_manifest_path =
+        staged_manifest_for_overlay(app_dir, manifest_path, &work_dir, &source_overlay)?
+            .unwrap_or_else(|| manifest_path.to_path_buf());
+
     let mut cargo = Command::new("cargo");
     cargo
         .arg("+nightly")
@@ -178,13 +238,18 @@ fn build_one_target_to(
         .arg("--target")
         .arg(&target_spec)
         .arg("--manifest-path")
-        .arg(&manifest_path);
-    if let Some(libc_patch) = find_vendor_dir(&app_dir, "libc-0.2.185") {
-        cargo.arg("--config").arg(format!(
-            "patch.crates-io.libc.path={}",
-            toml_string(&libc_patch.to_string_lossy())
-        ));
+        .arg(&cargo_manifest_path);
+    if !source_overlay.is_empty() {
+        println!(
+            "trueos-blueprint: source overlay crates: {}",
+            source_overlay
+                .iter()
+                .map(|patch| patch.name.as_str())
+                .collect::<Vec<_>>()
+                .join(",")
+        );
     }
+    push_source_overlay_configs(&mut cargo, &source_overlay);
     cargo.env("CARGO_TARGET_DIR", &cargo_target_dir);
     let mut extra_features = required_features.to_vec();
     for feature in &build_settings.extra_features {
@@ -204,6 +269,9 @@ fn build_one_target_to(
     if !extra_features.is_empty() {
         cargo.arg("--features").arg(extra_features.join(","));
     }
+    if matches!(cargo_profile, CargoProfile::Release) {
+        cargo.arg("--release");
+    }
 
     match &build_target {
         BuildTarget::Package => {}
@@ -213,9 +281,15 @@ fn build_one_target_to(
     };
     cargo.arg("--").arg("-Zno-link").arg("--emit=obj");
 
+    println!(
+        "trueos-blueprint: cargo artifact profile: {}",
+        cargo_profile.label()
+    );
     run_command(&mut cargo, "cargo rustc")?;
 
-    let target_dir = cargo_target_dir.join(&target_name).join("debug");
+    let target_dir = cargo_target_dir
+        .join(&target_name)
+        .join(cargo_profile.target_subdir());
     let deps_dir = target_dir.join("deps");
     if !deps_dir.is_dir() {
         return Err(format!("missing deps dir: {}", deps_dir.display()));
@@ -435,6 +509,374 @@ fn find_vendor_dir(app_dir: &Path, name: &str) -> Option<PathBuf> {
         }
     }
     None
+}
+
+const TRUEOS_SOURCE_OVERLAY_CRATES: &[&str] = &[
+    "atomic-waker",
+    "bytes",
+    "futures-channel",
+    "futures-core",
+    "http",
+    "http-body",
+    "http-body-util",
+    "hyper",
+    "hyper-util",
+    "itoa",
+    "libc",
+    "mio",
+    "pin-project-lite",
+    "smallvec",
+    "socket2",
+    "sync_wrapper",
+    "tokio",
+    "tower",
+    "tower-layer",
+    "tower-service",
+    "trueos-sys",
+    "try-lock",
+    "want",
+];
+
+fn source_overlay_patches(app_dir: &Path, manifest_path: &Path) -> Result<Vec<CratePatch>, String> {
+    let app_patch_names = manifest_patch_names(manifest_path)?;
+    let mut out = Vec::new();
+
+    if let Some(kernel_manifest) = trueos_kernel_manifest(app_dir) {
+        let kernel_root = kernel_manifest
+            .parent()
+            .ok_or_else(|| format!("bad kernel manifest path: {}", kernel_manifest.display()))?;
+        for (name, path) in manifest_patch_entries(&kernel_manifest)? {
+            if !TRUEOS_SOURCE_OVERLAY_CRATES.contains(&name.as_str()) {
+                continue;
+            }
+            if app_patch_names.iter().any(|existing| existing == &name) {
+                continue;
+            }
+            let patch_path = resolve_manifest_path(kernel_root, &path);
+            if patch_path.is_dir() {
+                out.push(CratePatch {
+                    name,
+                    path: patch_path,
+                });
+            }
+        }
+    }
+
+    if !out.iter().any(|patch| patch.name == "libc")
+        && !app_patch_names.iter().any(|name| name == "libc")
+        && let Some(path) = find_vendor_dir(app_dir, "libc-0.2.185")
+    {
+        out.push(CratePatch {
+            name: "libc".to_string(),
+            path,
+        });
+    }
+
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(out)
+}
+
+fn staged_manifest_for_overlay(
+    app_dir: &Path,
+    manifest_path: &Path,
+    work_dir: &Path,
+    source_overlay: &[CratePatch],
+) -> Result<Option<PathBuf>, String> {
+    let mismatches = source_overlay_lock_mismatches(app_dir, source_overlay)?;
+    if mismatches.is_empty() {
+        return Ok(None);
+    }
+
+    let staged_app_dir = work_dir.join("source-overlay-app");
+    copy_app_tree(app_dir, &staged_app_dir)?;
+    link_kernel_sibling_for_staged_app(app_dir, work_dir)?;
+    let staged_manifest = staged_app_dir.join(
+        manifest_path
+            .file_name()
+            .ok_or_else(|| format!("bad manifest path: {}", manifest_path.display()))?,
+    );
+
+    println!(
+        "trueos-blueprint: staged lock overlay: {}",
+        mismatches
+            .iter()
+            .map(|mismatch| format!(
+                "{} {}->{}",
+                mismatch.name, mismatch.locked_version, mismatch.overlay_version
+            ))
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+
+    for mismatch in mismatches {
+        let mut update = Command::new("cargo");
+        update
+            .arg("+nightly")
+            .arg("update")
+            .arg("--manifest-path")
+            .arg(&staged_manifest)
+            .arg("-p")
+            .arg(format!("{}@{}", mismatch.name, mismatch.locked_version))
+            .arg("--precise")
+            .arg(&mismatch.overlay_version);
+        push_source_overlay_configs(&mut update, source_overlay);
+        run_command(&mut update, "cargo update")?;
+    }
+
+    Ok(Some(staged_manifest))
+}
+
+struct LockMismatch {
+    name: String,
+    locked_version: String,
+    overlay_version: String,
+}
+
+fn source_overlay_lock_mismatches(
+    app_dir: &Path,
+    source_overlay: &[CratePatch],
+) -> Result<Vec<LockMismatch>, String> {
+    let lock_path = app_dir.join("Cargo.lock");
+    if !lock_path.is_file() {
+        return Ok(Vec::new());
+    }
+
+    let lock_packages = lock_package_versions(&lock_path)?;
+    let mut out = Vec::new();
+    for patch in source_overlay {
+        let Some(overlay_version) = package_version(&patch.path.join("Cargo.toml"))? else {
+            continue;
+        };
+        for (name, locked_version) in &lock_packages {
+            if name == &patch.name && locked_version != &overlay_version {
+                out.push(LockMismatch {
+                    name: name.clone(),
+                    locked_version: locked_version.clone(),
+                    overlay_version: overlay_version.clone(),
+                });
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn lock_package_versions(lock_path: &Path) -> Result<Vec<(String, String)>, String> {
+    let cargo_lock = fs::read_to_string(lock_path).map_err(io_string)?;
+    let mut out = Vec::new();
+    let mut in_package = false;
+    let mut name: Option<String> = None;
+    let mut version: Option<String> = None;
+
+    for line in cargo_lock.lines() {
+        let trimmed = line.trim();
+        if trimmed == "[[package]]" {
+            if in_package && let (Some(name), Some(version)) = (name.take(), version.take()) {
+                out.push((name, version));
+            }
+            in_package = true;
+            name = None;
+            version = None;
+            continue;
+        }
+        if !in_package {
+            continue;
+        }
+        if let Some((key, value)) = trimmed.split_once('=') {
+            match key.trim() {
+                "name" => name = toml_string_value(value.trim()),
+                "version" => version = toml_string_value(value.trim()),
+                _ => {}
+            }
+        }
+    }
+
+    if in_package && let (Some(name), Some(version)) = (name, version) {
+        out.push((name, version));
+    }
+    Ok(out)
+}
+
+fn package_version(manifest_path: &Path) -> Result<Option<String>, String> {
+    let cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
+    let mut in_package = false;
+    for line in cargo_toml.lines() {
+        let trimmed = line.split('#').next().unwrap_or("").trim();
+        if trimmed.starts_with('[') {
+            in_package = trimmed == "[package]";
+            continue;
+        }
+        if !in_package {
+            continue;
+        }
+        if let Some((key, value)) = trimmed.split_once('=')
+            && key.trim() == "version"
+        {
+            return Ok(toml_string_value(value.trim()));
+        }
+    }
+    Ok(None)
+}
+
+fn copy_app_tree(from: &Path, to: &Path) -> Result<(), String> {
+    fs::create_dir_all(to).map_err(io_string)?;
+    for entry in fs::read_dir(from).map_err(io_string)? {
+        let entry = entry.map_err(io_string)?;
+        let name = entry.file_name();
+        let Some(name_str) = name.to_str() else {
+            continue;
+        };
+        if matches!(name_str, ".git" | "target" | "dist") {
+            continue;
+        }
+        let src = entry.path();
+        let dst = to.join(&name);
+        let file_type = entry.file_type().map_err(io_string)?;
+        if file_type.is_dir() {
+            copy_app_tree(&src, &dst)?;
+        } else if file_type.is_file() {
+            fs::copy(&src, &dst).map_err(io_string)?;
+        } else if file_type.is_symlink()
+            && let Ok(target) = fs::read_link(&src)
+        {
+            #[cfg(unix)]
+            std::os::unix::fs::symlink(target, dst).map_err(io_string)?;
+        }
+    }
+    Ok(())
+}
+
+fn link_kernel_sibling_for_staged_app(app_dir: &Path, work_dir: &Path) -> Result<(), String> {
+    let Some(kernel_manifest) = trueos_kernel_manifest(app_dir) else {
+        return Ok(());
+    };
+    let Some(kernel_root) = kernel_manifest.parent() else {
+        return Ok(());
+    };
+    let link = work_dir.join("TRUEOS");
+    if link.exists() {
+        return Ok(());
+    }
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(kernel_root, link).map_err(io_string)?;
+    }
+    Ok(())
+}
+
+fn push_source_overlay_configs(cmd: &mut Command, source_overlay: &[CratePatch]) {
+    for patch in source_overlay {
+        cmd.arg("--config").arg(format!(
+            "patch.crates-io.{}.path={}",
+            patch.name,
+            toml_string(&patch.path.to_string_lossy())
+        ));
+    }
+}
+
+fn trueos_kernel_manifest(app_dir: &Path) -> Option<PathBuf> {
+    if let Some(root) = env::var_os("TRUEOS_BLUEPRINT_KERNEL_ROOT") {
+        let candidate = PathBuf::from(root).join("Cargo.toml");
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+
+    for ancestor in app_dir.ancestors() {
+        let candidate = ancestor.join("Cargo.toml");
+        if candidate.is_file()
+            && ancestor.join("vendor").is_dir()
+            && package_name(&candidate).ok().as_deref() == Some("TRUEOS")
+        {
+            return Some(candidate);
+        }
+
+        let sibling = ancestor.join("TRUEOS").join("Cargo.toml");
+        if sibling.is_file()
+            && sibling
+                .parent()
+                .is_some_and(|root| root.join("vendor").is_dir())
+        {
+            return Some(sibling);
+        }
+    }
+
+    None
+}
+
+fn manifest_patch_names(manifest_path: &Path) -> Result<Vec<String>, String> {
+    Ok(manifest_patch_entries(manifest_path)?
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect())
+}
+
+fn manifest_patch_entries(manifest_path: &Path) -> Result<Vec<(String, String)>, String> {
+    let cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
+    let mut in_patch = false;
+    let mut out = Vec::new();
+    for line in cargo_toml.lines() {
+        let trimmed = line.split('#').next().unwrap_or("").trim();
+        if trimmed.starts_with('[') {
+            in_patch = trimmed == "[patch.crates-io]";
+            continue;
+        }
+        if !in_patch || trimmed.is_empty() {
+            continue;
+        }
+        let Some((name, value)) = trimmed.split_once('=') else {
+            continue;
+        };
+        let Some(path) = inline_table_path(value.trim()) else {
+            continue;
+        };
+        out.push((name.trim().trim_matches('"').to_string(), path));
+    }
+    Ok(out)
+}
+
+fn inline_table_path(value: &str) -> Option<String> {
+    let table = value
+        .trim()
+        .strip_prefix('{')
+        .and_then(|value| value.strip_suffix('}'))?;
+    for item in table.split(',') {
+        let (key, value) = item.split_once('=')?;
+        if key.trim() == "path" {
+            return toml_string_value(value.trim());
+        }
+    }
+    None
+}
+
+fn toml_string_value(value: &str) -> Option<String> {
+    let value = value.trim();
+    let inner = value.strip_prefix('"')?.strip_suffix('"')?;
+    let mut out = String::new();
+    let mut chars = inner.chars();
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
+            out.push(ch);
+            continue;
+        }
+        match chars.next()? {
+            '\\' => out.push('\\'),
+            '"' => out.push('"'),
+            'n' => out.push('\n'),
+            'r' => out.push('\r'),
+            't' => out.push('\t'),
+            escaped => out.push(escaped),
+        }
+    }
+    Some(out)
+}
+
+fn resolve_manifest_path(manifest_root: &Path, value: &str) -> PathBuf {
+    let path = Path::new(value);
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        manifest_root.join(path)
+    }
 }
 
 fn toml_string(value: &str) -> String {

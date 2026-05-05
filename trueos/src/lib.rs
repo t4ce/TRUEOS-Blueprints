@@ -9,6 +9,7 @@ mod vcabi {
     pub use trueos_sys::vcabi::*;
 }
 
+pub mod net_fetch;
 pub mod ui2;
 pub mod vgfx;
 pub mod vgfx_hosted;
