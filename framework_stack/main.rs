@@ -2,8 +2,16 @@ use core::convert::Infallible;
 
 use hyper::body::Bytes;
 use hyper::{Method, Request, Response, StatusCode, Uri};
+use serde::Deserialize;
 use tower::{ServiceBuilder, ServiceExt, service_fn};
 use trueos_blueprint::{bp_error, bp_info, runtime, time};
+
+#[derive(Deserialize)]
+struct FrontmatterProbe {
+    name: String,
+    tools: Vec<String>,
+    enabled: bool,
+}
 
 fn main() {
     bp_info!("framework_stack: start");
@@ -27,9 +35,34 @@ fn main() {
 }
 
 async fn run_probe() -> Result<(), &'static str> {
+    probe_serde_yaml_frontmatter()?;
     probe_hyper_http_shapes()?;
     probe_tower_service_stack().await?;
     probe_tokio_time_surface().await?;
+    Ok(())
+}
+
+fn probe_serde_yaml_frontmatter() -> Result<(), &'static str> {
+    bp_info!("framework_stack: stage serde.yaml.frontmatter");
+    let frontmatter = "\
+name: localcoder
+tools:
+  - grep
+  - lsp
+enabled: true
+";
+    let parsed: FrontmatterProbe =
+        serde_yaml::from_str(frontmatter).map_err(|_| "serde.yaml.frontmatter.parse")?;
+    if parsed.name != "localcoder" || parsed.tools.len() != 2 || !parsed.enabled {
+        return Err("serde.yaml.frontmatter.value");
+    }
+
+    let value: serde_yaml::Value = serde_yaml::from_str("kind: framework\ncount: 3\n")
+        .map_err(|_| "serde.yaml.value.parse")?;
+    if value["kind"].as_str() != Some("framework") || value["count"].as_i64() != Some(3) {
+        return Err("serde.yaml.value.shape");
+    }
+    bp_info!("framework_stack: success serde.yaml.frontmatter");
     Ok(())
 }
 

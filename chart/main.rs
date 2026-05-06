@@ -233,7 +233,15 @@ fn compose_chart(w: u32, h: u32) -> Vec<u8> {
                 let tw = measure_text(label.as_str());
                 let lx = ix.saturating_sub(tw / 2);
                 if label_y + LABEL_LINE_HEIGHT <= dst_h {
-                    render_text(&mut buf, dst_w, dst_h, lx, label_y, label.as_str(), LABEL_RGBA);
+                    render_text(
+                        &mut buf,
+                        dst_w,
+                        dst_h,
+                        lx,
+                        label_y,
+                        label.as_str(),
+                        LABEL_RGBA,
+                    );
                 }
             }
         }

@@ -15,6 +15,7 @@ const WINDOW_WIDTH: u32 = 384;
 const WINDOW_HEIGHT: u32 = 240;
 const TRIANGLE_TEX_ID: u32 = 4_700;
 const CLEAR_RGB: u32 = 0x10141A;
+const FRAME_MS: u64 = 33;
 const STEP_COS: f32 = 0.9992001;
 const STEP_SIN: f32 = 0.039989334;
 
@@ -82,6 +83,6 @@ pub extern "C" fn main() {
         for point in &mut points {
             point.rotate_step();
         }
-        vsys::poll_once();
+        vsys::sleep_ms(FRAME_MS);
     }
 }

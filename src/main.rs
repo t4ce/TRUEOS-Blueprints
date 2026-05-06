@@ -215,6 +215,7 @@ fn build_one_target_to(
         .join("cargo")
         .join(sanitize_path_component(&output_name));
     fs::create_dir_all(&cargo_target_dir).map_err(io_string)?;
+    reset_dir(&cargo_target_dir.join(&target_name))?;
 
     let work_dir = workdir(&packer_target_dir, &output_name)?;
     reset_dir(&work_dir)?;

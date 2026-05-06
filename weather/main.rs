@@ -1,9 +1,7 @@
-// trueos-blueprint: features=["tokio-net-probe"]
-
-use std::net::{Ipv4Addr, SocketAddr};
+// trueos-blueprint: features=["tokio-runtime"]
 
 use trueos::{net_fetch, ui2, vgfx_hosted, vsys};
-use trueos_blueprint::{bp_error, bp_info, io, net, runtime, time};
+use trueos_blueprint::{bp_error, bp_info, runtime, time};
 
 const WINDOW_TITLE: &str = "Weather BP";
 const WINDOW_X: i32 = 72;
@@ -58,7 +56,7 @@ struct WeatherSnapshot {
 
 fn main() {
     bp_info!("weather_bp: start");
-    let runtime = match runtime::current_thread_net().build() {
+    let runtime = match runtime::current_thread().build() {
         Ok(rt) => rt,
         Err(err) => {
             bp_error!("weather_bp: runtime build failed: {}", err);
@@ -82,7 +80,7 @@ fn main() {
 
     let loading = WeatherSnapshot {
         header: String::from("Weather BP"),
-        subheader: String::from("Tokio runtime online; preparing weather request"),
+        subheader: String::from("Tokio runtime online; host fetch bridge ready"),
         rows: Vec::new(),
         note: String::from("transport: blueprint app VM"),
     };
@@ -103,21 +101,18 @@ fn main() {
 }
 
 async fn run_weather_loop(window: &ui2::SurfaceWindow) -> Result<(), &'static str> {
-    let tcp_note = match probe_tokio_tcp_http().await {
-        Ok(bytes) => format!("tokio tcp/http proof ok: {} bytes", bytes),
-        Err(stage) => format!("tokio tcp/http proof skipped: {}", stage),
-    };
-    bp_info!("weather_bp: {}", tcp_note);
+    let transport_note = "transport: host fetch CABI; Tokio drives app timing";
+    bp_info!("weather_bp: {}", transport_note);
 
     loop {
-        let snapshot = load_weather_snapshot(tcp_note.as_str()).await;
+        let snapshot = load_weather_snapshot(transport_note).await;
         present_snapshot(window, &snapshot);
         time::sleep(time::Duration::from_secs(REFRESH_SECS)).await;
     }
 }
 
-async fn load_weather_snapshot(tcp_note: &str) -> WeatherSnapshot {
-    let mut note = String::from(tcp_note);
+async fn load_weather_snapshot(transport_note: &str) -> WeatherSnapshot {
+    let mut note = String::from(transport_note);
     let geo_url = format!(
         "{}?q={}&limit=1&appid={}",
         GEO_URL, WEATHER_CITY, WEATHER_API_KEY
@@ -126,7 +121,7 @@ async fn load_weather_snapshot(tcp_note: &str) -> WeatherSnapshot {
     let geo = match fetch_text(geo_url.as_str()).await {
         Ok(raw) => parse_geo_response(raw.as_str()),
         Err(err) => {
-            note = format!("geo fetch failed: {}; {}", err, tcp_note);
+            note = format!("geo fetch failed: {}; {}", err, transport_note);
             None
         }
     };
@@ -199,23 +194,6 @@ async fn fetch_text(url: &str) -> Result<String, String> {
             Err(err) => return Err(format!("{:?}", err)),
         }
     }
-}
-
-async fn probe_tokio_tcp_http() -> Result<usize, &'static str> {
-    use io::{AsyncReadExt, AsyncWriteExt};
-
-    let addr = SocketAddr::from((Ipv4Addr::new(93, 184, 216, 34), 80));
-    let mut stream = net::TcpStream::connect(addr)
-        .await
-        .map_err(|_| "tcp.connect")?;
-    stream
-        .write_all(b"GET / HTTP/1.0\r\nHost: example.com\r\nUser-Agent: trueos-weather-bp\r\n\r\n")
-        .await
-        .map_err(|_| "tcp.write")?;
-
-    let mut buf = [0u8; 96];
-    let n = stream.read(&mut buf).await.map_err(|_| "tcp.read")?;
-    if n == 0 { Err("tcp.eof") } else { Ok(n) }
 }
 
 fn parse_geo_response(raw: &str) -> Option<GeoResult> {

@@ -12,6 +12,11 @@ pub fn poll_once() {
 }
 
 #[inline]
+pub fn sleep_ms(ms: u64) {
+    unsafe { vcabi::trueos_cabi_sleep_ms(ms) }
+}
+
+#[inline]
 pub fn write_stream(stream: u32, bytes: &[u8]) {
     if bytes.is_empty() {
         return;

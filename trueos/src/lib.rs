@@ -10,9 +10,11 @@ mod vcabi {
 }
 
 pub mod net_fetch;
+pub mod input;
 pub mod ui2;
 pub mod vgfx;
 pub mod vgfx_hosted;
+pub mod vshell;
 pub mod vsys;
 
 pub struct TrueosAllocator;

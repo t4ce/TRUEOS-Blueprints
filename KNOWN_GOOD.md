@@ -9,6 +9,12 @@
 | `tower` | `0.5.3` | `framework-probe` | crates.io | Service trait utilities and layers |
 | `serde` | `1.0.228` lock | default root dep | crates.io | `alloc` JSON/data model derive support |
 | `serde_json` | `1.0.149` lock | default root dep | crates.io | `alloc` JSON values and parsing |
+| `serde_yaml` | `0.9.34+deprecated` lock | `framework-probe` | crates.io | std blueprint YAML/frontmatter semantics |
+| `unsafe-libyaml` | `0.2.11` lock | `serde_yaml` transitive | crates.io | no-std libyaml parser/emitter core used by `serde_yaml` |
+| `indexmap` | `2.14.0` lock | `serde_yaml` transitive | crates.io | mapping order for YAML values |
+| `equivalent` | `1.0.2` lock | `indexmap` transitive | crates.io | key equivalence support |
+| `hashbrown` | `0.17.0` lock | `indexmap` transitive | crates.io | hash table backend |
+| `ryu` | `1.0.23` lock | `serde_yaml` transitive | crates.io | float formatting used by YAML serialization |
 | `bytes` | `1.11.1` | `../TRUEOS/vendor/bytes-1.11.1` |
 | `http` | `1.4.0` | crates.io |
 | `http-body` | `1.0.1` | crates.io |
