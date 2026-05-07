@@ -95,6 +95,56 @@ impl WindowId {
     }
 }
 
+#[repr(u32)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum FontTier {
+    Half = 0,
+    OneX = 1,
+    TwoX = 2,
+    Third = 3,
+}
+
+impl FontTier {
+    #[inline]
+    pub fn line_height_px(self) -> u32 {
+        unsafe { vcabi::trueos_cabi_ui2_font_line_height_px(self as u32) }
+    }
+}
+
+pub fn blit_text_rgba(
+    dst: &mut [u8],
+    dst_width: u32,
+    dst_height: u32,
+    tier: FontTier,
+    x: u32,
+    y: u32,
+    max_width_px: u32,
+    text: &str,
+    rgba: [u8; 4],
+) -> usize {
+    if dst.is_empty() || dst_width == 0 || dst_height == 0 || text.is_empty() {
+        return 0;
+    }
+    unsafe {
+        vcabi::trueos_cabi_ui2_font_blit_text_rgba(
+            dst.as_mut_ptr(),
+            dst.len(),
+            dst_width,
+            dst_height,
+            tier as u32,
+            x,
+            y,
+            max_width_px,
+            text.as_ptr(),
+            text.len(),
+            u32::from(rgba[0]),
+            u32::from(rgba[1]),
+            u32::from(rgba[2]),
+            u32::from(rgba[3]),
+        )
+    }
+}
+
 #[derive(Debug)]
 pub struct OwnedWindow {
     id: WindowId,
@@ -216,7 +266,11 @@ impl SurfaceWindow {
         (self.width, self.height)
     }
 
-    pub fn render_rgb_triangles(&self, clear_rgb: u32, vertices: &[crate::vgfx::RgbVertex]) -> bool {
+    pub fn render_rgb_triangles(
+        &self,
+        clear_rgb: u32,
+        vertices: &[crate::vgfx::RgbVertex],
+    ) -> bool {
         let rendered = crate::vgfx::render_rgb_triangles_to_texture(
             self.tex_id,
             self.width,
@@ -224,6 +278,38 @@ impl SurfaceWindow {
             clear_rgb,
             self.window.id.raw(),
             vertices,
+        );
+        if rendered {
+            let _ = self.window.id.request_repaint();
+        }
+        rendered
+    }
+
+    pub fn render_tex_triangles(
+        &self,
+        source_tex_id: u32,
+        clear_rgb: u32,
+        vertices: &[u8],
+    ) -> bool {
+        let rendered = crate::vgfx::render_tex_triangles_to_texture(
+            self.tex_id,
+            source_tex_id,
+            clear_rgb,
+            self.window.id.raw(),
+            vertices,
+        );
+        if rendered {
+            let _ = self.window.id.request_repaint();
+        }
+        rendered
+    }
+
+    pub fn render_mandelbrot(&self, ticks: u64, tick_hz: u64) -> bool {
+        let rendered = crate::vgfx::render_mandelbrot_to_texture(
+            self.tex_id,
+            ticks,
+            tick_hz,
+            self.window.id.raw(),
         );
         if rendered {
             let _ = self.window.id.request_repaint();

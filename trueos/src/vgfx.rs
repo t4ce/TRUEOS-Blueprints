@@ -49,11 +49,7 @@ pub fn texture_dimensions(tex_id: u32) -> Option<(u32, u32)> {
             &mut height as *mut u32,
         )
     };
-    if rc == 0 {
-        Some((width, height))
-    } else {
-        None
-    }
+    if rc == 0 { Some((width, height)) } else { None }
 }
 
 pub fn upload_texture_rgba_image_async(
@@ -191,6 +187,50 @@ pub fn render_rgb_triangles_to_texture(
             clear_rgb,
             bytes.as_ptr(),
             bytes.len(),
+            repaint_window_id,
+        ) == 0
+    }
+}
+
+pub fn render_tex_triangles_to_texture(
+    target_tex_id: u32,
+    source_tex_id: u32,
+    clear_rgb: u32,
+    repaint_window_id: u32,
+    vertices: &[u8],
+) -> bool {
+    if target_tex_id == 0 || source_tex_id == 0 {
+        return false;
+    }
+    if vertices.is_empty() {
+        return true;
+    }
+    unsafe {
+        vcabi::trueos_cabi_gfx_queue_render_tex_triangles_to_texture(
+            target_tex_id,
+            source_tex_id,
+            clear_rgb,
+            vertices.as_ptr(),
+            vertices.len(),
+            repaint_window_id,
+        ) == 0
+    }
+}
+
+pub fn render_mandelbrot_to_texture(
+    tex_id: u32,
+    ticks: u64,
+    tick_hz: u64,
+    repaint_window_id: u32,
+) -> bool {
+    if tex_id == 0 {
+        return false;
+    }
+    unsafe {
+        vcabi::trueos_cabi_gfx_queue_render_mandelbrot_to_texture(
+            tex_id,
+            ticks,
+            tick_hz,
             repaint_window_id,
         ) == 0
     }

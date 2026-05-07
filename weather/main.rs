@@ -15,6 +15,7 @@ const GEO_URL: &str = "https://api.openweathermap.org/geo/1.0/direct";
 const DEMO_JSON: &str = include_str!("../crates/trueos-weather/src/demo.json");
 const FETCH_TIMEOUT_MS: u64 = 45_000;
 const REFRESH_SECS: u64 = 3_600;
+const TRANSPORT_LOG: &str = "transport: host fetch CABI; Tokio drives app timing";
 
 const BG_RGBA: [u8; 4] = [0x18, 0x1C, 0x24, 0xFF];
 const PANEL_RGBA: [u8; 4] = [0x21, 0x27, 0x31, 0xFF];
@@ -31,11 +32,7 @@ const SNOW_RGBA: [u8; 4] = [0xE8, 0xF7, 0xFF, 0xFF];
 const FOG_RGBA: [u8; 4] = [0x93, 0xA2, 0xAF, 0xFF];
 const THUNDER_RGBA: [u8; 4] = [0xFF, 0xDF, 0x5D, 0xFF];
 
-const FONT_W: usize = 5;
-const FONT_H: usize = 7;
-const FONT_SCALE: usize = 2;
-const GLYPH_ADVANCE: usize = (FONT_W + 1) * FONT_SCALE;
-const LINE_H: usize = (FONT_H + 3) * FONT_SCALE;
+const WEATHER_FONT_TIER: ui2::FontTier = ui2::FontTier::Third;
 const PAD: usize = 14;
 const ICON_TEXT_X: usize = PAD + 30;
 
@@ -103,9 +100,9 @@ fn main() {
 
     let loading = WeatherSnapshot {
         header: String::from("Weather BP"),
-        subheader: String::from("Tokio runtime online; host fetch bridge ready"),
+        subheader: String::from("Fetching live OpenWeather forecast"),
         rows: Vec::new(),
-        note: String::from("transport: blueprint app VM"),
+        note: String::new(),
     };
     present_snapshot(&window, &loading);
 
@@ -116,7 +113,7 @@ fn main() {
                 header: String::from("Weather BP"),
                 subheader: format!("failed: {}", err),
                 rows: Vec::new(),
-                note: String::from("using app VM boundary; kernel autospawn stays off"),
+                note: String::from("weather app stopped"),
             };
             present_snapshot(&window, &snapshot);
         }
@@ -124,18 +121,17 @@ fn main() {
 }
 
 async fn run_weather_loop(window: &ui2::SurfaceWindow) -> Result<(), &'static str> {
-    let transport_note = "transport: host fetch CABI; Tokio drives app timing";
-    bp_info!("weather_bp: {}", transport_note);
+    bp_info!("weather_bp: {}", TRANSPORT_LOG);
 
     loop {
-        let snapshot = load_weather_snapshot(transport_note).await;
+        let snapshot = load_weather_snapshot().await;
         present_snapshot(window, &snapshot);
         time::sleep(time::Duration::from_secs(REFRESH_SECS)).await;
     }
 }
 
-async fn load_weather_snapshot(transport_note: &str) -> WeatherSnapshot {
-    let mut note = String::from(transport_note);
+async fn load_weather_snapshot() -> WeatherSnapshot {
+    let mut note = String::new();
     let geo_url = format!(
         "{}?q={}&limit=1&appid={}",
         GEO_URL, WEATHER_CITY, WEATHER_API_KEY
@@ -144,7 +140,11 @@ async fn load_weather_snapshot(transport_note: &str) -> WeatherSnapshot {
     let geo = match fetch_text(geo_url.as_str()).await {
         Ok(raw) => parse_geo_response(raw.as_str()),
         Err(err) => {
-            note = format!("geo fetch failed: {}; {}", err, transport_note);
+            bp_info!(
+                "weather_bp: geo fetch failed: {}; using bundled coordinates",
+                err
+            );
+            note = format!("geo lookup failed: {}; using saved coordinates", err);
             None
         }
     };
@@ -165,12 +165,17 @@ async fn load_weather_snapshot(transport_note: &str) -> WeatherSnapshot {
     );
 
     let (raw_weather, source_note) = match fetch_text(weather_url.as_str()).await {
-        Ok(raw) => (
-            raw,
-            String::from("live OpenWeather HTTPS via host fetch CABI"),
-        ),
+        Ok(raw) => (raw, String::from("live OpenWeather forecast")),
         Err(err) => {
-            note = format!("weather fetch failed: {}; {}", err, note);
+            bp_info!(
+                "weather_bp: weather fetch failed: {}; using bundled demo",
+                err
+            );
+            note = if note.is_empty() {
+                format!("weather fetch failed: {}; using bundled demo", err)
+            } else {
+                format!("weather fetch failed: {}; {}", err, note)
+            };
             (
                 String::from(DEMO_JSON),
                 String::from("bundled demo weather fallback"),
@@ -187,7 +192,11 @@ async fn load_weather_snapshot(transport_note: &str) -> WeatherSnapshot {
             header: format!("{} {} weather unavailable", geo.country, geo.name),
             subheader: source_note,
             rows: Vec::new(),
-            note: format!("decode failed; {}", note),
+            note: if note.is_empty() {
+                String::from("decode failed")
+            } else {
+                format!("decode failed; {}", note)
+            },
         },
     }
 }
@@ -320,6 +329,8 @@ fn present_snapshot(window: &ui2::SurfaceWindow, snapshot: &WeatherSnapshot) {
 
 fn compose_weather(snapshot: &WeatherSnapshot, width: usize, height: usize) -> Vec<u8> {
     let mut buf = vec![0u8; width * height * 4];
+    let line_h = WEATHER_FONT_TIER.line_height_px().max(1) as usize;
+    let row_gap = line_h / 2;
     fill_rect(&mut buf, width, height, 0, 0, width, height, BG_RGBA);
     fill_rect(&mut buf, width, height, 0, 0, width, 58, PANEL_RGBA);
 
@@ -329,6 +340,7 @@ fn compose_weather(snapshot: &WeatherSnapshot, width: usize, height: usize) -> V
         height,
         PAD,
         PAD,
+        WEATHER_FONT_TIER,
         snapshot.header.as_str(),
         ACCENT_RGBA,
     );
@@ -337,7 +349,8 @@ fn compose_weather(snapshot: &WeatherSnapshot, width: usize, height: usize) -> V
         width,
         height,
         PAD,
-        PAD + LINE_H,
+        PAD + line_h,
+        WEATHER_FONT_TIER,
         snapshot.subheader.as_str(),
         DIM_RGBA,
     );
@@ -353,7 +366,7 @@ fn compose_weather(snapshot: &WeatherSnapshot, width: usize, height: usize) -> V
                 0,
                 y.saturating_sub(6),
                 width,
-                LINE_H * 2 + 8,
+                line_h * 2 + row_gap,
                 ROW_RGBA,
             );
         }
@@ -372,6 +385,7 @@ fn compose_weather(snapshot: &WeatherSnapshot, width: usize, height: usize) -> V
             height,
             ICON_TEXT_X,
             y,
+            WEATHER_FONT_TIER,
             format!("{}  {}", row.day, row.summary).as_str(),
             TEXT_RGBA,
         );
@@ -380,30 +394,34 @@ fn compose_weather(snapshot: &WeatherSnapshot, width: usize, height: usize) -> V
             width,
             height,
             ICON_TEXT_X,
-            y + LINE_H,
+            y + line_h,
+            WEATHER_FONT_TIER,
             row.temp_line.as_str(),
             DIM_RGBA,
         );
-        y = y.saturating_add(LINE_H * 2 + 10);
-        if y >= height.saturating_sub(LINE_H * 2) {
+        y = y.saturating_add(line_h * 2 + row_gap);
+        if y >= height.saturating_sub(line_h * 2) {
             break;
         }
     }
 
-    let note_rgba = if snapshot.note.contains("failed") {
-        WARN_RGBA
-    } else {
-        DIM_RGBA
-    };
-    draw_text(
-        &mut buf,
-        width,
-        height,
-        PAD,
-        height.saturating_sub(PAD + LINE_H),
-        snapshot.note.as_str(),
-        note_rgba,
-    );
+    if !snapshot.note.is_empty() {
+        let note_rgba = if snapshot.note.contains("failed") {
+            WARN_RGBA
+        } else {
+            DIM_RGBA
+        };
+        draw_text(
+            &mut buf,
+            width,
+            height,
+            PAD,
+            height.saturating_sub(PAD + line_h),
+            WEATHER_FONT_TIER,
+            snapshot.note.as_str(),
+            note_rgba,
+        );
+    }
     buf
 }
 
@@ -593,191 +611,20 @@ fn draw_text(
     dst_h: usize,
     x: usize,
     y: usize,
+    tier: ui2::FontTier,
     text: &str,
     rgba: [u8; 4],
 ) {
-    let mut pen_x = x;
-    let max_x = dst_w.saturating_sub(PAD);
-    for ch in text.chars() {
-        if pen_x + FONT_W * FONT_SCALE > max_x {
-            break;
-        }
-        let bits = glyph_bits(ch);
-        for (row, mask) in bits.iter().enumerate() {
-            for col in 0..FONT_W {
-                if (mask & (1 << (FONT_W - 1 - col))) != 0 {
-                    fill_rect(
-                        dst,
-                        dst_w,
-                        dst_h,
-                        pen_x + col * FONT_SCALE,
-                        y + row * FONT_SCALE,
-                        FONT_SCALE,
-                        FONT_SCALE,
-                        rgba,
-                    );
-                }
-            }
-        }
-        pen_x = pen_x.saturating_add(GLYPH_ADVANCE);
-    }
-}
-
-fn glyph_bits(ch: char) -> [u8; FONT_H] {
-    match ch.to_ascii_uppercase() {
-        'A' => [
-            0b01110, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001,
-        ],
-        'B' => [
-            0b11110, 0b10001, 0b10001, 0b11110, 0b10001, 0b10001, 0b11110,
-        ],
-        'C' => [
-            0b01111, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b01111,
-        ],
-        'D' => [
-            0b11110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b11110,
-        ],
-        'E' => [
-            0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b11111,
-        ],
-        'F' => [
-            0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b10000,
-        ],
-        'G' => [
-            0b01111, 0b10000, 0b10000, 0b10111, 0b10001, 0b10001, 0b01111,
-        ],
-        'H' => [
-            0b10001, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001,
-        ],
-        'I' => [
-            0b11111, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b11111,
-        ],
-        'J' => [
-            0b11111, 0b00010, 0b00010, 0b00010, 0b10010, 0b10010, 0b01100,
-        ],
-        'K' => [
-            0b10001, 0b10010, 0b10100, 0b11000, 0b10100, 0b10010, 0b10001,
-        ],
-        'L' => [
-            0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b11111,
-        ],
-        'M' => [
-            0b10001, 0b11011, 0b10101, 0b10101, 0b10001, 0b10001, 0b10001,
-        ],
-        'N' => [
-            0b10001, 0b11001, 0b10101, 0b10011, 0b10001, 0b10001, 0b10001,
-        ],
-        'O' => [
-            0b01110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110,
-        ],
-        'P' => [
-            0b11110, 0b10001, 0b10001, 0b11110, 0b10000, 0b10000, 0b10000,
-        ],
-        'Q' => [
-            0b01110, 0b10001, 0b10001, 0b10001, 0b10101, 0b10010, 0b01101,
-        ],
-        'R' => [
-            0b11110, 0b10001, 0b10001, 0b11110, 0b10100, 0b10010, 0b10001,
-        ],
-        'S' => [
-            0b01111, 0b10000, 0b10000, 0b01110, 0b00001, 0b00001, 0b11110,
-        ],
-        'T' => [
-            0b11111, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100,
-        ],
-        'U' => [
-            0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110,
-        ],
-        'V' => [
-            0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01010, 0b00100,
-        ],
-        'W' => [
-            0b10001, 0b10001, 0b10001, 0b10101, 0b10101, 0b10101, 0b01010,
-        ],
-        'X' => [
-            0b10001, 0b10001, 0b01010, 0b00100, 0b01010, 0b10001, 0b10001,
-        ],
-        'Y' => [
-            0b10001, 0b10001, 0b01010, 0b00100, 0b00100, 0b00100, 0b00100,
-        ],
-        'Z' => [
-            0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b10000, 0b11111,
-        ],
-        '0' => [
-            0b01110, 0b10001, 0b10011, 0b10101, 0b11001, 0b10001, 0b01110,
-        ],
-        '1' => [
-            0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110,
-        ],
-        '2' => [
-            0b01110, 0b10001, 0b00001, 0b00010, 0b00100, 0b01000, 0b11111,
-        ],
-        '3' => [
-            0b11110, 0b00001, 0b00001, 0b01110, 0b00001, 0b00001, 0b11110,
-        ],
-        '4' => [
-            0b00010, 0b00110, 0b01010, 0b10010, 0b11111, 0b00010, 0b00010,
-        ],
-        '5' => [
-            0b11111, 0b10000, 0b10000, 0b11110, 0b00001, 0b00001, 0b11110,
-        ],
-        '6' => [
-            0b00111, 0b01000, 0b10000, 0b11110, 0b10001, 0b10001, 0b01110,
-        ],
-        '7' => [
-            0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b01000, 0b01000,
-        ],
-        '8' => [
-            0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110,
-        ],
-        '9' => [
-            0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b00010, 0b11100,
-        ],
-        ':' => [
-            0b00000, 0b00100, 0b00100, 0b00000, 0b00100, 0b00100, 0b00000,
-        ],
-        ';' => [
-            0b00000, 0b00100, 0b00100, 0b00000, 0b00100, 0b00100, 0b01000,
-        ],
-        '.' => [
-            0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b01100, 0b01100,
-        ],
-        ',' => [
-            0b00000, 0b00000, 0b00000, 0b00000, 0b00100, 0b00100, 0b01000,
-        ],
-        '-' => [
-            0b00000, 0b00000, 0b00000, 0b11111, 0b00000, 0b00000, 0b00000,
-        ],
-        '_' => [
-            0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b11111,
-        ],
-        '+' => [
-            0b00000, 0b00100, 0b00100, 0b11111, 0b00100, 0b00100, 0b00000,
-        ],
-        '/' => [
-            0b00001, 0b00010, 0b00010, 0b00100, 0b01000, 0b01000, 0b10000,
-        ],
-        '%' => [
-            0b11001, 0b11010, 0b00010, 0b00100, 0b01000, 0b01011, 0b10011,
-        ],
-        '(' => [
-            0b00010, 0b00100, 0b01000, 0b01000, 0b01000, 0b00100, 0b00010,
-        ],
-        ')' => [
-            0b01000, 0b00100, 0b00010, 0b00010, 0b00010, 0b00100, 0b01000,
-        ],
-        '>' => [
-            0b10000, 0b01000, 0b00100, 0b00010, 0b00100, 0b01000, 0b10000,
-        ],
-        '<' => [
-            0b00001, 0b00010, 0b00100, 0b01000, 0b00100, 0b00010, 0b00001,
-        ],
-        '=' => [
-            0b00000, 0b11111, 0b00000, 0b11111, 0b00000, 0b00000, 0b00000,
-        ],
-        ' ' => [0; FONT_H],
-        _ => [
-            0b11111, 0b10001, 0b00010, 0b00100, 0b00100, 0b00000, 0b00100,
-        ],
-    }
+    let max_width = dst_w.saturating_sub(PAD).saturating_sub(x);
+    let _ = ui2::blit_text_rgba(
+        dst,
+        dst_w as u32,
+        dst_h as u32,
+        tier,
+        x as u32,
+        y as u32,
+        max_width as u32,
+        text,
+        rgba,
+    );
 }

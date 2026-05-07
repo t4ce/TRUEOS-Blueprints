@@ -81,8 +81,22 @@ path = "full_tetris/main.rs"
 name = "flags"
 path = "flags/main.rs"
 
+[[example]]
+name = "mandelbrot"
+path = "mandelbrot/main.rs"
+
+[[example]]
+name = "particle"
+path = "particle/main.rs"
+
+[[example]]
+name = "currency"
+path = "currency/main.rs"
+required-features = ["tokio-runtime"]
+
 [dependencies]
 trueos = { path = "trueos" }
+trueos-gfx-core = { path = "../TRUEOS/crates/trueos-gfx-core", features = ["alloc"] }
 trueos-tetris = { path = "crates/trueos-tetris" }
 trueos-flags = { path = "crates/trueos-flags" }
 tokio = { path = "../TRUEOS/vendor/tokio-1.52.1", optional = true, default-features = false, features = ["rt", "sync", "time", "io-util", "io-std", "fs", "macros"] }
