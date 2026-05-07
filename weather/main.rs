@@ -23,6 +23,13 @@ const TEXT_RGBA: [u8; 4] = [0xEE, 0xF3, 0xF9, 0xFF];
 const DIM_RGBA: [u8; 4] = [0x9A, 0xA8, 0xB8, 0xFF];
 const ACCENT_RGBA: [u8; 4] = [0x7F, 0xD1, 0xAE, 0xFF];
 const WARN_RGBA: [u8; 4] = [0xFF, 0xC6, 0x6D, 0xFF];
+const SUN_RGBA: [u8; 4] = [0xFF, 0xD4, 0x66, 0xFF];
+const MOON_RGBA: [u8; 4] = [0xC9, 0xD4, 0xEE, 0xFF];
+const CLOUD_RGBA: [u8; 4] = [0xB8, 0xC5, 0xD4, 0xFF];
+const RAIN_RGBA: [u8; 4] = [0x5D, 0xAE, 0xFF, 0xFF];
+const SNOW_RGBA: [u8; 4] = [0xE8, 0xF7, 0xFF, 0xFF];
+const FOG_RGBA: [u8; 4] = [0x93, 0xA2, 0xAF, 0xFF];
+const THUNDER_RGBA: [u8; 4] = [0xFF, 0xDF, 0x5D, 0xFF];
 
 const FONT_W: usize = 5;
 const FONT_H: usize = 7;
@@ -30,6 +37,21 @@ const FONT_SCALE: usize = 2;
 const GLYPH_ADVANCE: usize = (FONT_W + 1) * FONT_SCALE;
 const LINE_H: usize = (FONT_H + 3) * FONT_SCALE;
 const PAD: usize = 14;
+const ICON_TEXT_X: usize = PAD + 30;
+
+#[derive(Clone, Copy, Debug)]
+enum WeatherIcon {
+    ClearDay,
+    ClearNight,
+    PartlyDay,
+    PartlyNight,
+    Cloud,
+    RainDay,
+    Rain,
+    Thunder,
+    Snow,
+    Fog,
+}
 
 #[derive(Clone, Debug)]
 struct GeoResult {
@@ -41,6 +63,7 @@ struct GeoResult {
 
 #[derive(Clone, Debug)]
 struct WeatherRow {
+    icon: WeatherIcon,
     day: &'static str,
     summary: String,
     temp_line: String,
@@ -217,13 +240,11 @@ fn build_weather_snapshot(
     let mut rows = Vec::new();
     if let Some(daily) = response.daily.as_ref() {
         for day in daily.iter().take(6) {
-            let condition = day
-                .weather
-                .first()
-                .map(|w| w.description.as_str())
-                .unwrap_or("weather");
+            let weather = day.weather.first();
+            let condition = weather.map(|w| w.description.as_str()).unwrap_or("weather");
             let k2c = |k: f64| libm::round(k - 273.15) as i32;
             rows.push(WeatherRow {
+                icon: weather_icon_for(weather),
                 day: weekday_abbrev(day.dt),
                 summary: String::from(condition),
                 temp_line: format!(
@@ -251,6 +272,38 @@ fn build_weather_snapshot(
 fn weekday_abbrev(unix: u64) -> &'static str {
     const DAYS: [&str; 7] = ["Thu", "Fri", "Sat", "Sun", "Mon", "Tue", "Wed"];
     DAYS[((unix / 86_400) % 7) as usize]
+}
+
+fn weather_icon_for(weather: Option<&trueos_weather::WetterInfo>) -> WeatherIcon {
+    if let Some(info) = weather {
+        match info.icon.as_str() {
+            "01d" => return WeatherIcon::ClearDay,
+            "01n" => return WeatherIcon::ClearNight,
+            "02d" => return WeatherIcon::PartlyDay,
+            "02n" => return WeatherIcon::PartlyNight,
+            "03d" | "03n" | "04d" | "04n" => return WeatherIcon::Cloud,
+            "09d" | "09n" => return WeatherIcon::Rain,
+            "10d" => return WeatherIcon::RainDay,
+            "10n" => return WeatherIcon::Rain,
+            "11d" | "11n" => return WeatherIcon::Thunder,
+            "13d" | "13n" => return WeatherIcon::Snow,
+            "50d" | "50n" => return WeatherIcon::Fog,
+            _ => {}
+        }
+
+        match info.id {
+            200..=299 => WeatherIcon::Thunder,
+            300..=599 => WeatherIcon::Rain,
+            600..=699 => WeatherIcon::Snow,
+            700..=799 => WeatherIcon::Fog,
+            800 => WeatherIcon::ClearDay,
+            801 => WeatherIcon::PartlyDay,
+            802..=899 => WeatherIcon::Cloud,
+            _ => WeatherIcon::Cloud,
+        }
+    } else {
+        WeatherIcon::Cloud
+    }
 }
 
 fn present_snapshot(window: &ui2::SurfaceWindow, snapshot: &WeatherSnapshot) {
@@ -291,6 +344,7 @@ fn compose_weather(snapshot: &WeatherSnapshot, width: usize, height: usize) -> V
 
     let mut y = 72usize;
     for (idx, row) in snapshot.rows.iter().enumerate() {
+        let row_bg = if idx % 2 == 0 { ROW_RGBA } else { BG_RGBA };
         if idx % 2 == 0 {
             fill_rect(
                 &mut buf,
@@ -303,11 +357,20 @@ fn compose_weather(snapshot: &WeatherSnapshot, width: usize, height: usize) -> V
                 ROW_RGBA,
             );
         }
-        draw_text(
+        draw_weather_icon(
             &mut buf,
             width,
             height,
             PAD,
+            y.saturating_sub(1),
+            row.icon,
+            row_bg,
+        );
+        draw_text(
+            &mut buf,
+            width,
+            height,
+            ICON_TEXT_X,
             y,
             format!("{}  {}", row.day, row.summary).as_str(),
             TEXT_RGBA,
@@ -316,7 +379,7 @@ fn compose_weather(snapshot: &WeatherSnapshot, width: usize, height: usize) -> V
             &mut buf,
             width,
             height,
-            PAD,
+            ICON_TEXT_X,
             y + LINE_H,
             row.temp_line.as_str(),
             DIM_RGBA,
@@ -364,6 +427,163 @@ fn fill_rect(
             dst[i + 2] = rgba[2];
             dst[i + 3] = rgba[3];
         }
+    }
+}
+
+fn put_px(dst: &mut [u8], dst_w: usize, dst_h: usize, x: i32, y: i32, rgba: [u8; 4]) {
+    if x < 0 || y < 0 {
+        return;
+    }
+    let x = x as usize;
+    let y = y as usize;
+    if x >= dst_w || y >= dst_h {
+        return;
+    }
+    let i = (y * dst_w + x) * 4;
+    dst[i] = rgba[0];
+    dst[i + 1] = rgba[1];
+    dst[i + 2] = rgba[2];
+    dst[i + 3] = rgba[3];
+}
+
+fn draw_disc(
+    dst: &mut [u8],
+    dst_w: usize,
+    dst_h: usize,
+    cx: i32,
+    cy: i32,
+    radius: i32,
+    rgba: [u8; 4],
+) {
+    let rr = radius * radius;
+    for y in (cy - radius)..=(cy + radius) {
+        for x in (cx - radius)..=(cx + radius) {
+            let dx = x - cx;
+            let dy = y - cy;
+            if dx * dx + dy * dy <= rr {
+                put_px(dst, dst_w, dst_h, x, y, rgba);
+            }
+        }
+    }
+}
+
+fn draw_sun(dst: &mut [u8], dst_w: usize, dst_h: usize, x: usize, y: usize) {
+    let x = x as i32;
+    let y = y as i32;
+    draw_disc(dst, dst_w, dst_h, x + 10, y + 9, 5, SUN_RGBA);
+    for (rx, ry) in [
+        (10, 1),
+        (10, 17),
+        (2, 9),
+        (18, 9),
+        (4, 3),
+        (16, 3),
+        (4, 15),
+        (16, 15),
+    ] {
+        put_px(dst, dst_w, dst_h, x + rx, y + ry, SUN_RGBA);
+    }
+}
+
+fn draw_moon(dst: &mut [u8], dst_w: usize, dst_h: usize, x: usize, y: usize, bg_rgba: [u8; 4]) {
+    let x = x as i32;
+    let y = y as i32;
+    draw_disc(dst, dst_w, dst_h, x + 10, y + 9, 6, MOON_RGBA);
+    draw_disc(dst, dst_w, dst_h, x + 13, y + 7, 6, bg_rgba);
+}
+
+fn draw_cloud(dst: &mut [u8], dst_w: usize, dst_h: usize, x: usize, y: usize) {
+    let x = x as i32;
+    let y = y as i32;
+    draw_disc(dst, dst_w, dst_h, x + 7, y + 11, 4, CLOUD_RGBA);
+    draw_disc(dst, dst_w, dst_h, x + 12, y + 9, 5, CLOUD_RGBA);
+    draw_disc(dst, dst_w, dst_h, x + 16, y + 12, 3, CLOUD_RGBA);
+    fill_rect(
+        dst,
+        dst_w,
+        dst_h,
+        x as usize + 4,
+        y as usize + 11,
+        15,
+        5,
+        CLOUD_RGBA,
+    );
+}
+
+fn draw_rain(dst: &mut [u8], dst_w: usize, dst_h: usize, x: usize, y: usize, day: bool) {
+    if day {
+        draw_sun(dst, dst_w, dst_h, x.saturating_sub(1), y);
+    }
+    draw_cloud(dst, dst_w, dst_h, x, y + 1);
+    for dx in [6usize, 11, 16] {
+        fill_rect(dst, dst_w, dst_h, x + dx, y + 17, 2, 5, RAIN_RGBA);
+    }
+}
+
+fn draw_thunder(dst: &mut [u8], dst_w: usize, dst_h: usize, x: usize, y: usize) {
+    draw_cloud(dst, dst_w, dst_h, x, y);
+    fill_rect(dst, dst_w, dst_h, x + 10, y + 15, 4, 2, THUNDER_RGBA);
+    fill_rect(dst, dst_w, dst_h, x + 9, y + 17, 3, 2, THUNDER_RGBA);
+    fill_rect(dst, dst_w, dst_h, x + 8, y + 19, 2, 3, THUNDER_RGBA);
+    fill_rect(dst, dst_w, dst_h, x + 12, y + 17, 2, 2, THUNDER_RGBA);
+}
+
+fn draw_snow(dst: &mut [u8], dst_w: usize, dst_h: usize, x: usize, y: usize) {
+    draw_cloud(dst, dst_w, dst_h, x, y);
+    for (dx, dy) in [(7usize, 18usize), (12, 20), (17, 18)] {
+        fill_rect(dst, dst_w, dst_h, x + dx, y + dy, 2, 2, SNOW_RGBA);
+        put_px(
+            dst,
+            dst_w,
+            dst_h,
+            (x + dx + 2) as i32,
+            (y + dy) as i32,
+            SNOW_RGBA,
+        );
+        put_px(
+            dst,
+            dst_w,
+            dst_h,
+            (x + dx) as i32,
+            (y + dy + 2) as i32,
+            SNOW_RGBA,
+        );
+    }
+}
+
+fn draw_fog(dst: &mut [u8], dst_w: usize, dst_h: usize, x: usize, y: usize) {
+    draw_cloud(dst, dst_w, dst_h, x, y.saturating_sub(1));
+    for dy in [16usize, 19, 22] {
+        fill_rect(dst, dst_w, dst_h, x + 4, y + dy, 15, 2, FOG_RGBA);
+    }
+}
+
+fn draw_weather_icon(
+    dst: &mut [u8],
+    dst_w: usize,
+    dst_h: usize,
+    x: usize,
+    y: usize,
+    icon: WeatherIcon,
+    bg_rgba: [u8; 4],
+) {
+    match icon {
+        WeatherIcon::ClearDay => draw_sun(dst, dst_w, dst_h, x, y),
+        WeatherIcon::ClearNight => draw_moon(dst, dst_w, dst_h, x, y, bg_rgba),
+        WeatherIcon::PartlyDay => {
+            draw_sun(dst, dst_w, dst_h, x.saturating_sub(2), y.saturating_sub(1));
+            draw_cloud(dst, dst_w, dst_h, x + 2, y + 3);
+        }
+        WeatherIcon::PartlyNight => {
+            draw_moon(dst, dst_w, dst_h, x.saturating_sub(1), y, bg_rgba);
+            draw_cloud(dst, dst_w, dst_h, x + 3, y + 4);
+        }
+        WeatherIcon::Cloud => draw_cloud(dst, dst_w, dst_h, x, y + 2),
+        WeatherIcon::RainDay => draw_rain(dst, dst_w, dst_h, x, y, true),
+        WeatherIcon::Rain => draw_rain(dst, dst_w, dst_h, x, y, false),
+        WeatherIcon::Thunder => draw_thunder(dst, dst_w, dst_h, x, y + 1),
+        WeatherIcon::Snow => draw_snow(dst, dst_w, dst_h, x, y + 1),
+        WeatherIcon::Fog => draw_fog(dst, dst_w, dst_h, x, y),
     }
 }
 

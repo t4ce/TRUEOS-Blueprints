@@ -10,6 +10,12 @@ struct ExampleSpec {
     required_features: Vec<String>,
 }
 
+struct PackageAppSpec {
+    name: String,
+    dir: PathBuf,
+    manifest_path: PathBuf,
+}
+
 enum BuildTarget {
     Package,
     Example(String),
@@ -73,23 +79,44 @@ fn run() -> Result<(), String> {
     }
 
     if package_name(&manifest_path)? == "trueos-blueprint" {
-        let requested_examples = if requested_apps.is_empty() {
-            example_names(&manifest_path)?
-        } else {
-            requested_apps
-        };
+        if requested_apps.is_empty() {
+            let examples = example_specs(&manifest_path)?;
+            let package_apps = package_app_specs(&app_dir)?;
+            if examples.is_empty() && package_apps.is_empty() {
+                return build_one_target(
+                    &app_dir,
+                    &manifest_path,
+                    BuildTarget::Package,
+                    &[],
+                    cargo_profile,
+                );
+            }
 
-        if requested_examples.is_empty() {
-            return build_one_target(
-                &app_dir,
-                &manifest_path,
-                BuildTarget::Package,
-                &[],
-                cargo_profile,
-            );
+            for example in examples {
+                build_one_target(
+                    &app_dir,
+                    &manifest_path,
+                    BuildTarget::Example(example.name),
+                    &example.required_features,
+                    cargo_profile,
+                )?;
+            }
+
+            for package_app in package_apps {
+                println!("trueos-blueprint: package app: {}", package_app.name);
+                build_one_target(
+                    &package_app.dir,
+                    &package_app.manifest_path,
+                    BuildTarget::Package,
+                    &[],
+                    cargo_profile,
+                )?;
+            }
+
+            return Ok(());
         }
 
-        for example_name in requested_examples {
+        for example_name in requested_apps {
             if let Ok(required_features) = example_required_features(&manifest_path, &example_name)
             {
                 build_one_target(
@@ -918,11 +945,34 @@ fn package_name(manifest_path: &Path) -> Result<String, String> {
     ))
 }
 
-fn example_names(manifest_path: &Path) -> Result<Vec<String>, String> {
-    Ok(example_specs(manifest_path)?
-        .into_iter()
-        .map(|example| example.name)
-        .collect())
+fn package_app_specs(app_dir: &Path) -> Result<Vec<PackageAppSpec>, String> {
+    let mut specs = Vec::new();
+    for entry in fs::read_dir(app_dir).map_err(io_string)? {
+        let entry = entry.map_err(io_string)?;
+        let file_type = entry.file_type().map_err(io_string)?;
+        if !file_type.is_dir() {
+            continue;
+        }
+
+        let dir = entry.path();
+        if !dir.join("src/main.rs").is_file() {
+            continue;
+        }
+
+        let manifest_path = dir.join("Cargo.toml");
+        if !manifest_path.is_file() {
+            continue;
+        }
+
+        let name = package_name(&manifest_path)?;
+        specs.push(PackageAppSpec {
+            name,
+            dir,
+            manifest_path,
+        });
+    }
+    specs.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(specs)
 }
 
 fn example_required_features(
