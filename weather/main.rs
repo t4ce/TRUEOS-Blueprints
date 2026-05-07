@@ -7,7 +7,7 @@ const WINDOW_TITLE: &str = "Weather BP";
 const WINDOW_X: i32 = 72;
 const WINDOW_Y: i32 = 72;
 const WINDOW_WIDTH: u32 = 560;
-const WINDOW_HEIGHT: u32 = 300;
+const WINDOW_HEIGHT: u32 = 530;
 const TEX_ID: u32 = 4_730;
 const WEATHER_CITY: &str = "Holzminden";
 const WEATHER_API_KEY: &str = "9715912a7d8748d65bc3985b4a4274a0";
@@ -16,6 +16,7 @@ const DEMO_JSON: &str = include_str!("../crates/trueos-weather/src/demo.json");
 const FETCH_TIMEOUT_MS: u64 = 45_000;
 const REFRESH_SECS: u64 = 3_600;
 const TRANSPORT_LOG: &str = "transport: host fetch CABI; Tokio drives app timing";
+const DAILY_ROW_COUNT: usize = 8;
 
 const BG_RGBA: [u8; 4] = [0x18, 0x1C, 0x24, 0xFF];
 const PANEL_RGBA: [u8; 4] = [0x21, 0x27, 0x31, 0xFF];
@@ -97,6 +98,11 @@ fn main() {
         bp_error!("weather_bp: ui2 surface window create failed");
         return;
     };
+    let _ = window
+        .id()
+        .set_decorations(ui2::WindowDecorationMode::Client);
+    let _ = window.id().set_vertical_scrollbar_visible(false);
+    let _ = window.id().set_horizontal_scrollbar_visible(false);
 
     let loading = WeatherSnapshot {
         header: String::from("Weather BP"),
@@ -177,7 +183,7 @@ async fn load_weather_snapshot() -> WeatherSnapshot {
                 format!("weather fetch failed: {}; {}", err, note)
             };
             (
-                String::from(DEMO_JSON),
+                String::from(bundled_demo_json()),
                 String::from("bundled demo weather fallback"),
             )
         }
@@ -228,6 +234,15 @@ async fn fetch_text(url: &str) -> Result<String, String> {
     }
 }
 
+fn bundled_demo_json() -> &'static str {
+    DEMO_JSON
+        .lines()
+        .rev()
+        .map(str::trim)
+        .find(|line| line.starts_with('{'))
+        .unwrap_or(DEMO_JSON)
+}
+
 fn parse_geo_response(raw: &str) -> Option<GeoResult> {
     let root: serde_json::Value = serde_json::from_str(raw).ok()?;
     let arr = root.as_array()?;
@@ -248,7 +263,7 @@ fn build_weather_snapshot(
 ) -> WeatherSnapshot {
     let mut rows = Vec::new();
     if let Some(daily) = response.daily.as_ref() {
-        for day in daily.iter().take(6) {
+        for day in daily.iter().take(DAILY_ROW_COUNT) {
             let weather = day.weather.first();
             let condition = weather.map(|w| w.description.as_str()).unwrap_or("weather");
             let k2c = |k: f64| libm::round(k - 273.15) as i32;

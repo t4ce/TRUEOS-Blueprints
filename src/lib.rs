@@ -102,6 +102,14 @@ pub mod diag {
     }
 }
 
+pub mod tyche {
+    pub use trueos::tyche::*;
+}
+
+pub mod rand {
+    pub use trueos::tyche::*;
+}
+
 #[cfg(feature = "tokio-runtime")]
 pub mod runtime {
     pub use tokio::runtime::{Builder, Handle, Runtime};

@@ -1,6 +1,9 @@
 #![no_std]
 #![no_main]
 
+extern crate alloc;
+
+use alloc::{format, string::String};
 use core::panic::PanicInfo;
 use trueos::{TrueosAllocator, panic_abort};
 use trueos::{ui2, vgfx, vsys};
@@ -40,17 +43,64 @@ pub extern "C" fn main() {
         return;
     };
 
-    let rc = vgfx::upload_svg_to_texture(TEX_ID, SVG_GRID.as_bytes());
-    if rc != 0 {
-        vsys::log_errorf(format_args!("svg_grid bp: svg upload failed rc={}\n", rc));
+    let window_id = window.id();
+    let _ = window_id.set_vertical_scrollbar_visible(false);
+    let _ = window_id.set_horizontal_scrollbar_visible(false);
+    let _ = window_id.set_resize_mode(ui2::WindowResizeMode::PreviewCommit);
+    let _ = window_id.set_resize_maintain_aspect(true);
+    let _ = window_id.set_content_preserve_scale(true);
+
+    let mut rendered_size =
+        current_content_size(window_id).unwrap_or((WINDOW_WIDTH, WINDOW_HEIGHT));
+    if !render_svg(window_id, rendered_size.0, rendered_size.1) {
         return;
     }
-    let _ = window.id().request_repaint();
-    vsys::log_info("svg_grid bp: rendered via encoded SVG upload\n");
 
     loop {
         vsys::poll_once();
+        let Some(size) = current_content_size(window_id) else {
+            continue;
+        };
+        if size != rendered_size && render_svg(window_id, size.0, size.1) {
+            rendered_size = size;
+        }
     }
+}
+
+fn current_content_size(window_id: ui2::WindowId) -> Option<(u32, u32)> {
+    let info = window_id.info()?;
+    Some((info.content.width.max(1), info.content.height.max(1)))
+}
+
+fn render_svg(window_id: ui2::WindowId, width: u32, height: u32) -> bool {
+    let svg = svg_for_texture_size(width, height);
+    let rc = vgfx::upload_svg_to_texture(TEX_ID, svg.as_bytes());
+    if rc != 0 {
+        vsys::log_errorf(format_args!(
+            "svg_grid bp: svg upload failed rc={} size={}x{}\n",
+            rc, width, height
+        ));
+        return false;
+    }
+    let _ = window_id.request_repaint();
+    vsys::log_infof(format_args!(
+        "svg_grid bp: rendered svg texture {}x{}\n",
+        width, height
+    ));
+    true
+}
+
+fn svg_for_texture_size(width: u32, height: u32) -> String {
+    let mut svg = String::from(SVG_GRID);
+    let head = format!(
+        r#"<svg width="{}" height="{}" viewBox="0 0 272 204" xmlns="http://www.w3.org/2000/svg">"#,
+        width.max(1),
+        height.max(1)
+    );
+    if let Some(tag_end) = svg.find('>') {
+        svg.replace_range(..=tag_end, &head);
+    }
+    svg
 }
 
 const SVG_GRID: &str = r##"<svg width="272" height="204" viewBox="0 0 272 204" xmlns="http://www.w3.org/2000/svg">

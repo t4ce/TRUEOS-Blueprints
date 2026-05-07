@@ -9,8 +9,12 @@ mod vcabi {
     pub use trueos_sys::vcabi::*;
 }
 
-pub mod net_fetch;
 pub mod input;
+pub mod net_fetch;
+pub mod rand {
+    pub use crate::tyche::*;
+}
+pub mod tyche;
 pub mod ui2;
 pub mod vgfx;
 pub mod vgfx_hosted;
@@ -71,8 +75,8 @@ fn default_panic(_info: &PanicInfo<'_>) -> ! {
 }
 
 pub mod prelude {
-    pub use crate::panic_abort;
     pub use crate::TrueosAllocator;
+    pub use crate::panic_abort;
     pub use crate::ui2;
     pub use crate::vgfx;
     pub use crate::vsys;

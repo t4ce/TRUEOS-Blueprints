@@ -24,16 +24,13 @@ const UI2_CURRENCY_TEXT_RGBA: [u8; 4] = [0xEC, 0xF2, 0xF8, 0xFF];
 const UI2_CURRENCY_DIM_RGBA: [u8; 4] = [0x94, 0xA2, 0xB3, 0xFF];
 const UI2_CURRENCY_ACCENT_RGBA: [u8; 4] = [0x79, 0xCF, 0xB0, 0xFF];
 
+const UI2_CURRENCY_FONT_TIER: ui2::FontTier = ui2::FontTier::OneX;
 const UI2_CURRENCY_PAD_X: usize = 10;
 const UI2_CURRENCY_PAD_Y: usize = 8;
 const UI2_CURRENCY_ROW_GAP_Y: usize = 4;
-const FONT_W: usize = 5;
-const FONT_H: usize = 7;
-const FONT_SCALE: usize = 2;
-const GLYPH_ADVANCE: usize = (FONT_W + 1) * FONT_SCALE;
-const LINE_H: usize = (FONT_H * FONT_SCALE) + UI2_CURRENCY_ROW_GAP_Y;
 
 const FXFEED_URL: &str = "https://api.fxfeed.io/v2/latest?base=USD&currencies=EUR,GBP,JPY&api_key=fxf_SwF1T46MmH8uCkOO7tOc";
+const CURRENCY_CODES: [&str; 3] = ["EUR", "GBP", "JPY"];
 const FETCH_TIMEOUT_MS: u64 = 45_000;
 const IDLE_SLEEP_MS: u64 = 200;
 
@@ -81,7 +78,9 @@ fn main() {
     };
     let _ = surface
         .id()
-        .set_vertical_scrollbar_side(ui2::VerticalScrollbarSide::Right);
+        .set_decorations(ui2::WindowDecorationMode::Client);
+    let _ = surface.id().set_vertical_scrollbar_visible(false);
+    let _ = surface.id().set_horizontal_scrollbar_visible(false);
 
     present_snapshot(&surface, &build_loading_snapshot());
 
@@ -150,72 +149,53 @@ fn parse_string_field(raw: &str, key: &str) -> Option<String> {
 
 fn build_loading_snapshot() -> CurrencySnapshot {
     CurrencySnapshot {
-        header: "CURRENCY CONVERTER".to_string(),
-        subheader: "USD BASE  |  EUR GBP JPY".to_string(),
+        header: "Currency Converter".to_string(),
+        subheader: currency_subheader(),
         rows: Vec::new(),
-        footer: "LOADING FXFEED...".to_string(),
+        footer: "Loading FXFeed...".to_string(),
     }
 }
 
 fn build_error_snapshot(message: &str) -> CurrencySnapshot {
     CurrencySnapshot {
-        header: "CURRENCY CONVERTER".to_string(),
-        subheader: "USD BASE  |  EUR GBP JPY".to_string(),
+        header: "Currency Converter".to_string(),
+        subheader: currency_subheader(),
         rows: Vec::new(),
         footer: message.to_string(),
     }
 }
 
+fn currency_subheader() -> String {
+    format!("USD base  |  {}", CURRENCY_CODES.join(" "))
+}
+
 fn build_currency_snapshot(raw: &str) -> Option<CurrencySnapshot> {
     let base = parse_string_field(raw, "base")?;
     let date = parse_string_field(raw, "date")?;
-    let eur = parse_rate(raw, "EUR")?;
-    let gbp = parse_rate(raw, "GBP")?;
-    let jpy = parse_rate(raw, "JPY")?;
+    let mut rows = Vec::new();
+    for code in CURRENCY_CODES {
+        let rate = parse_rate(raw, code)?;
+        let value = if code == "JPY" {
+            format!("{:.4}", rate)
+        } else {
+            format!("{:.6}", rate)
+        };
+        rows.push(CurrencyRow {
+            pair: code.to_string(),
+            value,
+        });
+    }
 
     Some(CurrencySnapshot {
-        header: "CURRENCY CONVERTER".to_string(),
+        header: "Currency Converter".to_string(),
         subheader: format!("1 {} =", base),
-        rows: vec![
-            CurrencyRow {
-                pair: "EUR".to_string(),
-                value: format!("{:.6}", eur),
-            },
-            CurrencyRow {
-                pair: "GBP".to_string(),
-                value: format!("{:.6}", gbp),
-            },
-            CurrencyRow {
-                pair: "JPY".to_string(),
-                value: format!("{:.4}", jpy),
-            },
-        ],
-        footer: format!("UPDATED {}", date),
+        rows,
+        footer: format!("Updated {}", date),
     })
 }
 
-fn currency_content_size(snapshot: &CurrencySnapshot) -> (u32, u32) {
-    let mut max_width = currency_measure_width(snapshot.header.as_str());
-    max_width = max_width.max(currency_measure_width(snapshot.subheader.as_str()));
-    max_width = max_width.max(currency_measure_width(snapshot.footer.as_str()));
-    for row in snapshot.rows.iter() {
-        let line = format!("{}  {}", row.pair, row.value);
-        max_width = max_width.max(currency_measure_width(line.as_str()));
-    }
-
-    let total_lines = 2 + snapshot.rows.len().max(1) + 1;
-    let content_w = max_width
-        .saturating_add(UI2_CURRENCY_PAD_X * 2)
-        .max(UI2_CURRENCY_VIEW_W as usize);
-    let content_h = total_lines
-        .saturating_mul(LINE_H)
-        .saturating_add(UI2_CURRENCY_PAD_Y * 2)
-        .max(UI2_CURRENCY_VIEW_H as usize);
-    (content_w as u32, content_h as u32)
-}
-
-fn currency_measure_width(text: &str) -> usize {
-    text.chars().count().saturating_mul(GLYPH_ADVANCE).max(1)
+fn currency_line_height() -> usize {
+    UI2_CURRENCY_FONT_TIER.line_height_px().max(1) as usize
 }
 
 fn fill_rect_rgba(
@@ -250,35 +230,23 @@ fn render_text_rgba(
     text: &str,
     rgba: [u8; 4],
 ) {
-    let mut pen_x = x;
-    for ch in text.chars() {
-        let bits = glyph_bits(ch.to_ascii_uppercase());
-        for (row, mask) in bits.iter().enumerate() {
-            for col in 0..FONT_W {
-                if (mask & (1 << (FONT_W - 1 - col))) != 0 {
-                    fill_rect_rgba(
-                        dst,
-                        dst_width,
-                        dst_height,
-                        pen_x + col * FONT_SCALE,
-                        y + row * FONT_SCALE,
-                        FONT_SCALE,
-                        FONT_SCALE,
-                        rgba,
-                    );
-                }
-            }
-        }
-        pen_x = pen_x.saturating_add(GLYPH_ADVANCE);
-        if pen_x >= dst_width {
-            break;
-        }
-    }
+    let max_width_px = dst_width.saturating_sub(x) as u32;
+    let _ = ui2::blit_text_rgba(
+        dst,
+        dst_width as u32,
+        dst_height as u32,
+        UI2_CURRENCY_FONT_TIER,
+        x as u32,
+        y as u32,
+        max_width_px,
+        text,
+        rgba,
+    );
 }
 
-fn compose_currency_rgba(snapshot: &CurrencySnapshot, content_w: u32, content_h: u32) -> Vec<u8> {
-    let dst_width = content_w as usize;
-    let dst_height = content_h as usize;
+fn compose_currency_rgba(snapshot: &CurrencySnapshot) -> Vec<u8> {
+    let dst_width = UI2_CURRENCY_VIEW_W as usize;
+    let dst_height = UI2_CURRENCY_VIEW_H as usize;
     let mut rgba = vec![0u8; dst_width.saturating_mul(dst_height).saturating_mul(4)];
 
     fill_rect_rgba(
@@ -299,10 +267,13 @@ fn compose_currency_rgba(snapshot: &CurrencySnapshot, content_w: u32, content_h:
         0,
         0,
         dst_width,
-        LINE_H.saturating_mul(2).saturating_add(UI2_CURRENCY_PAD_Y),
+        currency_line_step()
+            .saturating_mul(2)
+            .saturating_add(UI2_CURRENCY_PAD_Y),
         UI2_CURRENCY_HEADER_BG_RGBA,
     );
 
+    let line_step = currency_line_step();
     let mut y = UI2_CURRENCY_PAD_Y;
     render_text_rgba(
         rgba.as_mut_slice(),
@@ -313,7 +284,7 @@ fn compose_currency_rgba(snapshot: &CurrencySnapshot, content_w: u32, content_h:
         snapshot.header.as_str(),
         UI2_CURRENCY_ACCENT_RGBA,
     );
-    y = y.saturating_add(LINE_H);
+    y = y.saturating_add(line_step);
     render_text_rgba(
         rgba.as_mut_slice(),
         dst_width,
@@ -323,7 +294,7 @@ fn compose_currency_rgba(snapshot: &CurrencySnapshot, content_w: u32, content_h:
         snapshot.subheader.as_str(),
         UI2_CURRENCY_DIM_RGBA,
     );
-    y = y.saturating_add(LINE_H).saturating_add(2);
+    y = y.saturating_add(line_step).saturating_add(2);
 
     if snapshot.rows.is_empty() {
         render_text_rgba(
@@ -334,6 +305,15 @@ fn compose_currency_rgba(snapshot: &CurrencySnapshot, content_w: u32, content_h:
             y,
             snapshot.footer.as_str(),
             UI2_CURRENCY_TEXT_RGBA,
+        );
+        render_text_rgba(
+            rgba.as_mut_slice(),
+            dst_width,
+            dst_height,
+            UI2_CURRENCY_PAD_X,
+            dst_height.saturating_sub(UI2_CURRENCY_PAD_Y + currency_line_height()),
+            snapshot.footer.as_str(),
+            UI2_CURRENCY_DIM_RGBA,
         );
         return rgba;
     }
@@ -346,7 +326,7 @@ fn compose_currency_rgba(snapshot: &CurrencySnapshot, content_w: u32, content_h:
             UI2_CURRENCY_PAD_X.saturating_sub(4),
             y.saturating_sub(2),
             dst_width.saturating_sub(UI2_CURRENCY_PAD_X.saturating_sub(4) * 2),
-            LINE_H.saturating_add(4),
+            line_step.saturating_add(4),
             UI2_CURRENCY_ROW_BG_RGBA,
         );
         let line = format!("{}  {}", row.pair, row.value);
@@ -359,16 +339,15 @@ fn compose_currency_rgba(snapshot: &CurrencySnapshot, content_w: u32, content_h:
             line.as_str(),
             UI2_CURRENCY_TEXT_RGBA,
         );
-        y = y.saturating_add(LINE_H);
+        y = y.saturating_add(line_step);
     }
 
-    y = y.saturating_add(4);
     render_text_rgba(
         rgba.as_mut_slice(),
         dst_width,
         dst_height,
         UI2_CURRENCY_PAD_X,
-        y,
+        dst_height.saturating_sub(UI2_CURRENCY_PAD_Y + currency_line_height()),
         snapshot.footer.as_str(),
         UI2_CURRENCY_DIM_RGBA,
     );
@@ -376,150 +355,18 @@ fn compose_currency_rgba(snapshot: &CurrencySnapshot, content_w: u32, content_h:
     rgba
 }
 
+fn currency_line_step() -> usize {
+    currency_line_height().saturating_add(UI2_CURRENCY_ROW_GAP_Y)
+}
+
 fn present_snapshot(surface: &ui2::SurfaceWindow, snapshot: &CurrencySnapshot) {
-    let (content_w, content_h) = currency_content_size(snapshot);
-    let rgba = compose_currency_rgba(snapshot, content_w, content_h);
+    let rgba = compose_currency_rgba(snapshot);
     if vgfx_hosted::upload_texture_rgba_image_now(
         surface.tex_id(),
-        content_w,
-        content_h,
+        UI2_CURRENCY_VIEW_W,
+        UI2_CURRENCY_VIEW_H,
         rgba.as_slice(),
     ) {
         let _ = surface.id().request_repaint();
-    }
-}
-
-fn glyph_bits(ch: char) -> [u8; FONT_H] {
-    match ch {
-        'A' => [
-            0b01110, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001,
-        ],
-        'B' => [
-            0b11110, 0b10001, 0b10001, 0b11110, 0b10001, 0b10001, 0b11110,
-        ],
-        'C' => [
-            0b01110, 0b10001, 0b10000, 0b10000, 0b10000, 0b10001, 0b01110,
-        ],
-        'D' => [
-            0b11110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b11110,
-        ],
-        'E' => [
-            0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b11111,
-        ],
-        'F' => [
-            0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b10000,
-        ],
-        'G' => [
-            0b01110, 0b10001, 0b10000, 0b10111, 0b10001, 0b10001, 0b01110,
-        ],
-        'H' => [
-            0b10001, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001,
-        ],
-        'I' => [
-            0b11111, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b11111,
-        ],
-        'J' => [
-            0b00111, 0b00010, 0b00010, 0b00010, 0b10010, 0b10010, 0b01100,
-        ],
-        'K' => [
-            0b10001, 0b10010, 0b10100, 0b11000, 0b10100, 0b10010, 0b10001,
-        ],
-        'L' => [
-            0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b11111,
-        ],
-        'M' => [
-            0b10001, 0b11011, 0b10101, 0b10101, 0b10001, 0b10001, 0b10001,
-        ],
-        'N' => [
-            0b10001, 0b11001, 0b10101, 0b10011, 0b10001, 0b10001, 0b10001,
-        ],
-        'O' => [
-            0b01110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110,
-        ],
-        'P' => [
-            0b11110, 0b10001, 0b10001, 0b11110, 0b10000, 0b10000, 0b10000,
-        ],
-        'Q' => [
-            0b01110, 0b10001, 0b10001, 0b10001, 0b10101, 0b10010, 0b01101,
-        ],
-        'R' => [
-            0b11110, 0b10001, 0b10001, 0b11110, 0b10100, 0b10010, 0b10001,
-        ],
-        'S' => [
-            0b01111, 0b10000, 0b10000, 0b01110, 0b00001, 0b00001, 0b11110,
-        ],
-        'T' => [
-            0b11111, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100,
-        ],
-        'U' => [
-            0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110,
-        ],
-        'V' => [
-            0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01010, 0b00100,
-        ],
-        'W' => [
-            0b10001, 0b10001, 0b10001, 0b10101, 0b10101, 0b10101, 0b01010,
-        ],
-        'X' => [
-            0b10001, 0b10001, 0b01010, 0b00100, 0b01010, 0b10001, 0b10001,
-        ],
-        'Y' => [
-            0b10001, 0b10001, 0b01010, 0b00100, 0b00100, 0b00100, 0b00100,
-        ],
-        'Z' => [
-            0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b10000, 0b11111,
-        ],
-        '0' => [
-            0b01110, 0b10001, 0b10011, 0b10101, 0b11001, 0b10001, 0b01110,
-        ],
-        '1' => [
-            0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110,
-        ],
-        '2' => [
-            0b01110, 0b10001, 0b00001, 0b00010, 0b00100, 0b01000, 0b11111,
-        ],
-        '3' => [
-            0b11110, 0b00001, 0b00001, 0b01110, 0b00001, 0b00001, 0b11110,
-        ],
-        '4' => [
-            0b00010, 0b00110, 0b01010, 0b10010, 0b11111, 0b00010, 0b00010,
-        ],
-        '5' => [
-            0b11111, 0b10000, 0b10000, 0b11110, 0b00001, 0b00001, 0b11110,
-        ],
-        '6' => [
-            0b00110, 0b01000, 0b10000, 0b11110, 0b10001, 0b10001, 0b01110,
-        ],
-        '7' => [
-            0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b01000, 0b01000,
-        ],
-        '8' => [
-            0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110,
-        ],
-        '9' => [
-            0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b00010, 0b01100,
-        ],
-        '.' => [
-            0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00110, 0b00110,
-        ],
-        '-' => [
-            0b00000, 0b00000, 0b00000, 0b11111, 0b00000, 0b00000, 0b00000,
-        ],
-        '=' => [
-            0b00000, 0b00000, 0b11111, 0b00000, 0b11111, 0b00000, 0b00000,
-        ],
-        '|' => [
-            0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100,
-        ],
-        ':' => [
-            0b00000, 0b00110, 0b00110, 0b00000, 0b00110, 0b00110, 0b00000,
-        ],
-        '/' => [
-            0b00001, 0b00010, 0b00010, 0b00100, 0b01000, 0b01000, 0b10000,
-        ],
-        ' ' => [0; FONT_H],
-        _ => [
-            0b11111, 0b00001, 0b00010, 0b00100, 0b00100, 0b00000, 0b00100,
-        ],
     }
 }
