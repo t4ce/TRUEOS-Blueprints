@@ -8,38 +8,11 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 unsafe extern "C" {
-    fn trueos_cabi_fs_read_file(
-        path_ptr: *const u8,
-        path_len: usize,
-        out_ptr: *mut u8,
-        out_cap: usize,
-    ) -> isize;
-    fn trueos_cabi_net_fetch_start(
-        url_ptr: *const u8,
-        url_len: usize,
-        path_ptr: *const u8,
-        path_len: usize,
-    ) -> u32;
-    fn trueos_cabi_net_fetch_wait(op_id: u32, timeout_ms: u64) -> i32;
-    fn trueos_cabi_net_fetch_result(op_id: u32) -> i32;
-    fn trueos_cabi_net_fetch_discard(op_id: u32) -> i32;
-}
-
-fn read_file(path: &str) -> Result<Vec<u8>, i32> {
-    let len =
-        unsafe { trueos_cabi_fs_read_file(path.as_ptr(), path.len(), core::ptr::null_mut(), 0) };
-    if len < 0 {
-        return Err(len as i32);
-    }
-    let mut out = Vec::with_capacity(len as usize);
-    out.resize(len as usize, 0);
-    let got =
-        unsafe { trueos_cabi_fs_read_file(path.as_ptr(), path.len(), out.as_mut_ptr(), out.len()) };
-    if got < 0 {
-        return Err(got as i32);
-    }
-    out.truncate(got as usize);
-    Ok(out)
+    fn trueos_cabi_net_fetch_bytes_start(url_ptr: *const u8, url_len: usize) -> u32;
+    fn trueos_cabi_net_fetch_bytes_wait(op_id: u32, timeout_ms: u64) -> i32;
+    fn trueos_cabi_net_fetch_bytes_result_len(op_id: u32) -> isize;
+    fn trueos_cabi_net_fetch_bytes_read(op_id: u32, out_ptr: *mut u8, out_cap: usize) -> isize;
+    fn trueos_cabi_net_fetch_bytes_discard(op_id: u32) -> i32;
 }
 
 fn normalize_country_code(countrycode: &str) -> Option<String> {
@@ -53,72 +26,79 @@ fn normalize_country_code(countrycode: &str) -> Option<String> {
     Some(trimmed.to_ascii_lowercase())
 }
 
-fn flag_path(code: &str) -> String {
-    format!("flags/{}.svg", code)
-}
-
 fn flag_url(code: &str) -> String {
     format!("https://flagcdn.com/{}.svg", code)
 }
 
 pub fn getCachedFlagSVG(countrycode: &str) -> String {
-    let Some(code) = normalize_country_code(countrycode) else {
-        return String::new();
-    };
-    match read_file(flag_path(code.as_str()).as_str()) {
-        Ok(bytes) => String::from_utf8_lossy(bytes.as_slice()).into_owned(),
-        Err(_) => String::new(),
-    }
+    let _ = countrycode;
+    String::new()
 }
 
 pub fn startFlagSVGFetch(countrycode: &str) -> u32 {
     let Some(code) = normalize_country_code(countrycode) else {
         return 0;
     };
-    if !getCachedFlagSVG(code.as_str()).is_empty() {
-        return 0;
-    }
-
     let url = flag_url(code.as_str());
-    let path = flag_path(code.as_str());
-    unsafe { trueos_cabi_net_fetch_start(url.as_ptr(), url.len(), path.as_ptr(), path.len()) }
+    unsafe { trueos_cabi_net_fetch_bytes_start(url.as_ptr(), url.len()) }
 }
 
 pub fn pollFlagSVGFetch(op_id: u32) -> i32 {
     if op_id == 0 {
         return 0;
     }
-    unsafe { trueos_cabi_net_fetch_result(op_id) }
+    let rc = unsafe { trueos_cabi_net_fetch_bytes_result_len(op_id) };
+    if rc > i32::MAX as isize {
+        i32::MAX
+    } else if rc < i32::MIN as isize {
+        i32::MIN
+    } else {
+        rc as i32
+    }
+}
+
+pub fn readFlagSVGFetch(op_id: u32) -> String {
+    if op_id == 0 {
+        return String::new();
+    }
+    let len = unsafe { trueos_cabi_net_fetch_bytes_result_len(op_id) };
+    if len <= 0 {
+        return String::new();
+    }
+
+    let mut out = Vec::new();
+    out.resize(len as usize, 0);
+    let got = unsafe { trueos_cabi_net_fetch_bytes_read(op_id, out.as_mut_ptr(), out.len()) };
+    if got <= 0 {
+        return String::new();
+    }
+    out.truncate(got as usize);
+    String::from_utf8_lossy(out.as_slice()).into_owned()
 }
 
 pub fn discardFlagSVGFetch(op_id: u32) {
     if op_id != 0 {
-        let _ = unsafe { trueos_cabi_net_fetch_discard(op_id) };
+        let _ = unsafe { trueos_cabi_net_fetch_bytes_discard(op_id) };
     }
 }
 
 pub fn getFlagSVG(countrycode: &str) -> String {
-    let cached = getCachedFlagSVG(countrycode);
-    if !cached.is_empty() {
-        return cached;
-    }
-
     let op = startFlagSVGFetch(countrycode);
     if op == 0 {
         return String::new();
     }
 
-    let wait_rc = unsafe { trueos_cabi_net_fetch_wait(op, 30_000) };
+    let wait_rc = unsafe { trueos_cabi_net_fetch_bytes_wait(op, 30_000) };
     if wait_rc != 0 {
         discardFlagSVGFetch(op);
         return String::new();
     }
 
-    let result_rc = pollFlagSVGFetch(op);
-    discardFlagSVGFetch(op);
-    if result_rc != 0 {
+    let len = pollFlagSVGFetch(op);
+    if len <= 0 {
+        discardFlagSVGFetch(op);
         return String::new();
     }
 
-    getCachedFlagSVG(countrycode)
+    readFlagSVGFetch(op)
 }

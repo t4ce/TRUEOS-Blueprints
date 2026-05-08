@@ -78,7 +78,7 @@ fn main() {
     };
     let _ = surface
         .id()
-        .set_decorations(ui2::WindowDecorationMode::Client);
+        .set_decorations(ui2::WindowDecorationMode::System);
     let _ = surface.id().set_vertical_scrollbar_visible(false);
     let _ = surface.id().set_horizontal_scrollbar_visible(false);
 

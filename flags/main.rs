@@ -82,6 +82,7 @@ struct Game {
     answer_slot: usize,
     options: [usize; 4],
     fetches: [FetchSlot; 4],
+    svgs: [Option<String>; 4],
     loading: bool,
     flash: Flash,
     flash_frames: u8,
@@ -96,6 +97,7 @@ impl Game {
             answer_slot: 0,
             options: [0; 4],
             fetches: [FetchSlot::empty(); 4],
+            svgs: [(); 4].map(|_| None),
             loading: false,
             flash: Flash::None,
             flash_frames: 0,
@@ -113,6 +115,7 @@ impl Game {
         self.answer = rng.usize_below(COUNTRIES.len());
         self.answer_slot = rng.usize_below(4);
         self.options = [usize::MAX; 4];
+        self.svgs = [(); 4].map(|_| None);
         self.options[self.answer_slot] = self.answer;
 
         for slot in 0..4 {
@@ -139,13 +142,16 @@ impl Game {
         self.fetches = [FetchSlot::empty(); 4];
         for slot in 0..4 {
             let (code, _) = COUNTRIES[self.options[slot]];
-            if !trueos_flags::getCachedFlagSVG(code).is_empty() {
-                continue;
-            }
             let op_id = trueos_flags::startFlagSVGFetch(code);
+            vsys::log_infof(format_args!(
+                "flags bp: fetch start slot={} code={} op_id={}\n",
+                slot, code, op_id
+            ));
             if op_id != 0 {
                 self.fetches[slot] = FetchSlot { op_id, done: false };
                 self.loading = true;
+            } else {
+                self.svgs[slot] = Some(fallback_flag_svg(code));
             }
         }
     }
@@ -155,7 +161,8 @@ impl Game {
             return false;
         }
         let mut all_done = true;
-        for fetch in &mut self.fetches {
+        let mut changed = false;
+        for (slot, fetch) in self.fetches.iter_mut().enumerate() {
             if fetch.done {
                 continue;
             }
@@ -164,15 +171,34 @@ impl Game {
                 all_done = false;
                 continue;
             }
+            if rc > 0 {
+                let svg = trueos_flags::readFlagSVGFetch(fetch.op_id);
+                vsys::log_infof(format_args!(
+                    "flags bp: fetch done slot={} op_id={} rc={} svg_len={}\n",
+                    slot,
+                    fetch.op_id,
+                    rc,
+                    svg.len()
+                ));
+                if !svg.is_empty() {
+                    self.svgs[slot] = Some(svg);
+                    changed = true;
+                }
+            } else {
+                vsys::log_errorf(format_args!(
+                    "flags bp: fetch failed slot={} op_id={} rc={}\n",
+                    slot, fetch.op_id, rc
+                ));
+            }
             trueos_flags::discardFlagSVGFetch(fetch.op_id);
             fetch.done = true;
             fetch.op_id = 0;
         }
         if all_done {
             self.loading = false;
-            return true;
+            changed = true;
         }
-        false
+        changed
     }
 
     fn choose(&mut self, slot: usize) -> bool {
@@ -252,25 +278,72 @@ fn hit_slot(x: i32, y: i32) -> Option<usize> {
 }
 
 fn fallback_flag_svg(code: &str) -> String {
-    format!(
-        r##"<svg viewBox="0 0 640 480" xmlns="http://www.w3.org/2000/svg">
-<rect width="640" height="480" fill="#1d2430"/>
-<rect x="28" y="28" width="584" height="424" fill="none" stroke="#536173" stroke-width="18"/>
-<path d="M100 330 L230 170 L338 282 L430 215 L548 330" fill="none" stroke="#83d2ff" stroke-width="34" stroke-linejoin="round"/>
-<circle cx="492" cy="136" r="46" fill="#f3c969"/>
-<text x="320" y="418" text-anchor="middle" font-family="sans-serif" font-size="64" fill="#e7edf7">{}</text>
-</svg>"##,
-        code.to_ascii_uppercase()
-    )
-}
-
-fn flag_svg_for(code: &str) -> String {
-    let svg = trueos_flags::getCachedFlagSVG(code);
-    if svg.is_empty() {
-        fallback_flag_svg(code)
-    } else {
-        svg
-    }
+    let svg = match code {
+        "ar" => {
+            r##"<svg viewBox="0 0 640 480" xmlns="http://www.w3.org/2000/svg"><rect width="640" height="480" fill="#75aadb"/><rect y="160" width="640" height="160" fill="#fff"/><circle cx="320" cy="240" r="38" fill="#f6b40e"/></svg>"##
+        }
+        "au" => {
+            r##"<svg viewBox="0 0 640 480" xmlns="http://www.w3.org/2000/svg"><rect width="640" height="480" fill="#012169"/><path d="M0 0h320v240H0z" fill="#012169"/><path d="M0 0l320 240M320 0L0 240" stroke="#fff" stroke-width="38"/><path d="M0 0l320 240M320 0L0 240" stroke="#c8102e" stroke-width="18"/><path d="M160 0v240M0 120h320" stroke="#fff" stroke-width="62"/><path d="M160 0v240M0 120h320" stroke="#c8102e" stroke-width="34"/><circle cx="458" cy="310" r="30" fill="#fff"/><circle cx="540" cy="155" r="22" fill="#fff"/></svg>"##
+        }
+        "br" => {
+            r##"<svg viewBox="0 0 640 480" xmlns="http://www.w3.org/2000/svg"><rect width="640" height="480" fill="#009b3a"/><path d="M320 72 572 240 320 408 68 240z" fill="#ffdf00"/><circle cx="320" cy="240" r="104" fill="#002776"/><path d="M220 220c76-24 158-18 230 20" stroke="#fff" stroke-width="22" fill="none"/></svg>"##
+        }
+        "ca" => {
+            r##"<svg viewBox="0 0 640 480" xmlns="http://www.w3.org/2000/svg"><rect width="160" height="480" fill="#d52b1e"/><rect x="160" width="320" height="480" fill="#fff"/><rect x="480" width="160" height="480" fill="#d52b1e"/><path d="M320 104l34 78 82-20-45 72 72 36-86 18 20 88-77-50-77 50 20-88-86-18 72-36-45-72 82 20z" fill="#d52b1e"/></svg>"##
+        }
+        "de" => {
+            r##"<svg viewBox="0 0 640 480" xmlns="http://www.w3.org/2000/svg"><rect width="640" height="160" fill="#000"/><rect y="160" width="640" height="160" fill="#dd0000"/><rect y="320" width="640" height="160" fill="#ffce00"/></svg>"##
+        }
+        "es" => {
+            r##"<svg viewBox="0 0 640 480" xmlns="http://www.w3.org/2000/svg"><rect width="640" height="480" fill="#aa151b"/><rect y="120" width="640" height="240" fill="#f1bf00"/><rect x="150" y="190" width="70" height="100" fill="#c60b1e"/></svg>"##
+        }
+        "fr" => {
+            r##"<svg viewBox="0 0 640 480" xmlns="http://www.w3.org/2000/svg"><rect width="214" height="480" fill="#0055a4"/><rect x="214" width="212" height="480" fill="#fff"/><rect x="426" width="214" height="480" fill="#ef4135"/></svg>"##
+        }
+        "gb" => {
+            r##"<svg viewBox="0 0 640 480" xmlns="http://www.w3.org/2000/svg"><rect width="640" height="480" fill="#012169"/><path d="M0 0l640 480M640 0L0 480" stroke="#fff" stroke-width="82"/><path d="M0 0l640 480M640 0L0 480" stroke="#c8102e" stroke-width="42"/><path d="M320 0v480M0 240h640" stroke="#fff" stroke-width="136"/><path d="M320 0v480M0 240h640" stroke="#c8102e" stroke-width="82"/></svg>"##
+        }
+        "in" => {
+            r##"<svg viewBox="0 0 640 480" xmlns="http://www.w3.org/2000/svg"><rect width="640" height="160" fill="#ff9933"/><rect y="160" width="640" height="160" fill="#fff"/><rect y="320" width="640" height="160" fill="#138808"/><circle cx="320" cy="240" r="54" fill="none" stroke="#000080" stroke-width="10"/><g stroke="#000080" stroke-width="4"><path d="M320 186v108M266 240h108M282 202l76 76M358 202l-76 76"/></g></svg>"##
+        }
+        "it" => {
+            r##"<svg viewBox="0 0 640 480" xmlns="http://www.w3.org/2000/svg"><rect width="214" height="480" fill="#009246"/><rect x="214" width="212" height="480" fill="#fff"/><rect x="426" width="214" height="480" fill="#ce2b37"/></svg>"##
+        }
+        "jp" => {
+            r##"<svg viewBox="0 0 640 480" xmlns="http://www.w3.org/2000/svg"><rect width="640" height="480" fill="#fff"/><circle cx="320" cy="240" r="128" fill="#bc002d"/></svg>"##
+        }
+        "kr" => {
+            r##"<svg viewBox="0 0 640 480" xmlns="http://www.w3.org/2000/svg"><rect width="640" height="480" fill="#fff"/><path d="M320 152a88 88 0 0 1 0 176 44 44 0 0 1 0-88 44 44 0 0 0 0-88z" fill="#c60c30"/><path d="M320 328a88 88 0 0 1 0-176 44 44 0 0 1 0 88 44 44 0 0 0 0 88z" fill="#003478"/><g stroke="#111" stroke-width="18"><path d="M132 122l86 50M422 308l86 50M132 358l86-50M422 172l86-50"/></g></svg>"##
+        }
+        "mx" => {
+            r##"<svg viewBox="0 0 640 480" xmlns="http://www.w3.org/2000/svg"><rect width="214" height="480" fill="#006847"/><rect x="214" width="212" height="480" fill="#fff"/><rect x="426" width="214" height="480" fill="#ce1126"/><circle cx="320" cy="240" r="46" fill="#b38e5d"/></svg>"##
+        }
+        "no" => {
+            r##"<svg viewBox="0 0 640 480" xmlns="http://www.w3.org/2000/svg"><rect width="640" height="480" fill="#ba0c2f"/><path d="M0 194h640M194 0v480" stroke="#fff" stroke-width="96"/><path d="M0 194h640M194 0v480" stroke="#00205b" stroke-width="56"/></svg>"##
+        }
+        "pl" => {
+            r##"<svg viewBox="0 0 640 480" xmlns="http://www.w3.org/2000/svg"><rect width="640" height="240" fill="#fff"/><rect y="240" width="640" height="240" fill="#dc143c"/></svg>"##
+        }
+        "se" => {
+            r##"<svg viewBox="0 0 640 480" xmlns="http://www.w3.org/2000/svg"><rect width="640" height="480" fill="#006aa7"/><path d="M0 190h640M205 0v480" stroke="#fecc00" stroke-width="76"/></svg>"##
+        }
+        "tr" => {
+            r##"<svg viewBox="0 0 640 480" xmlns="http://www.w3.org/2000/svg"><rect width="640" height="480" fill="#e30a17"/><circle cx="276" cy="240" r="118" fill="#fff"/><circle cx="314" cy="240" r="94" fill="#e30a17"/><path d="M410 178l18 48 52-2-42 32 18 48-44-29-42 32 14-50-42-31 52-3z" fill="#fff"/></svg>"##
+        }
+        "ua" => {
+            r##"<svg viewBox="0 0 640 480" xmlns="http://www.w3.org/2000/svg"><rect width="640" height="240" fill="#0057b7"/><rect y="240" width="640" height="240" fill="#ffd700"/></svg>"##
+        }
+        "us" => {
+            r##"<svg viewBox="0 0 640 480" xmlns="http://www.w3.org/2000/svg"><rect width="640" height="480" fill="#b22234"/><g fill="#fff"><rect y="37" width="640" height="37"/><rect y="111" width="640" height="37"/><rect y="185" width="640" height="37"/><rect y="259" width="640" height="37"/><rect y="333" width="640" height="37"/><rect y="407" width="640" height="37"/></g><rect width="276" height="259" fill="#3c3b6e"/><g fill="#fff"><circle cx="46" cy="43" r="10"/><circle cx="92" cy="86" r="10"/><circle cx="138" cy="43" r="10"/><circle cx="184" cy="86" r="10"/><circle cx="230" cy="43" r="10"/><circle cx="46" cy="172" r="10"/><circle cx="138" cy="172" r="10"/><circle cx="230" cy="172" r="10"/></g></svg>"##
+        }
+        "za" => {
+            r##"<svg viewBox="0 0 640 480" xmlns="http://www.w3.org/2000/svg"><rect width="640" height="240" fill="#de3831"/><rect y="240" width="640" height="240" fill="#002395"/><path d="M0 0l305 240L0 480z" fill="#000"/><path d="M0 42l250 198L0 438" fill="none" stroke="#ffb612" stroke-width="72"/><path d="M0 76l206 164L0 404" fill="none" stroke="#007a4d" stroke-width="92"/><path d="M242 240h398" stroke="#fff" stroke-width="96"/><path d="M242 240h398" stroke="#007a4d" stroke-width="58"/></svg>"##
+        }
+        _ => {
+            r##"<svg viewBox="0 0 640 480" xmlns="http://www.w3.org/2000/svg"><rect width="640" height="480" fill="#1d2430"/><rect x="28" y="28" width="584" height="424" fill="none" stroke="#536173" stroke-width="18"/></svg>"##
+        }
+    };
+    String::from(svg)
 }
 
 fn push_flag(out: &mut String, flag_svg: &str, x: i32, y: i32, w: i32, h: i32) {
@@ -319,16 +392,15 @@ fn compose_svg(game: &Game) -> String {
             stroke = stroke
         );
         let (code, _) = COUNTRIES[game.options[slot]];
-        let svg = flag_svg_for(code);
-        push_flag(&mut out, svg.as_str(), x + 10, y + 10, w - 20, h - 20);
-    }
-
-    if game.loading {
-        out.push_str(
-            r##"<rect x="136" y="128" width="240" height="64" rx="7" fill="#101821" opacity="0.92" stroke="#536173" stroke-width="2"/>
-<text x="256" y="168" text-anchor="middle" font-family="sans-serif" font-size="24" font-weight="700" fill="#EAF2FF">loading</text>
-"##,
-        );
+        let fallback;
+        let svg = match game.svgs[slot].as_deref() {
+            Some(svg) => svg,
+            None => {
+                fallback = fallback_flag_svg(code);
+                fallback.as_str()
+            }
+        };
+        push_flag(&mut out, svg, x + 10, y + 10, w - 20, h - 20);
     }
 
     out.push_str("</svg>");

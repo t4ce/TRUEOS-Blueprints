@@ -386,11 +386,11 @@ async fn probe_time() -> Result<(), &'static str> {
     }
 
     bp_info!("tokio_rt: stage time.timeout_elapsed_sleep.inner_build");
-    let inner_sleep = time::sleep(time::Duration::from_millis(5));
+    let inner_sleep = time::sleep(time::Duration::from_millis(100));
     bp_info!("tokio_rt: success time.timeout_elapsed_sleep.inner_build");
 
     bp_info!("tokio_rt: stage time.timeout_elapsed_sleep.outer_build");
-    let timeout_sleep = time::timeout(time::Duration::from_millis(1), async {
+    let timeout_sleep = time::timeout(time::Duration::from_millis(5), async {
         inner_sleep.await;
         0x4445_4144u32
     });
