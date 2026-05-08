@@ -7,7 +7,7 @@ use alloc::string::String;
 use core::fmt::Write as _;
 use core::panic::PanicInfo;
 
-use trueos::{panic_abort, TrueosAllocator};
+use trueos::{TrueosAllocator, panic_abort};
 use trueos::{ui2, vgfx, vsys};
 
 #[global_allocator]
