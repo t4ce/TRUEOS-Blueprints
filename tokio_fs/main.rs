@@ -1,4 +1,5 @@
 use std::io::SeekFrom;
+use std::path::Path;
 
 use trueos_blueprint::{bp_error, bp_info, fs, io, runtime, tokio};
 
@@ -121,14 +122,42 @@ async fn run_probe() -> Result<(), &'static str> {
     }
     bp_info!("tokio_fs: success fs.try_exists");
 
+    bp_info!("tokio_fs: stage fs.stat.file");
+    let file_stat = fs::stat(PROBE_PATH.as_bytes()).map_err(|_| "fs.stat.file")?;
+    if file_stat.kind != fs::FsNodeKind::File || file_stat.len != PROBE_BYTES.len() as u64 {
+        return Err("fs.stat.file.value");
+    }
+    bp_info!("tokio_fs: success fs.stat.file len={}", file_stat.len);
+
     bp_info!("tokio_fs: stage fs.create_dir_all.nested_write_read");
     probe_create_dir_all_nested_write_read().await?;
     bp_info!("tokio_fs: success fs.create_dir_all.nested_write_read");
+
+    bp_info!("tokio_fs: stage fs.stat.dir");
+    let dir_stat =
+        fs::stat(format!("{}/nested", PROBE_DIR).as_bytes()).map_err(|_| "fs.stat.dir")?;
+    if dir_stat.kind != fs::FsNodeKind::Directory || dir_stat.len != 0 {
+        return Err("fs.stat.dir.value");
+    }
+    bp_info!("tokio_fs: success fs.stat.dir");
+
+    bp_info!("tokio_fs: stage fs.canonicalize.trueos");
+    let canonical = fs::canonicalize(format!("{}/./nested/../nested/probe.txt", PROBE_DIR))
+        .await
+        .map_err(|_| "fs.canonicalize.trueos")?;
+    if canonical != Path::new("/").join(PROBE_NESTED_PATH) {
+        return Err("fs.canonicalize.trueos.value");
+    }
+    bp_info!(
+        "tokio_fs: success fs.canonicalize.trueos path={}",
+        canonical.display()
+    );
 
     bp_info!("tokio_fs: stage fs.remove_file");
     tokio::fs::remove_file(PROBE_PATH)
         .await
         .map_err(|_| "fs.remove_file")?;
+    let _ = tokio::fs::remove_file(PROBE_NESTED_PATH).await;
     bp_info!("tokio_fs: success fs.remove_file");
 
     Ok(())
@@ -157,9 +186,6 @@ async fn probe_create_dir_all_nested_write_read() -> Result<(), &'static str> {
         return Err("fs.nested.read.value");
     }
 
-    tokio::fs::remove_file(PROBE_NESTED_PATH)
-        .await
-        .map_err(|_| "fs.nested.remove_file")?;
     Ok(())
 }
 

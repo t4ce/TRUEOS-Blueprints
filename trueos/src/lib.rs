@@ -16,6 +16,7 @@ pub mod rand {
 }
 pub mod tyche;
 pub mod ui2;
+pub mod vfs;
 pub mod vgfx;
 pub mod vgfx_hosted;
 pub mod vshell;

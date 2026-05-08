@@ -157,8 +157,10 @@ pub mod io {
 #[cfg(feature = "tokio-runtime")]
 pub mod fs {
     pub use tokio::fs::{
-        File, OpenOptions, create_dir, create_dir_all, read, read_to_string, try_exists, write,
+        File, OpenOptions, canonicalize, create_dir, create_dir_all, read, read_to_string,
+        try_exists, write,
     };
+    pub use trueos::vfs::{FsNodeKind, FsStat, stat};
 }
 
 #[cfg(feature = "tokio-net-probe")]

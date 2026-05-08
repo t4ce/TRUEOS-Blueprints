@@ -121,11 +121,12 @@ fn run() -> Result<(), String> {
 
             for package_app in package_apps {
                 println!("trueos-blueprint: package app: {}", package_app.name);
-                build_one_target(
+                build_one_target_to(
                     &package_app.dir,
                     &package_app.manifest_path,
                     BuildTarget::Package,
                     &[],
+                    &app_dir.join("dist"),
                     cargo_profile,
                 )?;
             }
@@ -242,6 +243,11 @@ fn build_one_target_to(
     output_dir: &Path,
     cargo_profile: CargoProfile,
 ) -> Result<(), String> {
+    let cargo_profile = if matches!(build_target, BuildTarget::Package) {
+        package_blueprint_profile(manifest_path)?.unwrap_or(cargo_profile)
+    } else {
+        cargo_profile
+    };
     let build_settings = build_settings(&app_dir, &manifest_path, &build_target)?;
 
     let output_name = match &build_target {
@@ -1133,6 +1139,9 @@ fn package_app_specs(app_dir: &Path) -> Result<Vec<PackageAppSpec>, String> {
         if !manifest_path.is_file() {
             continue;
         }
+        if !package_app_auto_enabled(&manifest_path)? {
+            continue;
+        }
 
         let name = package_name(&manifest_path)?;
         specs.push(PackageAppSpec {
@@ -1143,6 +1152,64 @@ fn package_app_specs(app_dir: &Path) -> Result<Vec<PackageAppSpec>, String> {
     }
     specs.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(specs)
+}
+
+fn package_app_auto_enabled(manifest_path: &Path) -> Result<bool, String> {
+    let cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
+    let mut in_metadata = false;
+    for line in cargo_toml.lines() {
+        let trimmed = line.split('#').next().unwrap_or("").trim();
+        if trimmed.starts_with('[') {
+            in_metadata = trimmed == "[package.metadata.trueos-blueprint]";
+            continue;
+        }
+        if !in_metadata {
+            continue;
+        }
+        let Some((key, value)) = trimmed.split_once('=') else {
+            continue;
+        };
+        if matches!(key.trim(), "app" | "auto-package" | "package")
+            && matches!(value.trim(), "false")
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn package_blueprint_profile(manifest_path: &Path) -> Result<Option<CargoProfile>, String> {
+    let cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
+    let mut in_metadata = false;
+    for line in cargo_toml.lines() {
+        let trimmed = line.split('#').next().unwrap_or("").trim();
+        if trimmed.starts_with('[') {
+            in_metadata = trimmed == "[package.metadata.trueos-blueprint]";
+            continue;
+        }
+        if !in_metadata {
+            continue;
+        }
+        let Some((key, value)) = trimmed.split_once('=') else {
+            continue;
+        };
+        if key.trim() != "profile" {
+            continue;
+        }
+        return match toml_string_value(value.trim()).as_deref() {
+            Some("dev") | Some("debug") => Ok(Some(CargoProfile::Dev)),
+            Some("release") => Ok(Some(CargoProfile::Release)),
+            Some(other) => Err(format!(
+                "unsupported trueos-blueprint profile `{other}` in {}",
+                manifest_path.display()
+            )),
+            None => Err(format!(
+                "bad trueos-blueprint profile in {}",
+                manifest_path.display()
+            )),
+        };
+    }
+    Ok(None)
 }
 
 fn example_required_features(
