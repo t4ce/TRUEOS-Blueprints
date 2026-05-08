@@ -26,6 +26,15 @@ enum BuildFlavor {
     ThinNoStd,
 }
 
+impl BuildFlavor {
+    fn cache_label(&self) -> &'static str {
+        match self {
+            BuildFlavor::TokioStd => "tokio-std",
+            BuildFlavor::ThinNoStd => "thin-nostd",
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 enum CargoProfile {
     Dev,
@@ -60,6 +69,9 @@ struct BuildSettings {
     needs_tokio_net: bool,
     extra_features: Vec<String>,
 }
+
+const CARGO_CACHE_DIR_ENV: &str = "TRUEOS_BLUEPRINT_CARGO_CACHE_DIR";
+const TARGET_SPEC_ENV: &str = "TRUEOS_BLUEPRINT_TARGET_SPEC";
 
 fn main() {
     if let Err(err) = run() {
@@ -238,11 +250,11 @@ fn build_one_target_to(
         .ok_or_else(|| format!("bad target spec path: {}", target_spec.display()))?
         .to_string();
     let packer_target_dir = app_dir.join("target").join("trueos-blueprint");
-    let cargo_target_dir = packer_target_dir
-        .join("cargo")
-        .join(sanitize_path_component(&output_name));
+    let cargo_cache_root = cargo_cache_root(&packer_target_dir);
+    let cargo_target_dir = cargo_cache_root
+        .join(&target_name)
+        .join(build_settings.flavor.cache_label());
     fs::create_dir_all(&cargo_target_dir).map_err(io_string)?;
-    reset_dir(&cargo_target_dir.join(&target_name))?;
 
     let work_dir = workdir(&packer_target_dir, &output_name)?;
     reset_dir(&work_dir)?;
@@ -313,6 +325,10 @@ fn build_one_target_to(
         "trueos-blueprint: cargo artifact profile: {}",
         cargo_profile.label()
     );
+    println!(
+        "trueos-blueprint: cargo artifact cache: {}",
+        cargo_target_dir.display()
+    );
     run_command(&mut cargo, "cargo rustc")?;
 
     let target_dir = cargo_target_dir
@@ -324,9 +340,9 @@ fn build_one_target_to(
     }
 
     let app_obj = match &build_target {
-        BuildTarget::Package => latest_one(&deps_dir, &format!("{output_name}-*.o"))?,
+        BuildTarget::Package => latest_cargo_object(&deps_dir, &cargo_artifact_stem(&output_name))?,
         BuildTarget::Example(name) => {
-            latest_one(&target_dir.join("examples"), &format!("{name}-*.o"))?
+            latest_cargo_object(&target_dir.join("examples"), &cargo_artifact_stem(name))?
         }
     };
     let rlibs = collect_rlibs(&deps_dir)?;
@@ -448,12 +464,8 @@ fn rustc_host_triple() -> Option<String> {
     })
 }
 
-fn latest_one(dir: &Path, pattern: &str) -> Result<PathBuf, String> {
-    let prefix = pattern
-        .strip_suffix('*')
-        .or_else(|| pattern.split_once('*').map(|(p, _)| p))
-        .ok_or_else(|| format!("unsupported pattern: {pattern}"))?;
-    let suffix = pattern.rsplit_once('*').map(|(_, s)| s).unwrap_or("");
+fn latest_cargo_object(dir: &Path, stem: &str) -> Result<PathBuf, String> {
+    let prefix = format!("{stem}-");
     let mut best: Option<(std::time::SystemTime, PathBuf)> = None;
     for entry in fs::read_dir(dir).map_err(io_string)? {
         let entry = entry.map_err(io_string)?;
@@ -464,7 +476,13 @@ fn latest_one(dir: &Path, pattern: &str) -> Result<PathBuf, String> {
         let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
             continue;
         };
-        if !name.starts_with(prefix) || !name.ends_with(suffix) {
+        let Some(hash) = name
+            .strip_prefix(&prefix)
+            .and_then(|rest| rest.strip_suffix(".o"))
+        else {
+            continue;
+        };
+        if hash.contains('.') {
             continue;
         }
         let modified = entry
@@ -477,8 +495,16 @@ fn latest_one(dir: &Path, pattern: &str) -> Result<PathBuf, String> {
             _ => best = Some((modified, path)),
         }
     }
-    best.map(|(_, path)| path)
-        .ok_or_else(|| format!("missing required build artifact in {}", dir.display()))
+    best.map(|(_, path)| path).ok_or_else(|| {
+        format!(
+            "missing required build artifact for {stem} in {}",
+            dir.display()
+        )
+    })
+}
+
+fn cargo_artifact_stem(name: &str) -> String {
+    name.replace('-', "_")
 }
 
 fn collect_rlibs(dir: &Path) -> Result<Vec<PathBuf>, String> {
@@ -501,6 +527,16 @@ fn collect_rlibs(dir: &Path) -> Result<Vec<PathBuf>, String> {
 }
 
 fn default_target_spec(app_dir: &Path) -> Result<PathBuf, String> {
+    if let Some(target_spec) = env_path(TARGET_SPEC_ENV) {
+        if target_spec.is_file() {
+            return Ok(target_spec);
+        }
+        return Err(format!(
+            "{TARGET_SPEC_ENV} points to missing target spec {}",
+            target_spec.display()
+        ));
+    }
+
     for candidate in [
         app_dir.join("target.json"),
         app_dir.join("trueos.json"),
@@ -527,6 +563,23 @@ fn default_target_spec(app_dir: &Path) -> Result<PathBuf, String> {
         "cannot infer target spec from {}; expected target.json near the blueprint Cargo.toml",
         app_dir.display()
     ))
+}
+
+fn cargo_cache_root(default_packer_target_dir: &Path) -> PathBuf {
+    env_path(CARGO_CACHE_DIR_ENV).unwrap_or_else(|| default_packer_target_dir.join("cargo-cache"))
+}
+
+fn env_path(name: &str) -> Option<PathBuf> {
+    let value = env::var_os(name)?;
+    if value.is_empty() {
+        return None;
+    }
+    let path = PathBuf::from(value);
+    if path.is_absolute() {
+        Some(path)
+    } else {
+        env::current_dir().ok().map(|cwd| cwd.join(path))
+    }
 }
 
 fn find_vendor_dir(app_dir: &Path, name: &str) -> Option<PathBuf> {
@@ -610,11 +663,11 @@ fn staged_manifest_for_overlay(
     work_dir: &Path,
     source_overlay: &[CratePatch],
 ) -> Result<Option<PathBuf>, String> {
-    let mismatches = source_overlay_lock_mismatches(app_dir, source_overlay)?;
-    if mismatches.is_empty() {
+    if source_overlay.is_empty() {
         return Ok(None);
     }
 
+    let mismatches = source_overlay_lock_mismatches(app_dir, source_overlay)?;
     let staged_app_dir = work_dir.join("source-overlay-app");
     copy_app_tree(app_dir, &staged_app_dir)?;
     link_kernel_sibling_for_staged_app(app_dir, work_dir)?;
@@ -623,6 +676,10 @@ fn staged_manifest_for_overlay(
             .file_name()
             .ok_or_else(|| format!("bad manifest path: {}", manifest_path.display()))?,
     );
+
+    if mismatches.is_empty() {
+        return Ok(Some(staged_manifest));
+    }
 
     println!(
         "trueos-blueprint: staged lock overlay: {}",
@@ -1060,7 +1117,8 @@ fn build_settings(
     let source = fs::read_to_string(&source_path)
         .map_err(|err| format!("failed to read {}: {err}", source_path.display()))?;
     let needs_tokio_net = source_needs_tokio_net(&source);
-    let flavor = if needs_tokio_net
+    let flavor = if !source_is_explicit_no_std(&source)
+        || needs_tokio_net
         || source.contains("trueos_blueprint")
         || source.contains("trueos_blueprint::")
         || source.contains("tokio::")
@@ -1105,6 +1163,10 @@ fn source_needs_tokio_net(source: &str) -> bool {
         || source.contains("net::mio")
         || source.contains("mio::net")
         || source.contains("socket2::")
+}
+
+fn source_is_explicit_no_std(source: &str) -> bool {
+    source.contains("#![no_std]") || source.contains("#![cfg_attr(not(test), no_std)]")
 }
 
 fn blueprint_feature_directives(source: &str) -> Vec<String> {

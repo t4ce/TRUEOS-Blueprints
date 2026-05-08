@@ -82,6 +82,10 @@ name = "flags"
 path = "flags/main.rs"
 
 [[example]]
+name = "retrosun"
+path = "retrosun/main.rs"
+
+[[example]]
 name = "mandelbrot"
 path = "mandelbrot/main.rs"
 

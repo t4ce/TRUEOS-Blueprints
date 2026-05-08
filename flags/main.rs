@@ -202,7 +202,7 @@ impl Game {
     }
 
     fn choose(&mut self, slot: usize) -> bool {
-        if self.loading || self.flash != Flash::None || slot >= 4 {
+        if self.flash != Flash::None || slot >= 4 {
             return false;
         }
         self.selected_slot = Some(slot);
