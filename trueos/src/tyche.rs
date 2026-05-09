@@ -1,10 +1,10 @@
-//! Tyche: small pseudo-random generator for blueprint apps.
+//! Tyche blueprint API.
 //!
-//! `SoftRng` is for UI variation, games, randomized retries, and demos. It is
-//! not a cryptographic RNG. The seed path intentionally uses the same small
-//! blueprint import style as time instead of reaching into kernel RNG internals.
+//! The kernel implementation lives in the TRUEOS repo at `src/Tyche.rs`.
+//! Blueprints reach it through the standard ABI and keep only the small app API.
 
 unsafe extern "C" {
+    fn sys_rand(recv_buf: *mut u32, words: usize);
     fn trueos_time_monotonic_nanos() -> u64;
 }
 
@@ -21,10 +21,13 @@ impl SoftRng {
         let local = 0u8;
         let stack_addr = (&local as *const u8 as usize) as u64;
         let salt_addr = (&TYCHE_SEED_SALT as *const u8 as usize) as u64;
-        Self::from_seed(mix_seed(
-            monotonic_nanos(),
-            stack_addr.rotate_left(17) ^ salt_addr.rotate_right(7),
-        ))
+        let seed = random_u64().filter(|seed| *seed != 0).unwrap_or_else(|| {
+            mix_seed(
+                monotonic_nanos(),
+                stack_addr.rotate_left(17) ^ salt_addr.rotate_right(7),
+            )
+        });
+        Self::from_seed(seed)
     }
 
     pub const fn from_seed(seed: u64) -> Self {
@@ -81,6 +84,21 @@ impl Default for SoftRng {
 
 pub fn soft_rng() -> SoftRng {
     SoftRng::new()
+}
+
+pub fn fill_bytes(dest: &mut [u8]) -> bool {
+    for chunk in dest.chunks_mut(core::mem::size_of::<u32>()) {
+        let mut word = 0u32;
+        unsafe { sys_rand(&mut word, 1) };
+        let bytes = word.to_le_bytes();
+        chunk.copy_from_slice(&bytes[..chunk.len()]);
+    }
+    true
+}
+
+pub fn random_u64() -> Option<u64> {
+    let mut bytes = [0u8; 8];
+    fill_bytes(&mut bytes).then(|| u64::from_le_bytes(bytes))
 }
 
 #[inline]

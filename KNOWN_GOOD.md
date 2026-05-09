@@ -15,21 +15,21 @@
 | `equivalent` | `1.0.2` lock | `indexmap` transitive | crates.io | key equivalence support |
 | `hashbrown` | `0.17.0` lock | `indexmap` transitive | crates.io | hash table backend |
 | `ryu` | `1.0.23` lock | `serde_yaml` transitive | crates.io | float formatting used by YAML serialization |
-| `bytes` | `1.11.1` | `../TRUEOS/vendor/bytes-1.11.1` |
-| `http` | `1.4.0` | crates.io |
-| `http-body` | `1.0.1` | crates.io |
-| `httparse` | `1.10.1` | crates.io |
-| `httpdate` | `1.0.3` | crates.io |
-| `atomic-waker` | `1.1.2` | `../TRUEOS/vendor/atomic-waker-1.1.2` |
-| `futures-core` | `0.3.32` | `../TRUEOS/vendor/futures-core-0.3.32` |
-| `futures-channel` | `0.3.32` | `../TRUEOS/vendor/futures-channel-0.3.32` |
-| `futures-util` | `0.3.32` | crates.io |
-| `pin-project-lite` | `0.2.17` | `../TRUEOS/vendor/pin-project-lite-0.2.17` |
-| `smallvec` | `1.15.1` | `../TRUEOS/vendor/smallvec-1.15.1` |
-| `want` | `0.3.1` | `../TRUEOS/vendor/want-0.3.1` |
-| `try-lock` | `0.2.5` | `../TRUEOS/vendor/try-lock-0.2.5` |
-| `itoa` | `1.0.18` | `../TRUEOS/vendor/itoa-1.0.18` |
-| `libc` | `0.2.185` | `../TRUEOS/vendor/libc-0.2.185` |
+| `bytes` | `1.11.1` lock | transitive | crates.io | byte buffers used by HTTP/Tokio crates |
+| `http` | `1.4.0` lock | `framework-probe` transitive | crates.io | HTTP request/response types |
+| `http-body` | `1.0.1` lock | `framework-probe` transitive | crates.io | HTTP body trait |
+| `httparse` | `1.10.1` lock | `framework-probe` transitive | crates.io | HTTP/1 parsing |
+| `httpdate` | `1.0.3` lock | `framework-probe` transitive | crates.io | HTTP date parsing/formatting |
+| `atomic-waker` | `1.1.2` lock | transitive | crates.io | async wake helper |
+| `futures-core` | `0.3.32` lock | transitive | crates.io | async trait primitives |
+| `futures-channel` | `0.3.32` lock | transitive | crates.io | channel primitives |
+| `futures-util` | `0.3.32` lock | transitive | crates.io | async utility adapters |
+| `pin-project-lite` | `0.2.17` lock | transitive | crates.io | pin projection macro |
+| `smallvec` | `1.15.1` lock | transitive | crates.io | inline small vectors |
+| `want` | `0.3.1` lock | transitive | crates.io | demand signaling helper |
+| `try-lock` | `0.2.5` lock | transitive | crates.io | lightweight nonblocking lock |
+| `itoa` | `1.0.18` lock | transitive | crates.io | integer formatting |
+| `libc` | `0.2.185` | `tokio-net-probe` transitive | `../TRUEOS/vendor/libc-0.2.185` | OS ABI bindings |
 
 ## Weather Blueprint Boundary
 

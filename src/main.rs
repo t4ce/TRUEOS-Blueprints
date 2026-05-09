@@ -712,20 +712,12 @@ fn find_vendor_dir(app_dir: &Path, name: &str) -> Option<PathBuf> {
 }
 
 const TRUEOS_SOURCE_OVERLAY_CRATES: &[&str] = &[
-    "atomic-waker",
-    "bytes",
-    "futures-channel",
-    "futures-core",
     "http",
     "http-body",
     "http-body-util",
     "hyper",
-    "hyper-util",
-    "itoa",
     "libc",
     "mio",
-    "pin-project-lite",
-    "smallvec",
     "socket2",
     "sync_wrapper",
     "tokio",
@@ -733,8 +725,6 @@ const TRUEOS_SOURCE_OVERLAY_CRATES: &[&str] = &[
     "tower-layer",
     "tower-service",
     "trueos-sys",
-    "try-lock",
-    "want",
 ];
 
 fn source_overlay_patches(app_dir: &Path, manifest_path: &Path) -> Result<Vec<CratePatch>, String> {

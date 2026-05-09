@@ -117,19 +117,10 @@ libm = { version = "0.2", default-features = false }
 trueos-weather = { path = "crates/trueos-weather" }
 
 [patch.crates-io]
-atomic-waker = { path = "../TRUEOS/vendor/atomic-waker-1.1.2" }
-bytes = { path = "../TRUEOS/vendor/bytes-1.11.1" }
-futures-channel = { path = "../TRUEOS/vendor/futures-channel-0.3.32" }
-futures-core = { path = "../TRUEOS/vendor/futures-core-0.3.32" }
 gix-config-value = { path = "vendor/gix-config-value-0.17.2" }
 gix-sec = { path = "vendor/gix-sec-0.13.3" }
 hyper = { path = "../TRUEOS/vendor/hyper-1.9.0" }
-itoa = { path = "../TRUEOS/vendor/itoa-1.0.18" }
 mio = { path = "../TRUEOS/vendor/mio-1.2.0" }
-pin-project-lite = { path = "../TRUEOS/vendor/pin-project-lite-0.2.17" }
-smallvec = { path = "../TRUEOS/vendor/smallvec-1.15.1" }
 socket2 = { path = "../TRUEOS/vendor/socket2-0.6.3" }
 tokio = { path = "../TRUEOS/vendor/tokio-1.52.1" }
 trueos-sys = { path = "../TRUEOS/crates/trueos-sys" }
-try-lock = { path = "../TRUEOS/vendor/try-lock-0.2.5" }
-want = { path = "../TRUEOS/vendor/want-0.3.1" }
