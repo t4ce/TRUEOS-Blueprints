@@ -1,6 +1,8 @@
-use std::sync::Arc;
-
-use trueos_blueprint::{bp_error, bp_info, io, runtime, sync, task, time, tokio};
+use trueos_blueprint::{
+    bp_error, bp_info, io,
+    platform::{future, thread, Arc},
+    runtime, sync, task, time, tokio,
+};
 
 fn main() {
     bp_info!("tokio_rt: start");
@@ -34,11 +36,11 @@ fn main() {
 
 fn probe_runtime_bootstrap_surfaces() -> Result<(), &'static str> {
     bp_info!("tokio_rt: stage thread.current.id");
-    let thread_id = std::thread::current().id();
+    let thread_id = thread::current().id();
     bp_info!("tokio_rt: success thread.current.id id={:?}", thread_id);
 
     bp_info!("tokio_rt: stage thread.yield_now");
-    std::thread::yield_now();
+    thread::yield_now();
     bp_info!("tokio_rt: success thread.yield_now");
 
     bp_info!("tokio_rt: stage runtime.current_thread.builder_new_plain");
@@ -375,7 +377,7 @@ async fn probe_time() -> Result<(), &'static str> {
     bp_info!("tokio_rt: stage time.timeout_elapsed_pending.build");
     let pending_elapsed = time::timeout(
         time::Duration::from_millis(1),
-        std::future::pending::<u32>(),
+        future::pending::<u32>(),
     );
     bp_info!("tokio_rt: success time.timeout_elapsed_pending.build");
 

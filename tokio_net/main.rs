@@ -1,7 +1,11 @@
 use core::net::{Ipv4Addr, SocketAddr};
 
 use trueos::vsys;
-use trueos_blueprint::{bp_error, bp_info, net, runtime, task, time, tokio};
+use trueos_blueprint::{
+    bp_error, bp_info, net,
+    platform::{format, thread},
+    runtime, task, time, tokio,
+};
 
 const PROBE_WAIT_BUDGET_MS: u64 = 1_500;
 const PROBE_WAIT_SLICE_MS: u64 = 25;
@@ -36,11 +40,11 @@ fn main() {
 
 fn probe_runtime_bootstrap_surfaces() -> Result<(), &'static str> {
     bp_info!("tokio_net: stage thread.current.id");
-    let thread_id = std::thread::current().id();
+    let thread_id = thread::current().id();
     bp_info!("tokio_net: success thread.current.id id={:?}", thread_id);
 
     bp_info!("tokio_net: stage thread.yield_now");
-    std::thread::yield_now();
+    thread::yield_now();
     bp_info!("tokio_net: success thread.yield_now");
 
     bp_info!("tokio_net: stage runtime.current_thread.builder_new_plain");

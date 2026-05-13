@@ -5,21 +5,68 @@
 //! reintroduced here.
 
 #![no_std]
-#[cfg(not(target_os = "zkvm"))]
+#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
 extern crate std;
 
 
-extern crate alloc;
+pub extern crate alloc;
 use core::fmt;
 use core::sync::atomic::{AtomicU8, Ordering};
 #[cfg(feature = "tokio-runtime")]
 pub use tokio;
 
+pub mod platform {
+    pub use alloc::borrow::{Cow, ToOwned};
+    pub use alloc::boxed::Box;
+    pub use alloc::format;
+    pub use alloc::string::{String, ToString};
+    pub use alloc::sync::Arc;
+    pub use alloc::vec;
+    pub use alloc::vec::Vec;
+
+    pub mod future {
+        pub use core::future::{Future, IntoFuture, pending, poll_fn};
+    }
+
+    #[cfg(feature = "tokio-runtime")]
+    pub mod io {
+        pub use tokio::io::{Error, ErrorKind, Result, SeekFrom};
+    }
+
+    #[cfg(feature = "tokio-runtime")]
+    pub mod path {
+        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+        pub use tokio::path::{Component, Components, Path, PathBuf};
+        #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+        pub use std::path::{Component, Components, Path, PathBuf};
+    }
+
+    #[cfg(feature = "tokio-runtime")]
+    pub mod thread {
+        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+        pub use tokio::thread::{Thread, ThreadId, current};
+        #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+        pub use std::thread::{Thread, ThreadId, current};
+
+        #[inline]
+        pub fn yield_now() {
+            #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+            {
+                trueos::vsys::poll_once();
+            }
+            #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+            {
+                std::thread::yield_now();
+            }
+        }
+    }
+}
+
 pub mod diag {
     use super::{AtomicU8, Ordering, fmt};
-    #[cfg(target_os = "zkvm")]
+    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
     use alloc::string::String;
-    #[cfg(target_os = "zkvm")]
+    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
     use core::fmt::Write as _;
 
     #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
@@ -80,7 +127,7 @@ pub mod diag {
         emit(Level::Trace, format_args!("{message}"));
     }
 
-    #[cfg(target_os = "zkvm")]
+    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
     fn emit_impl(level: Level, args: fmt::Arguments<'_>) {
         let mut line = String::new();
         let _ = write!(&mut line, "[trueos-blueprint:{}] {}", level.as_str(), args);
@@ -95,7 +142,7 @@ pub mod diag {
         trueos::vsys::write_log_stream(stream, line.as_str());
     }
 
-    #[cfg(not(target_os = "zkvm"))]
+    #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
     fn emit_impl(level: Level, args: fmt::Arguments<'_>) {
         std::eprintln!("[trueos-blueprint:{}] {}", level.as_str(), args);
     }
@@ -184,6 +231,7 @@ pub mod prelude {
     pub use crate::io;
     #[cfg(feature = "tokio-net-probe")]
     pub use crate::net;
+    pub use crate::platform;
     #[cfg(feature = "tokio-runtime")]
     pub use crate::runtime;
     #[cfg(feature = "tokio-runtime")]

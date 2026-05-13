@@ -1,7 +1,14 @@
-use std::io::SeekFrom;
-use std::path::Path;
-
-use trueos_blueprint::{bp_error, bp_info, fs, io, runtime, tokio};
+use trueos_blueprint::{
+    bp_error, bp_info, fs, io,
+    platform::{
+        format,
+        io::SeekFrom,
+        path::Path,
+        thread,
+        Vec,
+    },
+    runtime, tokio,
+};
 
 const PROBE_PATH: &str = "blueprint-tokio-fs-probe.txt";
 const PROBE_DIR: &str = "blueprint-tokio-fs-dir";
@@ -37,11 +44,11 @@ fn main() {
 
 fn probe_runtime_bootstrap_surfaces() -> Result<(), &'static str> {
     bp_info!("tokio_fs: stage thread.current.id");
-    let thread_id = std::thread::current().id();
+    let thread_id = thread::current().id();
     bp_info!("tokio_fs: success thread.current.id id={:?}", thread_id);
 
     bp_info!("tokio_fs: stage thread.yield_now");
-    std::thread::yield_now();
+    thread::yield_now();
     bp_info!("tokio_fs: success thread.yield_now");
 
     bp_info!("tokio_fs: stage runtime.current_thread.builder_new_plain");
@@ -150,7 +157,7 @@ async fn run_probe() -> Result<(), &'static str> {
     }
     bp_info!(
         "tokio_fs: success fs.canonicalize.trueos path={}",
-        canonical.display()
+        canonical.as_os_str()
     );
 
     bp_info!("tokio_fs: stage fs.remove_file");

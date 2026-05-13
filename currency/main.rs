@@ -1,12 +1,11 @@
 // trueos-blueprint: features=["tokio-runtime"]
 
-use std::format;
-use std::string::{String, ToString};
-use std::vec;
-use std::vec::Vec;
-
 use trueos::{net_fetch, ui2, vgfx_hosted, vsys};
-use trueos_blueprint::{bp_error, bp_info, runtime, time};
+use trueos_blueprint::{
+    bp_error, bp_info,
+    platform::{format, vec, String, ToString, Vec},
+    runtime, time,
+};
 
 const UI2_CURRENCY_TEX_ID: u32 = 4_723;
 const UI2_CURRENCY_WINDOW_TITLE: &str = "Currency";

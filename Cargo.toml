@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-default = ["tokio-runtime"]
+default = []
 tokio-runtime = ["dep:tokio"]
 tokio-net-probe = ["tokio-runtime", "tokio/net", "dep:mio", "dep:socket2"]
 framework-probe = ["tokio-net-probe", "dep:hyper", "dep:tower", "dep:serde_yaml"]

@@ -29,7 +29,7 @@ enum BuildFlavor {
 impl BuildFlavor {
     fn cache_label(&self) -> &'static str {
         match self {
-            BuildFlavor::TokioStd => "tokio-std",
+            BuildFlavor::TokioStd => "tokio-platform",
             BuildFlavor::ThinNoStd => "thin-nostd",
         }
     }
@@ -64,9 +64,12 @@ struct CratePatch {
 
 struct BuildSettings {
     flavor: BuildFlavor,
+    source_path: PathBuf,
     has_global_allocator: bool,
     has_panic_handler: bool,
     needs_tokio_net: bool,
+    needs_no_std_shim: bool,
+    needs_entry_shim: bool,
     extra_features: Vec<String>,
 }
 
@@ -77,6 +80,8 @@ const APPS_PUBLISH_MOUNT_URI_ENV: &str = "TRUEOS_BLUEPRINT_APPS_PUBLISH_MOUNT_UR
 const APPS_PUBLISH_URI_ENV: &str = "TRUEOS_BLUEPRINT_APPS_PUBLISH_URI";
 const DEFAULT_APPS_PUBLISH_MOUNT_URI: &str = "smb://t4ce@pdjb/home-share";
 const DEFAULT_APPS_PUBLISH_URI: &str = "smb://t4ce@pdjb/home-share/TRUEOS_SITE/apps";
+const RUSTFLAGS_ENCODED_SEPARATOR: char = '\u{1f}';
+const TRUEOS_CHECK_CFG_FLAG: &str = "--check-cfg=cfg(target_os,values(\"trueos\",\"zkvm\"))";
 
 fn main() {
     if let Err(err) = run() {
@@ -272,8 +277,14 @@ fn build_one_target_to(
     reset_dir(&work_dir)?;
 
     let source_overlay = source_overlay_patches(app_dir, manifest_path)?;
-    let cargo_manifest_path =
-        staged_manifest_for_overlay(app_dir, manifest_path, &work_dir, &source_overlay)?
+    let staged_source_overlay = staged_source_overlay(&source_overlay, &work_dir);
+    let cargo_manifest_path = staged_manifest_for_overlay(
+        app_dir,
+        manifest_path,
+        &work_dir,
+        &build_settings,
+        &source_overlay,
+    )?
             .unwrap_or_else(|| manifest_path.to_path_buf());
 
     let mut cargo = Command::new("cargo");
@@ -282,7 +293,7 @@ fn build_one_target_to(
         .arg("rustc")
         .arg("-Z")
         .arg(match build_settings.flavor {
-            BuildFlavor::TokioStd => "build-std=core,compiler_builtins,alloc,std,panic_abort",
+            BuildFlavor::TokioStd => "build-std=core,compiler_builtins,alloc,panic_abort",
             BuildFlavor::ThinNoStd => "build-std=core,compiler_builtins,alloc",
         })
         .arg("-Z")
@@ -301,20 +312,21 @@ fn build_one_target_to(
                 .join(",")
         );
     }
-    push_source_overlay_configs(&mut cargo, &source_overlay);
+    push_source_overlay_configs(&mut cargo, &staged_source_overlay);
+    push_extra_rustflag(&mut cargo, TRUEOS_CHECK_CFG_FLAG);
     cargo.env("CARGO_TARGET_DIR", &cargo_target_dir);
     let mut extra_features = required_features.to_vec();
     for feature in &build_settings.extra_features {
         push_feature(&mut extra_features, feature);
     }
+    if !build_settings.has_global_allocator {
+        push_feature(&mut extra_features, "thin-default-global-allocator");
+    }
+    if !build_settings.has_panic_handler {
+        push_feature(&mut extra_features, "thin-default-panic-handler");
+    }
     if matches!(build_settings.flavor, BuildFlavor::ThinNoStd) {
         cargo.arg("--no-default-features");
-        if !build_settings.has_global_allocator {
-            push_feature(&mut extra_features, "thin-default-global-allocator");
-        }
-        if !build_settings.has_panic_handler {
-            push_feature(&mut extra_features, "thin-default-panic-handler");
-        }
     } else if build_settings.needs_tokio_net {
         push_feature(&mut extra_features, "tokio-net-probe");
     }
@@ -711,24 +723,7 @@ fn find_vendor_dir(app_dir: &Path, name: &str) -> Option<PathBuf> {
     None
 }
 
-const TRUEOS_SOURCE_OVERLAY_CRATES: &[&str] = &[
-    "http",
-    "http-body",
-    "http-body-util",
-    "hyper",
-    "libc",
-    "mio",
-    "socket2",
-    "sync_wrapper",
-    "tokio",
-    "tower",
-    "tower-layer",
-    "tower-service",
-    "trueos-sys",
-];
-
-fn source_overlay_patches(app_dir: &Path, manifest_path: &Path) -> Result<Vec<CratePatch>, String> {
-    let app_patch_names = manifest_patch_names(manifest_path)?;
+fn source_overlay_patches(app_dir: &Path, _manifest_path: &Path) -> Result<Vec<CratePatch>, String> {
     let mut out = Vec::new();
 
     if let Some(kernel_manifest) = trueos_kernel_manifest(app_dir) {
@@ -736,12 +731,6 @@ fn source_overlay_patches(app_dir: &Path, manifest_path: &Path) -> Result<Vec<Cr
             .parent()
             .ok_or_else(|| format!("bad kernel manifest path: {}", kernel_manifest.display()))?;
         for (name, path) in manifest_patch_entries(&kernel_manifest)? {
-            if !TRUEOS_SOURCE_OVERLAY_CRATES.contains(&name.as_str()) {
-                continue;
-            }
-            if app_patch_names.iter().any(|existing| existing == &name) {
-                continue;
-            }
             let patch_path = resolve_manifest_path(kernel_root, &path);
             if patch_path.is_dir() {
                 out.push(CratePatch {
@@ -753,7 +742,6 @@ fn source_overlay_patches(app_dir: &Path, manifest_path: &Path) -> Result<Vec<Cr
     }
 
     if !out.iter().any(|patch| patch.name == "libc")
-        && !app_patch_names.iter().any(|name| name == "libc")
         && let Some(path) = find_vendor_dir(app_dir, "libc-0.2.185")
     {
         out.push(CratePatch {
@@ -770,9 +758,13 @@ fn staged_manifest_for_overlay(
     app_dir: &Path,
     manifest_path: &Path,
     work_dir: &Path,
+    build_settings: &BuildSettings,
     source_overlay: &[CratePatch],
 ) -> Result<Option<PathBuf>, String> {
-    if source_overlay.is_empty() {
+    if source_overlay.is_empty()
+        && !build_settings.needs_no_std_shim
+        && !build_settings.needs_entry_shim
+    {
         return Ok(None);
     }
 
@@ -785,6 +777,9 @@ fn staged_manifest_for_overlay(
             .file_name()
             .ok_or_else(|| format!("bad manifest path: {}", manifest_path.display()))?,
     );
+    strip_manifest_patch_section(&staged_manifest)?;
+            rewrite_staged_source_for_target(app_dir, &staged_app_dir, build_settings)?;
+    let staged_source_overlay = staged_source_overlay(source_overlay, work_dir);
 
     if mismatches.is_empty() {
         return Ok(Some(staged_manifest));
@@ -813,11 +808,56 @@ fn staged_manifest_for_overlay(
             .arg(format!("{}@{}", mismatch.name, mismatch.locked_version))
             .arg("--precise")
             .arg(&mismatch.overlay_version);
-        push_source_overlay_configs(&mut update, source_overlay);
+        push_source_overlay_configs(&mut update, &staged_source_overlay);
         run_command(&mut update, "cargo update")?;
     }
 
     Ok(Some(staged_manifest))
+}
+
+fn rewrite_staged_source_for_target(
+    app_dir: &Path,
+    staged_app_dir: &Path,
+    build_settings: &BuildSettings,
+) -> Result<(), String> {
+    if !build_settings.needs_no_std_shim && !build_settings.needs_entry_shim {
+        return Ok(());
+    }
+
+    let relative_source = build_settings
+        .source_path
+        .strip_prefix(app_dir)
+        .map_err(|_| {
+            format!(
+                "source path {} is not under app dir {}",
+                build_settings.source_path.display(),
+                app_dir.display()
+            )
+        })?;
+    let staged_source = staged_app_dir.join(relative_source);
+    let original = fs::read_to_string(&staged_source).map_err(io_string)?;
+
+    let mut header = String::new();
+    if build_settings.needs_no_std_shim {
+        header.push_str("#![no_std]\n");
+    }
+    if build_settings.needs_entry_shim {
+        header.push_str("#![no_main]\n");
+    }
+
+    let mut rewritten = String::with_capacity(original.len() + header.len() + 128);
+    rewritten.push_str(&header);
+    rewritten.push_str(&original);
+    if !original.ends_with('\n') {
+        rewritten.push('\n');
+    }
+    if build_settings.needs_entry_shim {
+        rewritten.push_str(
+            "\n#[unsafe(no_mangle)]\npub extern \"C\" fn _start() -> ! {\n    main();\n    trueos::panic_abort(\"blueprint main returned\\n\")\n}\n",
+        );
+    }
+
+    fs::write(&staged_source, rewritten).map_err(io_string)
 }
 
 struct LockMismatch {
@@ -946,13 +986,22 @@ fn link_kernel_sibling_for_staged_app(app_dir: &Path, work_dir: &Path) -> Result
     let Some(kernel_root) = kernel_manifest.parent() else {
         return Ok(());
     };
-    let link = work_dir.join("TRUEOS");
-    if link.exists() {
+    let staging_root = work_dir.parent().unwrap_or(work_dir);
+
+    link_staged_sibling(&staging_root.join("TRUEOS"), kernel_root)?;
+    link_staged_sibling(&staging_root.join("vendor"), &kernel_root.join("vendor"))?;
+    link_staged_sibling(&staging_root.join("crates"), &kernel_root.join("crates"))?;
+
+    Ok(())
+}
+
+fn link_staged_sibling(link: &Path, target: &Path) -> Result<(), String> {
+    if link.exists() || !target.exists() {
         return Ok(());
     }
     #[cfg(unix)]
     {
-        std::os::unix::fs::symlink(kernel_root, link).map_err(io_string)?;
+        std::os::unix::fs::symlink(target, link).map_err(io_string)?;
     }
     Ok(())
 }
@@ -964,6 +1013,34 @@ fn push_source_overlay_configs(cmd: &mut Command, source_overlay: &[CratePatch])
             patch.name,
             toml_string(&patch.path.to_string_lossy())
         ));
+    }
+}
+
+fn staged_source_overlay(source_overlay: &[CratePatch], work_dir: &Path) -> Vec<CratePatch> {
+    let staging_root = work_dir.parent().unwrap_or(work_dir);
+    source_overlay
+        .iter()
+        .map(|patch| CratePatch {
+            name: patch.name.clone(),
+            path: staged_overlay_path(&patch.path, staging_root),
+        })
+        .collect()
+}
+
+fn staged_overlay_path(path: &Path, staging_root: &Path) -> PathBuf {
+    let Some(name) = path.file_name() else {
+        return path.to_path_buf();
+    };
+    let Some(parent) = path.parent() else {
+        return path.to_path_buf();
+    };
+    let Some(kind) = parent.file_name().and_then(|value| value.to_str()) else {
+        return path.to_path_buf();
+    };
+    match kind {
+        "vendor" => staging_root.join("vendor").join(name),
+        "crates" => staging_root.join("crates").join(name),
+        _ => path.to_path_buf(),
     }
 }
 
@@ -997,13 +1074,6 @@ fn trueos_kernel_manifest(app_dir: &Path) -> Option<PathBuf> {
     None
 }
 
-fn manifest_patch_names(manifest_path: &Path) -> Result<Vec<String>, String> {
-    Ok(manifest_patch_entries(manifest_path)?
-        .into_iter()
-        .map(|(name, _)| name)
-        .collect())
-}
-
 fn manifest_patch_entries(manifest_path: &Path) -> Result<Vec<(String, String)>, String> {
     let cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
     let mut in_patch = false;
@@ -1026,6 +1096,38 @@ fn manifest_patch_entries(manifest_path: &Path) -> Result<Vec<(String, String)>,
         out.push((name.trim().trim_matches('"').to_string(), path));
     }
     Ok(out)
+}
+
+fn strip_manifest_patch_section(manifest_path: &Path) -> Result<(), String> {
+    let cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
+    let mut out = String::with_capacity(cargo_toml.len());
+    let mut in_patch = false;
+
+    for line in cargo_toml.lines() {
+        let trimmed = line.split('#').next().unwrap_or("").trim();
+        if trimmed.starts_with('[') {
+            in_patch = trimmed == "[patch.crates-io]";
+            if in_patch {
+                continue;
+            }
+        }
+        if in_patch {
+            continue;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+
+    fs::write(manifest_path, out).map_err(io_string)
+}
+
+fn push_extra_rustflag(command: &mut Command, flag: &str) {
+    let mut encoded = env::var("CARGO_ENCODED_RUSTFLAGS").unwrap_or_default();
+    if !encoded.is_empty() {
+        encoded.push(RUSTFLAGS_ENCODED_SEPARATOR);
+    }
+    encoded.push_str(flag);
+    command.env("CARGO_ENCODED_RUSTFLAGS", encoded);
 }
 
 fn inline_table_path(value: &str) -> Option<String> {
@@ -1287,6 +1389,7 @@ fn build_settings(
     let source = fs::read_to_string(&source_path)
         .map_err(|err| format!("failed to read {}: {err}", source_path.display()))?;
     let needs_tokio_net = source_needs_tokio_net(&source);
+    let explicit_no_std = source_is_explicit_no_std(&source);
     let flavor = if !source_is_explicit_no_std(&source)
         || needs_tokio_net
         || source.contains("trueos_blueprint")
@@ -1298,14 +1401,20 @@ fn build_settings(
         BuildFlavor::ThinNoStd
     };
     let mut extra_features = blueprint_feature_directives(&source);
+    if matches!(flavor, BuildFlavor::TokioStd) {
+        push_feature(&mut extra_features, "tokio-runtime");
+    }
     if needs_tokio_net {
         push_feature(&mut extra_features, "tokio-net-probe");
     }
     Ok(BuildSettings {
         flavor,
+        source_path,
         has_global_allocator: source.contains("#[global_allocator]"),
         has_panic_handler: source.contains("#[panic_handler]"),
         needs_tokio_net,
+        needs_no_std_shim: !explicit_no_std,
+        needs_entry_shim: source.contains("fn main(") && !source.contains("#![no_main]"),
         extra_features,
     })
 }
