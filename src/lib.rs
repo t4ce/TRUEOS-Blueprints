@@ -5,14 +5,13 @@
 //! reintroduced here.
 
 #![no_std]
-
-extern crate alloc;
 #[cfg(not(target_os = "zkvm"))]
 extern crate std;
 
+
+extern crate alloc;
 use core::fmt;
 use core::sync::atomic::{AtomicU8, Ordering};
-
 #[cfg(feature = "tokio-runtime")]
 pub use tokio;
 
