@@ -694,6 +694,16 @@ fn default_target_spec(app_dir: &Path) -> Result<PathBuf, String> {
         ));
     }
 
+    for ancestor in app_dir.ancestors() {
+        let candidate = ancestor
+            .join("sdk")
+            .join("targets")
+            .join("trueos-blueprint.json");
+        if candidate.is_file() {
+            return Ok(candidate);
+        }
+    }
+
     for candidate in [
         app_dir.join("target.json"),
         app_dir.join("trueos.json"),

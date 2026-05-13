@@ -1,0 +1,25 @@
+manifest-version = 1
+
+[sdk]
+id = "trueos-blueprint-sdk"
+version = "0.1.0"
+
+[target]
+spec = "sdk/targets/trueos-blueprint.json"
+os = "trueos"
+env = "newlib"
+families = ["unix"]
+
+[build_std]
+std = true
+panic = "abort"
+components = ["core", "compiler_builtins", "alloc", "std", "panic_abort"]
+
+[overlays]
+enabled = ["libc"]
+optional = ["std", "tokio"]
+
+[policy]
+app_root_cwd = true
+reroute_std_fs = true
+reroute_std_time = true
