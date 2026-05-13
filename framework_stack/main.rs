@@ -2,14 +2,12 @@ use core::convert::Infallible;
 
 use hyper::body::Bytes;
 use hyper::{Method, Request, Response, StatusCode, Uri};
-use serde::Deserialize;
 use tower::{ServiceBuilder, ServiceExt, service_fn};
-use trueos_blueprint::{bp_error, bp_info, runtime, time};
+use trueos_blueprint::{bp_error, bp_info, platform::Vec, runtime, time};
 
-#[derive(Deserialize)]
-struct FrontmatterProbe {
-    name: String,
-    tools: Vec<String>,
+struct FrontmatterProbe<'a> {
+    name: &'a str,
+    tools: Vec<&'a str>,
     enabled: bool,
 }
 
@@ -35,15 +33,15 @@ fn main() {
 }
 
 async fn run_probe() -> Result<(), &'static str> {
-    probe_serde_yaml_frontmatter()?;
+    probe_frontmatter_shape()?;
     probe_hyper_http_shapes()?;
     probe_tower_service_stack().await?;
     probe_tokio_time_surface().await?;
     Ok(())
 }
 
-fn probe_serde_yaml_frontmatter() -> Result<(), &'static str> {
-    bp_info!("framework_stack: stage serde.yaml.frontmatter");
+fn probe_frontmatter_shape() -> Result<(), &'static str> {
+    bp_info!("framework_stack: stage frontmatter.shape");
     let frontmatter = "\
 name: localcoder
 tools:
@@ -51,19 +49,74 @@ tools:
   - lsp
 enabled: true
 ";
-    let parsed: FrontmatterProbe =
-        serde_yaml::from_str(frontmatter).map_err(|_| "serde.yaml.frontmatter.parse")?;
+    let parsed = parse_frontmatter(frontmatter).ok_or("frontmatter.parse")?;
     if parsed.name != "localcoder" || parsed.tools.len() != 2 || !parsed.enabled {
-        return Err("serde.yaml.frontmatter.value");
+        return Err("frontmatter.value");
     }
 
-    let value: serde_yaml::Value = serde_yaml::from_str("kind: framework\ncount: 3\n")
-        .map_err(|_| "serde.yaml.value.parse")?;
-    if value["kind"].as_str() != Some("framework") || value["count"].as_i64() != Some(3) {
-        return Err("serde.yaml.value.shape");
+    let metadata = parse_scalar_map("kind: framework\ncount: 3\n").ok_or("frontmatter.map.parse")?;
+    if metadata.get("kind") != Some(&"framework") || metadata.get("count") != Some(&"3") {
+        return Err("frontmatter.map.value");
     }
-    bp_info!("framework_stack: success serde.yaml.frontmatter");
+    bp_info!("framework_stack: success frontmatter.shape");
     Ok(())
+}
+
+fn parse_frontmatter(raw: &str) -> Option<FrontmatterProbe<'_>> {
+    let mut name = None;
+    let mut tools = Vec::new();
+    let mut enabled = None;
+    let mut in_tools = false;
+
+    for line in raw.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        if let Some(value) = trimmed.strip_prefix("name:") {
+            name = Some(value.trim());
+            in_tools = false;
+            continue;
+        }
+        if trimmed == "tools:" {
+            in_tools = true;
+            continue;
+        }
+        if let Some(value) = trimmed.strip_prefix("enabled:") {
+            enabled = match value.trim() {
+                "true" => Some(true),
+                "false" => Some(false),
+                _ => None,
+            };
+            in_tools = false;
+            continue;
+        }
+        if in_tools && let Some(value) = trimmed.strip_prefix('-') {
+            tools.push(value.trim());
+            continue;
+        }
+        return None;
+    }
+
+    Some(FrontmatterProbe {
+        name: name?,
+        tools,
+        enabled: enabled?,
+    })
+}
+
+fn parse_scalar_map<'a>(raw: &'a str) -> Option<Vec<(&'a str, &'a str)>> {
+    let mut values = Vec::new();
+    for line in raw.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let (key, value) = trimmed.split_once(':')?;
+        values.push((key.trim(), value.trim()));
+    }
+    Some(values)
 }
 
 fn probe_hyper_http_shapes() -> Result<(), &'static str> {
