@@ -55,7 +55,9 @@ enabled: true
     }
 
     let metadata = parse_scalar_map("kind: framework\ncount: 3\n").ok_or("frontmatter.map.parse")?;
-    if metadata.get("kind") != Some(&"framework") || metadata.get("count") != Some(&"3") {
+    if scalar_map_value(&metadata, "kind") != Some("framework")
+        || scalar_map_value(&metadata, "count") != Some("3")
+    {
         return Err("frontmatter.map.value");
     }
     bp_info!("framework_stack: success frontmatter.shape");
@@ -117,6 +119,12 @@ fn parse_scalar_map<'a>(raw: &'a str) -> Option<Vec<(&'a str, &'a str)>> {
         values.push((key.trim(), value.trim()));
     }
     Some(values)
+}
+
+fn scalar_map_value<'a>(values: &'a [(&'a str, &'a str)], key: &str) -> Option<&'a str> {
+    values
+        .iter()
+        .find_map(|(entry_key, entry_value)| (*entry_key == key).then_some(*entry_value))
 }
 
 fn probe_hyper_http_shapes() -> Result<(), &'static str> {

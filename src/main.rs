@@ -293,7 +293,7 @@ fn build_one_target_to(
         .arg("rustc")
         .arg("-Z")
         .arg(match build_settings.flavor {
-            BuildFlavor::TokioStd => "build-std=core,compiler_builtins,alloc,panic_abort",
+            BuildFlavor::TokioStd => "build-std=core,compiler_builtins,alloc,std,panic_abort",
             BuildFlavor::ThinNoStd => "build-std=core,compiler_builtins,alloc",
         })
         .arg("-Z")
@@ -315,20 +315,29 @@ fn build_one_target_to(
     push_source_overlay_configs(&mut cargo, &staged_source_overlay);
     push_extra_rustflag(&mut cargo, TRUEOS_CHECK_CFG_FLAG);
     cargo.env("CARGO_TARGET_DIR", &cargo_target_dir);
+    let declared_features = manifest_declared_features(&cargo_manifest_path)?;
     let mut extra_features = required_features.to_vec();
     for feature in &build_settings.extra_features {
-        push_feature(&mut extra_features, feature);
+        push_declared_feature(&mut extra_features, feature, &declared_features);
     }
     if !build_settings.has_global_allocator {
-        push_feature(&mut extra_features, "thin-default-global-allocator");
+        push_declared_feature(
+            &mut extra_features,
+            "thin-default-global-allocator",
+            &declared_features,
+        );
     }
     if !build_settings.has_panic_handler {
-        push_feature(&mut extra_features, "thin-default-panic-handler");
+        push_declared_feature(
+            &mut extra_features,
+            "thin-default-panic-handler",
+            &declared_features,
+        );
     }
     if matches!(build_settings.flavor, BuildFlavor::ThinNoStd) {
         cargo.arg("--no-default-features");
     } else if build_settings.needs_tokio_net {
-        push_feature(&mut extra_features, "tokio-net-probe");
+        push_declared_feature(&mut extra_features, "tokio-net-probe", &declared_features);
     }
     if !extra_features.is_empty() {
         cargo.arg("--features").arg(extra_features.join(","));
@@ -419,6 +428,49 @@ fn run_command(cmd: &mut Command, label: &str) -> Result<(), String> {
     } else {
         Err(format!("{label} failed with status {status}"))
     }
+}
+
+fn run_staged_lock_overlay_update(
+    staged_manifest: &Path,
+    staged_source_overlay: &[CratePatch],
+    mismatch: &LockMismatch,
+) -> Result<(), String> {
+    let package_specs = [
+        format!("{}@{}", mismatch.name, mismatch.locked_version),
+        mismatch.name.clone(),
+    ];
+
+    for (index, package_spec) in package_specs.iter().enumerate() {
+        let mut update = Command::new("cargo");
+        update
+            .arg("+nightly")
+            .arg("update")
+            .arg("--manifest-path")
+            .arg(staged_manifest)
+            .arg("-p")
+            .arg(package_spec)
+            .arg("--precise")
+            .arg(&mismatch.overlay_version);
+        push_source_overlay_configs(&mut update, staged_source_overlay);
+
+        match update.status() {
+            Ok(status) if status.success() => return Ok(()),
+            Ok(status) if index + 1 == package_specs.len() => {
+                return Err(format!("cargo update failed with status {status}"));
+            }
+            Ok(_) => {
+                println!(
+                    "trueos-blueprint: retrying staged lock overlay for {} without version-qualified package id",
+                    mismatch.name
+                );
+            }
+            Err(err) => {
+                return Err(format!("cargo update failed to start: {err}"));
+            }
+        }
+    }
+
+    Err("cargo update failed unexpectedly".to_string())
 }
 
 fn publish_dist_blueprints(dist_dir: &Path) -> Result<(), String> {
@@ -798,18 +850,7 @@ fn staged_manifest_for_overlay(
     );
 
     for mismatch in mismatches {
-        let mut update = Command::new("cargo");
-        update
-            .arg("+nightly")
-            .arg("update")
-            .arg("--manifest-path")
-            .arg(&staged_manifest)
-            .arg("-p")
-            .arg(format!("{}@{}", mismatch.name, mismatch.locked_version))
-            .arg("--precise")
-            .arg(&mismatch.overlay_version);
-        push_source_overlay_configs(&mut update, &staged_source_overlay);
-        run_command(&mut update, "cargo update")?;
+        run_staged_lock_overlay_update(&staged_manifest, &staged_source_overlay, &mismatch)?;
     }
 
     Ok(Some(staged_manifest))
@@ -1302,6 +1343,33 @@ fn package_blueprint_profile(manifest_path: &Path) -> Result<Option<CargoProfile
         };
     }
     Ok(None)
+}
+
+fn manifest_declared_features(manifest_path: &Path) -> Result<Vec<String>, String> {
+    let cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
+    let mut in_features = false;
+    let mut out = Vec::new();
+    for line in cargo_toml.lines() {
+        let trimmed = line.split('#').next().unwrap_or("").trim();
+        if trimmed.starts_with('[') {
+            in_features = trimmed == "[features]";
+            continue;
+        }
+        if !in_features || trimmed.is_empty() {
+            continue;
+        }
+        let Some((key, _)) = trimmed.split_once('=') else {
+            continue;
+        };
+        out.push(key.trim().to_string());
+    }
+    Ok(out)
+}
+
+fn push_declared_feature(features: &mut Vec<String>, feature: &str, declared_features: &[String]) {
+    if declared_features.iter().any(|declared| declared == feature) {
+        push_feature(features, feature);
+    }
 }
 
 fn example_required_features(

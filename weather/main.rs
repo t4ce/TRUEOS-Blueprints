@@ -1,7 +1,11 @@
 // trueos-blueprint: features=["tokio-runtime"]
 
 use trueos::{net_fetch, ui2, vgfx_hosted, vsys};
-use trueos_blueprint::{bp_error, bp_info, runtime, time};
+use trueos_blueprint::{
+    bp_error, bp_info,
+    platform::{String, ToString, Vec, format, vec},
+    runtime, time,
+};
 
 const WINDOW_TITLE: &str = "Weather BP";
 const WINDOW_X: i32 = 72;
