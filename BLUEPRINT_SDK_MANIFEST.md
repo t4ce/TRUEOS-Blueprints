@@ -80,6 +80,28 @@ This split gives the cleanest maintenance path for standard library hotfixing:
 
 It also keeps the blueprint packer understandable. The packer can stay focused on transforming an app tree into a distributable bundle.
 
+## Compatibility Phases
+
+The SDK should expose its platform work as an ordered compatibility ladder instead of a flat pile of patches:
+
+1. target and cfg phase
+2. libc surface phase
+3. std contract phase
+4. tokio platform phase
+
+The important rule is that Tokio is not the first compatibility layer.
+Tokio comes after the std contract is mapped well enough that async crates are no longer compensating for missing baseline OS semantics.
+
+That gives TRUEOS a clear story:
+
+- target phase decides `os`, `env`, `target-family`, and linker policy
+- libc phase supplies the Unix and newlib contract that upstream `std` expects to see
+- std phase reroutes stable platform behavior such as time, fs, env, and thread-adjacent hooks into TRUEOS-owned implementations
+- Tokio phase maps a relatively large async/runtime subset onto TRUEOS platform services once the std layer is already coherent
+
+This keeps Tokio as a deliberate SDK acceleration layer rather than a substitute for missing std ownership.
+It also lets us adopt broad Tokio-backed behavior only where TRUEOS primitives are already proven.
+
 ## Proposed Layout
 
 ```text
@@ -183,13 +205,36 @@ components = ["core", "compiler_builtins", "alloc", "std", "panic_abort"]
 enabled = ["libc"]
 optional = ["std", "tokio"]
 
+[overlay_policy]
+apply_order = ["libc", "std", "tokio"]
+tokio_requires = ["std"]
+
 [policy]
 app_root_cwd = true
 reroute_std_fs = true
 reroute_std_time = true
+tokio_after_std = true
 ```
 
 This makes cfg policy and std hotfix policy inspectable.
+It also makes the Tokio step explicit instead of leaving it as an unstructured optional overlay.
+
+## Tokio SDK Step
+
+After the std map is in place, the next clear SDK step is a Tokio platform layer.
+That layer should own mappings like:
+
+- monotonic time and sleep backed by TRUEOS time services
+- runtime park and wake behavior backed by TRUEOS poll or host-yield hooks
+- blocking pool fallback behavior where TRUEOS does not yet have full condvar semantics
+- async networking glue where TRUEOS already has a proven socket or selector path
+
+This is a valid large-subset strategy because Tokio already centralizes a lot of runtime behavior behind a smaller set of platform seams.
+The SDK can use that to unlock a broad async ecosystem without pushing app crates into local workarounds.
+
+The constraint remains the same: Tokio mapping should extend the SDK after std, not replace the std layer.
+If an issue exists because upstream `std` assumes Unix or libc behavior, fix that in the std or libc phase first.
+If an issue exists because async runtime machinery needs a TRUEOS host hook, that belongs in the Tokio SDK phase.
 
 ## Migration Path
 
@@ -197,8 +242,9 @@ This makes cfg policy and std hotfix policy inspectable.
 2. Move the canonical blueprint target spec under an explicit SDK root.
 3. Move source overlay policy under that SDK root.
 4. Add a small SDK manifest that declares cfg and std behavior.
-5. Emit a bundle manifest into each `.bp` artifact.
-6. Stop solving platform mismatches inside per-app vendored crates when the issue is really SDK-owned.
+5. Make the std-to-Tokio compatibility order explicit in that SDK manifest.
+6. Emit a bundle manifest into each `.bp` artifact.
+7. Stop solving platform mismatches inside per-app vendored crates when the issue is really SDK-owned.
 
 ## Immediate Practical Guidance
 

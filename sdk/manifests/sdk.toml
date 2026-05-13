@@ -4,6 +4,9 @@ manifest-version = 1
 id = "trueos-blueprint-sdk"
 version = "0.1.0"
 
+[compat]
+phases = ["target", "libc", "std", "tokio"]
+
 [target]
 spec = "sdk/targets/trueos-blueprint.json"
 os = "trueos"
@@ -19,7 +22,13 @@ components = ["core", "compiler_builtins", "alloc", "std", "panic_abort"]
 enabled = ["libc"]
 optional = ["std", "tokio"]
 
+[overlay_policy]
+apply_order = ["libc", "std", "tokio"]
+tokio_requires = ["std"]
+tokio_role = "map proven async, time, poll, and runtime subsets onto TRUEOS platform services after the std contract is in place"
+
 [policy]
 app_root_cwd = true
 reroute_std_fs = true
 reroute_std_time = true
+tokio_after_std = true
