@@ -4,6 +4,10 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+mod build_plan;
+
+use build_plan::{resolve_build_settings, BuildFlavor, BuildSettings, BuildTarget};
+
 #[derive(Clone)]
 struct ExampleSpec {
     name: String,
@@ -14,25 +18,6 @@ struct PackageAppSpec {
     name: String,
     dir: PathBuf,
     manifest_path: PathBuf,
-}
-
-enum BuildTarget {
-    Package,
-    Example(String),
-}
-
-enum BuildFlavor {
-    TokioStd,
-    ThinNoStd,
-}
-
-impl BuildFlavor {
-    fn cache_label(&self) -> &'static str {
-        match self {
-            BuildFlavor::TokioStd => "tokio-platform",
-            BuildFlavor::ThinNoStd => "thin-nostd",
-        }
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -60,17 +45,6 @@ impl CargoProfile {
 struct CratePatch {
     name: String,
     path: PathBuf,
-}
-
-struct BuildSettings {
-    flavor: BuildFlavor,
-    source_path: PathBuf,
-    has_global_allocator: bool,
-    has_panic_handler: bool,
-    needs_tokio_net: bool,
-    needs_no_std_shim: bool,
-    needs_entry_shim: bool,
-    extra_features: Vec<String>,
 }
 
 const CARGO_CACHE_DIR_ENV: &str = "TRUEOS_BLUEPRINT_CARGO_CACHE_DIR";
@@ -253,7 +227,7 @@ fn build_one_target_to(
     } else {
         cargo_profile
     };
-    let build_settings = build_settings(&app_dir, &manifest_path, &build_target)?;
+    let build_settings = resolve_build_settings(&app_dir, &manifest_path, &build_target)?;
 
     let output_name = match &build_target {
         BuildTarget::Package => package_name(&manifest_path)?,
@@ -327,7 +301,7 @@ fn build_one_target_to(
             &declared_features,
         );
     }
-    if !build_settings.has_panic_handler {
+    if matches!(build_settings.flavor, BuildFlavor::ThinNoStd) && !build_settings.has_panic_handler {
         push_declared_feature(
             &mut extra_features,
             "thin-default-panic-handler",
@@ -1272,9 +1246,6 @@ fn package_app_specs(app_dir: &Path) -> Result<Vec<PackageAppSpec>, String> {
         if !manifest_path.is_file() {
             continue;
         }
-        if !package_app_auto_enabled(&manifest_path)? {
-            continue;
-        }
 
         let name = package_name(&manifest_path)?;
         specs.push(PackageAppSpec {
@@ -1285,30 +1256,6 @@ fn package_app_specs(app_dir: &Path) -> Result<Vec<PackageAppSpec>, String> {
     }
     specs.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(specs)
-}
-
-fn package_app_auto_enabled(manifest_path: &Path) -> Result<bool, String> {
-    let cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
-    let mut in_metadata = false;
-    for line in cargo_toml.lines() {
-        let trimmed = line.split('#').next().unwrap_or("").trim();
-        if trimmed.starts_with('[') {
-            in_metadata = trimmed == "[package.metadata.trueos-blueprint]";
-            continue;
-        }
-        if !in_metadata {
-            continue;
-        }
-        let Some((key, value)) = trimmed.split_once('=') else {
-            continue;
-        };
-        if matches!(key.trim(), "app" | "auto-package" | "package")
-            && matches!(value.trim(), "false")
-        {
-            return Ok(false);
-        }
-    }
-    Ok(true)
 }
 
 fn package_blueprint_profile(manifest_path: &Path) -> Result<Option<CargoProfile>, String> {
@@ -1443,149 +1390,6 @@ fn parse_string_array(value: &str) -> Vec<String> {
         .filter(|item| !item.is_empty())
         .map(|item| item.trim_matches('"').to_string())
         .collect()
-}
-
-fn build_settings(
-    app_dir: &Path,
-    manifest_path: &Path,
-    build_target: &BuildTarget,
-) -> Result<BuildSettings, String> {
-    let source_path = match build_target {
-        BuildTarget::Package => package_source_path(app_dir)?,
-        BuildTarget::Example(name) => example_source_path(app_dir, manifest_path, name)?,
-    };
-    let source = fs::read_to_string(&source_path)
-        .map_err(|err| format!("failed to read {}: {err}", source_path.display()))?;
-    let needs_tokio_net = source_needs_tokio_net(&source);
-    let explicit_no_std = source_is_explicit_no_std(&source);
-    let flavor = if !source_is_explicit_no_std(&source)
-        || needs_tokio_net
-        || source.contains("trueos_blueprint")
-        || source.contains("trueos_blueprint::")
-        || source.contains("tokio::")
-    {
-        BuildFlavor::TokioStd
-    } else {
-        BuildFlavor::ThinNoStd
-    };
-    let mut extra_features = blueprint_feature_directives(&source);
-    if matches!(flavor, BuildFlavor::TokioStd) {
-        push_feature(&mut extra_features, "tokio-runtime");
-    }
-    if needs_tokio_net {
-        push_feature(&mut extra_features, "tokio-net-probe");
-    }
-    Ok(BuildSettings {
-        flavor,
-        source_path,
-        has_global_allocator: source.contains("#[global_allocator]"),
-        has_panic_handler: source.contains("#[panic_handler]"),
-        needs_tokio_net,
-        needs_no_std_shim: !explicit_no_std,
-        needs_entry_shim: source.contains("fn main(") && !source.contains("#![no_main]"),
-        extra_features,
-    })
-}
-
-fn package_source_path(app_dir: &Path) -> Result<PathBuf, String> {
-    for candidate in [app_dir.join("src/main.rs"), app_dir.join("src/lib.rs")] {
-        if candidate.is_file() {
-            return Ok(candidate);
-        }
-    }
-
-    Err(format!(
-        "missing package source; expected src/main.rs or src/lib.rs under {}",
-        app_dir.display()
-    ))
-}
-
-fn source_needs_tokio_net(source: &str) -> bool {
-    source.contains("tokio::net")
-        || source.contains("trueos_blueprint::net")
-        || source.contains("current_thread_net")
-        || source.contains("net::TcpListener")
-        || source.contains("net::TcpStream")
-        || source.contains("net::UdpSocket")
-        || source.contains("net::mio")
-        || source.contains("mio::net")
-        || source.contains("socket2::")
-}
-
-fn source_is_explicit_no_std(source: &str) -> bool {
-    source.contains("#![no_std]") || source.contains("#![cfg_attr(not(test), no_std)]")
-}
-
-fn blueprint_feature_directives(source: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    for line in source.lines() {
-        let Some((_, suffix)) = line.split_once("trueos-blueprint:") else {
-            continue;
-        };
-        let Some((key, value)) = suffix.split_once('=') else {
-            continue;
-        };
-        if key.trim() != "features" {
-            continue;
-        }
-        for feature in parse_string_array(value.trim()) {
-            push_feature(&mut out, &feature);
-        }
-    }
-    out
-}
-
-fn example_source_path(
-    app_dir: &Path,
-    manifest_path: &Path,
-    example_name: &str,
-) -> Result<PathBuf, String> {
-    let cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
-    let mut in_example = false;
-    let mut current_name: Option<String> = None;
-    let mut current_path: Option<String> = None;
-
-    for line in cargo_toml.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with('[') {
-            if in_example
-                && current_name.as_deref() == Some(example_name)
-                && let Some(path) = current_path.take()
-            {
-                return Ok(app_dir.join(path));
-            }
-            in_example = trimmed == "[[example]]";
-            if in_example {
-                current_name = None;
-                current_path = None;
-            }
-            continue;
-        }
-        if !in_example {
-            continue;
-        }
-        if trimmed.starts_with("name") {
-            if let Some((_, value)) = trimmed.split_once('=') {
-                current_name = Some(value.trim().trim_matches('"').to_string());
-            }
-        } else if trimmed.starts_with("path")
-            && let Some((_, value)) = trimmed.split_once('=')
-        {
-            current_path = Some(value.trim().trim_matches('"').to_string());
-        }
-    }
-
-    if in_example
-        && current_name.as_deref() == Some(example_name)
-        && let Some(path) = current_path
-    {
-        return Ok(app_dir.join(path));
-    }
-
-    Err(format!(
-        "missing path for example {example_name} in {}",
-        manifest_path.display()
-    ))
 }
 
 fn entry_hint_hex(linked: &Path) -> String {
