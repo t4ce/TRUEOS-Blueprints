@@ -118,49 +118,34 @@ fn render_petersen(width: u32, height: u32) -> Vec<u8> {
         Point::new(27, 104),
     ];
     let inner = [
-        Point::new(140, 89),
-        Point::new(189, 125),
-        Point::new(170, 183),
-        Point::new(110, 183),
-        Point::new(91, 125),
+        Point::new(140, 76),
+        Point::new(191, 114),
+        Point::new(171, 174),
+        Point::new(109, 174),
+        Point::new(89, 114),
     ];
-    let outer_fill = [RED, BLUE, GREEN, RED, BLUE];
-    let inner_fill = [BLUE, RED, RED, GREEN, GREEN];
 
-    for i in 0..5 {
-        draw_line(
-            &mut pixels,
-            width,
-            height,
-            outer[i],
-            outer[(i + 1) % 5],
-            2,
-            EDGE,
-        );
-        draw_line(&mut pixels, width, height, outer[i], inner[i], 2, EDGE);
-        draw_line(
-            &mut pixels,
-            width,
-            height,
-            inner[i],
-            inner[(i + 2) % 5],
-            2,
-            EDGE,
-        );
+    for idx in 0..5 {
+        draw_line(pixels.as_mut_slice(), width, height, outer[idx], outer[(idx + 1) % 5], 2, EDGE);
+        draw_line(pixels.as_mut_slice(), width, height, inner[idx], inner[(idx + 2) % 5], 2, BLUE);
+        draw_line(pixels.as_mut_slice(), width, height, outer[idx], inner[idx], 2, GREEN);
     }
 
-    for i in 0..5 {
-        draw_disc(&mut pixels, width, height, outer[i], 12, OUTLINE);
-        draw_disc(&mut pixels, width, height, outer[i], 9, outer_fill[i]);
-        draw_disc(&mut pixels, width, height, inner[i], 12, OUTLINE);
-        draw_disc(&mut pixels, width, height, inner[i], 9, inner_fill[i]);
+    for point in outer {
+        draw_disc(pixels.as_mut_slice(), width, height, point, 9, OUTLINE);
+        draw_disc(pixels.as_mut_slice(), width, height, point, 7, RED);
+    }
+    for point in inner {
+        draw_disc(pixels.as_mut_slice(), width, height, point, 8, OUTLINE);
+        draw_disc(pixels.as_mut_slice(), width, height, point, 6, BLUE);
     }
 
     pixels
 }
 
-fn open_window() -> Option<ui2::SurfaceWindow> {
-    ui2::SurfaceWindow::create(
+#[unsafe(no_mangle)]
+pub extern "C" fn main() {
+    let Some(window) = ui2::SurfaceWindow::create(
         WINDOW_TITLE,
         ui2::Rect {
             x: WINDOW_X,
@@ -169,29 +154,24 @@ fn open_window() -> Option<ui2::SurfaceWindow> {
             height: WINDOW_HEIGHT,
         },
         TEX_ID,
-    )
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn main() {
-    let Some(window) = open_window() else {
+    ) else {
         vsys::log_error("petersen bp: window create failed\n");
         return;
     };
 
     let pixels = render_petersen(WINDOW_WIDTH, WINDOW_HEIGHT);
-    if !vgfx_hosted::upload_texture_rgba_image_now(
+    let ok = vgfx_hosted::upload_texture_rgba_image_now(
         TEX_ID,
         WINDOW_WIDTH,
         WINDOW_HEIGHT,
-        pixels.as_slice(),
-    ) {
+        &pixels,
+    );
+    if !ok {
         vsys::log_error("petersen bp: texture upload failed\n");
         return;
     }
-    let _ = window.id().request_repaint();
-    vsys::log_info("petersen bp: rendered\n");
 
+    let _ = window.id().request_repaint();
     loop {
         vsys::poll_once();
     }

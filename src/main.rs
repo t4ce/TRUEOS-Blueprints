@@ -129,7 +129,7 @@ fn run() -> Result<(), String> {
                 continue;
             }
 
-            let package_dir = app_dir.join(&example_name);
+            let package_dir = app_dir.join("apps").join(&example_name);
             let package_manifest = package_dir.join("Cargo.toml");
             if package_manifest.is_file() {
                 build_one_target_to(
@@ -1511,7 +1511,17 @@ fn link_kernel_sibling_for_staged_app(app_dir: &Path, work_dir: &Path) -> Result
         return Ok(());
     };
     let staging_root = work_dir.parent().unwrap_or(work_dir);
+    let app_target_root = app_dir.join("target");
 
+    for ancestor in app_dir.ancestors() {
+        let blueprint_trueos = ancestor.join("trueos");
+        if blueprint_trueos.join("Cargo.toml").is_file() {
+            link_staged_sibling(&staging_root.join("trueos"), &blueprint_trueos)?;
+            break;
+        }
+    }
+
+    link_staged_sibling(&app_target_root.join("crates"), &kernel_root.join("crates"))?;
     link_staged_sibling(&staging_root.join("TRUEOS"), kernel_root)?;
     link_staged_sibling(&staging_root.join("vendor"), &kernel_root.join("vendor"))?;
     link_staged_sibling(&staging_root.join("crates"), &kernel_root.join("crates"))?;
@@ -1755,7 +1765,9 @@ fn package_name(manifest_path: &Path) -> Result<String, String> {
 
 fn package_app_specs(app_dir: &Path) -> Result<Vec<PackageAppSpec>, String> {
     let mut specs = Vec::new();
-    for entry in fs::read_dir(app_dir).map_err(io_string)? {
+    let apps_dir = app_dir.join("apps");
+    let scan_root = if apps_dir.is_dir() { &apps_dir } else { app_dir };
+    for entry in fs::read_dir(scan_root).map_err(io_string)? {
         let entry = entry.map_err(io_string)?;
         let file_type = entry.file_type().map_err(io_string)?;
         if !file_type.is_dir() {
@@ -1763,10 +1775,6 @@ fn package_app_specs(app_dir: &Path) -> Result<Vec<PackageAppSpec>, String> {
         }
 
         let dir = entry.path();
-        if !dir.join("src/main.rs").is_file() {
-            continue;
-        }
-
         let manifest_path = dir.join("Cargo.toml");
         if !manifest_path.is_file() {
             continue;

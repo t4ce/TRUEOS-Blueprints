@@ -1,0 +1,12 @@
+[package]
+name = "petersen"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = []
+thin-default-global-allocator = ["trueos/default-global-allocator"]
+thin-default-panic-handler = ["trueos/default-panic-handler"]
+
+[dependencies]
+trueos = { path = "../../trueos" }

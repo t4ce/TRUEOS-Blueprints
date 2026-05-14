@@ -1,3 +1,10 @@
+[build]
+target = "x86_64-unknown-linux-gnu"
+target-dir = "target"
+
+[unstable]
+build-std = ["std", "core", "alloc", "panic_abort"]
+
 [alias]
-bp = "run --manifest-path host-cli/Cargo.toml -Z build-std=std,core,alloc,panic_abort --target x86_64-unknown-linux-gnu --bin trueos-blueprint --"
-apps = "run --manifest-path host-cli/Cargo.toml -Z build-std=std,core,alloc,panic_abort --target x86_64-unknown-linux-gnu --bin trueos-blueprint --"
+bp = "run --bin trueos-blueprint --"
+apps = "run --bin trueos-blueprint --"
