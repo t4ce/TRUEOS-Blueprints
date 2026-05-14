@@ -3,7 +3,7 @@
 
 use core::panic::PanicInfo;
 use trueos::{TrueosAllocator, panic_abort};
-use trueos::{ui2, vsys};
+use trueos::{platform, ui2};
 
 #[global_allocator]
 static GLOBAL_ALLOCATOR: TrueosAllocator = TrueosAllocator;
@@ -37,21 +37,21 @@ pub extern "C" fn main() {
         UI2_MANDELBROT_TEX_ID,
         false,
     ) else {
-        vsys::log_error("mandelbrot bp: ui2 surface window create failed\n");
+        platform::log_error("mandelbrot bp: ui2 surface window create failed\n");
         return;
     };
 
     let _ = surface.id().set_title("Seahorse Valley");
-    vsys::sleep_ms(1);
+    platform::sleep_ms(1);
 
     let mut ticks = 0u64;
     loop {
         if !surface.render_mandelbrot(ticks, TICK_HZ) {
             let _ = surface.id().set_title("Seahorse Valley (unavailable)");
-            vsys::log_error("mandelbrot bp: render queue failed\n");
+            platform::log_error("mandelbrot bp: render queue failed\n");
             break;
         }
         ticks = ticks.saturating_add(FRAME_MS);
-        vsys::sleep_ms(FRAME_MS);
+        platform::sleep_ms(FRAME_MS);
     }
 }

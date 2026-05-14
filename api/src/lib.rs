@@ -22,6 +22,7 @@ pub use hid as input;
 pub mod rand {
     pub use crate::tyche::*;
 }
+pub mod platform;
 pub mod tyche;
 pub mod ui2;
 pub mod vfs;
@@ -29,54 +30,6 @@ pub mod vgfx;
 pub mod vgfx_hosted;
 pub mod vnet;
 pub mod vshell;
-pub mod vsys;
-
-pub mod platform {
-    pub use alloc::borrow::{Cow, ToOwned};
-    pub use alloc::boxed::Box;
-    pub use alloc::format;
-    pub use alloc::string::{String, ToString};
-    pub use alloc::sync::Arc;
-    pub use alloc::vec;
-    pub use alloc::vec::Vec;
-
-    pub mod future {
-        pub use core::future::{Future, IntoFuture, pending, poll_fn};
-    }
-
-    #[cfg(feature = "tokio-runtime")]
-    pub mod io {
-        pub use tokio::io::{Error, ErrorKind, Result, SeekFrom};
-    }
-
-    #[cfg(feature = "tokio-runtime")]
-    pub mod path {
-        #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-        pub use std::path::{Component, Components, Path, PathBuf};
-        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-        pub use tokio::path::{Component, Components, Path, PathBuf};
-    }
-
-    #[cfg(feature = "tokio-runtime")]
-    pub mod thread {
-        #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-        pub use std::thread::{Thread, ThreadId, current};
-        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-        pub use tokio::thread::{Thread, ThreadId, current};
-
-        #[inline]
-        pub fn yield_now() {
-            #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-            {
-                crate::vsys::poll_once();
-            }
-            #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-            {
-                std::thread::yield_now();
-            }
-        }
-    }
-}
 
 pub mod diag {
     #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
@@ -136,7 +89,7 @@ pub mod diag {
             Level::Error => 2,
             Level::Warn | Level::Info | Level::Debug | Level::Trace => 1,
         };
-        crate::vsys::write_log_stream(stream, line.as_str());
+        crate::platform::write_log_stream(stream, line.as_str());
     }
 
     #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
@@ -274,7 +227,7 @@ unsafe impl GlobalAlloc for TrueosAllocator {
 }
 
 pub fn panic_abort(message: &str) -> ! {
-    vsys::log_error(message);
+    platform::log_error(message);
     loop {
         core::hint::spin_loop();
     }
@@ -309,7 +262,6 @@ pub mod prelude {
     pub use crate::tokio;
     pub use crate::ui2;
     pub use crate::vgfx;
-    pub use crate::vsys;
 }
 
 #[macro_export]

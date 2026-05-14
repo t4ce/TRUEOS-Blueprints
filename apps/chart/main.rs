@@ -9,7 +9,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::panic::PanicInfo;
 use trueos::ui2::{self, gfx};
-use trueos::vsys;
+use trueos::platform;
 use trueos::{panic_abort, TrueosAllocator};
 
 #[global_allocator]
@@ -306,19 +306,19 @@ fn open_window() -> Option<ui2::SurfaceWindow> {
 #[unsafe(no_mangle)]
 pub extern "C" fn main() {
     let Some(window) = open_window() else {
-        vsys::log_error("chart bp: window create failed\n");
+        platform::log_error("chart bp: window create failed\n");
         return;
     };
 
     let pixels = compose_chart(WINDOW_WIDTH, WINDOW_HEIGHT);
     if !gfx::upload_texture_rgba_image_now(TEX_ID, WINDOW_WIDTH, WINDOW_HEIGHT, pixels.as_slice()) {
-        vsys::log_error("chart bp: texture upload failed\n");
+        platform::log_error("chart bp: texture upload failed\n");
         return;
     }
     let _ = window.id().request_repaint();
-    vsys::log_info("chart bp: rendered sine axis chart\n");
+    platform::log_info("chart bp: rendered sine axis chart\n");
 
     loop {
-        vsys::poll_once();
+        platform::poll_once();
     }
 }

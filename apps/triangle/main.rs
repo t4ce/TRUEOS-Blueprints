@@ -3,7 +3,7 @@
 
 use core::panic::PanicInfo;
 use trueos::ui2::{self, gfx};
-use trueos::vsys;
+use trueos::platform;
 use trueos::{panic_abort, TrueosAllocator};
 
 #[global_allocator]
@@ -65,7 +65,7 @@ fn panic(_info: &PanicInfo<'_>) -> ! {
 #[unsafe(no_mangle)]
 pub extern "C" fn main() {
     let Some(window) = open_triangle_window() else {
-        vsys::log_error("triangle bp: ui2 surface window create failed\n");
+        platform::log_error("triangle bp: ui2 surface window create failed\n");
         return;
     };
 
@@ -78,12 +78,12 @@ pub extern "C" fn main() {
     loop {
         let vertices = [points[0].vertex(), points[1].vertex(), points[2].vertex()];
         if !window.render_rgb_triangles(CLEAR_RGB, &vertices) {
-            vsys::log_error("triangle bp: render failed\n");
+            platform::log_error("triangle bp: render failed\n");
             break;
         }
         for point in &mut points {
             point.rotate_step();
         }
-        vsys::sleep_ms(FRAME_MS);
+        platform::sleep_ms(FRAME_MS);
     }
 }

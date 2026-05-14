@@ -8,7 +8,7 @@ use core::fmt::Write as _;
 use core::panic::PanicInfo;
 
 use trueos::ui2::{self, gfx};
-use trueos::vsys;
+use trueos::platform;
 use trueos::{panic_abort, TrueosAllocator};
 
 #[global_allocator]
@@ -43,7 +43,7 @@ fn open_window() -> Option<ui2::SurfaceWindow> {
 #[unsafe(no_mangle)]
 pub extern "C" fn main() {
     let Some(window) = open_window() else {
-        vsys::log_error("retrosun bp: window create failed\n");
+        platform::log_error("retrosun bp: window create failed\n");
         return;
     };
 
@@ -59,13 +59,13 @@ pub extern "C" fn main() {
         let svg = compose_svg(frame);
         let rc = gfx::upload_svg_to_texture(TEX_ID, svg.as_bytes());
         if rc != 0 {
-            vsys::log_errorf(format_args!("retrosun bp: svg upload failed rc={}\n", rc));
+            platform::log_errorf(format_args!("retrosun bp: svg upload failed rc={}\n", rc));
             break;
         }
         let _ = window_id.request_repaint();
         frame = frame.wrapping_add(1);
-        vsys::poll_once();
-        vsys::sleep_ms(FRAME_MS);
+        platform::poll_once();
+        platform::sleep_ms(FRAME_MS);
     }
 }
 

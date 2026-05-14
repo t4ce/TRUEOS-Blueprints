@@ -6,7 +6,7 @@ extern crate alloc;
 use alloc::vec::Vec;
 use core::panic::PanicInfo;
 use trueos::ui2::{self, gfx};
-use trueos::vsys;
+use trueos::platform;
 use trueos::{input, panic_abort, TrueosAllocator};
 use trueos_tetris::{Lcg32, NoopEvents, Rotation};
 
@@ -516,7 +516,7 @@ pub extern "C" fn main() {
         },
         TEX_ID,
     ) else {
-        vsys::log_error("full_tetris bp: surface window create failed\n");
+        platform::log_error("full_tetris bp: surface window create failed\n");
         return;
     };
 
@@ -525,6 +525,6 @@ pub extern "C" fn main() {
         drain_input(&mut app);
         app.tick(16);
         render(&app, &window);
-        vsys::sleep_ms(16);
+        platform::sleep_ms(16);
     }
 }

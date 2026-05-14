@@ -8,7 +8,7 @@ use alloc::string::String;
 use core::fmt::Write as _;
 use core::panic::PanicInfo;
 use trueos::ui2::{self, gfx};
-use trueos::vsys;
+use trueos::platform;
 use trueos::{input, panic_abort, tyche, TrueosAllocator};
 
 #[global_allocator]
@@ -144,7 +144,7 @@ impl Game {
         for slot in 0..4 {
             let (code, _) = COUNTRIES[self.options[slot]];
             let op_id = trueos_flags::startFlagSVGFetch(code);
-            vsys::log_infof(format_args!(
+            platform::log_infof(format_args!(
                 "flags bp: fetch start slot={} code={} op_id={}\n",
                 slot, code, op_id
             ));
@@ -174,7 +174,7 @@ impl Game {
             }
             if rc > 0 {
                 let svg = trueos_flags::readFlagSVGFetch(fetch.op_id);
-                vsys::log_infof(format_args!(
+                platform::log_infof(format_args!(
                     "flags bp: fetch done slot={} op_id={} rc={} svg_len={}\n",
                     slot,
                     fetch.op_id,
@@ -186,7 +186,7 @@ impl Game {
                     changed = true;
                 }
             } else {
-                vsys::log_errorf(format_args!(
+                platform::log_errorf(format_args!(
                     "flags bp: fetch failed slot={} op_id={} rc={}\n",
                     slot, fetch.op_id, rc
                 ));
@@ -412,7 +412,7 @@ fn present(window: &ui2::SurfaceWindow, game: &Game) {
     if rc == 0 {
         let _ = window.id().request_repaint();
     } else {
-        vsys::log_errorf(format_args!("flags bp: svg upload failed rc={}\n", rc));
+        platform::log_errorf(format_args!("flags bp: svg upload failed rc={}\n", rc));
     }
 }
 
@@ -469,7 +469,7 @@ fn handle_cursor(
 #[unsafe(no_mangle)]
 pub extern "C" fn main() {
     let Some(window) = open_window() else {
-        vsys::log_error("flags bp: surface window create failed\n");
+        platform::log_error("flags bp: surface window create failed\n");
         return;
     };
     let _ = window.id().set_resize_maintain_aspect(true);
@@ -486,7 +486,7 @@ pub extern "C" fn main() {
     let mut last_buttons = 0u32;
 
     present(&window, &game);
-    vsys::log_info("flags bp: quiz ready\n");
+    platform::log_info("flags bp: quiz ready\n");
 
     loop {
         let mut changed = false;
@@ -497,7 +497,7 @@ pub extern "C" fn main() {
         if changed {
             present(&window, &game);
         }
-        vsys::poll_once();
-        vsys::sleep_ms(FRAME_MS);
+        platform::poll_once();
+        platform::sleep_ms(FRAME_MS);
     }
 }

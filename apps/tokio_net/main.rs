@@ -1,6 +1,6 @@
 use core::net::{Ipv4Addr, SocketAddr};
 
-use trueos::vsys;
+use trueos::platform;
 use trueos::{
     bp_error, bp_info, net,
     platform::{format, thread},
@@ -168,7 +168,7 @@ async fn probe_mio_udp_bind() -> Result<(), &'static str> {
                 return Ok(());
             }
             Err(_) if time::Instant::now() < deadline => {
-                vsys::poll_once();
+                platform::poll_once();
                 time::sleep(time::Duration::from_millis(PROBE_WAIT_SLICE_MS)).await;
             }
             Err(_) => return Err("mio.net.udp.bind"),
@@ -183,7 +183,7 @@ async fn probe_udp_bind() -> Result<(), &'static str> {
         match try_probe_udp_bind().await {
             Ok(()) => return Ok(()),
             Err(stage) if time::Instant::now() < deadline => {
-                vsys::poll_once();
+                platform::poll_once();
                 time::sleep(time::Duration::from_millis(PROBE_WAIT_SLICE_MS)).await;
                 if stage == "net.udp.bind" {
                     continue;

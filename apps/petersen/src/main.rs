@@ -7,7 +7,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::panic::PanicInfo;
 use trueos::ui2::{self, gfx};
-use trueos::vsys;
+use trueos::platform;
 use trueos::{panic_abort, TrueosAllocator};
 
 #[global_allocator]
@@ -156,19 +156,19 @@ pub extern "C" fn main() {
         },
         TEX_ID,
     ) else {
-        vsys::log_error("petersen bp: window create failed\n");
+        platform::log_error("petersen bp: window create failed\n");
         return;
     };
 
     let pixels = render_petersen(WINDOW_WIDTH, WINDOW_HEIGHT);
     let ok = gfx::upload_texture_rgba_image_now(TEX_ID, WINDOW_WIDTH, WINDOW_HEIGHT, &pixels);
     if !ok {
-        vsys::log_error("petersen bp: texture upload failed\n");
+        platform::log_error("petersen bp: texture upload failed\n");
         return;
     }
 
     let _ = window.id().request_repaint();
     loop {
-        vsys::poll_once();
+        platform::poll_once();
     }
 }

@@ -9,7 +9,7 @@ use alloc::vec::Vec;
 use core::panic::PanicInfo;
 
 use trueos::ui2::{self, gfx};
-use trueos::vsys;
+use trueos::platform;
 use trueos::{panic_abort, TrueosAllocator};
 use trueos_gfx_core::{push_tex_quad_px, Rgba8, ViewTransform, TEX_VERTEX_SIZE};
 
@@ -326,7 +326,7 @@ fn panic(_info: &PanicInfo<'_>) -> ! {
 #[unsafe(no_mangle)]
 pub extern "C" fn main() {
     let Some(surface) = create_particle_demo_window() else {
-        vsys::log_error("particle bp: ui2 surface window create failed\n");
+        platform::log_error("particle bp: ui2 surface window create failed\n");
         return;
     };
 
@@ -335,7 +335,7 @@ pub extern "C" fn main() {
     let mut rng = DemoRng::new(0x51D3_1000);
     let sprite_svg = normalized_particle_svg();
     if gfx::upload_svg_to_texture(UI2_PARTICLE_DEMO_SPRITE_TEX_ID, sprite_svg.as_bytes()) != 0 {
-        vsys::log_error("particle bp: svg upload failed\n");
+        platform::log_error("particle bp: svg upload failed\n");
         return;
     }
     let sprite_size = gfx::texture_dimensions(UI2_PARTICLE_DEMO_SPRITE_TEX_ID).unwrap_or((1, 1));
@@ -363,9 +363,9 @@ pub extern "C" fn main() {
             UI2_PARTICLE_DEMO_CLEAR_RGB,
             verts.as_slice(),
         ) {
-            vsys::log_error("particle bp: render queue failed\n");
+            platform::log_error("particle bp: render queue failed\n");
             break;
         }
-        vsys::sleep_ms(UI2_PARTICLE_DEMO_FRAME_MS);
+        platform::sleep_ms(UI2_PARTICLE_DEMO_FRAME_MS);
     }
 }

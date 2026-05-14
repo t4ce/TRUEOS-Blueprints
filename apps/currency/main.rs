@@ -6,7 +6,7 @@ use trueos::{
     platform::{format, vec, String, ToString, Vec},
     runtime, time,
 };
-use trueos::{vnet, vsys};
+use trueos::{platform, vnet};
 
 const UI2_CURRENCY_TEX_ID: u32 = 4_723;
 const UI2_CURRENCY_WINDOW_TITLE: &str = "Currency";
@@ -96,7 +96,7 @@ fn main() {
         present_snapshot(&surface, &snapshot);
 
         loop {
-            vsys::poll_once();
+            platform::poll_once();
             time::sleep(time::Duration::from_millis(IDLE_SLEEP_MS)).await;
         }
     });

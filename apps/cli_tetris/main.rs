@@ -3,7 +3,7 @@
 
 use core::panic::PanicInfo;
 use trueos::{TrueosAllocator, panic_abort};
-use trueos::{vshell, vsys};
+use trueos::{platform, vshell};
 use trueos_tetris::shell::{ShellControl, ShellIo};
 
 #[global_allocator]
@@ -34,7 +34,7 @@ pub extern "C" fn main() {
     app.set_viewport_top_row(1);
 
     let io = AttachedShell;
-    vsys::log_info("cli_tetris bp: attached shell mode\n");
+    platform::log_info("cli_tetris bp: attached shell mode\n");
     vshell::attached_write_str("\x1b[2J\x1b[H\x1b[?25l");
     app.draw(&io);
     app.finalize_frame();
@@ -52,6 +52,6 @@ pub extern "C" fn main() {
             app.draw(&io);
             app.finalize_frame();
         }
-        vsys::sleep_ms(16);
+        platform::sleep_ms(16);
     }
 }

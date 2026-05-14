@@ -6,7 +6,7 @@ extern crate alloc;
 use alloc::{format, string::String};
 use core::panic::PanicInfo;
 use trueos::ui2::{self, gfx};
-use trueos::vsys;
+use trueos::platform;
 use trueos::{panic_abort, TrueosAllocator};
 
 #[global_allocator]
@@ -40,7 +40,7 @@ fn open_window() -> Option<ui2::SurfaceWindow> {
 #[unsafe(no_mangle)]
 pub extern "C" fn main() {
     let Some(window) = open_window() else {
-        vsys::log_error("svg_grid bp: window create failed\n");
+        platform::log_error("svg_grid bp: window create failed\n");
         return;
     };
 
@@ -58,7 +58,7 @@ pub extern "C" fn main() {
     }
 
     loop {
-        vsys::poll_once();
+        platform::poll_once();
         let Some(size) = current_content_size(window_id) else {
             continue;
         };
@@ -77,14 +77,14 @@ fn render_svg(window_id: ui2::WindowId, width: u32, height: u32) -> bool {
     let svg = svg_for_texture_size(width, height);
     let rc = gfx::upload_svg_to_texture(TEX_ID, svg.as_bytes());
     if rc != 0 {
-        vsys::log_errorf(format_args!(
+        platform::log_errorf(format_args!(
             "svg_grid bp: svg upload failed rc={} size={}x{}\n",
             rc, width, height
         ));
         return false;
     }
     let _ = window_id.request_repaint();
-    vsys::log_infof(format_args!("svg_grid bp: rendered svg texture {}x{}\n", width, height));
+    platform::log_infof(format_args!("svg_grid bp: rendered svg texture {}x{}\n", width, height));
     true
 }
 
