@@ -1,5 +1,4 @@
 #![no_std]
-#![no_main]
 
 use trueos::logl::{self, level};
 use trueos::{platform, vshell};
@@ -17,8 +16,7 @@ impl ShellIo for AttachedShell {
     }
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn main() {
+fn main() {
     let seed = 0xC11C_7E75;
     let mut app = trueos_tetris::shell::ShellApp::new(seed, 120, 32);
     app.set_terminal_size(120, 32);

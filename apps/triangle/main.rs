@@ -1,5 +1,4 @@
 #![no_std]
-#![no_main]
 
 use trueos::logl::{self, level};
 use trueos::platform;
@@ -53,8 +52,7 @@ fn open_triangle_window() -> Option<ui2::SurfaceWindow> {
     )
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn main() {
+fn main() {
     let Some(window) = open_triangle_window() else {
         logl::log(level::ERROR, "triangle bp: ui2 surface window create failed\n");
         return;

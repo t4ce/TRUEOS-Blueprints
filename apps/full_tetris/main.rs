@@ -1,5 +1,4 @@
 #![no_std]
-#![no_main]
 
 extern crate alloc;
 
@@ -496,8 +495,7 @@ fn drain_input(app: &mut Arcade) {
     }
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn main() {
+fn main() {
     let Some(window) = ui2::SurfaceWindow::create(
         "TRUEOS Arcade",
         ui2::Rect {

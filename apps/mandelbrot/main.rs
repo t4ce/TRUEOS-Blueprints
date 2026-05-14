@@ -1,5 +1,4 @@
 #![no_std]
-#![no_main]
 
 use trueos::logl::{self, level};
 use trueos::{platform, ui2};
@@ -11,8 +10,7 @@ const UI2_MANDELBROT_WINDOW_Z: i32 = 31;
 const FRAME_MS: u64 = 33;
 const TICK_HZ: u64 = 1_000;
 
-#[unsafe(no_mangle)]
-pub extern "C" fn main() {
+fn main() {
     let Some(surface) = ui2::SurfaceWindow::create_with_options(
         "Demo Mandelbrot",
         ui2::Rect {

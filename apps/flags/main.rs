@@ -1,5 +1,4 @@
 #![no_std]
-#![no_main]
 
 extern crate alloc;
 
@@ -463,8 +462,7 @@ fn handle_cursor(
     changed
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn main() {
+fn main() {
     let Some(window) = open_window() else {
         logl::log(level::ERROR, "flags bp: surface window create failed\n");
         return;

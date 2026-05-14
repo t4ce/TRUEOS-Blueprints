@@ -1,5 +1,4 @@
 #![no_std]
-#![no_main]
 
 extern crate alloc;
 
@@ -134,8 +133,7 @@ fn render_petersen(width: u32, height: u32) -> Vec<u8> {
     pixels
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn main() {
+fn main() {
     let Some(window) = ui2::SurfaceWindow::create(
         WINDOW_TITLE,
         ui2::Rect {

@@ -1,5 +1,4 @@
 #![no_std]
-#![no_main]
 
 extern crate alloc;
 
@@ -14,8 +13,7 @@ struct CrateProbe {
     count: u32,
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn main() {
+fn main() {
     logl::log(level::INFO, "crate test hello\n");
 
     match run_probe() {

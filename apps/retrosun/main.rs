@@ -1,5 +1,4 @@
 #![no_std]
-#![no_main]
 
 extern crate alloc;
 
@@ -31,8 +30,7 @@ fn open_window() -> Option<ui2::SurfaceWindow> {
     )
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn main() {
+fn main() {
     let Some(window) = open_window() else {
         logl::log(level::ERROR, "retrosun bp: window create failed\n");
         return;

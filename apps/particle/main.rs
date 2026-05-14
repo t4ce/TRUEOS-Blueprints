@@ -1,5 +1,4 @@
 #![no_std]
-#![no_main]
 
 extern crate alloc;
 
@@ -312,8 +311,7 @@ fn create_particle_demo_window() -> Option<ui2::SurfaceWindow> {
     )
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn main() {
+fn main() {
     let Some(surface) = create_particle_demo_window() else {
         logl::log(level::ERROR, "particle bp: ui2 surface window create failed\n");
         return;
