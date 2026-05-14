@@ -16,10 +16,6 @@ thin-default-panic-handler = ["trueos/default-panic-handler"]
 name = "trueos_blueprint"
 path = "src/lib.rs"
 
-[[bin]]
-name = "trueos-blueprint"
-path = "src/main.rs"
-
 [[example]]
 name = "hello_world"
 path = "hello_world/hello_world.rs"

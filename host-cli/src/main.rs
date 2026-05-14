@@ -1,3 +1,5 @@
+use serde::Deserialize;
+use std::collections::{BTreeMap, HashMap};
 use std::env;
 use std::fs;
 use std::io;
@@ -251,6 +253,8 @@ fn build_one_target_to(
     reset_dir(&work_dir)?;
 
     let source_overlay = source_overlay_patches(app_dir, manifest_path)?;
+    let lock_mismatches = source_overlay_lock_mismatches(app_dir, &source_overlay)?;
+    preflight_source_overlay_version_alignment(app_dir, manifest_path, &lock_mismatches)?;
     let staged_source_overlay = staged_source_overlay(&source_overlay, &work_dir);
     let cargo_manifest_path = staged_manifest_for_overlay(
         app_dir,
@@ -258,6 +262,7 @@ fn build_one_target_to(
         &work_dir,
         &build_settings,
         &source_overlay,
+        &lock_mismatches,
     )?
             .unwrap_or_else(|| manifest_path.to_path_buf());
 
@@ -793,6 +798,7 @@ fn staged_manifest_for_overlay(
     work_dir: &Path,
     build_settings: &BuildSettings,
     source_overlay: &[CratePatch],
+    lock_mismatches: &[LockMismatch],
 ) -> Result<Option<PathBuf>, String> {
     if source_overlay.is_empty()
         && !build_settings.needs_no_std_shim
@@ -801,7 +807,6 @@ fn staged_manifest_for_overlay(
         return Ok(None);
     }
 
-    let mismatches = source_overlay_lock_mismatches(app_dir, source_overlay)?;
     let staged_app_dir = work_dir.join("source-overlay-app");
     copy_app_tree(app_dir, &staged_app_dir)?;
     link_kernel_sibling_for_staged_app(app_dir, work_dir)?;
@@ -814,13 +819,13 @@ fn staged_manifest_for_overlay(
             rewrite_staged_source_for_target(app_dir, &staged_app_dir, build_settings)?;
     let staged_source_overlay = staged_source_overlay(source_overlay, work_dir);
 
-    if mismatches.is_empty() {
+    if lock_mismatches.is_empty() {
         return Ok(Some(staged_manifest));
     }
 
     println!(
         "trueos-blueprint: staged lock overlay: {}",
-        mismatches
+        lock_mismatches
             .iter()
             .map(|mismatch| format!(
                 "{} {}->{}",
@@ -830,7 +835,7 @@ fn staged_manifest_for_overlay(
             .join(",")
     );
 
-    for mismatch in mismatches {
+    for mismatch in lock_mismatches {
         run_staged_lock_overlay_update(&staged_manifest, &staged_source_overlay, &mismatch)?;
     }
 
@@ -886,6 +891,497 @@ struct LockMismatch {
     name: String,
     locked_version: String,
     overlay_version: String,
+}
+
+#[derive(Deserialize)]
+struct CargoMetadata {
+    packages: Vec<MetadataPackage>,
+    resolve: Option<MetadataResolve>,
+}
+
+#[derive(Deserialize)]
+struct MetadataPackage {
+    id: String,
+    name: String,
+    version: String,
+    dependencies: Vec<MetadataDependency>,
+}
+
+#[derive(Deserialize)]
+struct MetadataDependency {
+    name: String,
+    rename: Option<String>,
+    req: String,
+}
+
+#[derive(Deserialize)]
+struct MetadataResolve {
+    nodes: Vec<MetadataNode>,
+}
+
+#[derive(Deserialize)]
+struct MetadataNode {
+    id: String,
+    deps: Vec<MetadataNodeDep>,
+}
+
+#[derive(Deserialize)]
+struct MetadataNodeDep {
+    name: String,
+    pkg: String,
+}
+
+struct VersionAlignmentTarget {
+    overlay_version: String,
+    parsed_overlay_version: SimpleVersion,
+}
+
+struct VersionAlignmentFinding {
+    package_name: String,
+    current_version: String,
+    overlay_version: String,
+    parent_name: String,
+    parent_version: String,
+    req: String,
+}
+
+struct VersionAlignmentReport {
+    checked_targets: usize,
+    compatible_edges: usize,
+    unresolved_edges: usize,
+    unparsed_requirements: usize,
+    incompatible: Vec<VersionAlignmentFinding>,
+}
+
+fn preflight_source_overlay_version_alignment(
+    app_dir: &Path,
+    manifest_path: &Path,
+    lock_mismatches: &[LockMismatch],
+) -> Result<(), String> {
+    if lock_mismatches.is_empty() {
+        return Ok(());
+    }
+
+    let report = match source_overlay_version_alignment(app_dir, manifest_path, lock_mismatches) {
+        Ok(report) => report,
+        Err(err) => {
+            println!("trueos-blueprint: version alignment skipped: {err}");
+            return Ok(());
+        }
+    };
+
+    if report.incompatible.is_empty() {
+        println!(
+            "trueos-blueprint: version alignment: checked {} overlay change(s), {} active edge(s) accept the forced version",
+            report.checked_targets, report.compatible_edges
+        );
+        if report.unresolved_edges > 0 || report.unparsed_requirements > 0 {
+            println!(
+                "trueos-blueprint: version alignment notes: {} unresolved edge(s), {} unparsed requirement(s)",
+                report.unresolved_edges, report.unparsed_requirements
+            );
+        }
+        return Ok(());
+    }
+
+    Err(format!(
+        "version alignment failed before staged lock overlay:\n{}\ntrueos-blueprint: at least one forced overlay version falls outside a depender's declared range; API compatibility was not attempted",
+        report
+            .incompatible
+            .iter()
+            .map(|finding| format!(
+                "  {} {} -> {} blocked by {} {} requiring {}",
+                finding.package_name,
+                finding.current_version,
+                finding.overlay_version,
+                finding.parent_name,
+                finding.parent_version,
+                finding.req
+            ))
+            .collect::<Vec<_>>()
+            .join("\n")
+    ))
+}
+
+fn source_overlay_version_alignment(
+    app_dir: &Path,
+    manifest_path: &Path,
+    lock_mismatches: &[LockMismatch],
+) -> Result<VersionAlignmentReport, String> {
+    let metadata = cargo_metadata(app_dir, manifest_path)?;
+    let resolve = metadata
+        .resolve
+        .ok_or_else(|| "cargo metadata returned no resolve graph".to_string())?;
+
+    let mut packages_by_id = HashMap::new();
+    for package in &metadata.packages {
+        packages_by_id.insert(package.id.clone(), package);
+    }
+
+    let mut overlay_targets = BTreeMap::new();
+    for mismatch in lock_mismatches {
+        match overlay_targets.entry(mismatch.name.clone()) {
+            std::collections::btree_map::Entry::Vacant(slot) => {
+                let parsed_overlay_version = SimpleVersion::parse(&mismatch.overlay_version).map_err(|err| {
+                    format!(
+                        "failed to parse overlay version {} for {}: {err}",
+                        mismatch.overlay_version, mismatch.name
+                    )
+                })?;
+                slot.insert(VersionAlignmentTarget {
+                    overlay_version: mismatch.overlay_version.clone(),
+                    parsed_overlay_version,
+                });
+            }
+            std::collections::btree_map::Entry::Occupied(existing)
+                if existing.get().overlay_version != mismatch.overlay_version =>
+            {
+                return Err(format!(
+                    "overlay version for {} is inconsistent: {} vs {}",
+                    mismatch.name,
+                    existing.get().overlay_version,
+                    mismatch.overlay_version
+                ));
+            }
+            std::collections::btree_map::Entry::Occupied(_) => {}
+        }
+    }
+
+    let mut compatible_edges = 0usize;
+    let mut unresolved_edges = 0usize;
+    let mut unparsed_requirements = 0usize;
+    let mut incompatible = Vec::new();
+
+    for node in resolve.nodes {
+        let Some(parent_package) = packages_by_id.get(&node.id) else {
+            continue;
+        };
+
+        for dep in node.deps {
+            let Some(dep_package) = packages_by_id.get(&dep.pkg) else {
+                continue;
+            };
+            let Some(target) = overlay_targets.get(&dep_package.name) else {
+                continue;
+            };
+            if dep_package.version == target.overlay_version {
+                continue;
+            }
+
+            let Some(declared_dependency) = parent_package.dependencies.iter().find(|candidate| {
+                dependency_display_name(candidate) == dep.name || candidate.name == dep_package.name
+            }) else {
+                unresolved_edges += 1;
+                continue;
+            };
+
+            let req_matches = match version_req_matches(
+                &declared_dependency.req,
+                &target.parsed_overlay_version,
+            ) {
+                Ok(matches) => matches,
+                Err(_) => {
+                    unparsed_requirements += 1;
+                    continue;
+                }
+            };
+
+            if req_matches {
+                compatible_edges += 1;
+                continue;
+            }
+
+            incompatible.push(VersionAlignmentFinding {
+                package_name: dep_package.name.clone(),
+                current_version: dep_package.version.clone(),
+                overlay_version: target.overlay_version.clone(),
+                parent_name: parent_package.name.clone(),
+                parent_version: parent_package.version.clone(),
+                req: declared_dependency.req.clone(),
+            });
+        }
+    }
+
+    incompatible.sort_by(|a, b| {
+        a.package_name
+            .cmp(&b.package_name)
+            .then(a.parent_name.cmp(&b.parent_name))
+            .then(a.parent_version.cmp(&b.parent_version))
+    });
+    incompatible.dedup_by(|left, right| {
+        left.package_name == right.package_name
+            && left.current_version == right.current_version
+            && left.overlay_version == right.overlay_version
+            && left.parent_name == right.parent_name
+            && left.parent_version == right.parent_version
+            && left.req == right.req
+    });
+
+    Ok(VersionAlignmentReport {
+        checked_targets: overlay_targets.len(),
+        compatible_edges,
+        unresolved_edges,
+        unparsed_requirements,
+        incompatible,
+    })
+}
+
+fn cargo_metadata(app_dir: &Path, manifest_path: &Path) -> Result<CargoMetadata, String> {
+    let mut metadata = Command::new("cargo");
+    metadata
+        .current_dir(app_dir)
+        .arg("+nightly")
+        .arg("metadata")
+        .arg("--format-version")
+        .arg("1")
+        .arg("--locked")
+        .arg("--manifest-path")
+        .arg(manifest_path);
+    let output = metadata
+        .output()
+        .map_err(|err| format!("cargo metadata failed to start: {err}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if stderr.is_empty() {
+            return Err(format!("cargo metadata failed with status {}", output.status));
+        }
+        return Err(format!("cargo metadata failed: {stderr}"));
+    }
+
+    serde_json::from_slice(&output.stdout)
+        .map_err(|err| format!("failed to parse cargo metadata JSON: {err}"))
+}
+
+fn dependency_display_name(dependency: &MetadataDependency) -> &str {
+    dependency.rename.as_deref().unwrap_or(&dependency.name)
+}
+
+#[derive(Clone, Eq, Ord, PartialEq, PartialOrd)]
+struct SimpleVersion {
+    major: u64,
+    minor: u64,
+    patch: u64,
+}
+
+impl SimpleVersion {
+    fn parse(value: &str) -> Result<Self, String> {
+        let core = value
+            .split_once('+')
+            .map(|(prefix, _)| prefix)
+            .unwrap_or(value)
+            .split_once('-')
+            .map(|(prefix, _)| prefix)
+            .unwrap_or(value);
+        let mut parts = core.split('.');
+        let major = parse_u64_component(parts.next(), value)?;
+        let minor = parse_u64_component(parts.next(), value)?;
+        let patch = parse_u64_component(parts.next(), value)?;
+        if parts.next().is_some() {
+            return Err(format!("unsupported version `{value}`"));
+        }
+        Ok(Self {
+            major,
+            minor,
+            patch,
+        })
+    }
+}
+
+struct ReqVersion {
+    major: u64,
+    minor: Option<u64>,
+    patch: Option<u64>,
+}
+
+fn version_req_matches(req: &str, version: &SimpleVersion) -> Result<bool, String> {
+    if req.contains("||") {
+        return Err(format!("unsupported disjunctive requirement `{req}`"));
+    }
+
+    for raw_token in req.split(',') {
+        let token = raw_token.trim();
+        if token.is_empty() || token == "*" {
+            continue;
+        }
+        if !requirement_token_matches(token, version)? {
+            return Ok(false);
+        }
+    }
+
+    Ok(true)
+}
+
+fn requirement_token_matches(token: &str, version: &SimpleVersion) -> Result<bool, String> {
+    if let Some(rest) = token.strip_prefix(">=") {
+        return Ok(version >= &req_lower_bound(&parse_req_version(rest.trim(), token)?));
+    }
+    if let Some(rest) = token.strip_prefix("<=") {
+        return Ok(version <= &req_lower_bound(&parse_req_version(rest.trim(), token)?));
+    }
+    if let Some(rest) = token.strip_prefix('>') {
+        return Ok(version > &req_lower_bound(&parse_req_version(rest.trim(), token)?));
+    }
+    if let Some(rest) = token.strip_prefix('<') {
+        return Ok(version < &req_lower_bound(&parse_req_version(rest.trim(), token)?));
+    }
+    if let Some(rest) = token.strip_prefix('=') {
+        return Ok(exact_req_matches(version, &parse_req_version(rest.trim(), token)?));
+    }
+    if let Some(rest) = token.strip_prefix('^') {
+        return Ok(caret_req_matches(version, &parse_req_version(rest.trim(), token)?));
+    }
+    if let Some(rest) = token.strip_prefix('~') {
+        return Ok(tilde_req_matches(version, &parse_req_version(rest.trim(), token)?));
+    }
+    if token.contains('*') || token.contains('x') || token.contains('X') {
+        return Ok(wildcard_req_matches(version, &parse_req_prefix(token)?));
+    }
+    Ok(caret_req_matches(version, &parse_req_version(token, token)?))
+}
+
+fn exact_req_matches(version: &SimpleVersion, req: &ReqVersion) -> bool {
+    version.major == req.major
+        && req.minor.is_none_or(|minor| version.minor == minor)
+        && req.patch.is_none_or(|patch| version.patch == patch)
+}
+
+fn wildcard_req_matches(version: &SimpleVersion, req: &ReqVersion) -> bool {
+    version.major == req.major
+        && req.minor.is_none_or(|minor| version.minor == minor)
+        && req.patch.is_none_or(|patch| version.patch == patch)
+}
+
+fn caret_req_matches(version: &SimpleVersion, req: &ReqVersion) -> bool {
+    let lower = req_lower_bound(req);
+    version >= &lower && version < &caret_upper_bound(req)
+}
+
+fn tilde_req_matches(version: &SimpleVersion, req: &ReqVersion) -> bool {
+    let lower = req_lower_bound(req);
+    version >= &lower && version < &tilde_upper_bound(req)
+}
+
+fn req_lower_bound(req: &ReqVersion) -> SimpleVersion {
+    SimpleVersion {
+        major: req.major,
+        minor: req.minor.unwrap_or(0),
+        patch: req.patch.unwrap_or(0),
+    }
+}
+
+fn caret_upper_bound(req: &ReqVersion) -> SimpleVersion {
+    let minor = req.minor.unwrap_or(0);
+    let patch = req.patch.unwrap_or(0);
+
+    if req.major > 0 {
+        return SimpleVersion {
+            major: req.major + 1,
+            minor: 0,
+            patch: 0,
+        };
+    }
+
+    if minor > 0 {
+        return SimpleVersion {
+            major: 0,
+            minor: minor + 1,
+            patch: 0,
+        };
+    }
+
+    SimpleVersion {
+        major: 0,
+        minor: 0,
+        patch: patch + 1,
+    }
+}
+
+fn tilde_upper_bound(req: &ReqVersion) -> SimpleVersion {
+    match req.minor {
+        Some(minor) => SimpleVersion {
+            major: req.major,
+            minor: minor + 1,
+            patch: 0,
+        },
+        None => SimpleVersion {
+            major: req.major + 1,
+            minor: 0,
+            patch: 0,
+        },
+    }
+}
+
+fn parse_req_version(value: &str, original: &str) -> Result<ReqVersion, String> {
+    let core = value
+        .split_once('+')
+        .map(|(prefix, _)| prefix)
+        .unwrap_or(value)
+        .split_once('-')
+        .map(|(prefix, _)| prefix)
+        .unwrap_or(value)
+        .trim();
+    let parts = core.split('.').collect::<Vec<_>>();
+    if parts.is_empty() || parts.len() > 3 {
+        return Err(format!("unsupported requirement `{original}`"));
+    }
+    let major = parse_req_component(parts.first().copied(), original)?;
+    let minor = parse_optional_req_component(parts.get(1).copied(), original)?;
+    let patch = parse_optional_req_component(parts.get(2).copied(), original)?;
+    Ok(ReqVersion {
+        major,
+        minor,
+        patch,
+    })
+}
+
+fn parse_req_prefix(token: &str) -> Result<ReqVersion, String> {
+    let mut major = None;
+    let mut minor = None;
+    let mut patch = None;
+    for (index, part) in token.split('.').enumerate() {
+        if part == "*" || part == "x" || part == "X" {
+            break;
+        }
+        match index {
+            0 => major = Some(parse_req_component(Some(part), token)?),
+            1 => minor = Some(parse_req_component(Some(part), token)?),
+            2 => patch = Some(parse_req_component(Some(part), token)?),
+            _ => return Err(format!("unsupported requirement `{token}`")),
+        }
+    }
+    Ok(ReqVersion {
+        major: major.ok_or_else(|| format!("unsupported requirement `{token}`"))?,
+        minor,
+        patch,
+    })
+}
+
+fn parse_u64_component(component: Option<&str>, original: &str) -> Result<u64, String> {
+    let value = component.ok_or_else(|| format!("unsupported version `{original}`"))?;
+    value
+        .parse::<u64>()
+        .map_err(|_| format!("unsupported version `{original}`"))
+}
+
+fn parse_req_component(component: Option<&str>, original: &str) -> Result<u64, String> {
+    let value = component.ok_or_else(|| format!("unsupported requirement `{original}`"))?;
+    value
+        .parse::<u64>()
+        .map_err(|_| format!("unsupported requirement `{original}`"))
+}
+
+fn parse_optional_req_component(
+    component: Option<&str>,
+    original: &str,
+) -> Result<Option<u64>, String> {
+    match component {
+        Some("*") | Some("x") | Some("X") => Ok(None),
+        Some(value) => value
+            .parse::<u64>()
+            .map(Some)
+            .map_err(|_| format!("unsupported requirement `{original}`")),
+        None => Ok(None),
+    }
 }
 
 fn source_overlay_lock_mismatches(
