@@ -3,10 +3,7 @@
 
 extern crate alloc;
 
-use alloc::format;
-use alloc::string::String;
-use alloc::vec;
-use alloc::vec::Vec;
+use alloc::{format, string::String, vec, vec::Vec};
 use core::panic::PanicInfo;
 use trueos::platform;
 use trueos::ui2::{self, gfx};

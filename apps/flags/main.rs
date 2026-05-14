@@ -3,8 +3,7 @@
 
 extern crate alloc;
 
-use alloc::format;
-use alloc::string::String;
+use alloc::{format, string::String};
 use core::fmt::Write as _;
 use core::panic::PanicInfo;
 use trueos::platform;

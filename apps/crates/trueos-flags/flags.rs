@@ -3,9 +3,7 @@
 
 extern crate alloc;
 
-use alloc::format;
-use alloc::string::String;
-use alloc::vec::Vec;
+use alloc::{format, string::String, vec::Vec};
 
 unsafe extern "C" {
     fn trueos_cabi_net_fetch_bytes_start(url_ptr: *const u8, url_len: usize) -> u32;

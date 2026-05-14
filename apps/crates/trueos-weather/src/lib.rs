@@ -7,8 +7,7 @@ pub mod lang;
 pub mod oc3;
 pub mod transport;
 
-use alloc::string::String;
-use alloc::vec::Vec;
+use alloc::{string::String, vec::Vec};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

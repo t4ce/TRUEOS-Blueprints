@@ -1,11 +1,9 @@
 extern crate alloc;
 
-use alloc::format;
-use alloc::string::String;
-use alloc::vec::Vec;
+use alloc::{format, string::String, vec::Vec};
 
 use crate::config::{GEO_REVERSE_URL, ONECALL_URL, OVERVIEW_URL};
-use crate::lang::{DEFAULT_GERMAN_LANGUAGE_CODE, normalized_language_code};
+use crate::lang::{normalized_language_code, DEFAULT_GERMAN_LANGUAGE_CODE};
 use serde_json::Value;
 
 pub fn openweather_geo_url(latitude: f64, longitude: f64, api_key: &str) -> String {
