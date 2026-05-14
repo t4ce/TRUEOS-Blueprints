@@ -20,6 +20,7 @@ mod vcabi {
 pub mod hid;
 pub use hid as input;
 pub mod globalog;
+pub mod logl;
 pub mod rand {
     pub use crate::tyche::*;
 }
@@ -215,7 +216,7 @@ unsafe impl GlobalAlloc for TrueosAllocator {
 }
 
 pub fn panic_abort(message: &str) -> ! {
-    globalog::log_with_level(globalog::level::ERROR, message);
+    logl::log(logl::level::ERROR, message);
     loop {
         core::hint::spin_loop();
     }
@@ -235,6 +236,7 @@ pub mod prelude {
     pub use crate::globalog;
     #[cfg(feature = "tokio-runtime")]
     pub use crate::io;
+    pub use crate::logl;
     #[cfg(feature = "tokio-net-probe")]
     pub use crate::net;
     pub use crate::panic_abort;

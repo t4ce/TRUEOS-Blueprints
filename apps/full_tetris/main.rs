@@ -4,8 +4,8 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
-use trueos::globalog::{self, level};
 use trueos::input;
+use trueos::logl::{self, level};
 use trueos::platform;
 use trueos::ui2::{self, gfx};
 use trueos_tetris::{Lcg32, NoopEvents, Rotation};
@@ -508,7 +508,7 @@ pub extern "C" fn main() {
         },
         TEX_ID,
     ) else {
-        globalog::log_with_level(level::ERROR, "full_tetris bp: surface window create failed\n");
+        logl::log(level::ERROR, "full_tetris bp: surface window create failed\n");
         return;
     };
 

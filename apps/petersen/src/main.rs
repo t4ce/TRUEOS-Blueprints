@@ -4,7 +4,7 @@
 extern crate alloc;
 
 use alloc::{vec, vec::Vec};
-use trueos::globalog::{self, level};
+use trueos::logl::{self, level};
 use trueos::platform;
 use trueos::ui2::{self, gfx};
 
@@ -146,14 +146,14 @@ pub extern "C" fn main() {
         },
         TEX_ID,
     ) else {
-        globalog::log_with_level(level::ERROR, "petersen bp: window create failed\n");
+        logl::log(level::ERROR, "petersen bp: window create failed\n");
         return;
     };
 
     let pixels = render_petersen(WINDOW_WIDTH, WINDOW_HEIGHT);
     let ok = gfx::upload_texture_rgba_image_now(TEX_ID, WINDOW_WIDTH, WINDOW_HEIGHT, &pixels);
     if !ok {
-        globalog::log_with_level(level::ERROR, "petersen bp: texture upload failed\n");
+        logl::log(level::ERROR, "petersen bp: texture upload failed\n");
         return;
     }
 

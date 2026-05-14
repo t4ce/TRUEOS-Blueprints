@@ -1,7 +1,7 @@
 #![no_std]
 #![no_main]
 
-use trueos::globalog::{self, level};
+use trueos::logl::{self, level};
 use trueos::platform;
 use trueos::ui2::{self, gfx};
 
@@ -56,7 +56,7 @@ fn open_triangle_window() -> Option<ui2::SurfaceWindow> {
 #[unsafe(no_mangle)]
 pub extern "C" fn main() {
     let Some(window) = open_triangle_window() else {
-        globalog::log_with_level(level::ERROR, "triangle bp: ui2 surface window create failed\n");
+        logl::log(level::ERROR, "triangle bp: ui2 surface window create failed\n");
         return;
     };
 
@@ -69,7 +69,7 @@ pub extern "C" fn main() {
     loop {
         let vertices = [points[0].vertex(), points[1].vertex(), points[2].vertex()];
         if !window.render_rgb_triangles(CLEAR_RGB, &vertices) {
-            globalog::log_with_level(level::ERROR, "triangle bp: render failed\n");
+            logl::log(level::ERROR, "triangle bp: render failed\n");
             break;
         }
         for point in &mut points {
