@@ -110,18 +110,12 @@ async fn run_probe() -> Result<(), &'static str> {
     match probe_tcp_loopback().await {
         Ok(()) => bp_info!("tokio_net: success net.tcp.loopback_roundtrip"),
         Err(stage) => {
-            bp_info!(
-                "tokio_net: note net.tcp.loopback unavailable, fallback={}",
-                stage
-            );
+            bp_info!("tokio_net: note net.tcp.loopback unavailable, fallback={}", stage);
             bp_info!("tokio_net: stage net.tcp.remote_http");
             match probe_remote_http().await {
                 Ok(()) => {}
                 Err(stage) => {
-                    bp_info!(
-                        "tokio_net: note net.tcp.remote_http unavailable, fallback={}",
-                        stage
-                    );
+                    bp_info!("tokio_net: note net.tcp.remote_http unavailable, fallback={}", stage);
                 }
             }
         }

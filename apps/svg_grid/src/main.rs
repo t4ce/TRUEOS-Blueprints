@@ -5,8 +5,8 @@ extern crate alloc;
 
 use alloc::{format, string::String};
 use core::panic::PanicInfo;
-use trueos::ui2::{self, gfx};
 use trueos::platform;
+use trueos::ui2::{self, gfx};
 use trueos::{panic_abort, TrueosAllocator};
 
 #[global_allocator]

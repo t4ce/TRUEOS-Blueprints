@@ -2,7 +2,7 @@
 #![no_main]
 
 use core::panic::PanicInfo;
-use trueos::{TrueosAllocator, panic_abort};
+use trueos::{panic_abort, TrueosAllocator};
 use trueos::{platform, vshell};
 use trueos_tetris::shell::{ShellControl, ShellIo};
 

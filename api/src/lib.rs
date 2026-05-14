@@ -37,7 +37,7 @@ pub mod diag {
     #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
     use core::fmt::Write as _;
 
-    use super::{AtomicU8, Ordering, fmt};
+    use super::{fmt, AtomicU8, Ordering};
 
     #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
     pub enum Level {
@@ -139,46 +139,46 @@ pub mod runtime {
 #[cfg(feature = "tokio-runtime")]
 pub mod task {
     pub use tokio::spawn;
-    pub use tokio::task::{JoinError, JoinHandle, JoinSet, LocalSet, yield_now};
+    pub use tokio::task::{yield_now, JoinError, JoinHandle, JoinSet, LocalSet};
 }
 
 #[cfg(feature = "tokio-runtime")]
 pub mod sync {
     pub use tokio::sync::{
-        Barrier, Mutex, Notify, RwLock, Semaphore, broadcast, mpsc, oneshot, watch,
+        broadcast, mpsc, oneshot, watch, Barrier, Mutex, Notify, RwLock, Semaphore,
     };
 }
 
 #[cfg(feature = "tokio-runtime")]
 pub mod time {
-    pub use tokio::time::{Duration, Instant, Interval, Sleep, interval, sleep, timeout};
+    pub use tokio::time::{interval, sleep, timeout, Duration, Instant, Interval, Sleep};
 }
 
 #[cfg(feature = "tokio-runtime")]
 pub mod io {
     pub use tokio::io::{
-        AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, Stderr, Stdin, Stdout, duplex,
-        stderr, stdin, stdout,
+        duplex, stderr, stdin, stdout, AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt,
+        Stderr, Stdin, Stdout,
     };
 }
 
 #[cfg(feature = "tokio-runtime")]
 pub mod fs {
     pub use tokio::fs::{
-        File, OpenOptions, canonicalize, create_dir, create_dir_all, read, read_to_string,
-        try_exists, write,
+        canonicalize, create_dir, create_dir_all, read, read_to_string, try_exists, write, File,
+        OpenOptions,
     };
 
-    pub use crate::vfs::{FsNodeKind, FsStat, stat};
+    pub use crate::vfs::{stat, FsNodeKind, FsStat};
 }
 
 #[cfg(feature = "tokio-net-probe")]
 pub mod net {
-    pub use tokio::net::{TcpListener, TcpStream, ToSocketAddrs, UdpSocket, lookup_host};
+    pub use tokio::net::{lookup_host, TcpListener, TcpStream, ToSocketAddrs, UdpSocket};
 
     pub mod mio {
-        pub use mio::{Events, Interest, Poll, Registry, Token, Waker};
         pub use mio::{event, net};
+        pub use mio::{Events, Interest, Poll, Registry, Token, Waker};
     }
 
     pub mod socket2 {
@@ -240,7 +240,6 @@ fn default_panic(_info: &PanicInfo<'_>) -> ! {
 }
 
 pub mod prelude {
-    pub use crate::TrueosAllocator;
     pub use crate::diag;
     #[cfg(feature = "tokio-runtime")]
     pub use crate::fs;
@@ -262,6 +261,7 @@ pub mod prelude {
     pub use crate::tokio;
     pub use crate::ui2;
     pub use crate::vgfx;
+    pub use crate::TrueosAllocator;
 }
 
 #[macro_export]

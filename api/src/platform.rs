@@ -1,6 +1,5 @@
 extern crate alloc;
 
-use alloc::string::String;
 use core::fmt;
 use core::fmt::Write as _;
 
@@ -9,13 +8,13 @@ use crate::vcabi;
 pub use alloc::borrow::{Cow, ToOwned};
 pub use alloc::boxed::Box;
 pub use alloc::format;
-pub use alloc::string::ToString;
+pub use alloc::string::{String, ToString};
 pub use alloc::sync::Arc;
 pub use alloc::vec;
 pub use alloc::vec::Vec;
 
 pub mod future {
-    pub use core::future::{Future, IntoFuture, pending, poll_fn};
+    pub use core::future::{pending, poll_fn, Future, IntoFuture};
 }
 
 #[cfg(feature = "tokio-runtime")]
@@ -34,9 +33,9 @@ pub mod path {
 #[cfg(feature = "tokio-runtime")]
 pub mod thread {
     #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-    pub use std::thread::{Thread, ThreadId, current};
+    pub use std::thread::{current, Thread, ThreadId};
     #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-    pub use tokio::thread::{Thread, ThreadId, current};
+    pub use tokio::thread::{current, Thread, ThreadId};
 
     #[inline]
     pub fn yield_now() {
