@@ -6,6 +6,7 @@ extern crate alloc;
 use alloc::string::String;
 use core::fmt::Write as _;
 
+use trueos::globalog::{self, level};
 use trueos::platform;
 use trueos::ui2::{self, gfx};
 
@@ -33,10 +34,7 @@ fn open_window() -> Option<ui2::SurfaceWindow> {
 #[unsafe(no_mangle)]
 pub extern "C" fn main() {
     let Some(window) = open_window() else {
-        trueos::globalog::log_with_level(
-            trueos::globalog::level::ERROR,
-            "retrosun bp: window create failed\n",
-        );
+        globalog::log_with_level(level::ERROR, "retrosun bp: window create failed\n");
         return;
     };
 
@@ -52,8 +50,8 @@ pub extern "C" fn main() {
         let svg = compose_svg(frame);
         let rc = gfx::upload_svg_to_texture(TEX_ID, svg.as_bytes());
         if rc != 0 {
-            trueos::globalog::log_with_level(
-                trueos::globalog::level::ERROR,
+            globalog::log_with_level(
+                level::ERROR,
                 format_args!("retrosun bp: svg upload failed rc={}\n", rc),
             );
             break;

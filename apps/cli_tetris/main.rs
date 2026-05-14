@@ -1,6 +1,7 @@
 #![no_std]
 #![no_main]
 
+use trueos::globalog::{self, level};
 use trueos::{platform, vshell};
 use trueos_tetris::shell::{ShellControl, ShellIo};
 
@@ -24,10 +25,7 @@ pub extern "C" fn main() {
     app.set_viewport_top_row(1);
 
     let io = AttachedShell;
-    trueos::globalog::log_with_level(
-        trueos::globalog::level::INFO,
-        "cli_tetris bp: attached shell mode\n",
-    );
+    globalog::log_with_level(level::INFO, "cli_tetris bp: attached shell mode\n");
     vshell::attached_write_str("\x1b[2J\x1b[H\x1b[?25l");
     app.draw(&io);
     app.finalize_frame();

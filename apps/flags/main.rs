@@ -5,6 +5,7 @@ extern crate alloc;
 
 use alloc::{format, string::String};
 use core::fmt::Write as _;
+use trueos::globalog::{self, level};
 use trueos::platform;
 use trueos::ui2::{self, gfx};
 use trueos::{input, tyche};
@@ -134,8 +135,8 @@ impl Game {
         for slot in 0..4 {
             let (code, _) = COUNTRIES[self.options[slot]];
             let op_id = trueos_flags::startFlagSVGFetch(code);
-            trueos::globalog::log_with_level(
-                trueos::globalog::level::INFO,
+            globalog::log_with_level(
+                level::INFO,
                 format_args!("flags bp: fetch start slot={} code={} op_id={}\n", slot, code, op_id),
             );
             if op_id != 0 {
@@ -164,8 +165,8 @@ impl Game {
             }
             if rc > 0 {
                 let svg = trueos_flags::readFlagSVGFetch(fetch.op_id);
-                trueos::globalog::log_with_level(
-                    trueos::globalog::level::INFO,
+                globalog::log_with_level(
+                    level::INFO,
                     format_args!(
                         "flags bp: fetch done slot={} op_id={} rc={} svg_len={}\n",
                         slot,
@@ -179,8 +180,8 @@ impl Game {
                     changed = true;
                 }
             } else {
-                trueos::globalog::log_with_level(
-                    trueos::globalog::level::ERROR,
+                globalog::log_with_level(
+                    level::ERROR,
                     format_args!(
                         "flags bp: fetch failed slot={} op_id={} rc={}\n",
                         slot, fetch.op_id, rc
@@ -408,8 +409,8 @@ fn present(window: &ui2::SurfaceWindow, game: &Game) {
     if rc == 0 {
         let _ = window.id().request_repaint();
     } else {
-        trueos::globalog::log_with_level(
-            trueos::globalog::level::ERROR,
+        globalog::log_with_level(
+            level::ERROR,
             format_args!("flags bp: svg upload failed rc={}\n", rc),
         );
     }
@@ -468,10 +469,7 @@ fn handle_cursor(
 #[unsafe(no_mangle)]
 pub extern "C" fn main() {
     let Some(window) = open_window() else {
-        trueos::globalog::log_with_level(
-            trueos::globalog::level::ERROR,
-            "flags bp: surface window create failed\n",
-        );
+        globalog::log_with_level(level::ERROR, "flags bp: surface window create failed\n");
         return;
     };
     let _ = window.id().set_resize_maintain_aspect(true);
@@ -488,7 +486,7 @@ pub extern "C" fn main() {
     let mut last_buttons = 0u32;
 
     present(&window, &game);
-    trueos::globalog::log_with_level(trueos::globalog::level::INFO, "flags bp: quiz ready\n");
+    globalog::log_with_level(level::INFO, "flags bp: quiz ready\n");
 
     loop {
         let mut changed = false;

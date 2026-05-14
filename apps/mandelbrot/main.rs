@@ -1,6 +1,7 @@
 #![no_std]
 #![no_main]
 
+use trueos::globalog::{self, level};
 use trueos::{platform, ui2};
 
 const UI2_MANDELBROT_TEX_ID: u32 = 4_702;
@@ -27,10 +28,7 @@ pub extern "C" fn main() {
         UI2_MANDELBROT_TEX_ID,
         false,
     ) else {
-        trueos::globalog::log_with_level(
-            trueos::globalog::level::ERROR,
-            "mandelbrot bp: ui2 surface window create failed\n",
-        );
+        globalog::log_with_level(level::ERROR, "mandelbrot bp: ui2 surface window create failed\n");
         return;
     };
 
@@ -41,10 +39,7 @@ pub extern "C" fn main() {
     loop {
         if !surface.render_mandelbrot(ticks, TICK_HZ) {
             let _ = surface.id().set_title("Seahorse Valley (unavailable)");
-            trueos::globalog::log_with_level(
-                trueos::globalog::level::ERROR,
-                "mandelbrot bp: render queue failed\n",
-            );
+            globalog::log_with_level(level::ERROR, "mandelbrot bp: render queue failed\n");
             break;
         }
         ticks = ticks.saturating_add(FRAME_MS);
