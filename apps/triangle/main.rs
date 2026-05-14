@@ -2,8 +2,9 @@
 #![no_main]
 
 use core::panic::PanicInfo;
-use trueos::{TrueosAllocator, panic_abort};
-use trueos::{ui2, vgfx, vsys};
+use trueos::ui2::{self, gfx};
+use trueos::vsys;
+use trueos::{panic_abort, TrueosAllocator};
 
 #[global_allocator]
 static GLOBAL_ALLOCATOR: TrueosAllocator = TrueosAllocator;
@@ -38,8 +39,8 @@ impl Point {
         self.y = next_y;
     }
 
-    const fn vertex(self) -> vgfx::RgbVertex {
-        vgfx::RgbVertex::new(self.x, self.y, self.color)
+    const fn vertex(self) -> gfx::RgbVertex {
+        gfx::RgbVertex::new(self.x, self.y, self.color)
     }
 }
 

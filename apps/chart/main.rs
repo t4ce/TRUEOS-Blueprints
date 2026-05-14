@@ -8,8 +8,9 @@ use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::panic::PanicInfo;
-use trueos::{TrueosAllocator, panic_abort};
-use trueos::{ui2, vgfx_hosted, vsys};
+use trueos::ui2::{self, gfx};
+use trueos::vsys;
+use trueos::{panic_abort, TrueosAllocator};
 
 #[global_allocator]
 static GLOBAL_ALLOCATOR: TrueosAllocator = TrueosAllocator;
@@ -233,15 +234,7 @@ fn compose_chart(w: u32, h: u32) -> Vec<u8> {
                 let tw = measure_text(label.as_str());
                 let lx = ix.saturating_sub(tw / 2);
                 if label_y + LABEL_LINE_HEIGHT <= dst_h {
-                    render_text(
-                        &mut buf,
-                        dst_w,
-                        dst_h,
-                        lx,
-                        label_y,
-                        label.as_str(),
-                        LABEL_RGBA,
-                    );
+                    render_text(&mut buf, dst_w, dst_h, lx, label_y, label.as_str(), LABEL_RGBA);
                 }
             }
         }
@@ -318,12 +311,7 @@ pub extern "C" fn main() {
     };
 
     let pixels = compose_chart(WINDOW_WIDTH, WINDOW_HEIGHT);
-    if !vgfx_hosted::upload_texture_rgba_image_now(
-        TEX_ID,
-        WINDOW_WIDTH,
-        WINDOW_HEIGHT,
-        pixels.as_slice(),
-    ) {
+    if !gfx::upload_texture_rgba_image_now(TEX_ID, WINDOW_WIDTH, WINDOW_HEIGHT, pixels.as_slice()) {
         vsys::log_error("chart bp: texture upload failed\n");
         return;
     }

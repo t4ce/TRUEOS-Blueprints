@@ -7,8 +7,9 @@ use alloc::string::String;
 use core::fmt::Write as _;
 use core::panic::PanicInfo;
 
-use trueos::{TrueosAllocator, panic_abort};
-use trueos::{ui2, vgfx, vsys};
+use trueos::ui2::{self, gfx};
+use trueos::vsys;
+use trueos::{panic_abort, TrueosAllocator};
 
 #[global_allocator]
 static GLOBAL_ALLOCATOR: TrueosAllocator = TrueosAllocator;
@@ -56,7 +57,7 @@ pub extern "C" fn main() {
     let mut frame = 0u32;
     loop {
         let svg = compose_svg(frame);
-        let rc = vgfx::upload_svg_to_texture(TEX_ID, svg.as_bytes());
+        let rc = gfx::upload_svg_to_texture(TEX_ID, svg.as_bytes());
         if rc != 0 {
             vsys::log_errorf(format_args!("retrosun bp: svg upload failed rc={}\n", rc));
             break;
@@ -162,11 +163,8 @@ fn push_neon_halo(out: &mut String, sun_y: f32, sun_r: f32, glow: f32) {
 }
 
 fn push_sun(out: &mut String, sun_y: f32, sun_r: f32, t: f32) {
-    let _ = write!(
-        out,
-        r##"<circle cx="800" cy="{:.1}" r="{:.1}" fill="url(#sun)"/>"##,
-        sun_y, sun_r
-    );
+    let _ =
+        write!(out, r##"<circle cx="800" cy="{:.1}" r="{:.1}" fill="url(#sun)"/>"##, sun_y, sun_r);
 
     for band in 0..15 {
         let y = sun_y - sun_r + 34.0 + band as f32 * 31.0 + wave(t * 1.15 + band as f32, 8.0);

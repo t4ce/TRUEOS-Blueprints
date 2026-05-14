@@ -1,12 +1,18 @@
 use crate::vcabi;
 
+pub mod gfx;
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct WindowId(u32);
 
 impl WindowId {
     #[inline]
     pub const fn new(raw: u32) -> Option<Self> {
-        if raw == 0 { None } else { Some(Self(raw)) }
+        if raw == 0 {
+            None
+        } else {
+            Some(Self(raw))
+        }
     }
 
     #[inline]
@@ -304,12 +310,8 @@ impl SurfaceWindow {
         (self.width, self.height)
     }
 
-    pub fn render_rgb_triangles(
-        &self,
-        clear_rgb: u32,
-        vertices: &[crate::vgfx::RgbVertex],
-    ) -> bool {
-        let rendered = crate::vgfx::render_rgb_triangles_to_texture(
+    pub fn render_rgb_triangles(&self, clear_rgb: u32, vertices: &[gfx::RgbVertex]) -> bool {
+        let rendered = gfx::render_rgb_triangles_to_texture(
             self.tex_id,
             self.width,
             self.height,
@@ -329,7 +331,7 @@ impl SurfaceWindow {
         clear_rgb: u32,
         vertices: &[u8],
     ) -> bool {
-        let rendered = crate::vgfx::render_tex_triangles_to_texture(
+        let rendered = gfx::render_tex_triangles_to_texture(
             self.tex_id,
             source_tex_id,
             clear_rgb,
@@ -343,12 +345,8 @@ impl SurfaceWindow {
     }
 
     pub fn render_mandelbrot(&self, ticks: u64, tick_hz: u64) -> bool {
-        let rendered = crate::vgfx::render_mandelbrot_to_texture(
-            self.tex_id,
-            ticks,
-            tick_hz,
-            self.window.id.raw(),
-        );
+        let rendered =
+            gfx::render_mandelbrot_to_texture(self.tex_id, ticks, tick_hz, self.window.id.raw());
         if rendered {
             let _ = self.window.id.request_repaint();
         }

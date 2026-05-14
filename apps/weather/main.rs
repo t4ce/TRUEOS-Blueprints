@@ -1,9 +1,9 @@
 // trueos-blueprint: features=["tokio-runtime"]
 
-use trueos::{ui2, vgfx_hosted};
+use trueos::ui2::{self, gfx};
 use trueos::{
     bp_error, bp_info,
-    platform::{String, ToString, Vec, format, vec},
+    platform::{format, vec, String, ToString, Vec},
     runtime, time,
 };
 
@@ -152,10 +152,7 @@ async fn load_weather_snapshot() -> WeatherSnapshot {
     let geo = match trueos_weather::transport::fetch_text(geo_url.as_str(), FETCH_TIMEOUT_MS) {
         Ok(raw) => parse_geo_response(raw.as_str()),
         Err(err) => {
-            bp_info!(
-                "weather_bp: geo fetch failed: {}; using bundled coordinates",
-                err
-            );
+            bp_info!("weather_bp: geo fetch failed: {}; using bundled coordinates", err);
             note = format!("geo lookup failed: {}; using saved coordinates", err);
             None
         }
@@ -178,23 +175,17 @@ async fn load_weather_snapshot() -> WeatherSnapshot {
 
     let (raw_weather, source_note) =
         match trueos_weather::transport::fetch_text(weather_url.as_str(), FETCH_TIMEOUT_MS) {
-        Ok(raw) => (raw, String::from("live OpenWeather forecast")),
-        Err(err) => {
-            bp_info!(
-                "weather_bp: weather fetch failed: {}; using bundled demo",
-                err
-            );
-            note = if note.is_empty() {
-                format!("weather fetch failed: {}; using bundled demo", err)
-            } else {
-                format!("weather fetch failed: {}; {}", err, note)
-            };
-            (
-                String::from(bundled_demo_json()),
-                String::from("bundled demo weather fallback"),
-            )
-        }
-    };
+            Ok(raw) => (raw, String::from("live OpenWeather forecast")),
+            Err(err) => {
+                bp_info!("weather_bp: weather fetch failed: {}; using bundled demo", err);
+                note = if note.is_empty() {
+                    format!("weather fetch failed: {}; using bundled demo", err)
+                } else {
+                    format!("weather fetch failed: {}; {}", err, note)
+                };
+                (String::from(bundled_demo_json()), String::from("bundled demo weather fallback"))
+            }
+        };
 
     let response = trueos_weather::oc3::decode_onecall_raw_safe(raw_weather.as_str()).ok();
     match response {
@@ -263,10 +254,7 @@ fn build_weather_snapshot(
     }
 
     WeatherSnapshot {
-        header: format!(
-            "{} {}  {:.4} {:.4}",
-            geo.country, geo.name, geo.lat, geo.lon
-        ),
+        header: format!("{} {}  {:.4} {:.4}", geo.country, geo.name, geo.lat, geo.lon),
         subheader: String::from(source_note),
         rows,
         note: String::from(note),
@@ -312,7 +300,7 @@ fn weather_icon_for(weather: Option<&trueos_weather::WetterInfo>) -> WeatherIcon
 
 fn present_snapshot(window: &ui2::SurfaceWindow, snapshot: &WeatherSnapshot) {
     let pixels = compose_weather(snapshot, WINDOW_WIDTH as usize, WINDOW_HEIGHT as usize);
-    if vgfx_hosted::upload_texture_rgba_image_now(
+    if gfx::upload_texture_rgba_image_now(
         window.tex_id(),
         WINDOW_WIDTH,
         WINDOW_HEIGHT,
@@ -365,15 +353,7 @@ fn compose_weather(snapshot: &WeatherSnapshot, width: usize, height: usize) -> V
                 ROW_RGBA,
             );
         }
-        draw_weather_icon(
-            &mut buf,
-            width,
-            height,
-            PAD,
-            y.saturating_sub(1),
-            row.icon,
-            row_bg,
-        );
+        draw_weather_icon(&mut buf, width, height, PAD, y.saturating_sub(1), row.icon, row_bg);
         draw_text(
             &mut buf,
             width,
@@ -511,16 +491,7 @@ fn draw_cloud(dst: &mut [u8], dst_w: usize, dst_h: usize, x: usize, y: usize) {
     draw_disc(dst, dst_w, dst_h, x + 7, y + 11, 4, CLOUD_RGBA);
     draw_disc(dst, dst_w, dst_h, x + 12, y + 9, 5, CLOUD_RGBA);
     draw_disc(dst, dst_w, dst_h, x + 16, y + 12, 3, CLOUD_RGBA);
-    fill_rect(
-        dst,
-        dst_w,
-        dst_h,
-        x as usize + 4,
-        y as usize + 11,
-        15,
-        5,
-        CLOUD_RGBA,
-    );
+    fill_rect(dst, dst_w, dst_h, x as usize + 4, y as usize + 11, 15, 5, CLOUD_RGBA);
 }
 
 fn draw_rain(dst: &mut [u8], dst_w: usize, dst_h: usize, x: usize, y: usize, day: bool) {
@@ -545,22 +516,8 @@ fn draw_snow(dst: &mut [u8], dst_w: usize, dst_h: usize, x: usize, y: usize) {
     draw_cloud(dst, dst_w, dst_h, x, y);
     for (dx, dy) in [(7usize, 18usize), (12, 20), (17, 18)] {
         fill_rect(dst, dst_w, dst_h, x + dx, y + dy, 2, 2, SNOW_RGBA);
-        put_px(
-            dst,
-            dst_w,
-            dst_h,
-            (x + dx + 2) as i32,
-            (y + dy) as i32,
-            SNOW_RGBA,
-        );
-        put_px(
-            dst,
-            dst_w,
-            dst_h,
-            (x + dx) as i32,
-            (y + dy + 2) as i32,
-            SNOW_RGBA,
-        );
+        put_px(dst, dst_w, dst_h, (x + dx + 2) as i32, (y + dy) as i32, SNOW_RGBA);
+        put_px(dst, dst_w, dst_h, (x + dx) as i32, (y + dy + 2) as i32, SNOW_RGBA);
     }
 }
 

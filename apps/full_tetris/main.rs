@@ -5,8 +5,9 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 use core::panic::PanicInfo;
-use trueos::{TrueosAllocator, input, panic_abort};
-use trueos::{ui2, vgfx, vsys};
+use trueos::ui2::{self, gfx};
+use trueos::vsys;
+use trueos::{input, panic_abort, TrueosAllocator};
 use trueos_tetris::{Lcg32, NoopEvents, Rotation};
 
 #[global_allocator]
@@ -250,7 +251,7 @@ fn panic(_info: &PanicInfo<'_>) -> ! {
     panic_abort("full_tetris bp: panic\n")
 }
 
-fn push_rect(vertices: &mut Vec<vgfx::RgbVertex>, x: u32, y: u32, w: u32, h: u32, color: [u8; 4]) {
+fn push_rect(vertices: &mut Vec<gfx::RgbVertex>, x: u32, y: u32, w: u32, h: u32, color: [u8; 4]) {
     if w == 0 || h == 0 {
         return;
     }
@@ -258,7 +259,7 @@ fn push_rect(vertices: &mut Vec<vgfx::RgbVertex>, x: u32, y: u32, w: u32, h: u32
     let y0 = (y as f32 / WIN_H as f32) * 2.0 - 1.0;
     let x1 = ((x + w) as f32 / WIN_W as f32) * 2.0 - 1.0;
     let y1 = ((y + h) as f32 / WIN_H as f32) * 2.0 - 1.0;
-    let mk = |x: f32, y: f32| vgfx::RgbVertex::new(x, y, color);
+    let mk = |x: f32, y: f32| gfx::RgbVertex::new(x, y, color);
     vertices.extend_from_slice(&[
         mk(x0, y0),
         mk(x1, y0),
@@ -270,7 +271,7 @@ fn push_rect(vertices: &mut Vec<vgfx::RgbVertex>, x: u32, y: u32, w: u32, h: u32
 }
 
 fn draw_digit(
-    vertices: &mut Vec<vgfx::RgbVertex>,
+    vertices: &mut Vec<gfx::RgbVertex>,
     digit: u8,
     x: u32,
     y: u32,
@@ -302,7 +303,7 @@ fn draw_digit(
     }
 }
 
-fn draw_menu(app: &Arcade, vertices: &mut Vec<vgfx::RgbVertex>) {
+fn draw_menu(app: &Arcade, vertices: &mut Vec<gfx::RgbVertex>) {
     let colors = [
         [0x55, 0xB8, 0xFF, 0xFF],
         [0x66, 0xD1, 0x8F, 0xFF],
@@ -320,19 +321,12 @@ fn draw_menu(app: &Arcade, vertices: &mut Vec<vgfx::RgbVertex>) {
     }
 }
 
-fn draw_tetris(app: &Arcade, vertices: &mut Vec<vgfx::RgbVertex>) {
+fn draw_tetris(app: &Arcade, vertices: &mut Vec<gfx::RgbVertex>) {
     push_rect(vertices, 0, 0, WIN_W, WIN_H, BG);
     let ox = 118;
     let oy = 18;
     let cell = 11;
-    push_rect(
-        vertices,
-        ox - 3,
-        oy - 3,
-        10 * cell + 6,
-        20 * cell + 6,
-        MUTED,
-    );
+    push_rect(vertices, ox - 3, oy - 3, 10 * cell + 6, 20 * cell + 6, MUTED);
     for y in 0..20 {
         for x in 0..10 {
             if let Some(c) = app.tetris.cell_view_at(x, y + 4, true) {
@@ -349,7 +343,7 @@ fn draw_tetris(app: &Arcade, vertices: &mut Vec<vgfx::RgbVertex>) {
     }
 }
 
-fn draw_snake(app: &Arcade, vertices: &mut Vec<vgfx::RgbVertex>) {
+fn draw_snake(app: &Arcade, vertices: &mut Vec<gfx::RgbVertex>) {
     push_rect(vertices, 0, 0, WIN_W, WIN_H, BG);
     let ox = 72;
     let oy = 62;
@@ -385,7 +379,7 @@ fn gem_color(gem: trueos_tetris::bejewled::GemKind) -> [u8; 4] {
     }
 }
 
-fn draw_bejeweled(app: &Arcade, vertices: &mut Vec<vgfx::RgbVertex>) {
+fn draw_bejeweled(app: &Arcade, vertices: &mut Vec<gfx::RgbVertex>) {
     push_rect(vertices, 0, 0, WIN_W, WIN_H, BG);
     let ox = 98;
     let oy = 42;
@@ -408,7 +402,7 @@ fn draw_bejeweled(app: &Arcade, vertices: &mut Vec<vgfx::RgbVertex>) {
     }
 }
 
-fn draw_mines(app: &Arcade, vertices: &mut Vec<vgfx::RgbVertex>) {
+fn draw_mines(app: &Arcade, vertices: &mut Vec<gfx::RgbVertex>) {
     push_rect(vertices, 0, 0, WIN_W, WIN_H, BG);
     let ox = 80;
     let oy = 52;
@@ -439,7 +433,7 @@ fn draw_mines(app: &Arcade, vertices: &mut Vec<vgfx::RgbVertex>) {
     }
 }
 
-fn draw_chess(app: &Arcade, vertices: &mut Vec<vgfx::RgbVertex>) {
+fn draw_chess(app: &Arcade, vertices: &mut Vec<gfx::RgbVertex>) {
     push_rect(vertices, 0, 0, WIN_W, WIN_H, BG);
     let ox = 100;
     let oy = 50;

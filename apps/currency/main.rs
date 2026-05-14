@@ -1,11 +1,12 @@
 // trueos-blueprint: features=["tokio-runtime"]
 
-use trueos::{ui2, vgfx_hosted, vnet, vsys};
+use trueos::ui2::{self, gfx};
 use trueos::{
     bp_error, bp_info,
     platform::{format, vec, String, ToString, Vec},
     runtime, time,
 };
+use trueos::{vnet, vsys};
 
 const UI2_CURRENCY_TEX_ID: u32 = 4_723;
 const UI2_CURRENCY_WINDOW_TITLE: &str = "Currency";
@@ -329,7 +330,7 @@ fn currency_line_step() -> usize {
 
 fn present_snapshot(surface: &ui2::SurfaceWindow, snapshot: &CurrencySnapshot) {
     let rgba = compose_currency_rgba(snapshot);
-    if vgfx_hosted::upload_texture_rgba_image_now(
+    if gfx::upload_texture_rgba_image_now(
         surface.tex_id(),
         UI2_CURRENCY_VIEW_W,
         UI2_CURRENCY_VIEW_H,

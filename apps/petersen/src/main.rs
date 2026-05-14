@@ -6,8 +6,9 @@ extern crate alloc;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::panic::PanicInfo;
-use trueos::{TrueosAllocator, panic_abort};
-use trueos::{ui2, vgfx_hosted, vsys};
+use trueos::ui2::{self, gfx};
+use trueos::vsys;
+use trueos::{panic_abort, TrueosAllocator};
 
 #[global_allocator]
 static GLOBAL_ALLOCATOR: TrueosAllocator = TrueosAllocator;
@@ -160,8 +161,7 @@ pub extern "C" fn main() {
     };
 
     let pixels = render_petersen(WINDOW_WIDTH, WINDOW_HEIGHT);
-    let ok =
-        vgfx_hosted::upload_texture_rgba_image_now(TEX_ID, WINDOW_WIDTH, WINDOW_HEIGHT, &pixels);
+    let ok = gfx::upload_texture_rgba_image_now(TEX_ID, WINDOW_WIDTH, WINDOW_HEIGHT, &pixels);
     if !ok {
         vsys::log_error("petersen bp: texture upload failed\n");
         return;

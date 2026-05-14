@@ -7,8 +7,9 @@ use alloc::format;
 use alloc::string::String;
 use core::fmt::Write as _;
 use core::panic::PanicInfo;
-use trueos::{TrueosAllocator, input, panic_abort, tyche};
-use trueos::{ui2, vgfx, vsys};
+use trueos::ui2::{self, gfx};
+use trueos::vsys;
+use trueos::{input, panic_abort, tyche, TrueosAllocator};
 
 #[global_allocator]
 static GLOBAL_ALLOCATOR: TrueosAllocator = TrueosAllocator;
@@ -351,11 +352,7 @@ fn push_flag(out: &mut String, flag_svg: &str, x: i32, y: i32, w: i32, h: i32) {
         .find("<svg")
         .map(|idx| &flag_svg[idx + 4..])
         .unwrap_or(flag_svg);
-    let _ = write!(
-        out,
-        r#"<svg x="{}" y="{}" width="{}" height="{}"{}"#,
-        x, y, w, h, clean
-    );
+    let _ = write!(out, r#"<svg x="{}" y="{}" width="{}" height="{}"{}"#, x, y, w, h, clean);
 }
 
 fn border_color(game: &Game, slot: usize) -> &'static str {
@@ -411,7 +408,7 @@ fn present(window: &ui2::SurfaceWindow, game: &Game) {
     let title = game.title();
     let _ = window.id().set_title(title.as_str());
     let svg = compose_svg(game);
-    let rc = vgfx::upload_svg_to_texture(TEX_ID, svg.as_bytes());
+    let rc = gfx::upload_svg_to_texture(TEX_ID, svg.as_bytes());
     if rc == 0 {
         let _ = window.id().request_repaint();
     } else {

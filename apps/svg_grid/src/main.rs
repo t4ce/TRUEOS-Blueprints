@@ -5,8 +5,9 @@ extern crate alloc;
 
 use alloc::{format, string::String};
 use core::panic::PanicInfo;
-use trueos::{TrueosAllocator, panic_abort};
-use trueos::{ui2, vgfx, vsys};
+use trueos::ui2::{self, gfx};
+use trueos::vsys;
+use trueos::{panic_abort, TrueosAllocator};
 
 #[global_allocator]
 static GLOBAL_ALLOCATOR: TrueosAllocator = TrueosAllocator;
@@ -74,7 +75,7 @@ fn current_content_size(window_id: ui2::WindowId) -> Option<(u32, u32)> {
 
 fn render_svg(window_id: ui2::WindowId, width: u32, height: u32) -> bool {
     let svg = svg_for_texture_size(width, height);
-    let rc = vgfx::upload_svg_to_texture(TEX_ID, svg.as_bytes());
+    let rc = gfx::upload_svg_to_texture(TEX_ID, svg.as_bytes());
     if rc != 0 {
         vsys::log_errorf(format_args!(
             "svg_grid bp: svg upload failed rc={} size={}x{}\n",
