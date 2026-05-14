@@ -1,8 +1,6 @@
 #![no_std]
 #![no_main]
 
-use core::panic::PanicInfo;
-use trueos::panic_abort;
 use trueos::{platform, ui2};
 
 const UI2_MANDELBROT_TEX_ID: u32 = 4_702;
@@ -11,11 +9,6 @@ const UI2_MANDELBROT_RT_H: u32 = 512;
 const UI2_MANDELBROT_WINDOW_Z: i32 = 31;
 const FRAME_MS: u64 = 33;
 const TICK_HZ: u64 = 1_000;
-
-#[panic_handler]
-fn panic(_info: &PanicInfo<'_>) -> ! {
-    panic_abort("mandelbrot bp: panic\n")
-}
 
 #[unsafe(no_mangle)]
 pub extern "C" fn main() {

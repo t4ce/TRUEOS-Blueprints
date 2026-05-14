@@ -5,9 +5,7 @@ extern crate alloc;
 
 use alloc::string::String;
 use core::fmt::Write as _;
-use core::panic::PanicInfo;
 
-use trueos::panic_abort;
 use trueos::platform;
 use trueos::ui2::{self, gfx};
 
@@ -18,11 +16,6 @@ const WINDOW_WIDTH: u32 = 1600;
 const WINDOW_HEIGHT: u32 = 900;
 const TEX_ID: u32 = 4_888;
 const FRAME_MS: u64 = 50;
-
-#[panic_handler]
-fn panic(_info: &PanicInfo<'_>) -> ! {
-    panic_abort("retrosun bp: panic\n")
-}
 
 fn open_window() -> Option<ui2::SurfaceWindow> {
     ui2::SurfaceWindow::create(

@@ -4,8 +4,6 @@
 extern crate alloc;
 
 use alloc::{format, string::String};
-use core::panic::PanicInfo;
-use trueos::panic_abort;
 use trueos::platform;
 use trueos::ui2::{self, gfx};
 
@@ -15,11 +13,6 @@ const WINDOW_Y: i32 = 120;
 const WINDOW_WIDTH: u32 = 272;
 const WINDOW_HEIGHT: u32 = 204;
 const TEX_ID: u32 = 4_761;
-
-#[panic_handler]
-fn panic(_info: &PanicInfo<'_>) -> ! {
-    panic_abort("svg_grid bp: panic\n")
-}
 
 fn open_window() -> Option<ui2::SurfaceWindow> {
     ui2::SurfaceWindow::create(

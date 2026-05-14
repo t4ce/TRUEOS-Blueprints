@@ -4,8 +4,6 @@
 extern crate alloc;
 
 use alloc::{vec, vec::Vec};
-use core::panic::PanicInfo;
-use trueos::panic_abort;
 use trueos::platform;
 use trueos::ui2::{self, gfx};
 
@@ -32,11 +30,6 @@ impl Point {
     const fn new(x: i32, y: i32) -> Self {
         Self { x, y }
     }
-}
-
-#[panic_handler]
-fn panic(_info: &PanicInfo<'_>) -> ! {
-    panic_abort("petersen bp: panic\n")
 }
 
 fn put_pixel(pixels: &mut [u8], width: u32, height: u32, x: i32, y: i32, rgba: [u8; 4]) {

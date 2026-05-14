@@ -4,8 +4,6 @@
 extern crate alloc;
 
 use alloc::{format, string::String, vec, vec::Vec};
-use core::panic::PanicInfo;
-use trueos::panic_abort;
 use trueos::platform;
 use trueos::ui2::{self, gfx};
 
@@ -39,11 +37,6 @@ const LABEL_H: usize = 5;
 const LABEL_SCALE: usize = 2;
 const LABEL_ADVANCE: usize = (LABEL_W + 1) * LABEL_SCALE;
 const LABEL_LINE_HEIGHT: usize = LABEL_H * LABEL_SCALE;
-
-#[panic_handler]
-fn panic(_info: &PanicInfo<'_>) -> ! {
-    panic_abort("chart bp: panic\n")
-}
 
 fn fill_rect(
     dst: &mut [u8],

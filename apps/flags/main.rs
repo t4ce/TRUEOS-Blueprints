@@ -5,10 +5,9 @@ extern crate alloc;
 
 use alloc::{format, string::String};
 use core::fmt::Write as _;
-use core::panic::PanicInfo;
 use trueos::platform;
 use trueos::ui2::{self, gfx};
-use trueos::{input, panic_abort, tyche};
+use trueos::{input, tyche};
 
 const WINDOW_X: i32 = 520;
 const WINDOW_Y: i32 = 150;
@@ -46,11 +45,6 @@ const COUNTRIES: &[(&str, &str)] = &[
     ("ar", "Argentina"),
     ("au", "Australia"),
 ];
-
-#[panic_handler]
-fn panic(_info: &PanicInfo<'_>) -> ! {
-    panic_abort("flags bp: panic\n")
-}
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 enum Flash {

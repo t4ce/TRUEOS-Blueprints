@@ -4,10 +4,9 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
-use core::panic::PanicInfo;
+use trueos::input;
 use trueos::platform;
 use trueos::ui2::{self, gfx};
-use trueos::{input, panic_abort};
 use trueos_tetris::{Lcg32, NoopEvents, Rotation};
 
 const TEX_ID: u32 = 4_775;
@@ -241,11 +240,6 @@ impl Arcade {
             _ => {}
         }
     }
-}
-
-#[panic_handler]
-fn panic(_info: &PanicInfo<'_>) -> ! {
-    panic_abort("full_tetris bp: panic\n")
 }
 
 fn push_rect(vertices: &mut Vec<gfx::RgbVertex>, x: u32, y: u32, w: u32, h: u32, color: [u8; 4]) {

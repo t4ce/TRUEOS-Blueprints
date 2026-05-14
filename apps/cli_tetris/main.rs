@@ -1,8 +1,6 @@
 #![no_std]
 #![no_main]
 
-use core::panic::PanicInfo;
-use trueos::panic_abort;
 use trueos::{platform, vshell};
 use trueos_tetris::shell::{ShellControl, ShellIo};
 
@@ -16,11 +14,6 @@ impl ShellIo for AttachedShell {
     fn write_fmt(&self, args: core::fmt::Arguments<'_>) {
         let _ = vshell::attached_write_fmt(args);
     }
-}
-
-#[panic_handler]
-fn panic(_info: &PanicInfo<'_>) -> ! {
-    panic_abort("cli_tetris bp: panic\n")
 }
 
 #[unsafe(no_mangle)]

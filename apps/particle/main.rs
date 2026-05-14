@@ -4,9 +4,7 @@
 extern crate alloc;
 
 use alloc::{string::String, vec, vec::Vec};
-use core::panic::PanicInfo;
 
-use trueos::panic_abort;
 use trueos::platform;
 use trueos::ui2::{self, gfx};
 use trueos_gfx_core::{push_tex_quad_px, Rgba8, ViewTransform, TEX_VERTEX_SIZE};
@@ -311,11 +309,6 @@ fn create_particle_demo_window() -> Option<ui2::SurfaceWindow> {
         UI2_PARTICLE_DEMO_TEX_ID,
         false,
     )
-}
-
-#[panic_handler]
-fn panic(_info: &PanicInfo<'_>) -> ! {
-    panic_abort("particle bp: panic\n")
 }
 
 #[unsafe(no_mangle)]

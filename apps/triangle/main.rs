@@ -1,8 +1,6 @@
 #![no_std]
 #![no_main]
 
-use core::panic::PanicInfo;
-use trueos::panic_abort;
 use trueos::platform;
 use trueos::ui2::{self, gfx};
 
@@ -52,11 +50,6 @@ fn open_triangle_window() -> Option<ui2::SurfaceWindow> {
         },
         TRIANGLE_TEX_ID,
     )
-}
-
-#[panic_handler]
-fn panic(_info: &PanicInfo<'_>) -> ! {
-    panic_abort("triangle bp: panic\n")
 }
 
 #[unsafe(no_mangle)]
