@@ -29,6 +29,11 @@ struct PackageAppSpec {
     manifest_path: PathBuf,
 }
 
+#[derive(Deserialize)]
+struct AppRegistry {
+    apps: Vec<String>,
+}
+
 #[derive(Clone, Copy)]
 enum CargoProfile {
     Dev,
@@ -131,12 +136,10 @@ fn run() -> Result<(), String> {
                 continue;
             }
 
-            let package_dir = app_dir.join("apps").join(&example_name);
-            let package_manifest = package_dir.join("Cargo.toml");
-            if package_manifest.is_file() {
+            if let Some(package_app) = package_app_spec(&app_dir, &example_name)? {
                 build_one_target_to(
-                    &package_dir,
-                    &package_manifest,
+                    &package_app.dir,
+                    &package_app.manifest_path,
                     BuildTarget::Package,
                     &[],
                     &app_dir.join("dist"),
@@ -162,7 +165,7 @@ fn run() -> Result<(), String> {
 fn parse_cli_args(
     args: &[std::ffi::OsString],
 ) -> Result<(PathBuf, Vec<String>, CargoProfile), String> {
-    let mut cargo_profile = CargoProfile::Dev;
+    let mut cargo_profile = CargoProfile::Release;
     let mut filtered_args = Vec::with_capacity(args.len());
     for arg in args {
         if arg == "--release" {
@@ -239,7 +242,7 @@ fn build_one_target_to(
         .ok_or_else(|| format!("bad target spec path: {}", target_spec.display()))?
         .to_string();
     let packer_target_dir = app_dir.join("target").join("trueos-blueprint");
-    let cargo_cache_root = cargo_cache_root(&packer_target_dir);
+    let cargo_cache_root = cargo_cache_root(&app_dir, &packer_target_dir);
     let cargo_target_dir = cargo_cache_root
         .join(&target_name)
         .join(build_settings.flavor.cache_label());
@@ -476,8 +479,27 @@ fn default_target_spec(app_dir: &Path) -> Result<PathBuf, String> {
     ))
 }
 
-fn cargo_cache_root(default_packer_target_dir: &Path) -> PathBuf {
-    env_path(CARGO_CACHE_DIR_ENV).unwrap_or_else(|| default_packer_target_dir.join("cargo-cache"))
+fn cargo_cache_root(app_dir: &Path, default_packer_target_dir: &Path) -> PathBuf {
+    if let Some(path) = env_path(CARGO_CACHE_DIR_ENV) {
+        return path;
+    }
+
+    blueprint_root(app_dir)
+        .map(|root| root.join("target").join("trueos-blueprint").join("cargo-cache"))
+        .unwrap_or_else(|| default_packer_target_dir.join("cargo-cache"))
+}
+
+fn blueprint_root(app_dir: &Path) -> Option<PathBuf> {
+    for ancestor in app_dir.ancestors() {
+        let manifest = ancestor.join("Cargo.toml");
+        if manifest.is_file()
+            && ancestor.join("apps.json").is_file()
+            && package_name(&manifest).ok().as_deref() == Some("trueos-blueprint")
+        {
+            return Some(ancestor.to_path_buf());
+        }
+    }
+    None
 }
 
 fn env_path(name: &str) -> Option<PathBuf> {
