@@ -359,8 +359,6 @@ fn build_one_target_to(
 
     let mut ld = tool_command(&["ld.lld", "rust-lld", "ld"])?;
     ld.arg("-r")
-        .arg("--gc-sections")
-        .arg("--undefined=main")
         .arg("-o")
         .arg(&linked)
         .arg(&app_obj);
@@ -777,9 +775,8 @@ fn source_overlay_patches(app_dir: &Path, _manifest_path: &Path) -> Result<Vec<C
         }
     }
 
-    if !out.iter().any(|patch| patch.name == "libc")
-        && let Some(path) = find_vendor_dir(app_dir, "libc-0.2.185")
-    {
+    if let Some(path) = find_vendor_dir(app_dir, "libc-0.2.185") {
+        out.retain(|patch| patch.name != "libc");
         out.push(CratePatch {
             name: "libc".to_string(),
             path,
@@ -906,6 +903,12 @@ fn source_overlay_lock_mismatches(
         let Some(overlay_version) = package_version(&patch.path.join("Cargo.toml"))? else {
             continue;
         };
+        let has_matching_locked_version = lock_packages
+            .iter()
+            .any(|(name, locked_version)| name == &patch.name && locked_version == &overlay_version);
+        if has_matching_locked_version {
+            continue;
+        }
         for (name, locked_version) in &lock_packages {
             if name == &patch.name && locked_version != &overlay_version {
                 out.push(LockMismatch {
@@ -1021,9 +1024,26 @@ fn link_kernel_sibling_for_staged_app(app_dir: &Path, work_dir: &Path) -> Result
 }
 
 fn link_staged_sibling(link: &Path, target: &Path) -> Result<(), String> {
-    if link.exists() || !target.exists() {
+    if !target.exists() {
         return Ok(());
     }
+
+    if let Ok(metadata) = fs::symlink_metadata(link) {
+        let file_type = metadata.file_type();
+        if file_type.is_symlink()
+            && let Ok(existing_target) = fs::read_link(link)
+            && existing_target == target
+        {
+            return Ok(());
+        }
+
+        if file_type.is_dir() && !file_type.is_symlink() {
+            fs::remove_dir_all(link).map_err(io_string)?;
+        } else {
+            fs::remove_file(link).map_err(io_string)?;
+        }
+    }
+
     #[cfg(unix)]
     {
         std::os::unix::fs::symlink(target, link).map_err(io_string)?;
@@ -1042,12 +1062,11 @@ fn push_source_overlay_configs(cmd: &mut Command, source_overlay: &[CratePatch])
 }
 
 fn staged_source_overlay(source_overlay: &[CratePatch], work_dir: &Path) -> Vec<CratePatch> {
-    let staging_root = work_dir.parent().unwrap_or(work_dir);
     source_overlay
         .iter()
         .map(|patch| CratePatch {
             name: patch.name.clone(),
-            path: staged_overlay_path(&patch.path, staging_root),
+            path: patch.path.clone(),
         })
         .collect()
 }
@@ -1407,17 +1426,34 @@ fn entry_hint_hex(linked: &Path) -> String {
         if let Ok(output) = readelf.arg("-Ws").arg(linked).output() {
             if output.status.success() {
                 if let Ok(stdout) = String::from_utf8(output.stdout) {
+                    let mut rust_main: Option<(u32, u32, usize)> = None;
                     for line in stdout.lines() {
                         let cols = line.split_whitespace().collect::<Vec<_>>();
                         if cols.len() < 8 {
                             continue;
                         }
-                        if cols[3] == "FUNC" && cols[7] == "main" {
-                            let value = cols[1].trim_start_matches("0x");
-                            let section = cols[6].parse::<u32>().unwrap_or(0);
-                            let value = u32::from_str_radix(value, 16).unwrap_or(0);
+                        if cols[3] != "FUNC" {
+                            continue;
+                        }
+                        let Some(name) = cols.last().copied() else {
+                            continue;
+                        };
+                        let value = cols[1].trim_start_matches("0x");
+                        let section = cols[6].parse::<u32>().unwrap_or(0);
+                        let value = u32::from_str_radix(value, 16).unwrap_or(0);
+                        if name == "main" {
                             return format!("{section:08x}{value:08x}");
                         }
+                        let prefer_rust_main = match &rust_main {
+                            Some((_, _, best_len)) => name.len() < *best_len,
+                            None => true,
+                        };
+                        if looks_like_rust_main_symbol(name) && prefer_rust_main {
+                            rust_main = Some((section, value, name.len()));
+                        }
+                    }
+                    if let Some((section, value, _)) = rust_main {
+                        return format!("{section:08x}{value:08x}");
                     }
                 }
             }
@@ -1431,12 +1467,34 @@ fn entry_hint_hex(linked: &Path) -> String {
                     let mut current_value: Option<u32> = None;
                     let mut current_section: Option<u32> = None;
                     let mut current_is_function = false;
+                    let mut current_name: Option<&str> = None;
+                    let mut rust_main: Option<(u32, u32, usize)> = None;
                     for line in stdout.lines() {
                         let trimmed = line.trim();
                         if trimmed == "Symbol {" {
                             current_value = None;
                             current_section = None;
                             current_is_function = false;
+                            current_name = None;
+                            continue;
+                        }
+                        if trimmed == "}" {
+                            if current_is_function {
+                                if let Some(name) = current_name {
+                                    let section = current_section.unwrap_or(0);
+                                    let value = current_value.unwrap_or(0);
+                                    if name == "main" {
+                                        return format!("{section:08x}{value:08x}");
+                                    }
+                                    let prefer_rust_main = match &rust_main {
+                                        Some((_, _, best_len)) => name.len() < *best_len,
+                                        None => true,
+                                    };
+                                    if looks_like_rust_main_symbol(name) && prefer_rust_main {
+                                        rust_main = Some((section, value, name.len()));
+                                    }
+                                }
+                            }
                             continue;
                         }
                         if let Some(value) = trimmed.strip_prefix("Value: ") {
@@ -1458,13 +1516,12 @@ fn entry_hint_hex(linked: &Path) -> String {
                             current_is_function = true;
                             continue;
                         }
-                        if trimmed == "Name: main" && current_is_function {
-                            return format!(
-                                "{:08x}{:08x}",
-                                current_section.unwrap_or(0),
-                                current_value.unwrap_or(0)
-                            );
+                        if let Some(name) = trimmed.strip_prefix("Name: ") {
+                            current_name = Some(name);
                         }
+                    }
+                    if let Some((section, value, _)) = rust_main {
+                        return format!("{section:08x}{value:08x}");
                     }
                 }
             }
@@ -1472,6 +1529,11 @@ fn entry_hint_hex(linked: &Path) -> String {
     }
 
     String::from("0000000000000000")
+}
+
+fn looks_like_rust_main_symbol(name: &str) -> bool {
+    (name.starts_with("_R") && name.ends_with("4main"))
+        || (name.starts_with("_ZN") && name.contains("4main17h") && name.ends_with('E'))
 }
 
 fn write_blueprint(out: &Path, stripped: &Path, entry_hint_hex: &str) -> Result<(), String> {

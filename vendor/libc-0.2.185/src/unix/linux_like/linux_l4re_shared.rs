@@ -1765,6 +1765,9 @@ extern "C" {
 
     pub fn getspnam(name: *const c_char) -> *mut spwd;
 
+    #[cfg(target_os = "trueos")]
+    pub fn pthread_setname_np(thread: crate::pthread_t, name: *const c_char) -> c_int;
+
     // System V IPC
     pub fn shmget(key: crate::key_t, size: size_t, shmflg: c_int) -> c_int;
     pub fn shmat(shmid: c_int, shmaddr: *const c_void, shmflg: c_int) -> *mut c_void;

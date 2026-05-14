@@ -6,15 +6,15 @@
   "target-pointer-width": 64,
   "target-c-int-width": 32,
   "os": "trueos",
-  "env": "newlib",
+  "env": "musl",
   "target-family": ["unix"],
   "executables": true,
   "linker-flavor": "ld.lld",
   "linker": "rust-lld",
   "panic-strategy": "abort",
   "disable-redzone": true,
-  "relocation-model": "static",
-  "code-model": "kernel",
+  "relocation-model": "pic",
+  "code-model": "small",
   "tls-model": "local-exec",
   "emit-debug-gdb-scripts": false
 }

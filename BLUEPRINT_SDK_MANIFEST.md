@@ -173,10 +173,37 @@ fs = true
 net = true
 time = true
 ui = false
+
+[readiness]
+requires = ["fs", "net.socket", "ui2"]
 ```
 
 This bundle manifest declares what the app expects.
 It does not redefine target cfg behavior. That remains SDK-owned.
+
+## Blueprint Readiness Contract
+
+Blueprint readiness is the launch-time contract between the bundle and the
+kernel services it needs. It should stay small and semantic. A bundle can
+declare these explicitly in `[readiness].requires`; until bundle manifests are
+embedded, the kernel may infer a conservative subset from imported CABI symbols.
+
+The current core set should stay near ten concepts:
+
+- `app-vm-worker`: AP2+ worker lane exists for app VM launch.
+- `ui2`: UI2 window broker is ready.
+- `gfx.texture-upload`: texture upload service is ready.
+- `gfx.backend`: general graphics backend is ready.
+- `fs.root`: TRUEOSFS root is mounted.
+- `net.config`: at least one IP stack is configured.
+- `net.socket`: VNet/socket surface is proven ready.
+- `tls.socket`: TLS socket service is ready.
+- `tokio.runtime`: shared Tokio runtime is ready.
+- `audio.hda`: Intel HDA/audio backend is ready.
+
+Specific future hardware features without software fallback, such as HDR output
+or media encode/decode blocks, should be added as explicit readiness concepts
+only when an SDK API exposes that dependency.
 
 ## SDK Manifest Shape
 

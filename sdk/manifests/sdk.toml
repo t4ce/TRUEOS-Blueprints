@@ -12,6 +12,8 @@ spec = "sdk/targets/trueos-blueprint.json"
 os = "trueos"
 env = "newlib"
 families = ["unix"]
+relocation_model = "pic"
+code_model = "small"
 
 [build_std]
 std = true

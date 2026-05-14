@@ -229,13 +229,18 @@ cfg_if! {
 cfg_if! {
     if #[cfg(all(target_family = "unix", not(target_os = "qurt")))] {
         // FIXME(pthread): eventually all platforms should use this module
+        #[cfg(target_os = "trueos")]
+        pub use common::posix::pthread::*;
         #[cfg(any(
             target_os = "android",
             target_os = "emscripten",
             target_os = "l4re",
-            any(target_os = "linux", target_os = "trueos")
+            target_os = "linux"
         ))]
         pub use pthread::*;
+        #[cfg(target_os = "trueos")]
+        pub use common::posix::unistd::*;
+        #[cfg(not(target_os = "trueos"))]
         pub use unistd::*;
     }
 }
