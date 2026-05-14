@@ -137,7 +137,7 @@ fn run() -> Result<(), String> {
                     &package_manifest,
                     BuildTarget::Package,
                     &[],
-                    &app_dir,
+                    &app_dir.join("dist"),
                     cargo_profile,
                 )?;
                 continue;
@@ -1514,9 +1514,9 @@ fn link_kernel_sibling_for_staged_app(app_dir: &Path, work_dir: &Path) -> Result
     let app_target_root = app_dir.join("target");
 
     for ancestor in app_dir.ancestors() {
-        let blueprint_trueos = ancestor.join("trueos");
-        if blueprint_trueos.join("Cargo.toml").is_file() {
-            link_staged_sibling(&staging_root.join("trueos"), &blueprint_trueos)?;
+        let blueprint_sdk = ancestor.join("sdk");
+        if blueprint_sdk.join("Cargo.toml").is_file() {
+            link_staged_sibling(&staging_root.join("sdk"), &blueprint_sdk)?;
             break;
         }
     }
