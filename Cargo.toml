@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [workspace]
-members = [".", "sdk", "apps/hello_world", "apps/petersen", "apps/svg_grid"]
+members = [".", "api", "apps/hello_world", "apps/petersen", "apps/svg_grid"]
 default-members = ["."]
 resolver = "3"
 

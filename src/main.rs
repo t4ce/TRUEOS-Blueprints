@@ -697,16 +697,6 @@ fn default_target_spec(app_dir: &Path) -> Result<PathBuf, String> {
         ));
     }
 
-    for ancestor in app_dir.ancestors() {
-        let candidate = ancestor
-            .join("sdk")
-            .join("targets")
-            .join("trueos-blueprint.json");
-        if candidate.is_file() {
-            return Ok(candidate);
-        }
-    }
-
     for candidate in [
         app_dir.join("target.json"),
         app_dir.join("trueos.json"),
@@ -815,8 +805,9 @@ fn staged_manifest_for_overlay(
             .file_name()
             .ok_or_else(|| format!("bad manifest path: {}", manifest_path.display()))?,
     );
-    strip_manifest_patch_section(&staged_manifest)?;
-            rewrite_staged_source_for_target(app_dir, &staged_app_dir, build_settings)?;
+        strip_manifest_patch_section(&staged_manifest)?;
+        ensure_standalone_manifest_workspace(&staged_manifest)?;
+        rewrite_staged_source_for_target(app_dir, &staged_app_dir, build_settings)?;
     let staged_source_overlay = staged_source_overlay(source_overlay, work_dir);
 
     if lock_mismatches.is_empty() {
@@ -1514,9 +1505,9 @@ fn link_kernel_sibling_for_staged_app(app_dir: &Path, work_dir: &Path) -> Result
     let app_target_root = app_dir.join("target");
 
     for ancestor in app_dir.ancestors() {
-        let blueprint_sdk = ancestor.join("sdk");
-        if blueprint_sdk.join("Cargo.toml").is_file() {
-            link_staged_sibling(&staging_root.join("sdk"), &blueprint_sdk)?;
+        let blueprint_api = ancestor.join("api");
+        if blueprint_api.join("Cargo.toml").is_file() {
+            link_staged_sibling(&staging_root.join("api"), &blueprint_api)?;
             break;
         }
     }
@@ -1667,6 +1658,24 @@ fn strip_manifest_patch_section(manifest_path: &Path) -> Result<(), String> {
         out.push_str(line);
         out.push('\n');
     }
+
+    fs::write(manifest_path, out).map_err(io_string)
+}
+
+fn ensure_standalone_manifest_workspace(manifest_path: &Path) -> Result<(), String> {
+    let cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
+    if cargo_toml
+        .lines()
+        .any(|line| line.split('#').next().unwrap_or("").trim() == "[workspace]")
+    {
+        return Ok(());
+    }
+
+    let mut out = cargo_toml;
+    if !out.ends_with('\n') {
+        out.push('\n');
+    }
+    out.push_str("\n[workspace]\n");
 
     fs::write(manifest_path, out).map_err(io_string)
 }

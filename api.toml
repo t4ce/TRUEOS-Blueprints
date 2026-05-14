@@ -1,16 +1,16 @@
 manifest-version = 1
 
-[sdk]
-id = "trueos-blueprint-sdk"
+[api]
+id = "trueos-blueprint-api"
 version = "0.1.0"
 
 [compat]
 phases = ["target", "libc", "std", "tokio"]
 
 [target]
-spec = "sdk/targets/trueos-blueprint.json"
+spec = "apps/target.json"
 os = "trueos"
-env = "newlib"
+env = "musl"
 families = ["unix"]
 relocation_model = "pic"
 code_model = "small"
