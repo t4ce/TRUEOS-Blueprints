@@ -15,8 +15,6 @@ trueos = { path = "api" }
 default = []
 tokio-runtime = ["trueos/tokio-runtime"]
 tokio-net-probe = ["tokio-runtime", "trueos/tokio-net-probe"]
-thin-default-global-allocator = ["trueos/default-global-allocator"]
-thin-default-panic-handler = ["trueos/default-panic-handler"]
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }

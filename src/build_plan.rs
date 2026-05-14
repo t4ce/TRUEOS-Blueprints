@@ -108,8 +108,7 @@ fn source_needs_tokio_net(source: &str) -> bool {
 }
 
 fn source_needs_trueos_platform(source: &str) -> bool {
-    source.contains("trueos::platform")
-        || source.contains("trueos::runtime")
+    source.contains("trueos::runtime")
         || source.contains("trueos::task")
         || source.contains("trueos::sync")
         || source.contains("trueos::time")
@@ -119,7 +118,7 @@ fn source_needs_trueos_platform(source: &str) -> bool {
             source,
             "trueos::{",
             &[
-                "platform", "runtime", "task", "sync", "time", "io", "fs", "net", "tokio",
+                "runtime", "task", "sync", "time", "io", "fs", "net", "tokio",
             ],
         )
 }

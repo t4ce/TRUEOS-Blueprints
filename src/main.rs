@@ -291,24 +291,19 @@ fn build_one_target_to(
     push_extra_rustflag(&mut cargo, TRUEOS_CHECK_CFG_FLAG);
     cargo.env("CARGO_TARGET_DIR", &cargo_target_dir);
     let declared_features = manifest_declared_features(&cargo_manifest_path)?;
+    let has_trueos_dependency = manifest_has_dependency(&cargo_manifest_path, "trueos")?;
     let mut extra_features = required_features.to_vec();
     for feature in &build_settings.extra_features {
         push_declared_feature(&mut extra_features, feature, &declared_features);
     }
-    if !build_settings.has_global_allocator {
-        push_declared_feature(
-            &mut extra_features,
-            "thin-default-global-allocator",
-            &declared_features,
-        );
+    if !build_settings.has_global_allocator && has_trueos_dependency {
+        push_feature(&mut extra_features, "trueos/default-global-allocator");
     }
-    if matches!(build_settings.flavor, BuildFlavor::ThinNoStd) && !build_settings.has_panic_handler
+    if matches!(build_settings.flavor, BuildFlavor::ThinNoStd)
+        && !build_settings.has_panic_handler
+        && has_trueos_dependency
     {
-        push_declared_feature(
-            &mut extra_features,
-            "thin-default-panic-handler",
-            &declared_features,
-        );
+        push_feature(&mut extra_features, "trueos/default-panic-handler");
     }
     if matches!(build_settings.flavor, BuildFlavor::ThinNoStd) {
         cargo.arg("--no-default-features");
@@ -565,6 +560,7 @@ fn staged_manifest_for_overlay(
             .ok_or_else(|| format!("bad manifest path: {}", manifest_path.display()))?,
     );
     strip_manifest_patch_section(&staged_manifest)?;
+    materialize_staged_workspace_dependencies(&staged_manifest)?;
     ensure_standalone_manifest_workspace(&staged_manifest)?;
     rewrite_staged_source_for_target(app_dir, &staged_app_dir, build_settings)?;
     let staged_source_overlay = staged_source_overlay(source_overlay, work_dir);
@@ -1404,6 +1400,35 @@ fn strip_manifest_patch_section(manifest_path: &Path) -> Result<(), String> {
     fs::write(manifest_path, out).map_err(io_string)
 }
 
+fn materialize_staged_workspace_dependencies(manifest_path: &Path) -> Result<(), String> {
+    let cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
+    let mut changed = false;
+    let mut out = String::with_capacity(cargo_toml.len());
+
+    for line in cargo_toml.lines() {
+        if is_workspace_trueos_dependency(line) {
+            out.push_str("trueos = { path = \"../../api\" }\n");
+            changed = true;
+        } else {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+
+    if changed {
+        fs::write(manifest_path, out).map_err(io_string)?;
+    }
+    Ok(())
+}
+
+fn is_workspace_trueos_dependency(line: &str) -> bool {
+    let line = line.split('#').next().unwrap_or("").trim();
+    let Some((key, value)) = line.split_once('=') else {
+        return false;
+    };
+    key.trim() == "trueos.workspace" && value.trim() == "true"
+}
+
 fn ensure_standalone_manifest_workspace(manifest_path: &Path) -> Result<(), String> {
     let cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
     if cargo_toml
@@ -1593,6 +1618,29 @@ fn manifest_declared_features(manifest_path: &Path) -> Result<Vec<String>, Strin
         out.push(key.trim().to_string());
     }
     Ok(out)
+}
+
+fn manifest_has_dependency(manifest_path: &Path, dependency_name: &str) -> Result<bool, String> {
+    let cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
+    let mut in_dependencies = false;
+    for line in cargo_toml.lines() {
+        let trimmed = line.split('#').next().unwrap_or("").trim();
+        if trimmed.starts_with('[') {
+            in_dependencies =
+                matches!(trimmed, "[dependencies]" | "[dev-dependencies]" | "[build-dependencies]");
+            continue;
+        }
+        if !in_dependencies || trimmed.is_empty() {
+            continue;
+        }
+        let Some((key, _)) = trimmed.split_once('=') else {
+            continue;
+        };
+        if key.trim() == dependency_name || key.trim().starts_with(&format!("{dependency_name}.")) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn push_declared_feature(features: &mut Vec<String>, feature: &str, declared_features: &[String]) {
