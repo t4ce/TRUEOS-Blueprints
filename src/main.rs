@@ -6,9 +6,16 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+mod artifact;
 mod build_plan;
+mod publish;
 
+use artifact::{
+    cargo_artifact_stem, collect_rlibs, entry_hint_hex, latest_cargo_object, tool_command,
+    write_blueprint,
+};
 use build_plan::{BuildFlavor, BuildSettings, BuildTarget, resolve_build_settings};
+use publish::publish_dist_blueprints;
 
 #[derive(Clone)]
 struct ExampleSpec {
@@ -51,11 +58,6 @@ struct CratePatch {
 
 const CARGO_CACHE_DIR_ENV: &str = "TRUEOS_BLUEPRINT_CARGO_CACHE_DIR";
 const TARGET_SPEC_ENV: &str = "TRUEOS_BLUEPRINT_TARGET_SPEC";
-const APPS_PUBLISH_SKIP_ENV: &str = "TRUEOS_BLUEPRINT_SKIP_APPS_PUBLISH";
-const APPS_PUBLISH_MOUNT_URI_ENV: &str = "TRUEOS_BLUEPRINT_APPS_PUBLISH_MOUNT_URI";
-const APPS_PUBLISH_URI_ENV: &str = "TRUEOS_BLUEPRINT_APPS_PUBLISH_URI";
-const DEFAULT_APPS_PUBLISH_MOUNT_URI: &str = "smb://t4ce@pdjb/home-share";
-const DEFAULT_APPS_PUBLISH_URI: &str = "smb://t4ce@pdjb/home-share/TRUEOS_SITE/apps";
 const RUSTFLAGS_ENCODED_SEPARATOR: char = '\u{1f}';
 const TRUEOS_CHECK_CFG_FLAG: &str = "--check-cfg=cfg(target_os,values(\"trueos\",\"zkvm\"))";
 
@@ -436,236 +438,8 @@ fn run_staged_lock_overlay_update(
     Err("cargo update failed unexpectedly".to_string())
 }
 
-fn publish_dist_blueprints(dist_dir: &Path) -> Result<(), String> {
-    if env_flag_is_set(APPS_PUBLISH_SKIP_ENV) {
-        println!("trueos-blueprint: skipping apps publish");
-        return Ok(());
-    }
-
-    let target_uri =
-        env_string(APPS_PUBLISH_URI_ENV).unwrap_or_else(|| DEFAULT_APPS_PUBLISH_URI.to_string());
-    let mount_uri = env_string(APPS_PUBLISH_MOUNT_URI_ENV)
-        .unwrap_or_else(|| DEFAULT_APPS_PUBLISH_MOUNT_URI.to_string());
-    let bp_files = dist_blueprint_files(dist_dir)?;
-    if bp_files.is_empty() {
-        return Err(format!("no .bp files found in {}", dist_dir.display()));
-    }
-
-    println!("trueos-blueprint: publishing {} blueprints", bp_files.len());
-    println!("trueos-blueprint: remote apps dir: {target_uri}");
-    let mut mount = gio_command();
-    mount.arg("mount").arg(&mount_uri);
-    let _ = mount.status();
-
-    ensure_remote_dir(&target_uri);
-    clean_remote_dir(&target_uri)?;
-    ensure_remote_dir(&target_uri);
-
-    for bp_file in bp_files {
-        let mut copy = gio_command();
-        copy.arg("copy").arg(&bp_file).arg(&target_uri);
-        run_command(&mut copy, "gio copy blueprint")?;
-    }
-
-    println!("trueos-blueprint: published dist blueprints");
-    Ok(())
-}
-
-fn dist_blueprint_files(dist_dir: &Path) -> Result<Vec<PathBuf>, String> {
-    let mut out = Vec::new();
-    for entry in fs::read_dir(dist_dir).map_err(io_string)? {
-        let entry = entry.map_err(io_string)?;
-        let path = entry.path();
-        if path.is_file() && path.extension().and_then(|value| value.to_str()) == Some("bp") {
-            out.push(path);
-        }
-    }
-    out.sort();
-    Ok(out)
-}
-
-fn clean_remote_dir(uri: &str) -> Result<(), String> {
-    for child_uri in gio_list_uris(uri)? {
-        clean_remote_entry(&child_uri)?;
-    }
-    Ok(())
-}
-
-fn clean_remote_entry(uri: &str) -> Result<(), String> {
-    if let Ok(child_uris) = gio_list_uris(uri) {
-        for child_uri in child_uris {
-            clean_remote_entry(&child_uri)?;
-        }
-    }
-
-    let mut remove = gio_command();
-    remove.arg("remove").arg("-f").arg(uri);
-    run_command(&mut remove, "gio remove remote app entry")
-}
-
-fn gio_list_uris(uri: &str) -> Result<Vec<String>, String> {
-    let output = gio_command()
-        .arg("list")
-        .arg("-h")
-        .arg("-u")
-        .arg(uri)
-        .output()
-        .map_err(|err| format!("gio list failed to start: {err}"))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("gio list failed for {uri}: {}", stderr.trim()));
-    }
-
-    Ok(String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .map(ToOwned::to_owned)
-        .collect())
-}
-
-fn ensure_remote_dir(uri: &str) {
-    let _ = gio_command().arg("mkdir").arg(uri).output();
-}
-
-fn gio_command() -> Command {
-    let mut cmd = Command::new("gio");
-    cmd.env_remove("GIO_MODULE_DIR");
-    cmd
-}
-
-fn env_flag_is_set(name: &str) -> bool {
-    env_string(name).is_some_and(|value| !matches!(value.as_str(), "0" | "false" | "FALSE"))
-}
-
-fn env_string(name: &str) -> Option<String> {
-    let value = env::var(name).ok()?;
-    if value.is_empty() { None } else { Some(value) }
-}
-
 fn io_string(err: io::Error) -> String {
     err.to_string()
-}
-
-fn tool_command(tool_names: &[&str]) -> Result<Command, String> {
-    let tool = find_tool(tool_names)?;
-    Ok(Command::new(tool))
-}
-
-fn find_tool(tool_names: &[&str]) -> Result<PathBuf, String> {
-    let mut candidates = Vec::new();
-
-    if let Some(sysroot_bin) = rust_sysroot_bin_dir() {
-        for tool_name in tool_names {
-            candidates.push(sysroot_bin.join(tool_name));
-            candidates.push(sysroot_bin.join("gcc-ld").join(tool_name));
-        }
-    }
-
-    if let Some(path_var) = env::var_os("PATH") {
-        for dir in env::split_paths(&path_var) {
-            for tool_name in tool_names {
-                candidates.push(dir.join(tool_name));
-            }
-        }
-    }
-
-    candidates
-        .into_iter()
-        .find(|candidate| candidate.is_file())
-        .ok_or_else(|| format!("missing required tool: {}", tool_names.join(" or ")))
-}
-
-fn rust_sysroot_bin_dir() -> Option<PathBuf> {
-    let output = Command::new("rustc")
-        .arg("+nightly")
-        .arg("--print")
-        .arg("sysroot")
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let sysroot = String::from_utf8(output.stdout).ok()?;
-    let sysroot = PathBuf::from(sysroot.trim());
-    let host = env::var("HOST").ok().or_else(rustc_host_triple)?;
-    Some(sysroot.join("lib").join("rustlib").join(host).join("bin"))
-}
-
-fn rustc_host_triple() -> Option<String> {
-    let output = Command::new("rustc")
-        .arg("+nightly")
-        .arg("-vV")
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let stdout = String::from_utf8(output.stdout).ok()?;
-    stdout.lines().find_map(|line| {
-        line.strip_prefix("host: ")
-            .map(str::trim)
-            .filter(|host| !host.is_empty())
-            .map(ToOwned::to_owned)
-    })
-}
-
-fn latest_cargo_object(dir: &Path, stem: &str) -> Result<PathBuf, String> {
-    let prefix = format!("{stem}-");
-    let mut best: Option<(std::time::SystemTime, PathBuf)> = None;
-    for entry in fs::read_dir(dir).map_err(io_string)? {
-        let entry = entry.map_err(io_string)?;
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-        let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
-            continue;
-        };
-        let Some(hash) = name
-            .strip_prefix(&prefix)
-            .and_then(|rest| rest.strip_suffix(".o"))
-        else {
-            continue;
-        };
-        if hash.contains('.') {
-            continue;
-        }
-        let modified = entry
-            .metadata()
-            .map_err(io_string)?
-            .modified()
-            .map_err(io_string)?;
-        match &best {
-            Some((best_modified, _)) if modified <= *best_modified => {}
-            _ => best = Some((modified, path)),
-        }
-    }
-    best.map(|(_, path)| path)
-        .ok_or_else(|| format!("missing required build artifact for {stem} in {}", dir.display()))
-}
-
-fn cargo_artifact_stem(name: &str) -> String {
-    name.replace('-', "_")
-}
-
-fn collect_rlibs(dir: &Path) -> Result<Vec<PathBuf>, String> {
-    let mut out = Vec::new();
-    for entry in fs::read_dir(dir).map_err(io_string)? {
-        let entry = entry.map_err(io_string)?;
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-        let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
-            continue;
-        };
-        if name.starts_with("lib") && name.ends_with(".rlib") {
-            out.push(path);
-        }
-    }
-    out.sort();
-    Ok(out)
 }
 
 fn default_target_spec(app_dir: &Path) -> Result<PathBuf, String> {
@@ -1543,7 +1317,7 @@ fn push_source_overlay_configs(cmd: &mut Command, source_overlay: &[CratePatch])
     }
 }
 
-fn staged_source_overlay(source_overlay: &[CratePatch], work_dir: &Path) -> Vec<CratePatch> {
+fn staged_source_overlay(source_overlay: &[CratePatch], _work_dir: &Path) -> Vec<CratePatch> {
     source_overlay
         .iter()
         .map(|patch| CratePatch {
@@ -1551,23 +1325,6 @@ fn staged_source_overlay(source_overlay: &[CratePatch], work_dir: &Path) -> Vec<
             path: patch.path.clone(),
         })
         .collect()
-}
-
-fn staged_overlay_path(path: &Path, staging_root: &Path) -> PathBuf {
-    let Some(name) = path.file_name() else {
-        return path.to_path_buf();
-    };
-    let Some(parent) = path.parent() else {
-        return path.to_path_buf();
-    };
-    let Some(kind) = parent.file_name().and_then(|value| value.to_str()) else {
-        return path.to_path_buf();
-    };
-    match kind {
-        "vendor" => staging_root.join("vendor").join(name),
-        "crates" => staging_root.join("crates").join(name),
-        _ => path.to_path_buf(),
-    }
 }
 
 fn trueos_kernel_manifest(app_dir: &Path) -> Option<PathBuf> {
@@ -1915,161 +1672,6 @@ fn parse_string_array(value: &str) -> Vec<String> {
         .filter(|item| !item.is_empty())
         .map(|item| item.trim_matches('"').to_string())
         .collect()
-}
-
-fn entry_hint_hex(linked: &Path) -> String {
-    if let Ok(mut readelf) = tool_command(&["llvm-readelf", "readelf"]) {
-        if let Ok(output) = readelf.arg("-Ws").arg(linked).output() {
-            if output.status.success() {
-                if let Ok(stdout) = String::from_utf8(output.stdout) {
-                    let mut rust_main: Option<(u32, u32, usize)> = None;
-                    for line in stdout.lines() {
-                        let cols = line.split_whitespace().collect::<Vec<_>>();
-                        if cols.len() < 8 {
-                            continue;
-                        }
-                        if cols[3] != "FUNC" {
-                            continue;
-                        }
-                        let Some(name) = cols.last().copied() else {
-                            continue;
-                        };
-                        let value = cols[1].trim_start_matches("0x");
-                        let section = cols[6].parse::<u32>().unwrap_or(0);
-                        let value = u32::from_str_radix(value, 16).unwrap_or(0);
-                        if name == "main" {
-                            return format!("{section:08x}{value:08x}");
-                        }
-                        let prefer_rust_main = match &rust_main {
-                            Some((_, _, best_len)) => name.len() < *best_len,
-                            None => true,
-                        };
-                        if looks_like_rust_main_symbol(name) && prefer_rust_main {
-                            rust_main = Some((section, value, name.len()));
-                        }
-                    }
-                    if let Some((section, value, _)) = rust_main {
-                        return format!("{section:08x}{value:08x}");
-                    }
-                }
-            }
-        }
-    }
-
-    if let Ok(mut readobj) = tool_command(&["llvm-readobj"]) {
-        if let Ok(output) = readobj.arg("--symbols").arg(linked).output() {
-            if output.status.success() {
-                if let Ok(stdout) = String::from_utf8(output.stdout) {
-                    let mut current_value: Option<u32> = None;
-                    let mut current_section: Option<u32> = None;
-                    let mut current_is_function = false;
-                    let mut current_name: Option<&str> = None;
-                    let mut rust_main: Option<(u32, u32, usize)> = None;
-                    for line in stdout.lines() {
-                        let trimmed = line.trim();
-                        if trimmed == "Symbol {" {
-                            current_value = None;
-                            current_section = None;
-                            current_is_function = false;
-                            current_name = None;
-                            continue;
-                        }
-                        if trimmed == "}" {
-                            if current_is_function {
-                                if let Some(name) = current_name {
-                                    let section = current_section.unwrap_or(0);
-                                    let value = current_value.unwrap_or(0);
-                                    if name == "main" {
-                                        return format!("{section:08x}{value:08x}");
-                                    }
-                                    let prefer_rust_main = match &rust_main {
-                                        Some((_, _, best_len)) => name.len() < *best_len,
-                                        None => true,
-                                    };
-                                    if looks_like_rust_main_symbol(name) && prefer_rust_main {
-                                        rust_main = Some((section, value, name.len()));
-                                    }
-                                }
-                            }
-                            continue;
-                        }
-                        if let Some(value) = trimmed.strip_prefix("Value: ") {
-                            current_value =
-                                u32::from_str_radix(value.trim_start_matches("0x"), 16).ok();
-                            continue;
-                        }
-                        if let Some(section) = trimmed.strip_prefix("Section: ") {
-                            let section = section
-                                .rsplit_once('(')
-                                .and_then(|(_, suffix)| suffix.strip_suffix(')'))
-                                .map(str::trim)
-                                .and_then(|value| value.strip_prefix("0x"))
-                                .and_then(|value| u32::from_str_radix(value, 16).ok());
-                            current_section = section;
-                            continue;
-                        }
-                        if trimmed == "Type: Function" {
-                            current_is_function = true;
-                            continue;
-                        }
-                        if let Some(name) = trimmed.strip_prefix("Name: ") {
-                            current_name = Some(name);
-                        }
-                    }
-                    if let Some((section, value, _)) = rust_main {
-                        return format!("{section:08x}{value:08x}");
-                    }
-                }
-            }
-        }
-    }
-
-    String::from("0000000000000000")
-}
-
-fn looks_like_rust_main_symbol(name: &str) -> bool {
-    (name.starts_with("_R") && name.ends_with("4main"))
-        || (name.starts_with("_ZN") && name.contains("4main17h") && name.ends_with('E'))
-}
-
-fn write_blueprint(out: &Path, stripped: &Path, entry_hint_hex: &str) -> Result<(), String> {
-    let raw = fs::read(stripped).map_err(io_string)?;
-    let payload = compress_blueprint_payload(stripped)?;
-    let entry = u64::from_str_radix(entry_hint_hex, 16).map_err(|err| err.to_string())?;
-
-    let mut bytes = Vec::with_capacity(24 + payload.len());
-    bytes.extend_from_slice(b"TRBP");
-    bytes.extend_from_slice(&1u16.to_le_bytes());
-    bytes.extend_from_slice(&2u16.to_le_bytes());
-    bytes.extend_from_slice(&entry.to_le_bytes());
-    bytes.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-    bytes.extend_from_slice(&(raw.len() as u32).to_le_bytes());
-    bytes.extend_from_slice(&payload);
-    fs::write(out, bytes).map_err(io_string)
-}
-
-fn compress_blueprint_payload(stripped: &Path) -> Result<Vec<u8>, String> {
-    let archive = stripped.with_extension("7z");
-    let parent = stripped
-        .parent()
-        .ok_or_else(|| format!("missing parent dir for {}", stripped.display()))?;
-    let file_name = stripped
-        .file_name()
-        .ok_or_else(|| format!("missing file name for {}", stripped.display()))?;
-
-    let mut seven_zip = tool_command(&["7z", "7zz"])?;
-    seven_zip
-        .current_dir(parent)
-        .arg("a")
-        .arg("-t7z")
-        .arg("-mx=9")
-        .arg("-m0=LZMA2")
-        .arg("-ms=off")
-        .arg("-bd")
-        .arg(&archive)
-        .arg(file_name);
-    run_command(&mut seven_zip, "7z")?;
-    fs::read(&archive).map_err(io_string)
 }
 
 fn workdir(packer_target_dir: &Path, output_name: &str) -> Result<PathBuf, String> {

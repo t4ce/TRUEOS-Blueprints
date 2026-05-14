@@ -1,6 +1,3 @@
 [submodule "TRUEOS"]
 	path = TRUEOS
 	url = https://github.com/t4ce/TRUEOS.git
-[submodule "localcoder"]
-	path = localcoder
-	url = https://github.com/t4ce/localcoder.git

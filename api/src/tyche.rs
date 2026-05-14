@@ -1,6 +1,6 @@
 //! Tyche blueprint API.
 //!
-//! The kernel implementation lives in the TRUEOS repo at `src/Tyche.rs`.
+//! The kernel implementation lives in the TRUEOS repo at `src/tyche.rs`.
 //! Blueprints reach it through the standard ABI and keep only the small app API.
 
 unsafe extern "C" {
