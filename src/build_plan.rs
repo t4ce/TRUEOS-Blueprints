@@ -49,9 +49,11 @@ pub(crate) fn resolve_build_settings(
     let source = fs::read_to_string(&source_path)
         .map_err(|err| format!("failed to read {}: {err}", source_path.display()))?;
     let needs_tokio_net = source_needs_tokio_net(&source);
+    let needs_trueos_platform = source_needs_trueos_platform(&source);
     let explicit_no_std = source_is_explicit_no_std(&source);
     let flavor = if !explicit_no_std
         || needs_tokio_net
+        || needs_trueos_platform
         || source.contains("trueos_blueprint")
         || source.contains("trueos_blueprint::")
         || source.contains("tokio::")
@@ -94,6 +96,7 @@ fn package_source_path(app_dir: &Path) -> Result<PathBuf, String> {
 
 fn source_needs_tokio_net(source: &str) -> bool {
     source.contains("tokio::net")
+        || source.contains("trueos::net")
         || source.contains("trueos_blueprint::net")
         || source.contains("current_thread_net")
         || source.contains("net::TcpListener")
@@ -102,6 +105,41 @@ fn source_needs_tokio_net(source: &str) -> bool {
         || source.contains("net::mio")
         || source.contains("mio::net")
         || source.contains("socket2::")
+}
+
+fn source_needs_trueos_platform(source: &str) -> bool {
+    source.contains("trueos::platform")
+        || source.contains("trueos::runtime")
+        || source.contains("trueos::task")
+        || source.contains("trueos::sync")
+        || source.contains("trueos::time")
+        || source.contains("trueos::io")
+        || source.contains("trueos::fs")
+        || source_group_import_mentions(
+            source,
+            "trueos::{",
+            &[
+                "platform", "runtime", "task", "sync", "time", "io", "fs", "net", "tokio",
+            ],
+        )
+}
+
+fn source_group_import_mentions(source: &str, prefix: &str, names: &[&str]) -> bool {
+    let mut rest = source;
+    while let Some((_, after_prefix)) = rest.split_once(prefix) {
+        let Some((group, after_group)) = after_prefix.split_once(';') else {
+            return false;
+        };
+        if names.iter().any(|name| {
+            group
+                .split(|ch: char| !(ch == '_' || ch.is_ascii_alphanumeric()))
+                .any(|token| token == *name)
+        }) {
+            return true;
+        }
+        rest = after_group;
+    }
+    false
 }
 
 fn source_is_explicit_no_std(source: &str) -> bool {
@@ -175,8 +213,5 @@ fn example_source_path(
         return Ok(app_dir.join(path));
     }
 
-    Err(format!(
-        "missing path for example {example_name} in {}",
-        manifest_path.display()
-    ))
+    Err(format!("missing path for example {example_name} in {}", manifest_path.display()))
 }

@@ -8,7 +8,7 @@ use std::process::Command;
 
 mod build_plan;
 
-use build_plan::{resolve_build_settings, BuildFlavor, BuildSettings, BuildTarget};
+use build_plan::{BuildFlavor, BuildSettings, BuildTarget, resolve_build_settings};
 
 #[derive(Clone)]
 struct ExampleSpec {
@@ -154,13 +154,7 @@ fn run() -> Result<(), String> {
 
     let build_target = BuildTarget::Package;
     let required_features = Vec::new();
-    build_one_target(
-        &app_dir,
-        &manifest_path,
-        build_target,
-        &required_features,
-        cargo_profile,
-    )
+    build_one_target(&app_dir, &manifest_path, build_target, &required_features, cargo_profile)
 }
 
 fn parse_cli_args(
@@ -264,7 +258,7 @@ fn build_one_target_to(
         &source_overlay,
         &lock_mismatches,
     )?
-            .unwrap_or_else(|| manifest_path.to_path_buf());
+    .unwrap_or_else(|| manifest_path.to_path_buf());
 
     let mut cargo = Command::new("cargo");
     cargo
@@ -306,7 +300,8 @@ fn build_one_target_to(
             &declared_features,
         );
     }
-    if matches!(build_settings.flavor, BuildFlavor::ThinNoStd) && !build_settings.has_panic_handler {
+    if matches!(build_settings.flavor, BuildFlavor::ThinNoStd) && !build_settings.has_panic_handler
+    {
         push_declared_feature(
             &mut extra_features,
             "thin-default-panic-handler",
@@ -333,14 +328,8 @@ fn build_one_target_to(
     };
     cargo.arg("--").arg("-Zno-link").arg("--emit=obj");
 
-    println!(
-        "trueos-blueprint: cargo artifact profile: {}",
-        cargo_profile.label()
-    );
-    println!(
-        "trueos-blueprint: cargo artifact cache: {}",
-        cargo_target_dir.display()
-    );
+    println!("trueos-blueprint: cargo artifact profile: {}", cargo_profile.label());
+    println!("trueos-blueprint: cargo artifact cache: {}", cargo_target_dir.display());
     run_command(&mut cargo, "cargo rustc")?;
 
     let target_dir = cargo_target_dir
@@ -363,10 +352,7 @@ fn build_one_target_to(
     let stripped = work_dir.join("module.stripped.o");
 
     let mut ld = tool_command(&["ld.lld", "rust-lld", "ld"])?;
-    ld.arg("-r")
-        .arg("-o")
-        .arg(&linked)
-        .arg(&app_obj);
+    ld.arg("-r").arg("-o").arg(&linked).arg(&app_obj);
     if !rlibs.is_empty() {
         ld.arg("--start-group");
         for rlib in &rlibs {
@@ -655,12 +641,8 @@ fn latest_cargo_object(dir: &Path, stem: &str) -> Result<PathBuf, String> {
             _ => best = Some((modified, path)),
         }
     }
-    best.map(|(_, path)| path).ok_or_else(|| {
-        format!(
-            "missing required build artifact for {stem} in {}",
-            dir.display()
-        )
-    })
+    best.map(|(_, path)| path)
+        .ok_or_else(|| format!("missing required build artifact for {stem} in {}", dir.display()))
 }
 
 fn cargo_artifact_stem(name: &str) -> String {
@@ -752,7 +734,10 @@ fn find_vendor_dir(app_dir: &Path, name: &str) -> Option<PathBuf> {
     None
 }
 
-fn source_overlay_patches(app_dir: &Path, _manifest_path: &Path) -> Result<Vec<CratePatch>, String> {
+fn source_overlay_patches(
+    app_dir: &Path,
+    _manifest_path: &Path,
+) -> Result<Vec<CratePatch>, String> {
     let mut out = Vec::new();
 
     if let Some(kernel_manifest) = trueos_kernel_manifest(app_dir) {
@@ -805,9 +790,9 @@ fn staged_manifest_for_overlay(
             .file_name()
             .ok_or_else(|| format!("bad manifest path: {}", manifest_path.display()))?,
     );
-        strip_manifest_patch_section(&staged_manifest)?;
-        ensure_standalone_manifest_workspace(&staged_manifest)?;
-        rewrite_staged_source_for_target(app_dir, &staged_app_dir, build_settings)?;
+    strip_manifest_patch_section(&staged_manifest)?;
+    ensure_standalone_manifest_workspace(&staged_manifest)?;
+    rewrite_staged_source_for_target(app_dir, &staged_app_dir, build_settings)?;
     let staged_source_overlay = staged_source_overlay(source_overlay, work_dir);
 
     if lock_mismatches.is_empty() {
@@ -1013,12 +998,13 @@ fn source_overlay_version_alignment(
     for mismatch in lock_mismatches {
         match overlay_targets.entry(mismatch.name.clone()) {
             std::collections::btree_map::Entry::Vacant(slot) => {
-                let parsed_overlay_version = SimpleVersion::parse(&mismatch.overlay_version).map_err(|err| {
-                    format!(
-                        "failed to parse overlay version {} for {}: {err}",
-                        mismatch.overlay_version, mismatch.name
-                    )
-                })?;
+                let parsed_overlay_version = SimpleVersion::parse(&mismatch.overlay_version)
+                    .map_err(|err| {
+                        format!(
+                            "failed to parse overlay version {} for {}: {err}",
+                            mismatch.overlay_version, mismatch.name
+                        )
+                    })?;
                 slot.insert(VersionAlignmentTarget {
                     overlay_version: mismatch.overlay_version.clone(),
                     parsed_overlay_version,
@@ -1066,16 +1052,15 @@ fn source_overlay_version_alignment(
                 continue;
             };
 
-            let req_matches = match version_req_matches(
-                &declared_dependency.req,
-                &target.parsed_overlay_version,
-            ) {
-                Ok(matches) => matches,
-                Err(_) => {
-                    unparsed_requirements += 1;
-                    continue;
-                }
-            };
+            let req_matches =
+                match version_req_matches(&declared_dependency.req, &target.parsed_overlay_version)
+                {
+                    Ok(matches) => matches,
+                    Err(_) => {
+                        unparsed_requirements += 1;
+                        continue;
+                    }
+                };
 
             if req_matches {
                 compatible_edges += 1;
@@ -1390,9 +1375,9 @@ fn source_overlay_lock_mismatches(
         let Some(overlay_version) = package_version(&patch.path.join("Cargo.toml"))? else {
             continue;
         };
-        let has_matching_locked_version = lock_packages
-            .iter()
-            .any(|(name, locked_version)| name == &patch.name && locked_version == &overlay_version);
+        let has_matching_locked_version = lock_packages.iter().any(|(name, locked_version)| {
+            name == &patch.name && locked_version == &overlay_version
+        });
         if has_matching_locked_version {
             continue;
         }
@@ -1766,16 +1751,17 @@ fn package_name(manifest_path: &Path) -> Result<String, String> {
             return Ok(value.trim().trim_matches('"').to_string());
         }
     }
-    Err(format!(
-        "failed to read package name from {}",
-        manifest_path.display()
-    ))
+    Err(format!("failed to read package name from {}", manifest_path.display()))
 }
 
 fn package_app_specs(app_dir: &Path) -> Result<Vec<PackageAppSpec>, String> {
     let mut specs = Vec::new();
     let apps_dir = app_dir.join("apps");
-    let scan_root = if apps_dir.is_dir() { &apps_dir } else { app_dir };
+    let scan_root = if apps_dir.is_dir() {
+        &apps_dir
+    } else {
+        app_dir
+    };
     for entry in fs::read_dir(scan_root).map_err(io_string)? {
         let entry = entry.map_err(io_string)?;
         let file_type = entry.file_type().map_err(io_string)?;
@@ -1825,10 +1811,7 @@ fn package_blueprint_profile(manifest_path: &Path) -> Result<Option<CargoProfile
                 "unsupported trueos-blueprint profile `{other}` in {}",
                 manifest_path.display()
             )),
-            None => Err(format!(
-                "bad trueos-blueprint profile in {}",
-                manifest_path.display()
-            )),
+            None => Err(format!("bad trueos-blueprint profile in {}", manifest_path.display())),
         };
     }
     Ok(None)

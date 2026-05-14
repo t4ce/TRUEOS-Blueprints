@@ -8,6 +8,8 @@ license = "MIT OR Apache-2.0"
 default = []
 default-global-allocator = []
 default-panic-handler = []
+tokio-runtime = ["dep:tokio"]
+tokio-net-probe = ["tokio-runtime", "dep:mio", "dep:socket2", "tokio/net"]
 
 [lib]
 name = "trueos"
@@ -15,3 +17,6 @@ path = "src/lib.rs"
 
 [dependencies]
 v = { path = "../../../crates/trueos-v" }
+tokio = { path = "../../../vendor/tokio-1.52.1", default-features = false, features = ["rt", "macros", "sync", "time", "io-util", "io-std", "fs"], optional = true }
+mio = { path = "../../../vendor/mio-1.2.0", default-features = false, features = ["os-poll", "net"], optional = true }
+socket2 = { path = "../../../vendor/socket2-0.6.3", default-features = false, optional = true }

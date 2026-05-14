@@ -33,7 +33,8 @@ pub fn fetch_bytes(url: &str, timeout_ms: u64) -> Result<Vec<u8>, String> {
 
     let mut body = Vec::new();
     body.resize(len as usize, 0);
-    let got = unsafe { vcabi::trueos_cabi_net_fetch_bytes_read(op_id, body.as_mut_ptr(), body.len()) };
+    let got =
+        unsafe { vcabi::trueos_cabi_net_fetch_bytes_read(op_id, body.as_mut_ptr(), body.len()) };
     discard_fetch(op_id);
     if got < 0 {
         return Err(format!("{} ({})", fetch_code_name(got as i32), got));

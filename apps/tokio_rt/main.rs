@@ -1,4 +1,4 @@
-use trueos_blueprint::{
+use trueos::{
     bp_error, bp_info, io,
     platform::{future, thread, Arc},
     runtime, sync, task, time, tokio,

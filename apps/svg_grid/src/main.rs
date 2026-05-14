@@ -83,10 +83,7 @@ fn render_svg(window_id: ui2::WindowId, width: u32, height: u32) -> bool {
         return false;
     }
     let _ = window_id.request_repaint();
-    vsys::log_infof(format_args!(
-        "svg_grid bp: rendered svg texture {}x{}\n",
-        width, height
-    ));
+    vsys::log_infof(format_args!("svg_grid bp: rendered svg texture {}x{}\n", width, height));
     true
 }
 

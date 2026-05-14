@@ -3,7 +3,7 @@ use core::convert::Infallible;
 use hyper::body::Bytes;
 use hyper::{Method, Request, Response, StatusCode, Uri};
 use tower::{ServiceBuilder, ServiceExt, service_fn};
-use trueos_blueprint::{bp_error, bp_info, platform::Vec, runtime, time};
+use trueos::{bp_error, bp_info, platform::Vec, runtime, time};
 
 struct FrontmatterProbe<'a> {
     name: &'a str,

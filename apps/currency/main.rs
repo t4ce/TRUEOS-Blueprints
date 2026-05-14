@@ -1,7 +1,7 @@
 // trueos-blueprint: features=["tokio-runtime"]
 
 use trueos::{ui2, vgfx_hosted, vnet, vsys};
-use trueos_blueprint::{
+use trueos::{
     bp_error, bp_info,
     platform::{format, vec, String, ToString, Vec},
     runtime, time,

@@ -160,12 +160,8 @@ pub extern "C" fn main() {
     };
 
     let pixels = render_petersen(WINDOW_WIDTH, WINDOW_HEIGHT);
-    let ok = vgfx_hosted::upload_texture_rgba_image_now(
-        TEX_ID,
-        WINDOW_WIDTH,
-        WINDOW_HEIGHT,
-        &pixels,
-    );
+    let ok =
+        vgfx_hosted::upload_texture_rgba_image_now(TEX_ID, WINDOW_WIDTH, WINDOW_HEIGHT, &pixels);
     if !ok {
         vsys::log_error("petersen bp: texture upload failed\n");
         return;

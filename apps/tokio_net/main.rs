@@ -1,7 +1,7 @@
 use core::net::{Ipv4Addr, SocketAddr};
 
 use trueos::vsys;
-use trueos_blueprint::{
+use trueos::{
     bp_error, bp_info, net,
     platform::{format, thread},
     runtime, task, time, tokio,
