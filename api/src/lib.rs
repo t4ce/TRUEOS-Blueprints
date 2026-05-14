@@ -9,8 +9,8 @@ mod vcabi {
     pub use trueos_sys::vcabi::*;
 }
 
-pub mod input;
-pub mod net_fetch;
+pub mod hid;
+pub use hid as input;
 pub mod rand {
     pub use crate::tyche::*;
 }
