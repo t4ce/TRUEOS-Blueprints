@@ -7,7 +7,7 @@ use alloc::{string::String, vec, vec::Vec};
 
 use trueos::platform;
 use trueos::ui2::{self, gfx};
-use trueos_gfx_core::{push_tex_quad_px, Rgba8, ViewTransform, TEX_VERTEX_SIZE};
+use trueos_gfx_core::{Rgba8, TEX_VERTEX_SIZE, ViewTransform, push_tex_quad_px};
 
 const UI2_PARTICLE_DEMO_TEX_ID: u32 = 4_709;
 const UI2_PARTICLE_DEMO_SPRITE_TEX_ID: u32 = 4_711;
@@ -314,7 +314,10 @@ fn create_particle_demo_window() -> Option<ui2::SurfaceWindow> {
 #[unsafe(no_mangle)]
 pub extern "C" fn main() {
     let Some(surface) = create_particle_demo_window() else {
-        platform::log_error("particle bp: ui2 surface window create failed\n");
+        trueos::globalog::log_with_level(
+            trueos::globalog::level::ERROR,
+            "particle bp: ui2 surface window create failed\n",
+        );
         return;
     };
 
@@ -323,7 +326,10 @@ pub extern "C" fn main() {
     let mut rng = DemoRng::new(0x51D3_1000);
     let sprite_svg = normalized_particle_svg();
     if gfx::upload_svg_to_texture(UI2_PARTICLE_DEMO_SPRITE_TEX_ID, sprite_svg.as_bytes()) != 0 {
-        platform::log_error("particle bp: svg upload failed\n");
+        trueos::globalog::log_with_level(
+            trueos::globalog::level::ERROR,
+            "particle bp: svg upload failed\n",
+        );
         return;
     }
     let sprite_size = gfx::texture_dimensions(UI2_PARTICLE_DEMO_SPRITE_TEX_ID).unwrap_or((1, 1));
@@ -351,7 +357,10 @@ pub extern "C" fn main() {
             UI2_PARTICLE_DEMO_CLEAR_RGB,
             verts.as_slice(),
         ) {
-            platform::log_error("particle bp: render queue failed\n");
+            trueos::globalog::log_with_level(
+                trueos::globalog::level::ERROR,
+                "particle bp: render queue failed\n",
+            );
             break;
         }
         platform::sleep_ms(UI2_PARTICLE_DEMO_FRAME_MS);

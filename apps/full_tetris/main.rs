@@ -507,7 +507,10 @@ pub extern "C" fn main() {
         },
         TEX_ID,
     ) else {
-        platform::log_error("full_tetris bp: surface window create failed\n");
+        trueos::globalog::log_with_level(
+            trueos::globalog::level::ERROR,
+            "full_tetris bp: surface window create failed\n",
+        );
         return;
     };
 

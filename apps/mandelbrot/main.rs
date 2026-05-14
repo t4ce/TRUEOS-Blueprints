@@ -27,7 +27,10 @@ pub extern "C" fn main() {
         UI2_MANDELBROT_TEX_ID,
         false,
     ) else {
-        platform::log_error("mandelbrot bp: ui2 surface window create failed\n");
+        trueos::globalog::log_with_level(
+            trueos::globalog::level::ERROR,
+            "mandelbrot bp: ui2 surface window create failed\n",
+        );
         return;
     };
 
@@ -38,7 +41,10 @@ pub extern "C" fn main() {
     loop {
         if !surface.render_mandelbrot(ticks, TICK_HZ) {
             let _ = surface.id().set_title("Seahorse Valley (unavailable)");
-            platform::log_error("mandelbrot bp: render queue failed\n");
+            trueos::globalog::log_with_level(
+                trueos::globalog::level::ERROR,
+                "mandelbrot bp: render queue failed\n",
+            );
             break;
         }
         ticks = ticks.saturating_add(FRAME_MS);

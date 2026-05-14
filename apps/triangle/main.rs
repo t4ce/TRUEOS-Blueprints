@@ -55,7 +55,10 @@ fn open_triangle_window() -> Option<ui2::SurfaceWindow> {
 #[unsafe(no_mangle)]
 pub extern "C" fn main() {
     let Some(window) = open_triangle_window() else {
-        platform::log_error("triangle bp: ui2 surface window create failed\n");
+        trueos::globalog::log_with_level(
+            trueos::globalog::level::ERROR,
+            "triangle bp: ui2 surface window create failed\n",
+        );
         return;
     };
 
@@ -68,7 +71,10 @@ pub extern "C" fn main() {
     loop {
         let vertices = [points[0].vertex(), points[1].vertex(), points[2].vertex()];
         if !window.render_rgb_triangles(CLEAR_RGB, &vertices) {
-            platform::log_error("triangle bp: render failed\n");
+            trueos::globalog::log_with_level(
+                trueos::globalog::level::ERROR,
+                "triangle bp: render failed\n",
+            );
             break;
         }
         for point in &mut points {

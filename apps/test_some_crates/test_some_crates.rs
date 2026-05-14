@@ -6,7 +6,6 @@ extern crate alloc;
 use alloc::string::String;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use trueos::platform;
 
 #[derive(Serialize, Deserialize)]
 struct CrateProbe {
@@ -16,11 +15,17 @@ struct CrateProbe {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn main() {
-    platform::log_info("crate test hello\n");
+    trueos::globalog::log_with_level(trueos::globalog::level::INFO, "crate test hello\n");
 
     match run_probe() {
-        Ok(()) => platform::log_info("test_some_crates bp: serde/json/regex/anyhow ok\n"),
-        Err(_) => platform::log_info("test_some_crates bp: crate probe failed\n"),
+        Ok(()) => trueos::globalog::log_with_level(
+            trueos::globalog::level::INFO,
+            "test_some_crates bp: serde/json/regex/anyhow ok\n",
+        ),
+        Err(_) => trueos::globalog::log_with_level(
+            trueos::globalog::level::INFO,
+            "test_some_crates bp: crate probe failed\n",
+        ),
     }
 }
 

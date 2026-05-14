@@ -30,7 +30,10 @@ fn open_window() -> Option<ui2::SurfaceWindow> {
 #[unsafe(no_mangle)]
 pub extern "C" fn main() {
     let Some(window) = open_window() else {
-        platform::log_error("svg_grid bp: window create failed\n");
+        trueos::globalog::log_with_level(
+            trueos::globalog::level::ERROR,
+            "svg_grid bp: window create failed\n",
+        );
         return;
     };
 
@@ -67,14 +70,17 @@ fn render_svg(window_id: ui2::WindowId, width: u32, height: u32) -> bool {
     let svg = svg_for_texture_size(width, height);
     let rc = gfx::upload_svg_to_texture(TEX_ID, svg.as_bytes());
     if rc != 0 {
-        platform::log_errorf(format_args!(
-            "svg_grid bp: svg upload failed rc={} size={}x{}\n",
-            rc, width, height
-        ));
+        trueos::globalog::log_with_level(
+            trueos::globalog::level::ERROR,
+            format_args!("svg_grid bp: svg upload failed rc={} size={}x{}\n", rc, width, height),
+        );
         return false;
     }
     let _ = window_id.request_repaint();
-    platform::log_infof(format_args!("svg_grid bp: rendered svg texture {}x{}\n", width, height));
+    trueos::globalog::log_with_level(
+        trueos::globalog::level::INFO,
+        format_args!("svg_grid bp: rendered svg texture {}x{}\n", width, height),
+    );
     true
 }
 

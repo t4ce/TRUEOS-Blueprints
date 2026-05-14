@@ -19,6 +19,7 @@ mod vcabi {
 
 pub mod hid;
 pub use hid as input;
+pub mod globalog;
 pub mod rand {
     pub use crate::tyche::*;
 }
@@ -32,12 +33,7 @@ pub mod vnet;
 pub mod vshell;
 
 pub mod diag {
-    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-    use alloc::string::String;
-    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-    use core::fmt::Write as _;
-
-    use super::{fmt, AtomicU8, Ordering};
+    use super::{AtomicU8, Ordering, fmt};
 
     #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
     pub enum Level {
@@ -74,27 +70,7 @@ pub mod diag {
         if !enabled(level) {
             return;
         }
-        emit_impl(level, args);
-    }
-
-    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-    fn emit_impl(level: Level, args: fmt::Arguments<'_>) {
-        let mut line = String::new();
-        let _ = write!(&mut line, "[trueos:{}] {}", level.as_str(), args);
-        if !line.ends_with('\n') {
-            line.push('\n');
-        }
-
-        let stream = match level {
-            Level::Error => 2,
-            Level::Warn | Level::Info | Level::Debug | Level::Trace => 1,
-        };
-        crate::platform::write_log_stream(stream, line.as_str());
-    }
-
-    #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-    fn emit_impl(level: Level, args: fmt::Arguments<'_>) {
-        std::eprintln!("[trueos:{}] {}", level.as_str(), args);
+        crate::globalog::log_with_concept_level("trueos", level.into(), args);
     }
 
     pub fn error(message: &str) {
@@ -115,6 +91,18 @@ pub mod diag {
 
     pub fn trace(message: &str) {
         emit(Level::Trace, format_args!("{message}"));
+    }
+
+    impl From<Level> for crate::globalog::Level {
+        fn from(level: Level) -> Self {
+            match level {
+                Level::Error => Self::Error,
+                Level::Warn => Self::Warn,
+                Level::Info => Self::Info,
+                Level::Debug => Self::Debug,
+                Level::Trace => Self::Trace,
+            }
+        }
     }
 }
 
@@ -139,46 +127,46 @@ pub mod runtime {
 #[cfg(feature = "tokio-runtime")]
 pub mod task {
     pub use tokio::spawn;
-    pub use tokio::task::{yield_now, JoinError, JoinHandle, JoinSet, LocalSet};
+    pub use tokio::task::{JoinError, JoinHandle, JoinSet, LocalSet, yield_now};
 }
 
 #[cfg(feature = "tokio-runtime")]
 pub mod sync {
     pub use tokio::sync::{
-        broadcast, mpsc, oneshot, watch, Barrier, Mutex, Notify, RwLock, Semaphore,
+        Barrier, Mutex, Notify, RwLock, Semaphore, broadcast, mpsc, oneshot, watch,
     };
 }
 
 #[cfg(feature = "tokio-runtime")]
 pub mod time {
-    pub use tokio::time::{interval, sleep, timeout, Duration, Instant, Interval, Sleep};
+    pub use tokio::time::{Duration, Instant, Interval, Sleep, interval, sleep, timeout};
 }
 
 #[cfg(feature = "tokio-runtime")]
 pub mod io {
     pub use tokio::io::{
-        duplex, stderr, stdin, stdout, AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt,
-        Stderr, Stdin, Stdout,
+        AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, Stderr, Stdin, Stdout, duplex,
+        stderr, stdin, stdout,
     };
 }
 
 #[cfg(feature = "tokio-runtime")]
 pub mod fs {
     pub use tokio::fs::{
-        canonicalize, create_dir, create_dir_all, read, read_to_string, try_exists, write, File,
-        OpenOptions,
+        File, OpenOptions, canonicalize, create_dir, create_dir_all, read, read_to_string,
+        try_exists, write,
     };
 
-    pub use crate::vfs::{stat, FsNodeKind, FsStat};
+    pub use crate::vfs::{FsNodeKind, FsStat, stat};
 }
 
 #[cfg(feature = "tokio-net-probe")]
 pub mod net {
-    pub use tokio::net::{lookup_host, TcpListener, TcpStream, ToSocketAddrs, UdpSocket};
+    pub use tokio::net::{TcpListener, TcpStream, ToSocketAddrs, UdpSocket, lookup_host};
 
     pub mod mio {
-        pub use mio::{event, net};
         pub use mio::{Events, Interest, Poll, Registry, Token, Waker};
+        pub use mio::{event, net};
     }
 
     pub mod socket2 {
@@ -227,7 +215,7 @@ unsafe impl GlobalAlloc for TrueosAllocator {
 }
 
 pub fn panic_abort(message: &str) -> ! {
-    platform::log_error(message);
+    globalog::log_with_level(globalog::level::ERROR, message);
     loop {
         core::hint::spin_loop();
     }
@@ -240,9 +228,11 @@ fn default_panic(_info: &PanicInfo<'_>) -> ! {
 }
 
 pub mod prelude {
+    pub use crate::TrueosAllocator;
     pub use crate::diag;
     #[cfg(feature = "tokio-runtime")]
     pub use crate::fs;
+    pub use crate::globalog;
     #[cfg(feature = "tokio-runtime")]
     pub use crate::io;
     #[cfg(feature = "tokio-net-probe")]
@@ -261,7 +251,6 @@ pub mod prelude {
     pub use crate::tokio;
     pub use crate::ui2;
     pub use crate::vgfx;
-    pub use crate::TrueosAllocator;
 }
 
 #[macro_export]

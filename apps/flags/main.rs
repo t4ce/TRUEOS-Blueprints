@@ -134,10 +134,10 @@ impl Game {
         for slot in 0..4 {
             let (code, _) = COUNTRIES[self.options[slot]];
             let op_id = trueos_flags::startFlagSVGFetch(code);
-            platform::log_infof(format_args!(
-                "flags bp: fetch start slot={} code={} op_id={}\n",
-                slot, code, op_id
-            ));
+            trueos::globalog::log_with_level(
+                trueos::globalog::level::INFO,
+                format_args!("flags bp: fetch start slot={} code={} op_id={}\n", slot, code, op_id),
+            );
             if op_id != 0 {
                 self.fetches[slot] = FetchSlot { op_id, done: false };
                 self.loading = true;
@@ -164,22 +164,28 @@ impl Game {
             }
             if rc > 0 {
                 let svg = trueos_flags::readFlagSVGFetch(fetch.op_id);
-                platform::log_infof(format_args!(
-                    "flags bp: fetch done slot={} op_id={} rc={} svg_len={}\n",
-                    slot,
-                    fetch.op_id,
-                    rc,
-                    svg.len()
-                ));
+                trueos::globalog::log_with_level(
+                    trueos::globalog::level::INFO,
+                    format_args!(
+                        "flags bp: fetch done slot={} op_id={} rc={} svg_len={}\n",
+                        slot,
+                        fetch.op_id,
+                        rc,
+                        svg.len()
+                    ),
+                );
                 if !svg.is_empty() {
                     self.svgs[slot] = Some(svg);
                     changed = true;
                 }
             } else {
-                platform::log_errorf(format_args!(
-                    "flags bp: fetch failed slot={} op_id={} rc={}\n",
-                    slot, fetch.op_id, rc
-                ));
+                trueos::globalog::log_with_level(
+                    trueos::globalog::level::ERROR,
+                    format_args!(
+                        "flags bp: fetch failed slot={} op_id={} rc={}\n",
+                        slot, fetch.op_id, rc
+                    ),
+                );
             }
             trueos_flags::discardFlagSVGFetch(fetch.op_id);
             fetch.done = true;
@@ -402,7 +408,10 @@ fn present(window: &ui2::SurfaceWindow, game: &Game) {
     if rc == 0 {
         let _ = window.id().request_repaint();
     } else {
-        platform::log_errorf(format_args!("flags bp: svg upload failed rc={}\n", rc));
+        trueos::globalog::log_with_level(
+            trueos::globalog::level::ERROR,
+            format_args!("flags bp: svg upload failed rc={}\n", rc),
+        );
     }
 }
 
@@ -459,7 +468,10 @@ fn handle_cursor(
 #[unsafe(no_mangle)]
 pub extern "C" fn main() {
     let Some(window) = open_window() else {
-        platform::log_error("flags bp: surface window create failed\n");
+        trueos::globalog::log_with_level(
+            trueos::globalog::level::ERROR,
+            "flags bp: surface window create failed\n",
+        );
         return;
     };
     let _ = window.id().set_resize_maintain_aspect(true);
@@ -476,7 +488,7 @@ pub extern "C" fn main() {
     let mut last_buttons = 0u32;
 
     present(&window, &game);
-    platform::log_info("flags bp: quiz ready\n");
+    trueos::globalog::log_with_level(trueos::globalog::level::INFO, "flags bp: quiz ready\n");
 
     loop {
         let mut changed = false;

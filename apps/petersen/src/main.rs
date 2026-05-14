@@ -145,14 +145,20 @@ pub extern "C" fn main() {
         },
         TEX_ID,
     ) else {
-        platform::log_error("petersen bp: window create failed\n");
+        trueos::globalog::log_with_level(
+            trueos::globalog::level::ERROR,
+            "petersen bp: window create failed\n",
+        );
         return;
     };
 
     let pixels = render_petersen(WINDOW_WIDTH, WINDOW_HEIGHT);
     let ok = gfx::upload_texture_rgba_image_now(TEX_ID, WINDOW_WIDTH, WINDOW_HEIGHT, &pixels);
     if !ok {
-        platform::log_error("petersen bp: texture upload failed\n");
+        trueos::globalog::log_with_level(
+            trueos::globalog::level::ERROR,
+            "petersen bp: texture upload failed\n",
+        );
         return;
     }
 

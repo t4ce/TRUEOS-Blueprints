@@ -42,11 +42,7 @@ pub fn read_cursor_events_since(
 pub fn pop_keyboard_output() -> Option<TrueosKeyboardOutputEvent> {
     let mut out = TrueosKeyboardOutputEvent::default();
     let rc = unsafe { vcabi::trueos_cabi_input_pop_keyboard_output(&mut out as *mut _) };
-    if rc == 0 {
-        Some(out)
-    } else {
-        None
-    }
+    if rc == 0 { Some(out) } else { None }
 }
 
 #[inline]

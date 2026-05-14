@@ -293,17 +293,26 @@ fn open_window() -> Option<ui2::SurfaceWindow> {
 #[unsafe(no_mangle)]
 pub extern "C" fn main() {
     let Some(window) = open_window() else {
-        platform::log_error("chart bp: window create failed\n");
+        trueos::globalog::log_with_level(
+            trueos::globalog::level::ERROR,
+            "chart bp: window create failed\n",
+        );
         return;
     };
 
     let pixels = compose_chart(WINDOW_WIDTH, WINDOW_HEIGHT);
     if !gfx::upload_texture_rgba_image_now(TEX_ID, WINDOW_WIDTH, WINDOW_HEIGHT, pixels.as_slice()) {
-        platform::log_error("chart bp: texture upload failed\n");
+        trueos::globalog::log_with_level(
+            trueos::globalog::level::ERROR,
+            "chart bp: texture upload failed\n",
+        );
         return;
     }
     let _ = window.id().request_repaint();
-    platform::log_info("chart bp: rendered sine axis chart\n");
+    trueos::globalog::log_with_level(
+        trueos::globalog::level::INFO,
+        "chart bp: rendered sine axis chart\n",
+    );
 
     loop {
         platform::poll_once();

@@ -24,7 +24,10 @@ pub extern "C" fn main() {
     app.set_viewport_top_row(1);
 
     let io = AttachedShell;
-    platform::log_info("cli_tetris bp: attached shell mode\n");
+    trueos::globalog::log_with_level(
+        trueos::globalog::level::INFO,
+        "cli_tetris bp: attached shell mode\n",
+    );
     vshell::attached_write_str("\x1b[2J\x1b[H\x1b[?25l");
     app.draw(&io);
     app.finalize_frame();
