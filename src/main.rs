@@ -485,7 +485,11 @@ fn cargo_cache_root(app_dir: &Path, default_packer_target_dir: &Path) -> PathBuf
     }
 
     blueprint_root(app_dir)
-        .map(|root| root.join("target").join("trueos-blueprint").join("cargo-cache"))
+        .map(|root| {
+            root.join("target")
+                .join("trueos-blueprint")
+                .join("cargo-cache")
+        })
         .unwrap_or_else(|| default_packer_target_dir.join("cargo-cache"))
 }
 
@@ -1581,10 +1585,7 @@ fn package_app_spec_required(app_dir: &Path, app_name: &str) -> Result<PackageAp
     let dir = app_dir.join("apps").join(app_name);
     let manifest_path = dir.join("Cargo.toml");
     if !manifest_path.is_file() {
-        return Err(format!(
-            "registered app `{app_name}` is missing {}",
-            manifest_path.display()
-        ));
+        return Err(format!("registered app `{app_name}` is missing {}", manifest_path.display()));
     }
 
     let name = package_name(&manifest_path)?;
