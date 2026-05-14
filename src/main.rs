@@ -1560,34 +1560,69 @@ fn package_name(manifest_path: &Path) -> Result<String, String> {
 
 fn package_app_specs(app_dir: &Path) -> Result<Vec<PackageAppSpec>, String> {
     let mut specs = Vec::new();
-    let apps_dir = app_dir.join("apps");
-    let scan_root = if apps_dir.is_dir() {
-        &apps_dir
-    } else {
-        app_dir
-    };
-    for entry in fs::read_dir(scan_root).map_err(io_string)? {
-        let entry = entry.map_err(io_string)?;
-        let file_type = entry.file_type().map_err(io_string)?;
-        if !file_type.is_dir() {
-            continue;
-        }
-
-        let dir = entry.path();
-        let manifest_path = dir.join("Cargo.toml");
-        if !manifest_path.is_file() {
-            continue;
-        }
-
-        let name = package_name(&manifest_path)?;
-        specs.push(PackageAppSpec {
-            name,
-            dir,
-            manifest_path,
-        });
+    for app_name in registered_app_names(app_dir)? {
+        specs.push(package_app_spec_required(app_dir, &app_name)?);
     }
     specs.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(specs)
+}
+
+fn package_app_spec(app_dir: &Path, app_name: &str) -> Result<Option<PackageAppSpec>, String> {
+    if !registered_app_names(app_dir)?
+        .iter()
+        .any(|name| name == app_name)
+    {
+        return Ok(None);
+    }
+    package_app_spec_required(app_dir, app_name).map(Some)
+}
+
+fn package_app_spec_required(app_dir: &Path, app_name: &str) -> Result<PackageAppSpec, String> {
+    let dir = app_dir.join("apps").join(app_name);
+    let manifest_path = dir.join("Cargo.toml");
+    if !manifest_path.is_file() {
+        return Err(format!(
+            "registered app `{app_name}` is missing {}",
+            manifest_path.display()
+        ));
+    }
+
+    let name = package_name(&manifest_path)?;
+    if name != app_name {
+        return Err(format!(
+            "registered app `{app_name}` has package name `{name}` in {}",
+            manifest_path.display()
+        ));
+    }
+
+    Ok(PackageAppSpec {
+        name,
+        dir,
+        manifest_path,
+    })
+}
+
+fn registered_app_names(app_dir: &Path) -> Result<Vec<String>, String> {
+    let registry_path = app_dir.join("apps.json");
+    let raw = fs::read_to_string(&registry_path)
+        .map_err(|err| format!("failed to read {}: {err}", registry_path.display()))?;
+    let registry: AppRegistry = serde_json::from_str(&raw)
+        .map_err(|err| format!("failed to parse {}: {err}", registry_path.display()))?;
+
+    let mut out = Vec::with_capacity(registry.apps.len());
+    for name in registry.apps {
+        if name.trim().is_empty() {
+            return Err(format!("empty app name in {}", registry_path.display()));
+        }
+        if out.iter().any(|existing| existing == &name) {
+            return Err(format!(
+                "duplicate registered app `{name}` in {}",
+                registry_path.display()
+            ));
+        }
+        out.push(name);
+    }
+    Ok(out)
 }
 
 fn package_blueprint_profile(manifest_path: &Path) -> Result<Option<CargoProfile>, String> {
