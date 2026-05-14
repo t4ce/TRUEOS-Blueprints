@@ -1,6 +1,6 @@
 // trueos-blueprint: features=["tokio-runtime"]
 
-use trueos::{net_fetch, ui2, vgfx_hosted, vsys};
+use trueos::{ui2, vgfx_hosted, vnet, vsys};
 use trueos_blueprint::{
     bp_error, bp_info,
     platform::{format, vec, String, ToString, Vec},
@@ -48,7 +48,7 @@ struct CurrencySnapshot {
 }
 
 fn main() {
-    bp_info!("currency_bp: start transport=host-fetch-cabi hyper");
+    bp_info!("currency_bp: start transport=trueos-vnet");
     let runtime = match runtime::current_thread().build() {
         Ok(rt) => rt,
         Err(err) => {
@@ -84,7 +84,7 @@ fn main() {
     present_snapshot(&surface, &build_loading_snapshot());
 
     runtime.block_on(async {
-        let snapshot = match fetch_text(FXFEED_URL).await {
+        let snapshot = match vnet::fetch_text(FXFEED_URL, FETCH_TIMEOUT_MS) {
             Ok(raw) => build_currency_snapshot(raw.as_str())
                 .unwrap_or_else(|| build_error_snapshot("FXFEED PARSE FAILED")),
             Err(err) => {
@@ -99,37 +99,6 @@ fn main() {
             time::sleep(time::Duration::from_millis(IDLE_SLEEP_MS)).await;
         }
     });
-}
-
-async fn fetch_text(url: &str) -> Result<String, String> {
-    let op_id = net_fetch::fetch_bytes_start(url).map_err(|err| format!("{:?}", err))?;
-    let deadline = time::Instant::now() + time::Duration::from_millis(FETCH_TIMEOUT_MS);
-
-    loop {
-        match net_fetch::fetch_bytes_result_len(op_id) {
-            Ok(Some(len)) => {
-                let bytes =
-                    net_fetch::fetch_bytes_read(op_id, len).map_err(|err| format!("{:?}", err))?;
-                return String::from_utf8(bytes).map_err(|_| String::from("bad utf8"));
-            }
-            Ok(None) if time::Instant::now() < deadline => {
-                vsys::poll_once();
-                time::sleep(time::Duration::from_millis(50)).await;
-            }
-            Ok(None) => {
-                net_fetch::fetch_bytes_discard(op_id);
-                return Err(String::from("timeout"));
-            }
-            Err(net_fetch::FetchBytesError::Code(code)) => {
-                net_fetch::fetch_bytes_discard(op_id);
-                return Err(format!("{} ({})", net_fetch::code_name(code), code));
-            }
-            Err(err) => {
-                net_fetch::fetch_bytes_discard(op_id);
-                return Err(format!("{:?}", err));
-            }
-        }
-    }
 }
 
 fn parse_rate(raw: &str, code: &str) -> Option<f64> {

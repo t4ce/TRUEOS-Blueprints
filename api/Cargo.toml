@@ -14,4 +14,4 @@ name = "trueos"
 path = "src/lib.rs"
 
 [dependencies]
-trueos-sys = { path = "../../../crates/trueos-sys" }
+v = { path = "../../../crates/trueos-v" }

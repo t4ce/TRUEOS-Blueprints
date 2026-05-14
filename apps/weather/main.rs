@@ -1,6 +1,6 @@
 // trueos-blueprint: features=["tokio-runtime"]
 
-use trueos::{net_fetch, ui2, vgfx_hosted, vsys};
+use trueos::{ui2, vgfx_hosted};
 use trueos_blueprint::{
     bp_error, bp_info,
     platform::{String, ToString, Vec, format, vec},
@@ -15,11 +15,11 @@ const WINDOW_HEIGHT: u32 = 530;
 const TEX_ID: u32 = 4_730;
 const WEATHER_CITY: &str = "Holzminden";
 const WEATHER_API_KEY: &str = "9715912a7d8748d65bc3985b4a4274a0";
-const GEO_URL: &str = "https://api.openweathermap.org/geo/1.0/direct";
 const DEMO_JSON: &str = include_str!("../crates/trueos-weather/src/demo.json");
 const FETCH_TIMEOUT_MS: u64 = 45_000;
 const REFRESH_SECS: u64 = 3_600;
-const TRANSPORT_LOG: &str = "transport: host fetch CABI; Tokio drives app timing";
+const TRANSPORT_LOG: &str =
+    "transport: shared trueos-weather fetch helper; models/config decode via trueos-weather";
 const DAILY_ROW_COUNT: usize = 8;
 
 const BG_RGBA: [u8; 4] = [0x18, 0x1C, 0x24, 0xFF];
@@ -144,10 +144,12 @@ async fn load_weather_snapshot() -> WeatherSnapshot {
     let mut note = String::new();
     let geo_url = format!(
         "{}?q={}&limit=1&appid={}",
-        GEO_URL, WEATHER_CITY, WEATHER_API_KEY
+        trueos_weather::config::GEO_URL,
+        WEATHER_CITY,
+        WEATHER_API_KEY
     );
 
-    let geo = match fetch_text(geo_url.as_str()).await {
+    let geo = match trueos_weather::transport::fetch_text(geo_url.as_str(), FETCH_TIMEOUT_MS) {
         Ok(raw) => parse_geo_response(raw.as_str()),
         Err(err) => {
             bp_info!(
@@ -174,7 +176,8 @@ async fn load_weather_snapshot() -> WeatherSnapshot {
         WEATHER_API_KEY
     );
 
-    let (raw_weather, source_note) = match fetch_text(weather_url.as_str()).await {
+    let (raw_weather, source_note) =
+        match trueos_weather::transport::fetch_text(weather_url.as_str(), FETCH_TIMEOUT_MS) {
         Ok(raw) => (raw, String::from("live OpenWeather forecast")),
         Err(err) => {
             bp_info!(
@@ -208,33 +211,6 @@ async fn load_weather_snapshot() -> WeatherSnapshot {
                 format!("decode failed; {}", note)
             },
         },
-    }
-}
-
-async fn fetch_text(url: &str) -> Result<String, String> {
-    let op_id = net_fetch::fetch_bytes_start(url).map_err(|err| format!("{:?}", err))?;
-    let deadline = time::Instant::now() + time::Duration::from_millis(FETCH_TIMEOUT_MS);
-
-    loop {
-        match net_fetch::fetch_bytes_result_len(op_id) {
-            Ok(Some(len)) => {
-                let bytes =
-                    net_fetch::fetch_bytes_read(op_id, len).map_err(|err| format!("{:?}", err))?;
-                return String::from_utf8(bytes).map_err(|_| String::from("bad utf8"));
-            }
-            Ok(None) if time::Instant::now() < deadline => {
-                vsys::poll_once();
-                time::sleep(time::Duration::from_millis(50)).await;
-            }
-            Ok(None) => {
-                net_fetch::fetch_bytes_discard(op_id);
-                return Err(String::from("timeout"));
-            }
-            Err(net_fetch::FetchBytesError::Code(code)) => {
-                return Err(format!("{} ({})", net_fetch::code_name(code), code));
-            }
-            Err(err) => return Err(format!("{:?}", err)),
-        }
     }
 }
 

@@ -6,7 +6,7 @@ use core::panic::PanicInfo;
 use core::ptr::null_mut;
 
 mod vcabi {
-    pub use trueos_sys::vcabi::*;
+    pub use v::vcabi::*;
 }
 
 pub mod hid;
@@ -19,6 +19,7 @@ pub mod ui2;
 pub mod vfs;
 pub mod vgfx;
 pub mod vgfx_hosted;
+pub mod vnet;
 pub mod vshell;
 pub mod vsys;
 
