@@ -9,4 +9,4 @@ thin-default-global-allocator = ["trueos/default-global-allocator"]
 thin-default-panic-handler = ["trueos/default-panic-handler"]
 
 [dependencies]
-trueos = { path = "../../api" }
+trueos.workspace = true

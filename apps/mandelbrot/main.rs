@@ -2,11 +2,8 @@
 #![no_main]
 
 use core::panic::PanicInfo;
-use trueos::{panic_abort, TrueosAllocator};
+use trueos::panic_abort;
 use trueos::{platform, ui2};
-
-#[global_allocator]
-static GLOBAL_ALLOCATOR: TrueosAllocator = TrueosAllocator;
 
 const UI2_MANDELBROT_TEX_ID: u32 = 4_702;
 const UI2_MANDELBROT_RT_W: u32 = 768;

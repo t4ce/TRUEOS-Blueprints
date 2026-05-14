@@ -7,12 +7,9 @@ use alloc::string::String;
 use core::fmt::Write as _;
 use core::panic::PanicInfo;
 
+use trueos::panic_abort;
 use trueos::platform;
 use trueos::ui2::{self, gfx};
-use trueos::{panic_abort, TrueosAllocator};
-
-#[global_allocator]
-static GLOBAL_ALLOCATOR: TrueosAllocator = TrueosAllocator;
 
 const WINDOW_TITLE: &str = "RETRO SUN";
 const WINDOW_X: i32 = 120;

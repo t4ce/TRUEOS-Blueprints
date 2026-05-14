@@ -7,11 +7,8 @@ use alloc::vec::Vec;
 use core::panic::PanicInfo;
 use trueos::platform;
 use trueos::ui2::{self, gfx};
-use trueos::{input, panic_abort, TrueosAllocator};
+use trueos::{input, panic_abort};
 use trueos_tetris::{Lcg32, NoopEvents, Rotation};
-
-#[global_allocator]
-static GLOBAL_ALLOCATOR: TrueosAllocator = TrueosAllocator;
 
 const TEX_ID: u32 = 4_775;
 const WIN_W: u32 = 360;

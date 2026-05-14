@@ -8,10 +8,7 @@ use core::fmt::Write as _;
 use core::panic::PanicInfo;
 use trueos::platform;
 use trueos::ui2::{self, gfx};
-use trueos::{input, panic_abort, tyche, TrueosAllocator};
-
-#[global_allocator]
-static GLOBAL_ALLOCATOR: TrueosAllocator = TrueosAllocator;
+use trueos::{input, panic_abort, tyche};
 
 const WINDOW_X: i32 = 520;
 const WINDOW_Y: i32 = 150;

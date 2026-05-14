@@ -5,12 +5,9 @@ extern crate alloc;
 
 use alloc::{format, string::String, vec, vec::Vec};
 use core::panic::PanicInfo;
+use trueos::panic_abort;
 use trueos::platform;
 use trueos::ui2::{self, gfx};
-use trueos::{panic_abort, TrueosAllocator};
-
-#[global_allocator]
-static GLOBAL_ALLOCATOR: TrueosAllocator = TrueosAllocator;
 
 // Axis settings - change these to adjust the visible range of the plot.
 const AXIS_X_MIN: f64 = -2.0;

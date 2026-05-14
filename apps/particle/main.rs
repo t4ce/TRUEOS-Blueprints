@@ -6,13 +6,10 @@ extern crate alloc;
 use alloc::{string::String, vec, vec::Vec};
 use core::panic::PanicInfo;
 
+use trueos::panic_abort;
 use trueos::platform;
 use trueos::ui2::{self, gfx};
-use trueos::{panic_abort, TrueosAllocator};
 use trueos_gfx_core::{push_tex_quad_px, Rgba8, ViewTransform, TEX_VERTEX_SIZE};
-
-#[global_allocator]
-static GLOBAL_ALLOCATOR: TrueosAllocator = TrueosAllocator;
 
 const UI2_PARTICLE_DEMO_TEX_ID: u32 = 4_709;
 const UI2_PARTICLE_DEMO_SPRITE_TEX_ID: u32 = 4_711;

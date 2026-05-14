@@ -2,12 +2,9 @@
 #![no_main]
 
 use core::panic::PanicInfo;
-use trueos::{panic_abort, TrueosAllocator};
+use trueos::panic_abort;
 use trueos::{platform, vshell};
 use trueos_tetris::shell::{ShellControl, ShellIo};
-
-#[global_allocator]
-static GLOBAL_ALLOCATOR: TrueosAllocator = TrueosAllocator;
 
 struct AttachedShell;
 
