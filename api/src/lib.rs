@@ -18,6 +18,11 @@ mod vcabi {
     pub use v::vcabi::*;
 }
 
+unsafe extern "C" {
+    fn posix_memalign(memptr: *mut *mut c_void, align: usize, size: usize) -> i32;
+    fn free(ptr: *mut c_void);
+}
+
 pub mod hid;
 pub use hid as input;
 pub mod globalog;
@@ -248,12 +253,52 @@ fn log_alloc_null(op: &str, reason: &str, size: usize, align: usize, new_size: u
     line.write_to_stream();
 }
 
+fn log_abort_entry(kind: &str) {
+    let mut sp = 0usize;
+    let mut fp = 0usize;
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        core::arch::asm!("mov {}, rsp", out(reg) sp, options(nomem, nostack, preserves_flags));
+        core::arch::asm!("mov {}, rbp", out(reg) fp, options(nomem, nostack, preserves_flags));
+    }
+
+    let stack = sp as *const usize;
+    let s0 = unsafe { stack.add(0).read_volatile() };
+    let s1 = unsafe { stack.add(1).read_volatile() };
+    let s2 = unsafe { stack.add(2).read_volatile() };
+    let s3 = unsafe { stack.add(3).read_volatile() };
+
+    let mut line = AllocDiagLine::new();
+    let _ = fmt::write(
+        &mut line,
+        format_args!(
+            "[blueprint:ERROR] abort-entry kind={} sp=0x{:016X} fp=0x{:016X} stack=[0x{:016X},0x{:016X},0x{:016X},0x{:016X}]\n",
+            kind, sp, fp, s0, s1, s2, s3
+        ),
+    );
+    line.write_to_stream();
+}
+
+fn allocator_base_align() -> usize {
+    core::mem::align_of::<usize>()
+}
+
+unsafe fn alloc_aligned(op: &str, layout: Layout, new_size: usize) -> *mut u8 {
+    let mut ptr = null_mut::<c_void>();
+    let rc = unsafe { posix_memalign(&mut ptr, layout.align(), layout.size().max(1)) };
+    if rc != 0 || ptr.is_null() {
+        log_alloc_null(op, "posix-memalign-failed", layout.size(), layout.align(), new_size);
+        return null_mut();
+    }
+    ptr.cast::<u8>()
+}
+
 // The thin blueprint path uses the host-exported C allocator directly.
 unsafe impl GlobalAlloc for TrueosAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        if layout.align() > core::mem::align_of::<usize>() {
-            log_alloc_null("alloc", "align-too-large", layout.size(), layout.align(), 0);
-            return null_mut();
+        if layout.align() > allocator_base_align() {
+            return unsafe { alloc_aligned("alloc", layout, 0) };
         }
         let ptr = unsafe { vcabi::trueos_cabi_alloc(layout.size().max(1)) };
         if ptr.is_null() {
@@ -262,32 +307,61 @@ unsafe impl GlobalAlloc for TrueosAllocator {
         ptr
     }
 
-    unsafe fn dealloc(&self, ptr: *mut u8, _layout: Layout) {
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         if ptr.is_null() {
             return;
         }
-        unsafe { vcabi::trueos_cabi_free(ptr) }
+        if layout.align() > allocator_base_align() {
+            unsafe { free(ptr.cast::<c_void>()) }
+        } else {
+            unsafe { vcabi::trueos_cabi_free(ptr) }
+        }
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-        if layout.align() > core::mem::align_of::<usize>() {
-            log_alloc_null("alloc_zeroed", "align-too-large", layout.size(), layout.align(), 0);
-            return null_mut();
-        }
-        let ptr = unsafe { vcabi::trueos_cabi_calloc(1, layout.size().max(1)) };
+        let ptr = if layout.align() > allocator_base_align() {
+            unsafe { alloc_aligned("alloc_zeroed", layout, 0) }
+        } else {
+            unsafe { vcabi::trueos_cabi_calloc(1, layout.size().max(1)) }
+        };
         if ptr.is_null() {
             log_alloc_null("alloc_zeroed", "backend-null", layout.size(), layout.align(), 0);
+        } else if layout.align() > allocator_base_align() {
+            unsafe { core::ptr::write_bytes(ptr, 0, layout.size().max(1)) };
         }
         ptr
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        if layout.align() > core::mem::align_of::<usize>() {
-            log_alloc_null("realloc", "align-too-large", layout.size(), layout.align(), new_size);
-            return null_mut();
-        }
         if ptr.is_null() {
             return unsafe { self.alloc(layout) };
+        }
+        if layout.align() > allocator_base_align() {
+            let Some(new_layout) = Layout::from_size_align(new_size.max(1), layout.align()).ok()
+            else {
+                log_alloc_null(
+                    "realloc",
+                    "layout-invalid",
+                    layout.size(),
+                    layout.align(),
+                    new_size,
+                );
+                return null_mut();
+            };
+            let new_ptr = unsafe { alloc_aligned("realloc", new_layout, new_size) };
+            if new_ptr.is_null() {
+                log_alloc_null("realloc", "backend-null", layout.size(), layout.align(), new_size);
+                return null_mut();
+            }
+            unsafe {
+                core::ptr::copy_nonoverlapping(
+                    ptr,
+                    new_ptr,
+                    core::cmp::min(layout.size(), new_size),
+                );
+                free(ptr.cast::<c_void>());
+            }
+            return new_ptr;
         }
         let new_ptr = unsafe { vcabi::trueos_cabi_realloc(ptr, new_size.max(1)) };
         if new_ptr.is_null() {
@@ -309,6 +383,7 @@ const UNWIND_END_OF_STACK: UnwindReasonCode = 5;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn abort() -> ! {
+    log_abort_entry("abort");
     panic_abort("blueprint abort\n")
 }
 
@@ -328,6 +403,7 @@ pub extern "C" fn _Unwind_GetIP(_context: *mut c_void) -> usize {
 #[cfg(feature = "default-panic-handler")]
 #[panic_handler]
 fn default_panic(_info: &PanicInfo<'_>) -> ! {
+    log_abort_entry("panic-handler");
     panic_abort("blueprint panic\n")
 }
 

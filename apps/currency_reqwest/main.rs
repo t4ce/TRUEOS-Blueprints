@@ -2,6 +2,8 @@
 
 extern crate alloc;
 
+use core::error::Error as _;
+
 use alloc::string::String;
 
 use trueos::logl::{self, level};
@@ -23,9 +25,7 @@ fn main() {
 
 async fn fetch_feed_text() -> Result<String, String> {
     logl::log(level::INFO, format_args!("currency_bp: stage reqwest.client.build"));
-    let client = reqwest::Client::builder()
-        .build()
-        .map_err(|err| format!("client {err}"))?;
+    let client = build_reqwest_client()?;
     logl::log(level::INFO, format_args!("currency_bp: success reqwest.client.build"));
 
     logl::log(level::INFO, format_args!("currency_bp: stage reqwest.request.send"));
@@ -53,4 +53,43 @@ async fn fetch_feed_text() -> Result<String, String> {
         return Err(format!("http {}", status.as_u16()));
     }
     String::from_utf8(body.to_vec()).map_err(|_| String::from("bad utf8"))
+}
+
+fn build_reqwest_client() -> Result<reqwest::Client, String> {
+    match reqwest::Client::builder().build() {
+        Ok(client) => return Ok(client),
+        Err(err) => {
+            logl::log(
+                level::ERROR,
+                format_args!("currency_bp: reqwest default builder failed debug={:?}", err),
+            );
+            if let Some(source) = err.source() {
+                logl::log(
+                    level::ERROR,
+                    format_args!("currency_bp: reqwest default builder source={}", source),
+                );
+            }
+        }
+    }
+
+    logl::log(
+        level::WARN,
+        format_args!("currency_bp: stage reqwest.client.build.insecure_tls_probe"),
+    );
+    reqwest::Client::builder()
+        .tls_danger_accept_invalid_certs(true)
+        .build()
+        .map_err(|err| {
+            logl::log(
+                level::ERROR,
+                format_args!("currency_bp: reqwest insecure builder failed debug={:?}", err),
+            );
+            if let Some(source) = err.source() {
+                logl::log(
+                    level::ERROR,
+                    format_args!("currency_bp: reqwest insecure builder source={}", source),
+                );
+            }
+            format!("client {err}")
+        })
 }
