@@ -1,6 +1,5 @@
 use anyhow::{Context, Result, anyhow};
 use ignore::WalkBuilder;
-use reqwest::Url;
 use serde::Deserialize;
 use std::collections::HashSet;
 use std::fs;
@@ -231,16 +230,55 @@ pub fn normalize_extension(value: &str) -> String {
 }
 
 pub fn file_uri(path: &Path) -> Result<String> {
-    Url::from_file_path(path)
-        .map(|url| url.to_string())
-        .map_err(|_| anyhow!("failed to convert path to file URI: {}", path.display()))
+    let path = path
+        .canonicalize()
+        .unwrap_or_else(|_| path.to_path_buf())
+        .to_string_lossy()
+        .replace('\\', "/");
+
+    if path.starts_with('/') {
+        Ok(format!("file://{}", path))
+    } else {
+        Ok(format!("file:///{}", path))
+    }
 }
 
 pub fn file_path_from_uri(uri: &str) -> Result<PathBuf> {
-    Url::parse(uri)
-        .with_context(|| format!("invalid file URI: {}", uri))?
-        .to_file_path()
-        .map_err(|_| anyhow!("unsupported file URI: {}", uri))
+    let path = uri
+        .strip_prefix("file://")
+        .ok_or_else(|| anyhow!("unsupported file URI: {}", uri))?;
+    let path = path.strip_prefix("localhost").unwrap_or(path);
+    Ok(PathBuf::from(percent_decode_file_path(path)))
+}
+
+fn percent_decode_file_path(path: &str) -> String {
+    let bytes = path.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut idx = 0;
+
+    while idx < bytes.len() {
+        if bytes[idx] == b'%' && idx + 2 < bytes.len() {
+            if let (Some(hi), Some(lo)) = (hex_value(bytes[idx + 1]), hex_value(bytes[idx + 2])) {
+                decoded.push((hi << 4) | lo);
+                idx += 3;
+                continue;
+            }
+        }
+
+        decoded.push(bytes[idx]);
+        idx += 1;
+    }
+
+    String::from_utf8_lossy(&decoded).into_owned()
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }
 
 fn resolve_settings_path(project_dir: &Path) -> Option<PathBuf> {

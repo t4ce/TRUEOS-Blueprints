@@ -12,6 +12,7 @@ repository = "https://github.com/iamwjun/localcoder"
 reqwest.workspace = true
 # Async runtime
 tokio.workspace = true
+trueos.workspace = true
 # JSON handling
 serde.workspace = true
 serde_json.workspace = true

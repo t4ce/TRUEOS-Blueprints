@@ -1,11 +1,10 @@
 use anyhow::{Context, Result, anyhow};
 use serde_json::{Value, json};
 use std::path::Path;
-use std::process::Stdio;
 use tokio::io::{
     AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader,
 };
-use tokio::process::{Child, ChildStdin, ChildStdout, Command};
+use tokio::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
 pub struct LspClient {
     server_name: String,
@@ -22,6 +21,7 @@ impl LspClient {
         args: &[String],
         cwd: &Path,
     ) -> Result<Self> {
+        let cwd = cwd.to_string_lossy().to_string();
         let mut child = Command::new(command)
             .args(args)
             .current_dir(cwd)

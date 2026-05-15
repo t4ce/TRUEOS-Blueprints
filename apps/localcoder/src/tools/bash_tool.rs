@@ -12,9 +12,8 @@
 use crate::tools::Tool;
 use anyhow::{Result, anyhow};
 use serde_json::{Value, json};
-use std::process::Stdio;
 use std::time::Duration;
-use tokio::process::Command;
+use tokio::process::{Command, Output, Stdio};
 
 const DEFAULT_TIMEOUT_MS: u64 = 120_000;
 const MAX_TIMEOUT_MS: u64 = 600_000;
@@ -108,7 +107,9 @@ impl Tool for BashTool {
             ));
         }
 
-        let output_future = Command::new("bash").arg("-lc").arg(command).output();
+        let mut command_runner = Command::new("bash");
+        command_runner.arg("-lc").arg(command);
+        let output_future = command_runner.output();
 
         let output = tokio::time::timeout(Duration::from_millis(timeout_ms), output_future)
             .await
@@ -128,7 +129,7 @@ fn is_dangerous(cmd: &str) -> Option<(&'static str, &'static str)> {
         .copied()
 }
 
-fn format_output(output: std::process::Output) -> String {
+fn format_output(output: Output) -> String {
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
 

@@ -4,7 +4,7 @@
 
 Chinese version: [README.zh.md](./README.zh.md)
 
-## 📖 Overview
+## 📖 Overview ok
 
 Localcoder is a Claude-like command-line AI assistant implemented in Rust. The current implementation already includes:
 
