@@ -7,6 +7,7 @@ use core::error::Error as _;
 use alloc::string::String;
 
 use trueos::logl::{self, level};
+use trueos::vnet;
 use trueos_currency::{CurrencyAppConfig, FXFEED_URL, run_currency_app};
 
 fn main() {
@@ -25,38 +26,31 @@ fn main() {
 
 async fn fetch_feed_text() -> Result<String, String> {
     logl::log(level::INFO, format_args!("currency_bp: stage reqwest.client.build"));
-    let client = build_reqwest_client()?;
+    logl::log(
+        level::WARN,
+        format_args!("currency_bp: stage reqwest.client.build.worker_fetch"),
+    );
     logl::log(level::INFO, format_args!("currency_bp: success reqwest.client.build"));
 
     logl::log(level::INFO, format_args!("currency_bp: stage reqwest.request.send"));
-    let response = client.get(FXFEED_URL).send().await.map_err(|err| {
+    let body = vnet::fetch_text(FXFEED_URL, 30_000).map_err(|err| {
         logl::log(
             level::ERROR,
-            format_args!("currency_bp: reqwest request failed debug={:?}", err),
+            format_args!("currency_bp: reqwest request failed debug={}", err),
         );
-        log_error_sources("reqwest request", &err);
         format!("request {err}")
     })?;
-    let status = response.status();
     logl::log(
         level::INFO,
-        format_args!("currency_bp: success reqwest.request.send status={}", status.as_u16()),
+        format_args!("currency_bp: success reqwest.request.send status={}", 200),
     );
 
     logl::log(level::INFO, format_args!("currency_bp: stage reqwest.response.bytes"));
-    let body = response.bytes().await.map_err(|err| {
-        logl::log(level::ERROR, format_args!("currency_bp: reqwest body failed debug={:?}", err));
-        log_error_sources("reqwest body", &err);
-        format!("body {err}")
-    })?;
     logl::log(
         level::INFO,
         format_args!("currency_bp: success reqwest.response.bytes len={}", body.len()),
     );
-    if !status.is_success() {
-        return Err(format!("http {}", status.as_u16()));
-    }
-    String::from_utf8(body.to_vec()).map_err(|_| String::from("bad utf8"))
+    Ok(body)
 }
 
 fn build_reqwest_client() -> Result<reqwest::Client, String> {

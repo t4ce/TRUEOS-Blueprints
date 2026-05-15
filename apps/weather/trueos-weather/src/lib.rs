@@ -5,7 +5,6 @@ pub mod config;
 pub mod helper;
 pub mod lang;
 pub mod oc3;
-pub mod transport;
 
 use alloc::{string::String, vec::Vec};
 use serde::{Deserialize, Serialize};

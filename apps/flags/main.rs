@@ -7,6 +7,7 @@ use std::string::String;
 use trueos::logl::{self, level};
 use trueos::platform;
 use trueos::ui2::{self, gfx};
+use trueos::vnet;
 use trueos::{input, runtime, tyche};
 
 const WINDOW_X: i32 = 520;
@@ -65,7 +66,7 @@ struct Game {
 }
 
 impl Game {
-    fn new(rng: &mut tyche::SoftRng, runtime: &runtime::Runtime, client: &reqwest::Client) -> Self {
+    fn new(rng: &mut tyche::SoftRng, runtime: &runtime::Runtime) -> Self {
         let mut game = Self {
             answer: 0,
             answer_slot: 0,
@@ -76,7 +77,7 @@ impl Game {
             selected_slot: None,
             score: 0,
         };
-        game.start_round(rng, runtime, client);
+        game.start_round(rng, runtime);
         game
     }
 
@@ -84,7 +85,6 @@ impl Game {
         &mut self,
         rng: &mut tyche::SoftRng,
         runtime: &runtime::Runtime,
-        client: &reqwest::Client,
     ) {
         self.answer = rng.usize_below(COUNTRIES.len());
         self.answer_slot = rng.usize_below(4);
@@ -108,7 +108,7 @@ impl Game {
         self.flash = Flash::None;
         self.flash_frames = 0;
         self.selected_slot = None;
-        let loaded_svgs = runtime.block_on(fetch_round_svgs(client, self.options));
+        let loaded_svgs = runtime.block_on(fetch_round_svgs(self.options));
         for (slot, svg) in loaded_svgs.into_iter().enumerate() {
             let (code, _) = COUNTRIES[self.options[slot]];
             self.svgs[slot] = Some(svg.unwrap_or_else(|| fallback_flag_svg(code)));
@@ -134,7 +134,6 @@ impl Game {
         &mut self,
         rng: &mut tyche::SoftRng,
         runtime: &runtime::Runtime,
-        client: &reqwest::Client,
     ) -> bool {
         if self.flash == Flash::None {
             return false;
@@ -149,7 +148,7 @@ impl Game {
         self.flash = Flash::None;
         self.selected_slot = None;
         if was_correct {
-            self.start_round(rng, runtime, client);
+            self.start_round(rng, runtime);
         }
         true
     }
@@ -164,11 +163,11 @@ impl Game {
     }
 }
 
-async fn fetch_round_svgs(client: &reqwest::Client, options: [usize; 4]) -> [Option<String>; 4] {
+async fn fetch_round_svgs(options: [usize; 4]) -> [Option<String>; 4] {
     let mut out = [(); 4].map(|_| None);
     for slot in 0..4 {
         let (code, _) = COUNTRIES[options[slot]];
-        out[slot] = match fetch_flag_svg(client, code).await {
+        out[slot] = match fetch_flag_svg(code).await {
             Ok(svg) => {
                 logl::log(
                     level::INFO,
@@ -196,21 +195,9 @@ async fn fetch_round_svgs(client: &reqwest::Client, options: [usize; 4]) -> [Opt
     out
 }
 
-async fn fetch_flag_svg(client: &reqwest::Client, code: &str) -> Result<String, String> {
-    let response = client
-        .get(flag_url(code).as_str())
-        .send()
-        .await
-        .map_err(|err| format!("request {err}"))?;
-    let status = response.status();
-    let body = response
-        .bytes()
-        .await
-        .map_err(|err| format!("body {err}"))?;
-    if !status.is_success() {
-        return Err(format!("http {}", status.as_u16()));
-    }
-    String::from_utf8(body.to_vec()).map_err(|_| String::from("bad utf8"))
+async fn fetch_flag_svg(code: &str) -> Result<String, String> {
+    vnet::fetch_text(flag_url(code).as_str(), FLAG_FETCH_TIMEOUT_MS)
+        .map_err(|err| format!("request {err}"))
 }
 
 fn flag_url(code: &str) -> String {
@@ -474,19 +461,10 @@ fn main() {
             return;
         }
     };
-    let client = match build_reqwest_client() {
-        Ok(client) => client,
-        Err(err) => {
-            logl::log(
-                level::ERROR,
-                format_args!("flags bp: reqwest client build failed: {}\n", err),
-            );
-            return;
-        }
-    };
+    logl::log(level::WARN, "flags bp: stage reqwest.client.build.worker_fetch\n");
 
     let mut rng = tyche::SoftRng::new();
-    let mut game = Game::new(&mut rng, &runtime, &client);
+    let mut game = Game::new(&mut rng, &runtime);
     let mut cursor_seq = {
         let (_, next_seq, _) = input::read_cursor_events_since(0, 64);
         next_seq
@@ -500,7 +478,7 @@ fn main() {
         let mut changed = false;
         changed |= handle_keyboard(&mut game);
         changed |= handle_cursor(&window, &mut cursor_seq, &mut last_buttons, &mut game);
-        changed |= game.tick_flash(&mut rng, &runtime, &client);
+        changed |= game.tick_flash(&mut rng, &runtime);
         if changed {
             present(&window, &game);
         }
