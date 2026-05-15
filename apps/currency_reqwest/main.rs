@@ -60,25 +60,9 @@ async fn fetch_feed_text() -> Result<String, String> {
 }
 
 fn build_reqwest_client() -> Result<reqwest::Client, String> {
-    match reqwest::Client::builder().build() {
-        Ok(client) => return Ok(client),
-        Err(err) => {
-            logl::log(
-                level::ERROR,
-                format_args!("currency_bp: reqwest default builder failed debug={:?}", err),
-            );
-            if let Some(source) = err.source() {
-                logl::log(
-                    level::ERROR,
-                    format_args!("currency_bp: reqwest default builder source={}", source),
-                );
-            }
-        }
-    }
-
     logl::log(
         level::WARN,
-        format_args!("currency_bp: stage reqwest.client.build.insecure_tls_probe"),
+        format_args!("currency_bp: stage reqwest.client.build.insecure_tls"),
     );
     reqwest::Client::builder()
         .tls_danger_accept_invalid_certs(true)

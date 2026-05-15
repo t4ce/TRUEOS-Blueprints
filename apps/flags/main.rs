@@ -1,8 +1,9 @@
 // trueos-blueprint: features=["tokio-net-probe"]
 
+use core::error::Error as _;
+use core::fmt::Write as _;
 use core::time::Duration;
 use std::string::String;
-use core::fmt::Write as _;
 use trueos::logl::{self, level};
 use trueos::platform;
 use trueos::ui2::{self, gfx};
@@ -163,10 +164,7 @@ impl Game {
     }
 }
 
-async fn fetch_round_svgs(
-    client: &reqwest::Client,
-    options: [usize; 4],
-) -> [Option<String>; 4] {
+async fn fetch_round_svgs(client: &reqwest::Client, options: [usize; 4]) -> [Option<String>; 4] {
     let mut out = [(); 4].map(|_| None);
     for slot in 0..4 {
         let (code, _) = COUNTRIES[options[slot]];
@@ -186,7 +184,10 @@ async fn fetch_round_svgs(
             Err(err) => {
                 logl::log(
                     level::ERROR,
-                    format_args!("flags bp: reqwest fetch failed slot={} code={} err={}\n", slot, code, err),
+                    format_args!(
+                        "flags bp: reqwest fetch failed slot={} code={} err={}\n",
+                        slot, code, err
+                    ),
                 );
                 None
             }
@@ -214,6 +215,27 @@ async fn fetch_flag_svg(client: &reqwest::Client, code: &str) -> Result<String, 
 
 fn flag_url(code: &str) -> String {
     format!("https://flagcdn.com/{}.svg", code)
+}
+
+fn build_reqwest_client() -> Result<reqwest::Client, String> {
+    logl::log(level::WARN, "flags bp: stage reqwest.client.build.insecure_tls\n");
+    reqwest::Client::builder()
+        .timeout(Duration::from_millis(FLAG_FETCH_TIMEOUT_MS))
+        .tls_danger_accept_invalid_certs(true)
+        .build()
+        .map_err(|err| {
+            logl::log(
+                level::ERROR,
+                format_args!("flags bp: reqwest insecure builder failed debug={:?}\n", err),
+            );
+            if let Some(source) = err.source() {
+                logl::log(
+                    level::ERROR,
+                    format_args!("flags bp: reqwest insecure builder source={}\n", source),
+                );
+            }
+            format!("client {err}")
+        })
 }
 
 fn open_window() -> Option<ui2::SurfaceWindow> {
@@ -452,13 +474,13 @@ fn main() {
             return;
         }
     };
-    let client = match reqwest::Client::builder()
-        .timeout(Duration::from_millis(FLAG_FETCH_TIMEOUT_MS))
-        .build()
-    {
+    let client = match build_reqwest_client() {
         Ok(client) => client,
         Err(err) => {
-            logl::log(level::ERROR, format_args!("flags bp: reqwest client build failed: {}\n", err));
+            logl::log(
+                level::ERROR,
+                format_args!("flags bp: reqwest client build failed: {}\n", err),
+            );
             return;
         }
     };
