@@ -81,11 +81,7 @@ impl Game {
         game
     }
 
-    fn start_round(
-        &mut self,
-        rng: &mut tyche::SoftRng,
-        runtime: &runtime::Runtime,
-    ) {
+    fn start_round(&mut self, rng: &mut tyche::SoftRng, runtime: &runtime::Runtime) {
         self.answer = rng.usize_below(COUNTRIES.len());
         self.answer_slot = rng.usize_below(4);
         self.options = [usize::MAX; 4];
@@ -130,11 +126,7 @@ impl Game {
         true
     }
 
-    fn tick_flash(
-        &mut self,
-        rng: &mut tyche::SoftRng,
-        runtime: &runtime::Runtime,
-    ) -> bool {
+    fn tick_flash(&mut self, rng: &mut tyche::SoftRng, runtime: &runtime::Runtime) -> bool {
         if self.flash == Flash::None {
             return false;
         }
@@ -325,12 +317,138 @@ fn fallback_flag_svg(code: &str) -> String {
     String::from(svg)
 }
 
+fn root_svg_attr<'a>(attrs: &'a str, name: &str) -> Option<&'a str> {
+    let bytes = attrs.as_bytes();
+    let mut idx = 0;
+    while idx < bytes.len() {
+        while idx < bytes.len() && bytes[idx].is_ascii_whitespace() {
+            idx += 1;
+        }
+        if idx < bytes.len() && bytes[idx] == b'/' {
+            idx += 1;
+            continue;
+        }
+        let name_start = idx;
+        while idx < bytes.len()
+            && !bytes[idx].is_ascii_whitespace()
+            && bytes[idx] != b'='
+            && bytes[idx] != b'/'
+        {
+            idx += 1;
+        }
+        if idx == name_start {
+            idx += 1;
+            continue;
+        }
+        let attr_name = &attrs[name_start..idx];
+        while idx < bytes.len() && bytes[idx].is_ascii_whitespace() {
+            idx += 1;
+        }
+        if idx >= bytes.len() || bytes[idx] != b'=' {
+            continue;
+        }
+        idx += 1;
+        while idx < bytes.len() && bytes[idx].is_ascii_whitespace() {
+            idx += 1;
+        }
+        if idx >= bytes.len() {
+            return None;
+        }
+        let quote = bytes[idx];
+        if quote != b'"' && quote != b'\'' {
+            continue;
+        }
+        idx += 1;
+        let value_start = idx;
+        while idx < bytes.len() && bytes[idx] != quote {
+            idx += 1;
+        }
+        if attr_name == name {
+            return Some(&attrs[value_start..idx]);
+        }
+        idx = idx.saturating_add(1);
+    }
+    None
+}
+
+fn push_filtered_svg_attrs(out: &mut String, attrs: &str) {
+    let bytes = attrs.as_bytes();
+    let mut idx = 0;
+    while idx < bytes.len() {
+        let attr_start = idx;
+        while idx < bytes.len() && bytes[idx].is_ascii_whitespace() {
+            idx += 1;
+        }
+        if idx < bytes.len() && bytes[idx] == b'/' {
+            idx += 1;
+            continue;
+        }
+        let name_start = idx;
+        while idx < bytes.len()
+            && !bytes[idx].is_ascii_whitespace()
+            && bytes[idx] != b'='
+            && bytes[idx] != b'/'
+        {
+            idx += 1;
+        }
+        if idx == name_start {
+            idx += 1;
+            continue;
+        }
+        let attr_name = &attrs[name_start..idx];
+        while idx < bytes.len() && bytes[idx].is_ascii_whitespace() {
+            idx += 1;
+        }
+        if idx < bytes.len() && bytes[idx] == b'=' {
+            idx += 1;
+            while idx < bytes.len() && bytes[idx].is_ascii_whitespace() {
+                idx += 1;
+            }
+            if idx < bytes.len() && (bytes[idx] == b'"' || bytes[idx] == b'\'') {
+                let quote = bytes[idx];
+                idx += 1;
+                while idx < bytes.len() && bytes[idx] != quote {
+                    idx += 1;
+                }
+                idx = idx.saturating_add(1);
+            } else {
+                while idx < bytes.len() && !bytes[idx].is_ascii_whitespace() {
+                    idx += 1;
+                }
+            }
+        }
+        if !matches!(attr_name, "x" | "y" | "width" | "height") {
+            out.push(' ');
+            out.push_str(attrs[attr_start..idx].trim());
+        }
+    }
+}
+
 fn push_flag(out: &mut String, flag_svg: &str, x: i32, y: i32, w: i32, h: i32) {
-    let clean = flag_svg
-        .find("<svg")
-        .map(|idx| &flag_svg[idx + 4..])
-        .unwrap_or(flag_svg);
-    let _ = write!(out, r#"<svg x="{}" y="{}" width="{}" height="{}"{}"#, x, y, w, h, clean);
+    let Some(svg_start) = flag_svg.find("<svg") else {
+        return;
+    };
+    let tail = &flag_svg[svg_start + 4..];
+    let Some(head_end) = tail.find('>') else {
+        return;
+    };
+    let attrs = &tail[..head_end];
+    let mut body = &tail[head_end + 1..];
+    if let Some(end) = body.rfind("</svg>") {
+        body = &body[..end];
+    }
+
+    let _ = write!(out, r#"<svg x="{}" y="{}" width="{}" height="{}""#, x, y, w, h);
+    if root_svg_attr(attrs, "viewBox").is_none()
+        && let (Some(svg_w), Some(svg_h)) =
+            (root_svg_attr(attrs, "width"), root_svg_attr(attrs, "height"))
+    {
+        let _ = write!(out, r#" viewBox="0 0 {} {}""#, svg_w, svg_h);
+    }
+    push_filtered_svg_attrs(out, attrs);
+    out.push('>');
+    out.push_str(body);
+    out.push_str("</svg>");
 }
 
 fn border_color(game: &Game, slot: usize) -> &'static str {
