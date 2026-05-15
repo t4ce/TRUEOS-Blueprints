@@ -289,7 +289,7 @@ fn build_one_target_to(
             "trueos-blueprint: source overlay crates: {}",
             source_overlay
                 .iter()
-                .map(|patch| patch.name.as_str())
+                .map(|patch| format!("{}={}", patch.name, patch.path.display()))
                 .collect::<Vec<_>>()
                 .join(",")
         );
