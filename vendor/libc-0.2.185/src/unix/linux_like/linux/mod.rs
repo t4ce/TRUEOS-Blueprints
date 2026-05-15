@@ -42,6 +42,16 @@ pub const NLMSG_MIN_TYPE: c_int = 0x10;
 // linux/sctp.h
 pub type sctp_assoc_t = __s32;
 
+#[cfg(target_os = "trueos")]
+extern "C" {
+    pub fn pthread_getname_np(
+        thread: crate::pthread_t,
+        name: *mut c_char,
+        len: size_t,
+    ) -> c_int;
+    pub fn pthread_setname_np(thread: crate::pthread_t, name: *const c_char) -> c_int;
+}
+
 pub type eventfd_t = u64;
 
 e! {

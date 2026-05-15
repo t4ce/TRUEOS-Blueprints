@@ -25,6 +25,8 @@ pub mod rand {
     pub use crate::tyche::*;
 }
 pub mod platform;
+#[cfg(feature = "tokio-runtime")]
+pub mod std_abi;
 pub mod tyche;
 pub mod ui2;
 pub mod vfs;

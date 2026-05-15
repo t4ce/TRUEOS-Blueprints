@@ -1,5 +1,5 @@
 use serde::Deserialize;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::env;
 use std::fs;
 use std::io;
@@ -268,6 +268,7 @@ fn build_one_target_to(
         &lock_mismatches,
     )?
     .unwrap_or_else(|| manifest_path.to_path_buf());
+    enforce_source_overlay_lock(&cargo_manifest_path, &staged_source_overlay)?;
 
     let mut cargo = Command::new("cargo");
     cargo
@@ -301,7 +302,12 @@ fn build_one_target_to(
     let has_trueos_dependency = manifest_has_dependency(&cargo_manifest_path, "trueos")?;
     let mut extra_features = required_features.to_vec();
     for feature in &build_settings.extra_features {
-        push_declared_feature(&mut extra_features, feature, &declared_features);
+        push_app_or_trueos_feature(
+            &mut extra_features,
+            feature,
+            &declared_features,
+            has_trueos_dependency,
+        );
     }
     if !build_settings.has_global_allocator && has_trueos_dependency {
         push_feature(&mut extra_features, "trueos/default-global-allocator");
@@ -315,7 +321,12 @@ fn build_one_target_to(
     if matches!(build_settings.flavor, BuildFlavor::ThinNoStd) {
         cargo.arg("--no-default-features");
     } else if build_settings.needs_tokio_net {
-        push_declared_feature(&mut extra_features, "tokio-net-probe", &declared_features);
+        push_app_or_trueos_feature(
+            &mut extra_features,
+            "tokio-net-probe",
+            &declared_features,
+            has_trueos_dependency,
+        );
     }
     if !extra_features.is_empty() {
         cargo.arg("--features").arg(extra_features.join(","));
@@ -434,6 +445,124 @@ fn run_staged_lock_overlay_update(
     }
 
     Err("cargo update failed unexpectedly".to_string())
+}
+
+fn enforce_source_overlay_lock(
+    staged_manifest: &Path,
+    staged_source_overlay: &[CratePatch],
+) -> Result<(), String> {
+    if staged_source_overlay.is_empty() {
+        return Ok(());
+    }
+
+    let lock_path = staged_manifest
+        .parent()
+        .ok_or_else(|| format!("bad manifest path: {}", staged_manifest.display()))?
+        .join("Cargo.lock");
+    let mut generate = Command::new("cargo");
+    generate
+        .arg("+nightly")
+        .arg("generate-lockfile")
+        .arg("--manifest-path")
+        .arg(staged_manifest);
+    push_source_overlay_configs(&mut generate, staged_source_overlay);
+    run_command(&mut generate, "cargo generate-lockfile")?;
+
+    let root_name = package_name(staged_manifest)?;
+    let mut locked = lock_packages(&lock_path)?;
+    let mut reachable = reachable_package_names(&locked, &root_name);
+    let mut forced = Vec::new();
+    for patch in staged_source_overlay {
+        let Some(overlay_version) = package_version(&patch.path.join("Cargo.toml"))? else {
+            continue;
+        };
+        let Some(current) = locked.iter().find(|package| package.name == patch.name) else {
+            continue;
+        };
+        if current.version == overlay_version && current.source.is_none() {
+            continue;
+        }
+        if !reachable.contains(&patch.name) {
+            continue;
+        }
+
+        let mismatch = LockMismatch {
+            name: patch.name.clone(),
+            locked_version: current.version.clone(),
+            overlay_version,
+        };
+        run_staged_lock_overlay_update(staged_manifest, staged_source_overlay, &mismatch)?;
+        forced.push(format!(
+            "{} {}->{}",
+            mismatch.name, mismatch.locked_version, mismatch.overlay_version
+        ));
+        locked = lock_packages(&lock_path)?;
+        reachable = reachable_package_names(&locked, &root_name);
+    }
+
+    if !forced.is_empty() {
+        println!("trueos-blueprint: source overlay lock forced: {}", forced.join(","));
+    }
+
+    let mut violations = Vec::new();
+    for patch in staged_source_overlay {
+        let Some(overlay_version) = package_version(&patch.path.join("Cargo.toml"))? else {
+            continue;
+        };
+        if !reachable.contains(&patch.name) {
+            continue;
+        }
+        for package in locked.iter().filter(|package| package.name == patch.name) {
+            if package.version != overlay_version {
+                violations.push(format!(
+                    "{} locked at {} but overlay pin is {} ({})",
+                    patch.name,
+                    package.version,
+                    overlay_version,
+                    patch.path.display()
+                ));
+                continue;
+            }
+            if let Some(source) = &package.source {
+                violations.push(format!(
+                    "{} {} resolved from {} instead of overlay path {}",
+                    patch.name,
+                    package.version,
+                    source,
+                    patch.path.display()
+                ));
+            }
+        }
+    }
+
+    if violations.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "source overlay lock guard failed; refusing to build with bypassed pins: {}",
+            violations.join("; ")
+        ))
+    }
+}
+
+fn reachable_package_names(locked: &[LockedPackage], root_name: &str) -> BTreeSet<String> {
+    let mut reachable = BTreeSet::new();
+    let mut stack = vec![root_name.to_string()];
+
+    while let Some(name) = stack.pop() {
+        if !reachable.insert(name.clone()) {
+            continue;
+        }
+        for package in locked.iter().filter(|package| package.name == name) {
+            for dep in &package.dependencies {
+                if !reachable.contains(dep) {
+                    stack.push(dep.clone());
+                }
+            }
+        }
+    }
+
+    reachable
 }
 
 fn io_string(err: io::Error) -> String {
@@ -587,6 +716,7 @@ fn staged_manifest_for_overlay(
     );
     strip_manifest_patch_section(&staged_manifest)?;
     materialize_staged_workspace_dependencies(app_dir, work_dir, &staged_manifest)?;
+    materialize_hidden_build_std_pins(&staged_manifest, build_settings, source_overlay)?;
     ensure_standalone_manifest_workspace(&staged_manifest)?;
     rewrite_staged_source_for_target(app_dir, &staged_app_dir, build_settings)?;
     let staged_source_overlay = staged_source_overlay(source_overlay, work_dir);
@@ -663,6 +793,13 @@ struct LockMismatch {
     name: String,
     locked_version: String,
     overlay_version: String,
+}
+
+struct LockedPackage {
+    name: String,
+    version: String,
+    source: Option<String>,
+    dependencies: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -1191,39 +1328,81 @@ fn source_overlay_lock_mismatches(
 }
 
 fn lock_package_versions(lock_path: &Path) -> Result<Vec<(String, String)>, String> {
+    Ok(lock_packages(lock_path)?
+        .into_iter()
+        .map(|package| (package.name, package.version))
+        .collect())
+}
+
+fn lock_packages(lock_path: &Path) -> Result<Vec<LockedPackage>, String> {
     let cargo_lock = fs::read_to_string(lock_path).map_err(io_string)?;
     let mut out = Vec::new();
     let mut in_package = false;
+    let mut in_dependencies = false;
     let mut name: Option<String> = None;
     let mut version: Option<String> = None;
+    let mut source: Option<String> = None;
+    let mut dependencies = Vec::new();
 
     for line in cargo_lock.lines() {
         let trimmed = line.trim();
         if trimmed == "[[package]]" {
             if in_package && let (Some(name), Some(version)) = (name.take(), version.take()) {
-                out.push((name, version));
+                out.push(LockedPackage {
+                    name,
+                    version,
+                    source: source.take(),
+                    dependencies,
+                });
             }
             in_package = true;
+            in_dependencies = false;
             name = None;
             version = None;
+            source = None;
+            dependencies = Vec::new();
             continue;
         }
         if !in_package {
+            continue;
+        }
+        if in_dependencies {
+            if trimmed == "]" {
+                in_dependencies = false;
+                continue;
+            }
+            if let Some(dep) = lock_dependency_name(trimmed) {
+                dependencies.push(dep);
+            }
             continue;
         }
         if let Some((key, value)) = trimmed.split_once('=') {
             match key.trim() {
                 "name" => name = toml_string_value(value.trim()),
                 "version" => version = toml_string_value(value.trim()),
+                "source" => source = toml_string_value(value.trim()),
+                "dependencies" if value.trim() == "[" => in_dependencies = true,
                 _ => {}
             }
         }
     }
 
     if in_package && let (Some(name), Some(version)) = (name, version) {
-        out.push((name, version));
+        out.push(LockedPackage {
+            name,
+            version,
+            source,
+            dependencies,
+        });
     }
     Ok(out)
+}
+
+fn lock_dependency_name(line: &str) -> Option<String> {
+    let value = line.trim().trim_end_matches(',');
+    let dep = toml_string_value(value)?;
+    let name = dep.split_whitespace().next()?;
+    Some(name.to_string())
 }
 
 fn package_version(manifest_path: &Path) -> Result<Option<String>, String> {
@@ -1453,6 +1632,34 @@ fn materialize_staged_workspace_dependencies(
     Ok(())
 }
 
+fn materialize_hidden_build_std_pins(
+    manifest_path: &Path,
+    build_settings: &BuildSettings,
+    source_overlay: &[CratePatch],
+) -> Result<(), String> {
+    if !matches!(build_settings.flavor, BuildFlavor::TokioStd) {
+        return Ok(());
+    }
+    if manifest_has_dependency(manifest_path, "libc")? {
+        return Ok(());
+    }
+    let Some(libc_patch) = source_overlay.iter().find(|patch| patch.name == "libc") else {
+        return Ok(());
+    };
+    let Some(libc_version) = package_version(&libc_patch.path.join("Cargo.toml"))? else {
+        return Ok(());
+    };
+
+    let mut cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
+    if !cargo_toml.ends_with('\n') {
+        cargo_toml.push('\n');
+    }
+    cargo_toml.push_str(&format!(
+        "\n# Pinned because Rust build-std pulls libc outside the app dependency graph.\nlibc = {{ version = \"={libc_version}\", default-features = false }}\n"
+    ));
+    fs::write(manifest_path, cargo_toml).map_err(io_string)
+}
+
 fn workspace_dependency_name(line: &str) -> Option<String> {
     let line = line.split('#').next().unwrap_or("").trim();
     let Some((key, value)) = line.split_once('=') else {
@@ -1499,7 +1706,7 @@ fn materialized_workspace_dependency(
             "tower = { version = \"0.5\", default-features = false, features = [\"util\"] }"
                 .to_string()
         }
-        "trueos" => "trueos = { path = \"../../api\" }".to_string(),
+        "trueos" => path_dependency_line(dep_name, &blueprint_root.join("api")),
         "trueos-flags" => path_dependency_line(dep_name, &blueprint_root.join("apps/crates/trueos-flags")),
         "trueos-gfx-core" => format!(
             "trueos-gfx-core = {{ path = {}, features = [\"alloc\"] }}",
@@ -1522,12 +1729,13 @@ fn path_dependency_line(dep_name: &str, path: &Path) -> String {
 fn stage_trueos_tetris_crate(blueprint_root: &Path, work_dir: &Path) -> Result<PathBuf, String> {
     let source = blueprint_root.join("apps/crates/trueos-tetris");
     let staged = work_dir.join("blueprint-crates").join("trueos-tetris");
+    let trueos_v = fs::canonicalize(blueprint_root.join("../trueos-v")).map_err(io_string)?;
     reset_dir(&staged)?;
     copy_app_tree(&source, &staged)?;
     rewrite_manifest_dependency_path(
         &staged.join("Cargo.toml"),
         "v",
-        "../../../../../crates/trueos-v",
+        &trueos_v.display().to_string(),
     )?;
     Ok(staged)
 }
@@ -1812,9 +2020,16 @@ fn manifest_has_dependency(manifest_path: &Path, dependency_name: &str) -> Resul
     Ok(false)
 }
 
-fn push_declared_feature(features: &mut Vec<String>, feature: &str, declared_features: &[String]) {
+fn push_app_or_trueos_feature(
+    features: &mut Vec<String>,
+    feature: &str,
+    declared_features: &[String],
+    has_trueos_dependency: bool,
+) {
     if declared_features.iter().any(|declared| declared == feature) {
         push_feature(features, feature);
+    } else if has_trueos_dependency {
+        push_feature(features, &format!("trueos/{feature}"));
     }
 }
 
