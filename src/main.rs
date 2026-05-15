@@ -11,8 +11,8 @@ mod build_plan;
 mod publish;
 
 use artifact::{
-    cargo_artifact_stem, collect_rlibs, entry_hint_hex, latest_cargo_object, tool_command,
-    write_blueprint,
+    cargo_artifact_stem, collect_rlibs_for_object, entry_hint_hex, latest_cargo_object,
+    tool_command, write_blueprint,
 };
 use build_plan::{BuildFlavor, BuildSettings, BuildTarget, resolve_build_settings};
 use publish::publish_dist_blueprints;
@@ -346,7 +346,7 @@ fn build_one_target_to(
             latest_cargo_object(&target_dir.join("examples"), &cargo_artifact_stem(name))?
         }
     };
-    let rlibs = collect_rlibs(&deps_dir)?;
+    let rlibs = collect_rlibs_for_object(&app_obj, &deps_dir)?;
 
     let linked = work_dir.join("module.o");
     let stripped = work_dir.join("module.stripped.o");

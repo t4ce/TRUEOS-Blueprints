@@ -125,6 +125,64 @@ pub(crate) fn collect_rlibs(dir: &Path) -> Result<Vec<PathBuf>, String> {
     Ok(out)
 }
 
+pub(crate) fn collect_rlibs_for_object(
+    app_obj: &Path,
+    deps_dir: &Path,
+) -> Result<Vec<PathBuf>, String> {
+    let Some(stem) = app_obj.file_stem().and_then(|value| value.to_str()) else {
+        return collect_rlibs(deps_dir);
+    };
+    let rlink = app_obj.with_file_name(format!("{stem}.rlink"));
+    if !rlink.is_file() {
+        return collect_rlibs(deps_dir);
+    }
+
+    let bytes = fs::read(&rlink).map_err(io_string)?;
+    let mut out = Vec::new();
+    for token in printable_tokens(&bytes) {
+        let Some(suffix_idx) = token.find(".rlib") else {
+            continue;
+        };
+        let Some(prefix_idx) = token[..suffix_idx].rfind('/') else {
+            continue;
+        };
+        let path = PathBuf::from(&token[prefix_idx..suffix_idx + ".rlib".len()]);
+        if !path.is_file() {
+            continue;
+        }
+        if !out.iter().any(|existing| existing == &path) {
+            out.push(path);
+        }
+    }
+
+    if out.is_empty() {
+        collect_rlibs(deps_dir)
+    } else {
+        Ok(out)
+    }
+}
+
+fn printable_tokens(bytes: &[u8]) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut start = None;
+    for (idx, byte) in bytes.iter().copied().enumerate() {
+        if byte.is_ascii_graphic() {
+            start.get_or_insert(idx);
+        } else if let Some(token_start) = start.take()
+            && idx > token_start
+            && let Ok(token) = std::str::from_utf8(&bytes[token_start..idx])
+        {
+            out.push(token.to_string());
+        }
+    }
+    if let Some(token_start) = start
+        && let Ok(token) = std::str::from_utf8(&bytes[token_start..])
+    {
+        out.push(token.to_string());
+    }
+    out
+}
+
 pub(crate) fn entry_hint_hex(linked: &Path) -> String {
     if let Ok(mut readelf) = tool_command(&["llvm-readelf", "readelf"]) {
         if let Ok(output) = readelf.arg("-Ws").arg(linked).output() {
