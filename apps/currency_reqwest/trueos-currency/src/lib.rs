@@ -62,9 +62,14 @@ where
     Fut: Future<Output = Result<String, String>>,
 {
     logl::log(level::INFO, format_args!("currency_bp: start transport={}", config.transport_label));
+    logl::log(level::INFO, format_args!("currency_bp: stage runtime.current_thread_net.builder_new"));
+
+    let mut runtime_builder = runtime::current_thread_net();
+    logl::log(level::INFO, format_args!("currency_bp: success runtime.current_thread_net.builder_new"));
+
     logl::log(level::INFO, format_args!("currency_bp: stage runtime.current_thread_net.build"));
 
-    let runtime = match runtime::current_thread_net().build() {
+    let runtime = match runtime_builder.build() {
         Ok(rt) => {
             logl::log(level::INFO, format_args!("currency_bp: success runtime.current_thread_net.build"));
             rt

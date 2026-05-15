@@ -37,7 +37,7 @@ pub mod vnet;
 pub mod vshell;
 
 pub mod diag {
-    use super::{AtomicU8, Ordering, fmt};
+    use super::{fmt, AtomicU8, Ordering};
 
     #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
     pub enum Level {
@@ -131,46 +131,46 @@ pub mod runtime {
 #[cfg(feature = "tokio-runtime")]
 pub mod task {
     pub use tokio::spawn;
-    pub use tokio::task::{JoinError, JoinHandle, JoinSet, LocalSet, yield_now};
+    pub use tokio::task::{yield_now, JoinError, JoinHandle, JoinSet, LocalSet};
 }
 
 #[cfg(feature = "tokio-runtime")]
 pub mod sync {
     pub use tokio::sync::{
-        Barrier, Mutex, Notify, RwLock, Semaphore, broadcast, mpsc, oneshot, watch,
+        broadcast, mpsc, oneshot, watch, Barrier, Mutex, Notify, RwLock, Semaphore,
     };
 }
 
 #[cfg(feature = "tokio-runtime")]
 pub mod time {
-    pub use tokio::time::{Duration, Instant, Interval, Sleep, interval, sleep, timeout};
+    pub use tokio::time::{interval, sleep, timeout, Duration, Instant, Interval, Sleep};
 }
 
 #[cfg(feature = "tokio-runtime")]
 pub mod io {
     pub use tokio::io::{
-        AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, Stderr, Stdin, Stdout, duplex,
-        stderr, stdin, stdout,
+        duplex, stderr, stdin, stdout, AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt,
+        Stderr, Stdin, Stdout,
     };
 }
 
 #[cfg(feature = "tokio-runtime")]
 pub mod fs {
     pub use tokio::fs::{
-        File, OpenOptions, canonicalize, create_dir, create_dir_all, read, read_to_string,
-        try_exists, write,
+        canonicalize, create_dir, create_dir_all, read, read_to_string, try_exists, write, File,
+        OpenOptions,
     };
 
-    pub use crate::vfs::{FsNodeKind, FsStat, stat};
+    pub use crate::vfs::{stat, FsNodeKind, FsStat};
 }
 
 #[cfg(feature = "tokio-net-probe")]
 pub mod net {
-    pub use tokio::net::{TcpListener, TcpStream, ToSocketAddrs, UdpSocket, lookup_host};
+    pub use tokio::net::{lookup_host, TcpListener, TcpStream, ToSocketAddrs, UdpSocket};
 
     pub mod mio {
-        pub use mio::{Events, Interest, Poll, Registry, Token, Waker};
         pub use mio::{event, net};
+        pub use mio::{Events, Interest, Poll, Registry, Token, Waker};
     }
 
     pub mod socket2 {
@@ -203,13 +203,63 @@ pub struct TrueosAllocator;
 #[global_allocator]
 static DEFAULT_GLOBAL_ALLOCATOR: TrueosAllocator = TrueosAllocator;
 
+struct AllocDiagLine {
+    buf: [u8; 192],
+    len: usize,
+}
+
+impl AllocDiagLine {
+    const fn new() -> Self {
+        Self {
+            buf: [0; 192],
+            len: 0,
+        }
+    }
+
+    fn write_to_stream(&self) {
+        if self.len != 0 {
+            unsafe { vcabi::trueos_cabi_write(2, self.buf.as_ptr(), self.len) }
+        }
+    }
+}
+
+impl fmt::Write for AllocDiagLine {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        let remaining = self.buf.len().saturating_sub(self.len);
+        let bytes = s.as_bytes();
+        let copy_len = core::cmp::min(remaining, bytes.len());
+        if copy_len != 0 {
+            self.buf[self.len..self.len + copy_len].copy_from_slice(&bytes[..copy_len]);
+            self.len += copy_len;
+        }
+        Ok(())
+    }
+}
+
+fn log_alloc_null(op: &str, reason: &str, size: usize, align: usize, new_size: usize) {
+    let mut line = AllocDiagLine::new();
+    let _ = fmt::write(
+        &mut line,
+        format_args!(
+            "[blueprint:ERROR] alloc-null op={} reason={} size={} align={} new_size={}\n",
+            op, reason, size, align, new_size
+        ),
+    );
+    line.write_to_stream();
+}
+
 // The thin blueprint path uses the host-exported C allocator directly.
 unsafe impl GlobalAlloc for TrueosAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         if layout.align() > core::mem::align_of::<usize>() {
+            log_alloc_null("alloc", "align-too-large", layout.size(), layout.align(), 0);
             return null_mut();
         }
-        unsafe { vcabi::trueos_cabi_alloc(layout.size().max(1)) }
+        let ptr = unsafe { vcabi::trueos_cabi_alloc(layout.size().max(1)) };
+        if ptr.is_null() {
+            log_alloc_null("alloc", "backend-null", layout.size(), layout.align(), 0);
+        }
+        ptr
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, _layout: Layout) {
@@ -221,19 +271,29 @@ unsafe impl GlobalAlloc for TrueosAllocator {
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
         if layout.align() > core::mem::align_of::<usize>() {
+            log_alloc_null("alloc_zeroed", "align-too-large", layout.size(), layout.align(), 0);
             return null_mut();
         }
-        unsafe { vcabi::trueos_cabi_calloc(1, layout.size().max(1)) }
+        let ptr = unsafe { vcabi::trueos_cabi_calloc(1, layout.size().max(1)) };
+        if ptr.is_null() {
+            log_alloc_null("alloc_zeroed", "backend-null", layout.size(), layout.align(), 0);
+        }
+        ptr
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
         if layout.align() > core::mem::align_of::<usize>() {
+            log_alloc_null("realloc", "align-too-large", layout.size(), layout.align(), new_size);
             return null_mut();
         }
         if ptr.is_null() {
             return unsafe { self.alloc(layout) };
         }
-        unsafe { vcabi::trueos_cabi_realloc(ptr, new_size.max(1)) }
+        let new_ptr = unsafe { vcabi::trueos_cabi_realloc(ptr, new_size.max(1)) };
+        if new_ptr.is_null() {
+            log_alloc_null("realloc", "backend-null", layout.size(), layout.align(), new_size);
+        }
+        new_ptr
     }
 }
 
@@ -272,7 +332,6 @@ fn default_panic(_info: &PanicInfo<'_>) -> ! {
 }
 
 pub mod prelude {
-    pub use crate::TrueosAllocator;
     pub use crate::diag;
     #[cfg(feature = "tokio-runtime")]
     pub use crate::fs;
@@ -284,11 +343,11 @@ pub mod prelude {
     pub use crate::net;
     pub use crate::panic_abort;
     pub use crate::platform;
-    pub use crate::t;
     #[cfg(feature = "tokio-runtime")]
     pub use crate::runtime;
     #[cfg(feature = "tokio-runtime")]
     pub use crate::sync;
+    pub use crate::t;
     #[cfg(feature = "tokio-runtime")]
     pub use crate::task;
     #[cfg(feature = "tokio-runtime")]
@@ -297,6 +356,7 @@ pub mod prelude {
     pub use crate::tokio;
     pub use crate::ui2;
     pub use crate::vgfx;
+    pub use crate::TrueosAllocator;
 }
 
 #[macro_export]
