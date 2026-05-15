@@ -3,6 +3,7 @@
     "chart",
     "cli_tetris",
     "currency",
+    "currency_reqwest",
     "flags",
     "framework_stack",
     "full_tetris",

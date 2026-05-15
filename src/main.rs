@@ -814,6 +814,14 @@ fn source_overlay_patches(
         });
     }
 
+    if let Some(path) = find_vendor_dir(app_dir, "hyper-rustls-0.27.9") {
+        out.retain(|patch| patch.name != "hyper-rustls");
+        out.push(CratePatch {
+            name: "hyper-rustls".to_string(),
+            path,
+        });
+    }
+
     out.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(out)
 }
@@ -1814,9 +1822,18 @@ fn materialized_workspace_dependency(
         "anyhow" => "anyhow = { version = \"1.0\", default-features = false }".to_string(),
         "colored" => "colored = \"2.1\"".to_string(),
         "glob" => "glob = \"0.3\"".to_string(),
+        "http-body-util" => {
+            path_dependency_line(dep_name, &blueprint_root.join("../../vendor/http-body-util-0.1.3"))
+        }
         "hyper" => {
             "hyper = { version = \"1.9\", default-features = false, features = [\"client\", \"server\", \"http1\"] }"
                 .to_string()
+        }
+        "hyper-util" => {
+            format!(
+                "hyper-util = {{ path = {}, default-features = false, features = [\"tokio\"] }}",
+                toml_string(&blueprint_root.join("../../vendor/hyper-util-0.1.20").display().to_string())
+            )
         }
         "ignore" => "ignore = \"0.4\"".to_string(),
         "libm" => "libm = { version = \"0.2\", default-features = false }".to_string(),
@@ -1827,6 +1844,16 @@ fn materialized_workspace_dependency(
         "reqwest" => {
             "reqwest = { version = \"0.13.3\", default-features = false, features = [\"json\"] }"
                 .to_string()
+        }
+        "rustls" => {
+            "rustls = { version = \"0.23.27\", default-features = false, features = [\"std\", \"tls12\"] }"
+                .to_string()
+        }
+        "rustls-rustcrypto" => {
+            format!(
+                "rustls-rustcrypto = {{ path = {}, default-features = false, features = [\"std\", \"tls12\"] }}",
+                toml_string(&blueprint_root.join("../../vendor/rustls-rustcrypto-0.0.2-alpha").display().to_string())
+            )
         }
         "rustyline" => "rustyline = \"14.0\"".to_string(),
         "serde" => {
@@ -1843,11 +1870,20 @@ fn materialized_workspace_dependency(
             "tokio = { version = \"1.52.1\", default-features = false, features = [\"full\"] }"
                 .to_string()
         }
+        "tokio-rustls" => {
+            format!(
+                "tokio-rustls = {{ path = {}, default-features = false, features = [\"tls12\"] }}",
+                toml_string(&blueprint_root.join("../../vendor/tokio-rustls-0.26.4").display().to_string())
+            )
+        }
         "tower" => {
             "tower = { version = \"0.5\", default-features = false, features = [\"util\"] }"
                 .to_string()
         }
         "trueos" => path_dependency_line(dep_name, &blueprint_root.join("api")),
+        "trueos-currency" => {
+            path_dependency_line(dep_name, &blueprint_root.join("apps/crates/trueos-currency"))
+        }
         "trueos-flags" => path_dependency_line(dep_name, &blueprint_root.join("apps/crates/trueos-flags")),
         "trueos-gfx-core" => format!(
             "trueos-gfx-core = {{ path = {}, features = [\"alloc\"] }}",
@@ -1858,6 +1894,9 @@ fn materialized_workspace_dependency(
             &stage_trueos_tetris_crate(blueprint_root, work_dir)?,
         ),
         "trueos-weather" => path_dependency_line(dep_name, &blueprint_root.join("apps/crates/trueos-weather")),
+        "webpki-roots" => {
+            "webpki-roots = { version = \"1\", default-features = false }".to_string()
+        }
         other => return Err(format!("unsupported workspace dependency `{other}` in {}", blueprint_root.display())),
     };
     Ok(line)
