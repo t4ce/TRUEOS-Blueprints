@@ -7,6 +7,7 @@ pub extern crate alloc;
 pub use tokio;
 
 use core::alloc::{GlobalAlloc, Layout};
+use core::ffi::c_void;
 use core::fmt;
 #[cfg(feature = "default-panic-handler")]
 use core::panic::PanicInfo;
@@ -222,6 +223,27 @@ pub fn panic_abort(message: &str) -> ! {
     loop {
         core::hint::spin_loop();
     }
+}
+
+type UnwindReasonCode = i32;
+const UNWIND_END_OF_STACK: UnwindReasonCode = 5;
+
+#[unsafe(no_mangle)]
+pub extern "C" fn abort() -> ! {
+    panic_abort("blueprint abort\n")
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn _Unwind_Backtrace(
+    _trace: extern "C" fn(*mut c_void, *mut c_void) -> UnwindReasonCode,
+    _trace_argument: *mut c_void,
+) -> UnwindReasonCode {
+    UNWIND_END_OF_STACK
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn _Unwind_GetIP(_context: *mut c_void) -> usize {
+    0
 }
 
 #[cfg(feature = "default-panic-handler")]

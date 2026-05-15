@@ -37,3 +37,5 @@ s! {
         pub d_name: [c_char; 256usize],
     }
 }
+
+pub type stat64 = stat;

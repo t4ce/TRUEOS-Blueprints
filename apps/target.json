@@ -6,7 +6,7 @@
   "target-pointer-width": 64,
   "target-c-int-width": 32,
   "os": "trueos",
-  "env": "musl",
+  "env": "newlib",
   "target-family": ["unix"],
   "executables": true,
   "linker-flavor": "ld.lld",

@@ -11,8 +11,8 @@ mod build_plan;
 mod publish;
 
 use artifact::{
-    cargo_artifact_stem, collect_rlibs_for_object, entry_hint_hex, latest_cargo_object,
-    tool_command, write_blueprint,
+    cargo_artifact_stem, collect_rlibs_for_object, entry_hint_hex, entry_symbol_name,
+    latest_cargo_object, tool_command, write_blueprint,
 };
 use build_plan::{BuildFlavor, BuildSettings, BuildTarget, resolve_build_settings};
 use publish::publish_dist_blueprints;
@@ -59,6 +59,25 @@ impl CargoProfile {
 struct CratePatch {
     name: String,
     path: PathBuf,
+}
+
+#[derive(Default)]
+struct CargoBuildArtifacts {
+    rlibs: Vec<PathBuf>,
+}
+
+#[derive(Deserialize)]
+struct CargoJsonMessage {
+    reason: String,
+    #[serde(default)]
+    filenames: Vec<String>,
+    #[serde(default)]
+    message: Option<CargoJsonDiagnostic>,
+}
+
+#[derive(Deserialize)]
+struct CargoJsonDiagnostic {
+    rendered: Option<String>,
 }
 
 #[derive(Default)]
@@ -281,6 +300,7 @@ fn build_one_target_to(
     cargo
         .arg("+nightly")
         .arg("rustc")
+        .arg("--message-format=json-render-diagnostics")
         .arg("-Z")
         .arg(match build_settings.flavor {
             BuildFlavor::TokioStd => "build-std=core,compiler_builtins,alloc,std,panic_abort",
@@ -352,7 +372,7 @@ fn build_one_target_to(
 
     println!("trueos-blueprint: cargo artifact profile: {}", cargo_profile.label());
     println!("trueos-blueprint: cargo artifact cache: {}", cargo_target_dir.display());
-    run_cargo_command(&mut cargo, "cargo rustc")?;
+    let cargo_artifacts = run_cargo_rustc_command(&mut cargo, "cargo rustc", &deps_dir)?;
 
     if !deps_dir.is_dir() {
         return Err(format!("missing deps dir: {}", deps_dir.display()));
@@ -364,13 +384,41 @@ fn build_one_target_to(
             latest_cargo_object(&target_dir.join("examples"), &cargo_artifact_stem(name))?
         }
     };
-    let rlibs = collect_rlibs_for_object(&app_obj, &deps_dir)?;
+    let rlibs = if cargo_artifacts.rlibs.is_empty() {
+        println!(
+            "trueos-blueprint: note: cargo artifact stream yielded no target rlibs; falling back to legacy .rlink scrape"
+        );
+        collect_rlibs_for_object(&app_obj, &deps_dir)?
+    } else {
+        cargo_artifacts.rlibs
+    };
 
     let linked = work_dir.join("module.o");
     let stripped = work_dir.join("module.stripped.o");
+    let entry_symbol = entry_symbol_name(&app_obj);
+    let link_app_obj = if let Some(symbol) = &entry_symbol {
+        let rooted = work_dir.join("app.rooted.o");
+        let mut objcopy = tool_command(&["llvm-objcopy", "rust-objcopy", "objcopy"])?;
+        objcopy
+            .arg("--globalize-symbol")
+            .arg(symbol)
+            .arg(&app_obj)
+            .arg(&rooted);
+        run_command(&mut objcopy, "objcopy globalize")?;
+        rooted
+    } else {
+        app_obj.clone()
+    };
 
     let mut ld = tool_command(&["ld.lld", "rust-lld", "ld"])?;
-    ld.arg("-r").arg("-o").arg(&linked).arg(&app_obj);
+    ld.arg("-r")
+        .arg("--gc-sections")
+        .arg("-o")
+        .arg(&linked);
+    if let Some(symbol) = &entry_symbol {
+        ld.arg("--undefined").arg(symbol);
+    }
+    ld.arg(&link_app_obj);
     if !rlibs.is_empty() {
         ld.arg("--start-group");
         for rlib in &rlibs {
@@ -419,6 +467,64 @@ fn run_cargo_command(cmd: &mut Command, label: &str) -> Result<(), String> {
     print_cargo_output_notes(label, &notes);
     if output.status.success() {
         Ok(())
+    } else {
+        Err(format!("{label} failed with status {}", output.status))
+    }
+}
+
+fn run_cargo_rustc_command(
+    cmd: &mut Command,
+    label: &str,
+    deps_dir: &Path,
+) -> Result<CargoBuildArtifacts, String> {
+    let output = cmd
+        .output()
+        .map_err(|err| format!("{label} failed to start: {err}"))?;
+
+    let mut artifacts = CargoBuildArtifacts::default();
+    let mut rendered_stdout = String::new();
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        match serde_json::from_str::<CargoJsonMessage>(line) {
+            Ok(message) => match message.reason.as_str() {
+                "compiler-artifact" => {
+                    for filename in message.filenames {
+                        let path = PathBuf::from(filename);
+                        if path.extension().and_then(|ext| ext.to_str()) != Some("rlib") {
+                            continue;
+                        }
+                        if !path.parent().is_some_and(|parent| parent == deps_dir) {
+                            continue;
+                        }
+                        if !artifacts.rlibs.iter().any(|existing| existing == &path) {
+                            artifacts.rlibs.push(path);
+                        }
+                    }
+                }
+                "compiler-message" => {
+                    if let Some(rendered) = message.message.and_then(|message| message.rendered) {
+                        rendered_stdout.push_str(&rendered);
+                        if !rendered.ends_with('\n') {
+                            rendered_stdout.push('\n');
+                        }
+                    }
+                }
+                _ => {}
+            },
+            Err(_) => {
+                rendered_stdout.push_str(line);
+                rendered_stdout.push('\n');
+            }
+        }
+    }
+
+    io::stdout()
+        .write_all(rendered_stdout.as_bytes())
+        .map_err(io_string)?;
+    let notes = write_filtered_cargo_output(label, &[], &output.stderr)?;
+    print_cargo_output_notes(label, &notes);
+
+    if output.status.success() {
+        Ok(artifacts)
     } else {
         Err(format!("{label} failed with status {}", output.status))
     }

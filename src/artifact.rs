@@ -181,33 +181,7 @@ pub(crate) fn entry_hint_hex(linked: &Path) -> String {
         if let Ok(output) = readelf.arg("-Ws").arg(linked).output() {
             if output.status.success() {
                 if let Ok(stdout) = String::from_utf8(output.stdout) {
-                    let mut rust_main: Option<(u32, u32, usize)> = None;
-                    for line in stdout.lines() {
-                        let cols = line.split_whitespace().collect::<Vec<_>>();
-                        if cols.len() < 8 {
-                            continue;
-                        }
-                        if cols[3] != "FUNC" {
-                            continue;
-                        }
-                        let Some(name) = cols.last().copied() else {
-                            continue;
-                        };
-                        let value = cols[1].trim_start_matches("0x");
-                        let section = cols[6].parse::<u32>().unwrap_or(0);
-                        let value = u32::from_str_radix(value, 16).unwrap_or(0);
-                        if name == "main" {
-                            return format!("{section:08x}{value:08x}");
-                        }
-                        let prefer_rust_main = match &rust_main {
-                            Some((_, _, best_len)) => name.len() < *best_len,
-                            None => true,
-                        };
-                        if looks_like_rust_main_symbol(name) && prefer_rust_main {
-                            rust_main = Some((section, value, name.len()));
-                        }
-                    }
-                    if let Some((section, value, _)) = rust_main {
+                    if let Some((section, value, _)) = best_main_symbol_from_readelf(&stdout) {
                         return format!("{section:08x}{value:08x}");
                     }
                 }
@@ -289,6 +263,46 @@ pub(crate) fn entry_hint_hex(linked: &Path) -> String {
 fn looks_like_rust_main_symbol(name: &str) -> bool {
     (name.starts_with("_R") && name.ends_with("4main"))
         || (name.starts_with("_ZN") && name.contains("4main17h") && name.ends_with('E'))
+}
+
+pub(crate) fn entry_symbol_name(object: &Path) -> Option<String> {
+    let mut readelf = tool_command(&["llvm-readelf", "readelf"]).ok()?;
+    let output = readelf.arg("-Ws").arg(object).output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8(output.stdout).ok()?;
+    best_main_symbol_from_readelf(&stdout).map(|(_, _, name)| name)
+}
+
+fn best_main_symbol_from_readelf(stdout: &str) -> Option<(u32, u32, String)> {
+    let mut rust_main: Option<(u32, u32, String)> = None;
+    for line in stdout.lines() {
+        let cols = line.split_whitespace().collect::<Vec<_>>();
+        if cols.len() < 8 {
+            continue;
+        }
+        if cols[3] != "FUNC" {
+            continue;
+        }
+        let Some(name) = cols.last().copied() else {
+            continue;
+        };
+        let value = cols[1].trim_start_matches("0x");
+        let section = cols[6].parse::<u32>().unwrap_or(0);
+        let value = u32::from_str_radix(value, 16).unwrap_or(0);
+        if name == "main" {
+            return Some((section, value, name.to_string()));
+        }
+        let prefer_rust_main = match &rust_main {
+            Some((_, _, best_name)) => name.len() < best_name.len(),
+            None => true,
+        };
+        if looks_like_rust_main_symbol(name) && prefer_rust_main {
+            rust_main = Some((section, value, name.to_string()));
+        }
+    }
+    rust_main
 }
 
 pub(crate) fn write_blueprint(

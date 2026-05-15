@@ -26,6 +26,20 @@ s! {
         pub sin_addr: crate::in_addr,
         pub sin_zero: [c_char; 8],
     }
+
+    pub struct sockaddr_un {
+        pub sun_len: u8,
+        pub sun_family: crate::sa_family_t,
+        pub sun_path: [c_char; 104],
+    }
+
+    pub struct sockaddr_storage {
+        pub ss_len: u8,
+        pub ss_family: crate::sa_family_t,
+        __ss_pad1: Padding<[u8; 6]>,
+        __ss_align: i64,
+        __ss_pad2: Padding<[u8; 112]>,
+    }
 }
 
 pub const AF_INET6: c_int = 23;
