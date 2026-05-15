@@ -1,0 +1,11 @@
+[package]
+name = "triangle"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "triangle"
+path = "main.rs"
+
+[dependencies]
+trueos.workspace = true

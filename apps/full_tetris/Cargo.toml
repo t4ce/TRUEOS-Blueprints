@@ -1,0 +1,12 @@
+[package]
+name = "full_tetris"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "full_tetris"
+path = "main.rs"
+
+[dependencies]
+trueos.workspace = true
+trueos-tetris.workspace = true

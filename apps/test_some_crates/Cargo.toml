@@ -1,0 +1,15 @@
+[package]
+name = "test_some_crates"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "test_some_crates"
+path = "test_some_crates.rs"
+
+[dependencies]
+anyhow.workspace = true
+regex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+trueos.workspace = true

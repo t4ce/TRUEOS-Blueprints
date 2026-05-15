@@ -247,6 +247,10 @@ fn build_one_target_to(
         .join(&target_name)
         .join(build_settings.flavor.cache_label());
     fs::create_dir_all(&cargo_target_dir).map_err(io_string)?;
+    let target_dir = cargo_target_dir
+        .join(&target_name)
+        .join(cargo_profile.target_subdir());
+    let deps_dir = target_dir.join("deps");
 
     let work_dir = workdir(&packer_target_dir, &output_name)?;
     reset_dir(&work_dir)?;
@@ -332,10 +336,6 @@ fn build_one_target_to(
     println!("trueos-blueprint: cargo artifact cache: {}", cargo_target_dir.display());
     run_command(&mut cargo, "cargo rustc")?;
 
-    let target_dir = cargo_target_dir
-        .join(&target_name)
-        .join(cargo_profile.target_subdir());
-    let deps_dir = target_dir.join("deps");
     if !deps_dir.is_dir() {
         return Err(format!("missing deps dir: {}", deps_dir.display()));
     }
@@ -586,7 +586,7 @@ fn staged_manifest_for_overlay(
             .ok_or_else(|| format!("bad manifest path: {}", manifest_path.display()))?,
     );
     strip_manifest_patch_section(&staged_manifest)?;
-    materialize_staged_workspace_dependencies(&staged_manifest)?;
+    materialize_staged_workspace_dependencies(app_dir, work_dir, &staged_manifest)?;
     ensure_standalone_manifest_workspace(&staged_manifest)?;
     rewrite_staged_source_for_target(app_dir, &staged_app_dir, build_settings)?;
     let staged_source_overlay = staged_source_overlay(source_overlay, work_dir);
@@ -1426,14 +1426,20 @@ fn strip_manifest_patch_section(manifest_path: &Path) -> Result<(), String> {
     fs::write(manifest_path, out).map_err(io_string)
 }
 
-fn materialize_staged_workspace_dependencies(manifest_path: &Path) -> Result<(), String> {
+fn materialize_staged_workspace_dependencies(
+    app_dir: &Path,
+    work_dir: &Path,
+    manifest_path: &Path,
+) -> Result<(), String> {
     let cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
+    let blueprint_root = blueprint_root(app_dir).unwrap_or_else(|| app_dir.to_path_buf());
     let mut changed = false;
     let mut out = String::with_capacity(cargo_toml.len());
 
     for line in cargo_toml.lines() {
-        if is_workspace_trueos_dependency(line) {
-            out.push_str("trueos = { path = \"../../api\" }\n");
+        if let Some(dep_name) = workspace_dependency_name(line) {
+            out.push_str(&materialized_workspace_dependency(&blueprint_root, work_dir, &dep_name)?);
+            out.push('\n');
             changed = true;
         } else {
             out.push_str(line);
@@ -1447,12 +1453,117 @@ fn materialize_staged_workspace_dependencies(manifest_path: &Path) -> Result<(),
     Ok(())
 }
 
-fn is_workspace_trueos_dependency(line: &str) -> bool {
+fn workspace_dependency_name(line: &str) -> Option<String> {
     let line = line.split('#').next().unwrap_or("").trim();
     let Some((key, value)) = line.split_once('=') else {
-        return false;
+        return None;
     };
-    key.trim() == "trueos.workspace" && value.trim() == "true"
+    let key = key.trim();
+    let value = value.trim();
+    if value == "true"
+        && let Some(dep_name) = key.strip_suffix(".workspace")
+    {
+        return Some(dep_name.to_string());
+    }
+    if value.contains("workspace") && value.contains("true") {
+        return Some(key.to_string());
+    }
+    None
+}
+
+fn materialized_workspace_dependency(
+    blueprint_root: &Path,
+    work_dir: &Path,
+    dep_name: &str,
+) -> Result<String, String> {
+    let line = match dep_name {
+        "anyhow" => "anyhow = { version = \"1.0\", default-features = false }".to_string(),
+        "hyper" => {
+            "hyper = { version = \"1.9\", default-features = false, features = [\"client\", \"server\", \"http1\"] }"
+                .to_string()
+        }
+        "libm" => "libm = { version = \"0.2\", default-features = false }".to_string(),
+        "regex" => {
+            "regex = { version = \"1\", default-features = false, features = [\"perf\"] }"
+                .to_string()
+        }
+        "serde" => {
+            "serde = { version = \"1.0\", default-features = false, features = [\"derive\", \"alloc\"] }"
+                .to_string()
+        }
+        "serde_json" => {
+            "serde_json = { version = \"1.0\", default-features = false, features = [\"alloc\"] }"
+                .to_string()
+        }
+        "tower" => {
+            "tower = { version = \"0.5\", default-features = false, features = [\"util\"] }"
+                .to_string()
+        }
+        "trueos" => "trueos = { path = \"../../api\" }".to_string(),
+        "trueos-flags" => path_dependency_line(dep_name, &blueprint_root.join("apps/crates/trueos-flags")),
+        "trueos-gfx-core" => format!(
+            "trueos-gfx-core = {{ path = {}, features = [\"alloc\"] }}",
+            toml_string(&blueprint_root.join("../trueos-gfx-core").display().to_string())
+        ),
+        "trueos-tetris" => path_dependency_line(
+            dep_name,
+            &stage_trueos_tetris_crate(blueprint_root, work_dir)?,
+        ),
+        "trueos-weather" => path_dependency_line(dep_name, &blueprint_root.join("apps/crates/trueos-weather")),
+        other => return Err(format!("unsupported workspace dependency `{other}` in {}", blueprint_root.display())),
+    };
+    Ok(line)
+}
+
+fn path_dependency_line(dep_name: &str, path: &Path) -> String {
+    format!("{dep_name} = {{ path = {} }}", toml_string(&path.display().to_string()))
+}
+
+fn stage_trueos_tetris_crate(blueprint_root: &Path, work_dir: &Path) -> Result<PathBuf, String> {
+    let source = blueprint_root.join("apps/crates/trueos-tetris");
+    let staged = work_dir.join("blueprint-crates").join("trueos-tetris");
+    reset_dir(&staged)?;
+    copy_app_tree(&source, &staged)?;
+    rewrite_manifest_dependency_path(
+        &staged.join("Cargo.toml"),
+        "v",
+        "../../../../../crates/trueos-v",
+    )?;
+    Ok(staged)
+}
+
+fn rewrite_manifest_dependency_path(
+    manifest_path: &Path,
+    dep_name: &str,
+    path: &str,
+) -> Result<(), String> {
+    let cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
+    let mut out = String::with_capacity(cargo_toml.len());
+    let mut changed = false;
+
+    for line in cargo_toml.lines() {
+        let trimmed = line.split('#').next().unwrap_or("").trim();
+        let is_dep = trimmed
+            .split_once('=')
+            .map(|(key, _)| key.trim() == dep_name)
+            .unwrap_or(false);
+        if is_dep {
+            out.push_str(dep_name);
+            out.push_str(" = { path = ");
+            out.push_str(&toml_string(path));
+            out.push_str(" }\n");
+            changed = true;
+        } else {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+
+    if !changed {
+        return Err(format!("missing dependency `{dep_name}` in {}", manifest_path.display()));
+    }
+
+    fs::write(manifest_path, out).map_err(io_string)
 }
 
 fn ensure_standalone_manifest_workspace(manifest_path: &Path) -> Result<(), String> {

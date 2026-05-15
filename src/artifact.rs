@@ -106,47 +106,28 @@ pub(crate) fn cargo_artifact_stem(name: &str) -> String {
     name.replace('-', "_")
 }
 
-pub(crate) fn collect_rlibs(dir: &Path) -> Result<Vec<PathBuf>, String> {
-    let mut out = Vec::new();
-    for entry in fs::read_dir(dir).map_err(io_string)? {
-        let entry = entry.map_err(io_string)?;
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-        let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
-            continue;
-        };
-        if name.starts_with("lib") && name.ends_with(".rlib") {
-            out.push(path);
-        }
-    }
-    out.sort();
-    Ok(out)
-}
-
 pub(crate) fn collect_rlibs_for_object(
     app_obj: &Path,
     deps_dir: &Path,
 ) -> Result<Vec<PathBuf>, String> {
     let Some(stem) = app_obj.file_stem().and_then(|value| value.to_str()) else {
-        return collect_rlibs(deps_dir);
+        return Err(format!("bad app object path: {}", app_obj.display()));
     };
     let rlink = app_obj.with_file_name(format!("{stem}.rlink"));
     if !rlink.is_file() {
-        return collect_rlibs(deps_dir);
+        return Err(format!(
+            "missing dependency metadata for {}; expected {}",
+            app_obj.display(),
+            rlink.display()
+        ));
     }
 
     let bytes = fs::read(&rlink).map_err(io_string)?;
     let mut out = Vec::new();
     for token in printable_tokens(&bytes) {
-        let Some(suffix_idx) = token.find(".rlib") else {
+        let Some(path) = rlib_path_from_token(&token, deps_dir) else {
             continue;
         };
-        let Some(prefix_idx) = token[..suffix_idx].rfind('/') else {
-            continue;
-        };
-        let path = PathBuf::from(&token[prefix_idx..suffix_idx + ".rlib".len()]);
         if !path.is_file() {
             continue;
         }
@@ -156,10 +137,22 @@ pub(crate) fn collect_rlibs_for_object(
     }
 
     if out.is_empty() {
-        collect_rlibs(deps_dir)
+        Err(format!("failed to read rlib dependencies from {}", rlink.display()))
     } else {
         Ok(out)
     }
+}
+
+fn rlib_path_from_token(token: &str, deps_dir: &Path) -> Option<PathBuf> {
+    let suffix_idx = token.find(".rlib")?;
+    let end = suffix_idx + ".rlib".len();
+    let candidate = &token[..end];
+    if let Some(path_start) = candidate.find('/') {
+        return Some(PathBuf::from(&candidate[path_start..]));
+    }
+
+    let file_start = candidate.rfind("lib")?;
+    Some(deps_dir.join(&candidate[file_start..]))
 }
 
 fn printable_tokens(bytes: &[u8]) -> Vec<String> {

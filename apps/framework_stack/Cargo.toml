@@ -1,0 +1,13 @@
+[package]
+name = "framework_stack"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "framework_stack"
+path = "main.rs"
+
+[dependencies]
+hyper.workspace = true
+tower.workspace = true
+trueos.workspace = true

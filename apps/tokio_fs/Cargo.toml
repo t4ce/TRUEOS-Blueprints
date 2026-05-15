@@ -1,0 +1,11 @@
+[package]
+name = "tokio_fs"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "tokio_fs"
+path = "main.rs"
+
+[dependencies]
+trueos.workspace = true

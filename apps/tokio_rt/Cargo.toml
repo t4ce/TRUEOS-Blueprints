@@ -1,0 +1,11 @@
+[package]
+name = "tokio_rt"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "tokio_rt"
+path = "main.rs"
+
+[dependencies]
+trueos.workspace = true

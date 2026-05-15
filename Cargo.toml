@@ -4,12 +4,47 @@ version = "0.1.0"
 edition = "2024"
 
 [workspace]
-members = [".", "api", "apps/hello_world", "apps/petersen", "apps/svg_grid"]
+members = [
+    ".",
+    "api",
+    "apps/chart",
+    "apps/cli_tetris",
+    "apps/crates/trueos-flags",
+    "apps/crates/trueos-tetris",
+    "apps/crates/trueos-weather",
+    "apps/currency",
+    "apps/flags",
+    "apps/framework_stack",
+    "apps/full_tetris",
+    "apps/hello_world",
+    "apps/mandelbrot",
+    "apps/particle",
+    "apps/petersen",
+    "apps/retrosun",
+    "apps/svg_grid",
+    "apps/test_some_crates",
+    "apps/tokio_fs",
+    "apps/tokio_net",
+    "apps/tokio_rt",
+    "apps/triangle",
+    "apps/weather",
+]
 default-members = ["."]
 resolver = "3"
 
 [workspace.dependencies]
+anyhow = { version = "1.0", default-features = false }
+hyper = { version = "1.9", default-features = false, features = ["client", "server", "http1"] }
+libm = { version = "0.2", default-features = false }
+regex = { version = "1", default-features = false, features = ["perf"] }
+serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
+serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
+tower = { version = "0.5", default-features = false, features = ["util"] }
 trueos = { path = "api" }
+trueos-flags = { path = "apps/crates/trueos-flags" }
+trueos-gfx-core = { path = "../trueos-gfx-core" }
+trueos-tetris = { path = "apps/crates/trueos-tetris" }
+trueos-weather = { path = "apps/crates/trueos-weather" }
 
 [features]
 default = []

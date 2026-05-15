@@ -43,7 +43,7 @@ pub(crate) fn resolve_build_settings(
     build_target: &BuildTarget,
 ) -> Result<BuildSettings, String> {
     let source_path = match build_target {
-        BuildTarget::Package => package_source_path(app_dir)?,
+        BuildTarget::Package => package_source_path(app_dir, manifest_path)?,
         BuildTarget::Example(name) => example_source_path(app_dir, manifest_path, name)?,
     };
     let source = fs::read_to_string(&source_path)
@@ -81,7 +81,11 @@ pub(crate) fn resolve_build_settings(
     })
 }
 
-fn package_source_path(app_dir: &Path) -> Result<PathBuf, String> {
+fn package_source_path(app_dir: &Path, manifest_path: &Path) -> Result<PathBuf, String> {
+    if let Some(path) = package_bin_source_path(app_dir, manifest_path)? {
+        return Ok(path);
+    }
+
     for candidate in [app_dir.join("src/main.rs"), app_dir.join("src/lib.rs")] {
         if candidate.is_file() {
             return Ok(candidate);
@@ -92,6 +96,42 @@ fn package_source_path(app_dir: &Path) -> Result<PathBuf, String> {
         "missing package source; expected src/main.rs or src/lib.rs under {}",
         app_dir.display()
     ))
+}
+
+fn package_bin_source_path(
+    app_dir: &Path,
+    manifest_path: &Path,
+) -> Result<Option<PathBuf>, String> {
+    let cargo_toml = fs::read_to_string(manifest_path)
+        .map_err(|err| format!("failed to read {}: {err}", manifest_path.display()))?;
+    let mut in_bin = false;
+    let mut current_path: Option<String> = None;
+
+    for line in cargo_toml.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            if in_bin && let Some(path) = current_path.take() {
+                return Ok(Some(app_dir.join(path)));
+            }
+            in_bin = trimmed == "[[bin]]";
+            current_path = None;
+            continue;
+        }
+        if !in_bin {
+            continue;
+        }
+        if trimmed.starts_with("path")
+            && let Some((_, value)) = trimmed.split_once('=')
+        {
+            current_path = Some(value.trim().trim_matches('"').to_string());
+        }
+    }
+
+    if in_bin && let Some(path) = current_path {
+        return Ok(Some(app_dir.join(path)));
+    }
+
+    Ok(None)
 }
 
 fn source_needs_tokio_net(source: &str) -> bool {

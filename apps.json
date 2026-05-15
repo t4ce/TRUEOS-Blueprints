@@ -1,7 +1,22 @@
 {
   "apps": [
+    "chart",
+    "cli_tetris",
+    "currency",
+    "flags",
+    "framework_stack",
+    "full_tetris",
     "hello_world",
+    "mandelbrot",
+    "particle",
     "petersen",
-    "svg_grid"
+    "retrosun",
+    "svg_grid",
+    "test_some_crates",
+    "tokio_fs",
+    "tokio_net",
+    "tokio_rt",
+    "triangle",
+    "weather"
   ]
 }
