@@ -33,11 +33,9 @@ pub fn fetch_bytes(url: &str, timeout_ms: u64) -> Result<Vec<u8>, String> {
         return Ok(Vec::new());
     }
 
-    let mut body = Vec::new();
-    body.resize(len, 0);
     let got = vnetfs::fetch_bytes_read(op_id).map_err(fetch_error_string)?;
     discard_fetch(op_id);
-    Ok(got)
+    Ok(if got.len() > len { got[..len].to_vec() } else { got })
 }
 
 pub fn fetch_text(url: &str, timeout_ms: u64) -> Result<String, String> {
