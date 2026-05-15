@@ -238,14 +238,13 @@ fn cell_rect(slot: usize) -> (i32, i32, i32, i32) {
     (x, y, CELL_W, CELL_H)
 }
 
-fn hit_slot(x: i32, y: i32) -> Option<usize> {
-    for slot in 0..4 {
-        let (cx, cy, cw, ch) = cell_rect(slot);
-        if x >= cx && x < cx + cw && y >= cy && y < cy + ch {
-            return Some(slot);
-        }
+fn hit_section(x: i32, y: i32) -> Option<usize> {
+    if x < 0 || y < 0 || x >= WINDOW_WIDTH as i32 || y >= WINDOW_HEIGHT as i32 {
+        return None;
     }
-    None
+    let col = ((x as u32).saturating_mul(2) / WINDOW_WIDTH).min(1) as usize;
+    let row = ((y as u32).saturating_mul(2) / WINDOW_HEIGHT).min(1) as usize;
+    Some(row * 2 + col)
 }
 
 fn fallback_flag_svg(code: &str) -> String {
@@ -553,9 +552,26 @@ fn handle_cursor(
         if !pressed {
             continue;
         }
-        let local_x = event.x as i32 - info.content.x;
-        let local_y = event.y as i32 - info.content.y;
-        if let Some(slot) = hit_slot(local_x, local_y) {
+        let cursor_id = event.slot_id.max(1);
+        let Ok((screen_x, screen_y)) =
+            input::cursor_pos(cursor_id).or_else(|_| input::cursor_pos(1))
+        else {
+            continue;
+        };
+        let local_x = screen_x - info.content.x;
+        let local_y = screen_y - info.content.y;
+        if local_x < 0
+            || local_y < 0
+            || local_x >= info.content.width as i32
+            || local_y >= info.content.height as i32
+        {
+            continue;
+        }
+        let surface_x =
+            (local_x as i64 * WINDOW_WIDTH as i64 / info.content.width.max(1) as i64) as i32;
+        let surface_y =
+            (local_y as i64 * WINDOW_HEIGHT as i64 / info.content.height.max(1) as i64) as i32;
+        if let Some(slot) = hit_section(surface_x, surface_y) {
             changed |= game.choose(slot);
         }
     }

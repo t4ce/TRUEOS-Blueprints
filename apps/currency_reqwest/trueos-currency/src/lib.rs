@@ -4,33 +4,36 @@ use core::future::Future;
 
 use trueos::logl::{self, level};
 use trueos::ui2::{self, gfx};
+use trueos::{platform, platform::format};
 use trueos::{
     platform::{String, ToString, Vec, vec},
     runtime, time,
 };
-use trueos::{platform, platform::format};
 
-pub const FXFEED_URL: &str =
-    "https://api.fxfeed.io/v2/latest?base=USD&currencies=EUR,GBP,JPY&api_key=fxf_SwF1T46MmH8uCkOO7tOc";
+pub const FXFEED_URL: &str = "https://api.fxfeed.io/v2/latest?base=USD&currencies=EUR,GBP,JPY&api_key=fxf_SwF1T46MmH8uCkOO7tOc";
 
 const CURRENCY_CODES: [&str; 3] = ["EUR", "GBP", "JPY"];
 const IDLE_SLEEP_MS: u64 = 200;
 
-const UI2_CURRENCY_VIEW_W: u32 = 360;
-const UI2_CURRENCY_VIEW_H: u32 = 180;
+const UI2_CURRENCY_VIEW_W: u32 = 460;
+const UI2_CURRENCY_VIEW_H: u32 = 240;
 const UI2_CURRENCY_WINDOW_ALPHA: u8 = 0xFF;
 
-const UI2_CURRENCY_BG_RGBA: [u8; 4] = [0x18, 0x1B, 0x22, 0xFF];
-const UI2_CURRENCY_HEADER_BG_RGBA: [u8; 4] = [0x21, 0x26, 0x31, 0xFF];
-const UI2_CURRENCY_ROW_BG_RGBA: [u8; 4] = [0x1C, 0x21, 0x2A, 0xFF];
-const UI2_CURRENCY_TEXT_RGBA: [u8; 4] = [0xEC, 0xF2, 0xF8, 0xFF];
-const UI2_CURRENCY_DIM_RGBA: [u8; 4] = [0x94, 0xA2, 0xB3, 0xFF];
-const UI2_CURRENCY_ACCENT_RGBA: [u8; 4] = [0x79, 0xCF, 0xB0, 0xFF];
+const UI2_CURRENCY_BG_RGBA: [u8; 4] = [0x12, 0x16, 0x1D, 0xFF];
+const UI2_CURRENCY_HEADER_BG_RGBA: [u8; 4] = [0x20, 0x27, 0x32, 0xFF];
+const UI2_CURRENCY_ROW_BG_RGBA: [u8; 4] = [0x1A, 0x21, 0x29, 0xFF];
+const UI2_CURRENCY_ROW_ALT_RGBA: [u8; 4] = [0x1D, 0x25, 0x30, 0xFF];
+const UI2_CURRENCY_TEXT_RGBA: [u8; 4] = [0xF0, 0xF5, 0xFA, 0xFF];
+const UI2_CURRENCY_DIM_RGBA: [u8; 4] = [0x99, 0xA7, 0xB8, 0xFF];
+const UI2_CURRENCY_ACCENT_RGBA: [u8; 4] = [0x7F, 0xD1, 0xAE, 0xFF];
+const UI2_CURRENCY_VALUE_RGBA: [u8; 4] = [0xFF, 0xD1, 0x7A, 0xFF];
 
 const UI2_CURRENCY_FONT_TIER: ui2::FontTier = ui2::FontTier::OneX;
-const UI2_CURRENCY_PAD_X: usize = 10;
-const UI2_CURRENCY_PAD_Y: usize = 8;
-const UI2_CURRENCY_ROW_GAP_Y: usize = 4;
+const UI2_CURRENCY_PAD_X: usize = 14;
+const UI2_CURRENCY_PAD_Y: usize = 10;
+const UI2_CURRENCY_ROW_GAP_Y: usize = 6;
+const UI2_CURRENCY_HEADER_H: usize = 58;
+const UI2_CURRENCY_ROW_H: usize = 42;
 
 #[derive(Copy, Clone)]
 pub struct CurrencyAppConfig {
@@ -44,8 +47,10 @@ pub struct CurrencyAppConfig {
 
 #[derive(Clone, Debug)]
 struct CurrencyRow {
-    pair: String,
-    value: String,
+    code: String,
+    per_usd: String,
+    per_100_usd: String,
+    usd_per_unit: String,
 }
 
 #[derive(Clone, Debug)]
@@ -62,16 +67,25 @@ where
     Fut: Future<Output = Result<String, String>>,
 {
     logl::log(level::INFO, format_args!("currency_bp: start transport={}", config.transport_label));
-    logl::log(level::INFO, format_args!("currency_bp: stage runtime.current_thread_net.builder_new"));
+    logl::log(
+        level::INFO,
+        format_args!("currency_bp: stage runtime.current_thread_net.builder_new"),
+    );
 
     let mut runtime_builder = runtime::current_thread_net();
-    logl::log(level::INFO, format_args!("currency_bp: success runtime.current_thread_net.builder_new"));
+    logl::log(
+        level::INFO,
+        format_args!("currency_bp: success runtime.current_thread_net.builder_new"),
+    );
 
     logl::log(level::INFO, format_args!("currency_bp: stage runtime.current_thread_net.build"));
 
     let runtime = match runtime_builder.build() {
         Ok(rt) => {
-            logl::log(level::INFO, format_args!("currency_bp: success runtime.current_thread_net.build"));
+            logl::log(
+                level::INFO,
+                format_args!("currency_bp: success runtime.current_thread_net.build"),
+            );
             rt
         }
         Err(err) => {
@@ -117,7 +131,10 @@ where
         logl::log(level::INFO, format_args!("currency_bp: stage fetch.await"));
         let snapshot = match fetcher().await {
             Ok(raw) => {
-                logl::log(level::INFO, format_args!("currency_bp: success fetch.await bytes={}", raw.len()));
+                logl::log(
+                    level::INFO,
+                    format_args!("currency_bp: success fetch.await bytes={}", raw.len()),
+                );
                 build_currency_snapshot(raw.as_str()).unwrap_or_else(|| {
                     logl::log(level::ERROR, format_args!("currency_bp: parse failed after fetch"));
                     build_error_snapshot(config.transport_label, "FXFEED PARSE FAILED")
@@ -140,32 +157,29 @@ where
     });
 }
 
-fn parse_rate(raw: &str, code: &str) -> Option<f64> {
+fn parse_feed(raw: &str) -> Option<(String, String, serde_json::Value)> {
     let root: serde_json::Value = serde_json::from_str(raw).ok()?;
     let success = root.get("success")?.as_bool()?;
     if !success {
         return None;
     }
-    root.get("rates")?.get(code)?.as_f64()
-}
-
-fn parse_string_field(raw: &str, key: &str) -> Option<String> {
-    let root: serde_json::Value = serde_json::from_str(raw).ok()?;
-    root.get(key)?.as_str().map(ToString::to_string)
+    let base = root.get("base")?.as_str()?.to_string();
+    let date = root.get("date")?.as_str()?.to_string();
+    Some((base, date, root))
 }
 
 fn build_loading_snapshot(transport_label: &str) -> CurrencySnapshot {
     CurrencySnapshot {
-        header: "Currency Converter".to_string(),
+        header: "USD Exchange Rates".to_string(),
         subheader: currency_subheader(),
         rows: Vec::new(),
-        footer: format!("Loading FXFeed via {}...", transport_label),
+        footer: format!("Loading live market snapshot via {}...", transport_label),
     }
 }
 
 fn build_error_snapshot(transport_label: &str, message: &str) -> CurrencySnapshot {
     CurrencySnapshot {
-        header: "Currency Converter".to_string(),
+        header: "USD Exchange Rates".to_string(),
         subheader: currency_subheader(),
         rows: Vec::new(),
         footer: format!("{} ({})", message, transport_label),
@@ -173,32 +187,44 @@ fn build_error_snapshot(transport_label: &str, message: &str) -> CurrencySnapsho
 }
 
 fn currency_subheader() -> String {
-    format!("USD base  |  {}", CURRENCY_CODES.join(" "))
+    format!("Tracked pairs: USD to {}", CURRENCY_CODES.join(", "))
 }
 
 fn build_currency_snapshot(raw: &str) -> Option<CurrencySnapshot> {
-    let base = parse_string_field(raw, "base")?;
-    let date = parse_string_field(raw, "date")?;
+    let (base, date, root) = parse_feed(raw)?;
+    let rates = root.get("rates")?;
     let mut rows = Vec::new();
     for code in CURRENCY_CODES {
-        let rate = parse_rate(raw, code)?;
-        let value = if code == "JPY" {
-            format!("{:.4}", rate)
+        let rate = rates.get(code)?.as_f64()?;
+        let per_usd = format_rate(rate, code);
+        let per_100_usd = format_rate(rate * 100.0, code);
+        let usd_per_unit = if rate > 0.0 {
+            format!("${:.4}", 1.0 / rate)
         } else {
-            format!("{:.6}", rate)
+            String::from("-")
         };
         rows.push(CurrencyRow {
-            pair: code.to_string(),
-            value,
+            code: code.to_string(),
+            per_usd,
+            per_100_usd,
+            usd_per_unit,
         });
     }
 
     Some(CurrencySnapshot {
-        header: "Currency Converter".to_string(),
-        subheader: format!("1 {} =", base),
+        header: format!("{} Exchange Rates", base),
+        subheader: String::from("Live FXFeed market snapshot"),
         rows,
-        footer: format!("Updated {}", date),
+        footer: format!("Updated {}  |  1 unit inverse shown in USD", date),
     })
+}
+
+fn format_rate(rate: f64, code: &str) -> String {
+    if code == "JPY" {
+        format!("{:.2}", rate)
+    } else {
+        format!("{:.4}", rate)
+    }
 }
 
 fn currency_line_height() -> usize {
@@ -274,9 +300,7 @@ fn compose_currency_rgba(snapshot: &CurrencySnapshot) -> Vec<u8> {
         0,
         0,
         dst_width,
-        currency_line_step()
-            .saturating_mul(2)
-            .saturating_add(UI2_CURRENCY_PAD_Y),
+        UI2_CURRENCY_HEADER_H,
         UI2_CURRENCY_HEADER_BG_RGBA,
     );
 
@@ -301,7 +325,7 @@ fn compose_currency_rgba(snapshot: &CurrencySnapshot) -> Vec<u8> {
         snapshot.subheader.as_str(),
         UI2_CURRENCY_DIM_RGBA,
     );
-    y = y.saturating_add(line_step).saturating_add(2);
+    y = UI2_CURRENCY_HEADER_H.saturating_add(UI2_CURRENCY_ROW_GAP_Y);
 
     if snapshot.rows.is_empty() {
         render_text_rgba(
@@ -325,7 +349,12 @@ fn compose_currency_rgba(snapshot: &CurrencySnapshot) -> Vec<u8> {
         return rgba;
     }
 
-    for row in snapshot.rows.iter() {
+    for (idx, row) in snapshot.rows.iter().enumerate() {
+        let row_bg = if idx % 2 == 0 {
+            UI2_CURRENCY_ROW_BG_RGBA
+        } else {
+            UI2_CURRENCY_ROW_ALT_RGBA
+        };
         fill_rect_rgba(
             rgba.as_mut_slice(),
             dst_width,
@@ -333,20 +362,48 @@ fn compose_currency_rgba(snapshot: &CurrencySnapshot) -> Vec<u8> {
             UI2_CURRENCY_PAD_X.saturating_sub(4),
             y.saturating_sub(2),
             dst_width.saturating_sub(UI2_CURRENCY_PAD_X.saturating_sub(4) * 2),
-            line_step.saturating_add(4),
-            UI2_CURRENCY_ROW_BG_RGBA,
+            UI2_CURRENCY_ROW_H,
+            row_bg,
         );
-        let line = format!("{}  {}", row.pair, row.value);
         render_text_rgba(
             rgba.as_mut_slice(),
             dst_width,
             dst_height,
             UI2_CURRENCY_PAD_X,
             y,
-            line.as_str(),
+            row.code.as_str(),
+            UI2_CURRENCY_ACCENT_RGBA,
+        );
+        render_text_rgba(
+            rgba.as_mut_slice(),
+            dst_width,
+            dst_height,
+            UI2_CURRENCY_PAD_X + 58,
+            y,
+            format!("1 USD = {} {}", row.per_usd, row.code).as_str(),
             UI2_CURRENCY_TEXT_RGBA,
         );
-        y = y.saturating_add(line_step);
+        render_text_rgba(
+            rgba.as_mut_slice(),
+            dst_width,
+            dst_height,
+            UI2_CURRENCY_PAD_X + 250,
+            y,
+            format!("100 USD = {}", row.per_100_usd).as_str(),
+            UI2_CURRENCY_VALUE_RGBA,
+        );
+        render_text_rgba(
+            rgba.as_mut_slice(),
+            dst_width,
+            dst_height,
+            UI2_CURRENCY_PAD_X + 58,
+            y.saturating_add(line_step),
+            format!("1 {} = {}", row.code, row.usd_per_unit).as_str(),
+            UI2_CURRENCY_DIM_RGBA,
+        );
+        y = y
+            .saturating_add(UI2_CURRENCY_ROW_H)
+            .saturating_add(UI2_CURRENCY_ROW_GAP_Y);
     }
 
     render_text_rgba(

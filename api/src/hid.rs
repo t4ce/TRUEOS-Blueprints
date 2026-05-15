@@ -18,6 +18,21 @@ pub const KEYBOARD_KEY_ARROW_RIGHT: u16 = 15;
 pub use crate::vcabi::{TrueosHidCursorEvent, TrueosKeyboardOutputEvent};
 
 #[inline]
+pub fn cursor_pos(cursor_id: u32) -> Result<(i32, i32), i32> {
+    let mut x = 0i32;
+    let mut y = 0i32;
+    let rc = unsafe { vcabi::trueos_cabi_input_cursor_pos(cursor_id, &mut x, &mut y) };
+    if rc == 0 { Ok((x, y)) } else { Err(rc) }
+}
+
+#[inline]
+pub fn cursor_buttons(cursor_id: u32) -> Result<u32, i32> {
+    let mut buttons = 0u32;
+    let rc = unsafe { vcabi::trueos_cabi_input_cursor_buttons(cursor_id, &mut buttons) };
+    if rc == 0 { Ok(buttons) } else { Err(rc) }
+}
+
+#[inline]
 pub fn read_cursor_events_since(
     read_seq: u64,
     out_cap: u32,
@@ -42,11 +57,7 @@ pub fn read_cursor_events_since(
 pub fn pop_keyboard_output() -> Option<TrueosKeyboardOutputEvent> {
     let mut out = TrueosKeyboardOutputEvent::default();
     let rc = unsafe { vcabi::trueos_cabi_input_pop_keyboard_output(&mut out as *mut _) };
-    if rc == 0 {
-        Some(out)
-    } else {
-        None
-    }
+    if rc == 0 { Some(out) } else { None }
 }
 
 #[inline]
