@@ -5,3 +5,6 @@ edition = "2024"
 
 [lib]
 path = "flags.rs"
+
+[dependencies]
+v = { path = "../../../../trueos-v" }
