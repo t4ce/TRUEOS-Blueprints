@@ -178,6 +178,25 @@ pub mod net {
     }
 }
 
+pub mod t {
+    #[cfg(feature = "tokio-runtime")]
+    pub use crate::fs;
+    #[cfg(feature = "tokio-runtime")]
+    pub use crate::io;
+    #[cfg(feature = "tokio-net-probe")]
+    pub use crate::net;
+    #[cfg(feature = "tokio-runtime")]
+    pub use crate::runtime;
+    #[cfg(feature = "tokio-runtime")]
+    pub use crate::sync;
+    #[cfg(feature = "tokio-runtime")]
+    pub use crate::task;
+    #[cfg(feature = "tokio-runtime")]
+    pub use crate::time;
+    #[cfg(feature = "tokio-runtime")]
+    pub use crate::tokio;
+}
+
 pub struct TrueosAllocator;
 
 #[cfg(feature = "default-global-allocator")]
@@ -265,6 +284,7 @@ pub mod prelude {
     pub use crate::net;
     pub use crate::panic_abort;
     pub use crate::platform;
+    pub use crate::t;
     #[cfg(feature = "tokio-runtime")]
     pub use crate::runtime;
     #[cfg(feature = "tokio-runtime")]

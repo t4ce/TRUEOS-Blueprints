@@ -1,5 +1,5 @@
 use trueos::{
-    bp_error, bp_info, fs, io,
+    bp_error, bp_info,
     platform::{
         format,
         io::SeekFrom,
@@ -7,7 +7,7 @@ use trueos::{
         thread,
         Vec,
     },
-    runtime, tokio,
+    t,
 };
 
 const PROBE_PATH: &str = "blueprint-tokio-fs-probe.txt";
@@ -25,7 +25,7 @@ fn main() {
     }
 
     bp_info!("tokio_fs: stage runtime.current_thread.build");
-    let runtime = match runtime::current_thread().build() {
+    let runtime = match t::runtime::current_thread().build() {
         Ok(rt) => rt,
         Err(err) => {
             bp_error!("tokio_fs: runtime build failed: {}", err);
@@ -52,7 +52,7 @@ fn probe_runtime_bootstrap_surfaces() -> Result<(), &'static str> {
     bp_info!("tokio_fs: success thread.yield_now");
 
     bp_info!("tokio_fs: stage runtime.current_thread.builder_new_plain");
-    let mut builder = tokio::runtime::Builder::new_current_thread();
+    let mut builder = t::tokio::runtime::Builder::new_current_thread();
     bp_info!("tokio_fs: success runtime.current_thread.builder_new_plain");
 
     bp_info!("tokio_fs: stage runtime.current_thread.builder_build_plain");
@@ -66,7 +66,7 @@ fn probe_runtime_bootstrap_surfaces() -> Result<(), &'static str> {
     bp_info!("tokio_fs: success runtime.current_thread.drop_plain");
 
     bp_info!("tokio_fs: stage runtime.current_thread.build_time");
-    let runtime = runtime::current_thread()
+    let runtime = t::runtime::current_thread()
         .build()
         .map_err(|_| "runtime.current_thread.build_time")?;
     bp_info!("tokio_fs: success runtime.current_thread.build_time");
@@ -79,24 +79,24 @@ fn probe_runtime_bootstrap_surfaces() -> Result<(), &'static str> {
 }
 
 async fn run_probe() -> Result<(), &'static str> {
-    let _ = tokio::fs::remove_file(PROBE_PATH).await;
-    let _ = tokio::fs::remove_file(PROBE_NESTED_PATH).await;
+    let _ = t::tokio::fs::remove_file(PROBE_PATH).await;
+    let _ = t::tokio::fs::remove_file(PROBE_NESTED_PATH).await;
 
     bp_info!("tokio_fs: stage fs.write");
-    fs::write(PROBE_PATH, PROBE_BYTES)
+    t::fs::write(PROBE_PATH, PROBE_BYTES)
         .await
         .map_err(|_| "fs.write")?;
     bp_info!("tokio_fs: success fs.write");
 
     bp_info!("tokio_fs: stage fs.read");
-    let bytes = fs::read(PROBE_PATH).await.map_err(|_| "fs.read")?;
+    let bytes = t::fs::read(PROBE_PATH).await.map_err(|_| "fs.read")?;
     if bytes.as_slice() != PROBE_BYTES {
         return Err("fs.read.value");
     }
     bp_info!("tokio_fs: success fs.read len={}", bytes.len());
 
     bp_info!("tokio_fs: stage fs.read_to_string");
-    let text = fs::read_to_string(PROBE_PATH)
+    let text = t::fs::read_to_string(PROBE_PATH)
         .await
         .map_err(|_| "fs.read_to_string")?;
     if text.as_bytes() != PROBE_BYTES {
@@ -105,7 +105,7 @@ async fn run_probe() -> Result<(), &'static str> {
     bp_info!("tokio_fs: success fs.read_to_string len={}", text.len());
 
     bp_info!("tokio_fs: stage fs.open_options.surface");
-    let _options = fs::OpenOptions::new();
+    let _options = t::fs::OpenOptions::new();
     bp_info!("tokio_fs: success fs.open_options.surface");
 
     bp_info!("tokio_fs: stage fs.open_options.file_write_flush");
@@ -121,7 +121,7 @@ async fn run_probe() -> Result<(), &'static str> {
     bp_info!("tokio_fs: success fs.file.seek_rewrite_flush");
 
     bp_info!("tokio_fs: stage fs.try_exists");
-    let exists = fs::try_exists(PROBE_PATH)
+    let exists = t::fs::try_exists(PROBE_PATH)
         .await
         .map_err(|_| "fs.try_exists")?;
     if !exists {
@@ -130,8 +130,8 @@ async fn run_probe() -> Result<(), &'static str> {
     bp_info!("tokio_fs: success fs.try_exists");
 
     bp_info!("tokio_fs: stage fs.stat.file");
-    let file_stat = fs::stat(PROBE_PATH.as_bytes()).map_err(|_| "fs.stat.file")?;
-    if file_stat.kind != fs::FsNodeKind::File || file_stat.len != PROBE_BYTES.len() as u64 {
+    let file_stat = t::fs::stat(PROBE_PATH.as_bytes()).map_err(|_| "fs.stat.file")?;
+    if file_stat.kind != t::fs::FsNodeKind::File || file_stat.len != PROBE_BYTES.len() as u64 {
         return Err("fs.stat.file.value");
     }
     bp_info!("tokio_fs: success fs.stat.file len={}", file_stat.len);
@@ -142,14 +142,14 @@ async fn run_probe() -> Result<(), &'static str> {
 
     bp_info!("tokio_fs: stage fs.stat.dir");
     let dir_stat =
-        fs::stat(format!("{}/nested", PROBE_DIR).as_bytes()).map_err(|_| "fs.stat.dir")?;
-    if dir_stat.kind != fs::FsNodeKind::Directory || dir_stat.len != 0 {
+        t::fs::stat(format!("{}/nested", PROBE_DIR).as_bytes()).map_err(|_| "fs.stat.dir")?;
+    if dir_stat.kind != t::fs::FsNodeKind::Directory || dir_stat.len != 0 {
         return Err("fs.stat.dir.value");
     }
     bp_info!("tokio_fs: success fs.stat.dir");
 
     bp_info!("tokio_fs: stage fs.canonicalize.trueos");
-    let canonical = fs::canonicalize(format!("{}/./nested/../nested/probe.txt", PROBE_DIR))
+    let canonical = t::fs::canonicalize(format!("{}/./nested/../nested/probe.txt", PROBE_DIR))
         .await
         .map_err(|_| "fs.canonicalize.trueos")?;
     if canonical != Path::new("/").join(PROBE_NESTED_PATH) {
@@ -161,32 +161,32 @@ async fn run_probe() -> Result<(), &'static str> {
     );
 
     bp_info!("tokio_fs: stage fs.remove_file");
-    tokio::fs::remove_file(PROBE_PATH)
+    t::tokio::fs::remove_file(PROBE_PATH)
         .await
         .map_err(|_| "fs.remove_file")?;
-    let _ = tokio::fs::remove_file(PROBE_NESTED_PATH).await;
+    let _ = t::tokio::fs::remove_file(PROBE_NESTED_PATH).await;
     bp_info!("tokio_fs: success fs.remove_file");
 
     Ok(())
 }
 
 async fn probe_create_dir_all_nested_write_read() -> Result<(), &'static str> {
-    fs::create_dir_all(format!("{}/nested", PROBE_DIR))
+    t::fs::create_dir_all(format!("{}/nested", PROBE_DIR))
         .await
         .map_err(|_| "fs.create_dir_all")?;
 
-    fs::write(PROBE_NESTED_PATH, PROBE_BYTES)
+    t::fs::write(PROBE_NESTED_PATH, PROBE_BYTES)
         .await
         .map_err(|_| "fs.nested.write")?;
 
-    let exists = fs::try_exists(PROBE_NESTED_PATH)
+    let exists = t::fs::try_exists(PROBE_NESTED_PATH)
         .await
         .map_err(|_| "fs.nested.try_exists")?;
     if !exists {
         return Err("fs.nested.try_exists.false");
     }
 
-    let bytes = fs::read(PROBE_NESTED_PATH)
+    let bytes = t::fs::read(PROBE_NESTED_PATH)
         .await
         .map_err(|_| "fs.nested.read")?;
     if bytes.as_slice() != PROBE_BYTES {
@@ -197,9 +197,9 @@ async fn probe_create_dir_all_nested_write_read() -> Result<(), &'static str> {
 }
 
 async fn probe_file_write_flush() -> Result<(), &'static str> {
-    use io::AsyncWriteExt;
+    use t::io::AsyncWriteExt;
 
-    let mut file = fs::OpenOptions::new()
+    let mut file = t::fs::OpenOptions::new()
         .read(true)
         .write(true)
         .truncate(true)
@@ -215,9 +215,9 @@ async fn probe_file_write_flush() -> Result<(), &'static str> {
 }
 
 async fn probe_file_read_to_end() -> Result<(), &'static str> {
-    use io::AsyncReadExt;
+    use t::io::AsyncReadExt;
 
-    let mut file = fs::File::open(PROBE_PATH)
+    let mut file = t::fs::File::open(PROBE_PATH)
         .await
         .map_err(|_| "fs.file.open")?;
     let mut bytes = Vec::new();

@@ -1,7 +1,7 @@
 use trueos::{
-    bp_error, bp_info, io,
+    bp_error, bp_info,
     platform::{future, thread, Arc},
-    runtime, sync, task, time, tokio,
+    t,
 };
 
 fn main() {
@@ -13,7 +13,7 @@ fn main() {
     }
 
     bp_info!("tokio_rt: stage runtime.current_thread.build");
-    let runtime = match runtime::current_thread().build() {
+    let runtime = match t::runtime::current_thread().build() {
         Ok(rt) => rt,
         Err(err) => {
             bp_error!("tokio_rt: runtime build failed: {}", err);
@@ -44,7 +44,7 @@ fn probe_runtime_bootstrap_surfaces() -> Result<(), &'static str> {
     bp_info!("tokio_rt: success thread.yield_now");
 
     bp_info!("tokio_rt: stage runtime.current_thread.builder_new_plain");
-    let mut builder = tokio::runtime::Builder::new_current_thread();
+    let mut builder = t::tokio::runtime::Builder::new_current_thread();
     bp_info!("tokio_rt: success runtime.current_thread.builder_new_plain");
 
     bp_info!("tokio_rt: stage runtime.current_thread.builder_build_plain");
@@ -58,7 +58,7 @@ fn probe_runtime_bootstrap_surfaces() -> Result<(), &'static str> {
     bp_info!("tokio_rt: success runtime.current_thread.drop_plain");
 
     bp_info!("tokio_rt: stage runtime.current_thread.build_time");
-    let runtime = runtime::current_thread()
+    let runtime = t::runtime::current_thread()
         .build()
         .map_err(|_| "runtime.current_thread.build_time")?;
     bp_info!("tokio_rt: success runtime.current_thread.build_time");
@@ -79,11 +79,11 @@ fn probe_runtime_bootstrap_surfaces() -> Result<(), &'static str> {
 
 async fn run_probe() -> Result<(), &'static str> {
     bp_info!("tokio_rt: stage rt.task.yield_now");
-    task::yield_now().await;
+    t::task::yield_now().await;
     bp_info!("tokio_rt: success rt.task.yield_now");
 
     bp_info!("tokio_rt: stage rt.task.spawn_join");
-    let join = task::spawn(async { 0xA11C_Eu32 });
+    let join = t::task::spawn(async { 0xA11C_Eu32 });
     let join_value = join.await.map_err(|_| "rt.task.spawn_join.await")?;
     if join_value != 0xA11C_E {
         return Err("rt.task.spawn_join.value");
@@ -91,10 +91,10 @@ async fn run_probe() -> Result<(), &'static str> {
     bp_info!("tokio_rt: success rt.task.spawn_join");
 
     bp_info!("tokio_rt: stage rt.task.localset_spawn_local");
-    let local = task::LocalSet::new();
+    let local = t::task::LocalSet::new();
     let local_value = local
         .run_until(async {
-            let local_join = tokio::task::spawn_local(async { 0x10CA_1E7u32 });
+            let local_join = t::tokio::task::spawn_local(async { 0x10CA_1E7u32 });
             local_join
                 .await
                 .map_err(|_| "rt.task.localset_spawn_local.join")
@@ -106,7 +106,7 @@ async fn run_probe() -> Result<(), &'static str> {
     bp_info!("tokio_rt: success rt.task.localset_spawn_local");
 
     bp_info!("tokio_rt: stage rt.task.join_set");
-    let mut join_set = task::JoinSet::new();
+    let mut join_set = t::task::JoinSet::new();
     join_set.spawn(async { 0x11u32 });
     join_set.spawn(async { 0x22u32 });
     let mut sum = 0u32;
@@ -120,9 +120,9 @@ async fn run_probe() -> Result<(), &'static str> {
     bp_info!("tokio_rt: success rt.task.join_set");
 
     bp_info!("tokio_rt: stage rt.task.join_macro");
-    let (left, right) = tokio::join!(
+    let (left, right) = t::tokio::join!(
         async {
-            task::yield_now().await;
+            t::task::yield_now().await;
             0x4A4F_494Eu32
         },
         async { 0x4D41_4352u32 },
@@ -133,9 +133,9 @@ async fn run_probe() -> Result<(), &'static str> {
     bp_info!("tokio_rt: success rt.task.join_macro");
 
     bp_info!("tokio_rt: stage rt.task.try_join_macro");
-    let (left, right) = tokio::try_join!(
+    let (left, right) = t::tokio::try_join!(
         async {
-            task::yield_now().await;
+            t::task::yield_now().await;
             Ok::<u32, &'static str>(0x5452_5931)
         },
         async { Ok::<u32, &'static str>(0x5452_5932) },
@@ -146,8 +146,8 @@ async fn run_probe() -> Result<(), &'static str> {
     bp_info!("tokio_rt: success rt.task.try_join_macro");
 
     bp_info!("tokio_rt: stage rt.task.abort");
-    let (_tx, rx) = sync::oneshot::channel::<()>();
-    let abort_task = task::spawn(async move {
+    let (_tx, rx) = t::sync::oneshot::channel::<()>();
+    let abort_task = t::task::spawn(async move {
         let _ = rx.await;
         0x4142_4F52u32
     });
@@ -159,10 +159,10 @@ async fn run_probe() -> Result<(), &'static str> {
     }
 
     bp_info!("tokio_rt: stage rt.select");
-    let select_value = tokio::select! {
-        _ = time::sleep(time::Duration::from_millis(5)) => 0u32,
+    let select_value = t::tokio::select! {
+        _ = t::time::sleep(t::time::Duration::from_millis(5)) => 0u32,
         value = async {
-            task::yield_now().await;
+            t::task::yield_now().await;
             0x5345_4C45u32
         } => value,
     };
@@ -180,8 +180,8 @@ async fn run_probe() -> Result<(), &'static str> {
 
 async fn probe_sync() -> Result<(), &'static str> {
     bp_info!("tokio_rt: stage sync.oneshot");
-    let (oneshot_tx, oneshot_rx) = sync::oneshot::channel();
-    let oneshot_task = task::spawn(async move {
+    let (oneshot_tx, oneshot_rx) = t::sync::oneshot::channel();
+    let oneshot_task = t::task::spawn(async move {
         let _ = oneshot_tx.send(0x5155u32);
     });
     oneshot_task.await.map_err(|_| "sync.oneshot.task")?;
@@ -192,7 +192,7 @@ async fn probe_sync() -> Result<(), &'static str> {
     bp_info!("tokio_rt: success sync.oneshot");
 
     bp_info!("tokio_rt: stage sync.mpsc");
-    let (mpsc_tx, mut mpsc_rx) = sync::mpsc::channel(2);
+    let (mpsc_tx, mut mpsc_rx) = t::sync::mpsc::channel(2);
     mpsc_tx
         .send(0x4D50_5343u32)
         .await
@@ -204,8 +204,8 @@ async fn probe_sync() -> Result<(), &'static str> {
     bp_info!("tokio_rt: success sync.mpsc");
 
     bp_info!("tokio_rt: stage sync.watch");
-    let (watch_tx, mut watch_rx) = sync::watch::channel(0u32);
-    let watch_task = task::spawn(async move {
+    let (watch_tx, mut watch_rx) = t::sync::watch::channel(0u32);
+    let watch_task = t::task::spawn(async move {
         watch_rx.changed().await.map_err(|_| "sync.watch.changed")?;
         Ok::<u32, &'static str>(*watch_rx.borrow())
     });
@@ -217,9 +217,9 @@ async fn probe_sync() -> Result<(), &'static str> {
     bp_info!("tokio_rt: success sync.watch");
 
     bp_info!("tokio_rt: stage sync.broadcast");
-    let (broadcast_tx, mut broadcast_rx) = sync::broadcast::channel(2);
+    let (broadcast_tx, mut broadcast_rx) = t::sync::broadcast::channel(2);
     let broadcast_task =
-        task::spawn(async move { broadcast_rx.recv().await.map_err(|_| "sync.broadcast.recv") });
+        t::task::spawn(async move { broadcast_rx.recv().await.map_err(|_| "sync.broadcast.recv") });
     broadcast_tx
         .send(0xB04D_C457u32)
         .map_err(|_| "sync.broadcast.send")?;
@@ -230,9 +230,9 @@ async fn probe_sync() -> Result<(), &'static str> {
     bp_info!("tokio_rt: success sync.broadcast");
 
     bp_info!("tokio_rt: stage sync.notify");
-    let notify = Arc::new(sync::Notify::new());
+    let notify = Arc::new(t::sync::Notify::new());
     let notify_wait = notify.clone();
-    let notify_task = task::spawn(async move {
+    let notify_task = t::task::spawn(async move {
         notify_wait.notified().await;
         0x4E4F_5449u32
     });
@@ -244,8 +244,8 @@ async fn probe_sync() -> Result<(), &'static str> {
     bp_info!("tokio_rt: success sync.notify");
 
     bp_info!("tokio_rt: stage sync.mutex");
-    let mutex = Arc::new(sync::Mutex::new(0u32));
-    let mutex_task = task::spawn({
+    let mutex = Arc::new(t::sync::Mutex::new(0u32));
+    let mutex_task = t::task::spawn({
         let mutex = mutex.clone();
         async move {
             let mut guard = mutex.lock().await;
@@ -259,7 +259,7 @@ async fn probe_sync() -> Result<(), &'static str> {
     bp_info!("tokio_rt: success sync.mutex");
 
     bp_info!("tokio_rt: stage sync.rwlock");
-    let rwlock = Arc::new(sync::RwLock::new(0u32));
+    let rwlock = Arc::new(t::sync::RwLock::new(0u32));
     {
         let mut guard = rwlock.write().await;
         *guard = 0x5257_4C4B;
@@ -270,8 +270,8 @@ async fn probe_sync() -> Result<(), &'static str> {
     bp_info!("tokio_rt: success sync.rwlock");
 
     bp_info!("tokio_rt: stage sync.semaphore");
-    let semaphore = Arc::new(sync::Semaphore::new(0));
-    let semaphore_task = task::spawn({
+    let semaphore = Arc::new(t::sync::Semaphore::new(0));
+    let semaphore_task = t::task::spawn({
         let semaphore = semaphore.clone();
         async move {
             let permit = semaphore
@@ -282,7 +282,7 @@ async fn probe_sync() -> Result<(), &'static str> {
             Ok::<u32, &'static str>(0x53E4_A001)
         }
     });
-    task::yield_now().await;
+    t::task::yield_now().await;
     semaphore.add_permits(1);
     let value = semaphore_task.await.map_err(|_| "sync.semaphore.task")??;
     if value != 0x53E4_A001 {
@@ -291,8 +291,8 @@ async fn probe_sync() -> Result<(), &'static str> {
     bp_info!("tokio_rt: success sync.semaphore");
 
     bp_info!("tokio_rt: stage sync.barrier");
-    let barrier = Arc::new(sync::Barrier::new(2));
-    let barrier_task = task::spawn({
+    let barrier = Arc::new(t::sync::Barrier::new(2));
+    let barrier_task = t::task::spawn({
         let barrier = barrier.clone();
         async move {
             barrier.wait().await;
@@ -312,59 +312,59 @@ async fn probe_sync() -> Result<(), &'static str> {
 
 async fn probe_time() -> Result<(), &'static str> {
     bp_info!("tokio_rt: stage time.instant_now");
-    let now = time::Instant::now();
-    let _ = now.checked_add(time::Duration::from_millis(1));
+    let now = t::time::Instant::now();
+    let _ = now.checked_add(t::time::Duration::from_millis(1));
     bp_info!("tokio_rt: success time.instant_now");
 
     bp_info!("tokio_rt: stage time.instant_delta.spin");
-    let spin_start = time::Instant::now();
+    let spin_start = t::time::Instant::now();
     for _ in 0..1024 {
         core::hint::spin_loop();
     }
-    let spin_delta = time::Instant::now().saturating_duration_since(spin_start);
+    let spin_delta = t::time::Instant::now().saturating_duration_since(spin_start);
     bp_info!(
         "tokio_rt: success time.instant_delta.spin nanos={}",
         spin_delta.as_nanos()
     );
 
     bp_info!("tokio_rt: stage time.instant_delta.after_yield");
-    let yield_start = time::Instant::now();
-    task::yield_now().await;
-    let yield_delta = time::Instant::now().saturating_duration_since(yield_start);
+    let yield_start = t::time::Instant::now();
+    t::task::yield_now().await;
+    let yield_delta = t::time::Instant::now().saturating_duration_since(yield_start);
     bp_info!(
         "tokio_rt: success time.instant_delta.after_yield nanos={}",
         yield_delta.as_nanos()
     );
 
     bp_info!("tokio_rt: stage time.sleep_zero.build");
-    let sleep_zero = time::sleep(time::Duration::from_millis(0));
+    let sleep_zero = t::time::sleep(t::time::Duration::from_millis(0));
     bp_info!("tokio_rt: success time.sleep_zero.build");
 
     bp_info!("tokio_rt: stage time.sleep_zero.await");
-    let sleep_zero_start = time::Instant::now();
+    let sleep_zero_start = t::time::Instant::now();
     sleep_zero.await;
-    let sleep_zero_delta = time::Instant::now().saturating_duration_since(sleep_zero_start);
+    let sleep_zero_delta = t::time::Instant::now().saturating_duration_since(sleep_zero_start);
     bp_info!(
         "tokio_rt: success time.sleep_zero.await nanos={}",
         sleep_zero_delta.as_nanos()
     );
 
     bp_info!("tokio_rt: stage time.sleep_one.build");
-    let sleep_one = time::sleep(time::Duration::from_millis(1));
+    let sleep_one = t::time::sleep(t::time::Duration::from_millis(1));
     bp_info!("tokio_rt: success time.sleep_one.build");
 
     bp_info!("tokio_rt: stage time.sleep_one.await");
-    let sleep_one_start = time::Instant::now();
+    let sleep_one_start = t::time::Instant::now();
     sleep_one.await;
-    let sleep_one_delta = time::Instant::now().saturating_duration_since(sleep_one_start);
+    let sleep_one_delta = t::time::Instant::now().saturating_duration_since(sleep_one_start);
     bp_info!(
         "tokio_rt: success time.sleep_one.await nanos={}",
         sleep_one_delta.as_nanos()
     );
 
     bp_info!("tokio_rt: stage time.timeout");
-    let value = time::timeout(time::Duration::from_millis(5), async {
-        task::yield_now().await;
+    let value = t::time::timeout(t::time::Duration::from_millis(5), async {
+        t::task::yield_now().await;
         0x5449_4D45u32
     })
     .await
@@ -375,8 +375,8 @@ async fn probe_time() -> Result<(), &'static str> {
     bp_info!("tokio_rt: success time.timeout");
 
     bp_info!("tokio_rt: stage time.timeout_elapsed_pending.build");
-    let pending_elapsed = time::timeout(
-        time::Duration::from_millis(1),
+    let pending_elapsed = t::time::timeout(
+        t::time::Duration::from_millis(1),
         future::pending::<u32>(),
     );
     bp_info!("tokio_rt: success time.timeout_elapsed_pending.build");
@@ -388,11 +388,11 @@ async fn probe_time() -> Result<(), &'static str> {
     }
 
     bp_info!("tokio_rt: stage time.timeout_elapsed_sleep.inner_build");
-    let inner_sleep = time::sleep(time::Duration::from_millis(100));
+    let inner_sleep = t::time::sleep(t::time::Duration::from_millis(100));
     bp_info!("tokio_rt: success time.timeout_elapsed_sleep.inner_build");
 
     bp_info!("tokio_rt: stage time.timeout_elapsed_sleep.outer_build");
-    let timeout_sleep = time::timeout(time::Duration::from_millis(5), async {
+    let timeout_sleep = t::time::timeout(t::time::Duration::from_millis(5), async {
         inner_sleep.await;
         0x4445_4144u32
     });
@@ -405,7 +405,7 @@ async fn probe_time() -> Result<(), &'static str> {
     }
 
     bp_info!("tokio_rt: stage time.interval");
-    let mut interval = time::interval(time::Duration::from_millis(1));
+    let mut interval = t::time::interval(t::time::Duration::from_millis(1));
     interval.tick().await;
     interval.tick().await;
     bp_info!("tokio_rt: success time.interval");
@@ -414,10 +414,10 @@ async fn probe_time() -> Result<(), &'static str> {
 }
 
 async fn probe_io() -> Result<(), &'static str> {
-    use io::{AsyncReadExt, AsyncWriteExt};
+    use t::io::{AsyncReadExt, AsyncWriteExt};
 
     bp_info!("tokio_rt: stage io.duplex");
-    let (mut write_half, mut read_half) = io::duplex(32);
+    let (mut write_half, mut read_half) = t::io::duplex(32);
     write_half
         .write_all(b"ok")
         .await
@@ -433,9 +433,9 @@ async fn probe_io() -> Result<(), &'static str> {
     bp_info!("tokio_rt: success io.duplex");
 
     bp_info!("tokio_rt: stage io.std.surface");
-    let _stdin = io::stdin();
-    let _stdout = io::stdout();
-    let _stderr = io::stderr();
+    let _stdin = t::io::stdin();
+    let _stdout = t::io::stdout();
+    let _stderr = t::io::stderr();
     bp_info!("tokio_rt: success io.std.surface");
 
     Ok(())

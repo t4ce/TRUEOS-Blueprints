@@ -2,9 +2,9 @@ use core::net::{Ipv4Addr, SocketAddr};
 
 use trueos::platform;
 use trueos::{
-    bp_error, bp_info, net,
+    bp_error, bp_info,
     platform::{format, thread},
-    runtime, task, time, tokio,
+    t,
 };
 
 const PROBE_WAIT_BUDGET_MS: u64 = 1_500;
@@ -21,7 +21,7 @@ fn main() {
 
     bp_info!("tokio_net: stage runtime.current_thread_net.build");
 
-    let runtime = match runtime::current_thread_net().build() {
+    let runtime = match t::runtime::current_thread_net().build() {
         Ok(rt) => rt,
         Err(err) => {
             bp_error!("tokio_net: runtime build failed: {}", err);
@@ -48,7 +48,7 @@ fn probe_runtime_bootstrap_surfaces() -> Result<(), &'static str> {
     bp_info!("tokio_net: success thread.yield_now");
 
     bp_info!("tokio_net: stage runtime.current_thread.builder_new_plain");
-    let mut builder = tokio::runtime::Builder::new_current_thread();
+    let mut builder = t::tokio::runtime::Builder::new_current_thread();
     bp_info!("tokio_net: success runtime.current_thread.builder_new_plain");
 
     bp_info!("tokio_net: stage runtime.current_thread.builder_build_plain");
@@ -62,7 +62,7 @@ fn probe_runtime_bootstrap_surfaces() -> Result<(), &'static str> {
     bp_info!("tokio_net: success runtime.current_thread.drop_plain");
 
     bp_info!("tokio_net: stage runtime.current_thread.build_time");
-    let runtime = runtime::current_thread()
+    let runtime = t::runtime::current_thread()
         .build()
         .map_err(|_| "runtime.current_thread.build_time")?;
     bp_info!("tokio_net: success runtime.current_thread.build_time");
@@ -125,10 +125,10 @@ async fn run_probe() -> Result<(), &'static str> {
 }
 
 fn probe_socket2_surface() -> Result<(), &'static str> {
-    let _socket = net::socket2::Socket::new(
-        net::socket2::Domain::IPV4,
-        net::socket2::Type::STREAM,
-        Some(net::socket2::Protocol::TCP),
+    let _socket = t::net::socket2::Socket::new(
+        t::net::socket2::Domain::IPV4,
+        t::net::socket2::Type::STREAM,
+        Some(t::net::socket2::Protocol::TCP),
     )
     .map_err(|_| "net.socket2.new")?;
     bp_info!("tokio_net: success net.socket2.new");
@@ -136,9 +136,9 @@ fn probe_socket2_surface() -> Result<(), &'static str> {
 }
 
 fn probe_mio_poll_surface() -> Result<(), &'static str> {
-    let mut poll = net::mio::Poll::new().map_err(|_| "mio.poll.new")?;
-    let mut events = net::mio::Events::with_capacity(4);
-    let waker = net::mio::Waker::new(poll.registry(), net::mio::Token(0xB170))
+    let mut poll = t::net::mio::Poll::new().map_err(|_| "mio.poll.new")?;
+    let mut events = t::net::mio::Events::with_capacity(4);
+    let waker = t::net::mio::Waker::new(poll.registry(), t::net::mio::Token(0xB170))
         .map_err(|_| "mio.waker.new")?;
     waker.wake().map_err(|_| "mio.waker.wake")?;
     poll.poll(&mut events, Some(core::time::Duration::ZERO))
@@ -152,18 +152,18 @@ fn probe_mio_poll_surface() -> Result<(), &'static str> {
 }
 
 async fn probe_mio_udp_bind() -> Result<(), &'static str> {
-    let deadline = time::Instant::now() + time::Duration::from_millis(PROBE_WAIT_BUDGET_MS);
+    let deadline = t::time::Instant::now() + t::time::Duration::from_millis(PROBE_WAIT_BUDGET_MS);
 
     loop {
-        match net::mio::net::UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0).into()) {
+        match t::net::mio::net::UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0).into()) {
             Ok(socket) => {
                 let local = socket.local_addr().map_err(|_| "mio.net.udp.local_addr")?;
                 bp_info!("tokio_net: success mio.net.udp.bind local={}", local);
                 return Ok(());
             }
-            Err(_) if time::Instant::now() < deadline => {
+            Err(_) if t::time::Instant::now() < deadline => {
                 platform::poll_once();
-                time::sleep(time::Duration::from_millis(PROBE_WAIT_SLICE_MS)).await;
+                t::time::sleep(t::time::Duration::from_millis(PROBE_WAIT_SLICE_MS)).await;
             }
             Err(_) => return Err("mio.net.udp.bind"),
         }
@@ -171,14 +171,14 @@ async fn probe_mio_udp_bind() -> Result<(), &'static str> {
 }
 
 async fn probe_udp_bind() -> Result<(), &'static str> {
-    let deadline = time::Instant::now() + time::Duration::from_millis(PROBE_WAIT_BUDGET_MS);
+    let deadline = t::time::Instant::now() + t::time::Duration::from_millis(PROBE_WAIT_BUDGET_MS);
 
     loop {
         match try_probe_udp_bind().await {
             Ok(()) => return Ok(()),
-            Err(stage) if time::Instant::now() < deadline => {
+            Err(stage) if t::time::Instant::now() < deadline => {
                 platform::poll_once();
-                time::sleep(time::Duration::from_millis(PROBE_WAIT_SLICE_MS)).await;
+                t::time::sleep(t::time::Duration::from_millis(PROBE_WAIT_SLICE_MS)).await;
                 if stage == "net.udp.bind" {
                     continue;
                 }
@@ -190,7 +190,7 @@ async fn probe_udp_bind() -> Result<(), &'static str> {
 }
 
 async fn try_probe_udp_bind() -> Result<(), &'static str> {
-    let socket = net::UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))
+    let socket = t::net::UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))
         .await
         .map_err(|_| "net.udp.bind")?;
     let local = socket.local_addr().map_err(|_| "net.udp.local_addr")?;
@@ -200,9 +200,9 @@ async fn try_probe_udp_bind() -> Result<(), &'static str> {
 }
 
 async fn probe_tcp_loopback() -> Result<(), &'static str> {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use t::io::{AsyncReadExt, AsyncWriteExt};
 
-    let listener = net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+    let listener = t::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
         .await
         .map_err(|_| "net.tcp.loopback.bind")?;
     let listen_addr = listener
@@ -210,7 +210,7 @@ async fn probe_tcp_loopback() -> Result<(), &'static str> {
         .map_err(|_| "net.tcp.loopback.local_addr")?;
     bp_info!("tokio_net: tcp loopback listen={}", listen_addr);
 
-    let accept_task = task::spawn(async move {
+    let accept_task = t::task::spawn(async move {
         let (mut server, peer) = listener
             .accept()
             .await
