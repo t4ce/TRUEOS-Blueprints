@@ -24,8 +24,13 @@ fn main() {
 }
 
 async fn fetch_feed_text() -> Result<String, String> {
+    logl::log(
+        level::WARN,
+        format_args!("currency_bp: reqwest client build insecure_tls=accept_invalid_certs"),
+    );
     let client = reqwest::Client::builder()
         .timeout(Duration::from_millis(30_000))
+        .tls_danger_accept_invalid_certs(true)
         .build()
         .map_err(|err| {
             logl::log(level::ERROR, format_args!("currency_bp: reqwest client failed: {}", err));

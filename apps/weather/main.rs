@@ -133,10 +133,21 @@ fn main() {
 
 async fn run_weather_loop(window: &ui2::SurfaceWindow) -> Result<(), &'static str> {
     logl::log(level::INFO, format_args!("weather_bp: {}", TRANSPORT_LOG));
+    logl::log(
+        level::WARN,
+        format_args!("weather_bp: reqwest client build insecure_tls=accept_invalid_certs"),
+    );
     let client = reqwest::Client::builder()
         .timeout(Duration::from_millis(FETCH_TIMEOUT_MS))
+        .tls_danger_accept_invalid_certs(true)
         .build()
-        .map_err(|_| "reqwest client build failed")?;
+        .map_err(|err| {
+            logl::log(
+                level::ERROR,
+                format_args!("weather_bp: reqwest client build failed: {}", err),
+            );
+            "reqwest client build failed"
+        })?;
 
     loop {
         let snapshot = load_weather_snapshot(&client).await;
