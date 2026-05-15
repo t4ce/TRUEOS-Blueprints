@@ -9,11 +9,7 @@ members = [
     "api",
     "apps/chart",
     "apps/cli_tetris",
-    "apps/crates/trueos-currency",
-    "apps/crates/trueos-flags",
     "apps/crates/trueos-tetris",
-    "apps/crates/trueos-weather",
-    "apps/currency",
     "apps/currency_reqwest",
     "apps/flags",
     "apps/framework_stack",
@@ -57,11 +53,11 @@ tokio = { version = "1.52.1", default-features = false, features = ["full"] }
 tokio-rustls = { path = "../../vendor/tokio-rustls-0.26.4", default-features = false, features = ["tls12"] }
 tower = { version = "0.5", default-features = false, features = ["util"] }
 trueos = { path = "api" }
-trueos-currency = { path = "apps/crates/trueos-currency" }
-trueos-flags = { path = "apps/crates/trueos-flags" }
+trueos-currency = { path = "apps/currency_reqwest/trueos-currency" }
+trueos-flags = { path = "apps/flags/trueos-flags" }
 trueos-gfx-core = { path = "../trueos-gfx-core" }
 trueos-tetris = { path = "apps/crates/trueos-tetris" }
-trueos-weather = { path = "apps/crates/trueos-weather" }
+trueos-weather = { path = "apps/weather/trueos-weather" }
 webpki-roots = { version = "1", default-features = false }
 
 [features]

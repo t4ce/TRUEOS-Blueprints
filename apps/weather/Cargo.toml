@@ -9,6 +9,7 @@ path = "main.rs"
 
 [dependencies]
 libm.workspace = true
+reqwest = { version = "0.13.3", default-features = false, features = ["json", "rustls"] }
 serde_json.workspace = true
 trueos.workspace = true
 trueos-weather.workspace = true

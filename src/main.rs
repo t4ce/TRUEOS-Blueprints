@@ -1882,9 +1882,11 @@ fn materialized_workspace_dependency(
         }
         "trueos" => path_dependency_line(dep_name, &blueprint_root.join("api")),
         "trueos-currency" => {
-            path_dependency_line(dep_name, &blueprint_root.join("apps/crates/trueos-currency"))
+            path_dependency_line(dep_name, &blueprint_root.join("apps/currency_reqwest/trueos-currency"))
         }
-        "trueos-flags" => path_dependency_line(dep_name, &blueprint_root.join("apps/crates/trueos-flags")),
+        "trueos-flags" => {
+            path_dependency_line(dep_name, &blueprint_root.join("apps/flags/trueos-flags"))
+        }
         "trueos-gfx-core" => format!(
             "trueos-gfx-core = {{ path = {}, features = [\"alloc\"] }}",
             toml_string(&blueprint_root.join("../trueos-gfx-core").display().to_string())
@@ -1893,7 +1895,9 @@ fn materialized_workspace_dependency(
             dep_name,
             &stage_trueos_tetris_crate(blueprint_root, work_dir)?,
         ),
-        "trueos-weather" => path_dependency_line(dep_name, &blueprint_root.join("apps/crates/trueos-weather")),
+        "trueos-weather" => {
+            path_dependency_line(dep_name, &blueprint_root.join("apps/weather/trueos-weather"))
+        }
         "webpki-roots" => {
             "webpki-roots = { version = \"1\", default-features = false }".to_string()
         }

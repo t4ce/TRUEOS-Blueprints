@@ -1,13 +1,12 @@
-#![no_std]
+// trueos-blueprint: features=["tokio-net-probe"]
 
-extern crate alloc;
-
-use alloc::{format, string::String};
+use core::time::Duration;
+use std::string::String;
 use core::fmt::Write as _;
 use trueos::logl::{self, level};
 use trueos::platform;
 use trueos::ui2::{self, gfx};
-use trueos::{input, tyche};
+use trueos::{input, runtime, tyche};
 
 const WINDOW_X: i32 = 520;
 const WINDOW_Y: i32 = 150;
@@ -16,7 +15,7 @@ const WINDOW_HEIGHT: u32 = 320;
 const TEX_ID: u32 = 4_776;
 const FRAME_MS: u64 = 16;
 const FLASH_FRAMES: u8 = 62;
-const FETCH_PENDING: i32 = -8;
+const FLAG_FETCH_TIMEOUT_MS: u64 = 30_000;
 
 const CELL_MARGIN: i32 = 18;
 const CELL_GAP: i32 = 14;
@@ -53,28 +52,11 @@ enum Flash {
     Wrong,
 }
 
-#[derive(Copy, Clone)]
-struct FetchSlot {
-    op_id: u32,
-    done: bool,
-}
-
-impl FetchSlot {
-    const fn empty() -> Self {
-        Self {
-            op_id: 0,
-            done: true,
-        }
-    }
-}
-
 struct Game {
     answer: usize,
     answer_slot: usize,
     options: [usize; 4],
-    fetches: [FetchSlot; 4],
     svgs: [Option<String>; 4],
-    loading: bool,
     flash: Flash,
     flash_frames: u8,
     selected_slot: Option<usize>,
@@ -82,27 +64,27 @@ struct Game {
 }
 
 impl Game {
-    fn new(rng: &mut tyche::SoftRng) -> Self {
+    fn new(rng: &mut tyche::SoftRng, runtime: &runtime::Runtime, client: &reqwest::Client) -> Self {
         let mut game = Self {
             answer: 0,
             answer_slot: 0,
             options: [0; 4],
-            fetches: [FetchSlot::empty(); 4],
             svgs: [(); 4].map(|_| None),
-            loading: false,
             flash: Flash::None,
             flash_frames: 0,
             selected_slot: None,
             score: 0,
         };
-        game.start_round(rng);
+        game.start_round(rng, runtime, client);
         game
     }
 
-    fn start_round(&mut self, rng: &mut tyche::SoftRng) {
-        for fetch in &self.fetches {
-            trueos_flags::discardFlagSVGFetch(fetch.op_id);
-        }
+    fn start_round(
+        &mut self,
+        rng: &mut tyche::SoftRng,
+        runtime: &runtime::Runtime,
+        client: &reqwest::Client,
+    ) {
         self.answer = rng.usize_below(COUNTRIES.len());
         self.answer_slot = rng.usize_below(4);
         self.options = [usize::MAX; 4];
@@ -125,77 +107,11 @@ impl Game {
         self.flash = Flash::None;
         self.flash_frames = 0;
         self.selected_slot = None;
-        self.start_fetches();
-    }
-
-    fn start_fetches(&mut self) {
-        self.loading = false;
-        self.fetches = [FetchSlot::empty(); 4];
-        for slot in 0..4 {
+        let loaded_svgs = runtime.block_on(fetch_round_svgs(client, self.options));
+        for (slot, svg) in loaded_svgs.into_iter().enumerate() {
             let (code, _) = COUNTRIES[self.options[slot]];
-            let op_id = trueos_flags::startFlagSVGFetch(code);
-            logl::log(
-                level::INFO,
-                format_args!("flags bp: fetch start slot={} code={} op_id={}\n", slot, code, op_id),
-            );
-            if op_id != 0 {
-                self.fetches[slot] = FetchSlot { op_id, done: false };
-                self.loading = true;
-            } else {
-                self.svgs[slot] = Some(fallback_flag_svg(code));
-            }
+            self.svgs[slot] = Some(svg.unwrap_or_else(|| fallback_flag_svg(code)));
         }
-    }
-
-    fn poll_fetches(&mut self) -> bool {
-        if !self.loading {
-            return false;
-        }
-        let mut all_done = true;
-        let mut changed = false;
-        for (slot, fetch) in self.fetches.iter_mut().enumerate() {
-            if fetch.done {
-                continue;
-            }
-            let rc = trueos_flags::pollFlagSVGFetch(fetch.op_id);
-            if rc == FETCH_PENDING {
-                all_done = false;
-                continue;
-            }
-            if rc > 0 {
-                let svg = trueos_flags::readFlagSVGFetch(fetch.op_id);
-                logl::log(
-                    level::INFO,
-                    format_args!(
-                        "flags bp: fetch done slot={} op_id={} rc={} svg_len={}\n",
-                        slot,
-                        fetch.op_id,
-                        rc,
-                        svg.len()
-                    ),
-                );
-                if !svg.is_empty() {
-                    self.svgs[slot] = Some(svg);
-                    changed = true;
-                }
-            } else {
-                logl::log(
-                    level::ERROR,
-                    format_args!(
-                        "flags bp: fetch failed slot={} op_id={} rc={}\n",
-                        slot, fetch.op_id, rc
-                    ),
-                );
-            }
-            trueos_flags::discardFlagSVGFetch(fetch.op_id);
-            fetch.done = true;
-            fetch.op_id = 0;
-        }
-        if all_done {
-            self.loading = false;
-            changed = true;
-        }
-        changed
     }
 
     fn choose(&mut self, slot: usize) -> bool {
@@ -213,7 +129,12 @@ impl Game {
         true
     }
 
-    fn tick_flash(&mut self, rng: &mut tyche::SoftRng) -> bool {
+    fn tick_flash(
+        &mut self,
+        rng: &mut tyche::SoftRng,
+        runtime: &runtime::Runtime,
+        client: &reqwest::Client,
+    ) -> bool {
         if self.flash == Flash::None {
             return false;
         }
@@ -227,7 +148,7 @@ impl Game {
         self.flash = Flash::None;
         self.selected_slot = None;
         if was_correct {
-            self.start_round(rng);
+            self.start_round(rng, runtime, client);
         }
         true
     }
@@ -237,10 +158,62 @@ impl Game {
         match self.flash {
             Flash::Correct => format!("Flag {} - hit", name),
             Flash::Wrong => format!("Flag {} - miss", name),
-            Flash::None if self.loading => format!("Flag {} - loading", name),
             Flash::None => format!("Flag {}", name),
         }
     }
+}
+
+async fn fetch_round_svgs(
+    client: &reqwest::Client,
+    options: [usize; 4],
+) -> [Option<String>; 4] {
+    let mut out = [(); 4].map(|_| None);
+    for slot in 0..4 {
+        let (code, _) = COUNTRIES[options[slot]];
+        out[slot] = match fetch_flag_svg(client, code).await {
+            Ok(svg) => {
+                logl::log(
+                    level::INFO,
+                    format_args!(
+                        "flags bp: reqwest fetch ok slot={} code={} svg_len={}\n",
+                        slot,
+                        code,
+                        svg.len()
+                    ),
+                );
+                Some(svg)
+            }
+            Err(err) => {
+                logl::log(
+                    level::ERROR,
+                    format_args!("flags bp: reqwest fetch failed slot={} code={} err={}\n", slot, code, err),
+                );
+                None
+            }
+        };
+    }
+    out
+}
+
+async fn fetch_flag_svg(client: &reqwest::Client, code: &str) -> Result<String, String> {
+    let response = client
+        .get(flag_url(code).as_str())
+        .send()
+        .await
+        .map_err(|err| format!("request {err}"))?;
+    let status = response.status();
+    let body = response
+        .bytes()
+        .await
+        .map_err(|err| format!("body {err}"))?;
+    if !status.is_success() {
+        return Err(format!("http {}", status.as_u16()));
+    }
+    String::from_utf8(body.to_vec()).map_err(|_| String::from("bad utf8"))
+}
+
+fn flag_url(code: &str) -> String {
+    format!("https://flagcdn.com/{}.svg", code)
 }
 
 fn open_window() -> Option<ui2::SurfaceWindow> {
@@ -472,8 +445,26 @@ fn main() {
     let _ = window.id().set_vertical_scrollbar_visible(false);
     let _ = window.id().set_horizontal_scrollbar_visible(false);
 
+    let runtime = match runtime::current_thread_net().build() {
+        Ok(rt) => rt,
+        Err(err) => {
+            logl::log(level::ERROR, format_args!("flags bp: runtime build failed: {}\n", err));
+            return;
+        }
+    };
+    let client = match reqwest::Client::builder()
+        .timeout(Duration::from_millis(FLAG_FETCH_TIMEOUT_MS))
+        .build()
+    {
+        Ok(client) => client,
+        Err(err) => {
+            logl::log(level::ERROR, format_args!("flags bp: reqwest client build failed: {}\n", err));
+            return;
+        }
+    };
+
     let mut rng = tyche::SoftRng::new();
-    let mut game = Game::new(&mut rng);
+    let mut game = Game::new(&mut rng, &runtime, &client);
     let mut cursor_seq = {
         let (_, next_seq, _) = input::read_cursor_events_since(0, 64);
         next_seq
@@ -485,10 +476,9 @@ fn main() {
 
     loop {
         let mut changed = false;
-        changed |= game.poll_fetches();
         changed |= handle_keyboard(&mut game);
         changed |= handle_cursor(&window, &mut cursor_seq, &mut last_buttons, &mut game);
-        changed |= game.tick_flash(&mut rng);
+        changed |= game.tick_flash(&mut rng, &runtime, &client);
         if changed {
             present(&window, &game);
         }

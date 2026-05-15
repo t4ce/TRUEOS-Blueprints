@@ -1,4 +1,6 @@
-// trueos-blueprint: features=["tokio-runtime"]
+// trueos-blueprint: features=["tokio-net-probe"]
+
+use core::time::Duration;
 
 use trueos::ui2::{self, gfx};
 use trueos::{
@@ -80,7 +82,7 @@ struct WeatherSnapshot {
 
 fn main() {
     bp_info!("weather_bp: start");
-    let runtime = match runtime::current_thread().build() {
+    let runtime = match runtime::current_thread_net().build() {
         Ok(rt) => rt,
         Err(err) => {
             bp_error!("weather_bp: runtime build failed: {}", err);
@@ -131,15 +133,19 @@ fn main() {
 
 async fn run_weather_loop(window: &ui2::SurfaceWindow) -> Result<(), &'static str> {
     bp_info!("weather_bp: {}", TRANSPORT_LOG);
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_millis(FETCH_TIMEOUT_MS))
+        .build()
+        .map_err(|_| "reqwest client build failed")?;
 
     loop {
-        let snapshot = load_weather_snapshot().await;
+        let snapshot = load_weather_snapshot(&client).await;
         present_snapshot(window, &snapshot);
         time::sleep(time::Duration::from_secs(REFRESH_SECS)).await;
     }
 }
 
-async fn load_weather_snapshot() -> WeatherSnapshot {
+async fn load_weather_snapshot(client: &reqwest::Client) -> WeatherSnapshot {
     let mut note = String::new();
     let geo_url = format!(
         "{}?q={}&limit=1&appid={}",
@@ -148,7 +154,7 @@ async fn load_weather_snapshot() -> WeatherSnapshot {
         WEATHER_API_KEY
     );
 
-    let geo = match trueos_weather::transport::fetch_text(geo_url.as_str(), FETCH_TIMEOUT_MS) {
+    let geo = match fetch_text(client, geo_url.as_str()).await {
         Ok(raw) => parse_geo_response(raw.as_str()),
         Err(err) => {
             bp_info!("weather_bp: geo fetch failed: {}; using bundled coordinates", err);
@@ -173,7 +179,7 @@ async fn load_weather_snapshot() -> WeatherSnapshot {
     );
 
     let (raw_weather, source_note) =
-        match trueos_weather::transport::fetch_text(weather_url.as_str(), FETCH_TIMEOUT_MS) {
+        match fetch_text(client, weather_url.as_str()).await {
             Ok(raw) => (raw, String::from("live OpenWeather forecast")),
             Err(err) => {
                 bp_info!("weather_bp: weather fetch failed: {}; using bundled demo", err);
@@ -202,6 +208,23 @@ async fn load_weather_snapshot() -> WeatherSnapshot {
             },
         },
     }
+}
+
+async fn fetch_text(client: &reqwest::Client, url: &str) -> Result<String, String> {
+    let response = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|err| format!("request {err}"))?;
+    let status = response.status();
+    let body = response
+        .bytes()
+        .await
+        .map_err(|err| format!("body {err}"))?;
+    if !status.is_success() {
+        return Err(format!("http {}", status.as_u16()));
+    }
+    String::from_utf8(body.to_vec()).map_err(|_| String::from("bad utf8"))
 }
 
 fn bundled_demo_json() -> &'static str {
