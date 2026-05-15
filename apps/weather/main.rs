@@ -15,7 +15,6 @@ const WINDOW_HEIGHT: u32 = 530;
 const TEX_ID: u32 = 4_730;
 const WEATHER_CITY: &str = "Holzminden";
 const WEATHER_API_KEY: &str = "9715912a7d8748d65bc3985b4a4274a0";
-const DEMO_JSON: &str = include_str!("../crates/trueos-weather/src/demo.json");
 const FETCH_TIMEOUT_MS: u64 = 45_000;
 const REFRESH_SECS: u64 = 3_600;
 const TRANSPORT_LOG: &str =
@@ -206,12 +205,12 @@ async fn load_weather_snapshot() -> WeatherSnapshot {
 }
 
 fn bundled_demo_json() -> &'static str {
-    DEMO_JSON
+    trueos_weather::DEMO_JSON
         .lines()
         .rev()
         .map(str::trim)
         .find(|line| line.starts_with('{'))
-        .unwrap_or(DEMO_JSON)
+        .unwrap_or(trueos_weather::DEMO_JSON)
 }
 
 fn parse_geo_response(raw: &str) -> Option<GeoResult> {

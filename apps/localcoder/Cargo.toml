@@ -9,31 +9,25 @@ repository = "https://github.com/iamwjun/localcoder"
 
 [dependencies]
 # HTTP client
-reqwest = { version = "0.13.3", features = ["json", "stream"] }
+reqwest.workspace = true
 # Async runtime
-tokio = { version = "1.40", features = ["full"] }
+tokio.workspace = true
 # JSON handling
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+serde.workspace = true
+serde_json.workspace = true
 # Error handling
-anyhow = "1.0"
+anyhow.workspace = true
 # CLI interaction
-rustyline = "14.0"
+rustyline.workspace = true
 # Terminal colors
-colored = "2.1"
+colored.workspace = true
 # File globbing (S03 GlobTool)
-glob = "0.3"
+glob.workspace = true
 # File walking with .gitignore support (S03 GrepTool)
-ignore = "0.4"
+ignore.workspace = true
 # Regex engine (S03 GrepTool)
-regex = "1"
-serde_yaml = "0.9"
-
-[profile.release]
-opt-level = 3
-lto = true
-codegen-units = 1
-strip = true
+regex.workspace = true
+serde_yaml.workspace = true
 
 [dev-dependencies]
-tempfile = "3"
+tempfile.workspace = true

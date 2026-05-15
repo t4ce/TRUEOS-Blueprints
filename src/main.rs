@@ -2,7 +2,7 @@ use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::env;
 use std::fs;
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -61,10 +61,17 @@ struct CratePatch {
     path: PathBuf,
 }
 
+#[derive(Default)]
+struct CargoOutputNotes {
+    unused_patch_diagnostics: usize,
+    build_std_future_incompat: usize,
+}
+
 const CARGO_CACHE_DIR_ENV: &str = "TRUEOS_BLUEPRINT_CARGO_CACHE_DIR";
 const TARGET_SPEC_ENV: &str = "TRUEOS_BLUEPRINT_TARGET_SPEC";
 const RUSTFLAGS_ENCODED_SEPARATOR: char = '\u{1f}';
 const TRUEOS_CHECK_CFG_FLAG: &str = "--check-cfg=cfg(target_os,values(\"trueos\",\"zkvm\"))";
+const BLUEPRINT_RUSTFLAGS: &[&str] = &[TRUEOS_CHECK_CFG_FLAG, "-A", "warnings"];
 
 fn main() {
     if let Err(err) = run() {
@@ -296,7 +303,7 @@ fn build_one_target_to(
         );
     }
     push_source_overlay_configs(&mut cargo, &staged_source_overlay);
-    push_extra_rustflag(&mut cargo, TRUEOS_CHECK_CFG_FLAG);
+    push_extra_rustflags(&mut cargo, BLUEPRINT_RUSTFLAGS);
     cargo.env("CARGO_TARGET_DIR", &cargo_target_dir);
     let declared_features = manifest_declared_features(&cargo_manifest_path)?;
     let has_trueos_dependency = manifest_has_dependency(&cargo_manifest_path, "trueos")?;
@@ -345,7 +352,7 @@ fn build_one_target_to(
 
     println!("trueos-blueprint: cargo artifact profile: {}", cargo_profile.label());
     println!("trueos-blueprint: cargo artifact cache: {}", cargo_target_dir.display());
-    run_command(&mut cargo, "cargo rustc")?;
+    run_cargo_command(&mut cargo, "cargo rustc")?;
 
     if !deps_dir.is_dir() {
         return Err(format!("missing deps dir: {}", deps_dir.display()));
@@ -404,6 +411,94 @@ fn run_command(cmd: &mut Command, label: &str) -> Result<(), String> {
     }
 }
 
+fn run_cargo_command(cmd: &mut Command, label: &str) -> Result<(), String> {
+    let output = cmd
+        .output()
+        .map_err(|err| format!("{label} failed to start: {err}"))?;
+    let notes = write_filtered_cargo_output(label, &output.stdout, &output.stderr)?;
+    print_cargo_output_notes(label, &notes);
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!("{label} failed with status {}", output.status))
+    }
+}
+
+fn write_filtered_cargo_output(
+    label: &str,
+    stdout: &[u8],
+    stderr: &[u8],
+) -> Result<CargoOutputNotes, String> {
+    io::stdout().write_all(stdout).map_err(io_string)?;
+    let stderr = String::from_utf8_lossy(stderr);
+    let mut filtered = String::with_capacity(stderr.len());
+    let mut notes = CargoOutputNotes::default();
+    let mut skip_patch_help = false;
+    let mut skip_future_incompat_note = false;
+
+    for line in stderr.lines() {
+        if line.starts_with("warning: patch `")
+            && line.ends_with("` was not used in the crate graph")
+        {
+            notes.unused_patch_diagnostics += 1;
+            skip_patch_help = true;
+            continue;
+        }
+
+        if line.starts_with("warning: the following packages contain code that will be rejected by a future version of Rust: std v0.0.0 ")
+        {
+            notes.build_std_future_incompat += 1;
+            skip_future_incompat_note = true;
+            continue;
+        }
+
+        if skip_patch_help && line.starts_with("help: Check that the patched package version") {
+            continue;
+        }
+        if skip_patch_help
+            && (line.starts_with("      with the dependency requirements.")
+                || line
+                    .starts_with("      what is locked in the Cargo.lock file, run `cargo update`")
+                || line
+                    .starts_with("      version. This may also occur with an optional dependency"))
+        {
+            continue;
+        }
+
+        if skip_future_incompat_note
+            && (line.starts_with("note: to see what the problems were, use the option")
+                || line.starts_with("or run `cargo report future-incompatibilities"))
+        {
+            continue;
+        }
+
+        skip_patch_help = false;
+        skip_future_incompat_note = false;
+        filtered.push_str(line);
+        filtered.push('\n');
+    }
+
+    io::stderr()
+        .write_all(filtered.as_bytes())
+        .map_err(|err| format!("{label} output write failed: {err}"))?;
+    Ok(notes)
+}
+
+fn print_cargo_output_notes(label: &str, notes: &CargoOutputNotes) {
+    if notes.unused_patch_diagnostics != 0 {
+        eprintln!(
+            "trueos-blueprint: note: suppressed {} unused source-overlay patch diagnostics during {label}",
+            notes.unused_patch_diagnostics
+        );
+    }
+    if notes.build_std_future_incompat != 0 {
+        eprintln!(
+            "trueos-blueprint: note: suppressed {} build-std future-incompat report for synthetic std during {label}",
+            notes.build_std_future_incompat
+        );
+    }
+}
+
 fn run_staged_lock_overlay_update(
     staged_manifest: &Path,
     staged_source_overlay: &[CratePatch],
@@ -427,12 +522,23 @@ fn run_staged_lock_overlay_update(
             .arg(&mismatch.overlay_version);
         push_source_overlay_configs(&mut update, staged_source_overlay);
 
-        match update.status() {
-            Ok(status) if status.success() => return Ok(()),
-            Ok(status) if index + 1 == package_specs.len() => {
-                return Err(format!("cargo update failed with status {status}"));
+        match update.output() {
+            Ok(output) if output.status.success() => {
+                let notes =
+                    write_filtered_cargo_output("cargo update", &output.stdout, &output.stderr)?;
+                print_cargo_output_notes("cargo update", &notes);
+                return Ok(());
             }
-            Ok(_) => {
+            Ok(output) if index + 1 == package_specs.len() => {
+                let notes =
+                    write_filtered_cargo_output("cargo update", &output.stdout, &output.stderr)?;
+                print_cargo_output_notes("cargo update", &notes);
+                return Err(format!("cargo update failed with status {}", output.status));
+            }
+            Ok(output) => {
+                let notes =
+                    write_filtered_cargo_output("cargo update", &output.stdout, &output.stderr)?;
+                print_cargo_output_notes("cargo update", &notes);
                 println!(
                     "trueos-blueprint: retrying staged lock overlay for {} without version-qualified package id",
                     mismatch.name
@@ -466,7 +572,7 @@ fn enforce_source_overlay_lock(
         .arg("--manifest-path")
         .arg(staged_manifest);
     push_source_overlay_configs(&mut generate, staged_source_overlay);
-    run_command(&mut generate, "cargo generate-lockfile")?;
+    run_cargo_command(&mut generate, "cargo generate-lockfile")?;
 
     let root_name = package_name(staged_manifest)?;
     let mut locked = lock_packages(&lock_path)?;
@@ -476,12 +582,18 @@ fn enforce_source_overlay_lock(
         let Some(overlay_version) = package_version(&patch.path.join("Cargo.toml"))? else {
             continue;
         };
-        let Some(current) = locked.iter().find(|package| package.name == patch.name) else {
+        if locked.iter().any(|package| {
+            package.name == patch.name
+                && package.version == overlay_version
+                && package.source.is_none()
+        }) {
             continue;
         };
-        if current.version == overlay_version && current.source.is_none() {
+        let Some(current) = locked.iter().find(|package| {
+            package.name == patch.name && cargo_semver_same_line(&package.version, &overlay_version)
+        }) else {
             continue;
-        }
+        };
         if !reachable.contains(&patch.name) {
             continue;
         }
@@ -512,17 +624,10 @@ fn enforce_source_overlay_lock(
         if !reachable.contains(&patch.name) {
             continue;
         }
-        for package in locked.iter().filter(|package| package.name == patch.name) {
-            if package.version != overlay_version {
-                violations.push(format!(
-                    "{} locked at {} but overlay pin is {} ({})",
-                    patch.name,
-                    package.version,
-                    overlay_version,
-                    patch.path.display()
-                ));
-                continue;
-            }
+        for package in locked
+            .iter()
+            .filter(|package| package.name == patch.name && package.version == overlay_version)
+        {
             if let Some(source) = &package.source {
                 violations.push(format!(
                     "{} {} resolved from {} instead of overlay path {}",
@@ -563,6 +668,28 @@ fn reachable_package_names(locked: &[LockedPackage], root_name: &str) -> BTreeSe
     }
 
     reachable
+}
+
+fn cargo_semver_same_line(version: &str, overlay: &str) -> bool {
+    let Some((version_major, version_minor)) = semver_major_minor(version) else {
+        return false;
+    };
+    let Some((overlay_major, overlay_minor)) = semver_major_minor(overlay) else {
+        return false;
+    };
+
+    if overlay_major == 0 {
+        version_major == 0 && version_minor == overlay_minor
+    } else {
+        version_major == overlay_major
+    }
+}
+
+fn semver_major_minor(version: &str) -> Option<(u64, u64)> {
+    let mut parts = version.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next()?.parse().ok()?;
+    Some((major, minor))
 }
 
 fn io_string(err: io::Error) -> String {
@@ -1685,21 +1812,35 @@ fn materialized_workspace_dependency(
 ) -> Result<String, String> {
     let line = match dep_name {
         "anyhow" => "anyhow = { version = \"1.0\", default-features = false }".to_string(),
+        "colored" => "colored = \"2.1\"".to_string(),
+        "glob" => "glob = \"0.3\"".to_string(),
         "hyper" => {
             "hyper = { version = \"1.9\", default-features = false, features = [\"client\", \"server\", \"http1\"] }"
                 .to_string()
         }
+        "ignore" => "ignore = \"0.4\"".to_string(),
         "libm" => "libm = { version = \"0.2\", default-features = false }".to_string(),
         "regex" => {
             "regex = { version = \"1\", default-features = false, features = [\"perf\"] }"
                 .to_string()
         }
+        "reqwest" => {
+            "reqwest = { version = \"0.13.3\", default-features = false, features = [\"json\"] }"
+                .to_string()
+        }
+        "rustyline" => "rustyline = \"14.0\"".to_string(),
         "serde" => {
             "serde = { version = \"1.0\", default-features = false, features = [\"derive\", \"alloc\"] }"
                 .to_string()
         }
         "serde_json" => {
             "serde_json = { version = \"1.0\", default-features = false, features = [\"alloc\"] }"
+                .to_string()
+        }
+        "serde_yaml" => "serde_yaml = \"0.9\"".to_string(),
+        "tempfile" => "tempfile = \"3\"".to_string(),
+        "tokio" => {
+            "tokio = { version = \"1.52.1\", default-features = false, features = [\"full\"] }"
                 .to_string()
         }
         "tower" => {
@@ -1792,12 +1933,14 @@ fn ensure_standalone_manifest_workspace(manifest_path: &Path) -> Result<(), Stri
     fs::write(manifest_path, out).map_err(io_string)
 }
 
-fn push_extra_rustflag(command: &mut Command, flag: &str) {
+fn push_extra_rustflags(command: &mut Command, flags: &[&str]) {
     let mut encoded = env::var("CARGO_ENCODED_RUSTFLAGS").unwrap_or_default();
-    if !encoded.is_empty() {
-        encoded.push(RUSTFLAGS_ENCODED_SEPARATOR);
+    for flag in flags {
+        if !encoded.is_empty() {
+            encoded.push(RUSTFLAGS_ENCODED_SEPARATOR);
+        }
+        encoded.push_str(flag);
     }
-    encoded.push_str(flag);
     command.env("CARGO_ENCODED_RUSTFLAGS", encoded);
 }
 

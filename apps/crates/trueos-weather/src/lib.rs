@@ -10,6 +10,8 @@ pub mod transport;
 use alloc::{string::String, vec::Vec};
 use serde::{Deserialize, Serialize};
 
+pub const DEMO_JSON: &str = include_str!("demo.json");
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct WetterMinute {
     pub dt: u64,
