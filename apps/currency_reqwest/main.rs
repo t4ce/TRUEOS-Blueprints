@@ -2,6 +2,7 @@
 
 extern crate alloc;
 
+use core::error::Error;
 use core::time::Duration;
 
 use alloc::string::String;
@@ -34,12 +35,16 @@ async fn fetch_feed_text() -> Result<String, String> {
         .build()
         .map_err(|err| {
             logl::log(level::ERROR, format_args!("currency_bp: reqwest client failed: {}", err));
+            logl::log(level::ERROR, format_args!("currency_bp: reqwest client debug={:?}", err));
+            log_reqwest_sources("currency_bp: reqwest client", &err);
             format!("client {err}")
         })?;
 
     logl::log(level::INFO, format_args!("currency_bp: fetching live FX rates"));
     let response = client.get(FXFEED_URL).send().await.map_err(|err| {
         logl::log(level::ERROR, format_args!("currency_bp: reqwest request failed: {}", err));
+        logl::log(level::ERROR, format_args!("currency_bp: reqwest request debug={:?}", err));
+        log_reqwest_sources("currency_bp: reqwest request", &err);
         format!("request {err}")
     })?;
 
@@ -55,4 +60,17 @@ async fn fetch_feed_text() -> Result<String, String> {
     })?;
     logl::log(level::INFO, format_args!("currency_bp: rates received bytes={}", body.len()));
     Ok(body)
+}
+
+fn log_reqwest_sources(prefix: &'static str, err: &reqwest::Error) {
+    let mut depth = 0usize;
+    let mut source = err.source();
+    while let Some(cause) = source {
+        logl::log(level::ERROR, format_args!("{} source[{}]: {}", prefix, depth, cause));
+        source = cause.source();
+        depth += 1;
+        if depth >= 4 {
+            break;
+        }
+    }
 }

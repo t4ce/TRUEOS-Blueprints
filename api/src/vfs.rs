@@ -1,3 +1,7 @@
+extern crate alloc;
+
+use alloc::{string::String, vec::Vec};
+
 use crate::vcabi;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -10,6 +14,22 @@ pub enum FsNodeKind {
 pub struct FsStat {
     pub kind: FsNodeKind,
     pub len: u64,
+}
+
+pub fn read_file(path: &[u8]) -> Result<Vec<u8>, i32> {
+    v::vfs::read_file(path)
+}
+
+pub fn read_file_utf8(path: &[u8]) -> Result<String, i32> {
+    v::vfs::read_file_utf8(path)
+}
+
+pub fn write_file(path: &[u8], data: &[u8]) -> Result<(), i32> {
+    v::vfs::write_file(path, data)
+}
+
+pub fn create_dir_all(path: &[u8]) -> Result<(), i32> {
+    v::vfs::create_dir_all(path)
 }
 
 pub fn stat(path: &[u8]) -> Result<FsStat, i32> {

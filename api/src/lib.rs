@@ -26,6 +26,7 @@ unsafe extern "C" {
 pub mod hid;
 pub use hid as input;
 pub mod globalog;
+pub mod clock;
 pub mod logl;
 pub mod rand {
     pub use crate::tyche::*;

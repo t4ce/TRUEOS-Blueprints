@@ -7,7 +7,6 @@ use std::string::String;
 use trueos::logl::{self, level};
 use trueos::platform;
 use trueos::ui2::{self, gfx};
-use trueos::vnet;
 use trueos::{input, runtime, tyche};
 
 const WINDOW_X: i32 = 520;
@@ -157,9 +156,19 @@ impl Game {
 
 async fn fetch_round_svgs(options: [usize; 4]) -> [Option<String>; 4] {
     let mut out = [(); 4].map(|_| None);
+    let client = match build_reqwest_client() {
+        Ok(client) => client,
+        Err(err) => {
+            logl::log(
+                level::ERROR,
+                format_args!("flags bp: reqwest client unavailable err={}\n", err),
+            );
+            return out;
+        }
+    };
     for slot in 0..4 {
         let (code, _) = COUNTRIES[options[slot]];
-        out[slot] = match fetch_flag_svg(code).await {
+        out[slot] = match fetch_flag_svg(&client, code).await {
             Ok(svg) => {
                 logl::log(
                     level::INFO,
@@ -187,9 +196,18 @@ async fn fetch_round_svgs(options: [usize; 4]) -> [Option<String>; 4] {
     out
 }
 
-async fn fetch_flag_svg(code: &str) -> Result<String, String> {
-    vnet::fetch_text(flag_url(code).as_str(), FLAG_FETCH_TIMEOUT_MS)
-        .map_err(|err| format!("request {err}"))
+async fn fetch_flag_svg(client: &reqwest::Client, code: &str) -> Result<String, String> {
+    let url = flag_url(code);
+    let response = client
+        .get(url.as_str())
+        .send()
+        .await
+        .map_err(|err| format!("request {err}"))?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(format!("http {}", status.as_u16()));
+    }
+    response.text().await.map_err(|err| format!("body {err}"))
 }
 
 fn flag_url(code: &str) -> String {
