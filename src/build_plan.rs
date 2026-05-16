@@ -102,6 +102,9 @@ fn package_bin_source_path(
     app_dir: &Path,
     manifest_path: &Path,
 ) -> Result<Option<PathBuf>, String> {
+    let manifest_dir = manifest_path
+        .parent()
+        .ok_or_else(|| format!("bad manifest path: {}", manifest_path.display()))?;
     let cargo_toml = fs::read_to_string(manifest_path)
         .map_err(|err| format!("failed to read {}: {err}", manifest_path.display()))?;
     let mut in_bin = false;
@@ -111,7 +114,7 @@ fn package_bin_source_path(
         let trimmed = line.trim();
         if trimmed.starts_with('[') {
             if in_bin && let Some(path) = current_path.take() {
-                return Ok(Some(app_dir.join(path)));
+                return Ok(Some(manifest_dir.join(path)));
             }
             in_bin = trimmed == "[[bin]]";
             current_path = None;
@@ -128,7 +131,7 @@ fn package_bin_source_path(
     }
 
     if in_bin && let Some(path) = current_path {
-        return Ok(Some(app_dir.join(path)));
+        return Ok(Some(manifest_dir.join(path)));
     }
 
     Ok(None)

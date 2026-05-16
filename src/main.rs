@@ -261,13 +261,13 @@ fn build_one_target_to(
         BuildTarget::Example(name) => name.clone(),
     };
 
-    let target_spec = default_target_spec(&app_dir)?;
+    let packer_target_dir = app_dir.join("target").join("trueos-blueprint");
+    let target_spec = cargo_target_spec_path(&default_target_spec(&app_dir)?, &packer_target_dir)?;
     let target_name = target_spec
         .file_stem()
         .and_then(|s| s.to_str())
         .ok_or_else(|| format!("bad target spec path: {}", target_spec.display()))?
         .to_string();
-    let packer_target_dir = app_dir.join("target").join("trueos-blueprint");
     let cargo_cache_root = cargo_cache_root(&app_dir, &packer_target_dir);
     let cargo_target_dir = cargo_cache_root
         .join(&target_name)
@@ -324,6 +324,7 @@ fn build_one_target_to(
     }
     push_source_overlay_configs(&mut cargo, &staged_source_overlay);
     push_extra_rustflags(&mut cargo, BLUEPRINT_RUSTFLAGS);
+    push_bindgen_clang_args(&mut cargo);
     cargo.env("CARGO_TARGET_DIR", &cargo_target_dir);
     let declared_features = manifest_declared_features(&cargo_manifest_path)?;
     let has_trueos_dependency = manifest_has_dependency(&cargo_manifest_path, "trueos")?;
@@ -363,7 +364,11 @@ fn build_one_target_to(
     }
 
     match &build_target {
-        BuildTarget::Package => {}
+        BuildTarget::Package => {
+            if let Some(bin_name) = package_bin_name(&cargo_manifest_path)? {
+                cargo.arg("--bin").arg(bin_name);
+            }
+        }
         BuildTarget::Example(name) => {
             cargo.arg("--example").arg(name);
         }
@@ -664,10 +669,6 @@ fn enforce_source_overlay_lock(
         return Ok(());
     }
 
-    let lock_path = staged_manifest
-        .parent()
-        .ok_or_else(|| format!("bad manifest path: {}", staged_manifest.display()))?
-        .join("Cargo.lock");
     let mut generate = Command::new("cargo");
     generate
         .arg("+nightly")
@@ -676,6 +677,7 @@ fn enforce_source_overlay_lock(
         .arg(staged_manifest);
     push_source_overlay_configs(&mut generate, staged_source_overlay);
     run_cargo_command(&mut generate, "cargo generate-lockfile")?;
+    let lock_path = generated_lock_path(staged_manifest)?;
 
     let root_name = package_name(staged_manifest)?;
     let mut locked = lock_packages(&lock_path)?;
@@ -751,6 +753,22 @@ fn enforce_source_overlay_lock(
             violations.join("; ")
         ))
     }
+}
+
+fn generated_lock_path(manifest_path: &Path) -> Result<PathBuf, String> {
+    let manifest_dir = manifest_path
+        .parent()
+        .ok_or_else(|| format!("bad manifest path: {}", manifest_path.display()))?;
+    for ancestor in manifest_dir.ancestors() {
+        let candidate = ancestor.join("Cargo.lock");
+        if candidate.is_file() {
+            return Ok(candidate);
+        }
+    }
+    Err(format!(
+        "cargo generate-lockfile did not create a Cargo.lock near {}",
+        manifest_path.display()
+    ))
 }
 
 fn reachable_package_names(locked: &[LockedPackage], root_name: &str) -> BTreeSet<String> {
@@ -836,6 +854,17 @@ fn default_target_spec(app_dir: &Path) -> Result<PathBuf, String> {
         "cannot infer target spec from {}; expected target.json near the blueprint Cargo.toml",
         app_dir.display()
     ))
+}
+
+fn cargo_target_spec_path(target_spec: &Path, packer_target_dir: &Path) -> Result<PathBuf, String> {
+    if target_spec.file_stem().and_then(|stem| stem.to_str()) != Some("target") {
+        return Ok(target_spec.to_path_buf());
+    }
+
+    let staged = packer_target_dir.join("x86_64-unknown-trueos.json");
+    fs::create_dir_all(packer_target_dir).map_err(io_string)?;
+    fs::copy(target_spec, &staged).map_err(io_string)?;
+    Ok(staged)
 }
 
 fn cargo_cache_root(app_dir: &Path, default_packer_target_dir: &Path) -> PathBuf {
@@ -947,15 +976,23 @@ fn staged_manifest_for_overlay(
     let staged_app_dir = work_dir.join("source-overlay-app");
     copy_app_tree(app_dir, &staged_app_dir)?;
     link_kernel_sibling_for_staged_app(app_dir, work_dir)?;
-    let staged_manifest = staged_app_dir.join(
-        manifest_path
-            .file_name()
-            .ok_or_else(|| format!("bad manifest path: {}", manifest_path.display()))?,
-    );
+    let manifest_relative = manifest_path.strip_prefix(app_dir).map_err(|_| {
+        format!(
+            "manifest path {} is not under app dir {}",
+            manifest_path.display(),
+            app_dir.display()
+        )
+    })?;
+    let staged_manifest = staged_app_dir.join(manifest_relative);
+    let nested_workspace_package = manifest_relative.components().count() > 1;
     strip_manifest_patch_section(&staged_manifest)?;
-    materialize_staged_workspace_dependencies(app_dir, work_dir, &staged_manifest)?;
+    if !nested_workspace_package {
+        materialize_staged_workspace_dependencies(app_dir, work_dir, &staged_manifest)?;
+    }
     materialize_hidden_build_std_pins(&staged_manifest, build_settings, source_overlay)?;
-    ensure_standalone_manifest_workspace(&staged_manifest)?;
+    if !nested_workspace_package {
+        ensure_standalone_manifest_workspace(&staged_manifest)?;
+    }
     rewrite_staged_source_for_target(app_dir, &staged_app_dir, build_settings)?;
     let staged_source_overlay = staged_source_overlay(source_overlay, work_dir);
 
@@ -1417,9 +1454,6 @@ fn req_lower_bound(req: &ReqVersion) -> SimpleVersion {
 }
 
 fn caret_upper_bound(req: &ReqVersion) -> SimpleVersion {
-    let minor = req.minor.unwrap_or(0);
-    let patch = req.patch.unwrap_or(0);
-
     if req.major > 0 {
         return SimpleVersion {
             major: req.major + 1,
@@ -1428,6 +1462,14 @@ fn caret_upper_bound(req: &ReqVersion) -> SimpleVersion {
         };
     }
 
+    let Some(minor) = req.minor else {
+        return SimpleVersion {
+            major: 1,
+            minor: 0,
+            patch: 0,
+        };
+    };
+
     if minor > 0 {
         return SimpleVersion {
             major: 0,
@@ -1435,6 +1477,14 @@ fn caret_upper_bound(req: &ReqVersion) -> SimpleVersion {
             patch: 0,
         };
     }
+
+    let Some(patch) = req.patch else {
+        return SimpleVersion {
+            major: 0,
+            minor: 1,
+            patch: 0,
+        };
+    };
 
     SimpleVersion {
         major: 0,
@@ -1554,6 +1604,9 @@ fn source_overlay_lock_mismatches(
         }
         for (name, locked_version) in &lock_packages {
             if name == &patch.name && locked_version != &overlay_version {
+                if !cargo_semver_same_line(locked_version, &overlay_version) {
+                    continue;
+                }
                 out.push(LockMismatch {
                     name: name.clone(),
                     locked_version: locked_version.clone(),
@@ -2095,6 +2148,42 @@ fn push_extra_rustflags(command: &mut Command, flags: &[&str]) {
     command.env("CARGO_ENCODED_RUSTFLAGS", encoded);
 }
 
+fn push_bindgen_clang_args(command: &mut Command) {
+    let Some(builtin_include) = bindgen_builtin_include_dir() else {
+        return;
+    };
+    let mut args = env::var("BINDGEN_EXTRA_CLANG_ARGS").unwrap_or_default();
+    if !args.is_empty() {
+        args.push(' ');
+    }
+    args.push_str("-isystem ");
+    args.push_str(&builtin_include.to_string_lossy());
+    command.env("BINDGEN_EXTRA_CLANG_ARGS", args);
+}
+
+fn bindgen_builtin_include_dir() -> Option<PathBuf> {
+    if let Ok(output) = Command::new("clang").arg("-print-resource-dir").output()
+        && output.status.success()
+    {
+        let resource_dir = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !resource_dir.is_empty() {
+            let builtin_include = PathBuf::from(resource_dir).join("include");
+            if builtin_include.is_dir() {
+                return Some(builtin_include);
+            }
+        }
+    }
+
+    let Ok(output) = Command::new("cc").arg("-print-file-name=include").output() else {
+        return None;
+    };
+    if !output.status.success() {
+        return None;
+    }
+    let builtin_include = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim().to_string());
+    builtin_include.is_dir().then_some(builtin_include)
+}
+
 fn inline_table_path(value: &str) -> Option<String> {
     let table = value
         .trim()
@@ -2175,6 +2264,38 @@ fn package_name(manifest_path: &Path) -> Result<String, String> {
     Err(format!("failed to read package name from {}", manifest_path.display()))
 }
 
+fn package_bin_name(manifest_path: &Path) -> Result<Option<String>, String> {
+    let cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
+    let mut in_package = false;
+    let mut in_bin = false;
+    let mut default_run = None;
+    let mut first_bin = None;
+
+    for line in cargo_toml.lines() {
+        let trimmed = line.split('#').next().unwrap_or("").trim();
+        if trimmed.starts_with('[') {
+            in_package = trimmed == "[package]";
+            in_bin = trimmed == "[[bin]]";
+            continue;
+        }
+
+        if in_package && trimmed.starts_with("default-run") {
+            if let Some((_, value)) = trimmed.split_once('=') {
+                default_run = toml_string_value(value.trim());
+            }
+            continue;
+        }
+
+        if in_bin && first_bin.is_none() && trimmed.starts_with("name") {
+            if let Some((_, value)) = trimmed.split_once('=') {
+                first_bin = toml_string_value(value.trim());
+            }
+        }
+    }
+
+    Ok(default_run.or(first_bin))
+}
+
 fn package_app_specs(app_dir: &Path) -> Result<Vec<PackageAppSpec>, String> {
     let mut specs = Vec::new();
     for app_name in registered_app_names(app_dir)? {
@@ -2196,17 +2317,33 @@ fn package_app_spec(app_dir: &Path, app_name: &str) -> Result<Option<PackageAppS
 
 fn package_app_spec_required(app_dir: &Path, app_name: &str) -> Result<PackageAppSpec, String> {
     let dir = app_dir.join("apps").join(app_name);
-    let manifest_path = dir.join("Cargo.toml");
+    let mut manifest_path = dir.join("Cargo.toml");
     if !manifest_path.is_file() {
         return Err(format!("registered app `{app_name}` is missing {}", manifest_path.display()));
     }
 
-    let name = package_name(&manifest_path)?;
-    if name != app_name {
+    let mut name = match package_name(&manifest_path) {
+        Ok(name) => name,
+        Err(_) => {
+            let package_manifest_path = dir.join("src").join("main").join("Cargo.toml");
+            if !package_manifest_path.is_file() {
+                return Err(format!(
+                    "registered app `{app_name}` has virtual manifest {} without src/main/Cargo.toml",
+                    manifest_path.display()
+                ));
+            }
+            manifest_path = package_manifest_path;
+            package_name(&manifest_path)?
+        }
+    };
+    if name != app_name && app_name != "matrix" {
         return Err(format!(
             "registered app `{app_name}` has package name `{name}` in {}",
             manifest_path.display()
         ));
+    }
+    if app_name == "matrix" {
+        name = app_name.to_string();
     }
 
     Ok(PackageAppSpec {
