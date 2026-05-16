@@ -6,18 +6,18 @@ use alloc::{
     collections::BTreeMap,
     format,
     string::{String, ToString},
+    sync::Arc,
     vec,
     vec::Vec,
 };
 use core::sync::atomic::{AtomicU16, AtomicU64, Ordering};
-use std::{io, net::SocketAddr, sync::Arc};
 
 use axum::{
     Router,
     body::{Body, Bytes},
-    extract::{DefaultBodyLimit, OriginalUri, Path, State},
+    extract::{DefaultBodyLimit, Path, State},
     http::{
-        HeaderMap, StatusCode,
+        HeaderMap, StatusCode, Uri,
         header::{CACHE_CONTROL, CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_TYPE},
     },
     response::Response,
@@ -29,9 +29,11 @@ use serde_json::Value;
 use trueos::{
     clock, logl,
     logl::level,
-    platform, runtime,
+    platform::{self, io},
+    runtime,
     time::{self, Duration},
-    tokio, vfs,
+    tokio::{self, net::SocketAddr},
+    vfs,
 };
 
 const FILEEXPLORER_HTTP_TCP_PORT: u16 = 8;
@@ -40,7 +42,7 @@ const FILEEXPLORER_HTTP_BODY_MAX: usize = 64 * 1024;
 const FILEEXPLORER_UPLOAD_BODY_MAX: usize = 16 * 1024 * 1024;
 const FILEEXPLORER_BIND_RETRY_MS: u64 = 1000;
 const FILEEXPLORER_INDEX_HTML: &str = include_str!("index.html");
-const TRUEOS_TAILWIND_CSS: &str = include_str!("../common/tailwind.css");
+const TRUEOS_TAILWIND_CSS: &str = include_str!("tailwind.css");
 
 static FILEEXPLORER_HTTP_PORT: AtomicU16 = AtomicU16::new(0);
 static JOB_SEQ: AtomicU64 = AtomicU64::new(1);
@@ -295,7 +297,7 @@ async fn handle_healthz() -> Response {
     )
 }
 
-async fn handle_tree(OriginalUri(uri): OriginalUri) -> Response {
+async fn handle_tree(uri: Uri) -> Response {
     let root_id = uri.query().and_then(|query| {
         query.split('&').find_map(|pair| {
             let (key, value) = pair.split_once('=')?;

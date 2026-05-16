@@ -4,7 +4,6 @@ extern crate alloc;
 
 use alloc::{string::ToString, vec::Vec};
 use core::sync::atomic::{AtomicU16, Ordering};
-use std::{io, net::SocketAddr};
 
 use axum::{
     Router,
@@ -21,15 +20,16 @@ use serde::Serialize;
 use trueos::{
     clock, logl,
     logl::level,
-    platform, runtime,
+    platform::{self, io},
+    runtime,
     time::{self, Duration},
-    tokio,
+    tokio::{self, net::SocketAddr},
 };
 
 const WEBDEVICES_HTTP_TCP_PORT: u16 = 10;
 const WEBDEVICES_BIND_RETRY_MS: u64 = 1000;
 const WEBDEVICES_INDEX_HTML: &str = include_str!("index.html");
-const TRUEOS_TAILWIND_CSS: &str = include_str!("../common/tailwind.css");
+const TRUEOS_TAILWIND_CSS: &str = include_str!("tailwind.css");
 
 static WEBDEVICES_HTTP_PORT: AtomicU16 = AtomicU16::new(0);
 

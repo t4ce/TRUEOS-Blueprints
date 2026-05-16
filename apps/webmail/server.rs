@@ -4,14 +4,12 @@ extern crate alloc;
 
 use alloc::{string::ToString, vec::Vec};
 use core::sync::atomic::{AtomicU16, Ordering};
-use std::{io, net::SocketAddr};
 
 use axum::{
     Router,
     body::{Body, Bytes},
-    extract::OriginalUri,
     http::{
-        StatusCode,
+        StatusCode, Uri,
         header::{CACHE_CONTROL, CONTENT_LENGTH, CONTENT_TYPE},
     },
     response::Response,
@@ -22,16 +20,17 @@ use serde::Serialize;
 use trueos::{
     clock, logl,
     logl::level,
-    platform, runtime,
+    platform::{self, io},
+    runtime,
     time::{self, Duration},
-    tokio,
+    tokio::{self, net::SocketAddr},
 };
 
 const WEBMAIL_HTTP_TCP_PORT: u16 = 4;
 const WEBMAIL_BIND_RETRY_MS: u64 = 1000;
 const WEBMAIL_INDEX_HTML: &str = include_str!("index.html");
 const WEBMAIL_APP_JS: &str = include_str!("app.js");
-const TRUEOS_TAILWIND_CSS: &str = include_str!("../common/tailwind.css");
+const TRUEOS_TAILWIND_CSS: &str = include_str!("tailwind.css");
 
 static WEBMAIL_HTTP_PORT: AtomicU16 = AtomicU16::new(0);
 
@@ -117,7 +116,7 @@ async fn handle_list() -> Response {
     )
 }
 
-async fn handle_read(OriginalUri(uri): OriginalUri) -> Response {
+async fn handle_read(uri: Uri) -> Response {
     let id = uri
         .query()
         .and_then(|query| query.split('&').find_map(|pair| pair.strip_prefix("id=")))
