@@ -411,10 +411,7 @@ fn build_one_target_to(
     };
 
     let mut ld = tool_command(&["ld.lld", "rust-lld", "ld"])?;
-    ld.arg("-r")
-        .arg("--gc-sections")
-        .arg("-o")
-        .arg(&linked);
+    ld.arg("-r").arg("--gc-sections").arg("-o").arg(&linked);
     if let Some(symbol) = &entry_symbol {
         ld.arg("--undefined").arg(symbol);
     }
@@ -1926,6 +1923,10 @@ fn materialized_workspace_dependency(
 ) -> Result<String, String> {
     let line = match dep_name {
         "anyhow" => "anyhow = { version = \"1.0\", default-features = false }".to_string(),
+        "axum" => {
+            "axum = { version = \"0.8.9\", default-features = false, features = [\"http1\", \"json\", \"tokio\"] }"
+                .to_string()
+        }
         "colored" => "colored = \"2.1\"".to_string(),
         "glob" => "glob = \"0.3\"".to_string(),
         "http-body-util" => {
@@ -1987,6 +1988,7 @@ fn materialized_workspace_dependency(
                 .to_string()
         }
         "trueos" => path_dependency_line(dep_name, &blueprint_root.join("api")),
+        "trueos-chat" => path_dependency_line(dep_name, &blueprint_root.join("../trueos-chat")),
         "trueos-currency" => {
             path_dependency_line(dep_name, &blueprint_root.join("apps/currency_reqwest/trueos-currency"))
         }

@@ -1,8 +1,10 @@
 {
   "apps": [
     "chart",
+    "chatserver",
     "cli_tetris",
     "currency_reqwest",
+    "fileexplorer",
     "flags",
     "framework_stack",
     "full_tetris",
@@ -18,6 +20,8 @@
     "tokio_net",
     "tokio_rt",
     "triangle",
-    "weather"
+    "weather",
+    "webdevices",
+    "webmail"
   ]
 }

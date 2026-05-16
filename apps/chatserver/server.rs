@@ -2,9 +2,8 @@
 
 extern crate alloc;
 
-use alloc::{string::String, string::ToString, vec::Vec};
+use alloc::{string::ToString, vec::Vec};
 use core::sync::atomic::{AtomicBool, AtomicU16, Ordering};
-use std::{io, net::SocketAddr, sync::Mutex};
 
 use axum::{
     Router,
@@ -21,9 +20,15 @@ use axum::{
 use trueos::{
     clock, logl,
     logl::level,
-    platform, runtime,
+    platform::{self, io},
+    runtime,
     time::{self, Duration},
-    tokio, vfs,
+    tokio::{
+        self,
+        net::SocketAddr,
+        sync::{Mutex, MutexGuard},
+    },
+    vfs,
 };
 use trueos_chat::{ChatConfig, ChatHub, ChatMethod, ChatRequest, ChatResponse};
 
@@ -34,9 +39,9 @@ const CHAT_SAVE_BATCH_MS: u64 = 10_000;
 const CHAT_SAVE_IDLE_MS: u64 = 1000;
 const CHAT_STORE_DIR: &str = "chat";
 const CHAT_STORE_PATH: &str = "chat/rooms.json";
-const TRUEOS_TAILWIND_CSS: &str = include_str!("../common/tailwind.css");
+const TRUEOS_TAILWIND_CSS: &str = include_str!("tailwind.css");
 
-static CHAT_HUB: Mutex<Option<ChatHub>> = Mutex::new(None);
+static CHAT_HUB: Mutex<Option<ChatHub>> = Mutex::const_new(None);
 static CHAT_HUB_LOADED: AtomicBool = AtomicBool::new(false);
 static CHAT_SAVE_REQUESTED: AtomicBool = AtomicBool::new(false);
 static CHAT_STORE_DIR_READY: AtomicBool = AtomicBool::new(false);
@@ -49,10 +54,8 @@ fn current_port() -> Option<u16> {
     }
 }
 
-fn lock_hub() -> std::sync::MutexGuard<'static, Option<ChatHub>> {
-    CHAT_HUB
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
+async fn lock_hub() -> MutexGuard<'static, Option<ChatHub>> {
+    CHAT_HUB.lock().await
 }
 
 fn status_code(status: u16) -> StatusCode {
@@ -67,12 +70,12 @@ fn now_ms() -> u64 {
     0
 }
 
-fn load_chat_hub_once_sync() {
+async fn load_chat_hub_once() {
     if CHAT_HUB_LOADED.load(Ordering::Acquire) {
         return;
     }
     {
-        let guard = lock_hub();
+        let guard = lock_hub().await;
         if guard.is_some() {
             CHAT_HUB_LOADED.store(true, Ordering::Release);
             return;
@@ -90,7 +93,7 @@ fn load_chat_hub_once_sync() {
     match ChatHub::from_json_bytes(ChatConfig::default(), bytes.as_slice()) {
         Ok(hub) => {
             let room_count = hub.room_count();
-            let mut guard = lock_hub();
+            let mut guard = lock_hub().await;
             if guard.is_none() {
                 *guard = Some(hub);
                 logl::log(
@@ -107,13 +110,13 @@ fn load_chat_hub_once_sync() {
     }
 }
 
-fn chat_hub_snapshot_bytes() -> Option<Vec<u8>> {
-    let guard = lock_hub();
+async fn chat_hub_snapshot_bytes() -> Option<Vec<u8>> {
+    let guard = lock_hub().await;
     guard.as_ref().map(ChatHub::to_json_bytes)
 }
 
-fn save_chat_hub_snapshot_sync() {
-    let Some(bytes) = chat_hub_snapshot_bytes() else {
+async fn save_chat_hub_snapshot() {
+    let Some(bytes) = chat_hub_snapshot_bytes().await else {
         return;
     };
     if !CHAT_STORE_DIR_READY.load(Ordering::Acquire) {
@@ -153,7 +156,7 @@ async fn chat_hub_save_loop() {
         time::sleep(Duration::from_millis(CHAT_SAVE_BATCH_MS)).await;
         let coalesced = CHAT_SAVE_REQUESTED.swap(false, Ordering::AcqRel);
         logl::log(level::INFO, "chat: save begin mode=batched");
-        save_chat_hub_snapshot_sync();
+        save_chat_hub_snapshot().await;
         logl::log(
             level::INFO,
             format_args!("chat: save done mode=batched coalesced_requests={}", coalesced),
@@ -198,7 +201,7 @@ async fn handle_tailwind_css() -> Response {
 }
 
 async fn handle_chat_request(request: Request) -> Response {
-    load_chat_hub_once_sync();
+    load_chat_hub_once().await;
     let (parts, body) = request.into_parts();
     let method = match parts.method {
         Method::GET => ChatMethod::Get,
@@ -213,7 +216,7 @@ async fn handle_chat_request(request: Request) -> Response {
     };
 
     let response = {
-        let mut guard = lock_hub();
+        let mut guard = lock_hub().await;
         let hub = guard.get_or_insert_with(|| ChatHub::new(ChatConfig::default()));
         hub.handle(ChatRequest {
             method,
@@ -241,7 +244,7 @@ fn chat_router() -> Router {
 
 async fn chat_http_runtime() -> Result<(), io::Error> {
     logl::log(level::INFO, "chat-http: runtime async enter");
-    load_chat_hub_once_sync();
+    load_chat_hub_once().await;
 
     let app = chat_router();
     let addr = SocketAddr::from(([0, 0, 0, 0], CHAT_HTTP_TCP_PORT));
