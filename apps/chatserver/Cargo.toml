@@ -1,0 +1,13 @@
+[package]
+name = "chatserver"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "chatserver"
+path = "server.rs"
+
+[dependencies]
+axum.workspace = true
+trueos.workspace = true
+trueos-chat.workspace = true
