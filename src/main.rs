@@ -90,7 +90,13 @@ const CARGO_CACHE_DIR_ENV: &str = "TRUEOS_BLUEPRINT_CARGO_CACHE_DIR";
 const TARGET_SPEC_ENV: &str = "TRUEOS_BLUEPRINT_TARGET_SPEC";
 const RUSTFLAGS_ENCODED_SEPARATOR: char = '\u{1f}';
 const TRUEOS_CHECK_CFG_FLAG: &str = "--check-cfg=cfg(target_os,values(\"trueos\",\"zkvm\"))";
-const BLUEPRINT_RUSTFLAGS: &[&str] = &[TRUEOS_CHECK_CFG_FLAG, "-A", "warnings"];
+const BLUEPRINT_RUSTFLAGS: &[&str] = &[
+    TRUEOS_CHECK_CFG_FLAG,
+    "--cfg",
+    "getrandom_backend=\"unsupported\"",
+    "-A",
+    "warnings",
+];
 
 fn main() {
     if let Err(err) = run() {
@@ -278,7 +284,7 @@ fn build_one_target_to(
         .join(cargo_profile.target_subdir());
     let deps_dir = target_dir.join("deps");
 
-    let work_dir = workdir(&packer_target_dir, &output_name)?;
+    let work_dir = workdir(app_dir, &packer_target_dir, &output_name)?;
     reset_dir(&work_dir)?;
 
     let source_overlay = source_overlay_patches(app_dir, manifest_path)?;
@@ -297,6 +303,9 @@ fn build_one_target_to(
     enforce_source_overlay_lock(&cargo_manifest_path, &staged_source_overlay)?;
 
     let mut cargo = Command::new("cargo");
+    if let Some(manifest_dir) = cargo_manifest_path.parent() {
+        cargo.current_dir(manifest_dir);
+    }
     cargo
         .arg("+nightly")
         .arg("rustc")
@@ -325,6 +334,7 @@ fn build_one_target_to(
     push_source_overlay_configs(&mut cargo, &staged_source_overlay);
     push_extra_rustflags(&mut cargo, BLUEPRINT_RUSTFLAGS);
     push_bindgen_clang_args(&mut cargo);
+    push_trueos_cc_flags(&mut cargo);
     cargo.env("CARGO_TARGET_DIR", &cargo_target_dir);
     let declared_features = manifest_declared_features(&cargo_manifest_path)?;
     let has_trueos_dependency = manifest_has_dependency(&cargo_manifest_path, "trueos")?;
@@ -346,7 +356,7 @@ fn build_one_target_to(
     {
         push_feature(&mut extra_features, "trueos/default-panic-handler");
     }
-    if matches!(build_settings.flavor, BuildFlavor::ThinNoStd) {
+    if matches!(build_settings.flavor, BuildFlavor::ThinNoStd) || is_helix_app_dir(app_dir) {
         cargo.arg("--no-default-features");
     } else if build_settings.needs_tokio_net {
         push_app_or_trueos_feature(
@@ -923,6 +933,10 @@ fn source_overlay_patches(
 ) -> Result<Vec<CratePatch>, String> {
     let mut out = Vec::new();
 
+    if is_helix_app_dir(app_dir) {
+        return Ok(out);
+    }
+
     if let Some(kernel_manifest) = trueos_kernel_manifest(app_dir) {
         let kernel_root = kernel_manifest
             .parent()
@@ -1312,8 +1326,12 @@ fn source_overlay_version_alignment(
 
 fn cargo_metadata(app_dir: &Path, manifest_path: &Path) -> Result<CargoMetadata, String> {
     let mut metadata = Command::new("cargo");
+    if let Some(manifest_dir) = manifest_path.parent() {
+        metadata.current_dir(manifest_dir);
+    } else {
+        metadata.current_dir(app_dir);
+    }
     metadata
-        .current_dir(app_dir)
         .arg("+nightly")
         .arg("metadata")
         .arg("--format-version")
@@ -2153,12 +2171,45 @@ fn push_bindgen_clang_args(command: &mut Command) {
         return;
     };
     let mut args = env::var("BINDGEN_EXTRA_CLANG_ARGS").unwrap_or_default();
+    push_clang_isystem_arg(&mut args, &builtin_include);
+    if let Some(include_dir) = host_multiarch_include_dir() {
+        push_clang_isystem_arg(&mut args, &include_dir);
+    }
+    command.env("BINDGEN_EXTRA_CLANG_ARGS", args);
+}
+
+fn push_trueos_cc_flags(command: &mut Command) {
+    push_env_words(
+        command,
+        "CFLAGS",
+        &["-DROCKSDB_PLATFORM_POSIX", "-DROCKSDB_LIB_IO_POSIX", "-DOS_LINUX"],
+    );
+    push_env_words(
+        command,
+        "CXXFLAGS",
+        &["-DROCKSDB_PLATFORM_POSIX", "-DROCKSDB_LIB_IO_POSIX", "-DOS_LINUX"],
+    );
+}
+
+fn push_env_words(command: &mut Command, key: &str, words: &[&str]) {
+    let mut value = env::var(key).unwrap_or_default();
+    for word in words {
+        if !value.split_whitespace().any(|existing| existing == *word) {
+            if !value.is_empty() {
+                value.push(' ');
+            }
+            value.push_str(word);
+        }
+    }
+    command.env(key, value);
+}
+
+fn push_clang_isystem_arg(args: &mut String, include_dir: &Path) {
     if !args.is_empty() {
         args.push(' ');
     }
     args.push_str("-isystem ");
-    args.push_str(&builtin_include.to_string_lossy());
-    command.env("BINDGEN_EXTRA_CLANG_ARGS", args);
+    args.push_str(&include_dir.to_string_lossy());
 }
 
 fn bindgen_builtin_include_dir() -> Option<PathBuf> {
@@ -2182,6 +2233,21 @@ fn bindgen_builtin_include_dir() -> Option<PathBuf> {
     }
     let builtin_include = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim().to_string());
     builtin_include.is_dir().then_some(builtin_include)
+}
+
+fn host_multiarch_include_dir() -> Option<PathBuf> {
+    let Ok(output) = Command::new("cc").arg("-dumpmachine").output() else {
+        return None;
+    };
+    if !output.status.success() {
+        return None;
+    }
+    let triple = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if triple.is_empty() {
+        return None;
+    }
+    let include_dir = PathBuf::from("/usr/include").join(triple);
+    include_dir.is_dir().then_some(include_dir)
 }
 
 fn inline_table_path(value: &str) -> Option<String> {
@@ -2325,10 +2391,10 @@ fn package_app_spec_required(app_dir: &Path, app_name: &str) -> Result<PackageAp
     let mut name = match package_name(&manifest_path) {
         Ok(name) => name,
         Err(_) => {
-            let package_manifest_path = dir.join("src").join("main").join("Cargo.toml");
+            let package_manifest_path = virtual_package_app_manifest_path(&dir, app_name);
             if !package_manifest_path.is_file() {
                 return Err(format!(
-                    "registered app `{app_name}` has virtual manifest {} without src/main/Cargo.toml",
+                    "registered app `{app_name}` has virtual manifest {} without a known package manifest",
                     manifest_path.display()
                 ));
             }
@@ -2336,13 +2402,13 @@ fn package_app_spec_required(app_dir: &Path, app_name: &str) -> Result<PackageAp
             package_name(&manifest_path)?
         }
     };
-    if name != app_name && app_name != "matrix" {
+    if name != app_name && !virtual_package_app_alias(app_name) {
         return Err(format!(
             "registered app `{app_name}` has package name `{name}` in {}",
             manifest_path.display()
         ));
     }
-    if app_name == "matrix" {
+    if virtual_package_app_alias(app_name) {
         name = app_name.to_string();
     }
 
@@ -2351,6 +2417,18 @@ fn package_app_spec_required(app_dir: &Path, app_name: &str) -> Result<PackageAp
         dir,
         manifest_path,
     })
+}
+
+fn virtual_package_app_manifest_path(dir: &Path, app_name: &str) -> PathBuf {
+    match app_name {
+        "helix" => dir.join("helix-term").join("Cargo.toml"),
+        "matrix" => dir.join("src").join("main").join("Cargo.toml"),
+        _ => dir.join("src").join("main").join("Cargo.toml"),
+    }
+}
+
+fn virtual_package_app_alias(app_name: &str) -> bool {
+    matches!(app_name, "helix" | "matrix")
 }
 
 fn registered_app_names(app_dir: &Path) -> Result<Vec<String>, String> {
@@ -2537,10 +2615,19 @@ fn parse_string_array(value: &str) -> Vec<String> {
         .collect()
 }
 
-fn workdir(packer_target_dir: &Path, output_name: &str) -> Result<PathBuf, String> {
-    Ok(packer_target_dir
-        .join("work")
-        .join(sanitize_path_component(output_name)))
+fn workdir(app_dir: &Path, packer_target_dir: &Path, output_name: &str) -> Result<PathBuf, String> {
+    let safe_name = sanitize_path_component(output_name);
+    if is_helix_app_dir(app_dir) {
+        return Ok(env::temp_dir()
+            .join("trueos-blueprint-work")
+            .join(safe_name));
+    }
+
+    Ok(packer_target_dir.join("work").join(safe_name))
+}
+
+fn is_helix_app_dir(app_dir: &Path) -> bool {
+    app_dir.file_name().and_then(|name| name.to_str()) == Some("helix")
 }
 
 fn sanitize_path_component(value: &str) -> String {

@@ -4,3 +4,6 @@
 [submodule "apps/matrix"]
 	path = apps/matrix
 	url = https://github.com/matrix-construct/tuwunel
+[submodule "apps/helix"]
+	path = apps/helix
+	url = https://github.com/helix-editor/helix
