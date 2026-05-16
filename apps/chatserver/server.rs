@@ -34,7 +34,7 @@ const CHAT_SAVE_BATCH_MS: u64 = 10_000;
 const CHAT_SAVE_IDLE_MS: u64 = 1000;
 const CHAT_STORE_DIR: &str = "chat";
 const CHAT_STORE_PATH: &str = "chat/rooms.json";
-const TRUEOS_TAILWIND_CSS: &str = include_str!("tailwind.css");
+const TRUEOS_TAILWIND_CSS: &str = include_str!("../common/tailwind.css");
 
 static CHAT_HUB: Mutex<Option<ChatHub>> = Mutex::new(None);
 static CHAT_HUB_LOADED: AtomicBool = AtomicBool::new(false);
