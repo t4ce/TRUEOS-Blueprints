@@ -335,6 +335,7 @@ fn build_one_target_to(
     push_extra_rustflags(&mut cargo, BLUEPRINT_RUSTFLAGS);
     push_bindgen_clang_args(&mut cargo);
     push_trueos_cc_flags(&mut cargo);
+    cargo.env("RUSTC_BOOTSTRAP_SYNTHETIC_TARGET", "1");
     cargo.env("CARGO_TARGET_DIR", &cargo_target_dir);
     let declared_features = manifest_declared_features(&cargo_manifest_path)?;
     let has_trueos_dependency = manifest_has_dependency(&cargo_manifest_path, "trueos")?;
@@ -920,6 +921,14 @@ fn env_path(name: &str) -> Option<PathBuf> {
 fn find_vendor_dir(app_dir: &Path, name: &str) -> Option<PathBuf> {
     for ancestor in app_dir.ancestors() {
         let candidate = ancestor.join("vendor").join(name);
+        if candidate.is_dir() {
+            return Some(candidate);
+        }
+    }
+    if let Some(kernel_manifest) = trueos_kernel_manifest(app_dir)
+        && let Some(kernel_root) = kernel_manifest.parent()
+    {
+        let candidate = kernel_root.join("vendor").join(name);
         if candidate.is_dir() {
             return Some(candidate);
         }

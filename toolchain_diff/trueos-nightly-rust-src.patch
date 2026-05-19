@@ -1,0 +1,93 @@
+--- library/std/src/os/mod.rs
++++ library/std/src/os/mod.rs
+@@ -92,7 +92,7 @@
+     )
+ )))]
+-#[cfg(any(target_os = "linux", doc))]
++#[cfg(any(target_os = "linux", target_os = "trueos", doc))]
+ pub mod linux;
+ 
+ // wasi
+@@ -194,7 +194,7 @@
+ ))]
+ pub mod fd;
+ 
+-#[cfg(any(target_os = "linux", target_os = "android", target_os = "cygwin", doc))]
++#[cfg(any(target_os = "linux", target_os = "trueos", target_os = "android", target_os = "cygwin", doc))]
+ mod net;
+ 
+ #[cfg(any(
+--- library/std/src/os/unix/mod.rs
++++ library/std/src/os/unix/mod.rs
+@@ -65,7 +65,7 @@
+     pub use crate::os::l4re::*;
+-    #[cfg(target_os = "linux")]
++    #[cfg(any(target_os = "linux", target_os = "trueos"))]
+     pub use crate::os::linux::*;
+     #[cfg(target_os = "netbsd")]
+     pub use crate::os::netbsd::*;
+--- library/std/src/os/linux/mod.rs
++++ library/std/src/os/linux/mod.rs
+@@ -4,7 +4,9 @@
+ #![doc(cfg(target_os = "linux"))]
+ 
+ pub mod fs;
++#[cfg(not(target_os = "trueos"))]
+ pub mod net;
++#[cfg(not(target_os = "trueos"))]
+ pub mod process;
+ pub mod raw;
+--- library/std/src/sys/random/mod.rs
++++ library/std/src/sys/random/mod.rs
+@@ -104,6 +104,7 @@
+     }
+     any(
+         all(target_family = "wasm", target_os = "unknown"),
++        target_os = "trueos",
+         target_os = "xous",
+         target_os = "vexos",
+     ) => {
+@@ -117,6 +118,7 @@
+ #[cfg(not(any(
+     target_os = "linux",
++    target_os = "trueos",
+     target_os = "android",
+     all(target_family = "wasm", target_os = "unknown"),
+     all(target_os = "wasi", not(target_env = "p1")),
+--- library/std/src/sys/args/unix.rs
++++ library/std/src/sys/args/unix.rs
+@@ -63,6 +63,7 @@
+ #[cfg(any(
+     target_os = "linux",
++    target_os = "trueos",
+     target_os = "android",
+     target_os = "freebsd",
+     target_os = "dragonfly",
+--- library/std/src/sys/paths/unix.rs
++++ library/std/src/sys/paths/unix.rs
+@@ -253,6 +253,7 @@
+ #[cfg(any(
+     target_os = "linux",
++    target_os = "trueos",
+     target_os = "cygwin",
+     target_os = "hurd",
+     target_os = "android",
+--- library/std/src/sys/fs/unix.rs
++++ library/std/src/sys/fs/unix.rs
+@@ -1145,6 +1145,7 @@
+         target_os = "illumos",
+         target_os = "l4re",
+         target_os = "linux",
++        target_os = "trueos",
+         target_os = "nto",
+         target_os = "redox",
+         target_os = "rtems",
+--- library/std/src/sys/thread_local/mod.rs
++++ library/std/src/sys/thread_local/mod.rs
+@@ -29,6 +29,7 @@
+         all(target_family = "wasm", not(target_feature = "atomics")),
+         target_os = "uefi",
++        target_os = "trueos",
+         target_os = "zkvm",
+         target_os = "trusty",
+         target_os = "vexos",
