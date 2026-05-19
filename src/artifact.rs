@@ -291,6 +291,9 @@ fn best_main_symbol_from_readelf(stdout: &str) -> Option<(u32, u32, String)> {
         let value = cols[1].trim_start_matches("0x");
         let section = cols[6].parse::<u32>().unwrap_or(0);
         let value = u32::from_str_radix(value, 16).unwrap_or(0);
+        if name == "_start" {
+            return Some((section, value, name.to_string()));
+        }
         if name == "main" {
             return Some((section, value, name.to_string()));
         }

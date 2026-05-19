@@ -1079,9 +1079,15 @@ fn rewrite_staged_source_for_target(
         rewritten.push('\n');
     }
     if build_settings.needs_entry_shim {
-        rewritten.push_str(
-            "\n#[unsafe(no_mangle)]\npub extern \"C\" fn _start() -> ! {\n    main();\n    trueos::panic_abort(\"blueprint main returned\\n\")\n}\n",
-        );
+        if build_settings.needs_no_std_shim {
+            rewritten.push_str(
+                "\n#[unsafe(no_mangle)]\npub extern \"C\" fn _start() -> ! {\n    main();\n    trueos::panic_abort(\"blueprint main returned\\n\")\n}\n",
+            );
+        } else {
+            rewritten.push_str(
+                "\n#[unsafe(no_mangle)]\npub extern \"C\" fn _start() -> ! {\n    main();\n    loop {\n        core::hint::spin_loop();\n    }\n}\n",
+            );
+        }
     }
 
     fs::write(&staged_source, rewritten).map_err(io_string)
