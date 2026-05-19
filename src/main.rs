@@ -267,6 +267,9 @@ fn build_one_target_to(
         cargo_profile
     };
     let build_settings = resolve_build_settings(&app_dir, &manifest_path, &build_target)?;
+    if matches!(build_settings.flavor, BuildFlavor::TokioStd) {
+        ensure_rust_std_trueos_thread_set_name()?;
+    }
 
     let output_name = match &build_target {
         BuildTarget::Package => package_bin_name(&manifest_path)?.unwrap_or(package_name(&manifest_path)?),
@@ -931,6 +934,62 @@ fn env_path(name: &str) -> Option<PathBuf> {
     } else {
         env::current_dir().ok().map(|cwd| cwd.join(path))
     }
+}
+
+fn ensure_rust_std_trueos_thread_set_name() -> Result<(), String> {
+    let sysroot_output = Command::new("rustc")
+        .arg("+nightly")
+        .arg("--print")
+        .arg("sysroot")
+        .output()
+        .map_err(|err| format!("rustc +nightly --print sysroot failed to start: {err}"))?;
+    if !sysroot_output.status.success() {
+        return Err(format!(
+            "rustc +nightly --print sysroot failed with status {}",
+            sysroot_output.status
+        ));
+    }
+    let sysroot = String::from_utf8(sysroot_output.stdout)
+        .map_err(|err| format!("rustc sysroot output was not UTF-8: {err}"))?;
+    let unix_thread = PathBuf::from(sysroot.trim())
+        .join("lib/rustlib/src/rust/library/std/src/sys/thread/unix.rs");
+    let source = fs::read_to_string(&unix_thread).map_err(|err| {
+        format!(
+            "failed to read Rust std thread source {}; install rust-src or check permissions: {err}",
+            unix_thread.display()
+        )
+    })?;
+    if source.contains("target_os = \"trueos\"") && source.contains("pub fn set_name(_name: &CStr)") {
+        return Ok(());
+    }
+
+    let marker = "\n#[cfg(not(target_os = \"espidf\"))]\npub fn sleep";
+    let Some(marker_idx) = source.find(marker) else {
+        return Err(format!(
+            "failed to patch {}; missing std unix thread sleep marker",
+            unix_thread.display()
+        ));
+    };
+    let patch = r#"
+
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+pub fn set_name(_name: &CStr) {}
+"#;
+    let mut patched = String::with_capacity(source.len() + patch.len());
+    patched.push_str(&source[..marker_idx]);
+    patched.push_str(patch);
+    patched.push_str(&source[marker_idx..]);
+    fs::write(&unix_thread, patched).map_err(|err| {
+        format!(
+            "failed to patch Rust std thread source {}: {err}",
+            unix_thread.display()
+        )
+    })?;
+    println!(
+        "trueos-blueprint: patched rust-src std unix thread set_name for trueos: {}",
+        unix_thread.display()
+    );
+    Ok(())
 }
 
 fn find_vendor_dir(app_dir: &Path, name: &str) -> Option<PathBuf> {
@@ -2297,7 +2356,14 @@ fn materialized_workspace_dependency(
         }
         "trueos-gfx-core" => format!(
             "trueos-gfx-core = {{ path = {}, features = [\"alloc\"] }}",
-            toml_string(&blueprint_root.join("../trueos-gfx-core").display().to_string())
+            toml_string(
+                &work_dir
+                    .parent()
+                    .unwrap_or(work_dir)
+                    .join("TRUEOS/crates/trueos-gfx-core")
+                    .display()
+                    .to_string(),
+            )
         ),
         "trueos-tetris" => path_dependency_line(
             dep_name,
@@ -2324,13 +2390,12 @@ fn path_dependency_line(dep_name: &str, path: &Path) -> String {
 fn stage_trueos_tetris_crate(blueprint_root: &Path, work_dir: &Path) -> Result<PathBuf, String> {
     let source = blueprint_root.join("apps/crates/trueos-tetris");
     let staged = work_dir.join("blueprint-crates").join("trueos-tetris");
-    let trueos_v = fs::canonicalize(blueprint_root.join("../trueos-v")).map_err(io_string)?;
     reset_dir(&staged)?;
     copy_app_tree(&source, &staged)?;
     rewrite_manifest_dependency_path(
         &staged.join("Cargo.toml"),
-        "v",
-        &trueos_v.display().to_string(),
+        "trueos",
+        &blueprint_root.join("api").display().to_string(),
     )?;
     Ok(staged)
 }

@@ -10,4 +10,4 @@ path = "src/lib.rs"
 default = []
 
 [dependencies]
-v = { path = "../../../../TRUEOS/crates/trueos-v" }
+trueos = { path = "../../../api" }

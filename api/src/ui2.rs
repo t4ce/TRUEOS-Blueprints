@@ -2,6 +2,25 @@ use crate::vcabi;
 
 pub mod gfx;
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct Rgb8 {
+    pub r: u8,
+    pub g: u8,
+    pub b: u8,
+}
+
+impl Rgb8 {
+    #[inline]
+    pub const fn new(r: u8, g: u8, b: u8) -> Self {
+        Self { r, g, b }
+    }
+
+    #[inline]
+    pub const fn rgba(self, a: u8) -> [u8; 4] {
+        [self.r, self.g, self.b, a]
+    }
+}
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct WindowId(u32);
 
