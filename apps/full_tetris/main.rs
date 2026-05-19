@@ -317,7 +317,14 @@ fn draw_tetris(app: &Arcade, vertices: &mut Vec<gfx::RgbVertex>) {
     let ox = 118;
     let oy = 18;
     let cell = 11;
-    push_rect(vertices, ox - 3, oy - 3, 10 * cell + 6, 20 * cell + 6, MUTED);
+    push_rect(
+        vertices,
+        ox - 3,
+        oy - 3,
+        10 * cell + 6,
+        20 * cell + 6,
+        MUTED,
+    );
     for y in 0..20 {
         for x in 0..10 {
             if let Some(c) = app.tetris.cell_view_at(x, y + 4, true) {
@@ -506,7 +513,10 @@ fn main() {
         },
         TEX_ID,
     ) else {
-        logl::log(level::ERROR, "full_tetris bp: surface window create failed\n");
+        logl::log(
+            level::ERROR,
+            "full_tetris bp: surface window create failed\n",
+        );
         return;
     };
 

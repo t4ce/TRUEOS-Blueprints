@@ -255,5 +255,8 @@ fn example_source_path(
         return Ok(app_dir.join(path));
     }
 
-    Err(format!("missing path for example {example_name} in {}", manifest_path.display()))
+    Err(format!(
+        "missing path for example {example_name} in {}",
+        manifest_path.display()
+    ))
 }

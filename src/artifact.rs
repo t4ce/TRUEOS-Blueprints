@@ -98,8 +98,12 @@ pub(crate) fn latest_cargo_object(dir: &Path, stem: &str) -> Result<PathBuf, Str
             _ => best = Some((modified, path)),
         }
     }
-    best.map(|(_, path)| path)
-        .ok_or_else(|| format!("missing required build artifact for {stem} in {}", dir.display()))
+    best.map(|(_, path)| path).ok_or_else(|| {
+        format!(
+            "missing required build artifact for {stem} in {}",
+            dir.display()
+        )
+    })
 }
 
 pub(crate) fn cargo_artifact_stem(name: &str) -> String {
@@ -137,7 +141,10 @@ pub(crate) fn collect_rlibs_for_object(
     }
 
     if out.is_empty() {
-        Err(format!("failed to read rlib dependencies from {}", rlink.display()))
+        Err(format!(
+            "failed to read rlib dependencies from {}",
+            rlink.display()
+        ))
     } else {
         Ok(out)
     }

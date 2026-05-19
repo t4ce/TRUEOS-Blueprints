@@ -293,7 +293,10 @@ impl ShellApp {
                         io,
                         row,
                         col,
-                        format_args!("\x1b[5;1;38;2;{};{};{}m██\x1b[0m", color.r, color.g, color.b),
+                        format_args!(
+                            "\x1b[5;1;38;2;{};{};{}m██\x1b[0m",
+                            color.r, color.g, color.b
+                        ),
                     );
                     continue;
                 }

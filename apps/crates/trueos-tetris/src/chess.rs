@@ -954,8 +954,14 @@ mod tests {
 
         assert_eq!(game.side_to_move(), Color::White);
         assert_eq!(game.state(), GameState::Active);
-        assert_eq!(game.piece_at(sq(4, 0)), Some(Piece::new(Color::White, PieceKind::King)));
-        assert_eq!(game.piece_at(sq(4, 7)), Some(Piece::new(Color::Black, PieceKind::King)));
+        assert_eq!(
+            game.piece_at(sq(4, 0)),
+            Some(Piece::new(Color::White, PieceKind::King))
+        );
+        assert_eq!(
+            game.piece_at(sq(4, 7)),
+            Some(Piece::new(Color::Black, PieceKind::King))
+        );
         assert!(
             game.castling_rights()
                 .can_castle(Color::White, CastleSide::Kingside)
@@ -997,9 +1003,15 @@ mod tests {
         let outcome = game.apply_move(Move::new(sq(4, 4), sq(3, 5))).unwrap();
 
         assert!(outcome.was_en_passant);
-        assert_eq!(outcome.captured_piece, Some(Piece::new(Color::Black, PieceKind::Pawn)));
+        assert_eq!(
+            outcome.captured_piece,
+            Some(Piece::new(Color::Black, PieceKind::Pawn))
+        );
         assert_eq!(game.piece_at(sq(3, 4)), None);
-        assert_eq!(game.piece_at(sq(3, 5)), Some(Piece::new(Color::White, PieceKind::Pawn)));
+        assert_eq!(
+            game.piece_at(sq(3, 5)),
+            Some(Piece::new(Color::White, PieceKind::Pawn))
+        );
     }
 
     #[test]
@@ -1015,8 +1027,14 @@ mod tests {
         let outcome = game.apply_move(Move::new(sq(4, 0), sq(6, 0))).unwrap();
 
         assert_eq!(outcome.castle, Some(CastleSide::Kingside));
-        assert_eq!(game.piece_at(sq(6, 0)), Some(Piece::new(Color::White, PieceKind::King)));
-        assert_eq!(game.piece_at(sq(5, 0)), Some(Piece::new(Color::White, PieceKind::Rook)));
+        assert_eq!(
+            game.piece_at(sq(6, 0)),
+            Some(Piece::new(Color::White, PieceKind::King))
+        );
+        assert_eq!(
+            game.piece_at(sq(5, 0)),
+            Some(Piece::new(Color::White, PieceKind::Rook))
+        );
         assert!(
             !game
                 .castling_rights()
@@ -1065,7 +1083,10 @@ mod tests {
             .unwrap();
 
         assert_eq!(outcome.promotion, Some(PieceKind::Queen));
-        assert_eq!(game.piece_at(sq(6, 7)), Some(Piece::new(Color::White, PieceKind::Queen)));
+        assert_eq!(
+            game.piece_at(sq(6, 7)),
+            Some(Piece::new(Color::White, PieceKind::Queen))
+        );
     }
 
     #[test]

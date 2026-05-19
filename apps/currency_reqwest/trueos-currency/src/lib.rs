@@ -66,7 +66,10 @@ where
     F: FnOnce() -> Fut,
     Fut: Future<Output = Result<String, String>>,
 {
-    logl::log(level::INFO, format_args!("currency_bp: start transport={}", config.transport_label));
+    logl::log(
+        level::INFO,
+        format_args!("currency_bp: start transport={}", config.transport_label),
+    );
     logl::log(
         level::INFO,
         format_args!("currency_bp: stage runtime.current_thread_net.builder_new"),
@@ -78,7 +81,10 @@ where
         format_args!("currency_bp: success runtime.current_thread_net.builder_new"),
     );
 
-    logl::log(level::INFO, format_args!("currency_bp: stage runtime.current_thread_net.build"));
+    logl::log(
+        level::INFO,
+        format_args!("currency_bp: stage runtime.current_thread_net.build"),
+    );
 
     let runtime = match runtime_builder.build() {
         Ok(rt) => {
@@ -89,12 +95,18 @@ where
             rt
         }
         Err(err) => {
-            logl::log(level::ERROR, format_args!("currency_bp: runtime build failed: {}", err));
+            logl::log(
+                level::ERROR,
+                format_args!("currency_bp: runtime build failed: {}", err),
+            );
             return;
         }
     };
 
-    logl::log(level::INFO, format_args!("currency_bp: stage ui2.surface_window.create"));
+    logl::log(
+        level::INFO,
+        format_args!("currency_bp: stage ui2.surface_window.create"),
+    );
 
     let Some(surface) = ui2::SurfaceWindow::create_with_options(
         config.window_title,
@@ -111,21 +123,36 @@ where
         config.tex_id,
         true,
     ) else {
-        logl::log(level::ERROR, format_args!("currency_bp: ui2 surface window create failed"));
+        logl::log(
+            level::ERROR,
+            format_args!("currency_bp: ui2 surface window create failed"),
+        );
         return;
     };
-    logl::log(level::INFO, format_args!("currency_bp: success ui2.surface_window.create"));
+    logl::log(
+        level::INFO,
+        format_args!("currency_bp: success ui2.surface_window.create"),
+    );
     let _ = surface
         .id()
         .set_decorations(ui2::WindowDecorationMode::System);
     let _ = surface.id().set_vertical_scrollbar_visible(false);
     let _ = surface.id().set_horizontal_scrollbar_visible(false);
 
-    logl::log(level::INFO, format_args!("currency_bp: stage ui2.present.loading_snapshot"));
+    logl::log(
+        level::INFO,
+        format_args!("currency_bp: stage ui2.present.loading_snapshot"),
+    );
     present_snapshot(&surface, &build_loading_snapshot(config.transport_label));
-    logl::log(level::INFO, format_args!("currency_bp: success ui2.present.loading_snapshot"));
+    logl::log(
+        level::INFO,
+        format_args!("currency_bp: success ui2.present.loading_snapshot"),
+    );
 
-    logl::log(level::INFO, format_args!("currency_bp: stage runtime.block_on.fetch_cycle"));
+    logl::log(
+        level::INFO,
+        format_args!("currency_bp: stage runtime.block_on.fetch_cycle"),
+    );
 
     runtime.block_on(async move {
         logl::log(level::INFO, format_args!("currency_bp: stage fetch.await"));
@@ -136,18 +163,30 @@ where
                     format_args!("currency_bp: success fetch.await bytes={}", raw.len()),
                 );
                 build_currency_snapshot(raw.as_str()).unwrap_or_else(|| {
-                    logl::log(level::ERROR, format_args!("currency_bp: parse failed after fetch"));
+                    logl::log(
+                        level::ERROR,
+                        format_args!("currency_bp: parse failed after fetch"),
+                    );
                     build_error_snapshot(config.transport_label, "FXFEED PARSE FAILED")
                 })
             }
             Err(err) => {
-                logl::log(level::ERROR, format_args!("currency_bp: request failed: {}", err));
+                logl::log(
+                    level::ERROR,
+                    format_args!("currency_bp: request failed: {}", err),
+                );
                 build_error_snapshot(config.transport_label, "FXFEED REQUEST FAILED")
             }
         };
-        logl::log(level::INFO, format_args!("currency_bp: stage ui2.present.result_snapshot"));
+        logl::log(
+            level::INFO,
+            format_args!("currency_bp: stage ui2.present.result_snapshot"),
+        );
         present_snapshot(&surface, &snapshot);
-        logl::log(level::INFO, format_args!("currency_bp: success ui2.present.result_snapshot"));
+        logl::log(
+            level::INFO,
+            format_args!("currency_bp: success ui2.present.result_snapshot"),
+        );
 
         logl::log(level::INFO, format_args!("currency_bp: stage idle.loop"));
         loop {

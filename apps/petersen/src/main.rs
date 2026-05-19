@@ -116,9 +116,33 @@ fn render_petersen(width: u32, height: u32) -> Vec<u8> {
     ];
 
     for idx in 0..5 {
-        draw_line(pixels.as_mut_slice(), width, height, outer[idx], outer[(idx + 1) % 5], 2, EDGE);
-        draw_line(pixels.as_mut_slice(), width, height, inner[idx], inner[(idx + 2) % 5], 2, BLUE);
-        draw_line(pixels.as_mut_slice(), width, height, outer[idx], inner[idx], 2, GREEN);
+        draw_line(
+            pixels.as_mut_slice(),
+            width,
+            height,
+            outer[idx],
+            outer[(idx + 1) % 5],
+            2,
+            EDGE,
+        );
+        draw_line(
+            pixels.as_mut_slice(),
+            width,
+            height,
+            inner[idx],
+            inner[(idx + 2) % 5],
+            2,
+            BLUE,
+        );
+        draw_line(
+            pixels.as_mut_slice(),
+            width,
+            height,
+            outer[idx],
+            inner[idx],
+            2,
+            GREEN,
+        );
     }
 
     for point in outer {

@@ -191,7 +191,13 @@ fn run() -> Result<(), String> {
 
     let build_target = BuildTarget::Package;
     let required_features = Vec::new();
-    build_one_target(&app_dir, &manifest_path, build_target, &required_features, cargo_profile)
+    build_one_target(
+        &app_dir,
+        &manifest_path,
+        build_target,
+        &required_features,
+        cargo_profile,
+    )
 }
 
 fn parse_cli_args(
@@ -263,7 +269,7 @@ fn build_one_target_to(
     let build_settings = resolve_build_settings(&app_dir, &manifest_path, &build_target)?;
 
     let output_name = match &build_target {
-        BuildTarget::Package => package_name(&manifest_path)?,
+        BuildTarget::Package => package_bin_name(&manifest_path)?.unwrap_or(package_name(&manifest_path)?),
         BuildTarget::Example(name) => name.clone(),
     };
 
@@ -287,7 +293,7 @@ fn build_one_target_to(
     let work_dir = workdir(app_dir, &packer_target_dir, &output_name)?;
     reset_dir(&work_dir)?;
 
-    let source_overlay = source_overlay_patches(app_dir, manifest_path)?;
+    let source_overlay = source_overlay_patches(app_dir, manifest_path, &work_dir)?;
     let lock_mismatches = source_overlay_lock_mismatches(app_dir, &source_overlay)?;
     preflight_source_overlay_version_alignment(app_dir, manifest_path, &lock_mismatches)?;
     let staged_source_overlay = staged_source_overlay(&source_overlay, &work_dir);
@@ -386,8 +392,14 @@ fn build_one_target_to(
     };
     cargo.arg("--").arg("-Zno-link").arg("--emit=obj");
 
-    println!("trueos-blueprint: cargo artifact profile: {}", cargo_profile.label());
-    println!("trueos-blueprint: cargo artifact cache: {}", cargo_target_dir.display());
+    println!(
+        "trueos-blueprint: cargo artifact profile: {}",
+        cargo_profile.label()
+    );
+    println!(
+        "trueos-blueprint: cargo artifact cache: {}",
+        cargo_target_dir.display()
+    );
     let cargo_artifacts = run_cargo_rustc_command(&mut cargo, "cargo rustc", &deps_dir)?;
 
     if !deps_dir.is_dir() {
@@ -729,7 +741,10 @@ fn enforce_source_overlay_lock(
     }
 
     if !forced.is_empty() {
-        println!("trueos-blueprint: source overlay lock forced: {}", forced.join(","));
+        println!(
+            "trueos-blueprint: source overlay lock forced: {}",
+            forced.join(",")
+        );
     }
 
     let mut violations = Vec::new();
@@ -938,7 +953,8 @@ fn find_vendor_dir(app_dir: &Path, name: &str) -> Option<PathBuf> {
 
 fn source_overlay_patches(
     app_dir: &Path,
-    _manifest_path: &Path,
+    manifest_path: &Path,
+    work_dir: &Path,
 ) -> Result<Vec<CratePatch>, String> {
     let mut out = Vec::new();
 
@@ -977,9 +993,188 @@ fn source_overlay_patches(
         });
     }
 
+    if manifest_or_lock_mentions_crate(app_dir, manifest_path, "ctrlc")? {
+        let path = stage_ctrlc_trueos_overlay(work_dir)?;
+        out.retain(|patch| patch.name != "ctrlc");
+        out.push(CratePatch {
+            name: "ctrlc".to_string(),
+            path,
+        });
+    }
+
+    if manifest_or_lock_mentions_crate(app_dir, manifest_path, "argmax")? {
+        let path = stage_argmax_trueos_overlay(work_dir)?;
+        out.retain(|patch| patch.name != "argmax");
+        out.push(CratePatch {
+            name: "argmax".to_string(),
+            path,
+        });
+    }
+
     out.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(out)
 }
+
+fn manifest_or_lock_mentions_crate(
+    app_dir: &Path,
+    manifest_path: &Path,
+    crate_name: &str,
+) -> Result<bool, String> {
+    let needle = format!("{crate_name}");
+    let manifest = fs::read_to_string(manifest_path).map_err(io_string)?;
+    if manifest.lines().any(|line| {
+        line.split('#')
+            .next()
+            .unwrap_or("")
+            .trim_start()
+            .starts_with(&needle)
+    }) {
+        return Ok(true);
+    }
+
+    let lock_path = app_dir.join("Cargo.lock");
+    if !lock_path.is_file() {
+        return Ok(false);
+    }
+    let lock = fs::read_to_string(lock_path).map_err(io_string)?;
+    Ok(lock
+        .lines()
+        .any(|line| line.trim() == format!("name = \"{crate_name}\"")))
+}
+
+fn stage_ctrlc_trueos_overlay(work_dir: &Path) -> Result<PathBuf, String> {
+    const CTRL_C_VERSION: &str = "3.4.4";
+    let source_name = format!("ctrlc-{CTRL_C_VERSION}");
+    let source = find_cargo_registry_crate(&source_name).ok_or_else(|| {
+        format!(
+            "missing Cargo registry source for {source_name}; run `cargo fetch` for the app once"
+        )
+    })?;
+    let staged = work_dir
+        .join("source-overlay-crates")
+        .join(source_name.as_str());
+    reset_dir(&staged)?;
+    copy_app_tree(&source, &staged)?;
+    patch_ctrlc_trueos_overlay(&staged)?;
+    Ok(staged)
+}
+
+fn stage_argmax_trueos_overlay(work_dir: &Path) -> Result<PathBuf, String> {
+    const ARGMAX_VERSION: &str = "0.4.0";
+    let source_name = format!("argmax-{ARGMAX_VERSION}");
+    let source = find_cargo_registry_crate(&source_name).ok_or_else(|| {
+        format!(
+            "missing Cargo registry source for {source_name}; run `cargo fetch` for the app once"
+        )
+    })?;
+    let staged = work_dir
+        .join("source-overlay-crates")
+        .join(source_name.as_str());
+    reset_dir(&staged)?;
+    copy_app_tree(&source, &staged)?;
+    patch_argmax_trueos_overlay(&staged)?;
+    Ok(staged)
+}
+
+fn find_cargo_registry_crate(crate_dir_name: &str) -> Option<PathBuf> {
+    let cargo_home = env::var_os("CARGO_HOME")
+        .map(PathBuf::from)
+        .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".cargo")))?;
+    let registry_src = cargo_home.join("registry").join("src");
+    let entries = fs::read_dir(registry_src).ok()?;
+    for entry in entries.flatten() {
+        let candidate = entry.path().join(crate_dir_name);
+        if candidate.join("Cargo.toml").is_file() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn patch_ctrlc_trueos_overlay(crate_dir: &Path) -> Result<(), String> {
+    replace_file_text(
+        &crate_dir.join("src/platform/mod.rs"),
+        "#[cfg(unix)]\nmod unix;\n\n#[cfg(windows)]",
+        "#[cfg(all(unix, not(any(target_os = \"trueos\", target_os = \"zkvm\"))))]\nmod unix;\n\n#[cfg(any(target_os = \"trueos\", target_os = \"zkvm\"))]\nmod trueos;\n\n#[cfg(windows)]",
+    )?;
+    replace_file_text(
+        &crate_dir.join("src/platform/mod.rs"),
+        "#[cfg(unix)]\npub use self::unix::*;\n\n#[cfg(windows)]",
+        "#[cfg(any(target_os = \"trueos\", target_os = \"zkvm\"))]\npub use self::trueos::*;\n\n#[cfg(all(unix, not(any(target_os = \"trueos\", target_os = \"zkvm\"))))]\npub use self::unix::*;\n\n#[cfg(windows)]",
+    )?;
+    replace_file_text(
+        &crate_dir.join("Cargo.toml"),
+        "[target.\"cfg(unix)\".dependencies.nix]",
+        "[target.\"cfg(all(unix, not(any(target_os = \\\"trueos\\\", target_os = \\\"zkvm\\\"))))\".dependencies.nix]",
+    )?;
+    replace_file_text(
+        &crate_dir.join("src/error.rs"),
+        "#[cfg(not(windows))]\n        if e == platform::Error::EEXIST {",
+        "#[cfg(all(not(windows), not(any(target_os = \"trueos\", target_os = \"zkvm\"))))]\n        if e == platform::Error::EEXIST {",
+    )?;
+
+    let trueos_dir = crate_dir.join("src/platform/trueos");
+    fs::create_dir_all(&trueos_dir).map_err(io_string)?;
+    fs::write(trueos_dir.join("mod.rs"), CTRL_C_TRUEOS_PLATFORM_RS).map_err(io_string)?;
+    Ok(())
+}
+
+fn patch_argmax_trueos_overlay(crate_dir: &Path) -> Result<(), String> {
+    replace_file_text(
+        &crate_dir.join("Cargo.toml"),
+        "[dependencies.nix]",
+        "[target.\"cfg(all(unix, not(any(target_os = \\\"trueos\\\", target_os = \\\"zkvm\\\"))))\".dependencies.nix]",
+    )?;
+    replace_file_text(
+        &crate_dir.join("src/lib.rs"),
+        "#[cfg(not(unix))]\nmod other;\n#[cfg(unix)]\nmod unix;",
+        "#[cfg(any(not(unix), target_os = \"trueos\", target_os = \"zkvm\"))]\nmod other;\n#[cfg(all(unix, not(any(target_os = \"trueos\", target_os = \"zkvm\"))))]\nmod unix;",
+    )?;
+    replace_file_text(
+        &crate_dir.join("src/lib.rs"),
+        "#[cfg(not(unix))]\nuse other as platform;\n#[cfg(unix)]\nuse unix as platform;",
+        "#[cfg(any(not(unix), target_os = \"trueos\", target_os = \"zkvm\"))]\nuse other as platform;\n#[cfg(all(unix, not(any(target_os = \"trueos\", target_os = \"zkvm\"))))]\nuse unix as platform;",
+    )?;
+    Ok(())
+}
+
+fn replace_file_text(path: &Path, needle: &str, replacement: &str) -> Result<(), String> {
+    let original = fs::read_to_string(path).map_err(io_string)?;
+    if !original.contains(needle) {
+        return Err(format!(
+            "failed to patch {}; missing expected text",
+            path.display()
+        ));
+    }
+    let rewritten = original.replace(needle, replacement);
+    fs::write(path, rewritten).map_err(io_string)
+}
+
+const CTRL_C_TRUEOS_PLATFORM_RS: &str = r#"// Patched by trueos-blueprint during SDK staging.
+
+use std::io;
+use std::thread;
+
+/// Platform specific error type.
+pub type Error = io::Error;
+
+/// Platform specific signal type.
+pub type Signal = u32;
+
+/// Register os signal handler.
+#[inline]
+pub unsafe fn init_os_handler(_overwrite: bool) -> Result<(), Error> {
+    Ok(())
+}
+
+/// Blocks until a Ctrl-C signal is received.
+#[inline]
+pub unsafe fn block_ctrl_c() -> Result<(), Error> {
+    loop {
+        thread::park();
+    }
+}
+"#;
 
 fn staged_manifest_for_overlay(
     app_dir: &Path,
@@ -1360,7 +1555,10 @@ fn cargo_metadata(app_dir: &Path, manifest_path: &Path) -> Result<CargoMetadata,
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         if stderr.is_empty() {
-            return Err(format!("cargo metadata failed with status {}", output.status));
+            return Err(format!(
+                "cargo metadata failed with status {}",
+                output.status
+            ));
         }
         return Err(format!("cargo metadata failed: {stderr}"));
     }
@@ -1442,18 +1640,30 @@ fn requirement_token_matches(token: &str, version: &SimpleVersion) -> Result<boo
         return Ok(version < &req_lower_bound(&parse_req_version(rest.trim(), token)?));
     }
     if let Some(rest) = token.strip_prefix('=') {
-        return Ok(exact_req_matches(version, &parse_req_version(rest.trim(), token)?));
+        return Ok(exact_req_matches(
+            version,
+            &parse_req_version(rest.trim(), token)?,
+        ));
     }
     if let Some(rest) = token.strip_prefix('^') {
-        return Ok(caret_req_matches(version, &parse_req_version(rest.trim(), token)?));
+        return Ok(caret_req_matches(
+            version,
+            &parse_req_version(rest.trim(), token)?,
+        ));
     }
     if let Some(rest) = token.strip_prefix('~') {
-        return Ok(tilde_req_matches(version, &parse_req_version(rest.trim(), token)?));
+        return Ok(tilde_req_matches(
+            version,
+            &parse_req_version(rest.trim(), token)?,
+        ));
     }
     if token.contains('*') || token.contains('x') || token.contains('X') {
         return Ok(wildcard_req_matches(version, &parse_req_prefix(token)?));
     }
-    Ok(caret_req_matches(version, &parse_req_version(token, token)?))
+    Ok(caret_req_matches(
+        version,
+        &parse_req_version(token, token)?,
+    ))
 }
 
 fn exact_req_matches(version: &SimpleVersion, req: &ReqVersion) -> bool {
@@ -1941,7 +2151,11 @@ fn materialize_staged_workspace_dependencies(
 
     for line in cargo_toml.lines() {
         if let Some(dep_name) = workspace_dependency_name(line) {
-            out.push_str(&materialized_workspace_dependency(&blueprint_root, work_dir, &dep_name)?);
+            out.push_str(&materialized_workspace_dependency(
+                &blueprint_root,
+                work_dir,
+                &dep_name,
+            )?);
             out.push('\n');
             changed = true;
         } else {
@@ -2101,7 +2315,10 @@ fn materialized_workspace_dependency(
 }
 
 fn path_dependency_line(dep_name: &str, path: &Path) -> String {
-    format!("{dep_name} = {{ path = {} }}", toml_string(&path.display().to_string()))
+    format!(
+        "{dep_name} = {{ path = {} }}",
+        toml_string(&path.display().to_string())
+    )
 }
 
 fn stage_trueos_tetris_crate(blueprint_root: &Path, work_dir: &Path) -> Result<PathBuf, String> {
@@ -2146,7 +2363,10 @@ fn rewrite_manifest_dependency_path(
     }
 
     if !changed {
-        return Err(format!("missing dependency `{dep_name}` in {}", manifest_path.display()));
+        return Err(format!(
+            "missing dependency `{dep_name}` in {}",
+            manifest_path.display()
+        ));
     }
 
     fs::write(manifest_path, out).map_err(io_string)
@@ -2197,12 +2417,20 @@ fn push_trueos_cc_flags(command: &mut Command) {
     push_env_words(
         command,
         "CFLAGS",
-        &["-DROCKSDB_PLATFORM_POSIX", "-DROCKSDB_LIB_IO_POSIX", "-DOS_LINUX"],
+        &[
+            "-DROCKSDB_PLATFORM_POSIX",
+            "-DROCKSDB_LIB_IO_POSIX",
+            "-DOS_LINUX",
+        ],
     );
     push_env_words(
         command,
         "CXXFLAGS",
-        &["-DROCKSDB_PLATFORM_POSIX", "-DROCKSDB_LIB_IO_POSIX", "-DOS_LINUX"],
+        &[
+            "-DROCKSDB_PLATFORM_POSIX",
+            "-DROCKSDB_LIB_IO_POSIX",
+            "-DOS_LINUX",
+        ],
     );
 }
 
@@ -2342,7 +2570,10 @@ fn package_name(manifest_path: &Path) -> Result<String, String> {
             return Ok(value.trim().trim_matches('"').to_string());
         }
     }
-    Err(format!("failed to read package name from {}", manifest_path.display()))
+    Err(format!(
+        "failed to read package name from {}",
+        manifest_path.display()
+    ))
 }
 
 fn package_bin_name(manifest_path: &Path) -> Result<Option<String>, String> {
@@ -2400,7 +2631,10 @@ fn package_app_spec_required(app_dir: &Path, app_name: &str) -> Result<PackageAp
     let dir = app_dir.join("apps").join(app_name);
     let mut manifest_path = dir.join("Cargo.toml");
     if !manifest_path.is_file() {
-        return Err(format!("registered app `{app_name}` is missing {}", manifest_path.display()));
+        return Err(format!(
+            "registered app `{app_name}` is missing {}",
+            manifest_path.display()
+        ));
     }
 
     let mut name = match package_name(&manifest_path) {
@@ -2443,7 +2677,7 @@ fn virtual_package_app_manifest_path(dir: &Path, app_name: &str) -> PathBuf {
 }
 
 fn virtual_package_app_alias(app_name: &str) -> bool {
-    matches!(app_name, "helix" | "matrix")
+    matches!(app_name, "fd" | "helix" | "matrix")
 }
 
 fn registered_app_names(app_dir: &Path) -> Result<Vec<String>, String> {
@@ -2494,7 +2728,10 @@ fn package_blueprint_profile(manifest_path: &Path) -> Result<Option<CargoProfile
                 "unsupported trueos-blueprint profile `{other}` in {}",
                 manifest_path.display()
             )),
-            None => Err(format!("bad trueos-blueprint profile in {}", manifest_path.display())),
+            None => Err(format!(
+                "bad trueos-blueprint profile in {}",
+                manifest_path.display()
+            )),
         };
     }
     Ok(None)
@@ -2527,8 +2764,10 @@ fn manifest_has_dependency(manifest_path: &Path, dependency_name: &str) -> Resul
     for line in cargo_toml.lines() {
         let trimmed = line.split('#').next().unwrap_or("").trim();
         if trimmed.starts_with('[') {
-            in_dependencies =
-                matches!(trimmed, "[dependencies]" | "[dev-dependencies]" | "[build-dependencies]");
+            in_dependencies = matches!(
+                trimmed,
+                "[dependencies]" | "[dev-dependencies]" | "[build-dependencies]"
+            );
             continue;
         }
         if !in_dependencies || trimmed.is_empty() {

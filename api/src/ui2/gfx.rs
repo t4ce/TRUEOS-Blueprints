@@ -49,11 +49,7 @@ pub fn texture_dimensions(tex_id: u32) -> Option<(u32, u32)> {
             &mut height as *mut u32,
         )
     };
-    if rc == 0 {
-        Some((width, height))
-    } else {
-        None
-    }
+    if rc == 0 { Some((width, height)) } else { None }
 }
 
 pub fn upload_texture_rgba_image_now(tex_id: u32, width: u32, height: u32, pixels: &[u8]) -> bool {

@@ -48,7 +48,10 @@ fn main() {
         let svg = compose_svg(frame);
         let rc = gfx::upload_svg_to_texture(TEX_ID, svg.as_bytes());
         if rc != 0 {
-            logl::log(level::ERROR, format_args!("retrosun bp: svg upload failed rc={}\n", rc));
+            logl::log(
+                level::ERROR,
+                format_args!("retrosun bp: svg upload failed rc={}\n", rc),
+            );
             break;
         }
         let _ = window_id.request_repaint();
@@ -152,8 +155,11 @@ fn push_neon_halo(out: &mut String, sun_y: f32, sun_r: f32, glow: f32) {
 }
 
 fn push_sun(out: &mut String, sun_y: f32, sun_r: f32, t: f32) {
-    let _ =
-        write!(out, r##"<circle cx="800" cy="{:.1}" r="{:.1}" fill="url(#sun)"/>"##, sun_y, sun_r);
+    let _ = write!(
+        out,
+        r##"<circle cx="800" cy="{:.1}" r="{:.1}" fill="url(#sun)"/>"##,
+        sun_y, sun_r
+    );
 
     for band in 0..15 {
         let y = sun_y - sun_r + 34.0 + band as f32 * 31.0 + wave(t * 1.15 + band as f32, 8.0);

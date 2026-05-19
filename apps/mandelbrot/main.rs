@@ -26,7 +26,10 @@ fn main() {
         UI2_MANDELBROT_TEX_ID,
         false,
     ) else {
-        logl::log(level::ERROR, "mandelbrot bp: ui2 surface window create failed\n");
+        logl::log(
+            level::ERROR,
+            "mandelbrot bp: ui2 surface window create failed\n",
+        );
         return;
     };
 

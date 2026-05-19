@@ -1,4 +1,4 @@
-pub use crate::globalog::{amount, level, range, Level, LogAmount, LogMessage, LogRange};
+pub use crate::globalog::{Level, LogAmount, LogMessage, LogRange, amount, level, range};
 
 #[inline]
 pub fn log(level: Level, message: impl LogMessage) {

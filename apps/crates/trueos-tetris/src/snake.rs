@@ -400,7 +400,10 @@ mod tests {
         let mut game = Game::<6, 4>::new(&mut rng, &mut events);
 
         assert_eq!(events.food_spawns, 1);
-        assert_eq!(game.cell_kind_at(game.head().0, game.head().1), Some(CellKind::Head));
+        assert_eq!(
+            game.cell_kind_at(game.head().0, game.head().1),
+            Some(CellKind::Head)
+        );
 
         let result = game.tick(&mut rng, &mut events);
         assert_eq!(result, TickResult::Moved);

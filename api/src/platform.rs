@@ -11,7 +11,7 @@ pub use alloc::vec;
 pub use alloc::vec::Vec;
 
 pub mod future {
-    pub use core::future::{pending, poll_fn, Future, IntoFuture};
+    pub use core::future::{Future, IntoFuture, pending, poll_fn};
 }
 
 #[cfg(feature = "tokio-runtime")]
@@ -30,9 +30,9 @@ pub mod path {
 #[cfg(feature = "tokio-runtime")]
 pub mod thread {
     #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-    pub use std::thread::{current, Thread, ThreadId};
+    pub use std::thread::{Thread, ThreadId, current};
     #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-    pub use tokio::thread::{current, Thread, ThreadId};
+    pub use tokio::thread::{Thread, ThreadId, current};
 
     #[inline]
     pub fn yield_now() {

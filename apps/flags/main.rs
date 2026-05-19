@@ -215,7 +215,10 @@ fn flag_url(code: &str) -> String {
 }
 
 fn build_reqwest_client() -> Result<reqwest::Client, String> {
-    logl::log(level::WARN, "flags bp: stage reqwest.client.build.insecure_tls\n");
+    logl::log(
+        level::WARN,
+        "flags bp: stage reqwest.client.build.insecure_tls\n",
+    );
     reqwest::Client::builder()
         .timeout(Duration::from_millis(FLAG_FETCH_TIMEOUT_MS))
         .tls_danger_accept_invalid_certs(true)
@@ -223,7 +226,10 @@ fn build_reqwest_client() -> Result<reqwest::Client, String> {
         .map_err(|err| {
             logl::log(
                 level::ERROR,
-                format_args!("flags bp: reqwest insecure builder failed debug={:?}\n", err),
+                format_args!(
+                    "flags bp: reqwest insecure builder failed debug={:?}\n",
+                    err
+                ),
             );
             if let Some(source) = err.source() {
                 logl::log(
@@ -455,10 +461,16 @@ fn push_flag(out: &mut String, flag_svg: &str, x: i32, y: i32, w: i32, h: i32) {
         body = &body[..end];
     }
 
-    let _ = write!(out, r#"<svg x="{}" y="{}" width="{}" height="{}""#, x, y, w, h);
+    let _ = write!(
+        out,
+        r#"<svg x="{}" y="{}" width="{}" height="{}""#,
+        x, y, w, h
+    );
     if root_svg_attr(attrs, "viewBox").is_none()
-        && let (Some(svg_w), Some(svg_h)) =
-            (root_svg_attr(attrs, "width"), root_svg_attr(attrs, "height"))
+        && let (Some(svg_w), Some(svg_h)) = (
+            root_svg_attr(attrs, "width"),
+            root_svg_attr(attrs, "height"),
+        )
     {
         let _ = write!(out, r#" viewBox="0 0 {} {}""#, svg_w, svg_h);
     }
@@ -525,7 +537,10 @@ fn present(window: &ui2::SurfaceWindow, game: &Game) {
     if rc == 0 {
         let _ = window.id().request_repaint();
     } else {
-        logl::log(level::ERROR, format_args!("flags bp: svg upload failed rc={}\n", rc));
+        logl::log(
+            level::ERROR,
+            format_args!("flags bp: svg upload failed rc={}\n", rc),
+        );
     }
 }
 
@@ -609,11 +624,17 @@ fn main() {
     let runtime = match runtime::current_thread_net().build() {
         Ok(rt) => rt,
         Err(err) => {
-            logl::log(level::ERROR, format_args!("flags bp: runtime build failed: {}\n", err));
+            logl::log(
+                level::ERROR,
+                format_args!("flags bp: runtime build failed: {}\n", err),
+            );
             return;
         }
     };
-    logl::log(level::WARN, "flags bp: stage reqwest.client.build.worker_fetch\n");
+    logl::log(
+        level::WARN,
+        "flags bp: stage reqwest.client.build.worker_fetch\n",
+    );
 
     let mut rng = tyche::SoftRng::new();
     let mut game = Game::new(&mut rng, &runtime);

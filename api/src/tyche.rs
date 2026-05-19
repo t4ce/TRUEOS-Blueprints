@@ -22,7 +22,10 @@ impl SoftRng {
         let stack_addr = (&local as *const u8 as usize) as u64;
         let salt_addr = (&TYCHE_SEED_SALT as *const u8 as usize) as u64;
         let seed = random_u64().filter(|seed| *seed != 0).unwrap_or_else(|| {
-            mix_seed(monotonic_nanos(), stack_addr.rotate_left(17) ^ salt_addr.rotate_right(7))
+            mix_seed(
+                monotonic_nanos(),
+                stack_addr.rotate_left(17) ^ salt_addr.rotate_right(7),
+            )
         });
         Self::from_seed(seed)
     }

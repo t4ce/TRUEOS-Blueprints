@@ -313,7 +313,10 @@ fn create_particle_demo_window() -> Option<ui2::SurfaceWindow> {
 
 fn main() {
     let Some(surface) = create_particle_demo_window() else {
-        logl::log(level::ERROR, "particle bp: ui2 surface window create failed\n");
+        logl::log(
+            level::ERROR,
+            "particle bp: ui2 surface window create failed\n",
+        );
         return;
     };
 

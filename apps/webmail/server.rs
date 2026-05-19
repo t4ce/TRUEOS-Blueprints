@@ -62,7 +62,10 @@ fn response(status: u16, content_type: &'static str, body: Vec<u8>, no_store: bo
         .status(status_code(status))
         .header(CONTENT_TYPE, content_type)
         .header(CONTENT_LENGTH, body.len().to_string())
-        .header(CACHE_CONTROL, if no_store { "no-store" } else { "no-cache" })
+        .header(
+            CACHE_CONTROL,
+            if no_store { "no-store" } else { "no-cache" },
+        )
         .body(Body::from(body))
         .unwrap_or_else(|_| Response::new(Body::empty()))
 }
@@ -74,7 +77,11 @@ fn text_response(status: u16, content_type: &'static str, body: &str) -> Respons
 fn json_response<T: Serialize>(status: u16, value: &T) -> Response {
     match serde_json::to_vec(value) {
         Ok(body) => response(status, "application/json; charset=utf-8", body, true),
-        Err(_) => text_response(500, "text/plain; charset=utf-8", "json serialization failed\n"),
+        Err(_) => text_response(
+            500,
+            "text/plain; charset=utf-8",
+            "json serialization failed\n",
+        ),
     }
 }
 
@@ -163,7 +170,10 @@ fn router() -> Router {
         .route("/healthz", get(handle_status))
         .route("/api/healthz", get(handle_status))
         .route("/api/webmail/status", get(handle_status))
-        .route("/api/webmail/refresh", get(handle_refresh).post(handle_refresh))
+        .route(
+            "/api/webmail/refresh",
+            get(handle_refresh).post(handle_refresh),
+        )
         .route("/api/webmail/list", get(handle_list))
         .route("/api/webmail/read", get(handle_read))
         .route("/api/webmail/send", post(handle_send))
@@ -177,14 +187,20 @@ async fn webmail_http_runtime() -> Result<(), io::Error> {
             Ok(listener) => listener,
             Err(err) => {
                 WEBMAIL_HTTP_PORT.store(0, Ordering::Release);
-                logl::log(level::WARN, format_args!("webmail-http: bind {} failed {}", addr, err));
+                logl::log(
+                    level::WARN,
+                    format_args!("webmail-http: bind {} failed {}", addr, err),
+                );
                 time::sleep(Duration::from_millis(WEBMAIL_BIND_RETRY_MS)).await;
                 continue;
             }
         };
 
         WEBMAIL_HTTP_PORT.store(addr.port(), Ordering::Release);
-        logl::log(level::INFO, format_args!("webmail-http: axum listening on http://{}/", addr));
+        logl::log(
+            level::INFO,
+            format_args!("webmail-http: axum listening on http://{}/", addr),
+        );
         let listener = listener.tap_io(|_| logl::log(level::INFO, "webmail-http: tcp accepted"));
         let result = axum::serve(listener, app).await;
         WEBMAIL_HTTP_PORT.store(0, Ordering::Release);
@@ -197,14 +213,20 @@ fn main() {
     let runtime = match runtime::current_thread_net().build() {
         Ok(runtime) => runtime,
         Err(err) => {
-            logl::log(level::ERROR, format_args!("webmail-http: runtime build failed {}", err));
+            logl::log(
+                level::ERROR,
+                format_args!("webmail-http: runtime build failed {}", err),
+            );
             return;
         }
     };
     let local = tokio::task::LocalSet::new();
     local.block_on(&runtime, async {
         if let Err(err) = webmail_http_runtime().await {
-            logl::log(level::ERROR, format_args!("webmail-http: runtime failed {:?}", err));
+            logl::log(
+                level::ERROR,
+                format_args!("webmail-http: runtime failed {:?}", err),
+            );
         }
     });
     platform::poll_once();

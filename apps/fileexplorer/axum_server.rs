@@ -170,7 +170,11 @@ fn text_response(status: u16, content_type: &'static str, body: &str) -> Respons
 fn json_response<T: Serialize>(status: u16, value: &T) -> Response {
     match serde_json::to_vec(value) {
         Ok(body) => response(status, "application/json; charset=utf-8", body),
-        Err(_) => text_response(500, "text/plain; charset=utf-8", "json serialization failed\n"),
+        Err(_) => text_response(
+            500,
+            "text/plain; charset=utf-8",
+            "json serialization failed\n",
+        ),
     }
 }
 
@@ -369,10 +373,13 @@ async fn handle_create_node(State(state): State<AppState>, body: Bytes) -> Respo
         Err(_) => return error_response(400, "bad json"),
     };
     let result = if request.kind == NodeKind::Folder {
-        let path =
-            format!("{}/{}", decode_node_id(&request.parent_id).unwrap_or_default(), request.name)
-                .trim_matches('/')
-                .to_string();
+        let path = format!(
+            "{}/{}",
+            decode_node_id(&request.parent_id).unwrap_or_default(),
+            request.name
+        )
+        .trim_matches('/')
+        .to_string();
         vfs::create_dir_all(path.as_bytes())
             .map(|_| Some(serde_json::json!({ "path": path })))
             .map_err(|err| format!("create dir failed rc={}", err))
@@ -465,7 +472,14 @@ async fn handle_upload_file(
     let result = vfs::write_file(path.as_bytes(), body.as_ref())
         .map(|_| Some(serde_json::json!({ "path": path, "bytes": body.len() })))
         .map_err(|err| format!("write failed rc={}", err));
-    record_job(state, "node_upload", format!("Upload {}", name), vec![parent_id], result).await
+    record_job(
+        state,
+        "node_upload",
+        format!("Upload {}", name),
+        vec![parent_id],
+        result,
+    )
+    .await
 }
 
 async fn handle_download_file(Path(id): Path<String>) -> Response {
@@ -510,7 +524,11 @@ async fn handle_job(State(state): State<AppState>, Path(id): Path<String>) -> Re
 }
 
 async fn handle_job_events() -> Response {
-    text_response(200, "text/event-stream; charset=utf-8", "event: ready\ndata: {\"ok\":true}\n\n")
+    text_response(
+        200,
+        "text/event-stream; charset=utf-8",
+        "event: ready\ndata: {\"ok\":true}\n\n",
+    )
 }
 
 fn router() -> Router {
@@ -525,7 +543,10 @@ fn router() -> Router {
         .route("/api/healthz", get(handle_healthz))
         .route("/api/tree", get(handle_tree).put(handle_tree))
         .route("/api/nodes", post(handle_create_node))
-        .route("/api/nodes/{id}", patch(handle_update_node).delete(handle_delete_node))
+        .route(
+            "/api/nodes/{id}",
+            patch(handle_update_node).delete(handle_delete_node),
+        )
         .route("/api/nodes/{id}/content", get(handle_node_content))
         .route("/api/nodes/{id}/download", get(handle_download_file))
         .route("/api/nodes/{id}/upload", post(handle_upload_file))
@@ -559,7 +580,10 @@ async fn serve_port(app: Router, port: u16) {
             format_args!("fileexplorer-http: axum listening on http://{}/", addr),
         );
         let listener = listener.tap_io(move |_| {
-            logl::log(level::INFO, format_args!("fileexplorer-http: tcp accepted port={}", port))
+            logl::log(
+                level::INFO,
+                format_args!("fileexplorer-http: tcp accepted port={}", port),
+            )
         });
         if let Err(err) = axum::serve(listener, app.clone()).await {
             logl::log(

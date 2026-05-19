@@ -1,6 +1,6 @@
 use trueos::{
     logl::{self, level},
-    platform::{future, thread, Arc},
+    platform::{Arc, future, thread},
     t,
 };
 
@@ -8,89 +8,173 @@ fn main() {
     logl::log(level::INFO, format_args!("tokio_rt: start"));
 
     if let Err(stage) = probe_runtime_bootstrap_surfaces() {
-        logl::log(level::ERROR, format_args!("tokio_rt: bootstrap failed stage={}", stage));
+        logl::log(
+            level::ERROR,
+            format_args!("tokio_rt: bootstrap failed stage={}", stage),
+        );
         return;
     }
 
-    logl::log(level::INFO, format_args!("tokio_rt: stage runtime.current_thread.build"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_rt: stage runtime.current_thread.build"),
+    );
     let runtime = match t::runtime::current_thread().build() {
         Ok(rt) => rt,
         Err(err) => {
-            logl::log(level::ERROR, format_args!("tokio_rt: runtime build failed: {}", err));
+            logl::log(
+                level::ERROR,
+                format_args!("tokio_rt: runtime build failed: {}", err),
+            );
             return;
         }
     };
-    logl::log(level::INFO, format_args!("tokio_rt: success runtime.current_thread.build"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_rt: success runtime.current_thread.build"),
+    );
 
     runtime.block_on(async {
         match run_probe().await {
             Ok(()) => logl::log(level::INFO, format_args!("tokio_rt: done")),
-            Err(stage) => logl::log(level::ERROR, format_args!("tokio_rt: failed stage={}", stage)),
+            Err(stage) => logl::log(
+                level::ERROR,
+                format_args!("tokio_rt: failed stage={}", stage),
+            ),
         }
     });
 
-    logl::log(level::INFO, format_args!("tokio_rt: stage runtime.current_thread.drop"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_rt: stage runtime.current_thread.drop"),
+    );
     drop(runtime);
-    logl::log(level::INFO, format_args!("tokio_rt: success runtime.current_thread.drop"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_rt: success runtime.current_thread.drop"),
+    );
 }
 
 fn probe_runtime_bootstrap_surfaces() -> Result<(), &'static str> {
-    logl::log(level::INFO, format_args!("tokio_rt: stage thread.current.id"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_rt: stage thread.current.id"),
+    );
     let thread_id = thread::current().id();
-    logl::log(level::INFO, format_args!("tokio_rt: success thread.current.id id={:?}", thread_id));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_rt: success thread.current.id id={:?}", thread_id),
+    );
 
-    logl::log(level::INFO, format_args!("tokio_rt: stage thread.yield_now"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_rt: stage thread.yield_now"),
+    );
     thread::yield_now();
-    logl::log(level::INFO, format_args!("tokio_rt: success thread.yield_now"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_rt: success thread.yield_now"),
+    );
 
-    logl::log(level::INFO, format_args!("tokio_rt: stage runtime.current_thread.builder_new_plain"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_rt: stage runtime.current_thread.builder_new_plain"),
+    );
     let mut builder = t::tokio::runtime::Builder::new_current_thread();
-    logl::log(level::INFO, format_args!("tokio_rt: success runtime.current_thread.builder_new_plain"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_rt: success runtime.current_thread.builder_new_plain"),
+    );
 
-    logl::log(level::INFO, format_args!("tokio_rt: stage runtime.current_thread.builder_build_plain"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_rt: stage runtime.current_thread.builder_build_plain"),
+    );
     let runtime = builder
         .build()
         .map_err(|_| "runtime.current_thread.builder_build_plain")?;
-    logl::log(level::INFO, format_args!("tokio_rt: success runtime.current_thread.build_plain"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_rt: success runtime.current_thread.build_plain"),
+    );
 
-    logl::log(level::INFO, format_args!("tokio_rt: stage runtime.current_thread.drop_plain"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_rt: stage runtime.current_thread.drop_plain"),
+    );
     drop(runtime);
-    logl::log(level::INFO, format_args!("tokio_rt: success runtime.current_thread.drop_plain"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_rt: success runtime.current_thread.drop_plain"),
+    );
 
-    logl::log(level::INFO, format_args!("tokio_rt: stage runtime.current_thread.build_time"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_rt: stage runtime.current_thread.build_time"),
+    );
     let runtime = t::runtime::current_thread()
         .build()
         .map_err(|_| "runtime.current_thread.build_time")?;
-    logl::log(level::INFO, format_args!("tokio_rt: success runtime.current_thread.build_time"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_rt: success runtime.current_thread.build_time"),
+    );
 
-    logl::log(level::INFO, format_args!("tokio_rt: stage runtime.current_thread.block_on_smoke"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_rt: stage runtime.current_thread.block_on_smoke"),
+    );
     let value = runtime.block_on(async { 0x5254_0001u32 });
     if value != 0x5254_0001 {
         return Err("runtime.current_thread.block_on_smoke.value");
     }
-    logl::log(level::INFO, format_args!("tokio_rt: success runtime.current_thread.block_on_smoke"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_rt: success runtime.current_thread.block_on_smoke"),
+    );
 
-    logl::log(level::INFO, format_args!("tokio_rt: stage runtime.current_thread.drop_time"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_rt: stage runtime.current_thread.drop_time"),
+    );
     drop(runtime);
-    logl::log(level::INFO, format_args!("tokio_rt: success runtime.current_thread.drop_time"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_rt: success runtime.current_thread.drop_time"),
+    );
 
     Ok(())
 }
 
 async fn run_probe() -> Result<(), &'static str> {
-    logl::log(level::INFO, format_args!("tokio_rt: stage rt.task.yield_now"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_rt: stage rt.task.yield_now"),
+    );
     t::task::yield_now().await;
-    logl::log(level::INFO, format_args!("tokio_rt: success rt.task.yield_now"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_rt: success rt.task.yield_now"),
+    );
 
-    logl::log(level::INFO, format_args!("tokio_rt: stage rt.task.spawn_join"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_rt: stage rt.task.spawn_join"),
+    );
     let join = t::task::spawn(async { 0xA11C_Eu32 });
     let join_value = join.await.map_err(|_| "rt.task.spawn_join.await")?;
     if join_value != 0xA11C_E {
         return Err("rt.task.spawn_join.value");
     }
-    logl::log(level::INFO, format_args!("tokio_rt: success rt.task.spawn_join"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_rt: success rt.task.spawn_join"),
+    );
 
-    logl::log(level::INFO, format_args!("tokio_rt: stage rt.task.localset_spawn_local"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_rt: stage rt.task.localset_spawn_local"),
+    );
     let local = t::task::LocalSet::new();
     let local_value = local
         .run_until(async {
@@ -103,9 +187,15 @@ async fn run_probe() -> Result<(), &'static str> {
     if local_value != 0x10CA_1E7 {
         return Err("rt.task.localset_spawn_local.value");
     }
-    logl::log(level::INFO, format_args!("tokio_rt: success rt.task.localset_spawn_local"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_rt: success rt.task.localset_spawn_local"),
+    );
 
-    logl::log(level::INFO, format_args!("tokio_rt: stage rt.task.join_set"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_rt: stage rt.task.join_set"),
+    );
     let mut join_set = t::task::JoinSet::new();
     join_set.spawn(async { 0x11u32 });
     join_set.spawn(async { 0x22u32 });
@@ -117,9 +207,15 @@ async fn run_probe() -> Result<(), &'static str> {
     if sum != 0x33 {
         return Err("rt.task.join_set.value");
     }
-    logl::log(level::INFO, format_args!("tokio_rt: success rt.task.join_set"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_rt: success rt.task.join_set"),
+    );
 
-    logl::log(level::INFO, format_args!("tokio_rt: stage rt.task.join_macro"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_rt: stage rt.task.join_macro"),
+    );
     let (left, right) = t::tokio::join!(
         async {
             t::task::yield_now().await;
@@ -130,9 +226,15 @@ async fn run_probe() -> Result<(), &'static str> {
     if left != 0x4A4F_494E || right != 0x4D41_4352 {
         return Err("rt.task.join_macro.value");
     }
-    logl::log(level::INFO, format_args!("tokio_rt: success rt.task.join_macro"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_rt: success rt.task.join_macro"),
+    );
 
-    logl::log(level::INFO, format_args!("tokio_rt: stage rt.task.try_join_macro"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_rt: stage rt.task.try_join_macro"),
+    );
     let (left, right) = t::tokio::try_join!(
         async {
             t::task::yield_now().await;
@@ -143,7 +245,10 @@ async fn run_probe() -> Result<(), &'static str> {
     if left != 0x5452_5931 || right != 0x5452_5932 {
         return Err("rt.task.try_join_macro.value");
     }
-    logl::log(level::INFO, format_args!("tokio_rt: success rt.task.try_join_macro"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_rt: success rt.task.try_join_macro"),
+    );
 
     logl::log(level::INFO, format_args!("tokio_rt: stage rt.task.abort"));
     let (_tx, rx) = t::sync::oneshot::channel::<()>();
@@ -153,7 +258,9 @@ async fn run_probe() -> Result<(), &'static str> {
     });
     abort_task.abort();
     match abort_task.await {
-        Err(err) if err.is_cancelled() => logl::log(level::INFO, format_args!("tokio_rt: success rt.task.abort")),
+        Err(err) if err.is_cancelled() => {
+            logl::log(level::INFO, format_args!("tokio_rt: success rt.task.abort"))
+        }
         Err(_) => return Err("rt.task.abort.state"),
         Ok(_) => return Err("rt.task.abort.value"),
     }
@@ -227,7 +334,10 @@ async fn probe_sync() -> Result<(), &'static str> {
     if value != 0xB04D_C457 {
         return Err("sync.broadcast.value");
     }
-    logl::log(level::INFO, format_args!("tokio_rt: success sync.broadcast"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_rt: success sync.broadcast"),
+    );
 
     logl::log(level::INFO, format_args!("tokio_rt: stage sync.notify"));
     let notify = Arc::new(t::sync::Notify::new());
@@ -288,7 +398,10 @@ async fn probe_sync() -> Result<(), &'static str> {
     if value != 0x53E4_A001 {
         return Err("sync.semaphore.value");
     }
-    logl::log(level::INFO, format_args!("tokio_rt: success sync.semaphore"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_rt: success sync.semaphore"),
+    );
 
     logl::log(level::INFO, format_args!("tokio_rt: stage sync.barrier"));
     let barrier = Arc::new(t::sync::Barrier::new(2));
@@ -311,12 +424,21 @@ async fn probe_sync() -> Result<(), &'static str> {
 }
 
 async fn probe_time() -> Result<(), &'static str> {
-    logl::log(level::INFO, format_args!("tokio_rt: stage time.instant_now"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_rt: stage time.instant_now"),
+    );
     let now = t::time::Instant::now();
     let _ = now.checked_add(t::time::Duration::from_millis(1));
-    logl::log(level::INFO, format_args!("tokio_rt: success time.instant_now"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_rt: success time.instant_now"),
+    );
 
-    logl::log(level::INFO, format_args!("tokio_rt: stage time.instant_delta.spin"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_rt: stage time.instant_delta.spin"),
+    );
     let spin_start = t::time::Instant::now();
     for _ in 0..1024 {
         core::hint::spin_loop();
@@ -324,42 +446,75 @@ async fn probe_time() -> Result<(), &'static str> {
     let spin_delta = t::time::Instant::now().saturating_duration_since(spin_start);
     logl::log(
         level::INFO,
-        format_args!("tokio_rt: success time.instant_delta.spin nanos={}", spin_delta.as_nanos()),
+        format_args!(
+            "tokio_rt: success time.instant_delta.spin nanos={}",
+            spin_delta.as_nanos()
+        ),
     );
 
-    logl::log(level::INFO, format_args!("tokio_rt: stage time.instant_delta.after_yield"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_rt: stage time.instant_delta.after_yield"),
+    );
     let yield_start = t::time::Instant::now();
     t::task::yield_now().await;
     let yield_delta = t::time::Instant::now().saturating_duration_since(yield_start);
     logl::log(
         level::INFO,
-        format_args!("tokio_rt: success time.instant_delta.after_yield nanos={}", yield_delta.as_nanos()),
+        format_args!(
+            "tokio_rt: success time.instant_delta.after_yield nanos={}",
+            yield_delta.as_nanos()
+        ),
     );
 
-    logl::log(level::INFO, format_args!("tokio_rt: stage time.sleep_zero.build"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_rt: stage time.sleep_zero.build"),
+    );
     let sleep_zero = t::time::sleep(t::time::Duration::from_millis(0));
-    logl::log(level::INFO, format_args!("tokio_rt: success time.sleep_zero.build"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_rt: success time.sleep_zero.build"),
+    );
 
-    logl::log(level::INFO, format_args!("tokio_rt: stage time.sleep_zero.await"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_rt: stage time.sleep_zero.await"),
+    );
     let sleep_zero_start = t::time::Instant::now();
     sleep_zero.await;
     let sleep_zero_delta = t::time::Instant::now().saturating_duration_since(sleep_zero_start);
     logl::log(
         level::INFO,
-        format_args!("tokio_rt: success time.sleep_zero.await nanos={}", sleep_zero_delta.as_nanos()),
+        format_args!(
+            "tokio_rt: success time.sleep_zero.await nanos={}",
+            sleep_zero_delta.as_nanos()
+        ),
     );
 
-    logl::log(level::INFO, format_args!("tokio_rt: stage time.sleep_one.build"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_rt: stage time.sleep_one.build"),
+    );
     let sleep_one = t::time::sleep(t::time::Duration::from_millis(1));
-    logl::log(level::INFO, format_args!("tokio_rt: success time.sleep_one.build"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_rt: success time.sleep_one.build"),
+    );
 
-    logl::log(level::INFO, format_args!("tokio_rt: stage time.sleep_one.await"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_rt: stage time.sleep_one.await"),
+    );
     let sleep_one_start = t::time::Instant::now();
     sleep_one.await;
     let sleep_one_delta = t::time::Instant::now().saturating_duration_since(sleep_one_start);
     logl::log(
         level::INFO,
-        format_args!("tokio_rt: success time.sleep_one.await nanos={}", sleep_one_delta.as_nanos()),
+        format_args!(
+            "tokio_rt: success time.sleep_one.await nanos={}",
+            sleep_one_delta.as_nanos()
+        ),
     );
 
     logl::log(level::INFO, format_args!("tokio_rt: stage time.timeout"));
@@ -374,33 +529,61 @@ async fn probe_time() -> Result<(), &'static str> {
     }
     logl::log(level::INFO, format_args!("tokio_rt: success time.timeout"));
 
-    logl::log(level::INFO, format_args!("tokio_rt: stage time.timeout_elapsed_pending.build"));
-    let pending_elapsed = t::time::timeout(
-        t::time::Duration::from_millis(1),
-        future::pending::<u32>(),
+    logl::log(
+        level::INFO,
+        format_args!("tokio_rt: stage time.timeout_elapsed_pending.build"),
     );
-    logl::log(level::INFO, format_args!("tokio_rt: success time.timeout_elapsed_pending.build"));
+    let pending_elapsed =
+        t::time::timeout(t::time::Duration::from_millis(1), future::pending::<u32>());
+    logl::log(
+        level::INFO,
+        format_args!("tokio_rt: success time.timeout_elapsed_pending.build"),
+    );
 
-    logl::log(level::INFO, format_args!("tokio_rt: stage time.timeout_elapsed_pending.await"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_rt: stage time.timeout_elapsed_pending.await"),
+    );
     match pending_elapsed.await {
-        Err(_) => logl::log(level::INFO, format_args!("tokio_rt: success time.timeout_elapsed_pending.await")),
+        Err(_) => logl::log(
+            level::INFO,
+            format_args!("tokio_rt: success time.timeout_elapsed_pending.await"),
+        ),
         Ok(_) => return Err("time.timeout_elapsed_pending.value"),
     }
 
-    logl::log(level::INFO, format_args!("tokio_rt: stage time.timeout_elapsed_sleep.inner_build"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_rt: stage time.timeout_elapsed_sleep.inner_build"),
+    );
     let inner_sleep = t::time::sleep(t::time::Duration::from_millis(100));
-    logl::log(level::INFO, format_args!("tokio_rt: success time.timeout_elapsed_sleep.inner_build"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_rt: success time.timeout_elapsed_sleep.inner_build"),
+    );
 
-    logl::log(level::INFO, format_args!("tokio_rt: stage time.timeout_elapsed_sleep.outer_build"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_rt: stage time.timeout_elapsed_sleep.outer_build"),
+    );
     let timeout_sleep = t::time::timeout(t::time::Duration::from_millis(5), async {
         inner_sleep.await;
         0x4445_4144u32
     });
-    logl::log(level::INFO, format_args!("tokio_rt: success time.timeout_elapsed_sleep.outer_build"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_rt: success time.timeout_elapsed_sleep.outer_build"),
+    );
 
-    logl::log(level::INFO, format_args!("tokio_rt: stage time.timeout_elapsed_sleep.await"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_rt: stage time.timeout_elapsed_sleep.await"),
+    );
     match timeout_sleep.await {
-        Err(_) => logl::log(level::INFO, format_args!("tokio_rt: success time.timeout_elapsed_sleep.await")),
+        Err(_) => logl::log(
+            level::INFO,
+            format_args!("tokio_rt: success time.timeout_elapsed_sleep.await"),
+        ),
         Ok(_) => return Err("time.timeout_elapsed_sleep.value"),
     }
 
@@ -436,7 +619,10 @@ async fn probe_io() -> Result<(), &'static str> {
     let _stdin = t::io::stdin();
     let _stdout = t::io::stdout();
     let _stderr = t::io::stderr();
-    logl::log(level::INFO, format_args!("tokio_rt: success io.std.surface"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_rt: success io.std.surface"),
+    );
 
     Ok(())
 }

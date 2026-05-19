@@ -15,107 +15,215 @@ fn main() {
     logl::log(level::INFO, format_args!("tokio_net: start"));
 
     if let Err(stage) = probe_runtime_bootstrap_surfaces() {
-        logl::log(level::ERROR, format_args!("tokio_net: bootstrap failed stage={}", stage));
+        logl::log(
+            level::ERROR,
+            format_args!("tokio_net: bootstrap failed stage={}", stage),
+        );
         return;
     }
 
-    logl::log(level::INFO, format_args!("tokio_net: stage runtime.current_thread_net.build"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_net: stage runtime.current_thread_net.build"),
+    );
 
     let runtime = match t::runtime::current_thread_net().build() {
         Ok(rt) => rt,
         Err(err) => {
-            logl::log(level::ERROR, format_args!("tokio_net: runtime build failed: {}", err));
+            logl::log(
+                level::ERROR,
+                format_args!("tokio_net: runtime build failed: {}", err),
+            );
             return;
         }
     };
-    logl::log(level::INFO, format_args!("tokio_net: success runtime.current_thread_net.build"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_net: success runtime.current_thread_net.build"),
+    );
 
     runtime.block_on(async {
         match run_probe().await {
             Ok(()) => logl::log(level::INFO, format_args!("tokio_net: done")),
-            Err(stage) => logl::log(level::ERROR, format_args!("tokio_net: failed stage={}", stage)),
+            Err(stage) => logl::log(
+                level::ERROR,
+                format_args!("tokio_net: failed stage={}", stage),
+            ),
         }
     });
 }
 
 fn probe_runtime_bootstrap_surfaces() -> Result<(), &'static str> {
-    logl::log(level::INFO, format_args!("tokio_net: stage thread.current.id"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_net: stage thread.current.id"),
+    );
     let thread_id = thread::current().id();
-    logl::log(level::INFO, format_args!("tokio_net: success thread.current.id id={:?}", thread_id));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_net: success thread.current.id id={:?}", thread_id),
+    );
 
-    logl::log(level::INFO, format_args!("tokio_net: stage thread.yield_now"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_net: stage thread.yield_now"),
+    );
     thread::yield_now();
-    logl::log(level::INFO, format_args!("tokio_net: success thread.yield_now"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_net: success thread.yield_now"),
+    );
 
-    logl::log(level::INFO, format_args!("tokio_net: stage runtime.current_thread.builder_new_plain"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_net: stage runtime.current_thread.builder_new_plain"),
+    );
     let mut builder = t::tokio::runtime::Builder::new_current_thread();
-    logl::log(level::INFO, format_args!("tokio_net: success runtime.current_thread.builder_new_plain"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_net: success runtime.current_thread.builder_new_plain"),
+    );
 
-    logl::log(level::INFO, format_args!("tokio_net: stage runtime.current_thread.builder_build_plain"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_net: stage runtime.current_thread.builder_build_plain"),
+    );
     let runtime = builder
         .build()
         .map_err(|_| "runtime.current_thread.builder_build_plain")?;
-    logl::log(level::INFO, format_args!("tokio_net: success runtime.current_thread.build_plain"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_net: success runtime.current_thread.build_plain"),
+    );
 
-    logl::log(level::INFO, format_args!("tokio_net: stage runtime.current_thread.drop_plain"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_net: stage runtime.current_thread.drop_plain"),
+    );
     drop(runtime);
-    logl::log(level::INFO, format_args!("tokio_net: success runtime.current_thread.drop_plain"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_net: success runtime.current_thread.drop_plain"),
+    );
 
-    logl::log(level::INFO, format_args!("tokio_net: stage runtime.current_thread.build_time"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_net: stage runtime.current_thread.build_time"),
+    );
     let runtime = t::runtime::current_thread()
         .build()
         .map_err(|_| "runtime.current_thread.build_time")?;
-    logl::log(level::INFO, format_args!("tokio_net: success runtime.current_thread.build_time"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_net: success runtime.current_thread.build_time"),
+    );
 
-    logl::log(level::INFO, format_args!("tokio_net: stage runtime.current_thread.drop_time"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_net: stage runtime.current_thread.drop_time"),
+    );
     drop(runtime);
-    logl::log(level::INFO, format_args!("tokio_net: success runtime.current_thread.drop_time"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_net: success runtime.current_thread.drop_time"),
+    );
 
-    logl::log(level::INFO, format_args!("tokio_net: stage runtime.current_thread.builder_new_io_no_time"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_net: stage runtime.current_thread.builder_new_io_no_time"),
+    );
     let mut builder = t::tokio::runtime::Builder::new_current_thread();
-    logl::log(level::INFO, format_args!("tokio_net: success runtime.current_thread.builder_new_io_no_time"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_net: success runtime.current_thread.builder_new_io_no_time"),
+    );
 
-    logl::log(level::INFO, format_args!("tokio_net: stage runtime.current_thread.build_io_no_time"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_net: stage runtime.current_thread.build_io_no_time"),
+    );
     builder.enable_io();
     let runtime = builder
         .build()
         .map_err(|_| "runtime.current_thread.build_io_no_time")?;
-    logl::log(level::INFO, format_args!("tokio_net: success runtime.current_thread.build_io_no_time"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_net: success runtime.current_thread.build_io_no_time"),
+    );
 
-    logl::log(level::INFO, format_args!("tokio_net: stage runtime.current_thread.drop_io_no_time"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_net: stage runtime.current_thread.drop_io_no_time"),
+    );
     drop(runtime);
-    logl::log(level::INFO, format_args!("tokio_net: success runtime.current_thread.drop_io_no_time"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_net: success runtime.current_thread.drop_io_no_time"),
+    );
 
-    logl::log(level::INFO, format_args!("tokio_net: stage mio.poll.wake.bootstrap"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_net: stage mio.poll.wake.bootstrap"),
+    );
     probe_mio_poll_surface()?;
-    logl::log(level::INFO, format_args!("tokio_net: success mio.poll.wake.bootstrap"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_net: success mio.poll.wake.bootstrap"),
+    );
 
     Ok(())
 }
 
 async fn run_probe() -> Result<(), &'static str> {
-    logl::log(level::INFO, format_args!("tokio_net: stage net.socket2.new"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_net: stage net.socket2.new"),
+    );
     probe_socket2_surface()?;
 
     logl::log(level::INFO, format_args!("tokio_net: stage mio.poll.wake"));
     probe_mio_poll_surface()?;
 
-    logl::log(level::INFO, format_args!("tokio_net: stage mio.net.udp.bind"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_net: stage mio.net.udp.bind"),
+    );
     probe_mio_udp_bind().await?;
 
     logl::log(level::INFO, format_args!("tokio_net: stage net.udp.bind"));
     probe_udp_bind().await?;
 
-    logl::log(level::INFO, format_args!("tokio_net: stage net.tcp.loopback_roundtrip"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_net: stage net.tcp.loopback_roundtrip"),
+    );
     match probe_tcp_loopback().await {
-        Ok(()) => logl::log(level::INFO, format_args!("tokio_net: success net.tcp.loopback_roundtrip")),
+        Ok(()) => logl::log(
+            level::INFO,
+            format_args!("tokio_net: success net.tcp.loopback_roundtrip"),
+        ),
         Err(stage) => {
-            logl::log(level::INFO, format_args!("tokio_net: note net.tcp.loopback unavailable, fallback={}", stage));
-            logl::log(level::INFO, format_args!("tokio_net: stage net.tcp.remote_http"));
+            logl::log(
+                level::INFO,
+                format_args!(
+                    "tokio_net: note net.tcp.loopback unavailable, fallback={}",
+                    stage
+                ),
+            );
+            logl::log(
+                level::INFO,
+                format_args!("tokio_net: stage net.tcp.remote_http"),
+            );
             match probe_remote_http().await {
                 Ok(()) => {}
                 Err(stage) => {
-                    logl::log(level::INFO, format_args!("tokio_net: note net.tcp.remote_http unavailable, fallback={}", stage));
+                    logl::log(
+                        level::INFO,
+                        format_args!(
+                            "tokio_net: note net.tcp.remote_http unavailable, fallback={}",
+                            stage
+                        ),
+                    );
                 }
             }
         }
@@ -131,7 +239,10 @@ fn probe_socket2_surface() -> Result<(), &'static str> {
         Some(t::net::socket2::Protocol::TCP),
     )
     .map_err(|_| "net.socket2.new")?;
-    logl::log(level::INFO, format_args!("tokio_net: success net.socket2.new"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_net: success net.socket2.new"),
+    );
     Ok(())
 }
 
@@ -147,7 +258,10 @@ fn probe_mio_poll_surface() -> Result<(), &'static str> {
     if event_count == 0 {
         return Err("mio.poll.empty");
     }
-    logl::log(level::INFO, format_args!("tokio_net: success mio.poll.wake events={}", event_count));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_net: success mio.poll.wake events={}", event_count),
+    );
     Ok(())
 }
 
@@ -158,7 +272,10 @@ async fn probe_mio_udp_bind() -> Result<(), &'static str> {
         match t::net::mio::net::UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0).into()) {
             Ok(socket) => {
                 let local = socket.local_addr().map_err(|_| "mio.net.udp.local_addr")?;
-                logl::log(level::INFO, format_args!("tokio_net: success mio.net.udp.bind local={}", local));
+                logl::log(
+                    level::INFO,
+                    format_args!("tokio_net: success mio.net.udp.bind local={}", local),
+                );
                 return Ok(());
             }
             Err(_) if t::time::Instant::now() < deadline => {
@@ -195,7 +312,10 @@ async fn try_probe_udp_bind() -> Result<(), &'static str> {
         .map_err(|_| "net.udp.bind")?;
     let local = socket.local_addr().map_err(|_| "net.udp.local_addr")?;
     socket.writable().await.map_err(|_| "net.udp.writable")?;
-    logl::log(level::INFO, format_args!("tokio_net: success net.udp.bind local={}", local));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_net: success net.udp.bind local={}", local),
+    );
     Ok(())
 }
 
@@ -208,7 +328,10 @@ async fn probe_tcp_loopback() -> Result<(), &'static str> {
     let listen_addr = listener
         .local_addr()
         .map_err(|_| "net.tcp.loopback.local_addr")?;
-    logl::log(level::INFO, format_args!("tokio_net: tcp loopback listen={}", listen_addr));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_net: tcp loopback listen={}", listen_addr),
+    );
 
     let accept_task = t::task::spawn(async move {
         let (mut server, peer) = listener
@@ -261,7 +384,10 @@ async fn probe_tcp_loopback() -> Result<(), &'static str> {
     let peer = accept_task
         .await
         .map_err(|_| "net.tcp.loopback.accept_task")??;
-    logl::log(level::INFO, format_args!("tokio_net: success net.tcp.loopback peer={}", peer));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_net: success net.tcp.loopback peer={}", peer),
+    );
     Ok(())
 }
 
@@ -304,9 +430,7 @@ async fn probe_remote_http() -> Result<(), &'static str> {
         level::INFO,
         format_args!(
             "tokio_net: success net.tcp.remote_http addr={} bytes={} preview={}",
-            remote_http_addr,
-            read,
-            preview
+            remote_http_addr, read, preview
         ),
     );
     Ok(())

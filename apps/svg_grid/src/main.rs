@@ -68,7 +68,10 @@ fn render_svg(window_id: ui2::WindowId, width: u32, height: u32) -> bool {
     if rc != 0 {
         logl::log(
             level::ERROR,
-            format_args!("svg_grid bp: svg upload failed rc={} size={}x{}\n", rc, width, height),
+            format_args!(
+                "svg_grid bp: svg upload failed rc={} size={}x{}\n",
+                rc, width, height
+            ),
         );
         return false;
     }

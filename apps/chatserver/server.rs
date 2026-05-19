@@ -98,13 +98,19 @@ async fn load_chat_hub_once() {
                 *guard = Some(hub);
                 logl::log(
                     level::INFO,
-                    format_args!("chat: loaded {} room(s) from {}", room_count, CHAT_STORE_PATH),
+                    format_args!(
+                        "chat: loaded {} room(s) from {}",
+                        room_count, CHAT_STORE_PATH
+                    ),
                 );
             }
             CHAT_HUB_LOADED.store(true, Ordering::Release);
         }
         Err(()) => {
-            logl::log(level::WARN, format_args!("chat: ignored invalid {}", CHAT_STORE_PATH));
+            logl::log(
+                level::WARN,
+                format_args!("chat: ignored invalid {}", CHAT_STORE_PATH),
+            );
             CHAT_HUB_LOADED.store(true, Ordering::Release);
         }
     }
@@ -132,7 +138,10 @@ async fn save_chat_hub_snapshot() {
         }
     }
     if let Err(err) = vfs::write_file(CHAT_STORE_PATH.as_bytes(), bytes.as_slice()) {
-        logl::log(level::WARN, format_args!("chat: save {} failed rc={}", CHAT_STORE_PATH, err));
+        logl::log(
+            level::WARN,
+            format_args!("chat: save {} failed rc={}", CHAT_STORE_PATH, err),
+        );
     }
 }
 
@@ -159,7 +168,10 @@ async fn chat_hub_save_loop() {
         save_chat_hub_snapshot().await;
         logl::log(
             level::INFO,
-            format_args!("chat: save done mode=batched coalesced_requests={}", coalesced),
+            format_args!(
+                "chat: save done mode=batched coalesced_requests={}",
+                coalesced
+            ),
         );
     }
 }
@@ -249,7 +261,10 @@ async fn chat_http_runtime() -> Result<(), io::Error> {
     let app = chat_router();
     let addr = SocketAddr::from(([0, 0, 0, 0], CHAT_HTTP_TCP_PORT));
     loop {
-        logl::log(level::INFO, format_args!("chat-http: bind begin addr={}", addr));
+        logl::log(
+            level::INFO,
+            format_args!("chat-http: bind begin addr={}", addr),
+        );
         let listener = match tokio::net::TcpListener::bind(addr).await {
             Ok(listener) => listener,
             Err(err) => {
@@ -269,7 +284,10 @@ async fn chat_http_runtime() -> Result<(), io::Error> {
         };
 
         CHAT_HTTP_PORT.store(addr.port(), Ordering::Release);
-        logl::log(level::INFO, format_args!("chat-http: axum listening on http://{}/", addr));
+        logl::log(
+            level::INFO,
+            format_args!("chat-http: axum listening on http://{}/", addr),
+        );
         let listener = listener.tap_io(|_| logl::log(level::INFO, "chat-http: tcp accepted"));
         if let Err(err) = axum::serve(listener, app.clone()).await {
             CHAT_HTTP_PORT.store(0, Ordering::Release);
@@ -292,7 +310,10 @@ fn main() {
     let runtime = match runtime::current_thread_net().build() {
         Ok(runtime) => runtime,
         Err(err) => {
-            logl::log(level::ERROR, format_args!("chat-http: runtime build failed {}", err));
+            logl::log(
+                level::ERROR,
+                format_args!("chat-http: runtime build failed {}", err),
+            );
             return;
         }
     };
@@ -300,10 +321,16 @@ fn main() {
     local.block_on(&runtime, async {
         tokio::task::spawn_local(chat_hub_save_loop());
         if let Err(err) = chat_http_runtime().await {
-            logl::log(level::ERROR, format_args!("chat-http: runtime failed {:?}", err));
+            logl::log(
+                level::ERROR,
+                format_args!("chat-http: runtime failed {:?}", err),
+            );
         }
     });
     CHAT_HTTP_PORT.store(0, Ordering::Release);
-    logl::log(level::INFO, format_args!("chat-http: blueprint stop port={:?}", current_port()));
+    logl::log(
+        level::INFO,
+        format_args!("chat-http: blueprint stop port={:?}", current_port()),
+    );
     platform::poll_once();
 }

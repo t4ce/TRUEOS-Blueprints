@@ -54,7 +54,10 @@ fn open_triangle_window() -> Option<ui2::SurfaceWindow> {
 
 fn main() {
     let Some(window) = open_triangle_window() else {
-        logl::log(level::ERROR, "triangle bp: ui2 surface window create failed\n");
+        logl::log(
+            level::ERROR,
+            "triangle bp: ui2 surface window create failed\n",
+        );
         return;
     };
 

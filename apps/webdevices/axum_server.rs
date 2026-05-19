@@ -93,7 +93,11 @@ fn text_response(status: u16, content_type: &'static str, body: &str) -> Respons
 fn json_response<T: Serialize>(status: u16, value: &T) -> Response {
     match serde_json::to_vec(value) {
         Ok(body) => response(status, "application/json; charset=utf-8", body, true),
-        Err(_) => text_response(500, "text/plain; charset=utf-8", "json serialization failed\n"),
+        Err(_) => text_response(
+            500,
+            "text/plain; charset=utf-8",
+            "json serialization failed\n",
+        ),
     }
 }
 
@@ -172,7 +176,10 @@ async fn webdevices_http_runtime() -> Result<(), io::Error> {
         };
 
         WEBDEVICES_HTTP_PORT.store(addr.port(), Ordering::Release);
-        logl::log(level::INFO, format_args!("webdevices-http: axum listening on http://{}/", addr));
+        logl::log(
+            level::INFO,
+            format_args!("webdevices-http: axum listening on http://{}/", addr),
+        );
         let listener = listener.tap_io(|_| logl::log(level::INFO, "webdevices-http: tcp accepted"));
         let result = axum::serve(listener, app).await;
         WEBDEVICES_HTTP_PORT.store(0, Ordering::Release);
@@ -185,14 +192,20 @@ fn main() {
     let runtime = match runtime::current_thread_net().build() {
         Ok(runtime) => runtime,
         Err(err) => {
-            logl::log(level::ERROR, format_args!("webdevices-http: runtime build failed {}", err));
+            logl::log(
+                level::ERROR,
+                format_args!("webdevices-http: runtime build failed {}", err),
+            );
             return;
         }
     };
     let local = tokio::task::LocalSet::new();
     local.block_on(&runtime, async {
         if let Err(err) = webdevices_http_runtime().await {
-            logl::log(level::ERROR, format_args!("webdevices-http: runtime failed {:?}", err));
+            logl::log(
+                level::ERROR,
+                format_args!("webdevices-http: runtime failed {:?}", err),
+            );
         }
     });
     platform::poll_once();

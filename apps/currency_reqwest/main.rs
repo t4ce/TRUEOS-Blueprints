@@ -34,31 +34,55 @@ async fn fetch_feed_text() -> Result<String, String> {
         .tls_danger_accept_invalid_certs(true)
         .build()
         .map_err(|err| {
-            logl::log(level::ERROR, format_args!("currency_bp: reqwest client failed: {}", err));
-            logl::log(level::ERROR, format_args!("currency_bp: reqwest client debug={:?}", err));
+            logl::log(
+                level::ERROR,
+                format_args!("currency_bp: reqwest client failed: {}", err),
+            );
+            logl::log(
+                level::ERROR,
+                format_args!("currency_bp: reqwest client debug={:?}", err),
+            );
             log_reqwest_sources("currency_bp: reqwest client", &err);
             format!("client {err}")
         })?;
 
-    logl::log(level::INFO, format_args!("currency_bp: fetching live FX rates"));
+    logl::log(
+        level::INFO,
+        format_args!("currency_bp: fetching live FX rates"),
+    );
     let response = client.get(FXFEED_URL).send().await.map_err(|err| {
-        logl::log(level::ERROR, format_args!("currency_bp: reqwest request failed: {}", err));
-        logl::log(level::ERROR, format_args!("currency_bp: reqwest request debug={:?}", err));
+        logl::log(
+            level::ERROR,
+            format_args!("currency_bp: reqwest request failed: {}", err),
+        );
+        logl::log(
+            level::ERROR,
+            format_args!("currency_bp: reqwest request debug={:?}", err),
+        );
         log_reqwest_sources("currency_bp: reqwest request", &err);
         format!("request {err}")
     })?;
 
     let status = response.status();
     if !status.is_success() {
-        logl::log(level::ERROR, format_args!("currency_bp: fxfeed status={}", status));
+        logl::log(
+            level::ERROR,
+            format_args!("currency_bp: fxfeed status={}", status),
+        );
         return Err(format!("status {status}"));
     }
 
     let body = response.text().await.map_err(|err| {
-        logl::log(level::ERROR, format_args!("currency_bp: response text failed: {}", err));
+        logl::log(
+            level::ERROR,
+            format_args!("currency_bp: response text failed: {}", err),
+        );
         format!("body {err}")
     })?;
-    logl::log(level::INFO, format_args!("currency_bp: rates received bytes={}", body.len()));
+    logl::log(
+        level::INFO,
+        format_args!("currency_bp: rates received bytes={}", body.len()),
+    );
     Ok(body)
 }
 
@@ -66,7 +90,10 @@ fn log_reqwest_sources(prefix: &'static str, err: &reqwest::Error) {
     let mut depth = 0usize;
     let mut source = err.source();
     while let Some(cause) = source {
-        logl::log(level::ERROR, format_args!("{} source[{}]: {}", prefix, depth, cause));
+        logl::log(
+            level::ERROR,
+            format_args!("{} source[{}]: {}", prefix, depth, cause),
+        );
         source = cause.source();
         depth += 1;
         if depth >= 4 {

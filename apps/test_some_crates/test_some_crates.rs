@@ -17,7 +17,10 @@ fn main() {
     logl::log(level::INFO, "crate test hello\n");
 
     match run_probe() {
-        Ok(()) => logl::log(level::INFO, "test_some_crates bp: serde/json/regex/anyhow ok\n"),
+        Ok(()) => logl::log(
+            level::INFO,
+            "test_some_crates bp: serde/json/regex/anyhow ok\n",
+        ),
         Err(_) => logl::log(level::INFO, "test_some_crates bp: crate probe failed\n"),
     }
 }
