@@ -4,6 +4,7 @@
     "chatserver",
     "cli_tetris",
     "currency_reqwest",
+    "file-system",
     "fileexplorer",
     "flags",
     "framework_stack",

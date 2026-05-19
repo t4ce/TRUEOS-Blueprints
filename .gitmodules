@@ -1,9 +1,9 @@
-[submodule "TRUEOS"]
-	path = TRUEOS
-	url = https://github.com/t4ce/TRUEOS.git
 [submodule "apps/matrix"]
 	path = apps/matrix
 	url = https://github.com/matrix-construct/tuwunel
 [submodule "apps/helix"]
 	path = apps/helix
 	url = https://github.com/helix-editor/helix
+[submodule "apps/file-system"]
+	path = apps/file-system
+	url = https://github.com/t4ce/TRUEOS-file-system.git

@@ -12,6 +12,7 @@ members = [
     "apps/cli_tetris",
     "apps/crates/trueos-tetris",
     "apps/currency_reqwest",
+    "apps/file-system",
     "apps/fileexplorer",
     "apps/flags",
     "apps/framework_stack",
@@ -40,28 +41,28 @@ anyhow = { version = "1.0", default-features = false }
 axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "tokio"] }
 colored = "2.1"
 glob = "0.3"
-http-body-util = { path = "../../vendor/http-body-util-0.1.3", default-features = false }
+http-body-util = { path = "../TRUEOS/vendor/http-body-util-0.1.3", default-features = false }
 hyper = { version = "1.9", default-features = false, features = ["client", "server", "http1"] }
-hyper-util = { path = "../../vendor/hyper-util-0.1.20", default-features = false }
+hyper-util = { path = "../TRUEOS/vendor/hyper-util-0.1.20", default-features = false }
 ignore = "0.4"
 libm = { version = "0.2", default-features = false }
 regex = { version = "1", default-features = false, features = ["perf"] }
 reqwest = { version = "0.13.3", default-features = false, features = ["json"] }
 rustls = { version = "0.23.27", default-features = false, features = ["std", "tls12"] }
-rustls-rustcrypto = { path = "../../vendor/rustls-rustcrypto-0.0.2-alpha", default-features = false, features = ["std", "tls12"] }
+rustls-rustcrypto = { path = "../TRUEOS/vendor/rustls-rustcrypto-0.0.2-alpha", default-features = false, features = ["std", "tls12"] }
 rustyline = "14.0"
 serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
 serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
 serde_yaml = "0.9"
 tempfile = "3"
 tokio = { version = "1.52.1", default-features = false, features = ["full"] }
-tokio-rustls = { path = "../../vendor/tokio-rustls-0.26.4", default-features = false, features = ["tls12"] }
+tokio-rustls = { path = "../TRUEOS/vendor/tokio-rustls-0.26.4", default-features = false, features = ["tls12"] }
 tower = { version = "0.5", default-features = false, features = ["util"] }
 trueos = { path = "api" }
-trueos-chat = { path = "../trueos-chat" }
+trueos-chat = { path = "apps/chatserver/trueos-chat" }
 trueos-currency = { path = "apps/currency_reqwest/trueos-currency" }
 trueos-flags = { path = "apps/flags/trueos-flags" }
-trueos-gfx-core = { path = "../trueos-gfx-core" }
+trueos-gfx-core = { path = "../TRUEOS/crates/trueos-gfx-core" }
 trueos-tetris = { path = "apps/crates/trueos-tetris" }
 trueos-weather = { path = "apps/weather/trueos-weather" }
 webpki-roots = { version = "1", default-features = false }

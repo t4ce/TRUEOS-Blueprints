@@ -2059,7 +2059,7 @@ fn materialized_workspace_dependency(
                 .to_string()
         }
         "trueos" => path_dependency_line(dep_name, &blueprint_root.join("api")),
-        "trueos-chat" => path_dependency_line(dep_name, &blueprint_root.join("../trueos-chat")),
+        "trueos-chat" => path_dependency_line(dep_name, &blueprint_root.join("apps/chatserver/trueos-chat")),
         "trueos-currency" => {
             path_dependency_line(dep_name, &blueprint_root.join("apps/currency_reqwest/trueos-currency"))
         }
