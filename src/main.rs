@@ -952,7 +952,7 @@ fn source_overlay_patches(
         }
     }
 
-    if let Some(path) = find_vendor_dir(app_dir, "libc-0.2.185") {
+    if let Some(path) = find_vendor_dir(app_dir, "libc-0.2.186") {
         out.retain(|patch| patch.name != "libc");
         out.push(CratePatch {
             name: "libc".to_string(),
@@ -2045,7 +2045,7 @@ fn materialized_workspace_dependency(
         "serde_yaml" => "serde_yaml = \"0.9\"".to_string(),
         "tempfile" => "tempfile = \"3\"".to_string(),
         "tokio" => {
-            "tokio = { version = \"1.52.1\", default-features = false, features = [\"full\"] }"
+            "tokio = { version = \"1.52.3\", default-features = false, features = [\"full\"] }"
                 .to_string()
         }
         "tokio-rustls" => {
