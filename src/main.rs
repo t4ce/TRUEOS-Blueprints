@@ -1072,7 +1072,6 @@ fn source_overlay_patches(
     }
 
     if let Some(path) = find_vendor_dir(app_dir, "tokio-1.52.3") {
-        let path = stage_tokio_trueos_overlay(work_dir, &path)?;
         out.retain(|patch| patch.name != "tokio");
         out.push(CratePatch {
             name: "tokio".to_string(),
@@ -1171,26 +1170,6 @@ fn stage_argmax_trueos_overlay(work_dir: &Path) -> Result<PathBuf, String> {
     Ok(staged)
 }
 
-fn stage_tokio_trueos_overlay(work_dir: &Path, source: &Path) -> Result<PathBuf, String> {
-    let staged = work_dir
-        .join("source-overlay-crates")
-        .join("tokio-1.52.3");
-    reset_dir(&staged)?;
-    copy_app_tree(source, &staged)?;
-    if let Some(kernel_root) = source.parent().and_then(Path::parent) {
-        replace_file_text(
-            &staged.join("Cargo.toml"),
-            "path = \"../../crates/trueos-io\"",
-            &format!(
-                "path = {}",
-                toml_string(&kernel_root.join("crates/trueos-io").display().to_string())
-            ),
-        )?;
-    }
-    patch_tokio_trueos_overlay(&staged)?;
-    Ok(staged)
-}
-
 fn find_cargo_registry_crate(crate_dir_name: &str) -> Option<PathBuf> {
     let cargo_home = env::var_os("CARGO_HOME")
         .map(PathBuf::from)
@@ -1251,46 +1230,6 @@ fn patch_argmax_trueos_overlay(crate_dir: &Path) -> Result<(), String> {
         "#[cfg(any(not(unix), target_os = \"trueos\", target_os = \"zkvm\"))]\nuse other as platform;\n#[cfg(all(unix, not(any(target_os = \"trueos\", target_os = \"zkvm\"))))]\nuse unix as platform;",
     )?;
     Ok(())
-}
-
-fn patch_tokio_trueos_overlay(crate_dir: &Path) -> Result<(), String> {
-    let trueos_std = crate_dir.join("src/trueos_std.rs");
-    let mut source = fs::read_to_string(&trueos_std).map_err(io_string)?;
-
-    if !source.contains("extern crate std as real_std;") {
-        source = source.replacen(
-            "extern crate self as std;\n",
-            "extern crate self as std;\nextern crate std as real_std;\n",
-            1,
-        );
-    }
-
-    if !source.contains("impl AsRef<Path> for crate::real_std::path::PathBuf") {
-        let marker = "\n    impl Deref for PathBuf {";
-        let Some(marker_idx) = source.find(marker) else {
-            return Err(format!(
-                "failed to patch {}; missing PathBuf Deref marker",
-                trueos_std.display()
-            ));
-        };
-        let bridge = r#"
-
-    impl AsRef<Path> for crate::real_std::path::Path {
-        fn as_ref(&self) -> &Path {
-            Path::new(self.to_str().unwrap_or(""))
-        }
-    }
-
-    impl AsRef<Path> for crate::real_std::path::PathBuf {
-        fn as_ref(&self) -> &Path {
-            self.as_path().as_ref()
-        }
-    }
-"#;
-        source.insert_str(marker_idx, bridge);
-    }
-
-    fs::write(&trueos_std, source).map_err(io_string)
 }
 
 fn replace_file_text(path: &Path, needle: &str, replacement: &str) -> Result<(), String> {
