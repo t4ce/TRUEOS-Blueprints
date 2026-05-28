@@ -165,6 +165,83 @@ pub fn texture_status(tex_id: u32) -> i32 {
     unsafe { vcabi::trueos_cabi_gfx_texture_status(tex_id) }
 }
 
+#[inline]
+pub fn begin_frame(clear_rgb: u32) -> i32 {
+    unsafe { vcabi::trueos_cabi_gfx_begin_frame(clear_rgb) }
+}
+
+#[inline]
+pub fn begin_frame_preserve(clear_rgb: u32) -> i32 {
+    unsafe { vcabi::trueos_cabi_gfx_begin_frame_preserve(clear_rgb) }
+}
+
+#[inline]
+pub fn begin_frame_no_present(clear_rgb: u32) -> i32 {
+    unsafe { vcabi::trueos_cabi_gfx_begin_frame_no_present(clear_rgb) }
+}
+
+#[inline]
+pub fn set_render_target(tex_id: u32) -> i32 {
+    unsafe { vcabi::trueos_cabi_gfx_set_render_target(tex_id) }
+}
+
+#[inline]
+pub fn set_blend_raw(
+    enabled: u32,
+    src_rgb: u32,
+    dst_rgb: u32,
+    src_alpha: u32,
+    dst_alpha: u32,
+    eq_rgb: u32,
+    eq_alpha: u32,
+) -> i32 {
+    unsafe {
+        vcabi::trueos_cabi_gfx_set_blend(
+            enabled, src_rgb, dst_rgb, src_alpha, dst_alpha, eq_rgb, eq_alpha,
+        )
+    }
+}
+
+#[inline]
+pub fn set_sampler_raw(wrap_s: u32, wrap_t: u32, min_filter: u32, mag_filter: u32) -> i32 {
+    unsafe { vcabi::trueos_cabi_gfx_set_sampler(wrap_s, wrap_t, min_filter, mag_filter) }
+}
+
+#[inline]
+pub fn set_scissor(x: u32, y: u32, width: u32, height: u32) -> i32 {
+    unsafe { vcabi::trueos_cabi_gfx_set_scissor(x, y, width, height) }
+}
+
+#[inline]
+pub fn clear_scissor() -> i32 {
+    unsafe { vcabi::trueos_cabi_gfx_clear_scissor() }
+}
+
+pub fn draw_rgb_triangles_no_present(vertices: &[RgbVertex]) -> i32 {
+    let bytes = unsafe {
+        core::slice::from_raw_parts(
+            vertices.as_ptr() as *const u8,
+            core::mem::size_of_val(vertices),
+        )
+    };
+    unsafe { vcabi::trueos_cabi_gfx_draw_rgb_triangles_no_present(bytes.as_ptr(), bytes.len()) }
+}
+
+pub fn draw_tex_triangles_no_present(tex_id: u32, vertices: &[u8]) -> i32 {
+    unsafe {
+        vcabi::trueos_cabi_gfx_draw_tex_triangles_no_present(
+            tex_id,
+            vertices.as_ptr(),
+            vertices.len(),
+        )
+    }
+}
+
+#[inline]
+pub fn end_frame() -> i32 {
+    unsafe { vcabi::trueos_cabi_gfx_end_frame() }
+}
+
 pub fn render_rgb_triangles_to_texture(
     tex_id: u32,
     width: u32,
