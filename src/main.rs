@@ -31,7 +31,19 @@ struct PackageAppSpec {
 
 #[derive(Deserialize)]
 struct AppRegistry {
-    apps: Vec<String>,
+    apps: Vec<AppRegistryEntry>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum AppRegistryEntry {
+    Name(String),
+    Spec { name: String, path: Option<PathBuf> },
+}
+
+struct RegisteredAppSpec {
+    name: String,
+    dir: PathBuf,
 }
 
 #[derive(Clone, Copy)]
@@ -191,13 +203,24 @@ fn run() -> Result<(), String> {
 
     let build_target = BuildTarget::Package;
     let required_features = Vec::new();
-    build_one_target(
-        &app_dir,
-        &manifest_path,
-        build_target,
-        &required_features,
-        cargo_profile,
-    )
+    if let Some(root) = current_blueprint_root() {
+        build_one_target_to(
+            &app_dir,
+            &manifest_path,
+            build_target,
+            &required_features,
+            &root.join("dist"),
+            cargo_profile,
+        )
+    } else {
+        build_one_target(
+            &app_dir,
+            &manifest_path,
+            build_target,
+            &required_features,
+            cargo_profile,
+        )
+    }
 }
 
 fn parse_cli_args(
@@ -272,7 +295,9 @@ fn build_one_target_to(
     }
 
     let output_name = match &build_target {
-        BuildTarget::Package => package_bin_name(&manifest_path)?.unwrap_or(package_name(&manifest_path)?),
+        BuildTarget::Package => {
+            package_bin_name(&manifest_path)?.unwrap_or(package_name(&manifest_path)?)
+        }
         BuildTarget::Example(name) => name.clone(),
     };
 
@@ -359,6 +384,13 @@ fn build_one_target_to(
     }
     if !build_settings.has_global_allocator && has_trueos_dependency {
         push_feature(&mut extra_features, "trueos/default-global-allocator");
+    }
+    if declared_features
+        .iter()
+        .any(|feature| feature == "trueos-blueprint")
+    {
+        cargo.arg("--no-default-features");
+        push_feature(&mut extra_features, "trueos-blueprint");
     }
     if matches!(build_settings.flavor, BuildFlavor::ThinNoStd)
         && !build_settings.has_panic_handler
@@ -884,6 +916,19 @@ fn default_target_spec(app_dir: &Path) -> Result<PathBuf, String> {
         }
     }
 
+    if let Some(root) = current_blueprint_root() {
+        for candidate in [
+            root.join("target.json"),
+            root.join("trueos.json"),
+            root.join("trueos-app.json"),
+            root.join("apps").join("target.json"),
+        ] {
+            if candidate.is_file() {
+                return Ok(candidate);
+            }
+        }
+    }
+
     Err(format!(
         "cannot infer target spec from {}; expected target.json near the blueprint Cargo.toml",
         app_dir.display()
@@ -916,6 +961,15 @@ fn cargo_cache_root(app_dir: &Path, default_packer_target_dir: &Path) -> PathBuf
 }
 
 fn blueprint_root(app_dir: &Path) -> Option<PathBuf> {
+    blueprint_root_from_ancestors(app_dir).or_else(current_blueprint_root)
+}
+
+fn current_blueprint_root() -> Option<PathBuf> {
+    let cwd = env::current_dir().ok()?;
+    blueprint_root_from_ancestors(&cwd)
+}
+
+fn blueprint_root_from_ancestors(app_dir: &Path) -> Option<PathBuf> {
     for ancestor in app_dir.ancestors() {
         let manifest = ancestor.join("Cargo.toml");
         if manifest.is_file()
@@ -986,7 +1040,9 @@ fn ensure_rust_std_trueos_thread_set_name() -> Result<(), String> {
             return Ok(());
         }
     }
-    if source.contains("target_os = \"trueos\"") && source.contains("pub fn set_name(_name: &core::ffi::CStr)") {
+    if source.contains("target_os = \"trueos\"")
+        && source.contains("pub fn set_name(_name: &core::ffi::CStr)")
+    {
         return Ok(());
     }
 
@@ -1301,6 +1357,7 @@ fn staged_manifest_for_overlay(
     if !nested_workspace_package {
         materialize_staged_workspace_dependencies(app_dir, work_dir, &staged_manifest)?;
     }
+    materialize_trueos_blueprint_dependency(app_dir, &staged_manifest)?;
     materialize_hidden_build_std_pins(&staged_manifest, build_settings, source_overlay)?;
     if !nested_workspace_package {
         ensure_standalone_manifest_workspace(&staged_manifest)?;
@@ -2245,11 +2302,12 @@ fn materialize_staged_workspace_dependencies(
 
     for line in cargo_toml.lines() {
         if let Some(dep_name) = workspace_dependency_name(line) {
-            out.push_str(&materialized_workspace_dependency(
-                &blueprint_root,
-                work_dir,
-                &dep_name,
-            )?);
+            let mut dependency =
+                materialized_workspace_dependency(&blueprint_root, work_dir, &dep_name)?;
+            if workspace_dependency_is_optional(line) {
+                dependency = optional_dependency_line(&dependency);
+            }
+            out.push_str(&dependency);
             out.push('\n');
             changed = true;
         } else {
@@ -2292,6 +2350,60 @@ fn materialize_hidden_build_std_pins(
     fs::write(manifest_path, cargo_toml).map_err(io_string)
 }
 
+fn materialize_trueos_blueprint_dependency(
+    app_dir: &Path,
+    manifest_path: &Path,
+) -> Result<(), String> {
+    if !manifest_declared_features(manifest_path)?
+        .iter()
+        .any(|feature| feature == "trueos-blueprint")
+        || manifest_has_dependency(manifest_path, "trueos")?
+    {
+        return Ok(());
+    }
+
+    let blueprint_root = blueprint_root(app_dir).unwrap_or_else(|| app_dir.to_path_buf());
+    let dependency = format!(
+        "# Injected by trueos-blueprint for external app packaging.\n{}",
+        path_dependency_line("trueos", &blueprint_root.join("api"))
+    );
+    insert_manifest_dependency(manifest_path, &dependency)
+}
+
+fn insert_manifest_dependency(manifest_path: &Path, dependency: &str) -> Result<(), String> {
+    let cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
+    let mut out = String::with_capacity(cargo_toml.len() + dependency.len() + 2);
+    let mut in_dependencies = false;
+    let mut inserted = false;
+
+    for line in cargo_toml.lines() {
+        let trimmed = line.trim();
+        if in_dependencies && trimmed.starts_with('[') {
+            out.push_str(dependency);
+            out.push('\n');
+            inserted = true;
+            in_dependencies = false;
+        }
+
+        out.push_str(line);
+        out.push('\n');
+
+        if trimmed == "[dependencies]" {
+            in_dependencies = true;
+        }
+    }
+
+    if !inserted {
+        if !in_dependencies {
+            out.push_str("\n[dependencies]\n");
+        }
+        out.push_str(dependency);
+        out.push('\n');
+    }
+
+    fs::write(manifest_path, out).map_err(io_string)
+}
+
 fn workspace_dependency_name(line: &str) -> Option<String> {
     let line = line.split('#').next().unwrap_or("").trim();
     let Some((key, value)) = line.split_once('=') else {
@@ -2308,6 +2420,25 @@ fn workspace_dependency_name(line: &str) -> Option<String> {
         return Some(key.to_string());
     }
     None
+}
+
+fn workspace_dependency_is_optional(line: &str) -> bool {
+    let line = line.split('#').next().unwrap_or("").trim();
+    line.contains("optional") && line.contains("true")
+}
+
+fn optional_dependency_line(line: &str) -> String {
+    if line.contains("optional") {
+        return line.to_string();
+    }
+    let Some(index) = line.rfind('}') else {
+        return line.to_string();
+    };
+    let mut out = String::with_capacity(line.len() + ", optional = true".len());
+    out.push_str(&line[..index]);
+    out.push_str(", optional = true");
+    out.push_str(&line[index..]);
+    out
 }
 
 fn materialized_workspace_dependency(
@@ -2710,25 +2841,26 @@ fn package_bin_name(manifest_path: &Path) -> Result<Option<String>, String> {
 
 fn package_app_specs(app_dir: &Path) -> Result<Vec<PackageAppSpec>, String> {
     let mut specs = Vec::new();
-    for app_name in registered_app_names(app_dir)? {
-        specs.push(package_app_spec_required(app_dir, &app_name)?);
+    for app in registered_app_specs(app_dir)? {
+        specs.push(package_app_spec_required(&app)?);
     }
     specs.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(specs)
 }
 
 fn package_app_spec(app_dir: &Path, app_name: &str) -> Result<Option<PackageAppSpec>, String> {
-    if !registered_app_names(app_dir)?
-        .iter()
-        .any(|name| name == app_name)
-    {
+    let Some(app) = registered_app_specs(app_dir)?
+        .into_iter()
+        .find(|app| app.name == app_name)
+    else {
         return Ok(None);
-    }
-    package_app_spec_required(app_dir, app_name).map(Some)
+    };
+    package_app_spec_required(&app).map(Some)
 }
 
-fn package_app_spec_required(app_dir: &Path, app_name: &str) -> Result<PackageAppSpec, String> {
-    let dir = app_dir.join("apps").join(app_name);
+fn package_app_spec_required(app: &RegisteredAppSpec) -> Result<PackageAppSpec, String> {
+    let app_name = app.name.as_str();
+    let dir = app.dir.clone();
     let mut manifest_path = dir.join("Cargo.toml");
     if !manifest_path.is_file() {
         return Err(format!(
@@ -2780,7 +2912,7 @@ fn virtual_package_app_alias(app_name: &str) -> bool {
     matches!(app_name, "fd" | "helix" | "matrix")
 }
 
-fn registered_app_names(app_dir: &Path) -> Result<Vec<String>, String> {
+fn registered_app_specs(app_dir: &Path) -> Result<Vec<RegisteredAppSpec>, String> {
     let registry_path = app_dir.join("apps.json");
     let raw = fs::read_to_string(&registry_path)
         .map_err(|err| format!("failed to read {}: {err}", registry_path.display()))?;
@@ -2788,17 +2920,29 @@ fn registered_app_names(app_dir: &Path) -> Result<Vec<String>, String> {
         .map_err(|err| format!("failed to parse {}: {err}", registry_path.display()))?;
 
     let mut out = Vec::with_capacity(registry.apps.len());
-    for name in registry.apps {
+    for entry in registry.apps {
+        let (name, path) = match entry {
+            AppRegistryEntry::Name(name) => (name, None),
+            AppRegistryEntry::Spec { name, path } => (name, path),
+        };
         if name.trim().is_empty() {
             return Err(format!("empty app name in {}", registry_path.display()));
         }
-        if out.iter().any(|existing| existing == &name) {
+        if out
+            .iter()
+            .any(|existing: &RegisteredAppSpec| existing.name == name)
+        {
             return Err(format!(
                 "duplicate registered app `{name}` in {}",
                 registry_path.display()
             ));
         }
-        out.push(name);
+        let dir = match path {
+            Some(path) if path.is_absolute() => path,
+            Some(path) => app_dir.join(path),
+            None => app_dir.join("apps").join(name.as_str()),
+        };
+        out.push(RegisteredAppSpec { name, dir });
     }
     Ok(out)
 }

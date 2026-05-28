@@ -26,6 +26,9 @@ unsafe extern "C" {
 pub mod hid;
 pub use hid as input;
 pub mod clock;
+pub mod env {
+    pub use v::env::*;
+}
 pub mod globalog;
 pub mod logl;
 pub mod rand {

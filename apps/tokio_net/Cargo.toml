@@ -8,4 +8,6 @@ name = "tokio_net"
 path = "main.rs"
 
 [dependencies]
+mio = { version = "=1.2.0", default-features = false, features = ["os-poll", "net"] }
+socket2 = { version = "=0.6.3", default-features = false }
 trueos.workspace = true
