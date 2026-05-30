@@ -1,3 +1,6 @@
+use alloc::vec;
+use alloc::vec::Vec;
+
 use crate::vcabi;
 
 pub mod gfx;
@@ -27,7 +30,11 @@ pub struct WindowId(u32);
 impl WindowId {
     #[inline]
     pub const fn new(raw: u32) -> Option<Self> {
-        if raw == 0 { None } else { Some(Self(raw)) }
+        if raw == 0 {
+            None
+        } else {
+            Some(Self(raw))
+        }
     }
 
     #[inline]
@@ -43,6 +50,18 @@ impl WindowId {
         } else {
             None
         }
+    }
+
+    pub fn take_cursor_events(self, out_cap: u32) -> Vec<WindowCursorEvent> {
+        let mut events = vec![vcabi::TrueosUi2WindowCursorEvent::default(); out_cap as usize];
+        let got = unsafe {
+            vcabi::trueos_cabi_ui2_window_take_cursor_events(self.0, events.as_mut_ptr(), out_cap)
+        };
+        events.truncate(got as usize);
+        events
+            .into_iter()
+            .map(WindowCursorEvent::from_raw)
+            .collect()
     }
 
     pub fn set_title(self, title: &str) -> bool {
@@ -67,6 +86,18 @@ impl WindowId {
 
     pub fn set_decorations(self, mode: WindowDecorationMode) -> bool {
         unsafe { vcabi::trueos_cabi_ui2_window_set_decorations(self.0, mode as u32) == 0 }
+    }
+
+    pub fn set_titlebar_visible(self, visible: bool) -> bool {
+        unsafe {
+            vcabi::trueos_cabi_ui2_window_set_titlebar_visible(self.0, u32::from(visible)) == 0
+        }
+    }
+
+    pub fn set_bottom_bar_visible(self, visible: bool) -> bool {
+        unsafe {
+            vcabi::trueos_cabi_ui2_window_set_bottom_bar_visible(self.0, u32::from(visible)) == 0
+        }
     }
 
     pub fn set_hit_test_visible(self, visible: bool) -> bool {
@@ -482,6 +513,30 @@ impl WindowInfo {
                 width: raw.decoration_width,
                 height: raw.decoration_height,
             },
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, Default)]
+pub struct WindowCursorEvent {
+    pub slot_id: u32,
+    pub x: f32,
+    pub y: f32,
+    pub buttons_down: u32,
+    pub wheel: i16,
+    pub flags: u32,
+}
+
+impl WindowCursorEvent {
+    #[inline]
+    fn from_raw(raw: vcabi::TrueosUi2WindowCursorEvent) -> Self {
+        Self {
+            slot_id: raw.slot_id,
+            x: raw.x,
+            y: raw.y,
+            buttons_down: raw.buttons_down,
+            wheel: raw.wheel,
+            flags: raw.flags,
         }
     }
 }

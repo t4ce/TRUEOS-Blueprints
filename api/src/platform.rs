@@ -10,6 +10,12 @@ pub use alloc::sync::Arc;
 pub use alloc::vec;
 pub use alloc::vec::Vec;
 
+type TrueosBlockingJob = Box<dyn FnOnce() + Send + 'static>;
+
+unsafe extern "Rust" {
+    fn trueos_tokio_spawn_blocking_job(job: TrueosBlockingJob) -> i32;
+}
+
 pub mod future {
     pub use core::future::{Future, IntoFuture, pending, poll_fn};
 }
@@ -55,6 +61,12 @@ pub fn poll_once() {
 #[inline]
 pub fn sleep_ms(ms: u64) {
     unsafe { vcabi::trueos_cabi_sleep_ms(ms) }
+}
+
+#[inline]
+pub fn spawn_blocking(job: impl FnOnce() + Send + 'static) -> Result<(), i32> {
+    let rc = unsafe { trueos_tokio_spawn_blocking_job(Box::new(job)) };
+    if rc == 0 { Ok(()) } else { Err(rc) }
 }
 
 #[inline]
