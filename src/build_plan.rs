@@ -99,7 +99,7 @@ fn package_source_path(app_dir: &Path, manifest_path: &Path) -> Result<PathBuf, 
 }
 
 fn package_bin_source_path(
-    app_dir: &Path,
+    _app_dir: &Path,
     manifest_path: &Path,
 ) -> Result<Option<PathBuf>, String> {
     let manifest_dir = manifest_path

@@ -38,9 +38,12 @@ pub mod platform;
 #[cfg(feature = "tokio-runtime")]
 pub mod std_abi;
 pub mod tyche;
+#[cfg(feature = "ui2")]
 pub mod ui2;
 pub mod vfs;
+#[cfg(feature = "ui2")]
 pub mod vgfx;
+#[cfg(feature = "ui2")]
 pub mod vgfx_hosted;
 pub mod vnet;
 pub mod vshell;
@@ -459,7 +462,9 @@ pub mod prelude {
     pub use crate::time;
     #[cfg(feature = "tokio-runtime")]
     pub use crate::tokio;
+    #[cfg(feature = "ui2")]
     pub use crate::ui2;
+    #[cfg(feature = "ui2")]
     pub use crate::vgfx;
 }
 

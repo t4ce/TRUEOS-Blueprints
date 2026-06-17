@@ -1,29 +1,26 @@
 {
   "apps": [
-    "chart",
     "chatserver",
-    "currency_reqwest",
     "file-system",
     "fileexplorer",
-    "flags",
     "framework_stack",
-    "full_tetris",
     "hello_world",
-    "mandelbrot",
-    "particle",
-    "petersen",
-    "retrosun",
-    "svg_grid",
     {
       "name": "tactics",
       "path": "../tactics"
+    },
+    {
+      "name": "esynth",
+      "path": "../esynth"
+    },
+    {
+      "name": "horizon",
+      "path": "../Horizon/crates/horizon"
     },
     "test_some_crates",
     "tokio_fs",
     "tokio_net",
     "tokio_rt",
-    "triangle",
-    "weather",
     "webdevices",
     "webmail"
   ]

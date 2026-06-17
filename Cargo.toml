@@ -8,28 +8,15 @@ members = [
     ".",
     "api",
     "apps/chatserver",
-    "apps/chart",
-    "apps/cli_tetris",
-    "apps/crates/trueos-tetris",
-    "apps/currency_reqwest",
     "apps/file-system",
     "apps/fileexplorer",
-    "apps/flags",
     "apps/framework_stack",
-    "apps/full_tetris",
     "apps/hello_world",
     "apps/localcoder",
-    "apps/mandelbrot",
-    "apps/particle",
-    "apps/petersen",
-    "apps/retrosun",
-    "apps/svg_grid",
     "apps/test_some_crates",
     "apps/tokio_fs",
     "apps/tokio_net",
     "apps/tokio_rt",
-    "apps/triangle",
-    "apps/weather",
     "apps/webdevices",
     "apps/webmail",
 ]
@@ -62,7 +49,6 @@ trueos = { path = "api" }
 trueos-chat = { path = "apps/chatserver/trueos-chat" }
 trueos-currency = { path = "apps/currency_reqwest/trueos-currency" }
 trueos-flags = { path = "apps/flags/trueos-flags" }
-trueos-gfx-core = { path = "../TRUEOS/crates/trueos-gfx-core" }
 trueos-tetris = { path = "apps/crates/trueos-tetris" }
 trueos-weather = { path = "apps/weather/trueos-weather" }
 webpki-roots = { version = "1", default-features = false }

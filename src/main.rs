@@ -69,8 +69,28 @@ impl CargoProfile {
 }
 
 struct CratePatch {
+    key: String,
     name: String,
     path: PathBuf,
+}
+
+impl CratePatch {
+    fn new(name: impl Into<String>, path: PathBuf) -> Self {
+        let name = name.into();
+        Self {
+            key: name.clone(),
+            name,
+            path,
+        }
+    }
+
+    fn alias(key: impl Into<String>, name: impl Into<String>, path: PathBuf) -> Self {
+        Self {
+            key: key.into(),
+            name: name.into(),
+            path,
+        }
+    }
 }
 
 #[derive(Default)]
@@ -104,8 +124,6 @@ const RUSTFLAGS_ENCODED_SEPARATOR: char = '\u{1f}';
 const TRUEOS_CHECK_CFG_FLAG: &str = "--check-cfg=cfg(target_os,values(\"trueos\",\"zkvm\"))";
 const BLUEPRINT_RUSTFLAGS: &[&str] = &[
     TRUEOS_CHECK_CFG_FLAG,
-    "--cfg",
-    "getrandom_backend=\"unsupported\"",
     "-A",
     "warnings",
 ];
@@ -360,7 +378,7 @@ fn build_one_target_to(
             "trueos-blueprint: source overlay crates: {}",
             source_overlay
                 .iter()
-                .map(|patch| format!("{}={}", patch.name, patch.path.display()))
+                .map(|patch| format!("{}={}", patch.key, patch.path.display()))
                 .collect::<Vec<_>>()
                 .join(",")
         );
@@ -417,12 +435,13 @@ fn build_one_target_to(
 
     match &build_target {
         BuildTarget::Package => {
-            if build_settings
+            let has_explicit_bin = package_bin_name(manifest_path)?.is_some();
+            let has_auto_main_bin = build_settings
                 .source_path
                 .file_name()
                 .and_then(|name| name.to_str())
-                == Some("main.rs")
-            {
+                == Some("main.rs");
+            if has_explicit_bin || has_auto_main_bin {
                 cargo.arg("--bin").arg(&output_name);
             }
         }
@@ -1111,58 +1130,60 @@ fn source_overlay_patches(
         for (name, path) in manifest_patch_entries(&kernel_manifest)? {
             let patch_path = resolve_manifest_path(kernel_root, &path);
             if patch_path.is_dir() {
-                out.push(CratePatch {
-                    name,
-                    path: patch_path,
-                });
+                out.push(CratePatch::new(name, patch_path));
             }
         }
     }
 
     if let Some(path) = find_vendor_dir(app_dir, "libc-0.2.186") {
         out.retain(|patch| patch.name != "libc");
-        out.push(CratePatch {
-            name: "libc".to_string(),
-            path,
-        });
+        out.push(CratePatch::new("libc", path));
     }
 
     if let Some(path) = find_vendor_dir(app_dir, "tokio-1.52.3") {
         out.retain(|patch| patch.name != "tokio");
-        out.push(CratePatch {
-            name: "tokio".to_string(),
-            path,
-        });
+        out.push(CratePatch::new("tokio", path));
     }
 
     if let Some(path) = find_vendor_dir(app_dir, "hyper-rustls-0.27.9") {
         out.retain(|patch| patch.name != "hyper-rustls");
-        out.push(CratePatch {
-            name: "hyper-rustls".to_string(),
-            path,
-        });
+        out.push(CratePatch::new("hyper-rustls", path));
     }
+
+    add_getrandom_source_overlays(app_dir, &mut out);
 
     if manifest_or_lock_mentions_crate(app_dir, manifest_path, "ctrlc")? {
         let path = stage_ctrlc_trueos_overlay(work_dir)?;
         out.retain(|patch| patch.name != "ctrlc");
-        out.push(CratePatch {
-            name: "ctrlc".to_string(),
-            path,
-        });
+        out.push(CratePatch::new("ctrlc", path));
     }
 
     if manifest_or_lock_mentions_crate(app_dir, manifest_path, "argmax")? {
         let path = stage_argmax_trueos_overlay(work_dir)?;
         out.retain(|patch| patch.name != "argmax");
-        out.push(CratePatch {
-            name: "argmax".to_string(),
-            path,
-        });
+        out.push(CratePatch::new("argmax", path));
     }
 
-    out.sort_by(|a, b| a.name.cmp(&b.name));
+    out.sort_by(|a, b| a.key.cmp(&b.key));
     Ok(out)
+}
+
+fn add_getrandom_source_overlays(app_dir: &Path, patches: &mut Vec<CratePatch>) {
+    patches.retain(|patch| patch.name != "getrandom");
+    for (key, vendor_dir) in [
+        ("getrandom", "getrandom-0.2.17"),
+        ("getrandom_03", "getrandom-0.3.4"),
+        ("getrandom_04", "getrandom-0.4.2"),
+    ] {
+        let Some(path) = find_vendor_dir(app_dir, vendor_dir) else {
+            continue;
+        };
+        patches.push(if key == "getrandom" {
+            CratePatch::new("getrandom", path)
+        } else {
+            CratePatch::alias(key, "getrandom", path)
+        });
+    }
 }
 
 fn manifest_or_lock_mentions_crate(
@@ -2195,9 +2216,16 @@ fn link_staged_sibling(link: &Path, target: &Path) -> Result<(), String> {
 
 fn push_source_overlay_configs(cmd: &mut Command, source_overlay: &[CratePatch]) {
     for patch in source_overlay {
+        if patch.key != patch.name {
+            cmd.arg("--config").arg(format!(
+                "patch.crates-io.{}.package={}",
+                patch.key,
+                toml_string(&patch.name)
+            ));
+        }
         cmd.arg("--config").arg(format!(
             "patch.crates-io.{}.path={}",
-            patch.name,
+            patch.key,
             toml_string(&patch.path.to_string_lossy())
         ));
     }
@@ -2207,6 +2235,7 @@ fn staged_source_overlay(source_overlay: &[CratePatch], _work_dir: &Path) -> Vec
     source_overlay
         .iter()
         .map(|patch| CratePatch {
+            key: patch.key.clone(),
             name: patch.name.clone(),
             path: patch.path.clone(),
         })
@@ -2303,7 +2332,7 @@ fn materialize_staged_workspace_dependencies(
     for line in cargo_toml.lines() {
         if let Some(dep_name) = workspace_dependency_name(line) {
             let mut dependency =
-                materialized_workspace_dependency(&blueprint_root, work_dir, &dep_name)?;
+                materialized_workspace_dependency(app_dir, &blueprint_root, work_dir, &dep_name)?;
             if workspace_dependency_is_optional(line) {
                 dependency = optional_dependency_line(&dependency);
             }
@@ -2340,14 +2369,10 @@ fn materialize_hidden_build_std_pins(
         return Ok(());
     };
 
-    let mut cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
-    if !cargo_toml.ends_with('\n') {
-        cargo_toml.push('\n');
-    }
-    cargo_toml.push_str(&format!(
-        "\n# Pinned because Rust build-std pulls libc outside the app dependency graph.\nlibc = {{ version = \"={libc_version}\", default-features = false }}\n"
-    ));
-    fs::write(manifest_path, cargo_toml).map_err(io_string)
+    let dependency = format!(
+        "# Pinned because Rust build-std pulls libc outside the app dependency graph.\nlibc = {{ version = \"={libc_version}\", default-features = false }}"
+    );
+    insert_manifest_dependency(manifest_path, &dependency)
 }
 
 fn materialize_trueos_blueprint_dependency(
@@ -2442,6 +2467,7 @@ fn optional_dependency_line(line: &str) -> String {
 }
 
 fn materialized_workspace_dependency(
+    app_dir: &Path,
     blueprint_root: &Path,
     work_dir: &Path,
     dep_name: &str,
@@ -2541,9 +2567,83 @@ fn materialized_workspace_dependency(
         "webpki-roots" => {
             "webpki-roots = { version = \"1\", default-features = false }".to_string()
         }
-        other => return Err(format!("unsupported workspace dependency `{other}` in {}", blueprint_root.display())),
+        other => {
+            return app_workspace_dependency_line(app_dir, other)?.ok_or_else(|| {
+                format!(
+                    "unsupported workspace dependency `{other}` in {}",
+                    blueprint_root.display()
+                )
+            });
+        }
     };
     Ok(line)
+}
+
+fn app_workspace_dependency_line(app_dir: &Path, dep_name: &str) -> Result<Option<String>, String> {
+    let Some((workspace_root, workspace_manifest)) = app_workspace_manifest(app_dir) else {
+        return Ok(None);
+    };
+    let cargo_toml = fs::read_to_string(&workspace_manifest).map_err(io_string)?;
+    let mut in_workspace_dependencies = false;
+
+    for line in cargo_toml.lines() {
+        let trimmed = line.split('#').next().unwrap_or("").trim();
+        if trimmed.starts_with('[') {
+            in_workspace_dependencies = trimmed == "[workspace.dependencies]";
+            continue;
+        }
+        if !in_workspace_dependencies || trimmed.is_empty() {
+            continue;
+        }
+        let Some((name, value)) = trimmed.split_once('=') else {
+            continue;
+        };
+        if name.trim() != dep_name {
+            continue;
+        }
+        return Ok(Some(materialize_app_workspace_dependency(
+            dep_name,
+            value.trim(),
+            &workspace_root,
+        )));
+    }
+
+    Ok(None)
+}
+
+fn app_workspace_manifest(app_dir: &Path) -> Option<(PathBuf, PathBuf)> {
+    for ancestor in app_dir.ancestors() {
+        let manifest = ancestor.join("Cargo.toml");
+        if !manifest.is_file() {
+            continue;
+        }
+        if manifest_has_workspace_dependencies(&manifest) {
+            return Some((ancestor.to_path_buf(), manifest));
+        }
+    }
+    None
+}
+
+fn manifest_has_workspace_dependencies(manifest_path: &Path) -> bool {
+    let Ok(cargo_toml) = fs::read_to_string(manifest_path) else {
+        return false;
+    };
+    cargo_toml
+        .lines()
+        .map(|line| line.split('#').next().unwrap_or("").trim())
+        .any(|line| line == "[workspace.dependencies]")
+}
+
+fn materialize_app_workspace_dependency(
+    dep_name: &str,
+    value: &str,
+    workspace_root: &Path,
+) -> String {
+    if let Some(path) = inline_table_path(value) {
+        let path = resolve_manifest_path(workspace_root, &path);
+        return path_dependency_line(dep_name, &path);
+    }
+    format!("{dep_name} = {value}")
 }
 
 fn path_dependency_line(dep_name: &str, path: &Path) -> String {
