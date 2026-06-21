@@ -29,12 +29,20 @@ impl BuildFlavor {
 pub(crate) struct BuildSettings {
     pub(crate) flavor: BuildFlavor,
     pub(crate) source_path: PathBuf,
-    pub(crate) has_global_allocator: bool,
-    pub(crate) has_panic_handler: bool,
-    pub(crate) needs_tokio_net: bool,
-    pub(crate) needs_no_std_shim: bool,
-    pub(crate) needs_entry_shim: bool,
-    pub(crate) extra_features: Vec<String>,
+    pub(crate) source: SourceFacts,
+    pub(crate) shims: SourceShims,
+    pub(crate) features: Vec<String>,
+}
+
+pub(crate) struct SourceFacts {
+    pub(crate) declares_global_allocator: bool,
+    pub(crate) declares_panic_handler: bool,
+    pub(crate) uses_tokio_net: bool,
+}
+
+pub(crate) struct SourceShims {
+    pub(crate) add_no_std: bool,
+    pub(crate) add_entrypoint: bool,
 }
 
 pub(crate) fn resolve_build_settings(
@@ -72,12 +80,16 @@ pub(crate) fn resolve_build_settings(
     Ok(BuildSettings {
         flavor,
         source_path,
-        has_global_allocator: source.contains("#[global_allocator]"),
-        has_panic_handler: source.contains("#[panic_handler]"),
-        needs_tokio_net,
-        needs_no_std_shim: matches!(flavor, BuildFlavor::ThinNoStd) && !explicit_no_std,
-        needs_entry_shim: source.contains("fn main(") && !source.contains("#![no_main]"),
-        extra_features,
+        source: SourceFacts {
+            declares_global_allocator: source.contains("#[global_allocator]"),
+            declares_panic_handler: source.contains("#[panic_handler]"),
+            uses_tokio_net: needs_tokio_net,
+        },
+        shims: SourceShims {
+            add_no_std: matches!(flavor, BuildFlavor::ThinNoStd) && !explicit_no_std,
+            add_entrypoint: source.contains("fn main(") && !source.contains("#![no_main]"),
+        },
+        features: extra_features,
     })
 }
 

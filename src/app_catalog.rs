@@ -1,0 +1,354 @@
+use serde::Deserialize;
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use crate::cli::CargoProfile;
+use crate::{io_string, parse_string_array, push_feature, toml_string_value};
+
+pub(crate) struct ExampleSpec {
+    pub(crate) name: String,
+    pub(crate) required_features: Vec<String>,
+}
+
+pub(crate) struct PackageAppSpec {
+    pub(crate) name: String,
+    pub(crate) dir: PathBuf,
+    pub(crate) manifest_path: PathBuf,
+}
+
+#[derive(Deserialize)]
+struct AppRegistry {
+    apps: Vec<AppRegistryEntry>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum AppRegistryEntry {
+    Name(String),
+    Spec { name: String, path: Option<PathBuf> },
+}
+
+struct RegisteredAppSpec {
+    name: String,
+    dir: PathBuf,
+}
+
+pub(crate) fn package_name(manifest_path: &Path) -> Result<String, String> {
+    let cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
+    let mut in_package = false;
+    for line in cargo_toml.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            in_package = trimmed == "[package]";
+            continue;
+        }
+        if in_package && trimmed.starts_with("name") {
+            let Some((_, value)) = trimmed.split_once('=') else {
+                continue;
+            };
+            return Ok(value.trim().trim_matches('"').to_string());
+        }
+    }
+    Err(format!(
+        "failed to read package name from {}",
+        manifest_path.display()
+    ))
+}
+
+pub(crate) fn package_bin_name(manifest_path: &Path) -> Result<Option<String>, String> {
+    let cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
+    let mut in_package = false;
+    let mut in_bin = false;
+    let mut default_run = None;
+    let mut first_bin = None;
+
+    for line in cargo_toml.lines() {
+        let trimmed = line.split('#').next().unwrap_or("").trim();
+        if trimmed.starts_with('[') {
+            in_package = trimmed == "[package]";
+            in_bin = trimmed == "[[bin]]";
+            continue;
+        }
+
+        if in_package && trimmed.starts_with("default-run") {
+            if let Some((_, value)) = trimmed.split_once('=') {
+                default_run = toml_string_value(value.trim());
+            }
+            continue;
+        }
+
+        if in_bin && first_bin.is_none() && trimmed.starts_with("name") {
+            if let Some((_, value)) = trimmed.split_once('=') {
+                first_bin = toml_string_value(value.trim());
+            }
+        }
+    }
+
+    Ok(default_run.or(first_bin))
+}
+
+pub(crate) fn package_app_specs(app_dir: &Path) -> Result<Vec<PackageAppSpec>, String> {
+    let mut specs = Vec::new();
+    for app in registered_app_specs(app_dir)? {
+        specs.push(package_app_spec_required(&app)?);
+    }
+    specs.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(specs)
+}
+
+pub(crate) fn package_app_spec(
+    app_dir: &Path,
+    app_name: &str,
+) -> Result<Option<PackageAppSpec>, String> {
+    let Some(app) = registered_app_specs(app_dir)?
+        .into_iter()
+        .find(|app| app.name == app_name)
+    else {
+        return Ok(None);
+    };
+    package_app_spec_required(&app).map(Some)
+}
+
+fn package_app_spec_required(app: &RegisteredAppSpec) -> Result<PackageAppSpec, String> {
+    let app_name = app.name.as_str();
+    let dir = app.dir.clone();
+    let mut manifest_path = dir.join("Cargo.toml");
+    if !manifest_path.is_file() {
+        return Err(format!(
+            "registered app `{app_name}` is missing {}",
+            manifest_path.display()
+        ));
+    }
+
+    let mut name = match package_name(&manifest_path) {
+        Ok(name) => name,
+        Err(_) => {
+            let package_manifest_path = virtual_package_app_manifest_path(&dir, app_name);
+            if !package_manifest_path.is_file() {
+                return Err(format!(
+                    "registered app `{app_name}` has virtual manifest {} without a known package manifest",
+                    manifest_path.display()
+                ));
+            }
+            manifest_path = package_manifest_path;
+            package_name(&manifest_path)?
+        }
+    };
+    if name != app_name && !virtual_package_app_alias(app_name) {
+        return Err(format!(
+            "registered app `{app_name}` has package name `{name}` in {}",
+            manifest_path.display()
+        ));
+    }
+    if virtual_package_app_alias(app_name) {
+        name = app_name.to_string();
+    }
+
+    Ok(PackageAppSpec {
+        name,
+        dir,
+        manifest_path,
+    })
+}
+
+fn virtual_package_app_manifest_path(dir: &Path, app_name: &str) -> PathBuf {
+    match app_name {
+        "helix" => dir.join("helix-term").join("Cargo.toml"),
+        "matrix" => dir.join("src").join("main").join("Cargo.toml"),
+        _ => dir.join("src").join("main").join("Cargo.toml"),
+    }
+}
+
+fn virtual_package_app_alias(app_name: &str) -> bool {
+    matches!(app_name, "fd" | "helix" | "matrix")
+}
+
+fn registered_app_specs(app_dir: &Path) -> Result<Vec<RegisteredAppSpec>, String> {
+    let registry_path = app_dir.join("apps.json");
+    let raw = fs::read_to_string(&registry_path)
+        .map_err(|err| format!("failed to read {}: {err}", registry_path.display()))?;
+    let registry: AppRegistry = serde_json::from_str(&raw)
+        .map_err(|err| format!("failed to parse {}: {err}", registry_path.display()))?;
+
+    let mut out = Vec::with_capacity(registry.apps.len());
+    for entry in registry.apps {
+        let (name, path) = match entry {
+            AppRegistryEntry::Name(name) => (name, None),
+            AppRegistryEntry::Spec { name, path } => (name, path),
+        };
+        if name.trim().is_empty() {
+            return Err(format!("empty app name in {}", registry_path.display()));
+        }
+        if out
+            .iter()
+            .any(|existing: &RegisteredAppSpec| existing.name == name)
+        {
+            return Err(format!(
+                "duplicate registered app `{name}` in {}",
+                registry_path.display()
+            ));
+        }
+        let dir = match path {
+            Some(path) if path.is_absolute() => path,
+            Some(path) => app_dir.join(path),
+            None => app_dir.join("apps").join(name.as_str()),
+        };
+        out.push(RegisteredAppSpec { name, dir });
+    }
+    Ok(out)
+}
+
+pub(crate) fn package_blueprint_profile(
+    manifest_path: &Path,
+) -> Result<Option<CargoProfile>, String> {
+    let cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
+    let mut in_metadata = false;
+    for line in cargo_toml.lines() {
+        let trimmed = line.split('#').next().unwrap_or("").trim();
+        if trimmed.starts_with('[') {
+            in_metadata = trimmed == "[package.metadata.trueos-blueprint]";
+            continue;
+        }
+        if !in_metadata {
+            continue;
+        }
+        let Some((key, value)) = trimmed.split_once('=') else {
+            continue;
+        };
+        if key.trim() != "profile" {
+            continue;
+        }
+        return match toml_string_value(value.trim()).as_deref() {
+            Some("dev") | Some("debug") => Ok(Some(CargoProfile::Dev)),
+            Some("release") => Ok(Some(CargoProfile::Release)),
+            Some(other) => Err(format!(
+                "unsupported trueos-blueprint profile `{other}` in {}",
+                manifest_path.display()
+            )),
+            None => Err(format!(
+                "bad trueos-blueprint profile in {}",
+                manifest_path.display()
+            )),
+        };
+    }
+    Ok(None)
+}
+
+pub(crate) fn manifest_declared_features(manifest_path: &Path) -> Result<Vec<String>, String> {
+    let cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
+    let mut in_features = false;
+    let mut out = Vec::new();
+    for line in cargo_toml.lines() {
+        let trimmed = line.split('#').next().unwrap_or("").trim();
+        if trimmed.starts_with('[') {
+            in_features = trimmed == "[features]";
+            continue;
+        }
+        if !in_features || trimmed.is_empty() {
+            continue;
+        }
+        let Some((key, _)) = trimmed.split_once('=') else {
+            continue;
+        };
+        out.push(key.trim().to_string());
+    }
+    Ok(out)
+}
+
+pub(crate) fn manifest_has_dependency(
+    manifest_path: &Path,
+    dependency_name: &str,
+) -> Result<bool, String> {
+    let cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
+    let mut in_dependencies = false;
+    for line in cargo_toml.lines() {
+        let trimmed = line.split('#').next().unwrap_or("").trim();
+        if trimmed.starts_with('[') {
+            in_dependencies = matches!(
+                trimmed,
+                "[dependencies]" | "[dev-dependencies]" | "[build-dependencies]"
+            );
+            continue;
+        }
+        if !in_dependencies || trimmed.is_empty() {
+            continue;
+        }
+        let Some((key, _)) = trimmed.split_once('=') else {
+            continue;
+        };
+        if key.trim() == dependency_name || key.trim().starts_with(&format!("{dependency_name}.")) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+pub(crate) fn push_app_or_trueos_feature(
+    features: &mut Vec<String>,
+    feature: &str,
+    declared_features: &[String],
+    has_trueos_dependency: bool,
+) {
+    if declared_features.iter().any(|declared| declared == feature) {
+        push_feature(features, feature);
+    } else if has_trueos_dependency {
+        push_feature(features, &format!("trueos/{feature}"));
+    }
+}
+
+pub(crate) fn example_required_features(
+    manifest_path: &Path,
+    example_name: &str,
+) -> Result<Vec<String>, String> {
+    example_specs(manifest_path)?
+        .into_iter()
+        .find(|example| example.name == example_name)
+        .map(|example| example.required_features)
+        .ok_or_else(|| format!("unknown example `{example_name}`"))
+}
+
+pub(crate) fn example_specs(manifest_path: &Path) -> Result<Vec<ExampleSpec>, String> {
+    let cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
+    let mut specs = Vec::new();
+    let mut in_example = false;
+    let mut current_name: Option<String> = None;
+    let mut current_required_features = Vec::new();
+    for line in cargo_toml.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            if in_example && let Some(name) = current_name.take() {
+                specs.push(ExampleSpec {
+                    name,
+                    required_features: core::mem::take(&mut current_required_features),
+                });
+            }
+            in_example = trimmed == "[[example]]";
+            if in_example {
+                current_name = None;
+                current_required_features.clear();
+            }
+            continue;
+        }
+        if !in_example {
+            continue;
+        }
+        if trimmed.starts_with("name") {
+            let Some((_, value)) = trimmed.split_once('=') else {
+                continue;
+            };
+            current_name = Some(value.trim().trim_matches('"').to_string());
+        } else if trimmed.starts_with("required-features") {
+            let Some((_, value)) = trimmed.split_once('=') else {
+                continue;
+            };
+            current_required_features = parse_string_array(value.trim());
+        }
+    }
+    if in_example && let Some(name) = current_name {
+        specs.push(ExampleSpec {
+            name,
+            required_features: current_required_features,
+        });
+    }
+    Ok(specs)
+}

@@ -2,71 +2,33 @@ use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::env;
 use std::fs;
-use std::io::{self, Write};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+mod app_catalog;
 mod artifact;
 mod build_plan;
+mod cargo_output;
+mod cli;
 mod publish;
 
+use app_catalog::{
+    example_required_features, example_specs, manifest_declared_features, manifest_has_dependency,
+    package_app_spec, package_app_specs, package_bin_name, package_blueprint_profile, package_name,
+    push_app_or_trueos_feature,
+};
 use artifact::{
     cargo_artifact_stem, collect_rlibs_for_object, entry_hint_hex, entry_symbol_name,
     latest_cargo_object, tool_command, write_blueprint,
 };
 use build_plan::{BuildFlavor, BuildSettings, BuildTarget, resolve_build_settings};
+use cargo_output::{
+    print_cargo_output_notes, run_cargo_command, run_cargo_rustc_command,
+    write_filtered_cargo_output,
+};
+use cli::{CargoProfile, parse_cli_args};
 use publish::publish_dist_blueprints;
-
-#[derive(Clone)]
-struct ExampleSpec {
-    name: String,
-    required_features: Vec<String>,
-}
-
-struct PackageAppSpec {
-    name: String,
-    dir: PathBuf,
-    manifest_path: PathBuf,
-}
-
-#[derive(Deserialize)]
-struct AppRegistry {
-    apps: Vec<AppRegistryEntry>,
-}
-
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum AppRegistryEntry {
-    Name(String),
-    Spec { name: String, path: Option<PathBuf> },
-}
-
-struct RegisteredAppSpec {
-    name: String,
-    dir: PathBuf,
-}
-
-#[derive(Clone, Copy)]
-enum CargoProfile {
-    Dev,
-    Release,
-}
-
-impl CargoProfile {
-    fn target_subdir(self) -> &'static str {
-        match self {
-            CargoProfile::Dev => "debug",
-            CargoProfile::Release => "release",
-        }
-    }
-
-    fn label(self) -> &'static str {
-        match self {
-            CargoProfile::Dev => "dev",
-            CargoProfile::Release => "release",
-        }
-    }
-}
 
 struct CratePatch {
     key: String,
@@ -91,31 +53,6 @@ impl CratePatch {
             path,
         }
     }
-}
-
-#[derive(Default)]
-struct CargoBuildArtifacts {
-    rlibs: Vec<PathBuf>,
-}
-
-#[derive(Deserialize)]
-struct CargoJsonMessage {
-    reason: String,
-    #[serde(default)]
-    filenames: Vec<String>,
-    #[serde(default)]
-    message: Option<CargoJsonDiagnostic>,
-}
-
-#[derive(Deserialize)]
-struct CargoJsonDiagnostic {
-    rendered: Option<String>,
-}
-
-#[derive(Default)]
-struct CargoOutputNotes {
-    unused_patch_diagnostics: usize,
-    build_std_future_incompat: usize,
 }
 
 const CARGO_CACHE_DIR_ENV: &str = "TRUEOS_BLUEPRINT_CARGO_CACHE_DIR";
@@ -237,42 +174,6 @@ fn run() -> Result<(), String> {
     }
 }
 
-fn parse_cli_args(
-    args: &[std::ffi::OsString],
-) -> Result<(PathBuf, Vec<String>, CargoProfile), String> {
-    let mut cargo_profile = CargoProfile::Release;
-    let mut filtered_args = Vec::with_capacity(args.len());
-    for arg in args {
-        if arg == "--release" {
-            cargo_profile = CargoProfile::Release;
-        } else {
-            filtered_args.push(arg.clone());
-        }
-    }
-
-    if filtered_args.is_empty() {
-        return Ok((PathBuf::from("."), Vec::new(), cargo_profile));
-    }
-
-    let first = PathBuf::from(&filtered_args[0]);
-    if first.join("Cargo.toml").is_file() {
-        if filtered_args.len() > 1 {
-            return Err("directory mode does not accept app names".to_string());
-        }
-        return Ok((first, Vec::new(), cargo_profile));
-    }
-
-    let mut app_names = Vec::with_capacity(filtered_args.len());
-    for arg in filtered_args {
-        app_names.push(
-            arg.into_string()
-                .map_err(|_| "app name must be valid UTF-8".to_string())?,
-        );
-    }
-
-    Ok((PathBuf::from("."), app_names, cargo_profile))
-}
-
 fn build_one_target(
     app_dir: &Path,
     manifest_path: &Path,
@@ -390,7 +291,7 @@ fn build_one_target_to(
     let declared_features = manifest_declared_features(&cargo_manifest_path)?;
     let has_trueos_dependency = manifest_has_dependency(&cargo_manifest_path, "trueos")?;
     let mut extra_features = required_features.to_vec();
-    for feature in &build_settings.extra_features {
+    for feature in &build_settings.features {
         push_app_or_trueos_feature(
             &mut extra_features,
             feature,
@@ -398,7 +299,7 @@ fn build_one_target_to(
             has_trueos_dependency,
         );
     }
-    if !build_settings.has_global_allocator && has_trueos_dependency {
+    if !build_settings.source.declares_global_allocator && has_trueos_dependency {
         push_feature(&mut extra_features, "trueos/default-global-allocator");
     }
     if declared_features
@@ -409,14 +310,14 @@ fn build_one_target_to(
         push_feature(&mut extra_features, "trueos-blueprint");
     }
     if matches!(build_settings.flavor, BuildFlavor::ThinNoStd)
-        && !build_settings.has_panic_handler
+        && !build_settings.source.declares_panic_handler
         && has_trueos_dependency
     {
         push_feature(&mut extra_features, "trueos/default-panic-handler");
     }
     if matches!(build_settings.flavor, BuildFlavor::ThinNoStd) || is_helix_app_dir(app_dir) {
         cargo.arg("--no-default-features");
-    } else if build_settings.needs_tokio_net {
+    } else if build_settings.source.uses_tokio_net {
         push_app_or_trueos_feature(
             &mut extra_features,
             "tokio-net-probe",
@@ -538,152 +439,6 @@ fn run_command(cmd: &mut Command, label: &str) -> Result<(), String> {
         Ok(())
     } else {
         Err(format!("{label} failed with status {status}"))
-    }
-}
-
-fn run_cargo_command(cmd: &mut Command, label: &str) -> Result<(), String> {
-    let output = cmd
-        .output()
-        .map_err(|err| format!("{label} failed to start: {err}"))?;
-    let notes = write_filtered_cargo_output(label, &output.stdout, &output.stderr)?;
-    print_cargo_output_notes(label, &notes);
-    if output.status.success() {
-        Ok(())
-    } else {
-        Err(format!("{label} failed with status {}", output.status))
-    }
-}
-
-fn run_cargo_rustc_command(
-    cmd: &mut Command,
-    label: &str,
-    deps_dir: &Path,
-) -> Result<CargoBuildArtifacts, String> {
-    let output = cmd
-        .output()
-        .map_err(|err| format!("{label} failed to start: {err}"))?;
-
-    let mut artifacts = CargoBuildArtifacts::default();
-    let mut rendered_stdout = String::new();
-    for line in String::from_utf8_lossy(&output.stdout).lines() {
-        match serde_json::from_str::<CargoJsonMessage>(line) {
-            Ok(message) => match message.reason.as_str() {
-                "compiler-artifact" => {
-                    for filename in message.filenames {
-                        let path = PathBuf::from(filename);
-                        if path.extension().and_then(|ext| ext.to_str()) != Some("rlib") {
-                            continue;
-                        }
-                        if !path.parent().is_some_and(|parent| parent == deps_dir) {
-                            continue;
-                        }
-                        if !artifacts.rlibs.iter().any(|existing| existing == &path) {
-                            artifacts.rlibs.push(path);
-                        }
-                    }
-                }
-                "compiler-message" => {
-                    if let Some(rendered) = message.message.and_then(|message| message.rendered) {
-                        rendered_stdout.push_str(&rendered);
-                        if !rendered.ends_with('\n') {
-                            rendered_stdout.push('\n');
-                        }
-                    }
-                }
-                _ => {}
-            },
-            Err(_) => {
-                rendered_stdout.push_str(line);
-                rendered_stdout.push('\n');
-            }
-        }
-    }
-
-    io::stdout()
-        .write_all(rendered_stdout.as_bytes())
-        .map_err(io_string)?;
-    let notes = write_filtered_cargo_output(label, &[], &output.stderr)?;
-    print_cargo_output_notes(label, &notes);
-
-    if output.status.success() {
-        Ok(artifacts)
-    } else {
-        Err(format!("{label} failed with status {}", output.status))
-    }
-}
-
-fn write_filtered_cargo_output(
-    label: &str,
-    stdout: &[u8],
-    stderr: &[u8],
-) -> Result<CargoOutputNotes, String> {
-    io::stdout().write_all(stdout).map_err(io_string)?;
-    let stderr = String::from_utf8_lossy(stderr);
-    let mut filtered = String::with_capacity(stderr.len());
-    let mut notes = CargoOutputNotes::default();
-    let mut skip_patch_help = false;
-    let mut skip_future_incompat_note = false;
-
-    for line in stderr.lines() {
-        if line.starts_with("warning: patch `")
-            && line.ends_with("` was not used in the crate graph")
-        {
-            notes.unused_patch_diagnostics += 1;
-            skip_patch_help = true;
-            continue;
-        }
-
-        if line.starts_with("warning: the following packages contain code that will be rejected by a future version of Rust: std v0.0.0 ")
-        {
-            notes.build_std_future_incompat += 1;
-            skip_future_incompat_note = true;
-            continue;
-        }
-
-        if skip_patch_help && line.starts_with("help: Check that the patched package version") {
-            continue;
-        }
-        if skip_patch_help
-            && (line.starts_with("      with the dependency requirements.")
-                || line
-                    .starts_with("      what is locked in the Cargo.lock file, run `cargo update`")
-                || line
-                    .starts_with("      version. This may also occur with an optional dependency"))
-        {
-            continue;
-        }
-
-        if skip_future_incompat_note
-            && (line.starts_with("note: to see what the problems were, use the option")
-                || line.starts_with("or run `cargo report future-incompatibilities"))
-        {
-            continue;
-        }
-
-        skip_patch_help = false;
-        skip_future_incompat_note = false;
-        filtered.push_str(line);
-        filtered.push('\n');
-    }
-
-    io::stderr()
-        .write_all(filtered.as_bytes())
-        .map_err(|err| format!("{label} output write failed: {err}"))?;
-    Ok(notes)
-}
-
-fn print_cargo_output_notes(label: &str, notes: &CargoOutputNotes) {
-    if notes.unused_patch_diagnostics != 0 {
-        eprintln!(
-            "trueos-blueprint: note: suppressed {} unused source-overlay patch diagnostics during {label}",
-            notes.unused_patch_diagnostics
-        );
-    }
-    if notes.build_std_future_incompat != 0 {
-        eprintln!(
-            "trueos-blueprint: note: suppressed {} build-std future-incompat report for synthetic std during {label}",
-            notes.build_std_future_incompat
-        );
     }
 }
 
@@ -1845,8 +1600,8 @@ fn staged_manifest_for_overlay(
     lock_mismatches: &[LockMismatch],
 ) -> Result<Option<PathBuf>, String> {
     if source_overlay.is_empty()
-        && !build_settings.needs_no_std_shim
-        && !build_settings.needs_entry_shim
+        && !build_settings.shims.add_no_std
+        && !build_settings.shims.add_entrypoint
     {
         return Ok(None);
     }
@@ -1903,7 +1658,7 @@ fn rewrite_staged_source_for_target(
     staged_app_dir: &Path,
     build_settings: &BuildSettings,
 ) -> Result<(), String> {
-    if !build_settings.needs_no_std_shim && !build_settings.needs_entry_shim {
+    if !build_settings.shims.add_no_std && !build_settings.shims.add_entrypoint {
         return Ok(());
     }
 
@@ -1921,10 +1676,10 @@ fn rewrite_staged_source_for_target(
     let original = fs::read_to_string(&staged_source).map_err(io_string)?;
 
     let mut header = String::new();
-    if build_settings.needs_no_std_shim {
+    if build_settings.shims.add_no_std {
         header.push_str("#![no_std]\n");
     }
-    if build_settings.needs_entry_shim {
+    if build_settings.shims.add_entrypoint {
         header.push_str("#![no_main]\n");
     }
 
@@ -1934,8 +1689,8 @@ fn rewrite_staged_source_for_target(
     if !original.ends_with('\n') {
         rewritten.push('\n');
     }
-    if build_settings.needs_entry_shim {
-        if build_settings.needs_no_std_shim {
+    if build_settings.shims.add_entrypoint {
+        if build_settings.shims.add_no_std {
             rewritten.push_str(
                 "\n#[unsafe(no_mangle)]\npub extern \"C\" fn _start() -> ! {\n    main();\n    trueos::panic_abort(\"blueprint main returned\\n\")\n}\n",
             );
@@ -3030,10 +2785,10 @@ fn materialized_workspace_dependency(
         "trueos" => path_dependency_line(dep_name, &blueprint_root.join("api")),
         "trueos-chat" => path_dependency_line(dep_name, &blueprint_root.join("apps/chatserver/trueos-chat")),
         "trueos-currency" => {
-            path_dependency_line(dep_name, &blueprint_root.join("apps/currency_reqwest/trueos-currency"))
+            path_dependency_line(dep_name, &blueprint_root.join("../uiout/currency_reqwest/trueos-currency"))
         }
         "trueos-flags" => {
-            path_dependency_line(dep_name, &blueprint_root.join("apps/flags/trueos-flags"))
+            path_dependency_line(dep_name, &blueprint_root.join("../uiout/flags/trueos-flags"))
         }
         "trueos-gfx-core" => format!(
             "trueos-gfx-core = {{ path = {}, features = [\"alloc\"] }}",
@@ -3051,7 +2806,7 @@ fn materialized_workspace_dependency(
             &stage_trueos_tetris_crate(blueprint_root, work_dir)?,
         ),
         "trueos-weather" => {
-            path_dependency_line(dep_name, &blueprint_root.join("apps/weather/trueos-weather"))
+            path_dependency_line(dep_name, &blueprint_root.join("../uiout/weather/trueos-weather"))
         }
         "webpki-roots" => {
             "webpki-roots = { version = \"1\", default-features = false }".to_string()
@@ -3143,7 +2898,7 @@ fn path_dependency_line(dep_name: &str, path: &Path) -> String {
 }
 
 fn stage_trueos_tetris_crate(blueprint_root: &Path, work_dir: &Path) -> Result<PathBuf, String> {
-    let source = blueprint_root.join("apps/crates/trueos-tetris");
+    let source = blueprint_root.join("../uiout/crates/trueos-tetris");
     let staged = work_dir.join("blueprint-crates").join("trueos-tetris");
     reset_dir(&staged)?;
     copy_app_tree(&source, &staged)?;
@@ -3372,318 +3127,6 @@ fn toml_string(value: &str) -> String {
     }
     out.push('"');
     out
-}
-
-fn package_name(manifest_path: &Path) -> Result<String, String> {
-    let cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
-    let mut in_package = false;
-    for line in cargo_toml.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with('[') {
-            in_package = trimmed == "[package]";
-            continue;
-        }
-        if in_package && trimmed.starts_with("name") {
-            let Some((_, value)) = trimmed.split_once('=') else {
-                continue;
-            };
-            return Ok(value.trim().trim_matches('"').to_string());
-        }
-    }
-    Err(format!(
-        "failed to read package name from {}",
-        manifest_path.display()
-    ))
-}
-
-fn package_bin_name(manifest_path: &Path) -> Result<Option<String>, String> {
-    let cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
-    let mut in_package = false;
-    let mut in_bin = false;
-    let mut default_run = None;
-    let mut first_bin = None;
-
-    for line in cargo_toml.lines() {
-        let trimmed = line.split('#').next().unwrap_or("").trim();
-        if trimmed.starts_with('[') {
-            in_package = trimmed == "[package]";
-            in_bin = trimmed == "[[bin]]";
-            continue;
-        }
-
-        if in_package && trimmed.starts_with("default-run") {
-            if let Some((_, value)) = trimmed.split_once('=') {
-                default_run = toml_string_value(value.trim());
-            }
-            continue;
-        }
-
-        if in_bin && first_bin.is_none() && trimmed.starts_with("name") {
-            if let Some((_, value)) = trimmed.split_once('=') {
-                first_bin = toml_string_value(value.trim());
-            }
-        }
-    }
-
-    Ok(default_run.or(first_bin))
-}
-
-fn package_app_specs(app_dir: &Path) -> Result<Vec<PackageAppSpec>, String> {
-    let mut specs = Vec::new();
-    for app in registered_app_specs(app_dir)? {
-        specs.push(package_app_spec_required(&app)?);
-    }
-    specs.sort_by(|a, b| a.name.cmp(&b.name));
-    Ok(specs)
-}
-
-fn package_app_spec(app_dir: &Path, app_name: &str) -> Result<Option<PackageAppSpec>, String> {
-    let Some(app) = registered_app_specs(app_dir)?
-        .into_iter()
-        .find(|app| app.name == app_name)
-    else {
-        return Ok(None);
-    };
-    package_app_spec_required(&app).map(Some)
-}
-
-fn package_app_spec_required(app: &RegisteredAppSpec) -> Result<PackageAppSpec, String> {
-    let app_name = app.name.as_str();
-    let dir = app.dir.clone();
-    let mut manifest_path = dir.join("Cargo.toml");
-    if !manifest_path.is_file() {
-        return Err(format!(
-            "registered app `{app_name}` is missing {}",
-            manifest_path.display()
-        ));
-    }
-
-    let mut name = match package_name(&manifest_path) {
-        Ok(name) => name,
-        Err(_) => {
-            let package_manifest_path = virtual_package_app_manifest_path(&dir, app_name);
-            if !package_manifest_path.is_file() {
-                return Err(format!(
-                    "registered app `{app_name}` has virtual manifest {} without a known package manifest",
-                    manifest_path.display()
-                ));
-            }
-            manifest_path = package_manifest_path;
-            package_name(&manifest_path)?
-        }
-    };
-    if name != app_name && !virtual_package_app_alias(app_name) {
-        return Err(format!(
-            "registered app `{app_name}` has package name `{name}` in {}",
-            manifest_path.display()
-        ));
-    }
-    if virtual_package_app_alias(app_name) {
-        name = app_name.to_string();
-    }
-
-    Ok(PackageAppSpec {
-        name,
-        dir,
-        manifest_path,
-    })
-}
-
-fn virtual_package_app_manifest_path(dir: &Path, app_name: &str) -> PathBuf {
-    match app_name {
-        "helix" => dir.join("helix-term").join("Cargo.toml"),
-        "matrix" => dir.join("src").join("main").join("Cargo.toml"),
-        _ => dir.join("src").join("main").join("Cargo.toml"),
-    }
-}
-
-fn virtual_package_app_alias(app_name: &str) -> bool {
-    matches!(app_name, "fd" | "helix" | "matrix")
-}
-
-fn registered_app_specs(app_dir: &Path) -> Result<Vec<RegisteredAppSpec>, String> {
-    let registry_path = app_dir.join("apps.json");
-    let raw = fs::read_to_string(&registry_path)
-        .map_err(|err| format!("failed to read {}: {err}", registry_path.display()))?;
-    let registry: AppRegistry = serde_json::from_str(&raw)
-        .map_err(|err| format!("failed to parse {}: {err}", registry_path.display()))?;
-
-    let mut out = Vec::with_capacity(registry.apps.len());
-    for entry in registry.apps {
-        let (name, path) = match entry {
-            AppRegistryEntry::Name(name) => (name, None),
-            AppRegistryEntry::Spec { name, path } => (name, path),
-        };
-        if name.trim().is_empty() {
-            return Err(format!("empty app name in {}", registry_path.display()));
-        }
-        if out
-            .iter()
-            .any(|existing: &RegisteredAppSpec| existing.name == name)
-        {
-            return Err(format!(
-                "duplicate registered app `{name}` in {}",
-                registry_path.display()
-            ));
-        }
-        let dir = match path {
-            Some(path) if path.is_absolute() => path,
-            Some(path) => app_dir.join(path),
-            None => app_dir.join("apps").join(name.as_str()),
-        };
-        out.push(RegisteredAppSpec { name, dir });
-    }
-    Ok(out)
-}
-
-fn package_blueprint_profile(manifest_path: &Path) -> Result<Option<CargoProfile>, String> {
-    let cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
-    let mut in_metadata = false;
-    for line in cargo_toml.lines() {
-        let trimmed = line.split('#').next().unwrap_or("").trim();
-        if trimmed.starts_with('[') {
-            in_metadata = trimmed == "[package.metadata.trueos-blueprint]";
-            continue;
-        }
-        if !in_metadata {
-            continue;
-        }
-        let Some((key, value)) = trimmed.split_once('=') else {
-            continue;
-        };
-        if key.trim() != "profile" {
-            continue;
-        }
-        return match toml_string_value(value.trim()).as_deref() {
-            Some("dev") | Some("debug") => Ok(Some(CargoProfile::Dev)),
-            Some("release") => Ok(Some(CargoProfile::Release)),
-            Some(other) => Err(format!(
-                "unsupported trueos-blueprint profile `{other}` in {}",
-                manifest_path.display()
-            )),
-            None => Err(format!(
-                "bad trueos-blueprint profile in {}",
-                manifest_path.display()
-            )),
-        };
-    }
-    Ok(None)
-}
-
-fn manifest_declared_features(manifest_path: &Path) -> Result<Vec<String>, String> {
-    let cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
-    let mut in_features = false;
-    let mut out = Vec::new();
-    for line in cargo_toml.lines() {
-        let trimmed = line.split('#').next().unwrap_or("").trim();
-        if trimmed.starts_with('[') {
-            in_features = trimmed == "[features]";
-            continue;
-        }
-        if !in_features || trimmed.is_empty() {
-            continue;
-        }
-        let Some((key, _)) = trimmed.split_once('=') else {
-            continue;
-        };
-        out.push(key.trim().to_string());
-    }
-    Ok(out)
-}
-
-fn manifest_has_dependency(manifest_path: &Path, dependency_name: &str) -> Result<bool, String> {
-    let cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
-    let mut in_dependencies = false;
-    for line in cargo_toml.lines() {
-        let trimmed = line.split('#').next().unwrap_or("").trim();
-        if trimmed.starts_with('[') {
-            in_dependencies = matches!(
-                trimmed,
-                "[dependencies]" | "[dev-dependencies]" | "[build-dependencies]"
-            );
-            continue;
-        }
-        if !in_dependencies || trimmed.is_empty() {
-            continue;
-        }
-        let Some((key, _)) = trimmed.split_once('=') else {
-            continue;
-        };
-        if key.trim() == dependency_name || key.trim().starts_with(&format!("{dependency_name}.")) {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
-fn push_app_or_trueos_feature(
-    features: &mut Vec<String>,
-    feature: &str,
-    declared_features: &[String],
-    has_trueos_dependency: bool,
-) {
-    if declared_features.iter().any(|declared| declared == feature) {
-        push_feature(features, feature);
-    } else if has_trueos_dependency {
-        push_feature(features, &format!("trueos/{feature}"));
-    }
-}
-
-fn example_required_features(
-    manifest_path: &Path,
-    example_name: &str,
-) -> Result<Vec<String>, String> {
-    example_specs(manifest_path)?
-        .into_iter()
-        .find(|example| example.name == example_name)
-        .map(|example| example.required_features)
-        .ok_or_else(|| format!("unknown example `{example_name}`"))
-}
-
-fn example_specs(manifest_path: &Path) -> Result<Vec<ExampleSpec>, String> {
-    let cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
-    let mut specs = Vec::new();
-    let mut in_example = false;
-    let mut current_name: Option<String> = None;
-    let mut current_required_features = Vec::new();
-    for line in cargo_toml.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with('[') {
-            if in_example && let Some(name) = current_name.take() {
-                specs.push(ExampleSpec {
-                    name,
-                    required_features: core::mem::take(&mut current_required_features),
-                });
-            }
-            in_example = trimmed == "[[example]]";
-            if in_example {
-                current_name = None;
-                current_required_features.clear();
-            }
-            continue;
-        }
-        if !in_example {
-            continue;
-        }
-        if trimmed.starts_with("name") {
-            let Some((_, value)) = trimmed.split_once('=') else {
-                continue;
-            };
-            current_name = Some(value.trim().trim_matches('"').to_string());
-        } else if trimmed.starts_with("required-features") {
-            let Some((_, value)) = trimmed.split_once('=') else {
-                continue;
-            };
-            current_required_features = parse_string_array(value.trim());
-        }
-    }
-    if in_example && let Some(name) = current_name {
-        specs.push(ExampleSpec {
-            name,
-            required_features: current_required_features,
-        });
-    }
-    Ok(specs)
 }
 
 fn parse_string_array(value: &str) -> Vec<String> {

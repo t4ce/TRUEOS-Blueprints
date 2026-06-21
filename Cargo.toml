@@ -12,7 +12,6 @@ members = [
     "apps/fileexplorer",
     "apps/framework_stack",
     "apps/hello_world",
-    "apps/localcoder",
     "apps/test_some_crates",
     "apps/tokio_fs",
     "apps/tokio_net",
@@ -47,10 +46,6 @@ tokio-rustls = { path = "../TRUEOS/vendor/tokio-rustls-0.26.4", default-features
 tower = { version = "0.5", default-features = false, features = ["util"] }
 trueos = { path = "api" }
 trueos-chat = { path = "apps/chatserver/trueos-chat" }
-trueos-currency = { path = "apps/currency_reqwest/trueos-currency" }
-trueos-flags = { path = "apps/flags/trueos-flags" }
-trueos-tetris = { path = "apps/crates/trueos-tetris" }
-trueos-weather = { path = "apps/weather/trueos-weather" }
 webpki-roots = { version = "1", default-features = false }
 
 [features]

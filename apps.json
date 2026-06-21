@@ -5,18 +5,6 @@
     "fileexplorer",
     "framework_stack",
     "hello_world",
-    {
-      "name": "tactics",
-      "path": "../tactics"
-    },
-    {
-      "name": "esynth",
-      "path": "../esynth"
-    },
-    {
-      "name": "horizon",
-      "path": "../Horizon/crates/horizon"
-    },
     "test_some_crates",
     "tokio_fs",
     "tokio_net",
