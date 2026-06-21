@@ -71,9 +71,6 @@ pub(crate) fn resolve_build_settings(
         BuildFlavor::ThinNoStd
     };
     let mut extra_features = blueprint_feature_directives(&source);
-    if matches!(flavor, BuildFlavor::TokioStd) {
-        push_feature(&mut extra_features, "tokio-runtime");
-    }
     if needs_tokio_net {
         push_feature(&mut extra_features, "tokio-net-probe");
     }

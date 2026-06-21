@@ -27,13 +27,12 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use trueos::{
-    clock, logl,
+    clock, fs, logl,
     logl::level,
     platform::{self, io},
     runtime,
     time::{self, Duration},
     tokio::{self, net::SocketAddr},
-    vfs,
 };
 
 const FILEEXPLORER_HTTP_TCP_PORT: u16 = 8;
@@ -238,7 +237,7 @@ fn hex(byte: u8) -> Option<u8> {
     }
 }
 
-fn node_for_path(path: &str) -> FileNode {
+async fn node_for_path(path: &str) -> FileNode {
     let name = if path.is_empty() {
         "TRUEOSFS".to_string()
     } else {
@@ -247,19 +246,19 @@ fn node_for_path(path: &str) -> FileNode {
     let stat = if path.is_empty() {
         None
     } else {
-        vfs::stat(path.as_bytes()).ok()
+        fs::metadata(path).await.ok()
     };
-    let kind = match stat.map(|stat| stat.kind) {
-        Some(vfs::FsNodeKind::File) => NodeKind::File,
+    let kind = match stat.as_ref().map(|stat| stat.is_file()) {
+        Some(true) => NodeKind::File,
         _ => NodeKind::Folder,
     };
-    let size = stat.map(|stat| stat.len).unwrap_or(0);
+    let size = stat.map(|stat| stat.len()).unwrap_or(0);
     let mut meta = BTreeMap::new();
     meta.insert("path".to_string(), serde_json::json!(path));
     if path.is_empty() {
         meta.insert(
             "note".to_string(),
-            serde_json::json!("directory listing requires a guest-safe VFS list facade"),
+            serde_json::json!("directory listing requires a guest-safe filesystem list facade"),
         );
     }
     FileNode {
@@ -320,7 +319,7 @@ async fn handle_tree(uri: Uri) -> Response {
         &TreeSnapshot {
             schema: "filetree.v1",
             version: now_ms(),
-            root: node_for_path(path.as_str()),
+            root: node_for_path(path.as_str()).await,
         },
     )
 }
@@ -380,9 +379,10 @@ async fn handle_create_node(State(state): State<AppState>, body: Bytes) -> Respo
         )
         .trim_matches('/')
         .to_string();
-        vfs::create_dir_all(path.as_bytes())
+        fs::create_dir_all(path.as_str())
+            .await
             .map(|_| Some(serde_json::json!({ "path": path })))
-            .map_err(|err| format!("create dir failed rc={}", err))
+            .map_err(|err| format!("create dir failed {}", err))
     } else {
         Err("file creation requires upload bytes".to_string())
     };
@@ -409,7 +409,7 @@ async fn handle_update_node(
         format!("Update {}", id),
         vec![id],
         Err(format!(
-            "rename is not exposed in blueprint VFS yet; requested name={:?}",
+            "rename is not exposed through the filesystem facade yet; requested name={:?}",
             request.name
         )),
     )
@@ -448,7 +448,7 @@ async fn handle_move_nodes(State(state): State<AppState>, body: Bytes) -> Respon
         "multi_move",
         format!("Move {} item(s)", request.ids.len()),
         request.ids,
-        Err("rename/move is not exposed in blueprint VFS yet".to_string()),
+        Err("rename/move is not exposed through the filesystem facade yet".to_string()),
     )
     .await
 }
@@ -469,9 +469,10 @@ async fn handle_upload_file(
         .unwrap_or_else(|| "upload.bin".to_string());
     let parent = decode_node_id(&parent_id).unwrap_or_default();
     let path = format!("{}/{}", parent, name).trim_matches('/').to_string();
-    let result = vfs::write_file(path.as_bytes(), body.as_ref())
+    let result = fs::write(path.as_str(), body.as_ref())
+        .await
         .map(|_| Some(serde_json::json!({ "path": path, "bytes": body.len() })))
-        .map_err(|err| format!("write failed rc={}", err));
+        .map_err(|err| format!("write failed {}", err));
     record_job(
         state,
         "node_upload",
@@ -487,7 +488,7 @@ async fn handle_download_file(Path(id): Path<String>) -> Response {
         Ok(path) if !path.is_empty() => path,
         _ => return error_response(404, "bad path"),
     };
-    match vfs::read_file(path.as_bytes()) {
+    match fs::read(path.as_str()).await {
         Ok(bytes) => Response::builder()
             .status(StatusCode::OK)
             .header(CONTENT_TYPE, "application/octet-stream")
@@ -501,7 +502,7 @@ async fn handle_download_file(Path(id): Path<String>) -> Response {
             )
             .body(Body::from(bytes))
             .unwrap_or_else(|_| Response::new(Body::empty())),
-        Err(err) => error_response(404, format!("read failed rc={}", err)),
+        Err(err) => error_response(404, format!("read failed {}", err)),
     }
 }
 
@@ -510,9 +511,9 @@ async fn handle_node_content(Path(id): Path<String>) -> Response {
         Ok(path) if !path.is_empty() => path,
         _ => return error_response(404, "bad path"),
     };
-    match vfs::read_file(path.as_bytes()) {
+    match fs::read(path.as_str()).await {
         Ok(bytes) => response(200, "text/plain; charset=utf-8", bytes),
-        Err(err) => error_response(404, format!("read failed rc={}", err)),
+        Err(err) => error_response(404, format!("read failed {}", err)),
     }
 }
 

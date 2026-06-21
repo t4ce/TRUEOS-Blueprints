@@ -213,14 +213,19 @@ async fn run_probe() -> Result<(), &'static str> {
     }
     logl::log(level::INFO, format_args!("tokio_fs: success fs.try_exists"));
 
-    logl::log(level::INFO, format_args!("tokio_fs: stage fs.stat.file"));
-    let file_stat = t::fs::stat(PROBE_PATH.as_bytes()).map_err(|_| "fs.stat.file")?;
-    if file_stat.kind != t::fs::FsNodeKind::File || file_stat.len != PROBE_BYTES.len() as u64 {
-        return Err("fs.stat.file.value");
+    logl::log(
+        level::INFO,
+        format_args!("tokio_fs: stage fs.metadata.file"),
+    );
+    let file_stat = t::fs::metadata(PROBE_PATH)
+        .await
+        .map_err(|_| "fs.metadata.file")?;
+    if !file_stat.is_file() || file_stat.len() != PROBE_BYTES.len() as u64 {
+        return Err("fs.metadata.file.value");
     }
     logl::log(
         level::INFO,
-        format_args!("tokio_fs: success fs.stat.file len={}", file_stat.len),
+        format_args!("tokio_fs: success fs.metadata.file len={}", file_stat.len()),
     );
 
     logl::log(
@@ -233,13 +238,17 @@ async fn run_probe() -> Result<(), &'static str> {
         format_args!("tokio_fs: success fs.create_dir_all.nested_write_read"),
     );
 
-    logl::log(level::INFO, format_args!("tokio_fs: stage fs.stat.dir"));
-    let dir_stat =
-        t::fs::stat(format!("{}/nested", PROBE_DIR).as_bytes()).map_err(|_| "fs.stat.dir")?;
-    if dir_stat.kind != t::fs::FsNodeKind::Directory || dir_stat.len != 0 {
-        return Err("fs.stat.dir.value");
+    logl::log(level::INFO, format_args!("tokio_fs: stage fs.metadata.dir"));
+    let dir_stat = t::fs::metadata(format!("{}/nested", PROBE_DIR))
+        .await
+        .map_err(|_| "fs.metadata.dir")?;
+    if !dir_stat.is_dir() {
+        return Err("fs.metadata.dir.value");
     }
-    logl::log(level::INFO, format_args!("tokio_fs: success fs.stat.dir"));
+    logl::log(
+        level::INFO,
+        format_args!("tokio_fs: success fs.metadata.dir"),
+    );
 
     logl::log(
         level::INFO,

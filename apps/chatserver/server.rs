@@ -18,7 +18,7 @@ use axum::{
     serve::ListenerExt,
 };
 use trueos::{
-    clock, logl,
+    clock, fs, logl,
     logl::level,
     platform::{self, io},
     runtime,
@@ -28,7 +28,6 @@ use trueos::{
         net::SocketAddr,
         sync::{Mutex, MutexGuard},
     },
-    vfs,
 };
 use trueos_chat::{ChatConfig, ChatHub, ChatMethod, ChatRequest, ChatResponse};
 
@@ -82,7 +81,7 @@ async fn load_chat_hub_once() {
         }
     }
 
-    let bytes = match vfs::read_file(CHAT_STORE_PATH.as_bytes()) {
+    let bytes = match fs::read(CHAT_STORE_PATH).await {
         Ok(bytes) => bytes,
         Err(_) => {
             CHAT_HUB_LOADED.store(true, Ordering::Release);
@@ -126,21 +125,21 @@ async fn save_chat_hub_snapshot() {
         return;
     };
     if !CHAT_STORE_DIR_READY.load(Ordering::Acquire) {
-        match vfs::create_dir_all(CHAT_STORE_DIR.as_bytes()) {
+        match fs::create_dir_all(CHAT_STORE_DIR).await {
             Ok(()) => CHAT_STORE_DIR_READY.store(true, Ordering::Release),
             Err(err) => {
                 logl::log(
                     level::WARN,
-                    format_args!("chat: create {} failed rc={}", CHAT_STORE_DIR, err),
+                    format_args!("chat: create {} failed {}", CHAT_STORE_DIR, err),
                 );
                 return;
             }
         }
     }
-    if let Err(err) = vfs::write_file(CHAT_STORE_PATH.as_bytes(), bytes.as_slice()) {
+    if let Err(err) = fs::write(CHAT_STORE_PATH, bytes.as_slice()).await {
         logl::log(
             level::WARN,
-            format_args!("chat: save {} failed rc={}", CHAT_STORE_PATH, err),
+            format_args!("chat: save {} failed {}", CHAT_STORE_PATH, err),
         );
     }
 }
