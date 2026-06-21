@@ -1,15 +1,6 @@
 {
   "apps": [
-    "chatserver",
-    "file-system",
-    "fileexplorer",
-    "framework_stack",
     "hello_world",
-    "test_some_crates",
-    "tokio_fs",
-    "tokio_net",
-    "tokio_rt",
-    "webdevices",
-    "webmail"
+    "test_some_crates"
   ]
 }
