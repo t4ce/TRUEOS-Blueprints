@@ -122,11 +122,7 @@ const CARGO_CACHE_DIR_ENV: &str = "TRUEOS_BLUEPRINT_CARGO_CACHE_DIR";
 const TARGET_SPEC_ENV: &str = "TRUEOS_BLUEPRINT_TARGET_SPEC";
 const RUSTFLAGS_ENCODED_SEPARATOR: char = '\u{1f}';
 const TRUEOS_CHECK_CFG_FLAG: &str = "--check-cfg=cfg(target_os,values(\"trueos\",\"zkvm\"))";
-const BLUEPRINT_RUSTFLAGS: &[&str] = &[
-    TRUEOS_CHECK_CFG_FLAG,
-    "-A",
-    "warnings",
-];
+const BLUEPRINT_RUSTFLAGS: &[&str] = &[TRUEOS_CHECK_CFG_FLAG, "-A", "warnings"];
 
 fn main() {
     if let Err(err) = run() {
@@ -310,6 +306,8 @@ fn build_one_target_to(
     let build_settings = resolve_build_settings(&app_dir, &manifest_path, &build_target)?;
     if matches!(build_settings.flavor, BuildFlavor::TokioStd) {
         ensure_rust_std_trueos_thread_set_name()?;
+        ensure_rust_std_trueos_hash_random()?;
+        ensure_rust_std_trueos_no_threads_tls()?;
     }
 
     let output_name = match &build_target {
@@ -1090,6 +1088,497 @@ pub fn set_name(_name: &core::ffi::CStr) {}
     println!(
         "trueos-blueprint: patched rust-src std unix thread set_name for trueos: {}",
         unix_thread.display()
+    );
+    Ok(())
+}
+
+fn nightly_rust_src_path(relative: &str) -> Result<PathBuf, String> {
+    let sysroot_output = Command::new("rustc")
+        .arg("+nightly")
+        .arg("--print")
+        .arg("sysroot")
+        .output()
+        .map_err(|err| format!("rustc +nightly --print sysroot failed to start: {err}"))?;
+    if !sysroot_output.status.success() {
+        return Err(format!(
+            "rustc +nightly --print sysroot failed with status {}",
+            sysroot_output.status
+        ));
+    }
+    let sysroot = String::from_utf8(sysroot_output.stdout)
+        .map_err(|err| format!("rustc sysroot output was not UTF-8: {err}"))?;
+    Ok(PathBuf::from(sysroot.trim())
+        .join("lib/rustlib/src/rust/library")
+        .join(relative))
+}
+
+fn ensure_rust_std_trueos_hash_random() -> Result<(), String> {
+    let random_rs = nightly_rust_src_path("std/src/hash/random.rs")?;
+    let source = fs::read_to_string(&random_rs).map_err(|err| {
+        format!(
+            "failed to read Rust std hash random source {}; install rust-src or check permissions: {err}",
+            random_rs.display()
+        )
+    })?;
+    if source.contains("TRUEOS_HASH_RANDOM_COUNTER") {
+        return Ok(());
+    }
+
+    let needle = r#"        thread_local!(static KEYS: Cell<(u64, u64)> = {
+            Cell::new(hashmap_random_keys())
+        });
+
+        KEYS.with(|keys| {
+            let (k0, k1) = keys.get();
+            keys.set((k0.wrapping_add(1), k1));
+            RandomState { k0, k1 }
+        })"#;
+    let replacement = r#"        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+        {
+            use crate::sync::atomic::{AtomicU64, Ordering};
+
+            static TRUEOS_HASH_RANDOM_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+            let seed = TRUEOS_HASH_RANDOM_COUNTER.fetch_add(1, Ordering::Relaxed);
+            let (mut k0, mut k1) = hashmap_random_keys();
+            k0 = k0.wrapping_add(seed);
+            k1 = k1.wrapping_add(seed.rotate_left(32));
+            RandomState { k0, k1 }
+        }
+
+        #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+        {
+            thread_local!(static KEYS: Cell<(u64, u64)> = {
+                Cell::new(hashmap_random_keys())
+            });
+
+            KEYS.with(|keys| {
+                let (k0, k1) = keys.get();
+                keys.set((k0.wrapping_add(1), k1));
+                RandomState { k0, k1 }
+            })
+        }"#;
+    if !source.contains(needle) {
+        return Err(format!(
+            "failed to patch {}; missing std hash RandomState thread-local marker",
+            random_rs.display()
+        ));
+    }
+    let patched = source.replace(needle, replacement);
+    fs::write(&random_rs, patched).map_err(|err| {
+        format!(
+            "failed to patch Rust std hash random source {}: {err}",
+            random_rs.display()
+        )
+    })?;
+    println!(
+        "trueos-blueprint: patched rust-src std HashMap RandomState for trueos: {}",
+        random_rs.display()
+    );
+    Ok(())
+}
+
+fn ensure_rust_std_trueos_no_threads_tls() -> Result<(), String> {
+    let no_threads_rs = nightly_rust_src_path("std/src/sys/thread_local/no_threads.rs")?;
+    let mut source = fs::read_to_string(&no_threads_rs).map_err(|err| {
+        format!(
+            "failed to read Rust std no_threads TLS source {}; install rust-src or check permissions: {err}",
+            no_threads_rs.display()
+        )
+    })?;
+    if source.contains("TRUEOS_STD_NO_THREADS_PER_SLOT") {
+        let original = source.clone();
+        source = source.replace(
+            r#"        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+        unsafe {
+            $crate::thread::LocalKey::new(|_| {
+                $(#[$align_attr])*
+                static __RUST_STD_INTERNAL_VAL: $crate::thread::local_impl::LazyStorage<$t> =
+                    $crate::thread::local_impl::LazyStorage::new();
+                __RUST_STD_INTERNAL_VAL.get(None, || __RUST_STD_INTERNAL_INIT)
+            })
+        }
+
+        #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+        unsafe {
+            $crate::thread::LocalKey::new(|_| {
+                $(#[$align_attr])*
+                static __RUST_STD_INTERNAL_VAL: $crate::thread::local_impl::EagerStorage<$t> =
+                    $crate::thread::local_impl::EagerStorage { value: __RUST_STD_INTERNAL_INIT };
+                &__RUST_STD_INTERNAL_VAL.value
+            })
+        }"#,
+            r#"        // NOTE: Please update the shadowing test in `tests/thread.rs` if these types are renamed.
+        unsafe {
+            $crate::thread::LocalKey::new(|_| {
+                $(#[$align_attr])*
+                static __RUST_STD_INTERNAL_VAL: $crate::thread::local_impl::EagerStorage<$t> =
+                    $crate::thread::local_impl::EagerStorage { value: __RUST_STD_INTERNAL_INIT };
+                &__RUST_STD_INTERNAL_VAL.value
+            })
+        }"#,
+        );
+        source = source.replace(
+            "#[cfg(not(any(target_os = \"trueos\", target_os = \"zkvm\")))]\n#[allow(missing_debug_implementations)]\n#[repr(transparent)] // Required for correctness of `#[rustc_align_static]`\npub struct EagerStorage<T>",
+            "#[allow(missing_debug_implementations)]\n#[repr(transparent)] // Required for correctness of `#[rustc_align_static]`\npub struct EagerStorage<T>",
+        );
+        source = source.replace(
+            "// SAFETY: the target doesn't have threads.\n#[cfg(not(any(target_os = \"trueos\", target_os = \"zkvm\")))]\nunsafe impl<T> Sync for EagerStorage<T> {}",
+            "// SAFETY: the target doesn't have threads.\nunsafe impl<T> Sync for EagerStorage<T> {}",
+        );
+        if source != original {
+            fs::write(&no_threads_rs, source).map_err(|err| {
+                format!(
+                    "failed to repair Rust std no_threads TLS source {}: {err}",
+                    no_threads_rs.display()
+                )
+            })?;
+            println!(
+                "trueos-blueprint: repaired rust-src std no_threads const TLS for trueos: {}",
+                no_threads_rs.display()
+            );
+        }
+        return Ok(());
+    }
+
+    fn replace_required(
+        source: &mut String,
+        path: &Path,
+        needle: &str,
+        replacement: &str,
+        marker: &str,
+    ) -> Result<(), String> {
+        if !source.contains(needle) {
+            return Err(format!(
+                "failed to patch {}; missing std no_threads TLS marker: {marker}",
+                path.display()
+            ));
+        }
+        *source = source.replace(needle, replacement);
+        Ok(())
+    }
+
+    replace_required(
+        &mut source,
+        &no_threads_rs,
+        r#"use crate::cell::{Cell, UnsafeCell};
+use crate::mem::MaybeUninit;
+use crate::ptr;"#,
+        r#"#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+use crate::cell::{Cell, UnsafeCell};
+#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+use crate::mem::MaybeUninit;
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+use crate::{
+    boxed::Box,
+    marker::PhantomData,
+    sync::atomic::{AtomicUsize, Ordering},
+};
+use crate::ptr;
+
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+const TRUEOS_STD_NO_THREADS_PER_SLOT: usize = 128;
+
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+unsafe extern "Rust" {
+    fn trueos_tokio_tls_current_slot() -> u32;
+}
+
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+fn trueos_std_thread_local_slot() -> usize {
+    let slot = unsafe { trueos_tokio_tls_current_slot() } as usize;
+    if slot < TRUEOS_STD_NO_THREADS_PER_SLOT {
+        slot
+    } else {
+        0
+    }
+}"#,
+        "imports",
+    )?;
+
+    replace_required(
+        &mut source,
+        &no_threads_rs,
+        r#"#[derive(Clone, Copy, PartialEq, Eq)]
+enum State {
+    Initial,
+    Alive,
+    Destroying,
+}
+
+#[allow(missing_debug_implementations)]
+#[repr(C)]
+pub struct LazyStorage<T> {
+    // This field must be first, for correctness of `#[rustc_align_static]`
+    value: UnsafeCell<MaybeUninit<T>>,
+    state: Cell<State>,
+}
+
+impl<T> LazyStorage<T> {
+    pub const fn new() -> LazyStorage<T> {
+        LazyStorage {
+            value: UnsafeCell::new(MaybeUninit::uninit()),
+            state: Cell::new(State::Initial),
+        }
+    }
+
+    /// Gets a pointer to the TLS value, potentially initializing it with the
+    /// provided parameters.
+    ///
+    /// The resulting pointer may not be used after reentrant inialialization
+    /// has occurred.
+    #[inline]
+    pub fn get(&'static self, i: Option<&mut Option<T>>, f: impl FnOnce() -> T) -> *const T {
+        if self.state.get() == State::Alive {
+            self.value.get() as *const T
+        } else {
+            self.initialize(i, f)
+        }
+    }
+
+    #[cold]
+    fn initialize(&'static self, i: Option<&mut Option<T>>, f: impl FnOnce() -> T) -> *const T {
+        let value = i.and_then(Option::take).unwrap_or_else(f);
+
+        // Destroy the old value if it is initialized
+        // FIXME(#110897): maybe panic on recursive initialization.
+        if self.state.get() == State::Alive {
+            self.state.set(State::Destroying);
+            // Safety: we check for no initialization during drop below
+            unsafe {
+                ptr::drop_in_place(self.value.get() as *mut T);
+            }
+            self.state.set(State::Initial);
+        }
+
+        // Guard against initialization during drop
+        if self.state.get() == State::Destroying {
+            panic!("Attempted to initialize thread-local while it is being dropped");
+        }
+
+        unsafe {
+            self.value.get().write(MaybeUninit::new(value));
+        }
+        self.state.set(State::Alive);
+
+        self.value.get() as *const T
+    }
+}
+
+// SAFETY: the target doesn't have threads.
+unsafe impl<T> Sync for LazyStorage<T> {}"#,
+        r#"#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum State {
+    Initial,
+    Alive,
+    Destroying,
+}
+
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+#[allow(missing_debug_implementations)]
+pub struct LazyStorage<T> {
+    slots: [AtomicUsize; TRUEOS_STD_NO_THREADS_PER_SLOT],
+    _marker: PhantomData<fn() -> T>,
+}
+
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+impl<T> LazyStorage<T> {
+    pub const fn new() -> LazyStorage<T> {
+        LazyStorage {
+            slots: [const { AtomicUsize::new(0) }; TRUEOS_STD_NO_THREADS_PER_SLOT],
+            _marker: PhantomData,
+        }
+    }
+
+    #[inline]
+    pub fn get(&'static self, i: Option<&mut Option<T>>, f: impl FnOnce() -> T) -> *const T {
+        let slot = trueos_std_thread_local_slot();
+        let cell = &self.slots[slot];
+        let existing = cell.load(Ordering::Acquire);
+        if existing != 0 {
+            return existing as *const T;
+        }
+
+        self.initialize(cell, i, f)
+    }
+
+    #[cold]
+    fn initialize(
+        &'static self,
+        cell: &AtomicUsize,
+        i: Option<&mut Option<T>>,
+        f: impl FnOnce() -> T,
+    ) -> *const T {
+        let value = i.and_then(Option::take).unwrap_or_else(f);
+        let ptr = Box::leak(Box::new(value)) as *mut T as usize;
+        match cell.compare_exchange(0, ptr, Ordering::AcqRel, Ordering::Acquire) {
+            Ok(_) => ptr as *const T,
+            Err(existing) => {
+                unsafe {
+                    drop(Box::from_raw(ptr as *mut T));
+                }
+                existing as *const T
+            }
+        }
+    }
+}
+
+#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+#[allow(missing_debug_implementations)]
+#[repr(C)]
+pub struct LazyStorage<T> {
+    // This field must be first, for correctness of `#[rustc_align_static]`
+    value: UnsafeCell<MaybeUninit<T>>,
+    state: Cell<State>,
+}
+
+#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+impl<T> LazyStorage<T> {
+    pub const fn new() -> LazyStorage<T> {
+        LazyStorage {
+            value: UnsafeCell::new(MaybeUninit::uninit()),
+            state: Cell::new(State::Initial),
+        }
+    }
+
+    /// Gets a pointer to the TLS value, potentially initializing it with the
+    /// provided parameters.
+    ///
+    /// The resulting pointer may not be used after reentrant inialialization
+    /// has occurred.
+    #[inline]
+    pub fn get(&'static self, i: Option<&mut Option<T>>, f: impl FnOnce() -> T) -> *const T {
+        if self.state.get() == State::Alive {
+            self.value.get() as *const T
+        } else {
+            self.initialize(i, f)
+        }
+    }
+
+    #[cold]
+    fn initialize(&'static self, i: Option<&mut Option<T>>, f: impl FnOnce() -> T) -> *const T {
+        let value = i.and_then(Option::take).unwrap_or_else(f);
+
+        // Destroy the old value if it is initialized
+        // FIXME(#110897): maybe panic on recursive initialization.
+        if self.state.get() == State::Alive {
+            self.state.set(State::Destroying);
+            // Safety: we check for no initialization during drop below
+            unsafe {
+                ptr::drop_in_place(self.value.get() as *mut T);
+            }
+            self.state.set(State::Initial);
+        }
+
+        // Guard against initialization during drop
+        if self.state.get() == State::Destroying {
+            panic!("Attempted to initialize thread-local while it is being dropped");
+        }
+
+        unsafe {
+            self.value.get().write(MaybeUninit::new(value));
+        }
+        self.state.set(State::Alive);
+
+        self.value.get() as *const T
+    }
+}
+
+// SAFETY: the TRUEOS variant uses per-slot atomics and leaked values.
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+unsafe impl<T> Sync for LazyStorage<T> {}
+
+// SAFETY: the target doesn't have threads.
+#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+unsafe impl<T> Sync for LazyStorage<T> {}"#,
+        "lazy storage",
+    )?;
+
+    replace_required(
+        &mut source,
+        &no_threads_rs,
+        r#"pub(crate) struct LocalPointer {
+    p: Cell<*mut ()>,
+}
+
+impl LocalPointer {
+    pub const fn __new() -> LocalPointer {
+        LocalPointer { p: Cell::new(ptr::null_mut()) }
+    }
+
+    pub fn get(&self) -> *mut () {
+        self.p.get()
+    }
+
+    pub fn set(&self, p: *mut ()) {
+        self.p.set(p)
+    }
+}
+
+// SAFETY: the target doesn't have threads.
+unsafe impl Sync for LocalPointer {}"#,
+        r#"#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+pub(crate) struct LocalPointer {
+    slots: [AtomicUsize; TRUEOS_STD_NO_THREADS_PER_SLOT],
+}
+
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+impl LocalPointer {
+    pub const fn __new() -> LocalPointer {
+        LocalPointer {
+            slots: [const { AtomicUsize::new(0) }; TRUEOS_STD_NO_THREADS_PER_SLOT],
+        }
+    }
+
+    pub fn get(&self) -> *mut () {
+        self.slots[trueos_std_thread_local_slot()].load(Ordering::Acquire) as *mut ()
+    }
+
+    pub fn set(&self, p: *mut ()) {
+        self.slots[trueos_std_thread_local_slot()].store(p as usize, Ordering::Release)
+    }
+}
+
+#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+pub(crate) struct LocalPointer {
+    p: Cell<*mut ()>,
+}
+
+#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+impl LocalPointer {
+    pub const fn __new() -> LocalPointer {
+        LocalPointer { p: Cell::new(ptr::null_mut()) }
+    }
+
+    pub fn get(&self) -> *mut () {
+        self.p.get()
+    }
+
+    pub fn set(&self, p: *mut ()) {
+        self.p.set(p)
+    }
+}
+
+// SAFETY: the TRUEOS variant uses per-slot atomics.
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+unsafe impl Sync for LocalPointer {}
+
+// SAFETY: the target doesn't have threads.
+#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+unsafe impl Sync for LocalPointer {}"#,
+        "local pointer",
+    )?;
+
+    fs::write(&no_threads_rs, source).map_err(|err| {
+        format!(
+            "failed to patch Rust std no_threads TLS source {}: {err}",
+            no_threads_rs.display()
+        )
+    })?;
+    println!(
+        "trueos-blueprint: patched rust-src std no_threads TLS for trueos: {}",
+        no_threads_rs.display()
     );
     Ok(())
 }
