@@ -73,6 +73,8 @@ pub(crate) fn resolve_build_settings(
     let mut extra_features = blueprint_feature_directives(&source);
     if needs_tokio_net {
         push_feature(&mut extra_features, "tokio-net-probe");
+    } else if needs_trueos_platform {
+        push_feature(&mut extra_features, "tokio-runtime");
     }
     Ok(BuildSettings {
         flavor,
@@ -166,11 +168,19 @@ fn source_needs_trueos_platform(source: &str) -> bool {
         || source.contains("trueos::time")
         || source.contains("trueos::io")
         || source.contains("trueos::fs")
+        || source.contains("trueos::t")
+        || source.contains("t::runtime")
+        || source.contains("t::task")
+        || source.contains("t::sync")
+        || source.contains("t::time")
+        || source.contains("t::io")
+        || source.contains("t::fs")
+        || source.contains("t::tokio")
         || source_group_import_mentions(
             source,
             "trueos::{",
             &[
-                "runtime", "task", "sync", "time", "io", "fs", "net", "tokio",
+                "runtime", "task", "sync", "time", "io", "fs", "net", "tokio", "t",
             ],
         )
 }

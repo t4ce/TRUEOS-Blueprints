@@ -1,9 +1,12 @@
 #![no_std]
 
 extern crate alloc;
+#[cfg(feature = "tokio-runtime")]
+extern crate std;
 pub extern crate alloc as alloc_crate;
 use core::alloc::{GlobalAlloc, Layout};
 use core::ptr::null_mut;
+#[cfg(feature = "tokio-runtime")]
 pub use tokio;
 pub use v::env;
 pub use v::vclock as clock;
@@ -23,16 +26,19 @@ pub mod platform {
 
     pub use v::vsys::{poll_once, sleep_ms, write_stream};
 
+    #[cfg(feature = "tokio-runtime")]
     pub mod io {
         pub use tokio::io::{Error, ErrorKind, Result, SeekFrom};
     }
 
+    #[cfg(feature = "tokio-runtime")]
     pub mod path {
-        pub use tokio::path::{Component, Components, Path, PathBuf};
+        pub use std::path::{Component, Components, Path, PathBuf};
     }
 
+    #[cfg(feature = "tokio-runtime")]
     pub mod thread {
-        pub use tokio::thread::{Thread, ThreadId, current};
+        pub use std::thread::{Thread, ThreadId, current};
 
         #[inline]
         pub fn yield_now() {
@@ -81,6 +87,7 @@ pub mod logl {
     }
 }
 
+#[cfg(feature = "tokio-runtime")]
 pub mod runtime {
     pub use tokio::runtime::{Builder, Handle, Runtime};
 
@@ -98,21 +105,129 @@ pub mod runtime {
     }
 }
 
+#[cfg(feature = "tokio-runtime")]
 pub mod task {
     pub use tokio::spawn;
     pub use tokio::task::{JoinError, JoinHandle, JoinSet, LocalSet, yield_now};
 }
 
+#[cfg(feature = "tokio-runtime")]
 pub mod sync {
     pub use tokio::sync::{
         Barrier, Mutex, Notify, RwLock, Semaphore, broadcast, mpsc, oneshot, watch,
     };
 }
 
+#[cfg(feature = "tokio-runtime")]
 pub mod time {
     pub use tokio::time::{Duration, Instant, Interval, Sleep, interval, sleep, timeout};
 }
 
+pub mod rng {
+    #[inline]
+    pub fn fill(bytes: &mut [u8]) {
+        if bytes.is_empty() {
+            return;
+        }
+
+        let mut offset = 0usize;
+        while offset < bytes.len() {
+            let mut word = u32();
+            let chunk = core::cmp::min(core::mem::size_of::<u32>(), bytes.len() - offset);
+            bytes[offset..offset + chunk].copy_from_slice(&word.to_ne_bytes()[..chunk]);
+            offset += chunk;
+        }
+    }
+
+    #[inline]
+    pub fn u8() -> u8 {
+        u32() as u8
+    }
+
+    #[inline]
+    pub fn i8() -> i8 {
+        u8() as i8
+    }
+
+    #[inline]
+    pub fn u16() -> u16 {
+        u32() as u16
+    }
+
+    #[inline]
+    pub fn i16() -> i16 {
+        u16() as i16
+    }
+
+    #[inline]
+    pub fn u32() -> u32 {
+        let mut word = 0u32;
+        unsafe { v::vcabi::sys_rand(&mut word, 1) };
+        word
+    }
+
+    #[inline]
+    pub fn i32() -> i32 {
+        u32() as i32
+    }
+
+    #[inline]
+    pub fn u64() -> u64 {
+        let lo = u32() as u64;
+        let hi = u32() as u64;
+        lo | (hi << 32)
+    }
+
+    #[inline]
+    pub fn i64() -> i64 {
+        u64() as i64
+    }
+
+    #[inline]
+    pub fn u128() -> u128 {
+        let lo = u64() as u128;
+        let hi = u64() as u128;
+        lo | (hi << 64)
+    }
+
+    #[inline]
+    pub fn i128() -> i128 {
+        u128() as i128
+    }
+
+    #[inline]
+    pub fn usize() -> usize {
+        if usize::BITS <= 32 {
+            u32() as usize
+        } else {
+            u64() as usize
+        }
+    }
+
+    #[inline]
+    pub fn isize() -> isize {
+        usize() as isize
+    }
+
+    #[inline]
+    pub fn boolean() -> bool {
+        (u32() & 1) != 0
+    }
+
+    #[inline]
+    pub fn f32() -> f32 {
+        const SCALE: f32 = 1.0 / ((1u64 << 24) as f32);
+        ((u32() >> 8) as f32) * SCALE
+    }
+
+    #[inline]
+    pub fn f64() -> f64 {
+        const SCALE: f64 = 1.0 / ((1u64 << 53) as f64);
+        ((u64() >> 11) as f64) * SCALE
+    }
+}
+
+#[cfg(feature = "tokio-runtime")]
 pub mod io {
     pub use tokio::io::{
         AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, Stderr, Stdin, Stdout, duplex,
@@ -120,6 +235,7 @@ pub mod io {
     };
 }
 
+#[cfg(feature = "tokio-runtime")]
 pub mod fs {
     pub use tokio::fs::{
         File, OpenOptions, canonicalize, copy, create_dir, create_dir_all, metadata, read,
@@ -141,6 +257,7 @@ pub mod net {
     }
 }
 
+#[cfg(feature = "tokio-runtime")]
 pub mod t {
     pub use crate::fs;
     pub use crate::io;
@@ -239,6 +356,8 @@ pub mod prelude {
     #[cfg(feature = "tokio-net-probe")]
     pub use crate::net;
     pub use crate::platform;
+    #[cfg(feature = "tokio-runtime")]
     pub use crate::t;
+    #[cfg(feature = "tokio-runtime")]
     pub use crate::{fs, io, runtime, sync, task, time, tokio};
 }

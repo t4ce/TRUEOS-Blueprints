@@ -1379,6 +1379,13 @@ fn source_overlay_patches(
         }
     }
 
+    if let Ok(path) = nightly_rust_src_path("vendor/libc-0.2.186")
+        && path.is_dir()
+    {
+        out.retain(|patch| patch.name != "libc");
+        out.push(CratePatch::new("libc", path));
+    }
+
     if let Some(path) = find_vendor_dir(app_dir, "tokio-1.52.3") {
         out.retain(|patch| patch.name != "tokio");
         out.push(CratePatch::new("tokio", path));

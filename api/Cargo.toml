@@ -7,8 +7,8 @@ edition = "2024"
 default = []
 default-global-allocator = []
 default-panic-handler = []
-tokio-runtime = []
-tokio-net-probe = ["dep:mio", "dep:socket2", "tokio/net"]
+tokio-runtime = ["dep:tokio"]
+tokio-net-probe = ["tokio-runtime", "dep:mio", "dep:socket2", "tokio/net"]
 ui2 = []
 
 [lib]
@@ -17,7 +17,7 @@ path = "src/lib.rs"
 
 [dependencies]
 v = { path = "../../TRUEOS/crates/trueos-v" }
-tokio = { path = "../../TRUEOS/vendor/tokio-1.52.3", default-features = false, features = ["rt", "macros", "sync", "time", "io-util", "io-std", "fs"] }
+tokio = { version = "=1.52.3", default-features = false, features = ["rt", "macros", "sync", "time", "io-util", "io-std", "fs"], optional = true }
 mio = { path = "../../TRUEOS/vendor/mio-1.2.0", default-features = false, features = ["os-poll", "net"], optional = true }
 socket2 = { path = "../../TRUEOS/vendor/socket2-0.6.3", default-features = false, optional = true }
 
