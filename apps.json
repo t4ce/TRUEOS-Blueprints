@@ -1,6 +1,12 @@
 {
   "apps": [
+    "chatserver",
+    "file-system",
+    "fileexplorer",
+    "framework_stack",
     "hello_world",
-    "test_some_crates"
+    "test_some_crates",
+    "webdevices",
+    "webmail"
   ]
 }

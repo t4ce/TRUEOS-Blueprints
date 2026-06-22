@@ -1,9 +1,9 @@
 #![no_std]
 
 extern crate alloc;
+pub extern crate alloc as alloc_crate;
 #[cfg(feature = "tokio-runtime")]
 extern crate std;
-pub extern crate alloc as alloc_crate;
 use core::alloc::{GlobalAlloc, Layout};
 use core::ptr::null_mut;
 #[cfg(feature = "tokio-runtime")]
