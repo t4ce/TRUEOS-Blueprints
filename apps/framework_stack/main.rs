@@ -51,6 +51,7 @@ fn main() {
 async fn run_probe() -> Result<(), &'static str> {
     probe_frontmatter_shape()?;
     probe_hyper_http_shapes()?;
+    probe_reqwest_client_shape()?;
     probe_tower_service_stack().await?;
     probe_tokio_time_surface().await?;
     Ok(())
@@ -192,6 +193,21 @@ fn probe_hyper_http_shapes() -> Result<(), &'static str> {
         format_args!("framework_stack: success hyper.request.response.bytes"),
     );
 
+    Ok(())
+}
+
+fn probe_reqwest_client_shape() -> Result<(), &'static str> {
+    logl::log(
+        level::INFO,
+        format_args!("framework_stack: stage reqwest.client.shape"),
+    );
+    let builder = reqwest::Client::builder();
+    let _ = core::mem::size_of_val(&builder);
+    let _ = core::mem::size_of::<reqwest::Client>();
+    logl::log(
+        level::INFO,
+        format_args!("framework_stack: success reqwest.client.shape"),
+    );
     Ok(())
 }
 

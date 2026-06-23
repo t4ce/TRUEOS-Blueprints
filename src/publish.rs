@@ -45,6 +45,44 @@ pub(crate) fn publish_dist_blueprints(dist_dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
+pub(crate) fn publish_blueprint_file(bp_file: &Path) -> Result<(), String> {
+    if env_flag_is_set(APPS_PUBLISH_SKIP_ENV) {
+        println!("trueos-blueprint: skipping apps publish");
+        return Ok(());
+    }
+    if !bp_file.is_file() || bp_file.extension().and_then(|value| value.to_str()) != Some("bp") {
+        return Err(format!("not a .bp file: {}", bp_file.display()));
+    }
+
+    let target_uri =
+        env_string(APPS_PUBLISH_URI_ENV).unwrap_or_else(|| DEFAULT_APPS_PUBLISH_URI.to_string());
+    let mount_uri = env_string(APPS_PUBLISH_MOUNT_URI_ENV)
+        .unwrap_or_else(|| DEFAULT_APPS_PUBLISH_MOUNT_URI.to_string());
+    let file_name = bp_file
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| format!("bad blueprint file name: {}", bp_file.display()))?;
+    let target_file_uri = join_uri(&target_uri, file_name);
+
+    println!("trueos-blueprint: publishing {}", bp_file.display());
+    println!("trueos-blueprint: remote apps dir: {target_uri}");
+    let mut mount = gio_command();
+    mount.arg("mount").arg(&mount_uri);
+    let _ = mount.status();
+
+    ensure_remote_dir(&target_uri);
+    let mut remove = gio_command();
+    remove.arg("remove").arg("-f").arg(&target_file_uri);
+    let _ = remove.status();
+
+    let mut copy = gio_command();
+    copy.arg("copy").arg(&bp_file).arg(&target_uri);
+    crate::run_command(&mut copy, "gio copy blueprint")?;
+
+    println!("trueos-blueprint: published {}", file_name);
+    Ok(())
+}
+
 fn dist_blueprint_files(dist_dir: &Path) -> Result<Vec<PathBuf>, String> {
     let mut out = Vec::new();
     for entry in fs::read_dir(dist_dir).map_err(io_string)? {
@@ -56,6 +94,14 @@ fn dist_blueprint_files(dist_dir: &Path) -> Result<Vec<PathBuf>, String> {
     }
     out.sort();
     Ok(out)
+}
+
+fn join_uri(base: &str, child: &str) -> String {
+    format!(
+        "{}/{}",
+        base.trim_end_matches('/'),
+        child.trim_start_matches('/')
+    )
 }
 
 fn clean_remote_dir(uri: &str) -> Result<(), String> {

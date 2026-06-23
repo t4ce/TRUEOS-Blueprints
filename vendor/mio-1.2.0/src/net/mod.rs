@@ -1,0 +1,55 @@
+//! Networking primitives.
+//!
+//! The types provided in this module are non-blocking by default and are
+//! designed to be portable across all supported Mio platforms. As long as the
+//! [portability guidelines] are followed, the behavior should be identical no
+//! matter the target platform.
+//!
+//! [portability guidelines]: ../struct.Poll.html#portability
+//!
+//! # Notes
+//!
+//! When using a datagram based socket, i.e. [`UdpSocket`] or [`UnixDatagram`],
+//! it's only possible to receive a packet once. This means that if you provide a
+//! buffer that is too small you won't be able to receive the data anymore. How
+//! OSs deal with this situation is different for each OS:
+//!  * Unixes, such as Linux, FreeBSD and macOS, will simply fill the buffer and
+//!    return the amount of bytes written. This means that if the returned value
+//!    is equal to the size of the buffer it may have only written a part of the
+//!    packet (or the packet has the same size as the buffer).
+//!  * Windows returns an `WSAEMSGSIZE` error.
+//!
+//! Mio does not change the value (either ok or error) returned by the OS, it's
+//! up to the user to handle this. How to deal with these differences is still up
+//! for debate, specifically in
+//! <https://github.com/rust-lang/rust/issues/55794>. The best advice we can
+//! give is to always call receive with a large enough buffer.
+
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+pub use core::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
+
+mod tcp;
+pub use self::tcp::{TcpListener, TcpStream};
+
+#[cfg(not(all(target_os = "wasi", target_env = "p1")))]
+#[cfg_attr(any(target_os = "trueos", target_os = "zkvm"), path = "udp_zkvm.rs")]
+mod udp;
+#[cfg(not(all(target_os = "wasi", target_env = "p1")))]
+pub use self::udp::UdpSocket;
+
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// no_std equivalent of `std::net::Shutdown` for TRUEOS sockets.
+pub enum Shutdown {
+    /// Shut down reads.
+    Read,
+    /// Shut down writes.
+    Write,
+    /// Shut down reads and writes.
+    Both,
+}
+
+#[cfg(all(unix, not(any(target_os = "trueos", target_os = "zkvm"))))]
+mod uds;
+#[cfg(all(unix, not(any(target_os = "trueos", target_os = "zkvm"))))]
+pub use self::uds::{UnixDatagram, UnixListener, UnixStream};

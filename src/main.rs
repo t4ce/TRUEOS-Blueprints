@@ -28,7 +28,7 @@ use cargo_output::{
     write_filtered_cargo_output,
 };
 use cli::{CargoProfile, parse_cli_args};
-use publish::publish_dist_blueprints;
+use publish::{publish_blueprint_file, publish_dist_blueprints};
 
 struct CratePatch {
     key: String,
@@ -60,6 +60,42 @@ const TARGET_SPEC_ENV: &str = "TRUEOS_BLUEPRINT_TARGET_SPEC";
 const RUSTFLAGS_ENCODED_SEPARATOR: char = '\u{1f}';
 const TRUEOS_CHECK_CFG_FLAG: &str = "--check-cfg=cfg(target_os,values(\"trueos\",\"zkvm\"))";
 const BLUEPRINT_RUSTFLAGS: &[&str] = &[TRUEOS_CHECK_CFG_FLAG, "-A", "warnings"];
+const BLUEPRINT_VENDOR_PATCHES: &[(&str, &str)] = &[
+    ("axum", "axum-0.8.9"),
+    ("axum-core", "axum-core-0.5.6"),
+    ("base64", "base64-0.22.1"),
+    ("bytes", "bytes-1.11.1"),
+    ("form_urlencoded", "form_urlencoded-1.2.2"),
+    ("h2", "h2-0.4.14"),
+    ("http", "http-1.4.0"),
+    ("http-body", "http-body-1.0.1"),
+    ("http-body-util", "http-body-util-0.1.3"),
+    ("httpdate", "httpdate-1.0.3"),
+    ("hyper", "hyper-1.9.0"),
+    ("hyper-rustls", "hyper-rustls-0.27.9"),
+    ("hyper-util", "hyper-util-0.1.20"),
+    ("matchit", "matchit-0.8.4"),
+    ("mime", "mime-0.3.17"),
+    ("mio", "mio-1.2.0"),
+    ("percent-encoding", "percent-encoding-2.3.2"),
+    ("reqwest", "reqwest-0.13.3"),
+    ("ring", "ring-0.17.14"),
+    ("rustls-rustcrypto", "rustls-rustcrypto-0.0.2-alpha"),
+    ("serde_urlencoded", "serde_urlencoded-0.7.1"),
+    ("socket2", "socket2-0.6.3"),
+    ("spin", "spin-0.10.0"),
+    ("sync_wrapper", "sync_wrapper-1.0.2"),
+    ("tokio", "tokio-1.52.3"),
+    ("tokio-macros", "tokio-macros-2.7.0"),
+    ("tokio-rustls", "tokio-rustls-0.26.4"),
+    ("tokio-tungstenite", "tokio-tungstenite-0.29.0"),
+    ("tokio-util", "tokio-util-0.7.18"),
+    ("tower", "tower-0.5.3"),
+    ("tower-http", "tower-http-0.6.9"),
+    ("tower-layer", "tower-layer-0.3.3"),
+    ("tower-service", "tower-service-0.3.3"),
+    ("want", "want-0.3.1"),
+];
 
 fn main() {
     if let Err(err) = run() {
@@ -83,13 +119,14 @@ fn run() -> Result<(), String> {
             let examples = example_specs(&manifest_path)?;
             let package_apps = package_app_specs(&app_dir)?;
             if examples.is_empty() && package_apps.is_empty() {
-                return build_one_target(
+                build_one_target(
                     &app_dir,
                     &manifest_path,
                     BuildTarget::Package,
                     &[],
                     cargo_profile,
-                );
+                )?;
+                return Ok(());
             }
 
             for example in examples {
@@ -121,18 +158,19 @@ fn run() -> Result<(), String> {
         for example_name in requested_apps {
             if let Ok(required_features) = example_required_features(&manifest_path, &example_name)
             {
-                build_one_target(
+                let bp_file = build_one_target(
                     &app_dir,
                     &manifest_path,
                     BuildTarget::Example(example_name),
                     &required_features,
                     cargo_profile,
                 )?;
+                publish_blueprint_file(&bp_file)?;
                 continue;
             }
 
             if let Some(package_app) = package_app_spec(&app_dir, &example_name)? {
-                build_one_target_to(
+                let bp_file = build_one_target_to(
                     &package_app.dir,
                     &package_app.manifest_path,
                     BuildTarget::Package,
@@ -140,6 +178,7 @@ fn run() -> Result<(), String> {
                     &app_dir.join("dist"),
                     cargo_profile,
                 )?;
+                publish_blueprint_file(&bp_file)?;
                 continue;
             }
 
@@ -155,14 +194,15 @@ fn run() -> Result<(), String> {
     let build_target = BuildTarget::Package;
     let required_features = Vec::new();
     if let Some(root) = current_blueprint_root() {
-        build_one_target_to(
+        let bp_file = build_one_target_to(
             &app_dir,
             &manifest_path,
             build_target,
             &required_features,
             &root.join("dist"),
             cargo_profile,
-        )
+        )?;
+        publish_blueprint_file(&bp_file)
     } else {
         build_one_target(
             &app_dir,
@@ -170,7 +210,8 @@ fn run() -> Result<(), String> {
             build_target,
             &required_features,
             cargo_profile,
-        )
+        )?;
+        Ok(())
     }
 }
 
@@ -180,7 +221,7 @@ fn build_one_target(
     build_target: BuildTarget,
     required_features: &[String],
     cargo_profile: CargoProfile,
-) -> Result<(), String> {
+) -> Result<PathBuf, String> {
     build_one_target_to(
         app_dir,
         manifest_path,
@@ -198,7 +239,7 @@ fn build_one_target_to(
     required_features: &[String],
     output_dir: &Path,
     cargo_profile: CargoProfile,
-) -> Result<(), String> {
+) -> Result<PathBuf, String> {
     let cargo_profile = if matches!(build_target, BuildTarget::Package) {
         package_blueprint_profile(manifest_path)?.unwrap_or(cargo_profile)
     } else {
@@ -207,6 +248,8 @@ fn build_one_target_to(
     let build_settings = resolve_build_settings(&app_dir, &manifest_path, &build_target)?;
     if matches!(build_settings.flavor, BuildFlavor::TokioStd) {
         ensure_rust_std_trueos_thread_set_name()?;
+        ensure_rust_std_trueos_thread_cleanup()?;
+        ensure_rust_std_trueos_thread_current_rebind()?;
         ensure_rust_std_trueos_hash_random()?;
         ensure_rust_std_trueos_no_threads_tls()?;
     }
@@ -423,7 +466,7 @@ fn build_one_target_to(
     fs::create_dir_all(out.parent().ok_or("bad output path")?).map_err(io_string)?;
     write_blueprint(&out, &stripped, &entry_hint_hex)?;
     println!("packed {} -> {}", app_obj.display(), out.display());
-    Ok(())
+    Ok(out)
 }
 
 fn push_feature(features: &mut Vec<String>, feature: &str) {
@@ -866,6 +909,136 @@ fn nightly_rust_src_path(relative: &str) -> Result<PathBuf, String> {
     Ok(PathBuf::from(sysroot.trim())
         .join("lib/rustlib/src/rust/library")
         .join(relative))
+}
+
+fn ensure_rust_std_trueos_thread_cleanup() -> Result<(), String> {
+    let unix_thread = nightly_rust_src_path("std/src/sys/thread/unix.rs")?;
+    let source = fs::read_to_string(&unix_thread).map_err(|err| {
+        format!(
+            "failed to read Rust std thread source {}; install rust-src or check permissions: {err}",
+            unix_thread.display()
+        )
+    })?;
+    if source.contains("TRUEOS service-lane pthread shim has no native TLS destructor") {
+        return Ok(());
+    }
+
+    let needle = r#"                rust_start();
+            }
+            ptr::null_mut()"#;
+    let replacement = r#"                rust_start();
+
+                #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+                {
+                    // TRUEOS service-lane pthread shim has no native TLS destructor.
+                    crate::rt::thread_cleanup();
+                }
+            }
+            ptr::null_mut()"#;
+    if !source.contains(needle) {
+        return Err(format!(
+            "failed to patch {}; missing std unix thread_start cleanup marker",
+            unix_thread.display()
+        ));
+    }
+    let patched = source.replace(needle, replacement);
+    fs::write(&unix_thread, patched).map_err(|err| {
+        format!(
+            "failed to patch Rust std thread source {}: {err}",
+            unix_thread.display()
+        )
+    })?;
+    println!(
+        "trueos-blueprint: patched rust-src std unix thread cleanup for trueos: {}",
+        unix_thread.display()
+    );
+    Ok(())
+}
+
+fn ensure_rust_std_trueos_thread_current_rebind() -> Result<(), String> {
+    let current_rs = nightly_rust_src_path("std/src/thread/current.rs")?;
+    let source = fs::read_to_string(&current_rs).map_err(|err| {
+        format!(
+            "failed to read Rust std current thread source {}; install rust-src or check permissions: {err}",
+            current_rs.display()
+        )
+    })?;
+    if source.contains("TRUEOS carrier lanes may host multiple logical std threads") {
+        return Ok(());
+    }
+
+    let needle = r#"pub(super) fn set_current(thread: Thread) -> Result<(), Thread> {
+    if CURRENT.get() != NONE {
+        return Err(thread);
+    }
+
+    match id::get() {
+        Some(id) if id == thread.id() => {}
+        None => id::set(thread.id()),
+        _ => return Err(thread),
+    }
+
+    // Make sure that `crate::rt::thread_cleanup` will be run, which will
+    // call `drop_current`.
+    crate::sys::thread_local::guard::enable();
+    CURRENT.set(thread.into_raw().cast_mut());
+    Ok(())
+}"#;
+    let replacement = r#"pub(super) fn set_current(thread: Thread) -> Result<(), Thread> {
+    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+    {
+        // TRUEOS carrier lanes may host multiple logical std threads over time.
+        // Rebind the per-lane std thread handle/id instead of treating a prior
+        // logical thread as a fatal TLS collision.
+        let current = CURRENT.get();
+        if current > DESTROYED {
+            unsafe {
+                drop(Thread::from_raw(current));
+            }
+        }
+        id::set(thread.id());
+        crate::sys::thread_local::guard::enable();
+        CURRENT.set(thread.into_raw().cast_mut());
+        return Ok(());
+    }
+
+    #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+    {
+        if CURRENT.get() != NONE {
+            return Err(thread);
+        }
+
+        match id::get() {
+            Some(id) if id == thread.id() => {}
+            None => id::set(thread.id()),
+            _ => return Err(thread),
+        }
+
+        // Make sure that `crate::rt::thread_cleanup` will be run, which will
+        // call `drop_current`.
+        crate::sys::thread_local::guard::enable();
+        CURRENT.set(thread.into_raw().cast_mut());
+        Ok(())
+    }
+}"#;
+    if !source.contains(needle) {
+        return Err(format!(
+            "failed to patch {}; missing std current thread set_current marker",
+            current_rs.display()
+        ));
+    }
+    let patched = source.replace(needle, replacement);
+    fs::write(&current_rs, patched).map_err(|err| {
+        format!(
+            "failed to patch Rust std current thread source {}: {err}",
+            current_rs.display()
+        )
+    })?;
+    println!(
+        "trueos-blueprint: patched rust-src std current thread rebind for trueos: {}",
+        current_rs.display()
+    );
+    Ok(())
 }
 
 fn ensure_rust_std_trueos_hash_random() -> Result<(), String> {
@@ -1340,16 +1513,12 @@ unsafe impl Sync for LocalPointer {}"#,
 }
 
 fn find_vendor_dir(app_dir: &Path, name: &str) -> Option<PathBuf> {
+    find_blueprint_vendor_dir(app_dir, name)
+}
+
+fn find_blueprint_vendor_dir(app_dir: &Path, name: &str) -> Option<PathBuf> {
     for ancestor in app_dir.ancestors() {
         let candidate = ancestor.join("vendor").join(name);
-        if candidate.is_dir() {
-            return Some(candidate);
-        }
-    }
-    if let Some(kernel_manifest) = trueos_kernel_manifest(app_dir)
-        && let Some(kernel_root) = kernel_manifest.parent()
-    {
-        let candidate = kernel_root.join("vendor").join(name);
         if candidate.is_dir() {
             return Some(candidate);
         }
@@ -1369,17 +1538,7 @@ fn source_overlay_patches(
         return Ok(out);
     }
 
-    if let Some(kernel_manifest) = trueos_kernel_manifest(app_dir) {
-        let kernel_root = kernel_manifest
-            .parent()
-            .ok_or_else(|| format!("bad kernel manifest path: {}", kernel_manifest.display()))?;
-        for (name, path) in manifest_patch_entries(&kernel_manifest)? {
-            let patch_path = resolve_manifest_path(kernel_root, &path);
-            if patch_path.is_dir() {
-                out.push(CratePatch::new(name, patch_path));
-            }
-        }
-    }
+    add_blueprint_vendor_patches(app_dir, &mut out);
 
     if let Ok(path) = nightly_rust_src_path("vendor/libc-0.2.186")
         && path.is_dir()
@@ -1399,32 +1558,10 @@ fn source_overlay_patches(
     }
 
     if matches!(build_settings.flavor, BuildFlavor::TokioStd) {
-        out.retain(|patch| {
-            patch.name != "mio"
-                && patch.name != "socket2"
-                && patch.name != "tokio"
-                && patch.name != "hyper-util"
-                && patch.name != "tower-http"
-        });
-        out.push(CratePatch::new(
-            "tokio",
-            stage_tokio_std_trueos_overlay(work_dir)?,
-        ));
+        out.retain(|patch| patch.name != "hyper-util");
         out.push(CratePatch::new(
             "hyper-util",
             stage_hyper_util_tokio_std_overlay(app_dir, work_dir)?,
-        ));
-        out.push(CratePatch::new(
-            "tower-http",
-            stage_tower_http_tokio_std_overlay(app_dir, work_dir)?,
-        ));
-        out.push(CratePatch::new(
-            "mio",
-            stage_mio_std_trueos_overlay(work_dir)?,
-        ));
-        out.push(CratePatch::new(
-            "socket2",
-            stage_socket2_std_trueos_overlay(work_dir)?,
         ));
     }
 
@@ -1444,6 +1581,16 @@ fn source_overlay_patches(
 
     out.sort_by(|a, b| a.key.cmp(&b.key));
     Ok(out)
+}
+
+fn add_blueprint_vendor_patches(app_dir: &Path, patches: &mut Vec<CratePatch>) {
+    for (name, vendor_dir) in BLUEPRINT_VENDOR_PATCHES {
+        let Some(path) = find_blueprint_vendor_dir(app_dir, vendor_dir) else {
+            continue;
+        };
+        patches.retain(|patch| patch.name != *name && patch.key != *name);
+        patches.push(CratePatch::new(*name, path));
+    }
 }
 
 fn add_getrandom_source_overlays(app_dir: &Path, patches: &mut Vec<CratePatch>) {
@@ -1525,23 +1672,6 @@ fn stage_argmax_trueos_overlay(work_dir: &Path) -> Result<PathBuf, String> {
     Ok(staged)
 }
 
-fn stage_tokio_std_trueos_overlay(work_dir: &Path) -> Result<PathBuf, String> {
-    const TOKIO_VERSION: &str = "1.52.3";
-    let source_name = format!("tokio-{TOKIO_VERSION}");
-    let source = find_cargo_registry_crate(&source_name).ok_or_else(|| {
-        format!(
-            "missing Cargo registry source for {source_name}; run `cargo fetch` for the app once"
-        )
-    })?;
-    let staged = work_dir
-        .join("source-overlay-crates")
-        .join("tokio-std-trueos");
-    reset_dir(&staged)?;
-    copy_app_tree(&source, &staged)?;
-    patch_tokio_std_trueos_overlay(&staged)?;
-    Ok(staged)
-}
-
 fn stage_hyper_util_tokio_std_overlay(app_dir: &Path, work_dir: &Path) -> Result<PathBuf, String> {
     let source = find_vendor_dir(app_dir, "hyper-util-0.1.20")
         .ok_or_else(|| "missing vendored hyper-util-0.1.20 source".to_string())?;
@@ -1551,52 +1681,6 @@ fn stage_hyper_util_tokio_std_overlay(app_dir: &Path, work_dir: &Path) -> Result
     reset_dir(&staged)?;
     copy_app_tree(&source, &staged)?;
     patch_hyper_util_tokio_std_overlay(&staged)?;
-    Ok(staged)
-}
-
-fn stage_tower_http_tokio_std_overlay(app_dir: &Path, work_dir: &Path) -> Result<PathBuf, String> {
-    let source = find_vendor_dir(app_dir, "tower-http-0.6.9")
-        .ok_or_else(|| "missing vendored tower-http-0.6.9 source".to_string())?;
-    let staged = work_dir
-        .join("source-overlay-crates")
-        .join("tower-http-tokio-std-trueos");
-    reset_dir(&staged)?;
-    copy_app_tree(&source, &staged)?;
-    patch_tower_http_tokio_std_overlay(&staged)?;
-    Ok(staged)
-}
-
-fn stage_mio_std_trueos_overlay(work_dir: &Path) -> Result<PathBuf, String> {
-    const MIO_VERSION: &str = "1.2.1";
-    let source_name = format!("mio-{MIO_VERSION}");
-    let source = find_cargo_registry_crate(&source_name).ok_or_else(|| {
-        format!(
-            "missing Cargo registry source for {source_name}; run `cargo fetch` for the app once"
-        )
-    })?;
-    let staged = work_dir
-        .join("source-overlay-crates")
-        .join("mio-std-trueos");
-    reset_dir(&staged)?;
-    copy_app_tree(&source, &staged)?;
-    patch_mio_std_trueos_overlay(&staged)?;
-    Ok(staged)
-}
-
-fn stage_socket2_std_trueos_overlay(work_dir: &Path) -> Result<PathBuf, String> {
-    const SOCKET2_VERSION: &str = "0.6.4";
-    let source_name = format!("socket2-{SOCKET2_VERSION}");
-    let source = find_cargo_registry_crate(&source_name).ok_or_else(|| {
-        format!(
-            "missing Cargo registry source for {source_name}; run `cargo fetch` for the app once"
-        )
-    })?;
-    let staged = work_dir
-        .join("source-overlay-crates")
-        .join("socket2-std-trueos");
-    reset_dir(&staged)?;
-    copy_app_tree(&source, &staged)?;
-    patch_socket2_std_trueos_overlay(&staged)?;
     Ok(staged)
 }
 
@@ -1662,61 +1746,11 @@ fn patch_argmax_trueos_overlay(crate_dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn patch_tokio_std_trueos_overlay(crate_dir: &Path) -> Result<(), String> {
-    replace_file_text(
-        &crate_dir.join("src/lib.rs"),
-        "#[macro_use]\n#[doc(hidden)]\npub mod macros;",
-        "#[macro_use]\n#[doc(hidden)]\npub mod macros;\n\n#[cfg(any(target_os = \"trueos\", target_os = \"zkvm\"))]\npub mod ffi {\n    pub use std::ffi::*;\n}\n\n#[cfg(any(target_os = \"trueos\", target_os = \"zkvm\"))]\npub mod path {\n    pub use std::path::*;\n}",
-    )?;
-    replace_file_text(
-        &crate_dir.join("src/fs/mod.rs"),
-        "pub use self::file::File;",
-        "pub use self::file::File;\n#[cfg(any(target_os = \"trueos\", target_os = \"zkvm\"))]\npub use std::fs::Metadata;",
-    )?;
-    replace_file_text(
-        &crate_dir.join("src/net/mod.rs"),
-        "pub use addr::ToSocketAddrs;",
-        "pub use addr::ToSocketAddrs;\n#[cfg(any(target_os = \"trueos\", target_os = \"zkvm\"))]\npub use std::net::SocketAddr;",
-    )?;
-    replace_file_text(
-        &crate_dir.join("src/net/unix/ucred.rs"),
-        "#[cfg(any(target_os = \"espidf\", target_os = \"vita\", target_os = \"hurd\"))]\npub(crate) use self::impl_noproc::get_peer_cred;",
-        "#[cfg(any(\n    target_os = \"espidf\",\n    target_os = \"vita\",\n    target_os = \"hurd\",\n    target_os = \"trueos\"\n))]\npub(crate) use self::impl_noproc::get_peer_cred;",
-    )?;
-    replace_file_text(
-        &crate_dir.join("src/net/unix/ucred.rs"),
-        "#[cfg(any(target_os = \"espidf\", target_os = \"vita\", target_os = \"hurd\"))]\npub(crate) mod impl_noproc {",
-        "#[cfg(any(\n    target_os = \"espidf\",\n    target_os = \"vita\",\n    target_os = \"hurd\",\n    target_os = \"trueos\"\n))]\npub(crate) mod impl_noproc {",
-    )?;
-    Ok(())
-}
-
 fn patch_hyper_util_tokio_std_overlay(crate_dir: &Path) -> Result<(), String> {
     replace_file_text(
-        &crate_dir.join("src/lib.rs"),
-        "extern crate alloc;",
-        "extern crate alloc;\n\n#[cfg(all(not(feature = \"std\"), any(target_os = \"trueos\", target_os = \"zkvm\")))]\nextern crate std as real_std;",
-    )?;
-    replace_file_text(
-        &crate_dir.join("src/lib.rs"),
-        "pub use tokio::io::{Error, ErrorKind, IoSlice, Result};",
-        "#[cfg(any(target_os = \"trueos\", target_os = \"zkvm\"))]\n    pub use real_std::io::{Error, ErrorKind, IoSlice, Result};\n    #[cfg(not(any(target_os = \"trueos\", target_os = \"zkvm\")))]\n    pub use tokio::io::{Error, ErrorKind, IoSlice, Result};",
-    )?;
-    for file in [
-        "src/rt/tokio.rs",
-        "src/rt/tokio/with_hyper_io.rs",
-        "src/rt/tokio/with_tokio_io.rs",
-    ] {
-        replace_file_text(
-            &crate_dir.join(file),
-            "tokio_io::IoSlice",
-            "std::io::IoSlice",
-        )?;
-    }
-    replace_file_text(
         &crate_dir.join("src/rt/tokio.rs"),
-        "fn hyper_to_tokio_slices<'buf>(\n    bufs: &'buf [hyper_io::IoSlice<'buf>],\n) -> Vec<std::io::IoSlice<'buf>> {\n    // On TRUEOS both sides re-export `trueos-io` platform I/O. Keep the\n    // conversion shape so the bridge remains source-compatible upstream.\n    bufs.iter().map(|buf| std::io::IoSlice::new(&**buf)).collect()\n}",
-        "fn hyper_to_tokio_slices<'buf>(\n    bufs: &'buf [hyper_io::IoSlice<'buf>],\n) -> Vec<std::io::IoSlice<'buf>> {\n    // On TRUEOS both sides re-export `trueos-io` platform I/O. Keep the\n    // conversion shape so the bridge remains source-compatible upstream.\n    bufs.iter().map(|buf| std::io::IoSlice::new(&**buf)).collect()\n}\n\n#[cfg(any(target_os = \"trueos\", target_os = \"zkvm\"))]\nfn hyper_to_tokio_instant(deadline: Instant) -> tokio::time::Instant {\n    let hyper_now = Instant::now();\n    let tokio_now = tokio::time::Instant::now();\n    if deadline >= hyper_now {\n        tokio_now + deadline.duration_since(hyper_now)\n    } else {\n        tokio_now - hyper_now.duration_since(deadline)\n    }\n}\n\n#[cfg(not(any(target_os = \"trueos\", target_os = \"zkvm\")))]\nfn hyper_to_tokio_instant(deadline: Instant) -> tokio::time::Instant {\n    deadline.into()\n}\n\n#[cfg(any(target_os = \"trueos\", target_os = \"zkvm\"))]\nfn tokio_to_hyper_instant(instant: tokio::time::Instant) -> Instant {\n    let tokio_now = tokio::time::Instant::now();\n    let hyper_now = Instant::now();\n    if instant >= tokio_now {\n        hyper_now + (instant - tokio_now)\n    } else {\n        hyper_now - (tokio_now - instant)\n    }\n}\n\n#[cfg(not(any(target_os = \"trueos\", target_os = \"zkvm\")))]\nfn tokio_to_hyper_instant(instant: tokio::time::Instant) -> Instant {\n    instant.into()\n}",
+        "fn hyper_to_tokio_slices<'buf>(\n    bufs: &'buf [hyper_io::IoSlice<'buf>],\n) -> Vec<tokio_io::IoSlice<'buf>> {\n    // On TRUEOS both sides re-export `trueos-io` platform I/O. Keep the\n    // conversion shape so the bridge remains source-compatible upstream.\n    bufs.iter().map(|buf| tokio_io::IoSlice::new(&**buf)).collect()\n}",
+        "fn hyper_to_tokio_slices<'buf>(\n    bufs: &'buf [hyper_io::IoSlice<'buf>],\n) -> Vec<tokio_io::IoSlice<'buf>> {\n    // On TRUEOS both sides re-export `trueos-io` platform I/O. Keep the\n    // conversion shape so the bridge remains source-compatible upstream.\n    bufs.iter().map(|buf| tokio_io::IoSlice::new(&**buf)).collect()\n}\n\n#[cfg(any(target_os = \"trueos\", target_os = \"zkvm\"))]\nfn hyper_to_tokio_instant(deadline: Instant) -> tokio::time::Instant {\n    let hyper_now = Instant::now();\n    let tokio_now = tokio::time::Instant::now();\n    if deadline >= hyper_now {\n        tokio_now + deadline.duration_since(hyper_now)\n    } else {\n        tokio_now - hyper_now.duration_since(deadline)\n    }\n}\n\n#[cfg(not(any(target_os = \"trueos\", target_os = \"zkvm\")))]\nfn hyper_to_tokio_instant(deadline: Instant) -> tokio::time::Instant {\n    deadline.into()\n}\n\n#[cfg(any(target_os = \"trueos\", target_os = \"zkvm\"))]\nfn tokio_to_hyper_instant(instant: tokio::time::Instant) -> Instant {\n    let tokio_now = tokio::time::Instant::now();\n    let hyper_now = Instant::now();\n    if instant >= tokio_now {\n        hyper_now + (instant - tokio_now)\n    } else {\n        hyper_now - (tokio_now - instant)\n    }\n}\n\n#[cfg(not(any(target_os = \"trueos\", target_os = \"zkvm\")))]\nfn tokio_to_hyper_instant(instant: tokio::time::Instant) -> Instant {\n    instant.into()\n}",
     )?;
     replace_file_text(
         &crate_dir.join("src/rt/tokio.rs"),
@@ -1733,73 +1767,17 @@ fn patch_hyper_util_tokio_std_overlay(crate_dir: &Path) -> Result<(), String> {
         "self.project().inner.as_mut().reset(deadline.into());",
         "self.project().inner.as_mut().reset(hyper_to_tokio_instant(deadline));",
     )?;
-    Ok(())
-}
-
-fn patch_tower_http_tokio_std_overlay(crate_dir: &Path) -> Result<(), String> {
     replace_file_text(
-        &crate_dir.join("src/content_encoding.rs"),
-        "Encoding::Gzip => Some(\".gz\"),\n            Encoding::Deflate => Some(\".zz\"),\n            Encoding::Brotli => Some(\".br\"),\n            Encoding::Zstd => Some(\".zst\"),",
-        "Encoding::Gzip => Some(tokio::ffi::OsStr::new(\".gz\")),\n            Encoding::Deflate => Some(tokio::ffi::OsStr::new(\".zz\")),\n            Encoding::Brotli => Some(tokio::ffi::OsStr::new(\".br\")),\n            Encoding::Zstd => Some(tokio::ffi::OsStr::new(\".zst\")),",
-    )?;
-    for file in [
-        "src/services/fs/serve_file.rs",
-        "src/services/fs/serve_dir/open_file.rs",
-    ] {
-        replace_file_text(
-            &crate_dir.join(file),
-            "let ext = path\n        .as_os_str()\n        .rsplit_once('.')\n        .map(|(_, ext)| ext)\n        .unwrap_or_default();\n    mime_guess::from_ext(ext)",
-            "let ext = path.extension().and_then(|ext| ext.to_str()).unwrap_or_default();\n    mime_guess::from_ext(ext)",
-        )?;
-    }
-    replace_file_text(
-        &crate_dir.join("src/services/fs/serve_dir/open_file.rs"),
-        "let new_file_name = path\n            .file_name()\n            .map(|file_name| {\n                let mut os_string = file_name.to_string();\n                os_string.push_str(file_extension);\n                os_string\n            })\n            .unwrap_or_else(|| file_extension.to_string());",
-        "let new_file_name = path\n            .file_name()\n            .map(|file_name| {\n                let mut os_string = file_name.to_os_string();\n                os_string.push(file_extension);\n                os_string\n            })\n            .unwrap_or_else(|| file_extension.to_os_string());",
+        &crate_dir.join("src/client/legacy/pool.rs"),
+        "now.saturating_duration_since(entry.idle_at) > dur",
+        "now.duration_since(entry.idle_at) > dur",
     )?;
     replace_file_text(
-        &crate_dir.join("src/services/fs/serve_dir/open_file.rs"),
-        "path.set_extension(\"\");",
-        "path.set_extension(tokio::ffi::OsStr::new(\"\"));",
+        &crate_dir.join("src/client/legacy/pool.rs"),
+        "now.saturating_duration_since(instant) > timeout",
+        "now.duration_since(instant) > timeout",
     )?;
     Ok(())
-}
-
-fn patch_mio_std_trueos_overlay(crate_dir: &Path) -> Result<(), String> {
-    replace_file_text(
-        &crate_dir.join("src/sys/unix/mod.rs"),
-        "target_os = \"linux\",\n            target_os = \"redox\",",
-        "target_os = \"linux\",\n            target_os = \"trueos\",\n            target_os = \"redox\",",
-    )?;
-    replace_file_text(
-        &crate_dir.join("src/sys/unix/mod.rs"),
-        "target_os = \"illumos\",\n            target_os = \"linux\",",
-        "target_os = \"illumos\",\n            target_os = \"linux\",\n            target_os = \"trueos\",",
-    )?;
-    replace_file_text(
-        &crate_dir.join("src/sys/unix/net.rs"),
-        "target_os = \"linux\",\n        target_os = \"netbsd\",",
-        "target_os = \"linux\",\n        target_os = \"trueos\",\n        target_os = \"netbsd\",",
-    )?;
-    replace_file_text(
-        &crate_dir.join("src/sys/unix/tcp.rs"),
-        "target_os = \"linux\",\n        target_os = \"netbsd\",",
-        "target_os = \"linux\",\n        target_os = \"trueos\",\n        target_os = \"netbsd\",",
-    )?;
-    replace_file_text(
-        &crate_dir.join("src/sys/unix/pipe.rs"),
-        "target_os = \"linux\",\n        target_os = \"netbsd\",",
-        "target_os = \"linux\",\n        target_os = \"trueos\",\n        target_os = \"netbsd\",",
-    )?;
-    Ok(())
-}
-
-fn patch_socket2_std_trueos_overlay(crate_dir: &Path) -> Result<(), String> {
-    replace_file_text(
-        &crate_dir.join("src/sys/unix.rs"),
-        "    target_os = \"aix\",\n    target_os = \"dragonfly\",\n    target_os = \"freebsd\",\n    target_os = \"fuchsia\",\n    target_os = \"haiku\",\n    target_os = \"hurd\",\n    target_os = \"illumos\",\n    target_os = \"ios\",\n    target_os = \"visionos\",\n    target_os = \"macos\",\n    target_os = \"netbsd\",\n    target_os = \"nto\",\n    target_os = \"openbsd\",\n    target_os = \"solaris\",\n    target_os = \"tvos\",\n    target_os = \"watchos\",\n    target_os = \"espidf\",\n    target_os = \"vita\",\n    target_os = \"cygwin\",\n))]\ntype IovLen = c_int;",
-        "    target_os = \"aix\",\n    target_os = \"trueos\",\n    target_os = \"dragonfly\",\n    target_os = \"freebsd\",\n    target_os = \"fuchsia\",\n    target_os = \"haiku\",\n    target_os = \"hurd\",\n    target_os = \"illumos\",\n    target_os = \"ios\",\n    target_os = \"visionos\",\n    target_os = \"macos\",\n    target_os = \"netbsd\",\n    target_os = \"nto\",\n    target_os = \"openbsd\",\n    target_os = \"solaris\",\n    target_os = \"tvos\",\n    target_os = \"watchos\",\n    target_os = \"espidf\",\n    target_os = \"vita\",\n    target_os = \"cygwin\",\n))]\ntype IovLen = c_int;",
-    )
 }
 
 fn replace_file_text(path: &Path, needle: &str, replacement: &str) -> Result<(), String> {
@@ -2765,30 +2743,6 @@ fn trueos_kernel_manifest(app_dir: &Path) -> Option<PathBuf> {
     None
 }
 
-fn manifest_patch_entries(manifest_path: &Path) -> Result<Vec<(String, String)>, String> {
-    let cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
-    let mut in_patch = false;
-    let mut out = Vec::new();
-    for line in cargo_toml.lines() {
-        let trimmed = line.split('#').next().unwrap_or("").trim();
-        if trimmed.starts_with('[') {
-            in_patch = trimmed == "[patch.crates-io]";
-            continue;
-        }
-        if !in_patch || trimmed.is_empty() {
-            continue;
-        }
-        let Some((name, value)) = trimmed.split_once('=') else {
-            continue;
-        };
-        let Some(path) = inline_table_path(value.trim()) else {
-            continue;
-        };
-        out.push((name.trim().trim_matches('"').to_string(), path));
-    }
-    Ok(out)
-}
-
 fn strip_manifest_patch_section(manifest_path: &Path) -> Result<(), String> {
     let cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
     let mut out = String::with_capacity(cargo_toml.len());
@@ -2967,23 +2921,23 @@ fn materialized_workspace_dependency(
 ) -> Result<String, String> {
     let line = match dep_name {
         "anyhow" => "anyhow = { version = \"1.0\", default-features = false }".to_string(),
-        "axum" => {
-            "axum = { version = \"0.8.9\", default-features = false, features = [\"http1\", \"json\", \"tokio\"] }"
-                .to_string()
-        }
+        "axum" => format!(
+            "axum = {{ path = {}, default-features = false, features = [\"http1\", \"json\", \"tokio\"] }}",
+            toml_string(&blueprint_root.join("vendor/axum-0.8.9").display().to_string())
+        ),
         "colored" => "colored = \"2.1\"".to_string(),
         "glob" => "glob = \"0.3\"".to_string(),
         "http-body-util" => {
-            path_dependency_line(dep_name, &blueprint_root.join("../../vendor/http-body-util-0.1.3"))
+            path_dependency_line(dep_name, &blueprint_root.join("vendor/http-body-util-0.1.3"))
         }
-        "hyper" => {
-            "hyper = { version = \"1.9\", default-features = false, features = [\"client\", \"server\", \"http1\"] }"
-                .to_string()
-        }
+        "hyper" => format!(
+            "hyper = {{ path = {}, default-features = false, features = [\"client\", \"server\", \"http1\"] }}",
+            toml_string(&blueprint_root.join("vendor/hyper-1.9.0").display().to_string())
+        ),
         "hyper-util" => {
             format!(
                 "hyper-util = {{ path = {}, default-features = false, features = [\"tokio\"] }}",
-                toml_string(&blueprint_root.join("../../vendor/hyper-util-0.1.20").display().to_string())
+                toml_string(&blueprint_root.join("vendor/hyper-util-0.1.20").display().to_string())
             )
         }
         "ignore" => "ignore = \"0.4\"".to_string(),
@@ -2992,10 +2946,10 @@ fn materialized_workspace_dependency(
             "regex = { version = \"1\", default-features = false, features = [\"perf\"] }"
                 .to_string()
         }
-        "reqwest" => {
-            "reqwest = { version = \"0.13.3\", default-features = false, features = [\"json\"] }"
-                .to_string()
-        }
+        "reqwest" => format!(
+            "reqwest = {{ path = {}, default-features = false, features = [\"json\", \"rustls\", \"http2\"] }}",
+            toml_string(&blueprint_root.join("vendor/reqwest-0.13.3").display().to_string())
+        ),
         "rustls" => {
             "rustls = { version = \"0.23.27\", default-features = false, features = [\"std\", \"tls12\"] }"
                 .to_string()
@@ -3003,7 +2957,7 @@ fn materialized_workspace_dependency(
         "rustls-rustcrypto" => {
             format!(
                 "rustls-rustcrypto = {{ path = {}, default-features = false, features = [\"std\", \"tls12\"] }}",
-                toml_string(&blueprint_root.join("../../vendor/rustls-rustcrypto-0.0.2-alpha").display().to_string())
+                toml_string(&blueprint_root.join("vendor/rustls-rustcrypto-0.0.2-alpha").display().to_string())
             )
         }
         "rustyline" => "rustyline = \"14.0\"".to_string(),
@@ -3017,20 +2971,20 @@ fn materialized_workspace_dependency(
         }
         "serde_yaml" => "serde_yaml = \"0.9\"".to_string(),
         "tempfile" => "tempfile = \"3\"".to_string(),
-        "tokio" => {
-            "tokio = { version = \"1.52.3\", default-features = false, features = [\"full\"] }"
-                .to_string()
-        }
+        "tokio" => format!(
+            "tokio = {{ path = {}, version = \"=1.52.3\", default-features = false, features = [\"full\"] }}",
+            toml_string(&blueprint_root.join("vendor/tokio-1.52.3").display().to_string())
+        ),
         "tokio-rustls" => {
             format!(
                 "tokio-rustls = {{ path = {}, default-features = false, features = [\"tls12\"] }}",
-                toml_string(&blueprint_root.join("../../vendor/tokio-rustls-0.26.4").display().to_string())
+                toml_string(&blueprint_root.join("vendor/tokio-rustls-0.26.4").display().to_string())
             )
         }
-        "tower" => {
-            "tower = { version = \"0.5\", default-features = false, features = [\"util\"] }"
-                .to_string()
-        }
+        "tower" => format!(
+            "tower = {{ path = {}, default-features = false, features = [\"util\"] }}",
+            toml_string(&blueprint_root.join("vendor/tower-0.5.3").display().to_string())
+        ),
         "trueos" => path_dependency_line(dep_name, &blueprint_root.join("api")),
         "trueos-chat" => path_dependency_line(dep_name, &blueprint_root.join("apps/chatserver/trueos-chat")),
         "trueos-currency" => {

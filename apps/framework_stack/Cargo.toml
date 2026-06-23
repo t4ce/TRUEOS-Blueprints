@@ -9,7 +9,8 @@ path = "main.rs"
 
 [dependencies]
 hyper.workspace = true
-mio = { version = "=1.2.1", default-features = false, features = ["os-poll", "net"] }
-socket2 = { version = "=0.6.4", default-features = false }
+mio = { version = "=1.2.0", default-features = false, features = ["os-poll", "net"] }
+reqwest = { workspace = true, features = ["rustls"] }
+socket2 = { version = "=0.6.3", default-features = false }
 tower.workspace = true
 trueos.workspace = true

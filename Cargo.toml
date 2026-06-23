@@ -19,6 +19,7 @@ members = [
     "apps/webdevices",
     "apps/webmail",
 ]
+exclude = ["crates", "crates/*", "vendor", "vendor/*"]
 default-members = ["."]
 resolver = "3"
 
@@ -27,23 +28,23 @@ anyhow = { version = "1.0", default-features = false }
 axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "tokio"] }
 colored = "2.1"
 glob = "0.3"
-http-body-util = { path = "../TRUEOS/vendor/http-body-util-0.1.3", default-features = false }
-hyper = { version = "1.9", default-features = false, features = ["client", "server", "http1"] }
-hyper-util = { path = "../TRUEOS/vendor/hyper-util-0.1.20", default-features = false }
+http-body-util = { version = "0.1.3", default-features = false }
+hyper = { version = "1.9.0", default-features = false, features = ["client", "server", "http1"] }
+hyper-util = { version = "0.1.20", default-features = false }
 ignore = "0.4"
 libm = { version = "0.2", default-features = false }
 regex = { version = "1", default-features = false, features = ["perf"] }
-reqwest = { version = "0.13.3", default-features = false, features = ["json"] }
+reqwest = { version = "=0.13.3", default-features = false, features = ["json", "rustls", "http2"] }
 rustls = { version = "0.23.27", default-features = false, features = ["std", "tls12"] }
-rustls-rustcrypto = { path = "../TRUEOS/vendor/rustls-rustcrypto-0.0.2-alpha", default-features = false, features = ["std", "tls12"] }
+rustls-rustcrypto = { version = "0.0.2-alpha", default-features = false, features = ["std", "tls12"] }
 rustyline = "14.0"
 serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
 serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
 serde_yaml = "0.9"
 tempfile = "3"
 tokio = { version = "=1.52.3", default-features = false, features = ["full"] }
-tokio-rustls = { path = "../TRUEOS/vendor/tokio-rustls-0.26.4", default-features = false, features = ["tls12"] }
-tower = { version = "0.5", default-features = false, features = ["util"] }
+tokio-rustls = { version = "0.26.4", default-features = false, features = ["tls12"] }
+tower = { version = "0.5.3", default-features = false, features = ["util"] }
 trueos = { path = "api" }
 trueos-chat = { path = "apps/chatserver/trueos-chat" }
 webpki-roots = { version = "1", default-features = false }
@@ -56,3 +57,42 @@ tokio-net-probe = []
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+
+[patch.crates-io]
+axum = { path = "vendor/axum-0.8.9" }
+axum-core = { path = "vendor/axum-core-0.5.6" }
+base64 = { path = "vendor/base64-0.22.1" }
+bytes = { path = "vendor/bytes-1.11.1" }
+form_urlencoded = { path = "vendor/form_urlencoded-1.2.2" }
+getrandom = { path = "vendor/getrandom-0.2.17" }
+getrandom_03 = { package = "getrandom", path = "vendor/getrandom-0.3.4" }
+getrandom_04 = { package = "getrandom", path = "vendor/getrandom-0.4.2" }
+h2 = { path = "vendor/h2-0.4.14" }
+http = { path = "vendor/http-1.4.0" }
+http-body = { path = "vendor/http-body-1.0.1" }
+http-body-util = { path = "vendor/http-body-util-0.1.3" }
+httpdate = { path = "vendor/httpdate-1.0.3" }
+hyper = { path = "vendor/hyper-1.9.0" }
+hyper-rustls = { path = "vendor/hyper-rustls-0.27.9" }
+hyper-util = { path = "vendor/hyper-util-0.1.20" }
+matchit = { path = "vendor/matchit-0.8.4" }
+mime = { path = "vendor/mime-0.3.17" }
+mio = { path = "vendor/mio-1.2.0" }
+percent-encoding = { path = "vendor/percent-encoding-2.3.2" }
+reqwest = { path = "vendor/reqwest-0.13.3" }
+ring = { path = "vendor/ring-0.17.14" }
+rustls-rustcrypto = { path = "vendor/rustls-rustcrypto-0.0.2-alpha" }
+serde_urlencoded = { path = "vendor/serde_urlencoded-0.7.1" }
+socket2 = { path = "vendor/socket2-0.6.3" }
+spin = { path = "vendor/spin-0.10.0" }
+sync_wrapper = { path = "vendor/sync_wrapper-1.0.2" }
+tokio = { path = "vendor/tokio-1.52.3" }
+tokio-macros = { path = "vendor/tokio-macros-2.7.0" }
+tokio-rustls = { path = "vendor/tokio-rustls-0.26.4" }
+tokio-tungstenite = { path = "vendor/tokio-tungstenite-0.29.0" }
+tokio-util = { path = "vendor/tokio-util-0.7.18" }
+tower = { path = "vendor/tower-0.5.3" }
+tower-http = { path = "vendor/tower-http-0.6.9" }
+tower-layer = { path = "vendor/tower-layer-0.3.3" }
+tower-service = { path = "vendor/tower-service-0.3.3" }
+want = { path = "vendor/want-0.3.1" }

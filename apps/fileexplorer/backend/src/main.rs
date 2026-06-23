@@ -39,7 +39,7 @@ const TEXT_OPEN_MAX: u64 = 5 * 1024 * 1024;
 type JobId = Uuid;
 type NodeId = String;
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tree = Arc::new(RwLock::new(TreeSnapshot::demo()));
     let jobs = Arc::new(RwLock::new(HashMap::new()));

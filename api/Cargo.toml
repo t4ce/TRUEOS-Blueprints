@@ -16,10 +16,10 @@ name = "trueos"
 path = "src/lib.rs"
 
 [dependencies]
-v = { path = "../../TRUEOS/crates/trueos-v" }
+v = { path = "../crates/trueos-v" }
 tokio = { version = "=1.52.3", default-features = false, features = ["rt", "macros", "sync", "time", "io-util", "io-std", "fs"], optional = true }
-mio = { version = "=1.2.1", default-features = false, features = ["os-poll", "net"], optional = true }
-socket2 = { version = "=0.6.4", default-features = false, optional = true }
+mio = { version = "=1.2.0", default-features = false, features = ["os-poll", "net"], optional = true }
+socket2 = { version = "=0.6.3", default-features = false, optional = true }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("trueos", "zkvm"))'] }
