@@ -11,6 +11,7 @@ pub use tokio;
 pub use v::env;
 pub use v::vclock as clock;
 pub use v::vinput as hid;
+pub use v::vmail;
 pub use v::vshell;
 pub use v::vsys;
 

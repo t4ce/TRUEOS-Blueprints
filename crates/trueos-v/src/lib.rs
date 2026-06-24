@@ -41,6 +41,7 @@ pub mod vfs;
 pub mod vhttp_srv;
 pub mod vinput;
 pub mod vio;
+pub mod vmail;
 pub mod vnet;
 pub mod vnetfs;
 pub mod vshell;

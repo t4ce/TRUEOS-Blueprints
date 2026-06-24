@@ -2,7 +2,7 @@
 
 extern crate alloc;
 
-use alloc::{string::ToString, vec::Vec};
+use alloc::{format, string::ToString, vec::Vec};
 use core::sync::atomic::{AtomicU16, Ordering};
 
 use axum::{
@@ -16,7 +16,7 @@ use axum::{
     routing::{get, post},
     serve::ListenerExt,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use trueos::{
     clock, logl,
     logl::level,
@@ -24,6 +24,7 @@ use trueos::{
     runtime,
     time::{self, Duration},
     tokio::{self, net::SocketAddr},
+    vmail,
 };
 
 const WEBMAIL_HTTP_TCP_PORT: u16 = 4;
@@ -43,7 +44,44 @@ struct WebmailStatus {
     generated_at_s: u64,
     inbox_state: &'static str,
     send_state: &'static str,
+    account: &'static str,
+    smtp: &'static str,
+    pop3: &'static str,
+    store_path: &'static str,
+    password_configured: bool,
     note: &'static str,
+}
+
+#[derive(Debug, Deserialize)]
+struct MailConfigRequest {
+    #[serde(default)]
+    smtp_user: String,
+    #[serde(default)]
+    smtp_pass: String,
+    #[serde(default)]
+    from: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct MailSendRequest {
+    to: String,
+    subject: String,
+    body: String,
+}
+
+fn smtp_error_name(rc: i32) -> &'static str {
+    match rc {
+        vmail::ERR_BAD_UTF8 => "bad utf8",
+        vmail::ERR_IO => "io error",
+        vmail::ERR_BAD_PARAM => "bad mail request",
+        vmail::ERR_NOT_FOUND => "mail password missing",
+        vmail::ERR_TIMEOUT => "smtp timeout",
+        vmail::ERR_DNS => "smtp dns failed",
+        vmail::ERR_CONNECT => "smtp connect failed",
+        vmail::ERR_TLS => "smtp tls failed",
+        vmail::ERR_SMTP => "smtp rejected message",
+        _ => "smtp failed",
+    }
 }
 
 fn current_port() -> Option<u16> {
@@ -106,10 +144,75 @@ async fn handle_status() -> Response {
             port: current_port(),
             generated_at_s: clock::ntp_current_unix_seconds(),
             inbox_state: "unavailable",
-            send_state: "unavailable",
-            note: "POP3/SMTP remain kernel services; this blueprint serves the webmail UI and stable API shape",
+            send_state: if vmail::password_configured() {
+                "ready"
+            } else {
+                "needs-password"
+            },
+            account: "jonasb@post.com",
+            smtp: "smtp.mail.com:587",
+            pop3: "pop.mail.com:995",
+            store_path: "/mail/box.json",
+            password_configured: vmail::password_configured(),
+            note: "POP3 remains kernel-side; this blueprint configures SMTP credentials at runtime and sends through TRUEOS vmail",
         },
     )
+}
+
+async fn handle_config_get() -> Response {
+    json_response(
+        200,
+        &serde_json::json!({
+            "ok": true,
+            "config": {
+                "smtp_user": "jonasb@post.com",
+                "from": "jonasb@post.com",
+                "passwordConfigured": vmail::password_configured(),
+                "smtp_host": "smtp.mail.com",
+                "smtp_port": 587,
+                "pop3_host": "pop.mail.com",
+                "pop3_port": 995
+            }
+        }),
+    )
+}
+
+async fn handle_config_set(body: Bytes) -> Response {
+    let req = match serde_json::from_slice::<MailConfigRequest>(body.as_ref()) {
+        Ok(req) => req,
+        Err(_) => {
+            return json_response(400, &serde_json::json!({"ok": false, "error": "bad json"}));
+        }
+    };
+    let user = if req.smtp_user.trim().is_empty() {
+        "jonasb@post.com"
+    } else {
+        req.smtp_user.trim()
+    };
+    let from = if req.from.trim().is_empty() {
+        "jonasb@post.com"
+    } else {
+        req.from.trim()
+    };
+    match vmail::configure_account(user, req.smtp_pass.as_str(), from) {
+        Ok(()) => json_response(
+            200,
+            &serde_json::json!({
+                "ok": true,
+                "config": {
+                    "smtp_user": user,
+                    "from": from,
+                    "passwordConfigured": true,
+                    "smtp_host": "smtp.mail.com",
+                    "smtp_port": 587
+                }
+            }),
+        ),
+        Err(rc) => json_response(
+            400,
+            &serde_json::json!({"ok": false, "error": smtp_error_name(rc), "rc": rc}),
+        ),
+    }
 }
 
 async fn handle_list() -> Response {
@@ -150,15 +253,39 @@ async fn handle_refresh() -> Response {
 }
 
 async fn handle_send(body: Bytes) -> Response {
-    json_response(
-        202,
-        &serde_json::json!({
-            "ok": false,
-            "queued": false,
-            "bytes": body.len(),
-            "error": "SMTP send is not exposed to blueprints yet"
-        }),
-    )
+    let req = match serde_json::from_slice::<MailSendRequest>(body.as_ref()) {
+        Ok(req) => req,
+        Err(_) => {
+            return json_response(400, &serde_json::json!({"ok": false, "error": "bad json"}));
+        }
+    };
+    if !vmail::password_configured() {
+        return json_response(
+            400,
+            &serde_json::json!({"ok": false, "error": "mail password missing"}),
+        );
+    }
+    match vmail::send_text_blocking(req.to.as_str(), req.subject.as_str(), req.body.as_str(), 60_000)
+    {
+        Ok(()) => json_response(
+            200,
+            &serde_json::json!({
+                "ok": true,
+                "queued": false,
+                "id": format!("smtp-{}", clock::ntp_current_unix_seconds()),
+                "status": "sent"
+            }),
+        ),
+        Err(rc) => json_response(
+            502,
+            &serde_json::json!({
+                "ok": false,
+                "queued": false,
+                "error": smtp_error_name(rc),
+                "rc": rc
+            }),
+        ),
+    }
 }
 
 fn router() -> Router {
@@ -170,6 +297,7 @@ fn router() -> Router {
         .route("/healthz", get(handle_status))
         .route("/api/healthz", get(handle_status))
         .route("/api/webmail/status", get(handle_status))
+        .route("/api/webmail/config", get(handle_config_get).post(handle_config_set))
         .route(
             "/api/webmail/refresh",
             get(handle_refresh).post(handle_refresh),
