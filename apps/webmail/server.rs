@@ -265,8 +265,12 @@ async fn handle_send(body: Bytes) -> Response {
             &serde_json::json!({"ok": false, "error": "mail password missing"}),
         );
     }
-    match vmail::send_text_blocking(req.to.as_str(), req.subject.as_str(), req.body.as_str(), 60_000)
-    {
+    match vmail::send_text_blocking(
+        req.to.as_str(),
+        req.subject.as_str(),
+        req.body.as_str(),
+        60_000,
+    ) {
         Ok(()) => json_response(
             200,
             &serde_json::json!({
@@ -297,7 +301,10 @@ fn router() -> Router {
         .route("/healthz", get(handle_status))
         .route("/api/healthz", get(handle_status))
         .route("/api/webmail/status", get(handle_status))
-        .route("/api/webmail/config", get(handle_config_get).post(handle_config_set))
+        .route(
+            "/api/webmail/config",
+            get(handle_config_get).post(handle_config_set),
+        )
         .route(
             "/api/webmail/refresh",
             get(handle_refresh).post(handle_refresh),

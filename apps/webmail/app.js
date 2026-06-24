@@ -6,6 +6,7 @@ const API = {
   list: `${API_BASE}/list`,
   read: (id) => `${API_BASE}/read?id=${encodeURIComponent(id)}`,
   send: `${API_BASE}/send`,
+  config: `${API_BASE}/config`,
 };
 
 const state = {
@@ -17,6 +18,7 @@ const state = {
   queueOpen: true,
   queue: [],
   filter: "",
+  config: null,
 };
 
 const app = document.querySelector("#app");
@@ -355,7 +357,25 @@ function inspectorMarkup(message) {
         ${detailRow("Account", status.account)}
         ${detailRow("Store", status.storePath)}
         ${detailRow("SMTP", status.smtp)}
+        ${detailRow("Password", status.passwordConfigured ? "configured" : "missing")}
         ${detailRow("POP3", status.pop3)}
+      </section>
+
+      <section class="rounded-md border border-stone-200 bg-white/66 p-3">
+        <h3 class="mb-2 text-xs font-semibold uppercase tracking-wide text-stone-500">Runtime Credentials</h3>
+        <form id="mail-config-form" class="grid gap-2">
+          <label class="grid gap-1 text-xs text-stone-500">
+            <span>Mail</span>
+            <input id="smtp-user" class="rounded-md border border-stone-200 bg-white px-2 py-2 text-sm text-stone-800 outline-none focus:border-cyan-500" autocomplete="username" value="${escapeHtml(state.config?.smtp_user || status.account || "jonasb@post.com")}" />
+          </label>
+          <label class="grid gap-1 text-xs text-stone-500">
+            <span>Password</span>
+            <input id="smtp-pass" class="rounded-md border border-stone-200 bg-white px-2 py-2 text-sm text-stone-800 outline-none focus:border-cyan-500" type="password" autocomplete="current-password" placeholder="Runtime password" />
+          </label>
+          <button class="icon-btn inline-flex h-9 items-center justify-center gap-2 rounded-md border border-cyan-700 bg-cyan-700 px-3 text-sm font-medium text-white" type="submit">
+            ${icon("key-round", 15)}<span>Use Password</span>
+          </button>
+        </form>
       </section>
 
       <section class="rounded-md border border-stone-200 bg-white/66 p-3">
@@ -441,6 +461,7 @@ function bindEvents() {
     button.addEventListener("click", () => readMessage(button.dataset.messageId));
   });
   document.querySelector("#compose-form")?.addEventListener("submit", sendMessage);
+  document.querySelector("#mail-config-form")?.addEventListener("submit", saveMailConfig);
   document.querySelector("#discard-button")?.addEventListener("click", () => {
     state.composeOpen = false;
     render();
@@ -464,6 +485,15 @@ async function loadStatus() {
   state.status = await fetchJson(API.status);
 }
 
+async function loadConfig() {
+  try {
+    const result = await fetchJson(API.config);
+    state.config = result.config || null;
+  } catch {
+    state.config = null;
+  }
+}
+
 async function loadMessages() {
   const data = await fetchJson(API.list);
   state.messages = Array.isArray(data.messages) ? data.messages : [];
@@ -475,9 +505,33 @@ async function loadMessages() {
 
 async function loadAll() {
   try {
-    await Promise.all([loadStatus(), loadMessages()]);
+    await Promise.all([loadStatus(), loadConfig(), loadMessages()]);
   } catch (error) {
     toast(`Webmail refresh failed: ${error.message || error}`);
+  }
+  render();
+}
+
+async function saveMailConfig(event) {
+  event.preventDefault();
+  const user = document.querySelector("#smtp-user")?.value || "";
+  const password = document.querySelector("#smtp-pass")?.value || "";
+  try {
+    const result = await fetchJson(API.config, {
+      method: "POST",
+      body: JSON.stringify({
+        smtp_user: user,
+        smtp_pass: password,
+        from: user,
+      }),
+    });
+    if (result.ok === false) throw new Error(text(result.error, "Config failed"));
+    toast("SMTP password configured for runtime.");
+    document.querySelector("#smtp-pass").value = "";
+    await loadStatus();
+    await loadConfig();
+  } catch (error) {
+    toast(`Credential update failed: ${error.message || error}`);
   }
   render();
 }
