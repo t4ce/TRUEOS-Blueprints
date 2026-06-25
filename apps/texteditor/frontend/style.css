@@ -1,0 +1,204 @@
+:root {
+  color-scheme: light;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #f6f7f9;
+  color: #17202a;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  overflow: hidden;
+}
+
+button {
+  font: inherit;
+}
+
+.shell {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  height: 100vh;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(246, 247, 249, 0.96)),
+    #f6f7f9;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 14px 18px;
+  border-bottom: 1px solid #d8dde5;
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(14px);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 12px;
+}
+
+.brand-mark {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  border-radius: 8px;
+  background: #17202a;
+  color: #ffffff;
+  font-weight: 800;
+}
+
+h1 {
+  margin: 0;
+  font-size: 17px;
+  line-height: 1.2;
+  letter-spacing: 0;
+}
+
+p {
+  margin: 3px 0 0;
+  color: #667487;
+  font-size: 12px;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.btn,
+.pill {
+  min-height: 34px;
+  border-radius: 7px;
+  border: 1px solid #cfd6df;
+  background: #ffffff;
+  color: #17202a;
+  padding: 7px 11px;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.btn {
+  cursor: pointer;
+}
+
+.btn:hover {
+  border-color: #9ba8b8;
+  background: #f9fafb;
+}
+
+.btn.primary {
+  border-color: #0f766e;
+  background: #0f766e;
+  color: #ffffff;
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pill.ok {
+  border-color: #bfd9cc;
+  color: #166534;
+  background: #effaf3;
+}
+
+.pill.warn {
+  border-color: #e5cf8a;
+  color: #845b00;
+  background: #fff8df;
+}
+
+.editor-frame {
+  min-height: 0;
+  overflow: auto;
+  padding: 28px;
+}
+
+.trueos-editor {
+  width: min(100%, 980px);
+  min-height: calc(100vh - 128px);
+  margin: 0 auto;
+  border: 1px solid #dce1e8;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 18px 45px rgba(42, 52, 68, 0.08);
+}
+
+.trueos-editor .bn-container {
+  min-height: calc(100vh - 132px);
+}
+
+.trueos-editor .bn-editor {
+  min-height: calc(100vh - 132px);
+  padding: 46px 54px 70px;
+}
+
+.boot {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  color: #667487;
+  font-size: 14px;
+  background: #f6f7f9;
+}
+
+.boot.error {
+  color: #b42318;
+}
+
+@media (max-width: 760px) {
+  body {
+    overflow: auto;
+  }
+
+  .shell {
+    height: auto;
+    min-height: 100vh;
+  }
+
+  .topbar {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .editor-frame {
+    padding: 12px;
+  }
+
+  .trueos-editor,
+  .trueos-editor .bn-container {
+    min-height: calc(100vh - 150px);
+  }
+
+  .trueos-editor .bn-editor {
+    min-height: calc(100vh - 150px);
+    padding: 28px 18px 56px;
+  }
+}

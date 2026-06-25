@@ -3,4 +3,6 @@ dist/
 Cargo.lock
 package.json
 package-lock.json
+!apps/texteditor/package.json
+!apps/texteditor/package-lock.json
 temp_*/

@@ -11,6 +11,7 @@
       "path": "apps/Reticulum-rs"
     },
     "test_some_crates",
+    "texteditor",
     "webdevices",
     "webmail"
   ]

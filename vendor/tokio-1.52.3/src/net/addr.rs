@@ -239,6 +239,7 @@ cfg_net! {
         type Future = sealed::MaybeReady;
 
         fn to_socket_addrs(&self, _: sealed::Internal) -> Self::Future {
+            #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
             use crate::blocking::spawn_blocking;
             use sealed::MaybeReady;
 
@@ -249,19 +250,22 @@ cfg_net! {
                 return MaybeReady(sealed::State::Ready(Some(addr)));
             }
 
+            #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+            {
+                return MaybeReady(sealed::State::ReadyMore(Some(
+                    trueos_resolve_addr_string(self),
+                )));
+            }
+
+            #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+            {
             // Run DNS lookup on the blocking pool
             let s = self.to_owned();
 
             MaybeReady(sealed::State::Blocking(spawn_blocking(move || {
-                #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-                {
-                    trueos_resolve_addr_string(&s)
-                }
-                #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-                {
-                    std::net::ToSocketAddrs::to_socket_addrs(&s)
-                }
+                std::net::ToSocketAddrs::to_socket_addrs(&s)
             })))
+            }
         }
     }
 
@@ -274,6 +278,7 @@ cfg_net! {
         type Future = sealed::MaybeReady;
 
         fn to_socket_addrs(&self, _: sealed::Internal) -> Self::Future {
+            #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
             use crate::blocking::spawn_blocking;
             use sealed::MaybeReady;
 
@@ -294,18 +299,21 @@ cfg_net! {
                 return MaybeReady(sealed::State::Ready(Some(addr)));
             }
 
+            #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+            {
+                return MaybeReady(sealed::State::ReadyMore(Some(
+                    trueos_resolve_host_port(host, port),
+                )));
+            }
+
+            #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+            {
             let host = host.to_owned();
 
             MaybeReady(sealed::State::Blocking(spawn_blocking(move || {
-                #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-                {
-                    trueos_resolve_host_port(&host, port)
-                }
-                #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-                {
-                    std::net::ToSocketAddrs::to_socket_addrs(&(&host[..], port))
-                }
+                std::net::ToSocketAddrs::to_socket_addrs(&(&host[..], port))
             })))
+            }
         }
     }
 
@@ -371,6 +379,7 @@ pub(crate) mod sealed {
         #[derive(Debug)]
         pub(super) enum State {
             Ready(Option<SocketAddr>),
+            ReadyMore(Option<io::Result<vec::IntoIter<SocketAddr>>>),
             Blocking(JoinHandle<io::Result<vec::IntoIter<SocketAddr>>>),
         }
 
@@ -389,6 +398,10 @@ pub(crate) mod sealed {
                     State::Ready(ref mut i) => {
                         let iter = OneOrMore::One(i.take().into_iter());
                         Poll::Ready(Ok(iter))
+                    }
+                    State::ReadyMore(ref mut i) => {
+                        let res = i.take().expect("polled after completion");
+                        Poll::Ready(res.map(OneOrMore::More))
                     }
                     State::Blocking(ref mut rx) => {
                         let res = ready!(Pin::new(rx).poll(cx))?.map(OneOrMore::More);
