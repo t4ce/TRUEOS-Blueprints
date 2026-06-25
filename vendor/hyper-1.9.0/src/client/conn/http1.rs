@@ -192,7 +192,7 @@ where
     pub fn send_request(
         &mut self,
         req: Request<B>,
-    ) -> impl Future<Output = crate::Result<Response<IncomingBody>>> {
+    ) -> impl Future<Output = crate::Result<Response<IncomingBody>>> + use<B> {
         let sent = self.dispatch.send(req);
 
         async move {

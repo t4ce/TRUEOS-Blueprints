@@ -1,9 +1,14 @@
+use crate::io;
 use crate::runtime::prelude::*;
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
 use alloc::{borrow::ToOwned, string::String, vec::Vec};
 use core::future;
-use crate::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
+
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+unsafe extern "C" {
+    fn trueos_cabi_dns_resolve_ipv4(host: *const u8, host_len: usize, out_octets: *mut u8) -> i32;
+}
 
 /// Converts or resolves without blocking to one or more `SocketAddr` values.
 ///
@@ -22,6 +27,71 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV
 pub trait ToSocketAddrs: sealed::ToSocketAddrsPriv {}
 
 type ReadyFuture<T> = future::Ready<io::Result<T>>;
+
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+fn trueos_dns_status_to_io(rc: i32) -> io::Error {
+    let (kind, detail) = match rc {
+        5 => (
+            io::ErrorKind::Other,
+            "TRUEOS secure DNS resolve failed: no answer or bad name",
+        ),
+        22 => (
+            io::ErrorKind::InvalidInput,
+            "TRUEOS secure DNS resolve failed: invalid input",
+        ),
+        110 => (
+            io::ErrorKind::TimedOut,
+            "TRUEOS secure DNS resolve failed: timeout, no NIC, or resolver runtime error",
+        ),
+        _ => (
+            io::ErrorKind::Other,
+            "TRUEOS secure DNS resolve failed: unknown status",
+        ),
+    };
+    io::Error::new(kind, detail)
+}
+
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+fn trueos_resolve_host_port(host: &str, port: u16) -> io::Result<alloc::vec::IntoIter<SocketAddr>> {
+    let host = host.trim().trim_end_matches('.');
+    if host.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "empty hostname",
+        ));
+    }
+
+    let mut octets = [0u8; 4];
+    let rc =
+        unsafe { trueos_cabi_dns_resolve_ipv4(host.as_ptr(), host.len(), octets.as_mut_ptr()) };
+    if rc != 0 {
+        return Err(trueos_dns_status_to_io(rc));
+    }
+
+    Ok(alloc::vec![SocketAddr::V4(SocketAddrV4::new(
+        Ipv4Addr::new(octets[0], octets[1], octets[2], octets[3]),
+        port,
+    ))]
+    .into_iter())
+}
+
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+fn trueos_resolve_addr_string(addr: &str) -> io::Result<alloc::vec::IntoIter<SocketAddr>> {
+    let Some((host, port)) = addr.rsplit_once(':') else {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "missing socket port",
+        ));
+    };
+    let port = port
+        .parse::<u16>()
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid socket port"))?;
+    let host = host
+        .strip_prefix('[')
+        .and_then(|host| host.strip_suffix(']'))
+        .unwrap_or(host);
+    trueos_resolve_host_port(host, port)
+}
 
 cfg_net! {
     pub(crate) fn to_socket_addrs<T>(arg: T) -> T::Future
@@ -185,13 +255,8 @@ cfg_net! {
             MaybeReady(sealed::State::Blocking(spawn_blocking(move || {
                 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
                 {
-                    let _ = s;
-                    Err(io::Error::new(
-                        io::ErrorKind::Other,
-                        "DNS resolution is unavailable on TRUEOS",
-                    ))
+                    trueos_resolve_addr_string(&s)
                 }
-
                 #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
                 {
                     std::net::ToSocketAddrs::to_socket_addrs(&s)
@@ -234,13 +299,8 @@ cfg_net! {
             MaybeReady(sealed::State::Blocking(spawn_blocking(move || {
                 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
                 {
-                    let _ = (host, port);
-                    Err(io::Error::new(
-                        io::ErrorKind::Other,
-                        "DNS resolution is unavailable on TRUEOS",
-                    ))
+                    trueos_resolve_host_port(&host, port)
                 }
-
                 #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
                 {
                     std::net::ToSocketAddrs::to_socket_addrs(&(&host[..], port))
@@ -281,8 +341,8 @@ pub(crate) mod sealed {
     //! part of the `ToSocketAddrs` public API. The details will change over
     //! time.
 
-    use core::future::Future;
     use crate::io;
+    use core::future::Future;
     use std::net::SocketAddr;
 
     #[doc(hidden)]

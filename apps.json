@@ -1,10 +1,15 @@
 {
   "apps": [
     "chatserver",
+    "cross",
     "file-system",
     "fileexplorer",
     "framework_stack",
     "hello_world",
+    {
+      "name": "reticulum",
+      "path": "apps/Reticulum-rs"
+    },
     "test_some_crates",
     "webdevices",
     "webmail"

@@ -8,6 +8,7 @@ members = [
     ".",
     "api",
     "apps/chatserver",
+    "apps/cross",
     "apps/file-system",
     "apps/fileexplorer",
     "apps/framework_stack",
@@ -63,6 +64,12 @@ axum = { path = "vendor/axum-0.8.9" }
 axum-core = { path = "vendor/axum-core-0.5.6" }
 base64 = { path = "vendor/base64-0.22.1" }
 bytes = { path = "vendor/bytes-1.11.1" }
+crossbeam = { path = "../TRUEOS/vendor/crossbeam-0.8.4" }
+crossbeam-channel = { path = "../TRUEOS/vendor/crossbeam-channel-0.5.15" }
+crossbeam-deque = { path = "../TRUEOS/vendor/crossbeam-deque-0.8.6" }
+crossbeam-epoch = { path = "../TRUEOS/vendor/crossbeam-epoch-0.9.18" }
+crossbeam-queue = { path = "../TRUEOS/vendor/crossbeam-queue-0.3.12" }
+crossbeam-utils = { path = "../TRUEOS/vendor/crossbeam-utils-0.8.21" }
 form_urlencoded = { path = "vendor/form_urlencoded-1.2.2" }
 getrandom = { path = "vendor/getrandom-0.2.17" }
 getrandom_03 = { package = "getrandom", path = "vendor/getrandom-0.3.4" }

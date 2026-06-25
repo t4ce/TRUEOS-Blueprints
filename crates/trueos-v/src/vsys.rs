@@ -37,6 +37,11 @@ pub fn sleep_ms(ms: u64) {
 }
 
 #[inline]
+pub fn thread_current_id() -> usize {
+    unsafe { vcabi::trueos_cabi_thread_current_id() }
+}
+
+#[inline]
 pub fn write_console_stream(stream: ConsoleStream, bytes: &[u8]) {
     if bytes.is_empty() {
         return;

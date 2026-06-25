@@ -181,7 +181,10 @@ impl Socket {
         let status = unsafe {
             trueos_mio_udp_socket_recv_from(self.id, &mut addr, buf.as_mut_ptr(), buf.len())
         };
-        Ok((read_write_result(status, "mio zkvm udp recv failed")?, raw_to_socket_addr(addr)?))
+        Ok((
+            read_write_result(status, "mio zkvm udp recv failed")?,
+            raw_to_socket_addr(addr)?,
+        ))
     }
 
     pub(crate) fn register(
@@ -262,7 +265,10 @@ fn socket_addr_to_raw(addr: SocketAddr) -> SocketAddrRaw {
 
 fn raw_to_socket_addr(raw: SocketAddrRaw) -> io::Result<SocketAddr> {
     match raw.family {
-        4 => Ok(SocketAddr::from(([raw.addr[0], raw.addr[1], raw.addr[2], raw.addr[3]], raw.port))),
+        4 => Ok(SocketAddr::from((
+            [raw.addr[0], raw.addr[1], raw.addr[2], raw.addr[3]],
+            raw.port,
+        ))),
         6 => Ok(SocketAddr::from((raw.addr, raw.port))),
         _ => Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -301,17 +307,17 @@ fn read_write_result(status: isize, detail: &'static str) -> io::Result<usize> {
 }
 
 #[inline(never)]
-fn status_to_error(status: i32, _detail: &'static str) -> io::Error {
-    let kind = match status {
-        STATUS_UNSUPPORTED => io::ErrorKind::Other,
-        STATUS_WOULD_BLOCK => io::ErrorKind::WouldBlock,
-        STATUS_NOT_CONNECTED => io::ErrorKind::NotConnected,
-        STATUS_INVALID_INPUT => io::ErrorKind::InvalidInput,
-        STATUS_NOT_FOUND => io::ErrorKind::NotFound,
-        STATUS_TIMED_OUT => io::ErrorKind::TimedOut,
-        STATUS_NO_DEVICE => io::ErrorKind::NotFound,
-        STATUS_IO => io::ErrorKind::Other,
-        _ => io::ErrorKind::Other,
+fn status_to_error(status: i32, detail: &'static str) -> io::Error {
+    let (kind, message) = match status {
+        STATUS_UNSUPPORTED => (io::ErrorKind::Other, "mio zkvm status unsupported"),
+        STATUS_WOULD_BLOCK => (io::ErrorKind::WouldBlock, "mio zkvm status would block"),
+        STATUS_NOT_CONNECTED => (io::ErrorKind::NotConnected, "mio zkvm status not connected"),
+        STATUS_INVALID_INPUT => (io::ErrorKind::InvalidInput, "mio zkvm status invalid input"),
+        STATUS_NOT_FOUND => (io::ErrorKind::NotFound, "mio zkvm status not found"),
+        STATUS_TIMED_OUT => (io::ErrorKind::TimedOut, "mio zkvm status timed out"),
+        STATUS_NO_DEVICE => (io::ErrorKind::NotFound, "mio zkvm status no device"),
+        STATUS_IO => (io::ErrorKind::Other, detail),
+        _ => (io::ErrorKind::Other, "mio zkvm status unknown"),
     };
-    kind.into()
+    io::Error::new(kind, message)
 }

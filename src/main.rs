@@ -65,6 +65,8 @@ const BLUEPRINT_VENDOR_PATCHES: &[(&str, &str)] = &[
     ("axum-core", "axum-core-0.5.6"),
     ("base64", "base64-0.22.1"),
     ("bytes", "bytes-1.11.1"),
+    ("crossbeam-epoch", "crossbeam-epoch-0.9.18"),
+    ("crossbeam-utils", "crossbeam-utils-0.8.21"),
     ("form_urlencoded", "form_urlencoded-1.2.2"),
     ("h2", "h2-0.4.14"),
     ("http", "http-1.4.0"),
@@ -1522,6 +1524,11 @@ fn find_blueprint_vendor_dir(app_dir: &Path, name: &str) -> Option<PathBuf> {
         if candidate.is_dir() {
             return Some(candidate);
         }
+
+        let sibling_kernel_candidate = ancestor.join("TRUEOS").join("vendor").join(name);
+        if sibling_kernel_candidate.is_dir() {
+            return Some(sibling_kernel_candidate);
+        }
     }
     None
 }
@@ -1552,9 +1559,33 @@ fn source_overlay_patches(
         out.push(CratePatch::new("tokio", path));
     }
 
+    if manifest_or_lock_mentions_crate(app_dir, manifest_path, "tokio-stream")? {
+        out.retain(|patch| patch.name != "tokio-stream");
+        out.push(CratePatch::new(
+            "tokio-stream",
+            stage_tokio_stream_trueos_overlay(work_dir)?,
+        ));
+    }
+
     if let Some(path) = find_vendor_dir(app_dir, "hyper-rustls-0.27.9") {
         out.retain(|patch| patch.name != "hyper-rustls");
         out.push(CratePatch::new("hyper-rustls", path));
+    }
+
+    if manifest_or_lock_mentions_crate(app_dir, manifest_path, "hyper-timeout")? {
+        out.retain(|patch| patch.name != "hyper-timeout");
+        out.push(CratePatch::new(
+            "hyper-timeout",
+            stage_hyper_timeout_trueos_overlay(work_dir)?,
+        ));
+    }
+
+    if manifest_or_lock_mentions_crate(app_dir, manifest_path, "tonic")? {
+        out.retain(|patch| patch.name != "tonic");
+        out.push(CratePatch::new(
+            "tonic",
+            stage_tonic_trueos_overlay(work_dir)?,
+        ));
     }
 
     if matches!(build_settings.flavor, BuildFlavor::TokioStd) {
@@ -1562,6 +1593,11 @@ fn source_overlay_patches(
         out.push(CratePatch::new(
             "hyper-util",
             stage_hyper_util_tokio_std_overlay(app_dir, work_dir)?,
+        ));
+        out.retain(|patch| patch.name != "tower");
+        out.push(CratePatch::new(
+            "tower",
+            stage_tower_tokio_std_overlay(app_dir, work_dir)?,
         ));
     }
 
@@ -1672,6 +1708,55 @@ fn stage_argmax_trueos_overlay(work_dir: &Path) -> Result<PathBuf, String> {
     Ok(staged)
 }
 
+fn stage_tokio_stream_trueos_overlay(work_dir: &Path) -> Result<PathBuf, String> {
+    const TOKIO_STREAM_VERSION: &str = "0.1.17";
+    let source_name = format!("tokio-stream-{TOKIO_STREAM_VERSION}");
+    let source = find_cargo_registry_crate(&source_name).ok_or_else(|| {
+        format!(
+            "missing Cargo registry source for {source_name}; run `cargo fetch` for the app once"
+        )
+    })?;
+    let staged = work_dir
+        .join("source-overlay-crates")
+        .join("tokio-stream-trueos");
+    reset_dir(&staged)?;
+    copy_app_tree(&source, &staged)?;
+    patch_tokio_stream_trueos_overlay(&staged)?;
+    Ok(staged)
+}
+
+fn stage_hyper_timeout_trueos_overlay(work_dir: &Path) -> Result<PathBuf, String> {
+    const HYPER_TIMEOUT_VERSION: &str = "0.5.2";
+    let source_name = format!("hyper-timeout-{HYPER_TIMEOUT_VERSION}");
+    let source = find_cargo_registry_crate(&source_name).ok_or_else(|| {
+        format!(
+            "missing Cargo registry source for {source_name}; run `cargo fetch` for the app once"
+        )
+    })?;
+    let staged = work_dir
+        .join("source-overlay-crates")
+        .join("hyper-timeout-trueos");
+    reset_dir(&staged)?;
+    copy_app_tree(&source, &staged)?;
+    patch_hyper_timeout_trueos_overlay(&staged)?;
+    Ok(staged)
+}
+
+fn stage_tonic_trueos_overlay(work_dir: &Path) -> Result<PathBuf, String> {
+    const TONIC_VERSION: &str = "0.14.6";
+    let source_name = format!("tonic-{TONIC_VERSION}");
+    let source = find_cargo_registry_crate(&source_name).ok_or_else(|| {
+        format!(
+            "missing Cargo registry source for {source_name}; run `cargo fetch` for the app once"
+        )
+    })?;
+    let staged = work_dir.join("source-overlay-crates").join("tonic-trueos");
+    reset_dir(&staged)?;
+    copy_app_tree(&source, &staged)?;
+    patch_tonic_trueos_overlay(&staged)?;
+    Ok(staged)
+}
+
 fn stage_hyper_util_tokio_std_overlay(app_dir: &Path, work_dir: &Path) -> Result<PathBuf, String> {
     let source = find_vendor_dir(app_dir, "hyper-util-0.1.20")
         .ok_or_else(|| "missing vendored hyper-util-0.1.20 source".to_string())?;
@@ -1681,6 +1766,18 @@ fn stage_hyper_util_tokio_std_overlay(app_dir: &Path, work_dir: &Path) -> Result
     reset_dir(&staged)?;
     copy_app_tree(&source, &staged)?;
     patch_hyper_util_tokio_std_overlay(&staged)?;
+    Ok(staged)
+}
+
+fn stage_tower_tokio_std_overlay(app_dir: &Path, work_dir: &Path) -> Result<PathBuf, String> {
+    let source = find_vendor_dir(app_dir, "tower-0.5.3")
+        .ok_or_else(|| "missing vendored tower-0.5.3 source".to_string())?;
+    let staged = work_dir
+        .join("source-overlay-crates")
+        .join("tower-tokio-std-trueos");
+    reset_dir(&staged)?;
+    copy_app_tree(&source, &staged)?;
+    patch_tower_tokio_std_overlay(&staged)?;
     Ok(staged)
 }
 
@@ -1697,6 +1794,169 @@ fn find_cargo_registry_crate(crate_dir_name: &str) -> Option<PathBuf> {
         }
     }
     None
+}
+
+fn patch_tokio_stream_trueos_overlay(crate_dir: &Path) -> Result<(), String> {
+    replace_file_text(
+        &crate_dir.join("src/wrappers/tcp_listener.rs"),
+        "use std::io;",
+        "use tokio::io;",
+    )?;
+    replace_file_text(
+        &crate_dir.join("src/wrappers.rs"),
+        "    #[cfg(unix)]\n    mod unix_listener;\n    #[cfg(unix)]\n    pub use unix_listener::UnixListenerStream;",
+        "    #[cfg(all(unix, not(any(target_os = \"trueos\", target_os = \"zkvm\"))))]\n    mod unix_listener;\n    #[cfg(all(unix, not(any(target_os = \"trueos\", target_os = \"zkvm\"))))]\n    pub use unix_listener::UnixListenerStream;",
+    )
+}
+
+fn patch_tonic_trueos_overlay(crate_dir: &Path) -> Result<(), String> {
+    replace_file_text(
+        &crate_dir.join("src/transport/channel/service/io.rs"),
+        "use std::io::{self, IoSlice};",
+        "use hyper::io::{self, IoSlice};",
+    )?;
+    replace_file_text(
+        &crate_dir.join("src/transport/server/service/io.rs"),
+        "use std::io;\nuse std::io::IoSlice;",
+        "use tokio::io;\nuse tokio::io::IoSlice;",
+    )?;
+    replace_file_text(
+        &crate_dir.join("src/transport/server/incoming.rs"),
+        "    net::{SocketAddr, TcpListener as StdTcpListener},",
+        "    net::SocketAddr,",
+    )?;
+    replace_file_text(
+        &crate_dir.join("src/transport/server/incoming.rs"),
+        "    time::Duration,\n};\n\nuse socket2::TcpKeepalive;",
+        "    time::Duration,\n};\n\nuse socket2::TcpKeepalive;\nuse tokio::io;",
+    )?;
+    replace_file_text(
+        &crate_dir.join("src/transport/server/incoming.rs"),
+        "    pub fn bind(addr: SocketAddr) -> std::io::Result<Self> {\n        let std_listener = StdTcpListener::bind(addr)?;\n        std_listener.set_nonblocking(true)?;\n\n        Ok(TcpListener::from_std(std_listener)?.into())\n    }",
+        "    pub async fn bind(addr: SocketAddr) -> io::Result<Self> {\n        TcpListener::bind(addr).await.map(Into::into)\n    }",
+    )?;
+    replace_file_text(
+        &crate_dir.join("src/transport/server/incoming.rs"),
+        "    pub fn local_addr(&self) -> std::io::Result<SocketAddr> {",
+        "    pub fn local_addr(&self) -> io::Result<SocketAddr> {",
+    )?;
+    replace_file_text(
+        &crate_dir.join("src/transport/server/incoming.rs"),
+        "    type Item = std::io::Result<TcpStream>;",
+        "    type Item = io::Result<TcpStream>;",
+    )?;
+    replace_file_text(
+        &crate_dir.join("src/transport/server/mod.rs"),
+        "#[cfg(unix)]\nmod unix;",
+        "#[cfg(all(unix, not(any(target_os = \"trueos\", target_os = \"zkvm\"))))]\nmod unix;",
+    )?;
+    replace_file_text(
+        &crate_dir.join("src/transport/server/mod.rs"),
+        "#[cfg(unix)]\npub use unix::UdsConnectInfo;",
+        "#[cfg(all(unix, not(any(target_os = \"trueos\", target_os = \"zkvm\"))))]\npub use unix::UdsConnectInfo;",
+    )?;
+    replace_file_text(
+        &crate_dir.join("src/transport/server/mod.rs"),
+        "    fn bind_incoming(&self, addr: SocketAddr) -> Result<TcpIncoming, super::Error> {\n        Ok(TcpIncoming::bind(addr)\n            .map_err(super::Error::from_source)?\n            .with_nodelay(Some(self.tcp_nodelay))\n            .with_keepalive(self.tcp_keepalive)\n            .with_keepalive_interval(self.tcp_keepalive_interval)\n            .with_keepalive_retries(self.tcp_keepalive_retries))\n    }",
+        "    async fn bind_incoming(&self, addr: SocketAddr) -> Result<TcpIncoming, super::Error> {\n        Ok(TcpIncoming::bind(addr)\n            .await\n            .map_err(super::Error::from_source)?\n            .with_nodelay(Some(self.tcp_nodelay))\n            .with_keepalive(self.tcp_keepalive)\n            .with_keepalive_interval(self.tcp_keepalive_interval)\n            .with_keepalive_retries(self.tcp_keepalive_retries))\n    }",
+    )?;
+    replace_file_text(
+        &crate_dir.join("src/transport/server/mod.rs"),
+        "        let incoming = self.bind_incoming(addr)?;",
+        "        let incoming = self.bind_incoming(addr).await?;",
+    )?;
+    replace_file_text(
+        &crate_dir.join("src/transport/channel/uds_connector.rs"),
+        "#[cfg(not(target_os = \"windows\"))]\nuse tokio::net::UnixStream;\n\n#[cfg(not(target_os = \"windows\"))]",
+        "#[cfg(not(any(target_os = \"windows\", target_os = \"trueos\", target_os = \"zkvm\")))]\nuse tokio::net::UnixStream;\n\n#[cfg(not(any(target_os = \"windows\", target_os = \"trueos\", target_os = \"zkvm\")))]",
+    )?;
+    replace_file_text(
+        &crate_dir.join("src/transport/channel/uds_connector.rs"),
+        "#[cfg(target_os = \"windows\")]\n#[allow(dead_code)]\ntype UnixStream = tokio::io::DuplexStream;\n\n#[cfg(target_os = \"windows\")]",
+        "#[cfg(any(target_os = \"windows\", target_os = \"trueos\", target_os = \"zkvm\"))]\n#[allow(dead_code)]\ntype UnixStream = tokio::io::DuplexStream;\n\n#[cfg(any(target_os = \"windows\", target_os = \"trueos\", target_os = \"zkvm\"))]",
+    )?;
+    replace_file_text(
+        &crate_dir.join("src/transport/channel/uds_connector.rs"),
+        "\"uds connections are not allowed on windows\".into(),",
+        "\"uds connections are not allowed on this platform\".into(),",
+    )?;
+    replace_file_text(
+        &crate_dir.join("src/transport/channel/service/connection.rs"),
+        "        let fut = self.inner.send_request(req);\n\n        Box::pin(async move { fut.await.map_err(Into::into).map(|res| res.map(Body::new)) })",
+        "        let mut inner = self.inner.clone();\n        let fut = inner.send_request(req);\n\n        Box::pin(async move { fut.await.map_err(Into::into).map(|res| res.map(Body::new)) })",
+    )?;
+    Ok(())
+}
+
+fn patch_hyper_timeout_trueos_overlay(crate_dir: &Path) -> Result<(), String> {
+    replace_file_text(
+        &crate_dir.join("src/lib.rs"),
+        "use std::io;",
+        "use hyper::io;",
+    )?;
+    replace_file_text(
+        &crate_dir.join("src/lib.rs"),
+        ".map_err(|e| io::Error::new(io::ErrorKind::TimedOut, e))?",
+        ".map_err(|_| io::Error::new(io::ErrorKind::TimedOut, \"connection timed out\"))?",
+    )?;
+    replace_file_text(
+        &crate_dir.join("src/stream.rs"),
+        "use std::io;",
+        "use hyper::io;",
+    )
+}
+
+fn patch_tower_tokio_std_overlay(crate_dir: &Path) -> Result<(), String> {
+    replace_file_text(
+        &crate_dir.join("src/lib.rs"),
+        "#![cfg_attr(any(target_os = \"trueos\", target_os = \"zkvm\"), no_std)]",
+        "",
+    )?;
+    replace_file_text(
+        &crate_dir.join("src/buffer/worker.rs"),
+        "use std::sync::{Arc, Mutex};",
+        "use spin::Mutex;\nuse std::sync::Arc;",
+    )?;
+    replace_file_text(
+        &crate_dir.join("src/buffer/worker.rs"),
+        "let mut inner = self.handle.inner.lock().unwrap();",
+        "let mut inner = self.handle.inner.lock();",
+    )?;
+    replace_file_text(
+        &crate_dir.join("src/buffer/worker.rs"),
+        ".lock()\n            .unwrap()\n            .as_ref()",
+        ".lock()\n            .as_ref()",
+    )?;
+    replace_file_text(
+        &crate_dir.join("src/load/peak_ewma.rs"),
+        "sync::{Arc, Mutex}",
+        "sync::Arc",
+    )?;
+    replace_file_text(
+        &crate_dir.join("src/load/peak_ewma.rs"),
+        "use tokio::time::Instant;",
+        "use spin::Mutex;\nuse tokio::time::Instant;",
+    )?;
+    replace_file_text(
+        &crate_dir.join("src/load/peak_ewma.rs"),
+        "let mut rtt = self.rtt_estimate.lock().expect(\"peak ewma prior_estimate\");",
+        "let mut rtt = self.rtt_estimate.lock();",
+    )?;
+    replace_file_text(
+        &crate_dir.join("src/load/peak_ewma.rs"),
+        "        if let Ok(mut rtt) = self.rtt_estimate.lock() {\n            rtt.update(self.sent_at, recv_at, self.decay_ns);\n        }",
+        "        let mut rtt = self.rtt_estimate.lock();\n        rtt.update(self.sent_at, recv_at, self.decay_ns);",
+    )?;
+    replace_file_text(
+        &crate_dir.join("src/load/peak_ewma.rs"),
+        "    /// The default RTT estimate decays, so that new nodes are considered if the\n    /// default RTT is too high.",
+        "    // The default RTT estimate decays, so that new nodes are considered if the\n    // default RTT is too high.",
+    )?;
+    append_if_missing(
+        &crate_dir.join("Cargo.toml"),
+        "[dependencies.spin]",
+        "\n[dependencies.spin]\nversion = \"0.10.0\"\ndefault-features = false\nfeatures = [\"spin_mutex\"]\n",
+    )
 }
 
 fn patch_ctrlc_trueos_overlay(crate_dir: &Path) -> Result<(), String> {
@@ -1790,6 +2050,15 @@ fn replace_file_text(path: &Path, needle: &str, replacement: &str) -> Result<(),
     }
     let rewritten = original.replace(needle, replacement);
     fs::write(path, rewritten).map_err(io_string)
+}
+
+fn append_if_missing(path: &Path, needle: &str, addition: &str) -> Result<(), String> {
+    let mut original = fs::read_to_string(path).map_err(io_string)?;
+    if original.contains(needle) {
+        return Ok(());
+    }
+    original.push_str(addition);
+    fs::write(path, original).map_err(io_string)
 }
 
 const CTRL_C_TRUEOS_PLATFORM_RS: &str = r#"// Patched by trueos-blueprint during SDK staging.
@@ -2071,7 +2340,8 @@ fn source_overlay_version_alignment(
 
     let mut overlay_targets = BTreeMap::new();
     for mismatch in lock_mismatches {
-        match overlay_targets.entry(mismatch.name.clone()) {
+        let target_key = (mismatch.name.clone(), mismatch.locked_version.clone());
+        match overlay_targets.entry(target_key) {
             std::collections::btree_map::Entry::Vacant(slot) => {
                 let parsed_overlay_version = SimpleVersion::parse(&mismatch.overlay_version)
                     .map_err(|err| {
@@ -2089,8 +2359,9 @@ fn source_overlay_version_alignment(
                 if existing.get().overlay_version != mismatch.overlay_version =>
             {
                 return Err(format!(
-                    "overlay version for {} is inconsistent: {} vs {}",
+                    "overlay version for {} {} is inconsistent: {} vs {}",
                     mismatch.name,
+                    mismatch.locked_version,
                     existing.get().overlay_version,
                     mismatch.overlay_version
                 ));
@@ -2113,7 +2384,8 @@ fn source_overlay_version_alignment(
             let Some(dep_package) = packages_by_id.get(&dep.pkg) else {
                 continue;
             };
-            let Some(target) = overlay_targets.get(&dep_package.name) else {
+            let target_key = (dep_package.name.clone(), dep_package.version.clone());
+            let Some(target) = overlay_targets.get(&target_key) else {
                 continue;
             };
             if dep_package.version == target.overlay_version {
