@@ -11,6 +11,10 @@ use alloc::{
     vec::Vec,
 };
 use core::sync::atomic::{AtomicU16, AtomicU64, Ordering};
+use std::env;
+
+#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+use std::fs as host_fs;
 
 use axum::{
     Router,
@@ -42,6 +46,8 @@ const FILEEXPLORER_UPLOAD_BODY_MAX: usize = 16 * 1024 * 1024;
 const FILEEXPLORER_BIND_RETRY_MS: u64 = 1000;
 const FILEEXPLORER_INDEX_HTML: &str = include_str!("index.html");
 const TRUEOS_TAILWIND_CSS: &str = include_str!("tailwind.css");
+const FILEEXPLORER_TREE_MAX_DEPTH: usize = 8;
+const FILEEXPLORER_TREE_MAX_NODES: usize = 2048;
 
 static FILEEXPLORER_HTTP_PORT: AtomicU16 = AtomicU16::new(0);
 static JOB_SEQ: AtomicU64 = AtomicU64::new(1);
@@ -51,6 +57,21 @@ type JobMap = Arc<tokio::sync::RwLock<BTreeMap<String, JobRecord>>>;
 #[derive(Clone)]
 struct AppState {
     jobs: JobMap,
+    app_root: String,
+    common_root: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RootScope {
+    App,
+    Common,
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedNode {
+    scope: RootScope,
+    rel: String,
+    physical_path: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -202,6 +223,144 @@ fn decode_node_id(id: &str) -> Result<String, String> {
     percent_decode(id).map(|path| path.trim_matches('/').to_string())
 }
 
+fn default_app_root() -> String {
+    env::var("TRUEOS_APP_FS_ROOT")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| ".".to_string())
+}
+
+fn default_common_root() -> Option<String> {
+    env::var("TRUEOS_APP_COMMON")
+        .or_else(|_| env::var("TRUEOS_APP_FS_COMMON"))
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+}
+
+fn normalize_root(root: String) -> String {
+    let trimmed = root.trim();
+    if trimmed.is_empty() {
+        ".".to_string()
+    } else if trimmed == "/" {
+        "/".to_string()
+    } else {
+        trimmed.trim_end_matches('/').to_string()
+    }
+}
+
+fn root_id(scope: RootScope) -> &'static str {
+    match scope {
+        RootScope::App => "app",
+        RootScope::Common => "common",
+    }
+}
+
+fn root_label(scope: RootScope) -> &'static str {
+    match scope {
+        RootScope::App => "app://",
+        RootScope::Common => "common://",
+    }
+}
+
+fn logical_id(scope: RootScope, rel: &str) -> String {
+    let root = root_id(scope);
+    if rel.is_empty() {
+        root.to_string()
+    } else {
+        format!("{root}/{rel}")
+    }
+}
+
+fn logical_path(scope: RootScope, rel: &str) -> String {
+    let root = root_label(scope);
+    if rel.is_empty() {
+        root.to_string()
+    } else {
+        format!("{root}{rel}")
+    }
+}
+
+fn display_name(scope: RootScope, rel: &str) -> String {
+    if rel.is_empty() {
+        root_label(scope).to_string()
+    } else {
+        rel.rsplit('/').next().unwrap_or(rel).to_string()
+    }
+}
+
+fn join_rel(parent: &str, name: &str) -> String {
+    if parent.is_empty() {
+        name.to_string()
+    } else {
+        format!("{parent}/{name}")
+    }
+}
+
+fn join_physical(root: &str, rel: &str) -> String {
+    if rel.is_empty() {
+        root.to_string()
+    } else if root == "/" {
+        format!("/{rel}")
+    } else {
+        format!("{}/{}", root.trim_end_matches('/'), rel)
+    }
+}
+
+fn validate_rel_path(rel: &str) -> Result<String, String> {
+    let rel = rel.trim().trim_matches('/');
+    if rel.is_empty() {
+        return Ok(String::new());
+    }
+    if rel
+        .split('/')
+        .any(|segment| segment.is_empty() || segment == "." || segment == "..")
+    {
+        return Err("bad path".to_string());
+    }
+    Ok(rel.to_string())
+}
+
+fn sanitize_child_name(name: &str) -> Result<String, String> {
+    let name = name.trim();
+    if name.is_empty() || name == "." || name == ".." || name.contains('/') || name.contains('\\') {
+        return Err("bad file name".to_string());
+    }
+    Ok(name.to_string())
+}
+
+fn resolve_node_id(state: &AppState, id: &str) -> Result<Option<ResolvedNode>, String> {
+    let id = decode_node_id(id)?;
+    if id.is_empty() {
+        return Ok(None);
+    }
+
+    let (scope, rel) = if id == root_id(RootScope::App) {
+        (RootScope::App, String::new())
+    } else if let Some(rel) = id.strip_prefix("app/") {
+        (RootScope::App, validate_rel_path(rel)?)
+    } else if id == root_id(RootScope::Common) {
+        (RootScope::Common, String::new())
+    } else if let Some(rel) = id.strip_prefix("common/") {
+        (RootScope::Common, validate_rel_path(rel)?)
+    } else {
+        return Err("node is outside app/common roots".to_string());
+    };
+
+    let root = match scope {
+        RootScope::App => state.app_root.as_str(),
+        RootScope::Common => state
+            .common_root
+            .as_deref()
+            .ok_or_else(|| "common root unavailable".to_string())?,
+    };
+
+    Ok(Some(ResolvedNode {
+        scope,
+        physical_path: join_physical(root, &rel),
+        rel,
+    }))
+}
+
 fn percent_decode(input: &str) -> Result<String, String> {
     let bytes = input.as_bytes();
     let mut out = Vec::new();
@@ -237,47 +396,259 @@ fn hex(byte: u8) -> Option<u8> {
     }
 }
 
-async fn node_for_path(path: &str) -> FileNode {
-    let name = if path.is_empty() {
-        "TRUEOSFS".to_string()
-    } else {
-        path.rsplit('/').next().unwrap_or(path).to_string()
-    };
-    let stat = if path.is_empty() {
-        None
-    } else {
-        fs::metadata(path).await.ok()
-    };
-    let kind = match stat.as_ref().map(|stat| stat.is_file()) {
-        Some(true) => NodeKind::File,
-        _ => NodeKind::Folder,
-    };
-    let size = stat.map(|stat| stat.len()).unwrap_or(0);
-    let mut meta = BTreeMap::new();
-    meta.insert("path".to_string(), serde_json::json!(path));
-    if path.is_empty() {
-        meta.insert(
-            "note".to_string(),
-            serde_json::json!("directory listing requires a guest-safe filesystem list facade"),
-        );
+fn file_actions(kind: NodeKind) -> Vec<&'static str> {
+    match kind {
+        NodeKind::File => vec!["open", "download", "delete"],
+        NodeKind::Folder => vec!["open", "upload", "create"],
     }
+}
+
+fn root_overview_node(state: &AppState) -> FileNode {
+    let mut meta = BTreeMap::new();
+    meta.insert("path".to_string(), serde_json::json!("trueos://"));
+
+    let mut budget = FILEEXPLORER_TREE_MAX_NODES;
+    let mut children = Vec::new();
+    children.push(scan_scope_root(
+        RootScope::App,
+        state.app_root.as_str(),
+        &mut budget,
+    ));
+    if let Some(common_root) = state.common_root.as_deref() {
+        children.push(scan_scope_root(RootScope::Common, common_root, &mut budget));
+    }
+
     FileNode {
-        id: if path.is_empty() {
-            "root".to_string()
-        } else {
-            path.to_string()
-        },
-        name,
+        id: "root".to_string(),
+        name: "TRUEOSFS".to_string(),
+        kind: NodeKind::Folder,
+        size: 0,
+        modified: now_iso(),
+        meta,
+        actions: vec!["open"],
+        children,
+    }
+}
+
+fn scan_scope_root(scope: RootScope, root: &str, budget: &mut usize) -> FileNode {
+    scan_node(
+        scope,
+        "",
+        root,
+        Some(root),
+        FILEEXPLORER_TREE_MAX_DEPTH,
+        budget,
+    )
+    .unwrap_or_else(|| {
+        let mut meta = BTreeMap::new();
+        meta.insert("path".to_string(), serde_json::json!(root_label(scope)));
+        meta.insert("physicalPath".to_string(), serde_json::json!(root));
+        meta.insert(
+            "error".to_string(),
+            serde_json::json!("root could not be listed"),
+        );
+        FileNode {
+            id: logical_id(scope, ""),
+            name: display_name(scope, ""),
+            kind: NodeKind::Folder,
+            size: 0,
+            modified: now_iso(),
+            meta,
+            actions: file_actions(NodeKind::Folder),
+            children: Vec::new(),
+        }
+    })
+}
+
+fn scan_node(
+    scope: RootScope,
+    rel: &str,
+    path: &str,
+    forced_root: Option<&str>,
+    depth: usize,
+    budget: &mut usize,
+) -> Option<FileNode> {
+    if *budget == 0 {
+        return None;
+    }
+    *budget = budget.saturating_sub(1);
+
+    let (kind, size) = if forced_root.is_some() {
+        (NodeKind::Folder, 0)
+    } else {
+        stat_path(path)?
+    };
+    let mut meta = BTreeMap::new();
+    meta.insert(
+        "path".to_string(),
+        serde_json::json!(logical_path(scope, rel)),
+    );
+    meta.insert("physicalPath".to_string(), serde_json::json!(path));
+
+    let children = if kind == NodeKind::Folder && depth > 0 && *budget > 0 {
+        match list_dir(path) {
+            Ok(mut names) => {
+                names.sort();
+                names
+                    .into_iter()
+                    .filter(|name| !name.starts_with('.'))
+                    .filter_map(|name| {
+                        let child_rel = join_rel(rel, &name);
+                        let child_path = join_physical(path, &name);
+                        scan_node(scope, &child_rel, &child_path, None, depth - 1, budget)
+                    })
+                    .collect()
+            }
+            Err(err) => {
+                meta.insert("listError".to_string(), serde_json::json!(err));
+                Vec::new()
+            }
+        }
+    } else {
+        Vec::new()
+    };
+
+    Some(FileNode {
+        id: logical_id(scope, rel),
+        name: display_name(scope, rel),
         kind,
         size,
         modified: now_iso(),
         meta,
-        actions: match kind {
-            NodeKind::File => vec!["open", "download", "delete"],
-            NodeKind::Folder => vec!["upload", "create"],
-        },
-        children: Vec::new(),
+        actions: file_actions(kind),
+        children,
+    })
+}
+
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+const TRUEOS_FS_KIND_FILE: u32 = 1;
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+const TRUEOS_FS_KIND_DIR: u32 = 2;
+
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+unsafe extern "C" {
+    fn trueos_cabi_fs_list_dir(
+        path_ptr: *const u8,
+        path_len: usize,
+        out_ptr: *mut u8,
+        out_cap: usize,
+    ) -> isize;
+    fn trueos_cabi_fs_stat(
+        path_ptr: *const u8,
+        path_len: usize,
+        out_kind: *mut u32,
+        out_len: *mut u64,
+    ) -> i32;
+}
+
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+fn list_dir(path: &str) -> Result<Vec<String>, String> {
+    let bytes = path.as_bytes();
+    let len =
+        unsafe { trueos_cabi_fs_list_dir(bytes.as_ptr(), bytes.len(), core::ptr::null_mut(), 0) };
+    if len < 0 {
+        return Err("list failed".to_string());
     }
+
+    let mut out = vec![0u8; len as usize];
+    let got = unsafe {
+        trueos_cabi_fs_list_dir(bytes.as_ptr(), bytes.len(), out.as_mut_ptr(), out.len())
+    };
+    if got < 0 {
+        return Err("list failed".to_string());
+    }
+
+    out.truncate(got as usize);
+    let text = String::from_utf8(out).map_err(|_| "bad utf8 in directory listing".to_string())?;
+    Ok(text
+        .lines()
+        .filter(|line| !line.is_empty())
+        .map(String::from)
+        .collect())
+}
+
+#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+fn list_dir(path: &str) -> Result<Vec<String>, String> {
+    let mut out = Vec::new();
+    for entry in host_fs::read_dir(path).map_err(|err| format!("list failed {}", err))? {
+        let entry = entry.map_err(|err| format!("list entry failed {}", err))?;
+        out.push(entry.file_name().to_string_lossy().into_owned());
+    }
+    Ok(out)
+}
+
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+fn stat_path(path: &str) -> Option<(NodeKind, u64)> {
+    let bytes = path.as_bytes();
+    let mut kind = 0u32;
+    let mut len = 0u64;
+    let rc = unsafe {
+        trueos_cabi_fs_stat(
+            bytes.as_ptr(),
+            bytes.len(),
+            &mut kind as *mut u32,
+            &mut len as *mut u64,
+        )
+    };
+    if rc != 0 {
+        return None;
+    }
+    match kind {
+        TRUEOS_FS_KIND_FILE => Some((NodeKind::File, len)),
+        TRUEOS_FS_KIND_DIR => Some((NodeKind::Folder, len)),
+        _ => None,
+    }
+}
+
+#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+fn stat_path(path: &str) -> Option<(NodeKind, u64)> {
+    let metadata = host_fs::metadata(path).ok()?;
+    let kind = if metadata.is_file() {
+        NodeKind::File
+    } else {
+        NodeKind::Folder
+    };
+    Some((kind, metadata.len()))
+}
+
+fn node_for_resolved(node: &ResolvedNode, state: &AppState) -> FileNode {
+    let mut budget = FILEEXPLORER_TREE_MAX_NODES;
+    scan_node(
+        node.scope,
+        &node.rel,
+        &node.physical_path,
+        if node.rel.is_empty() {
+            match node.scope {
+                RootScope::App => Some(state.app_root.as_str()),
+                RootScope::Common => state.common_root.as_deref(),
+            }
+        } else {
+            None
+        },
+        FILEEXPLORER_TREE_MAX_DEPTH,
+        &mut budget,
+    )
+    .unwrap_or_else(|| {
+        let mut meta = BTreeMap::new();
+        meta.insert(
+            "path".to_string(),
+            serde_json::json!(logical_path(node.scope, &node.rel)),
+        );
+        meta.insert(
+            "physicalPath".to_string(),
+            serde_json::json!(node.physical_path),
+        );
+        FileNode {
+            id: logical_id(node.scope, &node.rel),
+            name: display_name(node.scope, &node.rel),
+            kind: NodeKind::Folder,
+            size: 0,
+            modified: now_iso(),
+            meta,
+            actions: file_actions(NodeKind::Folder),
+            children: Vec::new(),
+        }
+    })
 }
 
 async fn handle_index() -> Response {
@@ -300,26 +671,27 @@ async fn handle_healthz() -> Response {
     )
 }
 
-async fn handle_tree(uri: Uri) -> Response {
+async fn handle_tree(State(state): State<AppState>, uri: Uri) -> Response {
     let root_id = uri.query().and_then(|query| {
         query.split('&').find_map(|pair| {
             let (key, value) = pair.split_once('=')?;
             (key == "rootId").then_some(value)
         })
     });
-    let path = match root_id {
-        Some(id) => match decode_node_id(id) {
-            Ok(path) => path,
+    let root = match root_id {
+        Some(id) => match resolve_node_id(&state, id) {
+            Ok(Some(node)) => node_for_resolved(&node, &state),
+            Ok(None) => root_overview_node(&state),
             Err(err) => return error_response(400, err),
         },
-        None => String::new(),
+        None => root_overview_node(&state),
     };
     json_response(
         200,
         &TreeSnapshot {
             schema: "filetree.v1",
             version: now_ms(),
-            root: node_for_path(path.as_str()).await,
+            root,
         },
     )
 }
@@ -334,7 +706,7 @@ async fn record_job(
     let id = format!("job-{}", JOB_SEQ.fetch_add(1, Ordering::Relaxed));
     let now = now_ms();
     let (status, progress, result, error) = match result {
-        Ok(result) => ("completed", 100, result, None),
+        Ok(result) => ("succeeded", 100, result, None),
         Err(err) => ("failed", 100, None, Some(err)),
     };
     state.jobs.write().await.insert(
@@ -372,16 +744,47 @@ async fn handle_create_node(State(state): State<AppState>, body: Bytes) -> Respo
         Err(_) => return error_response(400, "bad json"),
     };
     let result = if request.kind == NodeKind::Folder {
-        let path = format!(
-            "{}/{}",
-            decode_node_id(&request.parent_id).unwrap_or_default(),
-            request.name
-        )
-        .trim_matches('/')
-        .to_string();
+        let parent = match resolve_node_id(&state, &request.parent_id) {
+            Ok(Some(parent)) => parent,
+            Ok(None) => {
+                return record_job(
+                    state,
+                    "node_create",
+                    format!("Create {}", request.name),
+                    vec![request.parent_id],
+                    Err("choose app:// or common:// first".to_string()),
+                )
+                .await;
+            }
+            Err(err) => {
+                return record_job(
+                    state,
+                    "node_create",
+                    format!("Create {}", request.name),
+                    vec![request.parent_id],
+                    Err(err),
+                )
+                .await;
+            }
+        };
+        let name = match sanitize_child_name(&request.name) {
+            Ok(name) => name,
+            Err(err) => {
+                return record_job(
+                    state,
+                    "node_create",
+                    format!("Create {}", request.name),
+                    vec![request.parent_id],
+                    Err(err),
+                )
+                .await;
+            }
+        };
+        let path = join_physical(&parent.physical_path, &name);
+        let id = logical_id(parent.scope, &join_rel(&parent.rel, &name));
         fs::create_dir_all(path.as_str())
             .await
-            .map(|_| Some(serde_json::json!({ "path": path })))
+            .map(|_| Some(serde_json::json!({ "id": id, "path": path })))
             .map_err(|err| format!("create dir failed {}", err))
     } else {
         Err("file creation requires upload bytes".to_string())
@@ -467,11 +870,47 @@ async fn handle_upload_file(
         .and_then(|value| value.to_str().ok())
         .and_then(|value| percent_decode(value).ok())
         .unwrap_or_else(|| "upload.bin".to_string());
-    let parent = decode_node_id(&parent_id).unwrap_or_default();
-    let path = format!("{}/{}", parent, name).trim_matches('/').to_string();
+    let parent = match resolve_node_id(&state, &parent_id) {
+        Ok(Some(parent)) => parent,
+        Ok(None) => {
+            return record_job(
+                state,
+                "node_upload",
+                format!("Upload {}", name),
+                vec![parent_id],
+                Err("choose app:// or common:// first".to_string()),
+            )
+            .await;
+        }
+        Err(err) => {
+            return record_job(
+                state,
+                "node_upload",
+                format!("Upload {}", name),
+                vec![parent_id],
+                Err(err),
+            )
+            .await;
+        }
+    };
+    let name = match sanitize_child_name(&name) {
+        Ok(name) => name,
+        Err(err) => {
+            return record_job(
+                state,
+                "node_upload",
+                format!("Upload {}", name),
+                vec![parent_id],
+                Err(err),
+            )
+            .await;
+        }
+    };
+    let path = join_physical(&parent.physical_path, &name);
+    let id = logical_id(parent.scope, &join_rel(&parent.rel, &name));
     let result = fs::write(path.as_str(), body.as_ref())
         .await
-        .map(|_| Some(serde_json::json!({ "path": path, "bytes": body.len() })))
+        .map(|_| Some(serde_json::json!({ "id": id, "path": path, "bytes": body.len() })))
         .map_err(|err| format!("write failed {}", err));
     record_job(
         state,
@@ -483,12 +922,13 @@ async fn handle_upload_file(
     .await
 }
 
-async fn handle_download_file(Path(id): Path<String>) -> Response {
-    let path = match decode_node_id(&id) {
-        Ok(path) if !path.is_empty() => path,
-        _ => return error_response(404, "bad path"),
+async fn handle_download_file(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    let node = match resolve_node_id(&state, &id) {
+        Ok(Some(node)) => node,
+        Ok(None) => return error_response(404, "bad path"),
+        Err(err) => return error_response(404, err),
     };
-    match fs::read(path.as_str()).await {
+    match fs::read(node.physical_path.as_str()).await {
         Ok(bytes) => Response::builder()
             .status(StatusCode::OK)
             .header(CONTENT_TYPE, "application/octet-stream")
@@ -497,7 +937,7 @@ async fn handle_download_file(Path(id): Path<String>) -> Response {
                 CONTENT_DISPOSITION,
                 format!(
                     "attachment; filename=\"{}\"",
-                    path.rsplit('/').next().unwrap_or("download.bin")
+                    node.rel.rsplit('/').next().unwrap_or("download.bin")
                 ),
             )
             .body(Body::from(bytes))
@@ -506,12 +946,13 @@ async fn handle_download_file(Path(id): Path<String>) -> Response {
     }
 }
 
-async fn handle_node_content(Path(id): Path<String>) -> Response {
-    let path = match decode_node_id(&id) {
-        Ok(path) if !path.is_empty() => path,
-        _ => return error_response(404, "bad path"),
+async fn handle_node_content(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    let node = match resolve_node_id(&state, &id) {
+        Ok(Some(node)) => node,
+        Ok(None) => return error_response(404, "bad path"),
+        Err(err) => return error_response(404, err),
     };
-    match fs::read(path.as_str()).await {
+    match fs::read(node.physical_path.as_str()).await {
         Ok(bytes) => response(200, "text/plain; charset=utf-8", bytes),
         Err(err) => error_response(404, format!("read failed {}", err)),
     }
@@ -532,10 +973,38 @@ async fn handle_job_events() -> Response {
     )
 }
 
-fn router() -> Router {
-    let state = AppState {
+fn new_state() -> AppState {
+    AppState {
         jobs: Arc::new(tokio::sync::RwLock::new(BTreeMap::new())),
-    };
+        app_root: normalize_root(default_app_root()),
+        common_root: default_common_root().map(normalize_root),
+    }
+}
+
+async fn setup_roots(state: &AppState) {
+    if let Err(err) = fs::create_dir_all(state.app_root.as_str()).await {
+        logl::log(
+            level::WARN,
+            format_args!(
+                "fileexplorer-http: app root setup failed path={} err={}",
+                state.app_root, err
+            ),
+        );
+    }
+    if let Some(common_root) = state.common_root.as_deref() {
+        if let Err(err) = fs::create_dir_all(common_root).await {
+            logl::log(
+                level::WARN,
+                format_args!(
+                    "fileexplorer-http: common root setup failed path={} err={}",
+                    common_root, err
+                ),
+            );
+        }
+    }
+}
+
+fn router(state: AppState) -> Router {
     Router::new()
         .route("/", get(handle_index))
         .route("/index.html", get(handle_index))
@@ -600,7 +1069,17 @@ async fn serve_port(app: Router, port: u16) {
 }
 
 async fn fileexplorer_http_runtime() {
-    let app = router();
+    let state = new_state();
+    logl::log(
+        level::INFO,
+        format_args!(
+            "fileexplorer-http: roots app={} common={}",
+            state.app_root,
+            state.common_root.as_deref().unwrap_or("<none>")
+        ),
+    );
+    setup_roots(&state).await;
+    let app = router(state);
     tokio::task::spawn_local(serve_port(app.clone(), FILEEXPLORER_ALT_TCP_PORT));
     serve_port(app, FILEEXPLORER_HTTP_TCP_PORT).await;
 }
