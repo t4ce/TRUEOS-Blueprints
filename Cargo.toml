@@ -8,6 +8,7 @@ members = [
     ".",
     "api",
     "apps/chatserver",
+    "apps/condvar",
     "apps/cross",
     "apps/file-system",
     "apps/fileexplorer",

@@ -1,6 +1,7 @@
 {
   "apps": [
     "chatserver",
+    "condvar",
     "cross",
     "file-system",
     "fileexplorer",

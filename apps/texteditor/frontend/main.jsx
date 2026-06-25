@@ -42,8 +42,172 @@ function downloadBlob(format, text, type) {
 }
 
 function formatTime(timestampSeconds) {
-  if (!timestampSeconds) return "not saved";
+  if (!timestampSeconds) return "not stored yet";
   return new Date(timestampSeconds * 1000).toLocaleString();
+}
+
+function suggestedFilename(format) {
+  if (format === "html") return "document.html";
+  if (format === "json") return "document.blocknote.json";
+  if (format === "txt") return "document.txt";
+  return "document.md";
+}
+
+function joinPath(dir, name) {
+  const cleanDir = String(dir || ".").replace(/\/+$/g, "");
+  const cleanName = String(name || "").replace(/^\/+/g, "");
+  if (!cleanDir || cleanDir === ".") return cleanName;
+  return `${cleanDir}/${cleanName}`;
+}
+
+function parentPath(path) {
+  const clean = String(path || ".").replace(/\/+$/g, "");
+  if (!clean || clean === "." || !clean.includes("/")) return ".";
+  return clean.split("/").slice(0, -1).join("/") || ".";
+}
+
+function StoreDialog({ editor, onClose, onStored }) {
+  const [dir, setDir] = useState("texteditor");
+  const [entries, setEntries] = useState([]);
+  const [filename, setFilename] = useState("document.md");
+  const [format, setFormat] = useState("md");
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const loadDir = useCallback(async (nextDir = dir) => {
+    setBusy(true);
+    setMessage("");
+    try {
+      const res = await fetch(`${API}/fs/list?path=${encodeURIComponent(nextDir || ".")}`, { cache: "no-store" });
+      const json = await res.json();
+      if (!res.ok || !json.ok) throw new Error(json.error || `HTTP ${res.status}`);
+      setDir(json.path || ".");
+      setEntries(json.entries || []);
+    } catch (err) {
+      setMessage(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }, [dir]);
+
+  useEffect(() => {
+    loadDir("texteditor");
+  }, []);
+
+  const selectFormat = useCallback((nextFormat) => {
+    setFormat(nextFormat);
+    setFilename((current) => {
+      const base = current.replace(/(\.blocknote)?\.(json|md|markdown|html|txt)$/i, "");
+      const suggested = suggestedFilename(nextFormat);
+      const ext = suggested.slice("document".length);
+      return `${base || "document"}${ext}`;
+    });
+  }, []);
+
+  const createFolder = useCallback(async () => {
+    const name = window.prompt("Folder name");
+    if (!name) return;
+    const folderPath = joinPath(dir, name.trim());
+    setBusy(true);
+    setMessage("");
+    try {
+      const res = await fetch(`${API}/fs/mkdir`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path: folderPath }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.ok) throw new Error(json.error || `HTTP ${res.status}`);
+      await loadDir(dir);
+    } catch (err) {
+      setMessage(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }, [dir, loadDir]);
+
+  const storeCopy = useCallback(async () => {
+    const cleanName = filename.trim();
+    if (!cleanName) {
+      setMessage("Choose a file name");
+      return;
+    }
+    setBusy(true);
+    setMessage("Storing");
+    try {
+      const [markdown, html] = await Promise.all([
+        editor.blocksToMarkdownLossy(editor.document),
+        editor.blocksToHTMLLossy(editor.document),
+      ]);
+      const res = await fetch(`${API}/fs/store`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          path: joinPath(dir, cleanName),
+          format,
+          blocks: editor.document,
+          markdown,
+          html,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.ok) throw new Error(json.error || `HTTP ${res.status}`);
+      setMessage(`Stored ${json.path}`);
+      onStored?.(json.path);
+      await loadDir(dir);
+    } catch (err) {
+      setMessage(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }, [dir, editor, filename, format, loadDir, onStored]);
+
+  return React.createElement("div", { className: "modal-backdrop", role: "dialog", "aria-modal": "true" },
+    React.createElement("div", { className: "file-dialog" },
+      React.createElement("div", { className: "dialog-head" },
+        React.createElement("div", null,
+          React.createElement("h2", null, "Store Copy"),
+          React.createElement("p", null, dir)
+        ),
+        React.createElement("button", { type: "button", className: "icon-btn", onClick: onClose, "aria-label": "Close" }, "x")
+      ),
+      React.createElement("div", { className: "dialog-toolbar" },
+        React.createElement("button", { type: "button", className: "btn", onClick: () => loadDir(parentPath(dir)), disabled: busy }, "Up"),
+        React.createElement("button", { type: "button", className: "btn", onClick: createFolder, disabled: busy }, "New Folder"),
+        React.createElement("button", { type: "button", className: "btn", onClick: () => loadDir(dir), disabled: busy }, "Refresh")
+      ),
+      React.createElement("div", { className: "file-list" },
+        entries.length ? entries.map((entry) =>
+          React.createElement("button", {
+            key: entry.path,
+            type: "button",
+            className: `file-row ${entry.kind}`,
+            onClick: () => entry.kind === "folder" ? loadDir(entry.path) : setFilename(entry.name),
+          },
+            React.createElement("span", { className: "file-kind" }, entry.kind === "folder" ? "/" : "."),
+            React.createElement("span", { className: "file-name" }, entry.name),
+            React.createElement("span", { className: "file-size" }, entry.kind === "folder" ? "" : `${entry.size} B`)
+          )
+        ) : React.createElement("div", { className: "empty-list" }, busy ? "Loading" : "Empty")
+      ),
+      React.createElement("div", { className: "store-controls" },
+        React.createElement("select", { value: format, onChange: (event) => selectFormat(event.target.value), disabled: busy },
+          React.createElement("option", { value: "md" }, "Markdown"),
+          React.createElement("option", { value: "txt" }, "Plain Text"),
+          React.createElement("option", { value: "html" }, "HTML"),
+          React.createElement("option", { value: "json" }, "BlockNote JSON")
+        ),
+        React.createElement("input", {
+          value: filename,
+          onChange: (event) => setFilename(event.target.value),
+          disabled: busy,
+          spellCheck: "false",
+        }),
+        React.createElement("button", { type: "button", className: "btn primary", onClick: storeCopy, disabled: busy }, "Store Here")
+      ),
+      React.createElement("p", { className: message.includes("failed") || message.includes("bad") ? "dialog-message error" : "dialog-message" }, message || " ")
+    )
+  );
 }
 
 function EditorSurface({ initialDocument }) {
@@ -54,6 +218,7 @@ function EditorSurface({ initialDocument }) {
   const [savedAt, setSavedAt] = useState(initialDocument?.updatedAtS ?? 0);
   const [dirty, setDirty] = useState(false);
   const [wordCount, setWordCount] = useState(0);
+  const [storeDialogOpen, setStoreDialogOpen] = useState(false);
   const saveTimer = useRef(null);
   const saving = useRef(false);
 
@@ -85,7 +250,7 @@ function EditorSurface({ initialDocument }) {
       if (!res.ok || !json.ok) throw new Error(json.error || `HTTP ${res.status}`);
       setSavedAt(json.document.updatedAtS);
       setDirty(false);
-      setStatus("saved");
+      setStatus("stored");
     } catch (err) {
       setStatus(err.message);
     } finally {
@@ -124,9 +289,11 @@ function EditorSurface({ initialDocument }) {
 
   const badge = useMemo(() => {
     if (dirty) return "Unsaved";
-    if (status === "saved") return "Saved";
+    if (status === "stored") return "Stored on TRUEOS FS";
+    if (status === "ready") return savedAt ? "Loaded from TRUEOS FS" : "Ready";
+    if (status === "saving") return "Storing";
     return status;
-  }, [dirty, status]);
+  }, [dirty, savedAt, status]);
 
   return React.createElement("div", { className: "shell" },
     React.createElement("header", { className: "topbar" },
@@ -134,12 +301,13 @@ function EditorSurface({ initialDocument }) {
         React.createElement("div", { className: "brand-mark" }, "T"),
         React.createElement("div", null,
           React.createElement("h1", null, "TRUEOS Text Editor"),
-          React.createElement("p", null, `${wordCount} words / ${formatTime(savedAt)}`)
+          React.createElement("p", null, `${wordCount} words / ${formatTime(savedAt)} / texteditor/document.json`)
         )
       ),
       React.createElement("div", { className: "actions" },
         React.createElement("span", { className: dirty ? "pill warn" : "pill ok" }, badge),
         React.createElement("button", { type: "button", className: "btn primary", onClick: save }, "Save"),
+        React.createElement("button", { type: "button", className: "btn", onClick: () => setStoreDialogOpen(true) }, "Store Copy"),
         React.createElement("button", { type: "button", className: "btn", onClick: () => exportCurrent("json") }, "JSON"),
         React.createElement("button", { type: "button", className: "btn", onClick: () => exportCurrent("md") }, "MD"),
         React.createElement("button", { type: "button", className: "btn", onClick: () => exportCurrent("html") }, "HTML")
@@ -151,7 +319,12 @@ function EditorSurface({ initialDocument }) {
         theme: "light",
         className: "trueos-editor",
       })
-    )
+    ),
+    storeDialogOpen && React.createElement(StoreDialog, {
+      editor,
+      onClose: () => setStoreDialogOpen(false),
+      onStored: () => setStatus("stored"),
+    })
   );
 }
 

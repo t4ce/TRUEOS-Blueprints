@@ -1,7 +1,7 @@
 :root {
   color-scheme: light;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  background: #f6f7f9;
+  background: #ffffff;
   color: #17202a;
 }
 
@@ -28,9 +28,7 @@ button {
   display: grid;
   grid-template-rows: auto 1fr;
   height: 100vh;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(246, 247, 249, 0.96)),
-    #f6f7f9;
+  background: #ffffff;
 }
 
 .topbar {
@@ -132,26 +130,26 @@ p {
 .editor-frame {
   min-height: 0;
   overflow: auto;
-  padding: 28px;
+  background: #ffffff;
+  padding: 0;
 }
 
 .trueos-editor {
-  width: min(100%, 980px);
-  min-height: calc(100vh - 128px);
+  min-height: calc(100vh - 63px);
   margin: 0 auto;
-  border: 1px solid #dce1e8;
-  border-radius: 8px;
-  background: #ffffff;
-  box-shadow: 0 18px 45px rgba(42, 52, 68, 0.08);
+  background: transparent;
 }
 
 .trueos-editor .bn-container {
-  min-height: calc(100vh - 132px);
+  min-height: calc(100vh - 63px);
+  background: #ffffff;
 }
 
 .trueos-editor .bn-editor {
-  min-height: calc(100vh - 132px);
-  padding: 46px 54px 70px;
+  width: min(100%, 940px);
+  min-height: calc(100vh - 63px);
+  margin: 0 auto;
+  padding: 30px 42px 72px;
 }
 
 .boot {
@@ -164,6 +162,155 @@ p {
 }
 
 .boot.error {
+  color: #b42318;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(23, 32, 42, 0.28);
+}
+
+.file-dialog {
+  display: grid;
+  grid-template-rows: auto auto minmax(180px, 1fr) auto auto;
+  width: min(760px, 100%);
+  max-height: min(720px, calc(100vh - 36px));
+  overflow: hidden;
+  border: 1px solid #cfd6df;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 24px 70px rgba(23, 32, 42, 0.22);
+}
+
+.dialog-head,
+.dialog-toolbar,
+.store-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  border-bottom: 1px solid #e1e6ee;
+}
+
+.dialog-head {
+  justify-content: space-between;
+}
+
+.dialog-head h2 {
+  margin: 0;
+  font-size: 15px;
+  letter-spacing: 0;
+}
+
+.icon-btn {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid #cfd6df;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #17202a;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.file-list {
+  min-height: 0;
+  overflow: auto;
+  padding: 6px;
+}
+
+.file-row {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  align-items: center;
+  width: 100%;
+  min-height: 38px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #17202a;
+  cursor: pointer;
+  gap: 8px;
+  padding: 7px 9px;
+  text-align: left;
+}
+
+.file-row:hover {
+  background: #f3f6f9;
+}
+
+.file-kind {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  background: #e7edf4;
+  color: #536174;
+  font-weight: 800;
+}
+
+.file-row.folder .file-kind {
+  background: #e0f2f1;
+  color: #0f766e;
+}
+
+.file-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-size {
+  color: #667487;
+  font-size: 12px;
+}
+
+.empty-list {
+  display: grid;
+  place-items: center;
+  min-height: 160px;
+  color: #667487;
+  font-size: 13px;
+}
+
+.store-controls {
+  border-top: 1px solid #e1e6ee;
+  border-bottom: 0;
+}
+
+.store-controls select,
+.store-controls input {
+  min-height: 34px;
+  border: 1px solid #cfd6df;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #17202a;
+  padding: 7px 10px;
+  font: inherit;
+  font-size: 13px;
+}
+
+.store-controls input {
+  min-width: 0;
+  flex: 1;
+}
+
+.dialog-message {
+  min-height: 30px;
+  margin: 0;
+  padding: 0 12px 12px;
+}
+
+.dialog-message.error {
   color: #b42318;
 }
 
@@ -189,16 +336,21 @@ p {
   }
 
   .editor-frame {
-    padding: 12px;
+    padding: 0;
   }
 
   .trueos-editor,
   .trueos-editor .bn-container {
-    min-height: calc(100vh - 150px);
+    min-height: calc(100vh - 140px);
   }
 
   .trueos-editor .bn-editor {
-    min-height: calc(100vh - 150px);
-    padding: 28px 18px 56px;
+    min-height: calc(100vh - 140px);
+    padding: 24px 18px 56px;
+  }
+
+  .store-controls {
+    align-items: stretch;
+    flex-direction: column;
   }
 }

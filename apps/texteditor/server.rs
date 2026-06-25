@@ -9,6 +9,9 @@ use alloc::{
 };
 use core::sync::atomic::{AtomicU16, Ordering};
 
+#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+use std::fs as host_fs;
+
 use axum::{
     Router,
     body::{Body, Bytes},
@@ -34,6 +37,7 @@ use trueos::{
 const TEXTEDITOR_HTTP_TCP_PORT: u16 = 1010;
 const TEXTEDITOR_BIND_RETRY_MS: u64 = 1000;
 const TEXTEDITOR_BODY_MAX: usize = 2 * 1024 * 1024;
+const TEXTEDITOR_FS_LIST_MAX: usize = 256;
 const TEXTEDITOR_STORE_DIR: &str = "texteditor";
 const TEXTEDITOR_STORE_PATH: &str = "texteditor/document.json";
 const TEXTEDITOR_INDEX_HTML: &str = include_str!("index.html");
@@ -63,6 +67,40 @@ struct DocumentEnvelope {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SaveDocumentRequest {
+    blocks: Value,
+    #[serde(default)]
+    markdown: String,
+    #[serde(default)]
+    html: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum FsNodeKind {
+    File,
+    Folder,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FsEntry {
+    name: String,
+    path: String,
+    kind: FsNodeKind,
+    size: u64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateFolderRequest {
+    path: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StoreCopyRequest {
+    path: String,
+    format: String,
     blocks: Value,
     #[serde(default)]
     markdown: String,
@@ -182,6 +220,191 @@ fn validate_blocks(blocks: &Value) -> Result<(), &'static str> {
     }
 }
 
+fn normalize_fs_path(path: &str) -> Result<String, String> {
+    let path = path.trim().replace('\\', "/");
+    if path.is_empty() || path == "." || path == "/" {
+        return Ok(".".to_string());
+    }
+    if path
+        .split('/')
+        .any(|segment| segment == ".." || segment.contains('\0'))
+    {
+        return Err("bad path".to_string());
+    }
+    Ok(path.trim_matches('/').to_string())
+}
+
+fn join_path(parent: &str, name: &str) -> String {
+    if parent == "." || parent.is_empty() {
+        name.to_string()
+    } else {
+        format!("{}/{}", parent.trim_end_matches('/'), name)
+    }
+}
+
+fn parent_dir(path: &str) -> Option<String> {
+    path.rsplit_once('/').and_then(|(parent, _)| {
+        let parent = parent.trim();
+        (!parent.is_empty()).then(|| parent.to_string())
+    })
+}
+
+fn percent_decode(input: &str) -> Result<String, String> {
+    let bytes = input.as_bytes();
+    let mut out = Vec::new();
+    let mut index = 0usize;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'%' if index + 2 < bytes.len() => {
+                let hi = hex(bytes[index + 1]).ok_or_else(|| "bad escape".to_string())?;
+                let lo = hex(bytes[index + 2]).ok_or_else(|| "bad escape".to_string())?;
+                out.push((hi << 4) | lo);
+                index += 3;
+            }
+            b'%' => return Err("bad escape".to_string()),
+            b'+' => {
+                out.push(b' ');
+                index += 1;
+            }
+            byte => {
+                out.push(byte);
+                index += 1;
+            }
+        }
+    }
+    String::from_utf8(out).map_err(|_| "bad utf8".to_string())
+}
+
+fn hex(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+const TRUEOS_FS_KIND_FILE: u32 = 1;
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+const TRUEOS_FS_KIND_DIR: u32 = 2;
+
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+unsafe extern "C" {
+    fn trueos_cabi_fs_list_dir(
+        path_ptr: *const u8,
+        path_len: usize,
+        out_ptr: *mut u8,
+        out_cap: usize,
+    ) -> isize;
+    fn trueos_cabi_fs_stat(
+        path_ptr: *const u8,
+        path_len: usize,
+        out_kind: *mut u32,
+        out_len: *mut u64,
+    ) -> i32;
+}
+
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+fn list_dir_names(path: &str) -> Result<Vec<String>, String> {
+    let bytes = path.as_bytes();
+    let len =
+        unsafe { trueos_cabi_fs_list_dir(bytes.as_ptr(), bytes.len(), core::ptr::null_mut(), 0) };
+    if len < 0 {
+        return Err("list failed".to_string());
+    }
+
+    let mut out = vec![0u8; len as usize];
+    let got = unsafe {
+        trueos_cabi_fs_list_dir(bytes.as_ptr(), bytes.len(), out.as_mut_ptr(), out.len())
+    };
+    if got < 0 {
+        return Err("list failed".to_string());
+    }
+
+    out.truncate(got as usize);
+    let text = String::from_utf8(out).map_err(|_| "bad utf8 in directory listing".to_string())?;
+    Ok(text
+        .lines()
+        .filter(|line| !line.is_empty())
+        .map(String::from)
+        .collect())
+}
+
+#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+fn list_dir_names(path: &str) -> Result<Vec<String>, String> {
+    let mut out = Vec::new();
+    for entry in host_fs::read_dir(path).map_err(|err| format!("list failed {err}"))? {
+        let entry = entry.map_err(|err| format!("list entry failed {err}"))?;
+        out.push(entry.file_name().to_string_lossy().into_owned());
+    }
+    Ok(out)
+}
+
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+fn stat_path(path: &str) -> Option<(FsNodeKind, u64)> {
+    let bytes = path.as_bytes();
+    let mut kind = 0u32;
+    let mut len = 0u64;
+    let rc = unsafe {
+        trueos_cabi_fs_stat(
+            bytes.as_ptr(),
+            bytes.len(),
+            &mut kind as *mut u32,
+            &mut len as *mut u64,
+        )
+    };
+    if rc != 0 {
+        return None;
+    }
+    match kind {
+        TRUEOS_FS_KIND_FILE => Some((FsNodeKind::File, len)),
+        TRUEOS_FS_KIND_DIR => Some((FsNodeKind::Folder, len)),
+        _ => None,
+    }
+}
+
+#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+fn stat_path(path: &str) -> Option<(FsNodeKind, u64)> {
+    let metadata = host_fs::metadata(path).ok()?;
+    let kind = if metadata.is_dir() {
+        FsNodeKind::Folder
+    } else {
+        FsNodeKind::File
+    };
+    Some((kind, metadata.len()))
+}
+
+fn list_entries(path: &str) -> Result<Vec<FsEntry>, String> {
+    let mut entries = Vec::new();
+    for name in list_dir_names(path)?
+        .into_iter()
+        .take(TEXTEDITOR_FS_LIST_MAX)
+    {
+        if name == "." || name == ".." {
+            continue;
+        }
+        let child_path = join_path(path, &name);
+        let Some((kind, size)) = stat_path(&child_path) else {
+            continue;
+        };
+        entries.push(FsEntry {
+            name,
+            path: child_path,
+            kind,
+            size,
+        });
+    }
+    entries.sort_by(|a, b| {
+        let rank_a = if a.kind == FsNodeKind::Folder { 0 } else { 1 };
+        let rank_b = if b.kind == FsNodeKind::Folder { 0 } else { 1 };
+        rank_a
+            .cmp(&rank_b)
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+    });
+    Ok(entries)
+}
+
 async fn load_document() -> DocumentEnvelope {
     let bytes = match fs::read(TEXTEDITOR_STORE_PATH).await {
         Ok(bytes) => bytes,
@@ -285,6 +508,107 @@ async fn handle_document_save(body: Bytes) -> Response {
     }
 }
 
+async fn handle_fs_list(uri: Uri) -> Response {
+    let raw_path = uri
+        .query()
+        .and_then(|query| {
+            query.split('&').find_map(|pair| {
+                let (key, value) = pair.split_once('=')?;
+                (key == "path").then_some(value)
+            })
+        })
+        .unwrap_or(".");
+    let decoded = match percent_decode(raw_path) {
+        Ok(path) => path,
+        Err(err) => return error_response(400, err),
+    };
+    let path = match normalize_fs_path(&decoded) {
+        Ok(path) => path,
+        Err(err) => return error_response(400, err),
+    };
+    match list_entries(&path) {
+        Ok(entries) => json_response(
+            200,
+            &serde_json::json!({
+                "ok": true,
+                "path": path,
+                "entries": entries,
+            }),
+        ),
+        Err(err) => error_response(400, err),
+    }
+}
+
+async fn handle_fs_mkdir(body: Bytes) -> Response {
+    if body.len() > TEXTEDITOR_BODY_MAX {
+        return error_response(413, "request too large");
+    }
+    let req = match serde_json::from_slice::<CreateFolderRequest>(body.as_ref()) {
+        Ok(req) => req,
+        Err(_) => return error_response(400, "bad json"),
+    };
+    let path = match normalize_fs_path(&req.path) {
+        Ok(path) => path,
+        Err(err) => return error_response(400, err),
+    };
+    match fs::create_dir_all(path.as_str()).await {
+        Ok(()) => json_response(
+            200,
+            &serde_json::json!({
+                "ok": true,
+                "path": path,
+            }),
+        ),
+        Err(err) => error_response(500, format!("create folder failed: {err}")),
+    }
+}
+
+async fn handle_fs_store(body: Bytes) -> Response {
+    if body.len() > TEXTEDITOR_BODY_MAX {
+        return error_response(413, "request too large");
+    }
+    let req = match serde_json::from_slice::<StoreCopyRequest>(body.as_ref()) {
+        Ok(req) => req,
+        Err(_) => return error_response(400, "bad json"),
+    };
+    if let Err(err) = validate_blocks(&req.blocks) {
+        return error_response(400, err);
+    }
+    let path = match normalize_fs_path(&req.path) {
+        Ok(path) if path != "." => path,
+        Ok(_) => return error_response(400, "choose a file path"),
+        Err(err) => return error_response(400, err),
+    };
+    if let Some(parent) = parent_dir(&path) {
+        if let Err(err) = fs::create_dir_all(parent.as_str()).await {
+            return error_response(500, format!("create parent folder failed: {err}"));
+        }
+    }
+
+    let bytes = match req.format.as_str() {
+        "md" | "markdown" | "txt" | "text" => req.markdown.into_bytes(),
+        "html" => req.html.into_bytes(),
+        "json" | "blocknote" => match serde_json::to_vec_pretty(&req.blocks) {
+            Ok(bytes) => bytes,
+            Err(_) => return error_response(500, "json export failed"),
+        },
+        _ => return error_response(400, "bad format"),
+    };
+
+    match fs::write(path.as_str(), bytes.as_slice()).await {
+        Ok(()) => json_response(
+            200,
+            &serde_json::json!({
+                "ok": true,
+                "path": path,
+                "format": req.format,
+                "bytes": bytes.len(),
+            }),
+        ),
+        Err(err) => error_response(500, format!("write failed: {err}")),
+    }
+}
+
 async fn handle_export(uri: Uri) -> Response {
     let document = load_document().await;
     let format = uri
@@ -339,6 +663,15 @@ fn router() -> Router {
         .route(
             "/api/texteditor/document",
             get(handle_document_get).post(handle_document_save),
+        )
+        .route("/api/texteditor/fs/list", get(handle_fs_list))
+        .route(
+            "/api/texteditor/fs/mkdir",
+            get(handle_status).post(handle_fs_mkdir),
+        )
+        .route(
+            "/api/texteditor/fs/store",
+            get(handle_status).post(handle_fs_store),
         )
         .route("/api/texteditor/export", get(handle_export))
 }
