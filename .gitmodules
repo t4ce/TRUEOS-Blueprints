@@ -7,6 +7,9 @@
 [submodule "apps/fd"]
 	path = apps/fd
 	url = https://github.com/t4ce/fd.git
+[submodule "apps/Reticulum-rs"]
+	path = apps/Reticulum-rs
+	url = https://github.com/t4ce/Reticulum-rs
 [submodule "vendor/tantivy"]
 	path = vendor/tantivy
 	url = https://github.com/quickwit-oss/tantivy.git
