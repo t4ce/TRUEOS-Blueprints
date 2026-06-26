@@ -67,12 +67,12 @@ axum = { path = "vendor/axum-0.8.9" }
 axum-core = { path = "vendor/axum-core-0.5.6" }
 base64 = { path = "vendor/base64-0.22.1" }
 bytes = { path = "vendor/bytes-1.11.1" }
-crossbeam = { path = "../TRUEOS/vendor/crossbeam-0.8.4" }
-crossbeam-channel = { path = "../TRUEOS/vendor/crossbeam-channel-0.5.15" }
-crossbeam-deque = { path = "../TRUEOS/vendor/crossbeam-deque-0.8.6" }
-crossbeam-epoch = { path = "../TRUEOS/vendor/crossbeam-epoch-0.9.18" }
-crossbeam-queue = { path = "../TRUEOS/vendor/crossbeam-queue-0.3.12" }
-crossbeam-utils = { path = "../TRUEOS/vendor/crossbeam-utils-0.8.21" }
+crossbeam = { path = "vendor/crossbeam-0.8.4" }
+crossbeam-channel = { path = "vendor/crossbeam-channel-0.5.15" }
+crossbeam-deque = { path = "vendor/crossbeam-deque-0.8.6" }
+crossbeam-epoch = { path = "vendor/crossbeam-epoch-0.9.18" }
+crossbeam-queue = { path = "vendor/crossbeam-queue-0.3.12" }
+crossbeam-utils = { path = "vendor/crossbeam-utils-0.8.21" }
 form_urlencoded = { path = "vendor/form_urlencoded-1.2.2" }
 getrandom = { path = "vendor/getrandom-0.2.17" }
 getrandom_03 = { package = "getrandom", path = "vendor/getrandom-0.3.4" }
@@ -91,6 +91,8 @@ mio = { path = "vendor/mio-1.2.0" }
 percent-encoding = { path = "vendor/percent-encoding-2.3.2" }
 reqwest = { path = "vendor/reqwest-0.13.3" }
 ring = { path = "vendor/ring-0.17.14" }
+rayon = { path = "vendor/rayon" }
+rayon-core = { path = "vendor/rayon/rayon-core" }
 rustls-rustcrypto = { path = "vendor/rustls-rustcrypto-0.0.2-alpha" }
 serde_urlencoded = { path = "vendor/serde_urlencoded-0.7.1" }
 socket2 = { path = "vendor/socket2-0.6.3" }
