@@ -573,10 +573,10 @@ pub mod thread {
     use core::sync::atomic::{AtomicUsize, Ordering};
     use core::time::Duration;
 
-    const TRUEOS_THREAD_LOCAL_SLOT_COUNT: usize = 64;
+    const TRUEOS_THREAD_LOCAL_SLOT_COUNT: usize = 4096;
 
-    unsafe extern "Rust" {
-        fn trueos_tokio_tls_current_slot() -> u32;
+    unsafe extern "C" {
+        fn trueos_cabi_wls_current_slot() -> u32;
     }
 
     unsafe extern "C" {
@@ -729,7 +729,7 @@ pub mod thread {
         }
 
         fn get_or_init_ptr(&'static self) -> usize {
-            let slot = unsafe { trueos_tokio_tls_current_slot() } as usize;
+            let slot = unsafe { trueos_cabi_wls_current_slot() } as usize;
             let slot = if slot < TRUEOS_THREAD_LOCAL_SLOT_COUNT {
                 slot
             } else {

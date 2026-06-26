@@ -14,6 +14,7 @@
     "test_some_crates",
     "texteditor",
     "webdevices",
-    "webmail"
+    "webmail",
+    "wls"
   ]
 }

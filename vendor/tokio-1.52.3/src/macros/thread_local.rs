@@ -15,10 +15,10 @@ pub(crate) mod trueos_tls {
     use alloc::boxed::Box;
     use core::sync::atomic::{AtomicUsize, Ordering};
 
-    const TRUEOS_TLS_SLOT_COUNT: usize = 64;
+    const TRUEOS_TLS_SLOT_COUNT: usize = 4096;
 
-    unsafe extern "Rust" {
-        fn trueos_tokio_tls_current_slot() -> u32;
+    unsafe extern "C" {
+        fn trueos_cabi_wls_current_slot() -> u32;
     }
 
     pub(crate) struct LocalKey<T: 'static> {
@@ -53,7 +53,7 @@ pub(crate) mod trueos_tls {
         }
 
         fn get_or_init_ptr(&'static self) -> usize {
-            let slot = unsafe { trueos_tokio_tls_current_slot() } as usize;
+            let slot = unsafe { trueos_cabi_wls_current_slot() } as usize;
             let slot = if slot < TRUEOS_TLS_SLOT_COUNT {
                 slot
             } else {

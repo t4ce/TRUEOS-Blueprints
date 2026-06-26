@@ -21,6 +21,7 @@ members = [
     "apps/tokio_rt",
     "apps/webdevices",
     "apps/webmail",
+    "apps/wls",
 ]
 exclude = ["crates", "crates/*", "vendor", "vendor/*"]
 default-members = ["."]

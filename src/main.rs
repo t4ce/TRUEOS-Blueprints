@@ -1120,6 +1120,38 @@ fn ensure_rust_std_trueos_no_threads_tls() -> Result<(), String> {
     if source.contains("TRUEOS_STD_NO_THREADS_PER_SLOT") {
         let original = source.clone();
         source = source.replace(
+            "const TRUEOS_STD_NO_THREADS_PER_SLOT: usize = 128;",
+            "const TRUEOS_STD_NO_THREADS_PER_SLOT: usize = 4096;",
+        );
+        source = source.replace(
+            "const TRUEOS_STD_NO_THREADS_PER_SLOT: usize = 64;",
+            "const TRUEOS_STD_NO_THREADS_PER_SLOT: usize = 4096;",
+        );
+        source = source.replace(
+            "const TRUEOS_STD_NO_THREADS_PER_SLOT: usize = 1024;",
+            "const TRUEOS_STD_NO_THREADS_PER_SLOT: usize = 4096;",
+        );
+        source = source.replace(
+            r#"unsafe extern "Rust" {
+    fn trueos_tokio_tls_current_slot() -> u32;
+}"#,
+            r#"unsafe extern "C" {
+    fn trueos_cabi_wls_current_slot() -> u32;
+}"#,
+        );
+        source = source.replace(
+            "let slot = unsafe { trueos_tokio_tls_current_slot() } as usize;",
+            "let slot = unsafe { trueos_cabi_wls_current_slot() } as usize;",
+        );
+        source = source.replace(
+            r#"                static __RUST_STD_INTERNAL_VAL: $crate::thread::local_impl::EagerStorage<$t> =
+                    $crate::thread::local_impl::EagerStorage { value: __RUST_STD_INTERNAL_INIT };
+                &__RUST_STD_INTERNAL_VAL.value"#,
+            r#"                static __RUST_STD_INTERNAL_VAL: $crate::thread::local_impl::LazyStorage<$t> =
+                    $crate::thread::local_impl::LazyStorage::new();
+                __RUST_STD_INTERNAL_VAL.get(None, || __RUST_STD_INTERNAL_INIT)"#,
+        );
+        source = source.replace(
             r#"        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
         unsafe {
             $crate::thread::LocalKey::new(|_| {
@@ -1143,9 +1175,9 @@ fn ensure_rust_std_trueos_no_threads_tls() -> Result<(), String> {
         unsafe {
             $crate::thread::LocalKey::new(|_| {
                 $(#[$align_attr])*
-                static __RUST_STD_INTERNAL_VAL: $crate::thread::local_impl::EagerStorage<$t> =
-                    $crate::thread::local_impl::EagerStorage { value: __RUST_STD_INTERNAL_INIT };
-                &__RUST_STD_INTERNAL_VAL.value
+                static __RUST_STD_INTERNAL_VAL: $crate::thread::local_impl::LazyStorage<$t> =
+                    $crate::thread::local_impl::LazyStorage::new();
+                __RUST_STD_INTERNAL_VAL.get(None, || __RUST_STD_INTERNAL_INIT)
             })
         }"#,
         );
@@ -1160,12 +1192,12 @@ fn ensure_rust_std_trueos_no_threads_tls() -> Result<(), String> {
         if source != original {
             fs::write(&no_threads_rs, source).map_err(|err| {
                 format!(
-                    "failed to repair Rust std no_threads TLS source {}: {err}",
+                    "failed to upgrade Rust std no_threads TLS source {}: {err}",
                     no_threads_rs.display()
                 )
             })?;
             println!(
-                "trueos-blueprint: repaired rust-src std no_threads const TLS for trueos: {}",
+                "trueos-blueprint: upgraded rust-src std no_threads TLS for TRUEOS WLS: {}",
                 no_threads_rs.display()
             );
         }
@@ -1208,16 +1240,16 @@ use crate::{
 use crate::ptr;
 
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-const TRUEOS_STD_NO_THREADS_PER_SLOT: usize = 128;
+const TRUEOS_STD_NO_THREADS_PER_SLOT: usize = 4096;
 
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-unsafe extern "Rust" {
-    fn trueos_tokio_tls_current_slot() -> u32;
+unsafe extern "C" {
+    fn trueos_cabi_wls_current_slot() -> u32;
 }
 
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
 fn trueos_std_thread_local_slot() -> usize {
-    let slot = unsafe { trueos_tokio_tls_current_slot() } as usize;
+    let slot = unsafe { trueos_cabi_wls_current_slot() } as usize;
     if slot < TRUEOS_STD_NO_THREADS_PER_SLOT {
         slot
     } else {
@@ -1225,6 +1257,24 @@ fn trueos_std_thread_local_slot() -> usize {
     }
 }"#,
         "imports",
+    )?;
+
+    replace_required(
+        &mut source,
+        &no_threads_rs,
+        r#"            $crate::thread::LocalKey::new(|_| {
+                $(#[$align_attr])*
+                static __RUST_STD_INTERNAL_VAL: $crate::thread::local_impl::EagerStorage<$t> =
+                    $crate::thread::local_impl::EagerStorage { value: __RUST_STD_INTERNAL_INIT };
+                &__RUST_STD_INTERNAL_VAL.value
+            })"#,
+        r#"            $crate::thread::LocalKey::new(|_| {
+                $(#[$align_attr])*
+                static __RUST_STD_INTERNAL_VAL: $crate::thread::local_impl::LazyStorage<$t> =
+                    $crate::thread::local_impl::LazyStorage::new();
+                __RUST_STD_INTERNAL_VAL.get(None, || __RUST_STD_INTERNAL_INIT)
+            })"#,
+        "const eager storage",
     )?;
 
     replace_required(
@@ -2116,7 +2166,12 @@ fn staged_manifest_for_overlay(
     let nested_workspace_package = manifest_relative.components().count() > 1;
     strip_manifest_patch_section(&staged_manifest)?;
     if !nested_workspace_package {
-        materialize_staged_workspace_dependencies(app_dir, work_dir, &staged_manifest)?;
+        materialize_staged_workspace_dependencies(
+            app_dir,
+            work_dir,
+            &staged_manifest,
+            source_overlay,
+        )?;
     }
     materialize_trueos_blueprint_dependency(app_dir, &staged_manifest)?;
     materialize_hidden_build_std_pins(&staged_manifest, build_settings, source_overlay)?;
@@ -3042,6 +3097,7 @@ fn materialize_staged_workspace_dependencies(
     app_dir: &Path,
     work_dir: &Path,
     manifest_path: &Path,
+    source_overlay: &[CratePatch],
 ) -> Result<(), String> {
     let cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
     let blueprint_root = blueprint_root(app_dir).unwrap_or_else(|| app_dir.to_path_buf());
@@ -3050,8 +3106,13 @@ fn materialize_staged_workspace_dependencies(
 
     for line in cargo_toml.lines() {
         if let Some(dep_name) = workspace_dependency_name(line) {
-            let mut dependency =
-                materialized_workspace_dependency(app_dir, &blueprint_root, work_dir, &dep_name)?;
+            let mut dependency = materialized_workspace_dependency(
+                app_dir,
+                &blueprint_root,
+                work_dir,
+                source_overlay,
+                &dep_name,
+            )?;
             if workspace_dependency_is_optional(line) {
                 dependency = optional_dependency_line(&dependency);
             }
@@ -3189,27 +3250,59 @@ fn materialized_workspace_dependency(
     app_dir: &Path,
     blueprint_root: &Path,
     work_dir: &Path,
+    source_overlay: &[CratePatch],
     dep_name: &str,
 ) -> Result<String, String> {
     let line = match dep_name {
         "anyhow" => "anyhow = { version = \"1.0\", default-features = false }".to_string(),
         "axum" => format!(
             "axum = {{ path = {}, default-features = false, features = [\"http1\", \"json\", \"tokio\"] }}",
-            toml_string(&blueprint_root.join("vendor/axum-0.8.9").display().to_string())
+            toml_string(
+                &workspace_dependency_vendor_path(
+                    source_overlay,
+                    "axum",
+                    &blueprint_root.join("vendor/axum-0.8.9"),
+                )
+                .display()
+                .to_string(),
+            )
         ),
         "colored" => "colored = \"2.1\"".to_string(),
         "glob" => "glob = \"0.3\"".to_string(),
         "http-body-util" => {
-            path_dependency_line(dep_name, &blueprint_root.join("vendor/http-body-util-0.1.3"))
+            path_dependency_line(
+                dep_name,
+                &workspace_dependency_vendor_path(
+                    source_overlay,
+                    dep_name,
+                    &blueprint_root.join("vendor/http-body-util-0.1.3"),
+                ),
+            )
         }
         "hyper" => format!(
             "hyper = {{ path = {}, default-features = false, features = [\"client\", \"server\", \"http1\"] }}",
-            toml_string(&blueprint_root.join("vendor/hyper-1.9.0").display().to_string())
+            toml_string(
+                &workspace_dependency_vendor_path(
+                    source_overlay,
+                    "hyper",
+                    &blueprint_root.join("vendor/hyper-1.9.0"),
+                )
+                .display()
+                .to_string(),
+            )
         ),
         "hyper-util" => {
             format!(
                 "hyper-util = {{ path = {}, default-features = false, features = [\"tokio\"] }}",
-                toml_string(&blueprint_root.join("vendor/hyper-util-0.1.20").display().to_string())
+                toml_string(
+                    &workspace_dependency_vendor_path(
+                        source_overlay,
+                        "hyper-util",
+                        &blueprint_root.join("vendor/hyper-util-0.1.20"),
+                    )
+                    .display()
+                    .to_string(),
+                )
             )
         }
         "ignore" => "ignore = \"0.4\"".to_string(),
@@ -3220,7 +3313,15 @@ fn materialized_workspace_dependency(
         }
         "reqwest" => format!(
             "reqwest = {{ path = {}, default-features = false, features = [\"json\", \"rustls\", \"http2\"] }}",
-            toml_string(&blueprint_root.join("vendor/reqwest-0.13.3").display().to_string())
+            toml_string(
+                &workspace_dependency_vendor_path(
+                    source_overlay,
+                    "reqwest",
+                    &blueprint_root.join("vendor/reqwest-0.13.3"),
+                )
+                .display()
+                .to_string(),
+            )
         ),
         "rustls" => {
             "rustls = { version = \"0.23.27\", default-features = false, features = [\"std\", \"tls12\"] }"
@@ -3229,7 +3330,15 @@ fn materialized_workspace_dependency(
         "rustls-rustcrypto" => {
             format!(
                 "rustls-rustcrypto = {{ path = {}, default-features = false, features = [\"std\", \"tls12\"] }}",
-                toml_string(&blueprint_root.join("vendor/rustls-rustcrypto-0.0.2-alpha").display().to_string())
+                toml_string(
+                    &workspace_dependency_vendor_path(
+                        source_overlay,
+                        "rustls-rustcrypto",
+                        &blueprint_root.join("vendor/rustls-rustcrypto-0.0.2-alpha"),
+                    )
+                    .display()
+                    .to_string(),
+                )
             )
         }
         "rustyline" => "rustyline = \"14.0\"".to_string(),
@@ -3245,17 +3354,41 @@ fn materialized_workspace_dependency(
         "tempfile" => "tempfile = \"3\"".to_string(),
         "tokio" => format!(
             "tokio = {{ path = {}, version = \"=1.52.3\", default-features = false, features = [\"full\"] }}",
-            toml_string(&blueprint_root.join("vendor/tokio-1.52.3").display().to_string())
+            toml_string(
+                &workspace_dependency_vendor_path(
+                    source_overlay,
+                    "tokio",
+                    &blueprint_root.join("vendor/tokio-1.52.3"),
+                )
+                .display()
+                .to_string(),
+            )
         ),
         "tokio-rustls" => {
             format!(
                 "tokio-rustls = {{ path = {}, default-features = false, features = [\"tls12\"] }}",
-                toml_string(&blueprint_root.join("vendor/tokio-rustls-0.26.4").display().to_string())
+                toml_string(
+                    &workspace_dependency_vendor_path(
+                        source_overlay,
+                        "tokio-rustls",
+                        &blueprint_root.join("vendor/tokio-rustls-0.26.4"),
+                    )
+                    .display()
+                    .to_string(),
+                )
             )
         }
         "tower" => format!(
             "tower = {{ path = {}, default-features = false, features = [\"util\"] }}",
-            toml_string(&blueprint_root.join("vendor/tower-0.5.3").display().to_string())
+            toml_string(
+                &workspace_dependency_vendor_path(
+                    source_overlay,
+                    "tower",
+                    &blueprint_root.join("vendor/tower-0.5.3"),
+                )
+                .display()
+                .to_string(),
+            )
         ),
         "trueos" => path_dependency_line(dep_name, &blueprint_root.join("api")),
         "trueos-chat" => path_dependency_line(dep_name, &blueprint_root.join("apps/chatserver/trueos-chat")),
@@ -3296,6 +3429,18 @@ fn materialized_workspace_dependency(
         }
     };
     Ok(line)
+}
+
+fn workspace_dependency_vendor_path(
+    source_overlay: &[CratePatch],
+    dep_name: &str,
+    fallback: &Path,
+) -> PathBuf {
+    source_overlay
+        .iter()
+        .find(|patch| patch.key == dep_name && patch.name == dep_name)
+        .map(|patch| patch.path.clone())
+        .unwrap_or_else(|| fallback.to_path_buf())
 }
 
 fn app_workspace_dependency_line(app_dir: &Path, dep_name: &str) -> Result<Option<String>, String> {
