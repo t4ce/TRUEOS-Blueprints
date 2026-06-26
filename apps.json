@@ -11,10 +11,7 @@
       "name": "reticulum",
       "path": "apps/Reticulum-rs"
     },
-    {
-      "name": "tantivy",
-      "path": "vendor/tantivy"
-    },
+    "tantivy",
     "test_some_crates",
     "texteditor",
     "monaco",
