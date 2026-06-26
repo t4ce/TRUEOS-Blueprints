@@ -14,6 +14,8 @@ members = [
     "apps/fileexplorer",
     "apps/framework_stack",
     "apps/hello_world",
+    "apps/monaco",
+    "apps/rusqlite_probe",
     "apps/test_some_crates",
     "apps/texteditor",
     "apps/tokio_fs",

@@ -1,0 +1,11 @@
+{
+  "name": "trueos-monaco-blueprint",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "assets": "rm -rf static/monaco/vs && mkdir -p static/monaco && cp -R node_modules/monaco-editor/min/vs static/monaco/vs && node patch-monaco-assets.mjs"
+  },
+  "dependencies": {
+    "monaco-editor": "0.53.0"
+  }
+}

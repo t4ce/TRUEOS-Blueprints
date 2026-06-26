@@ -1,0 +1,220 @@
+function normalizeLanguage(lang) {
+    const raw = String(lang || 'javascript').toLowerCase().trim();
+
+    switch (raw) {
+        case 'js':
+            return 'javascript';
+        case 'ts':
+            return 'typescript';
+        case 'md':
+            return 'markdown';
+        case 'text':
+        case 'plain':
+            return 'plaintext';
+        default:
+            return raw || 'javascript';
+    }
+}
+
+let __monaco_loader = null;
+
+async function loadMonaco() {
+    if (!__monaco_loader) {
+        __monaco_loader = Promise.all([
+            import('monaco-editor'),
+            import('monaco-editor/min/vs/editor/editor.main.css'),
+        ]).then(([monacoModule]) => {
+            return monacoModule.default || monacoModule;
+        });
+    }
+
+    return __monaco_loader;
+}
+
+export default class CodeEditor extends HTMLElement {
+    constructor(props = {}) {
+        super();
+
+        this.value = (props.value !== undefined)
+            ? String(props.value)
+            : (this.getAttribute('value') ?? '');
+
+        this.language = normalizeLanguage(
+            props.language || this.getAttribute('language') || 'javascript'
+        );
+
+        this.readonly = props.readonly === true || this.hasAttribute('readonly');
+
+        this._mounted = false;
+        this._mounting = false;
+        this._resize_observer = null;
+
+        this.editor = null;
+        this.model = null;
+        this.editor_host_el = null;
+        this._monaco = null;
+
+        this.style.display = 'block';
+        this.style.width = '100%';
+        this.style.height = '100%';
+        this.style.minHeight = '0';
+        this.style.overflow = 'hidden';
+        this.style.position = 'relative';
+        this.style.boxSizing = 'border-box';
+    }
+
+    connectedCallback() {
+        if (this._mounted) return;
+        this._mounted = true;
+
+        this._build();
+        this._mountEditor();
+    }
+
+    disconnectedCallback() {
+        if (this._resize_observer) {
+            this._resize_observer.disconnect();
+            this._resize_observer = null;
+        }
+
+        if (this.editor) {
+            this.editor.dispose();
+            this.editor = null;
+        }
+
+        if (this.model) {
+            this.model.dispose();
+            this.model = null;
+        }
+
+        this._mounted = false;
+        this._mounting = false;
+    }
+
+    _build() {
+        this.innerHTML = '';
+
+        this.editor_host_el = document.createElement('div');
+        this.editor_host_el.style.position = 'absolute';
+        this.editor_host_el.style.inset = '0';
+        this.editor_host_el.style.width = '100%';
+        this.editor_host_el.style.height = '100%';
+        this.editor_host_el.style.minWidth = '0';
+        this.editor_host_el.style.minHeight = '0';
+        this.editor_host_el.style.overflow = 'hidden';
+        this.editor_host_el.style.boxSizing = 'border-box';
+        this.editor_host_el.style.padding = '0';
+        this.editor_host_el.style.margin = '0';
+        this.editor_host_el.style.border = '0';
+        this.editor_host_el.style.lineHeight = 'normal';
+        this.editor_host_el.style.letterSpacing = 'normal';
+        this.editor_host_el.style.contain = 'layout size style';
+
+        this.appendChild(this.editor_host_el);
+    }
+
+    async _mountEditor() {
+        if (this._mounting || this.editor) return;
+        this._mounting = true;
+
+        try {
+            const monaco = await loadMonaco();
+            this._monaco = monaco;
+
+            if (!this._mounted || !this.editor_host_el || !this.isConnected) {
+                return;
+            }
+
+            this.model = monaco.editor.createModel(this.value, this.language);
+
+            this.model.updateOptions({
+                tabSize: 4,
+                insertSpaces: true,
+                trimAutoWhitespace: false,
+            });
+
+            this.editor = monaco.editor.create(this.editor_host_el, {
+                model: this.model,
+                theme: 'vs-dark',
+                automaticLayout: false,
+                readOnly: this.readonly,
+                domReadOnly: this.readonly,
+
+                minimap: { enabled: false },
+                scrollBeyondLastLine: false,
+                wordWrap: 'off',
+                wrappingIndent: 'none',
+
+                lineNumbers: 'on',
+                glyphMargin: false,
+                folding: true,
+                renderLineHighlight: 'line',
+                roundedSelection: false,
+                selectOnLineNumbers: true,
+
+                fontSize: 14,
+                lineHeight: 20,
+                fontFamily: 'Consolas, Monaco, "Courier New", monospace',
+
+                tabSize: 4,
+                insertSpaces: true,
+                detectIndentation: false,
+
+                padding: {
+                    top: 10,
+                    bottom: 10,
+                },
+
+                scrollbar: {
+                    verticalScrollbarSize: 10,
+                    horizontalScrollbarSize: 10,
+                    useShadows: false,
+                    alwaysConsumeMouseWheel: false,
+                },
+            });
+
+            this.editor.onDidChangeModelContent(() => {
+                const next = this.editor.getValue();
+                this.value = next;
+
+                this.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+                this.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+            });
+
+            requestAnimationFrame(() => {
+                this.editor?.layout();
+            });
+
+            this._resize_observer = new ResizeObserver(() => {
+                this.editor?.layout();
+            });
+
+            this._resize_observer.observe(this.editor_host_el);
+        } catch (err) {
+            console.error('Failed to lazy load Monaco editor.', err);
+        } finally {
+            this._mounting = false;
+        }
+    }
+
+    getValue() {
+        if (this.editor) return this.editor.getValue();
+        return this.value ?? '';
+    }
+
+    setValue(next) {
+        const value = String(next ?? '');
+        this.value = value;
+
+        if (this.editor) {
+            const current = this.editor.getValue();
+            if (current !== value) {
+                this.editor.setValue(value);
+            }
+        }
+
+        return this;
+    }
+}
+
+customElements.define('code-editor', CodeEditor);

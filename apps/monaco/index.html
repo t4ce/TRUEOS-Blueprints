@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TRUEOS Monaco</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body data-app="monaco">
+  <div class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark">M</div>
+        <div>
+          <h1>TRUEOS Monaco</h1>
+          <p id="meta">starting</p>
+        </div>
+      </div>
+      <div class="pathbar">
+        <input id="path" spellcheck="false" value="monaco/main.rs" aria-label="Path">
+        <select id="language" aria-label="Language">
+          <option value="rust">Rust</option>
+          <option value="typescript">TypeScript</option>
+          <option value="javascript">JavaScript</option>
+          <option value="json">JSON</option>
+          <option value="markdown">Markdown</option>
+          <option value="html">HTML</option>
+          <option value="css">CSS</option>
+          <option value="plaintext">Plain Text</option>
+        </select>
+      </div>
+      <div class="actions">
+        <button id="load" type="button" title="Load">Open</button>
+        <button id="save" type="button" title="Save">Save</button>
+        <button id="theme" type="button" title="Theme">Dark</button>
+      </div>
+    </header>
+    <main id="editor"></main>
+    <footer class="statusbar">
+      <span id="status">ready</span>
+      <span id="position">Ln 1, Col 1</span>
+    </footer>
+  </div>
+  <script src="/monaco/vs/loader.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

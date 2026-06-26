@@ -11,8 +11,14 @@
       "name": "reticulum",
       "path": "apps/Reticulum-rs"
     },
+    {
+      "name": "tantivy",
+      "path": "vendor/tantivy"
+    },
     "test_some_crates",
     "texteditor",
+    "monaco",
+    "rusqlite_probe",
     "webdevices",
     "webmail",
     "wls"
