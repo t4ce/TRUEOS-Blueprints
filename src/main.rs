@@ -3621,6 +3621,7 @@ fn push_trueos_cc_flags(command: &mut Command) {
         command,
         "CFLAGS",
         &[
+            "-fno-stack-protector",
             "-DROCKSDB_PLATFORM_POSIX",
             "-DROCKSDB_LIB_IO_POSIX",
             "-DOS_LINUX",
@@ -3630,6 +3631,7 @@ fn push_trueos_cc_flags(command: &mut Command) {
         command,
         "CXXFLAGS",
         &[
+            "-fno-stack-protector",
             "-DROCKSDB_PLATFORM_POSIX",
             "-DROCKSDB_LIB_IO_POSIX",
             "-DOS_LINUX",
