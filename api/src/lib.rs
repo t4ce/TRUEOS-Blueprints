@@ -10,6 +10,7 @@ use core::ptr::null_mut;
 pub use tokio;
 pub use v::env;
 pub use v::vclock as clock;
+pub use v::vfs;
 pub use v::vinput as hid;
 pub use v::vmail;
 pub use v::vshell;
@@ -26,6 +27,15 @@ pub mod platform {
     pub use core::future;
 
     pub use v::vsys::{poll_once, sleep_ms, write_stream};
+
+    #[cfg(feature = "tokio-runtime")]
+    pub fn spawn_blocking<F>(f: F) -> Result<(), ()>
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        tokio::task::spawn_blocking(f);
+        Ok(())
+    }
 
     #[cfg(feature = "tokio-runtime")]
     pub mod io {
@@ -256,6 +266,360 @@ pub mod net {
     pub mod socket2 {
         pub use socket2::{Domain, Protocol, SockAddr, Socket, Type};
     }
+}
+
+#[cfg(feature = "ui2")]
+pub mod ui2 {
+    extern crate alloc;
+
+    use alloc::vec::Vec;
+    use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+
+    #[repr(C)]
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct Rect {
+        pub x: i32,
+        pub y: i32,
+        pub width: u32,
+        pub height: u32,
+    }
+
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct CursorEvent {
+        pub slot_id: u32,
+        pub buttons_down: u32,
+        pub wheel: i16,
+        pub x: f32,
+        pub y: f32,
+    }
+
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+    pub struct WindowId(u32);
+
+    impl WindowId {
+        #[inline]
+        pub const fn new(raw: u32) -> Option<Self> {
+            if raw == 0 { None } else { Some(Self(raw)) }
+        }
+
+        #[inline]
+        pub const fn raw(self) -> u32 {
+            self.0
+        }
+
+        #[inline]
+        pub fn request_repaint(self) -> bool {
+            unsafe { trueos_cabi_ui3_frame_request_repaint(self.0) == 0 }
+        }
+
+        #[inline]
+        pub fn close(self) -> bool {
+            unsafe { trueos_cabi_ui3_frame_close(self.0) == 0 }
+        }
+
+        #[inline]
+        pub fn begin_move(self) -> bool {
+            let _ = self;
+            false
+        }
+
+        #[inline]
+        pub fn set_position(self, x: i32, y: i32) -> bool {
+            unsafe { trueos_cabi_ui3_frame_set_position(self.0, x, y) == 0 }
+        }
+
+        #[inline]
+        pub fn set_size(self, width: u32, height: u32) -> bool {
+            unsafe { trueos_cabi_ui3_frame_set_size(self.0, width, height) == 0 }
+        }
+
+        pub fn take_cursor_events(self, max_events: u32) -> Vec<CursorEvent> {
+            static NEXT_CURSOR_SEQ: AtomicU64 = AtomicU64::new(0);
+
+            let cap = max_events.min(256);
+            if cap == 0 {
+                return Vec::new();
+            }
+
+            let read_seq = NEXT_CURSOR_SEQ.load(Ordering::Relaxed);
+            let mut raw = Vec::with_capacity(cap as usize);
+            raw.resize_with(cap as usize, v::bp_abi::TrueosHidCursorEvent::default);
+            let mut next_seq = read_seq;
+            let mut dropped = 0u32;
+            let got = unsafe {
+                v::bp_abi::trueos_cabi_input_read_cursor_events_since(
+                    read_seq,
+                    raw.as_mut_ptr(),
+                    cap,
+                    &mut next_seq,
+                    &mut dropped,
+                )
+            };
+            NEXT_CURSOR_SEQ.store(next_seq, Ordering::Relaxed);
+            raw.truncate(got.min(cap) as usize);
+            raw.into_iter()
+                .map(|event| CursorEvent {
+                    slot_id: event.slot_id,
+                    buttons_down: event.buttons_down,
+                    wheel: event.wheel,
+                    x: event.x as f32,
+                    y: event.y as f32,
+                })
+                .collect()
+        }
+    }
+
+    static CURRENT_FRAME_ID: AtomicU32 = AtomicU32::new(0);
+
+    #[derive(Debug)]
+    pub struct SurfaceWindow {
+        id: WindowId,
+        tex_id: u32,
+        close_on_drop: bool,
+    }
+
+    impl SurfaceWindow {
+        pub fn create(title: &str, rect: Rect, tex_id: u32) -> Option<Self> {
+            let _ = title;
+            let raw = unsafe {
+                trueos_cabi_ui3_frame_create(rect.x, rect.y, rect.width, rect.height, tex_id)
+            };
+            WindowId::new(raw).map(|id| {
+                CURRENT_FRAME_ID.store(id.raw(), Ordering::Relaxed);
+                Self {
+                    id,
+                    tex_id,
+                    close_on_drop: true,
+                }
+            })
+        }
+
+        #[inline]
+        pub const fn id(&self) -> WindowId {
+            self.id
+        }
+
+        #[inline]
+        pub const fn tex_id(&self) -> u32 {
+            self.tex_id
+        }
+
+        pub fn leak(mut self) -> WindowId {
+            self.close_on_drop = false;
+            CURRENT_FRAME_ID.store(self.id.raw(), Ordering::Relaxed);
+            self.id
+        }
+    }
+
+    impl Drop for SurfaceWindow {
+        fn drop(&mut self) {
+            if self.close_on_drop {
+                let _ = self.id.close();
+            }
+        }
+    }
+
+    pub mod gfx {
+        use core::sync::atomic::Ordering;
+
+        #[repr(C)]
+        #[derive(Clone, Copy, Debug, Default)]
+        pub struct RgbVertex {
+            pub x: f32,
+            pub y: f32,
+            pub color: [u8; 4],
+        }
+
+        impl RgbVertex {
+            #[inline]
+            pub const fn new(x: f32, y: f32, color: [u8; 4]) -> Self {
+                Self { x, y, color }
+            }
+        }
+
+        #[inline]
+        pub fn upload_texture_rgba_image_now(
+            tex_id: u32,
+            width: u32,
+            height: u32,
+            rgba: &[u8],
+        ) -> bool {
+            unsafe {
+                super::trueos_cabi_gfx_upload_texture_rgba_image(
+                    tex_id,
+                    width,
+                    height,
+                    rgba.as_ptr(),
+                    rgba.len(),
+                ) == 0
+            }
+        }
+
+        #[inline]
+        pub fn texture_status(tex_id: u32) -> i32 {
+            unsafe { super::trueos_cabi_gfx_texture_status(tex_id) }
+        }
+
+        #[inline]
+        pub fn texture_dimensions(tex_id: u32) -> Option<(u32, u32)> {
+            let mut width = 0u32;
+            let mut height = 0u32;
+            let rc = unsafe {
+                super::trueos_cabi_gfx_texture_dimensions(tex_id, &mut width, &mut height)
+            };
+            (rc == 0).then_some((width, height))
+        }
+
+        #[inline]
+        pub fn begin_frame_preserve(clear_rgb: u32) -> i32 {
+            let frame_id = super::CURRENT_FRAME_ID.load(Ordering::Relaxed);
+            unsafe { super::trueos_cabi_ui3_frame_begin(frame_id, clear_rgb, 1, 1) }
+        }
+
+        #[inline]
+        pub fn begin_frame_no_present(clear_rgb: u32) -> i32 {
+            let frame_id = super::CURRENT_FRAME_ID.load(Ordering::Relaxed);
+            unsafe { super::trueos_cabi_ui3_frame_begin(frame_id, clear_rgb, 0, 0) }
+        }
+
+        #[inline]
+        pub fn end_frame() -> i32 {
+            let frame_id = super::CURRENT_FRAME_ID.load(Ordering::Relaxed);
+            unsafe { super::trueos_cabi_ui3_frame_end(frame_id) }
+        }
+
+        #[inline]
+        pub fn set_render_target(tex_id: u32) -> i32 {
+            let frame_id = super::CURRENT_FRAME_ID.load(Ordering::Relaxed);
+            unsafe { super::trueos_cabi_ui3_frame_set_render_target(frame_id, tex_id) }
+        }
+
+        #[inline]
+        pub fn draw_rgb_triangles_no_present(vertices: &[RgbVertex]) -> i32 {
+            let frame_id = super::CURRENT_FRAME_ID.load(Ordering::Relaxed);
+            unsafe {
+                super::trueos_cabi_ui3_frame_draw_rgb_triangles(
+                    frame_id,
+                    vertices.as_ptr() as *const u8,
+                    core::mem::size_of_val(vertices),
+                )
+            }
+        }
+
+        #[inline]
+        pub fn draw_tex_triangles_no_present(tex_id: u32, vertices: &[u8]) -> i32 {
+            let frame_id = super::CURRENT_FRAME_ID.load(Ordering::Relaxed);
+            unsafe {
+                super::trueos_cabi_ui3_frame_draw_tex_triangles(
+                    frame_id,
+                    tex_id,
+                    vertices.as_ptr(),
+                    vertices.len(),
+                )
+            }
+        }
+
+        #[inline]
+        pub fn set_blend_raw(
+            enabled: u32,
+            src_rgb: u32,
+            dst_rgb: u32,
+            src_alpha: u32,
+            dst_alpha: u32,
+            equation_rgb: u32,
+            equation_alpha: u32,
+        ) -> i32 {
+            let _ = (
+                enabled,
+                src_rgb,
+                dst_rgb,
+                src_alpha,
+                dst_alpha,
+                equation_rgb,
+                equation_alpha,
+            );
+            0
+        }
+
+        #[inline]
+        pub fn set_sampler_raw(wrap_s: u32, wrap_t: u32, min_filter: u32, mag_filter: u32) -> i32 {
+            let _ = (wrap_s, wrap_t, min_filter, mag_filter);
+            0
+        }
+
+        #[inline]
+        pub fn set_scissor(x: u32, y: u32, width: u32, height: u32) -> i32 {
+            let _ = (x, y, width, height);
+            0
+        }
+
+        #[inline]
+        pub fn clear_scissor() -> i32 {
+            0
+        }
+    }
+
+    unsafe extern "C" {
+        fn trueos_cabi_gfx_texture_dimensions(
+            tex_id: u32,
+            out_width: *mut u32,
+            out_height: *mut u32,
+        ) -> i32;
+        fn trueos_cabi_gfx_texture_status(tex_id: u32) -> i32;
+        fn trueos_cabi_gfx_upload_texture_rgba_image(
+            tex_id: u32,
+            width: u32,
+            height: u32,
+            data_ptr: *const u8,
+            data_len: usize,
+        ) -> i32;
+        fn trueos_cabi_ui3_frame_create(
+            x: i32,
+            y: i32,
+            width: u32,
+            height: u32,
+            tex_id: u32,
+        ) -> u32;
+        fn trueos_cabi_ui3_frame_close(frame_id: u32) -> i32;
+        fn trueos_cabi_ui3_frame_request_repaint(frame_id: u32) -> i32;
+        fn trueos_cabi_ui3_frame_set_position(frame_id: u32, x: i32, y: i32) -> i32;
+        fn trueos_cabi_ui3_frame_set_size(frame_id: u32, width: u32, height: u32) -> i32;
+        fn trueos_cabi_ui3_frame_begin(
+            frame_id: u32,
+            clear_rgb: u32,
+            preserve_contents: u32,
+            allow_present: u32,
+        ) -> i32;
+        fn trueos_cabi_ui3_frame_end(frame_id: u32) -> i32;
+        fn trueos_cabi_ui3_frame_set_render_target(frame_id: u32, tex_id: u32) -> i32;
+        fn trueos_cabi_ui3_frame_draw_rgb_triangles(
+            frame_id: u32,
+            data_ptr: *const u8,
+            data_len: usize,
+        ) -> i32;
+        fn trueos_cabi_ui3_frame_draw_tex_triangles(
+            frame_id: u32,
+            tex_id: u32,
+            data_ptr: *const u8,
+            data_len: usize,
+        ) -> i32;
+    }
+}
+
+#[cfg(feature = "ui3")]
+pub mod ui3 {
+    pub mod frame {
+        pub type FrameBounds = crate::ui2::Rect;
+        pub type FrameId = crate::ui2::WindowId;
+        pub type Frame = crate::ui2::SurfaceWindow;
+        pub type CursorEvent = crate::ui2::CursorEvent;
+    }
+
+    pub mod gfx {
+        pub use crate::ui2::gfx::*;
+    }
+
+    pub use frame::{CursorEvent, Frame, FrameBounds, FrameId};
 }
 
 #[cfg(feature = "tokio-runtime")]

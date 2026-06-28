@@ -353,6 +353,30 @@ fn build_one_target_to(
             has_trueos_dependency,
         );
     }
+    if source_tree_mentions(app_dir, "trueos::ui2")? {
+        push_app_or_trueos_feature(
+            &mut extra_features,
+            "ui2",
+            &declared_features,
+            has_trueos_dependency,
+        );
+    }
+    if source_tree_mentions(app_dir, "trueos::ui3")? {
+        push_app_or_trueos_feature(
+            &mut extra_features,
+            "ui3",
+            &declared_features,
+            has_trueos_dependency,
+        );
+    }
+    if source_tree_mentions(app_dir, "trueos::platform::spawn_blocking")? {
+        push_app_or_trueos_feature(
+            &mut extra_features,
+            "tokio-runtime",
+            &declared_features,
+            has_trueos_dependency,
+        );
+    }
     if !build_settings.source.declares_global_allocator && has_trueos_dependency {
         push_feature(&mut extra_features, "trueos/default-global-allocator");
     }
@@ -494,6 +518,38 @@ fn run_command(cmd: &mut Command, label: &str) -> Result<(), String> {
     } else {
         Err(format!("{label} failed with status {status}"))
     }
+}
+
+fn source_tree_mentions(app_dir: &Path, needle: &str) -> Result<bool, String> {
+    let source_dir = app_dir.join("src");
+    if !source_dir.is_dir() {
+        return Ok(false);
+    }
+    source_tree_mentions_in_dir(&source_dir, needle)
+}
+
+fn source_tree_mentions_in_dir(dir: &Path, needle: &str) -> Result<bool, String> {
+    for entry in fs::read_dir(dir).map_err(io_string)? {
+        let entry = entry.map_err(io_string)?;
+        let path = entry.path();
+        let file_type = entry.file_type().map_err(io_string)?;
+        if file_type.is_dir() {
+            if source_tree_mentions_in_dir(&path, needle)? {
+                return Ok(true);
+            }
+            continue;
+        }
+        if !file_type.is_file() || path.extension().and_then(|ext| ext.to_str()) != Some("rs") {
+            continue;
+        }
+        if fs::read_to_string(&path)
+            .map_err(io_string)?
+            .contains(needle)
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn run_staged_lock_overlay_update(
@@ -1582,11 +1638,6 @@ fn find_blueprint_vendor_dir(app_dir: &Path, name: &str) -> Option<PathBuf> {
         if candidate.is_dir() {
             return Some(candidate);
         }
-
-        let sibling_kernel_candidate = ancestor.join("TRUEOS").join("vendor").join(name);
-        if sibling_kernel_candidate.is_dir() {
-            return Some(sibling_kernel_candidate);
-        }
     }
     None
 }
@@ -2162,7 +2213,7 @@ fn staged_manifest_for_overlay(
 
     let staged_app_dir = work_dir.join("source-overlay-app");
     copy_app_tree(app_dir, &staged_app_dir)?;
-    link_kernel_sibling_for_staged_app(app_dir, work_dir)?;
+    link_blueprint_siblings_for_staged_app(app_dir, work_dir)?;
     let manifest_relative = manifest_path.strip_prefix(app_dir).map_err(|_| {
         format!(
             "manifest path {} is not under app dir {}",
@@ -2966,28 +3017,24 @@ fn copy_app_tree(from: &Path, to: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn link_kernel_sibling_for_staged_app(app_dir: &Path, work_dir: &Path) -> Result<(), String> {
-    let Some(kernel_manifest) = trueos_kernel_manifest(app_dir) else {
-        return Ok(());
-    };
-    let Some(kernel_root) = kernel_manifest.parent() else {
-        return Ok(());
-    };
+fn link_blueprint_siblings_for_staged_app(app_dir: &Path, work_dir: &Path) -> Result<(), String> {
+    let blueprint_root = blueprint_root(app_dir).unwrap_or_else(|| app_dir.to_path_buf());
     let staging_root = work_dir.parent().unwrap_or(work_dir);
     let app_target_root = app_dir.join("target");
 
-    for ancestor in app_dir.ancestors() {
-        let blueprint_api = ancestor.join("api");
-        if blueprint_api.join("Cargo.toml").is_file() {
-            link_staged_sibling(&staging_root.join("api"), &blueprint_api)?;
-            break;
-        }
-    }
+    link_staged_sibling(&staging_root.join("api"), &blueprint_root.join("api"))?;
+    link_staged_sibling(&staging_root.join("vendor"), &blueprint_root.join("vendor"))?;
+    link_staged_sibling(&staging_root.join("crates"), &blueprint_root.join("crates"))?;
+    link_staged_sibling(
+        &app_target_root.join("crates"),
+        &blueprint_root.join("crates"),
+    )?;
 
-    link_staged_sibling(&app_target_root.join("crates"), &kernel_root.join("crates"))?;
-    link_staged_sibling(&staging_root.join("TRUEOS"), kernel_root)?;
-    link_staged_sibling(&staging_root.join("vendor"), &kernel_root.join("vendor"))?;
-    link_staged_sibling(&staging_root.join("crates"), &kernel_root.join("crates"))?;
+    if let Some(kernel_manifest) = explicit_trueos_kernel_manifest()
+        && let Some(kernel_root) = kernel_manifest.parent()
+    {
+        link_staged_sibling(&staging_root.join("TRUEOS"), kernel_root)?;
+    }
 
     Ok(())
 }
@@ -3048,30 +3095,11 @@ fn staged_source_overlay(source_overlay: &[CratePatch], _work_dir: &Path) -> Vec
         .collect()
 }
 
-fn trueos_kernel_manifest(app_dir: &Path) -> Option<PathBuf> {
+fn explicit_trueos_kernel_manifest() -> Option<PathBuf> {
     if let Some(root) = env::var_os("TRUEOS_BLUEPRINT_KERNEL_ROOT") {
         let candidate = PathBuf::from(root).join("Cargo.toml");
         if candidate.is_file() {
             return Some(candidate);
-        }
-    }
-
-    for ancestor in app_dir.ancestors() {
-        let candidate = ancestor.join("Cargo.toml");
-        if candidate.is_file()
-            && ancestor.join("vendor").is_dir()
-            && package_name(&candidate).ok().as_deref() == Some("TRUEOS")
-        {
-            return Some(candidate);
-        }
-
-        let sibling = ancestor.join("TRUEOS").join("Cargo.toml");
-        if sibling.is_file()
-            && sibling
-                .parent()
-                .is_some_and(|root| root.join("vendor").is_dir())
-        {
-            return Some(sibling);
         }
     }
 
@@ -3408,14 +3436,7 @@ fn materialized_workspace_dependency(
         }
         "trueos-gfx-core" => format!(
             "trueos-gfx-core = {{ path = {}, features = [\"alloc\"] }}",
-            toml_string(
-                &work_dir
-                    .parent()
-                    .unwrap_or(work_dir)
-                    .join("TRUEOS/crates/trueos-gfx-core")
-                    .display()
-                    .to_string(),
-            )
+            toml_string(&blueprint_root.join("crates/trueos-gfx-core").display().to_string(),)
         ),
         "trueos-tetris" => path_dependency_line(
             dep_name,

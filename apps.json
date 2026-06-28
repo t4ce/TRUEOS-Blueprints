@@ -15,6 +15,10 @@
     "test_some_crates",
     "texteditor",
     "monaco",
+    {
+      "name": "tactics",
+      "path": "../tactics"
+    },
     "rusqlite_probe",
     "webdevices",
     "webmail",

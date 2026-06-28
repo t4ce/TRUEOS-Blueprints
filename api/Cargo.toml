@@ -10,6 +10,7 @@ default-panic-handler = []
 tokio-runtime = ["dep:tokio"]
 tokio-net-probe = ["tokio-runtime", "dep:mio", "dep:socket2", "tokio/net"]
 ui2 = []
+ui3 = ["ui2"]
 
 [lib]
 name = "trueos"
