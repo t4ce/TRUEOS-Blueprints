@@ -76,10 +76,9 @@ pub(crate) fn resolve_build_settings(
     } else if needs_trueos_platform {
         push_feature(&mut extra_features, "tokio-runtime");
     }
-    let add_entrypoint =
-        source_path.file_name().and_then(|name| name.to_str()) != Some("lib.rs")
-            && source_defines_main(&source)
-            && !source.contains("#![no_main]");
+    let add_entrypoint = source_path.file_name().and_then(|name| name.to_str()) != Some("lib.rs")
+        && source_defines_main(&source)
+        && !source.contains("#![no_main]");
     Ok(BuildSettings {
         flavor,
         source_path,
@@ -214,9 +213,14 @@ fn source_is_explicit_no_std(source: &str) -> bool {
 fn source_defines_main(source: &str) -> bool {
     source.lines().any(|line| {
         let line = line.trim_start();
-        ["fn main(", "pub fn main(", "async fn main(", "pub async fn main("]
-            .iter()
-            .any(|prefix| line.starts_with(prefix))
+        [
+            "fn main(",
+            "pub fn main(",
+            "async fn main(",
+            "pub async fn main(",
+        ]
+        .iter()
+        .any(|prefix| line.starts_with(prefix))
     })
 }
 

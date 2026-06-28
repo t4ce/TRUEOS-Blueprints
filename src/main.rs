@@ -353,14 +353,6 @@ fn build_one_target_to(
             has_trueos_dependency,
         );
     }
-    if source_tree_mentions(app_dir, "trueos::ui2")? {
-        push_app_or_trueos_feature(
-            &mut extra_features,
-            "ui2",
-            &declared_features,
-            has_trueos_dependency,
-        );
-    }
     if source_tree_mentions(app_dir, "trueos::ui3")? {
         push_app_or_trueos_feature(
             &mut extra_features,

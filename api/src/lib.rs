@@ -268,8 +268,8 @@ pub mod net {
     }
 }
 
-#[cfg(feature = "ui2")]
-pub mod ui2 {
+#[cfg(feature = "ui3")]
+mod ui3_core {
     extern crate alloc;
 
     use alloc::vec::Vec;
@@ -424,17 +424,38 @@ pub mod ui2 {
 
         #[repr(C)]
         #[derive(Clone, Copy, Debug, Default)]
-        pub struct RgbVertex {
+        pub struct SolidRect {
             pub x: f32,
             pub y: f32,
+            pub w: f32,
+            pub h: f32,
             pub color: [u8; 4],
         }
 
-        impl RgbVertex {
+        impl SolidRect {
             #[inline]
-            pub const fn new(x: f32, y: f32, color: [u8; 4]) -> Self {
-                Self { x, y, color }
+            pub const fn new(x: f32, y: f32, w: f32, h: f32, color: [u8; 4]) -> Self {
+                Self { x, y, w, h, color }
             }
+        }
+
+        #[repr(C)]
+        #[derive(Clone, Copy, Debug, Default)]
+        pub struct SpriteCorner {
+            pub x: f32,
+            pub y: f32,
+            pub u: f32,
+            pub v: f32,
+        }
+
+        #[repr(C)]
+        #[derive(Clone, Copy, Debug, Default)]
+        pub struct SpriteQuad {
+            pub c0: SpriteCorner,
+            pub c1: SpriteCorner,
+            pub c2: SpriteCorner,
+            pub c3: SpriteCorner,
+            pub color: [u8; 4],
         }
 
         #[inline]
@@ -495,26 +516,26 @@ pub mod ui2 {
         }
 
         #[inline]
-        pub fn draw_rgb_triangles_no_present(vertices: &[RgbVertex]) -> i32 {
+        pub fn draw_solid_batch_no_present(rects: &[SolidRect]) -> i32 {
             let frame_id = super::CURRENT_FRAME_ID.load(Ordering::Relaxed);
             unsafe {
-                super::trueos_cabi_ui3_frame_draw_rgb_triangles(
+                super::trueos_cabi_ui3_frame_draw_solid_batch(
                     frame_id,
-                    vertices.as_ptr() as *const u8,
-                    core::mem::size_of_val(vertices),
+                    rects.as_ptr() as *const u8,
+                    core::mem::size_of_val(rects),
                 )
             }
         }
 
         #[inline]
-        pub fn draw_tex_triangles_no_present(tex_id: u32, vertices: &[u8]) -> i32 {
+        pub fn draw_sprite_batch_no_present(tex_id: u32, quads: &[u8]) -> i32 {
             let frame_id = super::CURRENT_FRAME_ID.load(Ordering::Relaxed);
             unsafe {
-                super::trueos_cabi_ui3_frame_draw_tex_triangles(
+                super::trueos_cabi_ui3_frame_draw_sprite_batch(
                     frame_id,
                     tex_id,
-                    vertices.as_ptr(),
-                    vertices.len(),
+                    quads.as_ptr(),
+                    quads.len(),
                 )
             }
         }
@@ -592,12 +613,12 @@ pub mod ui2 {
         ) -> i32;
         fn trueos_cabi_ui3_frame_end(frame_id: u32) -> i32;
         fn trueos_cabi_ui3_frame_set_render_target(frame_id: u32, tex_id: u32) -> i32;
-        fn trueos_cabi_ui3_frame_draw_rgb_triangles(
+        fn trueos_cabi_ui3_frame_draw_solid_batch(
             frame_id: u32,
             data_ptr: *const u8,
             data_len: usize,
         ) -> i32;
-        fn trueos_cabi_ui3_frame_draw_tex_triangles(
+        fn trueos_cabi_ui3_frame_draw_sprite_batch(
             frame_id: u32,
             tex_id: u32,
             data_ptr: *const u8,
@@ -609,14 +630,14 @@ pub mod ui2 {
 #[cfg(feature = "ui3")]
 pub mod ui3 {
     pub mod frame {
-        pub type FrameBounds = crate::ui2::Rect;
-        pub type FrameId = crate::ui2::WindowId;
-        pub type Frame = crate::ui2::SurfaceWindow;
-        pub type CursorEvent = crate::ui2::CursorEvent;
+        pub type FrameBounds = crate::ui3_core::Rect;
+        pub type FrameId = crate::ui3_core::WindowId;
+        pub type Frame = crate::ui3_core::SurfaceWindow;
+        pub type CursorEvent = crate::ui3_core::CursorEvent;
     }
 
     pub mod gfx {
-        pub use crate::ui2::gfx::*;
+        pub use crate::ui3_core::gfx::*;
     }
 
     pub use frame::{CursorEvent, Frame, FrameBounds, FrameId};
