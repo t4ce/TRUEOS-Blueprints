@@ -1,0 +1,12 @@
+[package]
+name = "esp32_stt"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "esp32_stt"
+path = "main.rs"
+
+[dependencies]
+oxiwhisper = { version = "0.1.1", default-features = false }
+trueos = { workspace = true, features = ["tokio-net-probe"] }

@@ -1,0 +1,11 @@
+[package]
+name = "flight_controller_sim"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "flight_controller_sim"
+path = "main.rs"
+
+[dependencies]
+trueos.workspace = true

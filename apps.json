@@ -7,6 +7,8 @@
     "fileexplorer",
     "framework_stack",
     "hello_world",
+    "esp32_stt",
+    "flight_controller_sim",
     {
       "name": "reticulum",
       "path": "apps/Reticulum-rs"
