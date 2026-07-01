@@ -77,7 +77,7 @@ fn binomial_inversion(rng: &mut Xoshiro256PlusPlus, n: usize, p: f64, _nf: f64) 
     let a = ((n + 1) as f64) * s;
     let mut r = q.powi(n as i32);
     if r <= 0.0 {
-        r = (-((n as f64) * p)).exp();
+        r = libm::exp(-((n as f64) * p));
     }
     let mut u = rng.next_f64();
     let mut x = 0usize;

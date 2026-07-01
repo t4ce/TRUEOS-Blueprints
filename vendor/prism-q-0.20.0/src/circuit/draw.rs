@@ -205,11 +205,20 @@ const VERT: char = '\u{2502}'; // │
 const CTRL: char = '@';
 const SWAP_X: char = '\u{00D7}'; // ×
 
+fn decimal_digits(mut n: usize) -> usize {
+    let mut digits = 1;
+    while n >= 10 {
+        n /= 10;
+        digits += 1;
+    }
+    digits
+}
+
 fn qubit_label_width(n: usize) -> usize {
     if n <= 1 {
         return 4;
     }
-    let digits = ((n - 1) as f64).log10().floor() as usize + 1;
+    let digits = decimal_digits(n - 1);
     3 + digits // "q[" + digits + "]"
 }
 
@@ -671,7 +680,7 @@ fn render_depth_profile(lines: &mut Vec<String>, moments: &[Vec<PlacedOp>]) {
     let bar_max = 40usize;
 
     lines.push("Depth profile (gates per time slice):".to_string());
-    let depth_w = ((depth - 1) as f64).log10().floor() as usize + 1;
+    let depth_w = decimal_digits(depth - 1);
     for (b, &count) in bucket_counts.iter().enumerate() {
         let start = b * bucket_size;
         let end = ((b + 1) * bucket_size).min(depth) - 1;
@@ -741,7 +750,7 @@ fn render_heatmap(circuit: &Circuit, opts: &TextOptions) -> Vec<String> {
     let label_w = if row_bucket == 1 {
         qubit_label_width(n)
     } else {
-        let w = ((n - 1) as f64).log10().floor() as usize + 1;
+        let w = decimal_digits(n - 1);
         w * 2 + 4
     };
 
@@ -901,7 +910,7 @@ fn render_summary(circuit: &Circuit) -> Vec<String> {
                 q,
                 "\u{2588}".repeat(bar_len),
                 c,
-                width = ((n - 1) as f64).log10().floor() as usize + 1,
+                width = decimal_digits(n - 1),
             ));
         }
     } else {

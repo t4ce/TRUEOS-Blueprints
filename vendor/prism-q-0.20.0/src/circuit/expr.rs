@@ -255,19 +255,19 @@ impl<'e> ExprParser<'e> {
 
     fn apply_function(&self, name: &str, arg: f64) -> Result<f64> {
         let val = match name {
-            "sin" => arg.sin(),
-            "cos" => arg.cos(),
-            "tan" => arg.tan(),
-            "asin" => arg.asin(),
-            "acos" => arg.acos(),
-            "atan" => arg.atan(),
-            "sqrt" => arg.sqrt(),
-            "exp" => arg.exp(),
-            "ln" => arg.ln(),
-            "log2" => arg.log2(),
-            "abs" => arg.abs(),
-            "ceil" => arg.ceil(),
-            "floor" => arg.floor(),
+            "sin" => libm::sin(arg),
+            "cos" => libm::cos(arg),
+            "tan" => libm::tan(arg),
+            "asin" => libm::asin(arg),
+            "acos" => libm::acos(arg),
+            "atan" => libm::atan(arg),
+            "sqrt" => libm::sqrt(arg),
+            "exp" => libm::exp(arg),
+            "ln" => libm::log(arg),
+            "log2" => libm::log2(arg),
+            "abs" => libm::fabs(arg),
+            "ceil" => libm::ceil(arg),
+            "floor" => libm::floor(arg),
             _ => {
                 return Err(PrismError::Parse {
                     line: self.line,

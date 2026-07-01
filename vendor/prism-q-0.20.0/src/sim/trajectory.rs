@@ -117,9 +117,9 @@ fn apply_thermal_relaxation(
     if t1 <= 0.0 || t2 <= 0.0 || gate_time < 0.0 {
         return Ok(());
     }
-    let p_reset = 1.0 - (-gate_time / t1).exp();
+    let p_reset = 1.0 - libm::exp(-gate_time / t1);
     let p_dephase = if t2 < 2.0 * t1 {
-        1.0 - (-gate_time * (1.0 / t2 - 0.5 / t1)).exp()
+        1.0 - libm::exp(-gate_time * (1.0 / t2 - 0.5 / t1))
     } else {
         0.0
     };

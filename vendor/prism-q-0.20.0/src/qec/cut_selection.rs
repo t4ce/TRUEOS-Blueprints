@@ -240,7 +240,7 @@ pub fn cut_score(graph: &InteractionGraph, cut: &HashSet<usize>, c: f64) -> f64 
     if log_score > 700.0 {
         f64::INFINITY
     } else {
-        log_score.exp()
+        libm::exp(log_score)
     }
 }
 

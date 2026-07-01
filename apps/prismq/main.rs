@@ -282,7 +282,7 @@ fn read_input(command: Command, input: Option<&str>) -> Result<String, String> {
             input_text_to_qasm("-", &text)
         }
         Some(name) if builtin_example_qasm(name).is_some() => {
-            Ok(builtin_example_qasm(name).unwrap().to_string())
+            Ok(builtin_example_qasm(name).unwrap())
         }
         Some(path) => {
             let text =
@@ -292,10 +292,39 @@ fn read_input(command: Command, input: Option<&str>) -> Result<String, String> {
     }
 }
 
-fn builtin_example_qasm(name: &str) -> Option<&'static str> {
+fn builtin_example_qasm(name: &str) -> Option<String> {
     match name {
         "bell" | "bell-pair" | "hello-bell" | "entanglement" | "example:bell"
-        | "example:bell-pair" | "builtin:bell" | "builtin:bell-pair" => Some(BELL_PAIR_QASM2),
+        | "example:bell-pair" | "builtin:bell" | "builtin:bell-pair" => {
+            Some(BELL_PAIR_QASM2.to_string())
+        }
+        "ghz-8" | "example:ghz-8" | "stress-ghz-8" | "example:stress-ghz-8" => {
+            Some(build_ghz_qasm(8, true))
+        }
+        "ghz-16" | "example:ghz-16" | "stress-ghz-16" | "example:stress-ghz-16" => {
+            Some(build_ghz_qasm(16, true))
+        }
+        "ghz-24" | "example:ghz-24" | "stress-ghz-24" | "example:stress-ghz-24" => {
+            Some(build_ghz_qasm(24, true))
+        }
+        "ghz-26" | "example:ghz-26" | "stress-ghz-26" | "example:stress-ghz-26" => {
+            Some(build_ghz_qasm(26, true))
+        }
+        "mesh-16" | "example:mesh-16" | "stress-mesh-16" | "example:stress-mesh-16" => {
+            Some(build_mesh_qasm(16, 6, true))
+        }
+        "mesh-20" | "example:mesh-20" | "stress-mesh-20" | "example:stress-mesh-20" => {
+            Some(build_mesh_qasm(20, 7, true))
+        }
+        "mesh-22" | "example:mesh-22" | "stress-mesh-22" | "example:stress-mesh-22" => {
+            Some(build_mesh_qasm(22, 8, true))
+        }
+        "mesh-24" | "example:mesh-24" | "stress-mesh-24" | "example:stress-mesh-24" => {
+            Some(build_mesh_qasm(24, 8, true))
+        }
+        "mesh-26" | "example:mesh-26" | "stress-mesh-26" | "example:stress-mesh-26" => {
+            Some(build_mesh_qasm(26, 9, true))
+        }
         _ => None,
     }
 }
@@ -307,9 +336,83 @@ fn print_example(name: Option<&str>) -> Result<(), String> {
         Ok(())
     } else {
         Err(format!(
-            "unknown built-in example `{name}`; available: bell-pair"
+            "unknown built-in example `{name}`; available: bell-pair, ghz-8, ghz-16, ghz-24, ghz-26, mesh-16, mesh-20, mesh-22, mesh-24, mesh-26"
         ))
     }
+}
+
+fn build_ghz_qasm(qubits: usize, measured: bool) -> String {
+    let mut qasm = String::new();
+    qasm.push_str("OPENQASM 3.0;\ninclude \"stdgates.inc\";\n\n");
+    qasm.push_str(&format!("qubit[{qubits}] q;\n"));
+    if measured {
+        qasm.push_str(&format!("bit[{qubits}] c;\n"));
+    }
+    qasm.push('\n');
+    qasm.push_str("h q[0];\n");
+    for target in 1..qubits {
+        qasm.push_str(&format!("cx q[{}], q[{target}];\n", target - 1));
+    }
+    if measured {
+        qasm.push('\n');
+        for qubit in 0..qubits {
+            qasm.push_str(&format!("c[{qubit}] = measure q[{qubit}];\n"));
+        }
+    }
+    qasm
+}
+
+fn build_mesh_qasm(qubits: usize, layers: usize, measured: bool) -> String {
+    let mut qasm = String::new();
+    qasm.push_str("OPENQASM 3.0;\ninclude \"stdgates.inc\";\n\n");
+    qasm.push_str(&format!("qubit[{qubits}] q;\n"));
+    if measured {
+        qasm.push_str(&format!("bit[{qubits}] c;\n"));
+    }
+    qasm.push('\n');
+
+    for qubit in 0..qubits {
+        qasm.push_str(&format!("h q[{qubit}];\n"));
+    }
+
+    for layer in 0..layers {
+        qasm.push_str(&format!("\n// stress layer {layer}\n"));
+        for qubit in 0..qubits {
+            let theta = ((layer + 1) * (qubit + 3)) as f64 / 37.0;
+            let phi = ((layer + 2) * (qubit + 5)) as f64 / 41.0;
+            qasm.push_str(&format!("rz({theta:.12}) q[{qubit}];\n"));
+            if (layer + qubit) % 2 == 0 {
+                qasm.push_str(&format!("rx({phi:.12}) q[{qubit}];\n"));
+            } else {
+                qasm.push_str(&format!("ry({phi:.12}) q[{qubit}];\n"));
+            }
+            if (layer + qubit) % 3 == 0 {
+                qasm.push_str(&format!("t q[{qubit}];\n"));
+            }
+        }
+
+        let parity = layer % 2;
+        let mut control = parity;
+        while control + 1 < qubits {
+            qasm.push_str(&format!("cx q[{control}], q[{}];\n", control + 1));
+            control += 2;
+        }
+
+        for qubit in 0..qubits {
+            let other = (qubit + layer + 3) % qubits;
+            if qubit != other && (qubit + layer) % 4 == 0 {
+                qasm.push_str(&format!("cz q[{qubit}], q[{other}];\n"));
+            }
+        }
+    }
+
+    if measured {
+        qasm.push('\n');
+        for qubit in 0..qubits {
+            qasm.push_str(&format!("c[{qubit}] = measure q[{qubit}];\n"));
+        }
+    }
+    qasm
 }
 
 fn input_text_to_qasm(path: &str, text: &str) -> Result<String, String> {
@@ -745,10 +848,11 @@ fn print_help() {
     println!("  prismq inspect [file.qasm|file.json|-]");
     println!("  prismq validate [file.qasm|file.json|-]");
     println!("  prismq draw [file.qasm|file.json|-] [--format text|svg] [--out path]");
-    println!("  prismq example [bell-pair]");
+    println!("  prismq example [bell-pair|ghz-26|mesh-20|mesh-24|mesh-26]");
     println!();
     println!("With no input path, prismq runs an embedded Bell-state OpenQASM program.");
-    println!("Built-in example input aliases include `example:bell-pair` and `bell-pair`.");
+    println!("Built-in example aliases include `example:bell-pair`, `ghz-26`, and `mesh-24`.");
+    println!("Stress ladder: `counts mesh-20`, `counts mesh-24`, then `counts mesh-26`.");
     println!("JSON input is accepted for .json files or stdin beginning with `{{`.");
     println!(
         "The embedded shots/counts program includes measurements; run/probs leaves Bell unmeasured."

@@ -59,7 +59,13 @@ const CARGO_CACHE_DIR_ENV: &str = "TRUEOS_BLUEPRINT_CARGO_CACHE_DIR";
 const TARGET_SPEC_ENV: &str = "TRUEOS_BLUEPRINT_TARGET_SPEC";
 const RUSTFLAGS_ENCODED_SEPARATOR: char = '\u{1f}';
 const TRUEOS_CHECK_CFG_FLAG: &str = "--check-cfg=cfg(target_os,values(\"trueos\",\"zkvm\"))";
-const BLUEPRINT_RUSTFLAGS: &[&str] = &[TRUEOS_CHECK_CFG_FLAG, "-A", "warnings"];
+const BLUEPRINT_RUSTFLAGS: &[&str] = &[
+    TRUEOS_CHECK_CFG_FLAG,
+    "-A",
+    "warnings",
+    "-C",
+    "panic=abort",
+];
 const BLUEPRINT_VENDOR_PATCHES: &[(&str, &str)] = &[
     ("axum", "axum-0.8.9"),
     ("axum-core", "axum-core-0.5.6"),
