@@ -2,7 +2,10 @@
 
 extern crate alloc;
 
-use alloc::{string::ToString, vec::Vec};
+use alloc::{
+    string::{String, ToString},
+    vec::Vec,
+};
 use core::sync::atomic::{AtomicU16, Ordering};
 
 use axum::{
@@ -21,6 +24,7 @@ use trueos::{
     clock, logl,
     logl::level,
     platform::{self, io},
+    rapl,
     runtime,
     time::{self, Duration},
     tokio::{self, net::SocketAddr},
@@ -39,6 +43,7 @@ struct HardwareSnapshot {
     schema: &'static str,
     generated_at_s: u64,
     service: ServiceSnapshot,
+    rapl: RaplSnapshot,
     pci: DeviceGroup,
     usb: DeviceGroup,
     note: &'static str,
@@ -50,6 +55,18 @@ struct ServiceSnapshot {
     name: &'static str,
     port: Option<u16>,
     bind: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RaplSnapshot {
+    vlayer_available: bool,
+    sample_valid: bool,
+    snapshot_bytes: usize,
+    history_bytes: usize,
+    max_history_bytes: usize,
+    latest_text: String,
+    unavailable_reason: Option<&'static str>,
 }
 
 #[derive(Debug, Serialize)]
@@ -121,6 +138,34 @@ async fn handle_healthz() -> Response {
     )
 }
 
+fn rapl_payload() -> RaplSnapshot {
+    match rapl::snapshot_text() {
+        Ok(latest_text) if !latest_text.is_empty() => {
+            let sample_valid = latest_text
+                .lines()
+                .any(|line| line.trim() == "sample_valid=true");
+            RaplSnapshot {
+                vlayer_available: true,
+                sample_valid,
+                snapshot_bytes: latest_text.len(),
+                history_bytes: rapl::history_len().unwrap_or(0),
+                max_history_bytes: rapl::MAX_HISTORY_BYTES,
+                latest_text,
+                unavailable_reason: None,
+            }
+        }
+        Ok(_) | Err(_) => RaplSnapshot {
+            vlayer_available: false,
+            sample_valid: false,
+            snapshot_bytes: 0,
+            history_bytes: 0,
+            max_history_bytes: rapl::MAX_HISTORY_BYTES,
+            latest_text: String::new(),
+            unavailable_reason: Some("RAPL vlayer surface is unavailable"),
+        },
+    }
+}
+
 async fn handle_snapshot() -> Response {
     json_response(
         200,
@@ -132,6 +177,7 @@ async fn handle_snapshot() -> Response {
                 port: current_port(),
                 bind: "0.0.0.0",
             },
+            rapl: rapl_payload(),
             pci: DeviceGroup {
                 count: 0,
                 devices: Vec::new(),
@@ -147,6 +193,38 @@ async fn handle_snapshot() -> Response {
     )
 }
 
+async fn handle_rapl_snapshot() -> Response {
+    match rapl::snapshot_text() {
+        Ok(text) if !text.is_empty() => response(
+            200,
+            "text/plain; charset=utf-8",
+            text.into_bytes(),
+            true,
+        ),
+        Ok(_) | Err(_) => text_response(
+            503,
+            "text/plain; charset=utf-8",
+            "RAPL vlayer surface is unavailable\n",
+        ),
+    }
+}
+
+async fn handle_rapl_history() -> Response {
+    match rapl::history_bytes(rapl::MAX_HISTORY_BYTES) {
+        Ok(bytes) if !bytes.is_empty() => response(200, "text/plain; charset=utf-8", bytes, true),
+        Ok(_) => text_response(
+            503,
+            "text/plain; charset=utf-8",
+            "RAPL history is empty; waiting for service samples or vlayer resolver\n",
+        ),
+        Err(_) => text_response(
+            503,
+            "text/plain; charset=utf-8",
+            "RAPL history is unavailable\n",
+        ),
+    }
+}
+
 fn router() -> Router {
     Router::new()
         .route("/", get(handle_index))
@@ -156,6 +234,8 @@ fn router() -> Router {
         .route("/api/healthz", get(handle_healthz))
         .route("/api/webdevices/snapshot", get(handle_snapshot))
         .route("/api/devices/snapshot", get(handle_snapshot))
+        .route("/api/rapl/snapshot", get(handle_rapl_snapshot))
+        .route("/api/rapl/history", get(handle_rapl_history))
 }
 
 async fn webdevices_http_runtime() -> Result<(), io::Error> {

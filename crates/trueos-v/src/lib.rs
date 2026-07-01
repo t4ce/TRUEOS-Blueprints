@@ -44,6 +44,7 @@ pub mod vio;
 pub mod vmail;
 pub mod vnet;
 pub mod vnetfs;
+pub mod vrapl;
 pub mod vshell;
 pub mod vsys;
 

@@ -13,6 +13,7 @@ pub use v::vclock as clock;
 pub use v::vfs;
 pub use v::vinput as hid;
 pub use v::vmail;
+pub use v::vrapl as rapl;
 pub use v::vshell;
 pub use v::vsys;
 

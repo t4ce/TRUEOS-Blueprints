@@ -1,0 +1,418 @@
+# Changelog
+
+All notable changes to PRISM-Q will be documented in this file.
+
+## [0.20.0] - 2026-06-16
+
+### Features
+
+- **distributed:** Add statevector shot sampling (#84)([b483dae](https://github.com/AbeCoull/prism-q/commit/b483dae300a234349f250b61a9ad8bd15e919966))
+## [0.19.0] - 2026-06-10
+
+### Features
+
+- **dist:** Add fusion, measurement, and tiled exchange to the distributed backend (#83)([c4f3749](https://github.com/AbeCoull/prism-q/commit/c4f374976d1f1d14ff8068dae9485ab4ea6a0149))
+
+### Miscellaneous
+
+- **release:** 0.19.0([ad630b1](https://github.com/AbeCoull/prism-q/commit/ad630b17e0fceea4bfd7ce9e7c6b066ae4537d08))
+## [0.18.0] - 2026-06-08
+
+### Features
+
+- **dist:** Support global multi-qubit gates (#82)([1c65673](https://github.com/AbeCoull/prism-q/commit/1c656731471cbad9e32775545ac7eb40027f0608))
+
+### Miscellaneous
+
+- **release:** 0.18.0([0d1f7c1](https://github.com/AbeCoull/prism-q/commit/0d1f7c12e179ea4e55f8f7af894e8b62150c5b91))
+## [0.17.0] - 2026-06-05
+
+### Documentation
+
+- Add supported status for cpu/gpu architectures (#80)([ddb2005](https://github.com/AbeCoull/prism-q/commit/ddb2005cb0fc6ab04d3e1742501b40085af6e56e))
+
+### Features
+
+- **dist:** Add MPI base for the state vector backend (#81)([550a717](https://github.com/AbeCoull/prism-q/commit/550a717fd0dc2623aaaac2ca8020a5a9e1440545))
+
+### Miscellaneous
+
+- **release:** 0.17.0([7258bdd](https://github.com/AbeCoull/prism-q/commit/7258bdd6380a2dbcc99f4bcf57086481b2964361))
+## [0.16.1] - 2026-05-30
+
+### Bug Fixes
+
+- **kernel:** Add kernel checks across CPU arch and GPU (#79)([b5cc9a4](https://github.com/AbeCoull/prism-q/commit/b5cc9a478fa3415f1d80a892ce59c701d208a960))
+
+### Documentation
+
+- Update docs to properly include architecture breakdown and bett… (#78)([e5266d8](https://github.com/AbeCoull/prism-q/commit/e5266d87cf37c9c05a49c57c22e6e7a19c63c159))
+- Add github pages (#75)([7474e5d](https://github.com/AbeCoull/prism-q/commit/7474e5db947c687a9e55a3c56b289c02759a9b7c))
+
+### Miscellaneous
+
+- **release:** 0.16.1([3967113](https://github.com/AbeCoull/prism-q/commit/3967113cf30bc8c63e9ccc27a9989445437dff34))
+- Make parallel feature opt-out instead of opt-in (#76)([22d0a25](https://github.com/AbeCoull/prism-q/commit/22d0a259136f8625a0dcac18ad67a6bc551e45bc))
+## [0.16.0] - 2026-05-29
+
+### Features
+
+- **qec:** Add T strategy ladder for stabilizer simulator (#74)([d6503aa](https://github.com/AbeCoull/prism-q/commit/d6503aaec9486fdfe800d2ffd5318a8065f43548))
+
+### Miscellaneous
+
+- **release:** 0.16.0([cb5fb54](https://github.com/AbeCoull/prism-q/commit/cb5fb548fc3e2d6ab36ac7d3927b066ef929e925))
+## [0.15.0] - 2026-05-20
+
+### Documentation
+
+- Add quantum computing category and updating README (#72)([f304e39](https://github.com/AbeCoull/prism-q/commit/f304e390d58e07c0d75c2fb9e76ba1e3e8c4c5f7))
+
+### Features
+
+- Expand benchmark regression tests (#73)([c7937e4](https://github.com/AbeCoull/prism-q/commit/c7937e422250e564d1b85ebfac1958e3d59dcc44))
+
+### Miscellaneous
+
+- **release:** 0.15.0([a2239ec](https://github.com/AbeCoull/prism-q/commit/a2239ecc7e57d8427feb38e1023ad9bb599647f5))
+## [0.14.4] - 2026-05-20
+
+### Bug Fixes
+
+- **sim:** Tighten packed shots and dispatch metadata (#71)([64da8fa](https://github.com/AbeCoull/prism-q/commit/64da8faa6f53ce6c81150fb2b6372f27007cd7f5))
+
+### Miscellaneous
+
+- **release:** 0.14.4([8043b43](https://github.com/AbeCoull/prism-q/commit/8043b4367e62856462aded0229b997316c9a0ba6))
+
+### Testing
+
+- Consolidate backend correctness matrix and use nextest (#70)([fcec12a](https://github.com/AbeCoull/prism-q/commit/fcec12ab57049e310a6cfaf2a1a1cc38a6dcf8eb))
+## [0.14.3] - 2026-05-18
+
+### Miscellaneous
+
+- **release:** 0.14.3([d0df681](https://github.com/AbeCoull/prism-q/commit/d0df6810aff5679df594ab5cb0a06108dffcd513))
+
+### Performance
+
+- **sim:** Streamline query APIs with terminal sampling fast paths (#69)([6d328d6](https://github.com/AbeCoull/prism-q/commit/6d328d61db6ba2bf4bc54b23f8352c3fbc755c1b))
+## [0.14.2] - 2026-05-18
+
+### Bug Fixes
+
+- **sim:** Correct backward sign for SX, SXdg, and CZ in compiled Pauli propagation (#68)([6a2c273](https://github.com/AbeCoull/prism-q/commit/6a2c273ffeb8f901416dd2a2316a0e293862a858))
+
+### Miscellaneous
+
+- **release:** 0.14.2([6c88249](https://github.com/AbeCoull/prism-q/commit/6c882499c8c55445d0b3c18c146f0b93ca3fbcde))
+
+### Refactor
+
+- **sim:** Consolidate simulator hot path helpers (#65)([5ebb2b8](https://github.com/AbeCoull/prism-q/commit/5ebb2b885035a0ad185a78fbe9d77b318d8cbab9))
+
+### Testing
+
+- Really boring but test coverage is good and this is an attempt to add more (#67)([42cc7e8](https://github.com/AbeCoull/prism-q/commit/42cc7e8ce502483e7f1df65eb08a8d1fed8c2253))
+## [0.14.1] - 2026-05-13
+
+### Documentation
+
+- Cleanup safety with docstrings, consolidate code, and general housekeeping (#62)([59dfc93](https://github.com/AbeCoull/prism-q/commit/59dfc93f1ef32588975a6f78261565174ed8a2fd))
+
+### Miscellaneous
+
+- **release:** 0.14.1([6add832](https://github.com/AbeCoull/prism-q/commit/6add8329838d869fc4348bb3d01e4f216db8d18e))
+
+### Performance
+
+- **qft:** Add native statevector QFT block kernel (#64)([203290b](https://github.com/AbeCoull/prism-q/commit/203290b46d009354aeccc46101d0fd3e1edde6f9))
+- **backend:** Block-based CX kernels and NT-store rowmul for stabilizer (#63)([faa6227](https://github.com/AbeCoull/prism-q/commit/faa6227e262c09eadf3c094d1c0f8efdab9cbf6e))
+## [0.14.0] - 2026-05-09
+
+### Features
+
+- **qec:** Add noisy validation and staged profiling benchmarks (#61)([d351102](https://github.com/AbeCoull/prism-q/commit/d3511026228cd890b3695969bfc46f2218911d68))
+
+### Miscellaneous
+
+- **release:** 0.14.0([38f07ee](https://github.com/AbeCoull/prism-q/commit/38f07ee6e23b9bff7e8aedc71390d2a29449a3ef))
+## [0.13.0] - 2026-05-04
+
+### Features
+
+- **qec:** Add native Clifford QEC program runner with Pauli noise (#60)([93e91fe](https://github.com/AbeCoull/prism-q/commit/93e91fedb98c35b4929d91cceb889f187010074e))
+
+### Miscellaneous
+
+- **release:** 0.13.0([1668d93](https://github.com/AbeCoull/prism-q/commit/1668d931ede825902d0c3e568d9d6774d1baed93))
+## [0.12.2] - 2026-05-02
+
+### Bug Fixes
+
+- **openqasm:** Support for-loops, def subroutines, classical expressions (#59)([37743a4](https://github.com/AbeCoull/prism-q/commit/37743a45cd448278e5938d709223503f0fa7330f))
+
+### Miscellaneous
+
+- **release:** 0.12.2([fcfcdeb](https://github.com/AbeCoull/prism-q/commit/fcfcdeb5fabcaa9ad0b10cfbc808e5c585d94c73))
+## [0.12.1] - 2026-05-02
+
+### Bug Fixes
+
+- **openqasm:** Support Qiskit and native hardware gates (#58)([f831f43](https://github.com/AbeCoull/prism-q/commit/f831f43c12dc84fd22ebd4772ff5a83b7e9472df))
+
+### Miscellaneous
+
+- **release:** 0.12.1([a968a99](https://github.com/AbeCoull/prism-q/commit/a968a990cd37628e9de1d3123e03fc8b7d2af112))
+## [0.12.0] - 2026-05-02
+
+### CI
+
+- Add benchmark regression workflow (#56)([291f26b](https://github.com/AbeCoull/prism-q/commit/291f26bff6c6ae96c657f2a310a45c1f0d0bed0f))
+
+### Documentation
+
+- **general:** Add code of conduct (#54)([3114ef4](https://github.com/AbeCoull/prism-q/commit/3114ef4bf15cab194c02cb143319accfd9ab474f))
+
+### Features
+
+- **qec:** Add packed detector sampler (#57)([e245a30](https://github.com/AbeCoull/prism-q/commit/e245a3087fc68b7137860335c6605a54eb110402))
+
+### Miscellaneous
+
+- **release:** 0.12.0([6709b85](https://github.com/AbeCoull/prism-q/commit/6709b8519ff04bb0ef6e5fdd624849eeec483d34))
+
+### Testing
+
+- **correctness:** Complete per-backend correctness matrix (#55)([3bb6204](https://github.com/AbeCoull/prism-q/commit/3bb62046fc8cba7e24cece2a90e2488eec71705a))
+## [0.11.4] - 2026-04-30
+
+### Documentation
+
+- **ci:** Add github issues template (#45)([4782b6f](https://github.com/AbeCoull/prism-q/commit/4782b6f695de0c188b434f3424f250762adb050f))
+
+### Miscellaneous
+
+- **release:** 0.11.4([c98c763](https://github.com/AbeCoull/prism-q/commit/c98c76366702a84ca45b3b0891dde03417a68edd))
+
+### Performance
+
+- **statevector:** AVX2 paired-group 2q kernel and Fused2q reorder (#52)([12f51a7](https://github.com/AbeCoull/prism-q/commit/12f51a7f6bdea070bdd757d1488ef2ace906604e))
+
+### Testing
+
+- **correctness:** Add cross-backend correctness suite scaffolding (#51)([43031a7](https://github.com/AbeCoull/prism-q/commit/43031a7b49b33ad6183f5ab8ef9bc992678be337))
+## [0.11.3] - 2026-04-26
+
+### Miscellaneous
+
+- **release:** 0.11.3([55943d8](https://github.com/AbeCoull/prism-q/commit/55943d8992b8baad12209a2a073cf192b25917ff))
+
+### Performance
+
+- **factored:** SIMD inner loop on substate tensor product merge (#44)([6e632ba](https://github.com/AbeCoull/prism-q/commit/6e632ba608f8bdce000042f098338e8230a74229))
+## [0.11.2] - 2026-04-25
+
+### Miscellaneous
+
+- **release:** 0.11.2([354d23d](https://github.com/AbeCoull/prism-q/commit/354d23dfb0dfa39f809dd8d65a5cb29d4e65350a))
+
+### Performance
+
+- **statevector:** Fuse repeated 2q blocks and optimize adjacent fused gates (#43)([b8fe8d9](https://github.com/AbeCoull/prism-q/commit/b8fe8d931b7b3fbc10b624cc7201f7ee52b2a6ad))
+## [0.11.1] - 2026-04-25
+
+### Bug Fixes
+
+- Enforce qubit bounds and finite gate parameters in release builds (#42)([54dc825](https://github.com/AbeCoull/prism-q/commit/54dc825feaa754fa60339ac40687f366d964b51d))
+
+### Miscellaneous
+
+- **release:** 0.11.1([5b3994b](https://github.com/AbeCoull/prism-q/commit/5b3994b74d9535ee7e0846b52b7caaed4f2d152e))
+
+### Refactor
+
+- **gpu:** Cache launcher metadata and reduce measure-prob on device (#41)([2df45d3](https://github.com/AbeCoull/prism-q/commit/2df45d3aa163b3f7c09d265476076952f27b44c0))
+## [0.11.0] - 2026-04-24
+
+### Documentation
+
+- Add install instructions to the README (#39)([d255725](https://github.com/AbeCoull/prism-q/commit/d255725b4600a779b94f673ea0ed87533cc7e4b4))
+
+### Features
+
+- **noise:** Support dense custom Kraus trajectory noise (#40)([0816f3a](https://github.com/AbeCoull/prism-q/commit/0816f3a6567b7852c823a9f92c2f2168381fe629))
+
+### Miscellaneous
+
+- **release:** 0.11.0([6d33f13](https://github.com/AbeCoull/prism-q/commit/6d33f13b607b05fced0016540477b2c9d5c28b93))
+## [0.10.0] - 2026-04-24
+
+### Documentation
+
+- Add architecture glossary and link from architecture.md (#37)([ca9d1b7](https://github.com/AbeCoull/prism-q/commit/ca9d1b73c08324c54e0db8c9a54c51d0b2bc220f))
+
+### Features
+
+- **gpu:** Stabilizer GPU kernels, dispatch, and bench group (#38)([e76a621](https://github.com/AbeCoull/prism-q/commit/e76a621c57560b6a805ec456002abe4c0d7def5b))
+
+### Miscellaneous
+
+- **release:** 0.10.0([69d8fa4](https://github.com/AbeCoull/prism-q/commit/69d8fa4005af92989d99aec46b7d09283c52a629))
+## [0.9.1] - 2026-04-24
+
+### Bug Fixes
+
+- Add a SECURITY.md (#36)([83a5b47](https://github.com/AbeCoull/prism-q/commit/83a5b47d113c9fe85b47a09368765ac527c4a6bd))
+
+### Miscellaneous
+
+- **release:** 0.9.1([01feedb](https://github.com/AbeCoull/prism-q/commit/01feedbae631dbc708f0c04217cfbe17862e7ebc))
+## [0.9.0] - 2026-04-21
+
+### Features
+
+- **gpu:** Stabilizer GPU scaffol (#34)([30d7d42](https://github.com/AbeCoull/prism-q/commit/30d7d42df89ac1758b3baa1aeba2a7063f427fd3))
+
+### Miscellaneous
+
+- **release:** 0.9.0([379b7e3](https://github.com/AbeCoull/prism-q/commit/379b7e30c3b6c7f74ba0318971cfc346ba433c22))
+## [0.8.0] - 2026-04-20
+
+### Features
+
+- **gpu:** Observability  and benchmarking infra for gpu code (#33)([d133066](https://github.com/AbeCoull/prism-q/commit/d133066c1abf8f61253c1606f4e2a738d737d9f6))
+
+### Miscellaneous
+
+- **release:** 0.8.0([c5120bb](https://github.com/AbeCoull/prism-q/commit/c5120bb70846f176196bbd6943643542e981b9ab))
+## [0.7.0] - 2026-04-19
+
+### Documentation
+
+- Update docs and add a pull request template (#31)([13b381e](https://github.com/AbeCoull/prism-q/commit/13b381efd7da4556ca8ed84f3fbafb67a2dfffd7))
+
+### Features
+
+- **gpu:** Dispatch-level crossover and decomposition-aware routing (#32)([1c2627d](https://github.com/AbeCoull/prism-q/commit/1c2627d92c3ecdaca9d62da092f73f8b857292f7))
+
+### Miscellaneous
+
+- **release:** 0.7.0([d4c3007](https://github.com/AbeCoull/prism-q/commit/d4c3007153e6bd0fe09c02573e664eb3ef70d231))
+## [0.6.0] - 2026-04-18
+
+### Features
+
+- **gpu:** Batched kernels for fused gate variants (#30)([02bb5fb](https://github.com/AbeCoull/prism-q/commit/02bb5fb15fe24024696210c93562eefb88ce717c))
+
+### Miscellaneous
+
+- **release:** 0.6.0([3b0df64](https://github.com/AbeCoull/prism-q/commit/3b0df64d62418cf90c330547ba3f610939736736))
+## [0.5.0] - 2026-04-18
+
+### Features
+
+- **statevector:** Add optional CUDA GPU backend for processing gates (#29)([61d56a1](https://github.com/AbeCoull/prism-q/commit/61d56a1300cd63592dc2c053476752814c248a08))
+
+### Miscellaneous
+
+- **release:** 0.5.0([f9f6eb2](https://github.com/AbeCoull/prism-q/commit/f9f6eb2ef66bbeaa994593d08abd7ec55a59e01d))
+## [0.4.0] - 2026-04-17
+
+### Features
+
+- **statevector:** Add optional GPU acceleration (#27)([c99c752](https://github.com/AbeCoull/prism-q/commit/c99c7528bcb16c0acc38261e006077183a97721c))
+
+### Miscellaneous
+
+- **release:** 0.4.0([036a349](https://github.com/AbeCoull/prism-q/commit/036a3491ff560e4847d992bd4d88302d3c35814b))
+## [0.3.0] - 2026-04-17
+
+### Features
+
+- **gpu:** Shared GPU execution resource scaffold (#26)([9132747](https://github.com/AbeCoull/prism-q/commit/9132747bc5e30032c52b235b775f596b8c3b360c))
+
+### Miscellaneous
+
+- **release:** 0.3.0([5781bd7](https://github.com/AbeCoull/prism-q/commit/5781bd71d1dccf0ccf77b2b2364c06a39c03bffb))
+## [0.2.4] - 2026-04-16
+
+### Miscellaneous
+
+- **release:** 0.2.4([fa01a49](https://github.com/AbeCoull/prism-q/commit/fa01a49171c9510b0756ef4371b0984e0a9a27a1))
+
+### Performance
+
+- **compiled:** Skip deterministic rows in BTS sampling (#25)([533495b](https://github.com/AbeCoull/prism-q/commit/533495ba0995d6b161fcf286be71e5910526481b))
+
+### Testing
+
+- **dispatch:** Add validation, error path, and smoke tests for Backe… (#24)([f6950b8](https://github.com/AbeCoull/prism-q/commit/f6950b8d7534c9467882e1d99aebc3a51a3fc34b))
+## [0.2.3] - 2026-04-16
+
+### Miscellaneous
+
+- **release:** 0.2.3([ce31d89](https://github.com/AbeCoull/prism-q/commit/ce31d898219da3e4915c36fba1606674633345b9))
+
+### Performance
+
+- **compiled:** AVX2 DAG kernel + parallel BTS DAG pass-through (#23)([4be7d31](https://github.com/AbeCoull/prism-q/commit/4be7d313c11fc01e612294da3906be573a34aa96))
+## [0.2.2] - 2026-04-14
+
+### Miscellaneous
+
+- **release:** 0.2.2([77e2bcd](https://github.com/AbeCoull/prism-q/commit/77e2bcd77e3fc6a52e25915fa172c35fec9ed909))
+
+### Performance
+
+- **mps:** Keep routed qubits in a persistent logical layout (#22)([24d3788](https://github.com/AbeCoull/prism-q/commit/24d3788a969a5ee6727eda793dab7afbfbea30c8))
+## [0.2.1] - 2026-04-10
+
+### Miscellaneous
+
+- **release:** 0.2.1([ef6e5c7](https://github.com/AbeCoull/prism-q/commit/ef6e5c7c145f1e716a83af25de3feaa96a12dc8c))
+## [0.2.0] - 2026-04-10
+
+### Bug Fixes
+
+- Update release flows (#21)([31ba60a](https://github.com/AbeCoull/prism-q/commit/31ba60a35788cc23b189fc8b41d268ff87e1b5c6))
+## [0.1.0] - 2026-04-10
+
+### Bug Fixes
+
+- Add shot accumulator for clifford sims (#12)([9c8ab55](https://github.com/AbeCoull/prism-q/commit/9c8ab55fd3d29b43f75cfbcaee680d5035effd4a))
+- Update coverage github badge action (#11)([5be3a43](https://github.com/AbeCoull/prism-q/commit/5be3a43316303f6baeeb3f0e29a6e7c056b6036e))
+- Update shot processing to end of the simulation (#2)([3a2a9ca](https://github.com/AbeCoull/prism-q/commit/3a2a9cad39718e5bdaaf8b6684a881317b0de5aa))
+
+### CI
+
+- Update to include coverage and docs runs (#4)([709a629](https://github.com/AbeCoull/prism-q/commit/709a6292bef82d5210dd372303327376c3c227fd))
+
+### Features
+
+- Add crate publishing workflow (#20)([9307d81](https://github.com/AbeCoull/prism-q/commit/9307d8165af2cc63942d21e90860e54f8f37aea7))
+- Add quantum trajectories (#19)([ec30253](https://github.com/AbeCoull/prism-q/commit/ec302534e93341b7dcbd8305d4fcbe614647a70d))
+- Add circuit visualizer (#18)([88251f6](https://github.com/AbeCoull/prism-q/commit/88251f64ed0630a5f54117eccbea14038a8da0e0))
+- Refactor the stabilizer backend (#7)([7648541](https://github.com/AbeCoull/prism-q/commit/7648541ff9a8bc272d5eeceff2c426b66335bf7e))
+- Add arm support for kernel (#1)([7016588](https://github.com/AbeCoull/prism-q/commit/70165887d9b0ea7f3d9476e46c5583f1f97d5744))
+
+### Performance
+
+- Add better stabilizer perf at higher shot count and benchmarking (#14)([cfe251d](https://github.com/AbeCoull/prism-q/commit/cfe251d44c5df1b3741c4d31de29ca4eb05ab06b))
+- Optimize stabilizer measurement and Gaussian elimination (#6)([6ff849b](https://github.com/AbeCoull/prism-q/commit/6ff849b0259e75973302aa12b70ee8ab03503a1c))
+- Cache fusion across shots in run_shots_with slow path (#5)([7a0f7b9](https://github.com/AbeCoull/prism-q/commit/7a0f7b91dcfc8d4659fd820953c94bb435fab17c))
+- Optimize rowmul phase and inline measurement rowmul (#3)([c579931](https://github.com/AbeCoull/prism-q/commit/c5799311309ea1f8beb95857076995dcab12d3a1))
+
+### Refactor
+
+- Move items to shared file path and fix visibility (#17)([1583b9a](https://github.com/AbeCoull/prism-q/commit/1583b9a3eced48274a4c44245b1e2f30ddbec13e))
+- Clean up the way users interface with the package (#16)([263ecdc](https://github.com/AbeCoull/prism-q/commit/263ecdc81109f4c1010fe21f1b0930925520df3e))
+- Split larger files and better organize dispatch utils (#15)([bca4c1d](https://github.com/AbeCoull/prism-q/commit/bca4c1d165c69fe223c604bb74f55bc4e474d17b))
+- Add nullAccum for testing paths and speed up histogram (#13)([9846b5f](https://github.com/AbeCoull/prism-q/commit/9846b5f43bb7a896eed5d66746f0bfc600edcab0))
+- Rewriting to speed up shots at higher values and changing output type (#10)([b3f1ab5](https://github.com/AbeCoull/prism-q/commit/b3f1ab55dfc09685975743a7065c326f9861e8d2))
+- Replace quasi_prob with unified SPP/SPD backends (#9)([c1e1d25](https://github.com/AbeCoull/prism-q/commit/c1e1d25744e2b746e5a1853850db50edaca804fa))
+
+### `fix
+
+- Fusion pass fixes with temporal blocking (#8)([eb9fc76](https://github.com/AbeCoull/prism-q/commit/eb9fc762a122e66903defb793a1345b3b3e2a5ad))
+

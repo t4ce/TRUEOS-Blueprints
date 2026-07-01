@@ -8,4 +8,13 @@ name = "prismq"
 path = "main.rs"
 
 [dependencies]
-prism-q = { version = "0.20.0", default-features = false }
+prism-q.workspace = true
+rayon.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[target.'cfg(any(target_os = "trueos", target_os = "zkvm"))'.dependencies]
+tokio = { version = "=1.52.3", default-features = false, features = ["rt", "time"] }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("trueos", "zkvm"))'] }

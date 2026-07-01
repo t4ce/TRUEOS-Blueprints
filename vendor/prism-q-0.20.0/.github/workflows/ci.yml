@@ -1,0 +1,302 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  # Features exercised on runners without CUDA. The `gpu` feature links against CUDA via
+  # cudarc's dynamic-linking mode and can't build on hosts that don't have the NVIDIA
+  # toolkit installed, so CI enumerates features instead of using --all-features.
+  CI_FEATURES: parallel,serialization
+  CI_BENCH_FEATURES: parallel,bench-fast
+  REGRESSION_THRESHOLD: ${{ vars.REGRESSION_THRESHOLD || '5.0' }}
+
+jobs:
+  check:
+    name: Lint & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: false
+      - uses: taiki-e/install-action@cargo-nextest
+
+      - name: Formatting
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets --features "$CI_FEATURES" -- -D warnings -D clippy::undocumented_unsafe_blocks
+
+      - name: Tests
+        run: cargo nextest run --features "$CI_FEATURES"
+
+      - name: Doc tests
+        run: cargo test --doc --features "$CI_FEATURES"
+
+      - name: Doc build
+        run: cargo doc --no-deps --features "$CI_FEATURES"
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  check-no-default-features:
+    name: Lint & Test (no default features)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: false
+      - uses: taiki-e/install-action@cargo-nextest
+
+      - name: Clippy
+        run: cargo clippy --all-targets --no-default-features -- -D warnings -D clippy::undocumented_unsafe_blocks
+
+      - name: Tests
+        run: cargo nextest run --no-default-features
+
+      - name: Doc tests
+        run: cargo test --doc --no-default-features
+
+  benchmark-regression:
+    name: Benchmark Regression
+    runs-on: ubuntu-latest
+    needs: check
+    if: github.event_name == 'pull_request'
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout base
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+          fetch-depth: 1
+
+      - name: Checkout head
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: head
+          fetch-depth: 1
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: false
+          workspaces: |
+            base -> target
+            head -> target
+
+      - name: Install benchmark tools
+        run: sudo apt-get update && sudo apt-get install -y bc jq
+
+      - name: Benchmark base
+        working-directory: base
+        run: bash ../head/scripts/bench_ci.sh
+        env:
+          PRISM_BENCH_PROJECT_DIR: ${{ github.workspace }}/base
+
+      - name: Save base baseline
+        working-directory: base
+        run: bash scripts/bench_check.sh save --name ci-base
+
+      - name: Copy base baseline
+        run: |
+          mkdir -p head/bench_results/baselines
+          cp base/bench_results/baselines/ci-base.json head/bench_results/baselines/ci-base.json
+
+      - name: Benchmark head
+        working-directory: head
+        run: bash scripts/bench_ci.sh
+
+      - name: Compare benchmark results
+        working-directory: head
+        run: |
+          set +e
+          bash scripts/bench_check.sh table --baseline ci-base | tee ../benchmark-summary.md
+          table_status=${PIPESTATUS[0]}
+          bash scripts/bench_check.sh compare --baseline ci-base | tee ../benchmark-compare.txt
+          compare_status=${PIPESTATUS[0]}
+
+          {
+            echo "## Benchmark Regression Gate"
+            echo ""
+            cat ../benchmark-summary.md
+            echo ""
+            echo '```text'
+            cat ../benchmark-compare.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ "$table_status" -ne 0 ]]; then
+            exit "$table_status"
+          fi
+          exit "$compare_status"
+
+      - name: Upload benchmark artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-regression
+          if-no-files-found: ignore
+          path: |
+            benchmark-summary.md
+            benchmark-compare.txt
+            base/bench_results/baselines/ci-base.json
+            head/bench_results/baselines/ci-base.json
+            head/target/criterion/**/benchmark.json
+            head/target/criterion/**/new/estimates.json
+
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: false
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - name: Generate coverage
+        run: cargo llvm-cov --features "$CI_FEATURES" --lcov --output-path lcov.info
+      - name: Extract coverage percentage
+        id: cov
+        run: |
+          LF=$(grep '^LF:' lcov.info | awk -F: '{s+=$2} END {print s+0}')
+          LH=$(grep '^LH:' lcov.info | awk -F: '{s+=$2} END {print s+0}')
+          COVERAGE=$(awk "BEGIN {if ($LF>0) printf \"%.1f\", ($LH/$LF)*100; else print \"0\"}")
+          echo "percentage=$COVERAGE" >> "$GITHUB_OUTPUT"
+          echo "### Coverage: ${COVERAGE}%" >> "$GITHUB_STEP_SUMMARY"
+      - name: Update coverage badge
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: schneegans/dynamic-badges-action@v1.7.0
+        with:
+          auth: ${{ secrets.GIST_TOKEN }}
+          gistID: ${{ vars.COVERAGE_GIST_ID }}
+          filename: coverage.json
+          label: coverage
+          message: ${{ steps.cov.outputs.percentage }}%
+          valColorRange: ${{ steps.cov.outputs.percentage }}
+          minColorRange: 50
+          maxColorRange: 90
+
+  check-aarch64:
+    name: Cross-compile aarch64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: false
+      - name: Install cross-compilation toolchain
+        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
+      - name: Check (no default features)
+        run: cargo check --target aarch64-unknown-linux-gnu --no-default-features
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+      - name: Check (CI features)
+        run: cargo check --target aarch64-unknown-linux-gnu --features "$CI_FEATURES"
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+
+  # Execute the NEON fallbacks under emulation. check-aarch64 above only compiles,
+  # so without this the NEON kernels are never run against their scalar reference on
+  # Linux. Scoped to the SIMD-relevant tests to bound QEMU wall-clock.
+  test-aarch64-qemu:
+    name: Test aarch64 (QEMU)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: false
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+      - name: SIMD kernel unit tests (NEON vs scalar)
+        run: cross test --target aarch64-unknown-linux-gnu --features "$CI_FEATURES" --lib backend::simd::tests
+      - name: word_ops unit tests (NEON vs scalar)
+        run: cross test --target aarch64-unknown-linux-gnu --features "$CI_FEATURES" --lib backend::word_ops::tests
+      - name: Batched diagonal phase reference (NEON path)
+        run: cross test --target aarch64-unknown-linux-gnu --features "$CI_FEATURES" --lib backend::statevector::tests::batch_phase_matches_independent_reference
+      - name: Cross-backend correctness matrix
+        run: cross test --target aarch64-unknown-linux-gnu --features "$CI_FEATURES" --test backend_matrix
+
+  # Compile-check the GPU paths with the CUDA toolkit but no device. The job only
+  # compiles and runs the device-free KERNEL_NAMES test (nothing opens a device),
+  # enforcing the exhaustive GPU dispatch matches and the golden_gpu registry at
+  # compile time. Pinned to ubuntu-22.04: CUDA 12.4 (matching cudarc's cuda-12040
+  # bindings) has no package for the ubuntu2404 repo on ubuntu-latest.
+  gpu-check:
+    name: GPU compile-check (no device)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Jimver/cuda-toolkit@v0.2.18
+        with:
+          cuda: '12.4.0'
+          method: network
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: false
+      - uses: taiki-e/install-action@cargo-nextest
+      - name: Compile-check GPU dispatch + golden_gpu coverage
+        run: cargo check --all-targets --features "parallel gpu"
+      - name: Clippy GPU paths
+        run: cargo clippy --all-targets --features "parallel gpu" -- -D warnings -D clippy::undocumented_unsafe_blocks
+      - name: KERNEL_NAMES consistency (device-free)
+        run: cargo nextest run --features "parallel gpu" -E 'test(kernel_names_match_source_entry_points)'
+
+  test-macos-arm:
+    name: Test macOS ARM64
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: false
+      - uses: taiki-e/install-action@cargo-nextest
+      - name: Clippy
+        run: cargo clippy --all-targets --features "$CI_FEATURES" -- -D warnings -D clippy::undocumented_unsafe_blocks
+      - name: Tests
+        run: cargo nextest run --features "$CI_FEATURES"
+      - name: Doc tests
+        run: cargo test --doc --features "$CI_FEATURES"
+
+  security:
+    name: Security & Licenses
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check

@@ -66,8 +66,6 @@ use core::marker::PhantomData;
 use core::str::FromStr;
 use core3::io;
 #[cfg(not(target_os = "trueos"))]
-use std as host_std;
-#[cfg(not(target_os = "trueos"))]
 use std::env;
 use std::thread;
 #[cfg(target_os = "trueos")]
@@ -152,12 +150,9 @@ enum ErrorKind {
     IOError(io::Error),
 }
 
-#[cfg(not(target_os = "trueos"))]
-type StdIoError = host_std::io::Error;
-#[cfg(not(target_os = "trueos"))]
-type StdIoErrorKind = host_std::io::ErrorKind;
+type StdIoError = std::io::Error;
+type StdIoErrorKind = std::io::ErrorKind;
 
-#[cfg(not(target_os = "trueos"))]
 fn io_error_from_std(error: StdIoError) -> io::Error {
     let kind = match error.kind() {
         StdIoErrorKind::NotFound => io::ErrorKind::NotFound,

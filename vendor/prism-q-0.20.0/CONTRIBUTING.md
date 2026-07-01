@@ -1,0 +1,129 @@
+# Contributing to PRISM-Q
+
+## Build
+
+```bash
+cargo build                           # core (no parallelism)
+cargo build --features parallel       # Rayon parallelism plus faer SVD
+cargo build --features "parallel gpu" # add the optional CUDA statevector backend
+cargo build --all-features            # everything
+```
+
+The `gpu` feature requires the CUDA toolkit (12.x or newer) and a CUDA capable device.
+PTX is compiled at runtime via NVRTC against the device's compute capability.
+
+### From source
+
+```bash
+git clone https://github.com/AbeCoull/prism-q.git
+cd prism-q
+cargo build --release --features parallel
+```
+
+To pin a downstream crate to a specific revision:
+
+```bash
+cargo add prism-q --git https://github.com/AbeCoull/prism-q --features parallel
+```
+
+## Test and lint
+
+```bash
+cargo nextest run --all-features
+cargo test --doc --all-features
+cargo fmt --check
+cargo clippy --all-targets --all-features -- -D warnings -D clippy::undocumented_unsafe_blocks
+cargo doc --no-deps --all-features
+```
+
+Use `cargo test --all-features` when `cargo-nextest` is not installed. Keep doctests on
+`cargo test --doc` until nextest doctest support is no longer experimental.
+
+GPU golden tests run under `cargo test --features "parallel gpu" --test golden_gpu` and
+skip automatically when no CUDA device is present.
+
+## Coverage
+
+```bash
+# requires: rustup component add llvm-tools-preview && cargo install cargo-llvm-cov
+cargo llvm-cov --all-features                     # terminal summary
+cargo llvm-cov --all-features --html --open       # browseable HTML report
+```
+
+## Documentation site
+
+The architecture guide and glossary in `docs/` publish as an mdBook site to GitHub Pages
+via `.github/workflows/docs.yml`. Preview locally:
+
+```bash
+cargo install mdbook   # once
+mdbook serve docs      # serves at http://localhost:3000
+```
+
+The book is rooted at `docs/` (`docs/book.toml`); `docs/SUMMARY.md` lists the pages and
+rendered output lands in `docs/book/` (gitignored). Publishing requires the repository
+Pages source set to "GitHub Actions" once under Settings > Pages.
+
+## Benchmarks
+
+```bash
+cargo bench --bench circuits --features parallel        # circuit macrobenchmarks
+cargo bench --bench bench_driver --features parallel    # gate microbenchmarks
+```
+
+Always use `--features parallel`. Baselines were taken with Rayon enabled. Do not run
+multiple `cargo bench` processes at once. Rayon contention causes noisy results.
+
+### Regression checks
+
+```bash
+cargo bench --features parallel
+./scripts/bench_check.sh save --name "before"
+.\scripts\bench_check.ps1 save -Name "before"
+
+cargo bench --features parallel
+
+./scripts/bench_check.sh compare --baseline "before"
+.\scripts\bench_check.ps1 compare -Baseline "before"
+
+./scripts/bench_check.sh table --baseline "before"
+.\scripts\bench_check.ps1 table -Baseline "before"
+```
+
+`compare` exits non zero on regression. `table` emits a markdown summary for the PR
+description.
+
+## PR guidelines
+
+- Include before/after benchmark numbers for performance-sensitive changes.
+- All tests pass, clippy clean, fmt clean, doc build clean.
+- Fixed seeds: `42` for tests, `0xDEAD_BEEF` for benchmark circuits.
+- The pull request template at `.github/PULL_REQUEST_TEMPLATE.md` captures the required
+  checklist.
+
+## CI
+
+PRs run formatting, clippy, nextest, doctests, doc build, coverage, aarch64
+cross-compile, macOS ARM64 tests, and `cargo-deny` (security advisories plus license
+audit).
+
+## Hot-path rules
+
+- No heap allocation in gate-application inner loops.
+- Enum dispatch only in gate kernels. No trait objects.
+- `// SAFETY:` comment on all `unsafe` blocks.
+
+## Adding a backend
+
+1. Create `src/backend/<name>.rs` (or a directory module) and implement the `Backend`
+   trait.
+2. Add `pub mod <name>;` to `src/backend/mod.rs`.
+3. Write unit tests (single-qubit, two-qubit, measurement at minimum) and golden tests
+   against the statevector backend.
+4. Add benchmark entries in `benches/circuits.rs`.
+5. Update `docs/architecture/engine.md` with the backend's position in the dispatch tree,
+   and `docs/architecture/backends.md` with its description.
+
+## Questions
+
+Open an issue or start a discussion on the repo.

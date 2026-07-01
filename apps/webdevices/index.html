@@ -58,7 +58,7 @@
             <div id="topology" class="topology topology-grid"></div>
           </div>
         </section>
-        <p class="footer-note">Auto-refresh reads PCI inventory and USB TLB snapshots. BAR sizes are intentionally not probed in the repaint path.</p>
+        <p class="footer-note">Auto-refresh reads device snapshots and the RAPL vlayer status. BAR sizes are intentionally not probed in the repaint path.</p>
       </main>
       <aside class="details">
         <h2 id="detail-title" class="detail-title">Select a device</h2>
@@ -95,7 +95,11 @@
     }
 
     function buildItems(snapshot) {
-      const pci = snapshot.pci.devices.map((device) => ({
+      const pciDevices = snapshot.pci?.devices || [];
+      const usbShape = snapshot.usb || {};
+      const usbDevices = usbShape.devices || [];
+      const usbControllers = usbShape.controllers || [];
+      const pci = pciDevices.map((device) => ({
         id: device.id,
         kind: 'pci',
         role: device.role,
@@ -104,7 +108,7 @@
         search: `${device.bdf} ${device.vendorId}:${device.deviceId} ${device.className} ${device.name} ${device.role}`.toLowerCase(),
         raw: device
       }));
-      const controllers = snapshot.usb.controllers.map((ctrl) => ({
+      const controllers = usbControllers.map((ctrl) => ({
         id: `usb-controller-${ctrl.id}`,
         kind: 'controller',
         role: 'usb',
@@ -113,7 +117,7 @@
         search: `${ctrl.bdf} ${ctrl.vendorId}:${ctrl.deviceId} ${ctrl.phase} ${ctrl.lifecycle}`.toLowerCase(),
         raw: ctrl
       }));
-      const usb = snapshot.usb.devices.map((device) => ({
+      const usb = usbDevices.map((device) => ({
         id: device.id,
         kind: 'usb',
         role: usbRole(device),
@@ -177,9 +181,9 @@
       if (!snap) return;
       $('subtitle').textContent = `${snap.service.primaryIpv4 || 'no-ip'}:${snap.service.port || '-'} / refreshed ${new Date().toLocaleTimeString()}`;
       $('stat-pci').textContent = snap.pci.count;
-      $('stat-usb').textContent = snap.usb.deviceCount;
-      $('stat-ctrl').textContent = snap.usb.controllerCount;
-      $('stat-topo').textContent = snap.usb.topologyCount;
+      $('stat-usb').textContent = snap.usb.deviceCount ?? snap.usb.count ?? 0;
+      $('stat-ctrl').textContent = snap.usb.controllerCount ?? 0;
+      $('stat-topo').textContent = snap.usb.topologyCount ?? 0;
       $('count-all').textContent = countBy('all');
       $('count-pci').textContent = countBy('pci');
       $('count-usb').textContent = countBy('usb');
@@ -190,11 +194,13 @@
       $('side-status').innerHTML = kvHtml([
         ['Schema', snap.schema],
         ['Port', snap.service.port || '-'],
-        ['Uptime', `${snap.uptimeS}s`],
-        ['Probe', snap.usb.probeError || 'ok']
+        ['Uptime', snap.uptimeS == null ? '-' : `${snap.uptimeS}s`],
+        ['Probe', snap.usb.probeError || snap.usb.unavailableReason || 'ok'],
+        ['RAPL', snap.rapl?.sampleValid ? 'sample valid' : (snap.rapl?.vlayerAvailable ? 'waiting' : 'unavailable')],
+        ['RAPL history', `${snap.rapl?.historyBytes ?? 0} bytes`]
       ]);
       $('probe-tag').className = snap.usb.probeError ? 'tag warn' : 'tag ok';
-      $('probe-tag').textContent = snap.usb.probeError || 'probe ok';
+      $('probe-tag').textContent = snap.usb.probeError || snap.usb.unavailableReason || 'probe ok';
       renderList();
       renderTopology();
       renderDetails();
@@ -222,7 +228,7 @@
     }
 
     function renderTopology() {
-      const nodes = state.snapshot.usb.topology || [];
+      const nodes = state.snapshot.usb?.topology || [];
       $('topology').innerHTML = nodes.length ? nodes.map((node) => `
         <button class="mini" data-topology="${esc(node.controllerId)}:${esc(node.slotId || '')}:${esc(node.portId)}">
           <strong>${esc(node.kind)} / ctrl ${esc(node.controllerId)} / port ${esc(node.portId)}</strong>

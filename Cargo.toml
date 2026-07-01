@@ -41,6 +41,8 @@ hyper = { version = "1.9.0", default-features = false, features = ["client", "se
 hyper-util = { version = "0.1.20", default-features = false }
 ignore = "0.4"
 libm = { version = "0.2", default-features = false }
+prism-q = { version = "=0.20.0", default-features = true }
+rayon = { version = "=1.12.0" }
 regex = { version = "1", default-features = false, features = ["perf"] }
 reqwest = { version = "=0.13.3", default-features = false, features = ["json", "rustls", "http2"] }
 rustls = { version = "0.23.27", default-features = false, features = ["std", "tls12"] }
@@ -94,6 +96,7 @@ matchit = { path = "vendor/matchit-0.8.4" }
 mime = { path = "vendor/mime-0.3.17" }
 mio = { path = "vendor/mio-1.2.0" }
 percent-encoding = { path = "vendor/percent-encoding-2.3.2" }
+prism-q = { path = "vendor/prism-q-0.20.0" }
 reqwest = { path = "vendor/reqwest-0.13.3" }
 ring = { path = "vendor/ring-0.17.14" }
 rayon = { path = "vendor/rayon" }
