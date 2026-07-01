@@ -385,6 +385,14 @@ body[data-app="webmail"] .app-shell {
   margin-bottom: 12px;
 }
 
+.telemetry {
+  display: grid;
+  grid-template-columns: minmax(360px, 1.35fr) minmax(320px, .9fr);
+  gap: 12px;
+  align-items: stretch;
+  margin-bottom: 12px;
+}
+
 .stat {
   background: var(--panel);
   border: 1px solid var(--line);
@@ -441,6 +449,105 @@ body[data-app="webmail"] .app-shell {
   margin: 0;
   font-size: 14px;
   letter-spacing: 0;
+}
+
+.legend {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  display: inline-block;
+}
+
+.swatch.pkg { background: #0e7490; }
+.swatch.core { background: #047857; }
+.swatch.gfx { background: #b45309; }
+
+.chart-wrap {
+  position: relative;
+  height: 240px;
+  padding: 10px;
+}
+
+.chart-wrap canvas {
+  display: block;
+  width: 100%;
+  height: 220px;
+  border: 1px solid #e5e7eb;
+  border-radius: 7px;
+  background: #fff;
+}
+
+.overlay-empty {
+  position: absolute;
+  inset: 10px;
+  place-items: center;
+  pointer-events: none;
+  background: rgba(255, 255, 255, .72);
+}
+
+.table-wrap {
+  overflow: auto;
+  max-height: 240px;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.data-table th,
+.data-table td {
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+}
+
+.data-table th {
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  background: #fbfcfd;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.data-table td {
+  font-variant-numeric: tabular-nums;
+}
+
+.data-table td:first-child strong,
+.data-table td:first-child span {
+  display: block;
+}
+
+.data-table td:first-child span {
+  color: var(--muted);
+  font-size: 11px;
+  margin-top: 2px;
+}
+
+.empty-cell {
+  color: var(--muted);
+  text-align: center !important;
+  padding: 28px 10px !important;
 }
 
 .list {
@@ -868,6 +975,7 @@ body[data-app="chat"] {
   }
 
   .stats,
+  .telemetry,
   .split {
     grid-template-columns: 1fr;
   }

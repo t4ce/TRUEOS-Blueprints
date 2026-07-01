@@ -177,7 +177,11 @@ fn normalize_fs_path(path: &str) -> Result<String, String> {
     if path.is_empty() {
         return Ok(MONACO_DEFAULT_PATH.to_string());
     }
-    if path.starts_with('/') || path.split('/').any(|part| part == ".." || part.contains('\0')) {
+    if path.starts_with('/')
+        || path
+            .split('/')
+            .any(|part| part == ".." || part.contains('\0'))
+    {
         return Err("bad path".to_string());
     }
     Ok(path.trim_matches('/').to_string())

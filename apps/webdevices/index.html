@@ -42,6 +42,36 @@
           <div class="stat"><strong id="stat-ctrl">0</strong><span>xHCI controllers</span></div>
           <div class="stat"><strong id="stat-topo">0</strong><span>Topology nodes</span></div>
         </section>
+        <section class="telemetry">
+          <div class="panel">
+            <div class="panel-head">
+              <h2>RAPL power</h2>
+              <div class="legend">
+                <span><i class="swatch pkg"></i>Package</span>
+                <span><i class="swatch core"></i>Cores</span>
+                <span><i class="swatch gfx"></i>Graphics</span>
+              </div>
+            </div>
+            <div class="chart-wrap">
+              <canvas id="rapl-chart" width="720" height="220"></canvas>
+              <div id="rapl-empty" class="empty overlay-empty">Waiting for RAPL history.</div>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-head">
+              <h2>RAPL domains</h2>
+              <span id="rapl-status-tag" class="tag">rapl</span>
+            </div>
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr><th>Domain</th><th>Joules</th><th>Watts</th><th>State</th></tr>
+                </thead>
+                <tbody id="rapl-domain-table"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
         <section class="split">
           <div class="panel">
             <div class="panel-head">
@@ -58,7 +88,7 @@
             <div id="topology" class="topology topology-grid"></div>
           </div>
         </section>
-        <p class="footer-note">Auto-refresh reads device snapshots and the RAPL vlayer status. BAR sizes are intentionally not probed in the repaint path.</p>
+        <p class="footer-note">Auto-refresh reads PCI inventory, BAR windows, and RAPL telemetry from vlayer snapshots.</p>
       </main>
       <aside class="details">
         <h2 id="detail-title" class="detail-title">Select a device</h2>
@@ -203,7 +233,98 @@
       $('probe-tag').textContent = snap.usb.probeError || snap.usb.unavailableReason || 'probe ok';
       renderList();
       renderTopology();
+      renderRapl();
       renderDetails();
+    }
+
+    function renderRapl() {
+      const rapl = state.snapshot?.rapl || {};
+      const tag = $('rapl-status-tag');
+      tag.className = rapl.sampleValid ? 'tag ok' : (rapl.vlayerAvailable ? 'tag warn' : 'tag bad');
+      tag.textContent = rapl.sampleValid ? 'sample valid' : (rapl.vlayerAvailable ? 'waiting' : 'unavailable');
+
+      const rows = rapl.domains || [];
+      $('rapl-domain-table').innerHTML = rows.length ? rows.map((row) => `
+        <tr>
+          <td><strong>${esc(row.domain)}</strong><span>${esc(row.description)}</span></td>
+          <td>${esc(formatNumber(row.joules, 3))}</td>
+          <td>${esc(formatWatts(row.watts))}</td>
+          <td><span class="tag ${row.state === 'active' ? 'ok' : ''}">${esc(row.state)}</span></td>
+        </tr>
+      `).join('') : '<tr><td colspan="4" class="empty-cell">No RAPL domains yet.</td></tr>';
+
+      const points = (rapl.history || []).filter((point) => point.valid);
+      $('rapl-empty').style.display = points.length > 1 ? 'none' : 'grid';
+      drawRaplChart(points);
+    }
+
+    function drawRaplChart(points) {
+      const canvas = $('rapl-chart');
+      const ctx = canvas.getContext('2d');
+      const rect = canvas.getBoundingClientRect();
+      const ratio = window.devicePixelRatio || 1;
+      const width = Math.max(320, Math.floor(rect.width * ratio));
+      const height = Math.max(180, Math.floor(rect.height * ratio));
+      if (canvas.width !== width || canvas.height !== height) {
+        canvas.width = width;
+        canvas.height = height;
+      }
+
+      ctx.clearRect(0, 0, width, height);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, width, height);
+      const padL = 44 * ratio;
+      const padR = 12 * ratio;
+      const padT = 14 * ratio;
+      const padB = 26 * ratio;
+      const plotW = width - padL - padR;
+      const plotH = height - padT - padB;
+
+      const series = [
+        ['packageWatts', '#0e7490'],
+        ['coreWatts', '#047857'],
+        ['graphicsWatts', '#b45309']
+      ];
+      const values = [];
+      points.forEach((point) => series.forEach(([key]) => {
+        if (typeof point[key] === 'number') values.push(point[key]);
+      }));
+      const maxY = Math.max(1, ...values) * 1.15;
+
+      ctx.strokeStyle = '#e5e7eb';
+      ctx.lineWidth = ratio;
+      ctx.font = `${11 * ratio}px sans-serif`;
+      ctx.fillStyle = '#68645f';
+      for (let i = 0; i <= 4; i++) {
+        const y = padT + plotH * i / 4;
+        ctx.beginPath();
+        ctx.moveTo(padL, y);
+        ctx.lineTo(width - padR, y);
+        ctx.stroke();
+        const label = `${(maxY * (1 - i / 4)).toFixed(1)}W`;
+        ctx.fillText(label, 6 * ratio, y + 4 * ratio);
+      }
+
+      if (points.length < 2) return;
+      series.forEach(([key, color]) => {
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2 * ratio;
+        ctx.beginPath();
+        let started = false;
+        points.forEach((point, index) => {
+          const value = point[key];
+          if (typeof value !== 'number') return;
+          const x = padL + plotW * index / Math.max(points.length - 1, 1);
+          const y = padT + plotH * (1 - Math.min(value, maxY) / maxY);
+          if (!started) {
+            ctx.moveTo(x, y);
+            started = true;
+          } else {
+            ctx.lineTo(x, y);
+          }
+        });
+        ctx.stroke();
+      });
     }
 
     function renderList() {
@@ -256,6 +377,7 @@
     }
 
     function renderPciDetails(device) {
+      const bars = device.bars || [];
       $('detail-kv').innerHTML = kvHtml([
         ['BDF', device.bdf],
         ['VID:PID', `${device.vendorId}:${device.deviceId}`],
@@ -266,9 +388,9 @@
       ]);
       $('detail-extra').innerHTML = `
         <div class="panel" style="margin-top:12px">
-          <div class="panel-head"><h2>BAR windows</h2><span class="tag">${device.bars.length}</span></div>
-          <div class="bars">${device.bars.length ? device.bars.map((bar) => `
-            <div class="mini"><strong>BAR${bar.index} ${esc(bar.kind)} ${esc(bar.width)}</strong><span>${esc(bar.base)} / raw ${esc(bar.raw)} / prefetch ${bar.prefetchable ? 'yes' : 'no'}</span></div>
+          <div class="panel-head"><h2>BAR windows</h2><span class="tag">${bars.length}</span></div>
+          <div class="bars">${bars.length ? bars.map((bar) => `
+            <div class="mini"><strong>BAR${bar.index} ${esc(bar.kind)} ${esc(bar.width)}</strong><span>${esc(bar.base)} / size ${esc(bar.size || '-')} / raw ${esc(bar.raw)} / prefetch ${bar.prefetchable ? 'yes' : 'no'}</span></div>
           `).join('') : '<div class="empty">No active BARs.</div>'}</div>
         </div>`;
     }
@@ -310,6 +432,14 @@
 
     function kvHtml(rows) {
       return rows.map(([key, value]) => `<div>${esc(key)}</div><div>${esc(value)}</div>`).join('');
+    }
+
+    function formatNumber(value, digits = 2) {
+      return typeof value === 'number' && Number.isFinite(value) ? value.toFixed(digits) : '-';
+    }
+
+    function formatWatts(value) {
+      return typeof value === 'number' && Number.isFinite(value) ? `${value.toFixed(2)} W` : '-';
     }
 
     document.querySelectorAll('[data-filter]').forEach((button) => {

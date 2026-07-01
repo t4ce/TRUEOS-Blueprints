@@ -3,6 +3,7 @@
 extern crate alloc;
 
 use alloc::{
+    format,
     string::{String, ToString},
     vec::Vec,
 };
@@ -23,15 +24,17 @@ use serde::Serialize;
 use trueos::{
     clock, logl,
     logl::level,
+    pci,
     platform::{self, io},
-    rapl,
-    runtime,
+    rapl, runtime,
     time::{self, Duration},
     tokio::{self, net::SocketAddr},
 };
 
 const WEBDEVICES_HTTP_TCP_PORT: u16 = 10;
 const WEBDEVICES_BIND_RETRY_MS: u64 = 1000;
+const RAPL_UI_HISTORY_BYTES: usize = 256 * 1024;
+const RAPL_UI_HISTORY_POINTS: usize = 240;
 const WEBDEVICES_INDEX_HTML: &str = include_str!("index.html");
 const TRUEOS_TAILWIND_CSS: &str = include_str!("tailwind.css");
 
@@ -45,7 +48,7 @@ struct HardwareSnapshot {
     service: ServiceSnapshot,
     rapl: RaplSnapshot,
     pci: DeviceGroup,
-    usb: DeviceGroup,
+    usb: UsbSnapshot,
     note: &'static str,
 }
 
@@ -65,8 +68,42 @@ struct RaplSnapshot {
     snapshot_bytes: usize,
     history_bytes: usize,
     max_history_bytes: usize,
+    domains: Vec<RaplDomainRow>,
+    history: Vec<RaplHistoryPoint>,
     latest_text: String,
     unavailable_reason: Option<&'static str>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RaplDomainRow {
+    domain: String,
+    description: String,
+    msr: String,
+    raw: String,
+    joules: Option<f64>,
+    delta_joules: Option<f64>,
+    watts: Option<f64>,
+    state: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RaplHistoryPoint {
+    ms: u64,
+    dt_ms: u64,
+    update: u64,
+    valid: bool,
+    package_joules: Option<f64>,
+    core_joules: Option<f64>,
+    graphics_joules: Option<f64>,
+    dram_joules: Option<f64>,
+    platform_joules: Option<f64>,
+    package_watts: Option<f64>,
+    core_watts: Option<f64>,
+    graphics_watts: Option<f64>,
+    dram_watts: Option<f64>,
+    platform_watts: Option<f64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -75,6 +112,35 @@ struct DeviceGroup {
     count: usize,
     devices: Vec<serde_json::Value>,
     unavailable_reason: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UsbSnapshot {
+    count: usize,
+    device_count: usize,
+    controller_count: usize,
+    topology_count: usize,
+    devices: Vec<serde_json::Value>,
+    controllers: Vec<serde_json::Value>,
+    topology: Vec<serde_json::Value>,
+    unavailable_reason: &'static str,
+}
+
+struct PciDeviceDraft {
+    id: String,
+    bdf: String,
+    vendor_id: String,
+    device_id: String,
+    class_code: String,
+    subclass: String,
+    prog_if: String,
+    class_name: String,
+    role: String,
+    command: String,
+    status: String,
+    name: String,
+    bars: Vec<serde_json::Value>,
 }
 
 fn current_port() -> Option<u16> {
@@ -144,12 +210,17 @@ fn rapl_payload() -> RaplSnapshot {
             let sample_valid = latest_text
                 .lines()
                 .any(|line| line.trim() == "sample_valid=true");
+            let domains = parse_rapl_domains(&latest_text);
+            let history_text = rapl::history_tail_text(RAPL_UI_HISTORY_BYTES).unwrap_or_default();
+            let history = parse_rapl_history(&history_text, RAPL_UI_HISTORY_POINTS);
             RaplSnapshot {
                 vlayer_available: true,
                 sample_valid,
                 snapshot_bytes: latest_text.len(),
                 history_bytes: rapl::history_len().unwrap_or(0),
                 max_history_bytes: rapl::MAX_HISTORY_BYTES,
+                domains,
+                history,
                 latest_text,
                 unavailable_reason: None,
             }
@@ -160,13 +231,257 @@ fn rapl_payload() -> RaplSnapshot {
             snapshot_bytes: 0,
             history_bytes: 0,
             max_history_bytes: rapl::MAX_HISTORY_BYTES,
+            domains: Vec::new(),
+            history: Vec::new(),
             latest_text: String::new(),
             unavailable_reason: Some("RAPL vlayer surface is unavailable"),
         },
     }
 }
 
+fn parse_rapl_domains(text: &str) -> Vec<RaplDomainRow> {
+    let mut rows = Vec::new();
+    let mut in_table = false;
+    for line in text.lines() {
+        let line = line.trim();
+        if line == "domain,description,msr,raw,joules,delta_joules,watts,state" {
+            in_table = true;
+            continue;
+        }
+        if !in_table || line.is_empty() {
+            continue;
+        }
+
+        let fields: Vec<&str> = line.split(',').collect();
+        if fields.len() < 8 {
+            continue;
+        }
+        rows.push(RaplDomainRow {
+            domain: fields[0].to_string(),
+            description: fields[1].to_string(),
+            msr: fields[2].to_string(),
+            raw: fields[3].to_string(),
+            joules: parse_optional_f64(fields[4]),
+            delta_joules: parse_optional_f64(fields[5]),
+            watts: parse_optional_f64(fields[6]),
+            state: fields[7].to_string(),
+        });
+    }
+    rows
+}
+
+fn parse_rapl_history(text: &str, max_points: usize) -> Vec<RaplHistoryPoint> {
+    let mut points = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+
+        let fields: Vec<&str> = line.split(',').collect();
+        if fields.len() < 14 {
+            continue;
+        }
+        let Some(ms) = parse_u64(fields[0]) else {
+            continue;
+        };
+
+        if max_points != 0 && points.len() == max_points {
+            points.remove(0);
+        }
+        points.push(RaplHistoryPoint {
+            ms,
+            dt_ms: parse_u64(fields[1]).unwrap_or(0),
+            update: parse_u64(fields[2]).unwrap_or(0),
+            valid: fields[3].trim() == "1",
+            package_joules: parse_optional_f64(fields[4]),
+            core_joules: parse_optional_f64(fields[5]),
+            graphics_joules: parse_optional_f64(fields[6]),
+            dram_joules: parse_optional_f64(fields[7]),
+            platform_joules: parse_optional_f64(fields[8]),
+            package_watts: parse_optional_f64(fields[9]),
+            core_watts: parse_optional_f64(fields[10]),
+            graphics_watts: parse_optional_f64(fields[11]),
+            dram_watts: parse_optional_f64(fields[12]),
+            platform_watts: parse_optional_f64(fields[13]),
+        });
+    }
+    points
+}
+
+fn parse_u64(value: &str) -> Option<u64> {
+    value.trim().parse::<u64>().ok()
+}
+
+fn parse_optional_f64(value: &str) -> Option<f64> {
+    let value = value.trim();
+    if value.is_empty() || value == "-" {
+        return None;
+    }
+    value.parse::<f64>().ok()
+}
+
+fn pci_payload() -> DeviceGroup {
+    match pci::snapshot_text() {
+        Ok(text) if !text.is_empty() => {
+            let devices = parse_pci_devices(&text);
+            DeviceGroup {
+                count: devices.len(),
+                devices,
+                unavailable_reason: "",
+            }
+        }
+        Ok(_) | Err(_) => DeviceGroup {
+            count: 0,
+            devices: Vec::new(),
+            unavailable_reason: "PCI vlayer snapshot is unavailable",
+        },
+    }
+}
+
+fn usb_payload_from_pci(pci_devices: &[serde_json::Value]) -> UsbSnapshot {
+    let mut controllers = Vec::new();
+    for device in pci_devices {
+        let role = json_str(device, "role");
+        let class_name = json_str(device, "className");
+        let class_code = json_str(device, "classCode");
+        let subclass = json_str(device, "subclass");
+        if role != "usb" && !(class_code == "0C" && subclass == "03") && class_name != "usb" {
+            continue;
+        }
+
+        let bdf = json_str(device, "bdf");
+        let prog_if = json_str(device, "progIf");
+        let phase = if prog_if == "30" {
+            "xHCI"
+        } else {
+            "USB controller"
+        };
+        controllers.push(serde_json::json!({
+            "id": bdf,
+            "bdf": bdf,
+            "vendorId": json_str(device, "vendorId"),
+            "deviceId": json_str(device, "deviceId"),
+            "phase": phase,
+            "lifecycle": "pci-vlayer",
+            "eventReady": false,
+            "rootPortChangeSeen": false,
+            "emptyProbeStreak": 0,
+            "ports": [],
+        }));
+    }
+
+    UsbSnapshot {
+        count: 0,
+        device_count: 0,
+        controller_count: controllers.len(),
+        topology_count: 0,
+        devices: Vec::new(),
+        controllers,
+        topology: Vec::new(),
+        unavailable_reason: "USB controllers are projected from PCI; USB devices and input topology are not exported yet",
+    }
+}
+
+fn json_str<'a>(value: &'a serde_json::Value, key: &str) -> &'a str {
+    value.get(key).and_then(|v| v.as_str()).unwrap_or("")
+}
+
+fn parse_pci_devices(text: &str) -> Vec<serde_json::Value> {
+    let mut devices = Vec::new();
+    let mut current: Option<PciDeviceDraft> = None;
+
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty()
+            || line.starts_with('#')
+            || line.starts_with("trueos ")
+            || line.starts_with("device_count=")
+            || line.starts_with("dev,bdf,")
+        {
+            continue;
+        }
+
+        let fields: Vec<&str> = line.split(',').collect();
+        match fields.first().copied() {
+            Some("dev") if fields.len() >= 12 => {
+                if let Some(device) = current.take() {
+                    devices.push(pci_device_to_json(device));
+                }
+                let bdf = fields[1].trim().to_string();
+                let vendor_id = fields[2].trim().to_string();
+                let device_id = fields[3].trim().to_string();
+                let class_name = fields[7].trim().to_string();
+                let name = fields[11].trim();
+                current = Some(PciDeviceDraft {
+                    id: format!("pci-{}", bdf),
+                    bdf,
+                    vendor_id: vendor_id.clone(),
+                    device_id: device_id.clone(),
+                    class_code: fields[4].trim().to_string(),
+                    subclass: fields[5].trim().to_string(),
+                    prog_if: fields[6].trim().to_string(),
+                    class_name: class_name.clone(),
+                    role: fields[8].trim().to_string(),
+                    command: fields[9].trim().to_string(),
+                    status: fields[10].trim().to_string(),
+                    name: if name.is_empty() || name == "-" {
+                        format!("{} {}:{}", class_name, vendor_id, device_id)
+                    } else {
+                        name.to_string()
+                    },
+                    bars: Vec::new(),
+                });
+            }
+            Some("bar") if fields.len() >= 9 => {
+                let Some(device) = current.as_mut() else {
+                    continue;
+                };
+                if fields[1].trim() != device.bdf {
+                    continue;
+                }
+                device.bars.push(serde_json::json!({
+                    "index": parse_u64(fields[2]).unwrap_or(0),
+                    "kind": fields[3].trim(),
+                    "width": fields[4].trim(),
+                    "prefetchable": fields[5].trim() == "1",
+                    "base": fields[6].trim(),
+                    "size": fields[7].trim(),
+                    "raw": fields[8].trim(),
+                }));
+            }
+            _ => {}
+        }
+    }
+
+    if let Some(device) = current.take() {
+        devices.push(pci_device_to_json(device));
+    }
+
+    devices
+}
+
+fn pci_device_to_json(device: PciDeviceDraft) -> serde_json::Value {
+    serde_json::json!({
+        "id": device.id,
+        "bdf": device.bdf,
+        "vendorId": device.vendor_id,
+        "deviceId": device.device_id,
+        "classCode": device.class_code,
+        "subclass": device.subclass,
+        "progIf": device.prog_if,
+        "className": device.class_name,
+        "role": device.role,
+        "command": device.command,
+        "status": device.status,
+        "name": device.name,
+        "bars": device.bars,
+    })
+}
+
 async fn handle_snapshot() -> Response {
+    let pci = pci_payload();
+    let usb = usb_payload_from_pci(&pci.devices);
     json_response(
         200,
         &HardwareSnapshot {
@@ -178,29 +493,18 @@ async fn handle_snapshot() -> Response {
                 bind: "0.0.0.0",
             },
             rapl: rapl_payload(),
-            pci: DeviceGroup {
-                count: 0,
-                devices: Vec::new(),
-                unavailable_reason: "PCI inventory is a kernel service; no guest-safe blueprint facade is exposed yet",
-            },
-            usb: DeviceGroup {
-                count: 0,
-                devices: Vec::new(),
-                unavailable_reason: "USB topology is a kernel service; no guest-safe blueprint facade is exposed yet",
-            },
-            note: "webdevices is running as a blueprint axum app with kernel-only inventory intentionally isolated",
+            pci,
+            usb,
+            note: "webdevices is running as a blueprint axum app with vlayer-backed PCI and RAPL snapshots",
         },
     )
 }
 
 async fn handle_rapl_snapshot() -> Response {
     match rapl::snapshot_text() {
-        Ok(text) if !text.is_empty() => response(
-            200,
-            "text/plain; charset=utf-8",
-            text.into_bytes(),
-            true,
-        ),
+        Ok(text) if !text.is_empty() => {
+            response(200, "text/plain; charset=utf-8", text.into_bytes(), true)
+        }
         Ok(_) | Err(_) => text_response(
             503,
             "text/plain; charset=utf-8",

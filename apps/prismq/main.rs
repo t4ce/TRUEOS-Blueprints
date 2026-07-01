@@ -32,6 +32,21 @@ c[0] = measure q[0];
 c[1] = measure q[1];
 "#;
 
+const BELL_PAIR_QASM2: &str = r#"OPENQASM 2.0;
+include "qelib1.inc";
+
+qreg q[2];
+creg c[2];
+
+// Create entanglement.
+h q[0];
+cx q[0], q[1];
+
+// Measure both qubits.
+measure q[0] -> c[0];
+measure q[1] -> c[1];
+"#;
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Command {
     Run,
@@ -41,6 +56,7 @@ enum Command {
     Draw,
     Inspect,
     Validate,
+    Example,
     Help,
 }
 
@@ -115,6 +131,10 @@ fn run() -> Result<(), String> {
         print_help();
         return Ok(());
     }
+    if options.command == Command::Example {
+        print_example(options.input.as_deref())?;
+        return Ok(());
+    }
 
     let qasm = read_input(options.command, options.input.as_deref())?;
     let circuit = openqasm::parse(&qasm).map_err(|err| format!("parse failed: {err}"))?;
@@ -130,7 +150,7 @@ fn run() -> Result<(), String> {
             println!("valid");
             inspect_circuit(&circuit)
         }
-        Command::Help => Ok(()),
+        Command::Example | Command::Help => Ok(()),
     }
 }
 
@@ -180,7 +200,7 @@ fn parse_args(args: Vec<String>) -> Result<Options, String> {
             }
             "--svg" => draw_format = DrawFormat::Svg,
             "--out" => {
-                index += 2;
+                index += 1;
                 out = Some(
                     args.get(index)
                         .ok_or_else(|| "--out needs a path".to_string())?
@@ -188,7 +208,7 @@ fn parse_args(args: Vec<String>) -> Result<Options, String> {
                 );
             }
             "--backend" => {
-                index += 2;
+                index += 1;
                 match args.get(index).map(String::as_str) {
                     Some("auto") => {}
                     Some(other) => {
@@ -232,6 +252,7 @@ fn parse_command(arg: &str) -> Option<Command> {
         "draw" => Some(Command::Draw),
         "inspect" => Some(Command::Inspect),
         "validate" => Some(Command::Validate),
+        "example" | "examples" => Some(Command::Example),
         "help" | "--help" | "-h" => Some(Command::Help),
         _ => None,
     }
@@ -260,11 +281,34 @@ fn read_input(command: Command, input: Option<&str>) -> Result<String, String> {
                 .map_err(|err| format!("failed to read stdin: {err}"))?;
             input_text_to_qasm("-", &text)
         }
+        Some(name) if builtin_example_qasm(name).is_some() => {
+            Ok(builtin_example_qasm(name).unwrap().to_string())
+        }
         Some(path) => {
             let text =
                 fs::read_to_string(path).map_err(|err| format!("failed to read {path}: {err}"))?;
             input_text_to_qasm(path, &text)
         }
+    }
+}
+
+fn builtin_example_qasm(name: &str) -> Option<&'static str> {
+    match name {
+        "bell" | "bell-pair" | "hello-bell" | "entanglement" | "example:bell"
+        | "example:bell-pair" | "builtin:bell" | "builtin:bell-pair" => Some(BELL_PAIR_QASM2),
+        _ => None,
+    }
+}
+
+fn print_example(name: Option<&str>) -> Result<(), String> {
+    let name = name.unwrap_or("bell-pair");
+    if let Some(qasm) = builtin_example_qasm(name) {
+        print!("{qasm}");
+        Ok(())
+    } else {
+        Err(format!(
+            "unknown built-in example `{name}`; available: bell-pair"
+        ))
     }
 }
 
@@ -701,8 +745,10 @@ fn print_help() {
     println!("  prismq inspect [file.qasm|file.json|-]");
     println!("  prismq validate [file.qasm|file.json|-]");
     println!("  prismq draw [file.qasm|file.json|-] [--format text|svg] [--out path]");
+    println!("  prismq example [bell-pair]");
     println!();
     println!("With no input path, prismq runs an embedded Bell-state OpenQASM program.");
+    println!("Built-in example input aliases include `example:bell-pair` and `bell-pair`.");
     println!("JSON input is accepted for .json files or stdin beginning with `{{`.");
     println!(
         "The embedded shots/counts program includes measurements; run/probs leaves Bell unmeasured."

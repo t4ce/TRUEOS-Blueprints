@@ -4,8 +4,7 @@ use std::time::Duration;
 
 use trueos::{
     logl::{self, level},
-    platform,
-    t,
+    platform, t,
 };
 
 const WAIT_TICK: Duration = Duration::from_millis(1);
@@ -28,7 +27,10 @@ fn main() {
 
     match run_probe() {
         Ok(()) => logl::log(level::INFO, format_args!("condvar: done")),
-        Err(stage) => logl::log(level::ERROR, format_args!("condvar: failed stage={}", stage)),
+        Err(stage) => logl::log(
+            level::ERROR,
+            format_args!("condvar: failed stage={}", stage),
+        ),
     }
 }
 
@@ -68,7 +70,10 @@ fn std_thread_signal_roundtrip() -> Result<(), &'static str> {
 }
 
 fn std_thread_broadcast_roundtrip() -> Result<(), &'static str> {
-    logl::log(level::INFO, format_args!("condvar: stage std.broadcast.spawn"));
+    logl::log(
+        level::INFO,
+        format_args!("condvar: stage std.broadcast.spawn"),
+    );
     let shared = Arc::new(Shared::default());
     let mut workers = Vec::new();
     for index in 0..2u32 {
@@ -84,7 +89,10 @@ fn std_thread_broadcast_roundtrip() -> Result<(), &'static str> {
         );
     }
 
-    logl::log(level::INFO, format_args!("condvar: stage std.broadcast.notify"));
+    logl::log(
+        level::INFO,
+        format_args!("condvar: stage std.broadcast.notify"),
+    );
     notify_stage(&shared, 2, 0xC0DE_0002);
 
     let mut sum = 0u32;

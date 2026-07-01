@@ -3,7 +3,8 @@ use trueos::{logl, logl::level, platform};
 
 fn run_probe() -> Result<(), rusqlite_fork::Error> {
     let conn = Connection::open_in_memory()?;
-    let sqlite_version = conn.query_row("select sqlite_version()", [], |row| row.get::<_, String>(0))?;
+    let sqlite_version =
+        conn.query_row("select sqlite_version()", [], |row| row.get::<_, String>(0))?;
 
     conn.execute(
         "create table notes (
