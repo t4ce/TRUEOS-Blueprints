@@ -12,6 +12,8 @@
       "path": "apps/Reticulum-rs"
     },
     "tantivy",
+    "prismq",
+    "prism_q_probe",
     "test_some_crates",
     "texteditor",
     "monaco",

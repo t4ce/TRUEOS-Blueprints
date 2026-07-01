@@ -1,0 +1,11 @@
+[package]
+name = "prismq"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "prismq"
+path = "main.rs"
+
+[dependencies]
+prism-q = { version = "0.20.0", default-features = false }
