@@ -26,7 +26,7 @@ use trueos::{
     logl::level,
     pci,
     platform::{self, io},
-    rapl, runtime,
+    rapl, runtime, thermal,
     time::{self, Duration},
     tokio::{self, net::SocketAddr},
 };
@@ -47,6 +47,7 @@ struct HardwareSnapshot {
     generated_at_s: u64,
     service: ServiceSnapshot,
     rapl: RaplSnapshot,
+    thermal: ThermalSnapshot,
     pci: DeviceGroup,
     usb: UsbSnapshot,
     note: &'static str,
@@ -104,6 +105,62 @@ struct RaplHistoryPoint {
     graphics_watts: Option<f64>,
     dram_watts: Option<f64>,
     platform_watts: Option<f64>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ThermalSnapshot {
+    vlayer_available: bool,
+    sample_valid: bool,
+    snapshot_bytes: usize,
+    update_count: Option<u64>,
+    last_update_ms: Option<u64>,
+    tj_max_celsius: Option<u64>,
+    total_cpus: Option<u64>,
+    online_cpus: Option<u64>,
+    completed_cpus: Option<u64>,
+    package: Option<ThermalPackageRow>,
+    cores: Vec<ThermalCoreRow>,
+    latest_text: String,
+    unavailable_reason: Option<&'static str>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ThermalPackageRow {
+    domain: String,
+    raw: String,
+    temp_celsius: Option<i64>,
+    delta_to_tjmax: Option<u64>,
+    valid: bool,
+    state: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ThermalCoreRow {
+    slot: u64,
+    online: bool,
+    source: String,
+    age_ms: Option<u64>,
+    kind: String,
+    spawned: Option<u64>,
+    ready: Option<u64>,
+    hlt_now: Option<bool>,
+    hlt_active80: Option<u64>,
+    perf_ratio: Option<u64>,
+    effective_permille: Option<u64>,
+    raw: String,
+    temp_celsius: Option<i64>,
+    delta_to_tjmax: Option<u64>,
+    valid: bool,
+    thermal: Option<bool>,
+    prochot: Option<bool>,
+    critical: Option<bool>,
+    power_limit: Option<bool>,
+    current_limit: Option<bool>,
+    cross_domain: Option<bool>,
+    state: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -239,6 +296,141 @@ fn rapl_payload() -> RaplSnapshot {
     }
 }
 
+fn thermal_payload() -> ThermalSnapshot {
+    match thermal::snapshot_text() {
+        Ok(latest_text) if !latest_text.is_empty() => {
+            let sample_valid = latest_text
+                .lines()
+                .any(|line| line.trim() == "sample_valid=true");
+            let (package, cores) = parse_thermal_rows(&latest_text);
+            ThermalSnapshot {
+                vlayer_available: true,
+                sample_valid,
+                snapshot_bytes: latest_text.len(),
+                update_count: parse_thermal_scalar(&latest_text, "update_count"),
+                last_update_ms: parse_thermal_scalar(&latest_text, "last_update_ms"),
+                tj_max_celsius: parse_thermal_scalar(&latest_text, "tj_max_celsius"),
+                total_cpus: parse_thermal_cpu_scalar(&latest_text, "total"),
+                online_cpus: parse_thermal_cpu_scalar(&latest_text, "online"),
+                completed_cpus: parse_thermal_cpu_scalar(&latest_text, "completed"),
+                package,
+                cores,
+                latest_text,
+                unavailable_reason: None,
+            }
+        }
+        Ok(_) | Err(_) => ThermalSnapshot {
+            vlayer_available: false,
+            sample_valid: false,
+            snapshot_bytes: 0,
+            update_count: None,
+            last_update_ms: None,
+            tj_max_celsius: None,
+            total_cpus: None,
+            online_cpus: None,
+            completed_cpus: None,
+            package: None,
+            cores: Vec::new(),
+            latest_text: String::new(),
+            unavailable_reason: Some("thermal vlayer surface is unavailable"),
+        },
+    }
+}
+
+fn parse_thermal_rows(text: &str) -> (Option<ThermalPackageRow>, Vec<ThermalCoreRow>) {
+    let mut package = None;
+    let mut cores = Vec::new();
+    let mut table = "";
+
+    for line in text.lines() {
+        let line = line.trim();
+        if line
+            == "domain,description,msr,raw,temp_c,delta_to_tjmax,valid,thermal,prochot,critical,power_limit,current_limit,cross_domain,state"
+        {
+            table = "package";
+            continue;
+        }
+        if line
+            == "slot,online,source,age_ms,kind,spawned,ready,hlt_now,hlt_active80,hlt_history,perf_ratio,perf_status,aperf_delta,mperf_delta,eff_permille,raw,temp_c,delta_to_tjmax,valid,thermal,prochot,critical,power_limit,current_limit,cross_domain,state"
+        {
+            table = "cores";
+            continue;
+        }
+        if line.is_empty() || line.contains('=') {
+            continue;
+        }
+
+        let fields: Vec<&str> = line.split(',').map(str::trim).collect();
+        match table {
+            "package" if fields.len() >= 14 => {
+                package = Some(ThermalPackageRow {
+                    domain: fields[0].to_string(),
+                    raw: fields[3].to_string(),
+                    temp_celsius: parse_optional_i64(fields[4]),
+                    delta_to_tjmax: parse_optional_u64(fields[5]),
+                    valid: parse_bool(fields[6]).unwrap_or(false),
+                    state: fields[13].to_string(),
+                });
+            }
+            "cores" if fields.len() >= 26 => {
+                let Some(slot) = parse_u64(fields[0]) else {
+                    continue;
+                };
+                cores.push(ThermalCoreRow {
+                    slot,
+                    online: parse_bool(fields[1]).unwrap_or(false),
+                    source: fields[2].to_string(),
+                    age_ms: parse_optional_u64(fields[3]),
+                    kind: fields[4].to_string(),
+                    spawned: parse_optional_u64(fields[5]),
+                    ready: parse_optional_u64(fields[6]),
+                    hlt_now: parse_bool(fields[7]),
+                    hlt_active80: parse_optional_u64(fields[8]),
+                    perf_ratio: parse_optional_u64(fields[10]),
+                    effective_permille: parse_optional_u64(fields[14]),
+                    raw: fields[15].to_string(),
+                    temp_celsius: parse_optional_i64(fields[16]),
+                    delta_to_tjmax: parse_optional_u64(fields[17]),
+                    valid: parse_bool(fields[18]).unwrap_or(false),
+                    thermal: parse_bool(fields[19]),
+                    prochot: parse_bool(fields[20]),
+                    critical: parse_bool(fields[21]),
+                    power_limit: parse_bool(fields[22]),
+                    current_limit: parse_bool(fields[23]),
+                    cross_domain: parse_bool(fields[24]),
+                    state: fields[25].to_string(),
+                });
+            }
+            _ => {}
+        }
+    }
+
+    (package, cores)
+}
+
+fn parse_thermal_scalar(text: &str, key: &str) -> Option<u64> {
+    let prefix = format!("{}=", key);
+    text.lines()
+        .map(str::trim)
+        .find_map(|line| line.strip_prefix(&prefix).and_then(parse_optional_u64))
+}
+
+fn parse_thermal_cpu_scalar(text: &str, key: &str) -> Option<u64> {
+    text.lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("cpus "))
+        .and_then(|line| {
+            line.split_whitespace().find_map(|part| {
+                let (name, value) = part.split_once('=')?;
+                if name == key {
+                    parse_optional_u64(value)
+                } else {
+                    None
+                }
+            })
+        })
+}
+
 fn parse_rapl_domains(text: &str) -> Vec<RaplDomainRow> {
     let mut rows = Vec::new();
     let mut in_table = false;
@@ -311,6 +503,30 @@ fn parse_rapl_history(text: &str, max_points: usize) -> Vec<RaplHistoryPoint> {
 
 fn parse_u64(value: &str) -> Option<u64> {
     value.trim().parse::<u64>().ok()
+}
+
+fn parse_optional_u64(value: &str) -> Option<u64> {
+    let value = value.trim();
+    if value.is_empty() || value == "-" {
+        return None;
+    }
+    value.parse::<u64>().ok()
+}
+
+fn parse_optional_i64(value: &str) -> Option<i64> {
+    let value = value.trim();
+    if value.is_empty() || value == "-" {
+        return None;
+    }
+    value.parse::<i64>().ok()
+}
+
+fn parse_bool(value: &str) -> Option<bool> {
+    match value.trim() {
+        "true" | "1" | "yes" => Some(true),
+        "false" | "0" | "no" => Some(false),
+        _ => None,
+    }
 }
 
 fn parse_optional_f64(value: &str) -> Option<f64> {
@@ -493,9 +709,10 @@ async fn handle_snapshot() -> Response {
                 bind: "0.0.0.0",
             },
             rapl: rapl_payload(),
+            thermal: thermal_payload(),
             pci,
             usb,
-            note: "webdevices is running as a blueprint axum app with vlayer-backed PCI and RAPL snapshots",
+            note: "webdevices is running as a blueprint axum app with vlayer-backed PCI, RAPL, and thermal snapshots",
         },
     )
 }
@@ -529,6 +746,19 @@ async fn handle_rapl_history() -> Response {
     }
 }
 
+async fn handle_thermal_snapshot() -> Response {
+    match thermal::snapshot_text() {
+        Ok(text) if !text.is_empty() => {
+            response(200, "text/plain; charset=utf-8", text.into_bytes(), true)
+        }
+        Ok(_) | Err(_) => text_response(
+            503,
+            "text/plain; charset=utf-8",
+            "thermal vlayer surface is unavailable\n",
+        ),
+    }
+}
+
 fn router() -> Router {
     Router::new()
         .route("/", get(handle_index))
@@ -540,6 +770,7 @@ fn router() -> Router {
         .route("/api/devices/snapshot", get(handle_snapshot))
         .route("/api/rapl/snapshot", get(handle_rapl_snapshot))
         .route("/api/rapl/history", get(handle_rapl_history))
+        .route("/api/thermal/snapshot", get(handle_thermal_snapshot))
 }
 
 async fn webdevices_http_runtime() -> Result<(), io::Error> {

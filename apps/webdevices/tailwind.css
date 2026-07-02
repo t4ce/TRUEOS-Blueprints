@@ -380,14 +380,14 @@ body[data-app="webmail"] .app-shell {
 
 .stats {
   display: grid;
-  grid-template-columns: repeat(4, minmax(120px, 1fr));
+  grid-template-columns: repeat(5, minmax(110px, 1fr));
   gap: 10px;
   margin-bottom: 12px;
 }
 
 .telemetry {
   display: grid;
-  grid-template-columns: minmax(360px, 1.35fr) minmax(320px, .9fr);
+  grid-template-columns: minmax(360px, 1.35fr) minmax(300px, .85fr);
   gap: 12px;
   align-items: stretch;
   margin-bottom: 12px;
@@ -421,9 +421,17 @@ body[data-app="webmail"] .app-shell {
 
 .split {
   display: grid;
-  grid-template-columns: minmax(300px, 1fr) minmax(300px, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
   align-items: start;
+}
+
+.split.with-topology {
+  grid-template-columns: minmax(300px, 1fr) minmax(300px, 1fr);
+}
+
+.thermal-panel {
+  grid-column: 1 / -1;
 }
 
 .panel {
@@ -503,6 +511,92 @@ body[data-app="webmail"] .app-shell {
 .table-wrap {
   overflow: auto;
   max-height: 240px;
+}
+
+.thermal-summary {
+  display: grid;
+  grid-template-columns: max-content 1fr max-content 1fr;
+  gap: 6px 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  background: #fff;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.thermal-summary div:nth-child(odd) {
+  color: var(--muted);
+}
+
+.thermal-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 8px;
+  padding: 10px;
+  max-height: 240px;
+  overflow: auto;
+}
+
+.thermal-core {
+  border: 1px solid var(--line);
+  border-left-width: 4px;
+  border-radius: 7px;
+  background: #fff;
+  padding: 8px;
+  min-width: 0;
+}
+
+.thermal-core.ok {
+  border-left-color: var(--accent);
+}
+
+.thermal-core.limited {
+  border-left-color: var(--warn);
+}
+
+.thermal-core.hot {
+  border-left-color: var(--danger);
+}
+
+.thermal-core.stale {
+  border-left-color: #9ca3af;
+  opacity: .76;
+}
+
+.thermal-core strong,
+.thermal-core small {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thermal-core strong {
+  font-size: 13px;
+}
+
+.thermal-core strong span,
+.thermal-core small,
+.thermal-meta {
+  color: var(--muted);
+}
+
+.thermal-temp {
+  margin-top: 5px;
+  font-size: 20px;
+  line-height: 1.1;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.thermal-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 3px 6px;
+  margin-top: 7px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
 }
 
 .data-table {

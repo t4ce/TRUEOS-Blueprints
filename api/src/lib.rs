@@ -17,6 +17,7 @@ pub use v::vpci as pci;
 pub use v::vrapl as rapl;
 pub use v::vshell;
 pub use v::vsys;
+pub use v::vthermal as thermal;
 
 pub mod platform {
     pub use alloc::borrow::{Cow, ToOwned};

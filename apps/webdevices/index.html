@@ -41,6 +41,7 @@
           <div class="stat"><strong id="stat-usb">0</strong><span>USB devices</span></div>
           <div class="stat"><strong id="stat-ctrl">0</strong><span>xHCI controllers</span></div>
           <div class="stat"><strong id="stat-topo">0</strong><span>Topology nodes</span></div>
+          <div class="stat"><strong id="stat-temp">-</strong><span>Max core temp</span></div>
         </section>
         <section class="telemetry">
           <div class="panel">
@@ -71,8 +72,16 @@
               </table>
             </div>
           </div>
+          <div class="panel thermal-panel">
+            <div class="panel-head">
+              <h2>Thermals</h2>
+              <span id="thermal-status-tag" class="tag">thermal</span>
+            </div>
+            <div id="thermal-summary" class="thermal-summary"></div>
+            <div id="thermal-core-grid" class="thermal-grid"></div>
+          </div>
         </section>
-        <section class="split">
+        <section id="inventory-split" class="split">
           <div class="panel">
             <div class="panel-head">
               <h2>Device inventory</h2>
@@ -80,7 +89,7 @@
             </div>
             <div id="device-list" class="list"></div>
           </div>
-          <div class="panel">
+          <div id="usb-topology-panel" class="panel">
             <div class="panel-head">
               <h2>USB topology</h2>
               <span id="probe-tag" class="tag">probe</span>
@@ -88,7 +97,7 @@
             <div id="topology" class="topology topology-grid"></div>
           </div>
         </section>
-        <p class="footer-note">Auto-refresh reads PCI inventory, BAR windows, and RAPL telemetry from vlayer snapshots.</p>
+        <p class="footer-note">Auto-refresh reads PCI inventory, BAR windows, RAPL, and thermal telemetry from vlayer snapshots.</p>
       </main>
       <aside class="details">
         <h2 id="detail-title" class="detail-title">Select a device</h2>
@@ -214,6 +223,7 @@
       $('stat-usb').textContent = snap.usb.deviceCount ?? snap.usb.count ?? 0;
       $('stat-ctrl').textContent = snap.usb.controllerCount ?? 0;
       $('stat-topo').textContent = snap.usb.topologyCount ?? 0;
+      $('stat-temp').textContent = formatTemp(maxCoreTemp(snap.thermal?.cores || []));
       $('count-all').textContent = countBy('all');
       $('count-pci').textContent = countBy('pci');
       $('count-usb').textContent = countBy('usb');
@@ -227,13 +237,15 @@
         ['Uptime', snap.uptimeS == null ? '-' : `${snap.uptimeS}s`],
         ['Probe', snap.usb.probeError || snap.usb.unavailableReason || 'ok'],
         ['RAPL', snap.rapl?.sampleValid ? 'sample valid' : (snap.rapl?.vlayerAvailable ? 'waiting' : 'unavailable')],
-        ['RAPL history', `${snap.rapl?.historyBytes ?? 0} bytes`]
+        ['RAPL history', `${snap.rapl?.historyBytes ?? 0} bytes`],
+        ['Thermal', snap.thermal?.sampleValid ? `${snap.thermal.cores?.length || 0} cores` : (snap.thermal?.vlayerAvailable ? 'waiting' : 'unavailable')]
       ]);
       $('probe-tag').className = snap.usb.probeError ? 'tag warn' : 'tag ok';
       $('probe-tag').textContent = snap.usb.probeError || snap.usb.unavailableReason || 'probe ok';
       renderList();
       renderTopology();
       renderRapl();
+      renderThermal();
       renderDetails();
     }
 
@@ -256,6 +268,37 @@
       const points = (rapl.history || []).filter((point) => point.valid);
       $('rapl-empty').style.display = points.length > 1 ? 'none' : 'grid';
       drawRaplChart(points);
+    }
+
+    function renderThermal() {
+      const thermal = state.snapshot?.thermal || {};
+      const tag = $('thermal-status-tag');
+      tag.className = thermal.sampleValid ? 'tag ok' : (thermal.vlayerAvailable ? 'tag warn' : 'tag bad');
+      tag.textContent = thermal.sampleValid ? 'sample valid' : (thermal.vlayerAvailable ? 'waiting' : 'unavailable');
+
+      const cores = thermal.cores || [];
+      const packageTemp = thermal.package?.tempCelsius;
+      $('thermal-summary').innerHTML = kvHtml([
+        ['Package', formatTemp(packageTemp)],
+        ['TJ max', formatTemp(thermal.tjMaxCelsius)],
+        ['CPUs', `${thermal.completedCpus ?? 0}/${thermal.onlineCpus ?? 0}`],
+        ['Update', thermal.updateCount ?? '-']
+      ]);
+      $('thermal-core-grid').innerHTML = cores.length ? cores.map((core) => `
+        <div class="thermal-core ${thermalStateClass(core)}">
+          <div>
+            <strong>CPU ${esc(core.slot)} <span>${esc(core.kind || 'unknown')}</span></strong>
+            <small>${esc(core.source)} / ${esc(formatAge(core.ageMs))}</small>
+          </div>
+          <div class="thermal-temp">${esc(formatTemp(core.tempCelsius))}</div>
+          <div class="thermal-meta">
+            <span>ratio ${esc(core.perfRatio ?? '-')}</span>
+            <span>eff ${esc(formatPermille(core.effectivePermille))}</span>
+            <span>tasks ${esc(core.spawned ?? '-')}/${esc(core.ready ?? '-')}</span>
+            <span>hlt ${core.hltNow === true ? 'yes' : (core.hltNow === false ? 'no' : '-')}</span>
+          </div>
+        </div>
+      `).join('') : '<div class="empty">No thermal core samples yet.</div>';
     }
 
     function drawRaplChart(points) {
@@ -349,13 +392,25 @@
     }
 
     function renderTopology() {
-      const nodes = state.snapshot.usb?.topology || [];
+      const showTopology = topologyFilterActive();
+      $('inventory-split').classList.toggle('with-topology', showTopology);
+      $('usb-topology-panel').hidden = !showTopology;
+      if (!showTopology) {
+        $('topology').innerHTML = '';
+        return;
+      }
+
+      const nodes = state.snapshot?.usb?.topology || [];
       $('topology').innerHTML = nodes.length ? nodes.map((node) => `
         <button class="mini" data-topology="${esc(node.controllerId)}:${esc(node.slotId || '')}:${esc(node.portId)}">
           <strong>${esc(node.kind)} / ctrl ${esc(node.controllerId)} / port ${esc(node.portId)}</strong>
           <span>root ${esc(node.rootPortId)} depth ${esc(node.depth)} speed ${esc(node.speed)} vid:pid ${esc(node.vidPid)}</span>
         </button>
       `).join('') : '<div class="empty">No USB topology observed yet.</div>';
+    }
+
+    function topologyFilterActive() {
+      return state.filter === 'usb' || state.filter === 'controllers' || state.filter === 'input';
     }
 
     function renderDetails() {
@@ -442,11 +497,38 @@
       return typeof value === 'number' && Number.isFinite(value) ? `${value.toFixed(2)} W` : '-';
     }
 
+    function formatTemp(value) {
+      return typeof value === 'number' && Number.isFinite(value) ? `${value} C` : '-';
+    }
+
+    function formatAge(value) {
+      if (typeof value !== 'number' || !Number.isFinite(value)) return '-';
+      if (value >= 1000) return `${(value / 1000).toFixed(0)}s`;
+      return `${value}ms`;
+    }
+
+    function formatPermille(value) {
+      return typeof value === 'number' && Number.isFinite(value) ? `${(value / 10).toFixed(1)}%` : '-';
+    }
+
+    function maxCoreTemp(cores) {
+      const temps = cores.map((core) => core.tempCelsius).filter((value) => typeof value === 'number' && Number.isFinite(value));
+      return temps.length ? Math.max(...temps) : null;
+    }
+
+    function thermalStateClass(core) {
+      if (core.critical || core.prochot || core.thermal) return 'hot';
+      if (core.powerLimit || core.currentLimit || core.crossDomain) return 'limited';
+      if (core.state === 'stale') return 'stale';
+      return 'ok';
+    }
+
     document.querySelectorAll('[data-filter]').forEach((button) => {
       button.addEventListener('click', () => {
         state.filter = button.getAttribute('data-filter');
         document.querySelectorAll('[data-filter]').forEach((el) => el.classList.toggle('active', el === button));
         renderList();
+        renderTopology();
       });
     });
     $('search').addEventListener('input', (event) => {

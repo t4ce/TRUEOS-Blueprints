@@ -48,6 +48,7 @@ pub mod vpci;
 pub mod vrapl;
 pub mod vshell;
 pub mod vsys;
+pub mod vthermal;
 
 #[macro_export]
 macro_rules! shell_line {
