@@ -20,6 +20,8 @@ members = [
     "apps/prismq",
     "apps/rusqlite_probe",
     "apps/prism_q_probe",
+    "apps/ratatui_demo",
+    "apps/skybox",
     "apps/test_some_crates",
     "apps/texteditor",
     "apps/tokio_fs",
@@ -29,7 +31,20 @@ members = [
     "apps/webmail",
     "apps/wls",
 ]
-exclude = ["crates", "crates/*", "vendor", "vendor/*"]
+exclude = [
+    "crates",
+    "crates/*",
+    "vendor",
+    "vendor/*",
+    "vendor/ratatui/ratatui",
+    "vendor/ratatui/ratatui-core",
+    "vendor/ratatui/ratatui-crossterm",
+    "vendor/ratatui/ratatui-macros",
+    "vendor/ratatui/ratatui-termina",
+    "vendor/ratatui/ratatui-termion",
+    "vendor/ratatui/ratatui-termwiz",
+    "vendor/ratatui/ratatui-widgets",
+]
 default-members = ["."]
 resolver = "3"
 
@@ -45,6 +60,7 @@ ignore = "0.4"
 libm = { version = "0.2", default-features = false }
 prism-q = { version = "=0.20.0", default-features = true }
 rayon = { version = "=1.12.0" }
+ratatui = { path = "vendor/ratatui/ratatui", default-features = false }
 regex = { version = "1", default-features = false, features = ["perf"] }
 reqwest = { version = "=0.13.3", default-features = false, features = ["json", "rustls", "http2"] }
 rustls = { version = "0.23.27", default-features = false, features = ["std", "tls12"] }
@@ -99,6 +115,9 @@ mime = { path = "vendor/mime-0.3.17" }
 mio = { path = "vendor/mio-1.2.0" }
 percent-encoding = { path = "vendor/percent-encoding-2.3.2" }
 prism-q = { path = "vendor/prism-q-0.20.0" }
+ratatui = { path = "vendor/ratatui/ratatui" }
+ratatui-core = { path = "vendor/ratatui/ratatui-core" }
+ratatui-widgets = { path = "vendor/ratatui/ratatui-widgets" }
 reqwest = { path = "vendor/reqwest-0.13.3" }
 ring = { path = "vendor/ring-0.17.14" }
 rayon = { path = "vendor/rayon" }

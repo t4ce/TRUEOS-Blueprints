@@ -16,6 +16,7 @@
     "tantivy",
     "prismq",
     "prism_q_probe",
+    "ratatui_demo",
     "test_some_crates",
     "texteditor",
     "monaco",
@@ -24,6 +25,8 @@
       "path": "../tactics"
     },
     "rusqlite_probe",
+    "skybox",
+    "superseedr",
     "webdevices",
     "webmail",
     "wls"

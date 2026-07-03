@@ -1,0 +1,12 @@
+[package]
+name = "ratatui_demo"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "ratatui_demo"
+path = "main.rs"
+
+[dependencies]
+ratatui.workspace = true
+trueos.workspace = true

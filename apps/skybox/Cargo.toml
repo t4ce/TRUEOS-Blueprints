@@ -1,0 +1,15 @@
+[package]
+name = "skybox"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "skybox"
+path = "src/main.rs"
+
+[dependencies]
+libm.workspace = true
+trueos.workspace = true
+
+[build-dependencies]
+png = "0.17"

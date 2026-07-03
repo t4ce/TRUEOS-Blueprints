@@ -13,3 +13,9 @@
 [submodule "apps/tantivy"]
 	path = apps/tantivy
 	url = https://github.com/quickwit-oss/tantivy.git
+[submodule "apps/superseedr"]
+	path = apps/superseedr
+	url = https://github.com/t4ce/superseedr
+[submodule "vendor/ratatui"]
+	path = vendor/ratatui
+	url = https://github.com/t4ce/ratatui
