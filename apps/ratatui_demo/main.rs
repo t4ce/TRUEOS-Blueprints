@@ -1,3 +1,4 @@
+use core::fmt::Write;
 use ratatui_core::{
     backend::{Backend, ClearType, WindowSize},
     buffer::{Buffer, Cell},
@@ -52,22 +53,54 @@ fn render_shell_model(frame: &mut Frame<'_>) {
             "TRUEOS",
             Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD),
         ),
-        Span::raw(" kernel shell model"),
+        Span::styled(" kernel shell model", Style::new().fg(Color::LightGreen)),
     ]))
-    .block(Block::new().title("ratatui").borders(Borders::ALL))
+    .block(
+        Block::new()
+            .title("ratatui")
+            .borders(Borders::ALL)
+            .style(Style::new().fg(Color::Gray)),
+    )
     .render(chunks[0], frame.buffer_mut());
 
     Paragraph::new(vec![
-        Line::from("prompt  / > apps"),
-        Line::from("select  ratatui_demo"),
-        Line::from("render  Terminal<TrueOsKonsoleBackend>"),
+        Line::from(vec![
+            Span::styled("prompt  ", Style::new().fg(Color::DarkGray)),
+            Span::styled("/ > apps", Style::new().fg(Color::Yellow)),
+        ]),
+        Line::from(vec![
+            Span::styled("select  ", Style::new().fg(Color::DarkGray)),
+            Span::styled("ratatui_demo", Style::new().fg(Color::LightCyan)),
+        ]),
+        Line::from(vec![
+            Span::styled("render  ", Style::new().fg(Color::DarkGray)),
+            Span::styled(
+                "Terminal<TrueOsKonsoleBackend>",
+                Style::new().fg(Color::White).add_modifier(Modifier::ITALIC),
+            ),
+        ]),
     ])
-    .block(Block::new().title("shell").borders(Borders::ALL))
+    .block(
+        Block::new()
+            .title("shell")
+            .borders(Borders::ALL)
+            .style(Style::new().fg(Color::LightBlue)),
+    )
     .render(chunks[1], frame.buffer_mut());
 
     Gauge::default()
-        .block(Block::new().title("model fit").borders(Borders::ALL))
-        .gauge_style(Style::new().fg(Color::Green))
+        .block(
+            Block::new()
+                .title("model fit")
+                .borders(Borders::ALL)
+                .style(Style::new().fg(Color::Magenta)),
+        )
+        .gauge_style(
+            Style::new()
+                .fg(Color::Black)
+                .bg(Color::LightGreen)
+                .add_modifier(Modifier::BOLD | Modifier::REVERSED),
+        )
         .ratio(0.72)
         .label("ratatui vendored")
         .render(chunks[2], frame.buffer_mut());
@@ -180,14 +213,30 @@ impl<S: KonsoleSink> TrueOsKonsoleBackend<S> {
         self.sink.begin_frame(self.buffer.area.as_size(), cursor);
 
         for y in 0..self.buffer.area.height {
-            let mut row = String::new();
-            for x in 0..self.buffer.area.width {
-                row.push_str(self.buffer[(x, y)].symbol());
-            }
-            self.sink.write_row(y, row.trim_end());
+            let row = self.styled_row(y);
+            self.sink.write_row(y, row.as_str());
         }
 
         self.sink.end_frame();
+    }
+
+    fn styled_row(&self, y: u16) -> String {
+        let mut row = String::new();
+        let mut current = CellStyle::default();
+        row.push_str("\x1b[0m");
+
+        for x in 0..self.buffer.area.width {
+            let cell = &self.buffer[(x, y)];
+            let next = CellStyle::from_cell(cell);
+            if next != current {
+                emit_sgr(&mut row, next);
+                current = next;
+            }
+            row.push_str(cell.symbol());
+        }
+
+        row.push_str("\x1b[0m");
+        row
     }
 
     fn clear_cells(&mut self, clear_type: ClearType) {
@@ -230,6 +279,135 @@ impl<S: KonsoleSink> TrueOsKonsoleBackend<S> {
                     cell.reset();
                 }
             }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+struct CellStyle {
+    fg: Color,
+    bg: Color,
+    modifier: Modifier,
+}
+
+impl Default for CellStyle {
+    fn default() -> Self {
+        Self {
+            fg: Color::Reset,
+            bg: Color::Reset,
+            modifier: Modifier::empty(),
+        }
+    }
+}
+
+impl CellStyle {
+    fn from_cell(cell: &Cell) -> Self {
+        Self {
+            fg: cell.fg,
+            bg: cell.bg,
+            modifier: cell.modifier,
+        }
+    }
+}
+
+fn emit_sgr(out: &mut String, style: CellStyle) {
+    out.push_str("\x1b[0");
+    emit_modifier_codes(out, style.modifier);
+    emit_color_code(out, style.fg, true);
+    emit_color_code(out, style.bg, false);
+    out.push('m');
+}
+
+fn emit_modifier_codes(out: &mut String, modifier: Modifier) {
+    if modifier.contains(Modifier::BOLD) {
+        out.push_str(";1");
+    }
+    if modifier.contains(Modifier::DIM) {
+        out.push_str(";2");
+    }
+    if modifier.contains(Modifier::ITALIC) {
+        out.push_str(";3");
+    }
+    if modifier.contains(Modifier::UNDERLINED) {
+        out.push_str(";4");
+    }
+    if modifier.contains(Modifier::SLOW_BLINK) {
+        out.push_str(";5");
+    }
+    if modifier.contains(Modifier::RAPID_BLINK) {
+        out.push_str(";6");
+    }
+    if modifier.contains(Modifier::REVERSED) {
+        out.push_str(";7");
+    }
+    if modifier.contains(Modifier::HIDDEN) {
+        out.push_str(";8");
+    }
+    if modifier.contains(Modifier::CROSSED_OUT) {
+        out.push_str(";9");
+    }
+}
+
+fn emit_color_code(out: &mut String, color: Color, foreground: bool) {
+    let base = if foreground { 30 } else { 40 };
+    let bright_base = if foreground { 90 } else { 100 };
+    match color {
+        Color::Reset => {}
+        Color::Black => {
+            let _ = write!(out, ";{}", base);
+        }
+        Color::Red => {
+            let _ = write!(out, ";{}", base + 1);
+        }
+        Color::Green => {
+            let _ = write!(out, ";{}", base + 2);
+        }
+        Color::Yellow => {
+            let _ = write!(out, ";{}", base + 3);
+        }
+        Color::Blue => {
+            let _ = write!(out, ";{}", base + 4);
+        }
+        Color::Magenta => {
+            let _ = write!(out, ";{}", base + 5);
+        }
+        Color::Cyan => {
+            let _ = write!(out, ";{}", base + 6);
+        }
+        Color::Gray => {
+            let _ = write!(out, ";{}", base + 7);
+        }
+        Color::DarkGray => {
+            let _ = write!(out, ";{}", bright_base);
+        }
+        Color::LightRed => {
+            let _ = write!(out, ";{}", bright_base + 1);
+        }
+        Color::LightGreen => {
+            let _ = write!(out, ";{}", bright_base + 2);
+        }
+        Color::LightYellow => {
+            let _ = write!(out, ";{}", bright_base + 3);
+        }
+        Color::LightBlue => {
+            let _ = write!(out, ";{}", bright_base + 4);
+        }
+        Color::LightMagenta => {
+            let _ = write!(out, ";{}", bright_base + 5);
+        }
+        Color::LightCyan => {
+            let _ = write!(out, ";{}", bright_base + 6);
+        }
+        Color::White => {
+            let _ = write!(out, ";{}", bright_base + 7);
+        }
+        Color::Indexed(index) => {
+            let selector = if foreground { 38 } else { 48 };
+            let _ = write!(out, ";{};5;{}", selector, index);
+        }
+        Color::Rgb(r, g, b) => {
+            let selector = if foreground { 38 } else { 48 };
+            let _ = write!(out, ";{};2;{};{};{}", selector, r, g, b);
         }
     }
 }
