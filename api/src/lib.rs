@@ -461,6 +461,26 @@ mod ui3_core {
             pub color: [u8; 4],
         }
 
+        #[repr(C)]
+        #[derive(Clone, Copy, Debug, Default)]
+        pub struct SkyboxRenderParams {
+            pub right_x: f32,
+            pub right_y: f32,
+            pub right_z: f32,
+            pub up_x: f32,
+            pub up_y: f32,
+            pub up_z: f32,
+            pub forward_x: f32,
+            pub forward_y: f32,
+            pub forward_z: f32,
+            pub aspect_tan_half_fov_y: f32,
+            pub tan_half_fov_y: f32,
+            pub rect_x: u32,
+            pub rect_y: u32,
+            pub rect_width: u32,
+            pub rect_height: u32,
+        }
+
         #[inline]
         pub fn upload_texture_rgba_image_now(
             tex_id: u32,
@@ -475,6 +495,24 @@ mod ui3_core {
                     height,
                     rgba.as_ptr(),
                     rgba.len(),
+                ) == 0
+            }
+        }
+
+        #[inline]
+        pub fn upload_skybox_rgb565_now(
+            skybox_id: u32,
+            width: u32,
+            height: u32,
+            rgb565: &[u8],
+        ) -> bool {
+            unsafe {
+                super::trueos_cabi_gfx_upload_skybox_rgb565(
+                    skybox_id,
+                    width,
+                    height,
+                    rgb565.as_ptr(),
+                    rgb565.len(),
                 ) == 0
             }
         }
@@ -544,6 +582,19 @@ mod ui3_core {
         }
 
         #[inline]
+        pub fn render_skybox_rgb565_no_present(skybox_id: u32, params: &SkyboxRenderParams) -> i32 {
+            let frame_id = super::CURRENT_FRAME_ID.load(Ordering::Relaxed);
+            unsafe {
+                super::trueos_cabi_ui3_frame_render_skybox_rgb565(
+                    frame_id,
+                    skybox_id,
+                    (params as *const SkyboxRenderParams).cast::<u8>(),
+                    core::mem::size_of::<SkyboxRenderParams>(),
+                )
+            }
+        }
+
+        #[inline]
         pub fn set_blend_raw(
             enabled: u32,
             src_rgb: u32,
@@ -597,6 +648,13 @@ mod ui3_core {
             data_ptr: *const u8,
             data_len: usize,
         ) -> i32;
+        fn trueos_cabi_gfx_upload_skybox_rgb565(
+            skybox_id: u32,
+            width: u32,
+            height: u32,
+            data_ptr: *const u8,
+            data_len: usize,
+        ) -> i32;
         fn trueos_cabi_ui3_frame_create(
             x: i32,
             y: i32,
@@ -626,6 +684,12 @@ mod ui3_core {
             tex_id: u32,
             data_ptr: *const u8,
             data_len: usize,
+        ) -> i32;
+        fn trueos_cabi_ui3_frame_render_skybox_rgb565(
+            frame_id: u32,
+            skybox_id: u32,
+            params_ptr: *const u8,
+            params_len: usize,
         ) -> i32;
     }
 }

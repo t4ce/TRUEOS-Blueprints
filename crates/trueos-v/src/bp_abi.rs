@@ -77,6 +77,13 @@ unsafe extern "C" {
         data_ptr: *const u8,
         data_len: usize,
     ) -> i32;
+    pub fn trueos_cabi_gfx_upload_skybox_rgb565(
+        skybox_id: u32,
+        width: u32,
+        height: u32,
+        data_ptr: *const u8,
+        data_len: usize,
+    ) -> i32;
 
     pub fn trueos_cabi_ui3_frame_create(
         x: i32,
@@ -107,6 +114,12 @@ unsafe extern "C" {
         tex_id: u32,
         data_ptr: *const u8,
         data_len: usize,
+    ) -> i32;
+    pub fn trueos_cabi_ui3_frame_render_skybox_rgb565(
+        frame_id: u32,
+        skybox_id: u32,
+        params_ptr: *const u8,
+        params_len: usize,
     ) -> i32;
 
     pub fn trueos_cabi_net_fetch_start(
@@ -168,7 +181,7 @@ unsafe extern "C" {
     pub fn trueos_cabi_socket_tcp_set_nonblocking(socket_id: u32, nonblocking: u32) -> i32;
     pub fn trueos_cabi_socket_tcp_bind_v4(socket_id: u32, addr_be: u32, port_be: u16) -> i32;
     pub fn trueos_cabi_socket_tcp_bind_v6(socket_id: u32, addr_ptr: *const u8, port_be: u16)
-    -> i32;
+        -> i32;
     pub fn trueos_cabi_socket_tcp_connect_v4(
         socket_id: u32,
         addr_be: u32,
@@ -304,7 +317,7 @@ unsafe extern "C" {
     ) -> i32;
     pub fn trueos_cabi_hid_hut_read_mice(out: *mut TrueosHidHutMouseState, out_cap: u32) -> u32;
     pub fn trueos_cabi_hid_hut_read_tablets(out: *mut TrueosHidHutTabletState, out_cap: u32)
-    -> u32;
+        -> u32;
     pub fn trueos_cabi_hid_hut_read_keyboards(
         out: *mut TrueosHidHutKeyboardState,
         out_cap: u32,
@@ -348,6 +361,16 @@ unsafe extern "C" {
     pub fn trueos_cabi_shell_attached_write(data_ptr: *const u8, data_len: usize) -> usize;
     pub fn trueos_cabi_shell_attached_read_byte() -> i32;
     pub fn trueos_cabi_shell_attached_retarget_slot(slot_ptr: *const u8, slot_len: usize) -> i32;
+    pub fn trueos_cabi_shell2_raw_write(data_ptr: *const u8, data_len: usize) -> usize;
+    pub fn trueos_cabi_konsole_begin_frame(cols: u32, rows: u32, reserved_top_rows: u32) -> i32;
+    pub fn trueos_cabi_konsole_write_row(
+        row: u32,
+        col: u32,
+        data_ptr: *const u8,
+        data_len: usize,
+    ) -> i32;
+    pub fn trueos_cabi_konsole_set_cursor(row: u32, col: u32, visible: u32) -> i32;
+    pub fn trueos_cabi_konsole_end_frame() -> i32;
     pub fn trueos_cabi_shell_command_registry_json(out_ptr: *mut u8, out_cap: usize) -> isize;
     pub fn trueos_cabi_shell_history_lines_all() -> usize;
     pub fn trueos_cabi_shell_history_lines(

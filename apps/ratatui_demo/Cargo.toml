@@ -8,5 +8,6 @@ name = "ratatui_demo"
 path = "main.rs"
 
 [dependencies]
-ratatui.workspace = true
+ratatui-core.workspace = true
+ratatui-widgets.workspace = true
 trueos.workspace = true

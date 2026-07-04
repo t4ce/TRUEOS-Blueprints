@@ -1,23 +1,26 @@
-use ratatui::{
-    buffer::Buffer,
-    layout::{Constraint, Layout, Rect},
+use ratatui_core::{
+    backend::{Backend, ClearType, WindowSize},
+    buffer::{Buffer, Cell},
+    layout::{Constraint, Layout, Position, Rect, Size},
     style::{Color, Modifier, Style},
+    terminal::{Frame, Terminal},
     text::{Line, Span},
-    widgets::{Block, Borders, Gauge, Paragraph, Widget},
+    widgets::Widget,
 };
-use trueos::logl::{self, level};
+use ratatui_widgets::{block::Block, borders::Borders, gauge::Gauge, paragraph::Paragraph};
+use trueos::{
+    logl::{self, level},
+    vshell,
+};
 
 const WIDTH: u16 = 48;
 const HEIGHT: u16 = 12;
+const RESERVED_TOP_ROWS: u32 = 2;
 
 fn main() {
     logl::log(level::INFO, format_args!("ratatui_demo: start"));
 
-    let mut buffer = Buffer::empty(Rect::new(0, 0, WIDTH, HEIGHT));
-    render_shell_model(&mut buffer);
-    log_buffer(&buffer);
-
-    match validate_render(&buffer) {
+    match run_probe() {
         Ok(()) => logl::log(level::INFO, format_args!("ratatui_demo: done")),
         Err(stage) => logl::log(
             level::ERROR,
@@ -26,8 +29,17 @@ fn main() {
     }
 }
 
-fn render_shell_model(buffer: &mut Buffer) {
-    let area = buffer.area;
+fn run_probe() -> Result<(), &'static str> {
+    let backend = TrueOsKonsoleBackend::new(WIDTH, HEIGHT, ShellKonsoleSink::default());
+    let mut terminal = Terminal::new(backend).map_err(|_| "terminal.new")?;
+    let completed = terminal
+        .draw(render_shell_model)
+        .map_err(|_| "terminal.draw")?;
+    validate_render(completed.buffer)
+}
+
+fn render_shell_model(frame: &mut Frame<'_>) {
+    let area = frame.area();
     let chunks = Layout::vertical([
         Constraint::Length(3),
         Constraint::Length(5),
@@ -38,39 +50,29 @@ fn render_shell_model(buffer: &mut Buffer) {
     Paragraph::new(Line::from(vec![
         Span::styled(
             "TRUEOS",
-            Style::new()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
+            Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD),
         ),
         Span::raw(" kernel shell model"),
     ]))
     .block(Block::new().title("ratatui").borders(Borders::ALL))
-    .render(chunks[0], buffer);
+    .render(chunks[0], frame.buffer_mut());
 
     Paragraph::new(vec![
         Line::from("prompt  / > apps"),
         Line::from("select  ratatui_demo"),
-        Line::from("render  buffer-only tui probe"),
+        Line::from("render  Terminal<TrueOsKonsoleBackend>"),
     ])
     .block(Block::new().title("shell").borders(Borders::ALL))
-    .render(chunks[1], buffer);
+    .render(chunks[1], frame.buffer_mut());
 
     Gauge::default()
         .block(Block::new().title("model fit").borders(Borders::ALL))
         .gauge_style(Style::new().fg(Color::Green))
         .ratio(0.72)
         .label("ratatui vendored")
-        .render(chunks[2], buffer);
-}
+        .render(chunks[2], frame.buffer_mut());
 
-fn log_buffer(buffer: &Buffer) {
-    for y in 0..buffer.area.height {
-        let mut row = String::new();
-        for x in 0..buffer.area.width {
-            row.push_str(buffer[(x, y)].symbol());
-        }
-        logl::log(level::INFO, format_args!("ratatui_demo: |{}|", row));
-    }
+    frame.set_cursor_position(Position::new(2, 4));
 }
 
 fn validate_render(buffer: &Buffer) -> Result<(), &'static str> {
@@ -78,7 +80,7 @@ fn validate_render(buffer: &Buffer) -> Result<(), &'static str> {
     if !rendered.contains("TRUEOS kernel shell model") {
         return Err("title.text");
     }
-    if !rendered.contains("buffer-only tui probe") {
+    if !rendered.contains("Terminal<TrueOsKonsoleBackend>") {
         return Err("body.text");
     }
     if !rendered.contains("ratatui vendored") {
@@ -96,4 +98,200 @@ fn buffer_text(buffer: &Buffer) -> String {
         rendered.push('\n');
     }
     rendered
+}
+
+trait KonsoleSink {
+    fn begin_frame(&mut self, size: Size, cursor: Option<Position>);
+    fn write_row(&mut self, y: u16, row: &str);
+    fn end_frame(&mut self);
+}
+
+#[derive(Default)]
+struct ShellKonsoleSink {
+    cursor: Option<Position>,
+}
+
+impl KonsoleSink for ShellKonsoleSink {
+    fn begin_frame(&mut self, size: Size, cursor: Option<Position>) {
+        self.cursor = cursor;
+        let status = vshell::konsole_begin_frame(
+            u32::from(size.width),
+            u32::from(size.height),
+            RESERVED_TOP_ROWS,
+        );
+        if status != 0 {
+            logl::log(
+                level::ERROR,
+                format_args!("ratatui_demo: konsole_begin_frame failed status={}", status),
+            );
+        }
+    }
+
+    fn write_row(&mut self, y: u16, row: &str) {
+        let status = vshell::konsole_write_row(u32::from(y), 0, row.as_bytes());
+        if status != 0 {
+            logl::log(
+                level::ERROR,
+                format_args!(
+                    "ratatui_demo: konsole_write_row failed row={} status={}",
+                    y, status
+                ),
+            );
+        }
+    }
+
+    fn end_frame(&mut self) {
+        if let Some(cursor) = self.cursor {
+            let _ = vshell::konsole_set_cursor(u32::from(cursor.y), u32::from(cursor.x), true);
+        } else {
+            let _ = vshell::konsole_set_cursor(0, 0, false);
+        }
+        let status = vshell::konsole_end_frame();
+        if status != 0 {
+            logl::log(
+                level::ERROR,
+                format_args!("ratatui_demo: konsole_end_frame failed status={}", status),
+            );
+        }
+    }
+}
+
+struct TrueOsKonsoleBackend<S> {
+    buffer: Buffer,
+    cursor_position: Position,
+    cursor_visible: bool,
+    sink: S,
+}
+
+impl<S> TrueOsKonsoleBackend<S> {
+    fn new(width: u16, height: u16, sink: S) -> Self {
+        Self {
+            buffer: Buffer::empty(Rect::new(0, 0, width, height)),
+            cursor_position: Position::ORIGIN,
+            cursor_visible: false,
+            sink,
+        }
+    }
+}
+
+impl<S: KonsoleSink> TrueOsKonsoleBackend<S> {
+    fn emit_frame(&mut self) {
+        let cursor = self.cursor_visible.then_some(self.cursor_position);
+        self.sink.begin_frame(self.buffer.area.as_size(), cursor);
+
+        for y in 0..self.buffer.area.height {
+            let mut row = String::new();
+            for x in 0..self.buffer.area.width {
+                row.push_str(self.buffer[(x, y)].symbol());
+            }
+            self.sink.write_row(y, row.trim_end());
+        }
+
+        self.sink.end_frame();
+    }
+
+    fn clear_cells(&mut self, clear_type: ClearType) {
+        let area = self.buffer.area;
+        match clear_type {
+            ClearType::All => self.buffer.reset(),
+            ClearType::AfterCursor => {
+                let index = self
+                    .buffer
+                    .index_of(self.cursor_position.x, self.cursor_position.y);
+                for cell in &mut self.buffer.content[index..] {
+                    cell.reset();
+                }
+            }
+            ClearType::BeforeCursor => {
+                let index = self
+                    .buffer
+                    .index_of(self.cursor_position.x, self.cursor_position.y);
+                for cell in &mut self.buffer.content[..=index] {
+                    cell.reset();
+                }
+            }
+            ClearType::CurrentLine => {
+                let start = self.buffer.index_of(0, self.cursor_position.y);
+                let end = self
+                    .buffer
+                    .index_of(area.width.saturating_sub(1), self.cursor_position.y);
+                for cell in &mut self.buffer.content[start..=end] {
+                    cell.reset();
+                }
+            }
+            ClearType::UntilNewLine => {
+                let start = self
+                    .buffer
+                    .index_of(self.cursor_position.x, self.cursor_position.y);
+                let end = self
+                    .buffer
+                    .index_of(area.width.saturating_sub(1), self.cursor_position.y);
+                for cell in &mut self.buffer.content[start..=end] {
+                    cell.reset();
+                }
+            }
+        }
+    }
+}
+
+impl<S: KonsoleSink> Backend for TrueOsKonsoleBackend<S> {
+    type Error = core::convert::Infallible;
+
+    fn draw<'a, I>(&mut self, content: I) -> Result<(), Self::Error>
+    where
+        I: Iterator<Item = (u16, u16, &'a Cell)>,
+    {
+        for (x, y, cell) in content {
+            if x < self.buffer.area.width && y < self.buffer.area.height {
+                self.buffer[(x, y)] = cell.clone();
+            }
+        }
+        Ok(())
+    }
+
+    fn hide_cursor(&mut self) -> Result<(), Self::Error> {
+        self.cursor_visible = false;
+        Ok(())
+    }
+
+    fn show_cursor(&mut self) -> Result<(), Self::Error> {
+        self.cursor_visible = true;
+        Ok(())
+    }
+
+    fn get_cursor_position(&mut self) -> Result<Position, Self::Error> {
+        Ok(self.cursor_position)
+    }
+
+    fn set_cursor_position<P: Into<Position>>(&mut self, position: P) -> Result<(), Self::Error> {
+        self.cursor_position = position.into();
+        Ok(())
+    }
+
+    fn clear(&mut self) -> Result<(), Self::Error> {
+        self.clear_cells(ClearType::All);
+        Ok(())
+    }
+
+    fn clear_region(&mut self, clear_type: ClearType) -> Result<(), Self::Error> {
+        self.clear_cells(clear_type);
+        Ok(())
+    }
+
+    fn size(&self) -> Result<Size, Self::Error> {
+        Ok(self.buffer.area.as_size())
+    }
+
+    fn window_size(&mut self) -> Result<WindowSize, Self::Error> {
+        let size = self.buffer.area.as_size();
+        Ok(WindowSize {
+            columns_rows: size,
+            pixels: Size::ZERO,
+        })
+    }
+
+    fn flush(&mut self) -> Result<(), Self::Error> {
+        self.emit_frame();
+        Ok(())
+    }
 }
