@@ -17,10 +17,14 @@ include!(concat!(env!("OUT_DIR"), "/skybox_meta.rs"));
 
 const SKYBOX_RGB565: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/skybox_rgb565.bin"));
 
-const DEFAULT_FRAME_X: i32 = 80;
-const DEFAULT_FRAME_Y: i32 = 72;
-const DEFAULT_FRAME_WIDTH: u32 = 960;
-const DEFAULT_FRAME_HEIGHT: u32 = 540;
+const DEFAULT_FRAME_X: i32 = 0;
+const DEFAULT_FRAME_Y: i32 = 0;
+const DEFAULT_FRAME_WIDTH: u32 = 2560;
+const DEFAULT_FRAME_HEIGHT: u32 = 1440;
+const WINDOW_FRAME_X: i32 = 80;
+const WINDOW_FRAME_Y: i32 = 72;
+const WINDOW_FRAME_WIDTH: u32 = 1920;
+const WINDOW_FRAME_HEIGHT: u32 = 1080;
 const TEST_RIG_WIDTH: u32 = 2560;
 const TEST_RIG_HEIGHT: u32 = 1440;
 const MAX_FRAME_WIDTH: u32 = 2560;
@@ -135,6 +139,15 @@ impl Layout {
             y: 0,
             width: TEST_RIG_WIDTH,
             height: TEST_RIG_HEIGHT,
+        }
+    }
+
+    const fn window() -> Self {
+        Self {
+            x: WINDOW_FRAME_X,
+            y: WINDOW_FRAME_Y,
+            width: WINDOW_FRAME_WIDTH,
+            height: WINDOW_FRAME_HEIGHT,
         }
     }
 
@@ -315,7 +328,7 @@ fn handle_command(
             status_line("  full | 1440p       set 2560x1440 at 0,0");
             status_line("  1080p              set 1920x1080 at 0,0");
             status_line("  720p               set 1280x720 at 0,0");
-            status_line("  window             set 960x540 at 80,72");
+            status_line("  window             set 1920x1080 at 80,72");
             status_line("  size <w> <h>       resize, clamped to 2560x1440");
             status_line("  size <w>x<h>       resize shorthand");
             status_line("  pos <x> <y>        move frame");
@@ -362,7 +375,7 @@ fn handle_command(
                 height: 720,
             },
         ),
-        "window" | "small" => apply_layout(frame, layout, rgba, Layout::default()),
+        "window" | "small" => apply_layout(frame, layout, rgba, Layout::window()),
         "size" | "resize" => {
             let Some((width, height)) = parse_size(parts.next(), parts.next()) else {
                 status_line("skybox: usage size <w> <h> or size <w>x<h>");

@@ -30,6 +30,8 @@ pub(crate) fn parse_cli_args(
     for arg in args {
         if arg == "--release" {
             cargo_profile = CargoProfile::Release;
+        } else if arg.to_str().is_some_and(|arg| arg.trim().is_empty()) {
+            continue;
         } else {
             filtered_args.push(arg.clone());
         }
@@ -56,4 +58,32 @@ pub(crate) fn parse_cli_args(
     }
 
     Ok((PathBuf::from("."), app_names, cargo_profile))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::OsString;
+
+    #[test]
+    fn parse_cli_args_ignores_blank_app_names() {
+        let args = [OsString::from(""), OsString::from("   ")];
+
+        let (app_dir, app_names, profile) = parse_cli_args(&args).unwrap();
+
+        assert_eq!(app_dir, PathBuf::from("."));
+        assert!(app_names.is_empty());
+        assert!(matches!(profile, CargoProfile::Release));
+    }
+
+    #[test]
+    fn parse_cli_args_keeps_nonblank_app_names() {
+        let args = [OsString::from("hello_world")];
+
+        let (app_dir, app_names, profile) = parse_cli_args(&args).unwrap();
+
+        assert_eq!(app_dir, PathBuf::from("."));
+        assert_eq!(app_names, vec!["hello_world"]);
+        assert!(matches!(profile, CargoProfile::Release));
+    }
 }
