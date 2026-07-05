@@ -482,13 +482,20 @@ compile_error! {
 extern crate alloc;
 
 #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-pub mod ffi {
-    pub use std::ffi::*;
+pub(crate) mod ffi {
+    pub(crate) use std::ffi::*;
 }
 
 #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-pub mod path {
-    pub use std::path::*;
+pub(crate) mod path {
+    pub(crate) use std::path::*;
+}
+
+#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+pub(crate) mod panic {
+    pub(crate) use std::panic::{
+        AssertUnwindSafe, RefUnwindSafe, UnwindSafe, catch_unwind, resume_unwind,
+    };
 }
 
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]

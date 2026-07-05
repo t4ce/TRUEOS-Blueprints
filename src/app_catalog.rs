@@ -160,7 +160,7 @@ fn virtual_package_app_manifest_path(dir: &Path, app_name: &str) -> PathBuf {
 }
 
 fn virtual_package_app_alias(app_name: &str) -> bool {
-    matches!(app_name, "fd" | "helix" | "matrix")
+    matches!(app_name, "fd" | "helix" | "matrix" | "scope_tui")
 }
 
 fn registered_app_specs(app_dir: &Path) -> Result<Vec<RegisteredAppSpec>, String> {
@@ -264,10 +264,15 @@ pub(crate) fn manifest_has_dependency(
     for line in cargo_toml.lines() {
         let trimmed = line.split('#').next().unwrap_or("").trim();
         if trimmed.starts_with('[') {
+            let section = trimmed.trim_start_matches('[').trim_end_matches(']');
             in_dependencies = matches!(
-                trimmed,
-                "[dependencies]" | "[dev-dependencies]" | "[build-dependencies]"
-            );
+                section,
+                "dependencies" | "dev-dependencies" | "build-dependencies"
+            ) || (section.starts_with("target.")
+                && matches!(
+                    section.rsplit('.').next(),
+                    Some("dependencies" | "dev-dependencies" | "build-dependencies")
+                ));
             continue;
         }
         if !in_dependencies || trimmed.is_empty() {
@@ -293,6 +298,38 @@ pub(crate) fn push_app_or_trueos_feature(
         push_feature(features, feature);
     } else if has_trueos_dependency {
         push_feature(features, &format!("trueos/{feature}"));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::env;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn manifest_has_dependency_sees_target_dependencies() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = env::temp_dir().join(format!("trueos-blueprint-manifest-{nonce}.toml"));
+        fs::write(
+            &path,
+            r#"
+[package]
+name = "probe"
+version = "0.1.0"
+
+[target.'cfg(any(target_os = "trueos", target_os = "zkvm"))'.dependencies]
+trueos = { path = "../../api" }
+"#,
+        )
+        .unwrap();
+
+        assert!(manifest_has_dependency(&path, "trueos").unwrap());
+
+        let _ = fs::remove_file(path);
     }
 }
 

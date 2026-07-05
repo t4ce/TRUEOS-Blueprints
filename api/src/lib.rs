@@ -8,6 +8,7 @@ use core::alloc::{GlobalAlloc, Layout};
 use core::ptr::null_mut;
 #[cfg(feature = "tokio-runtime")]
 pub use tokio;
+pub use v::collections;
 pub use v::env;
 pub use v::vclock as clock;
 pub use v::vfs;
@@ -29,6 +30,7 @@ pub mod platform {
     pub use alloc::vec::Vec;
     pub use core::future;
 
+    pub use v::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
     pub use v::vsys::{poll_once, sleep_ms, write_stream};
 
     #[cfg(feature = "tokio-runtime")]

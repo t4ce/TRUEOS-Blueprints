@@ -7,7 +7,7 @@ use core::{derive, fmt, ops};
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
 pub(crate) type StdInstant = Duration;
 #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-pub(crate) type StdInstant = crate::time::Duration;
+pub(crate) type StdInstant = std::time::Instant;
 
 /// A measurement of a monotonically nondecreasing clock.
 /// Opaque and useful only with `Duration`.
@@ -253,7 +253,7 @@ mod variant {
 
         #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
         {
-            Instant::from_std(hostlib::time::Instant::now())
+            Instant::from_std(std::time::Instant::now())
         }
     }
 }

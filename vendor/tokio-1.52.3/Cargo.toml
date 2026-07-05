@@ -960,5 +960,5 @@ check-cfg = [
     "cfg(tokio_no_parking_lot)",
     "cfg(tokio_no_tuning_tests)",
     "cfg(tokio_unstable)",
-    'cfg(target_os, values("cygwin"))',
+    'cfg(target_os, values("cygwin", "trueos", "zkvm"))',
 ]

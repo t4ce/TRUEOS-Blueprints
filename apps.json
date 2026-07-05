@@ -27,6 +27,10 @@
     },
     "rusqlite_probe",
     "skybox",
+    {
+      "name": "scope_tui",
+      "path": "apps/scope-tui"
+    },
     "superseedr",
     "webdevices",
     "webmail",

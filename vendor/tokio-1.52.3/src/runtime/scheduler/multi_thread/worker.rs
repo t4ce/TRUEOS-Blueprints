@@ -501,6 +501,7 @@ where
 
 impl Launch {
     pub(crate) fn launch(mut self) {
+        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
         crate::platform::log(
             3,
             alloc::format!(

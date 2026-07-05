@@ -2200,9 +2200,12 @@ fn staged_manifest_for_overlay(
     source_overlay: &[CratePatch],
     lock_mismatches: &[LockMismatch],
 ) -> Result<Option<PathBuf>, String> {
+    let stage_for_source_rewrite =
+        staged_source_needs_trueos_collection_rewrite(app_dir, manifest_path)?;
     if source_overlay.is_empty()
         && !build_settings.shims.add_no_std
         && !build_settings.shims.add_entrypoint
+        && !stage_for_source_rewrite
     {
         return Ok(None);
     }
@@ -2233,7 +2236,7 @@ fn staged_manifest_for_overlay(
     if !nested_workspace_package {
         ensure_standalone_manifest_workspace(&staged_manifest)?;
     }
-    rewrite_staged_source_for_target(app_dir, &staged_app_dir, build_settings)?;
+    rewrite_staged_source_for_target(app_dir, &staged_app_dir, &staged_manifest, build_settings)?;
     let staged_source_overlay = staged_source_overlay(source_overlay, work_dir);
 
     if lock_mismatches.is_empty() {
@@ -2262,8 +2265,14 @@ fn staged_manifest_for_overlay(
 fn rewrite_staged_source_for_target(
     app_dir: &Path,
     staged_app_dir: &Path,
+    staged_manifest: &Path,
     build_settings: &BuildSettings,
 ) -> Result<(), String> {
+    let rewrite_collections = manifest_has_dependency(staged_manifest, "trueos")?;
+    if rewrite_collections {
+        rewrite_trueos_collection_imports(staged_app_dir)?;
+    }
+
     if !build_settings.shims.add_no_std && !build_settings.shims.add_entrypoint {
         return Ok(());
     }
@@ -2308,6 +2317,211 @@ fn rewrite_staged_source_for_target(
     }
 
     fs::write(&staged_source, rewritten).map_err(io_string)
+}
+
+fn staged_source_needs_trueos_collection_rewrite(
+    app_dir: &Path,
+    manifest_path: &Path,
+) -> Result<bool, String> {
+    if !manifest_has_dependency(manifest_path, "trueos")?
+        && !manifest_declared_features(manifest_path)?
+            .iter()
+            .any(|feature| feature == "trueos-blueprint")
+    {
+        return Ok(false);
+    }
+
+    for needle in [
+        "std::collections::HashMap",
+        "std::collections::HashSet",
+        "std::collections::BTreeMap",
+        "std::collections::BTreeSet",
+        "use std::collections::{",
+        "std::time::Instant",
+        "use std::time::{",
+    ] {
+        if source_tree_mentions(app_dir, needle)? {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
+fn rewrite_trueos_collection_imports(staged_app_dir: &Path) -> Result<(), String> {
+    let source_dir = staged_app_dir.join("src");
+    if !source_dir.is_dir() {
+        return Ok(());
+    }
+
+    let mut changed_files = 0usize;
+    rewrite_trueos_collection_imports_in_dir(&source_dir, &mut changed_files)?;
+    if changed_files > 0 {
+        println!(
+            "trueos-blueprint: rewrote std collection imports for trueos: {changed_files} files"
+        );
+    }
+    Ok(())
+}
+
+fn rewrite_trueos_collection_imports_in_dir(
+    dir: &Path,
+    changed_files: &mut usize,
+) -> Result<(), String> {
+    for entry in fs::read_dir(dir).map_err(io_string)? {
+        let entry = entry.map_err(io_string)?;
+        let path = entry.path();
+        let file_type = entry.file_type().map_err(io_string)?;
+        if file_type.is_dir() {
+            rewrite_trueos_collection_imports_in_dir(&path, changed_files)?;
+            continue;
+        }
+        if !file_type.is_file() || path.extension().and_then(|ext| ext.to_str()) != Some("rs") {
+            continue;
+        }
+
+        let source = fs::read_to_string(&path).map_err(io_string)?;
+        let rewritten = rewrite_trueos_collection_imports_in_source(&source);
+        if rewritten != source {
+            fs::write(&path, rewritten).map_err(io_string)?;
+            *changed_files += 1;
+        }
+    }
+    Ok(())
+}
+
+fn rewrite_trueos_collection_imports_in_source(source: &str) -> String {
+    let mut out = String::with_capacity(source.len());
+    for line in source.lines() {
+        out.push_str(&rewrite_trueos_collection_import_line(line));
+        out.push('\n');
+    }
+    if !source.ends_with('\n') {
+        out.pop();
+    }
+    out
+}
+
+fn rewrite_trueos_collection_import_line(line: &str) -> String {
+    let line = rewrite_trueos_time_import_line(line);
+    if let Some(rewritten) = rewrite_trueos_grouped_collection_import(&line) {
+        return rewritten;
+    }
+
+    let mut rewritten = line;
+    for (from, to) in [
+        ("std::collections::HashMap", "trueos::collections::HashMap"),
+        ("std::collections::HashSet", "trueos::collections::HashSet"),
+        (
+            "std::collections::BTreeMap",
+            "trueos::collections::BTreeMap",
+        ),
+        (
+            "std::collections::BTreeSet",
+            "trueos::collections::BTreeSet",
+        ),
+    ] {
+        rewritten = rewritten.replace(from, to);
+    }
+    rewritten
+}
+
+fn rewrite_trueos_time_import_line(line: &str) -> String {
+    if let Some(rewritten) = rewrite_trueos_grouped_time_import(line) {
+        return rewritten;
+    }
+
+    line.replace("std::time::Instant", "trueos::clock::Instant")
+}
+
+fn rewrite_trueos_grouped_time_import(line: &str) -> Option<String> {
+    let indent_len = line.len() - line.trim_start().len();
+    let indent = &line[..indent_len];
+    let trimmed = line.trim_start();
+    let inner = trimmed
+        .strip_prefix("use std::time::{")?
+        .strip_suffix("};")?;
+    let mut std_items = Vec::new();
+    let mut has_instant = false;
+    for item in inner.split(',') {
+        let item = item.trim();
+        if item.is_empty() {
+            continue;
+        }
+        if item == "Instant" {
+            has_instant = true;
+        } else {
+            std_items.push(item);
+        }
+    }
+    if !has_instant {
+        return None;
+    }
+
+    let mut out = String::new();
+    if !std_items.is_empty() {
+        out.push_str(&format!(
+            "{indent}use std::time::{{{}}};\n",
+            std_items.join(", ")
+        ));
+    }
+    out.push_str(&format!("{indent}use trueos::clock::Instant;"));
+    Some(out)
+}
+
+fn rewrite_trueos_grouped_collection_import(line: &str) -> Option<String> {
+    let indent_len = line.len() - line.trim_start().len();
+    let indent = &line[..indent_len];
+    let trimmed = line.trim_start();
+    let inner = trimmed
+        .strip_prefix("use std::collections::{")?
+        .strip_suffix("};")?;
+    let mut items = Vec::new();
+    for item in inner.split(',') {
+        let item = item.trim();
+        if item.is_empty() {
+            continue;
+        }
+        if !matches!(item, "BTreeMap" | "BTreeSet" | "HashMap" | "HashSet") {
+            return None;
+        }
+        items.push(item);
+    }
+    if items.is_empty() {
+        return None;
+    }
+
+    Some(format!(
+        "{indent}use trueos::collections::{{{}}};",
+        items.join(", ")
+    ))
+}
+
+#[cfg(test)]
+mod source_rewrite_tests {
+    use super::*;
+
+    #[test]
+    fn rewrites_supported_collection_imports_without_touching_hash_map_internals() {
+        let source = "\
+use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, hash_map::{Iter, Keys}};
+type Ordered = std::collections::BTreeMap<u8, u8>;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+let start = std::time::Instant::now();
+";
+
+        let rewritten = rewrite_trueos_collection_imports_in_source(source);
+
+        assert!(rewritten.contains("use trueos::collections::HashMap;"));
+        assert!(rewritten.contains("use trueos::collections::{HashMap, HashSet};"));
+        assert!(rewritten.contains("type Ordered = trueos::collections::BTreeMap<u8, u8>;"));
+        assert!(rewritten.contains("use std::collections::{HashMap, hash_map::{Iter, Keys}};"));
+        assert!(rewritten.contains("use std::time::{Duration, SystemTime, UNIX_EPOCH};"));
+        assert!(rewritten.contains("use trueos::clock::Instant;"));
+        assert!(rewritten.contains("let start = trueos::clock::Instant::now();"));
+    }
 }
 
 struct LockMismatch {

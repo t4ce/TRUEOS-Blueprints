@@ -18,7 +18,7 @@ fn std_now() -> StdInstant {
 
 #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
 fn std_now() -> StdInstant {
-    hostlib::time::Instant::now()
+    std::time::Instant::now()
 }
 
 #[cfg(feature = "test-util")]

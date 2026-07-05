@@ -3,6 +3,8 @@ extern crate alloc;
 use alloc::{string::String, vec};
 use core::fmt;
 use core::num::FpCategory;
+use core::ops::{Add, AddAssign, Sub, SubAssign};
+use core::time::Duration as CoreDuration;
 
 use crate::vcabi;
 
@@ -73,8 +75,77 @@ impl Duration {
     }
 
     #[inline]
+    pub const fn as_secs(self) -> u64 {
+        self.nanos / 1_000_000_000
+    }
+
+    #[inline]
     pub const fn as_millis(self) -> u64 {
         self.nanos / 1_000_000
+    }
+
+    #[inline]
+    pub const fn as_micros(self) -> u128 {
+        self.nanos as u128 / 1_000
+    }
+
+    #[inline]
+    pub const fn as_secs_f64(self) -> f64 {
+        self.nanos as f64 / 1_000_000_000.0
+    }
+
+    #[inline]
+    pub const fn as_secs_f32(self) -> f32 {
+        self.nanos as f32 / 1_000_000_000.0
+    }
+
+    #[inline]
+    pub const fn as_core_duration(self) -> CoreDuration {
+        CoreDuration::from_nanos(self.nanos)
+    }
+}
+
+impl From<Duration> for CoreDuration {
+    #[inline]
+    fn from(value: Duration) -> Self {
+        value.as_core_duration()
+    }
+}
+
+impl From<CoreDuration> for Duration {
+    #[inline]
+    fn from(value: CoreDuration) -> Self {
+        Self {
+            nanos: duration_nanos_u64(value),
+        }
+    }
+}
+
+impl PartialEq<CoreDuration> for Duration {
+    #[inline]
+    fn eq(&self, other: &CoreDuration) -> bool {
+        self.as_core_duration() == *other
+    }
+}
+
+impl PartialEq<Duration> for CoreDuration {
+    #[inline]
+    fn eq(&self, other: &Duration) -> bool {
+        *self == other.as_core_duration()
+    }
+}
+
+impl PartialOrd<CoreDuration> for Duration {
+    #[inline]
+    fn partial_cmp(&self, other: &CoreDuration) -> Option<core::cmp::Ordering> {
+        self.as_core_duration().partial_cmp(other)
+    }
+}
+
+impl PartialOrd<Duration> for CoreDuration {
+    #[inline]
+    fn partial_cmp(&self, other: &Duration) -> Option<core::cmp::Ordering> {
+        self.partial_cmp(&other.as_core_duration())
     }
 }
 
@@ -96,8 +167,82 @@ impl Instant {
     }
 
     #[inline]
-    pub fn elapsed(self) -> Duration {
-        Duration::from_nanos(monotonic_nanos().saturating_sub(self.nanos))
+    pub fn elapsed(&self) -> CoreDuration {
+        Instant::now() - *self
+    }
+
+    #[inline]
+    pub fn duration_since(&self, earlier: Instant) -> CoreDuration {
+        self.checked_duration_since(earlier).unwrap_or_default()
+    }
+
+    #[inline]
+    pub fn checked_duration_since(&self, earlier: Instant) -> Option<CoreDuration> {
+        self.nanos
+            .checked_sub(earlier.nanos)
+            .map(CoreDuration::from_nanos)
+    }
+
+    #[inline]
+    pub fn saturating_duration_since(&self, earlier: Instant) -> CoreDuration {
+        self.duration_since(earlier)
+    }
+
+    #[inline]
+    pub fn checked_add(&self, duration: CoreDuration) -> Option<Instant> {
+        self.nanos
+            .checked_add(duration_nanos_checked(duration)?)
+            .map(|nanos| Instant { nanos })
+    }
+
+    #[inline]
+    pub fn checked_sub(&self, duration: CoreDuration) -> Option<Instant> {
+        self.nanos
+            .checked_sub(duration_nanos_checked(duration)?)
+            .map(|nanos| Instant { nanos })
+    }
+}
+
+impl Add<CoreDuration> for Instant {
+    type Output = Instant;
+
+    #[track_caller]
+    fn add(self, other: CoreDuration) -> Instant {
+        self.checked_add(other)
+            .expect("overflow when adding duration to instant")
+    }
+}
+
+impl AddAssign<CoreDuration> for Instant {
+    #[inline]
+    fn add_assign(&mut self, other: CoreDuration) {
+        *self = *self + other;
+    }
+}
+
+impl Sub<CoreDuration> for Instant {
+    type Output = Instant;
+
+    #[track_caller]
+    fn sub(self, other: CoreDuration) -> Instant {
+        self.checked_sub(other)
+            .expect("overflow when subtracting duration from instant")
+    }
+}
+
+impl SubAssign<CoreDuration> for Instant {
+    #[inline]
+    fn sub_assign(&mut self, other: CoreDuration) {
+        *self = *self - other;
+    }
+}
+
+impl Sub<Instant> for Instant {
+    type Output = CoreDuration;
+
+    #[inline]
+    fn sub(self, other: Instant) -> CoreDuration {
+        self.duration_since(other)
     }
 }
 
@@ -126,6 +271,16 @@ pub fn monotonic_nanos() -> u64 {
 #[inline]
 pub fn monotonic_millis() -> u64 {
     monotonic_nanos() / 1_000_000
+}
+
+#[inline]
+fn duration_nanos_checked(duration: CoreDuration) -> Option<u64> {
+    u64::try_from(duration.as_nanos()).ok()
+}
+
+#[inline]
+fn duration_nanos_u64(duration: CoreDuration) -> u64 {
+    duration_nanos_checked(duration).unwrap_or(u64::MAX)
 }
 
 #[inline]

@@ -1876,6 +1876,7 @@ cfg_rt_multi_thread! {
             use crate::runtime::scheduler::{self, MultiThread};
 
             let worker_threads = self.worker_threads.unwrap_or_else(num_cpus);
+            #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
             crate::platform::log(
                 3,
                 alloc::format!(
