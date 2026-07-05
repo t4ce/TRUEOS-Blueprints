@@ -623,6 +623,17 @@ pub(crate) fn rustls_store(certs: Vec<Certificate>) -> crate::Result<RootCertSto
 }
 
 #[cfg(feature = "__rustls")]
+pub(crate) fn rustls_store_with_webpki(certs: Vec<Certificate>) -> crate::Result<RootCertStore> {
+    let mut root_cert_store = rustls::RootCertStore::empty();
+    #[cfg(feature = "webpki-roots")]
+    root_cert_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    for cert in certs {
+        cert.add_to_rustls(&mut root_cert_store)?;
+    }
+    Ok(root_cert_store)
+}
+
+#[cfg(feature = "__rustls")]
 #[cfg(any(all(unix, not(target_os = "android")), target_os = "windows"))]
 pub(crate) fn rustls_der(
     certs: Vec<Certificate>,

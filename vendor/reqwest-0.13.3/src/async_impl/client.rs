@@ -1,6 +1,6 @@
+use ::core::fmt;
 #[cfg(any(feature = "__native-tls", feature = "__rustls",))]
 use core::any::Any;
-use ::core::fmt;
 use core::future::Future;
 use core::pin::Pin;
 use core::task::{ready, Context, Poll};
@@ -432,7 +432,10 @@ impl ClientBuilder {
                 resolver = dns_resolver;
             }
             if !config.dns_overrides.is_empty() {
-                resolver = Arc::new(DnsResolverWithOverrides::new(resolver, config.dns_overrides));
+                resolver = Arc::new(DnsResolverWithOverrides::new(
+                    resolver,
+                    config.dns_overrides,
+                ));
             }
             DynResolver::new(resolver)
         };
@@ -781,9 +784,9 @@ impl ClientBuilder {
                         }
                         #[cfg(not(feature = "rustls-platform-verifier"))]
                         {
-                            config_builder.with_root_certificates(crate::tls::rustls_store(
-                                config.root_certs,
-                            )?)
+                            config_builder.with_root_certificates(
+                                crate::tls::rustls_store_with_webpki(config.root_certs)?,
+                            )
                         }
                     } else {
                         if config.crls.is_empty() {
@@ -3053,9 +3056,9 @@ impl Future for Pending {
         let inner = self.inner();
         match inner.get_mut() {
             PendingInner::Request(ref mut req) => Pin::new(req).poll(cx),
-            PendingInner::Error(ref mut err) => {
-                Poll::Ready(Err(err.take().expect("Pending error polled more than once")))
-            }
+            PendingInner::Error(ref mut err) => Poll::Ready(Err(err
+                .take()
+                .expect("Pending error polled more than once"))),
         }
     }
 }
@@ -3106,8 +3109,12 @@ impl Future for PendingRequest {
             }
         };
 
-        let res =
-            Response::new(res, self.url.clone(), self.total_timeout.take(), self.read_timeout);
+        let res = Response::new(
+            res,
+            self.url.clone(),
+            self.total_timeout.take(),
+            self.read_timeout,
+        );
         Poll::Ready(Ok(res))
     }
 }

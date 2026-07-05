@@ -15,6 +15,7 @@
     },
     "tantivy",
     "prismq",
+    "posix_fd_probe",
     "prism_q_probe",
     "ratatui_demo",
     "test_some_crates",

@@ -16,7 +16,7 @@ use trueos::{
 
 const WIDTH: u16 = 48;
 const HEIGHT: u16 = 12;
-const RESERVED_TOP_ROWS: u32 = 2;
+const RESERVED_TOP_ROWS: u32 = 0;
 
 fn main() {
     logl::log(level::INFO, format_args!("ratatui_demo: start"));

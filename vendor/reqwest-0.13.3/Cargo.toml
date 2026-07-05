@@ -170,6 +170,7 @@ query = [
 rustls = [
     "__rustls-rustcrypto",
     "__rustls",
+    "webpki-roots",
 ]
 rustls-no-provider = [
     "__rustls-rustcrypto",
@@ -184,6 +185,7 @@ stream = [
     "dep:wasm-streams",
 ]
 system-proxy = ["hyper-util/client-proxy-system"]
+webpki-roots = ["dep:webpki-roots"]
 zstd = ["tower-http/decompression-zstd"]
 
 [lib]
@@ -468,6 +470,11 @@ default-features = false
 
 [target.'cfg(not(all(target_arch = "wasm32", any(target_os = "unknown", target_os = "none"))))'.dependencies.tower-service]
 version = "0.3"
+
+[target.'cfg(not(all(target_arch = "wasm32", any(target_os = "unknown", target_os = "none"))))'.dependencies.webpki-roots]
+version = "1"
+optional = true
+default-features = false
 
 [target.'cfg(not(all(target_arch = "wasm32", any(target_os = "unknown", target_os = "none"))))'.dev-dependencies.brotli_crate]
 version = "8"

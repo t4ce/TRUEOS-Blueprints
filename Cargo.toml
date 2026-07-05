@@ -18,6 +18,7 @@ members = [
     "apps/flight_controller_sim",
     "apps/monaco",
     "apps/prismq",
+    "apps/posix_fd_probe",
     "apps/rusqlite_probe",
     "apps/prism_q_probe",
     "apps/ratatui_demo",

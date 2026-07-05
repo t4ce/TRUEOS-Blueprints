@@ -38,6 +38,7 @@ pub mod vcabi;
 pub mod vclock;
 pub mod vfetch;
 pub mod vfs;
+pub mod vfs_fd;
 pub mod vhttp_srv;
 pub mod vinput;
 pub mod vio;
