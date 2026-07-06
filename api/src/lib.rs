@@ -10,6 +10,7 @@ use core::ptr::null_mut;
 pub use tokio;
 pub use v::collections;
 pub use v::env;
+pub use v::vaudio as audio;
 pub use v::vclock as clock;
 pub use v::vfs;
 pub use v::vinput as hid;

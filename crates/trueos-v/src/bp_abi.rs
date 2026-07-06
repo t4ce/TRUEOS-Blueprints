@@ -285,6 +285,40 @@ unsafe extern "C" {
     ) -> i32;
     pub fn trueos_cabi_smtp_password_configured() -> i32;
 
+    pub fn trueos_cabi_audio_open_playback(
+        format: u32,
+        channels: u32,
+        rate_hz: u32,
+        out_handle: *mut u32,
+    ) -> i32;
+    pub fn trueos_cabi_audio_close(handle: u32) -> i32;
+    pub fn trueos_cabi_audio_start(handle: u32) -> i32;
+    pub fn trueos_cabi_audio_drop(handle: u32) -> i32;
+    pub fn trueos_cabi_audio_set_paused(handle: u32, paused: u32) -> i32;
+    pub fn trueos_cabi_audio_paused(handle: u32) -> i32;
+    pub fn trueos_cabi_audio_set_volume_percent(handle: u32, percent: u32) -> i32;
+    pub fn trueos_cabi_audio_volume_percent(handle: u32) -> i32;
+    pub fn trueos_cabi_audio_drain(handle: u32, timeout_ms: u64) -> i32;
+    pub fn trueos_cabi_audio_write_i16_interleaved(
+        handle: u32,
+        samples_ptr: *const i16,
+        sample_count: usize,
+    ) -> isize;
+    pub fn trueos_cabi_audio_write_i16_stereo_48k(
+        samples_ptr: *const i16,
+        sample_count: usize,
+    ) -> isize;
+    pub fn trueos_cabi_audio_queued_frames(handle: u32) -> isize;
+    pub fn trueos_cabi_audio_buffer_frames(handle: u32) -> isize;
+    pub fn trueos_cabi_audio_state(handle: u32) -> i32;
+    pub fn trueos_cabi_audio_monitor_start_cursor(preroll_samples: usize) -> u64;
+    pub fn trueos_cabi_audio_monitor_read_i16_since(
+        cursor: u64,
+        out_ptr: *mut i16,
+        out_cap: usize,
+        out_next_cursor: *mut u64,
+    ) -> isize;
+
     pub fn trueos_cabi_input_pop_mouse(
         out_buttons: *mut u8,
         out_dx: *mut i8,
