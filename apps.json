@@ -28,7 +28,7 @@
     "rusqlite_probe",
     "skybox",
     {
-      "name": "scope_tui",
+      "name": "aud_player_scope_tui",
       "path": "apps/scope-tui"
     },
     "superseedr",
