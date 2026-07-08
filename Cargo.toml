@@ -19,6 +19,7 @@ members = [
     "apps/monaco",
     "apps/prismq",
     "apps/posix_fd_probe",
+    "apps/unix_api_probe",
     "apps/rusqlite_probe",
     "apps/prism_q_probe",
     "apps/ratatui_demo",

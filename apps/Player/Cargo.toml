@@ -1,0 +1,29 @@
+[package]
+name = "Player"
+version = "0.3.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+readme = "README.md"
+documentation = "https://docs.rs/player-scope"
+keywords = ["tui", "audio", "player", "ratatui"]
+categories = ["command-line-utilities"]
+include = [
+    "Cargo.toml",
+    "Cargo.lock",
+    "LICENSE",
+    "README.md",
+    "src/**/*",
+    "demo/**/*",
+    "doc/Screenshot.png",
+]
+
+[[example]]
+name = "demo"
+path = "demo/main.rs"
+
+[dependencies]
+anyhow = "1.0"
+crossterm = "0.28"
+ratatui = "0.29"
+scope = { package = "scope-tui", version = "0.3.5", default-features = false, features = ["tui"] }

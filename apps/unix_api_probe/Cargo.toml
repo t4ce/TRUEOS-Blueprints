@@ -1,0 +1,11 @@
+[package]
+name = "unix_api_probe"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "unix_api_probe"
+path = "main.rs"
+
+[dependencies]
+trueos.workspace = true
