@@ -42,7 +42,35 @@ struct Registration {
 #[derive(Debug, Default)]
 struct SelectorState {
     registrations: Mutex<BTreeMap<usize, Registration>>,
+    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+    fd_registrations: Mutex<BTreeMap<i32, Registration>>,
     ready: Mutex<VecDeque<Event>>,
+}
+
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+struct PollFd {
+    fd: i32,
+    events: i16,
+    revents: i16,
+}
+
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+const POLLIN: i16 = 0x001;
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+const POLLOUT: i16 = 0x004;
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+const POLLERR: i16 = 0x008;
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+const POLLHUP: i16 = 0x010;
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+const POLLNVAL: i16 = 0x020;
+
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+unsafe extern "C" {
+    fn poll(fds: *mut PollFd, nfds: usize, timeout: i32) -> i32;
+    fn __errno_location() -> *mut i32;
 }
 
 static NEXT_SELECTOR_ID: AtomicUsize = AtomicUsize::new(1);
@@ -79,6 +107,10 @@ impl Selector {
             return Ok(());
         }
 
+        if self.drain_fd_ready_timeout(events, Some(Duration::ZERO)) {
+            return Ok(());
+        }
+
         if matches!(timeout, Some(duration) if duration.is_zero()) {
             return Ok(());
         }
@@ -104,6 +136,10 @@ impl Selector {
             };
 
             if self.drain_socket_ready_timeout(events, timeout_slice) {
+                return Ok(());
+            }
+
+            if self.drain_fd_ready_timeout(events, timeout_slice) {
                 return Ok(());
             }
 
@@ -145,6 +181,35 @@ impl Selector {
         Ok(())
     }
 
+    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+    pub(crate) fn register_fd_source(
+        &self,
+        fd: i32,
+        token: Token,
+        interests: Interest,
+    ) -> io::Result<()> {
+        let mut registrations = self.state.fd_registrations.lock();
+        registrations.insert(fd, Registration { token, interests });
+        Ok(())
+    }
+
+    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+    pub(crate) fn reregister_fd_source(
+        &self,
+        fd: i32,
+        token: Token,
+        interests: Interest,
+    ) -> io::Result<()> {
+        self.register_fd_source(fd, token, interests)
+    }
+
+    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+    pub(crate) fn deregister_fd_source(&self, fd: i32) -> io::Result<()> {
+        let mut registrations = self.state.fd_registrations.lock();
+        registrations.remove(&fd);
+        Ok(())
+    }
+
     pub(crate) fn push_waker_event(&self, token: Token) -> io::Result<()> {
         let mut ready = self.state.ready.lock();
         ready.push_back(Event {
@@ -165,6 +230,54 @@ impl Selector {
             };
             events.push(event);
         }
+        !events.is_empty()
+    }
+
+    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+    fn drain_fd_ready_timeout(&self, events: &mut Events, timeout: Option<Duration>) -> bool {
+        let remaining = events.capacity().saturating_sub(events.len());
+        if remaining == 0 {
+            return !events.is_empty();
+        }
+
+        let registrations = self.state.fd_registrations.lock();
+        if registrations.is_empty() {
+            return !events.is_empty();
+        }
+
+        let mut pollfds = Vec::new();
+        for (&fd, registration) in registrations.iter() {
+            if pollfds.len() >= remaining {
+                break;
+            }
+            pollfds.push(PollFd {
+                fd,
+                events: poll_events(registration.interests),
+                revents: 0,
+            });
+        }
+        drop(registrations);
+
+        let timeout_ms = timeout_to_millis(timeout);
+        let ready = unsafe { poll(pollfds.as_mut_ptr(), pollfds.len(), timeout_ms) };
+        if ready <= 0 {
+            return !events.is_empty();
+        }
+
+        let registrations = self.state.fd_registrations.lock();
+        for pollfd in pollfds {
+            if events.len() >= events.capacity() || pollfd.revents == 0 {
+                continue;
+            }
+            let Some(registration) = registrations.get(&pollfd.fd) else {
+                continue;
+            };
+            events.push(Event {
+                token: registration.token,
+                readiness: readiness_from_poll(pollfd.revents),
+            });
+        }
+
         !events.is_empty()
     }
 
@@ -198,6 +311,54 @@ impl Selector {
     #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
     fn drain_socket_ready(&self, events: &mut Events) -> bool {
         !events.is_empty()
+    }
+}
+
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+fn poll_events(interests: Interest) -> i16 {
+    let mut events = 0;
+    if interests.is_readable() {
+        events |= POLLIN;
+    }
+    if interests.is_writable() {
+        events |= POLLOUT;
+    }
+    events
+}
+
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+fn readiness_from_poll(revents: i16) -> Ready {
+    Ready {
+        readable: (revents & POLLIN) != 0,
+        writable: (revents & POLLOUT) != 0,
+        error: (revents & (POLLERR | POLLNVAL)) != 0,
+        read_closed: (revents & POLLHUP) != 0,
+        write_closed: (revents & POLLHUP) != 0,
+        ..Ready::default()
+    }
+}
+
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+fn timeout_to_millis(timeout: Option<Duration>) -> i32 {
+    match timeout {
+        None => -1,
+        Some(duration) => {
+            let millis = duration.as_millis();
+            i32::try_from(millis).unwrap_or(i32::MAX)
+        }
+    }
+}
+
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+#[allow(dead_code)]
+fn last_errno() -> i32 {
+    unsafe {
+        let errno = __errno_location();
+        if errno.is_null() {
+            0
+        } else {
+            *errno
+        }
     }
 }
 

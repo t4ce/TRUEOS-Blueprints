@@ -18,8 +18,12 @@ include = [
     "doc/Screenshot.png",
 ]
 
-[[example]]
-name = "demo"
+[lib]
+name = "player_scope"
+path = "src/lib.rs"
+
+[[bin]]
+name = "Player"
 path = "demo/main.rs"
 
 [dependencies]

@@ -49,6 +49,11 @@ pub enum Shutdown {
     Both,
 }
 
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+mod uds_trueos;
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+pub use self::uds_trueos::UnixStream;
+
 #[cfg(all(unix, not(any(target_os = "trueos", target_os = "zkvm"))))]
 mod uds;
 #[cfg(all(unix, not(any(target_os = "trueos", target_os = "zkvm"))))]

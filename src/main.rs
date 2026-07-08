@@ -1720,6 +1720,36 @@ fn source_overlay_patches(
         out.push(CratePatch::new("argmax", path));
     }
 
+    if manifest_or_lock_mentions_crate(app_dir, manifest_path, "rustix")? {
+        let rustix_0_38 = stage_rustix_trueos_overlay(work_dir, "0.38.44")?;
+        let rustix_1_1 = stage_rustix_trueos_overlay(work_dir, "1.1.4")?;
+        out.retain(|patch| patch.name != "rustix");
+        out.push(CratePatch::alias("rustix_0_38", "rustix", rustix_0_38));
+        out.push(CratePatch::alias("rustix_1_1", "rustix", rustix_1_1));
+    }
+
+    if manifest_or_lock_mentions_crate(app_dir, manifest_path, "signal-hook-mio")? {
+        let path = stage_signal_hook_mio_trueos_overlay(work_dir)?;
+        out.retain(|patch| patch.name != "signal-hook-mio");
+        out.push(CratePatch::new("signal-hook-mio", path));
+    }
+
+    if manifest_or_lock_mentions_crate(app_dir, manifest_path, "crossterm")? {
+        let crossterm_0_28 = stage_crossterm_trueos_overlay(work_dir, "0.28.1")?;
+        let crossterm_0_29 = stage_crossterm_trueos_overlay(work_dir, "0.29.0")?;
+        out.retain(|patch| patch.name != "crossterm");
+        out.push(CratePatch::alias(
+            "crossterm_0_28",
+            "crossterm",
+            crossterm_0_28,
+        ));
+        out.push(CratePatch::alias(
+            "crossterm_0_29",
+            "crossterm",
+            crossterm_0_29,
+        ));
+    }
+
     out.sort_by(|a, b| a.key.cmp(&b.key));
     Ok(out)
 }
@@ -1810,6 +1840,55 @@ fn stage_argmax_trueos_overlay(work_dir: &Path) -> Result<PathBuf, String> {
     reset_dir(&staged)?;
     copy_app_tree(&source, &staged)?;
     patch_argmax_trueos_overlay(&staged)?;
+    Ok(staged)
+}
+
+fn stage_rustix_trueos_overlay(work_dir: &Path, version: &str) -> Result<PathBuf, String> {
+    let source_name = format!("rustix-{version}");
+    let source = find_cargo_registry_crate(&source_name).ok_or_else(|| {
+        format!(
+            "missing Cargo registry source for {source_name}; run `cargo fetch` for the app once"
+        )
+    })?;
+    let staged = work_dir
+        .join("source-overlay-crates")
+        .join(format!("rustix-{version}-trueos"));
+    reset_dir(&staged)?;
+    copy_app_tree(&source, &staged)?;
+    patch_rustix_trueos_overlay(&staged)?;
+    Ok(staged)
+}
+
+fn stage_signal_hook_mio_trueos_overlay(work_dir: &Path) -> Result<PathBuf, String> {
+    const SIGNAL_HOOK_MIO_VERSION: &str = "0.2.5";
+    let source_name = format!("signal-hook-mio-{SIGNAL_HOOK_MIO_VERSION}");
+    let source = find_cargo_registry_crate(&source_name).ok_or_else(|| {
+        format!(
+            "missing Cargo registry source for {source_name}; run `cargo fetch` for the app once"
+        )
+    })?;
+    let staged = work_dir
+        .join("source-overlay-crates")
+        .join("signal-hook-mio-trueos");
+    reset_dir(&staged)?;
+    copy_app_tree(&source, &staged)?;
+    patch_signal_hook_mio_trueos_overlay(&staged)?;
+    Ok(staged)
+}
+
+fn stage_crossterm_trueos_overlay(work_dir: &Path, version: &str) -> Result<PathBuf, String> {
+    let source_name = format!("crossterm-{version}");
+    let source = find_cargo_registry_crate(&source_name).ok_or_else(|| {
+        format!(
+            "missing Cargo registry source for {source_name}; run `cargo fetch` for the app once"
+        )
+    })?;
+    let staged = work_dir
+        .join("source-overlay-crates")
+        .join(format!("crossterm-{version}-trueos"));
+    reset_dir(&staged)?;
+    copy_app_tree(&source, &staged)?;
+    patch_crossterm_trueos_overlay(&staged)?;
     Ok(staged)
 }
 
@@ -2108,6 +2187,95 @@ fn patch_argmax_trueos_overlay(crate_dir: &Path) -> Result<(), String> {
         "#[cfg(not(unix))]\nuse other as platform;\n#[cfg(unix)]\nuse unix as platform;",
         "#[cfg(any(not(unix), target_os = \"trueos\", target_os = \"zkvm\"))]\nuse other as platform;\n#[cfg(all(unix, not(any(target_os = \"trueos\", target_os = \"zkvm\"))))]\nuse unix as platform;",
     )?;
+    Ok(())
+}
+
+fn patch_rustix_trueos_overlay(crate_dir: &Path) -> Result<(), String> {
+    let ioctl_mod = crate_dir.join("src/ioctl/mod.rs");
+    let source = fs::read_to_string(&ioctl_mod).map_err(io_string)?;
+    if source.contains("type _RawOpcode = c::c_int;") {
+        replace_file_text(
+            &ioctl_mod,
+            "    target_os = \"wasi\",\n    target_os = \"nto\"\n))]\ntype _RawOpcode = c::c_int;",
+            "    target_os = \"wasi\",\n    target_os = \"nto\"\n))]\ntype _RawOpcode = c::c_int;\n\n#[cfg(target_os = \"trueos\")]\ntype _RawOpcode = crate::backend::c::Ioctl;",
+        )
+    } else {
+        replace_file_text(
+            &ioctl_mod,
+            "    target_os = \"nto\",\n    target_os = \"wasi\",\n))]\ntype _Opcode = c::c_int;",
+            "    target_os = \"nto\",\n    target_os = \"wasi\",\n))]\ntype _Opcode = c::c_int;\n\n#[cfg(target_os = \"trueos\")]\ntype _Opcode = crate::backend::c::Ioctl;",
+        )
+    }
+}
+
+fn patch_signal_hook_mio_trueos_overlay(crate_dir: &Path) -> Result<(), String> {
+    replace_file_text(
+        &crate_dir.join("src/lib.rs"),
+        "        use std::io::Error;\n\n        use signal_hook::iterator",
+        "        use std::io::Error as SignalError;\n        use mio::io::{Error, ErrorKind};\n\n        use signal_hook::iterator",
+    )?;
+    replace_file_text(
+        &crate_dir.join("src/lib.rs"),
+        "        use libc::c_int;\n\n        /// A struct which mimics",
+        "        use libc::c_int;\n\n        fn map_signal_error(error: SignalError) -> Error {\n            if let Some(errno) = error.raw_os_error() {\n                return mio::io::errno_error(errno);\n            }\n            let kind = match error.kind() {\n                std::io::ErrorKind::WouldBlock => ErrorKind::WouldBlock,\n                std::io::ErrorKind::Interrupted => ErrorKind::Interrupted,\n                std::io::ErrorKind::InvalidInput => ErrorKind::InvalidInput,\n                std::io::ErrorKind::NotFound => ErrorKind::NotFound,\n                std::io::ErrorKind::PermissionDenied => ErrorKind::PermissionDenied,\n                std::io::ErrorKind::BrokenPipe => ErrorKind::BrokenPipe,\n                std::io::ErrorKind::AlreadyExists => ErrorKind::AlreadyExists,\n                std::io::ErrorKind::TimedOut => ErrorKind::TimedOut,\n                std::io::ErrorKind::ConnectionRefused => ErrorKind::ConnectionRefused,\n                std::io::ErrorKind::ConnectionReset => ErrorKind::ConnectionReset,\n                std::io::ErrorKind::ConnectionAborted => ErrorKind::ConnectionAborted,\n                std::io::ErrorKind::NotConnected => ErrorKind::NotConnected,\n                std::io::ErrorKind::AddrInUse => ErrorKind::AddrInUse,\n                std::io::ErrorKind::AddrNotAvailable => ErrorKind::AddrNotAvailable,\n                _ => ErrorKind::Other,\n            };\n            Error::new(kind, \"signal-hook-mio error\")\n        }\n\n        /// A struct which mimics",
+    )?;
+    replace_file_text(
+        &crate_dir.join("src/lib.rs"),
+        "                let delivery = SignalDelivery::with_pipe(read, write, exfiltrator, signals)?;",
+        "                let delivery = SignalDelivery::with_pipe(read, write, exfiltrator, signals)\n                    .map_err(map_signal_error)?;",
+    )?;
+    replace_file_text(
+        &crate_dir.join("src/lib.rs"),
+        "                self.0.handle().add_signal(signal)",
+        "                self.0.handle().add_signal(signal).map_err(map_signal_error)",
+    )
+}
+
+fn patch_crossterm_trueos_overlay(crate_dir: &Path) -> Result<(), String> {
+    let mio_path = crate_dir.join("src/event/source/unix/mio.rs");
+    normalize_line_endings(&mio_path)?;
+    replace_file_text(
+        &mio_path,
+        "const TTY_BUFFER_SIZE: usize = 1_024;\n",
+        "const TTY_BUFFER_SIZE: usize = 1_024;\n\nfn mio_to_io_error(error: mio::io::Error) -> io::Error {\n    let kind = match error.kind() {\n        mio::io::ErrorKind::WouldBlock => io::ErrorKind::WouldBlock,\n        mio::io::ErrorKind::Interrupted => io::ErrorKind::Interrupted,\n        mio::io::ErrorKind::InvalidInput => io::ErrorKind::InvalidInput,\n        mio::io::ErrorKind::NotFound => io::ErrorKind::NotFound,\n        mio::io::ErrorKind::PermissionDenied => io::ErrorKind::PermissionDenied,\n        mio::io::ErrorKind::BrokenPipe => io::ErrorKind::BrokenPipe,\n        mio::io::ErrorKind::AlreadyExists => io::ErrorKind::AlreadyExists,\n        mio::io::ErrorKind::TimedOut => io::ErrorKind::TimedOut,\n        mio::io::ErrorKind::ConnectionRefused => io::ErrorKind::ConnectionRefused,\n        mio::io::ErrorKind::ConnectionReset => io::ErrorKind::ConnectionReset,\n        mio::io::ErrorKind::ConnectionAborted => io::ErrorKind::ConnectionAborted,\n        mio::io::ErrorKind::NotConnected => io::ErrorKind::NotConnected,\n        mio::io::ErrorKind::AddrInUse => io::ErrorKind::AddrInUse,\n        mio::io::ErrorKind::AddrNotAvailable => io::ErrorKind::AddrNotAvailable,\n        _ => io::ErrorKind::Other,\n    };\n    io::Error::new(kind, \"mio trueos error\")\n}\n",
+    )?;
+    replace_file_text(
+        &mio_path,
+        "        let poll = Poll::new()?;",
+        "        let poll = Poll::new().map_err(mio_to_io_error)?;",
+    )?;
+    replace_file_text(
+        &mio_path,
+        "        registry.register(&mut tty_ev, TTY_TOKEN, Interest::READABLE)?;",
+        "        registry\n            .register(&mut tty_ev, TTY_TOKEN, Interest::READABLE)\n            .map_err(mio_to_io_error)?;",
+    )?;
+    replace_file_text(
+        &mio_path,
+        "        let mut signals = Signals::new([signal_hook::consts::SIGWINCH])?;",
+        "        let mut signals = Signals::new([signal_hook::consts::SIGWINCH])\n            .map_err(mio_to_io_error)?;",
+    )?;
+    replace_file_text(
+        &mio_path,
+        "        registry.register(&mut signals, SIGNAL_TOKEN, Interest::READABLE)?;",
+        "        registry\n            .register(&mut signals, SIGNAL_TOKEN, Interest::READABLE)\n            .map_err(mio_to_io_error)?;",
+    )?;
+    replace_file_text(
+        &mio_path,
+        "        let waker = Waker::new(registry, WAKE_TOKEN)?;",
+        "        let waker = Waker::new(registry, WAKE_TOKEN).map_err(mio_to_io_error)?;",
+    )?;
+    replace_file_text(
+        &mio_path,
+        "                if e.kind() == io::ErrorKind::Interrupted {\n                    continue;\n                } else {\n                    return Err(e);\n                }",
+        "                if e.kind() == mio::io::ErrorKind::Interrupted {\n                    continue;\n                } else {\n                    return Err(mio_to_io_error(e));\n                }",
+    )
+}
+
+fn normalize_line_endings(path: &Path) -> Result<(), String> {
+    let original = fs::read_to_string(path).map_err(io_string)?;
+    if original.contains("\r\n") {
+        fs::write(path, original.replace("\r\n", "\n")).map_err(io_string)?;
+    }
     Ok(())
 }
 

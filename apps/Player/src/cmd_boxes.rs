@@ -12,6 +12,7 @@ use ratatui::{
 use super::{COMMAND_FG, FLASH_BG, FLASH_FG, HOTKEY_FINAL_BG, HOTKEY_STATE};
 
 const COMPACT_CELL_WIDTH: usize = 6;
+const ARG_FG: Color = Color::Rgb(105, 105, 105);
 
 pub fn draw_compact(frame: &mut Frame, area: Rect) {
     let lines = vec![
@@ -123,7 +124,7 @@ pub fn draw(frame: &mut Frame, area: Rect) {
                 icon_column_line(
                     [
                         keyed_command("goto"),
-                        vec![arg_span(" <"), icon_span("⏱"), arg_span(">")],
+                        vec![arg_span(" < "), icon_span("⏱"), arg_span(" >")],
                     ]
                     .concat(),
                     "🔽",
@@ -138,11 +139,11 @@ pub fn draw(frame: &mut Frame, area: Rect) {
                     [
                         keyed_command("loop"),
                         vec![
-                            arg_span(" <"),
+                            arg_span(" < "),
                             icon_span("⏱"),
-                            arg_span(","),
+                            arg_span(", "),
                             icon_span("⏱"),
-                            arg_span(">"),
+                            arg_span(" >"),
                         ],
                     ]
                     .concat(),
@@ -174,11 +175,11 @@ pub fn draw(frame: &mut Frame, area: Rect) {
                     [
                         keyed_command("cut"),
                         vec![
-                            arg_span(" <"),
+                            arg_span(" < "),
                             icon_span("⏱"),
-                            arg_span(","),
+                            arg_span(", "),
                             icon_span("⏱"),
-                            arg_span(">"),
+                            arg_span(" >"),
                         ],
                     ]
                     .concat(),
@@ -266,7 +267,7 @@ fn compact_caption_span(text: &'static str) -> Span<'static> {
 
 fn compact_item_spans(alias: &'static str, icon: &'static str) -> Vec<Span<'static>> {
     let mut spans = Vec::new();
-    let alias_width = alias.chars().count();
+    let alias_width = str_target_width(alias);
     if alias_width < 2 {
         spans.push(Span::raw(" ".repeat(2 - alias_width)));
     }
@@ -274,7 +275,7 @@ fn compact_item_spans(alias: &'static str, icon: &'static str) -> Vec<Span<'stat
     spans.push(Span::raw(" "));
     spans.push(icon_span(icon));
 
-    let width = Line::from(spans.clone()).width();
+    let width = spans_target_width(&spans);
     if width < COMPACT_CELL_WIDTH {
         spans.push(Span::raw(" ".repeat(COMPACT_CELL_WIDTH - width)));
     }
@@ -301,7 +302,7 @@ fn hotkey_span(text: &'static str) -> Span<'static> {
 }
 
 fn icon_span(text: &'static str) -> Span<'static> {
-    Span::styled(text, plain_style())
+    Span::styled(text, plain_style().fg(COMMAND_FG))
 }
 
 fn split_separator_span() -> Span<'static> {
@@ -345,14 +346,26 @@ fn plain_style() -> Style {
     Style::default().remove_modifier(Modifier::BOLD | Modifier::UNDERLINED | Modifier::REVERSED)
 }
 
+fn span_target_width(span: &Span<'_>) -> usize {
+    span.content.chars().count()
+}
+
+fn spans_target_width(spans: &[Span<'_>]) -> usize {
+    spans.iter().map(span_target_width).sum()
+}
+
+fn str_target_width(text: &str) -> usize {
+    text.chars().count()
+}
+
 fn right_icon_line(
     mut content: Vec<Span<'static>>,
     icon: &'static str,
     inner_width: u16,
 ) -> Line<'static> {
-    let content_width = Line::from(content.clone()).width();
+    let content_width = spans_target_width(&content);
     let icon = icon_span(icon);
-    let icon_width = icon.width();
+    let icon_width = span_target_width(&icon);
     let gap = usize::from(inner_width).saturating_sub(content_width + icon_width);
 
     content.push(Span::raw(" ".repeat(gap)));
@@ -365,9 +378,9 @@ fn icon_column_line(
     icon: &'static str,
     column_width: u16,
 ) -> Line<'static> {
-    let content_width = Line::from(content.clone()).width();
+    let content_width = spans_target_width(&content);
     let icon = icon_span(icon);
-    let icon_width = icon.width();
+    let icon_width = span_target_width(&icon);
     let gap = usize::from(column_width)
         .saturating_sub(content_width + icon_width)
         .max(1);
@@ -412,5 +425,5 @@ fn dual_icon_line_split(
 }
 
 fn arg_span(text: &'static str) -> Span<'static> {
-    Span::styled(text, plain_style().fg(Color::Gray))
+    Span::styled(text, plain_style().fg(ARG_FG))
 }

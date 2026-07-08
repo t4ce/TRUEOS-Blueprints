@@ -48,6 +48,8 @@ compile_error!("This wasm target is unsupported by mio. If using Tokio, disable 
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
 extern crate alloc;
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+extern crate std as real_std;
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
 extern crate self as std;
 
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
@@ -221,6 +223,46 @@ pub mod unix {
     }
 
     pub use crate::sys::SourceFd;
+}
+
+#[cfg(all(any(target_os = "trueos", target_os = "zkvm"), feature = "os-ext"))]
+pub mod unix {
+    //! TRUEOS Unix extensions.
+
+    use crate::io;
+    use crate::{event, Interest, Registry, Token};
+
+    /// Adapter for a borrowed raw fd.
+    #[derive(Debug)]
+    pub struct SourceFd<'a>(pub &'a i32);
+
+    impl event::Source for SourceFd<'_> {
+        fn register(
+            &mut self,
+            registry: &Registry,
+            token: Token,
+            interests: Interest,
+        ) -> io::Result<()> {
+            registry
+                .selector()
+                .register_fd_source(*self.0, token, interests)
+        }
+
+        fn reregister(
+            &mut self,
+            registry: &Registry,
+            token: Token,
+            interests: Interest,
+        ) -> io::Result<()> {
+            registry
+                .selector()
+                .reregister_fd_source(*self.0, token, interests)
+        }
+
+        fn deregister(&mut self, registry: &Registry) -> io::Result<()> {
+            registry.selector().deregister_fd_source(*self.0)
+        }
+    }
 }
 
 #[cfg(all(target_os = "hermit", feature = "os-ext"))]
