@@ -266,6 +266,25 @@ pub fn shell2_raw_write(bytes: &[u8]) -> usize {
 }
 
 #[inline]
+pub fn leave_terminal_handoff() {
+    let _ = shell2_raw_write(b"\x1b]777;terminal_handoff=0\x07");
+}
+
+#[inline]
+pub fn report_exit_reason(reason: &str) -> bool {
+    if reason.is_empty() {
+        return false;
+    }
+    unsafe { vcabi::trueos_cabi_blueprint_exit_reason(reason.as_ptr(), reason.len()) == 0 }
+}
+
+#[inline]
+pub fn shutdown_current_blueprint(reason: &str) -> bool {
+    let bytes = reason.as_bytes();
+    unsafe { vcabi::trueos_cabi_blueprint_shutdown(bytes.as_ptr(), bytes.len()) == 0 }
+}
+
+#[inline]
 pub fn attached_read_byte() -> Option<u8> {
     let value = unsafe { vcabi::trueos_cabi_shell_attached_read_byte() };
     if (0..=255).contains(&value) {
@@ -317,6 +336,24 @@ pub fn attached_retarget_slot(slot: &str) -> bool {
 }
 
 pub const KONSOLE_FRAME_TERMINAL_HANDOFF: u32 = 1 << 31;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct KonsoleSize {
+    pub cols: u32,
+    pub rows: u32,
+}
+
+#[inline]
+pub fn konsole_size() -> Option<KonsoleSize> {
+    let mut cols = 0u32;
+    let mut rows = 0u32;
+    let status = unsafe { vcabi::trueos_cabi_konsole_size(&mut cols, &mut rows) };
+    if status == 0 && cols != 0 && rows != 0 {
+        Some(KonsoleSize { cols, rows })
+    } else {
+        None
+    }
+}
 
 #[inline]
 pub fn konsole_begin_frame(cols: u32, rows: u32, reserved_top_rows: u32) -> i32 {

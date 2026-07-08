@@ -29,7 +29,7 @@
     "skybox",
     {
       "name": "aud_player_scope_tui",
-      "path": "apps/scope-tui"
+      "path": "apps/aud-player-scope-tui"
     },
     "superseedr",
     "webdevices",

@@ -36,7 +36,7 @@ exclude = [
     "crates",
     "crates/*",
     "apps/rebels-in-the-sky",
-    "apps/scope-tui",
+    "apps/aud-player-scope-tui",
     "vendor",
     "vendor/*",
     "vendor/ratatui/**",
