@@ -22,7 +22,6 @@ members = [
     "apps/unix_api_probe",
     "apps/rusqlite_probe",
     "apps/prism_q_probe",
-    "apps/ratatui_demo",
     "apps/skybox",
     "apps/test_some_crates",
     "apps/texteditor",
@@ -36,6 +35,7 @@ members = [
 exclude = [
     "crates",
     "crates/*",
+    "apps/Player",
     "apps/rebels-in-the-sky",
     "apps/aud-player-scope-tui",
     "vendor",

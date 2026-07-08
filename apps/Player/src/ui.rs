@@ -35,7 +35,7 @@ use scope::{
 #[path = "cmd_boxes.rs"]
 mod cmd_boxes;
 
-use crate::control;
+use crate::{control, playback};
 
 const SPINNER: [&str; 8] = ["⢈", "⡈", "⡐", "⡠", "⣀", "⢄", "⢂", "⢁"];
 const HOTKEYS_ENABLED: bool = false;
@@ -139,6 +139,7 @@ struct App {
     last_response: String,
     file_path: String,
     track: Track,
+    playback: playback::PlaybackEngine,
     playing: bool,
     muted: bool,
     volume: u16,
@@ -190,6 +191,7 @@ impl App {
             last_response: config.ready_response,
             file_path: config.default_file_path.clone(),
             track: default_track.clone(),
+            playback: playback::PlaybackEngine::new(config.initial_volume),
             playing: false,
             muted: false,
             volume: config.initial_volume,
@@ -258,12 +260,17 @@ impl App {
         }
         if self.playing {
             self.spinner_idx = (self.spinner_idx + 1) % SPINNER.len();
+            self.tick_playback();
             if self.last_progress_tick.elapsed() < Duration::from_secs(1) {
                 return;
             }
 
             self.last_progress_tick = Instant::now();
-            self.progress_secs = self.progress_secs.saturating_add(1);
+            if self.playback.is_loaded() {
+                self.progress_secs = self.playback.position_secs().min(self.duration_secs);
+            } else {
+                self.progress_secs = self.progress_secs.saturating_add(1);
+            }
 
             if let Some((start, end)) = self.loop_range {
                 if self.progress_secs >= end {
@@ -278,6 +285,21 @@ impl App {
                 self.progress_secs = self.duration_secs;
                 self.playing = false;
                 self.respond("complete: demo timeline reached the end");
+            }
+        }
+    }
+
+    fn tick_playback(&mut self) {
+        match self.playback.feed() {
+            Ok(true) => {
+                self.playing = false;
+                self.progress_secs = self.duration_secs;
+                self.respond("complete: playback finished");
+            }
+            Ok(false) => {}
+            Err(err) => {
+                self.playing = false;
+                self.respond(format!("playback: {err}"));
             }
         }
     }
@@ -1299,6 +1321,7 @@ impl App {
     }
 
     fn next_track(&mut self) {
+        self.playback.clear();
         self.track = self.next_track.clone();
         self.file_path.clone_from(&self.next_file_path);
         self.progress_secs = self.next_progress_secs;
@@ -1308,6 +1331,7 @@ impl App {
     }
 
     fn prev_track(&mut self) {
+        self.playback.clear();
         self.track = self.default_track.clone();
         self.file_path.clone_from(&self.default_file_path);
         self.progress_secs = self.default_progress_secs;
@@ -1316,21 +1340,61 @@ impl App {
         self.respond("prev: restored first demo metadata");
     }
 
-    fn load_path(&mut self, path: String) {
-        let file = Path::new(&path)
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or(path.as_str())
-            .to_string();
+    fn load_path(&mut self, path: String) -> std::result::Result<(), String> {
+        let loaded = self
+            .playback
+            .load_path(&path)
+            .map_err(|err| format!("load: {err}"))?;
 
-        self.file_path = path;
-        self.track.file = file;
+        self.file_path = loaded.path;
+        self.track.file = loaded.file_name;
+        self.track.codec = loaded.codec;
+        self.track.sample_rate = "48 kHz".into();
+        self.track.channels = "stereo".into();
+        self.track.size = loaded.size_label;
+        self.duration_secs = loaded.duration_secs.max(1);
         self.progress_secs = 0;
         self.playing = false;
-        self.respond("load: metadata mocked; playback backend still disconnected");
+        self.respond(format!("load: {} frames ready", loaded.frames));
+        Ok(())
+    }
+
+    fn play_loaded(&mut self) {
+        if !self.playback.is_loaded() {
+            if let Err(err) = self.load_path(self.file_path.clone()) {
+                self.respond(err);
+                return;
+            }
+        }
+
+        match self.playback.play() {
+            Ok(()) => {
+                self.playing = true;
+                self.last_progress_tick = Instant::now();
+                self.respond("play: playback started");
+            }
+            Err(err) => {
+                self.playing = false;
+                self.respond(format!("play: {err}"));
+            }
+        }
+    }
+
+    fn pause_playback(&mut self) {
+        match self.playback.pause() {
+            Ok(()) => {
+                self.playing = false;
+                self.respond("pause: playback paused");
+            }
+            Err(err) => {
+                self.playing = false;
+                self.respond(format!("pause: {err}"));
+            }
+        }
     }
 
     fn shutdown(&mut self, message: impl Into<String>) {
+        self.playback.close_stream();
         self.respond(message);
         self.should_quit = true;
     }
@@ -1420,20 +1484,17 @@ impl control::ControlEventHandler for App {
         let path = event.rest();
         if path.is_empty() {
             self.respond("load: missing path");
-        } else {
-            self.load_path(path);
+        } else if let Err(err) = self.load_path(path) {
+            self.respond(err);
         }
     }
 
     fn on_play(&mut self, _event: &control::ParsedCommand) {
-        self.playing = true;
-        self.last_progress_tick = Instant::now();
-        self.respond("play: visual timeline running; audio engine not attached");
+        self.play_loaded();
     }
 
     fn on_pause(&mut self, _event: &control::ParsedCommand) {
-        self.playing = false;
-        self.respond("pause: timeline held");
+        self.pause_playback();
     }
 
     fn on_quit(&mut self, _event: &control::ParsedCommand) {
