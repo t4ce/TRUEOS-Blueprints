@@ -553,12 +553,20 @@ fn run_staged_lock_overlay_update(
     staged_source_overlay: &[CratePatch],
     mismatch: &LockMismatch,
 ) -> Result<(), String> {
+    if staged_lock_overlay_aligned(staged_manifest, mismatch)? {
+        return Ok(());
+    }
+
     let package_specs = [
         format!("{}@{}", mismatch.name, mismatch.locked_version),
         mismatch.name.clone(),
     ];
 
     for (index, package_spec) in package_specs.iter().enumerate() {
+        if staged_lock_overlay_aligned(staged_manifest, mismatch)? {
+            return Ok(());
+        }
+
         let mut update = Command::new("cargo");
         update
             .arg("+nightly")
@@ -582,6 +590,9 @@ fn run_staged_lock_overlay_update(
                 let notes =
                     write_filtered_cargo_output("cargo update", &output.stdout, &output.stderr)?;
                 print_cargo_output_notes("cargo update", &notes);
+                if staged_lock_overlay_aligned(staged_manifest, mismatch)? {
+                    return Ok(());
+                }
                 return Err(format!("cargo update failed with status {}", output.status));
             }
             Ok(output) => {
@@ -600,6 +611,26 @@ fn run_staged_lock_overlay_update(
     }
 
     Err("cargo update failed unexpectedly".to_string())
+}
+
+fn staged_lock_overlay_aligned(
+    staged_manifest: &Path,
+    mismatch: &LockMismatch,
+) -> Result<bool, String> {
+    let lock_path = generated_lock_path(staged_manifest)?;
+    let locked = lock_packages(&lock_path)?;
+    let mut has_overlay_version = false;
+    for package in locked
+        .iter()
+        .filter(|package| package.name == mismatch.name)
+    {
+        if package.version == mismatch.overlay_version {
+            has_overlay_version = true;
+        } else if cargo_semver_same_line(&package.version, &mismatch.overlay_version) {
+            return Ok(false);
+        }
+    }
+    Ok(has_overlay_version)
 }
 
 fn enforce_source_overlay_lock(
@@ -2436,7 +2467,8 @@ fn rewrite_staged_source_for_target(
     staged_manifest: &Path,
     build_settings: &BuildSettings,
 ) -> Result<(), String> {
-    let rewrite_collections = manifest_has_dependency(staged_manifest, "trueos")?;
+    let rewrite_collections = manifest_has_dependency(staged_manifest, "trueos")?
+        && manifest_trueos_rewrite_std_imports(staged_manifest)?;
     if rewrite_collections {
         rewrite_trueos_collection_imports(staged_app_dir)?;
     }
@@ -2491,6 +2523,10 @@ fn staged_source_needs_trueos_collection_rewrite(
     app_dir: &Path,
     manifest_path: &Path,
 ) -> Result<bool, String> {
+    if !manifest_trueos_rewrite_std_imports(manifest_path)? {
+        return Ok(false);
+    }
+
     if !manifest_has_dependency(manifest_path, "trueos")?
         && !manifest_declared_features(manifest_path)?
             .iter()
@@ -2514,6 +2550,35 @@ fn staged_source_needs_trueos_collection_rewrite(
     }
 
     Ok(false)
+}
+
+fn manifest_trueos_rewrite_std_imports(manifest_path: &Path) -> Result<bool, String> {
+    let cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
+    let mut in_metadata = false;
+    for line in cargo_toml.lines() {
+        let trimmed = line.split('#').next().unwrap_or("").trim();
+        if trimmed.starts_with('[') {
+            in_metadata = trimmed == "[package.metadata.trueos-blueprint]";
+            continue;
+        }
+        if !in_metadata {
+            continue;
+        }
+        let Some((key, value)) = trimmed.split_once('=') else {
+            continue;
+        };
+        if key.trim() != "rewrite-std-imports" {
+            continue;
+        }
+        return match toml_bool_value(value.trim()) {
+            Some(value) => Ok(value),
+            None => Err(format!(
+                "bad trueos-blueprint rewrite-std-imports in {}",
+                manifest_path.display()
+            )),
+        };
+    }
+    Ok(true)
 }
 
 fn rewrite_trueos_collection_imports(staged_app_dir: &Path) -> Result<(), String> {
@@ -4131,6 +4196,14 @@ fn toml_string_value(value: &str) -> Option<String> {
         }
     }
     Some(out)
+}
+
+fn toml_bool_value(value: &str) -> Option<bool> {
+    match value.trim() {
+        "true" => Some(true),
+        "false" => Some(false),
+        _ => None,
+    }
 }
 
 fn resolve_manifest_path(manifest_root: &Path, value: &str) -> PathBuf {

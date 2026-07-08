@@ -155,6 +155,7 @@ fn virtual_package_app_manifest_path(dir: &Path, app_name: &str) -> PathBuf {
     match app_name {
         "helix" => dir.join("helix-term").join("Cargo.toml"),
         "matrix" => dir.join("src").join("main").join("Cargo.toml"),
+        "vpverst" => dir.join("vpverst_client").join("Cargo.toml"),
         _ => dir.join("src").join("main").join("Cargo.toml"),
     }
 }
@@ -162,7 +163,7 @@ fn virtual_package_app_manifest_path(dir: &Path, app_name: &str) -> PathBuf {
 fn virtual_package_app_alias(app_name: &str) -> bool {
     matches!(
         app_name,
-        "fd" | "helix" | "matrix" | "scope_tui" | "aud_player_scope_tui"
+        "fd" | "helix" | "matrix" | "scope_tui" | "aud_player_scope_tui" | "vpverst"
     )
 }
 

@@ -5,8 +5,9 @@ const DEFAULT_CHANNELS: usize = 2;
 const SAMPLE_BYTES: usize = 2;
 const FRAME_BYTES: usize = DEFAULT_CHANNELS * SAMPLE_BYTES;
 const MAX_AUDIO_FILE_BYTES: usize = 16 * 1024 * 1024;
-const STREAM_CHUNK_FRAMES: usize = 2048;
-const STREAM_MAX_QUEUE_FRAMES: usize = DEFAULT_RATE_HZ as usize;
+const STREAM_CHUNK_FRAMES: usize = 4096;
+const STREAM_TARGET_QUEUE_FRAMES: usize = DEFAULT_RATE_HZ as usize;
+const STREAM_MAX_PUMP_CHUNKS: usize = 16;
 
 #[derive(Debug, Clone)]
 pub struct LoadedTrack {
@@ -142,11 +143,7 @@ impl PlaybackEngine {
             .map_err(audio_error)?;
         self.volume_percent = applied.min(100);
 
-        let first_end = self
-            .cursor_samples
-            .saturating_add(self.chunk_samples)
-            .min(loaded.samples.len());
-        self.write_stream_chunk(stream, first_end)?;
+        self.pump_stream(stream, STREAM_TARGET_QUEUE_FRAMES)?;
         stream.start().map_err(audio_error)?;
         self.stream = Some(stream);
         Ok(())
@@ -186,17 +183,7 @@ impl PlaybackEngine {
             return Ok(false);
         };
 
-        if let Ok(queued) = stream.queued_frames() {
-            if queued >= STREAM_MAX_QUEUE_FRAMES {
-                return Ok(false);
-            }
-        }
-
-        let end = self
-            .cursor_samples
-            .saturating_add(self.chunk_samples)
-            .min(loaded.samples.len());
-        self.write_stream_chunk(stream, end)?;
+        self.pump_stream(stream, STREAM_TARGET_QUEUE_FRAMES)?;
         Ok(false)
     }
 
@@ -206,16 +193,46 @@ impl PlaybackEngine {
     }
 
     #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+    fn pump_stream(
+        &mut self,
+        stream: trueos::audio::Stream,
+        target_queued_frames: usize,
+    ) -> Result<(), io::Error> {
+        for _ in 0..STREAM_MAX_PUMP_CHUNKS {
+            let Some(loaded) = self.loaded.as_ref() else {
+                return Ok(());
+            };
+            if self.cursor_samples >= loaded.samples.len() {
+                return Ok(());
+            }
+            if let Ok(queued) = stream.queued_frames() {
+                if queued >= target_queued_frames {
+                    return Ok(());
+                }
+            }
+
+            let end = self
+                .cursor_samples
+                .saturating_add(self.chunk_samples)
+                .min(loaded.samples.len());
+            if self.write_stream_chunk(stream, end)? == 0 {
+                return Ok(());
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
     fn write_stream_chunk(
         &mut self,
         stream: trueos::audio::Stream,
         end: usize,
-    ) -> Result<(), io::Error> {
+    ) -> Result<usize, io::Error> {
         let Some(loaded) = self.loaded.as_ref() else {
-            return Ok(());
+            return Ok(0);
         };
         if self.cursor_samples >= end {
-            return Ok(());
+            return Ok(0);
         }
 
         match stream.write_interleaved_i16(&loaded.samples[self.cursor_samples..end]) {
@@ -224,9 +241,9 @@ impl PlaybackEngine {
                 self.cursor_samples = self
                     .cursor_samples
                     .saturating_add(written.min(end - self.cursor_samples));
-                Ok(())
+                Ok(written)
             }
-            Err(trueos::audio::ERR_BUSY) => Ok(()),
+            Err(trueos::audio::ERR_BUSY) => Ok(0),
             Err(err) => Err(audio_error(err)),
         }
     }

@@ -35,6 +35,7 @@ members = [
 exclude = [
     "crates",
     "crates/*",
+    "apps/Frog",
     "apps/Player",
     "apps/rebels-in-the-sky",
     "apps/aud-player-scope-tui",

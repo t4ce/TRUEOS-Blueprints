@@ -55,7 +55,7 @@ pub fn draw_compact(frame: &mut Frame, area: Rect) {
     ];
 
     let block = Block::default()
-        .title("─cmds ╾")
+        .title("─cmds ─")
         .title_style(plain_style().fg(COMMAND_FG))
         .borders(Borders::ALL)
         .border_set(border::ROUNDED)
@@ -231,9 +231,9 @@ pub fn draw(frame: &mut Frame, area: Rect) {
 
     for (idx, (title, lines)) in groups.iter().enumerate() {
         let title = if idx >= 3 {
-            Line::from(format!("╼ {title}─")).right_aligned()
+            Line::from(format!("─ {title}─")).right_aligned()
         } else {
-            Line::from(format!("─{title} ╾"))
+            Line::from(format!("─{title} ─"))
         };
         let block = Block::default()
             .title(title)

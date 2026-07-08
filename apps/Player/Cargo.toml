@@ -33,6 +33,6 @@ ratatui = "0.29"
 scope = { package = "scope-tui", version = "0.3.5", default-features = false, features = ["tui"] }
 
 [target.'cfg(any(target_os = "trueos", target_os = "zkvm"))'.dependencies]
-trueos = { path = "../../api" }
+trueos = { path = "../../api", features = ["tokio-runtime"] }
 symphonia-core = { path = "../../vendor/symphonia-core-0.5.5-trueos", default-features = false }
 symphonia-codec-aac = { path = "../../vendor/symphonia-codec-aac-0.5.5-trueos", default-features = false }

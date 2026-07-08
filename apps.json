@@ -18,10 +18,10 @@
     "posix_fd_probe",
     "unix_api_probe",
     "prism_q_probe",
-    "ratatui_demo",
     "test_some_crates",
     "texteditor",
     "monaco",
+    "Frog",
     "Player",
     {
       "name": "tactics",
@@ -29,13 +29,10 @@
     },
     "rusqlite_probe",
     "skybox",
-    {
-      "name": "aud_player_scope_tui",
-      "path": "apps/aud-player-scope-tui"
-    },
     "superseedr",
     "webdevices",
     "webmail",
-    "wls"
+    "wls",
+    "vpverst"
   ]
 }

@@ -58,11 +58,27 @@ const SYSTEM_EDGE: &str = "┨";
 
 /// Runs the terminal UI with the provided data/configuration.
 pub fn run(config: UiConfig) -> Result<()> {
+    tokio_worker_probe();
     let mut terminal = setup_terminal()?;
     let result = App::new(config).run(&mut terminal);
     restore_terminal(&mut terminal)?;
     result
 }
+
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+fn tokio_worker_probe() {
+    let Ok(runtime) = trueos::runtime::current_thread().build() else {
+        return;
+    };
+
+    runtime.block_on(async {
+        let join = trueos::tokio::task::spawn_blocking(|| 0xA11D_10u32);
+        let _ = join.await;
+    });
+}
+
+#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+fn tokio_worker_probe() {}
 
 /// Initial state and demo data used by the terminal UI.
 #[derive(Debug, Clone)]
@@ -648,7 +664,7 @@ impl App {
         }
 
         let block = Block::default()
-            .title("─Labels ╾")
+            .title("─Labels ─")
             .title_style(block_title_style())
             .borders(Borders::ALL)
             .border_set(border::ROUNDED)
@@ -742,7 +758,7 @@ impl App {
         let datasets = series.iter().map(Into::into).collect::<Vec<_>>();
 
         let block = Block::default()
-            .title(format!("─{title} ╾"))
+            .title(format!("─{title} ─"))
             .title_style(block_title_style())
             .borders(Borders::ALL)
             .border_set(border::ROUNDED)
@@ -796,7 +812,7 @@ impl App {
 
         let block = Block::default()
             .title(format!(
-                "─Playlist  /apps/scope/tui/folder  {} entries ╾",
+                "─Playlist  /apps/scope/tui/folder  {} entries ─",
                 self.playlist_entries.len()
             ))
             .title_style(block_title_style())
@@ -850,7 +866,7 @@ impl App {
             ("pitch", format!("{} st", signed(self.pitch))),
         ];
         let block = Block::default()
-            .title("─Playback ╾")
+            .title("─Playback ─")
             .title_style(block_title_style())
             .borders(Borders::ALL)
             .border_set(border::ROUNDED)
@@ -929,7 +945,7 @@ impl App {
 
     fn draw_status_panel(&self, frame: &mut Frame, area: Rect) {
         let block = Block::default()
-            .title("─Status ╾")
+            .title("─Status ─")
             .title_style(block_title_style())
             .borders(Borders::ALL)
             .border_set(border::ROUNDED)
@@ -1124,7 +1140,7 @@ impl App {
             .centered(),
         );
         let block = Block::default()
-            .title("─Volume ╾")
+            .title("─Volume ─")
             .title(output_title)
             .title_style(block_title_style())
             .borders(Borders::ALL)
@@ -1199,7 +1215,7 @@ impl App {
 
     fn draw_log(&self, frame: &mut Frame, area: Rect) {
         let block = Block::default()
-            .title("─Log ╾")
+            .title("─Log ─")
             .title_style(block_title_style())
             .borders(Borders::ALL)
             .border_set(border::ROUNDED)

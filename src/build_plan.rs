@@ -100,7 +100,15 @@ fn package_source_path(app_dir: &Path, manifest_path: &Path) -> Result<PathBuf, 
         return Ok(path);
     }
 
-    for candidate in [app_dir.join("src/main.rs"), app_dir.join("src/lib.rs")] {
+    let manifest_dir = manifest_path
+        .parent()
+        .ok_or_else(|| format!("bad manifest path: {}", manifest_path.display()))?;
+    for candidate in [
+        manifest_dir.join("src/main.rs"),
+        manifest_dir.join("src/lib.rs"),
+        app_dir.join("src/main.rs"),
+        app_dir.join("src/lib.rs"),
+    ] {
         if candidate.is_file() {
             return Ok(candidate);
         }
