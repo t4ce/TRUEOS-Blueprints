@@ -75,6 +75,9 @@ const BLUEPRINT_VENDOR_PATCHES: &[(&str, &str)] = &[
     ("futures-task", "futures-task-0.3.32"),
     ("futures-util", "futures-util-0.3.32"),
     ("h2", "h2-0.4.14"),
+    ("hickory-proto", "hickory-proto-0.25.2"),
+    ("hickory-resolver", "hickory-resolver-0.25.2"),
+    ("if-watch", "if-watch-3.2.2"),
     ("http", "http-1.4.0"),
     ("http-body", "http-body-1.0.1"),
     ("http-body-util", "http-body-util-0.1.3"),
@@ -82,6 +85,9 @@ const BLUEPRINT_VENDOR_PATCHES: &[(&str, &str)] = &[
     ("hyper", "hyper-1.9.0"),
     ("hyper-rustls", "hyper-rustls-0.27.9"),
     ("hyper-util", "hyper-util-0.1.20"),
+    ("libp2p-mdns", "libp2p-mdns-0.48.0"),
+    ("libp2p-quic", "libp2p-quic-0.13.1"),
+    ("libp2p-tcp", "libp2p-tcp-0.44.1"),
     ("log", "log-0.4.32"),
     ("matchit", "matchit-0.8.4"),
     ("memchr", "memchr-2.8.2"),
@@ -90,6 +96,9 @@ const BLUEPRINT_VENDOR_PATCHES: &[(&str, &str)] = &[
     ("once_cell", "once_cell-1.21.4"),
     ("percent-encoding", "percent-encoding-2.3.2"),
     ("prism-q", "prism-q-0.20.0"),
+    ("quinn", "quinn-0.11.9"),
+    ("quinn-proto", "quinn-proto-0.11.14"),
+    ("quinn-udp", "quinn-udp-0.5.14"),
     ("rayon", "rayon"),
     ("rayon-core", "rayon/rayon-core"),
     ("reqwest", "reqwest-0.13.3"),
@@ -2420,6 +2429,20 @@ fn staged_manifest_for_overlay(
         )
     })?;
     let staged_manifest = staged_app_dir.join(manifest_relative);
+    let regenerate_staged_lock = if manifest_has_path_dependency(&staged_manifest)? {
+        let staged_lock = staged_app_dir.join("Cargo.lock");
+        if staged_lock.is_file() {
+            fs::remove_file(&staged_lock).map_err(io_string)?;
+            println!(
+                "trueos-blueprint: regenerating staged lock after relocating path dependencies"
+            );
+            true
+        } else {
+            false
+        }
+    } else {
+        false
+    };
     let nested_workspace_package = manifest_relative.components().count() > 1;
     strip_manifest_patch_section(&staged_manifest)?;
     if !nested_workspace_package {
@@ -2438,7 +2461,7 @@ fn staged_manifest_for_overlay(
     rewrite_staged_source_for_target(app_dir, &staged_app_dir, &staged_manifest, build_settings)?;
     let staged_source_overlay = staged_source_overlay(source_overlay, work_dir);
 
-    if lock_mismatches.is_empty() {
+    if regenerate_staged_lock || lock_mismatches.is_empty() {
         return Ok(Some(staged_manifest));
     }
 
@@ -2459,6 +2482,28 @@ fn staged_manifest_for_overlay(
     }
 
     Ok(Some(staged_manifest))
+}
+
+fn manifest_has_path_dependency(manifest_path: &Path) -> Result<bool, String> {
+    let cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
+    let mut in_dependency_table = false;
+
+    for line in cargo_toml.lines() {
+        let trimmed = line.split('#').next().unwrap_or("").trim();
+        if trimmed.starts_with('[') {
+            in_dependency_table = trimmed.contains("dependencies");
+            continue;
+        }
+        if in_dependency_table
+            && (trimmed.starts_with("path =")
+                || trimmed.contains("{ path =")
+                || trimmed.contains(", path ="))
+        {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
 }
 
 fn rewrite_staged_source_for_target(
@@ -2949,9 +2994,9 @@ fn source_overlay_version_alignment(
                 continue;
             }
 
-            let Some(declared_dependency) = parent_package.dependencies.iter().find(|candidate| {
-                dependency_display_name(candidate) == dep.name || candidate.name == dep_package.name
-            }) else {
+            let Some(declared_dependency) =
+                declared_dependency_for_resolved_edge(&parent_package.dependencies, &dep.name)
+            else {
                 unresolved_edges += 1;
                 continue;
             };
@@ -3041,6 +3086,55 @@ fn cargo_metadata(app_dir: &Path, manifest_path: &Path) -> Result<CargoMetadata,
 
 fn dependency_display_name(dependency: &MetadataDependency) -> &str {
     dependency.rename.as_deref().unwrap_or(&dependency.name)
+}
+
+fn declared_dependency_for_resolved_edge<'a>(
+    dependencies: &'a [MetadataDependency],
+    resolved_name: &str,
+) -> Option<&'a MetadataDependency> {
+    dependencies
+        .iter()
+        .find(|dependency| dependency_display_name(dependency).replace('-', "_") == resolved_name)
+}
+
+#[cfg(test)]
+mod version_alignment_tests {
+    use super::{MetadataDependency, declared_dependency_for_resolved_edge};
+
+    fn dependency(name: &str, rename: Option<&str>, req: &str) -> MetadataDependency {
+        MetadataDependency {
+            name: name.to_string(),
+            rename: rename.map(str::to_string),
+            req: req.to_string(),
+        }
+    }
+
+    #[test]
+    fn resolved_dependency_name_selects_the_matching_compatibility_alias() {
+        let dependencies = vec![
+            dependency("mio", Some("mio-0_6"), "~0.6"),
+            dependency("mio", Some("mio-0_7"), "~0.7"),
+            dependency("mio", Some("mio-0_8"), "~0.8"),
+            dependency("mio", Some("mio-1_0"), "1.0"),
+        ];
+
+        let selected = declared_dependency_for_resolved_edge(&dependencies, "mio_1_0")
+            .expect("resolved mio compatibility edge");
+
+        assert_eq!(selected.rename.as_deref(), Some("mio-1_0"));
+        assert_eq!(selected.req, "1.0");
+        assert!(declared_dependency_for_resolved_edge(&dependencies, "mio").is_none());
+    }
+
+    #[test]
+    fn resolved_dependency_name_normalizes_unrenamed_hyphens() {
+        let dependencies = vec![dependency("signal-hook", None, "~0.3")];
+
+        let selected = declared_dependency_for_resolved_edge(&dependencies, "signal_hook")
+            .expect("resolved signal-hook edge");
+
+        assert_eq!(selected.name, "signal-hook");
+    }
 }
 
 #[derive(Clone, Eq, Ord, PartialEq, PartialOrd)]
@@ -3527,13 +3621,23 @@ fn push_source_overlay_configs(cmd: &mut Command, source_overlay: &[CratePatch])
     }
 }
 
-fn staged_source_overlay(source_overlay: &[CratePatch], _work_dir: &Path) -> Vec<CratePatch> {
+fn staged_source_overlay(source_overlay: &[CratePatch], work_dir: &Path) -> Vec<CratePatch> {
+    let staging_root = work_dir.parent().unwrap_or(work_dir);
     source_overlay
         .iter()
-        .map(|patch| CratePatch {
-            key: patch.key.clone(),
-            name: patch.name.clone(),
-            path: patch.path.clone(),
+        .map(|patch| {
+            let staged_path = blueprint_root(&patch.path)
+                .and_then(|root| patch.path.strip_prefix(root).ok().map(Path::to_path_buf))
+                .filter(|relative| relative.starts_with("vendor"))
+                .map(|relative| staging_root.join(relative))
+                .filter(|candidate| candidate.exists())
+                .unwrap_or_else(|| patch.path.clone());
+
+            CratePatch {
+                key: patch.key.clone(),
+                name: patch.name.clone(),
+                path: staged_path,
+            }
         })
         .collect()
 }

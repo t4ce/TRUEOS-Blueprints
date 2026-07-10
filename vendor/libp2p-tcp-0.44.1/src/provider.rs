@@ -61,13 +61,27 @@ pub trait Provider: Clone + Send + 'static {
 
     /// Creates a new listener wrapping the given [`TcpListener`] that
     /// can be polled for incoming connections via [`Self::poll_accept()`].
+    #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
     fn new_listener(_: TcpListener) -> io::Result<Self::Listener>;
+
+    /// Creates a listener directly from an address on TRUEOS.
+    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+    fn new_listener_addr(_: SocketAddr) -> io::Result<Self::Listener>;
+
+    /// Returns a listener's bound address on TRUEOS.
+    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+    fn listener_local_addr(_: &Self::Listener) -> io::Result<SocketAddr>;
 
     /// Creates a new stream for an outgoing connection, wrapping the
     /// given [`TcpStream`]. The given `TcpStream` is initiating a
     /// connection, but implementations must wait for the connection
     /// setup to complete, i.e. for the stream to be writable.
+    #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
     fn new_stream(_: TcpStream) -> BoxFuture<'static, io::Result<Self::Stream>>;
+
+    /// Connects directly to an address on TRUEOS.
+    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+    fn new_stream_addr(_: SocketAddr) -> BoxFuture<'static, io::Result<Self::Stream>>;
 
     /// Polls a [`Self::Listener`] for an incoming connection, ensuring a task wakeup,
     /// if necessary.

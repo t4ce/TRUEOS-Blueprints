@@ -31,6 +31,46 @@ use futures::{
 
 use super::{Incoming, Provider};
 
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+fn tokio_error_kind(kind: tokio::io::ErrorKind) -> io::ErrorKind {
+    match kind {
+        tokio::io::ErrorKind::NotFound => io::ErrorKind::NotFound,
+        tokio::io::ErrorKind::PermissionDenied => io::ErrorKind::PermissionDenied,
+        tokio::io::ErrorKind::ConnectionRefused => io::ErrorKind::ConnectionRefused,
+        tokio::io::ErrorKind::ConnectionReset => io::ErrorKind::ConnectionReset,
+        tokio::io::ErrorKind::ConnectionAborted => io::ErrorKind::ConnectionAborted,
+        tokio::io::ErrorKind::NotConnected => io::ErrorKind::NotConnected,
+        tokio::io::ErrorKind::AddrInUse => io::ErrorKind::AddrInUse,
+        tokio::io::ErrorKind::AddrNotAvailable => io::ErrorKind::AddrNotAvailable,
+        tokio::io::ErrorKind::BrokenPipe => io::ErrorKind::BrokenPipe,
+        tokio::io::ErrorKind::AlreadyExists => io::ErrorKind::AlreadyExists,
+        tokio::io::ErrorKind::WouldBlock => io::ErrorKind::WouldBlock,
+        tokio::io::ErrorKind::InvalidInput => io::ErrorKind::InvalidInput,
+        tokio::io::ErrorKind::InvalidData => io::ErrorKind::InvalidData,
+        tokio::io::ErrorKind::TimedOut => io::ErrorKind::TimedOut,
+        tokio::io::ErrorKind::WriteZero => io::ErrorKind::WriteZero,
+        tokio::io::ErrorKind::Interrupted => io::ErrorKind::Interrupted,
+        _ => io::ErrorKind::Other,
+    }
+}
+
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+fn tokio_to_std_error(error: tokio::io::Error) -> io::Error {
+    io::Error::new(
+        tokio_error_kind(error.kind()),
+        "libp2p TCP TRUEOS Tokio I/O error",
+    )
+}
+
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+fn map_tokio_poll<T>(poll: Poll<tokio::io::Result<T>>) -> Poll<io::Result<T>> {
+    match poll {
+        Poll::Pending => Poll::Pending,
+        Poll::Ready(Ok(value)) => Poll::Ready(Ok(value)),
+        Poll::Ready(Err(error)) => Poll::Ready(Err(tokio_to_std_error(error))),
+    }
+}
+
 /// A TCP [`Transport`](libp2p_core::Transport) that works with the `tokio` ecosystem.
 ///
 /// # Example
@@ -75,10 +115,22 @@ impl Provider for Tcp {
         if_watcher.iter().copied().collect()
     }
 
+    #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
     fn new_listener(l: net::TcpListener) -> io::Result<Self::Listener> {
         tokio::net::TcpListener::try_from(l)
     }
 
+    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+    fn new_listener_addr(addr: net::SocketAddr) -> io::Result<Self::Listener> {
+        tokio::net::TcpListener::bind_addr(addr).map_err(tokio_to_std_error)
+    }
+
+    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+    fn listener_local_addr(listener: &Self::Listener) -> io::Result<net::SocketAddr> {
+        listener.local_addr().map_err(tokio_to_std_error)
+    }
+
+    #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
     fn new_stream(s: net::TcpStream) -> BoxFuture<'static, io::Result<Self::Stream>> {
         async move {
             // Taken from [`tokio::net::TcpStream::connect_mio`].
@@ -102,17 +154,36 @@ impl Provider for Tcp {
         .boxed()
     }
 
+    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+    fn new_stream_addr(addr: net::SocketAddr) -> BoxFuture<'static, io::Result<Self::Stream>> {
+        async move {
+            tokio::net::TcpStream::connect(addr)
+                .await
+                .map(TcpStream)
+                .map_err(tokio_to_std_error)
+        }
+        .boxed()
+    }
+
     fn poll_accept(
         l: &mut Self::Listener,
         cx: &mut Context<'_>,
     ) -> Poll<io::Result<Incoming<Self::Stream>>> {
         let (stream, remote_addr) = match l.poll_accept(cx) {
             Poll::Pending => return Poll::Pending,
-            Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+            Poll::Ready(Err(e)) => {
+                #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+                return Poll::Ready(Err(e));
+                #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+                return Poll::Ready(Err(tokio_to_std_error(e)));
+            }
             Poll::Ready(Ok((stream, remote_addr))) => (stream, remote_addr),
         };
 
+        #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
         let local_addr = stream.local_addr()?;
+        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+        let local_addr = stream.local_addr().map_err(tokio_to_std_error)?;
         let stream = TcpStream(stream);
 
         Poll::Ready(Ok(Incoming {
@@ -140,11 +211,15 @@ impl AsyncRead for TcpStream {
         buf: &mut [u8],
     ) -> Poll<Result<usize, io::Error>> {
         let mut read_buf = tokio::io::ReadBuf::new(buf);
-        futures::ready!(tokio::io::AsyncRead::poll_read(
+        let result = futures::ready!(tokio::io::AsyncRead::poll_read(
             Pin::new(&mut self.0),
             cx,
             &mut read_buf
-        ))?;
+        ));
+        #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+        result?;
+        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+        result.map_err(tokio_to_std_error)?;
         Poll::Ready(Ok(read_buf.filled().len()))
     }
 }
@@ -155,15 +230,31 @@ impl AsyncWrite for TcpStream {
         cx: &mut Context,
         buf: &[u8],
     ) -> Poll<Result<usize, io::Error>> {
-        tokio::io::AsyncWrite::poll_write(Pin::new(&mut self.0), cx, buf)
+        #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+        return tokio::io::AsyncWrite::poll_write(Pin::new(&mut self.0), cx, buf);
+        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+        map_tokio_poll(tokio::io::AsyncWrite::poll_write(
+            Pin::new(&mut self.0),
+            cx,
+            buf,
+        ))
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
-        tokio::io::AsyncWrite::poll_flush(Pin::new(&mut self.0), cx)
+        #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+        return tokio::io::AsyncWrite::poll_flush(Pin::new(&mut self.0), cx);
+        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+        map_tokio_poll(tokio::io::AsyncWrite::poll_flush(Pin::new(&mut self.0), cx))
     }
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), io::Error>> {
-        tokio::io::AsyncWrite::poll_shutdown(Pin::new(&mut self.0), cx)
+        #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+        return tokio::io::AsyncWrite::poll_shutdown(Pin::new(&mut self.0), cx);
+        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+        map_tokio_poll(tokio::io::AsyncWrite::poll_shutdown(
+            Pin::new(&mut self.0),
+            cx,
+        ))
     }
 
     fn poll_write_vectored(
@@ -171,6 +262,19 @@ impl AsyncWrite for TcpStream {
         cx: &mut Context<'_>,
         bufs: &[io::IoSlice<'_>],
     ) -> Poll<io::Result<usize>> {
-        tokio::io::AsyncWrite::poll_write_vectored(Pin::new(&mut self.0), cx, bufs)
+        #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+        return tokio::io::AsyncWrite::poll_write_vectored(Pin::new(&mut self.0), cx, bufs);
+        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+        {
+            let platform_bufs: Vec<tokio::io::IoSlice<'_>> = bufs
+                .iter()
+                .map(|buf| tokio::io::IoSlice::new(&**buf))
+                .collect();
+            map_tokio_poll(tokio::io::AsyncWrite::poll_write_vectored(
+                Pin::new(&mut self.0),
+                cx,
+                &platform_bufs,
+            ))
+        }
     }
 }

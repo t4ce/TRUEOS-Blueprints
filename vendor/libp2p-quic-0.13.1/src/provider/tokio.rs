@@ -62,6 +62,10 @@ impl super::Provider for Provider {
         buf: &'a [u8],
         target: SocketAddr,
     ) -> BoxFuture<'a, io::Result<usize>> {
+        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+        return Box::pin(async move { udp_socket.send_to(buf, target) });
+
+        #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
         Box::pin(async move {
             tokio::net::UdpSocket::from_std(udp_socket.try_clone()?)?
                 .send_to(buf, target)

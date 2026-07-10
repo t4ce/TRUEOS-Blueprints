@@ -503,7 +503,7 @@ pub mod boxed {
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
 pub mod collections {
     pub use alloc::collections::*;
-    pub use alloc::collections::{BTreeMap as HashMap, BTreeSet as HashSet};
+    pub use hashbrown::{HashMap, HashSet, hash_map, hash_set};
 }
 
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]

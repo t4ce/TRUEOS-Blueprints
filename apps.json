@@ -16,6 +16,8 @@
     "tantivy",
     "prismq",
     "posix_fd_probe",
+    "panick",
+    "rebels-in-the-sky",
     "unix_api_probe",
     "prism_q_probe",
     "test_some_crates",

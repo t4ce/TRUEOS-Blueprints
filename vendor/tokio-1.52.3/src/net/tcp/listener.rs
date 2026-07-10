@@ -6,10 +6,10 @@ cfg_not_wasip1! {
     use crate::net::{to_socket_addrs, ToSocketAddrs};
 }
 
-use ::core::fmt;
 use crate::io;
-use std::net::{self, SocketAddr};
+use ::core::fmt;
 use core::task::{ready, Context, Poll};
+use std::net::{self, SocketAddr};
 
 cfg_net! {
     /// A TCP socket server, listening for connections.
@@ -120,7 +120,7 @@ impl TcpListener {
             }))
         }
 
-        fn bind_addr(addr: SocketAddr) -> io::Result<TcpListener> {
+        pub fn bind_addr(addr: SocketAddr) -> io::Result<TcpListener> {
             let listener = mio::net::TcpListener::bind(addr)?;
             TcpListener::new(listener)
         }
@@ -249,11 +249,11 @@ impl TcpListener {
 
         #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
         {
-        check_socket_for_blocking(&listener)?;
+            check_socket_for_blocking(&listener)?;
 
-        let io = mio::net::TcpListener::from_std(listener);
-        let io = PollEvented::new(io)?;
-        Ok(TcpListener { io })
+            let io = mio::net::TcpListener::from_std(listener);
+            let io = PollEvented::new(io)?;
+            Ok(TcpListener { io })
         }
     }
 

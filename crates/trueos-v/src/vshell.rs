@@ -267,7 +267,7 @@ pub fn shell2_raw_write(bytes: &[u8]) -> usize {
 
 #[inline]
 pub fn leave_terminal_handoff() {
-    let _ = shell2_raw_write(b"\x1b]777;terminal_handoff=0\x07");
+    let _ = unsafe { vcabi::trueos_cabi_blueprint_return_to_cli() };
 }
 
 #[inline]

@@ -89,7 +89,7 @@ version = "0.23.9"
 default-features = false
 
 [dependencies.socket2]
-version = "0.5.7"
+version = "=0.6.3"
 
 [dependencies.thiserror]
 version = "2"

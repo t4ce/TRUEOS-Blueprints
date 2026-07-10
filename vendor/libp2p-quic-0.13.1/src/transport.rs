@@ -181,6 +181,11 @@ impl<P: Provider> GenTransport<P> {
     }
 
     fn create_socket(&self, socket_addr: SocketAddr) -> io::Result<UdpSocket> {
+        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+        return UdpSocket::bind(socket_addr);
+
+        #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+        {
         let socket = Socket::new(
             Domain::for_address(socket_addr),
             Type::DGRAM,
@@ -193,6 +198,7 @@ impl<P: Provider> GenTransport<P> {
         socket.bind(&socket_addr.into())?;
 
         Ok(socket.into())
+        }
     }
 
     fn bound_socket(&mut self, socket_addr: SocketAddr) -> Result<quinn::Endpoint, Error> {

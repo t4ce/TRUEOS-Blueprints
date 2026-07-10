@@ -1,1 +1,3 @@
 /target/
+# Frog is an application; keep its blueprint dependency resolution reproducible.
+!Cargo.lock

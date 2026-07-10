@@ -15,6 +15,7 @@ pub use v::vclock as clock;
 pub use v::vfs;
 pub use v::vinput as hid;
 pub use v::vmail;
+pub use v::vnet;
 pub use v::vpci as pci;
 pub use v::vrapl as rapl;
 pub use v::vshell;
@@ -241,6 +242,108 @@ pub mod rng {
     pub fn f64() -> f64 {
         const SCALE: f64 = 1.0 / ((1u64 << 53) as f64);
         ((u64() >> 11) as f64) * SCALE
+    }
+}
+
+#[cfg(feature = "tokio-runtime")]
+pub mod net {
+    use core::fmt;
+
+    pub const DEFAULT_TUN_MTU: u16 = 1500;
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub enum TunError {
+        BadArgument,
+        WouldBlock,
+        MessageTooLarge,
+        NetworkUnreachable,
+        NotConnected,
+        Io,
+        Unknown(isize),
+    }
+
+    impl fmt::Display for TunError {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            match self {
+                TunError::BadArgument => f.write_str("bad TUN argument"),
+                TunError::WouldBlock => f.write_str("TUN would block"),
+                TunError::MessageTooLarge => f.write_str("TUN packet is too large"),
+                TunError::NetworkUnreachable => f.write_str("TUN network is unreachable"),
+                TunError::NotConnected => f.write_str("TUN is not connected"),
+                TunError::Io => f.write_str("TUN I/O error"),
+                TunError::Unknown(code) => write!(f, "TUN error {}", code),
+            }
+        }
+    }
+
+    impl TunError {
+        fn from_rc(rc: isize) -> Self {
+            match -rc {
+                11 => Self::WouldBlock,
+                22 => Self::BadArgument,
+                32 | 107 => Self::NotConnected,
+                90 => Self::MessageTooLarge,
+                101 => Self::NetworkUnreachable,
+                5 => Self::Io,
+                _ => Self::Unknown(rc),
+            }
+        }
+    }
+
+    #[derive(Debug)]
+    pub struct Tun {
+        id: u32,
+    }
+
+    impl Tun {
+        pub fn open(
+            ipv4: [u8; 4],
+            ipv4_prefix_len: u8,
+            ipv6: [u8; 16],
+            ipv6_prefix_len: u8,
+            mtu: u16,
+        ) -> Result<Self, TunError> {
+            let rc = unsafe {
+                v::vcabi::trueos_cabi_tun_open(
+                    u32::from_be_bytes(ipv4),
+                    ipv4_prefix_len as u32,
+                    ipv6.as_ptr(),
+                    ipv6_prefix_len as u32,
+                    mtu as u32,
+                )
+            };
+            if rc > 0 {
+                Ok(Self { id: rc as u32 })
+            } else {
+                Err(TunError::from_rc(rc as isize))
+            }
+        }
+
+        pub fn recv(&self, out: &mut [u8]) -> Result<usize, TunError> {
+            let rc =
+                unsafe { v::vcabi::trueos_cabi_tun_recv(self.id, out.as_mut_ptr(), out.len()) };
+            if rc >= 0 {
+                Ok(rc as usize)
+            } else {
+                Err(TunError::from_rc(rc))
+            }
+        }
+
+        pub fn send(&self, packet: &[u8]) -> Result<usize, TunError> {
+            let rc =
+                unsafe { v::vcabi::trueos_cabi_tun_send(self.id, packet.as_ptr(), packet.len()) };
+            if rc >= 0 {
+                Ok(rc as usize)
+            } else {
+                Err(TunError::from_rc(rc))
+            }
+        }
+    }
+
+    impl Drop for Tun {
+        fn drop(&mut self) {
+            let _ = unsafe { v::vcabi::trueos_cabi_tun_close(self.id) };
+        }
     }
 }
 

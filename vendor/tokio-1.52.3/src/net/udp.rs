@@ -1,11 +1,11 @@
 use crate::io::{Interest, PollEvented, ReadBuf, Ready};
-use crate::net::{to_socket_addrs, ToSocketAddrs};
+use crate::net::{ToSocketAddrs, to_socket_addrs};
 use crate::util::check_socket_for_blocking;
 
-use ::core::fmt;
 use crate::io;
+use ::core::fmt;
+use core::task::{Context, Poll, ready};
 use std::net::{self, Ipv4Addr, Ipv6Addr, SocketAddr};
-use core::task::{ready, Context, Poll};
 
 cfg_io_util! {
     use bytes::BufMut;
@@ -159,11 +159,14 @@ impl UdpSocket {
         }
 
         Err(last_err.unwrap_or_else(|| {
-            io::Error::new(io::ErrorKind::InvalidInput, "could not resolve to any address")
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "could not resolve to any address",
+            )
         }))
     }
 
-    fn bind_addr(addr: SocketAddr) -> io::Result<UdpSocket> {
+    pub fn bind_addr(addr: SocketAddr) -> io::Result<UdpSocket> {
         let sys = mio::net::UdpSocket::bind(addr)?;
         UdpSocket::new(sys)
     }
@@ -229,10 +232,10 @@ impl UdpSocket {
 
         #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
         {
-        check_socket_for_blocking(&socket)?;
+            check_socket_for_blocking(&socket)?;
 
-        let io = mio::net::UdpSocket::from_std(socket);
-        UdpSocket::new(io)
+            let io = mio::net::UdpSocket::from_std(socket);
+            UdpSocket::new(io)
         }
     }
 
@@ -370,7 +373,10 @@ impl UdpSocket {
         }
 
         Err(last_err.unwrap_or_else(|| {
-            io::Error::new(io::ErrorKind::InvalidInput, "could not resolve to any address")
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "could not resolve to any address",
+            )
         }))
     }
 
@@ -1197,9 +1203,10 @@ impl UdpSocket {
 
         match addrs.next() {
             Some(target) => self.send_to_addr(buf, target).await,
-            None => {
-                Err(io::Error::new(io::ErrorKind::InvalidInput, "no addresses to send data to"))
-            }
+            None => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "no addresses to send data to",
+            )),
         }
     }
 
@@ -1335,7 +1342,9 @@ impl UdpSocket {
     pub async fn recv_from(&self, buf: &mut [u8]) -> io::Result<(usize, SocketAddr)> {
         self.io
             .registration()
-            .async_io(Interest::READABLE | Interest::ERROR, || self.io.recv_from(buf))
+            .async_io(Interest::READABLE | Interest::ERROR, || {
+                self.io.recv_from(buf)
+            })
             .await
     }
 
@@ -1718,7 +1727,9 @@ impl UdpSocket {
     pub async fn peek_from(&self, buf: &mut [u8]) -> io::Result<(usize, SocketAddr)> {
         self.io
             .registration()
-            .async_io(Interest::READABLE | Interest::ERROR, || self.io.peek_from(buf))
+            .async_io(Interest::READABLE | Interest::ERROR, || {
+                self.io.peek_from(buf)
+            })
             .await
     }
 
@@ -1835,7 +1846,9 @@ impl UdpSocket {
     pub async fn peek_sender(&self) -> io::Result<SocketAddr> {
         self.io
             .registration()
-            .async_io(Interest::READABLE | Interest::ERROR, || self.peek_sender_inner())
+            .async_io(Interest::READABLE | Interest::ERROR, || {
+                self.peek_sender_inner()
+            })
             .await
     }
 

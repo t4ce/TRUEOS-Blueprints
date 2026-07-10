@@ -33,7 +33,7 @@ mod provider;
 use std::{
     collections::{HashSet, VecDeque},
     io,
-    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     pin::Pin,
     sync::{Arc, RwLock},
     task::{Context, Poll, Waker},
@@ -50,7 +50,10 @@ use libp2p_core::{
 #[cfg(feature = "tokio")]
 pub use provider::tokio;
 use provider::{Incoming, Provider};
+#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
 use socket2::{Domain, Socket, Type};
+#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+use std::net::TcpListener;
 
 /// The configuration for a TCP/IP transport capability for libp2p.
 #[derive(Clone, Debug)]
@@ -194,6 +197,7 @@ impl Config {
         self
     }
 
+    #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
     fn create_socket(&self, socket_addr: SocketAddr, port_use: PortUse) -> io::Result<Socket> {
         let socket = Socket::new(
             Domain::for_address(socket_addr),
@@ -278,29 +282,57 @@ where
         id: ListenerId,
         socket_addr: SocketAddr,
     ) -> io::Result<ListenStream<T>> {
-        let socket = self.config.create_socket(socket_addr, PortUse::Reuse)?;
-        socket.bind(&socket_addr.into())?;
-        socket.listen(self.config.backlog as _)?;
-        socket.set_nonblocking(true)?;
-        let listener: TcpListener = socket.into();
-        let local_addr = listener.local_addr()?;
+        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+        {
+            let listener = T::new_listener_addr(socket_addr)?;
+            let local_addr = T::listener_local_addr(&listener)?;
+            let if_watcher = if local_addr.ip().is_unspecified() {
+                Some(T::new_if_watcher()?)
+            } else {
+                self.port_reuse.register(local_addr.ip(), local_addr.port());
+                let listen_addr = ip_to_multiaddr(local_addr.ip(), local_addr.port());
+                self.pending_events.push_back(TransportEvent::NewAddress {
+                    listener_id: id,
+                    listen_addr,
+                });
+                None
+            };
 
-        if local_addr.ip().is_unspecified() {
-            return ListenStream::<T>::new(
+            return Ok(ListenStream::<T>::new_trueos(
                 id,
                 listener,
-                Some(T::new_if_watcher()?),
+                local_addr,
+                if_watcher,
                 self.port_reuse.clone(),
-            );
+            ));
         }
 
-        self.port_reuse.register(local_addr.ip(), local_addr.port());
-        let listen_addr = ip_to_multiaddr(local_addr.ip(), local_addr.port());
-        self.pending_events.push_back(TransportEvent::NewAddress {
-            listener_id: id,
-            listen_addr,
-        });
-        ListenStream::<T>::new(id, listener, None, self.port_reuse.clone())
+        #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+        {
+            let socket = self.config.create_socket(socket_addr, PortUse::Reuse)?;
+            socket.bind(&socket_addr.into())?;
+            socket.listen(self.config.backlog as _)?;
+            socket.set_nonblocking(true)?;
+            let listener: TcpListener = socket.into();
+            let local_addr = listener.local_addr()?;
+
+            if local_addr.ip().is_unspecified() {
+                return ListenStream::<T>::new(
+                    id,
+                    listener,
+                    Some(T::new_if_watcher()?),
+                    self.port_reuse.clone(),
+                );
+            }
+
+            self.port_reuse.register(local_addr.ip(), local_addr.port());
+            let listen_addr = ip_to_multiaddr(local_addr.ip(), local_addr.port());
+            self.pending_events.push_back(TransportEvent::NewAddress {
+                listener_id: id,
+                listen_addr,
+            });
+            ListenStream::<T>::new(id, listener, None, self.port_reuse.clone())
+        }
     }
 }
 
@@ -371,22 +403,30 @@ where
         };
         tracing::debug!(address=%socket_addr, "dialing address");
 
-        let socket = self
-            .config
-            .create_socket(socket_addr, opts.port_use)
-            .map_err(TransportError::Other)?;
+        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+        {
+            let _ = opts;
+            return Ok(T::new_stream_addr(socket_addr));
+        }
 
-        let bind_addr = match self.port_reuse.local_dial_addr(&socket_addr.ip()) {
-            Some(socket_addr) if opts.port_use == PortUse::Reuse => {
-                tracing::trace!(address=%addr, "Binding dial socket to listen socket address");
-                Some(socket_addr)
-            }
-            _ => None,
-        };
+        #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+        {
+            let socket = self
+                .config
+                .create_socket(socket_addr, opts.port_use)
+                .map_err(TransportError::Other)?;
 
-        let local_config = self.config.clone();
+            let bind_addr = match self.port_reuse.local_dial_addr(&socket_addr.ip()) {
+                Some(socket_addr) if opts.port_use == PortUse::Reuse => {
+                    tracing::trace!(address=%addr, "Binding dial socket to listen socket address");
+                    Some(socket_addr)
+                }
+                _ => None,
+            };
 
-        Ok(async move {
+            let local_config = self.config.clone();
+
+            Ok(async move {
             if let Some(bind_addr) = bind_addr {
                 socket.bind(&bind_addr.into())?;
             }
@@ -417,6 +457,7 @@ where
             Ok(stream)
         }
         .boxed())
+        }
     }
 
     /// Poll all listeners.
@@ -483,6 +524,7 @@ where
 {
     /// Constructs a [`ListenStream`] for incoming connections around
     /// the given [`TcpListener`].
+    #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
     fn new(
         listener_id: ListenerId,
         listener: TcpListener,
@@ -504,6 +546,28 @@ where
             is_closed: false,
             close_listener_waker: None,
         })
+    }
+
+    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+    fn new_trueos(
+        listener_id: ListenerId,
+        listener: T::Listener,
+        listen_addr: SocketAddr,
+        if_watcher: Option<T::IfWatcher>,
+        port_reuse: PortReuse,
+    ) -> Self {
+        Self {
+            port_reuse,
+            listener,
+            listener_id,
+            listen_addr,
+            if_watcher,
+            pause: None,
+            sleep_on_error: Duration::from_millis(100),
+            pending_event: None,
+            is_closed: false,
+            close_listener_waker: None,
+        }
     }
 
     /// Disables port reuse for any listen address of this stream.
