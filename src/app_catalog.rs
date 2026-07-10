@@ -25,12 +25,18 @@ struct AppRegistry {
 #[serde(untagged)]
 enum AppRegistryEntry {
     Name(String),
-    Spec { name: String, path: Option<PathBuf> },
+    Spec {
+        name: String,
+        path: Option<PathBuf>,
+        #[serde(default)]
+        optional: bool,
+    },
 }
 
 struct RegisteredAppSpec {
     name: String,
     dir: PathBuf,
+    optional: bool,
 }
 
 pub(crate) fn package_name(manifest_path: &Path) -> Result<String, String> {
@@ -90,6 +96,14 @@ pub(crate) fn package_bin_name(manifest_path: &Path) -> Result<Option<String>, S
 pub(crate) fn package_app_specs(app_dir: &Path) -> Result<Vec<PackageAppSpec>, String> {
     let mut specs = Vec::new();
     for app in registered_app_specs(app_dir)? {
+        if app.optional && !app.dir.join("Cargo.toml").is_file() {
+            println!(
+                "trueos-blueprint: skipping unavailable optional app: {} ({})",
+                app.name,
+                app.dir.display()
+            );
+            continue;
+        }
         specs.push(package_app_spec_required(&app)?);
     }
     specs.sort_by(|a, b| a.name.cmp(&b.name));
@@ -176,9 +190,13 @@ fn registered_app_specs(app_dir: &Path) -> Result<Vec<RegisteredAppSpec>, String
 
     let mut out = Vec::with_capacity(registry.apps.len());
     for entry in registry.apps {
-        let (name, path) = match entry {
-            AppRegistryEntry::Name(name) => (name, None),
-            AppRegistryEntry::Spec { name, path } => (name, path),
+        let (name, path, optional) = match entry {
+            AppRegistryEntry::Name(name) => (name, None, false),
+            AppRegistryEntry::Spec {
+                name,
+                path,
+                optional,
+            } => (name, path, optional),
         };
         if name.trim().is_empty() {
             return Err(format!("empty app name in {}", registry_path.display()));
@@ -197,7 +215,11 @@ fn registered_app_specs(app_dir: &Path) -> Result<Vec<RegisteredAppSpec>, String
             Some(path) => app_dir.join(path),
             None => app_dir.join("apps").join(name.as_str()),
         };
-        out.push(RegisteredAppSpec { name, dir });
+        out.push(RegisteredAppSpec {
+            name,
+            dir,
+            optional,
+        });
     }
     Ok(out)
 }

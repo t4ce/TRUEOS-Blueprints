@@ -99,6 +99,7 @@ const BLUEPRINT_VENDOR_PATCHES: &[(&str, &str)] = &[
     ("quinn", "quinn-0.11.9"),
     ("quinn-proto", "quinn-proto-0.11.14"),
     ("quinn-udp", "quinn-udp-0.5.14"),
+    ("rand", "rand-0.8.6"),
     ("rayon", "rayon"),
     ("rayon-core", "rayon/rayon-core"),
     ("reqwest", "reqwest-0.13.3"),
@@ -270,6 +271,7 @@ fn build_one_target_to(
     };
     let build_settings = resolve_build_settings(&app_dir, &manifest_path, &build_target)?;
     if matches!(build_settings.flavor, BuildFlavor::TokioStd) {
+        ensure_rust_std_trueos_cfg_hooks()?;
         ensure_rust_std_trueos_thread_set_name()?;
         ensure_rust_std_trueos_thread_cleanup()?;
         ensure_rust_std_trueos_thread_current_rebind()?;
@@ -306,6 +308,9 @@ fn build_one_target_to(
 
     let source_overlay =
         source_overlay_patches(app_dir, manifest_path, &work_dir, &build_settings)?;
+    if matches!(build_settings.flavor, BuildFlavor::TokioStd) {
+        ensure_rust_src_libc_lock_matches_overlay(&source_overlay, &cargo_target_dir)?;
+    }
     let lock_mismatches = source_overlay_lock_mismatches(app_dir, &source_overlay)?;
     preflight_source_overlay_version_alignment(app_dir, manifest_path, &lock_mismatches)?;
     let staged_source_overlay = staged_source_overlay(&source_overlay, &work_dir);
@@ -1013,6 +1018,205 @@ fn nightly_rust_src_path(relative: &str) -> Result<PathBuf, String> {
         .join(relative))
 }
 
+fn ensure_rust_src_replacement(
+    relative: &str,
+    needle: &str,
+    replacement: &str,
+    label: &str,
+) -> Result<(), String> {
+    let path = nightly_rust_src_path(relative)?;
+    let source = fs::read_to_string(&path).map_err(|err| {
+        format!(
+            "failed to read Rust std source {}; install rust-src or check permissions: {err}",
+            path.display()
+        )
+    })?;
+    if source.contains(replacement) {
+        return Ok(());
+    }
+    if !source.contains(needle) {
+        return Err(format!(
+            "failed to patch {}; missing {label} marker after nightly update",
+            path.display()
+        ));
+    }
+
+    let patched = source.replacen(needle, replacement, 1);
+    fs::write(&path, patched)
+        .map_err(|err| format!("failed to patch Rust std source {}: {err}", path.display()))?;
+    println!(
+        "trueos-blueprint: restored rust-src TRUEOS {label} hook: {}",
+        path.display()
+    );
+    Ok(())
+}
+
+fn ensure_rust_std_trueos_cfg_hooks() -> Result<(), String> {
+    ensure_rust_src_replacement(
+        "std/src/os/mod.rs",
+        "        #[cfg(target_os = \"linux\")]\n        pub mod linux;",
+        "        #[cfg(any(target_os = \"linux\", target_os = \"trueos\"))]\n        pub mod linux;",
+        "os::linux module",
+    )?;
+    ensure_rust_src_replacement(
+        "std/src/os/mod.rs",
+        "#[cfg(any(target_os = \"linux\", target_os = \"android\", target_os = \"cygwin\", doc))]\nmod net;",
+        "#[cfg(any(target_os = \"linux\", target_os = \"trueos\", target_os = \"android\", target_os = \"cygwin\", doc))]\nmod net;",
+        "os::net module",
+    )?;
+    ensure_rust_src_replacement(
+        "std/src/os/unix/mod.rs",
+        "    #[cfg(target_os = \"linux\")]\n    pub use crate::os::linux::*;",
+        "    #[cfg(any(target_os = \"linux\", target_os = \"trueos\"))]\n    pub use crate::os::linux::*;",
+        "Unix platform alias",
+    )?;
+    ensure_rust_src_replacement(
+        "std/src/os/linux/mod.rs",
+        "pub mod fs;\npub mod net;\npub mod process;\npub mod raw;",
+        "pub mod fs;\n#[cfg(not(target_os = \"trueos\"))]\npub mod net;\n#[cfg(not(target_os = \"trueos\"))]\npub mod process;\npub mod raw;",
+        "Linux compatibility modules",
+    )?;
+    ensure_rust_src_replacement(
+        "std/src/sys/random/mod.rs",
+        "        all(target_family = \"wasm\", target_os = \"unknown\"),\n        target_os = \"xous\",",
+        "        all(target_family = \"wasm\", target_os = \"unknown\"),\n        target_os = \"trueos\",\n        target_os = \"xous\",",
+        "random fallback",
+    )?;
+    ensure_rust_src_replacement(
+        "std/src/sys/random/mod.rs",
+        "#[cfg(not(any(\n    target_os = \"linux\",\n    target_os = \"android\",",
+        "#[cfg(not(any(\n    target_os = \"linux\",\n    target_os = \"trueos\",\n    target_os = \"android\",",
+        "HashMap random fallback",
+    )?;
+    ensure_rust_src_replacement(
+        "std/src/sys/args/unix.rs",
+        "#[cfg(any(\n    target_os = \"linux\",\n    target_os = \"android\",",
+        "#[cfg(any(\n    target_os = \"linux\",\n    target_os = \"trueos\",\n    target_os = \"android\",",
+        "process arguments",
+    )?;
+    ensure_rust_src_replacement(
+        "std/src/sys/paths/unix.rs",
+        "#[cfg(any(\n    target_os = \"linux\",\n    target_os = \"cygwin\",",
+        "#[cfg(any(\n    target_os = \"linux\",\n    target_os = \"trueos\",\n    target_os = \"cygwin\",",
+        "current executable path",
+    )?;
+    ensure_rust_src_replacement(
+        "std/src/sys/fs/unix.rs",
+        "        target_os = \"l4re\",\n        target_os = \"linux\",\n        target_os = \"nto\",\n        target_os = \"qnx\",\n        target_os = \"redox\",",
+        "        target_os = \"l4re\",\n        target_os = \"linux\",\n        target_os = \"trueos\",\n        target_os = \"nto\",\n        target_os = \"qnx\",\n        target_os = \"redox\",",
+        "directory metadata",
+    )?;
+    ensure_rust_src_replacement(
+        "std/src/sys/thread_local/mod.rs",
+        "        target_os = \"uefi\",\n        target_os = \"zkvm\",",
+        "        target_os = \"uefi\",\n        target_os = \"trueos\",\n        target_os = \"zkvm\",",
+        "no-threads TLS selection",
+    )?;
+    ensure_rust_src_replacement(
+        "std/src/sys/pal/unix/time.rs",
+        "    pub fn now(clock: libc::clockid_t) -> Timespec {\n        use crate::mem::MaybeUninit;",
+        r#"    pub fn now(clock: libc::clockid_t) -> Timespec {
+        #[cfg(target_os = "trueos")]
+        {
+            unsafe extern "Rust" {
+                fn trueos_platform_monotonic_nanos() -> u64;
+                fn trueos_platform_unix_seconds() -> u64;
+            }
+
+            let nanos = if clock == libc::CLOCK_MONOTONIC {
+                unsafe { trueos_platform_monotonic_nanos() }
+            } else {
+                unsafe { trueos_platform_unix_seconds() }.saturating_mul(NSEC_PER_SEC)
+            };
+            let secs = (nanos / NSEC_PER_SEC).min(i64::MAX as u64) as i64;
+            let nsec = (nanos % NSEC_PER_SEC) as i64;
+            return Timespec::new(secs, nsec).unwrap_or_else(|_| Timespec::zero());
+        }
+
+        use crate::mem::MaybeUninit;"#,
+        "platform clock",
+    )?;
+    Ok(())
+}
+
+fn ensure_rust_src_libc_lock_matches_overlay(
+    source_overlay: &[CratePatch],
+    cargo_target_dir: &Path,
+) -> Result<(), String> {
+    let Some(libc_patch) = source_overlay.iter().find(|patch| patch.name == "libc") else {
+        return Ok(());
+    };
+    let Some(overlay_version) = package_version(&libc_patch.path.join("Cargo.toml"))? else {
+        return Err(format!(
+            "failed to read patched libc version from {}",
+            libc_patch.path.display()
+        ));
+    };
+
+    let rust_src_lock = nightly_rust_src_path("Cargo.lock")?;
+    let locked = lock_packages(&rust_src_lock)?;
+    let locked_version = locked
+        .iter()
+        .find(|package| package.name == "libc")
+        .map(|package| package.version.as_str());
+    if locked_version == Some(overlay_version.as_str()) {
+        return Ok(());
+    }
+
+    let rust_src_library = rust_src_lock.parent().ok_or_else(|| {
+        format!(
+            "bad nightly rust-src Cargo.lock path: {}",
+            rust_src_lock.display()
+        )
+    })?;
+    println!(
+        "trueos-blueprint: rust-src libc lock {} -> {} for TRUEOS build-std",
+        locked_version.unwrap_or("missing"),
+        overlay_version
+    );
+
+    let mut update = Command::new("cargo");
+    update
+        .current_dir(rust_src_library)
+        .arg("+nightly")
+        .arg("update")
+        .arg("-p")
+        .arg(match locked_version {
+            Some(version) => format!("libc@{version}"),
+            None => String::from("libc"),
+        })
+        .arg("--precise")
+        .arg(&overlay_version);
+    run_cargo_command(&mut update, "rust-src libc lock update")?;
+
+    let updated = lock_packages(&rust_src_lock)?;
+    if !updated
+        .iter()
+        .any(|package| package.name == "libc" && package.version == overlay_version)
+    {
+        return Err(format!(
+            "rust-src libc lock update did not select patched version {} in {}",
+            overlay_version,
+            rust_src_lock.display()
+        ));
+    }
+
+    if cargo_target_dir.exists() {
+        fs::remove_dir_all(cargo_target_dir).map_err(|err| {
+            format!(
+                "failed to invalidate TRUEOS build-std cache {}: {err}",
+                cargo_target_dir.display()
+            )
+        })?;
+    }
+    fs::create_dir_all(cargo_target_dir).map_err(io_string)?;
+    println!(
+        "trueos-blueprint: invalidated TRUEOS build-std cache after libc repin: {}",
+        cargo_target_dir.display()
+    );
+    Ok(())
+}
+
 fn ensure_rust_std_trueos_thread_cleanup() -> Result<(), String> {
     let unix_thread = nightly_rust_src_path("std/src/sys/thread/unix.rs")?;
     let source = fs::read_to_string(&unix_thread).map_err(|err| {
@@ -1217,8 +1421,12 @@ fn ensure_rust_std_trueos_no_threads_tls() -> Result<(), String> {
             no_threads_rs.display()
         )
     })?;
+    let original = source.clone();
+    source = source.replace(
+        "#[cfg(target_has_threads)]\ncompile_error!(\"Using no_threads implementation on a target with threads\");",
+        "#[cfg(all(\n    target_has_threads,\n    not(any(target_os = \"trueos\", target_os = \"zkvm\"))\n))]\ncompile_error!(\"Using no_threads implementation on a target with threads\");",
+    );
     if source.contains("TRUEOS_STD_NO_THREADS_PER_SLOT") {
-        let original = source.clone();
         source = source.replace(
             "const TRUEOS_STD_NO_THREADS_PER_SLOT: usize = 128;",
             "const TRUEOS_STD_NO_THREADS_PER_SLOT: usize = 4096;",
@@ -1690,6 +1898,8 @@ fn source_overlay_patches(
         return Ok(out);
     }
 
+    ensure_overlay_registry_sources(app_dir, manifest_path, work_dir)?;
+
     add_blueprint_vendor_patches(app_dir, &mut out);
 
     if let Ok(path) = nightly_rust_src_path("vendor/libc-0.2.186")
@@ -2020,6 +2230,80 @@ fn find_cargo_registry_crate(crate_dir_name: &str) -> Option<PathBuf> {
     None
 }
 
+fn ensure_overlay_registry_sources(
+    app_dir: &Path,
+    manifest_path: &Path,
+    work_dir: &Path,
+) -> Result<(), String> {
+    let registry_overlays = [
+        ("argmax", "0.4.0", "argmax-0.4.0"),
+        ("crossterm", "0.28.1", "crossterm-0.28.1"),
+        ("crossterm", "0.29.0", "crossterm-0.29.0"),
+        ("ctrlc", "3.4.4", "ctrlc-3.4.4"),
+        ("hyper-timeout", "0.5.2", "hyper-timeout-0.5.2"),
+        ("rustix", "0.38.44", "rustix-0.38.44"),
+        ("rustix", "1.1.4", "rustix-1.1.4"),
+        ("signal-hook-mio", "0.2.5", "signal-hook-mio-0.2.5"),
+        ("tokio-stream", "0.1.17", "tokio-stream-0.1.17"),
+        ("tonic", "0.14.6", "tonic-0.14.6"),
+    ];
+    let mut missing = Vec::new();
+    for (crate_name, version, source_dir) in registry_overlays {
+        if find_cargo_registry_crate(source_dir).is_none()
+            && manifest_or_lock_mentions_crate(app_dir, manifest_path, crate_name)?
+        {
+            missing.push((crate_name, version, source_dir));
+        }
+    }
+    if missing.is_empty() {
+        return Ok(());
+    }
+
+    println!(
+        "trueos-blueprint: fetching missing overlay sources: {}",
+        missing
+            .iter()
+            .map(|(_, _, source_dir)| *source_dir)
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+    let fetch_dir = work_dir.join("registry-fetch");
+    fs::create_dir_all(&fetch_dir).map_err(io_string)?;
+    let mut fetch_manifest = String::from(
+        "[package]\nname = \"trueos-overlay-source-fetch\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[lib]\npath = \"lib.rs\"\n\n[workspace]\n\n[dependencies]\n",
+    );
+    for (index, (crate_name, version, _)) in missing.iter().enumerate() {
+        fetch_manifest.push_str(&format!(
+            "overlay_{index} = {{ package = {}, version = {} }}\n",
+            toml_string(crate_name),
+            toml_string(&format!("={version}")),
+        ));
+    }
+    let fetch_manifest_path = fetch_dir.join("Cargo.toml");
+    fs::write(&fetch_manifest_path, fetch_manifest).map_err(io_string)?;
+    fs::write(fetch_dir.join("lib.rs"), "").map_err(io_string)?;
+    let mut fetch = Command::new("cargo");
+    fetch
+        .arg("fetch")
+        .arg("--manifest-path")
+        .arg(&fetch_manifest_path);
+    run_command(&mut fetch, "cargo fetch overlay sources")?;
+
+    let still_missing = missing
+        .into_iter()
+        .map(|(_, _, source_dir)| source_dir)
+        .filter(|source_dir| find_cargo_registry_crate(source_dir).is_none())
+        .collect::<Vec<_>>();
+    if still_missing.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "cargo fetch completed without required overlay sources: {}",
+            still_missing.join(",")
+        ))
+    }
+}
+
 fn patch_tokio_stream_trueos_overlay(crate_dir: &Path) -> Result<(), String> {
     replace_file_text(
         &crate_dir.join("src/wrappers/tcp_listener.rs"),
@@ -2277,12 +2561,12 @@ fn patch_crossterm_trueos_overlay(crate_dir: &Path) -> Result<(), String> {
     replace_file_text(
         &mio_path,
         "const TTY_BUFFER_SIZE: usize = 1_024;\n",
-        "const TTY_BUFFER_SIZE: usize = 1_024;\n\nfn mio_to_io_error(error: mio::io::Error) -> io::Error {\n    let kind = match error.kind() {\n        mio::io::ErrorKind::WouldBlock => io::ErrorKind::WouldBlock,\n        mio::io::ErrorKind::Interrupted => io::ErrorKind::Interrupted,\n        mio::io::ErrorKind::InvalidInput => io::ErrorKind::InvalidInput,\n        mio::io::ErrorKind::NotFound => io::ErrorKind::NotFound,\n        mio::io::ErrorKind::PermissionDenied => io::ErrorKind::PermissionDenied,\n        mio::io::ErrorKind::BrokenPipe => io::ErrorKind::BrokenPipe,\n        mio::io::ErrorKind::AlreadyExists => io::ErrorKind::AlreadyExists,\n        mio::io::ErrorKind::TimedOut => io::ErrorKind::TimedOut,\n        mio::io::ErrorKind::ConnectionRefused => io::ErrorKind::ConnectionRefused,\n        mio::io::ErrorKind::ConnectionReset => io::ErrorKind::ConnectionReset,\n        mio::io::ErrorKind::ConnectionAborted => io::ErrorKind::ConnectionAborted,\n        mio::io::ErrorKind::NotConnected => io::ErrorKind::NotConnected,\n        mio::io::ErrorKind::AddrInUse => io::ErrorKind::AddrInUse,\n        mio::io::ErrorKind::AddrNotAvailable => io::ErrorKind::AddrNotAvailable,\n        _ => io::ErrorKind::Other,\n    };\n    io::Error::new(kind, \"mio trueos error\")\n}\n",
+        "const TTY_BUFFER_SIZE: usize = 1_024;\n\n#[cfg(any(target_os = \"trueos\", target_os = \"zkvm\"))]\nunsafe extern \"C\" {\n    fn trueos_cabi_write(stream: u32, bytes: *const u8, len: usize);\n}\n\n#[cfg(any(target_os = \"trueos\", target_os = \"zkvm\"))]\nfn trueos_event_probe(message: &[u8]) {\n    unsafe { trueos_cabi_write(1, message.as_ptr(), message.len()) };\n}\n\n#[cfg(not(any(target_os = \"trueos\", target_os = \"zkvm\")))]\nfn trueos_event_probe(_message: &[u8]) {}\n\nfn mio_to_io_error(error: mio::io::Error) -> io::Error {\n    let kind = match error.kind() {\n        mio::io::ErrorKind::WouldBlock => io::ErrorKind::WouldBlock,\n        mio::io::ErrorKind::Interrupted => io::ErrorKind::Interrupted,\n        mio::io::ErrorKind::InvalidInput => io::ErrorKind::InvalidInput,\n        mio::io::ErrorKind::NotFound => io::ErrorKind::NotFound,\n        mio::io::ErrorKind::PermissionDenied => io::ErrorKind::PermissionDenied,\n        mio::io::ErrorKind::BrokenPipe => io::ErrorKind::BrokenPipe,\n        mio::io::ErrorKind::AlreadyExists => io::ErrorKind::AlreadyExists,\n        mio::io::ErrorKind::TimedOut => io::ErrorKind::TimedOut,\n        mio::io::ErrorKind::ConnectionRefused => io::ErrorKind::ConnectionRefused,\n        mio::io::ErrorKind::ConnectionReset => io::ErrorKind::ConnectionReset,\n        mio::io::ErrorKind::ConnectionAborted => io::ErrorKind::ConnectionAborted,\n        mio::io::ErrorKind::NotConnected => io::ErrorKind::NotConnected,\n        mio::io::ErrorKind::AddrInUse => io::ErrorKind::AddrInUse,\n        mio::io::ErrorKind::AddrNotAvailable => io::ErrorKind::AddrNotAvailable,\n        _ => io::ErrorKind::Other,\n    };\n    io::Error::new(kind, \"mio trueos error\")\n}\n",
     )?;
     replace_file_text(
         &mio_path,
         "        let poll = Poll::new()?;",
-        "        let poll = Poll::new().map_err(mio_to_io_error)?;",
+        "        trueos_event_probe(b\"[crossterm-resize-probe:INFO] event-source init\\n\");\n        let poll = Poll::new().map_err(mio_to_io_error)?;",
     )?;
     replace_file_text(
         &mio_path,
@@ -2292,12 +2576,12 @@ fn patch_crossterm_trueos_overlay(crate_dir: &Path) -> Result<(), String> {
     replace_file_text(
         &mio_path,
         "        let mut signals = Signals::new([signal_hook::consts::SIGWINCH])?;",
-        "        let mut signals = Signals::new([signal_hook::consts::SIGWINCH])\n            .map_err(mio_to_io_error)?;",
+        "        trueos_event_probe(b\"[crossterm-resize-probe:INFO] sigwinch register begin\\n\");\n        let mut signals = Signals::new([signal_hook::consts::SIGWINCH])\n            .map_err(mio_to_io_error)?;",
     )?;
     replace_file_text(
         &mio_path,
         "        registry.register(&mut signals, SIGNAL_TOKEN, Interest::READABLE)?;",
-        "        registry\n            .register(&mut signals, SIGNAL_TOKEN, Interest::READABLE)\n            .map_err(mio_to_io_error)?;",
+        "        registry\n            .register(&mut signals, SIGNAL_TOKEN, Interest::READABLE)\n            .map_err(mio_to_io_error)?;\n        trueos_event_probe(b\"[crossterm-resize-probe:INFO] sigwinch register ready\\n\");",
     )?;
     replace_file_text(
         &mio_path,
@@ -2308,6 +2592,29 @@ fn patch_crossterm_trueos_overlay(crate_dir: &Path) -> Result<(), String> {
         &mio_path,
         "                if e.kind() == io::ErrorKind::Interrupted {\n                    continue;\n                } else {\n                    return Err(e);\n                }",
         "                if e.kind() == mio::io::ErrorKind::Interrupted {\n                    continue;\n                } else {\n                    return Err(mio_to_io_error(e));\n                }",
+    )?;
+    replace_file_text(
+        &mio_path,
+        "                    SIGNAL_TOKEN => {\n                        if self.signals.pending().next() == Some(signal_hook::consts::SIGWINCH) {",
+        "                    SIGNAL_TOKEN => {\n                        trueos_event_probe(b\"[crossterm-resize-probe:INFO] signal token ready\\n\");\n                        if self.signals.pending().next() == Some(signal_hook::consts::SIGWINCH) {\n                            trueos_event_probe(b\"[crossterm-resize-probe:INFO] sigwinch -> resize event\\n\");",
+    )?;
+
+    let terminal_unix_path = crate_dir.join("src/terminal/sys/unix.rs");
+    normalize_line_endings(&terminal_unix_path)?;
+    replace_file_text(
+        &terminal_unix_path,
+        "static TERMINAL_MODE_PRIOR_RAW_MODE: Mutex<Option<Termios>> = parking_lot::const_mutex(None);\n",
+        "static TERMINAL_MODE_PRIOR_RAW_MODE: Mutex<Option<Termios>> = parking_lot::const_mutex(None);\n\n#[cfg(any(target_os = \"trueos\", target_os = \"zkvm\"))]\nstatic TRUEOS_LAST_TERMINAL_SIZE: core::sync::atomic::AtomicU32 =\n    core::sync::atomic::AtomicU32::new(u32::MAX);\n\n#[cfg(any(target_os = \"trueos\", target_os = \"zkvm\"))]\nunsafe extern \"C\" {\n    fn trueos_cabi_write(stream: u32, bytes: *const u8, len: usize);\n}\n\n#[cfg(any(target_os = \"trueos\", target_os = \"zkvm\"))]\nfn trueos_size_probe(size: &WindowSize) {\n    let packed = (u32::from(size.rows) << 16) | u32::from(size.columns);\n    let previous = TRUEOS_LAST_TERMINAL_SIZE.swap(\n        packed,\n        core::sync::atomic::Ordering::Relaxed,\n    );\n    let message = if previous == u32::MAX {\n        Some(b\"[crossterm-resize-probe:INFO] ioctl size path active\\n\".as_slice())\n    } else if previous != packed {\n        Some(b\"[crossterm-resize-probe:INFO] ioctl size changed\\n\".as_slice())\n    } else {\n        None\n    };\n    if let Some(message) = message {\n        unsafe { trueos_cabi_write(1, message.as_ptr(), message.len()) };\n    }\n}\n\n#[cfg(not(any(target_os = \"trueos\", target_os = \"zkvm\")))]\nfn trueos_size_probe(_size: &WindowSize) {}\n",
+    )?;
+    replace_file_text(
+        &terminal_unix_path,
+        "    if wrap_with_result(unsafe { ioctl(fd, TIOCGWINSZ.into(), &mut size) }).is_ok() {\n        return Ok(size.into());\n    }",
+        "    if wrap_with_result(unsafe { ioctl(fd, TIOCGWINSZ.into(), &mut size) }).is_ok() {\n        let size = WindowSize::from(size);\n        trueos_size_probe(&size);\n        return Ok(size);\n    }",
+    )?;
+    replace_file_text(
+        &terminal_unix_path,
+        "    let size = rustix::termios::tcgetwinsize(fd)?;\n    Ok(size.into())",
+        "    let size = WindowSize::from(rustix::termios::tcgetwinsize(fd)?);\n    trueos_size_probe(&size);\n    Ok(size)",
     )
 }
 
@@ -2453,7 +2760,7 @@ fn staged_manifest_for_overlay(
             source_overlay,
         )?;
     }
-    materialize_trueos_blueprint_dependency(app_dir, &staged_manifest)?;
+    materialize_trueos_blueprint_dependency(app_dir, work_dir, &staged_manifest)?;
     materialize_hidden_build_std_pins(&staged_manifest, build_settings, source_overlay)?;
     if !nested_workspace_package {
         ensure_standalone_manifest_workspace(&staged_manifest)?;
@@ -3740,6 +4047,7 @@ fn materialize_hidden_build_std_pins(
 
 fn materialize_trueos_blueprint_dependency(
     app_dir: &Path,
+    work_dir: &Path,
     manifest_path: &Path,
 ) -> Result<(), String> {
     if !manifest_declared_features(manifest_path)?
@@ -3751,9 +4059,10 @@ fn materialize_trueos_blueprint_dependency(
     }
 
     let blueprint_root = blueprint_root(app_dir).unwrap_or_else(|| app_dir.to_path_buf());
+    let trueos_api = staged_blueprint_path(&blueprint_root, work_dir, "api");
     let dependency = format!(
         "# Injected by trueos-blueprint for external app packaging.\n{}",
-        path_dependency_line("trueos", &blueprint_root.join("api"))
+        path_dependency_line("trueos", &trueos_api)
     );
     insert_manifest_dependency(manifest_path, &dependency)
 }
@@ -3843,6 +4152,7 @@ fn materialized_workspace_dependency(
             toml_string(
                 &workspace_dependency_vendor_path(
                     source_overlay,
+                    work_dir,
                     "axum",
                     &blueprint_root.join("vendor/axum-0.8.9"),
                 )
@@ -3857,6 +4167,7 @@ fn materialized_workspace_dependency(
                 dep_name,
                 &workspace_dependency_vendor_path(
                     source_overlay,
+                    work_dir,
                     dep_name,
                     &blueprint_root.join("vendor/http-body-util-0.1.3"),
                 ),
@@ -3867,6 +4178,7 @@ fn materialized_workspace_dependency(
             toml_string(
                 &workspace_dependency_vendor_path(
                     source_overlay,
+                    work_dir,
                     "hyper",
                     &blueprint_root.join("vendor/hyper-1.9.0"),
                 )
@@ -3880,6 +4192,7 @@ fn materialized_workspace_dependency(
                 toml_string(
                     &workspace_dependency_vendor_path(
                         source_overlay,
+                        work_dir,
                         "hyper-util",
                         &blueprint_root.join("vendor/hyper-util-0.1.20"),
                     )
@@ -3899,6 +4212,7 @@ fn materialized_workspace_dependency(
             toml_string(
                 &workspace_dependency_vendor_path(
                     source_overlay,
+                    work_dir,
                     "reqwest",
                     &blueprint_root.join("vendor/reqwest-0.13.3"),
                 )
@@ -3916,6 +4230,7 @@ fn materialized_workspace_dependency(
                 toml_string(
                     &workspace_dependency_vendor_path(
                         source_overlay,
+                        work_dir,
                         "rustls-rustcrypto",
                         &blueprint_root.join("vendor/rustls-rustcrypto-0.0.2-alpha"),
                     )
@@ -3940,6 +4255,7 @@ fn materialized_workspace_dependency(
             toml_string(
                 &workspace_dependency_vendor_path(
                     source_overlay,
+                    work_dir,
                     "tokio",
                     &blueprint_root.join("vendor/tokio-1.52.3"),
                 )
@@ -3953,6 +4269,7 @@ fn materialized_workspace_dependency(
                 toml_string(
                     &workspace_dependency_vendor_path(
                         source_overlay,
+                        work_dir,
                         "tokio-rustls",
                         &blueprint_root.join("vendor/tokio-rustls-0.26.4"),
                     )
@@ -3966,6 +4283,7 @@ fn materialized_workspace_dependency(
             toml_string(
                 &workspace_dependency_vendor_path(
                     source_overlay,
+                    work_dir,
                     "tower",
                     &blueprint_root.join("vendor/tower-0.5.3"),
                 )
@@ -3973,7 +4291,10 @@ fn materialized_workspace_dependency(
                 .to_string(),
             )
         ),
-        "trueos" => path_dependency_line(dep_name, &blueprint_root.join("api")),
+        "trueos" => path_dependency_line(
+            dep_name,
+            &staged_blueprint_path(blueprint_root, work_dir, "api"),
+        ),
         "trueos-chat" => path_dependency_line(dep_name, &blueprint_root.join("apps/chatserver/trueos-chat")),
         "trueos-currency" => {
             path_dependency_line(dep_name, &blueprint_root.join("../uiout/currency_reqwest/trueos-currency"))
@@ -3983,7 +4304,11 @@ fn materialized_workspace_dependency(
         }
         "trueos-gfx-core" => format!(
             "trueos-gfx-core = {{ path = {}, features = [\"alloc\"] }}",
-            toml_string(&blueprint_root.join("crates/trueos-gfx-core").display().to_string(),)
+            toml_string(
+                &staged_blueprint_path(blueprint_root, work_dir, "crates/trueos-gfx-core")
+                    .display()
+                    .to_string(),
+            )
         ),
         "trueos-tetris" => path_dependency_line(
             dep_name,
@@ -4009,14 +4334,31 @@ fn materialized_workspace_dependency(
 
 fn workspace_dependency_vendor_path(
     source_overlay: &[CratePatch],
+    work_dir: &Path,
     dep_name: &str,
     fallback: &Path,
 ) -> PathBuf {
-    source_overlay
+    let path = source_overlay
         .iter()
         .find(|patch| patch.key == dep_name && patch.name == dep_name)
         .map(|patch| patch.path.clone())
-        .unwrap_or_else(|| fallback.to_path_buf())
+        .unwrap_or_else(|| fallback.to_path_buf());
+
+    blueprint_root(&path)
+        .and_then(|root| path.strip_prefix(root).ok().map(Path::to_path_buf))
+        .filter(|relative| relative.starts_with("vendor"))
+        .map(|relative| work_dir.parent().unwrap_or(work_dir).join(relative))
+        .filter(|candidate| candidate.exists())
+        .unwrap_or(path)
+}
+
+fn staged_blueprint_path(blueprint_root: &Path, work_dir: &Path, relative: &str) -> PathBuf {
+    let staged = work_dir.parent().unwrap_or(work_dir).join(relative);
+    if staged.exists() {
+        staged
+    } else {
+        blueprint_root.join(relative)
+    }
 }
 
 fn app_workspace_dependency_line(app_dir: &Path, dep_name: &str) -> Result<Option<String>, String> {

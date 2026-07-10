@@ -10,6 +10,10 @@ spin = "0.10"
 skrifa = { version = "0.44.0", default-features = false, features = ["libm"] }
 serde = { version = "=1.0.228", default-features = false, features = ["alloc", "derive"] }
 serde_json = { version = "=1.0.150", default-features = false, features = ["alloc"] }
+trueos-math = { path = "../trueos-math", default-features = false }
 
 [features]
 default = []
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("trueos", "zkvm"))'] }

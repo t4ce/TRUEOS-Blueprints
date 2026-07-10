@@ -3,6 +3,7 @@
     "chatserver",
     "condvar",
     "cross",
+    "calculator",
     "file-system",
     "fileexplorer",
     "framework_stack",
@@ -27,11 +28,13 @@
     "Player",
     {
       "name": "tactics",
-      "path": "../tactics"
+      "path": "../tactics",
+      "optional": true
     },
     "rusqlite_probe",
     "skybox",
     "superseedr",
+    "system-services",
     "webdevices",
     "webmail",
     "wls",

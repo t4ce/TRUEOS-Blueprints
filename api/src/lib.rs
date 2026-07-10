@@ -8,6 +8,7 @@ use core::alloc::{GlobalAlloc, Layout};
 use core::ptr::null_mut;
 #[cfg(feature = "tokio-runtime")]
 pub use tokio;
+pub use v::calculator_base;
 pub use v::collections;
 pub use v::env;
 pub use v::vaudio as audio;
@@ -20,6 +21,7 @@ pub use v::vpci as pci;
 pub use v::vrapl as rapl;
 pub use v::vshell;
 pub use v::vsys;
+pub use v::vsystem_services as system_services;
 pub use v::vthermal as thermal;
 
 pub mod platform {
@@ -249,6 +251,20 @@ pub mod rng {
 pub mod net {
     use core::fmt;
 
+    #[cfg(feature = "tokio-net-probe")]
+    pub use tokio::net::{TcpListener, TcpStream, ToSocketAddrs, UdpSocket, lookup_host};
+
+    #[cfg(feature = "tokio-net-probe")]
+    pub mod mio {
+        pub use mio::{Events, Interest, Poll, Registry, Token, Waker};
+        pub use mio::{event, net};
+    }
+
+    #[cfg(feature = "tokio-net-probe")]
+    pub mod socket2 {
+        pub use socket2::{Domain, Protocol, SockAddr, Socket, Type};
+    }
+
     pub const DEFAULT_TUN_MTU: u16 = 1500;
 
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -361,20 +377,6 @@ pub mod fs {
         File, OpenOptions, canonicalize, copy, create_dir, create_dir_all, metadata, read,
         read_to_string, remove_dir_all, remove_file, rename, try_exists, write,
     };
-}
-
-#[cfg(feature = "tokio-net-probe")]
-pub mod net {
-    pub use tokio::net::{TcpListener, TcpStream, ToSocketAddrs, UdpSocket, lookup_host};
-
-    pub mod mio {
-        pub use mio::{Events, Interest, Poll, Registry, Token, Waker};
-        pub use mio::{event, net};
-    }
-
-    pub mod socket2 {
-        pub use socket2::{Domain, Protocol, SockAddr, Socket, Type};
-    }
 }
 
 #[cfg(feature = "ui3")]

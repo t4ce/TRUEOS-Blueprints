@@ -24,6 +24,7 @@ members = [
     "apps/rusqlite_probe",
     "apps/prism_q_probe",
     "apps/skybox",
+    "apps/system-services",
     "apps/test_some_crates",
     "apps/texteditor",
     "apps/tokio_fs",
