@@ -1,4 +1,4 @@
-use std::io;
+use std::io::{self, BufWriter};
 use std::time::Duration;
 
 use anyhow::Result;
@@ -31,6 +31,8 @@ use trueos_math::calculator_base::{
 };
 
 const MAX_BUTTONS: usize = 32;
+const INPUT_POLL_INTERVAL: Duration = Duration::from_millis(16);
+const FRAME_BUFFER_CAPACITY: usize = 128 * 1024;
 const BG: Color = Color::Rgb(8, 11, 18);
 const PANEL: Color = Color::Rgb(18, 24, 35);
 const PANEL_ALT: Color = Color::Rgb(25, 34, 48);
@@ -57,14 +59,18 @@ fn run() -> Result<()> {
     result
 }
 
-fn setup_terminal() -> Result<Terminal<CrosstermBackend<io::Stdout>>> {
+type CalculatorTerminal = Terminal<CrosstermBackend<BufWriter<io::Stdout>>>;
+
+fn setup_terminal() -> Result<CalculatorTerminal> {
     enable_raw_mode()?;
-    let mut stdout = io::stdout();
+    // Crossterm emits several small writes per changed cell. Buffer a complete
+    // Ratatui frame so TRUEOS only has to cross the VM console ABI once.
+    let mut stdout = BufWriter::with_capacity(FRAME_BUFFER_CAPACITY, io::stdout());
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture, Hide)?;
     Ok(Terminal::new(CrosstermBackend::new(stdout))?)
 }
 
-fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
+fn restore_terminal(terminal: &mut CalculatorTerminal) -> Result<()> {
     disable_raw_mode()?;
     execute!(
         terminal.backend_mut(),
@@ -158,16 +164,36 @@ impl Default for App {
 }
 
 impl App {
-    fn run(mut self, terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
+    fn run(mut self, terminal: &mut CalculatorTerminal) -> Result<()> {
+        terminal.draw(|frame| self.draw(frame))?;
+
         while !self.should_quit {
-            terminal.draw(|frame| self.draw(frame))?;
-            if !event::poll(Duration::from_millis(120))? {
+            if !event::poll(INPUT_POLL_INTERVAL)? {
                 continue;
             }
-            match event::read()? {
-                Event::Key(key) if key.is_press() => self.handle_key(key),
-                Event::Mouse(mouse) => self.handle_mouse(mouse),
-                _ => {}
+
+            let mut redraw = false;
+            loop {
+                match event::read()? {
+                    Event::Key(key) if key.is_press() => {
+                        self.handle_key(key);
+                        redraw = true;
+                    }
+                    Event::Mouse(mouse) => {
+                        self.handle_mouse(mouse);
+                        redraw = true;
+                    }
+                    Event::Resize(_, _) => redraw = true,
+                    _ => {}
+                }
+
+                if !event::poll(Duration::ZERO)? {
+                    break;
+                }
+            }
+
+            if redraw && !self.should_quit {
+                terminal.draw(|frame| self.draw(frame))?;
             }
         }
         Ok(())
