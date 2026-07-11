@@ -7,47 +7,91 @@ use crate::error::{PrismError, Result};
 const MEMORY_BUDGET_DIVISOR: u64 = 2;
 
 pub(crate) fn max_statevector_qubits() -> usize {
-    static CACHED: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    *CACHED.get_or_init(|| {
-        configured_or_detected_dense_qubits(
+    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+    {
+        return configured_or_detected_dense_qubits(
             "PRISM_MAX_SV_QUBITS",
             size_of::<Complex64>(),
             "statevector qubit cap",
-        )
-    })
+        );
+    }
+    #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+    {
+        static CACHED: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        *CACHED.get_or_init(|| {
+            configured_or_detected_dense_qubits(
+                "PRISM_MAX_SV_QUBITS",
+                size_of::<Complex64>(),
+                "statevector qubit cap",
+            )
+        })
+    }
 }
 
 pub(crate) fn max_dense_probability_qubits() -> usize {
-    static CACHED: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    *CACHED.get_or_init(|| {
-        configured_or_detected_dense_qubits(
+    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+    {
+        return configured_or_detected_dense_qubits(
             "PRISM_MAX_PROB_QUBITS",
             size_of::<f64>(),
             "dense probability cap",
-        )
-    })
+        );
+    }
+    #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+    {
+        static CACHED: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        *CACHED.get_or_init(|| {
+            configured_or_detected_dense_qubits(
+                "PRISM_MAX_PROB_QUBITS",
+                size_of::<f64>(),
+                "dense probability cap",
+            )
+        })
+    }
 }
 
 pub(crate) fn max_dense_statevector_qubits() -> usize {
-    static CACHED: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    *CACHED.get_or_init(|| {
-        configured_or_detected_dense_qubits(
+    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+    {
+        return configured_or_detected_dense_qubits(
             "PRISM_MAX_EXPORT_QUBITS",
             size_of::<Complex64>(),
             "dense statevector export cap",
-        )
-    })
+        );
+    }
+    #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+    {
+        static CACHED: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        *CACHED.get_or_init(|| {
+            configured_or_detected_dense_qubits(
+                "PRISM_MAX_EXPORT_QUBITS",
+                size_of::<Complex64>(),
+                "dense statevector export cap",
+            )
+        })
+    }
 }
 
 pub(crate) fn max_tensor_probability_qubits() -> usize {
-    static CACHED: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    *CACHED.get_or_init(|| {
-        configured_or_detected_dense_qubits(
+    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+    {
+        return configured_or_detected_dense_qubits(
             "PRISM_MAX_PROB_QUBITS",
             size_of::<Complex64>() + size_of::<f64>(),
             "tensor-network dense probability cap",
-        )
-    })
+        );
+    }
+    #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+    {
+        static CACHED: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        *CACHED.get_or_init(|| {
+            configured_or_detected_dense_qubits(
+                "PRISM_MAX_PROB_QUBITS",
+                size_of::<Complex64>() + size_of::<f64>(),
+                "tensor-network dense probability cap",
+            )
+        })
+    }
 }
 
 fn configured_or_detected_dense_qubits(
@@ -197,7 +241,7 @@ fn detect_physical_memory_bytes() -> Option<u64> {
     Some(status.ull_total_phys)
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, not(any(target_os = "trueos", target_os = "zkvm"))))]
 fn detect_physical_memory_bytes() -> Option<u64> {
     let meminfo = std::fs::read_to_string("/proc/meminfo").ok()?;
     for line in meminfo.lines() {
@@ -209,7 +253,38 @@ fn detect_physical_memory_bytes() -> Option<u64> {
     None
 }
 
-#[cfg(not(any(windows, unix)))]
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+fn detect_physical_memory_bytes() -> Option<u64> {
+    #[repr(C)]
+    #[derive(Default)]
+    struct TrueosCabiHeapStats {
+        heap_start: usize,
+        heap_end: usize,
+        usable_total: usize,
+        free_bytes: usize,
+        largest_free_block: usize,
+        free_blocks: usize,
+        initialized: u32,
+        source: u32,
+    }
+
+    unsafe extern "C" {
+        fn trueos_cabi_heap_stats(out: *mut TrueosCabiHeapStats) -> i32;
+    }
+
+    let mut stats = TrueosCabiHeapStats::default();
+    // SAFETY: `stats` is a writable repr(C) value matching the TRUEOS ABI.
+    if unsafe { trueos_cabi_heap_stats(&mut stats) } != 0 || stats.initialized == 0 {
+        return None;
+    }
+
+    // Dense Vec allocations need one contiguous region. The smaller value also
+    // accounts for other live allocations. TRUEOS may grow/rebalance the VM
+    // arena between calls, so callers deliberately do not cache this result.
+    u64::try_from(stats.free_bytes.min(stats.largest_free_block)).ok()
+}
+
+#[cfg(not(any(windows, unix, target_os = "trueos", target_os = "zkvm")))]
 fn detect_physical_memory_bytes() -> Option<u64> {
     None
 }

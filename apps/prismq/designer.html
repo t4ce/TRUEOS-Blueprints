@@ -73,6 +73,14 @@
       min-height: 100vh;
     }
 
+    .app.designer-hidden {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .app.designer-hidden aside {
+      display: none;
+    }
+
     aside {
       border-right: 1px solid var(--line);
       background: #fbfbf7;
@@ -82,7 +90,7 @@
 
     main {
       display: grid;
-      grid-template-rows: auto minmax(0, 1fr) minmax(190px, 30vh);
+      grid-template-rows: auto minmax(0, 1fr) minmax(240px, 36vh);
       min-width: 0;
     }
 
@@ -148,6 +156,562 @@
       flex-wrap: wrap;
       align-items: center;
       gap: 8px;
+    }
+
+    .circuit-name-field {
+      width: 150px;
+    }
+
+    .caption-field {
+      min-width: 0;
+      height: 42px;
+      margin: 0;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 0 8px 5px;
+      background: #fff;
+      color: var(--muted);
+    }
+
+    .caption-field:focus-within {
+      border-color: var(--focus);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus) 18%, transparent);
+    }
+
+    .caption-field legend {
+      padding: 0 4px;
+      font-size: 10px;
+      font-weight: 700;
+      line-height: 1;
+    }
+
+    .caption-field input {
+      width: 100%;
+      min-height: 23px;
+      border: 0;
+      border-radius: 0;
+      padding: 0 2px;
+      outline: 0;
+    }
+
+    .caption-field input:focus-visible {
+      outline: 0;
+    }
+
+    .panel-toggle[aria-pressed="false"] {
+      color: var(--muted);
+      background: #f3f4ef;
+    }
+
+    details.menu {
+      position: relative;
+    }
+
+    details.menu > summary {
+      display: flex;
+      align-items: center;
+      min-height: 34px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+      padding: 0 10px;
+      color: var(--ink);
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 700;
+      list-style: none;
+      user-select: none;
+    }
+
+    details.menu > summary::-webkit-details-marker {
+      display: none;
+    }
+
+    details.menu[open] > summary {
+      border-color: var(--wire);
+    }
+
+    .menu-popover {
+      position: absolute;
+      z-index: 20;
+      top: calc(100% + 6px);
+      right: 0;
+      width: 260px;
+      max-height: 300px;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      box-shadow: 0 12px 30px rgba(18, 31, 27, .16);
+      padding: 6px;
+    }
+
+    .saved-head,
+    .saved-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 58px;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .saved-head {
+      padding: 5px 8px;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 750;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .saved-row {
+      border-top: 1px solid #edf0ea;
+    }
+
+    .saved-row button {
+      min-height: 32px;
+      border: 0;
+      border-radius: 4px;
+      background: transparent;
+      padding: 0 8px;
+      text-align: left;
+      font-size: 12px;
+    }
+
+    .saved-row .delete-saved {
+      color: #8b2119;
+      text-align: center;
+    }
+
+    .menu-section + .menu-section {
+      margin-top: 8px;
+      border-top: 1px solid var(--line);
+      padding-top: 8px;
+    }
+
+    #savedMenu .menu-popover {
+      width: 330px;
+      max-height: 520px;
+    }
+
+    .menu-section-title {
+      display: flex;
+      justify-content: space-between;
+      padding: 5px 8px;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 750;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .common-row button:last-child {
+      color: var(--gate);
+      text-align: center;
+      font-size: 17px;
+      font-weight: 500;
+    }
+
+    .dirty-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      color: #8b5a08;
+      font-size: 10px;
+      font-weight: 750;
+      white-space: nowrap;
+    }
+
+    .dirty-badge::before {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--accent);
+      content: "";
+    }
+
+    .dirty-badge[hidden] {
+      display: none;
+    }
+
+    .history-menu .menu-popover {
+      right: auto;
+      left: 0;
+      width: min(420px, calc(100vw - 28px));
+    }
+
+    .history-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 3px 5px 9px;
+    }
+
+    .history-head span {
+      color: var(--muted);
+      font-size: 10px;
+    }
+
+    .history-reset {
+      min-height: 28px;
+      border-color: #e0c2bd;
+      color: #8b2119;
+      font-size: 10px;
+    }
+
+    .history-list {
+      max-height: 340px;
+      overflow: auto;
+      border-top: 1px solid var(--line);
+    }
+
+    .history-row {
+      display: grid;
+      grid-template-columns: 30px minmax(0, 1fr) 66px;
+      align-items: center;
+      border-bottom: 1px solid #edf0ea;
+    }
+
+    .history-row button {
+      grid-column: 1 / 3;
+      display: grid;
+      grid-template-columns: 30px minmax(0, 1fr);
+      align-items: center;
+      min-width: 0;
+      min-height: 36px;
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+      padding: 0 8px 0 0;
+      text-align: left;
+    }
+
+    .history-row button span:first-child {
+      color: #98a29e;
+      font-size: 10px;
+      text-align: center;
+    }
+
+    .history-row button span:last-child {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .history-row output {
+      padding-right: 8px;
+      color: var(--muted);
+      font: 9px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      text-align: right;
+    }
+
+    .history-row.current {
+      background: #eaf4f0;
+      box-shadow: inset 3px 0 var(--gate);
+    }
+
+    .history-row.future {
+      opacity: .48;
+    }
+
+    .history-branch {
+      padding: 7px 9px;
+      border-bottom: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 10px;
+    }
+
+    dialog.decision-dialog {
+      width: min(470px, calc(100vw - 32px));
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 0;
+      background: #fff;
+      color: var(--ink);
+      box-shadow: 0 24px 80px rgba(12, 24, 21, .24);
+    }
+
+    dialog.decision-dialog::backdrop {
+      background: rgba(12, 19, 17, .42);
+      backdrop-filter: blur(2px);
+    }
+
+    .decision-content {
+      padding: 24px;
+    }
+
+    .decision-content h3 {
+      margin: 0 0 9px;
+      font-size: 18px;
+    }
+
+    .decision-content p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .decision-actions {
+      display: flex;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+      gap: 8px;
+      border-top: 1px solid var(--line);
+      padding: 14px 24px;
+      background: #f7f8f4;
+    }
+
+    .decision-actions button[data-kind="primary"] {
+      border-color: var(--gate);
+      background: var(--gate);
+      color: #fff;
+    }
+
+    .decision-actions button[data-kind="danger"] {
+      border-color: var(--control);
+      background: var(--control);
+      color: #fff;
+    }
+
+    .saved-empty {
+      padding: 14px 8px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .save-status {
+      max-width: 180px;
+      overflow: hidden;
+      color: var(--muted);
+      font-size: 11px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .run-config {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .run-config .caption-field {
+      width: 92px;
+    }
+
+    .run-button {
+      min-width: 92px;
+      background: var(--control);
+      border-color: var(--control);
+      color: #fff;
+    }
+
+    .run-button:disabled {
+      cursor: wait;
+      opacity: .72;
+    }
+
+    .bottom-panel {
+      display: grid;
+      grid-template-columns: minmax(280px, .85fr) minmax(340px, 1.15fr);
+      min-height: 0;
+      border-top: 1px solid var(--line);
+      background: #111817;
+    }
+
+    .bottom-panel.json-hidden {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .bottom-panel.json-hidden .json-panel {
+      display: none;
+    }
+
+    .json-panel {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      min-width: 0;
+      min-height: 0;
+      border-right: 1px solid #31403c;
+    }
+
+    .panel-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 38px;
+      padding: 0 14px;
+      color: #b9c9c3;
+      font-size: 11px;
+      font-weight: 750;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .panel-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .panel-menu > summary {
+      min-width: 30px;
+      justify-content: center;
+      min-height: 28px !important;
+      border-color: #42514c !important;
+      background: transparent !important;
+      color: #d9e6e1 !important;
+      padding: 0 8px !important;
+      font-size: 16px !important;
+    }
+
+    .panel-menu .menu-popover {
+      top: calc(100% + 4px);
+      width: 170px;
+      padding: 5px;
+    }
+
+    .panel-menu button {
+      display: block;
+      width: 100%;
+      min-height: 34px;
+      border: 0;
+      background: transparent;
+      padding: 0 10px;
+      text-align: left;
+      font-size: 12px;
+    }
+
+    .panel-menu button:hover {
+      background: #f1f3ee;
+    }
+
+    .json-panel textarea {
+      min-height: 0;
+      border-top-color: #31403c;
+    }
+
+    .results-panel {
+      min-width: 0;
+      min-height: 0;
+      overflow: auto;
+      padding: 0 16px 16px;
+      background: #f1f3ee;
+    }
+
+    .results-panel .panel-title {
+      padding-right: 0;
+      padding-left: 0;
+      color: var(--muted);
+    }
+
+    .result-status {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 650;
+      letter-spacing: 0;
+      text-transform: none;
+    }
+
+    .progress-track {
+      display: none;
+      height: 3px;
+      overflow: hidden;
+      background: #d4dad2;
+    }
+
+    .progress-track.active {
+      display: block;
+    }
+
+    .progress-track::after {
+      content: "";
+      display: block;
+      width: 38%;
+      height: 100%;
+      background: var(--control);
+      animation: progress 1s ease-in-out infinite;
+    }
+
+    @keyframes progress {
+      from { transform: translateX(-110%); }
+      to { transform: translateX(290%); }
+    }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(72px, 1fr));
+      gap: 8px;
+      margin: 12px 0 16px;
+    }
+
+    .metric {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+      padding: 8px 10px;
+    }
+
+    .metric strong,
+    .metric span {
+      display: block;
+    }
+
+    .metric strong {
+      font: 700 16px/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+
+    .metric span {
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 10px;
+      text-transform: uppercase;
+    }
+
+    .histogram {
+      display: grid;
+      gap: 7px;
+    }
+
+    .outcome {
+      display: grid;
+      grid-template-columns: minmax(46px, auto) minmax(90px, 1fr) 72px;
+      gap: 9px;
+      align-items: center;
+      font: 12px/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+
+    .outcome-state {
+      font-weight: 700;
+    }
+
+    .outcome-track {
+      height: 12px;
+      overflow: hidden;
+      border-radius: 2px;
+      background: #dce1da;
+    }
+
+    .outcome-bar {
+      height: 100%;
+      min-width: 2px;
+      background: var(--gate);
+      transition: width .35s ease-out;
+    }
+
+    .outcome-value {
+      text-align: right;
+      color: var(--muted);
+    }
+
+    .empty-result,
+    .error-result {
+      margin: 20px 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .error-result {
+      color: #8b2119;
     }
 
     .primary {
@@ -342,12 +906,27 @@
       main {
         min-height: 70vh;
       }
+
+      .bottom-panel {
+        grid-template-columns: 1fr;
+      }
+
+      .json-panel {
+        min-height: 240px;
+        border-right: 0;
+        border-bottom: 1px solid #31403c;
+      }
+
+      header {
+        align-items: flex-start;
+        flex-direction: column;
+      }
     }
   </style>
 </head>
 <body>
-  <div class="app">
-    <aside>
+  <div class="app" id="app">
+    <aside id="designerPanel">
       <h1>PrismQ Designer</h1>
 
       <h2>Registers</h2>
@@ -386,22 +965,92 @@
     <main>
       <header>
         <div class="toolbar">
-          <button id="bell" class="primary" type="button">Bell</button>
-          <button id="ghz" type="button">GHZ</button>
-          <button id="undo" type="button" aria-label="Undo last gate">Undo</button>
-          <button id="clear" class="danger" type="button">Clear</button>
+          <button id="toggleDesigner" class="panel-toggle" type="button" aria-pressed="true">Designer</button>
+          <button id="toggleJson" class="panel-toggle" type="button" aria-pressed="false">JSON</button>
+          <details id="historyMenu" class="menu history-menu">
+            <summary id="historySummary">History · 1</summary>
+            <div class="menu-popover">
+              <div class="history-head">
+                <span id="historyMemory">0 B in memory</span>
+                <button id="resetHistory" class="history-reset" type="button">Reset history</button>
+              </div>
+              <div id="historyList" class="history-list"></div>
+            </div>
+          </details>
         </div>
         <div class="toolbar">
-          <button id="importJson" type="button">Import JSON</button>
-          <button id="download" type="button">Download JSON</button>
+          <fieldset class="caption-field circuit-name-field">
+            <legend>Circuit name</legend>
+            <input id="circuitName" type="text" maxlength="64" aria-label="Current circuit name">
+          </fieldset>
+          <button id="saveCircuit" class="primary" type="button">Save</button>
+          <details id="savedMenu" class="menu">
+            <summary>Circuits</summary>
+            <div class="menu-popover">
+              <section class="menu-section">
+                <div class="menu-section-title"><span>Common</span><span>Append</span></div>
+                <div id="commonCircuits"></div>
+              </section>
+              <section class="menu-section">
+                <div class="menu-section-title"><span>Stored</span><span>Delete</span></div>
+                <div id="savedCircuits"></div>
+              </section>
+            </div>
+          </details>
+          <span id="dirtyBadge" class="dirty-badge" hidden>Edited</span>
+          <span id="saveStatus" class="save-status"></span>
+          <div class="run-config">
+            <fieldset class="caption-field">
+              <legend>Shots</legend>
+              <input id="shots" type="number" min="1" max="100000" step="1">
+            </fieldset>
+            <fieldset class="caption-field">
+              <legend>Seed</legend>
+              <input id="seed" type="number" min="0" step="1">
+            </fieldset>
+          </div>
+          <button id="run" class="run-button" type="button">Run circuit</button>
         </div>
       </header>
       <section class="stage">
         <div class="circuit" id="circuit"></div>
       </section>
-      <textarea id="json" spellcheck="false"></textarea>
+      <section class="bottom-panel json-hidden" id="bottomPanel">
+        <div class="json-panel">
+          <div class="panel-title">
+            <span>Single JSON contract</span>
+            <div class="panel-actions">
+              <span>prismq.circuit.v1</span>
+              <details id="jsonMenu" class="menu panel-menu">
+                <summary aria-label="JSON actions">⋯</summary>
+                <div class="menu-popover">
+                  <button id="importJson" type="button">Import JSON</button>
+                  <button id="download" type="button">Download JSON</button>
+                </div>
+              </details>
+            </div>
+          </div>
+          <textarea id="json" spellcheck="false" aria-label="Circuit JSON"></textarea>
+        </div>
+        <div class="results-panel" aria-live="polite">
+          <div class="panel-title">
+            <span>Simulation results</span>
+            <span class="result-status" id="resultStatus">Ready</span>
+          </div>
+          <div class="progress-track" id="progress"></div>
+          <div id="results" class="empty-result">Run the circuit to inspect measurement counts and exact state probabilities.</div>
+        </div>
+      </section>
     </main>
   </div>
+
+  <dialog id="decisionDialog" class="decision-dialog">
+    <div class="decision-content">
+      <h3 id="decisionTitle"></h3>
+      <p id="decisionMessage"></p>
+    </div>
+    <div id="decisionActions" class="decision-actions"></div>
+  </dialog>
 
   <script>
     const gateButtons = [
@@ -421,6 +1070,8 @@
     const threeTarget = new Set(["ccx", "cswap"]);
 
     const el = {
+      app: document.getElementById("app"),
+      bottomPanel: document.getElementById("bottomPanel"),
       qubits: document.getElementById("qubits"),
       bits: document.getElementById("bits"),
       target: document.getElementById("target"),
@@ -431,42 +1082,324 @@
       operations: document.getElementById("operations"),
       circuit: document.getElementById("circuit"),
       json: document.getElementById("json"),
-      bell: document.getElementById("bell"),
-      ghz: document.getElementById("ghz"),
-      undo: document.getElementById("undo"),
-      clear: document.getElementById("clear"),
+      shots: document.getElementById("shots"),
+      seed: document.getElementById("seed"),
+      run: document.getElementById("run"),
+      progress: document.getElementById("progress"),
+      resultStatus: document.getElementById("resultStatus"),
+      results: document.getElementById("results"),
+      toggleDesigner: document.getElementById("toggleDesigner"),
+      toggleJson: document.getElementById("toggleJson"),
+      circuitName: document.getElementById("circuitName"),
+      saveCircuit: document.getElementById("saveCircuit"),
+      savedMenu: document.getElementById("savedMenu"),
+      commonCircuits: document.getElementById("commonCircuits"),
+      savedCircuits: document.getElementById("savedCircuits"),
+      saveStatus: document.getElementById("saveStatus"),
+      dirtyBadge: document.getElementById("dirtyBadge"),
+      historyMenu: document.getElementById("historyMenu"),
+      historySummary: document.getElementById("historySummary"),
+      historyMemory: document.getElementById("historyMemory"),
+      historyList: document.getElementById("historyList"),
+      resetHistory: document.getElementById("resetHistory"),
+      jsonMenu: document.getElementById("jsonMenu"),
+      decisionDialog: document.getElementById("decisionDialog"),
+      decisionTitle: document.getElementById("decisionTitle"),
+      decisionMessage: document.getElementById("decisionMessage"),
+      decisionActions: document.getElementById("decisionActions"),
       importJson: document.getElementById("importJson"),
       download: document.getElementById("download")
     };
 
-    let state = bellCircuit();
+    const PI = Math.PI;
 
-    function bellCircuit() {
+    function measuredCircuit(qubits, gates, bits = qubits) {
       return {
-        qubits: 2,
-        bits: 2,
-        gates: [
-          { gate: "h", target: 0 },
-          { gate: "cx", control: 0, target: 1 },
-          { gate: "measure", qubit: 0, bit: 0 },
-          { gate: "measure", qubit: 1, bit: 1 }
-        ]
+        schema: "prismq.circuit.v1",
+        qubits,
+        bits,
+        seed: 42,
+        shots: 1024,
+        threshold: 1e-10,
+        gates: gates.concat(Array.from({ length: bits }, (_, bit) => ({
+          gate: "measure", qubit: Math.min(bit, qubits - 1), bit
+        })))
       };
     }
 
-    function ghzCircuit() {
+    function ghz(size) {
+      const gates = [{ gate: "h", target: 0 }];
+      for (let target = 1; target < size; target += 1) {
+        gates.push({ gate: "cx", control: target - 1, target });
+      }
+      return measuredCircuit(size, gates);
+    }
+
+    const circuitTemplates = [
+      ["Bell pair", measuredCircuit(2, [
+        { gate: "h", target: 0 }, { gate: "cx", control: 0, target: 1 }
+      ])],
+      ["GHZ state · 3 qubits", ghz(3)],
+      ["GHZ state · 5 qubits", ghz(5)],
+      ["W state · 3 qubits", measuredCircuit(3, [
+        { gate: "ry", target: 0, params: [1.910633] },
+        { gate: "cry", control: 0, target: 1, params: [PI / 2] },
+        { gate: "cx", control: 1, target: 2 }, { gate: "cx", control: 0, target: 1 }
+      ])],
+      ["Uniform superposition · 4", measuredCircuit(4, [0, 1, 2, 3].map((target) => ({ gate: "h", target })))],
+      ["Minus state", measuredCircuit(1, [{ gate: "x", target: 0 }, { gate: "h", target: 0 }])],
+      ["Basis state |1011>", measuredCircuit(4, [
+        { gate: "x", target: 0 }, { gate: "x", target: 1 }, { gate: "x", target: 3 }
+      ])],
+      ["Ramsey interferometry", measuredCircuit(1, [
+        { gate: "h", target: 0 }, { gate: "rz", target: 0, params: [PI / 3] }, { gate: "h", target: 0 }
+      ])],
+      ["Rabi rotation", measuredCircuit(1, [{ gate: "rx", target: 0, params: [PI / 3] }])],
+      ["Toffoli truth table", measuredCircuit(3, [
+        { gate: "x", target: 0 }, { gate: "x", target: 1 }, { gate: "ccx", targets: [0, 1, 2] }
+      ])],
+      ["Fredkin controlled swap", measuredCircuit(3, [
+        { gate: "x", target: 0 }, { gate: "x", target: 1 }, { gate: "cswap", targets: [0, 1, 2] }
+      ])],
+      ["SWAP test", measuredCircuit(3, [
+        { gate: "h", target: 0 }, { gate: "x", target: 1 },
+        { gate: "cswap", targets: [0, 1, 2] }, { gate: "h", target: 0 }
+      ])],
+      ["Grover search · 2 qubits", measuredCircuit(2, [
+        { gate: "h", target: 0 }, { gate: "h", target: 1 }, { gate: "cz", control: 0, target: 1 },
+        { gate: "h", target: 0 }, { gate: "h", target: 1 }, { gate: "x", target: 0 },
+        { gate: "x", target: 1 }, { gate: "cz", control: 0, target: 1 },
+        { gate: "x", target: 0 }, { gate: "x", target: 1 }, { gate: "h", target: 0 }, { gate: "h", target: 1 }
+      ])],
+      ["Deutsch algorithm", measuredCircuit(2, [
+        { gate: "x", target: 1 }, { gate: "h", target: 0 }, { gate: "h", target: 1 },
+        { gate: "cx", control: 0, target: 1 }, { gate: "h", target: 0 }
+      ])],
+      ["Deutsch–Jozsa balanced", measuredCircuit(4, [
+        { gate: "x", target: 3 }, { gate: "h", target: 0 }, { gate: "h", target: 1 },
+        { gate: "h", target: 2 }, { gate: "h", target: 3 }, { gate: "cx", control: 0, target: 3 },
+        { gate: "h", target: 0 }, { gate: "h", target: 1 }, { gate: "h", target: 2 }
+      ], 3)],
+      ["Bernstein–Vazirani · 101", measuredCircuit(4, [
+        { gate: "x", target: 3 }, { gate: "h", target: 0 }, { gate: "h", target: 1 },
+        { gate: "h", target: 2 }, { gate: "h", target: 3 }, { gate: "cx", control: 0, target: 3 },
+        { gate: "cx", control: 2, target: 3 }, { gate: "h", target: 0 },
+        { gate: "h", target: 1 }, { gate: "h", target: 2 }
+      ], 3)],
+      ["Quantum Fourier transform · 2", measuredCircuit(2, [
+        { gate: "h", target: 0 }, { gate: "cp", control: 1, target: 0, params: [PI / 2] },
+        { gate: "h", target: 1 }, { gate: "swap", targets: [0, 1] }
+      ])],
+      ["Quantum Fourier transform · 3", measuredCircuit(3, [
+        { gate: "h", target: 0 }, { gate: "cp", control: 1, target: 0, params: [PI / 2] },
+        { gate: "cp", control: 2, target: 0, params: [PI / 4] }, { gate: "h", target: 1 },
+        { gate: "cp", control: 2, target: 1, params: [PI / 2] }, { gate: "h", target: 2 },
+        { gate: "swap", targets: [0, 2] }
+      ])],
+      ["Inverse QFT · 3", measuredCircuit(3, [
+        { gate: "swap", targets: [0, 2] }, { gate: "h", target: 2 },
+        { gate: "cp", control: 2, target: 1, params: [-PI / 2] }, { gate: "h", target: 1 },
+        { gate: "cp", control: 2, target: 0, params: [-PI / 4] },
+        { gate: "cp", control: 1, target: 0, params: [-PI / 2] }, { gate: "h", target: 0 }
+      ])],
+      ["Phase kickback", measuredCircuit(2, [
+        { gate: "x", target: 1 }, { gate: "h", target: 0 }, { gate: "h", target: 1 },
+        { gate: "cx", control: 0, target: 1 }, { gate: "h", target: 0 }
+      ])],
+      ["Entanglement swapping", measuredCircuit(4, [
+        { gate: "h", target: 0 }, { gate: "cx", control: 0, target: 1 },
+        { gate: "h", target: 2 }, { gate: "cx", control: 2, target: 3 },
+        { gate: "cx", control: 1, target: 2 }, { gate: "h", target: 1 }
+      ])],
+      ["Superdense coding · 11", measuredCircuit(2, [
+        { gate: "h", target: 0 }, { gate: "cx", control: 0, target: 1 },
+        { gate: "x", target: 0 }, { gate: "z", target: 0 },
+        { gate: "cx", control: 0, target: 1 }, { gate: "h", target: 0 }
+      ])],
+      ["Ising Trotter step", measuredCircuit(3, [
+        { gate: "h", target: 0 }, { gate: "h", target: 1 }, { gate: "h", target: 2 },
+        { gate: "rzz", targets: [0, 1], params: [0.35] },
+        { gate: "rzz", targets: [1, 2], params: [0.35] },
+        { gate: "rx", target: 0, params: [0.2] }, { gate: "rx", target: 1, params: [0.2] },
+        { gate: "rx", target: 2, params: [0.2] }
+      ])],
+      ["Variational ansatz · 4", measuredCircuit(4, [
+        { gate: "ry", target: 0, params: [0.31] }, { gate: "ry", target: 1, params: [0.67] },
+        { gate: "ry", target: 2, params: [1.13] }, { gate: "ry", target: 3, params: [1.71] },
+        { gate: "cx", control: 0, target: 1 }, { gate: "cx", control: 1, target: 2 },
+        { gate: "cx", control: 2, target: 3 }, { gate: "rz", target: 0, params: [0.23] },
+        { gate: "rz", target: 1, params: [0.41] }, { gate: "rz", target: 2, params: [0.59] },
+        { gate: "rz", target: 3, params: [0.83] }
+      ])],
+      ["Three-step quantum walk", measuredCircuit(3, [
+        { gate: "h", target: 0 }, { gate: "cx", control: 0, target: 1 },
+        { gate: "h", target: 0 }, { gate: "cx", control: 0, target: 2 },
+        { gate: "swap", targets: [1, 2] }, { gate: "h", target: 0 },
+        { gate: "cx", control: 0, target: 1 }
+      ])]
+    ];
+
+    const clone = (value) => JSON.parse(JSON.stringify(value));
+    const textEncoder = new TextEncoder();
+    let state = clone(circuitTemplates[0][1]);
+    let history = createHistory(state, "Started · Bell pair");
+    let dirty = false;
+    let jsonDraftDirty = false;
+
+    function circuitDocument(value) {
       return {
-        qubits: 3,
-        bits: 3,
-        gates: [
-          { gate: "h", target: 0 },
-          { gate: "cx", control: 0, target: 1 },
-          { gate: "cx", control: 1, target: 2 },
-          { gate: "measure", qubit: 0, bit: 0 },
-          { gate: "measure", qubit: 1, bit: 1 },
-          { gate: "measure", qubit: 2, bit: 2 }
-        ]
+        schema: "prismq.circuit.v1",
+        qubits: clampInt(value.qubits, 1, 26),
+        bits: clampInt(value.bits ?? 0, 0, 26),
+        seed: Math.max(0, Number.parseInt(value.seed ?? 42, 10) || 0),
+        shots: clampInt(value.shots ?? 1024, 1, 100000),
+        threshold: Number.isFinite(Number(value.threshold)) ? Number(value.threshold) : 1e-10,
+        gates: Array.isArray(value.gates) ? clone(value.gates) : []
       };
+    }
+
+    function snapshotBytes(snapshot) {
+      return textEncoder.encode(JSON.stringify(snapshot)).byteLength;
+    }
+
+    function historyAction(label, snapshot) {
+      const clean = circuitDocument(snapshot);
+      return { label, bytes: snapshotBytes(clean), snapshot: clean };
+    }
+
+    function createHistory(snapshot, label = "Started") {
+      return {
+        schema: "prismq.history.v1",
+        cursor: 0,
+        actions: [historyAction(label, snapshot)],
+        branches: []
+      };
+    }
+
+    function normalizeHistory(value, fallbackSnapshot, fallbackLabel) {
+      if (!value || value.schema !== "prismq.history.v1" || !Array.isArray(value.actions) || !value.actions.length) {
+        return createHistory(fallbackSnapshot, fallbackLabel);
+      }
+      const actions = value.actions
+        .filter((action) => action && action.snapshot)
+        .map((action, index) => historyAction(String(action.label || `Action ${index + 1}`), action.snapshot));
+      if (!actions.length) return createHistory(fallbackSnapshot, fallbackLabel);
+      const cursor = Math.max(0, Math.min(actions.length - 1, Number.parseInt(value.cursor, 10) || 0));
+      const branches = Array.isArray(value.branches) ? clone(value.branches) : [];
+      return { schema: "prismq.history.v1", cursor, actions, branches };
+    }
+
+    function persistenceDocument() {
+      return { ...circuitDocument(state), history: clone(history) };
+    }
+
+    function formatBytes(bytes) {
+      if (bytes < 1024) return `${bytes} B`;
+      if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(bytes < 10240 ? 1 : 0)} KiB`;
+      return `${(bytes / 1024 / 1024).toFixed(1)} MiB`;
+    }
+
+    function historyMemoryBytes() {
+      return history.actions.reduce((sum, action) => sum + action.bytes, 0)
+        + snapshotBytes(history.branches);
+    }
+
+    function setDirty(value) {
+      dirty = Boolean(value);
+      el.dirtyBadge.hidden = !dirty && !jsonDraftDirty;
+      el.dirtyBadge.textContent = jsonDraftDirty ? "JSON edited" : "Edited";
+    }
+
+    function askDecision(title, message, choices) {
+      return new Promise((resolve) => {
+        el.decisionTitle.textContent = title;
+        el.decisionMessage.textContent = message;
+        el.decisionActions.textContent = "";
+        let settled = false;
+        const onCancel = (event) => {
+          event.preventDefault();
+          finish(null);
+        };
+        const finish = (value) => {
+          if (settled) return;
+          settled = true;
+          el.decisionDialog.removeEventListener("cancel", onCancel);
+          if (el.decisionDialog.open) el.decisionDialog.close();
+          resolve(value);
+        };
+        choices.forEach((choice) => {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.textContent = choice.label;
+          if (choice.kind) button.dataset.kind = choice.kind;
+          button.addEventListener("click", () => finish(choice.value));
+          el.decisionActions.appendChild(button);
+        });
+        el.decisionDialog.addEventListener("cancel", onCancel);
+        el.decisionDialog.showModal();
+      });
+    }
+
+    async function allowReplacement(label) {
+      if (!dirty && !jsonDraftDirty) return true;
+      const choice = await askDecision(
+        "Replace edited circuit?",
+        `Your current work has changes that are not saved. Loading “${label}” will replace it.`,
+        [
+          { label: "Keep editing", value: false },
+          { label: "Replace anyway", value: true, kind: "danger" }
+        ]
+      );
+      return choice === true;
+    }
+
+    async function prepareHistoryEdit() {
+      if (history.cursor >= history.actions.length - 1) return true;
+      const futureCount = history.actions.length - history.cursor - 1;
+      const choice = await askDecision(
+        "Edit from the past?",
+        `${futureCount} future action${futureCount === 1 ? "" : "s"} can no longer stay on the active timeline. Fork preserves the complete timeline beside the circuit JSON.`,
+        [
+          { label: "Cancel", value: "cancel" },
+          { label: "Forget future", value: "forget", kind: "danger" },
+          { label: "Fork & preserve", value: "fork", kind: "primary" }
+        ]
+      );
+      if (!choice || choice === "cancel") return false;
+      if (choice === "fork") {
+        const originalName = el.circuitName.value.trim() || "Untitled";
+        history.branches.push({
+          name: `${originalName} · preserved future`,
+          forkAt: history.cursor,
+          cursor: history.actions.length - 1,
+          actions: clone(history.actions),
+          createdAt: new Date().toISOString()
+        });
+        el.circuitName.value = `${originalName}-fork`;
+        showSaveStatus("Future preserved as a history branch");
+      }
+      history.actions = history.actions.slice(0, history.cursor + 1);
+      return true;
+    }
+
+    async function commitMutation(label, mutate) {
+      if (!(await prepareHistoryEdit())) {
+        render();
+        return false;
+      }
+      const before = JSON.stringify(circuitDocument(state));
+      mutate();
+      state = circuitDocument(state);
+      if (JSON.stringify(state) === before) {
+        render();
+        return false;
+      }
+      history.actions.push(historyAction(label, state));
+      history.cursor = history.actions.length - 1;
+      jsonDraftDirty = false;
+      setDirty(true);
+      render();
+      return true;
     }
 
     function clampRegisters() {
@@ -494,7 +1427,7 @@
       if (count > 0) select.value = Math.min(Number(old) || 0, count - 1);
     }
 
-    function addGate(name) {
+    async function addGate(name) {
       const target = Number(el.target.value) || 0;
       const control = Number(el.control.value) || 0;
       const bit = Number(el.bit.value) || 0;
@@ -513,14 +1446,15 @@
       }
       if (threeTarget.has(name)) gate = { gate: name, targets: [control, target, third] };
       if (name === "measure") {
-        state.bits = Math.max(state.bits, bit + 1);
         gate = { gate: name, qubit: target, bit };
       }
       if (name === "barrier") gate = { gate: name, targets: allQubits() };
 
       if (!gate) return;
-      state.gates.push(gate);
-      render();
+      await commitMutation(`Add ${gateLabel(gate)}`, () => {
+        if (name === "measure") state.bits = Math.max(state.bits, bit + 1);
+        state.gates.push(gate);
+      });
     }
 
     function pickDifferent(a, b) {
@@ -610,24 +1544,371 @@
         remove.type = "button";
         remove.textContent = "x";
         remove.setAttribute("aria-label", `Remove gate ${index + 1}`);
-        remove.addEventListener("click", () => {
-          state.gates.splice(index, 1);
-          render();
+        remove.addEventListener("click", async () => {
+          await commitMutation(`Remove ${gateLabel(gate)}`, () => {
+            state.gates.splice(index, 1);
+          });
         });
         item.append(label, remove);
         el.operations.appendChild(item);
       });
     }
 
+    function renderHistory() {
+      el.historySummary.textContent = `History · ${history.cursor + 1}/${history.actions.length}`;
+      el.historyMemory.textContent = `${formatBytes(historyMemoryBytes())} in memory`;
+      el.historyList.textContent = "";
+      history.actions.forEach((action, index) => {
+        const row = document.createElement("div");
+        const jump = document.createElement("button");
+        const number = document.createElement("span");
+        const label = document.createElement("span");
+        const memory = document.createElement("output");
+        row.className = `history-row${index === history.cursor ? " current" : ""}${index > history.cursor ? " future" : ""}`;
+        jump.type = "button";
+        jump.title = `Restore action ${index + 1}: ${action.label}`;
+        number.textContent = String(index + 1).padStart(2, "0");
+        label.textContent = action.label;
+        memory.textContent = formatBytes(action.bytes);
+        jump.append(number, label);
+        jump.addEventListener("click", () => {
+          if (index === history.cursor) {
+            el.historyMenu.open = false;
+            return;
+          }
+          state = clone(action.snapshot);
+          history.cursor = index;
+          jsonDraftDirty = false;
+          setDirty(true);
+          render();
+          el.historyMenu.open = false;
+        });
+        row.append(jump, memory);
+        el.historyList.appendChild(row);
+      });
+      history.branches.forEach((branch) => {
+        const note = document.createElement("div");
+        note.className = "history-branch";
+        note.textContent = `Preserved · ${branch.name} · ${branch.actions?.length || 0} actions`;
+        el.historyList.appendChild(note);
+      });
+    }
+
     function render() {
       el.qubits.value = state.qubits;
       el.bits.value = state.bits;
+      el.shots.value = state.shots ?? 1024;
+      el.seed.value = state.seed ?? 42;
       setOptions(el.target, state.qubits, "q");
       setOptions(el.control, state.qubits, "q");
       setOptions(el.bit, Math.max(1, state.bits), "c");
       renderCircuit();
       renderOperations();
-      el.json.value = JSON.stringify(state, null, 2);
+      renderHistory();
+      el.json.value = JSON.stringify(persistenceDocument(), null, 2);
+      jsonDraftDirty = false;
+      setDirty(dirty);
+    }
+
+    function documentFromEditor() {
+      const parsed = JSON.parse(el.json.value);
+      return circuitDocument(parsed);
+    }
+
+    function setRunning(running) {
+      el.run.disabled = running;
+      el.run.textContent = running ? "Running…" : "Run circuit";
+      el.progress.classList.toggle("active", running);
+    }
+
+    function addMetric(container, value, label) {
+      const metric = document.createElement("div");
+      const strong = document.createElement("strong");
+      const caption = document.createElement("span");
+      metric.className = "metric";
+      strong.textContent = value;
+      caption.textContent = label;
+      metric.append(strong, caption);
+      container.appendChild(metric);
+    }
+
+    function renderResults(result) {
+      el.results.className = "";
+      el.results.textContent = "";
+
+      const metrics = document.createElement("div");
+      metrics.className = "metrics";
+      addMetric(metrics, result.circuit.qubits, "Qubits");
+      addMetric(metrics, result.circuit.depth, "Depth");
+      addMetric(metrics, result.circuit.gates, "Gates");
+      addMetric(metrics, `${result.elapsedMs} ms`, "Server time");
+      el.results.appendChild(metrics);
+
+      const rows = result.counts.length ? result.counts : result.probabilities;
+      if (!rows.length) {
+        const empty = document.createElement("div");
+        empty.className = "empty-result";
+        empty.textContent = "The backend returned no outcomes above the configured threshold.";
+        el.results.appendChild(empty);
+        return;
+      }
+
+      const histogram = document.createElement("div");
+      histogram.className = "histogram";
+      const max = Math.max(...rows.map((row) => row.probability), Number.EPSILON);
+      rows.forEach((row) => {
+        const outcome = document.createElement("div");
+        const stateLabel = document.createElement("div");
+        const track = document.createElement("div");
+        const bar = document.createElement("div");
+        const value = document.createElement("div");
+        outcome.className = "outcome";
+        stateLabel.className = "outcome-state";
+        track.className = "outcome-track";
+        bar.className = "outcome-bar";
+        value.className = "outcome-value";
+        stateLabel.textContent = `|${row.state}>`;
+        bar.style.width = `${Math.max(0, Math.min(100, row.probability / max * 100))}%`;
+        value.textContent = result.counts.length
+          ? `${row.count} · ${(row.probability * 100).toFixed(1)}%`
+          : `${(row.probability * 100).toFixed(3)}%`;
+        track.appendChild(bar);
+        outcome.append(stateLabel, track, value);
+        histogram.appendChild(outcome);
+      });
+      el.results.appendChild(histogram);
+    }
+
+    async function runCircuit() {
+      let document;
+      try {
+        document = documentFromEditor();
+        if (JSON.stringify(document) !== JSON.stringify(circuitDocument(state))) {
+          const applied = await commitMutation("Apply edited JSON", () => { state = document; });
+          if (!applied) return;
+          document = circuitDocument(state);
+        } else {
+          render();
+        }
+      } catch (error) {
+        el.resultStatus.textContent = "Invalid JSON";
+        el.results.className = "error-result";
+        el.results.textContent = error.message;
+        return;
+      }
+
+      setRunning(true);
+      const started = performance.now();
+      const timer = window.setInterval(() => {
+        el.resultStatus.textContent = `Simulating · ${((performance.now() - started) / 1000).toFixed(1)} s`;
+      }, 100);
+
+      try {
+        const response = await fetch("/api/simulate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Accept": "application/json" },
+          body: JSON.stringify(document)
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || !result.ok) throw new Error(result.error || `Server returned HTTP ${response.status}`);
+        renderResults(result);
+        const kind = result.counts.length ? `${result.shots.toLocaleString()} shots` : "exact probabilities";
+        el.resultStatus.textContent = `Complete · ${kind}`;
+      } catch (error) {
+        el.resultStatus.textContent = "Run failed";
+        el.results.className = "error-result";
+        el.results.textContent = error.message;
+      } finally {
+        window.clearInterval(timer);
+        setRunning(false);
+      }
+    }
+
+    function setPanelVisibility(kind, visible) {
+      if (kind === "designer") {
+        el.app.classList.toggle("designer-hidden", !visible);
+        el.toggleDesigner.setAttribute("aria-pressed", String(visible));
+      } else {
+        el.bottomPanel.classList.toggle("json-hidden", !visible);
+        el.toggleJson.setAttribute("aria-pressed", String(visible));
+      }
+    }
+
+    function showSaveStatus(message, isError = false) {
+      el.saveStatus.textContent = message;
+      el.saveStatus.style.color = isError ? "#8b2119" : "";
+    }
+
+    function suggestedFileName(label) {
+      return label
+        .replace(/[·–—]/g, "-")
+        .replace(/[^A-Za-z0-9 _-]/g, "")
+        .replace(/\s*-\s*/g, "-")
+        .trim();
+    }
+
+    async function apiJson(url, options) {
+      const response = await fetch(url, options);
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.error || `Server returned HTTP ${response.status}`);
+      }
+      return payload;
+    }
+
+    async function refreshSavedCircuits() {
+      try {
+        const payload = await apiJson("/api/circuits");
+        renderSavedCircuits(payload.circuits || []);
+      } catch (error) {
+        renderSavedCircuits([]);
+        showSaveStatus(error.message, true);
+      }
+    }
+
+    function renderSavedCircuits(names) {
+      el.savedCircuits.textContent = "";
+      if (!names.length) {
+        const empty = document.createElement("div");
+        empty.className = "saved-empty";
+        empty.textContent = "No saved circuits yet.";
+        el.savedCircuits.appendChild(empty);
+        return;
+      }
+      names.forEach((name) => {
+        const row = document.createElement("div");
+        const load = document.createElement("button");
+        const remove = document.createElement("button");
+        row.className = "saved-row";
+        load.type = "button";
+        load.textContent = name;
+        load.title = `Load ${name}`;
+        remove.type = "button";
+        remove.className = "delete-saved";
+        remove.textContent = "Delete";
+        remove.title = `Delete ${name} and its revisions`;
+        load.addEventListener("click", () => loadSavedCircuit(name));
+        remove.addEventListener("click", () => deleteSavedCircuit(name));
+        row.append(load, remove);
+        el.savedCircuits.appendChild(row);
+      });
+    }
+
+    function renderCommonCircuits() {
+      el.commonCircuits.textContent = "";
+      circuitTemplates.forEach(([name], index) => {
+        const row = document.createElement("div");
+        const load = document.createElement("button");
+        const append = document.createElement("button");
+        row.className = "saved-row common-row";
+        load.type = "button";
+        load.textContent = name;
+        load.title = `Start from ${name}`;
+        append.type = "button";
+        append.textContent = "+";
+        append.title = `Append ${name} to the current circuit`;
+        load.addEventListener("click", () => loadCommonCircuit(index));
+        append.addEventListener("click", () => appendCommonCircuit(index));
+        row.append(load, append);
+        el.commonCircuits.appendChild(row);
+      });
+    }
+
+    async function loadCommonCircuit(index) {
+      const [name, circuit] = circuitTemplates[index];
+      if (!(await allowReplacement(name))) return;
+      state = circuitDocument(circuit);
+      history = createHistory(state, `Template · ${name}`);
+      el.circuitName.value = suggestedFileName(name);
+      el.savedMenu.open = false;
+      jsonDraftDirty = false;
+      setDirty(true);
+      render();
+      showSaveStatus(`Loaded template · ${name}`);
+    }
+
+    async function appendCommonCircuit(index) {
+      const [name, circuit] = circuitTemplates[index];
+      const appended = await commitMutation(`Append template · ${name}`, () => {
+        state.qubits = Math.max(state.qubits, circuit.qubits);
+        state.bits = Math.max(state.bits, circuit.bits || 0);
+        state.gates.push(...clone(circuit.gates));
+      });
+      if (appended) {
+        el.savedMenu.open = false;
+        showSaveStatus(`Appended ${name}`);
+      }
+    }
+
+    async function loadSavedCircuit(name) {
+      if (!(await allowReplacement(name))) return;
+      showSaveStatus("Loading…");
+      try {
+        const payload = await apiJson(`/api/circuits/${encodeURIComponent(name)}`);
+        state = circuitDocument(payload.circuit);
+        history = normalizeHistory(payload.circuit.history, state, `Loaded · ${payload.name}`);
+        state = clone(history.actions[history.cursor].snapshot);
+        el.circuitName.value = payload.name;
+        el.savedMenu.open = false;
+        jsonDraftDirty = false;
+        setDirty(false);
+        render();
+        showSaveStatus(`Loaded ${payload.name}`);
+      } catch (error) {
+        showSaveStatus(error.message, true);
+      }
+    }
+
+    async function saveCurrentCircuit() {
+      const name = el.circuitName.value.trim();
+      if (!name) {
+        showSaveStatus("Enter a circuit name", true);
+        el.circuitName.focus();
+        return;
+      }
+      let document;
+      try {
+        document = documentFromEditor();
+      } catch (error) {
+        showSaveStatus(`Invalid JSON: ${error.message}`, true);
+        return;
+      }
+      if (JSON.stringify(document) !== JSON.stringify(circuitDocument(state))) {
+        const applied = await commitMutation("Apply edited JSON before save", () => { state = document; });
+        if (!applied) return;
+      }
+      el.saveCircuit.disabled = true;
+      showSaveStatus("Saving…");
+      try {
+        const payload = await apiJson(`/api/circuits/${encodeURIComponent(name)}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Accept": "application/json" },
+          body: JSON.stringify(persistenceDocument())
+        });
+        jsonDraftDirty = false;
+        setDirty(false);
+        render();
+        const revision = payload.archivedRevision;
+        showSaveStatus(revision ? `Saved · previous is rev${revision}` : "Saved");
+        await refreshSavedCircuits();
+      } catch (error) {
+        showSaveStatus(error.message, true);
+      } finally {
+        el.saveCircuit.disabled = false;
+      }
+    }
+
+    async function deleteSavedCircuit(name) {
+      if (!window.confirm(`Delete “${name}” and all of its revisions?`)) return;
+      showSaveStatus("Deleting…");
+      try {
+        await apiJson(`/api/circuits/${encodeURIComponent(name)}`, { method: "DELETE" });
+        if (el.circuitName.value.trim() === name) el.circuitName.value = "";
+        showSaveStatus(`Deleted ${name}`);
+        await refreshSavedCircuits();
+      } catch (error) {
+        showSaveStatus(error.message, true);
+      }
     }
 
     gateButtons.forEach((name) => {
@@ -638,40 +1919,50 @@
       el.gatePad.appendChild(button);
     });
 
-    el.qubits.addEventListener("change", () => {
-      clampRegisters();
-      render();
+    el.qubits.addEventListener("change", async () => {
+      const next = clampInt(el.qubits.value, 1, 26);
+      await commitMutation(`Set qubits · ${next}`, clampRegisters);
     });
-    el.bits.addEventListener("change", () => {
-      clampRegisters();
-      render();
+    el.bits.addEventListener("change", async () => {
+      const next = clampInt(el.bits.value, 0, 26);
+      await commitMutation(`Set bits · ${next}`, clampRegisters);
     });
-    el.bell.addEventListener("click", () => {
-      state = bellCircuit();
-      render();
+    el.shots.addEventListener("change", async () => {
+      const next = clampInt(el.shots.value, 1, 100000);
+      await commitMutation(`Set shots · ${next}`, () => { state.shots = next; });
     });
-    el.ghz.addEventListener("click", () => {
-      state = ghzCircuit();
-      render();
+    el.seed.addEventListener("change", async () => {
+      const next = Math.max(0, Number.parseInt(el.seed.value, 10) || 0);
+      await commitMutation(`Set seed · ${next}`, () => { state.seed = next; });
     });
-    el.undo.addEventListener("click", () => {
-      state.gates.pop();
-      render();
+    el.toggleDesigner.addEventListener("click", () => {
+      setPanelVisibility("designer", el.toggleDesigner.getAttribute("aria-pressed") !== "true");
     });
-    el.clear.addEventListener("click", () => {
-      state.gates = [];
-      render();
+    el.toggleJson.addEventListener("click", () => {
+      setPanelVisibility("json", el.toggleJson.getAttribute("aria-pressed") !== "true");
     });
-    el.importJson.addEventListener("click", () => {
+    el.importJson.addEventListener("click", async () => {
       try {
         const parsed = JSON.parse(el.json.value);
-        state = {
-          qubits: clampInt(parsed.qubits, 1, 26),
-          bits: clampInt(parsed.bits ?? 0, 0, 26),
-          gates: Array.isArray(parsed.gates) ? parsed.gates : []
-        };
-        clampRegisters();
-        render();
+        const document = circuitDocument(parsed);
+        if (parsed.history?.schema === "prismq.history.v1") {
+          history = normalizeHistory(parsed.history, document, "Imported JSON");
+          state = document;
+          if (JSON.stringify(history.actions[history.cursor].snapshot) !== JSON.stringify(document)) {
+            history.actions = history.actions.slice(0, history.cursor + 1);
+            history.actions.push(historyAction(`Import JSON · ${document.gates.length} gates`, document));
+            history.cursor = history.actions.length - 1;
+          }
+          jsonDraftDirty = false;
+          setDirty(true);
+          render();
+          el.jsonMenu.open = false;
+          return;
+        }
+        const imported = await commitMutation(`Import JSON · ${document.gates.length} gates`, () => {
+          state = document;
+        });
+        if (imported) el.jsonMenu.open = false;
       } catch (error) {
         alert(`Invalid JSON: ${error.message}`);
       }
@@ -683,9 +1974,37 @@
       link.download = "circuit.prismq.json";
       link.click();
       URL.revokeObjectURL(link.href);
+      el.jsonMenu.open = false;
     });
+    el.saveCircuit.addEventListener("click", saveCurrentCircuit);
+    el.circuitName.addEventListener("input", () => setDirty(true));
+    el.circuitName.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") saveCurrentCircuit();
+    });
+    el.json.addEventListener("input", () => {
+      jsonDraftDirty = true;
+      setDirty(dirty);
+    });
+    el.resetHistory.addEventListener("click", async () => {
+      const choice = await askDecision(
+        "Reset action history?",
+        "The current circuit stays exactly as it is, but its action timeline and preserved branches will be permanently removed.",
+        [
+          { label: "Cancel", value: false },
+          { label: "Reset history", value: true, kind: "danger" }
+        ]
+      );
+      if (!choice) return;
+      history = createHistory(state, "History reset");
+      el.historyMenu.open = false;
+      setDirty(true);
+      render();
+    });
+    el.run.addEventListener("click", runCircuit);
 
     render();
+    renderCommonCircuits();
+    refreshSavedCircuits();
   </script>
 </body>
 </html>

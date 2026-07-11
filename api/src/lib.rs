@@ -88,6 +88,11 @@ pub mod logl {
         }
     }
 
+    pub fn log_record(level: u8, target: &str, message: impl IntoLogMessage) -> i32 {
+        let message = message.into_log_message();
+        v::vsys::log_record(u32::from(level), target, message.as_str())
+    }
+
     pub trait IntoLogMessage {
         fn into_log_message(self) -> String;
     }

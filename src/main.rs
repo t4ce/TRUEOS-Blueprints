@@ -1914,6 +1914,16 @@ fn source_overlay_patches(
         out.push(CratePatch::new("tokio", path));
     }
 
+    if matches!(build_settings.flavor, BuildFlavor::TokioStd)
+        && manifest_or_lock_mentions_crate(app_dir, manifest_path, "futures-timer")?
+    {
+        out.retain(|patch| patch.name != "futures-timer");
+        out.push(CratePatch::new(
+            "futures-timer",
+            stage_futures_timer_trueos_overlay(work_dir)?,
+        ));
+    }
+
     if manifest_or_lock_mentions_crate(app_dir, manifest_path, "tokio-stream")? {
         out.retain(|patch| patch.name != "tokio-stream");
         out.push(CratePatch::new(
@@ -2126,6 +2136,23 @@ fn stage_signal_hook_mio_trueos_overlay(work_dir: &Path) -> Result<PathBuf, Stri
     Ok(staged)
 }
 
+fn stage_futures_timer_trueos_overlay(work_dir: &Path) -> Result<PathBuf, String> {
+    const FUTURES_TIMER_VERSION: &str = "3.0.4";
+    let source_name = format!("futures-timer-{FUTURES_TIMER_VERSION}");
+    let source = find_cargo_registry_crate(&source_name).ok_or_else(|| {
+        format!(
+            "missing Cargo registry source for {source_name}; run `cargo fetch` for the app once"
+        )
+    })?;
+    let staged = work_dir
+        .join("source-overlay-crates")
+        .join("futures-timer-trueos");
+    reset_dir(&staged)?;
+    copy_app_tree(&source, &staged)?;
+    patch_futures_timer_trueos_overlay(&staged)?;
+    Ok(staged)
+}
+
 fn stage_crossterm_trueos_overlay(work_dir: &Path, version: &str) -> Result<PathBuf, String> {
     let source_name = format!("crossterm-{version}");
     let source = find_cargo_registry_crate(&source_name).ok_or_else(|| {
@@ -2240,6 +2267,7 @@ fn ensure_overlay_registry_sources(
         ("crossterm", "0.28.1", "crossterm-0.28.1"),
         ("crossterm", "0.29.0", "crossterm-0.29.0"),
         ("ctrlc", "3.4.4", "ctrlc-3.4.4"),
+        ("futures-timer", "3.0.4", "futures-timer-3.0.4"),
         ("hyper-timeout", "0.5.2", "hyper-timeout-0.5.2"),
         ("rustix", "0.38.44", "rustix-0.38.44"),
         ("rustix", "1.1.4", "rustix-1.1.4"),
@@ -2315,6 +2343,20 @@ fn patch_tokio_stream_trueos_overlay(crate_dir: &Path) -> Result<(), String> {
         "    #[cfg(unix)]\n    mod unix_listener;\n    #[cfg(unix)]\n    pub use unix_listener::UnixListenerStream;",
         "    #[cfg(all(unix, not(any(target_os = \"trueos\", target_os = \"zkvm\"))))]\n    mod unix_listener;\n    #[cfg(all(unix, not(any(target_os = \"trueos\", target_os = \"zkvm\"))))]\n    pub use unix_listener::UnixListenerStream;",
     )
+}
+
+fn patch_futures_timer_trueos_overlay(crate_dir: &Path) -> Result<(), String> {
+    replace_file_text(
+        &crate_dir.join("src/lib.rs"),
+        "#[cfg(not(all(target_arch = \"wasm32\", feature = \"wasm-bindgen\")))]\nmod native;\n#[cfg(all(target_arch = \"wasm32\", feature = \"wasm-bindgen\"))]\nmod wasm;\n\n#[cfg(not(all(target_arch = \"wasm32\", feature = \"wasm-bindgen\")))]\npub use self::native::Delay;\n#[cfg(all(target_arch = \"wasm32\", feature = \"wasm-bindgen\"))]\npub use self::wasm::Delay;",
+        "#[cfg(any(target_os = \"trueos\", target_os = \"zkvm\"))]\nmod trueos;\n#[cfg(all(\n    not(any(target_os = \"trueos\", target_os = \"zkvm\")),\n    not(all(target_arch = \"wasm32\", feature = \"wasm-bindgen\"))\n))]\nmod native;\n#[cfg(all(\n    not(any(target_os = \"trueos\", target_os = \"zkvm\")),\n    target_arch = \"wasm32\",\n    feature = \"wasm-bindgen\"\n))]\nmod wasm;\n\n#[cfg(any(target_os = \"trueos\", target_os = \"zkvm\"))]\npub use self::trueos::Delay;\n#[cfg(all(\n    not(any(target_os = \"trueos\", target_os = \"zkvm\")),\n    not(all(target_arch = \"wasm32\", feature = \"wasm-bindgen\"))\n))]\npub use self::native::Delay;\n#[cfg(all(\n    not(any(target_os = \"trueos\", target_os = \"zkvm\")),\n    target_arch = \"wasm32\",\n    feature = \"wasm-bindgen\"\n))]\npub use self::wasm::Delay;",
+    )?;
+    append_if_missing(
+        &crate_dir.join("Cargo.toml"),
+        "dependencies.trueos-tokio",
+        "\n[target.\"cfg(any(target_os = \\\"trueos\\\", target_os = \\\"zkvm\\\"))\".dependencies.trueos-tokio]\npackage = \"tokio\"\nversion = \"=1.52.3\"\ndefault-features = false\nfeatures = [\"rt\", \"time\"]\n",
+    )?;
+    fs::write(crate_dir.join("src/trueos.rs"), FUTURES_TIMER_TRUEOS_RS).map_err(io_string)
 }
 
 fn patch_tonic_trueos_overlay(crate_dir: &Path) -> Result<(), String> {
@@ -2680,6 +2722,72 @@ fn append_if_missing(path: &Path, needle: &str, addition: &str) -> Result<(), St
     original.push_str(addition);
     fs::write(path, original).map_err(io_string)
 }
+
+const FUTURES_TIMER_TRUEOS_RS: &str = r#"//! TRUEOS timer backend: use the application's existing Tokio timer wheel.
+
+use std::fmt;
+use std::future::Future;
+use std::pin::Pin;
+use std::task::{Context, Poll};
+use std::time::Duration;
+use trueos_tokio::time::{Instant, Sleep, sleep_until};
+
+/// A future which becomes ready after a duration has elapsed.
+///
+/// On TRUEOS this is deliberately a Tokio timer entry, not a helper pthread.
+/// The sleep is created lazily so constructing a libp2p behaviour immediately
+/// before entering its runtime remains valid.
+pub struct Delay {
+    deadline: Instant,
+    sleep: Option<Pin<Box<Sleep>>>,
+}
+
+impl Delay {
+    /// Creates a new delay.
+    #[inline]
+    pub fn new(duration: Duration) -> Self {
+        Self {
+            deadline: deadline_after(duration),
+            sleep: None,
+        }
+    }
+
+    /// Restarts this delay with a new duration.
+    #[inline]
+    pub fn reset(&mut self, duration: Duration) {
+        self.deadline = deadline_after(duration);
+        if let Some(sleep) = self.sleep.as_mut() {
+            sleep.as_mut().reset(self.deadline);
+        }
+    }
+}
+
+impl Future for Delay {
+    type Output = ();
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.get_mut();
+        if this.sleep.is_none() {
+            this.sleep = Some(Box::pin(sleep_until(this.deadline)));
+        }
+        this.sleep.as_mut().expect("sleep initialized").as_mut().poll(cx)
+    }
+}
+
+impl fmt::Debug for Delay {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Delay")
+            .field("deadline", &self.deadline)
+            .finish()
+    }
+}
+
+fn deadline_after(duration: Duration) -> Instant {
+    let now = Instant::now();
+    now.checked_add(duration)
+        .unwrap_or_else(|| now + Duration::from_secs(86_400 * 365 * 30))
+}
+"#;
 
 const CTRL_C_TRUEOS_PLATFORM_RS: &str = r#"// Patched by trueos-blueprint during SDK staging.
 
