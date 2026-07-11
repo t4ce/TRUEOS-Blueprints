@@ -2,7 +2,7 @@
 
 This is the subsystem-coherent five-agent pass over the 173-commit Blueprint timeline. Each entry is rewritten in the context of the related API, refactor, userspace, and kernel-service commits that belong to the same subsystem, even when those commits are separated in time.
 
-The individual subsystem drafts remain under tools/comitmsg/subsystem-pass/ for audit. This archive is descriptive only; it does not rewrite Git history or imply a commit or push.
+The individual subsystem drafts were used during synthesis and are not part of this final archive. This archive is descriptive only; it does not rewrite Git history or imply a commit or push.
 
 ## 001 — `1e0ac40f` — 2026-03-19
 
