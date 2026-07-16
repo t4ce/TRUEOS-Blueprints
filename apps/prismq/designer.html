@@ -89,8 +89,7 @@
     }
 
     main {
-      display: grid;
-      grid-template-rows: auto minmax(0, 1fr) minmax(240px, 36vh);
+      display: block;
       min-width: 0;
     }
 
@@ -293,6 +292,56 @@
       max-height: 520px;
     }
 
+    .revision-menu[hidden] {
+      display: none;
+    }
+
+    .revision-menu .menu-popover {
+      width: 170px;
+    }
+
+    .revision-option {
+      display: block;
+      width: 100%;
+      min-height: 32px;
+      border: 0;
+      border-radius: 4px;
+      background: transparent;
+      padding: 0 9px;
+      color: var(--ink);
+      text-align: left;
+      font-size: 12px;
+      cursor: pointer;
+    }
+
+    .revision-option:hover,
+    .revision-option[aria-current="true"] {
+      background: #edf4f2;
+    }
+
+    .revision-option[aria-current="true"] {
+      color: var(--gate);
+      font-weight: 750;
+    }
+
+    .circuit-filter {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 6px;
+      border-bottom: 1px solid var(--line);
+      padding: 3px 5px 9px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .circuit-filter .caption-field {
+      width: 72px;
+      min-width: 72px;
+    }
+
     .menu-section-title {
       display: flex;
       justify-content: space-between;
@@ -337,6 +386,57 @@
       right: auto;
       left: 0;
       width: min(420px, calc(100vw - 28px));
+    }
+
+    .simulation-history-menu .menu-popover {
+      right: auto;
+      left: 0;
+      width: min(430px, calc(100vw - 28px));
+    }
+
+    .simulation-history-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 58px;
+      align-items: center;
+      border-top: 1px solid #edf0ea;
+    }
+
+    .simulation-history-row button {
+      min-height: 38px;
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+      padding: 0 9px;
+      text-align: left;
+      font-size: 11px;
+    }
+
+    .simulation-history-row .delete-simulation {
+      color: #8b2119;
+      text-align: center;
+    }
+
+    .simulation-history-label,
+    .simulation-history-meta {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .simulation-history-label {
+      font-weight: 700;
+    }
+
+    .simulation-history-meta {
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 9px;
+    }
+
+    .simulation-tooltip .sim-preview {
+      color: #f0d493;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     }
 
     .history-head {
@@ -498,11 +598,60 @@
       width: 92px;
     }
 
+    .readout-policy {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 42px;
+      padding: 0 10px;
+      text-align: left;
+    }
+
+    .readout-policy i {
+      width: 9px;
+      height: 9px;
+      border: 2px solid #b17a1b;
+      border-radius: 50%;
+      background: transparent;
+    }
+
+    .readout-policy span {
+      display: grid;
+      gap: 1px;
+    }
+
+    .readout-policy b {
+      font-size: 11px;
+    }
+
+    .readout-policy small {
+      color: var(--muted);
+      font-size: 9px;
+      font-weight: 600;
+    }
+
+    .readout-policy.needs-readout {
+      border-color: #d8b36d;
+      background: #fffaf0;
+    }
+
+    .readout-policy.enabled {
+      border-color: #6d9f8d;
+      background: #eef8f4;
+    }
+
+    .readout-policy.enabled i {
+      border-color: var(--gate);
+      background: var(--gate);
+      box-shadow: inset 0 0 0 2px #eef8f4;
+    }
+
     .run-button {
       min-width: 92px;
-      background: var(--control);
-      border-color: var(--control);
+      background: #2867c7;
+      border-color: #2867c7;
       color: #fff;
+      transition: background .16s ease, box-shadow .16s ease, transform .16s ease;
     }
 
     .run-button:disabled {
@@ -510,28 +659,51 @@
       opacity: .72;
     }
 
+    .run-button.holding {
+      background: #1f55a6;
+      box-shadow: 0 0 0 4px rgba(45, 108, 223, .18);
+    }
+
+    .run-button.auto-locked {
+      background: #174b9b;
+      border-color: #174b9b;
+      animation: run-pulse 1s ease-in-out infinite;
+    }
+
+    @keyframes run-pulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(45, 108, 223, .36); }
+      50% { box-shadow: 0 0 0 7px rgba(45, 108, 223, 0); }
+    }
+
     .bottom-panel {
       display: grid;
-      grid-template-columns: minmax(280px, .85fr) minmax(340px, 1.15fr);
-      min-height: 0;
-      border-top: 1px solid var(--line);
-      background: #111817;
-    }
-
-    .bottom-panel.json-hidden {
       grid-template-columns: minmax(0, 1fr);
-    }
-
-    .bottom-panel.json-hidden .json-panel {
-      display: none;
+      gap: 18px;
+      min-height: 0;
+      margin: 0 18px 18px;
+      overflow: visible;
     }
 
     .json-panel {
       display: grid;
-      grid-template-rows: auto minmax(0, 1fr);
+      grid-template-rows: 48px minmax(240px, auto);
       min-width: 0;
-      min-height: 0;
-      border-right: 1px solid #31403c;
+      min-height: 288px;
+      overflow: hidden;
+      border: 1px solid #31403c;
+      border-radius: 8px;
+      background: #111817;
+      transition: min-height .16s ease;
+    }
+
+    .json-panel.collapsed {
+      grid-template-rows: 62px 0;
+      min-height: 64px;
+      height: 64px;
+    }
+
+    .json-panel.collapsed textarea {
+      display: none;
     }
 
     .panel-title {
@@ -551,6 +723,15 @@
       display: flex;
       align-items: center;
       gap: 8px;
+    }
+
+    .json-collapse {
+      min-height: 28px;
+      border-color: #42514c;
+      background: transparent;
+      color: #d9e6e1;
+      padding: 0 9px;
+      font-size: 11px;
     }
 
     .panel-menu > summary {
@@ -592,8 +773,10 @@
 
     .results-panel {
       min-width: 0;
-      min-height: 0;
-      overflow: auto;
+      min-height: 290px;
+      overflow: visible;
+      border: 1px solid var(--line);
+      border-radius: 8px;
       padding: 0 16px 16px;
       background: #f1f3ee;
     }
@@ -639,7 +822,7 @@
 
     .metrics {
       display: grid;
-      grid-template-columns: repeat(4, minmax(72px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
       gap: 8px;
       margin: 12px 0 16px;
     }
@@ -745,6 +928,52 @@
       width: 100%;
       min-width: 0;
       padding: 0 4px;
+      font: 700 11px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      letter-spacing: .04em;
+    }
+
+    .gate-tooltip {
+      position: fixed;
+      z-index: 100;
+      width: min(280px, calc(100vw - 24px));
+      border: 1px solid #34443f;
+      border-radius: 7px;
+      background: #111817;
+      color: #e8fff6;
+      box-shadow: 0 10px 28px rgba(10, 22, 18, .24);
+      padding: 10px 11px;
+      pointer-events: none;
+      opacity: 0;
+      transform: translateY(-3px);
+      transition: opacity .12s ease, transform .12s ease;
+    }
+
+    .gate-tooltip.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .gate-tooltip strong,
+    .gate-tooltip span {
+      display: block;
+    }
+
+    .gate-tooltip strong {
+      margin-bottom: 6px;
+      color: #fff;
+      font-size: 12px;
+    }
+
+    .gate-tooltip span {
+      margin-top: 3px;
+      color: #b9c9c3;
+      font-size: 11px;
+      line-height: 1.35;
+    }
+
+    .gate-tooltip .gate-effect {
+      margin-top: 7px;
+      color: #f0d493;
     }
 
     .wide {
@@ -787,6 +1016,34 @@
       min-width: 0;
       overflow: auto;
       padding: 18px;
+    }
+
+    .readout-notice {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      width: max-content;
+      max-width: 100%;
+      margin: 0 0 8px auto;
+      color: #8b5a08;
+      font-size: 10px;
+      font-weight: 700;
+    }
+
+    .readout-notice::before {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #d8a642;
+      content: "";
+    }
+
+    .readout-notice.enabled {
+      color: var(--gate);
+    }
+
+    .readout-notice.enabled::before {
+      background: #3f8b73;
     }
 
     .circuit {
@@ -867,6 +1124,45 @@
       color: #211800;
     }
 
+    .implicit-readout-cell {
+      border-left: 1px dashed #79a696;
+      background: linear-gradient(90deg, rgba(66, 139, 113, .04), rgba(66, 139, 113, .09));
+    }
+
+    .implicit-measure {
+      border: 1px dashed #34745f;
+      background: #eef8f4;
+      color: #245a49;
+    }
+
+    .implicit-measure::after {
+      position: absolute;
+      right: -6px;
+      bottom: -7px;
+      border-radius: 3px;
+      padding: 2px 3px;
+      background: #fff;
+      color: #34745f;
+      content: "RUN";
+      font: 700 7px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+
+    .result-context {
+      margin: 14px 0 0;
+      border-left: 3px solid var(--accent);
+      padding: 9px 12px;
+      background: #fffaf0;
+      color: #6d5526;
+      font-size: 11px;
+      line-height: 1.5;
+    }
+
+    .result-context.implicit {
+      border-color: #3f8b73;
+      background: #eef8f4;
+      color: #245a49;
+    }
+
     .dot {
       width: 13px;
       height: 13px;
@@ -912,9 +1208,11 @@
       }
 
       .json-panel {
-        min-height: 240px;
-        border-right: 0;
-        border-bottom: 1px solid #31403c;
+        min-height: 288px;
+      }
+
+      .json-panel.collapsed {
+        min-height: 64px;
       }
 
       header {
@@ -966,7 +1264,7 @@
       <header>
         <div class="toolbar">
           <button id="toggleDesigner" class="panel-toggle" type="button" aria-pressed="true">Designer</button>
-          <button id="toggleJson" class="panel-toggle" type="button" aria-pressed="false">JSON</button>
+          <span id="dirtyBadge" class="dirty-badge" hidden>Edited</span>
           <details id="historyMenu" class="menu history-menu">
             <summary id="historySummary">History · 1</summary>
             <div class="menu-popover">
@@ -977,6 +1275,16 @@
               <div id="historyList" class="history-list"></div>
             </div>
           </details>
+          <details id="simulationHistoryMenu" class="menu simulation-history-menu">
+            <summary id="simulationHistorySummary">Simulation History · 0</summary>
+            <div class="menu-popover">
+              <div class="history-head">
+                <span id="simulationHistoryMemory">0 results · 0 B</span>
+              </div>
+              <div id="simulationHistoryList"></div>
+            </div>
+          </details>
+          <span id="saveStatus" class="save-status"></span>
         </div>
         <div class="toolbar">
           <fieldset class="caption-field circuit-name-field">
@@ -985,8 +1293,15 @@
           </fieldset>
           <button id="saveCircuit" class="primary" type="button">Save</button>
           <details id="savedMenu" class="menu">
-            <summary>Circuits</summary>
+            <summary id="circuitMenuSummary">Circuits · 1q</summary>
             <div class="menu-popover">
+              <div class="circuit-filter">
+                <span>Filter both lists</span>
+                <fieldset class="caption-field">
+                  <legend>Qubits</legend>
+                  <input id="circuitQubitFilter" type="number" min="1" max="26" step="1" value="1">
+                </fieldset>
+              </div>
               <section class="menu-section">
                 <div class="menu-section-title"><span>Common</span><span>Append</span></div>
                 <div id="commonCircuits"></div>
@@ -997,8 +1312,10 @@
               </section>
             </div>
           </details>
-          <span id="dirtyBadge" class="dirty-badge" hidden>Edited</span>
-          <span id="saveStatus" class="save-status"></span>
+          <details id="revisionMenu" class="menu revision-menu" hidden>
+            <summary id="revisionSummary">Revision · Latest</summary>
+            <div id="revisionList" class="menu-popover"></div>
+          </details>
           <div class="run-config">
             <fieldset class="caption-field">
               <legend>Shots</legend>
@@ -1008,19 +1325,33 @@
               <legend>Seed</legend>
               <input id="seed" type="number" min="0" step="1">
             </fieldset>
+            <button id="readoutPolicy" class="readout-policy" type="button" aria-pressed="false">
+              <i aria-hidden="true"></i>
+              <span><b>Readout</b><small id="readoutPolicyState">Exact only</small></span>
+            </button>
           </div>
-          <button id="run" class="run-button" type="button">Run circuit</button>
+          <button id="run" class="run-button" type="button" aria-pressed="false" title="Click to run once; hold for 3 seconds to lock auto-run">Run circuit</button>
         </div>
       </header>
       <section class="stage">
+        <div id="readoutNotice" class="readout-notice"></div>
         <div class="circuit" id="circuit"></div>
       </section>
-      <section class="bottom-panel json-hidden" id="bottomPanel">
-        <div class="json-panel">
+      <section class="bottom-panel">
+        <div class="results-panel" aria-live="polite">
+          <div class="panel-title">
+            <span>Simulation results</span>
+            <span class="result-status" id="resultStatus">Ready</span>
+          </div>
+          <div class="progress-track" id="progress"></div>
+          <div id="results" class="empty-result">Run the circuit to inspect measurement counts and exact state probabilities.</div>
+        </div>
+        <div class="json-panel collapsed" id="jsonPanel">
           <div class="panel-title">
             <span>Single JSON contract</span>
             <div class="panel-actions">
               <span>prismq.circuit.v1</span>
+              <button id="toggleJsonPanel" class="json-collapse" type="button" aria-expanded="false">Expand</button>
               <details id="jsonMenu" class="menu panel-menu">
                 <summary aria-label="JSON actions">⋯</summary>
                 <div class="menu-popover">
@@ -1031,14 +1362,6 @@
             </div>
           </div>
           <textarea id="json" spellcheck="false" aria-label="Circuit JSON"></textarea>
-        </div>
-        <div class="results-panel" aria-live="polite">
-          <div class="panel-title">
-            <span>Simulation results</span>
-            <span class="result-status" id="resultStatus">Ready</span>
-          </div>
-          <div class="progress-track" id="progress"></div>
-          <div id="results" class="empty-result">Run the circuit to inspect measurement counts and exact state probabilities.</div>
         </div>
       </section>
     </main>
@@ -1053,14 +1376,32 @@
   </dialog>
 
   <script>
-    const gateButtons = [
-      "h", "x", "y", "z",
-      "s", "sdg", "t", "tdg",
-      "rx", "ry", "rz", "phase",
-      "cx", "cy", "cz", "ch",
-      "swap", "rzz", "rxx", "ryy",
-      "ccx", "cswap", "barrier", "measure",
-      "reset"
+    const gateCatalog = [
+      { name: "h", fullName: "Hadamard", input: "1 target qubit", output: "Target in an equal superposition", effect: "Creates or recombines a 0/1 superposition and enables interference." },
+      { name: "x", fullName: "Pauli-X", input: "1 target qubit", output: "Target bit-flipped", effect: "Swaps |0> and |1>; the quantum equivalent of a classical NOT." },
+      { name: "y", fullName: "Pauli-Y", input: "1 target qubit", output: "Target bit- and phase-flipped", effect: "Rotates the state by pi around the Bloch sphere's Y axis." },
+      { name: "z", fullName: "Pauli-Z", input: "1 target qubit", output: "Target phase-flipped", effect: "Leaves |0> unchanged and negates the phase of |1>." },
+      { name: "s", fullName: "S phase gate", input: "1 target qubit", output: "Target phase advanced by pi/2", effect: "Applies the square root of Z for quarter-turn phase control." },
+      { name: "sdg", fullName: "S-dagger gate", input: "1 target qubit", output: "Target phase reduced by pi/2", effect: "Applies the inverse S phase rotation." },
+      { name: "t", fullName: "T phase gate", input: "1 target qubit", output: "Target phase advanced by pi/4", effect: "Adds a fine eighth-turn phase used in universal circuits." },
+      { name: "tdg", fullName: "T-dagger gate", input: "1 target qubit", output: "Target phase reduced by pi/4", effect: "Applies the inverse T phase rotation." },
+      { name: "rx", fullName: "X-axis rotation", input: "Target qubit + angle", output: "Target rotated around X", effect: "Continuously mixes |0> and |1> by the selected angle." },
+      { name: "ry", fullName: "Y-axis rotation", input: "Target qubit + angle", output: "Target rotated around Y", effect: "Creates real-valued amplitude mixtures without an added complex phase." },
+      { name: "rz", fullName: "Z-axis rotation", input: "Target qubit + angle", output: "Target phase rotated around Z", effect: "Changes relative phase while preserving measurement probabilities." },
+      { name: "phase", fullName: "Phase shift", input: "Target qubit + angle", output: "Phase shifted target", effect: "Applies a configurable phase only to the |1> component." },
+      { name: "cx", fullName: "Controlled-X / CNOT", input: "Control + target qubit", output: "Target flipped when control is |1>", effect: "Correlates qubits and is the standard gate for creating entanglement." },
+      { name: "cy", fullName: "Controlled-Y", input: "Control + target qubit", output: "Y applied when control is |1>", effect: "Conditionally applies both a bit and phase rotation." },
+      { name: "cz", fullName: "Controlled-Z", input: "Control + target qubit", output: "Joint |11> phase flipped", effect: "Adds a conditional phase and can entangle superposed qubits." },
+      { name: "ch", fullName: "Controlled-Hadamard", input: "Control + target qubit", output: "Hadamard applied when control is |1>", effect: "Conditionally creates or recombines target superposition." },
+      { name: "swap", fullName: "SWAP", input: "2 target qubits", output: "The two quantum states exchanged", effect: "Moves quantum information between wires without measuring it." },
+      { name: "rzz", fullName: "ZZ interaction rotation", input: "2 target qubits + angle", output: "Correlated Z phase rotation", effect: "Models Ising-style coupling and creates phase correlations." },
+      { name: "rxx", fullName: "XX interaction rotation", input: "2 target qubits + angle", output: "Correlated X rotation", effect: "Mixes paired amplitudes through an XX interaction." },
+      { name: "ryy", fullName: "YY interaction rotation", input: "2 target qubits + angle", output: "Correlated Y rotation", effect: "Mixes paired amplitudes through a YY interaction." },
+      { name: "ccx", fullName: "Toffoli / controlled-controlled-X", input: "2 controls + 1 target", output: "Target flipped when both controls are |1>", effect: "Implements a reversible AND-controlled NOT operation." },
+      { name: "cswap", fullName: "Fredkin / controlled-SWAP", input: "1 control + 2 targets", output: "Targets exchanged when control is |1>", effect: "Conditionally routes two quantum states without measurement." },
+      { name: "barrier", fullName: "Barrier", input: "All circuit qubits", output: "Unchanged quantum state", effect: "Preserves a visual/compiler boundary and prevents reordering across it." },
+      { name: "measure", fullName: "Measurement", input: "1 qubit + classical bit", output: "Classical 0 or 1; qubit collapsed", effect: "Reads a qubit in the computational basis and stores the outcome." },
+      { name: "reset", fullName: "Reset", input: "1 target qubit", output: "Target returned to |0>", effect: "Discards the previous target state and prepares a clean zero state." }
     ];
 
     const singleTarget = new Set(["h", "x", "y", "z", "s", "sdg", "t", "tdg", "reset"]);
@@ -1071,7 +1412,6 @@
 
     const el = {
       app: document.getElementById("app"),
-      bottomPanel: document.getElementById("bottomPanel"),
       qubits: document.getElementById("qubits"),
       bits: document.getElementById("bits"),
       target: document.getElementById("target"),
@@ -1084,17 +1424,26 @@
       json: document.getElementById("json"),
       shots: document.getElementById("shots"),
       seed: document.getElementById("seed"),
+      readoutPolicy: document.getElementById("readoutPolicy"),
+      readoutPolicyState: document.getElementById("readoutPolicyState"),
+      readoutNotice: document.getElementById("readoutNotice"),
       run: document.getElementById("run"),
       progress: document.getElementById("progress"),
       resultStatus: document.getElementById("resultStatus"),
       results: document.getElementById("results"),
       toggleDesigner: document.getElementById("toggleDesigner"),
-      toggleJson: document.getElementById("toggleJson"),
+      jsonPanel: document.getElementById("jsonPanel"),
+      toggleJsonPanel: document.getElementById("toggleJsonPanel"),
       circuitName: document.getElementById("circuitName"),
       saveCircuit: document.getElementById("saveCircuit"),
       savedMenu: document.getElementById("savedMenu"),
+      circuitMenuSummary: document.getElementById("circuitMenuSummary"),
+      circuitQubitFilter: document.getElementById("circuitQubitFilter"),
       commonCircuits: document.getElementById("commonCircuits"),
       savedCircuits: document.getElementById("savedCircuits"),
+      revisionMenu: document.getElementById("revisionMenu"),
+      revisionSummary: document.getElementById("revisionSummary"),
+      revisionList: document.getElementById("revisionList"),
       saveStatus: document.getElementById("saveStatus"),
       dirtyBadge: document.getElementById("dirtyBadge"),
       historyMenu: document.getElementById("historyMenu"),
@@ -1102,6 +1451,10 @@
       historyMemory: document.getElementById("historyMemory"),
       historyList: document.getElementById("historyList"),
       resetHistory: document.getElementById("resetHistory"),
+      simulationHistoryMenu: document.getElementById("simulationHistoryMenu"),
+      simulationHistorySummary: document.getElementById("simulationHistorySummary"),
+      simulationHistoryMemory: document.getElementById("simulationHistoryMemory"),
+      simulationHistoryList: document.getElementById("simulationHistoryList"),
       jsonMenu: document.getElementById("jsonMenu"),
       decisionDialog: document.getElementById("decisionDialog"),
       decisionTitle: document.getElementById("decisionTitle"),
@@ -1118,12 +1471,24 @@
         schema: "prismq.circuit.v1",
         qubits,
         bits,
-        seed: 42,
+        seed: 0,
         shots: 1024,
         threshold: 1e-10,
         gates: gates.concat(Array.from({ length: bits }, (_, bit) => ({
           gate: "measure", qubit: Math.min(bit, qubits - 1), bit
         })))
+      };
+    }
+
+    function emptyCircuit() {
+      return {
+        schema: "prismq.circuit.v1",
+        qubits: 1,
+        bits: 0,
+        seed: 0,
+        shots: 1024,
+        threshold: 1e-10,
+        gates: []
       };
     }
 
@@ -1241,20 +1606,35 @@
 
     const clone = (value) => JSON.parse(JSON.stringify(value));
     const textEncoder = new TextEncoder();
-    let state = clone(circuitTemplates[0][1]);
-    let history = createHistory(state, "Started · Bell pair");
+    let state = emptyCircuit();
+    let history = createHistory();
     let dirty = false;
     let jsonDraftDirty = false;
+    let savedCircuitEntries = [];
+    let activeStoredName = "";
+    let activeStoredRevision = null;
+    let runInProgress = false;
+    let runHoldStartedAt = 0;
+    let runHoldInterval = 0;
+    let autoRunTimer = 0;
+    let autoRunLocked = false;
+    let suppressRunClick = false;
+    let simulationHistory = [];
+    let nextSimulationHistoryId = 1;
 
     function circuitDocument(value) {
+      const readoutMode = value.readout?.mode === "measure_unmeasured"
+        ? "measure_unmeasured"
+        : "explicit";
       return {
         schema: "prismq.circuit.v1",
         qubits: clampInt(value.qubits, 1, 26),
         bits: clampInt(value.bits ?? 0, 0, 26),
-        seed: Math.max(0, Number.parseInt(value.seed ?? 42, 10) || 0),
+        seed: Math.max(0, Number.parseInt(value.seed ?? 0, 10) || 0),
         shots: clampInt(value.shots ?? 1024, 1, 100000),
         threshold: Number.isFinite(Number(value.threshold)) ? Number(value.threshold) : 1e-10,
-        gates: Array.isArray(value.gates) ? clone(value.gates) : []
+        gates: Array.isArray(value.gates) ? clone(value.gates) : [],
+        readout: { mode: readoutMode }
       };
     }
 
@@ -1267,23 +1647,23 @@
       return { label, bytes: snapshotBytes(clean), snapshot: clean };
     }
 
-    function createHistory(snapshot, label = "Started") {
+    function createHistory() {
       return {
         schema: "prismq.history.v1",
-        cursor: 0,
-        actions: [historyAction(label, snapshot)],
+        cursor: -1,
+        actions: [],
         branches: []
       };
     }
 
-    function normalizeHistory(value, fallbackSnapshot, fallbackLabel) {
+    function normalizeHistory(value) {
       if (!value || value.schema !== "prismq.history.v1" || !Array.isArray(value.actions) || !value.actions.length) {
-        return createHistory(fallbackSnapshot, fallbackLabel);
+        return createHistory();
       }
       const actions = value.actions
         .filter((action) => action && action.snapshot)
         .map((action, index) => historyAction(String(action.label || `Action ${index + 1}`), action.snapshot));
-      if (!actions.length) return createHistory(fallbackSnapshot, fallbackLabel);
+      if (!actions.length) return createHistory();
       const cursor = Math.max(0, Math.min(actions.length - 1, Number.parseInt(value.cursor, 10) || 0));
       const branches = Array.isArray(value.branches) ? clone(value.branches) : [];
       return { schema: "prismq.history.v1", cursor, actions, branches };
@@ -1301,7 +1681,7 @@
 
     function historyMemoryBytes() {
       return history.actions.reduce((sum, action) => sum + action.bytes, 0)
-        + snapshotBytes(history.branches);
+        + (history.branches.length ? snapshotBytes(history.branches) : 0);
     }
 
     function setDirty(value) {
@@ -1348,6 +1728,25 @@
         [
           { label: "Keep editing", value: false },
           { label: "Replace anyway", value: true, kind: "danger" }
+        ]
+      );
+      return choice === true;
+    }
+
+    function hasWorkAfterTemplateLoad() {
+      if (jsonDraftDirty) return true;
+      if (!dirty) return false;
+      const currentAction = history.actions[history.cursor];
+      return !currentAction || !currentAction.label.startsWith("Load template · ");
+    }
+
+    async function allowTemplateReplacement(label) {
+      const choice = await askDecision(
+        "Replace edited circuit?",
+        `Work added after the current template will leave the canvas when “${label}” loads. It remains preserved as earlier entries in History.`,
+        [
+          { label: "Keep editing", value: false },
+          { label: "Load & preserve history", value: true, kind: "primary" }
         ]
       );
       return choice === true;
@@ -1490,8 +1889,61 @@
       return `${gate.gate} q${gate.target}`;
     }
 
+    function implicitReadoutMappings(value = state) {
+      const measuredQubits = new Set();
+      const usedBits = Array.from({ length: value.bits || 0 }, () => false);
+      value.gates.forEach((gate) => {
+        if (!["measure", "m"].includes(String(gate.gate).toLowerCase())) return;
+        const qubit = gate.qubit ?? gate.target ?? gate.targets?.[0];
+        if (!Number.isInteger(qubit) || qubit < 0 || qubit >= value.qubits) return;
+        measuredQubits.add(qubit);
+        const bit = Number.isInteger(gate.bit) ? gate.bit : qubit;
+        while (usedBits.length <= bit) usedBits.push(false);
+        usedBits[bit] = true;
+      });
+      const mappings = [];
+      for (let qubit = 0; qubit < value.qubits; qubit += 1) {
+        if (measuredQubits.has(qubit)) continue;
+        let bit = !usedBits[qubit] ? qubit : usedBits.findIndex((used) => !used);
+        if (bit < 0) bit = usedBits.length;
+        while (usedBits.length <= bit) usedBits.push(false);
+        usedBits[bit] = true;
+        mappings.push({ qubit, bit });
+      }
+      return mappings;
+    }
+
+    function readoutEnabled() {
+      return state.readout?.mode === "measure_unmeasured";
+    }
+
+    function renderReadoutPolicy() {
+      const mappings = implicitReadoutMappings();
+      const enabled = readoutEnabled();
+      el.readoutPolicy.classList.toggle("enabled", enabled);
+      el.readoutPolicy.classList.toggle("needs-readout", !enabled && mappings.length > 0);
+      el.readoutPolicy.setAttribute("aria-pressed", String(enabled));
+      if (enabled) {
+        el.readoutPolicyState.textContent = mappings.length
+          ? `Measure ${mappings.length} missing`
+          : "Explicitly covered";
+        el.readoutNotice.className = "readout-notice enabled";
+        el.readoutNotice.textContent = mappings.length
+          ? `${mappings.length} run-only measurement${mappings.length === 1 ? "" : "s"} shown as dashed terminal gates`
+          : "Every qubit already has an explicit measurement; no run-only gates needed";
+      } else {
+        el.readoutPolicyState.textContent = mappings.length ? `${mappings.length} unmeasured` : "Explicitly covered";
+        el.readoutNotice.className = "readout-notice";
+        el.readoutNotice.textContent = mappings.length
+          ? `${mappings.length} qubit${mappings.length === 1 ? " has" : "s have"} no measurement · runs show exact state only`
+          : "All qubits are accounted for by explicit measurement gates";
+      }
+    }
+
     function renderCircuit() {
-      const columns = Math.max(1, state.gates.length);
+      const implicit = readoutEnabled() ? implicitReadoutMappings() : [];
+      const authoredColumns = Math.max(1, state.gates.length);
+      const columns = authoredColumns + (implicit.length ? 1 : 0);
       el.circuit.style.gridTemplateColumns = `54px repeat(${columns}, 64px)`;
       el.circuit.textContent = "";
 
@@ -1506,6 +1958,14 @@
           cell.className = "cell";
           const gate = state.gates[col];
           if (gate) drawGateCell(cell, gate, row);
+          if (implicit.length && col === columns - 1) {
+            const mapping = implicit.find(({ qubit }) => qubit === row);
+            cell.classList.add("implicit-readout-cell");
+            if (mapping) {
+              cell.title = `Run-only readout q${mapping.qubit} → c${mapping.bit}`;
+              appendMark(cell, "measure implicit-measure", "M");
+            }
+          }
           el.circuit.appendChild(cell);
         }
       }
@@ -1598,13 +2058,14 @@
       el.qubits.value = state.qubits;
       el.bits.value = state.bits;
       el.shots.value = state.shots ?? 1024;
-      el.seed.value = state.seed ?? 42;
+      el.seed.value = state.seed ?? 0;
       setOptions(el.target, state.qubits, "q");
       setOptions(el.control, state.qubits, "q");
       setOptions(el.bit, Math.max(1, state.bits), "c");
       renderCircuit();
       renderOperations();
       renderHistory();
+      renderReadoutPolicy();
       el.json.value = JSON.stringify(persistenceDocument(), null, 2);
       jsonDraftDirty = false;
       setDirty(dirty);
@@ -1616,9 +2077,86 @@
     }
 
     function setRunning(running) {
-      el.run.disabled = running;
-      el.run.textContent = running ? "Running…" : "Run circuit";
+      runInProgress = running;
+      el.run.disabled = running && !autoRunLocked;
       el.progress.classList.toggle("active", running);
+      updateRunButton();
+    }
+
+    function updateRunButton() {
+      const heldFor = runHoldStartedAt > 0 ? performance.now() - runHoldStartedAt : 0;
+      const showHoldCountdown = runHoldStartedAt > 0 && heldFor >= 500 && !autoRunLocked;
+      el.run.classList.toggle("auto-locked", autoRunLocked);
+      el.run.classList.toggle("holding", showHoldCountdown);
+      el.run.setAttribute("aria-pressed", String(autoRunLocked));
+      if (autoRunLocked) {
+        el.run.textContent = runInProgress ? "Auto running…" : "Auto · 1s";
+      } else if (showHoldCountdown) {
+        const remaining = Math.max(0, 3000 - heldFor);
+        el.run.textContent = `Hold ${(remaining / 1000).toFixed(1)}s`;
+      } else {
+        el.run.textContent = runInProgress ? "Running…" : "Run circuit";
+      }
+    }
+
+    function cancelRunHold() {
+      if (runHoldInterval) window.clearInterval(runHoldInterval);
+      runHoldInterval = 0;
+      runHoldStartedAt = 0;
+      updateRunButton();
+    }
+
+    function beginRunHold(event) {
+      if (event.button !== undefined && event.button !== 0) return;
+      if (runInProgress || autoRunLocked || runHoldStartedAt > 0) return;
+      runHoldStartedAt = performance.now();
+      updateRunButton();
+      runHoldInterval = window.setInterval(() => {
+        const heldFor = performance.now() - runHoldStartedAt;
+        updateRunButton();
+        if (heldFor >= 3000) activateAutoRun();
+      }, 100);
+    }
+
+    function activateAutoRun() {
+      cancelRunHold();
+      suppressRunClick = true;
+      autoRunLocked = true;
+      el.run.disabled = false;
+      updateRunButton();
+      showSaveStatus("Auto-run locked · click Run to stop");
+      runAutoCycle();
+    }
+
+    function stopAutoRun(message = "Auto-run stopped") {
+      autoRunLocked = false;
+      if (autoRunTimer) window.clearTimeout(autoRunTimer);
+      autoRunTimer = 0;
+      el.run.disabled = runInProgress;
+      updateRunButton();
+      showSaveStatus(message);
+    }
+
+    async function runAutoCycle() {
+      if (!autoRunLocked || runInProgress) return;
+      const succeeded = await runCircuit();
+      if (!autoRunLocked) return;
+      if (!succeeded) {
+        stopAutoRun("Auto-run stopped · evaluation failed");
+        return;
+      }
+      autoRunTimer = window.setTimeout(() => {
+        autoRunTimer = 0;
+        runAutoCycle();
+      }, 1000);
+    }
+
+    function prepareNextSeed(usedSeed) {
+      const nextSeed = usedSeed >= Number.MAX_SAFE_INTEGER ? 0 : usedSeed + 1;
+      state.seed = nextSeed;
+      const current = history.actions[history.cursor];
+      if (current) history.actions[history.cursor] = historyAction(current.label, state);
+      render();
     }
 
     function addMetric(container, value, label) {
@@ -1641,8 +2179,24 @@
       addMetric(metrics, result.circuit.qubits, "Qubits");
       addMetric(metrics, result.circuit.depth, "Depth");
       addMetric(metrics, result.circuit.gates, "Gates");
+      addMetric(metrics, result.circuit.measurements, "Measurements");
       addMetric(metrics, `${result.elapsedMs} ms`, "Server time");
       el.results.appendChild(metrics);
+
+      const implicitMeasurements = result.readout?.implicitMeasurements || [];
+      const context = document.createElement("div");
+      context.className = `result-context${implicitMeasurements.length ? " implicit" : ""}`;
+      if (implicitMeasurements.length) {
+        const mapping = implicitMeasurements
+          .map(({ qubit, bit }) => `q${qubit}→c${bit}`)
+          .join(" · ");
+        context.textContent = `Run-only readout sampled ${implicitMeasurements.length} otherwise unmeasured qubit${implicitMeasurements.length === 1 ? "" : "s"}: ${mapping}. The dashed gates were not added to the authored circuit.`;
+      } else if (result.circuit.measurements === 0) {
+        context.textContent = "Exact quantum state only. No measurement gates ran, so classical shot counts are intentionally omitted.";
+      } else {
+        context.textContent = "Classical counts come only from explicit measurement gates in the authored circuit.";
+      }
+      el.results.appendChild(context);
 
       const rows = result.counts.length ? result.counts : result.probabilities;
       if (!rows.length) {
@@ -1667,7 +2221,7 @@
         track.className = "outcome-track";
         bar.className = "outcome-bar";
         value.className = "outcome-value";
-        stateLabel.textContent = `|${row.state}>`;
+        stateLabel.textContent = result.counts.length ? `c:${row.state}` : `|${row.state}⟩`;
         bar.style.width = `${Math.max(0, Math.min(100, row.probability / max * 100))}%`;
         value.textContent = result.counts.length
           ? `${row.count} · ${(row.probability * 100).toFixed(1)}%`
@@ -1679,13 +2233,101 @@
       el.results.appendChild(histogram);
     }
 
+    function recordSimulationResult(result) {
+      const snapshot = clone(result);
+      simulationHistory.push({
+        id: nextSimulationHistoryId++,
+        name: el.circuitName.value.trim() || `${result.circuit.qubits}-qubit circuit`,
+        createdAt: new Date(),
+        bytes: snapshotBytes(snapshot),
+        result: snapshot
+      });
+      if (simulationHistory.length > 200) simulationHistory.shift();
+      renderSimulationHistory();
+    }
+
+    function renderSimulationHistory() {
+      const bytes = simulationHistory.reduce((sum, entry) => sum + entry.bytes, 0);
+      el.simulationHistorySummary.textContent = `Simulation History · ${simulationHistory.length}`;
+      el.simulationHistoryMemory.textContent = `${simulationHistory.length} result${simulationHistory.length === 1 ? "" : "s"} · ${formatBytes(bytes)}`;
+      el.simulationHistoryList.textContent = "";
+      if (!simulationHistory.length) {
+        const empty = document.createElement("div");
+        empty.className = "saved-empty";
+        empty.textContent = "Successful simulations appear here.";
+        el.simulationHistoryList.appendChild(empty);
+        return;
+      }
+      [...simulationHistory].reverse().forEach((entry) => {
+        const row = document.createElement("div");
+        const load = document.createElement("button");
+        const label = document.createElement("span");
+        const meta = document.createElement("span");
+        const remove = document.createElement("button");
+        row.className = "simulation-history-row";
+        load.type = "button";
+        label.className = "simulation-history-label";
+        meta.className = "simulation-history-meta";
+        label.textContent = entry.name;
+        meta.textContent = `seed ${entry.result.seed} · ${entry.result.circuit.qubits}q · ${entry.result.elapsedMs} ms · ${entry.createdAt.toLocaleTimeString()}`;
+        load.append(label, meta);
+        load.setAttribute("aria-describedby", "simulationTooltip");
+        load.addEventListener("click", () => loadSimulationResult(entry));
+        load.addEventListener("mouseenter", () => showSimulationTooltip(load, entry));
+        load.addEventListener("mouseleave", hideSimulationTooltip);
+        load.addEventListener("focus", () => showSimulationTooltip(load, entry));
+        load.addEventListener("blur", hideSimulationTooltip);
+        remove.type = "button";
+        remove.className = "delete-simulation";
+        remove.textContent = "Delete";
+        remove.setAttribute("aria-label", `Delete simulation result for ${entry.name}, seed ${entry.result.seed}`);
+        remove.addEventListener("click", () => deleteSimulationResult(entry.id));
+        row.append(load, remove);
+        el.simulationHistoryList.appendChild(row);
+      });
+    }
+
+    function loadSimulationResult(entry) {
+      hideSimulationTooltip();
+      renderResults(entry.result);
+      el.resultStatus.textContent = `History · seed ${entry.result.seed} · ${entry.createdAt.toLocaleTimeString()}`;
+      el.simulationHistoryMenu.open = false;
+    }
+
+    function deleteSimulationResult(id) {
+      hideSimulationTooltip();
+      simulationHistory = simulationHistory.filter((entry) => entry.id !== id);
+      renderSimulationHistory();
+    }
+
+    function showSimulationTooltip(button, entry) {
+      const heading = document.createElement("strong");
+      const metrics = document.createElement("span");
+      const preview = document.createElement("span");
+      const rows = entry.result.counts.length ? entry.result.counts : entry.result.probabilities;
+      heading.textContent = entry.name;
+      metrics.textContent = `Seed ${entry.result.seed} · ${entry.result.circuit.qubits} qubits · depth ${entry.result.circuit.depth} · ${entry.result.elapsedMs} ms`;
+      preview.className = "sim-preview";
+      preview.textContent = rows.length
+        ? rows.slice(0, 4).map((row) => `|${row.state}> ${(row.probability * 100).toFixed(1)}%`).join("  ·  ")
+        : "No outcomes above threshold";
+      simulationTooltip.textContent = "";
+      simulationTooltip.append(heading, metrics, preview);
+      simulationTooltip.classList.add("visible");
+      positionFloatingTooltip(simulationTooltip, button);
+    }
+
+    function hideSimulationTooltip() {
+      simulationTooltip.classList.remove("visible");
+    }
+
     async function runCircuit() {
       let document;
       try {
         document = documentFromEditor();
         if (JSON.stringify(document) !== JSON.stringify(circuitDocument(state))) {
           const applied = await commitMutation("Apply edited JSON", () => { state = document; });
-          if (!applied) return;
+          if (!applied) return false;
           document = circuitDocument(state);
         } else {
           render();
@@ -1694,10 +2336,11 @@
         el.resultStatus.textContent = "Invalid JSON";
         el.results.className = "error-result";
         el.results.textContent = error.message;
-        return;
+        return false;
       }
 
       setRunning(true);
+      prepareNextSeed(document.seed);
       const started = performance.now();
       const timer = window.setInterval(() => {
         el.resultStatus.textContent = `Simulating · ${((performance.now() - started) / 1000).toFixed(1)} s`;
@@ -1712,12 +2355,18 @@
         const result = await response.json().catch(() => ({}));
         if (!response.ok || !result.ok) throw new Error(result.error || `Server returned HTTP ${response.status}`);
         renderResults(result);
-        const kind = result.counts.length ? `${result.shots.toLocaleString()} shots` : "exact probabilities";
+        recordSimulationResult(result);
+        const implicit = result.readout?.implicitMeasurements?.length || 0;
+        const kind = result.counts.length
+          ? `${result.shots.toLocaleString()} shots${implicit ? " · run-only readout" : ""}`
+          : "exact state · unmeasured";
         el.resultStatus.textContent = `Complete · ${kind}`;
+        return true;
       } catch (error) {
         el.resultStatus.textContent = "Run failed";
         el.results.className = "error-result";
         el.results.textContent = error.message;
+        return false;
       } finally {
         window.clearInterval(timer);
         setRunning(false);
@@ -1725,13 +2374,15 @@
     }
 
     function setPanelVisibility(kind, visible) {
-      if (kind === "designer") {
-        el.app.classList.toggle("designer-hidden", !visible);
-        el.toggleDesigner.setAttribute("aria-pressed", String(visible));
-      } else {
-        el.bottomPanel.classList.toggle("json-hidden", !visible);
-        el.toggleJson.setAttribute("aria-pressed", String(visible));
-      }
+      if (kind !== "designer") return;
+      el.app.classList.toggle("designer-hidden", !visible);
+      el.toggleDesigner.setAttribute("aria-pressed", String(visible));
+    }
+
+    function setJsonExpanded(expanded) {
+      el.jsonPanel.classList.toggle("collapsed", !expanded);
+      el.toggleJsonPanel.setAttribute("aria-expanded", String(expanded));
+      el.toggleJsonPanel.textContent = expanded ? "Collapse" : "Expand";
     }
 
     function showSaveStatus(message, isError = false) {
@@ -1747,35 +2398,96 @@
         .trim();
     }
 
-    async function apiJson(url, options) {
-      const response = await fetch(url, options);
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok || !payload.ok) {
-        throw new Error(payload.error || `Server returned HTTP ${response.status}`);
+    async function apiJson(url, options = {}) {
+      const { timeoutMs = 12000, ...fetchOptions } = options;
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const response = await fetch(url, { ...fetchOptions, signal: controller.signal });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || !payload.ok) {
+          throw new Error(payload.error || `Server returned HTTP ${response.status}`);
+        }
+        return payload;
+      } catch (error) {
+        if (error.name === "AbortError") {
+          throw new Error("Storage request timed out; the circuit was not saved");
+        }
+        throw error;
+      } finally {
+        window.clearTimeout(timeout);
       }
-      return payload;
     }
 
     async function refreshSavedCircuits() {
       try {
         const payload = await apiJson("/api/circuits");
-        renderSavedCircuits(payload.circuits || []);
+        savedCircuitEntries = (payload.circuits || []).map((entry) => {
+          if (typeof entry === "string") return { name: entry, qubits: 0, revisions: [] };
+          return {
+            ...entry,
+            revisions: Array.isArray(entry.revisions)
+              ? entry.revisions.map(Number).filter((revision) => Number.isInteger(revision) && revision > 0)
+              : []
+          };
+        });
+        renderSavedCircuits();
+        renderRevisionMenu();
       } catch (error) {
-        renderSavedCircuits([]);
+        savedCircuitEntries = [];
+        renderSavedCircuits();
+        renderRevisionMenu();
         showSaveStatus(error.message, true);
       }
     }
 
-    function renderSavedCircuits(names) {
+    function renderRevisionMenu() {
+      const currentName = el.circuitName.value.trim();
+      const entry = savedCircuitEntries.find(({ name }) =>
+        name === activeStoredName && name === currentName
+      );
+      const revisions = entry?.revisions || [];
+      const visible = revisions.length > 0;
+      el.revisionMenu.hidden = !visible;
+      if (!visible) {
+        el.revisionMenu.open = false;
+        el.revisionList.textContent = "";
+        return;
+      }
+
+      el.revisionSummary.textContent = activeStoredRevision
+        ? `Revision · rev${activeStoredRevision}`
+        : "Revision · Latest";
+      el.revisionList.textContent = "";
+      const versions = [null, ...[...revisions].sort((a, b) => b - a)];
+      versions.forEach((revision) => {
+        const option = document.createElement("button");
+        const selected = revision === activeStoredRevision;
+        option.type = "button";
+        option.className = "revision-option";
+        option.textContent = revision ? `Revision ${revision}` : "Latest";
+        option.setAttribute("aria-current", String(selected));
+        option.addEventListener("click", () => loadStoredCircuit(entry.name, revision));
+        el.revisionList.appendChild(option);
+      });
+    }
+
+    function selectedCircuitQubits() {
+      return clampInt(el.circuitQubitFilter.value, 1, 26);
+    }
+
+    function renderSavedCircuits() {
+      const qubits = selectedCircuitQubits();
+      const entries = savedCircuitEntries.filter((entry) => Number(entry.qubits) === qubits);
       el.savedCircuits.textContent = "";
-      if (!names.length) {
+      if (!entries.length) {
         const empty = document.createElement("div");
         empty.className = "saved-empty";
-        empty.textContent = "No saved circuits yet.";
+        empty.textContent = `No stored ${qubits}-qubit circuits.`;
         el.savedCircuits.appendChild(empty);
         return;
       }
-      names.forEach((name) => {
+      entries.forEach(({ name }) => {
         const row = document.createElement("div");
         const load = document.createElement("button");
         const remove = document.createElement("button");
@@ -1795,8 +2507,19 @@
     }
 
     function renderCommonCircuits() {
+      const qubits = selectedCircuitQubits();
+      const templates = circuitTemplates
+        .map(([name, circuit], index) => ({ name, circuit, index }))
+        .filter((entry) => entry.circuit.qubits === qubits);
       el.commonCircuits.textContent = "";
-      circuitTemplates.forEach(([name], index) => {
+      if (!templates.length) {
+        const empty = document.createElement("div");
+        empty.className = "saved-empty";
+        empty.textContent = `No common ${qubits}-qubit circuits.`;
+        el.commonCircuits.appendChild(empty);
+        return;
+      }
+      templates.forEach(({ name, index }) => {
         const row = document.createElement("div");
         const load = document.createElement("button");
         const append = document.createElement("button");
@@ -1814,17 +2537,45 @@
       });
     }
 
+    function applyCircuitQubitFilter(value) {
+      const qubits = clampInt(value, 1, 26);
+      el.circuitQubitFilter.value = qubits;
+      el.circuitMenuSummary.textContent = `Circuits · ${qubits}q`;
+      renderCommonCircuits();
+      renderSavedCircuits();
+    }
+
     async function loadCommonCircuit(index) {
       const [name, circuit] = circuitTemplates[index];
-      if (!(await allowReplacement(name))) return;
-      state = circuitDocument(circuit);
-      history = createHistory(state, `Template · ${name}`);
-      el.circuitName.value = suggestedFileName(name);
-      el.savedMenu.open = false;
-      jsonDraftDirty = false;
-      setDirty(true);
-      render();
-      showSaveStatus(`Loaded template · ${name}`);
+      const templateName = suggestedFileName(name);
+      const alreadyLoaded = JSON.stringify(circuitDocument(state))
+        === JSON.stringify(circuitDocument(circuit));
+      if (alreadyLoaded) {
+        const nameChanged = el.circuitName.value !== templateName;
+        el.circuitName.value = templateName;
+        activeStoredName = "";
+        activeStoredRevision = null;
+        renderRevisionMenu();
+        el.savedMenu.open = false;
+        if (nameChanged) setDirty(true);
+        showSaveStatus(`Loaded template · ${name}`);
+        return;
+      }
+      if (hasWorkAfterTemplateLoad() && !(await allowTemplateReplacement(name))) return;
+      const loaded = await commitMutation(`Load template · ${name}`, () => {
+        state = clone(circuit);
+      });
+      if (loaded) {
+        el.circuitName.value = templateName;
+        activeStoredName = "";
+        activeStoredRevision = null;
+        renderRevisionMenu();
+        el.savedMenu.open = false;
+        showSaveStatus(`Loaded template · ${name}`);
+      } else {
+        render();
+        showSaveStatus("Template unchanged");
+      }
     }
 
     async function appendCommonCircuit(index) {
@@ -1840,20 +2591,32 @@
       }
     }
 
-    async function loadSavedCircuit(name) {
-      if (!(await allowReplacement(name))) return;
+    function loadSavedCircuit(name) {
+      return loadStoredCircuit(name, null);
+    }
+
+    async function loadStoredCircuit(name, revision) {
+      const versionLabel = revision ? `${name} · revision ${revision}` : name;
+      if (!(await allowReplacement(versionLabel))) return;
       showSaveStatus("Loading…");
       try {
-        const payload = await apiJson(`/api/circuits/${encodeURIComponent(name)}`);
+        const baseUrl = `/api/circuits/${encodeURIComponent(name)}`;
+        const url = revision ? `${baseUrl}/revisions/${revision}` : baseUrl;
+        const payload = await apiJson(url);
         state = circuitDocument(payload.circuit);
-        history = normalizeHistory(payload.circuit.history, state, `Loaded · ${payload.name}`);
-        state = clone(history.actions[history.cursor].snapshot);
+        history = normalizeHistory(payload.circuit.history);
+        const currentAction = history.actions[history.cursor];
+        if (currentAction) state = clone(currentAction.snapshot);
         el.circuitName.value = payload.name;
+        activeStoredName = payload.name;
+        activeStoredRevision = revision;
         el.savedMenu.open = false;
+        el.revisionMenu.open = false;
         jsonDraftDirty = false;
         setDirty(false);
+        renderRevisionMenu();
         render();
-        showSaveStatus(`Loaded ${payload.name}`);
+        showSaveStatus(revision ? `Loaded ${payload.name} · rev${revision}` : `Loaded ${payload.name}`);
       } catch (error) {
         showSaveStatus(error.message, true);
       }
@@ -1885,6 +2648,8 @@
           headers: { "Content-Type": "application/json", "Accept": "application/json" },
           body: JSON.stringify(persistenceDocument())
         });
+        activeStoredName = payload.name;
+        activeStoredRevision = null;
         jsonDraftDirty = false;
         setDirty(false);
         render();
@@ -1904,6 +2669,10 @@
       try {
         await apiJson(`/api/circuits/${encodeURIComponent(name)}`, { method: "DELETE" });
         if (el.circuitName.value.trim() === name) el.circuitName.value = "";
+        if (activeStoredName === name) {
+          activeStoredName = "";
+          activeStoredRevision = null;
+        }
         showSaveStatus(`Deleted ${name}`);
         await refreshSavedCircuits();
       } catch (error) {
@@ -1911,11 +2680,60 @@
       }
     }
 
-    gateButtons.forEach((name) => {
+    const gateTooltip = document.createElement("div");
+    gateTooltip.id = "gateTooltip";
+    gateTooltip.className = "gate-tooltip";
+    gateTooltip.setAttribute("role", "tooltip");
+    document.body.appendChild(gateTooltip);
+
+    const simulationTooltip = document.createElement("div");
+    simulationTooltip.id = "simulationTooltip";
+    simulationTooltip.className = "gate-tooltip simulation-tooltip";
+    simulationTooltip.setAttribute("role", "tooltip");
+    document.body.appendChild(simulationTooltip);
+
+    function positionFloatingTooltip(tooltip, button) {
+      const anchor = button.getBoundingClientRect();
+      const width = tooltip.offsetWidth;
+      const height = tooltip.offsetHeight;
+      const left = Math.max(12, Math.min(window.innerWidth - width - 12, anchor.left));
+      let top = anchor.bottom + 8;
+      if (top + height > window.innerHeight - 12) top = anchor.top - height - 8;
+      tooltip.style.left = `${left}px`;
+      tooltip.style.top = `${Math.max(12, top)}px`;
+    }
+
+    function showGateTooltip(button, gate) {
+      const heading = document.createElement("strong");
+      const input = document.createElement("span");
+      const output = document.createElement("span");
+      const effect = document.createElement("span");
+      heading.textContent = gate.fullName;
+      input.textContent = `Input: ${gate.input}`;
+      output.textContent = `Output: ${gate.output}`;
+      effect.className = "gate-effect";
+      effect.textContent = gate.effect;
+      gateTooltip.textContent = "";
+      gateTooltip.append(heading, input, output, effect);
+      gateTooltip.classList.add("visible");
+      positionFloatingTooltip(gateTooltip, button);
+    }
+
+    function hideGateTooltip() {
+      gateTooltip.classList.remove("visible");
+    }
+
+    gateCatalog.forEach((gate) => {
       const button = document.createElement("button");
       button.type = "button";
-      button.textContent = name.toUpperCase();
-      button.addEventListener("click", () => addGate(name));
+      button.textContent = gate.name.slice(0, 4).toUpperCase();
+      button.setAttribute("aria-label", `${gate.fullName}: ${gate.effect}`);
+      button.setAttribute("aria-describedby", "gateTooltip");
+      button.addEventListener("click", () => addGate(gate.name));
+      button.addEventListener("mouseenter", () => showGateTooltip(button, gate));
+      button.addEventListener("mouseleave", hideGateTooltip);
+      button.addEventListener("focus", () => showGateTooltip(button, gate));
+      button.addEventListener("blur", hideGateTooltip);
       el.gatePad.appendChild(button);
     });
 
@@ -1935,20 +2753,34 @@
       const next = Math.max(0, Number.parseInt(el.seed.value, 10) || 0);
       await commitMutation(`Set seed · ${next}`, () => { state.seed = next; });
     });
+    el.readoutPolicy.addEventListener("click", async () => {
+      const enable = !readoutEnabled();
+      await commitMutation(
+        enable ? "Enable run-only readout" : "Disable run-only readout",
+        () => { state.readout = { mode: enable ? "measure_unmeasured" : "explicit" }; }
+      );
+    });
     el.toggleDesigner.addEventListener("click", () => {
       setPanelVisibility("designer", el.toggleDesigner.getAttribute("aria-pressed") !== "true");
     });
-    el.toggleJson.addEventListener("click", () => {
-      setPanelVisibility("json", el.toggleJson.getAttribute("aria-pressed") !== "true");
+    el.toggleJsonPanel.addEventListener("click", () => {
+      setJsonExpanded(el.toggleJsonPanel.getAttribute("aria-expanded") !== "true");
+    });
+    el.circuitQubitFilter.addEventListener("input", () => {
+      applyCircuitQubitFilter(el.circuitQubitFilter.value);
+    });
+    el.savedMenu.addEventListener("toggle", () => {
+      if (el.savedMenu.open) applyCircuitQubitFilter(state.qubits);
     });
     el.importJson.addEventListener("click", async () => {
       try {
         const parsed = JSON.parse(el.json.value);
         const document = circuitDocument(parsed);
         if (parsed.history?.schema === "prismq.history.v1") {
-          history = normalizeHistory(parsed.history, document, "Imported JSON");
+          history = normalizeHistory(parsed.history);
           state = document;
-          if (JSON.stringify(history.actions[history.cursor].snapshot) !== JSON.stringify(document)) {
+          const currentAction = history.actions[history.cursor];
+          if (!currentAction || JSON.stringify(currentAction.snapshot) !== JSON.stringify(document)) {
             history.actions = history.actions.slice(0, history.cursor + 1);
             history.actions.push(historyAction(`Import JSON · ${document.gates.length} gates`, document));
             history.cursor = history.actions.length - 1;
@@ -1977,7 +2809,10 @@
       el.jsonMenu.open = false;
     });
     el.saveCircuit.addEventListener("click", saveCurrentCircuit);
-    el.circuitName.addEventListener("input", () => setDirty(true));
+    el.circuitName.addEventListener("input", () => {
+      setDirty(true);
+      renderRevisionMenu();
+    });
     el.circuitName.addEventListener("keydown", (event) => {
       if (event.key === "Enter") saveCurrentCircuit();
     });
@@ -1995,15 +2830,35 @@
         ]
       );
       if (!choice) return;
-      history = createHistory(state, "History reset");
+      history = createHistory();
       el.historyMenu.open = false;
-      setDirty(true);
       render();
     });
-    el.run.addEventListener("click", runCircuit);
+    el.run.addEventListener("pointerdown", beginRunHold);
+    el.run.addEventListener("pointerup", cancelRunHold);
+    el.run.addEventListener("pointercancel", cancelRunHold);
+    el.run.addEventListener("pointerleave", cancelRunHold);
+    el.run.addEventListener("click", async () => {
+      if (suppressRunClick) {
+        suppressRunClick = false;
+        return;
+      }
+      if (autoRunLocked) {
+        stopAutoRun();
+        return;
+      }
+      if (!runInProgress) await runCircuit();
+    });
+
+    document.addEventListener("click", (event) => {
+      document.querySelectorAll("details.menu[open]").forEach((menu) => {
+        if (!menu.contains(event.target)) menu.open = false;
+      });
+    });
 
     render();
-    renderCommonCircuits();
+    renderSimulationHistory();
+    applyCircuitQubitFilter(state.qubits);
     refreshSavedCircuits();
   </script>
 </body>

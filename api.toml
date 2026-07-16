@@ -14,7 +14,7 @@ env = "musl"
 families = ["unix"]
 relocation_model = "pic"
 code_model = "small"
-
+ 
 [build_std]
 std = true
 panic = "abort"

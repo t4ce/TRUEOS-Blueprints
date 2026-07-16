@@ -1,0 +1,22 @@
+[package]
+name = "txt"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[[bin]]
+name = "txt"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0"
+crossterm = "0.29"
+ratatui = { path = "../../vendor/ratatui/ratatui", version = "=0.30.2", default-features = false, features = ["crossterm"] }
+
+[target.'cfg(any(target_os = "trueos", target_os = "zkvm"))'.dependencies]
+trueos = { path = "../../api" }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("trueos", "zkvm"))'] }
+
+[workspace]
