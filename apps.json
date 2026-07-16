@@ -32,6 +32,11 @@
       "path": "../tactics",
       "optional": true
     },
+    {
+      "name": "solara",
+      "path": "../solara",
+      "optional": true
+    },
     "rusqlite_probe",
     "skybox",
     "superseedr",

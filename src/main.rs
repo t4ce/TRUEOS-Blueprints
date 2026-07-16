@@ -390,11 +390,12 @@ fn build_one_target_to(
     if !build_settings.source.declares_global_allocator && has_trueos_dependency {
         push_feature(&mut extra_features, "trueos/default-global-allocator");
     }
+    let mut no_default_features = false;
     if declared_features
         .iter()
         .any(|feature| feature == "trueos-blueprint")
     {
-        cargo.arg("--no-default-features");
+        no_default_features = true;
         push_feature(&mut extra_features, "trueos-blueprint");
     }
     if matches!(build_settings.flavor, BuildFlavor::ThinNoStd)
@@ -404,7 +405,7 @@ fn build_one_target_to(
         push_feature(&mut extra_features, "trueos/default-panic-handler");
     }
     if matches!(build_settings.flavor, BuildFlavor::ThinNoStd) || is_helix_app_dir(app_dir) {
-        cargo.arg("--no-default-features");
+        no_default_features = true;
     } else if build_settings.source.uses_tokio_net {
         push_app_or_trueos_feature(
             &mut extra_features,
@@ -412,6 +413,9 @@ fn build_one_target_to(
             &declared_features,
             has_trueos_dependency,
         );
+    }
+    if no_default_features {
+        cargo.arg("--no-default-features");
     }
     if !extra_features.is_empty() {
         cargo.arg("--features").arg(extra_features.join(","));
@@ -4036,23 +4040,16 @@ fn push_source_overlay_configs(cmd: &mut Command, source_overlay: &[CratePatch])
     }
 }
 
-fn staged_source_overlay(source_overlay: &[CratePatch], work_dir: &Path) -> Vec<CratePatch> {
-    let staging_root = work_dir.parent().unwrap_or(work_dir);
+fn staged_source_overlay(source_overlay: &[CratePatch], _work_dir: &Path) -> Vec<CratePatch> {
     source_overlay
         .iter()
-        .map(|patch| {
-            let staged_path = blueprint_root(&patch.path)
-                .and_then(|root| patch.path.strip_prefix(root).ok().map(Path::to_path_buf))
-                .filter(|relative| relative.starts_with("vendor"))
-                .map(|relative| staging_root.join(relative))
-                .filter(|candidate| candidate.exists())
-                .unwrap_or_else(|| patch.path.clone());
-
-            CratePatch {
-                key: patch.key.clone(),
-                name: patch.name.clone(),
-                path: staged_path,
-            }
+        .map(|patch| CratePatch {
+            key: patch.key.clone(),
+            name: patch.name.clone(),
+            // Preserve the canonical vendor identity. A symlinked overlay may
+            // contain relative Blueprint-crate dependencies; mixing those with
+            // the canonical SDK produces duplicate path package IDs.
+            path: patch.path.clone(),
         })
         .collect()
 }
@@ -4155,7 +4152,7 @@ fn materialize_hidden_build_std_pins(
 
 fn materialize_trueos_blueprint_dependency(
     app_dir: &Path,
-    work_dir: &Path,
+    _work_dir: &Path,
     manifest_path: &Path,
 ) -> Result<(), String> {
     if !manifest_declared_features(manifest_path)?
@@ -4167,7 +4164,11 @@ fn materialize_trueos_blueprint_dependency(
     }
 
     let blueprint_root = blueprint_root(app_dir).unwrap_or_else(|| app_dir.to_path_buf());
-    let trueos_api = staged_blueprint_path(&blueprint_root, work_dir, "api");
+    // Inject the canonical SDK path for external workspace roots. Routing this
+    // edge through the staging symlink makes Cargo treat transitive sibling
+    // paths (for example `crates/trueos-math`) as both their canonical and
+    // symlinked package IDs, which cannot be represented in one lockfile.
+    let trueos_api = blueprint_root.join("api");
     let dependency = format!(
         "# Injected by trueos-blueprint for external app packaging.\n{}",
         path_dependency_line("trueos", &trueos_api)
