@@ -1,0 +1,847 @@
+#![no_std]
+
+//! A statically allocated, double-buffered DIN A4 grid-paper document.
+//!
+//! The stable raw format is row-major. Each 1 cm cell occupies exactly
+//! [`CELL_BYTES`] bytes:
+//!
+//! - byte 0: UTF-8 byte length (`0..=16`)
+//! - byte 1: foreground [`Color`]
+//! - byte 2: background [`Color`]
+//! - byte 3: [`CellStyle`] bits
+//! - bytes 4..20: UTF-8 bytes, zero-padded
+//!
+//! Raw access is safe but can create invalid encoded cells. Typed reads report
+//! such data as [`CellError`] instead of assuming that arbitrary bytes are valid.
+
+use core::fmt;
+
+pub const A4_WIDTH_MM: usize = 210;
+pub const A4_HEIGHT_MM: usize = 297;
+pub const CELL_EDGE_MM: usize = 10;
+pub const COLUMNS: usize = A4_WIDTH_MM / CELL_EDGE_MM;
+pub const FULL_ROWS: usize = A4_HEIGHT_MM / CELL_EDGE_MM;
+pub const ROWS: usize = FULL_ROWS + 1;
+pub const FINAL_ROW_HEIGHT_MM: usize = A4_HEIGHT_MM % CELL_EDGE_MM;
+pub const CELL_COUNT: usize = COLUMNS * ROWS;
+
+pub const CELL_TEXT_CAPACITY: usize = 16;
+pub const CELL_BYTES: usize = 4 + CELL_TEXT_CAPACITY;
+pub const ROW_BYTES: usize = COLUMNS * CELL_BYTES;
+pub const PAGE_BYTES: usize = CELL_COUNT * CELL_BYTES;
+pub const DOUBLE_BUFFER_BYTES: usize = PAGE_BYTES * 2;
+pub const DEFAULT_SCALE_PERCENT: u16 = 100;
+
+pub const TEXT_LENGTH_OFFSET: usize = 0;
+pub const FOREGROUND_OFFSET: usize = 1;
+pub const BACKGROUND_OFFSET: usize = 2;
+pub const STYLE_OFFSET: usize = 3;
+pub const TEXT_OFFSET: usize = 4;
+
+/// A compact palette shared by foreground and background fields.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[repr(u8)]
+pub enum Color {
+    #[default]
+    Default = 0,
+    Black = 1,
+    Red = 2,
+    Green = 3,
+    Yellow = 4,
+    Blue = 5,
+    Magenta = 6,
+    Cyan = 7,
+    White = 8,
+    BrightBlack = 9,
+    BrightRed = 10,
+    BrightGreen = 11,
+    BrightYellow = 12,
+    BrightBlue = 13,
+    BrightMagenta = 14,
+    BrightCyan = 15,
+    BrightWhite = 16,
+    Transparent = 17,
+}
+
+impl TryFrom<u8> for Color {
+    type Error = CellError;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Self::Default),
+            1 => Ok(Self::Black),
+            2 => Ok(Self::Red),
+            3 => Ok(Self::Green),
+            4 => Ok(Self::Yellow),
+            5 => Ok(Self::Blue),
+            6 => Ok(Self::Magenta),
+            7 => Ok(Self::Cyan),
+            8 => Ok(Self::White),
+            9 => Ok(Self::BrightBlack),
+            10 => Ok(Self::BrightRed),
+            11 => Ok(Self::BrightGreen),
+            12 => Ok(Self::BrightYellow),
+            13 => Ok(Self::BrightBlue),
+            14 => Ok(Self::BrightMagenta),
+            15 => Ok(Self::BrightCyan),
+            16 => Ok(Self::BrightWhite),
+            17 => Ok(Self::Transparent),
+            other => Err(CellError::InvalidColor(other)),
+        }
+    }
+}
+
+/// Composable style bits stored in a cell's fourth byte.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[repr(transparent)]
+pub struct CellStyle(u8);
+
+impl CellStyle {
+    pub const NONE: Self = Self(0);
+    pub const BOLD: Self = Self(1 << 0);
+    pub const STRIKEOUT: Self = Self(1 << 1);
+    pub const UNDERLINE: Self = Self(1 << 2);
+    pub const ITALIC: Self = Self(1 << 3);
+    pub const ALL: Self =
+        Self(Self::BOLD.0 | Self::STRIKEOUT.0 | Self::UNDERLINE.0 | Self::ITALIC.0);
+
+    pub const fn from_bits(bits: u8) -> Result<Self, CellError> {
+        if bits & !Self::ALL.0 == 0 {
+            Ok(Self(bits))
+        } else {
+            Err(CellError::InvalidStyle(bits))
+        }
+    }
+
+    pub const fn bits(self) -> u8 {
+        self.0
+    }
+
+    pub const fn contains(self, flag: Self) -> bool {
+        self.0 & flag.0 == flag.0
+    }
+
+    pub const fn union(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
+
+    pub const fn without(self, other: Self) -> Self {
+        Self(self.0 & !other.0)
+    }
+}
+
+impl core::ops::BitOr for CellStyle {
+    type Output = Self;
+
+    fn bitor(self, rhs: Self) -> Self::Output {
+        self.union(rhs)
+    }
+}
+
+impl core::ops::BitOrAssign for CellStyle {
+    fn bitor_assign(&mut self, rhs: Self) {
+        *self = self.union(rhs);
+    }
+}
+
+/// One decoded grid cell. Its UTF-8 storage is fixed and contains no pointer.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Cell {
+    text: [u8; CELL_TEXT_CAPACITY],
+    text_len: u8,
+    foreground: Color,
+    background: Color,
+    style: CellStyle,
+}
+
+impl Cell {
+    pub const fn blank() -> Self {
+        Self {
+            text: [0; CELL_TEXT_CAPACITY],
+            text_len: 0,
+            foreground: Color::Default,
+            background: Color::Default,
+            style: CellStyle::NONE,
+        }
+    }
+
+    pub fn new(
+        text: &str,
+        foreground: Color,
+        background: Color,
+        style: CellStyle,
+    ) -> Result<Self, CellError> {
+        let mut cell = Self {
+            foreground,
+            background,
+            style,
+            ..Self::blank()
+        };
+        cell.set_text(text)?;
+        Ok(cell)
+    }
+
+    pub fn set_text(&mut self, text: &str) -> Result<(), CellError> {
+        let bytes = text.as_bytes();
+        if bytes.len() > CELL_TEXT_CAPACITY {
+            return Err(CellError::TextTooLong {
+                length: bytes.len(),
+                capacity: CELL_TEXT_CAPACITY,
+            });
+        }
+
+        self.text.fill(0);
+        self.text[..bytes.len()].copy_from_slice(bytes);
+        self.text_len = bytes.len() as u8;
+        Ok(())
+    }
+
+    pub fn text(&self) -> &str {
+        // `Cell` can only be constructed from `str` or the validating decoder.
+        core::str::from_utf8(&self.text[..usize::from(self.text_len)])
+            .expect("gridpaper Cell invariant: text is UTF-8")
+    }
+
+    pub const fn foreground(&self) -> Color {
+        self.foreground
+    }
+
+    pub const fn background(&self) -> Color {
+        self.background
+    }
+
+    pub const fn style(&self) -> CellStyle {
+        self.style
+    }
+
+    pub const fn set_foreground(&mut self, color: Color) {
+        self.foreground = color;
+    }
+
+    pub const fn set_background(&mut self, color: Color) {
+        self.background = color;
+    }
+
+    pub const fn set_style(&mut self, style: CellStyle) {
+        self.style = style;
+    }
+
+    fn encode_into(&self, raw: &mut [u8]) {
+        debug_assert_eq!(raw.len(), CELL_BYTES);
+        raw.fill(0);
+        raw[TEXT_LENGTH_OFFSET] = self.text_len;
+        raw[FOREGROUND_OFFSET] = self.foreground as u8;
+        raw[BACKGROUND_OFFSET] = self.background as u8;
+        raw[STYLE_OFFSET] = self.style.bits();
+        raw[TEXT_OFFSET..TEXT_OFFSET + usize::from(self.text_len)]
+            .copy_from_slice(&self.text[..usize::from(self.text_len)]);
+    }
+
+    fn decode(raw: &[u8]) -> Result<Self, CellError> {
+        debug_assert_eq!(raw.len(), CELL_BYTES);
+        let text_len = usize::from(raw[TEXT_LENGTH_OFFSET]);
+        if text_len > CELL_TEXT_CAPACITY {
+            return Err(CellError::InvalidTextLength(raw[TEXT_LENGTH_OFFSET]));
+        }
+
+        let encoded = &raw[TEXT_OFFSET..TEXT_OFFSET + text_len];
+        core::str::from_utf8(encoded).map_err(|_| CellError::InvalidUtf8)?;
+
+        let mut text = [0; CELL_TEXT_CAPACITY];
+        text[..text_len].copy_from_slice(encoded);
+        Ok(Self {
+            text,
+            text_len: text_len as u8,
+            foreground: Color::try_from(raw[FOREGROUND_OFFSET])?,
+            background: Color::try_from(raw[BACKGROUND_OFFSET])?,
+            style: CellStyle::from_bits(raw[STYLE_OFFSET])?,
+        })
+    }
+}
+
+impl Default for Cell {
+    fn default() -> Self {
+        Self::blank()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CellError {
+    OutOfBounds { column: usize, row: usize },
+    TextTooLong { length: usize, capacity: usize },
+    InvalidTextLength(u8),
+    InvalidUtf8,
+    InvalidColor(u8),
+    InvalidStyle(u8),
+}
+
+impl fmt::Display for CellError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::OutOfBounds { column, row } => {
+                write!(
+                    formatter,
+                    "cell ({column}, {row}) is outside {COLUMNS}x{ROWS}"
+                )
+            }
+            Self::TextTooLong { length, capacity } => {
+                write!(
+                    formatter,
+                    "UTF-8 value uses {length} bytes; capacity is {capacity}"
+                )
+            }
+            Self::InvalidTextLength(length) => {
+                write!(formatter, "raw cell has invalid UTF-8 length {length}")
+            }
+            Self::InvalidUtf8 => formatter.write_str("raw cell text is not valid UTF-8"),
+            Self::InvalidColor(color) => write!(formatter, "raw cell has invalid color {color}"),
+            Self::InvalidStyle(style) => {
+                write!(formatter, "raw cell has invalid style bits 0x{style:02x}")
+            }
+        }
+    }
+}
+
+/// Determines when a dirty edit buffer becomes the published snapshot.
+///
+/// A zero threshold disables that part of a cadence. Time-based publication is
+/// evaluated by [`GridPaper::tick`] and when an [`EditSession`] is finished.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum SnapshotCadence {
+    #[default]
+    Manual,
+    EveryEdits(u32),
+    EveryMillis(u64),
+    EveryEditsOrMillis {
+        edits: u32,
+        millis: u64,
+    },
+}
+
+impl SnapshotCadence {
+    const fn is_due(self, edit_batches: u32, elapsed_ms: u64) -> bool {
+        match self {
+            Self::Manual => false,
+            Self::EveryEdits(edits) => edits != 0 && edit_batches >= edits,
+            Self::EveryMillis(millis) => millis != 0 && elapsed_ms >= millis,
+            Self::EveryEditsOrMillis { edits, millis } => {
+                (edits != 0 && edit_batches >= edits) || (millis != 0 && elapsed_ms >= millis)
+            }
+        }
+    }
+}
+
+/// Chooses the work performed after the active buffers are exchanged.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum PublishMode {
+    /// Copy the new snapshot into the next edit buffer. This keeps incremental
+    /// edits intuitive at the cost of copying [`PAGE_BYTES`] bytes per publish.
+    #[default]
+    PreserveIncrementalEdits,
+    /// Exchange buffer indices in O(1). A producer using this mode must rewrite
+    /// a complete page before every publish.
+    SwapOnly,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct GridPaperConfig {
+    pub cadence: SnapshotCadence,
+    pub publish_mode: PublishMode,
+    /// Monotonic timestamp used as the origin for time-based cadence.
+    pub initial_time_ms: u64,
+}
+
+/// Publication result returned by edit completion, ticks, and manual publish.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PublishEvent {
+    Unchanged { generation: u64 },
+    Deferred { generation: u64 },
+    Published { generation: u64 },
+}
+
+impl PublishEvent {
+    pub const fn generation(self) -> u64 {
+        match self {
+            Self::Unchanged { generation }
+            | Self::Deferred { generation }
+            | Self::Published { generation } => generation,
+        }
+    }
+
+    pub const fn was_published(self) -> bool {
+        matches!(self, Self::Published { .. })
+    }
+}
+
+/// Two fixed page buffers plus small snapshot metadata. No heap is used.
+pub struct GridPaper {
+    buffers: [[u8; PAGE_BYTES]; 2],
+    published_index: usize,
+    generation: u64,
+    scale_percent: u16,
+    edit_batches: u32,
+    last_publish_ms: u64,
+    dirty: bool,
+    config: GridPaperConfig,
+}
+
+impl GridPaper {
+    pub const fn new(config: GridPaperConfig) -> Self {
+        Self {
+            buffers: [[0; PAGE_BYTES]; 2],
+            published_index: 0,
+            generation: 0,
+            scale_percent: DEFAULT_SCALE_PERCENT,
+            edit_batches: 0,
+            last_publish_ms: config.initial_time_ms,
+            dirty: false,
+            config,
+        }
+    }
+
+    pub const fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    /// Returns the page-wide font/render scale, where 100 means 100%.
+    pub const fn scale_percent(&self) -> u16 {
+        self.scale_percent
+    }
+
+    /// Sets the page-wide font/render scale, where 100 means 100%.
+    pub fn set_scale_percent(&mut self, scale_percent: u16) {
+        self.scale_percent = scale_percent;
+    }
+
+    pub const fn is_dirty(&self) -> bool {
+        self.dirty
+    }
+
+    pub const fn config(&self) -> GridPaperConfig {
+        self.config
+    }
+
+    pub fn set_cadence(&mut self, cadence: SnapshotCadence) {
+        self.config.cadence = cadence;
+    }
+
+    pub fn set_publish_mode(&mut self, publish_mode: PublishMode) {
+        self.config.publish_mode = publish_mode;
+    }
+
+    /// Starts a write transaction against the non-published buffer.
+    ///
+    /// Finishing or dropping the session counts as one edit batch if any mutable
+    /// accessor was used. Explicit [`EditSession::finish`] reports whether that
+    /// batch caused a configured snapshot publication.
+    pub fn edit(&mut self, now_ms: u64) -> EditSession<'_> {
+        EditSession {
+            page: Some(self),
+            now_ms,
+            dirty: false,
+        }
+    }
+
+    /// Borrows the currently published, immutable buffer and generation.
+    pub fn snapshot(&self) -> Snapshot<'_> {
+        Snapshot {
+            raw: &self.buffers[self.published_index],
+            generation: self.generation,
+            scale_percent: self.scale_percent,
+        }
+    }
+
+    /// Checks a time/edit cadence and publishes if it is due.
+    pub fn tick(&mut self, now_ms: u64) -> PublishEvent {
+        if !self.dirty {
+            return PublishEvent::Unchanged {
+                generation: self.generation,
+            };
+        }
+        if self.snapshot_due(now_ms) {
+            self.publish(now_ms)
+        } else {
+            PublishEvent::Deferred {
+                generation: self.generation,
+            }
+        }
+    }
+
+    /// Publishes a dirty buffer immediately, independent of the cadence.
+    pub fn publish(&mut self, now_ms: u64) -> PublishEvent {
+        if !self.dirty {
+            return PublishEvent::Unchanged {
+                generation: self.generation,
+            };
+        }
+
+        self.published_index ^= 1;
+        self.generation = self.generation.wrapping_add(1);
+        self.edit_batches = 0;
+        self.last_publish_ms = now_ms;
+        self.dirty = false;
+
+        if self.config.publish_mode == PublishMode::PreserveIncrementalEdits {
+            self.copy_published_to_edit();
+        }
+
+        PublishEvent::Published {
+            generation: self.generation,
+        }
+    }
+
+    fn edit_index(&self) -> usize {
+        self.published_index ^ 1
+    }
+
+    fn finish_edit(&mut self, dirty: bool, now_ms: u64) -> PublishEvent {
+        if !dirty {
+            return PublishEvent::Unchanged {
+                generation: self.generation,
+            };
+        }
+
+        self.dirty = true;
+        self.edit_batches = self.edit_batches.saturating_add(1);
+        self.tick(now_ms)
+    }
+
+    fn snapshot_due(&self, now_ms: u64) -> bool {
+        self.config.cadence.is_due(
+            self.edit_batches,
+            now_ms.saturating_sub(self.last_publish_ms),
+        )
+    }
+
+    fn copy_published_to_edit(&mut self) {
+        if self.published_index == 0 {
+            let (published, edit) = self.buffers.split_at_mut(1);
+            edit[0].copy_from_slice(&published[0]);
+        } else {
+            let (edit, published) = self.buffers.split_at_mut(1);
+            edit[0].copy_from_slice(&published[0]);
+        }
+    }
+}
+
+impl Default for GridPaper {
+    fn default() -> Self {
+        Self::new(GridPaperConfig::default())
+    }
+}
+
+/// A stable read view of one published generation.
+pub struct Snapshot<'a> {
+    raw: &'a [u8; PAGE_BYTES],
+    generation: u64,
+    scale_percent: u16,
+}
+
+impl<'a> Snapshot<'a> {
+    pub const fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    /// Returns the page-wide font/render scale captured by this view.
+    pub const fn scale_percent(&self) -> u16 {
+        self.scale_percent
+    }
+
+    /// Typed cell access (access level 1).
+    pub fn cell(&self, column: usize, row: usize) -> Result<Cell, CellError> {
+        Cell::decode(self.cell_bytes(column, row)?)
+    }
+
+    /// Encoded cell access, useful for small zero-copy operations.
+    pub fn cell_bytes(&self, column: usize, row: usize) -> Result<&[u8], CellError> {
+        let offset = cell_offset(column, row)?;
+        Ok(&self.raw[offset..offset + CELL_BYTES])
+    }
+
+    /// Row-level raw access (access level 2).
+    pub fn row_bytes(&self, row: usize) -> Result<&[u8], CellError> {
+        let offset = row_offset(row)?;
+        Ok(&self.raw[offset..offset + ROW_BYTES])
+    }
+
+    /// Whole-page raw access (access level 3).
+    pub const fn raw(&self) -> &[u8; PAGE_BYTES] {
+        self.raw
+    }
+}
+
+/// A mutable transaction over the non-published page buffer.
+pub struct EditSession<'a> {
+    page: Option<&'a mut GridPaper>,
+    now_ms: u64,
+    dirty: bool,
+}
+
+impl EditSession<'_> {
+    /// Typed cell access (access level 1).
+    pub fn cell(&self, column: usize, row: usize) -> Result<Cell, CellError> {
+        Cell::decode(self.cell_bytes(column, row)?)
+    }
+
+    pub fn set_cell(&mut self, column: usize, row: usize, cell: Cell) -> Result<(), CellError> {
+        cell.encode_into(self.cell_bytes_mut(column, row)?);
+        Ok(())
+    }
+
+    pub fn cell_bytes(&self, column: usize, row: usize) -> Result<&[u8], CellError> {
+        let offset = cell_offset(column, row)?;
+        let raw = self.edit_raw();
+        Ok(&raw[offset..offset + CELL_BYTES])
+    }
+
+    pub fn cell_bytes_mut(&mut self, column: usize, row: usize) -> Result<&mut [u8], CellError> {
+        let offset = cell_offset(column, row)?;
+        self.dirty = true;
+        let raw = self.edit_raw_mut();
+        Ok(&mut raw[offset..offset + CELL_BYTES])
+    }
+
+    /// Row-level raw access (access level 2).
+    pub fn row_bytes(&self, row: usize) -> Result<&[u8], CellError> {
+        let offset = row_offset(row)?;
+        let raw = self.edit_raw();
+        Ok(&raw[offset..offset + ROW_BYTES])
+    }
+
+    pub fn row_bytes_mut(&mut self, row: usize) -> Result<&mut [u8], CellError> {
+        let offset = row_offset(row)?;
+        self.dirty = true;
+        let raw = self.edit_raw_mut();
+        Ok(&mut raw[offset..offset + ROW_BYTES])
+    }
+
+    /// Whole-page raw access (access level 3).
+    pub fn raw(&self) -> &[u8; PAGE_BYTES] {
+        self.edit_raw()
+    }
+
+    pub fn raw_mut(&mut self) -> &mut [u8; PAGE_BYTES] {
+        self.dirty = true;
+        self.edit_raw_mut()
+    }
+
+    /// Completes this batch and returns its publication outcome.
+    pub fn finish(mut self) -> PublishEvent {
+        self.finish_inner()
+    }
+
+    fn edit_raw(&self) -> &[u8; PAGE_BYTES] {
+        let page = self
+            .page
+            .as_deref()
+            .expect("gridpaper EditSession invariant: page is present");
+        &page.buffers[page.edit_index()]
+    }
+
+    fn edit_raw_mut(&mut self) -> &mut [u8; PAGE_BYTES] {
+        let page = self
+            .page
+            .as_deref_mut()
+            .expect("gridpaper EditSession invariant: page is present");
+        let edit_index = page.edit_index();
+        &mut page.buffers[edit_index]
+    }
+
+    fn finish_inner(&mut self) -> PublishEvent {
+        let page = self
+            .page
+            .take()
+            .expect("gridpaper EditSession can only finish once");
+        page.finish_edit(self.dirty, self.now_ms)
+    }
+}
+
+impl Drop for EditSession<'_> {
+    fn drop(&mut self) {
+        if self.page.is_some() {
+            let _ = self.finish_inner();
+        }
+    }
+}
+
+pub const fn row_height_mm(row: usize) -> Option<usize> {
+    if row < FULL_ROWS {
+        Some(CELL_EDGE_MM)
+    } else if row == FULL_ROWS {
+        Some(FINAL_ROW_HEIGHT_MM)
+    } else {
+        None
+    }
+}
+
+fn cell_offset(column: usize, row: usize) -> Result<usize, CellError> {
+    if column >= COLUMNS || row >= ROWS {
+        return Err(CellError::OutOfBounds { column, row });
+    }
+    Ok((row * COLUMNS + column) * CELL_BYTES)
+}
+
+fn row_offset(row: usize) -> Result<usize, CellError> {
+    if row >= ROWS {
+        return Err(CellError::OutOfBounds { column: 0, row });
+    }
+    Ok(row * ROW_BYTES)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn styled_cell(text: &str) -> Cell {
+        Cell::new(
+            text,
+            Color::BrightBlue,
+            Color::White,
+            CellStyle::BOLD | CellStyle::UNDERLINE | CellStyle::ITALIC,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn a4_geometry_and_static_sizes_are_exact() {
+        assert_eq!(COLUMNS, 21);
+        assert_eq!(FULL_ROWS, 29);
+        assert_eq!(ROWS, 30);
+        assert_eq!(CELL_COUNT, 630);
+        assert_eq!(FINAL_ROW_HEIGHT_MM, 7);
+        assert_eq!(CELL_BYTES, 20);
+        assert_eq!(PAGE_BYTES, 12_600);
+        assert_eq!(DOUBLE_BUFFER_BYTES, 25_200);
+        assert_eq!(row_height_mm(28), Some(10));
+        assert_eq!(row_height_mm(29), Some(7));
+    }
+
+    #[test]
+    fn global_scale_defaults_to_100_percent_and_has_a_getter_setter() {
+        let mut page = GridPaper::default();
+        assert_eq!(page.scale_percent(), DEFAULT_SCALE_PERCENT);
+        assert_eq!(page.snapshot().scale_percent(), DEFAULT_SCALE_PERCENT);
+
+        page.set_scale_percent(125);
+        assert_eq!(page.scale_percent(), 125);
+        assert_eq!(page.snapshot().scale_percent(), 125);
+    }
+
+    #[test]
+    fn typed_utf8_style_and_color_round_trip_through_snapshot() {
+        let mut page = GridPaper::default();
+        let expected = styled_cell("Grüße ✎");
+
+        let event = {
+            let mut edit = page.edit(5);
+            edit.set_cell(20, 29, expected).unwrap();
+            edit.finish()
+        };
+        assert_eq!(event, PublishEvent::Deferred { generation: 0 });
+        assert_eq!(page.publish(5), PublishEvent::Published { generation: 1 });
+
+        let actual = page.snapshot().cell(20, 29).unwrap();
+        assert_eq!(actual, expected);
+        assert!(actual.style().contains(CellStyle::BOLD));
+        assert!(actual.style().contains(CellStyle::UNDERLINE));
+        assert!(!actual.style().contains(CellStyle::STRIKEOUT));
+    }
+
+    #[test]
+    fn invalid_raw_bytes_are_rejected_by_typed_access() {
+        let mut page = GridPaper::default();
+        {
+            let mut edit = page.edit(0);
+            let raw = edit.cell_bytes_mut(0, 0).unwrap();
+            raw[TEXT_LENGTH_OFFSET] = 1;
+            raw[FOREGROUND_OFFSET] = Color::Red as u8;
+            raw[BACKGROUND_OFFSET] = Color::Black as u8;
+            raw[STYLE_OFFSET] = 0;
+            raw[TEXT_OFFSET] = 0xff;
+            edit.finish();
+        }
+        page.publish(0);
+        assert_eq!(page.snapshot().cell(0, 0), Err(CellError::InvalidUtf8));
+    }
+
+    #[test]
+    fn edit_count_cadence_publishes_on_configured_batch() {
+        let mut page = GridPaper::new(GridPaperConfig {
+            cadence: SnapshotCadence::EveryEdits(2),
+            ..GridPaperConfig::default()
+        });
+
+        let first = {
+            let mut edit = page.edit(1);
+            edit.set_cell(0, 0, styled_cell("one")).unwrap();
+            edit.finish()
+        };
+        assert_eq!(first, PublishEvent::Deferred { generation: 0 });
+
+        let second = {
+            let mut edit = page.edit(2);
+            edit.set_cell(1, 0, styled_cell("two")).unwrap();
+            edit.finish()
+        };
+        assert_eq!(second, PublishEvent::Published { generation: 1 });
+        assert_eq!(page.snapshot().cell(0, 0).unwrap().text(), "one");
+        assert_eq!(page.snapshot().cell(1, 0).unwrap().text(), "two");
+    }
+
+    #[test]
+    fn millisecond_cadence_can_be_driven_by_tick() {
+        let mut page = GridPaper::new(GridPaperConfig {
+            cadence: SnapshotCadence::EveryMillis(16),
+            initial_time_ms: 100,
+            ..GridPaperConfig::default()
+        });
+        {
+            let mut edit = page.edit(105);
+            edit.set_cell(0, 0, styled_cell("tick")).unwrap();
+        }
+        assert_eq!(page.tick(115), PublishEvent::Deferred { generation: 0 });
+        assert_eq!(page.tick(116), PublishEvent::Published { generation: 1 });
+    }
+
+    #[test]
+    fn preserve_mode_keeps_incremental_edits_between_publications() {
+        let mut page = GridPaper::default();
+        {
+            let mut edit = page.edit(0);
+            edit.set_cell(0, 0, styled_cell("kept")).unwrap();
+        }
+        page.publish(0);
+        {
+            let mut edit = page.edit(1);
+            edit.set_cell(1, 0, styled_cell("new")).unwrap();
+        }
+        page.publish(1);
+
+        assert_eq!(page.snapshot().cell(0, 0).unwrap().text(), "kept");
+        assert_eq!(page.snapshot().cell(1, 0).unwrap().text(), "new");
+    }
+
+    #[test]
+    fn row_and_page_access_are_zero_copy_views_of_the_same_bytes() {
+        let mut page = GridPaper::default();
+        let cell = styled_cell("raw");
+        {
+            let mut edit = page.edit(0);
+            edit.set_cell(3, 2, cell).unwrap();
+            let cell_start = 3 * CELL_BYTES;
+            assert_eq!(
+                &edit.row_bytes(2).unwrap()[cell_start..cell_start + CELL_BYTES],
+                edit.cell_bytes(3, 2).unwrap()
+            );
+            edit.finish();
+        }
+        page.publish(0);
+
+        let snapshot = page.snapshot();
+        let absolute = (2 * COLUMNS + 3) * CELL_BYTES;
+        assert_eq!(
+            &snapshot.raw()[absolute..absolute + CELL_BYTES],
+            snapshot.cell_bytes(3, 2).unwrap()
+        );
+    }
+}

@@ -13,6 +13,7 @@ members = [
     "apps/file-system",
     "apps/fileexplorer",
     "apps/framework_stack",
+    "apps/gridpaper",
     "apps/hello_world",
     "apps/esp32_stt",
     "apps/flight_controller_sim",

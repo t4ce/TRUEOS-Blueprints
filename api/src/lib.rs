@@ -27,6 +27,9 @@ pub use v::vthermal as thermal;
 #[cfg(feature = "ui4-solara-text")]
 pub mod ui4_solara_text;
 
+#[cfg(feature = "gridpaper")]
+pub mod gridpaper;
+
 pub mod platform {
     pub use alloc::borrow::{Cow, ToOwned};
     pub use alloc::boxed::Box;
