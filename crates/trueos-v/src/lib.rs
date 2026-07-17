@@ -48,6 +48,7 @@ pub mod vmail;
 pub mod vnet;
 pub mod vnetfs;
 pub mod vpci;
+pub mod vprinter;
 pub mod vrapl;
 pub mod vshell;
 pub mod vsys;

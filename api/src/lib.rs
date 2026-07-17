@@ -18,6 +18,7 @@ pub use v::vinput as hid;
 pub use v::vmail;
 pub use v::vnet;
 pub use v::vpci as pci;
+pub use v::vprinter as printers;
 pub use v::vrapl as rapl;
 pub use v::vshell;
 pub use v::vsys;

@@ -82,7 +82,7 @@ fn main() {
     let mut submitted_animation_generation = u64::MAX;
     submit_to_kernel(&page, &mut submitted_animation_generation);
 
-    let mut input = [0_u8; gridpaper::CELL_TEXT_CAPACITY + 2];
+    let mut input = [0_u8; 64];
     loop {
         let read = vshell::read_blocking(&mut input);
         let command = trim_ascii(&input[..read]);
@@ -204,6 +204,19 @@ fn initialize_unicode_demo(page: &mut GridPaper, now_ms: u64) {
                     .expect("static ASCII letter coordinate is in bounds");
             }
         }
+        edit.set_cell(
+            18,
+            11,
+            Cell::with_upper(
+                "x",
+                "²",
+                Color::BrightBlue,
+                Color::Transparent,
+                CellStyle::NONE,
+            )
+            .expect("static x-squared demo fits one cell"),
+        )
+        .expect("static x-squared demo coordinate is in bounds");
         let _ = edit.finish();
     }
     let _ = page.publish(now_ms);

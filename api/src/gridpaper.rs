@@ -6,7 +6,7 @@
 
 pub const COLUMNS: usize = 37;
 pub const ROWS: usize = 53;
-pub const CELL_BYTES: usize = 20;
+pub const CELL_BYTES: usize = 13;
 pub const PAGE_BYTES: usize = COLUMNS * ROWS * CELL_BYTES;
 pub const TEXT_COLOR_ANIMATION_SLOTS: usize = 17;
 pub const COLOR_KEYFRAME_CAPACITY: usize = 8;

@@ -5,11 +5,13 @@
 //! The stable raw format is row-major. Each 5 mm cell occupies exactly
 //! [`CELL_BYTES`] bytes:
 //!
-//! - byte 0: UTF-8 byte length (`0..=16`)
-//! - byte 1: foreground [`Color`]
-//! - byte 2: background [`Color`]
-//! - byte 3: [`CellStyle`] bits
-//! - bytes 4..20: UTF-8 bytes, zero-padded
+//! - byte 0: primary-glyph UTF-8 byte length (`0..=4`)
+//! - byte 1: upper-glyph UTF-8 byte length (`0..=4`)
+//! - byte 2: foreground [`Color`]
+//! - byte 3: background [`Color`]
+//! - byte 4: [`CellStyle`] bits
+//! - bytes 5..9: primary-glyph UTF-8 bytes, zero-padded
+//! - bytes 9..13: optional upper-glyph UTF-8 bytes, zero-padded
 //!
 //! Raw access is safe but can create invalid encoded cells. Typed reads report
 //! such data as [`CellError`] instead of assuming that arbitrary bytes are valid.
@@ -34,18 +36,20 @@ pub const FULL_ROWS: usize = ROWS;
 pub const FINAL_ROW_HEIGHT_MM: usize = 0;
 pub const CELL_COUNT: usize = COLUMNS * ROWS;
 
-pub const CELL_TEXT_CAPACITY: usize = 16;
-pub const CELL_BYTES: usize = 4 + CELL_TEXT_CAPACITY;
+pub const GLYPH_UTF8_CAPACITY: usize = 4;
+pub const CELL_BYTES: usize = 5 + GLYPH_UTF8_CAPACITY * 2;
 pub const ROW_BYTES: usize = COLUMNS * CELL_BYTES;
 pub const PAGE_BYTES: usize = CELL_COUNT * CELL_BYTES;
 pub const DOUBLE_BUFFER_BYTES: usize = PAGE_BYTES * 2;
 pub const DEFAULT_SCALE_PERCENT: u16 = 100;
 
-pub const TEXT_LENGTH_OFFSET: usize = 0;
-pub const FOREGROUND_OFFSET: usize = 1;
-pub const BACKGROUND_OFFSET: usize = 2;
-pub const STYLE_OFFSET: usize = 3;
-pub const TEXT_OFFSET: usize = 4;
+pub const PRIMARY_LENGTH_OFFSET: usize = 0;
+pub const UPPER_LENGTH_OFFSET: usize = 1;
+pub const FOREGROUND_OFFSET: usize = 2;
+pub const BACKGROUND_OFFSET: usize = 3;
+pub const STYLE_OFFSET: usize = 4;
+pub const PRIMARY_OFFSET: usize = 5;
+pub const UPPER_OFFSET: usize = PRIMARY_OFFSET + GLYPH_UTF8_CAPACITY;
 
 /// A compact palette shared by foreground and background fields.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -153,11 +157,13 @@ impl core::ops::BitOrAssign for CellStyle {
     }
 }
 
-/// One decoded grid cell. Its UTF-8 storage is fixed and contains no pointer.
+/// One decoded grid cell. Its two UTF-8 glyph fields are fixed and separate.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Cell {
-    text: [u8; CELL_TEXT_CAPACITY],
-    text_len: u8,
+    primary: [u8; GLYPH_UTF8_CAPACITY],
+    primary_len: u8,
+    upper: [u8; GLYPH_UTF8_CAPACITY],
+    upper_len: u8,
     foreground: Color,
     background: Color,
     style: CellStyle,
@@ -166,8 +172,10 @@ pub struct Cell {
 impl Cell {
     pub const fn blank() -> Self {
         Self {
-            text: [0; CELL_TEXT_CAPACITY],
-            text_len: 0,
+            primary: [0; GLYPH_UTF8_CAPACITY],
+            primary_len: 0,
+            upper: [0; GLYPH_UTF8_CAPACITY],
+            upper_len: 0,
             foreground: Color::Default,
             background: Color::Default,
             style: CellStyle::NONE,
@@ -175,7 +183,7 @@ impl Cell {
     }
 
     pub fn new(
-        text: &str,
+        primary: &str,
         foreground: Color,
         background: Color,
         style: CellStyle,
@@ -186,29 +194,58 @@ impl Cell {
             style,
             ..Self::blank()
         };
-        cell.set_text(text)?;
+        cell.set_primary(primary)?;
         Ok(cell)
     }
 
-    pub fn set_text(&mut self, text: &str) -> Result<(), CellError> {
-        let bytes = text.as_bytes();
-        if bytes.len() > CELL_TEXT_CAPACITY {
-            return Err(CellError::TextTooLong {
-                length: bytes.len(),
-                capacity: CELL_TEXT_CAPACITY,
-            });
-        }
+    pub fn with_upper(
+        primary: &str,
+        upper: &str,
+        foreground: Color,
+        background: Color,
+        style: CellStyle,
+    ) -> Result<Self, CellError> {
+        let mut cell = Self::new(primary, foreground, background, style)?;
+        cell.set_upper(upper)?;
+        Ok(cell)
+    }
 
-        self.text.fill(0);
-        self.text[..bytes.len()].copy_from_slice(bytes);
-        self.text_len = bytes.len() as u8;
+    pub fn set_primary(&mut self, primary: &str) -> Result<(), CellError> {
+        validate_glyph(GlyphField::Primary, primary)?;
+        let bytes = primary.as_bytes();
+        self.primary.fill(0);
+        self.primary[..bytes.len()].copy_from_slice(bytes);
+        self.primary_len = bytes.len() as u8;
+        if bytes.is_empty() {
+            self.upper.fill(0);
+            self.upper_len = 0;
+        }
         Ok(())
     }
 
-    pub fn text(&self) -> &str {
+    pub fn set_upper(&mut self, upper: &str) -> Result<(), CellError> {
+        validate_glyph(GlyphField::Upper, upper)?;
+        if self.primary_len == 0 && !upper.is_empty() {
+            return Err(CellError::UpperWithoutPrimary);
+        }
+        let bytes = upper.as_bytes();
+        self.upper.fill(0);
+        self.upper[..bytes.len()].copy_from_slice(bytes);
+        self.upper_len = bytes.len() as u8;
+        Ok(())
+    }
+
+    pub fn primary(&self) -> &str {
         // `Cell` can only be constructed from `str` or the validating decoder.
-        core::str::from_utf8(&self.text[..usize::from(self.text_len)])
-            .expect("gridpaper Cell invariant: text is UTF-8")
+        core::str::from_utf8(&self.primary[..usize::from(self.primary_len)])
+            .expect("gridpaper Cell invariant: primary glyph is UTF-8")
+    }
+
+    pub fn upper(&self) -> Option<&str> {
+        (self.upper_len != 0).then(|| {
+            core::str::from_utf8(&self.upper[..usize::from(self.upper_len)])
+                .expect("gridpaper Cell invariant: upper glyph is UTF-8")
+        })
     }
 
     pub const fn foreground(&self) -> Color {
@@ -238,34 +275,79 @@ impl Cell {
     fn encode_into(&self, raw: &mut [u8]) {
         debug_assert_eq!(raw.len(), CELL_BYTES);
         raw.fill(0);
-        raw[TEXT_LENGTH_OFFSET] = self.text_len;
+        raw[PRIMARY_LENGTH_OFFSET] = self.primary_len;
+        raw[UPPER_LENGTH_OFFSET] = self.upper_len;
         raw[FOREGROUND_OFFSET] = self.foreground as u8;
         raw[BACKGROUND_OFFSET] = self.background as u8;
         raw[STYLE_OFFSET] = self.style.bits();
-        raw[TEXT_OFFSET..TEXT_OFFSET + usize::from(self.text_len)]
-            .copy_from_slice(&self.text[..usize::from(self.text_len)]);
+        raw[PRIMARY_OFFSET..PRIMARY_OFFSET + usize::from(self.primary_len)]
+            .copy_from_slice(&self.primary[..usize::from(self.primary_len)]);
+        raw[UPPER_OFFSET..UPPER_OFFSET + usize::from(self.upper_len)]
+            .copy_from_slice(&self.upper[..usize::from(self.upper_len)]);
     }
 
     fn decode(raw: &[u8]) -> Result<Self, CellError> {
         debug_assert_eq!(raw.len(), CELL_BYTES);
-        let text_len = usize::from(raw[TEXT_LENGTH_OFFSET]);
-        if text_len > CELL_TEXT_CAPACITY {
-            return Err(CellError::InvalidTextLength(raw[TEXT_LENGTH_OFFSET]));
+        let primary_len = usize::from(raw[PRIMARY_LENGTH_OFFSET]);
+        let upper_len = usize::from(raw[UPPER_LENGTH_OFFSET]);
+        let primary = decode_glyph(
+            GlyphField::Primary,
+            primary_len,
+            &raw[PRIMARY_OFFSET..PRIMARY_OFFSET + GLYPH_UTF8_CAPACITY],
+        )?;
+        let upper = decode_glyph(
+            GlyphField::Upper,
+            upper_len,
+            &raw[UPPER_OFFSET..UPPER_OFFSET + GLYPH_UTF8_CAPACITY],
+        )?;
+        if primary_len == 0 && upper_len != 0 {
+            return Err(CellError::UpperWithoutPrimary);
         }
-
-        let encoded = &raw[TEXT_OFFSET..TEXT_OFFSET + text_len];
-        core::str::from_utf8(encoded).map_err(|_| CellError::InvalidUtf8)?;
-
-        let mut text = [0; CELL_TEXT_CAPACITY];
-        text[..text_len].copy_from_slice(encoded);
         Ok(Self {
-            text,
-            text_len: text_len as u8,
+            primary,
+            primary_len: primary_len as u8,
+            upper,
+            upper_len: upper_len as u8,
             foreground: Color::try_from(raw[FOREGROUND_OFFSET])?,
             background: Color::try_from(raw[BACKGROUND_OFFSET])?,
             style: CellStyle::from_bits(raw[STYLE_OFFSET])?,
         })
     }
+}
+
+fn validate_glyph(field: GlyphField, glyph: &str) -> Result<(), CellError> {
+    let length = glyph.len();
+    if length > GLYPH_UTF8_CAPACITY {
+        return Err(CellError::GlyphTooLong {
+            field,
+            length,
+            capacity: GLYPH_UTF8_CAPACITY,
+        });
+    }
+    let characters = glyph.chars().count();
+    if characters > 1 {
+        return Err(CellError::MultipleGlyphs { field, characters });
+    }
+    Ok(())
+}
+
+fn decode_glyph(
+    field: GlyphField,
+    length: usize,
+    encoded: &[u8],
+) -> Result<[u8; GLYPH_UTF8_CAPACITY], CellError> {
+    if length > GLYPH_UTF8_CAPACITY {
+        return Err(CellError::InvalidGlyphLength {
+            field,
+            length: length as u8,
+        });
+    }
+    let encoded = &encoded[..length];
+    let glyph = core::str::from_utf8(encoded).map_err(|_| CellError::InvalidUtf8(field))?;
+    validate_glyph(field, glyph)?;
+    let mut stored = [0; GLYPH_UTF8_CAPACITY];
+    stored[..length].copy_from_slice(encoded);
+    Ok(stored)
 }
 
 impl Default for Cell {
@@ -276,12 +358,33 @@ impl Default for Cell {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CellError {
-    OutOfBounds { column: usize, row: usize },
-    TextTooLong { length: usize, capacity: usize },
-    InvalidTextLength(u8),
-    InvalidUtf8,
+    OutOfBounds {
+        column: usize,
+        row: usize,
+    },
+    GlyphTooLong {
+        field: GlyphField,
+        length: usize,
+        capacity: usize,
+    },
+    MultipleGlyphs {
+        field: GlyphField,
+        characters: usize,
+    },
+    InvalidGlyphLength {
+        field: GlyphField,
+        length: u8,
+    },
+    InvalidUtf8(GlyphField),
+    UpperWithoutPrimary,
     InvalidColor(u8),
     InvalidStyle(u8),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GlyphField {
+    Primary,
+    Upper,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -308,21 +411,46 @@ impl fmt::Display for CellError {
                     "cell ({column}, {row}) is outside {COLUMNS}x{ROWS}"
                 )
             }
-            Self::TextTooLong { length, capacity } => {
+            Self::GlyphTooLong {
+                field,
+                length,
+                capacity,
+            } => {
                 write!(
                     formatter,
-                    "UTF-8 value uses {length} bytes; capacity is {capacity}"
+                    "{field} glyph uses {length} UTF-8 bytes; capacity is {capacity}"
                 )
             }
-            Self::InvalidTextLength(length) => {
-                write!(formatter, "raw cell has invalid UTF-8 length {length}")
+            Self::MultipleGlyphs { field, characters } => {
+                write!(
+                    formatter,
+                    "{field} field contains {characters} characters; expected at most one"
+                )
             }
-            Self::InvalidUtf8 => formatter.write_str("raw cell text is not valid UTF-8"),
+            Self::InvalidGlyphLength { field, length } => {
+                write!(
+                    formatter,
+                    "raw {field} glyph has invalid UTF-8 length {length}"
+                )
+            }
+            Self::InvalidUtf8(field) => write!(formatter, "raw {field} glyph is not valid UTF-8"),
+            Self::UpperWithoutPrimary => {
+                formatter.write_str("upper glyph requires a primary glyph")
+            }
             Self::InvalidColor(color) => write!(formatter, "raw cell has invalid color {color}"),
             Self::InvalidStyle(style) => {
                 write!(formatter, "raw cell has invalid style bits 0x{style:02x}")
             }
         }
+    }
+}
+
+impl fmt::Display for GlyphField {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Primary => "primary",
+            Self::Upper => "upper",
+        })
     }
 }
 
@@ -785,9 +913,9 @@ mod tests {
         assert_eq!(GRID_HORIZONTAL_MARGIN_MM, 12.5);
         assert_eq!(GRID_VERTICAL_MARGIN_MM, 16.0);
         assert_eq!(FINAL_ROW_HEIGHT_MM, 0);
-        assert_eq!(CELL_BYTES, 20);
-        assert_eq!(PAGE_BYTES, 39_220);
-        assert_eq!(DOUBLE_BUFFER_BYTES, 78_440);
+        assert_eq!(CELL_BYTES, 13);
+        assert_eq!(PAGE_BYTES, 25_493);
+        assert_eq!(DOUBLE_BUFFER_BYTES, 50_986);
         assert_eq!(row_height_mm(52), Some(5));
         assert_eq!(row_height_mm(53), None);
     }
@@ -833,9 +961,16 @@ mod tests {
     }
 
     #[test]
-    fn typed_utf8_style_and_color_round_trip_through_snapshot() {
+    fn typed_primary_and_upper_glyphs_round_trip_through_snapshot() {
         let mut page = GridPaper::default();
-        let expected = styled_cell("Grüße ✎");
+        let expected = Cell::with_upper(
+            "x",
+            "²",
+            Color::BrightBlue,
+            Color::White,
+            CellStyle::BOLD | CellStyle::UNDERLINE | CellStyle::ITALIC,
+        )
+        .unwrap();
 
         let event = {
             let mut edit = page.edit(5);
@@ -847,6 +982,8 @@ mod tests {
 
         let actual = page.snapshot().cell(20, 29).unwrap();
         assert_eq!(actual, expected);
+        assert_eq!(actual.primary(), "x");
+        assert_eq!(actual.upper(), Some("²"));
         assert!(actual.style().contains(CellStyle::BOLD));
         assert!(actual.style().contains(CellStyle::UNDERLINE));
         assert!(!actual.style().contains(CellStyle::STRIKEOUT));
@@ -858,15 +995,18 @@ mod tests {
         {
             let mut edit = page.edit(0);
             let raw = edit.cell_bytes_mut(0, 0).unwrap();
-            raw[TEXT_LENGTH_OFFSET] = 1;
+            raw[PRIMARY_LENGTH_OFFSET] = 1;
             raw[FOREGROUND_OFFSET] = Color::Red as u8;
             raw[BACKGROUND_OFFSET] = Color::Black as u8;
             raw[STYLE_OFFSET] = 0;
-            raw[TEXT_OFFSET] = 0xff;
+            raw[PRIMARY_OFFSET] = 0xff;
             edit.finish();
         }
         page.publish(0);
-        assert_eq!(page.snapshot().cell(0, 0), Err(CellError::InvalidUtf8));
+        assert_eq!(
+            page.snapshot().cell(0, 0),
+            Err(CellError::InvalidUtf8(GlyphField::Primary))
+        );
     }
 
     #[test]
@@ -878,19 +1018,19 @@ mod tests {
 
         let first = {
             let mut edit = page.edit(1);
-            edit.set_cell(0, 0, styled_cell("one")).unwrap();
+            edit.set_cell(0, 0, styled_cell("1")).unwrap();
             edit.finish()
         };
         assert_eq!(first, PublishEvent::Deferred { generation: 0 });
 
         let second = {
             let mut edit = page.edit(2);
-            edit.set_cell(1, 0, styled_cell("two")).unwrap();
+            edit.set_cell(1, 0, styled_cell("2")).unwrap();
             edit.finish()
         };
         assert_eq!(second, PublishEvent::Published { generation: 1 });
-        assert_eq!(page.snapshot().cell(0, 0).unwrap().text(), "one");
-        assert_eq!(page.snapshot().cell(1, 0).unwrap().text(), "two");
+        assert_eq!(page.snapshot().cell(0, 0).unwrap().primary(), "1");
+        assert_eq!(page.snapshot().cell(1, 0).unwrap().primary(), "2");
     }
 
     #[test]
@@ -902,7 +1042,7 @@ mod tests {
         });
         {
             let mut edit = page.edit(105);
-            edit.set_cell(0, 0, styled_cell("tick")).unwrap();
+            edit.set_cell(0, 0, styled_cell("t")).unwrap();
         }
         assert_eq!(page.tick(115), PublishEvent::Deferred { generation: 0 });
         assert_eq!(page.tick(116), PublishEvent::Published { generation: 1 });
@@ -913,23 +1053,23 @@ mod tests {
         let mut page = GridPaper::default();
         {
             let mut edit = page.edit(0);
-            edit.set_cell(0, 0, styled_cell("kept")).unwrap();
+            edit.set_cell(0, 0, styled_cell("k")).unwrap();
         }
         page.publish(0);
         {
             let mut edit = page.edit(1);
-            edit.set_cell(1, 0, styled_cell("new")).unwrap();
+            edit.set_cell(1, 0, styled_cell("n")).unwrap();
         }
         page.publish(1);
 
-        assert_eq!(page.snapshot().cell(0, 0).unwrap().text(), "kept");
-        assert_eq!(page.snapshot().cell(1, 0).unwrap().text(), "new");
+        assert_eq!(page.snapshot().cell(0, 0).unwrap().primary(), "k");
+        assert_eq!(page.snapshot().cell(1, 0).unwrap().primary(), "n");
     }
 
     #[test]
     fn row_and_page_access_are_zero_copy_views_of_the_same_bytes() {
         let mut page = GridPaper::default();
-        let cell = styled_cell("raw");
+        let cell = styled_cell("r");
         {
             let mut edit = page.edit(0);
             edit.set_cell(3, 2, cell).unwrap();

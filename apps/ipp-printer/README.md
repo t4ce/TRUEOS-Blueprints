@@ -1,27 +1,32 @@
 # TRUEOS IPP printer Blueprint
 
 `ipp-printer` is a userspace IPP Everywhere client for network printers. It
-keeps printer policy and protocol parsing out of the kernel: TRUEOS supplies
-Tokio-compatible TCP/UDP sockets, while the Blueprint owns DNS-SD discovery,
-IPP capability negotiation, job attributes, and document submission.
+keeps print-job policy out of the kernel: the BSP-resident TRUEOS printer
+service owns DNS-SD discovery and refreshes its registry every 15 seconds,
+while the Blueprint owns IPP capability negotiation, job attributes, and
+document submission over TRUEOS Tokio sockets.
 
 The app uses the Rust `ipp` crate for the standards codec and the
-TRUEOS-patched Tokio TCP/UDP stack for transport. No USB printer class, CUPS
-daemon, vendor PPD, or kernel printer driver is needed.
+TRUEOS-patched Tokio TCP stack for job transport. The kernel service owns mDNS
+UDP discovery. No USB printer class, CUPS daemon, vendor PPD, or kernel printer
+driver is needed.
 
 ## Commands
 
 ```text
-ipp-printer discover [milliseconds]
+ipp-printer printers
+ipp-printer info auto
 ipp-printer info ipp://192.0.2.10:631/ipp/print
 ipp-printer print ipp://192.0.2.10:631/ipp/print document.pdf
 ipp-printer print auto photo.jpg --media iso_a4_210x297mm --quality high
 ipp-printer print auto page.pwg --copies 2 --sides two-sided-long-edge
 ```
 
-Discovery queries the standard `_ipp._tcp`, IPP Everywhere subtype, and
-`_ipps._tcp` DNS-SD services over mDNS. Direct IP URIs remain available for
-young kernels or networks that filter multicast.
+There is no manual discovery step. The app reads the live kernel printer
+registry; `auto` waits briefly for the BSP service when the registry is still
+warming up. The kernel queries `_ipp._tcp`, the IPP Everywhere subtype, and
+`_ipps._tcp` over mDNS. Direct IP URIs remain available on networks that filter
+multicast.
 
 Plain IPP is operational. Secure IPPS advertisements are shown by discovery,
 and automatic selection prefers the operational `_ipp._tcp` service. Explicit

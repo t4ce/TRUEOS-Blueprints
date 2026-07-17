@@ -1,5 +1,3 @@
-use core::net::{Ipv4Addr, SocketAddr};
-use std::collections::BTreeMap;
 use std::io::Cursor;
 
 use ipp::prelude::{
@@ -10,23 +8,14 @@ use trueos::{
     env,
     logl::{self, level},
     platform::{String, ToString, Vec, format},
-    t,
+    printers, t,
 };
 
 const APP: &str = "ipp-printer";
-const DEFAULT_DISCOVERY_MS: u64 = 3_000;
+const PRINTER_REGISTRY_WAIT_MS: u64 = 16_000;
+const PRINTER_REGISTRY_POLL_MS: u64 = 250;
 const IPP_TIMEOUT_MS: u64 = 30_000;
 const MAX_IPP_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
-const MDNS_PORT: u16 = 5_353;
-const MDNS_ADDR: SocketAddr = SocketAddr::new(
-    core::net::IpAddr::V4(Ipv4Addr::new(224, 0, 0, 251)),
-    MDNS_PORT,
-);
-const MDNS_SERVICES: [&str; 3] = [
-    "_ipp._tcp.local.",
-    "_print._sub._ipp._tcp.local.",
-    "_ipps._tcp.local.",
-];
 const CAPABILITY_ATTRIBUTES: [&str; 15] = [
     "printer-info",
     "printer-make-and-model",
@@ -57,30 +46,6 @@ struct PrintOptions {
     quality: Option<i32>,
 }
 
-#[derive(Clone, Debug, Default)]
-struct PartialPrinter {
-    instance: String,
-    service: String,
-    target: String,
-    port: u16,
-    txt: BTreeMap<String, String>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct DiscoveredPrinter {
-    name: String,
-    uri: String,
-    secure: bool,
-    make_and_model: Option<String>,
-    formats: Vec<String>,
-}
-
-#[derive(Default)]
-struct DiscoveryState {
-    printers: BTreeMap<String, PartialPrinter>,
-    ipv4: BTreeMap<String, Ipv4Addr>,
-}
-
 fn main() {
     let runtime = match t::runtime::current_thread_net().build() {
         Ok(runtime) => runtime,
@@ -104,22 +69,16 @@ async fn run() -> AppResult<()> {
     let _archive_name = args.next();
     let Some(command) = args.next() else {
         print_usage();
-        return discover_and_print(DEFAULT_DISCOVERY_MS).await;
+        return print_known_printers().await;
     };
 
     match command.as_str() {
-        "discover" | "scan" => {
-            let timeout_ms = args
-                .next()
-                .map(|value| parse_u64(&value, "discovery milliseconds"))
-                .transpose()?
-                .unwrap_or(DEFAULT_DISCOVERY_MS);
-            discover_and_print(timeout_ms).await
-        }
+        "printers" | "list" => print_known_printers().await,
         "info" | "status" => {
-            let uri = args
+            let destination = args
                 .next()
-                .ok_or_else(|| String::from("info requires an ipp:// or ipps:// URI"))?;
+                .ok_or_else(|| String::from("info requires 'auto' or an IPP URI"))?;
+            let uri = resolve_destination(&destination).await?;
             print_capabilities(&uri).await.map(|_| ())
         }
         "print" => {
@@ -130,11 +89,7 @@ async fn run() -> AppResult<()> {
                 String::from("print requires a printer URI (or 'auto') and a document path")
             })?;
             let options = parse_print_options(args.collect())?;
-            let uri = if destination == "auto" {
-                choose_auto_printer(DEFAULT_DISCOVERY_MS).await?.uri
-            } else {
-                destination
-            };
+            let uri = resolve_destination(&destination).await?;
             submit_job(&uri, &path, options).await
         }
         "help" | "--help" | "-h" => {
@@ -150,12 +105,10 @@ async fn run() -> AppResult<()> {
 
 fn print_usage() {
     info("TRUEOS IPP Everywhere printer client");
-    info(format!("usage: {APP} discover [milliseconds]"));
+    info(format!("usage: {APP} printers"));
+    info(format!("       {APP} info <auto|IPP-URI>"));
     info(format!(
-        "       {APP} info <ipp[s]://host[:port]/ipp/print>"
-    ));
-    info(format!(
-        "       {APP} print <URI|auto> <document> [--format MIME] [--copies N]"
+        "       {APP} print <auto|IPP-URI> <document> [--format MIME] [--copies N]"
     ));
     info("              [--media PWG-NAME] [--sides MODE] [--color MODE]");
     info("              [--quality draft|normal|high]");
@@ -173,18 +126,16 @@ fn error(message: impl AsRef<str>) {
     logl::log(level::ERROR, message.as_ref());
 }
 
-async fn discover_and_print(timeout_ms: u64) -> AppResult<()> {
-    info(format!(
-        "{APP}: looking for IPP Everywhere printers on mDNS"
-    ));
-    let printers = discover(timeout_ms).await?;
-    if printers.is_empty() {
-        warn(format!(
-            "{APP}: no printer answered; direct IP still works with '{APP} info ipp://ADDRESS/ipp/print'"
-        ));
-        return Ok(());
-    }
-
+async fn print_known_printers() -> AppResult<()> {
+    let printers = match wait_for_known_printers().await {
+        Ok(printers) => printers,
+        Err(_) => {
+            warn(format!(
+                "{APP}: kernel printer registry is empty; direct ipp:// URIs remain available"
+            ));
+            return Ok(());
+        }
+    };
     for (index, printer) in printers.iter().enumerate() {
         let security = if printer.secure { "IPPS" } else { "IPP" };
         info(format!(
@@ -204,330 +155,36 @@ async fn discover_and_print(timeout_ms: u64) -> AppResult<()> {
     Ok(())
 }
 
-async fn choose_auto_printer(timeout_ms: u64) -> AppResult<DiscoveredPrinter> {
-    let mut printers = discover(timeout_ms).await?;
+async fn choose_auto_printer() -> AppResult<printers::Printer> {
+    let mut printers = wait_for_known_printers().await?;
     printers.sort_by_key(|printer| printer.secure);
     printers.into_iter().next().ok_or_else(|| {
-        String::from("no IPP printer was discovered; pass an explicit ipp:// address")
+        String::from("kernel printer registry is empty; pass an explicit ipp:// URI")
     })
 }
 
-async fn discover(timeout_ms: u64) -> AppResult<Vec<DiscoveredPrinter>> {
-    let socket = match t::net::UdpSocket::bind((Ipv4Addr::UNSPECIFIED, MDNS_PORT)).await {
-        Ok(socket) => socket,
-        Err(_) => t::net::UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))
-            .await
-            .map_err(|error| format!("could not open mDNS UDP socket: {error}"))?,
-    };
-    let query = build_mdns_query(&MDNS_SERVICES)?;
-    socket
-        .send_to(&query, MDNS_ADDR)
-        .await
-        .map_err(|error| format!("could not send mDNS query: {error}"))?;
-
-    let mut state = DiscoveryState::default();
-    let deadline = t::time::Instant::now() + t::time::Duration::from_millis(timeout_ms.max(1));
-    let mut buffer = [0u8; 9_000];
-    while t::time::Instant::now() < deadline {
-        let remaining = deadline.saturating_duration_since(t::time::Instant::now());
-        let slice = remaining.min(t::time::Duration::from_millis(500));
-        match t::time::timeout(slice, socket.recv_from(&mut buffer)).await {
-            Ok(Ok((read, _peer))) => {
-                if let Err(message) = parse_mdns_packet(&buffer[..read], &mut state) {
-                    warn(format!("{APP}: ignored malformed mDNS response: {message}"));
-                }
-            }
-            Ok(Err(error)) => return Err(format!("mDNS receive failed: {error}")),
-            Err(_) => {}
-        }
-    }
-    Ok(state.finish())
-}
-
-fn build_mdns_query(services: &[&str]) -> AppResult<Vec<u8>> {
-    let count = u16::try_from(services.len())
-        .map_err(|_| String::from("too many mDNS service questions"))?;
-    let mut out = Vec::with_capacity(128);
-    out.extend_from_slice(&0u16.to_be_bytes());
-    out.extend_from_slice(&0u16.to_be_bytes());
-    out.extend_from_slice(&count.to_be_bytes());
-    out.extend_from_slice(&0u16.to_be_bytes());
-    out.extend_from_slice(&0u16.to_be_bytes());
-    out.extend_from_slice(&0u16.to_be_bytes());
-    for service in services {
-        encode_dns_name(service, &mut out)?;
-        out.extend_from_slice(&12u16.to_be_bytes());
-        // IN plus the mDNS unicast-response bit. This also lets the ephemeral-port
-        // fallback receive replies when another local responder owns port 5353.
-        out.extend_from_slice(&0x8001u16.to_be_bytes());
-    }
-    Ok(out)
-}
-
-fn encode_dns_name(name: &str, out: &mut Vec<u8>) -> AppResult<()> {
-    for label in name.trim_end_matches('.').split('.') {
-        if label.is_empty() || label.len() > 63 {
-            return Err(format!("invalid DNS label in '{name}'"));
-        }
-        out.push(label.len() as u8);
-        out.extend_from_slice(label.as_bytes());
-    }
-    out.push(0);
-    Ok(())
-}
-
-fn parse_mdns_packet(packet: &[u8], state: &mut DiscoveryState) -> AppResult<()> {
-    if packet.len() < 12 {
-        return Err(String::from("packet shorter than DNS header"));
-    }
-    let question_count = read_u16(packet, 4)? as usize;
-    let answer_count = read_u16(packet, 6)? as usize;
-    let authority_count = read_u16(packet, 8)? as usize;
-    let additional_count = read_u16(packet, 10)? as usize;
-    let mut offset = 12usize;
-
-    for _ in 0..question_count {
-        let _ = read_dns_name(packet, &mut offset)?;
-        checked_advance(packet, &mut offset, 4)?;
-    }
-
-    let record_count = answer_count
-        .checked_add(authority_count)
-        .and_then(|count| count.checked_add(additional_count))
-        .ok_or_else(|| String::from("DNS record count overflow"))?;
-    for _ in 0..record_count {
-        let owner = read_dns_name(packet, &mut offset)?;
-        let record_type = read_u16(packet, offset)?;
-        checked_advance(packet, &mut offset, 2)?;
-        checked_advance(packet, &mut offset, 2)?; // class
-        checked_advance(packet, &mut offset, 4)?; // ttl
-        let data_len = read_u16(packet, offset)? as usize;
-        checked_advance(packet, &mut offset, 2)?;
-        let data_start = offset;
-        let data_end = data_start
-            .checked_add(data_len)
-            .filter(|end| *end <= packet.len())
-            .ok_or_else(|| String::from("DNS record exceeds packet"))?;
-
-        match record_type {
-            1 if data_len == 4 => {
-                state.ipv4.insert(
-                    dns_key(&owner),
-                    Ipv4Addr::new(
-                        packet[data_start],
-                        packet[data_start + 1],
-                        packet[data_start + 2],
-                        packet[data_start + 3],
-                    ),
-                );
-            }
-            12 => {
-                let mut cursor = data_start;
-                let instance = read_dns_name(packet, &mut cursor)?;
-                if cursor > data_end {
-                    return Err(String::from("PTR target exceeds record"));
-                }
-                let key = dns_key(&instance);
-                let printer = state.printers.entry(key).or_default();
-                printer.instance = instance;
-                if owner.contains("_ipp._tcp") || owner.contains("_ipps._tcp") {
-                    printer.service = owner;
-                }
-            }
-            16 => {
-                let values = parse_txt(&packet[data_start..data_end])?;
-                let key = dns_key(&owner);
-                let printer = state.printers.entry(key).or_default();
-                printer.instance = owner;
-                printer.txt.extend(values);
-            }
-            33 if data_len >= 6 => {
-                let port = read_u16(packet, data_start + 4)?;
-                let mut cursor = data_start + 6;
-                let target = read_dns_name(packet, &mut cursor)?;
-                if cursor > data_end {
-                    return Err(String::from("SRV target exceeds record"));
-                }
-                let key = dns_key(&owner);
-                let printer = state.printers.entry(key).or_default();
-                printer.instance = owner;
-                printer.target = target;
-                printer.port = port;
-            }
-            _ => {}
-        }
-        offset = data_end;
-    }
-    Ok(())
-}
-
-fn parse_txt(data: &[u8]) -> AppResult<BTreeMap<String, String>> {
-    let mut values = BTreeMap::new();
-    let mut offset = 0usize;
-    while offset < data.len() {
-        let len = data[offset] as usize;
-        offset += 1;
-        let end = offset
-            .checked_add(len)
-            .filter(|end| *end <= data.len())
-            .ok_or_else(|| String::from("truncated DNS TXT item"))?;
-        if let Ok(text) = core::str::from_utf8(&data[offset..end]) {
-            let (key, value) = text.split_once('=').unwrap_or((text, ""));
-            values.insert(key.to_ascii_lowercase(), value.to_string());
-        }
-        offset = end;
-    }
-    Ok(values)
-}
-
-fn read_dns_name(packet: &[u8], offset: &mut usize) -> AppResult<String> {
-    let mut labels = Vec::new();
-    let mut cursor = *offset;
-    let mut jumped = false;
-    let mut jumps = 0usize;
+async fn wait_for_known_printers() -> AppResult<Vec<printers::Printer>> {
+    let deadline =
+        t::time::Instant::now() + t::time::Duration::from_millis(PRINTER_REGISTRY_WAIT_MS);
     loop {
-        let length = *packet
-            .get(cursor)
-            .ok_or_else(|| String::from("truncated DNS name"))?;
-        if length & 0xc0 == 0xc0 {
-            let next = *packet
-                .get(cursor + 1)
-                .ok_or_else(|| String::from("truncated DNS compression pointer"))?;
-            if !jumped {
-                *offset = cursor + 2;
-                jumped = true;
-            }
-            cursor = (((length & 0x3f) as usize) << 8) | next as usize;
-            jumps += 1;
-            if jumps > 32 || cursor >= packet.len() {
-                return Err(String::from("invalid DNS compression pointer"));
-            }
-            continue;
+        let printers = printers::snapshot()
+            .map_err(|code| format!("could not read kernel printer registry: {code}"))?;
+        if !printers.is_empty() {
+            return Ok(printers);
         }
-        if length & 0xc0 != 0 {
-            return Err(String::from("unsupported DNS label encoding"));
+        if t::time::Instant::now() >= deadline {
+            return Err(String::from("kernel printer registry is empty"));
         }
-        cursor += 1;
-        if length == 0 {
-            if !jumped {
-                *offset = cursor;
-            }
-            break;
-        }
-        let end = cursor
-            .checked_add(length as usize)
-            .filter(|end| *end <= packet.len())
-            .ok_or_else(|| String::from("truncated DNS label"))?;
-        let label = core::str::from_utf8(&packet[cursor..end])
-            .map_err(|_| String::from("non-UTF-8 DNS label"))?;
-        labels.push(label.to_string());
-        cursor = end;
+        t::time::sleep(t::time::Duration::from_millis(PRINTER_REGISTRY_POLL_MS)).await;
     }
-    if labels.is_empty() {
-        Ok(String::from("."))
+}
+
+async fn resolve_destination(destination: &str) -> AppResult<String> {
+    if destination == "auto" {
+        Ok(choose_auto_printer().await?.uri)
     } else {
-        Ok(format!("{}.", labels.join(".")))
+        Ok(destination.to_string())
     }
-}
-
-fn read_u16(data: &[u8], offset: usize) -> AppResult<u16> {
-    let bytes = data
-        .get(offset..offset + 2)
-        .ok_or_else(|| String::from("truncated 16-bit network value"))?;
-    Ok(u16::from_be_bytes([bytes[0], bytes[1]]))
-}
-
-fn checked_advance(data: &[u8], offset: &mut usize, count: usize) -> AppResult<()> {
-    *offset = offset
-        .checked_add(count)
-        .filter(|end| *end <= data.len())
-        .ok_or_else(|| String::from("truncated DNS field"))?;
-    Ok(())
-}
-
-fn dns_key(name: &str) -> String {
-    name.trim_end_matches('.').to_ascii_lowercase()
-}
-
-impl DiscoveryState {
-    fn finish(self) -> Vec<DiscoveredPrinter> {
-        let mut result = Vec::new();
-        for printer in self.printers.into_values() {
-            if printer.target.is_empty() || printer.port == 0 {
-                continue;
-            }
-            let secure =
-                printer.service.contains("_ipps._tcp") || printer.instance.contains("._ipps._tcp");
-            let scheme = if secure { "ipps" } else { "ipp" };
-            let host = if secure {
-                printer.target.trim_end_matches('.').to_string()
-            } else {
-                self.ipv4
-                    .get(&dns_key(&printer.target))
-                    .map(ToString::to_string)
-                    .unwrap_or_else(|| printer.target.trim_end_matches('.').to_string())
-            };
-            let resource = printer
-                .txt
-                .get("rp")
-                .map(|value| value.trim_start_matches('/'))
-                .filter(|value| !value.is_empty())
-                .unwrap_or("ipp/print");
-            let uri = format!("{scheme}://{host}:{}/{resource}", printer.port);
-            let name = printer
-                .txt
-                .get("ty")
-                .filter(|value| !value.is_empty())
-                .cloned()
-                .unwrap_or_else(|| display_instance_name(&printer.instance));
-            let make_and_model = printer
-                .txt
-                .get("product")
-                .map(|value| value.trim_matches(['(', ')']).to_string())
-                .filter(|value| !value.is_empty());
-            let formats = printer
-                .txt
-                .get("pdl")
-                .map(|value| {
-                    value
-                        .split(',')
-                        .map(str::trim)
-                        .filter(|value| !value.is_empty())
-                        .map(ToString::to_string)
-                        .collect()
-                })
-                .unwrap_or_default();
-            let candidate = DiscoveredPrinter {
-                name,
-                uri,
-                secure,
-                make_and_model,
-                formats,
-            };
-            if !result
-                .iter()
-                .any(|existing: &DiscoveredPrinter| existing.uri == candidate.uri)
-            {
-                result.push(candidate);
-            }
-        }
-        result.sort_by(|left, right| {
-            left.secure
-                .cmp(&right.secure)
-                .then_with(|| left.name.cmp(&right.name))
-        });
-        result
-    }
-}
-
-fn display_instance_name(instance: &str) -> String {
-    let lowered = instance.to_ascii_lowercase();
-    for marker in ["._ipp._tcp.", "._ipps._tcp."] {
-        if let Some(index) = lowered.find(marker) {
-            return instance[..index].to_string();
-        }
-    }
-    instance.trim_end_matches('.').to_string()
 }
 
 fn parse_uri(uri: &str) -> AppResult<Uri> {
@@ -607,7 +264,11 @@ async fn submit_job(uri_text: &str, path: &str, options: PrintOptions) -> AppRes
 
     let capabilities = get_capabilities(uri_text).await?;
     let supported = attribute_values(&capabilities, "document-format-supported");
-    if !supported.is_empty() && !supported.iter().any(|value| value == &format) {
+    if !supported.is_empty()
+        && !supported
+            .iter()
+            .any(|value| value.eq_ignore_ascii_case(&format))
+    {
         return Err(format!(
             "printer does not advertise {format}; supported: {}",
             supported.join(", ")
@@ -922,12 +583,6 @@ fn parse_print_options(args: Vec<String>) -> AppResult<PrintOptions> {
     Ok(result)
 }
 
-fn parse_u64(value: &str, name: &str) -> AppResult<u64> {
-    value
-        .parse::<u64>()
-        .map_err(|_| format!("invalid {name}: '{value}'"))
-}
-
 fn format_for_path(path: &str) -> Option<&'static str> {
     let extension = path.rsplit('.').next()?.to_ascii_lowercase();
     match extension.as_str() {
@@ -947,38 +602,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn mdns_query_contains_all_driverless_services() {
-        let query = build_mdns_query(&MDNS_SERVICES).unwrap();
-        assert_eq!(read_u16(&query, 4).unwrap(), 3);
-        assert!(query.windows(3).any(|window| window == b"ipp"));
-        assert!(query.windows(4).any(|window| window == b"ipps"));
-    }
-
-    #[test]
-    fn dns_compression_pointer_is_decoded() {
-        let packet = [
-            3, b'f', b'o', b'o', 5, b'l', b'o', b'c', b'a', b'l', 0, 3, b'b', b'a', b'r', 0xc0,
-            0x00,
-        ];
-        let mut offset = 11;
-        assert_eq!(
-            read_dns_name(&packet, &mut offset).unwrap(),
-            "bar.foo.local."
-        );
-        assert_eq!(offset, packet.len());
-    }
-
-    #[test]
-    fn txt_and_formats_are_parsed() {
-        let txt = b"\x0crp=ipp/print\x15pdl=application/pdf";
-        let values = parse_txt(txt).unwrap();
-        assert_eq!(values.get("rp").map(String::as_str), Some("ipp/print"));
-        assert_eq!(
-            values.get("pdl").map(String::as_str),
-            Some("application/pdf")
-        );
+    fn common_print_formats_are_inferred() {
         assert_eq!(format_for_path("page.PDF"), Some("application/pdf"));
         assert_eq!(format_for_path("photo.jpeg"), Some("image/jpeg"));
+        assert_eq!(format_for_path("page.pwg"), Some("image/pwg-raster"));
     }
 
     #[test]
