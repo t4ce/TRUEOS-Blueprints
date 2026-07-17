@@ -43,6 +43,12 @@ const UNICODE_WAVES: [[&str; gridpaper::TEXT_COLOR_ANIMATION_SLOTS]; 3] = [
         "←", "↖", "↑", "↗", "→", "↘", "↓", "↙", "⇐", "⇑", "⇒", "⇓", "⇔", "⊕", "⊗", "⊙", "⊥",
     ],
 ];
+const ASCII_DIGITS: [&str; 10] = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
+const ASCII_LETTERS: [&str; 7] = ["a", "b", "c", "d", "e", "f", "g"];
+const ASCII_SPECIMEN_ROWS: [(usize, usize); 3] = [(14, 17), (31, 34), (48, 51)];
+const ASCII_SPECIMEN_STYLES: [CellStyle; ASCII_SPECIMEN_ROWS.len()] =
+    [CellStyle::NONE, CellStyle::BOLD, CellStyle::ITALIC];
+const ASCII_SPECIMEN_COLOR_PHASES: [usize; ASCII_SPECIMEN_ROWS.len()] = [0, 5, 10];
 
 const WAVE_BASE_ROWS: [usize; UNICODE_WAVES.len()] = [5, 22, 39];
 const WAVE_ROW_OFFSETS: [usize; gridpaper::TEXT_COLOR_ANIMATION_SLOTS] =
@@ -69,6 +75,7 @@ fn main() {
         publish_mode: PublishMode::PreserveIncrementalEdits,
         initial_time_ms: start_ms,
     });
+    page.set_scale_percent(150);
     install_full_rainbow_text_animations(&mut page);
 
     initialize_unicode_demo(&mut page, start_ms);
@@ -136,8 +143,8 @@ fn main() {
     }
 }
 
-/// Place three sparse Unicode waves in one edit. Every foreground selector is
-/// represented in every wave while untouched cells remain empty.
+/// Place three sparse Unicode waves and normal/bold/italic ASCII specimens in
+/// one edit. Untouched cells remain empty.
 fn initialize_unicode_demo(page: &mut GridPaper, now_ms: u64) {
     {
         let mut edit = page.edit(now_ms);
@@ -165,6 +172,36 @@ fn initialize_unicode_demo(page: &mut GridPaper, now_ms: u64) {
                 .expect("static Unicode demo glyph fits one cell");
                 edit.set_cell(column, row, cell)
                     .expect("static Unicode demo coordinate is in bounds");
+            }
+        }
+        for (specimen, ((digit_row, letter_row), style)) in ASCII_SPECIMEN_ROWS
+            .iter()
+            .copied()
+            .zip(ASCII_SPECIMEN_STYLES.iter().copied())
+            .enumerate()
+        {
+            let color_phase = ASCII_SPECIMEN_COLOR_PHASES[specimen];
+            for (index, glyph) in ASCII_DIGITS.iter().enumerate() {
+                let cell = Cell::new(
+                    glyph,
+                    ACTIVE_TEXT_COLORS[(index + color_phase) % ACTIVE_TEXT_COLORS.len()],
+                    Color::Transparent,
+                    style,
+                )
+                .expect("static ASCII digit fits one cell");
+                edit.set_cell(9 + index * 2, digit_row, cell)
+                    .expect("static ASCII digit coordinate is in bounds");
+            }
+            for (index, glyph) in ASCII_LETTERS.iter().enumerate() {
+                let cell = Cell::new(
+                    glyph,
+                    ACTIVE_TEXT_COLORS[(index + 10 + color_phase) % ACTIVE_TEXT_COLORS.len()],
+                    Color::Transparent,
+                    style,
+                )
+                .expect("static ASCII letter fits one cell");
+                edit.set_cell(12 + index * 2, letter_row, cell)
+                    .expect("static ASCII letter coordinate is in bounds");
             }
         }
         let _ = edit.finish();

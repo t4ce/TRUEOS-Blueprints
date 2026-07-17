@@ -15,6 +15,7 @@ pub struct FontSize {
 pub enum Font {
     Default = 1,
     NotoSansSc = 2,
+    Inconsolata = 3,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
