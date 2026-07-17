@@ -21,6 +21,17 @@ pub const MAX_ANIMATION_WIRE_BYTES: usize = ANIMATION_WIRE_HEADER_BYTES
     + TEXT_COLOR_ANIMATION_SLOTS
         * (ANIMATION_RECORD_HEADER_BYTES + COLOR_KEYFRAME_CAPACITY * ANIMATION_KEYFRAME_BYTES);
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PrintRequest {
+    token: u32,
+}
+
+impl PrintRequest {
+    pub const fn token(self) -> u32 {
+        self.token
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct Rgba8 {
     pub r: u8,
@@ -289,6 +300,14 @@ fn encode_text_animations(
 /// Detach this Blueprint producer. The UI retains its last published frame.
 pub fn close() -> Result<(), Error> {
     status(unsafe { v::bp_abi::trueos_cabi_gridpaper_close() })
+}
+
+/// Take one focused-GridPaper F10 request, if present.
+pub fn take_print_request() -> Option<PrintRequest> {
+    let token = unsafe { v::bp_abi::trueos_cabi_gridpaper_print_request_take() };
+    (token != 0 && token <= u32::MAX as u64).then_some(PrintRequest {
+        token: token as u32,
+    })
 }
 
 fn status(code: i32) -> Result<(), Error> {

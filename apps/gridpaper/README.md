@@ -6,9 +6,10 @@ The physical page is 210 mm by 297 mm. Its centered grid has 37 columns and 53
 rows of 5 mm cells, for a 185 mm by 265 mm grid and 1,961 addressable cells.
 That leaves 12.5 mm margins at the left and right and 16 mm margins at the top
 and bottom, matching the reference graph-paper PDF. Each cell is a stable
-20-byte record with a 16-byte fixed UTF-8 value,
-foreground and background palette colors, and bold, strikeout, underline, and
-italic style bits.
+13-byte record with separate primary and optional upper UTF-8 glyph fields.
+Each field accepts one Unicode scalar encoded in up to four bytes. Foreground
+and background palette colors plus bold, strikeout, underline, and italic style
+bits remain native cell fields shared by both glyphs.
 
 The page has one global font/render scale. It defaults to 100% and is available
 through `GridPaper::scale_percent` and `GridPaper::set_scale_percent`; snapshots
@@ -22,7 +23,7 @@ to CSS classes. `GridPaper::set_text_color_animation` assigns a fixed-storage
 has two to eight RGBA keyframes at 0..1000 offsets, an RGBA channel mask, a
 16 ms to 600 s duration, linear or ease-in-out-sine timing, and `once`, `loop`,
 or `alternate` iteration. Animation metadata is transported separately from the
-39,220-byte page, so changing paint does not edit a cell or rebuild its font
+25,493-byte page, so changing paint does not edit a cell or rebuild its font
 triangles.
 
 The data API has three granularities on both `Snapshot` and `EditSession`:
@@ -34,7 +35,7 @@ The data API has three granularities on both `Snapshot` and `EditSession`:
 `cell_bytes` and `cell_bytes_mut` are also available for targeted encoded I/O.
 Raw writes are deliberately checked only when read through the typed API.
 
-`GridPaper` owns two 39,220-byte page buffers. A `Snapshot` reads the published
+`GridPaper` owns two 25,493-byte page buffers. A `Snapshot` reads the published
 buffer while an `EditSession` writes the other one. `SnapshotCadence` supports
 manual, edit-count, millisecond, or combined thresholds. Callers supply their
 monotonic millisecond timestamp to `edit`, `tick`, and `publish`, so the data type
@@ -42,7 +43,7 @@ does not need a timer or runtime dependency.
 
 `PublishMode::SwapOnly` publishes by exchanging two indices in O(1), intended
 for full-page producers. The default `PreserveIncrementalEdits` mode additionally
-copies 39,220 bytes after each exchange so the next edit buffer starts from the
+copies 25,493 bytes after each exchange so the next edit buffer starts from the
 latest snapshot.
 
 The app publishes that fixed page image through the dedicated `gridpaper`
@@ -52,7 +53,16 @@ the UI4 window and builds the paper, cell backgrounds, grid, decorations, and
 positioned font outlines as resident GPU triangle meshes. The last good scene
 and UI4 front buffer remain live until a newer snapshot has been built and
 published successfully. Foreground/background colors, bold, underline,
-strikeout, and a centered italic outline shear are represented now.
+strikeout, and a centered italic outline shear are represented now. A cell with
+only its primary glyph uses the normal centered size. When an upper glyph is
+present, the primary renders slightly smaller and lower-left while the smaller
+second glyph renders at the upper-right, giving the fixed `x²` composition.
+
+Focused UI4 keyboard input starts in the primary field. Typing replaces that
+single glyph and advances one cell. Tab toggles the selected cell between its
+primary and upper fields. Typing an upper glyph replaces it without advancing;
+Delete/Entf or Backspace clears it. An upper glyph cannot exist without a
+primary glyph, and deleting the primary clears both fields.
 
 The retained text path prefers the uploaded `Inconsolata-Regular.ttf` face for
 each cell. If a Unicode value is absent from Inconsolata, the kernel selects the
@@ -62,8 +72,8 @@ losing the wider Unicode showcase.
 
 At startup the demo leaves unused cells empty and places three deterministic
 Unicode waves at different positions in one edit transaction. It also shows
-`0` through `9` and `a` through `g` as normal, bold, and italic specimens. The
-102 cells cover Greek, mathematical, Cyrillic, geometric, musical, card-suit,
+`0` through `9` and `a` through `g` as normal, bold, and italic specimens, plus
+one `x²` composite. The 103 cells cover Greek, mathematical, Cyrillic, geometric, musical, card-suit,
 arrow, and operator glyphs together with underline and strikeout variants. It
 uses no startup RNG, Perlin field, `x`, or `o` fill.
 
