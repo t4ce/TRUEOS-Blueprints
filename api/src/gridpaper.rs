@@ -12,6 +12,31 @@ pub const TEXT_COLOR_ANIMATION_SLOTS: usize = 17;
 pub const COLOR_KEYFRAME_CAPACITY: usize = 8;
 pub const MIN_ANIMATION_DURATION_MS: u32 = 16;
 pub const MAX_ANIMATION_DURATION_MS: u32 = 600_000;
+pub const INSTANCE_CAPACITY: usize = 2;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct InstanceId(u32);
+
+impl InstanceId {
+    pub const PRIMARY: Self = Self(0);
+    pub const NATIVE: Self = Self(1);
+
+    pub const fn from_index(index: usize) -> Option<Self> {
+        if index < INSTANCE_CAPACITY {
+            Some(Self(index as u32))
+        } else {
+            None
+        }
+    }
+
+    pub const fn index(self) -> usize {
+        self.0 as usize
+    }
+
+    const fn raw(self) -> u32 {
+        self.0
+    }
+}
 
 const ANIMATION_WIRE_VERSION: u8 = 1;
 const ANIMATION_WIRE_HEADER_BYTES: usize = 4;
@@ -227,6 +252,7 @@ pub enum Error {
     NotOwner,
     Transport,
     InvalidAnimation,
+    InvalidInstance,
     Unknown(i32),
 }
 
@@ -239,8 +265,18 @@ pub fn submit_snapshot(
     scale_percent: u16,
     raw: &[u8; PAGE_BYTES],
 ) -> Result<(), Error> {
+    submit_instance_snapshot(InstanceId::PRIMARY, generation, scale_percent, raw)
+}
+
+pub fn submit_instance_snapshot(
+    instance: InstanceId,
+    generation: u64,
+    scale_percent: u16,
+    raw: &[u8; PAGE_BYTES],
+) -> Result<(), Error> {
     status(unsafe {
         v::bp_abi::trueos_cabi_gridpaper_snapshot_submit(
+            instance.raw(),
             generation,
             u32::from(scale_percent),
             raw.as_ptr(),
@@ -255,10 +291,21 @@ pub fn submit_snapshot(
 pub fn submit_text_animations(
     animations: &[Option<ColorAnimation>; TEXT_COLOR_ANIMATION_SLOTS],
 ) -> Result<(), Error> {
+    submit_instance_text_animations(InstanceId::PRIMARY, animations)
+}
+
+pub fn submit_instance_text_animations(
+    instance: InstanceId,
+    animations: &[Option<ColorAnimation>; TEXT_COLOR_ANIMATION_SLOTS],
+) -> Result<(), Error> {
     let mut wire = [0u8; MAX_ANIMATION_WIRE_BYTES];
     let wire_len = encode_text_animations(animations, &mut wire);
     status(unsafe {
-        v::bp_abi::trueos_cabi_gridpaper_text_animations_submit(wire.as_ptr(), wire_len)
+        v::bp_abi::trueos_cabi_gridpaper_text_animations_submit(
+            instance.raw(),
+            wire.as_ptr(),
+            wire_len,
+        )
     })
 }
 
@@ -300,12 +347,20 @@ fn encode_text_animations(
 /// Detach this Blueprint producer. The kernel retains the scene, while its
 /// UI4 presentation is released until a running producer attaches again.
 pub fn close() -> Result<(), Error> {
-    status(unsafe { v::bp_abi::trueos_cabi_gridpaper_close() })
+    close_instance(InstanceId::PRIMARY)
+}
+
+pub fn close_instance(instance: InstanceId) -> Result<(), Error> {
+    status(unsafe { v::bp_abi::trueos_cabi_gridpaper_close(instance.raw()) })
 }
 
 /// Take one focused-GridPaper F10 request, if present.
 pub fn take_print_request() -> Option<PrintRequest> {
-    let token = unsafe { v::bp_abi::trueos_cabi_gridpaper_print_request_take() };
+    take_instance_print_request(InstanceId::PRIMARY)
+}
+
+pub fn take_instance_print_request(instance: InstanceId) -> Option<PrintRequest> {
+    let token = unsafe { v::bp_abi::trueos_cabi_gridpaper_print_request_take(instance.raw()) };
     (token != 0 && token <= u32::MAX as u64).then_some(PrintRequest {
         token: token as u32,
     })
@@ -319,6 +374,7 @@ fn status(code: i32) -> Result<(), Error> {
         -3 => Err(Error::NotOwner),
         -4 => Err(Error::Transport),
         -5 => Err(Error::InvalidAnimation),
+        -6 => Err(Error::InvalidInstance),
         other => Err(Error::Unknown(other)),
     }
 }

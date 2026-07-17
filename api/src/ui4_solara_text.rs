@@ -64,6 +64,26 @@ pub enum Error {
     Unknown(i32),
 }
 
+/// Optional UI4 work requested at the coherent frame/session teardown point.
+/// The default performs no capture or filesystem I/O.
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+pub struct CloseRequest {
+    persist_final_frame: bool,
+}
+
+impl CloseRequest {
+    /// Save the last published frame as `trueosfs:/finalframes/<app>.png`.
+    /// A later close of the same app replaces the previous image.
+    pub const fn persist_final_frame(mut self) -> Self {
+        self.persist_final_frame = true;
+        self
+    }
+
+    const fn flags(self) -> u32 {
+        if self.persist_final_frame { 1 } else { 0 }
+    }
+}
+
 pub struct Frame {
     window_id: u32,
     width: u32,
@@ -179,6 +199,19 @@ impl Frame {
                 damage.height,
             )
         })
+    }
+
+    /// Close this UI4 frame with optional teardown work. If final-frame
+    /// persistence is requested without a writable TRUEOSFS root, close still
+    /// succeeds and the capture is skipped.
+    pub fn close(mut self, request: CloseRequest) -> Result<(), Error> {
+        let result = status(unsafe {
+            v::bp_abi::trueos_cabi_ui4_solara_frame_close_requested(self.window_id, request.flags())
+        });
+        if result.is_ok() {
+            self.window_id = 0;
+        }
+        result
     }
 }
 
