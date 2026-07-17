@@ -64,6 +64,18 @@ primary and upper fields. Typing an upper glyph replaces it without advancing;
 Delete/Entf or Backspace clears it. An upper glyph cannot exist without a
 primary glyph, and deleting the primary clears both fields.
 
+F10 captures the focused GridPaper generation immediately and hands its stable
+kernel-owned snapshot to `trueos::print2d`. The Blueprint does not choose or
+discover a device: the BSP spooler drains the asynchronous queue into the first
+online plain-IPP printer advertising PWG Raster, and the app polls the returned
+job ID through `Queued`, `WaitingForPrinter`, `Rendering`, `Connecting`,
+`Sending`, `Submitted`, `Printing`, and the terminal `Completed`, `Failed`,
+`Canceled`, or `OutcomeUnknown` states. The last state prevents an ambiguous
+network failure from silently resubmitting and printing a duplicate page. Every
+transition is also emitted at INFO through the kernel log router. Printing
+always renders the page at physical 100%—the demo's 150% display zoom and pan
+are intentionally not part of the A4 job.
+
 The retained text path prefers the uploaded `Inconsolata-Regular.ttf` face for
 each cell. If a Unicode value is absent from Inconsolata, the kernel selects the
 uploaded `NotoSansSC[wght].ttf` face for that cell, then uses the embedded face

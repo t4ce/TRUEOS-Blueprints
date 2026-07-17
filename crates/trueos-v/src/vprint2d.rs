@@ -21,6 +21,14 @@ impl JobId {
     pub const fn get(self) -> u32 {
         self.0
     }
+
+    pub fn status(self) -> Result<JobState, Error> {
+        status(self)
+    }
+
+    pub fn is_done(self) -> Result<bool, Error> {
+        self.status().map(JobState::is_terminal)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -36,11 +44,19 @@ pub enum JobState {
     Completed = 8,
     Failed = 9,
     Canceled = 10,
+    OutcomeUnknown = 11,
 }
 
 impl JobState {
     pub const fn is_terminal(self) -> bool {
-        matches!(self, Self::Completed | Self::Failed | Self::Canceled)
+        matches!(
+            self,
+            Self::Completed | Self::Failed | Self::Canceled | Self::OutcomeUnknown
+        )
+    }
+
+    pub const fn is_done(self) -> bool {
+        self.is_terminal()
     }
 }
 
@@ -59,6 +75,7 @@ impl TryFrom<i32> for JobState {
             8 => Ok(Self::Completed),
             9 => Ok(Self::Failed),
             10 => Ok(Self::Canceled),
+            11 => Ok(Self::OutcomeUnknown),
             other => Err(error_from_code(other)),
         }
     }
@@ -88,9 +105,8 @@ pub fn status(job_id: JobId) -> Result<JobState, Error> {
 }
 
 fn submit(document_kind: u32, subject: u64, raw: &[u8]) -> Result<JobId, Error> {
-    let result = unsafe {
-        trueos_vlayer_print2d_submit(document_kind, subject, raw.as_ptr(), raw.len())
-    };
+    let result =
+        unsafe { trueos_vlayer_print2d_submit(document_kind, subject, raw.as_ptr(), raw.len()) };
     if result <= 0 || result > u32::MAX as i64 {
         return Err(error_from_code(result as i32));
     }

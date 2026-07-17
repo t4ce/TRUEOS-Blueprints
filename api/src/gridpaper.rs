@@ -297,7 +297,8 @@ fn encode_text_animations(
     cursor
 }
 
-/// Detach this Blueprint producer. The UI retains its last published frame.
+/// Detach this Blueprint producer. The kernel retains the scene, while its
+/// UI4 presentation is released until a running producer attaches again.
 pub fn close() -> Result<(), Error> {
     status(unsafe { v::bp_abi::trueos_cabi_gridpaper_close() })
 }

@@ -9,8 +9,17 @@ use gridpaper::{
 use trueos::{
     clock,
     logl::{self, level},
-    vshell,
+    platform, print2d, vshell,
 };
+
+const TRACKED_PRINT_JOBS: usize = 8;
+const PRINT_STATUS_INTERVAL_MS: u64 = 250;
+
+#[derive(Clone, Copy)]
+struct TrackedPrintJob {
+    id: print2d::JobId,
+    state: print2d::JobState,
+}
 
 const ACTIVE_TEXT_COLORS: [Color; gridpaper::TEXT_COLOR_ANIMATION_SLOTS] = [
     Color::Default,
@@ -83,8 +92,22 @@ fn main() {
     submit_to_kernel(&page, &mut submitted_animation_generation);
 
     let mut input = [0_u8; 64];
+    let mut print_jobs = [None; TRACKED_PRINT_JOBS];
+    let mut next_print_status_ms = start_ms;
     loop {
-        let read = vshell::read_blocking(&mut input);
+        drain_f10_print_requests(&mut print_jobs);
+        let now_ms = clock::monotonic_millis();
+        if now_ms >= next_print_status_ms {
+            poll_print_jobs(&mut print_jobs);
+            next_print_status_ms = now_ms.saturating_add(PRINT_STATUS_INTERVAL_MS);
+        }
+
+        let read = vshell::read(&mut input);
+        if read == 0 {
+            platform::poll_once();
+            platform::sleep_ms(16);
+            continue;
+        }
         let command = trim_ascii(&input[..read]);
         match command {
             b"quit" => break,
@@ -140,6 +163,89 @@ fn main() {
             level::WARN,
             format_args!("gridpaper: kernel close failed: {error:?}"),
         );
+    }
+}
+
+fn drain_f10_print_requests(jobs: &mut [Option<TrackedPrintJob>; TRACKED_PRINT_JOBS]) {
+    while let Some(request) = trueos::gridpaper::take_print_request() {
+        match print2d::submit_gridpaper_request(request.token()) {
+            Ok(id) => {
+                remember_print_job(jobs, id);
+                logl::log(
+                    level::INFO,
+                    format_args!(
+                        "gridpaper: print2d job={} state=Queued trigger=F10",
+                        id.get()
+                    ),
+                );
+            }
+            Err(print2d::Error::QueueFull) => {
+                // The kernel deliberately leaves this token available; retry
+                // it after the spooler drains one slot.
+                break;
+            }
+            Err(error) => {
+                logl::log(
+                    level::WARN,
+                    format_args!("gridpaper: F10 print submit failed: {error:?}"),
+                );
+                break;
+            }
+        }
+    }
+}
+
+fn remember_print_job(
+    jobs: &mut [Option<TrackedPrintJob>; TRACKED_PRINT_JOBS],
+    id: print2d::JobId,
+) {
+    if let Some(slot) = jobs.iter_mut().find(|slot| slot.is_none()) {
+        *slot = Some(TrackedPrintJob {
+            id,
+            state: print2d::JobState::Queued,
+        });
+    } else {
+        logl::log(
+            level::WARN,
+            format_args!("gridpaper: print2d tracking full job={}", id.get()),
+        );
+    }
+}
+
+fn poll_print_jobs(jobs: &mut [Option<TrackedPrintJob>; TRACKED_PRINT_JOBS]) {
+    for slot in jobs {
+        let Some(mut tracked) = *slot else {
+            continue;
+        };
+        match print2d::status(tracked.id) {
+            Ok(state) => {
+                if state != tracked.state {
+                    logl::log(
+                        level::INFO,
+                        format_args!(
+                            "gridpaper: print2d job={} state={state:?}",
+                            tracked.id.get()
+                        ),
+                    );
+                    tracked.state = state;
+                }
+                if state.is_done() {
+                    *slot = None;
+                } else {
+                    *slot = Some(tracked);
+                }
+            }
+            Err(error) => {
+                logl::log(
+                    level::WARN,
+                    format_args!(
+                        "gridpaper: print2d status failed job={} error={error:?}",
+                        tracked.id.get()
+                    ),
+                );
+                *slot = None;
+            }
+        }
     }
 }
 
