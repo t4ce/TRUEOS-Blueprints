@@ -15,6 +15,7 @@ members = [
     "apps/framework_stack",
     "apps/gridpaper",
     "apps/hello_world",
+    "apps/hello_world_replicatable",
     "apps/ipp-printer",
     "apps/esp32_stt",
     "apps/flight_controller_sim",

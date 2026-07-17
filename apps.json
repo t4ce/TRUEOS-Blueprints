@@ -9,6 +9,7 @@
     "framework_stack",
     "gridpaper",
     "hello_world",
+    "hello_world_replicatable",
     "ipp-printer",
     "esp32_stt",
     "flight_controller_sim",

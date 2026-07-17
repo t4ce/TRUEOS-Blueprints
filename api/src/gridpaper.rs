@@ -265,7 +265,14 @@ pub fn submit_snapshot(
     scale_percent: u16,
     raw: &[u8; PAGE_BYTES],
 ) -> Result<(), Error> {
-    submit_instance_snapshot(InstanceId::PRIMARY, generation, scale_percent, raw)
+    status(unsafe {
+        v::bp_abi::trueos_cabi_gridpaper_snapshot_submit(
+            generation,
+            u32::from(scale_percent),
+            raw.as_ptr(),
+            raw.len(),
+        )
+    })
 }
 
 pub fn submit_instance_snapshot(
@@ -275,7 +282,7 @@ pub fn submit_instance_snapshot(
     raw: &[u8; PAGE_BYTES],
 ) -> Result<(), Error> {
     status(unsafe {
-        v::bp_abi::trueos_cabi_gridpaper_snapshot_submit(
+        v::bp_abi::trueos_cabi_gridpaper_snapshot_submit_instance(
             instance.raw(),
             generation,
             u32::from(scale_percent),
@@ -291,7 +298,11 @@ pub fn submit_instance_snapshot(
 pub fn submit_text_animations(
     animations: &[Option<ColorAnimation>; TEXT_COLOR_ANIMATION_SLOTS],
 ) -> Result<(), Error> {
-    submit_instance_text_animations(InstanceId::PRIMARY, animations)
+    let mut wire = [0u8; MAX_ANIMATION_WIRE_BYTES];
+    let wire_len = encode_text_animations(animations, &mut wire);
+    status(unsafe {
+        v::bp_abi::trueos_cabi_gridpaper_text_animations_submit(wire.as_ptr(), wire_len)
+    })
 }
 
 pub fn submit_instance_text_animations(
@@ -301,7 +312,7 @@ pub fn submit_instance_text_animations(
     let mut wire = [0u8; MAX_ANIMATION_WIRE_BYTES];
     let wire_len = encode_text_animations(animations, &mut wire);
     status(unsafe {
-        v::bp_abi::trueos_cabi_gridpaper_text_animations_submit(
+        v::bp_abi::trueos_cabi_gridpaper_text_animations_submit_instance(
             instance.raw(),
             wire.as_ptr(),
             wire_len,
@@ -347,20 +358,24 @@ fn encode_text_animations(
 /// Detach this Blueprint producer. The kernel retains the scene, while its
 /// UI4 presentation is released until a running producer attaches again.
 pub fn close() -> Result<(), Error> {
-    close_instance(InstanceId::PRIMARY)
+    status(unsafe { v::bp_abi::trueos_cabi_gridpaper_close() })
 }
 
 pub fn close_instance(instance: InstanceId) -> Result<(), Error> {
-    status(unsafe { v::bp_abi::trueos_cabi_gridpaper_close(instance.raw()) })
+    status(unsafe { v::bp_abi::trueos_cabi_gridpaper_close_instance(instance.raw()) })
 }
 
 /// Take one focused-GridPaper F10 request, if present.
 pub fn take_print_request() -> Option<PrintRequest> {
-    take_instance_print_request(InstanceId::PRIMARY)
+    let token = unsafe { v::bp_abi::trueos_cabi_gridpaper_print_request_take() };
+    (token != 0 && token <= u32::MAX as u64).then_some(PrintRequest {
+        token: token as u32,
+    })
 }
 
 pub fn take_instance_print_request(instance: InstanceId) -> Option<PrintRequest> {
-    let token = unsafe { v::bp_abi::trueos_cabi_gridpaper_print_request_take(instance.raw()) };
+    let token =
+        unsafe { v::bp_abi::trueos_cabi_gridpaper_print_request_take_instance(instance.raw()) };
     (token != 0 && token <= u32::MAX as u64).then_some(PrintRequest {
         token: token as u32,
     })

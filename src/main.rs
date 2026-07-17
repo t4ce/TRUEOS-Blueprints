@@ -6,6 +6,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+mod abi_guard;
 mod app_catalog;
 mod artifact;
 mod build_plan;
@@ -503,6 +504,11 @@ fn build_one_target_to(
     }
 
     run_command(&mut ld, "ld")?;
+
+    // A relocatable ELF import records only a symbol name, not its C function
+    // type. Compare the source contracts while that information is still
+    // available and refuse to package a register-layout mismatch.
+    abi_guard::verify_before_pack(blueprint_root(app_dir).as_deref(), &linked)?;
 
     let entry_hint_hex = entry_hint_hex(&linked);
 
