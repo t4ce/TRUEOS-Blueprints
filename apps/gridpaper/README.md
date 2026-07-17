@@ -31,3 +31,17 @@ does not need a timer or runtime dependency.
 for full-page producers. The default `PreserveIncrementalEdits` mode additionally
 copies 12,600 bytes after each exchange so the next edit buffer starts from the
 latest snapshot.
+
+The app publishes that fixed page image through the dedicated `gridpaper`
+transport. The call only validates and copies into a kernel-owned double buffer;
+an Embassy task independently consumes the newest generation. The kernel owns
+the UI4 window and builds the paper, cell backgrounds, grid, decorations, and
+positioned font outlines as resident GPU triangle meshes. The last good scene
+and UI4 front buffer remain live until a newer snapshot has been built and
+published successfully. Foreground/background colors, bold, underline, and
+strikeout are represented now; italic remains preserved in the wire data for a
+future shader-side slant transform.
+
+At startup the demo takes one seed from the Blueprint kernel RNG, evaluates a
+small 2D Perlin field over the page, and fills every cell with `x` or `o` in one
+edit transaction. The complete initialized page is then sent as one snapshot.

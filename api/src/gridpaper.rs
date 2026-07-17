@@ -52,4 +52,3 @@ fn status(code: i32) -> Result<(), Error> {
         other => Err(Error::Unknown(other)),
     }
 }
-
