@@ -2,7 +2,7 @@
 
 //! A statically allocated, double-buffered DIN A4 grid-paper document.
 //!
-//! The stable raw format is row-major. Each 1 cm cell occupies exactly
+//! The stable raw format is row-major. Each 5 mm cell occupies exactly
 //! [`CELL_BYTES`] bytes:
 //!
 //! - byte 0: UTF-8 byte length (`0..=16`)
@@ -16,13 +16,22 @@
 
 use core::fmt;
 
+pub use trueos::gridpaper::{
+    AnimationDefinitionError, AnimationIteration, AnimationTiming, COLOR_KEYFRAME_CAPACITY,
+    ColorAnimation, ColorChannels, ColorKeyframe, Rgba8, TEXT_COLOR_ANIMATION_SLOTS,
+};
+
 pub const A4_WIDTH_MM: usize = 210;
 pub const A4_HEIGHT_MM: usize = 297;
-pub const CELL_EDGE_MM: usize = 10;
-pub const COLUMNS: usize = A4_WIDTH_MM / CELL_EDGE_MM;
-pub const FULL_ROWS: usize = A4_HEIGHT_MM / CELL_EDGE_MM;
-pub const ROWS: usize = FULL_ROWS + 1;
-pub const FINAL_ROW_HEIGHT_MM: usize = A4_HEIGHT_MM % CELL_EDGE_MM;
+pub const CELL_EDGE_MM: usize = 5;
+pub const COLUMNS: usize = 37;
+pub const ROWS: usize = 53;
+pub const GRID_WIDTH_MM: usize = COLUMNS * CELL_EDGE_MM;
+pub const GRID_HEIGHT_MM: usize = ROWS * CELL_EDGE_MM;
+pub const GRID_HORIZONTAL_MARGIN_MM: f32 = (A4_WIDTH_MM - GRID_WIDTH_MM) as f32 / 2.0;
+pub const GRID_VERTICAL_MARGIN_MM: f32 = (A4_HEIGHT_MM - GRID_HEIGHT_MM) as f32 / 2.0;
+pub const FULL_ROWS: usize = ROWS;
+pub const FINAL_ROW_HEIGHT_MM: usize = 0;
 pub const CELL_COUNT: usize = COLUMNS * ROWS;
 
 pub const CELL_TEXT_CAPACITY: usize = 16;
@@ -275,6 +284,21 @@ pub enum CellError {
     InvalidStyle(u8),
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AnimationTargetError {
+    TransparentForeground,
+}
+
+impl fmt::Display for AnimationTargetError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::TransparentForeground => {
+                formatter.write_str("transparent is not an active text animation selector")
+            }
+        }
+    }
+}
+
 impl fmt::Display for CellError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -379,6 +403,8 @@ pub struct GridPaper {
     published_index: usize,
     generation: u64,
     scale_percent: u16,
+    text_color_animations: [Option<ColorAnimation>; TEXT_COLOR_ANIMATION_SLOTS],
+    animation_generation: u64,
     edit_batches: u32,
     last_publish_ms: u64,
     dirty: bool,
@@ -392,6 +418,8 @@ impl GridPaper {
             published_index: 0,
             generation: 0,
             scale_percent: DEFAULT_SCALE_PERCENT,
+            text_color_animations: [None; TEXT_COLOR_ANIMATION_SLOTS],
+            animation_generation: 0,
             edit_batches: 0,
             last_publish_ms: config.initial_time_ms,
             dirty: false,
@@ -411,6 +439,42 @@ impl GridPaper {
     /// Sets the page-wide font/render scale, where 100 means 100%.
     pub fn set_scale_percent(&mut self, scale_percent: u16) {
         self.scale_percent = scale_percent;
+    }
+
+    /// Assign a CSS-like paint program to every active text cell using this
+    /// foreground color. The page bytes and resident font geometry are unchanged.
+    pub fn set_text_color_animation(
+        &mut self,
+        selector: Color,
+        animation: Option<ColorAnimation>,
+    ) -> Result<(), AnimationTargetError> {
+        if selector == Color::Transparent {
+            return Err(AnimationTargetError::TransparentForeground);
+        }
+        let slot = selector as usize;
+        if self.text_color_animations[slot] != animation {
+            self.text_color_animations[slot] = animation;
+            self.animation_generation = self.animation_generation.wrapping_add(1).max(1);
+        }
+        Ok(())
+    }
+
+    pub const fn text_color_animation(&self, selector: Color) -> Option<ColorAnimation> {
+        match selector {
+            Color::Transparent => None,
+            _ => self.text_color_animations[selector as usize],
+        }
+    }
+
+    pub fn clear_text_color_animations(&mut self) {
+        if self.text_color_animations.iter().any(Option::is_some) {
+            self.text_color_animations = [None; TEXT_COLOR_ANIMATION_SLOTS];
+            self.animation_generation = self.animation_generation.wrapping_add(1).max(1);
+        }
+    }
+
+    pub const fn animation_generation(&self) -> u64 {
+        self.animation_generation
     }
 
     pub const fn is_dirty(&self) -> bool {
@@ -448,6 +512,8 @@ impl GridPaper {
             raw: &self.buffers[self.published_index],
             generation: self.generation,
             scale_percent: self.scale_percent,
+            text_color_animations: &self.text_color_animations,
+            animation_generation: self.animation_generation,
         }
     }
 
@@ -535,6 +601,8 @@ pub struct Snapshot<'a> {
     raw: &'a [u8; PAGE_BYTES],
     generation: u64,
     scale_percent: u16,
+    text_color_animations: &'a [Option<ColorAnimation>; TEXT_COLOR_ANIMATION_SLOTS],
+    animation_generation: u64,
 }
 
 impl<'a> Snapshot<'a> {
@@ -545,6 +613,16 @@ impl<'a> Snapshot<'a> {
     /// Returns the page-wide font/render scale captured by this view.
     pub const fn scale_percent(&self) -> u16 {
         self.scale_percent
+    }
+
+    pub const fn text_color_animations(
+        &self,
+    ) -> &[Option<ColorAnimation>; TEXT_COLOR_ANIMATION_SLOTS] {
+        self.text_color_animations
+    }
+
+    pub const fn animation_generation(&self) -> u64 {
+        self.animation_generation
     }
 
     /// Typed cell access (access level 1).
@@ -665,13 +743,7 @@ impl Drop for EditSession<'_> {
 }
 
 pub const fn row_height_mm(row: usize) -> Option<usize> {
-    if row < FULL_ROWS {
-        Some(CELL_EDGE_MM)
-    } else if row == FULL_ROWS {
-        Some(FINAL_ROW_HEIGHT_MM)
-    } else {
-        None
-    }
+    if row < ROWS { Some(CELL_EDGE_MM) } else { None }
 }
 
 fn cell_offset(column: usize, row: usize) -> Result<usize, CellError> {
@@ -704,16 +776,20 @@ mod tests {
 
     #[test]
     fn a4_geometry_and_static_sizes_are_exact() {
-        assert_eq!(COLUMNS, 21);
-        assert_eq!(FULL_ROWS, 29);
-        assert_eq!(ROWS, 30);
-        assert_eq!(CELL_COUNT, 630);
-        assert_eq!(FINAL_ROW_HEIGHT_MM, 7);
+        assert_eq!(COLUMNS, 37);
+        assert_eq!(FULL_ROWS, 53);
+        assert_eq!(ROWS, 53);
+        assert_eq!(CELL_COUNT, 1_961);
+        assert_eq!(GRID_WIDTH_MM, 185);
+        assert_eq!(GRID_HEIGHT_MM, 265);
+        assert_eq!(GRID_HORIZONTAL_MARGIN_MM, 12.5);
+        assert_eq!(GRID_VERTICAL_MARGIN_MM, 16.0);
+        assert_eq!(FINAL_ROW_HEIGHT_MM, 0);
         assert_eq!(CELL_BYTES, 20);
-        assert_eq!(PAGE_BYTES, 12_600);
-        assert_eq!(DOUBLE_BUFFER_BYTES, 25_200);
-        assert_eq!(row_height_mm(28), Some(10));
-        assert_eq!(row_height_mm(29), Some(7));
+        assert_eq!(PAGE_BYTES, 39_220);
+        assert_eq!(DOUBLE_BUFFER_BYTES, 78_440);
+        assert_eq!(row_height_mm(52), Some(5));
+        assert_eq!(row_height_mm(53), None);
     }
 
     #[test]
@@ -725,6 +801,35 @@ mod tests {
         page.set_scale_percent(125);
         assert_eq!(page.scale_percent(), 125);
         assert_eq!(page.snapshot().scale_percent(), 125);
+    }
+
+    #[test]
+    fn text_color_animation_is_static_metadata_not_page_bytes() {
+        let mut page = GridPaper::default();
+        let before = *page.snapshot().raw();
+        let animation = ColorAnimation::transition(
+            Rgba8::new(255, 0, 0, 255),
+            Rgba8::new(0, 0, 255, 255),
+            ColorChannels::RGB,
+            2_000,
+            AnimationTiming::EaseInOutSine,
+            AnimationIteration::Alternate,
+        )
+        .unwrap();
+
+        page.set_text_color_animation(Color::BrightBlue, Some(animation))
+            .unwrap();
+        assert_eq!(
+            page.text_color_animation(Color::BrightBlue),
+            Some(animation)
+        );
+        assert_eq!(page.animation_generation(), 1);
+        assert_eq!(page.snapshot().animation_generation(), 1);
+        assert_eq!(*page.snapshot().raw(), before);
+        assert_eq!(
+            page.set_text_color_animation(Color::Transparent, Some(animation)),
+            Err(AnimationTargetError::TransparentForeground)
+        );
     }
 
     #[test]

@@ -1,12 +1,63 @@
 // trueos-blueprint: features=["gridpaper"]
 #![no_std]
 
-use gridpaper::{Cell, CellStyle, Color, GridPaper, GridPaperConfig, PublishMode, SnapshotCadence};
+use gridpaper::{
+    AnimationIteration, AnimationTiming, COLOR_KEYFRAME_CAPACITY, Cell, CellStyle, Color,
+    ColorAnimation, ColorChannels, ColorKeyframe, GridPaper, GridPaperConfig, PublishMode, Rgba8,
+    SnapshotCadence,
+};
 use trueos::{
     clock,
     logl::{self, level},
-    rng, vshell,
+    vshell,
 };
+
+const ACTIVE_TEXT_COLORS: [Color; gridpaper::TEXT_COLOR_ANIMATION_SLOTS] = [
+    Color::Default,
+    Color::Black,
+    Color::Red,
+    Color::Green,
+    Color::Yellow,
+    Color::Blue,
+    Color::Magenta,
+    Color::Cyan,
+    Color::White,
+    Color::BrightBlack,
+    Color::BrightRed,
+    Color::BrightGreen,
+    Color::BrightYellow,
+    Color::BrightBlue,
+    Color::BrightMagenta,
+    Color::BrightCyan,
+    Color::BrightWhite,
+];
+
+const UNICODE_WAVES: [[&str; gridpaper::TEXT_COLOR_ANIMATION_SLOTS]; 3] = [
+    [
+        "α", "β", "γ", "δ", "λ", "π", "Σ", "Ω", "∞", "∫", "√", "≈", "≠", "≤", "≥", "±", "∂",
+    ],
+    [
+        "Ж", "Я", "Д", "Ф", "Ю", "♪", "♫", "▲", "△", "◆", "◇", "●", "○", "♠", "♣", "♥", "♦",
+    ],
+    [
+        "←", "↖", "↑", "↗", "→", "↘", "↓", "↙", "⇐", "⇑", "⇒", "⇓", "⇔", "⊕", "⊗", "⊙", "⊥",
+    ],
+];
+
+const WAVE_BASE_ROWS: [usize; UNICODE_WAVES.len()] = [5, 22, 39];
+const WAVE_ROW_OFFSETS: [usize; gridpaper::TEXT_COLOR_ANIMATION_SLOTS] =
+    [0, 1, 3, 5, 6, 5, 3, 1, 0, 1, 3, 5, 6, 5, 3, 1, 0];
+const RAINBOW_KEYFRAME_OFFSETS: [u16; COLOR_KEYFRAME_CAPACITY] =
+    [0, 143, 286, 429, 571, 714, 857, 1_000];
+const RAINBOW_COLORS: [Rgba8; COLOR_KEYFRAME_CAPACITY - 1] = [
+    Rgba8::new(255, 72, 96, 255),
+    Rgba8::new(255, 142, 56, 224),
+    Rgba8::new(255, 220, 72, 255),
+    Rgba8::new(72, 224, 112, 224),
+    Rgba8::new(64, 216, 232, 255),
+    Rgba8::new(72, 112, 255, 224),
+    Rgba8::new(224, 72, 240, 255),
+];
 
 fn main() {
     let start_ms = clock::monotonic_millis();
@@ -18,25 +69,11 @@ fn main() {
         publish_mode: PublishMode::PreserveIncrementalEdits,
         initial_time_ms: start_ms,
     });
+    install_full_rainbow_text_animations(&mut page);
 
-    let (noise_seed, x_cells) = seed_perlin_page(&mut page, start_ms);
-    submit_to_kernel(&page);
-
-    logl::log(
-        level::INFO,
-        format_args!(
-            "gridpaper: ready cells={} page_bytes={} double_buffer_bytes={} scale={}% generation={} perlin_seed=0x{:08x} x_cells={} o_cells={}",
-            gridpaper::CELL_COUNT,
-            gridpaper::PAGE_BYTES,
-            gridpaper::DOUBLE_BUFFER_BYTES,
-            page.scale_percent(),
-            page.generation(),
-            noise_seed,
-            x_cells,
-            gridpaper::CELL_COUNT - x_cells,
-        ),
-    );
-    vshell::write(b"gridpaper: type UTF-8 for cell (0,0), `snapshot`, `clear`, or `quit`\n");
+    initialize_unicode_demo(&mut page, start_ms);
+    let mut submitted_animation_generation = u64::MAX;
+    submit_to_kernel(&page, &mut submitted_animation_generation);
 
     let mut input = [0_u8; gridpaper::CELL_TEXT_CAPACITY + 2];
     loop {
@@ -46,7 +83,7 @@ fn main() {
             b"quit" => break,
             b"snapshot" => {
                 let event = page.publish(clock::monotonic_millis());
-                submit_to_kernel(&page);
+                submit_to_kernel(&page, &mut submitted_animation_generation);
                 logl::log(
                     level::INFO,
                     format_args!("gridpaper: snapshot generation={}", event.generation()),
@@ -59,7 +96,7 @@ fn main() {
                     let _ = edit.finish();
                 }
                 let event = page.publish(clock::monotonic_millis());
-                submit_to_kernel(&page);
+                submit_to_kernel(&page, &mut submitted_animation_generation);
                 logl::log(
                     level::INFO,
                     format_args!("gridpaper: cleared generation={}", event.generation()),
@@ -73,7 +110,7 @@ fn main() {
                         let _ = edit.set_cell(0, 0, cell);
                         let _ = edit.finish();
                         let event = page.publish(clock::monotonic_millis());
-                        submit_to_kernel(&page);
+                        submit_to_kernel(&page, &mut submitted_animation_generation);
                         logl::log(
                             level::INFO,
                             format_args!(
@@ -99,96 +136,71 @@ fn main() {
     }
 }
 
-/// Fill the complete page in one edit and cross the kernel boundary once.
-fn seed_perlin_page(page: &mut GridPaper, now_ms: u64) -> (u32, usize) {
-    let seed = rng::u32();
-    let x_cell = Cell::new("x", Color::BrightBlue, Color::White, CellStyle::NONE)
-        .expect("single ASCII x fits a cell");
-    let o_cell = Cell::new("o", Color::BrightCyan, Color::White, CellStyle::NONE)
-        .expect("single ASCII o fits a cell");
-    let offset_x = (seed & 0xff) as f32 / 83.0;
-    let offset_y = ((seed >> 8) & 0xff) as f32 / 79.0;
-    let mut x_cells = 0usize;
-
+/// Place three sparse Unicode waves in one edit. Every foreground selector is
+/// represented in every wave while untouched cells remain empty.
+fn initialize_unicode_demo(page: &mut GridPaper, now_ms: u64) {
     {
         let mut edit = page.edit(now_ms);
-        for row in 0..gridpaper::ROWS {
-            for column in 0..gridpaper::COLUMNS {
-                let x = column as f32 * 0.19 + offset_x;
-                let y = row as f32 * 0.17 + offset_y;
-                let cell = if perlin_2d(x, y, seed) >= 0.0 {
-                    x_cells += 1;
-                    x_cell
-                } else {
-                    o_cell
+        edit.raw_mut().fill(0);
+        for (wave_index, glyphs) in UNICODE_WAVES.iter().enumerate() {
+            for (selector, glyph) in glyphs.iter().enumerate() {
+                let column = 2 + selector * 2;
+                let row = WAVE_BASE_ROWS[wave_index] + WAVE_ROW_OFFSETS[selector];
+                let style = match wave_index {
+                    0 => CellStyle::NONE,
+                    1 => CellStyle::BOLD,
+                    _ => match selector % 4 {
+                        0 => CellStyle::UNDERLINE,
+                        1 => CellStyle::STRIKEOUT,
+                        2 => CellStyle::ITALIC,
+                        _ => CellStyle::BOLD.union(CellStyle::UNDERLINE),
+                    },
                 };
+                let cell = Cell::new(
+                    glyph,
+                    ACTIVE_TEXT_COLORS[selector],
+                    Color::Transparent,
+                    style,
+                )
+                .expect("static Unicode demo glyph fits one cell");
                 edit.set_cell(column, row, cell)
-                    .expect("gridpaper startup coordinates are in bounds");
+                    .expect("static Unicode demo coordinate is in bounds");
             }
         }
         let _ = edit.finish();
     }
     let _ = page.publish(now_ms);
-    (seed, x_cells)
 }
 
-fn perlin_2d(x: f32, y: f32, seed: u32) -> f32 {
-    let x0 = x as i32;
-    let y0 = y as i32;
-    let local_x = x - x0 as f32;
-    let local_y = y - y0 as f32;
-    let u = perlin_fade(local_x);
-    let v = perlin_fade(local_y);
-
-    let top = lerp(
-        gradient_dot(noise_hash(x0, y0, seed), local_x, local_y),
-        gradient_dot(noise_hash(x0 + 1, y0, seed), local_x - 1.0, local_y),
-        u,
-    );
-    let bottom = lerp(
-        gradient_dot(noise_hash(x0, y0 + 1, seed), local_x, local_y - 1.0),
-        gradient_dot(
-            noise_hash(x0 + 1, y0 + 1, seed),
-            local_x - 1.0,
-            local_y - 1.0,
-        ),
-        u,
-    );
-    lerp(top, bottom, v)
-}
-
-fn noise_hash(x: i32, y: i32, seed: u32) -> u32 {
-    let mut value =
-        seed ^ (x as u32).wrapping_mul(0x9e37_79b1) ^ (y as u32).wrapping_mul(0x85eb_ca77);
-    value ^= value >> 16;
-    value = value.wrapping_mul(0x7feb_352d);
-    value ^= value >> 15;
-    value = value.wrapping_mul(0x846c_a68b);
-    value ^ (value >> 16)
-}
-
-fn gradient_dot(hash: u32, x: f32, y: f32) -> f32 {
-    match hash & 7 {
-        0 => x + y,
-        1 => x - y,
-        2 => -x + y,
-        3 => -x - y,
-        4 => x,
-        5 => -x,
-        6 => y,
-        _ => -y,
+/// Exercise the complete animation table and the maximum keyframe capacity.
+/// Rotating the seven unique stops gives each selector a stable spatial phase;
+/// the eighth stop closes its loop without discontinuity.
+fn install_full_rainbow_text_animations(page: &mut GridPaper) {
+    for (selector, color) in ACTIVE_TEXT_COLORS.iter().copied().enumerate() {
+        let phase = selector % RAINBOW_COLORS.len();
+        let mut keyframes = [ColorKeyframe::new(0, Rgba8::TRANSPARENT); COLOR_KEYFRAME_CAPACITY];
+        for (index, keyframe) in keyframes.iter_mut().enumerate() {
+            let stop = if index + 1 == COLOR_KEYFRAME_CAPACITY {
+                phase
+            } else {
+                (index + phase) % RAINBOW_COLORS.len()
+            };
+            *keyframe = ColorKeyframe::new(RAINBOW_KEYFRAME_OFFSETS[index], RAINBOW_COLORS[stop]);
+        }
+        let animation = ColorAnimation::keyframes(
+            &keyframes,
+            ColorChannels::RGBA,
+            7_000,
+            AnimationTiming::Linear,
+            AnimationIteration::Loop,
+        )
+        .expect("static full-capacity rainbow keyframes are valid");
+        page.set_text_color_animation(color, Some(animation))
+            .expect("animation selector is an active foreground color");
     }
 }
 
-fn perlin_fade(value: f32) -> f32 {
-    value * value * value * (value * (value * 6.0 - 15.0) + 10.0)
-}
-
-fn lerp(from: f32, to: f32, amount: f32) -> f32 {
-    from + (to - from) * amount
-}
-
-fn submit_to_kernel(page: &GridPaper) {
+fn submit_to_kernel(page: &GridPaper, submitted_animation_generation: &mut u64) {
     let snapshot = page.snapshot();
     if let Err(error) = trueos::gridpaper::submit_snapshot(
         snapshot.generation(),
@@ -199,6 +211,15 @@ fn submit_to_kernel(page: &GridPaper) {
             level::WARN,
             format_args!("gridpaper: kernel snapshot submit failed: {error:?}"),
         );
+    }
+    if snapshot.animation_generation() != *submitted_animation_generation {
+        match trueos::gridpaper::submit_text_animations(snapshot.text_color_animations()) {
+            Ok(()) => *submitted_animation_generation = snapshot.animation_generation(),
+            Err(error) => logl::log(
+                level::WARN,
+                format_args!("gridpaper: kernel text animations submit failed: {error:?}"),
+            ),
+        }
     }
 }
 
