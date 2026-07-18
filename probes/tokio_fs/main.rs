@@ -1,6 +1,6 @@
 use trueos::{
     logl::{self, level},
-    platform::{Vec, format, io::SeekFrom, path::Path, thread},
+    platform::{Vec, format, io::SeekFrom, thread},
     t,
 };
 
@@ -257,7 +257,7 @@ async fn run_probe() -> Result<(), &'static str> {
     let canonical = t::fs::canonicalize(format!("{}/./nested/../nested/probe.txt", PROBE_DIR))
         .await
         .map_err(|_| "fs.canonicalize.trueos")?;
-    if canonical != Path::new("/").join(PROBE_NESTED_PATH) {
+    if canonical != t::tokio::path::Path::new("/").join(PROBE_NESTED_PATH) {
         return Err("fs.canonicalize.trueos.value");
     }
     logl::log(

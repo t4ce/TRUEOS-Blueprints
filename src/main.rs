@@ -4470,22 +4470,39 @@ fn materialized_workspace_dependency(
 
 fn workspace_dependency_vendor_path(
     source_overlay: &[CratePatch],
-    work_dir: &Path,
+    _work_dir: &Path,
     dep_name: &str,
     fallback: &Path,
 ) -> PathBuf {
-    let path = source_overlay
+    // Keep direct workspace dependencies on the same canonical path used by
+    // `[patch.crates-io]`. Cargo treats a staging symlink and its real target as
+    // different package IDs, which makes same-name/version packages collide in
+    // the generated lockfile.
+    source_overlay
         .iter()
         .find(|patch| patch.key == dep_name && patch.name == dep_name)
         .map(|patch| patch.path.clone())
-        .unwrap_or_else(|| fallback.to_path_buf());
+        .unwrap_or_else(|| fallback.to_path_buf())
+}
 
-    blueprint_root(&path)
-        .and_then(|root| path.strip_prefix(root).ok().map(Path::to_path_buf))
-        .filter(|relative| relative.starts_with("vendor"))
-        .map(|relative| work_dir.parent().unwrap_or(work_dir).join(relative))
-        .filter(|candidate| candidate.exists())
-        .unwrap_or(path)
+#[cfg(test)]
+mod workspace_dependency_tests {
+    use super::*;
+
+    #[test]
+    fn vendored_workspace_dependency_keeps_the_overlay_canonical_path() {
+        let canonical = PathBuf::from("/sdk/vendor/hyper-1.9.0");
+        let patches = [CratePatch::new("hyper", canonical.clone())];
+
+        let resolved = workspace_dependency_vendor_path(
+            &patches,
+            Path::new("/staging/work/package"),
+            "hyper",
+            Path::new("/fallback/vendor/hyper-1.9.0"),
+        );
+
+        assert_eq!(resolved, canonical);
+    }
 }
 
 fn staged_blueprint_path(blueprint_root: &Path, work_dir: &Path, relative: &str) -> PathBuf {
