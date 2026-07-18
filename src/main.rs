@@ -29,7 +29,7 @@ use cargo_output::{
     write_filtered_cargo_output,
 };
 use cli::{CargoProfile, PackageCatalog, parse_cli_args};
-use publish::{publish_blueprint_file, publish_dist_blueprints};
+use publish::{publish_blueprint_file, publish_blueprint_files};
 
 struct CratePatch {
     key: String,
@@ -158,14 +158,15 @@ fn run() -> Result<(), String> {
                 return Ok(());
             }
 
+            let mut built_blueprints = Vec::with_capacity(examples.len() + package_apps.len());
             for example in examples {
-                build_one_target(
+                built_blueprints.push(build_one_target(
                     &app_dir,
                     &manifest_path,
                     BuildTarget::Example(example.name),
                     &example.required_features,
                     cargo_profile,
-                )?;
+                )?);
             }
 
             for package_app in package_apps {
@@ -174,17 +175,17 @@ fn run() -> Result<(), String> {
                     package_catalog.item_label(),
                     package_app.name
                 );
-                build_one_target_to(
+                built_blueprints.push(build_one_target_to(
                     &package_app.dir,
                     &package_app.manifest_path,
                     BuildTarget::Package,
                     &[],
                     &app_dir.join("dist"),
                     cargo_profile,
-                )?;
+                )?);
             }
 
-            publish_dist_blueprints(&app_dir.join("dist"))?;
+            publish_blueprint_files(&built_blueprints, package_catalog)?;
             return Ok(());
         }
 
@@ -200,7 +201,7 @@ fn run() -> Result<(), String> {
                     &required_features,
                     cargo_profile,
                 )?;
-                publish_blueprint_file(&bp_file)?;
+                publish_blueprint_file(&bp_file, package_catalog)?;
                 continue;
             }
 
@@ -213,7 +214,7 @@ fn run() -> Result<(), String> {
                     &app_dir.join("dist"),
                     cargo_profile,
                 )?;
-                publish_blueprint_file(&bp_file)?;
+                publish_blueprint_file(&bp_file, package_catalog)?;
                 continue;
             }
 
@@ -240,7 +241,7 @@ fn run() -> Result<(), String> {
             &root.join("dist"),
             cargo_profile,
         )?;
-        publish_blueprint_file(&bp_file)
+        publish_blueprint_file(&bp_file, package_catalog)
     } else {
         build_one_target(
             &app_dir,

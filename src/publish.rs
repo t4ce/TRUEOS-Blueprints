@@ -6,32 +6,40 @@ use std::process::Command;
 
 use sha2::{Digest, Sha256};
 
+use crate::cli::PackageCatalog;
+
 const APPS_PUBLISH_SKIP_ENV: &str = "TRUEOS_BLUEPRINT_SKIP_APPS_PUBLISH";
 const APPS_PUBLISH_MOUNT_URI_ENV: &str = "TRUEOS_BLUEPRINT_APPS_PUBLISH_MOUNT_URI";
 const APPS_PUBLISH_URI_ENV: &str = "TRUEOS_BLUEPRINT_APPS_PUBLISH_URI";
+const PROBES_PUBLISH_URI_ENV: &str = "TRUEOS_BLUEPRINT_PROBES_PUBLISH_URI";
 const DEFAULT_APPS_PUBLISH_MOUNT_URI: &str = "smb://t4ce@pdjb/home-share";
 const DEFAULT_APPS_PUBLISH_URI: &str = "smb://t4ce@pdjb/home-share/TRUEOS_SITE/apps";
+const DEFAULT_PROBES_PUBLISH_URI: &str = "smb://t4ce@pdjb/home-share/TRUEOS_SITE/probes";
 const PUBLISHED_APP_HASH_SEPARATOR: &str = "§§";
 
-pub(crate) fn publish_dist_blueprints(dist_dir: &Path) -> Result<(), String> {
+pub(crate) fn publish_blueprint_files(
+    bp_files: &[PathBuf],
+    package_catalog: PackageCatalog,
+) -> Result<(), String> {
     if env_flag_is_set(APPS_PUBLISH_SKIP_ENV) {
-        println!("trueos-blueprint: skipping apps publish");
+        println!(
+            "trueos-blueprint: skipping {} publish",
+            package_catalog.default_dir()
+        );
         return Ok(());
     }
 
-    let target_uri =
-        env_string(APPS_PUBLISH_URI_ENV).unwrap_or_else(|| DEFAULT_APPS_PUBLISH_URI.to_string());
+    let target_uri = publish_uri(package_catalog);
     let mount_uri = env_string(APPS_PUBLISH_MOUNT_URI_ENV)
         .unwrap_or_else(|| DEFAULT_APPS_PUBLISH_MOUNT_URI.to_string());
-    let bp_files = dist_blueprint_files(dist_dir)?;
     if bp_files.is_empty() {
-        return Err(format!("no .bp files found in {}", dist_dir.display()));
+        return Err("no .bp files were built for publishing".to_string());
     }
     let published_files = bp_files
-        .into_iter()
+        .iter()
         .map(|path| {
-            let published_name = published_blueprint_name(&path)?;
-            Ok((path, published_name))
+            let published_name = published_blueprint_name(path)?;
+            Ok((path.clone(), published_name))
         })
         .collect::<Result<Vec<_>, String>>()?;
 
@@ -39,7 +47,10 @@ pub(crate) fn publish_dist_blueprints(dist_dir: &Path) -> Result<(), String> {
         "trueos-blueprint: publishing {} blueprints",
         published_files.len()
     );
-    println!("trueos-blueprint: remote apps dir: {target_uri}");
+    println!(
+        "trueos-blueprint: remote {} dir: {target_uri}",
+        package_catalog.default_dir()
+    );
     let mut mount = gio_command();
     mount.arg("mount").arg(&mount_uri);
     let _ = mount.status();
@@ -59,17 +70,22 @@ pub(crate) fn publish_dist_blueprints(dist_dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
-pub(crate) fn publish_blueprint_file(bp_file: &Path) -> Result<(), String> {
+pub(crate) fn publish_blueprint_file(
+    bp_file: &Path,
+    package_catalog: PackageCatalog,
+) -> Result<(), String> {
     if env_flag_is_set(APPS_PUBLISH_SKIP_ENV) {
-        println!("trueos-blueprint: skipping apps publish");
+        println!(
+            "trueos-blueprint: skipping {} publish",
+            package_catalog.default_dir()
+        );
         return Ok(());
     }
     if !bp_file.is_file() || bp_file.extension().and_then(|value| value.to_str()) != Some("bp") {
         return Err(format!("not a .bp file: {}", bp_file.display()));
     }
 
-    let target_uri =
-        env_string(APPS_PUBLISH_URI_ENV).unwrap_or_else(|| DEFAULT_APPS_PUBLISH_URI.to_string());
+    let target_uri = publish_uri(package_catalog);
     let mount_uri = env_string(APPS_PUBLISH_MOUNT_URI_ENV)
         .unwrap_or_else(|| DEFAULT_APPS_PUBLISH_MOUNT_URI.to_string());
     let file_name = bp_file
@@ -80,7 +96,10 @@ pub(crate) fn publish_blueprint_file(bp_file: &Path) -> Result<(), String> {
     let target_file_uri = join_uri(&target_uri, published_name.as_str());
 
     println!("trueos-blueprint: publishing {}", bp_file.display());
-    println!("trueos-blueprint: remote apps dir: {target_uri}");
+    println!(
+        "trueos-blueprint: remote {} dir: {target_uri}",
+        package_catalog.default_dir()
+    );
     let mut mount = gio_command();
     mount.arg("mount").arg(&mount_uri);
     let _ = mount.status();
@@ -94,6 +113,18 @@ pub(crate) fn publish_blueprint_file(bp_file: &Path) -> Result<(), String> {
 
     println!("trueos-blueprint: published {}", published_name);
     Ok(())
+}
+
+fn publish_uri(package_catalog: PackageCatalog) -> String {
+    let (env_name, default_uri) = publish_uri_config(package_catalog);
+    env_string(env_name).unwrap_or_else(|| default_uri.to_string())
+}
+
+fn publish_uri_config(package_catalog: PackageCatalog) -> (&'static str, &'static str) {
+    match package_catalog {
+        PackageCatalog::Apps => (APPS_PUBLISH_URI_ENV, DEFAULT_APPS_PUBLISH_URI),
+        PackageCatalog::Probes => (PROBES_PUBLISH_URI_ENV, DEFAULT_PROBES_PUBLISH_URI),
+    }
 }
 
 fn published_blueprint_name(bp_file: &Path) -> Result<String, String> {
@@ -159,19 +190,6 @@ fn hex_nibble(byte: u8) -> Option<u8> {
         b'A'..=b'F' => Some(byte - b'A' + 10),
         _ => None,
     }
-}
-
-fn dist_blueprint_files(dist_dir: &Path) -> Result<Vec<PathBuf>, String> {
-    let mut out = Vec::new();
-    for entry in fs::read_dir(dist_dir).map_err(io_string)? {
-        let entry = entry.map_err(io_string)?;
-        let path = entry.path();
-        if path.is_file() && path.extension().and_then(|value| value.to_str()) == Some("bp") {
-            out.push(path);
-        }
-    }
-    out.sort();
-    Ok(out)
 }
 
 fn join_uri(base: &str, child: &str) -> String {
@@ -274,5 +292,19 @@ mod tests {
             percent_decode_uri_segment("one%C2%A7app.bp%C2%A7%C2%A7abc123"),
             "one§app.bp§§abc123"
         );
+    }
+
+    #[test]
+    fn apps_and_probes_have_separate_default_publish_uris() {
+        assert_eq!(
+            publish_uri_config(PackageCatalog::Apps),
+            (APPS_PUBLISH_URI_ENV, DEFAULT_APPS_PUBLISH_URI)
+        );
+        assert_eq!(
+            publish_uri_config(PackageCatalog::Probes),
+            (PROBES_PUBLISH_URI_ENV, DEFAULT_PROBES_PUBLISH_URI)
+        );
+        assert!(DEFAULT_APPS_PUBLISH_URI.ends_with("/TRUEOS_SITE/apps"));
+        assert!(DEFAULT_PROBES_PUBLISH_URI.ends_with("/TRUEOS_SITE/probes"));
     }
 }
