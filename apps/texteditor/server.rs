@@ -1,4 +1,4 @@
-// trueos-blueprint: features=["tokio-net-probe"]
+// trueos-blueprint: features=["lifecycle-net"]
 
 extern crate alloc;
 
@@ -30,12 +30,10 @@ use trueos::{
     logl::level,
     platform::{self, io},
     runtime,
-    time::{self, Duration},
     tokio::{self, net::SocketAddr},
 };
 
 const TEXTEDITOR_HTTP_TCP_PORT: u16 = 1010;
-const TEXTEDITOR_BIND_RETRY_MS: u64 = 1000;
 const TEXTEDITOR_BODY_MAX: usize = 2 * 1024 * 1024;
 const TEXTEDITOR_FS_LIST_MAX: usize = 256;
 const TEXTEDITOR_STORE_DIR: &str = "texteditor";
@@ -679,30 +677,10 @@ fn router() -> Router {
 async fn texteditor_http_runtime() -> Result<(), io::Error> {
     let app = router();
     let addr = SocketAddr::from(([0, 0, 0, 0], TEXTEDITOR_HTTP_TCP_PORT));
-    loop {
-        let listener = match tokio::net::TcpListener::bind(addr).await {
-            Ok(listener) => listener,
-            Err(err) => {
-                TEXTEDITOR_HTTP_PORT.store(0, Ordering::Release);
-                logl::log(
-                    level::WARN,
-                    format_args!("texteditor-http: bind {} failed {}", addr, err),
-                );
-                time::sleep(Duration::from_millis(TEXTEDITOR_BIND_RETRY_MS)).await;
-                continue;
-            }
-        };
-
-        TEXTEDITOR_HTTP_PORT.store(addr.port(), Ordering::Release);
-        logl::log(
-            level::INFO,
-            format_args!("texteditor-http: axum listening on http://{}/", addr),
-        );
-        let listener = listener.tap_io(|_| logl::log(level::INFO, "texteditor-http: tcp accepted"));
-        let result = axum::serve(listener, app).await;
-        TEXTEDITOR_HTTP_PORT.store(0, Ordering::Release);
-        return result;
-    }
+    let listener =
+        trueos::lifecycle_axum_listener!("texteditor-http", addr, &TEXTEDITOR_HTTP_PORT).await;
+    let listener = listener.tap_io(|_| logl::log(level::INFO, "texteditor-http: tcp accepted"));
+    axum::serve(listener, app).await
 }
 
 fn main() {

@@ -1,4 +1,4 @@
-// trueos-blueprint: features=["tokio-net-probe"]
+// trueos-blueprint: features=["lifecycle-net"]
 
 extern crate alloc;
 
@@ -26,7 +26,6 @@ use trueos::{
     logl::level,
     platform::{self, io},
     runtime,
-    time::{self, Duration},
     tokio::{self, net::SocketAddr},
 };
 
@@ -35,7 +34,6 @@ mod monaco_assets {
 }
 
 const MONACO_HTTP_TCP_PORT: u16 = 1011;
-const MONACO_BIND_RETRY_MS: u64 = 1000;
 const MONACO_BODY_MAX: usize = 4 * 1024 * 1024;
 const MONACO_DEFAULT_PATH: &str = "monaco/main.rs";
 const MONACO_INDEX_HTML: &str = include_str!("index.html");
@@ -355,30 +353,9 @@ fn router() -> Router {
 async fn monaco_http_runtime() -> Result<(), io::Error> {
     let app = router();
     let addr = SocketAddr::from(([0, 0, 0, 0], MONACO_HTTP_TCP_PORT));
-    loop {
-        let listener = match tokio::net::TcpListener::bind(addr).await {
-            Ok(listener) => listener,
-            Err(err) => {
-                MONACO_HTTP_PORT.store(0, Ordering::Release);
-                logl::log(
-                    level::WARN,
-                    format_args!("monaco-http: bind {} failed {}", addr, err),
-                );
-                time::sleep(Duration::from_millis(MONACO_BIND_RETRY_MS)).await;
-                continue;
-            }
-        };
-
-        MONACO_HTTP_PORT.store(addr.port(), Ordering::Release);
-        logl::log(
-            level::INFO,
-            format_args!("monaco-http: axum listening on http://{}/", addr),
-        );
-        let listener = listener.tap_io(|_| logl::log(level::INFO, "monaco-http: tcp accepted"));
-        let result = axum::serve(listener, app).await;
-        MONACO_HTTP_PORT.store(0, Ordering::Release);
-        return result;
-    }
+    let listener = trueos::lifecycle_axum_listener!("monaco-http", addr, &MONACO_HTTP_PORT).await;
+    let listener = listener.tap_io(|_| logl::log(level::INFO, "monaco-http: tcp accepted"));
+    axum::serve(listener, app).await
 }
 
 fn main() {

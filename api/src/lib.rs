@@ -30,6 +30,9 @@ pub mod ui4_solara_text;
 
 pub mod ui4_scene;
 
+#[cfg(feature = "lifecycle-net")]
+pub mod lifecycle;
+
 #[cfg(feature = "gridpaper")]
 pub mod gridpaper;
 

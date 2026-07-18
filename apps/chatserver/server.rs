@@ -1,4 +1,4 @@
-// trueos-blueprint: features=["tokio-net-probe"]
+// trueos-blueprint: features=["lifecycle-net"]
 
 extern crate alloc;
 
@@ -33,7 +33,6 @@ use trueos_chat::{ChatConfig, ChatHub, ChatMethod, ChatRequest, ChatResponse};
 
 const CHAT_HTTP_TCP_PORT: u16 = 3;
 const CHAT_HTTP_BODY_MAX: usize = 64 * 1024;
-const CHAT_HTTP_BIND_RETRY_MS: u64 = 100;
 const CHAT_SAVE_BATCH_MS: u64 = 10_000;
 const CHAT_SAVE_IDLE_MS: u64 = 1000;
 const CHAT_STORE_DIR: &str = "chat";
@@ -259,49 +258,9 @@ async fn chat_http_runtime() -> Result<(), io::Error> {
 
     let app = chat_router();
     let addr = SocketAddr::from(([0, 0, 0, 0], CHAT_HTTP_TCP_PORT));
-    loop {
-        logl::log(
-            level::INFO,
-            format_args!("chat-http: bind begin addr={}", addr),
-        );
-        let listener = match tokio::net::TcpListener::bind(addr).await {
-            Ok(listener) => listener,
-            Err(err) => {
-                CHAT_HTTP_PORT.store(0, Ordering::Release);
-                logl::log(
-                    level::WARN,
-                    format_args!(
-                        "chat-http: bind {} failed kind={:?} err={}",
-                        addr,
-                        err.kind(),
-                        err
-                    ),
-                );
-                time::sleep(Duration::from_millis(CHAT_HTTP_BIND_RETRY_MS)).await;
-                continue;
-            }
-        };
-
-        CHAT_HTTP_PORT.store(addr.port(), Ordering::Release);
-        logl::log(
-            level::INFO,
-            format_args!("chat-http: axum listening on http://{}/", addr),
-        );
-        let listener = listener.tap_io(|_| logl::log(level::INFO, "chat-http: tcp accepted"));
-        if let Err(err) = axum::serve(listener, app.clone()).await {
-            CHAT_HTTP_PORT.store(0, Ordering::Release);
-            logl::log(
-                level::WARN,
-                format_args!(
-                    "chat-http: serve failed port={} kind={:?} err={}",
-                    addr.port(),
-                    err.kind(),
-                    err
-                ),
-            );
-            time::sleep(Duration::from_millis(1000)).await;
-        }
-    }
+    let listener = trueos::lifecycle_axum_listener!("chat-http", addr, &CHAT_HTTP_PORT).await;
+    let listener = listener.tap_io(|_| logl::log(level::INFO, "chat-http: tcp accepted"));
+    axum::serve(listener, app).await
 }
 
 fn main() {
