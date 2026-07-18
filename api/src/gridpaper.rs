@@ -12,14 +12,16 @@ pub const TEXT_COLOR_ANIMATION_SLOTS: usize = 17;
 pub const COLOR_KEYFRAME_CAPACITY: usize = 8;
 pub const MIN_ANIMATION_DURATION_MS: u32 = 16;
 pub const MAX_ANIMATION_DURATION_MS: u32 = 600_000;
-pub const INSTANCE_CAPACITY: usize = 2;
+/// A GridPaper Blueprint owns one document scene. Kernel-side replication is
+/// expressed by launching another Blueprint, not by multiplying scenes inside
+/// one producer.
+pub const INSTANCE_CAPACITY: usize = 1;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct InstanceId(u32);
 
 impl InstanceId {
     pub const PRIMARY: Self = Self(0);
-    pub const NATIVE: Self = Self(1);
 
     pub const fn from_index(index: usize) -> Option<Self> {
         if index < INSTANCE_CAPACITY {
@@ -253,6 +255,7 @@ pub enum Error {
     Transport,
     InvalidAnimation,
     InvalidInstance,
+    PoolFull,
     Unknown(i32),
 }
 
@@ -355,8 +358,8 @@ fn encode_text_animations(
     cursor
 }
 
-/// Detach this Blueprint producer. The kernel retains the scene, while its
-/// UI4 presentation is released until a running producer attaches again.
+/// Detach this Blueprint producer and return its kernel GridPaper pool lease.
+/// VM lifecycle pause/resume remains the retained-scene path.
 pub fn close() -> Result<(), Error> {
     status(unsafe { v::bp_abi::trueos_cabi_gridpaper_close() })
 }
@@ -390,6 +393,7 @@ fn status(code: i32) -> Result<(), Error> {
         -4 => Err(Error::Transport),
         -5 => Err(Error::InvalidAnimation),
         -6 => Err(Error::InvalidInstance),
+        -7 => Err(Error::PoolFull),
         other => Err(Error::Unknown(other)),
     }
 }

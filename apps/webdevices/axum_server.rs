@@ -26,7 +26,7 @@ use trueos::{
     logl::level,
     pci,
     platform::{self, io},
-    rapl, runtime, thermal,
+    printers, rapl, runtime, thermal,
     time::{self, Duration},
     tokio::{self, net::SocketAddr},
 };
@@ -48,6 +48,7 @@ struct HardwareSnapshot {
     service: ServiceSnapshot,
     rapl: RaplSnapshot,
     thermal: ThermalSnapshot,
+    printers: PrinterSnapshot,
     pci: DeviceGroup,
     usb: UsbSnapshot,
     note: &'static str,
@@ -161,6 +162,34 @@ struct ThermalCoreRow {
     current_limit: Option<bool>,
     cross_domain: Option<bool>,
     state: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PrinterSnapshot {
+    vlayer_available: bool,
+    snapshot_bytes: usize,
+    generated_at_ms: Option<u64>,
+    discovery_interval_ms: Option<u64>,
+    stale_after_ms: Option<u64>,
+    printer_count: usize,
+    printers: Vec<PrinterRow>,
+    latest_text: String,
+    unavailable_reason: Option<&'static str>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PrinterRow {
+    id: String,
+    name: String,
+    uri: String,
+    secure: bool,
+    make_and_model: Option<String>,
+    formats: Vec<String>,
+    last_seen_ms: u64,
+    age_ms: Option<u64>,
+    default_candidate: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -335,6 +364,73 @@ fn thermal_payload() -> ThermalSnapshot {
             unavailable_reason: Some("thermal vlayer surface is unavailable"),
         },
     }
+}
+
+fn printer_payload() -> PrinterSnapshot {
+    match printers::snapshot_text() {
+        Ok(latest_text) if !latest_text.is_empty() => {
+            let generated_at_ms = parse_snapshot_scalar(&latest_text, "generated_at_ms");
+            let discovery_interval_ms =
+                parse_snapshot_scalar(&latest_text, "discovery_interval_ms");
+            let stale_after_ms = parse_snapshot_scalar(&latest_text, "stale_after_ms");
+            let discovered = printers::parse_snapshot_text(&latest_text);
+            let mut default_selected = false;
+            let printers = discovered
+                .into_iter()
+                .map(|printer| {
+                    let supports_pwg_raster = printer.formats.is_empty()
+                        || printer
+                            .formats
+                            .iter()
+                            .any(|format| format.eq_ignore_ascii_case("image/pwg-raster"));
+                    let default_candidate =
+                        !default_selected && !printer.secure && supports_pwg_raster;
+                    default_selected |= default_candidate;
+                    PrinterRow {
+                        id: format!("printer-{}", printer.uri),
+                        name: printer.name,
+                        uri: printer.uri,
+                        secure: printer.secure,
+                        make_and_model: printer.make_and_model,
+                        formats: printer.formats,
+                        last_seen_ms: printer.last_seen_ms,
+                        age_ms: generated_at_ms
+                            .map(|generated| generated.saturating_sub(printer.last_seen_ms)),
+                        default_candidate,
+                    }
+                })
+                .collect::<Vec<_>>();
+            PrinterSnapshot {
+                vlayer_available: true,
+                snapshot_bytes: latest_text.len(),
+                generated_at_ms,
+                discovery_interval_ms,
+                stale_after_ms,
+                printer_count: printers.len(),
+                printers,
+                latest_text,
+                unavailable_reason: None,
+            }
+        }
+        Ok(_) | Err(_) => PrinterSnapshot {
+            vlayer_available: false,
+            snapshot_bytes: 0,
+            generated_at_ms: None,
+            discovery_interval_ms: None,
+            stale_after_ms: None,
+            printer_count: 0,
+            printers: Vec::new(),
+            latest_text: String::new(),
+            unavailable_reason: Some("printer vlayer surface is unavailable"),
+        },
+    }
+}
+
+fn parse_snapshot_scalar(text: &str, key: &str) -> Option<u64> {
+    let prefix = format!("{}=", key);
+    text.lines()
+        .map(str::trim)
+        .find_map(|line| line.strip_prefix(&prefix).and_then(parse_optional_u64))
 }
 
 fn parse_thermal_rows(text: &str) -> (Option<ThermalPackageRow>, Vec<ThermalCoreRow>) {
@@ -710,9 +806,10 @@ async fn handle_snapshot() -> Response {
             },
             rapl: rapl_payload(),
             thermal: thermal_payload(),
+            printers: printer_payload(),
             pci,
             usb,
-            note: "webdevices is running as a blueprint axum app with vlayer-backed PCI, RAPL, and thermal snapshots",
+            note: "webdevices is running as a blueprint axum app with vlayer-backed PCI, RAPL, thermal, and printer snapshots",
         },
     )
 }
@@ -759,6 +856,25 @@ async fn handle_thermal_snapshot() -> Response {
     }
 }
 
+async fn handle_printer_snapshot() -> Response {
+    let snapshot = printer_payload();
+    let status = if snapshot.vlayer_available { 200 } else { 503 };
+    json_response(status, &snapshot)
+}
+
+async fn handle_printer_snapshot_text() -> Response {
+    match printers::snapshot_text() {
+        Ok(text) if !text.is_empty() => {
+            response(200, "text/plain; charset=utf-8", text.into_bytes(), true)
+        }
+        Ok(_) | Err(_) => text_response(
+            503,
+            "text/plain; charset=utf-8",
+            "printer vlayer surface is unavailable\n",
+        ),
+    }
+}
+
 fn router() -> Router {
     Router::new()
         .route("/", get(handle_index))
@@ -771,6 +887,11 @@ fn router() -> Router {
         .route("/api/rapl/snapshot", get(handle_rapl_snapshot))
         .route("/api/rapl/history", get(handle_rapl_history))
         .route("/api/thermal/snapshot", get(handle_thermal_snapshot))
+        .route("/api/printers/snapshot", get(handle_printer_snapshot))
+        .route(
+            "/api/printers/snapshot.txt",
+            get(handle_printer_snapshot_text),
+        )
 }
 
 async fn webdevices_http_runtime() -> Result<(), io::Error> {

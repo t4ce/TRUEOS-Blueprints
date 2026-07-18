@@ -43,6 +43,10 @@ pub fn snapshot_text() -> Result<String, i32> {
 
 pub fn snapshot() -> Result<Vec<Printer>, i32> {
     let text = snapshot_text()?;
+    Ok(parse_snapshot_text(&text))
+}
+
+pub fn parse_snapshot_text(text: &str) -> Vec<Printer> {
     let mut printers = Vec::new();
     for line in text.lines() {
         let mut fields = line.split('\t');
@@ -79,7 +83,7 @@ pub fn snapshot() -> Result<Vec<Printer>, i32> {
             last_seen_ms,
         });
     }
-    Ok(printers)
+    printers
 }
 
 fn read_all(read_fn: PrinterReadFn) -> Result<Vec<u8>, i32> {
@@ -122,5 +126,30 @@ mod tests {
         };
         assert_eq!(printer.name, "Office");
         assert!(!printer.secure);
+    }
+
+    #[test]
+    fn parses_kernel_snapshot_rows() {
+        let text = "trueos printer snapshot v1\n\
+            generated_at_ms=31000\n\
+            discovery_interval_ms=15000\n\
+            stale_after_ms=45000\n\
+            printer_count=1\n\
+            printer\tname\turi\tsecure\tmake_and_model\tformats\tlast_seen_ms\n\
+            printer\tOffice\tipp://192.0.2.1:631/ipp/print\t0\tExample 4000\timage/pwg-raster,application/pdf\t30000\n";
+
+        let printers = parse_snapshot_text(text);
+
+        assert_eq!(printers.len(), 1);
+        assert_eq!(printers[0].name, "Office");
+        assert_eq!(printers[0].make_and_model.as_deref(), Some("Example 4000"));
+        assert_eq!(
+            printers[0].formats,
+            vec![
+                String::from("image/pwg-raster"),
+                String::from("application/pdf")
+            ]
+        );
+        assert_eq!(printers[0].last_seen_ms, 30_000);
     }
 }

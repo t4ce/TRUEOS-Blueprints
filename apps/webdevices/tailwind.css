@@ -380,7 +380,7 @@ body[data-app="webmail"] .app-shell {
 
 .stats {
   display: grid;
-  grid-template-columns: repeat(5, minmax(110px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
   gap: 10px;
   margin-bottom: 12px;
 }
@@ -773,6 +773,17 @@ body[data-app="webmail"] .app-shell {
   display: grid;
   gap: 8px;
   padding: 10px;
+}
+
+.printer-formats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px;
+}
+
+.printer-formats .empty {
+  width: 100%;
 }
 
 .mini {

@@ -18,10 +18,13 @@ and neither action silently defaults to VM0. Paused slots keep independent VM
 store devices, so saving a second slot does not replace the first slot's
 checkpoint index.
 
-An attached VM control shell follows the same distinction: `pause` enters the
-replicatable lifecycle and tells the user to resume the VM by ID from the F2
-`pause` table. `preserve` remains the explicit raw checkpoint command; it stops
-and saves without retaining the Blueprint lifecycle latch.
+Both attached control paths, including the inner Hull `vmx>` mini shell, follow
+the same distinction: `stop` exits without a checkpoint, `pause` enters the
+replicatable lifecycle and tells the user to resume by ID from the F2 `pause`
+table, and `preserve` performs a raw checkpoint-and-stop without retaining the
+Blueprint lifecycle latch. The host VM-exit dispatcher carries stop and
+preserve as distinct outcomes rather than inferring preserve from every
+terminating `vmcall`.
 
 ## Required boundary
 
@@ -78,8 +81,13 @@ presentation, while its kernel-owned page, resident 3D scene, GPU allocations,
 and last front buffer remain retained. Resume re-arms the same VM owner and
 creates a new UI4 presentation session over that retained scene.
 
+Snapshot format v3 preserves the live VMCS RIP/RSP, guest GPRs and RFLAGS, and
+the restored stack is retained through relaunch. A same-slot F2 resume therefore
+continues after the exact pause boundary instead of entering the Blueprint at
+its default seed again. Formats v1 and v2 remain readable with their historical
+checkpoint-and-restart semantics.
+
 The next slice should add a lifecycle poll/ack ABI before treating the metadata
-as a production safety guarantee. Live replication must remain disabled until
-the VM checkpoint covers all required CPU and writable-memory state; until then,
-the tagged F2 path is an architectural probe and checkpoint-and-restart is the
-honest implementation model.
+as a production safety guarantee. Cross-host replication must remain disabled
+until the checkpoint also relocates or serializes every guest-writable backing
+and rebuilds host capabilities under the new VM principal.

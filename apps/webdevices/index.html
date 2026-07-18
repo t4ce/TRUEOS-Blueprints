@@ -16,7 +16,7 @@
           <p id="subtitle">PCI and USB hardware overview</p>
         </div>
       </div>
-      <input id="search" class="search" type="search" placeholder="Search PCI, USB, BDF, VID:PID, product">
+      <input id="search" class="search" type="search" placeholder="Search PCI, USB, printers, BDF, VID:PID, product">
       <div class="toolbar">
         <button id="refresh" class="btn">Refresh</button>
         <button id="auto" class="btn primary">Auto</button>
@@ -32,6 +32,7 @@
         <button class="nav-item" data-filter="storage"><span>Storage</span><span id="count-storage" class="nav-count">0</span></button>
         <button class="nav-item" data-filter="input"><span>Input</span><span id="count-input" class="nav-count">0</span></button>
         <button class="nav-item" data-filter="network"><span>Network</span><span id="count-network" class="nav-count">0</span></button>
+        <button class="nav-item" data-filter="printers"><span>Printers</span><span id="count-printers" class="nav-count">0</span></button>
         <div class="section-title">Status</div>
         <div class="kv" id="side-status"></div>
       </aside>
@@ -41,6 +42,7 @@
           <div class="stat"><strong id="stat-usb">0</strong><span>USB devices</span></div>
           <div class="stat"><strong id="stat-ctrl">0</strong><span>xHCI controllers</span></div>
           <div class="stat"><strong id="stat-topo">0</strong><span>Topology nodes</span></div>
+          <div class="stat"><strong id="stat-printers">0</strong><span>LAN printers</span></div>
           <div class="stat"><strong id="stat-temp">-</strong><span>Max core temp</span></div>
         </section>
         <section class="telemetry">
@@ -97,11 +99,11 @@
             <div id="topology" class="topology topology-grid"></div>
           </div>
         </section>
-        <p class="footer-note">Auto-refresh reads PCI inventory, BAR windows, RAPL, and thermal telemetry from vlayer snapshots.</p>
+        <p class="footer-note">Auto-refresh reads PCI inventory, BAR windows, RAPL, thermal telemetry, and the central LAN printer registry from vlayer snapshots.</p>
       </main>
       <aside class="details">
         <h2 id="detail-title" class="detail-title">Select a device</h2>
-        <p id="detail-sub" class="detail-sub">Pick a PCI function, USB device, or controller to inspect its live kernel-backed fields.</p>
+        <p id="detail-sub" class="detail-sub">Pick a PCI function, USB device, controller, or printer to inspect its live kernel-backed fields.</p>
         <div id="detail-chips" class="chips"></div>
         <div id="detail-kv" class="kv"></div>
         <div id="detail-extra"></div>
@@ -136,8 +138,10 @@
     function buildItems(snapshot) {
       const pciDevices = snapshot.pci?.devices || [];
       const usbShape = snapshot.usb || {};
+      const printerShape = snapshot.printers || {};
       const usbDevices = usbShape.devices || [];
       const usbControllers = usbShape.controllers || [];
+      const discoveredPrinters = printerShape.printers || [];
       const pci = pciDevices.map((device) => ({
         id: device.id,
         kind: 'pci',
@@ -165,7 +169,16 @@
         search: `${device.vendorId}:${device.productId} ${device.className} ${device.product || ''} ${device.manufacturer || ''} ${device.serial || ''}`.toLowerCase(),
         raw: device
       }));
-      return [...pci, ...controllers, ...usb];
+      const printers = discoveredPrinters.map((printer) => ({
+        id: printer.id,
+        kind: 'printer',
+        role: 'printer',
+        title: printer.name || printer.makeAndModel || 'LAN printer',
+        sub: `${printer.secure ? 'IPPS' : 'IPP'} / ${printer.makeAndModel || 'model unknown'} / ${formatLastSeen(printer.ageMs)}`,
+        search: `${printer.name || ''} ${printer.makeAndModel || ''} ${printer.uri || ''} ${(printer.formats || []).join(' ')}`.toLowerCase(),
+        raw: printer
+      }));
+      return [...pci, ...controllers, ...usb, ...printers];
     }
 
     function usbRole(device) {
@@ -182,6 +195,7 @@
       if (state.filter === 'storage' && item.role !== 'storage') return false;
       if (state.filter === 'input' && item.role !== 'input') return false;
       if (state.filter === 'network' && item.role !== 'network') return false;
+      if (state.filter === 'printers' && item.kind !== 'printer') return false;
       if (state.query && !item.search.includes(state.query)) return false;
       return true;
     }
@@ -223,6 +237,7 @@
       $('stat-usb').textContent = snap.usb.deviceCount ?? snap.usb.count ?? 0;
       $('stat-ctrl').textContent = snap.usb.controllerCount ?? 0;
       $('stat-topo').textContent = snap.usb.topologyCount ?? 0;
+      $('stat-printers').textContent = snap.printers?.printerCount ?? 0;
       $('stat-temp').textContent = formatTemp(maxCoreTemp(snap.thermal?.cores || []));
       $('count-all').textContent = countBy('all');
       $('count-pci').textContent = countBy('pci');
@@ -231,6 +246,7 @@
       $('count-storage').textContent = countBy('storage');
       $('count-input').textContent = countBy('input');
       $('count-network').textContent = countBy('network');
+      $('count-printers').textContent = countBy('printers');
       $('side-status').innerHTML = kvHtml([
         ['Schema', snap.schema],
         ['Port', snap.service.port || '-'],
@@ -238,7 +254,8 @@
         ['Probe', snap.usb.probeError || snap.usb.unavailableReason || 'ok'],
         ['RAPL', snap.rapl?.sampleValid ? 'sample valid' : (snap.rapl?.vlayerAvailable ? 'waiting' : 'unavailable')],
         ['RAPL history', `${snap.rapl?.historyBytes ?? 0} bytes`],
-        ['Thermal', snap.thermal?.sampleValid ? `${snap.thermal.cores?.length || 0} cores` : (snap.thermal?.vlayerAvailable ? 'waiting' : 'unavailable')]
+        ['Thermal', snap.thermal?.sampleValid ? `${snap.thermal.cores?.length || 0} cores` : (snap.thermal?.vlayerAvailable ? 'waiting' : 'unavailable')],
+        ['Printers', printerStatus(snap.printers)]
       ]);
       $('probe-tag').className = snap.usb.probeError ? 'tag warn' : 'tag ok';
       $('probe-tag').textContent = snap.usb.probeError || snap.usb.unavailableReason || 'probe ok';
@@ -372,6 +389,9 @@
 
     function renderList() {
       const visible = state.items.filter(itemVisible);
+      if (!visible.some((item) => item.id === state.selectedId)) {
+        state.selectedId = visible[0]?.id ?? null;
+      }
       $('visible-count').textContent = `${visible.length} visible`;
       $('device-list').innerHTML = visible.length ? visible.map((item) => `
         <button class="row ${item.id === state.selectedId ? 'selected' : ''}" data-select="${esc(item.id)}">
@@ -429,6 +449,7 @@
       if (item.kind === 'pci') renderPciDetails(item.raw);
       if (item.kind === 'usb') renderUsbDetails(item.raw);
       if (item.kind === 'controller') renderControllerDetails(item.raw);
+      if (item.kind === 'printer') renderPrinterDetails(item.raw);
     }
 
     function renderPciDetails(device) {
@@ -485,6 +506,28 @@
         </div>`;
     }
 
+    function renderPrinterDetails(printer) {
+      const formats = printer.formats || [];
+      const registry = state.snapshot?.printers || {};
+      $('detail-kv').innerHTML = kvHtml([
+        ['Transport', printer.secure ? 'IPPS' : 'IPP'],
+        ['URI', printer.uri],
+        ['Model', printer.makeAndModel || '-'],
+        ['Last seen', formatLastSeen(printer.ageMs)],
+        ['Discovery cadence', formatAge(registry.discoveryIntervalMs)],
+        ['Stale after', formatAge(registry.staleAfterMs)],
+        ['Registry tick', printer.lastSeenMs ?? '-'],
+        ['Print default', printer.defaultCandidate ? 'yes' : 'no']
+      ]);
+      $('detail-extra').innerHTML = `
+        <div class="panel" style="margin-top:12px">
+          <div class="panel-head"><h2>Advertised formats</h2><span class="tag">${formats.length}</span></div>
+          <div class="printer-formats">${formats.length ? formats.map((format) => `
+            <span class="tag ${format.toLowerCase() === 'image/pwg-raster' ? 'ok' : ''}">${esc(format)}</span>
+          `).join('') : '<div class="empty">No PDL list advertised; the spooler treats the printer as capability-compatible.</div>'}</div>
+        </div>`;
+    }
+
     function kvHtml(rows) {
       return rows.map(([key, value]) => `<div>${esc(key)}</div><div>${esc(value)}</div>`).join('');
     }
@@ -505,6 +548,17 @@
       if (typeof value !== 'number' || !Number.isFinite(value)) return '-';
       if (value >= 1000) return `${(value / 1000).toFixed(0)}s`;
       return `${value}ms`;
+    }
+
+    function formatLastSeen(value) {
+      const age = formatAge(value);
+      return age === '-' ? 'age unknown' : `${age} ago`;
+    }
+
+    function printerStatus(printers) {
+      if (!printers?.vlayerAvailable) return 'unavailable';
+      const count = printers.printerCount ?? 0;
+      return count === 1 ? '1 discovered' : `${count} discovered`;
     }
 
     function formatPermille(value) {
@@ -529,6 +583,7 @@
         document.querySelectorAll('[data-filter]').forEach((el) => el.classList.toggle('active', el === button));
         renderList();
         renderTopology();
+        renderDetails();
       });
     });
     $('search').addEventListener('input', (event) => {

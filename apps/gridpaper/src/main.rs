@@ -14,10 +14,6 @@ use trueos::{
 
 const TRACKED_PRINT_JOBS: usize = 8;
 const PRINT_STATUS_INTERVAL_MS: u64 = 250;
-const GRIDPAPER_INSTANCES: [trueos::gridpaper::InstanceId; trueos::gridpaper::INSTANCE_CAPACITY] = [
-    trueos::gridpaper::InstanceId::PRIMARY,
-    trueos::gridpaper::InstanceId::NATIVE,
-];
 
 #[derive(Clone, Copy)]
 struct TrackedPrintJob {
@@ -88,17 +84,12 @@ fn main() {
         publish_mode: PublishMode::PreserveIncrementalEdits,
         initial_time_ms: start_ms,
     };
-    let mut pages = [GridPaper::new(config), GridPaper::new(config)];
-    // Preserve the original producer exactly; the second producer starts at
-    // native 100% and owns a completely separate page and animation table.
-    pages[0].set_scale_percent(150);
-    pages[1].set_scale_percent(100);
-    for page in &mut pages {
-        install_full_rainbow_text_animations(page);
-        initialize_unicode_demo(page, start_ms);
-    }
-    let mut submitted_animation_generations = [u64::MAX; GRIDPAPER_INSTANCES.len()];
-    submit_all_to_kernel(&pages, &mut submitted_animation_generations);
+    let mut page = GridPaper::new(config);
+    page.set_scale_percent(100);
+    install_full_rainbow_text_animations(&mut page);
+    initialize_unicode_demo(&mut page, start_ms);
+    let mut submitted_animation_generation = u64::MAX;
+    submit_to_kernel(&page, &mut submitted_animation_generation);
 
     let mut input = [0_u8; 64];
     let mut print_jobs = [None; TRACKED_PRINT_JOBS];
@@ -122,37 +113,27 @@ fn main() {
             b"quit" => break,
             b"snapshot" => {
                 let now_ms = clock::monotonic_millis();
-                for page in &mut pages {
-                    let _ = page.publish(now_ms);
-                }
-                submit_all_to_kernel(&pages, &mut submitted_animation_generations);
+                let _ = page.publish(now_ms);
+                submit_to_kernel(&page, &mut submitted_animation_generation);
             }
             b"clear" => {
                 let now_ms = clock::monotonic_millis();
-                for page in &mut pages {
-                    let mut edit = page.edit(now_ms);
-                    edit.raw_mut().fill(0);
-                    let _ = edit.finish();
-                }
-                for page in &mut pages {
-                    let _ = page.publish(now_ms);
-                }
-                submit_all_to_kernel(&pages, &mut submitted_animation_generations);
+                let mut edit = page.edit(now_ms);
+                edit.raw_mut().fill(0);
+                let _ = edit.finish();
+                let _ = page.publish(now_ms);
+                submit_to_kernel(&page, &mut submitted_animation_generation);
             }
             bytes => match core::str::from_utf8(bytes) {
                 Ok(text) => match Cell::new(text, Color::BrightBlue, Color::White, CellStyle::BOLD)
                 {
                     Ok(cell) => {
                         let now_ms = clock::monotonic_millis();
-                        for page in &mut pages {
-                            let mut edit = page.edit(now_ms);
-                            let _ = edit.set_cell(0, 0, cell);
-                            let _ = edit.finish();
-                        }
-                        for page in &mut pages {
-                            let _ = page.publish(now_ms);
-                        }
-                        submit_all_to_kernel(&pages, &mut submitted_animation_generations);
+                        let mut edit = page.edit(now_ms);
+                        let _ = edit.set_cell(0, 0, cell);
+                        let _ = edit.finish();
+                        let _ = page.publish(now_ms);
+                        submit_to_kernel(&page, &mut submitted_animation_generation);
                     }
                     Err(error) => {
                         logl::log(level::WARN, format_args!("gridpaper: {error}"));
@@ -162,46 +143,38 @@ fn main() {
             },
         }
     }
-    for instance in GRIDPAPER_INSTANCES {
-        if let Err(error) = trueos::gridpaper::close_instance(instance) {
-            logl::log(
-                level::WARN,
-                format_args!(
-                    "gridpaper: kernel close failed instance={} error={error:?}",
-                    instance.index(),
-                ),
-            );
-        }
+    if let Err(error) = trueos::gridpaper::close() {
+        logl::log(
+            level::WARN,
+            format_args!("gridpaper: kernel close failed error={error:?}"),
+        );
     }
 }
 
 fn drain_f10_print_requests(jobs: &mut [Option<TrackedPrintJob>; TRACKED_PRINT_JOBS]) {
-    for instance in GRIDPAPER_INSTANCES {
-        while let Some(request) = trueos::gridpaper::take_instance_print_request(instance) {
-            match print2d::submit_gridpaper_request(request.token()) {
-                Ok(id) => {
-                    remember_print_job(jobs, id);
-                    logl::log(
-                        level::INFO,
-                        format_args!(
-                            "gridpaper: print2d job={} instance={} state=Queued trigger=F10",
-                            id.get(),
-                            instance.index(),
-                        ),
-                    );
-                }
-                Err(print2d::Error::QueueFull) => {
-                    // The kernel deliberately leaves this token available; retry
-                    // it after the spooler drains one slot.
-                    break;
-                }
-                Err(error) => {
-                    logl::log(
-                        level::WARN,
-                        format_args!("gridpaper: F10 print submit failed: {error:?}"),
-                    );
-                    break;
-                }
+    while let Some(request) = trueos::gridpaper::take_print_request() {
+        match print2d::submit_gridpaper_request(request.token()) {
+            Ok(id) => {
+                remember_print_job(jobs, id);
+                logl::log(
+                    level::INFO,
+                    format_args!(
+                        "gridpaper: print2d job={} state=Queued trigger=F10",
+                        id.get()
+                    ),
+                );
+            }
+            Err(print2d::Error::QueueFull) => {
+                // The kernel deliberately leaves this token available; retry
+                // it after the spooler drains one slot.
+                break;
+            }
+            Err(error) => {
+                logl::log(
+                    level::WARN,
+                    format_args!("gridpaper: F10 print submit failed: {error:?}"),
+                );
+                break;
             }
         }
     }
@@ -368,53 +341,26 @@ fn install_full_rainbow_text_animations(page: &mut GridPaper) {
     }
 }
 
-fn submit_to_kernel(
-    instance: trueos::gridpaper::InstanceId,
-    page: &GridPaper,
-    submitted_animation_generation: &mut u64,
-) {
+fn submit_to_kernel(page: &GridPaper, submitted_animation_generation: &mut u64) {
     let snapshot = page.snapshot();
-    if let Err(error) = trueos::gridpaper::submit_instance_snapshot(
-        instance,
+    if let Err(error) = trueos::gridpaper::submit_snapshot(
         snapshot.generation(),
         snapshot.scale_percent(),
         snapshot.raw(),
     ) {
         logl::log(
             level::WARN,
-            format_args!(
-                "gridpaper: kernel snapshot submit failed instance={} error={error:?}",
-                instance.index(),
-            ),
+            format_args!("gridpaper: kernel snapshot submit failed error={error:?}"),
         );
     }
     if snapshot.animation_generation() != *submitted_animation_generation {
-        match trueos::gridpaper::submit_instance_text_animations(
-            instance,
-            snapshot.text_color_animations(),
-        ) {
+        match trueos::gridpaper::submit_text_animations(snapshot.text_color_animations()) {
             Ok(()) => *submitted_animation_generation = snapshot.animation_generation(),
             Err(error) => logl::log(
                 level::WARN,
-                format_args!(
-                    "gridpaper: kernel text animations submit failed instance={} error={error:?}",
-                    instance.index(),
-                ),
+                format_args!("gridpaper: kernel text animations submit failed error={error:?}"),
             ),
         }
-    }
-}
-
-fn submit_all_to_kernel(
-    pages: &[GridPaper; GRIDPAPER_INSTANCES.len()],
-    submitted_animation_generations: &mut [u64; GRIDPAPER_INSTANCES.len()],
-) {
-    for (index, instance) in GRIDPAPER_INSTANCES.iter().copied().enumerate() {
-        submit_to_kernel(
-            instance,
-            &pages[index],
-            &mut submitted_animation_generations[index],
-        );
     }
 }
 
