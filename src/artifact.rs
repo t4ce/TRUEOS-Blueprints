@@ -4,6 +4,13 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+const BLUEPRINT_PAYLOAD_7Z: u16 = 2;
+pub(crate) const BLUEPRINT_CAP_REPLICATABLE: u16 = 1 << 8;
+
+const fn blueprint_header_flags(capability_flags: u16) -> u16 {
+    BLUEPRINT_PAYLOAD_7Z | capability_flags
+}
+
 pub(crate) fn tool_command(tool_names: &[&str]) -> Result<Command, String> {
     let tool = find_tool(tool_names)?;
     Ok(Command::new(tool))
@@ -319,6 +326,7 @@ pub(crate) fn write_blueprint(
     out: &Path,
     stripped: &Path,
     entry_hint_hex: &str,
+    capability_flags: u16,
 ) -> Result<(), String> {
     let raw = fs::read(stripped).map_err(io_string)?;
     let payload = compress_blueprint_payload(stripped)?;
@@ -327,7 +335,7 @@ pub(crate) fn write_blueprint(
     let mut bytes = Vec::with_capacity(24 + payload.len());
     bytes.extend_from_slice(b"TRBP");
     bytes.extend_from_slice(&1u16.to_le_bytes());
-    bytes.extend_from_slice(&2u16.to_le_bytes());
+    bytes.extend_from_slice(&blueprint_header_flags(capability_flags).to_le_bytes());
     bytes.extend_from_slice(&entry.to_le_bytes());
     bytes.extend_from_slice(&(payload.len() as u32).to_le_bytes());
     bytes.extend_from_slice(&(raw.len() as u32).to_le_bytes());
@@ -361,4 +369,14 @@ fn compress_blueprint_payload(stripped: &Path) -> Result<Vec<u8>, String> {
 
 fn io_string(err: io::Error) -> String {
     err.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn replicatable_capability_keeps_the_payload_encoding() {
+        assert_eq!(blueprint_header_flags(BLUEPRINT_CAP_REPLICATABLE), 0x0102);
+    }
 }

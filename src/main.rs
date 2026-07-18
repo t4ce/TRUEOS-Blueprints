@@ -16,12 +16,12 @@ mod publish;
 
 use app_catalog::{
     example_required_features, example_specs, manifest_declared_features, manifest_has_dependency,
-    package_app_spec, package_app_specs, package_bin_name, package_blueprint_profile, package_name,
-    push_app_or_trueos_feature,
+    package_app_spec, package_app_specs, package_bin_name, package_blueprint_profile,
+    package_blueprint_replicatable, package_name, push_app_or_trueos_feature,
 };
 use artifact::{
-    cargo_artifact_stem, collect_rlibs_for_object, entry_hint_hex, entry_symbol_name,
-    latest_cargo_object, tool_command, write_blueprint,
+    BLUEPRINT_CAP_REPLICATABLE, cargo_artifact_stem, collect_rlibs_for_object, entry_hint_hex,
+    entry_symbol_name, latest_cargo_object, tool_command, write_blueprint,
 };
 use build_plan::{BuildFlavor, BuildSettings, BuildTarget, resolve_build_settings};
 use cargo_output::{
@@ -265,6 +265,13 @@ fn build_one_target_to(
     output_dir: &Path,
     cargo_profile: CargoProfile,
 ) -> Result<PathBuf, String> {
+    let capability_flags = if matches!(build_target, BuildTarget::Package)
+        && package_blueprint_replicatable(manifest_path)?
+    {
+        BLUEPRINT_CAP_REPLICATABLE
+    } else {
+        0
+    };
     let cargo_profile = if matches!(build_target, BuildTarget::Package) {
         package_blueprint_profile(manifest_path)?.unwrap_or(cargo_profile)
     } else {
@@ -518,7 +525,7 @@ fn build_one_target_to(
 
     let out = output_dir.join(format!("{output_name}.bp"));
     fs::create_dir_all(out.parent().ok_or("bad output path")?).map_err(io_string)?;
-    write_blueprint(&out, &stripped, &entry_hint_hex)?;
+    write_blueprint(&out, &stripped, &entry_hint_hex, capability_flags)?;
     println!("packed {} -> {}", app_obj.display(), out.display());
     Ok(out)
 }

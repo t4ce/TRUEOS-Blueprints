@@ -116,16 +116,18 @@ async fn run(policy: PortPolicy) {
 
 async fn acquire_listener(policy: PortPolicy) -> Option<t::net::TcpListener> {
     match policy {
-        PortPolicy::Ephemeral => match t::net::TcpListener::bind((Ipv4Addr::UNSPECIFIED, 0)).await {
-            Ok(listener) => Some(listener),
-            Err(err) => {
-                logl::log(
-                    level::WARN,
-                    format_args!("replicatable: ephemeral bind failed: {}", err),
-                );
-                None
+        PortPolicy::Ephemeral => {
+            match t::net::TcpListener::bind((Ipv4Addr::UNSPECIFIED, 0)).await {
+                Ok(listener) => Some(listener),
+                Err(err) => {
+                    logl::log(
+                        level::WARN,
+                        format_args!("replicatable: ephemeral bind failed: {}", err),
+                    );
+                    None
+                }
             }
-        },
+        }
         PortPolicy::Increment { preferred } => {
             for offset in 0..MAX_INCREMENT_ATTEMPTS {
                 let Some(port) = preferred.checked_add(offset) else {

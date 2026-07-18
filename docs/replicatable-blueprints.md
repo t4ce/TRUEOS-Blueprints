@@ -4,6 +4,20 @@ F2 Apps should own orchestration. A Blueprint may opt into a cooperative
 lifecycle contract when it has external resources that cannot safely be copied.
 Blueprints without lifecycle support continue to start and stop normally.
 
+The package opt-in is explicit metadata which is encoded into the `.bp` header:
+
+```toml
+[package.metadata.trueos-blueprint]
+replicatable = true
+```
+
+F2 uses that artifact capability to filter its `pause` table. Blank submit lists
+only tagged running or latched VM slots; submitting a displayed VM ID toggles
+pause/resume. `unpause` is retained only as a command alias, not a separate tab,
+and neither action silently defaults to VM0. Paused slots keep independent VM
+store devices, so saving a second slot does not replace the first slot's
+checkpoint index.
+
 ## Required boundary
 
 The snapshot contains logical, in-VM state. It must not claim ownership of live
@@ -53,7 +67,8 @@ writing the same state directory.
 instances cannot silently own the same TCP listener port. It demonstrates both
 incrementing from a preferred port and asking TRUEOS for an ephemeral port.
 
-The next slice should add an opt-in lifecycle poll/ack ABI and route F2 `pause`
-through it. Live replication must remain disabled until the VM checkpoint covers
-all required CPU and writable-memory state; until then, checkpoint-and-restart is
-the honest implementation model.
+The next slice should add a lifecycle poll/ack ABI before treating the metadata
+as a production safety guarantee. Live replication must remain disabled until
+the VM checkpoint covers all required CPU and writable-memory state; until then,
+the tagged F2 path is an architectural probe and checkpoint-and-restart is the
+honest implementation model.
