@@ -18,6 +18,11 @@ and neither action silently defaults to VM0. Paused slots keep independent VM
 store devices, so saving a second slot does not replace the first slot's
 checkpoint index.
 
+An attached VM control shell follows the same distinction: `pause` enters the
+replicatable lifecycle and tells the user to resume the VM by ID from the F2
+`pause` table. `preserve` remains the explicit raw checkpoint command; it stops
+and saves without retaining the Blueprint lifecycle latch.
+
 ## Required boundary
 
 The snapshot contains logical, in-VM state. It must not claim ownership of live
@@ -66,6 +71,12 @@ writing the same state directory.
 `hello_world_replicatable` establishes the first invariant: two Blueprint
 instances cannot silently own the same TCP listener port. It demonstrates both
 incrementing from a preferred port and asking TRUEOS for an ephemeral port.
+
+The original `hello_world` and `gridpaper` apps also opt in. Gridpaper exercises
+the managed-service form of the contract: pause detaches the owner's UI4
+presentation, while its kernel-owned page, resident 3D scene, GPU allocations,
+and last front buffer remain retained. Resume re-arms the same VM owner and
+creates a new UI4 presentation session over that retained scene.
 
 The next slice should add a lifecycle poll/ack ABI before treating the metadata
 as a production safety guarantee. Live replication must remain disabled until

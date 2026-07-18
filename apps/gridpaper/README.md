@@ -2,6 +2,12 @@
 
 `gridpaper` is a no-heap DIN A4 grid document and Blueprint demo app.
 
+The Blueprint opts into the F2 replicatable lifecycle. On pause, TRUEOS detaches
+the VM owner's UI4 presentation while retaining the kernel-owned Gridpaper page,
+3D scene, GPU allocations, and last front buffer. Resuming the same VM slot
+re-arms that producer and attaches a new UI4 window session to the retained
+scene; the Blueprint does not checkpoint UI4 or GPU handles.
+
 The physical page is 210 mm by 297 mm. Its centered grid has 37 columns and 53
 rows of 5 mm cells, for a 185 mm by 265 mm grid and 1,961 addressable cells.
 That leaves 12.5 mm margins at the left and right and 16 mm margins at the top
