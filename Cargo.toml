@@ -30,7 +30,6 @@ members = [
     "apps/swarm",
     "apps/system-services",
     "apps/test_some_crates",
-    "apps/texteditor",
     "apps/tokio_fs",
     "apps/tokio_net",
     "apps/tokio_rt",

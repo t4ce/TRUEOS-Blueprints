@@ -108,10 +108,15 @@ writing the same state directory.
 instances cannot silently own the same TCP listener port. It demonstrates both
 incrementing from a preferred port and asking TRUEOS for an ephemeral port.
 
-`chatserver`, `monaco`, and `texteditor` use the compact Axum boundary and opt
-into the F2 table. Together they cover preserved in-memory state, path-based
-file access, and HTTP listener reconstruction without making lifecycle support
-mandatory for unrelated Blueprints.
+`chatserver`, `monaco`, and `swarm` use the compact Axum boundary and opt into
+the F2 table. Swarm folds the former standalone Texteditor proof into its Python
+workspace: embedded templates and writable files can be opened, edited,
+created, deleted, and uploaded to a selected node. Writable sources live under
+`swarm/sketches`, while embedded sketches remain immutable templates that can
+be saved into that workspace. Together these apps cover preserved in-memory
+state, path-based file access, inbound listener recovery, and Swarm's UDP
+discovery lease without making lifecycle support mandatory for unrelated
+Blueprints.
 
 The original `hello_world` and `gridpaper` apps also opt in. Gridpaper exercises
 the managed-service form of the contract: pause detaches the owner's UI4

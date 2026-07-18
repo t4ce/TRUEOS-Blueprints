@@ -1,4 +1,4 @@
-// trueos-blueprint: features=["tokio-net-probe"]
+// trueos-blueprint: features=["lifecycle-net"]
 
 extern crate alloc;
 
@@ -27,7 +27,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use trueos::{
-    clock, logl,
+    clock, fs, logl,
     logl::level,
     platform::{self, io},
     runtime,
@@ -38,12 +38,12 @@ use trueos::{
         net::{TcpStream, UdpSocket},
         sync::RwLock,
     },
-    vnet,
+    vfs, vnet,
 };
 use trueos_esp::{gate, swarm};
 
 const SWARM_HTTP_TCP_PORT: u16 = 12;
-const SWARM_HTTP_BIND_RETRY_MS: u64 = 1_000;
+const SWARM_NETWORK_RETRY_MS: u64 = 1_000;
 const SWARM_DISCOVERY_RELAY_UDP_PORT: u16 = 32_345;
 const SWARM_DISCOVERY_RELAY_MAGIC: &[u8; 4] = b"SRD1";
 const SWARM_REGISTRY_MAX_DEVICES: usize = 64;
@@ -53,6 +53,10 @@ const SWARM_CONTROL_TIMEOUT_MS: u64 = 3_000;
 const SWARM_CONTROL_MAX_RX: usize = 16 * 1024;
 const SWARM_EVENT_LIMIT: usize = 64;
 const SWARM_TARGET_FILENAME: &str = "app.py";
+const SWARM_SKETCH_DIR: &str = "swarm/sketches";
+const SWARM_SKETCH_MAX_FILES: usize = 128;
+const SWARM_SKETCH_MAX_BYTES: usize = 256 * 1024;
+const SWARM_SOCKET_LEASE_PROBE_MS: u64 = 500;
 const SWARM_INDEX_HTML: &str = include_str!("index.html");
 const TRUEOS_TAILWIND_CSS: &str = include_str!("tailwind.css");
 const SWARM_CSS: &str = include_str!("swarm.css");
@@ -217,10 +221,12 @@ struct DeviceStatusRow {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SketchRow {
-    id: &'static str,
-    source_name: &'static str,
-    target_name: &'static str,
-    description: &'static str,
+    id: String,
+    source_name: String,
+    target_name: String,
+    description: String,
+    origin: &'static str,
+    editable: bool,
     bytes: usize,
 }
 
@@ -232,10 +238,143 @@ struct UploadRequest {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct SaveSketchRequest {
+    name: String,
+    source: String,
+}
+
+struct LoadedSketch {
+    id: String,
+    source_name: String,
+    description: String,
+    origin: &'static str,
+    editable: bool,
+    body: Vec<u8>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct ManualDeviceRequest {
     address: String,
     #[serde(default)]
     port: Option<u16>,
+}
+
+fn embedded_sketch_id(sketch: &SketchSpec) -> String {
+    format!("embedded:{}", sketch.id)
+}
+
+fn workspace_sketch_id(name: &str) -> String {
+    format!("file:{}", name)
+}
+
+fn normalize_sketch_name(raw: &str) -> Result<String, String> {
+    let name = raw.trim();
+    if name.is_empty() {
+        return Err("choose a Python file name".to_string());
+    }
+    if name.len() > 96 {
+        return Err("file name is too long".to_string());
+    }
+    if name == "." || name == ".." || name.starts_with('.') {
+        return Err("hidden or relative file names are not allowed".to_string());
+    }
+    if name.contains('/') || name.contains('\\') || name.contains('\0') {
+        return Err("file name must not contain a path".to_string());
+    }
+    if !name.to_ascii_lowercase().ends_with(".py") {
+        return Err("Swarm workspace files must end in .py".to_string());
+    }
+    if !name
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+    {
+        return Err("use letters, numbers, dash, underscore, and dot in file names".to_string());
+    }
+    Ok(name.to_string())
+}
+
+fn workspace_sketch_path(name: &str) -> String {
+    format!("{}/{}", SWARM_SKETCH_DIR, name)
+}
+
+fn workspace_sketch_names() -> Vec<String> {
+    let mut names = vfs::list_dir_utf8(SWARM_SKETCH_DIR.as_bytes())
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|name| normalize_sketch_name(name).ok())
+        .take(SWARM_SKETCH_MAX_FILES)
+        .collect::<Vec<_>>();
+    names.sort_by_key(|name| name.to_ascii_lowercase());
+    names
+}
+
+fn sketch_rows() -> Vec<SketchRow> {
+    let mut rows = Vec::new();
+    for name in workspace_sketch_names() {
+        let path = workspace_sketch_path(&name);
+        let bytes = vfs::stat(path.as_bytes())
+            .ok()
+            .map(|stat| stat.len.min(usize::MAX as u64) as usize)
+            .unwrap_or(0);
+        rows.push(SketchRow {
+            id: workspace_sketch_id(&name),
+            source_name: name,
+            target_name: SWARM_TARGET_FILENAME.to_string(),
+            description: "Writable Swarm workspace file".to_string(),
+            origin: "file",
+            editable: true,
+            bytes,
+        });
+    }
+    rows.extend(SWARM_SKETCHES.iter().map(|sketch| SketchRow {
+        id: embedded_sketch_id(sketch),
+        source_name: sketch.source_name.to_string(),
+        target_name: SWARM_TARGET_FILENAME.to_string(),
+        description: sketch.description.to_string(),
+        origin: "embedded",
+        editable: false,
+        bytes: sketch.body.len(),
+    }));
+    rows
+}
+
+async fn load_sketch(id: &str) -> Result<LoadedSketch, String> {
+    if let Some(embedded_id) = id.strip_prefix("embedded:") {
+        let sketch = SWARM_SKETCHES
+            .iter()
+            .find(|sketch| sketch.id == embedded_id)
+            .ok_or_else(|| "embedded sketch not found".to_string())?;
+        return Ok(LoadedSketch {
+            id: embedded_sketch_id(sketch),
+            source_name: sketch.source_name.to_string(),
+            description: sketch.description.to_string(),
+            origin: "embedded",
+            editable: false,
+            body: sketch.body.to_vec(),
+        });
+    }
+
+    let raw_name = id
+        .strip_prefix("file:")
+        .ok_or_else(|| "bad sketch id".to_string())?;
+    let name = normalize_sketch_name(raw_name)?;
+    let path = workspace_sketch_path(&name);
+    let body = fs::read(path.as_str())
+        .await
+        .map_err(|error| format!("read {} failed: {}", name, error))?;
+    if body.len() > SWARM_SKETCH_MAX_BYTES {
+        return Err(format!("{} exceeds the Swarm source limit", name));
+    }
+    core::str::from_utf8(&body).map_err(|_| format!("{} is not UTF-8 Python source", name))?;
+    Ok(LoadedSketch {
+        id: workspace_sketch_id(&name),
+        source_name: name,
+        description: "Writable Swarm workspace file".to_string(),
+        origin: "file",
+        editable: true,
+        body,
+    })
 }
 
 fn monotonic_ms(state: &AppState) -> u64 {
@@ -336,21 +475,12 @@ async fn handle_snapshot(State(state): State<AppState>) -> Response {
         .iter()
         .map(|snapshot| device_row(snapshot, now_ms))
         .collect();
-    let sketches = SWARM_SKETCHES
-        .iter()
-        .map(|sketch| SketchRow {
-            id: sketch.id,
-            source_name: sketch.source_name,
-            target_name: SWARM_TARGET_FILENAME,
-            description: sketch.description,
-            bytes: sketch.body.len(),
-        })
-        .collect();
+    let sketches = sketch_rows();
 
     json_response(
         200,
         &SnapshotResponse {
-            schema: "trueos.swarm.v1",
+            schema: "trueos.swarm.v2",
             generated_at_ms: generated_at_ms(&state),
             change_seq: shared.change_seq,
             service: ServiceRow {
@@ -372,6 +502,97 @@ async fn handle_snapshot(State(state): State<AppState>) -> Response {
             events: shared.events.iter().cloned().rev().collect(),
         },
     )
+}
+
+async fn handle_sketch_get(Path(id): Path<String>) -> Response {
+    let sketch = match load_sketch(&id).await {
+        Ok(sketch) => sketch,
+        Err(error) => return error_response(404, error),
+    };
+    let source = match String::from_utf8(sketch.body) {
+        Ok(source) => source,
+        Err(_) => return error_response(500, "embedded sketch is not UTF-8"),
+    };
+    json_response(
+        200,
+        &serde_json::json!({
+            "ok": true,
+            "sketch": {
+                "id": sketch.id,
+                "sourceName": sketch.source_name,
+                "description": sketch.description,
+                "origin": sketch.origin,
+                "editable": sketch.editable,
+                "bytes": source.len(),
+                "source": source,
+            }
+        }),
+    )
+}
+
+async fn handle_sketch_save(
+    State(state): State<AppState>,
+    Json(request): Json<SaveSketchRequest>,
+) -> Response {
+    let name = match normalize_sketch_name(&request.name) {
+        Ok(name) => name,
+        Err(error) => return error_response(400, error),
+    };
+    if request.source.len() > SWARM_SKETCH_MAX_BYTES {
+        return error_response(413, "Python source exceeds the Swarm source limit");
+    }
+    if let Err(error) = fs::create_dir_all(SWARM_SKETCH_DIR).await {
+        return error_response(500, format!("create workspace failed: {}", error));
+    }
+    let path = workspace_sketch_path(&name);
+    let existed = fs::try_exists(path.as_str()).await.unwrap_or(false);
+    if let Err(error) = fs::write(path.as_str(), request.source.as_bytes()).await {
+        return error_response(500, format!("write {} failed: {}", name, error));
+    }
+
+    let now_ms = monotonic_ms(&state);
+    let mut shared = state.shared.write().await;
+    shared.note_change();
+    shared.push_event(
+        now_ms,
+        "ok",
+        format!(
+            "{} workspace sketch {} ({} bytes)",
+            if existed { "saved" } else { "created" },
+            name,
+            request.source.len()
+        ),
+    );
+    json_response(
+        200,
+        &serde_json::json!({
+            "ok": true,
+            "id": workspace_sketch_id(&name),
+            "sourceName": name,
+            "bytes": request.source.len(),
+            "created": !existed,
+        }),
+    )
+}
+
+async fn handle_sketch_delete(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    let Some(raw_name) = id.strip_prefix("file:") else {
+        return error_response(409, "embedded templates cannot be deleted");
+    };
+    let name = match normalize_sketch_name(raw_name) {
+        Ok(name) => name,
+        Err(error) => return error_response(400, error),
+    };
+    let path = workspace_sketch_path(&name);
+    if let Err(error) = fs::remove_file(path.as_str()).await {
+        return error_response(404, format!("delete {} failed: {}", name, error));
+    }
+
+    let now_ms = monotonic_ms(&state);
+    let mut shared = state.shared.write().await;
+    shared.note_change();
+    shared.push_event(now_ms, "warn", format!("deleted workspace sketch {}", name));
+    json_response(200, &serde_json::json!({ "ok": true, "sourceName": name }))
 }
 
 fn device_row(snapshot: &gate::DeviceSnapshot, now_ms: u64) -> DeviceRow {
@@ -484,11 +705,9 @@ async fn handle_upload(
     Path(handle): Path<u32>,
     Json(request): Json<UploadRequest>,
 ) -> Response {
-    let Some(sketch) = SWARM_SKETCHES
-        .iter()
-        .find(|entry| entry.id == request.sketch_id)
-    else {
-        return error_response(404, "unknown sketch id");
+    let sketch = match load_sketch(&request.sketch_id).await {
+        Ok(sketch) => sketch,
+        Err(error) => return error_response(404, error),
     };
     let Some(snapshot) = snapshot_for_handle(&state, handle).await else {
         return error_response(404, "device is not in the swarm registry");
@@ -506,7 +725,7 @@ async fn handle_upload(
                 ("Content-Type", "application/octet-stream"),
                 ("X-Filename", SWARM_TARGET_FILENAME),
             ],
-            sketch.body,
+            sketch.body.as_slice(),
         )
         .await?;
         device_http_request(&snapshot, "POST", swarm::ESP_RUN_PATH, &[], &[]).await?;
@@ -701,7 +920,7 @@ async fn discovery_loop(state: AppState) {
                 shared.discovery_online = false;
                 shared.discovery_error = Some(message);
                 drop(shared);
-                time::sleep(Duration::from_millis(SWARM_HTTP_BIND_RETRY_MS)).await;
+                time::sleep(Duration::from_millis(SWARM_NETWORK_RETRY_MS)).await;
                 continue;
             }
         };
@@ -725,15 +944,30 @@ async fn discovery_loop(state: AppState) {
 
         let mut buffer = [0u8; 2_048];
         loop {
-            match socket.recv_from(&mut buffer).await {
-                Ok((len, _)) => handle_discovery_packet(&state, &buffer[..len]).await,
-                Err(error) => {
+            match time::timeout(
+                Duration::from_millis(SWARM_SOCKET_LEASE_PROBE_MS),
+                socket.recv_from(&mut buffer),
+            )
+            .await
+            {
+                Ok(Ok((len, _))) => handle_discovery_packet(&state, &buffer[..len]).await,
+                Ok(Err(error)) => {
                     let message = format!("receive failed: {}", error);
                     let mut shared = state.shared.write().await;
                     shared.discovery_online = false;
                     shared.discovery_error = Some(message.clone());
                     shared.push_event(monotonic_ms(&state), "error", message);
                     break;
+                }
+                Err(_) => {
+                    if let Err(error) = socket.local_addr() {
+                        let message = format!("listener lease revoked: {}", error);
+                        let mut shared = state.shared.write().await;
+                        shared.discovery_online = false;
+                        shared.discovery_error = Some(message.clone());
+                        shared.push_event(monotonic_ms(&state), "warn", message);
+                        break;
+                    }
                 }
             }
         }
@@ -881,6 +1115,11 @@ fn router(state: AppState) -> Router {
         .route("/healthz", get(handle_healthz))
         .route("/api/healthz", get(handle_healthz))
         .route("/api/swarm/snapshot", get(handle_snapshot))
+        .route("/api/swarm/sketches", post(handle_sketch_save))
+        .route(
+            "/api/swarm/sketches/{id}",
+            get(handle_sketch_get).delete(handle_sketch_delete),
+        )
         .route("/api/swarm/devices", post(handle_manual_device))
         .route("/api/swarm/devices/{handle}/upload", post(handle_upload))
         .route("/api/swarm/devices/{handle}/restart", post(handle_restart))
@@ -892,6 +1131,12 @@ fn router(state: AppState) -> Router {
 }
 
 async fn swarm_http_runtime() -> Result<(), io::Error> {
+    if let Err(error) = fs::create_dir_all(SWARM_SKETCH_DIR).await {
+        logl::log(
+            level::WARN,
+            format_args!("swarm-http: workspace init failed {}", error),
+        );
+    }
     let state = AppState {
         shared: Arc::new(RwLock::new(SwarmState::new())),
         started_at: Instant::now(),
@@ -901,29 +1146,9 @@ async fn swarm_http_runtime() -> Result<(), io::Error> {
 
     let app = router(state);
     let addr = SocketAddr::from(([0, 0, 0, 0], SWARM_HTTP_TCP_PORT));
-    loop {
-        let listener = match tokio::net::TcpListener::bind(addr).await {
-            Ok(listener) => listener,
-            Err(error) => {
-                SWARM_HTTP_PORT.store(0, Ordering::Release);
-                logl::log(
-                    level::WARN,
-                    format_args!("swarm-http: bind {} failed {}", addr, error),
-                );
-                time::sleep(Duration::from_millis(SWARM_HTTP_BIND_RETRY_MS)).await;
-                continue;
-            }
-        };
-        SWARM_HTTP_PORT.store(addr.port(), Ordering::Release);
-        logl::log(
-            level::INFO,
-            format_args!("swarm-http: axum listening on http://{}/", addr),
-        );
-        let listener = listener.tap_io(|_| logl::log(level::INFO, "swarm-http: tcp accepted"));
-        let result = axum::serve(listener, app).await;
-        SWARM_HTTP_PORT.store(0, Ordering::Release);
-        return result;
-    }
+    let listener = trueos::lifecycle_axum_listener!("swarm-http", addr, &SWARM_HTTP_PORT).await;
+    let listener = listener.tap_io(|_| logl::log(level::INFO, "swarm-http: tcp accepted"));
+    axum::serve(listener, app).await
 }
 
 fn main() {

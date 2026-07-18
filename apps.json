@@ -26,7 +26,6 @@
     "unix_api_probe",
     "test_some_crates",
     "txt",
-    "texteditor",
     "monaco",
     "Frog",
     "Player",

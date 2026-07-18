@@ -34,7 +34,10 @@
         <button class="nav-item" data-filter="esp"><span>ESP uploaders</span><span id="count-esp" class="nav-count">0</span></button>
         <button class="nav-item" data-filter="trueos"><span>TRUEOS peers</span><span id="count-trueos" class="nav-count">0</span></button>
 
-        <div class="section-title">Sketch library</div>
+        <div class="sidebar-title-row">
+          <div class="section-title">Python workspace</div>
+          <button id="new-sketch" class="mini-btn" type="button">New</button>
+        </div>
         <div id="sketch-list" class="sketch-list"></div>
 
         <div class="section-title">Wire ports</div>
@@ -46,6 +49,30 @@
           <div class="stat"><strong id="stat-devices">0</strong><span>Known nodes</span></div>
           <div class="stat"><strong id="stat-running">0</strong><span>Running apps</span></div>
           <div class="stat"><strong id="stat-packets">0</strong><span>Discovery frames</span></div>
+        </section>
+
+        <section class="panel editor-panel">
+          <div class="editor-head">
+            <div>
+              <h2>Python workspace</h2>
+              <p id="editor-description" class="panel-subtitle">Open an embedded template or create a workspace file.</p>
+            </div>
+            <div class="editor-actions">
+              <span id="editor-origin" class="tag">no file</span>
+              <button id="save-sketch" class="btn primary" type="button" disabled>Save</button>
+              <button id="delete-sketch" class="btn danger-btn" type="button" disabled>Delete</button>
+            </div>
+          </div>
+          <div class="editor-filebar">
+            <input id="editor-name" class="editor-name mono" autocomplete="off" spellcheck="false" placeholder="example.py" disabled>
+            <span id="editor-status" class="editor-status">Select a sketch</span>
+          </div>
+          <textarea id="sketch-editor" class="code-editor" autocomplete="off" autocapitalize="off" spellcheck="false" wrap="off" disabled></textarea>
+          <div class="editor-footer">
+            <span id="editor-position">Ln 1, Col 1</span>
+            <span id="editor-size">0 B</span>
+            <span>Tab inserts spaces · Ctrl/⌘ S saves</span>
+          </div>
         </section>
 
         <section class="panel device-panel">
@@ -97,7 +124,16 @@
       filter: 'all',
       auto: true,
       loading: false,
-      timer: null
+      timer: null,
+      editor: {
+        id: null,
+        name: '',
+        origin: '',
+        description: '',
+        source: '',
+        dirty: false,
+        loading: false
+      }
     };
 
     const $ = (id) => document.getElementById(id);
@@ -109,10 +145,6 @@
 
     function selectedDevice() {
       return state.snapshot?.devices?.find((device) => device.handle === state.selectedHandle) || null;
-    }
-
-    function selectedSketch() {
-      return state.snapshot?.sketches?.find((sketch) => sketch.id === state.selectedSketch) || null;
     }
 
     async function api(path, options = {}) {
@@ -138,9 +170,11 @@
           state.selectedHandle = devices.find((device) => device.class === 'esp')?.handle ?? devices[0]?.handle ?? null;
         }
         if (!(state.snapshot.sketches || []).some((sketch) => sketch.id === state.selectedSketch)) {
-          state.selectedSketch = state.snapshot.sketches?.[0]?.id || null;
+          if (!state.editor.dirty) state.selectedSketch = state.snapshot.sketches?.[0]?.id || null;
         }
+        const shouldOpen = !state.editor.id && !state.editor.name && state.selectedSketch;
         render();
+        if (shouldOpen) await openSketch(state.selectedSketch, false);
       } catch (error) {
         $('service-tag').className = 'tag bad';
         $('service-tag').textContent = 'offline';
@@ -182,20 +216,143 @@
       renderDevices(filtered);
       renderDetails(selectedDevice());
       renderEvents(snapshot.events || []);
+      renderEditorChrome();
     }
 
     function renderSketches(sketches) {
       $('sketch-list').innerHTML = sketches.map((sketch) => `
         <button class="sketch-row ${sketch.id === state.selectedSketch ? 'active' : ''}" data-sketch="${esc(sketch.id)}">
-          <strong>${esc(sketch.sourceName)}</strong>
+          <div class="sketch-title"><strong>${esc(sketch.sourceName)}</strong><span class="origin-badge ${esc(sketch.origin)}">${sketch.origin === 'file' ? 'file' : 'template'}</span></div>
           <span>${esc(sketch.description)}</span>
           <small>${fmtBytes(sketch.bytes)} → ${esc(sketch.targetName)}</small>
         </button>
-      `).join('') || '<div class="empty">No embedded sketches.</div>';
+      `).join('') || '<div class="empty">No Python sketches.</div>';
       document.querySelectorAll('[data-sketch]').forEach((button) => button.addEventListener('click', () => {
-        state.selectedSketch = button.dataset.sketch;
-        render();
+        openSketch(button.dataset.sketch);
       }));
+    }
+
+    function confirmDiscard() {
+      return !state.editor.dirty || confirm(`Discard unsaved changes to ${state.editor.name || 'this sketch'}?`);
+    }
+
+    async function openSketch(id, askToDiscard = true) {
+      if (askToDiscard && !confirmDiscard()) return;
+      state.editor.loading = true;
+      renderEditorChrome();
+      try {
+        const payload = await api(`/api/swarm/sketches/${encodeURIComponent(id)}`);
+        const sketch = payload.sketch;
+        state.selectedSketch = sketch.id;
+        state.editor = {
+          id: sketch.id,
+          name: sketch.sourceName,
+          origin: sketch.origin,
+          description: sketch.description || '',
+          source: sketch.source || '',
+          dirty: false,
+          loading: false
+        };
+        $('sketch-editor').value = state.editor.source;
+        $('editor-name').value = state.editor.name;
+        render();
+        updateEditorPosition();
+      } catch (error) {
+        state.editor.loading = false;
+        setAction(error.message, true);
+        renderEditorChrome();
+      }
+    }
+
+    function newSketch() {
+      if (!confirmDiscard()) return;
+      state.selectedSketch = null;
+      state.editor = {
+        id: null,
+        name: 'new_sketch.py',
+        origin: 'new',
+        description: 'New writable Swarm workspace file',
+        source: '# New Swarm MicroPython sketch\n\n',
+        dirty: true,
+        loading: false
+      };
+      $('editor-name').value = state.editor.name;
+      $('sketch-editor').value = state.editor.source;
+      render();
+      $('editor-name').focus();
+      $('editor-name').select();
+    }
+
+    async function saveSketch() {
+      if (state.editor.loading) return false;
+      const name = $('editor-name').value.trim();
+      const source = $('sketch-editor').value;
+      state.editor.loading = true;
+      renderEditorChrome();
+      try {
+        const result = await api('/api/swarm/sketches', {
+          method: 'POST',
+          body: JSON.stringify({ name, source })
+        });
+        state.selectedSketch = result.id;
+        state.editor.id = result.id;
+        state.editor.name = result.sourceName;
+        state.editor.origin = 'file';
+        state.editor.description = 'Writable Swarm workspace file';
+        state.editor.source = source;
+        state.editor.dirty = false;
+        state.editor.loading = false;
+        $('editor-name').value = result.sourceName;
+        setAction(`Saved ${result.sourceName}.`);
+        await refresh();
+        renderEditorChrome();
+        return true;
+      } catch (error) {
+        state.editor.loading = false;
+        setAction(error.message, true);
+        renderEditorChrome();
+        return false;
+      }
+    }
+
+    async function deleteSketch() {
+      if (state.editor.origin !== 'file' || !state.editor.id) return;
+      if (!confirm(`Delete ${state.editor.name} from the Swarm workspace?`)) return;
+      const deletedName = state.editor.name;
+      try {
+        await api(`/api/swarm/sketches/${encodeURIComponent(state.editor.id)}`, { method: 'DELETE' });
+        state.editor = { id: null, name: '', origin: '', description: '', source: '', dirty: false, loading: false };
+        state.selectedSketch = null;
+        $('editor-name').value = '';
+        $('sketch-editor').value = '';
+        setAction(`Deleted ${deletedName}.`);
+        await refresh();
+      } catch (error) {
+        setAction(error.message, true);
+      }
+    }
+
+    function renderEditorChrome() {
+      const editor = state.editor;
+      const available = Boolean(editor.id || editor.name);
+      $('editor-name').disabled = !available || editor.loading || editor.origin === 'file';
+      $('sketch-editor').disabled = !available || editor.loading;
+      $('save-sketch').disabled = !available || editor.loading;
+      $('delete-sketch').disabled = editor.origin !== 'file' || editor.loading;
+      $('save-sketch').textContent = editor.origin === 'embedded' ? 'Save copy' : 'Save';
+      $('editor-origin').className = `tag ${editor.dirty ? 'warn' : editor.origin === 'file' ? 'ok' : ''}`;
+      $('editor-origin').textContent = editor.origin === 'embedded' ? 'embedded template' : editor.origin === 'file' ? 'workspace file' : editor.origin === 'new' ? 'new file' : 'no file';
+      $('editor-description').textContent = editor.description || 'Open an embedded template or create a workspace file.';
+      $('editor-status').textContent = editor.loading ? 'Working…' : editor.dirty ? 'Unsaved changes' : available ? 'Saved' : 'Select a sketch';
+      $('editor-size').textContent = fmtBytes(new TextEncoder().encode($('sketch-editor').value).length);
+    }
+
+    function updateEditorPosition() {
+      const editor = $('sketch-editor');
+      const before = editor.value.slice(0, editor.selectionStart);
+      const lines = before.split('\n');
+      $('editor-position').textContent = `Ln ${lines.length}, Col ${lines[lines.length - 1].length + 1}`;
+      $('editor-size').textContent = fmtBytes(new TextEncoder().encode(editor.value).length);
     }
 
     function deviceState(device) {
@@ -234,10 +391,9 @@
     }
 
     function renderDetails(device) {
-      const sketch = selectedSketch();
-      $('selected-sketch-name').textContent = sketch?.sourceName || 'None';
+      $('selected-sketch-name').textContent = state.editor.name || 'None';
       const esp = device?.class === 'esp';
-      $('upload').disabled = !esp || !sketch;
+      $('upload').disabled = !esp || !state.editor.name || state.editor.loading;
       $('restart').disabled = !esp;
       $('remove').disabled = !device;
       if (!device) {
@@ -311,14 +467,46 @@
       } catch (error) { setAction(error.message, true); }
     });
     $('refresh').addEventListener('click', refresh);
+    $('new-sketch').addEventListener('click', newSketch);
+    $('save-sketch').addEventListener('click', saveSketch);
+    $('delete-sketch').addEventListener('click', deleteSketch);
+    $('editor-name').addEventListener('input', () => {
+      state.editor.name = $('editor-name').value;
+      state.editor.dirty = true;
+      renderEditorChrome();
+      renderDetails(selectedDevice());
+    });
+    $('sketch-editor').addEventListener('input', () => {
+      state.editor.source = $('sketch-editor').value;
+      state.editor.dirty = true;
+      renderEditorChrome();
+      updateEditorPosition();
+    });
+    $('sketch-editor').addEventListener('click', updateEditorPosition);
+    $('sketch-editor').addEventListener('keyup', updateEditorPosition);
+    $('sketch-editor').addEventListener('keydown', (event) => {
+      if (event.key === 'Tab') {
+        event.preventDefault();
+        const editor = $('sketch-editor');
+        const start = editor.selectionStart;
+        const end = editor.selectionEnd;
+        editor.setRangeText('    ', start, end, 'end');
+        editor.dispatchEvent(new Event('input'));
+      }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+        event.preventDefault();
+        saveSketch();
+      }
+    });
     $('auto').addEventListener('click', () => {
       state.auto = !state.auto;
       $('auto').classList.toggle('primary', state.auto);
       $('auto').textContent = state.auto ? 'Auto' : 'Paused';
     });
-    $('upload').addEventListener('click', () => {
-      const device = selectedDevice(); const sketch = selectedSketch();
-      if (device && sketch) runAction($('upload'), `/api/swarm/devices/${device.handle}/upload`, { sketchId: sketch.id });
+    $('upload').addEventListener('click', async () => {
+      if ((state.editor.dirty || !state.editor.id) && !(await saveSketch())) return;
+      const device = selectedDevice();
+      if (device && state.editor.id) runAction($('upload'), `/api/swarm/devices/${device.handle}/upload`, { sketchId: state.editor.id });
     });
     $('restart').addEventListener('click', () => {
       const device = selectedDevice();

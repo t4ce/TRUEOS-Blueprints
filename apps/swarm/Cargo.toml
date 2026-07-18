@@ -3,6 +3,9 @@ name = "swarm"
 version = "0.1.0"
 edition = "2024"
 
+[package.metadata.trueos-blueprint]
+replicatable = true
+
 [[bin]]
 name = "swarm"
 path = "server.rs"
@@ -11,5 +14,5 @@ path = "server.rs"
 axum.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-trueos = { workspace = true, features = ["tokio-net-probe"] }
+trueos = { workspace = true, features = ["lifecycle-net"] }
 trueos-esp = { path = "trueos-esp" }
