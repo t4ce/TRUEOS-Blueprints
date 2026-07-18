@@ -129,13 +129,13 @@ body[data-app="swarm"] .content {
 }
 
 .mini-btn {
-  padding: 3px 7px;
+  padding: 5px 8px;
   border: 1px solid rgba(4, 120, 87, 0.28);
   border-radius: 6px;
   background: rgba(4, 120, 87, 0.07);
   color: var(--ok);
   font: inherit;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
   cursor: pointer;
 }
@@ -203,6 +203,20 @@ body[data-app="swarm"] .content {
   line-height: 1.35;
 }
 
+.sketch-row-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.sketch-row .sketch-open {
+  flex: none;
+  color: var(--ok);
+  font-size: 10px;
+  font-weight: 800;
+}
+
 .compact-kv {
   font-size: 11px;
 }
@@ -227,6 +241,8 @@ body[data-app="swarm"] .content {
 .editor-actions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 7px;
 }
 

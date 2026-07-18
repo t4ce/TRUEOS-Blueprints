@@ -36,7 +36,7 @@
 
         <div class="sidebar-title-row">
           <div class="section-title">Python workspace</div>
-          <button id="new-sketch" class="mini-btn" type="button">New</button>
+          <button id="new-sketch" class="mini-btn" type="button">+ New file</button>
         </div>
         <div id="sketch-list" class="sketch-list"></div>
 
@@ -59,6 +59,7 @@
             </div>
             <div class="editor-actions">
               <span id="editor-origin" class="tag">no file</span>
+              <button id="new-sketch-main" class="btn" type="button">New file</button>
               <button id="save-sketch" class="btn primary" type="button" disabled>Save</button>
               <button id="delete-sketch" class="btn danger-btn" type="button" disabled>Delete</button>
             </div>
@@ -224,7 +225,7 @@
         <button class="sketch-row ${sketch.id === state.selectedSketch ? 'active' : ''}" data-sketch="${esc(sketch.id)}">
           <div class="sketch-title"><strong>${esc(sketch.sourceName)}</strong><span class="origin-badge ${esc(sketch.origin)}">${sketch.origin === 'file' ? 'file' : 'template'}</span></div>
           <span>${esc(sketch.description)}</span>
-          <small>${fmtBytes(sketch.bytes)} → ${esc(sketch.targetName)}</small>
+          <div class="sketch-row-footer"><small>${fmtBytes(sketch.bytes)} → ${esc(sketch.targetName)}</small><span class="sketch-open">${sketch.editable ? 'Edit' : 'Open template'} →</span></div>
         </button>
       `).join('') || '<div class="empty">No Python sketches.</div>';
       document.querySelectorAll('[data-sketch]').forEach((button) => button.addEventListener('click', () => {
@@ -468,6 +469,7 @@
     });
     $('refresh').addEventListener('click', refresh);
     $('new-sketch').addEventListener('click', newSketch);
+    $('new-sketch-main').addEventListener('click', newSketch);
     $('save-sketch').addEventListener('click', saveSketch);
     $('delete-sketch').addEventListener('click', deleteSketch);
     $('editor-name').addEventListener('input', () => {
