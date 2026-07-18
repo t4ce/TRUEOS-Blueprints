@@ -7,7 +7,7 @@ use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 
-use trueos::ui4_scene::{Damage, Frame, SkyboxRenderParams};
+use trueos::ui4_scene::{Damage, Error as Ui4Error, Frame, SkyboxRenderParams};
 use trueos::{hid, logl, vshell, vsys};
 
 include!(concat!(env!("OUT_DIR"), "/skybox_meta.rs"));
@@ -193,7 +193,8 @@ fn main() {
     let mut rgba = rgba_buffer(layout.width, layout.height);
     let mut view = View::new();
 
-    let Ok(mut frame) = Frame::open(layout.x, layout.y, layout.width, layout.height) else {
+    let Ok(mut frame) = Frame::open_streaming(layout.x, layout.y, layout.width, layout.height)
+    else {
         status_line("skybox: frame create failed");
         logl::log(
             logl::level::ERROR,
@@ -212,29 +213,37 @@ fn main() {
         status_line("skybox: rgb565 upload failed, using cpu fallback");
     }
 
-    if !present_skybox(
-        &mut frame,
-        layout.width,
-        layout.height,
-        view,
-        &mut gpu_ready,
-        &mut rgba,
-    ) {
-        status_line("skybox: initial ui4 publish failed");
-        logl::log(logl::level::ERROR, "skybox: initial ui4 publish failed");
-        return;
+    loop {
+        match present_skybox(
+            &mut frame,
+            layout.width,
+            layout.height,
+            view,
+            &mut gpu_ready,
+            &mut rgba,
+        ) {
+            Ok(PresentOutcome::Presented) => break,
+            Ok(PresentOutcome::Retry) => {
+                vsys::poll_once();
+                vsys::sleep_ms(8);
+            }
+            Err(failure) => {
+                report_present_failure("initial frame failed", failure);
+                return;
+            }
+        }
     }
     status_line("skybox: first ui4 frame presented");
 
     let mut rendered_yaw = view.yaw;
     let mut rendered_pitch = view.pitch;
     let mut shell = ShellInput::new();
+    let mut render_pending = false;
 
     loop {
-        let mut force_render = false;
         if let Some(command) = shell.poll() {
             match handle_command(command, &mut frame, &mut layout, &mut rgba) {
-                CommandResult::Render => force_render = true,
+                CommandResult::Render => render_pending = true,
                 CommandResult::NoRender => {}
                 CommandResult::Quit => return,
             }
@@ -243,8 +252,8 @@ fn main() {
         view.update_from_cursor();
         let moved = shortest_angle_delta(rendered_yaw, view.yaw).abs() > 0.001
             || (rendered_pitch - view.pitch).abs() > 0.001;
-        if moved || force_render {
-            if !present_skybox(
+        if moved || render_pending {
+            match present_skybox(
                 &mut frame,
                 layout.width,
                 layout.height,
@@ -252,12 +261,17 @@ fn main() {
                 &mut gpu_ready,
                 &mut rgba,
             ) {
-                status_line("skybox: ui4 publish failed");
-                logl::log(logl::level::ERROR, "skybox: ui4 publish failed");
-                return;
+                Ok(PresentOutcome::Presented) => {
+                    rendered_yaw = view.yaw;
+                    rendered_pitch = view.pitch;
+                    render_pending = false;
+                }
+                Ok(PresentOutcome::Retry) => {}
+                Err(failure) => {
+                    report_present_failure("frame failed", failure);
+                    return;
+                }
             }
-            rendered_yaw = view.yaw;
-            rendered_pitch = view.pitch;
         }
         vsys::poll_once();
         vsys::sleep_ms(24);
@@ -452,6 +466,26 @@ fn status_line(text: &str) {
     vsys::write_out(b"\n");
 }
 
+enum PresentOutcome {
+    Presented,
+    Retry,
+}
+
+struct PresentFailure {
+    stage: &'static str,
+    error: Ui4Error,
+}
+
+fn report_present_failure(context: &str, failure: PresentFailure) {
+    status_line(
+        format!(
+            "skybox: {} stage={} error={:?}",
+            context, failure.stage, failure.error
+        )
+        .as_str(),
+    );
+}
+
 fn present_skybox(
     frame: &mut Frame,
     width: u32,
@@ -459,22 +493,57 @@ fn present_skybox(
     view: View,
     gpu_ready: &mut bool,
     rgba: &mut [u8],
-) -> bool {
-    if frame.begin(trueos::ui4_scene::rgba(0, 0, 0, 255)).is_err() {
-        return false;
+) -> Result<PresentOutcome, PresentFailure> {
+    match frame.begin(trueos::ui4_scene::rgba(0, 0, 0, 255)) {
+        Ok(()) => {}
+        Err(Ui4Error::Busy) => return Ok(PresentOutcome::Retry),
+        Err(error) => {
+            return Err(PresentFailure {
+                stage: "begin",
+                error,
+            });
+        }
     }
 
     if *gpu_ready {
         let params = skybox_render_params(width, height, view);
-        if frame.render_skybox_rgb565(&params).is_ok() {
-            return frame.publish(Damage::full(width, height)).is_ok();
+        match frame.render_skybox_rgb565(&params) {
+            Ok(()) => {
+                return frame
+                    .publish(Damage::full(width, height))
+                    .map(|()| PresentOutcome::Presented)
+                    .map_err(|error| PresentFailure {
+                        stage: "publish",
+                        error,
+                    });
+            }
+            Err(error) => {
+                status_line(
+                    format!(
+                        "skybox: gpu render failed error={:?}, using cpu fallback",
+                        error
+                    )
+                    .as_str(),
+                );
+            }
         }
-        status_line("skybox: gpu render failed, using cpu fallback");
         *gpu_ready = false;
     }
 
     render_skybox(rgba, width as usize, height as usize, view);
-    frame.write_opaque_rgba8(rgba).is_ok() && frame.publish(Damage::full(width, height)).is_ok()
+    frame
+        .write_opaque_rgba8(rgba)
+        .map_err(|error| PresentFailure {
+            stage: "cpu-write",
+            error,
+        })?;
+    frame
+        .publish(Damage::full(width, height))
+        .map(|()| PresentOutcome::Presented)
+        .map_err(|error| PresentFailure {
+            stage: "publish",
+            error,
+        })
 }
 
 fn skybox_render_params(width: u32, height: u32, view: View) -> SkyboxRenderParams {

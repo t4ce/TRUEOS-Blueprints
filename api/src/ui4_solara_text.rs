@@ -82,6 +82,7 @@ pub enum Error {
     InvalidState,
     Font,
     Ui4,
+    Busy,
     Unknown(i32),
 }
 
@@ -115,6 +116,21 @@ impl Frame {
     pub fn open(x: i32, y: i32, width: u32, height: u32) -> Result<Self, Error> {
         let window_id =
             unsafe { v::bp_abi::trueos_cabi_ui4_solara_frame_open(x, y, width, height) };
+        if window_id == 0 {
+            Err(Error::Ui4)
+        } else {
+            Ok(Self {
+                window_id,
+                width,
+                height,
+            })
+        }
+    }
+
+    /// Open a triple-buffered scene frame for continuously shaded content.
+    pub fn open_streaming(x: i32, y: i32, width: u32, height: u32) -> Result<Self, Error> {
+        let window_id =
+            unsafe { v::bp_abi::trueos_cabi_ui4_scene_frame_open_streaming(x, y, width, height) };
         if window_id == 0 {
             Err(Error::Ui4)
         } else {
@@ -372,6 +388,7 @@ fn error_from_status(code: i32) -> Error {
         -4 => Error::InvalidState,
         -5 => Error::Font,
         -6 => Error::Ui4,
+        -7 => Error::Busy,
         other => Error::Unknown(other),
     }
 }
