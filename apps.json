@@ -1,12 +1,9 @@
 {
   "apps": [
     "chatserver",
-    "condvar",
-    "cross",
     "calculator",
     "file-system",
     "fileexplorer",
-    "framework_stack",
     "gridpaper",
     "hello_world",
     "hello_world_replicatable",
@@ -19,12 +16,8 @@
     },
     "tantivy",
     "prismq",
-    "posix_fd_probe",
-    "panick",
     "particle",
     "rebels-in-the-sky",
-    "unix_api_probe",
-    "test_some_crates",
     "txt",
     "monaco",
     "Frog",
@@ -39,14 +32,12 @@
       "path": "../solara",
       "optional": true
     },
-    "rusqlite_probe",
     "skybox",
     "swarm",
     "superseedr",
     "system-services",
     "webdevices",
     "webmail",
-    "wls",
     "vpverst"
   ]
 }

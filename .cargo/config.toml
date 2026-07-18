@@ -7,4 +7,5 @@ build-std = ["std", "core", "alloc", "panic_abort"]
 
 [alias]
 bp = "run --bin trueos-blueprint --"
+bpp = "run --bin trueos-blueprint -- --probes"
 apps = "run --bin trueos-blueprint --"

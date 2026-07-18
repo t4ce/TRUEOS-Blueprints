@@ -28,7 +28,7 @@ use cargo_output::{
     print_cargo_output_notes, run_cargo_command, run_cargo_rustc_command,
     write_filtered_cargo_output,
 };
-use cli::{CargoProfile, parse_cli_args};
+use cli::{CargoProfile, PackageCatalog, parse_cli_args};
 use publish::{publish_blueprint_file, publish_dist_blueprints};
 
 struct CratePatch {
@@ -131,7 +131,7 @@ fn main() {
 
 fn run() -> Result<(), String> {
     let args: Vec<_> = env::args_os().skip(1).collect();
-    let (app_dir, requested_apps, cargo_profile) = parse_cli_args(&args)?;
+    let (app_dir, requested_apps, cargo_profile, package_catalog) = parse_cli_args(&args)?;
     let app_dir = fs::canonicalize(&app_dir)
         .map_err(|err| format!("failed to resolve app dir {}: {err}", app_dir.display()))?;
     let manifest_path = app_dir.join("Cargo.toml");
@@ -141,8 +141,12 @@ fn run() -> Result<(), String> {
 
     if package_name(&manifest_path)? == "trueos-blueprint" {
         if requested_apps.is_empty() {
-            let examples = example_specs(&manifest_path)?;
-            let package_apps = package_app_specs(&app_dir)?;
+            let examples = if package_catalog == PackageCatalog::Apps {
+                example_specs(&manifest_path)?
+            } else {
+                Vec::new()
+            };
+            let package_apps = package_app_specs(&app_dir, package_catalog)?;
             if examples.is_empty() && package_apps.is_empty() {
                 build_one_target(
                     &app_dir,
@@ -165,7 +169,11 @@ fn run() -> Result<(), String> {
             }
 
             for package_app in package_apps {
-                println!("trueos-blueprint: package app: {}", package_app.name);
+                println!(
+                    "trueos-blueprint: package {}: {}",
+                    package_catalog.item_label(),
+                    package_app.name
+                );
                 build_one_target_to(
                     &package_app.dir,
                     &package_app.manifest_path,
@@ -181,7 +189,9 @@ fn run() -> Result<(), String> {
         }
 
         for example_name in requested_apps {
-            if let Ok(required_features) = example_required_features(&manifest_path, &example_name)
+            if package_catalog == PackageCatalog::Apps
+                && let Ok(required_features) =
+                    example_required_features(&manifest_path, &example_name)
             {
                 let bp_file = build_one_target(
                     &app_dir,
@@ -194,7 +204,7 @@ fn run() -> Result<(), String> {
                 continue;
             }
 
-            if let Some(package_app) = package_app_spec(&app_dir, &example_name)? {
+            if let Some(package_app) = package_app_spec(&app_dir, &example_name, package_catalog)? {
                 let bp_file = build_one_target_to(
                     &package_app.dir,
                     &package_app.manifest_path,
@@ -207,7 +217,10 @@ fn run() -> Result<(), String> {
                 continue;
             }
 
-            return Err(format!("unknown example or package `{example_name}`"));
+            return Err(match package_catalog {
+                PackageCatalog::Apps => format!("unknown example or package `{example_name}`"),
+                PackageCatalog::Probes => format!("unknown probe `{example_name}`"),
+            });
         }
         return Ok(());
     }

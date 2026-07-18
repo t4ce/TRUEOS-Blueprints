@@ -2,7 +2,7 @@ use serde::Deserialize;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::cli::CargoProfile;
+use crate::cli::{CargoProfile, PackageCatalog};
 use crate::{io_string, parse_string_array, push_feature, toml_string_value};
 
 pub(crate) struct ExampleSpec {
@@ -19,6 +19,11 @@ pub(crate) struct PackageAppSpec {
 #[derive(Deserialize)]
 struct AppRegistry {
     apps: Vec<AppRegistryEntry>,
+}
+
+#[derive(Deserialize)]
+struct ProbeRegistry {
+    probes: Vec<AppRegistryEntry>,
 }
 
 #[derive(Deserialize)]
@@ -93,12 +98,16 @@ pub(crate) fn package_bin_name(manifest_path: &Path) -> Result<Option<String>, S
     Ok(default_run.or(first_bin))
 }
 
-pub(crate) fn package_app_specs(app_dir: &Path) -> Result<Vec<PackageAppSpec>, String> {
+pub(crate) fn package_app_specs(
+    app_dir: &Path,
+    package_catalog: PackageCatalog,
+) -> Result<Vec<PackageAppSpec>, String> {
     let mut specs = Vec::new();
-    for app in registered_app_specs(app_dir)? {
+    for app in registered_app_specs(app_dir, package_catalog)? {
         if app.optional && !app.dir.join("Cargo.toml").is_file() {
             println!(
-                "trueos-blueprint: skipping unavailable optional app: {} ({})",
+                "trueos-blueprint: skipping unavailable optional {}: {} ({})",
+                package_catalog.item_label(),
                 app.name,
                 app.dir.display()
             );
@@ -113,8 +122,9 @@ pub(crate) fn package_app_specs(app_dir: &Path) -> Result<Vec<PackageAppSpec>, S
 pub(crate) fn package_app_spec(
     app_dir: &Path,
     app_name: &str,
+    package_catalog: PackageCatalog,
 ) -> Result<Option<PackageAppSpec>, String> {
-    let Some(app) = registered_app_specs(app_dir)?
+    let Some(app) = registered_app_specs(app_dir, package_catalog)?
         .into_iter()
         .find(|app| app.name == app_name)
     else {
@@ -181,15 +191,25 @@ fn virtual_package_app_alias(app_name: &str) -> bool {
     )
 }
 
-fn registered_app_specs(app_dir: &Path) -> Result<Vec<RegisteredAppSpec>, String> {
-    let registry_path = app_dir.join("apps.json");
+fn registered_app_specs(
+    app_dir: &Path,
+    package_catalog: PackageCatalog,
+) -> Result<Vec<RegisteredAppSpec>, String> {
+    let registry_path = app_dir.join(package_catalog.registry_file());
     let raw = fs::read_to_string(&registry_path)
         .map_err(|err| format!("failed to read {}: {err}", registry_path.display()))?;
-    let registry: AppRegistry = serde_json::from_str(&raw)
-        .map_err(|err| format!("failed to parse {}: {err}", registry_path.display()))?;
+    let entries = match package_catalog {
+        PackageCatalog::Apps => {
+            serde_json::from_str::<AppRegistry>(&raw).map(|registry| registry.apps)
+        }
+        PackageCatalog::Probes => {
+            serde_json::from_str::<ProbeRegistry>(&raw).map(|registry| registry.probes)
+        }
+    }
+    .map_err(|err| format!("failed to parse {}: {err}", registry_path.display()))?;
 
-    let mut out = Vec::with_capacity(registry.apps.len());
-    for entry in registry.apps {
+    let mut out = Vec::with_capacity(entries.len());
+    for entry in entries {
         let (name, path, optional) = match entry {
             AppRegistryEntry::Name(name) => (name, None, false),
             AppRegistryEntry::Spec {
@@ -213,7 +233,9 @@ fn registered_app_specs(app_dir: &Path) -> Result<Vec<RegisteredAppSpec>, String
         let dir = match path {
             Some(path) if path.is_absolute() => path,
             Some(path) => app_dir.join(path),
-            None => app_dir.join("apps").join(name.as_str()),
+            None => app_dir
+                .join(package_catalog.default_dir())
+                .join(name.as_str()),
         };
         out.push(RegisteredAppSpec {
             name,
@@ -411,6 +433,36 @@ replicatable = true
         assert!(package_blueprint_replicatable(&path).unwrap());
 
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn root_catalogs_keep_apps_and_probes_separate() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let apps = registered_app_specs(root, PackageCatalog::Apps).unwrap();
+        let probes = package_app_specs(root, PackageCatalog::Probes).unwrap();
+
+        for probe_name in [
+            "condvar",
+            "cross",
+            "framework_stack",
+            "panick",
+            "posix_fd_probe",
+            "rusqlite_probe",
+            "test_some_crates",
+            "tokio_fs",
+            "tokio_mrt",
+            "tokio_net",
+            "tokio_rt",
+            "unix_api_probe",
+            "wls",
+        ] {
+            assert!(apps.iter().all(|app| app.name != probe_name));
+            let probe = probes
+                .iter()
+                .find(|probe| probe.name == probe_name)
+                .unwrap();
+            assert_eq!(probe.dir, root.join("probes").join(probe_name));
+        }
     }
 }
 

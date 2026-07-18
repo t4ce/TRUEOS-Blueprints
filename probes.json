@@ -1,0 +1,17 @@
+{
+  "probes": [
+    "condvar",
+    "cross",
+    "framework_stack",
+    "panick",
+    "posix_fd_probe",
+    "rusqlite_probe",
+    "test_some_crates",
+    "tokio_fs",
+    "tokio_mrt",
+    "tokio_net",
+    "tokio_rt",
+    "unix_api_probe",
+    "wls"
+  ]
+}
