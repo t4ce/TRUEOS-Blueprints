@@ -21,6 +21,7 @@
     "prismq",
     "posix_fd_probe",
     "panick",
+    "particle",
     "rebels-in-the-sky",
     "unix_api_probe",
     "prism_q_probe",

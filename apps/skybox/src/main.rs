@@ -6,11 +6,8 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
-use core::mem;
-use core::slice;
 
-use trueos::ui3::gfx::{SkyboxRenderParams, SpriteCorner, SpriteQuad};
-use trueos::ui3::{Frame, FrameBounds};
+use trueos::ui4_scene::{Damage, Frame, SkyboxRenderParams};
 use trueos::{hid, logl, vshell, vsys};
 
 include!(concat!(env!("OUT_DIR"), "/skybox_meta.rs"));
@@ -29,8 +26,6 @@ const TEST_RIG_WIDTH: u32 = 2560;
 const TEST_RIG_HEIGHT: u32 = 1440;
 const MAX_FRAME_WIDTH: u32 = 2560;
 const MAX_FRAME_HEIGHT: u32 = 1440;
-const FRAME_TEX_ID: u32 = 0x534B_5901;
-const SKYBOX_ID: u32 = 0x534B_5902;
 const FOV_Y_DEGREES: f32 = 72.0;
 const PI: f32 = 3.141_592_7;
 const TAU: f32 = 6.283_185_5;
@@ -198,62 +193,38 @@ fn main() {
     let mut rgba = rgba_buffer(layout.width, layout.height);
     let mut view = View::new();
 
-    let Some(frame) = Frame::create(
-        "skybox",
-        FrameBounds {
-            x: layout.x,
-            y: layout.y,
-            width: layout.width,
-            height: layout.height,
-        },
-        FRAME_TEX_ID,
-    ) else {
+    let Ok(mut frame) = Frame::open(layout.x, layout.y, layout.width, layout.height) else {
         status_line("skybox: frame create failed");
-        logl::log(logl::level::ERROR, "skybox: failed to create ui3 frame");
+        logl::log(
+            logl::level::ERROR,
+            "skybox: failed to create ui4 scene frame",
+        );
         return;
     };
-    status_line("skybox: frame created");
+    status_line("skybox: ui4 scene frame created");
 
-    let mut gpu_ready = trueos::ui3::gfx::upload_skybox_rgb565_now(
-        SKYBOX_ID,
-        SKYBOX_WIDTH as u32,
-        SKYBOX_HEIGHT as u32,
-        SKYBOX_RGB565,
-    );
+    let mut gpu_ready = frame
+        .upload_skybox_rgb565(SKYBOX_WIDTH as u32, SKYBOX_HEIGHT as u32, SKYBOX_RGB565)
+        .is_ok();
     if gpu_ready {
         status_line("skybox: rgb565 skybox uploaded");
     } else {
         status_line("skybox: rgb565 upload failed, using cpu fallback");
     }
 
-    let first_present_ok = if gpu_ready {
-        present_skybox_gpu(SKYBOX_ID, layout.width, layout.height, view)
-    } else {
-        render_skybox(
-            &mut rgba,
-            layout.width as usize,
-            layout.height as usize,
-            view,
-        );
-        present_skybox_texture(frame.tex_id(), layout.width, layout.height, &rgba)
-    };
-    if !first_present_ok {
-        gpu_ready = false;
-        render_skybox(
-            &mut rgba,
-            layout.width as usize,
-            layout.height as usize,
-            view,
-        );
-    }
-    if !first_present_ok
-        && !present_skybox_texture(frame.tex_id(), layout.width, layout.height, &rgba)
-    {
-        status_line("skybox: initial texture present failed");
-        logl::log(logl::level::ERROR, "skybox: initial texture present failed");
+    if !present_skybox(
+        &mut frame,
+        layout.width,
+        layout.height,
+        view,
+        &mut gpu_ready,
+        &mut rgba,
+    ) {
+        status_line("skybox: initial ui4 publish failed");
+        logl::log(logl::level::ERROR, "skybox: initial ui4 publish failed");
         return;
     }
-    status_line("skybox: first texture presented");
+    status_line("skybox: first ui4 frame presented");
 
     let mut rendered_yaw = view.yaw;
     let mut rendered_pitch = view.pitch;
@@ -262,7 +233,7 @@ fn main() {
     loop {
         let mut force_render = false;
         if let Some(command) = shell.poll() {
-            match handle_command(command, &frame, &mut layout, &mut rgba) {
+            match handle_command(command, &mut frame, &mut layout, &mut rgba) {
                 CommandResult::Render => force_render = true,
                 CommandResult::NoRender => {}
                 CommandResult::Quit => return,
@@ -273,28 +244,16 @@ fn main() {
         let moved = shortest_angle_delta(rendered_yaw, view.yaw).abs() > 0.001
             || (rendered_pitch - view.pitch).abs() > 0.001;
         if moved || force_render {
-            let presented = if gpu_ready {
-                present_skybox_gpu(SKYBOX_ID, layout.width, layout.height, view)
-            } else {
-                false
-            };
-            if !presented {
-                if gpu_ready {
-                    status_line("skybox: gpu render failed, using cpu fallback");
-                    gpu_ready = false;
-                }
-                render_skybox(
-                    &mut rgba,
-                    layout.width as usize,
-                    layout.height as usize,
-                    view,
-                );
-            }
-            if !presented
-                && !present_skybox_texture(frame.tex_id(), layout.width, layout.height, &rgba)
-            {
-                status_line("skybox: texture present failed");
-                logl::log(logl::level::ERROR, "skybox: texture present failed");
+            if !present_skybox(
+                &mut frame,
+                layout.width,
+                layout.height,
+                view,
+                &mut gpu_ready,
+                &mut rgba,
+            ) {
+                status_line("skybox: ui4 publish failed");
+                logl::log(logl::level::ERROR, "skybox: ui4 publish failed");
                 return;
             }
             rendered_yaw = view.yaw;
@@ -313,7 +272,7 @@ enum CommandResult {
 
 fn handle_command(
     command: &str,
-    frame: &Frame,
+    frame: &mut Frame,
     layout: &mut Layout,
     rgba: &mut Vec<u8>,
 ) -> CommandResult {
@@ -402,7 +361,7 @@ fn handle_command(
                 status_line("skybox: usage pos <x> <y>");
                 return CommandResult::NoRender;
             };
-            if frame.id().set_position(x, y) {
+            if frame.set_position(x, y).is_ok() {
                 layout.x = x;
                 layout.y = y;
                 status_line(
@@ -425,14 +384,14 @@ fn handle_command(
 }
 
 fn apply_layout(
-    frame: &Frame,
+    frame: &mut Frame,
     layout: &mut Layout,
     rgba: &mut Vec<u8>,
     mut requested: Layout,
 ) -> CommandResult {
     requested.clamp_size();
     let size_changed = layout.width != requested.width || layout.height != requested.height;
-    let size_ok = !size_changed || frame.id().set_size(requested.width, requested.height);
+    let size_ok = !size_changed || frame.resize(requested.width, requested.height).is_ok();
     if !size_ok {
         status_line(
             format!(
@@ -445,7 +404,7 @@ fn apply_layout(
     }
 
     let pos_changed = layout.x != requested.x || layout.y != requested.y;
-    let pos_ok = !pos_changed || frame.id().set_position(requested.x, requested.y);
+    let pos_ok = !pos_changed || frame.set_position(requested.x, requested.y).is_ok();
     if !pos_ok {
         status_line("skybox: position failed after resize");
     }
@@ -493,14 +452,29 @@ fn status_line(text: &str) {
     vsys::write_out(b"\n");
 }
 
-fn present_skybox_gpu(skybox_id: u32, width: u32, height: u32, view: View) -> bool {
-    if trueos::ui3::gfx::begin_frame_preserve(0) != 0 {
+fn present_skybox(
+    frame: &mut Frame,
+    width: u32,
+    height: u32,
+    view: View,
+    gpu_ready: &mut bool,
+    rgba: &mut [u8],
+) -> bool {
+    if frame.begin(trueos::ui4_scene::rgba(0, 0, 0, 255)).is_err() {
         return false;
     }
-    let params = skybox_render_params(width, height, view);
-    let render_rc = trueos::ui3::gfx::render_skybox_rgb565_no_present(skybox_id, &params);
-    let end_rc = trueos::ui3::gfx::end_frame();
-    render_rc == 0 && end_rc == 0
+
+    if *gpu_ready {
+        let params = skybox_render_params(width, height, view);
+        if frame.render_skybox_rgb565(&params).is_ok() {
+            return frame.publish(Damage::full(width, height)).is_ok();
+        }
+        status_line("skybox: gpu render failed, using cpu fallback");
+        *gpu_ready = false;
+    }
+
+    render_skybox(rgba, width as usize, height as usize, view);
+    frame.write_opaque_rgba8(rgba).is_ok() && frame.publish(Damage::full(width, height)).is_ok()
 }
 
 fn skybox_render_params(width: u32, height: u32, view: View) -> SkyboxRenderParams {
@@ -533,54 +507,6 @@ fn skybox_render_params(width: u32, height: u32, view: View) -> SkyboxRenderPara
         rect_width: width,
         rect_height: height,
     }
-}
-
-fn present_skybox_texture(tex_id: u32, width: u32, height: u32, rgba: &[u8]) -> bool {
-    if !trueos::ui3::gfx::upload_texture_rgba_image_now(tex_id, width, height, rgba) {
-        return false;
-    }
-
-    if trueos::ui3::gfx::begin_frame_preserve(0) != 0 {
-        return false;
-    }
-
-    let quad = SpriteQuad {
-        c0: SpriteCorner {
-            x: 0.0,
-            y: 0.0,
-            u: 0.0,
-            v: 0.0,
-        },
-        c1: SpriteCorner {
-            x: width as f32,
-            y: 0.0,
-            u: 1.0,
-            v: 0.0,
-        },
-        c2: SpriteCorner {
-            x: width as f32,
-            y: height as f32,
-            u: 1.0,
-            v: 1.0,
-        },
-        c3: SpriteCorner {
-            x: 0.0,
-            y: height as f32,
-            u: 0.0,
-            v: 1.0,
-        },
-        color: [255, 255, 255, 255],
-    };
-    let quad_bytes = unsafe {
-        slice::from_raw_parts(
-            (&quad as *const SpriteQuad).cast::<u8>(),
-            mem::size_of::<SpriteQuad>(),
-        )
-    };
-
-    let draw_rc = trueos::ui3::gfx::draw_sprite_batch_no_present(tex_id, quad_bytes);
-    let end_rc = trueos::ui3::gfx::end_frame();
-    draw_rc == 0 && end_rc == 0
 }
 
 fn render_skybox(out: &mut [u8], width: usize, height: usize, view: View) {

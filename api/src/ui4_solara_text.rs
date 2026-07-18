@@ -42,6 +42,27 @@ pub struct Damage {
     pub height: u32,
 }
 
+/// Camera basis and destination rectangle for the kernel RGB565 skybox
+/// sampler. The source image is retained by the frame after upload.
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
+pub struct SkyboxRenderParams {
+    pub right_x: f32,
+    pub right_y: f32,
+    pub right_z: f32,
+    pub up_x: f32,
+    pub up_y: f32,
+    pub up_z: f32,
+    pub forward_x: f32,
+    pub forward_y: f32,
+    pub forward_z: f32,
+    pub aspect_tan_half_fov_y: f32,
+    pub tan_half_fov_y: f32,
+    pub rect_x: u32,
+    pub rect_y: u32,
+    pub rect_width: u32,
+    pub rect_height: u32,
+}
+
 impl Damage {
     pub const fn full(width: u32, height: u32) -> Self {
         Self {
@@ -119,6 +140,87 @@ impl Frame {
 
     pub fn begin(&mut self, clear_rgba: u32) -> Result<(), Error> {
         status(unsafe { v::bp_abi::trueos_cabi_ui4_solara_frame_begin(self.window_id, clear_rgba) })
+    }
+
+    pub fn set_position(&mut self, x: i32, y: i32) -> Result<(), Error> {
+        status(unsafe { v::bp_abi::trueos_cabi_ui4_scene_frame_set_position(self.window_id, x, y) })
+    }
+
+    pub fn resize(&mut self, width: u32, height: u32) -> Result<(), Error> {
+        status(unsafe {
+            v::bp_abi::trueos_cabi_ui4_scene_frame_resize(self.window_id, width, height)
+        })?;
+        self.width = width;
+        self.height = height;
+        Ok(())
+    }
+
+    /// Copy a tightly packed full-frame RGBA8 image. Every input pixel must be
+    /// opaque so it already satisfies UI4's premultiplied-alpha contract.
+    pub fn write_opaque_rgba8(&mut self, rgba: &[u8]) -> Result<(), Error> {
+        let expected = self.width as usize * self.height as usize * 4;
+        if rgba.len() != expected || rgba.chunks_exact(4).any(|pixel| pixel[3] != u8::MAX) {
+            return Err(Error::Invalid);
+        }
+        status(unsafe {
+            v::bp_abi::trueos_cabi_ui4_scene_frame_write_opaque_rgba8(
+                self.window_id,
+                rgba.as_ptr(),
+                rgba.len(),
+            )
+        })
+    }
+
+    /// Retain one tightly packed RGB565 equirectangular source for shaded
+    /// rendering into this frame's back buffers.
+    pub fn upload_skybox_rgb565(
+        &mut self,
+        width: u32,
+        height: u32,
+        rgb565: &[u8],
+    ) -> Result<(), Error> {
+        let Some(expected) = (width as usize)
+            .checked_mul(height as usize)
+            .and_then(|pixels| pixels.checked_mul(2))
+        else {
+            return Err(Error::Invalid);
+        };
+        if rgb565.len() != expected {
+            return Err(Error::Invalid);
+        }
+        status(unsafe {
+            v::bp_abi::trueos_cabi_ui4_scene_skybox_upload_rgb565(
+                self.window_id,
+                width,
+                height,
+                rgb565.as_ptr(),
+                rgb565.len(),
+            )
+        })
+    }
+
+    /// Shade the retained skybox into the currently acquired UI4 back buffer.
+    pub fn render_skybox_rgb565(&mut self, params: &SkyboxRenderParams) -> Result<(), Error> {
+        let raw = v::bp_abi::TrueosUi4SkyboxRenderParams {
+            right_x: params.right_x,
+            right_y: params.right_y,
+            right_z: params.right_z,
+            up_x: params.up_x,
+            up_y: params.up_y,
+            up_z: params.up_z,
+            forward_x: params.forward_x,
+            forward_y: params.forward_y,
+            forward_z: params.forward_z,
+            aspect_tan_half_fov_y: params.aspect_tan_half_fov_y,
+            tan_half_fov_y: params.tan_half_fov_y,
+            rect_x: params.rect_x,
+            rect_y: params.rect_y,
+            rect_width: params.rect_width,
+            rect_height: params.rect_height,
+        };
+        status(unsafe {
+            v::bp_abi::trueos_cabi_ui4_scene_skybox_render_rgb565(self.window_id, &raw)
+        })
     }
 
     pub fn draw_text_rows(

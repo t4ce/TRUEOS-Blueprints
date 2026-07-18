@@ -11,6 +11,7 @@ tokio-runtime = ["dep:tokio"]
 tokio-net-probe = ["tokio-runtime", "dep:mio", "dep:socket2", "tokio/net"]
 ui3 = []
 ui4-solara-text = []
+ui4-scene = ["ui4-solara-text"]
 gridpaper = []
 
 [lib]

@@ -1,15 +1,11 @@
 [package]
-name = "skybox"
+name = "particle"
 version = "0.1.0"
 edition = "2024"
 
 [[bin]]
-name = "skybox"
-path = "src/main.rs"
+name = "particle"
+path = "main.rs"
 
 [dependencies]
-libm.workspace = true
 trueos = { workspace = true, features = ["ui4-scene"] }
-
-[build-dependencies]
-png = "0.17"

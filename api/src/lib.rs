@@ -26,8 +26,9 @@ pub use v::vsys;
 pub use v::vsystem_services as system_services;
 pub use v::vthermal as thermal;
 
-#[cfg(feature = "ui4-solara-text")]
 pub mod ui4_solara_text;
+
+pub mod ui4_scene;
 
 #[cfg(feature = "gridpaper")]
 pub mod gridpaper;

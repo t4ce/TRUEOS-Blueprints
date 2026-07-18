@@ -23,6 +23,7 @@ members = [
     "apps/prismq",
     "apps/posix_fd_probe",
     "apps/panick",
+    "apps/particle",
     "apps/unix_api_probe",
     "apps/rusqlite_probe",
     "apps/prism_q_probe",
