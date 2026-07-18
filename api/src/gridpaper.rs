@@ -4,8 +4,8 @@
 //! publishes its fixed wire image; the kernel service owns presentation and
 //! GPU residency.
 
-pub const COLUMNS: usize = 37;
-pub const ROWS: usize = 53;
+pub const COLUMNS: usize = 39;
+pub const ROWS: usize = 55;
 pub const CELL_BYTES: usize = 13;
 pub const PAGE_BYTES: usize = COLUMNS * ROWS * CELL_BYTES;
 pub const TEXT_COLOR_ANIMATION_SLOTS: usize = 17;

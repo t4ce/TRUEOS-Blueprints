@@ -26,8 +26,8 @@ pub use trueos::gridpaper::{
 pub const A4_WIDTH_MM: usize = 210;
 pub const A4_HEIGHT_MM: usize = 297;
 pub const CELL_EDGE_MM: usize = 5;
-pub const COLUMNS: usize = 37;
-pub const ROWS: usize = 53;
+pub const COLUMNS: usize = 39;
+pub const ROWS: usize = 55;
 pub const GRID_WIDTH_MM: usize = COLUMNS * CELL_EDGE_MM;
 pub const GRID_HEIGHT_MM: usize = ROWS * CELL_EDGE_MM;
 pub const GRID_HORIZONTAL_MARGIN_MM: f32 = (A4_WIDTH_MM - GRID_WIDTH_MM) as f32 / 2.0;
@@ -42,6 +42,13 @@ pub const ROW_BYTES: usize = COLUMNS * CELL_BYTES;
 pub const PAGE_BYTES: usize = CELL_COUNT * CELL_BYTES;
 pub const DOUBLE_BUFFER_BYTES: usize = PAGE_BYTES * 2;
 pub const DEFAULT_SCALE_PERCENT: u16 = 100;
+
+const _: () = {
+    assert!(COLUMNS == trueos::gridpaper::COLUMNS);
+    assert!(ROWS == trueos::gridpaper::ROWS);
+    assert!(CELL_BYTES == trueos::gridpaper::CELL_BYTES);
+    assert!(PAGE_BYTES == trueos::gridpaper::PAGE_BYTES);
+};
 
 pub const PRIMARY_LENGTH_OFFSET: usize = 0;
 pub const UPPER_LENGTH_OFFSET: usize = 1;
@@ -904,20 +911,20 @@ mod tests {
 
     #[test]
     fn a4_geometry_and_static_sizes_are_exact() {
-        assert_eq!(COLUMNS, 37);
-        assert_eq!(FULL_ROWS, 53);
-        assert_eq!(ROWS, 53);
-        assert_eq!(CELL_COUNT, 1_961);
-        assert_eq!(GRID_WIDTH_MM, 185);
-        assert_eq!(GRID_HEIGHT_MM, 265);
-        assert_eq!(GRID_HORIZONTAL_MARGIN_MM, 12.5);
-        assert_eq!(GRID_VERTICAL_MARGIN_MM, 16.0);
+        assert_eq!(COLUMNS, 39);
+        assert_eq!(FULL_ROWS, 55);
+        assert_eq!(ROWS, 55);
+        assert_eq!(CELL_COUNT, 2_145);
+        assert_eq!(GRID_WIDTH_MM, 195);
+        assert_eq!(GRID_HEIGHT_MM, 275);
+        assert_eq!(GRID_HORIZONTAL_MARGIN_MM, 7.5);
+        assert_eq!(GRID_VERTICAL_MARGIN_MM, 11.0);
         assert_eq!(FINAL_ROW_HEIGHT_MM, 0);
         assert_eq!(CELL_BYTES, 13);
-        assert_eq!(PAGE_BYTES, 25_493);
-        assert_eq!(DOUBLE_BUFFER_BYTES, 50_986);
-        assert_eq!(row_height_mm(52), Some(5));
-        assert_eq!(row_height_mm(53), None);
+        assert_eq!(PAGE_BYTES, 27_885);
+        assert_eq!(DOUBLE_BUFFER_BYTES, 55_770);
+        assert_eq!(row_height_mm(54), Some(5));
+        assert_eq!(row_height_mm(55), None);
     }
 
     #[test]

@@ -8,10 +8,10 @@ the VM owner's UI4 presentation while retaining the kernel-owned Gridpaper page,
 re-arms that producer and attaches a new UI4 window session to the retained
 scene; the Blueprint does not checkpoint UI4 or GPU handles.
 
-The physical page is 210 mm by 297 mm. Its centered grid has 37 columns and 53
-rows of 5 mm cells, for a 185 mm by 265 mm grid and 1,961 addressable cells.
-That leaves 12.5 mm margins at the left and right and 16 mm margins at the top
-and bottom, matching the reference graph-paper PDF. Each cell is a stable
+The physical page is 210 mm by 297 mm. Its centered grid has 39 columns and 55
+rows of 5 mm cells, for a 195 mm by 275 mm grid and 2,145 addressable cells.
+That leaves 7.5 mm margins at the left and right and 11 mm margins at the top
+and bottom. Each cell is a stable
 13-byte record with separate primary and optional upper UTF-8 glyph fields.
 Each field accepts one Unicode scalar encoded in up to four bytes. Foreground
 and background palette colors plus bold, strikeout, underline, and italic style
@@ -29,7 +29,7 @@ to CSS classes. `GridPaper::set_text_color_animation` assigns a fixed-storage
 has two to eight RGBA keyframes at 0..1000 offsets, an RGBA channel mask, a
 16 ms to 600 s duration, linear or ease-in-out-sine timing, and `once`, `loop`,
 or `alternate` iteration. Animation metadata is transported separately from the
-25,493-byte page, so changing paint does not edit a cell or rebuild its font
+27,885-byte page, so changing paint does not edit a cell or rebuild its font
 triangles.
 
 The data API has three granularities on both `Snapshot` and `EditSession`:
@@ -41,7 +41,7 @@ The data API has three granularities on both `Snapshot` and `EditSession`:
 `cell_bytes` and `cell_bytes_mut` are also available for targeted encoded I/O.
 Raw writes are deliberately checked only when read through the typed API.
 
-`GridPaper` owns two 25,493-byte page buffers. A `Snapshot` reads the published
+`GridPaper` owns two 27,885-byte page buffers. A `Snapshot` reads the published
 buffer while an `EditSession` writes the other one. `SnapshotCadence` supports
 manual, edit-count, millisecond, or combined thresholds. Callers supply their
 monotonic millisecond timestamp to `edit`, `tick`, and `publish`, so the data type
@@ -49,7 +49,7 @@ does not need a timer or runtime dependency.
 
 `PublishMode::SwapOnly` publishes by exchanging two indices in O(1), intended
 for full-page producers. The default `PreserveIncrementalEdits` mode additionally
-copies 25,493 bytes after each exchange so the next edit buffer starts from the
+copies 27,885 bytes after each exchange so the next edit buffer starts from the
 latest snapshot.
 
 The app publishes that fixed page image through the dedicated `gridpaper`
@@ -115,6 +115,6 @@ display's EDID physical dimensions to rasterize the document. The unused A4
 paper margins are not part of the UI4 frame. A 4 mm transparent gutter above
 and to the left carries ruler ticks every 5 mm, with longer 1 cm ticks and the
 largest ticks every 3 cm. On the currently detected HP E273q, the fixed
-189×269 mm viewport is about 810×1153 pixels: cells are about 21.4 pixels at
+199×279 mm viewport is about 853×1196 pixels: cells are about 21.4 pixels at
 100% and 32.1 pixels at the demo's 150% zoom, with the enlarged right and bottom
 parts naturally outside that viewport.
