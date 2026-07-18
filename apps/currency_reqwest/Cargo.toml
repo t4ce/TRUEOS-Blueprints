@@ -1,0 +1,13 @@
+[package]
+name = "currency_reqwest"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "currency_reqwest"
+path = "main.rs"
+
+[dependencies]
+reqwest = { version = "0.13.3", default-features = false, features = ["json", "rustls"] }
+trueos.workspace = true
+trueos-currency.workspace = true
