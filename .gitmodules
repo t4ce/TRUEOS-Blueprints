@@ -10,6 +10,12 @@
 [submodule "apps/Reticulum-rs"]
 	path = apps/Reticulum-rs
 	url = https://github.com/t4ce/Reticulum-rs
+[submodule "apps/rebels-in-the-sky"]
+	path = apps/rebels-in-the-sky
+	url = https://github.com/t4ce/rebels-in-the-sky
+[submodule "apps/vpverst"]
+	path = apps/vpverst
+	url = https://charaverk.online/git/CharaVerKys/vpverst.git
 [submodule "apps/tantivy"]
 	path = apps/tantivy
 	url = https://github.com/quickwit-oss/tantivy.git
