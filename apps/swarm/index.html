@@ -46,7 +46,6 @@
           <div class="stat"><strong id="stat-devices">0</strong><span>Known nodes</span></div>
           <div class="stat"><strong id="stat-running">0</strong><span>Running apps</span></div>
           <div class="stat"><strong id="stat-packets">0</strong><span>Discovery frames</span></div>
-          <div class="stat"><strong id="stat-piano">0</strong><span>Piano frames</span></div>
         </section>
 
         <section class="panel device-panel">
@@ -60,21 +59,12 @@
           <div id="device-grid" class="device-grid"></div>
         </section>
 
-        <section class="split swarm-lower">
-          <div class="panel">
-            <div class="panel-head">
-              <h2>Activity</h2>
-              <span class="tag">latest first</span>
-            </div>
-            <div id="event-list" class="event-list"></div>
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Activity</h2>
+            <span class="tag">latest first</span>
           </div>
-          <div class="panel">
-            <div class="panel-head">
-              <h2>Piano UDP</h2>
-              <span id="piano-tag" class="tag">port 9696</span>
-            </div>
-            <div id="piano-list" class="event-list"></div>
-          </div>
+          <div id="event-list" class="event-list"></div>
         </section>
 
         <p class="footer-note">External discovery remains on UDP 32343. The kernel's shared LAN listener relays source-preserving frames to this Blueprint on loopback UDP 32345.</p>
@@ -166,7 +156,6 @@
       if (!snapshot) return;
       const devices = snapshot.devices || [];
       const discovery = snapshot.discovery || {};
-      const piano = snapshot.piano || {};
       const filtered = devices.filter((device) => state.filter === 'all' || device.class === state.filter);
 
       $('service-tag').className = discovery.online ? 'tag ok' : 'tag warn';
@@ -177,7 +166,6 @@
       $('stat-devices').textContent = devices.length;
       $('stat-running').textContent = devices.filter((device) => device.status?.running).length;
       $('stat-packets').textContent = discovery.packetCount || 0;
-      $('stat-piano').textContent = piano.packetCount || 0;
       $('visible-count').textContent = `${filtered.length} visible`;
       $('registry-subtitle').textContent = discovery.online
         ? `Registry revision ${snapshot.changeSeq}; status polls one ESP per second.`
@@ -187,7 +175,6 @@
         ['Discovery', `UDP ${discovery.publicUdpPort}`],
         ['ESP control', `TCP ${discovery.espHttpPort}`],
         ['Peer registry', `TCP ${discovery.trueosPeerTcpPort}`],
-        ['Piano', `UDP ${piano.udpPort}`],
         ['UI', `TCP ${snapshot.service.httpPort}`]
       ].map(([key, value]) => `<div>${esc(key)}</div><div class="mono">${esc(value)}</div>`).join('');
 
@@ -195,7 +182,6 @@
       renderDevices(filtered);
       renderDetails(selectedDevice());
       renderEvents(snapshot.events || []);
-      renderPiano(piano);
     }
 
     function renderSketches(sketches) {
@@ -285,14 +271,6 @@
       $('event-list').innerHTML = events.slice(0, 16).map((event) => `
         <div class="event-row"><span class="event-dot ${esc(event.level)}"></span><div><strong>${esc(event.message)}</strong><small>+${event.atMs} ms</small></div></div>
       `).join('') || '<div class="empty">No activity yet.</div>';
-    }
-
-    function renderPiano(piano) {
-      $('piano-tag').className = piano.online ? 'tag ok' : 'tag warn';
-      $('piano-tag').textContent = piano.online ? `UDP ${piano.udpPort}` : 'waiting';
-      $('piano-list').innerHTML = (piano.events || []).slice(0, 16).map((event) => `
-        <div class="event-row"><span class="event-dot ${event.kind === 'down' ? 'ok' : ''}"></span><div><strong>note ${event.note} ${esc(event.kind)}</strong><small>velocity ${event.velocity} · key ${event.keyIndex} · ${esc(event.source)}</small></div></div>
-      `).join('') || `<div class="empty">${esc(piano.error || 'No piano note transitions received.')}</div>`;
     }
 
     function setAction(message, error = false) {

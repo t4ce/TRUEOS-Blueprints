@@ -157,10 +157,6 @@ body[data-app="swarm"] .content {
   font-size: 11px;
 }
 
-.swarm-lower {
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-}
-
 .event-list {
   max-height: 260px;
   overflow: auto;
@@ -296,7 +292,4 @@ body[data-app="swarm"] .content {
     border-bottom: 1px solid var(--line);
   }
 
-  .swarm-lower {
-    grid-template-columns: 1fr;
-  }
 }

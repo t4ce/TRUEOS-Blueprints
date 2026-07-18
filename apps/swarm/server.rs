@@ -40,7 +40,7 @@ use trueos::{
     },
     vnet,
 };
-use trueos_esp::{gate, piano, swarm};
+use trueos_esp::{gate, swarm};
 
 const SWARM_HTTP_TCP_PORT: u16 = 12;
 const SWARM_HTTP_BIND_RETRY_MS: u64 = 1_000;
@@ -52,7 +52,6 @@ const SWARM_STATUS_POLL_MS: u64 = 1_000;
 const SWARM_CONTROL_TIMEOUT_MS: u64 = 3_000;
 const SWARM_CONTROL_MAX_RX: usize = 16 * 1024;
 const SWARM_EVENT_LIMIT: usize = 64;
-const SWARM_PIANO_EVENT_LIMIT: usize = 48;
 const SWARM_TARGET_FILENAME: &str = "app.py";
 const SWARM_INDEX_HTML: &str = include_str!("index.html");
 const TRUEOS_TAILWIND_CSS: &str = include_str!("tailwind.css");
@@ -113,10 +112,6 @@ struct SwarmState {
     discovery_online: bool,
     discovery_error: Option<String>,
     events: VecDeque<EventRow>,
-    piano_packets: u64,
-    piano_online: bool,
-    piano_error: Option<String>,
-    piano_events: VecDeque<PianoEventRow>,
 }
 
 impl SwarmState {
@@ -128,10 +123,6 @@ impl SwarmState {
             discovery_online: false,
             discovery_error: None,
             events: VecDeque::new(),
-            piano_packets: 0,
-            piano_online: false,
-            piano_error: None,
-            piano_events: VecDeque::new(),
         }
     }
 
@@ -149,13 +140,6 @@ impl SwarmState {
             message,
         });
     }
-
-    fn push_piano_event(&mut self, event: PianoEventRow) {
-        while self.piano_events.len() >= SWARM_PIANO_EVENT_LIMIT {
-            let _ = self.piano_events.pop_front();
-        }
-        self.piano_events.push_back(event);
-    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -164,18 +148,6 @@ struct EventRow {
     at_ms: u64,
     level: &'static str,
     message: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct PianoEventRow {
-    at_ms: u64,
-    source: String,
-    kind: &'static str,
-    key_index: u8,
-    note: u8,
-    velocity: u8,
-    delta: i16,
 }
 
 #[derive(Debug, Serialize)]
@@ -189,7 +161,6 @@ struct SnapshotResponse {
     devices: Vec<DeviceRow>,
     sketches: Vec<SketchRow>,
     events: Vec<EventRow>,
-    piano: PianoRow,
 }
 
 #[derive(Debug, Serialize)]
@@ -251,16 +222,6 @@ struct SketchRow {
     target_name: &'static str,
     description: &'static str,
     bytes: usize,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct PianoRow {
-    online: bool,
-    udp_port: u16,
-    packet_count: u64,
-    error: Option<String>,
-    events: Vec<PianoEventRow>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -362,7 +323,6 @@ async fn handle_healthz(State(state): State<AppState>) -> Response {
             "port": current_port(),
             "discoveryOnline": shared.discovery_online,
             "devices": shared.registry.len(),
-            "pianoOnline": shared.piano_online,
         }),
     )
 }
@@ -410,13 +370,6 @@ async fn handle_snapshot(State(state): State<AppState>) -> Response {
             devices,
             sketches,
             events: shared.events.iter().cloned().rev().collect(),
-            piano: PianoRow {
-                online: shared.piano_online,
-                udp_port: piano::TRUEOS_PIANO_UDP_PORT,
-                packet_count: shared.piano_packets,
-                error: shared.piano_error.clone(),
-                events: shared.piano_events.iter().cloned().rev().collect(),
-            },
         },
     )
 }
@@ -919,74 +872,6 @@ async fn status_loop(state: AppState) {
     }
 }
 
-async fn piano_loop(state: AppState) {
-    let addr = SocketAddr::from(([0, 0, 0, 0], piano::TRUEOS_PIANO_UDP_PORT));
-    let mut receiver = piano::PianoUdpReceiver::new();
-    loop {
-        let socket = match UdpSocket::bind(addr).await {
-            Ok(socket) => socket,
-            Err(error) => {
-                let message = format!("bind {} failed: {}", addr, error);
-                let mut shared = state.shared.write().await;
-                shared.piano_online = false;
-                shared.piano_error = Some(message);
-                drop(shared);
-                time::sleep(Duration::from_millis(SWARM_HTTP_BIND_RETRY_MS)).await;
-                continue;
-            }
-        };
-        {
-            let mut shared = state.shared.write().await;
-            shared.piano_online = true;
-            shared.piano_error = None;
-            shared.push_event(
-                monotonic_ms(&state),
-                "info",
-                format!(
-                    "piano receiver listening on UDP {}",
-                    piano::TRUEOS_PIANO_UDP_PORT
-                ),
-            );
-        }
-
-        let mut buffer = [0u8; 1_024];
-        loop {
-            match socket.recv_from(&mut buffer).await {
-                Ok((len, source)) => {
-                    let at_ms = monotonic_ms(&state);
-                    let mut parsed = Vec::new();
-                    let handled = receiver.on_frame(&buffer[..len], |event| parsed.push(event));
-                    let mut shared = state.shared.write().await;
-                    shared.piano_packets = shared.piano_packets.saturating_add(1);
-                    if handled {
-                        for event in parsed {
-                            shared.push_piano_event(PianoEventRow {
-                                at_ms,
-                                source: source.to_string(),
-                                kind: match event.kind {
-                                    piano::PianoNoteEventKind::Down => "down",
-                                    piano::PianoNoteEventKind::Up => "up",
-                                },
-                                key_index: event.key_index,
-                                note: event.note,
-                                velocity: event.velocity,
-                                delta: event.delta,
-                            });
-                        }
-                    }
-                }
-                Err(error) => {
-                    let message = format!("receive failed: {}", error);
-                    let mut shared = state.shared.write().await;
-                    shared.piano_online = false;
-                    shared.piano_error = Some(message);
-                    break;
-                }
-            }
-        }
-    }
-}
-
 fn router(state: AppState) -> Router {
     Router::new()
         .route("/", get(handle_index))
@@ -1013,7 +898,6 @@ async fn swarm_http_runtime() -> Result<(), io::Error> {
     };
     tokio::task::spawn_local(discovery_loop(state.clone()));
     tokio::task::spawn_local(status_loop(state.clone()));
-    tokio::task::spawn_local(piano_loop(state.clone()));
 
     let app = router(state);
     let addr = SocketAddr::from(([0, 0, 0, 0], SWARM_HTTP_TCP_PORT));
