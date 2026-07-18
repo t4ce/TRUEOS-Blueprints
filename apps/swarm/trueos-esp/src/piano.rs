@@ -89,12 +89,7 @@ impl PianoUdpReceiver {
         true
     }
 
-    pub fn on_packet<F>(
-        &mut self,
-        handle: api::NetHandle,
-        data: &[u8],
-        mut on_note_event: F,
-    ) -> bool
+    pub fn on_packet<F>(&mut self, handle: api::NetHandle, data: &[u8], on_note_event: F) -> bool
     where
         F: FnMut(PianoNoteEvent),
     {
@@ -102,6 +97,17 @@ impl PianoUdpReceiver {
             return false;
         }
 
+        self.on_frame(data, on_note_event)
+    }
+
+    /// Parse one piano datagram without coupling the parser to a vnet handle.
+    ///
+    /// Blueprint applications that receive datagrams through Tokio use this
+    /// entry point; kernel vnet consumers can continue to use [`Self::on_packet`].
+    pub fn on_frame<F>(&mut self, data: &[u8], mut on_note_event: F) -> bool
+    where
+        F: FnMut(PianoNoteEvent),
+    {
         let Some(frame) = parse_piano_frame(data) else {
             return false;
         };
