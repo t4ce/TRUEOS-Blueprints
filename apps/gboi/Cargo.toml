@@ -1,0 +1,15 @@
+[package]
+name = "gboi"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[[bin]]
+name = "gboi"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+trueos = { workspace = true, features = ["ui4-scene"] }
+trueos-gboi.workspace = true

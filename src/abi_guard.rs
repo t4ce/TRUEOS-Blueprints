@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 const KERNEL_REPO_ENV: &str = "TRUEOS_REPO_ROOT";
 const ABI_GUARD_ENV: &str = "TRUEOS_BLUEPRINT_ABI_GUARD";
 const ABI_DECLARATIONS_RELATIVE: &str = "crates/trueos-v/src/bp_abi.rs";
-const ABI_LOCK_RELATIVE: &str = "abi/portal-cabi-v1.sha256";
+const ABI_LOCK_RELATIVE: &str = "abi/portal-cabi-v2.sha256";
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 struct FunctionContract {

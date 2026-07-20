@@ -15,6 +15,7 @@ members = [
     "apps/fileexplorer",
     "probes/framework_stack",
     "apps/gridpaper",
+    "apps/gboi",
     "apps/hello_world",
     "apps/hello_world_replicatable",
     "apps/ipp-printer",
@@ -141,6 +142,7 @@ tracing = "0.1.37"
 tracing-appender = "0.2"
 tracing-subscriber = "0.3.10"
 trueos = { path = "api" }
+trueos-gboi = { path = "../TRUEOS/crates/trueos-gboi" }
 trueos-chat = { path = "apps/chatserver/trueos-chat" }
 trybuild = "1.0.19"
 tui-input = { path = "vendor/tui-input-0.15.3", version = "0.15.3", default-features = false }

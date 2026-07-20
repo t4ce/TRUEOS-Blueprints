@@ -57,25 +57,6 @@ pub struct TrueosUi4SkyboxRenderParams {
     pub rect_height: u32,
 }
 
-#[repr(C)]
-#[derive(Copy, Clone, Debug, Default)]
-pub struct TrueosCabiFdStat {
-    pub kind: u32,
-    pub len: u64,
-    pub mode: u32,
-    pub reserved: u32,
-}
-
-#[repr(C)]
-#[derive(Copy, Clone, Debug, Default)]
-pub struct TrueosCabiFdLock {
-    pub l_type: i16,
-    pub l_whence: i16,
-    pub l_start: i64,
-    pub l_len: i64,
-    pub l_pid: i32,
-}
-
 unsafe extern "C" {
     pub fn trueos_cabi_gridpaper_snapshot_submit(
         generation: u64,
@@ -191,69 +172,17 @@ unsafe extern "C" {
         out_value: *mut f64,
     ) -> i32;
 
-    pub fn trueos_cabi_fs_read_file(
-        path_ptr: *const u8,
-        path_len: usize,
+    pub fn trueos_cabi_async_fs_read_start(path_ptr: *const u8, path_len: usize) -> i32;
+    pub fn trueos_cabi_async_fs_remove_start(path_ptr: *const u8, path_len: usize) -> i32;
+    pub fn trueos_cabi_async_fs_status(id: u32) -> i32;
+    pub fn trueos_cabi_async_fs_result_len(id: u32) -> isize;
+    pub fn trueos_cabi_async_fs_result_read(
+        id: u32,
+        offset: usize,
         out_ptr: *mut u8,
         out_cap: usize,
     ) -> isize;
-    pub fn trueos_cabi_fs_write_begin(
-        path_ptr: *const u8,
-        path_len: usize,
-        total_len: u64,
-        out_handle: *mut u32,
-    ) -> i32;
-    pub fn trueos_cabi_fs_create_dir_all(path_ptr: *const u8, path_len: usize) -> i32;
-    pub fn trueos_cabi_fs_write_chunk(handle: u32, data_ptr: *const u8, data_len: usize) -> i32;
-    pub fn trueos_cabi_fs_write_finish(handle: u32) -> i32;
-    pub fn trueos_cabi_fs_write_abort(handle: u32) -> i32;
-    pub fn trueos_cabi_fs_exists(path_ptr: *const u8, path_len: usize) -> i32;
-    pub fn trueos_cabi_fs_stat(
-        path_ptr: *const u8,
-        path_len: usize,
-        out_kind: *mut u32,
-        out_len: *mut u64,
-    ) -> i32;
-    pub fn trueos_cabi_fs_list_dir(
-        path_ptr: *const u8,
-        path_len: usize,
-        out_ptr: *mut u8,
-        out_cap: usize,
-    ) -> isize;
-    pub fn trueos_cabi_trueosfs_primary_html_tree(
-        max_entries: u32,
-        out_ptr: *mut u8,
-        out_cap: usize,
-    ) -> isize;
-    pub fn trueos_cabi_trueosfs_json_all(
-        max_entries: u32,
-        out_ptr: *mut u8,
-        out_cap: usize,
-    ) -> isize;
-    pub fn trueos_cabi_fs_remove(path_ptr: *const u8, path_len: usize) -> i32;
-    pub fn trueos_cabi_fs_fd_open(
-        path_ptr: *const u8,
-        path_len: usize,
-        flags: i32,
-        mode: u32,
-    ) -> i32;
-    pub fn trueos_cabi_fs_fd_close(fd: i32) -> i32;
-    pub fn trueos_cabi_fs_fd_read(fd: i32, out_ptr: *mut u8, out_cap: usize) -> isize;
-    pub fn trueos_cabi_fs_fd_write(fd: i32, data_ptr: *const u8, data_len: usize) -> isize;
-    pub fn trueos_cabi_fs_fd_lseek(fd: i32, offset: i64, whence: i32) -> i64;
-    pub fn trueos_cabi_fs_fd_pread(fd: i32, out_ptr: *mut u8, out_cap: usize, offset: i64)
-        -> isize;
-    pub fn trueos_cabi_fs_fd_pwrite(
-        fd: i32,
-        data_ptr: *const u8,
-        data_len: usize,
-        offset: i64,
-    ) -> isize;
-    pub fn trueos_cabi_fs_fd_fstat(fd: i32, out_stat: *mut TrueosCabiFdStat) -> i32;
-    pub fn trueos_cabi_fs_fd_ftruncate(fd: i32, len: i64) -> i32;
-    pub fn trueos_cabi_fs_fd_fsync(fd: i32) -> i32;
-    pub fn trueos_cabi_fs_fd_fdatasync(fd: i32) -> i32;
-    pub fn trueos_cabi_fs_fd_fcntl(fd: i32, cmd: i32, lock: *mut TrueosCabiFdLock) -> i32;
+    pub fn trueos_cabi_async_fs_discard(id: u32) -> i32;
 
     pub fn trueos_cabi_gfx_texture_dimensions(
         tex_id: u32,
@@ -377,7 +306,7 @@ unsafe extern "C" {
     pub fn trueos_cabi_socket_tcp_set_nonblocking(socket_id: u32, nonblocking: u32) -> i32;
     pub fn trueos_cabi_socket_tcp_bind_v4(socket_id: u32, addr_be: u32, port_be: u16) -> i32;
     pub fn trueos_cabi_socket_tcp_bind_v6(socket_id: u32, addr_ptr: *const u8, port_be: u16)
-        -> i32;
+    -> i32;
     pub fn trueos_cabi_socket_tcp_connect_v4(
         socket_id: u32,
         addr_be: u32,
@@ -557,7 +486,7 @@ unsafe extern "C" {
     ) -> i32;
     pub fn trueos_cabi_hid_hut_read_mice(out: *mut TrueosHidHutMouseState, out_cap: u32) -> u32;
     pub fn trueos_cabi_hid_hut_read_tablets(out: *mut TrueosHidHutTabletState, out_cap: u32)
-        -> u32;
+    -> u32;
     pub fn trueos_cabi_hid_hut_read_keyboards(
         out: *mut TrueosHidHutKeyboardState,
         out_cap: u32,

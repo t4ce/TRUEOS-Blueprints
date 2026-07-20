@@ -686,14 +686,26 @@ fn enforce_source_overlay_lock(
         return Ok(());
     }
 
-    let mut generate = Command::new("cargo");
-    generate
+    let mut resolve = Command::new("cargo");
+    resolve
         .arg("+nightly")
-        .arg("generate-lockfile")
+        .arg("metadata")
+        .arg("--format-version")
+        .arg("1")
         .arg("--manifest-path")
         .arg(staged_manifest);
-    push_source_overlay_configs(&mut generate, staged_source_overlay);
-    run_cargo_command(&mut generate, "cargo generate-lockfile")?;
+    push_source_overlay_configs(&mut resolve, staged_source_overlay);
+    let output = resolve
+        .output()
+        .map_err(|err| format!("cargo metadata failed to start: {err}"))?;
+    let notes = write_filtered_cargo_output("cargo metadata", &[], &output.stderr)?;
+    print_cargo_output_notes("cargo metadata", &notes);
+    if !output.status.success() {
+        return Err(format!(
+            "cargo metadata failed with status {}",
+            output.status
+        ));
+    }
     let lock_path = generated_lock_path(staged_manifest)?;
 
     let root_name = package_name(staged_manifest)?;
@@ -2875,20 +2887,6 @@ fn staged_manifest_for_overlay(
         )
     })?;
     let staged_manifest = staged_app_dir.join(manifest_relative);
-    let regenerate_staged_lock = if manifest_has_path_dependency(&staged_manifest)? {
-        let staged_lock = staged_app_dir.join("Cargo.lock");
-        if staged_lock.is_file() {
-            fs::remove_file(&staged_lock).map_err(io_string)?;
-            println!(
-                "trueos-blueprint: regenerating staged lock after relocating path dependencies"
-            );
-            true
-        } else {
-            false
-        }
-    } else {
-        false
-    };
     let nested_workspace_package = manifest_relative.components().count() > 1;
     strip_manifest_patch_section(&staged_manifest)?;
     if !nested_workspace_package {
@@ -2907,7 +2905,7 @@ fn staged_manifest_for_overlay(
     rewrite_staged_source_for_target(app_dir, &staged_app_dir, &staged_manifest, build_settings)?;
     let staged_source_overlay = staged_source_overlay(source_overlay, work_dir);
 
-    if regenerate_staged_lock || lock_mismatches.is_empty() {
+    if lock_mismatches.is_empty() {
         return Ok(Some(staged_manifest));
     }
 
@@ -2928,28 +2926,6 @@ fn staged_manifest_for_overlay(
     }
 
     Ok(Some(staged_manifest))
-}
-
-fn manifest_has_path_dependency(manifest_path: &Path) -> Result<bool, String> {
-    let cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
-    let mut in_dependency_table = false;
-
-    for line in cargo_toml.lines() {
-        let trimmed = line.split('#').next().unwrap_or("").trim();
-        if trimmed.starts_with('[') {
-            in_dependency_table = trimmed.contains("dependencies");
-            continue;
-        }
-        if in_dependency_table
-            && (trimmed.starts_with("path =")
-                || trimmed.contains("{ path =")
-                || trimmed.contains(", path ="))
-        {
-            return Ok(true);
-        }
-    }
-
-    Ok(false)
 }
 
 fn rewrite_staged_source_for_target(

@@ -9,7 +9,7 @@
 use core::cmp::{max, min};
 
 pub const PIECE_CELL_COUNT: usize = 4;
-pub const START_ROW_INTERVAL_MS: u32 = 4_000;
+pub const START_ROW_INTERVAL_MS: u32 = 6_000;
 pub const MIN_ROW_INTERVAL_MS: u32 = 1_800;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -69,6 +69,7 @@ impl Cutter {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CutResult {
     Cut,
+    CoolingDown,
     NoFit,
     GameOver,
 }
@@ -126,6 +127,8 @@ pub struct Game<const W: usize, const H: usize> {
     rows_spawned: u32,
     cuts: u32,
     invalid_cuts: u32,
+    cut_cooldown_ms: u32,
+    missed_blocks: usize,
     score: u32,
     game_over: bool,
     changed: bool,
@@ -148,6 +151,8 @@ impl<const W: usize, const H: usize> Game<W, H> {
             rows_spawned: 0,
             cuts: 0,
             invalid_cuts: 0,
+            cut_cooldown_ms: 0,
+            missed_blocks: 0,
             score: 0,
             game_over: false,
             changed: true,
@@ -186,6 +191,26 @@ impl<const W: usize, const H: usize> Game<W, H> {
         self.invalid_cuts
     }
 
+    pub const fn cut_cooldown_ms(&self) -> u32 {
+        self.cut_cooldown_ms
+    }
+
+    pub const fn cut_ready(&self) -> bool {
+        self.cut_cooldown_ms == 0
+    }
+
+    pub const fn missed_blocks(&self) -> usize {
+        self.missed_blocks
+    }
+
+    pub const fn miss_limit(&self) -> usize {
+        W
+    }
+
+    pub const fn lives_remaining(&self) -> usize {
+        W.saturating_sub(self.missed_blocks)
+    }
+
     pub const fn score(&self) -> u32 {
         self.score
     }
@@ -204,6 +229,10 @@ impl<const W: usize, const H: usize> Game<W, H> {
             MIN_ROW_INTERVAL_MS,
             START_ROW_INTERVAL_MS.saturating_sub(speed_steps.saturating_mul(175)),
         )
+    }
+
+    pub fn cut_interval_ms(&self) -> u32 {
+        max(1, self.row_interval_ms() / W as u32)
     }
 
     pub fn cell_at(&self, x: usize, y: usize) -> Option<u8> {
@@ -275,6 +304,9 @@ impl<const W: usize, const H: usize> Game<W, H> {
         if self.game_over {
             return CutResult::GameOver;
         }
+        if !self.cut_ready() {
+            return CutResult::CoolingDown;
+        }
         let Some(target) = self.target_cells() else {
             self.invalid_cuts = self.invalid_cuts.saturating_add(1);
             self.changed = true;
@@ -287,6 +319,7 @@ impl<const W: usize, const H: usize> Game<W, H> {
             self.board[y][x] = None;
         }
         self.cuts = self.cuts.saturating_add(1);
+        self.cut_cooldown_ms = self.cut_interval_ms();
         self.score = self
             .score
             .saturating_add(100 + (deepest as u32).saturating_mul(5));
@@ -300,6 +333,11 @@ impl<const W: usize, const H: usize> Game<W, H> {
     pub fn tick(&mut self, elapsed_ms: u32) {
         if self.game_over {
             return;
+        }
+        let cooldown_before = self.cut_cooldown_ms;
+        self.cut_cooldown_ms = self.cut_cooldown_ms.saturating_sub(elapsed_ms);
+        if cooldown_before != 0 && self.cut_cooldown_ms == 0 {
+            self.changed = true;
         }
         self.row_elapsed_ms = self.row_elapsed_ms.saturating_add(elapsed_ms);
         loop {
@@ -316,11 +354,14 @@ impl<const W: usize, const H: usize> Game<W, H> {
     }
 
     fn spawn_row(&mut self) {
-        if self.board[H - 1].iter().any(Option::is_some) {
-            self.game_over = true;
-            self.changed = true;
-            return;
-        }
+        // Charge every block entering the bottom row, including several blocks
+        // in the same tick. Their columns do not matter: misses accumulate over
+        // the entire run until they total one complete row's worth. The old
+        // bottom row was charged when it entered, so it is not counted twice.
+        let missed_this_tick = self.board[H - 2]
+            .iter()
+            .filter(|cell| cell.is_some())
+            .count();
 
         for y in (1..H).rev() {
             self.board[y] = self.board[y - 1];
@@ -328,6 +369,8 @@ impl<const W: usize, const H: usize> Game<W, H> {
         let band = (self.rows_spawned % 6) as u8;
         self.board[0] = [Some(band); W];
         self.rows_spawned = self.rows_spawned.saturating_add(1);
+        self.missed_blocks = self.missed_blocks.saturating_add(missed_this_tick);
+        self.game_over = self.missed_blocks >= W;
         self.changed = true;
     }
 
@@ -338,9 +381,10 @@ impl<const W: usize, const H: usize> Game<W, H> {
             return None;
         }
 
-        // The cutter has no vertical control. It stamps the lowest intact copy
-        // of its mask at the selected x, which keeps the pressure near danger
-        // while allowing surrounding blocks to remain and form real holes.
+        // The cutter has no vertical control. It stamps the lowest legal intact
+        // copy of its mask at the selected x, which keeps the pressure near
+        // danger while allowing surrounding blocks to remain and form real
+        // holes. A cut may not detach material from the top-fed mass.
         for anchor_y in (0..=H - height).rev() {
             let mut target = [(0_usize, 0_usize); PIECE_CELL_COUNT];
             let mut intact = true;
@@ -353,11 +397,67 @@ impl<const W: usize, const H: usize> Game<W, H> {
                     break;
                 }
             }
-            if intact {
+            if intact && self.cut_keeps_material_top_connected(&target) {
                 return Some(target);
             }
         }
         None
+    }
+
+    fn cut_keeps_material_top_connected(
+        &self,
+        target: &[(usize, usize); PIECE_CELL_COUNT],
+    ) -> bool {
+        let remains = |x: usize, y: usize| {
+            self.board[y][x].is_some()
+                && !target
+                    .iter()
+                    .any(|&(target_x, target_y)| target_x == x && target_y == y)
+        };
+
+        let mut connected = [[false; W]; H];
+        let mut remaining = 0_usize;
+        let mut reached = 0_usize;
+        for y in 0..H {
+            for x in 0..W {
+                if remains(x, y) {
+                    remaining += 1;
+                    if y == 0 {
+                        connected[y][x] = true;
+                        reached += 1;
+                    }
+                }
+            }
+        }
+
+        if remaining == 0 {
+            return true;
+        }
+
+        loop {
+            let mut progressed = false;
+            for y in 0..H {
+                for x in 0..W {
+                    if connected[y][x] || !remains(x, y) {
+                        continue;
+                    }
+                    let touches_connected = (x > 0 && connected[y][x - 1])
+                        || (x + 1 < W && connected[y][x + 1])
+                        || (y > 0 && connected[y - 1][x])
+                        || (y + 1 < H && connected[y + 1][x]);
+                    if touches_connected {
+                        connected[y][x] = true;
+                        reached += 1;
+                        progressed = true;
+                    }
+                }
+            }
+            if !progressed {
+                break;
+            }
+        }
+
+        reached == remaining
     }
 }
 
@@ -476,6 +576,55 @@ mod tests {
     }
 
     #[test]
+    fn a_cut_that_would_leave_a_floating_island_is_illegal() {
+        let mut game = TestGame::new(8);
+        game.board = [[None; 10]; 20];
+        for x in 0..4 {
+            game.board[0][x] = Some(0);
+            game.board[1][x] = Some(0);
+        }
+        game.board[2][0] = Some(0);
+        set_cutter(&mut game, PieceKind::I, 1, 0);
+        let before = game.board;
+
+        assert_eq!(game.cut(), CutResult::NoFit);
+        assert_eq!(game.board, before);
+        assert_eq!(game.invalid_cuts(), 1);
+    }
+
+    #[test]
+    fn starting_row_cadence_is_fifty_percent_slower() {
+        let mut game = TestGame::new(9);
+        assert_eq!(game.row_interval_ms(), 6_000);
+
+        game.tick(5_999);
+        assert_eq!(game.rows_spawned(), 1);
+        game.tick(1);
+        assert_eq!(game.rows_spawned(), 2);
+    }
+
+    #[test]
+    fn cuts_are_rate_limited_to_one_row_bar_step() {
+        let mut game = TestGame::new(10);
+        game.spawn_row();
+        set_cutter(&mut game, PieceKind::I, 1, 0);
+        assert_eq!(game.cut_interval_ms(), 600);
+        assert_eq!(game.cut(), CutResult::Cut);
+        assert_eq!(game.cut_cooldown_ms(), 600);
+
+        set_cutter(&mut game, PieceKind::I, 1, 0);
+        let before = game.board;
+        assert_eq!(game.cut(), CutResult::CoolingDown);
+        assert_eq!(game.board, before);
+        assert_eq!(game.invalid_cuts(), 0);
+
+        game.tick(599);
+        assert_eq!(game.cut(), CutResult::CoolingDown);
+        game.tick(1);
+        assert_eq!(game.cut(), CutResult::Cut);
+    }
+
+    #[test]
     fn a_row_spawn_pushes_holes_toward_the_bottom() {
         let mut game = TestGame::new(5);
         set_cutter(&mut game, PieceKind::I, 1, 0);
@@ -488,12 +637,64 @@ mod tests {
     }
 
     #[test]
-    fn pushing_any_block_past_the_bottom_is_game_over() {
+    fn fewer_than_one_rows_worth_of_misses_is_survivable() {
         let mut game = TestGame::new(6);
-        game.board[TestGame::new(0).height() - 1][7] = Some(0);
+        game.board = [[None; 10]; 20];
+        for x in [0, 2, 5, 7, 9] {
+            game.board[18][x] = Some(0);
+        }
 
         game.spawn_row();
 
+        assert!(!game.is_game_over());
+        assert_eq!(game.missed_blocks(), 5);
+        assert_eq!(game.lives_remaining(), 5);
+        assert_eq!(
+            game.board[19].iter().filter(|cell| cell.is_some()).count(),
+            5
+        );
+    }
+
+    #[test]
+    fn misses_accumulate_across_columns_and_end_at_one_full_row() {
+        let mut game = TestGame::new(11);
+        game.board = [[None; 10]; 20];
+
+        for x in [0, 2, 4, 6] {
+            game.board[18][x] = Some(0);
+        }
+        game.spawn_row();
+        assert_eq!(game.missed_blocks(), 4);
+        assert!(!game.is_game_over());
+
+        for x in [1, 3, 5, 7, 9] {
+            game.board[18][x] = Some(0);
+        }
+        game.spawn_row();
+        assert_eq!(game.missed_blocks(), 9);
+        assert_eq!(game.lives_remaining(), 1);
+        assert!(!game.is_game_over());
+
+        game.board[18][8] = Some(0);
+        game.spawn_row();
+        assert_eq!(game.missed_blocks(), 10);
+        assert_eq!(game.lives_remaining(), 0);
+        assert!(game.is_game_over());
+    }
+
+    #[test]
+    fn one_tick_can_consume_multiple_remaining_lives() {
+        let mut game = TestGame::new(12);
+        game.board = [[None; 10]; 20];
+        game.missed_blocks = 8;
+        for x in [1, 4, 8] {
+            game.board[18][x] = Some(0);
+        }
+
+        game.spawn_row();
+
+        assert_eq!(game.missed_blocks(), 11);
+        assert_eq!(game.lives_remaining(), 0);
         assert!(game.is_game_over());
     }
 

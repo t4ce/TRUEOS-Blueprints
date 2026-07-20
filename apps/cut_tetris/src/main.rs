@@ -183,7 +183,7 @@ fn draw_game(rects: &mut Canvas, game: &Game<BOARD_WIDTH, BOARD_HEIGHT>) {
         PANEL,
     );
 
-    let target = game.target_cells();
+    let target = game.cut_ready().then(|| game.target_cells()).flatten();
     for y in 0..BOARD_HEIGHT {
         for x in 0..BOARD_WIDTH {
             let px = BOARD_X + x as f32 * CELL;
@@ -248,6 +248,23 @@ fn draw_game(rects: &mut Canvas, game: &Game<BOARD_WIDTH, BOARD_HEIGHT>) {
     draw_number(rects, game.cuts(), SIDE_X, 291.0, 2.0, TEXT);
     draw_text(rects, "ROWS", SIDE_X + 92.0, 272.0, 2.0, MUTED);
     draw_number(rects, game.rows_spawned(), SIDE_X + 92.0, 291.0, 2.0, TEXT);
+
+    draw_text(rects, "LIVES", SIDE_X, 314.0, 1.0, MUTED);
+    let lives_remaining = game.lives_remaining();
+    for life in 0..game.miss_limit() {
+        rect(
+            rects,
+            SIDE_X + 28.0 + life as f32 * 14.0,
+            313.0,
+            11.0,
+            8.0,
+            if life < lives_remaining {
+                GOOD
+            } else {
+                [55, 29, 37, 255]
+            },
+        );
+    }
 
     draw_text(rects, "NEXT ROW", SIDE_X, 329.0, 1.0, MUTED);
     rect(rects, SIDE_X, 341.0, 184.0, 8.0, GRID);
