@@ -2,13 +2,14 @@
 
 extern crate alloc;
 
+use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
 
 use trueos::logl::{self, level};
 use trueos::ui4_scene::{Damage, Error as Ui4Error, Frame, rgba};
-use trueos::{env, hid, vfs, vsys};
+use trueos::{async_fs, env, hid, vshell, vsys};
 use trueos_gboi::{GameBoyButton, GameBoyEmulator};
 
 const DEFAULT_ROM_PATH: &str = "common/gboi.gb";
@@ -20,6 +21,7 @@ const FRAME_X: i32 = 96;
 const FRAME_Y: i32 = 80;
 const FRAME_PERIOD_MS: u64 = 16;
 const CLEAR_RGBA: u32 = rgba(0, 0, 0, 255);
+const SHELL_INPUT_CAP: usize = 512;
 
 const KEY_A: u8 = 0x04;
 const KEY_C: u8 = 0x06;
@@ -38,31 +40,25 @@ const KEY_ARROW_UP: u8 = 0x52;
 
 fn main() {
     let rom_path = rom_path_from_args();
-    let rom = match vfs::read_file(rom_path.as_bytes()) {
-        Ok(rom) => rom,
+    let mut emulator = GameBoyEmulator::new();
+    let mut current_rom = None;
+    match load_rom_from_path(&mut emulator, rom_path.as_str()) {
+        Ok(bytes) => {
+            current_rom = Some(rom_path.clone());
+            logl::log(
+                level::INFO,
+                format_args!("gboi: loaded {} bytes from {}", bytes, rom_path),
+            );
+        }
         Err(error) => {
             logl::log(
-                level::ERROR,
+                level::WARN,
                 format_args!(
-                    "gboi: ROM read failed path={} error={}; launch with a path or install {}",
-                    rom_path, error, DEFAULT_ROM_PATH
+                    "gboi: startup ROM unavailable path={} error={}; use `list` and `load <path>`",
+                    rom_path, error
                 ),
             );
-            return;
         }
-    };
-
-    let mut emulator = GameBoyEmulator::new();
-    if !emulator.load_rom(rom.as_slice()) {
-        logl::log(
-            level::ERROR,
-            format_args!(
-                "gboi: ROM parser rejected {} bytes from {}",
-                rom.len(),
-                rom_path
-            ),
-        );
-        return;
     }
 
     // `Frame::open` is intentionally the dirty/double-buffered UI4 request.
@@ -75,20 +71,26 @@ fn main() {
     logl::log(
         level::INFO,
         format_args!(
-            "gboi: loaded {} bytes from {}; UI4 frame={}x{} buffers=2; Esc exits",
-            rom.len(),
-            rom_path,
-            FRAME_WIDTH,
-            FRAME_HEIGHT
+            "gboi: UI4 frame={}x{} buffers=2; Esc exits; shell commands are independent",
+            FRAME_WIDTH, FRAME_HEIGHT
         ),
     );
+    shell_line("gboi: app:// is the private root; common/... is shared");
+    shell_line("gboi: commands: list [app|common], load <path>, status, help");
+    shell_prompt();
 
     let pixel_count = FRAME_WIDTH as usize * FRAME_HEIGHT as usize;
     let mut argb = vec![0u32; pixel_count];
     let mut rgba8 = vec![0u8; pixel_count * 4];
     let mut frame_number = 0u64;
+    let mut shell = ShellInput::new();
 
     loop {
+        if let Some(command) = shell.poll() {
+            handle_shell_command(command.as_str(), &mut emulator, &mut current_rom);
+            shell_prompt();
+        }
+
         let keyboards = hid::hid_hut_keyboards();
         if key_is_down(&keyboards, KEY_ESCAPE) {
             break;
@@ -130,6 +132,172 @@ fn main() {
         level::INFO,
         format_args!("gboi: closing after {} frame(s)", frame_number),
     );
+}
+
+struct ShellInput {
+    bytes: [u8; SHELL_INPUT_CAP],
+    len: usize,
+}
+
+impl ShellInput {
+    const fn new() -> Self {
+        Self {
+            bytes: [0; SHELL_INPUT_CAP],
+            len: 0,
+        }
+    }
+
+    fn poll(&mut self) -> Option<String> {
+        while let Some(byte) = vshell::attached_read_byte() {
+            match byte {
+                b'\r' | b'\n' => {
+                    vshell::attached_write(b"\r\n");
+                    let len = self.len;
+                    self.len = 0;
+                    return String::from_utf8(self.bytes[..len].to_vec()).ok();
+                }
+                8 | 127 => {
+                    if self.len != 0 {
+                        self.len -= 1;
+                        vshell::attached_write(b"\x08 \x08");
+                    }
+                }
+                0x20..=0x7e => {
+                    if self.len < self.bytes.len() {
+                        self.bytes[self.len] = byte;
+                        self.len += 1;
+                        vshell::attached_write(&[byte]);
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+}
+
+fn shell_line(text: &str) {
+    vshell::attached_write(text.as_bytes());
+    vshell::attached_write(b"\r\n");
+}
+
+fn shell_prompt() {
+    vshell::attached_write(b"gboi> ");
+}
+
+fn load_rom_from_path(emulator: &mut GameBoyEmulator, path: &str) -> Result<usize, String> {
+    let rom = async_fs::block_on(async_fs::read_file(path.as_bytes()))
+        .map_err(|error| format!("read failed ({error})"))?;
+    let mut candidate = GameBoyEmulator::new();
+    if !candidate.load_rom(rom.as_slice()) {
+        return Err(format!("parser rejected {} bytes", rom.len()));
+    }
+    *emulator = candidate;
+    Ok(rom.len())
+}
+
+fn list_roms(directory: &str) {
+    let label = if directory.is_empty() {
+        "app://"
+    } else {
+        "common://"
+    };
+    let listing = match async_fs::block_on(async_fs::list_dir_utf8(directory.as_bytes())) {
+        Ok(listing) => listing,
+        Err(error) => {
+            shell_line(format!("gboi: list {label} failed ({error})").as_str());
+            return;
+        }
+    };
+
+    let mut names = listing
+        .lines()
+        .filter(|name| !name.is_empty() && *name != "...")
+        .collect::<Vec<_>>();
+    names.sort_unstable();
+
+    shell_line(format!("gboi: ROMs in {label}").as_str());
+    let mut found = 0usize;
+    for name in names {
+        if !is_rom_name(name) {
+            continue;
+        }
+        let path = if directory.is_empty() {
+            name.to_string()
+        } else {
+            format!("{directory}/{name}")
+        };
+        let Ok(metadata) = async_fs::block_on(async_fs::metadata(path.as_bytes())) else {
+            continue;
+        };
+        if !metadata.is_file() {
+            continue;
+        }
+        found += 1;
+        shell_line(format!("  {path} ({} bytes)", metadata.len).as_str());
+    }
+    if found == 0 {
+        shell_line("  no .gb or .gbc files found");
+    }
+}
+
+fn is_rom_name(name: &str) -> bool {
+    name.ends_with(".gb")
+        || name.ends_with(".gbc")
+        || name.ends_with(".GB")
+        || name.ends_with(".GBC")
+}
+
+fn handle_shell_command(
+    command: &str,
+    emulator: &mut GameBoyEmulator,
+    current_rom: &mut Option<String>,
+) {
+    let command = command.trim();
+    let mut parts = command.split_whitespace();
+    let Some(operation) = parts.next() else {
+        return;
+    };
+
+    match operation {
+        "help" | "?" => {
+            shell_line("gboi commands:");
+            shell_line("  list             list ROMs in app://");
+            shell_line("  list common      list ROMs in common://");
+            shell_line("  load <path>      load app-relative or common/... ROM");
+            shell_line("  status           show the active ROM");
+        }
+        "list" => match parts.next() {
+            None | Some("app") | Some(".") => list_roms(""),
+            Some("common") => list_roms("common"),
+            Some(_) => shell_line("usage: list [app|common]"),
+        },
+        "load" => {
+            let path = command[operation.len()..].trim();
+            if path.is_empty() {
+                shell_line("usage: load <path>");
+                return;
+            }
+            match load_rom_from_path(emulator, path) {
+                Ok(bytes) => {
+                    *current_rom = Some(path.to_string());
+                    shell_line(format!("gboi: loaded {path} ({bytes} bytes)").as_str());
+                    logl::log(
+                        level::INFO,
+                        format_args!("gboi: shell loaded {} bytes from {}", bytes, path),
+                    );
+                }
+                Err(error) => {
+                    shell_line(format!("gboi: load {path} failed: {error}").as_str());
+                }
+            }
+        }
+        "status" => match current_rom.as_deref() {
+            Some(path) => shell_line(format!("gboi: active ROM {path}").as_str()),
+            None => shell_line("gboi: no ROM loaded"),
+        },
+        _ => shell_line("gboi: unknown command; use `help`"),
+    }
 }
 
 fn rom_path_from_args() -> String {

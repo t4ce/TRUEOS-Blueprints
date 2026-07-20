@@ -418,8 +418,9 @@ pub mod io {
 #[cfg(feature = "tokio-runtime")]
 pub mod fs {
     pub use tokio::fs::{
-        File, OpenOptions, canonicalize, copy, create_dir, create_dir_all, metadata, read,
-        read_to_string, remove_dir_all, remove_file, rename, try_exists, write,
+        DirEntry, File, OpenOptions, ReadDir, canonicalize, copy, create_dir, create_dir_all,
+        metadata, read, read_dir, read_to_string, remove_dir_all, remove_file, rename, try_exists,
+        write,
     };
 }
 

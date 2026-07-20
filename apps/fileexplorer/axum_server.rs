@@ -3,6 +3,7 @@
 extern crate alloc;
 
 use alloc::{
+    boxed::Box,
     collections::BTreeMap,
     format,
     string::{String, ToString},
@@ -10,11 +11,10 @@ use alloc::{
     vec,
     vec::Vec,
 };
+use core::future::Future;
+use core::pin::Pin;
 use core::sync::atomic::{AtomicU16, AtomicU64, Ordering};
 use std::env;
-
-#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-use std::fs as host_fs;
 
 use axum::{
     Router,
@@ -403,19 +403,15 @@ fn file_actions(kind: NodeKind) -> Vec<&'static str> {
     }
 }
 
-fn root_overview_node(state: &AppState) -> FileNode {
+async fn root_overview_node(state: &AppState) -> FileNode {
     let mut meta = BTreeMap::new();
     meta.insert("path".to_string(), serde_json::json!("trueos://"));
 
     let mut budget = FILEEXPLORER_TREE_MAX_NODES;
     let mut children = Vec::new();
-    children.push(scan_scope_root(
-        RootScope::App,
-        state.app_root.as_str(),
-        &mut budget,
-    ));
+    children.push(scan_scope_root(RootScope::App, state.app_root.as_str(), &mut budget).await);
     if let Some(common_root) = state.common_root.as_deref() {
-        children.push(scan_scope_root(RootScope::Common, common_root, &mut budget));
+        children.push(scan_scope_root(RootScope::Common, common_root, &mut budget).await);
     }
 
     FileNode {
@@ -430,7 +426,7 @@ fn root_overview_node(state: &AppState) -> FileNode {
     }
 }
 
-fn scan_scope_root(scope: RootScope, root: &str, budget: &mut usize) -> FileNode {
+async fn scan_scope_root(scope: RootScope, root: &str, budget: &mut usize) -> FileNode {
     scan_node(
         scope,
         "",
@@ -439,6 +435,7 @@ fn scan_scope_root(scope: RootScope, root: &str, budget: &mut usize) -> FileNode
         FILEEXPLORER_TREE_MAX_DEPTH,
         budget,
     )
+    .await
     .unwrap_or_else(|| {
         let mut meta = BTreeMap::new();
         meta.insert("path".to_string(), serde_json::json!(root_label(scope)));
@@ -460,158 +457,98 @@ fn scan_scope_root(scope: RootScope, root: &str, budget: &mut usize) -> FileNode
     })
 }
 
-fn scan_node(
+fn scan_node<'a>(
     scope: RootScope,
-    rel: &str,
-    path: &str,
-    forced_root: Option<&str>,
+    rel: &'a str,
+    path: &'a str,
+    forced_root: Option<&'a str>,
     depth: usize,
-    budget: &mut usize,
-) -> Option<FileNode> {
-    if *budget == 0 {
-        return None;
-    }
-    *budget = budget.saturating_sub(1);
+    budget: &'a mut usize,
+) -> Pin<Box<dyn Future<Output = Option<FileNode>> + Send + 'a>> {
+    Box::pin(async move {
+        if *budget == 0 {
+            return None;
+        }
+        *budget = budget.saturating_sub(1);
 
-    let (kind, size) = if forced_root.is_some() {
-        (NodeKind::Folder, 0)
-    } else {
-        stat_path(path)?
-    };
-    let mut meta = BTreeMap::new();
-    meta.insert(
-        "path".to_string(),
-        serde_json::json!(logical_path(scope, rel)),
-    );
-    meta.insert("physicalPath".to_string(), serde_json::json!(path));
+        let (kind, size) = if forced_root.is_some() {
+            (NodeKind::Folder, 0)
+        } else {
+            stat_path(path).await?
+        };
+        let mut meta = BTreeMap::new();
+        meta.insert(
+            "path".to_string(),
+            serde_json::json!(logical_path(scope, rel)),
+        );
+        meta.insert("physicalPath".to_string(), serde_json::json!(path));
 
-    let children = if kind == NodeKind::Folder && depth > 0 && *budget > 0 {
-        match list_dir(path) {
-            Ok(mut names) => {
-                names.sort();
-                names
-                    .into_iter()
-                    .filter(|name| !name.starts_with('.'))
-                    .filter_map(|name| {
+        let mut children = Vec::new();
+        if kind == NodeKind::Folder && depth > 0 && *budget > 0 {
+            match list_dir(path).await {
+                Ok(mut names) => {
+                    names.sort();
+                    for name in names.into_iter().filter(|name| !name.starts_with('.')) {
                         let child_rel = join_rel(rel, &name);
                         let child_path = join_physical(path, &name);
-                        scan_node(scope, &child_rel, &child_path, None, depth - 1, budget)
-                    })
-                    .collect()
-            }
-            Err(err) => {
-                meta.insert("listError".to_string(), serde_json::json!(err));
-                Vec::new()
+                        if let Some(child) =
+                            scan_node(scope, &child_rel, &child_path, None, depth - 1, budget).await
+                        {
+                            children.push(child);
+                        }
+                    }
+                }
+                Err(err) => {
+                    meta.insert("listError".to_string(), serde_json::json!(err));
+                }
             }
         }
-    } else {
-        Vec::new()
-    };
 
-    Some(FileNode {
-        id: logical_id(scope, rel),
-        name: display_name(scope, rel),
-        kind,
-        size,
-        modified: now_iso(),
-        meta,
-        actions: file_actions(kind),
-        children,
+        Some(FileNode {
+            id: logical_id(scope, rel),
+            name: display_name(scope, rel),
+            kind,
+            size,
+            modified: now_iso(),
+            meta,
+            actions: file_actions(kind),
+            children,
+        })
     })
 }
 
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-const TRUEOS_FS_KIND_FILE: u32 = 1;
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-const TRUEOS_FS_KIND_DIR: u32 = 2;
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-unsafe extern "C" {
-    fn trueos_cabi_fs_list_dir(
-        path_ptr: *const u8,
-        path_len: usize,
-        out_ptr: *mut u8,
-        out_cap: usize,
-    ) -> isize;
-    fn trueos_cabi_fs_stat(
-        path_ptr: *const u8,
-        path_len: usize,
-        out_kind: *mut u32,
-        out_len: *mut u64,
-    ) -> i32;
-}
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-fn list_dir(path: &str) -> Result<Vec<String>, String> {
-    let bytes = path.as_bytes();
-    let len =
-        unsafe { trueos_cabi_fs_list_dir(bytes.as_ptr(), bytes.len(), core::ptr::null_mut(), 0) };
-    if len < 0 {
-        return Err("list failed".to_string());
-    }
-
-    let mut out = vec![0u8; len as usize];
-    let got = unsafe {
-        trueos_cabi_fs_list_dir(bytes.as_ptr(), bytes.len(), out.as_mut_ptr(), out.len())
-    };
-    if got < 0 {
-        return Err("list failed".to_string());
-    }
-
-    out.truncate(got as usize);
-    let text = String::from_utf8(out).map_err(|_| "bad utf8 in directory listing".to_string())?;
-    Ok(text
-        .lines()
-        .filter(|line| !line.is_empty())
-        .map(String::from)
-        .collect())
-}
-
-#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-fn list_dir(path: &str) -> Result<Vec<String>, String> {
+async fn list_dir(path: &str) -> Result<Vec<String>, String> {
     let mut out = Vec::new();
-    for entry in host_fs::read_dir(path).map_err(|err| format!("list failed {}", err))? {
-        let entry = entry.map_err(|err| format!("list entry failed {}", err))?;
-        out.push(entry.file_name().to_string_lossy().into_owned());
+    let mut entries = fs::read_dir(path)
+        .await
+        .map_err(|err| format!("list failed {}", err))?;
+    while let Some(entry) = entries
+        .next_entry()
+        .await
+        .map_err(|err| format!("list entry failed {}", err))?
+    {
+        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+        let name = entry.file_name();
+        #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+        let name = entry.file_name().to_string_lossy().into_owned();
+        out.push(name);
     }
     Ok(out)
 }
 
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-fn stat_path(path: &str) -> Option<(NodeKind, u64)> {
-    let bytes = path.as_bytes();
-    let mut kind = 0u32;
-    let mut len = 0u64;
-    let rc = unsafe {
-        trueos_cabi_fs_stat(
-            bytes.as_ptr(),
-            bytes.len(),
-            &mut kind as *mut u32,
-            &mut len as *mut u64,
-        )
-    };
-    if rc != 0 {
-        return None;
-    }
-    match kind {
-        TRUEOS_FS_KIND_FILE => Some((NodeKind::File, len)),
-        TRUEOS_FS_KIND_DIR => Some((NodeKind::Folder, len)),
-        _ => None,
-    }
-}
-
-#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-fn stat_path(path: &str) -> Option<(NodeKind, u64)> {
-    let metadata = host_fs::metadata(path).ok()?;
+async fn stat_path(path: &str) -> Option<(NodeKind, u64)> {
+    let metadata = fs::metadata(path).await.ok()?;
     let kind = if metadata.is_file() {
         NodeKind::File
-    } else {
+    } else if metadata.is_dir() {
         NodeKind::Folder
+    } else {
+        return None;
     };
     Some((kind, metadata.len()))
 }
 
-fn node_for_resolved(node: &ResolvedNode, state: &AppState) -> FileNode {
+async fn node_for_resolved(node: &ResolvedNode, state: &AppState) -> FileNode {
     let mut budget = FILEEXPLORER_TREE_MAX_NODES;
     scan_node(
         node.scope,
@@ -628,6 +565,7 @@ fn node_for_resolved(node: &ResolvedNode, state: &AppState) -> FileNode {
         FILEEXPLORER_TREE_MAX_DEPTH,
         &mut budget,
     )
+    .await
     .unwrap_or_else(|| {
         let mut meta = BTreeMap::new();
         meta.insert(
@@ -680,11 +618,11 @@ async fn handle_tree(State(state): State<AppState>, uri: Uri) -> Response {
     });
     let root = match root_id {
         Some(id) => match resolve_node_id(&state, id) {
-            Ok(Some(node)) => node_for_resolved(&node, &state),
-            Ok(None) => root_overview_node(&state),
+            Ok(Some(node)) => node_for_resolved(&node, &state).await,
+            Ok(None) => root_overview_node(&state).await,
             Err(err) => return error_response(400, err),
         },
-        None => root_overview_node(&state),
+        None => root_overview_node(&state).await,
     };
     json_response(
         200,
