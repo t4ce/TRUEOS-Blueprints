@@ -26,6 +26,33 @@ pub use v::vsys;
 pub use v::vsystem_services as system_services;
 pub use v::vthermal as thermal;
 
+/// Keyboard events translated by the kernel's shared HID input broker.
+///
+/// `hid` exposes device-oriented input state. This small facade exposes the
+/// focus-independent key/text stream used by interactive Blueprint windows.
+pub mod input {
+    pub const KEYBOARD_OUTPUT_KIND_TEXT: u8 = 1;
+    pub const KEYBOARD_OUTPUT_KIND_KEY: u8 = 2;
+
+    pub const KEYBOARD_KEY_ENTER: u16 = 3;
+    pub const KEYBOARD_KEY_ESCAPE: u16 = 4;
+    pub const KEYBOARD_KEY_SPACE: u16 = 5;
+    pub const KEYBOARD_KEY_ARROW_UP: u16 = 12;
+    pub const KEYBOARD_KEY_ARROW_DOWN: u16 = 13;
+    pub const KEYBOARD_KEY_ARROW_LEFT: u16 = 14;
+    pub const KEYBOARD_KEY_ARROW_RIGHT: u16 = 15;
+
+    pub use v::bp_abi::TrueosKeyboardOutputEvent;
+
+    #[inline]
+    pub fn pop_keyboard_output() -> Option<TrueosKeyboardOutputEvent> {
+        let mut event = TrueosKeyboardOutputEvent::default();
+        let result =
+            unsafe { v::bp_abi::trueos_cabi_input_pop_keyboard_output(&mut event as *mut _) };
+        (result == 0).then_some(event)
+    }
+}
+
 pub mod ui4_solara_text;
 
 pub mod ui4_scene;

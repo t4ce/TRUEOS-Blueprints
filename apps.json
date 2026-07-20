@@ -2,6 +2,7 @@
   "apps": [
     "chatserver",
     "calculator",
+    "cut_tetris",
     "file-system",
     "fileexplorer",
     "gridpaper",
