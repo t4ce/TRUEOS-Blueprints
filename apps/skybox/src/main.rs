@@ -14,10 +14,10 @@ include!(concat!(env!("OUT_DIR"), "/skybox_meta.rs"));
 
 const SKYBOX_RGB565: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/skybox_rgb565.bin"));
 
-const DEFAULT_FRAME_X: i32 = 0;
-const DEFAULT_FRAME_Y: i32 = 0;
-const DEFAULT_FRAME_WIDTH: u32 = 2560;
-const DEFAULT_FRAME_HEIGHT: u32 = 1440;
+const DEFAULT_FRAME_X: i32 = 64;
+const DEFAULT_FRAME_Y: i32 = 64;
+const DEFAULT_FRAME_WIDTH: u32 = 768;
+const DEFAULT_FRAME_HEIGHT: u32 = 512;
 const WINDOW_FRAME_X: i32 = 80;
 const WINDOW_FRAME_Y: i32 = 72;
 const WINDOW_FRAME_WIDTH: u32 = 1920;
@@ -516,6 +516,12 @@ fn present_skybox(
                         stage: "publish",
                         error,
                     });
+            }
+            Err(Ui4Error::Busy) => {
+                return Err(PresentFailure {
+                    stage: "gpu-retirement",
+                    error: Ui4Error::Busy,
+                });
             }
             Err(error) => {
                 status_line(
