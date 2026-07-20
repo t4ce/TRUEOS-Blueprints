@@ -42,6 +42,36 @@ pub struct Damage {
     pub height: u32,
 }
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct CursorSource {
+    pub controller_id: u32,
+    pub slot_id: u32,
+    pub ep_target: u32,
+    pub hid_kind: u32,
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum PanPhase {
+    Begin,
+    Update,
+    End,
+}
+
+/// One UI4 middle-button gesture already hit-tested and captured to this frame.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct PanEvent {
+    pub source: CursorSource,
+    pub phase: PanPhase,
+    pub x: u32,
+    pub y: u32,
+    pub local_x: i32,
+    pub local_y: i32,
+    pub dx: i32,
+    pub dy: i32,
+    pub combo_id: u32,
+    pub vcursor: bool,
+}
+
 /// Camera basis and destination rectangle for the kernel RGB565 skybox
 /// sampler. The source image is retained by the frame after upload.
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
@@ -156,6 +186,42 @@ impl Frame {
 
     pub fn begin(&mut self, clear_rgba: u32) -> Result<(), Error> {
         status(unsafe { v::bp_abi::trueos_cabi_ui4_solara_frame_begin(self.window_id, clear_rgba) })
+    }
+
+    /// Take the next app-owned middle-button pan event for this frame.
+    pub fn take_pan_event(&mut self) -> Result<Option<PanEvent>, Error> {
+        let mut raw = v::bp_abi::TrueosUi4PanEvent::default();
+        let result =
+            unsafe { v::bp_abi::trueos_cabi_ui4_scene_pan_event_take(self.window_id, &mut raw) };
+        if result == 1 {
+            return Ok(None);
+        }
+        if result != 0 {
+            return Err(error_from_status(result));
+        }
+        let phase = match raw.phase {
+            1 => PanPhase::Begin,
+            2 => PanPhase::Update,
+            3 => PanPhase::End,
+            _ => return Err(Error::Invalid),
+        };
+        Ok(Some(PanEvent {
+            source: CursorSource {
+                controller_id: raw.controller_id,
+                slot_id: raw.slot_id,
+                ep_target: raw.ep_target,
+                hid_kind: raw.hid_kind,
+            },
+            phase,
+            x: raw.x,
+            y: raw.y,
+            local_x: raw.local_x,
+            local_y: raw.local_y,
+            dx: raw.dx,
+            dy: raw.dy,
+            combo_id: raw.combo_id,
+            vcursor: raw.vcursor != 0,
+        }))
     }
 
     pub fn set_position(&mut self, x: i32, y: i32) -> Result<(), Error> {

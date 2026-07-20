@@ -6,8 +6,10 @@ fn main() -> anyhow::Result<()> {
     #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
     {
         trueos::vshell::leave_terminal_handoff();
-        let _ = trueos::vshell::shutdown_current_blueprint("Player exited");
+        if matches!(result.as_ref(), Ok(player_scope::ui::UiExit::Terminate)) {
+            let _ = trueos::vshell::shutdown_current_blueprint("Player terminated");
+        }
     }
 
-    result
+    result.map(|_| ())
 }

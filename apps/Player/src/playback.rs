@@ -404,7 +404,8 @@ fn wav_pcm_s16_stereo_48k_data_range(bytes: &[u8]) -> Option<(usize, usize)> {
 
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
 fn read_audio_file(path: &str) -> Result<Vec<u8>, io::Error> {
-    let bytes = trueos::vfs::read_file(path.as_bytes()).map_err(vfs_error)?;
+    let bytes = trueos::async_fs::block_on(trueos::async_fs::read_file(path.as_bytes()))
+        .map_err(vfs_error)?;
     validate_audio_file_size(path, bytes)
 }
 

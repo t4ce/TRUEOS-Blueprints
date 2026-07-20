@@ -1,11 +1,13 @@
 use crate::io::ReadBuf;
+use crate::io::{self, Read, Seek, SeekFrom, Write};
 use crate::loom::sync as trueos_sync;
+use crate::path::{Component, Path, PathBuf};
 use crate::runtime::prelude::*;
+use ::core::fmt;
+use ::core::future::{Future, poll_fn};
+use ::core::task::{Context, Poll, Waker};
 use alloc::string::String;
 use alloc::vec::Vec;
-use ::core::fmt;
-use crate::io::{self, Read, Seek, SeekFrom, Write};
-use crate::path::{Component, Path, PathBuf};
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct FileType {
@@ -101,34 +103,40 @@ impl Metadata {
 }
 
 #[derive(Debug)]
-pub(crate) struct TrueosReadDir;
+pub(crate) struct TrueosReadDir {
+    entries: alloc::vec::IntoIter<TrueosDirEntry>,
+}
 
 #[derive(Debug)]
-pub(crate) struct TrueosDirEntry;
+pub(crate) struct TrueosDirEntry {
+    path: PathBuf,
+    file_name: String,
+    metadata: Metadata,
+}
 
 impl Iterator for TrueosReadDir {
     type Item = io::Result<TrueosDirEntry>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        None
+        self.entries.next().map(Ok)
     }
 }
 
 impl TrueosDirEntry {
     pub(crate) fn path(&self) -> PathBuf {
-        PathBuf::new()
+        self.path.clone()
     }
 
     pub(crate) fn file_name(&self) -> crate::ffi::OsString {
-        String::new()
+        self.file_name.clone()
     }
 
     pub(crate) fn metadata(&self) -> io::Result<Metadata> {
-        unsupported("read_dir metadata")
+        Ok(self.metadata)
     }
 
     pub(crate) fn file_type(&self) -> io::Result<FileType> {
-        unsupported("read_dir file_type")
+        Ok(self.metadata.file_type())
     }
 }
 
@@ -152,30 +160,77 @@ impl<T> Mutex<T> {
 }
 
 unsafe extern "C" {
-    fn trueos_cabi_fs_read_file(
+    fn trueos_cabi_async_fs_read_start(path_ptr: *const u8, path_len: usize) -> i32;
+    fn trueos_cabi_async_fs_write_begin(
         path_ptr: *const u8,
         path_len: usize,
+        total_len: usize,
+    ) -> i32;
+    fn trueos_cabi_async_fs_write_chunk(
+        id: u32,
+        offset: usize,
+        data_ptr: *const u8,
+        data_len: usize,
+    ) -> i32;
+    fn trueos_cabi_async_fs_write_commit(id: u32) -> i32;
+    fn trueos_cabi_async_fs_create_dir_all_start(path_ptr: *const u8, path_len: usize) -> i32;
+    fn trueos_cabi_async_fs_stat_start(path_ptr: *const u8, path_len: usize) -> i32;
+    fn trueos_cabi_async_fs_list_dir_start(path_ptr: *const u8, path_len: usize) -> i32;
+    fn trueos_cabi_async_fs_remove_start(path_ptr: *const u8, path_len: usize) -> i32;
+    fn trueos_cabi_async_fs_status(id: u32) -> i32;
+    fn trueos_cabi_async_fs_result_len(id: u32) -> isize;
+    fn trueos_cabi_async_fs_result_read(
+        id: u32,
+        offset: usize,
         out_ptr: *mut u8,
         out_cap: usize,
     ) -> isize;
-    fn trueos_cabi_fs_write_begin(
-        path_ptr: *const u8,
-        path_len: usize,
-        total_len: u64,
-        out_handle: *mut u32,
-    ) -> i32;
-    fn trueos_cabi_fs_write_chunk(handle: u32, data_ptr: *const u8, data_len: usize) -> i32;
-    fn trueos_cabi_fs_write_finish(handle: u32) -> i32;
-    fn trueos_cabi_fs_write_abort(handle: u32) -> i32;
-    fn trueos_cabi_fs_create_dir_all(path_ptr: *const u8, path_len: usize) -> i32;
-    fn trueos_cabi_fs_exists(path_ptr: *const u8, path_len: usize) -> i32;
-    fn trueos_cabi_fs_remove(path_ptr: *const u8, path_len: usize) -> i32;
-    fn trueos_cabi_fs_stat(
-        path_ptr: *const u8,
-        path_len: usize,
-        out_kind: *mut u32,
-        out_len: *mut u64,
-    ) -> i32;
+    fn trueos_cabi_async_fs_discard(id: u32) -> i32;
+}
+
+const FS_TRANSFER_CHUNK_BYTES: usize = 64 * 1024;
+
+struct AsyncFsOperation {
+    id: u32,
+}
+
+impl AsyncFsOperation {
+    fn from_start(value: i32, op: &'static str) -> io::Result<Self> {
+        if value <= 0 {
+            Err(fs_status_to_io(if value == 0 { -4 } else { value }, op))
+        } else {
+            Ok(Self { id: value as u32 })
+        }
+    }
+
+    async fn ready(&self) -> io::Result<()> {
+        poll_fn(|cx| {
+            let status = unsafe { trueos_cabi_async_fs_status(self.id) };
+            match status {
+                0 => {
+                    crate::platform::poll_once();
+                    cx.waker().wake_by_ref();
+                    Poll::Pending
+                }
+                1 => Poll::Ready(Ok(())),
+                error => Poll::Ready(Err(fs_status_to_io(error, "async status"))),
+            }
+        })
+        .await
+    }
+
+    fn discard(&mut self) {
+        if self.id != 0 {
+            let _ = unsafe { trueos_cabi_async_fs_discard(self.id) };
+            self.id = 0;
+        }
+    }
+}
+
+impl Drop for AsyncFsOperation {
+    fn drop(&mut self) {
+        self.discard();
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -286,79 +341,130 @@ fn fs_status_to_io(rc: i32, _op: &'static str) -> io::Error {
     io::Error::new(kind, message)
 }
 
-fn read_sync(path: &Path) -> io::Result<Vec<u8>> {
+fn block_on_async_fs<F: Future>(future: F) -> F::Output {
+    let mut future = ::core::pin::pin!(future);
+    let mut context = Context::from_waker(Waker::noop());
+    loop {
+        match future.as_mut().poll(&mut context) {
+            Poll::Ready(output) => return output,
+            Poll::Pending => crate::platform::poll_once(),
+        }
+    }
+}
+
+async fn read_async(path: &Path) -> io::Result<Vec<u8>> {
     let path = cabi_path_string(path, false)?;
     let path = path.as_bytes();
-    let len =
-        unsafe { trueos_cabi_fs_read_file(path.as_ptr(), path.len(), core::ptr::null_mut(), 0) };
+    let mut operation = AsyncFsOperation::from_start(
+        unsafe { trueos_cabi_async_fs_read_start(path.as_ptr(), path.len()) },
+        "read start",
+    )?;
+    operation.ready().await?;
+
+    let len = unsafe { trueos_cabi_async_fs_result_len(operation.id) };
     if len < 0 {
         return Err(fs_status_to_io(len as i32, "read.len"));
     }
 
     let mut bytes = vec![0u8; len as usize];
-    let got = unsafe {
-        trueos_cabi_fs_read_file(path.as_ptr(), path.len(), bytes.as_mut_ptr(), bytes.len())
-    };
-    if got < 0 {
-        return Err(fs_status_to_io(got as i32, "read"));
+    let mut offset = 0usize;
+    while offset < bytes.len() {
+        let end = core::cmp::min(offset.saturating_add(FS_TRANSFER_CHUNK_BYTES), bytes.len());
+        let got = unsafe {
+            trueos_cabi_async_fs_result_read(
+                operation.id,
+                offset,
+                bytes[offset..end].as_mut_ptr(),
+                end - offset,
+            )
+        };
+        if got < 0 {
+            return Err(fs_status_to_io(got as i32, "read"));
+        }
+        if got == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                "TRUEOS async fs read ended before its reported length",
+            ));
+        }
+        offset = offset.saturating_add(got as usize);
     }
-
-    bytes.truncate(got as usize);
+    operation.discard();
     Ok(bytes)
 }
 
-fn write_sync(path: &Path, contents: &[u8]) -> io::Result<()> {
+async fn write_async(path: &Path, contents: &[u8]) -> io::Result<()> {
     let path = cabi_path_string(path, false)?;
     let path = path.as_bytes();
-    let mut handle = 0u32;
-    let rc = unsafe {
-        trueos_cabi_fs_write_begin(path.as_ptr(), path.len(), contents.len() as u64, &mut handle)
-    };
-    if rc != 0 {
-        return Err(fs_status_to_io(rc, "write_begin"));
+    let mut operation = AsyncFsOperation::from_start(
+        unsafe { trueos_cabi_async_fs_write_begin(path.as_ptr(), path.len(), contents.len()) },
+        "write begin",
+    )?;
+    let mut offset = 0usize;
+    while offset < contents.len() {
+        let end = core::cmp::min(
+            offset.saturating_add(FS_TRANSFER_CHUNK_BYTES),
+            contents.len(),
+        );
+        let status = unsafe {
+            trueos_cabi_async_fs_write_chunk(
+                operation.id,
+                offset,
+                contents[offset..end].as_ptr(),
+                end - offset,
+            )
+        };
+        if status != 0 {
+            return Err(fs_status_to_io(status, "write chunk"));
+        }
+        offset = end;
     }
-
-    let rc = unsafe { trueos_cabi_fs_write_chunk(handle, contents.as_ptr(), contents.len()) };
-    if rc != 0 {
-        let _ = unsafe { trueos_cabi_fs_write_abort(handle) };
-        return Err(fs_status_to_io(rc, "write_chunk"));
+    let status = unsafe { trueos_cabi_async_fs_write_commit(operation.id) };
+    if status != 0 {
+        return Err(fs_status_to_io(status, "write commit"));
     }
-
-    let rc = unsafe { trueos_cabi_fs_write_finish(handle) };
-    if rc != 0 {
-        let _ = unsafe { trueos_cabi_fs_write_abort(handle) };
-        return Err(fs_status_to_io(rc, "write_finish"));
-    }
-
+    operation.ready().await?;
+    operation.discard();
     Ok(())
 }
 
-fn exists_sync(path: &Path) -> io::Result<bool> {
+async fn stat_async(path: &Path) -> io::Result<Metadata> {
     let path = cabi_path_string(path, true)?;
     let path = path.as_bytes();
-    let rc = unsafe { trueos_cabi_fs_exists(path.as_ptr(), path.len()) };
-    if rc < 0 {
-        return Err(fs_status_to_io(rc, "exists"));
+    let mut operation = AsyncFsOperation::from_start(
+        unsafe { trueos_cabi_async_fs_stat_start(path.as_ptr(), path.len()) },
+        "stat start",
+    )?;
+    operation.ready().await?;
+    let len = unsafe { trueos_cabi_async_fs_result_len(operation.id) };
+    if len < 0 {
+        return Err(fs_status_to_io(len as i32, "stat len"));
     }
-    Ok(rc != 0)
-}
-
-fn stat_sync(path: &Path) -> io::Result<Metadata> {
-    let path = cabi_path_string(path, true)?;
-    let mut kind = 0u32;
-    let mut len = 0u64;
-    let rc = unsafe {
-        trueos_cabi_fs_stat(
-            path.as_ptr(),
-            path.len(),
-            &mut kind as *mut u32,
-            &mut len as *mut u64,
-        )
+    if len != 12 {
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            "TRUEOS async fs stat returned an invalid result",
+        ));
+    }
+    let mut result = [0u8; 12];
+    let got = unsafe {
+        trueos_cabi_async_fs_result_read(operation.id, 0, result.as_mut_ptr(), result.len())
     };
-    if rc != 0 {
-        return Err(fs_status_to_io(rc, "stat"));
+    if got != result.len() as isize {
+        return Err(if got < 0 {
+            fs_status_to_io(got as i32, "stat read")
+        } else {
+            io::Error::new(
+                io::ErrorKind::Other,
+                "TRUEOS async fs stat returned a short result",
+            )
+        });
     }
-
+    operation.discard();
+    let kind = u32::from_le_bytes([result[0], result[1], result[2], result[3]]);
+    let len = u64::from_le_bytes([
+        result[4], result[5], result[6], result[7], result[8], result[9], result[10], result[11],
+    ]);
     match kind {
         1 => Ok(Metadata::file(len)),
         2 => Ok(Metadata::dir()),
@@ -367,6 +473,103 @@ fn stat_sync(path: &Path) -> io::Result<Metadata> {
             "TRUEOS fs CABI returned an unknown node kind",
         )),
     }
+}
+
+async fn list_dir_async(path: &Path) -> io::Result<Vec<String>> {
+    let path = cabi_path_string(path, true)?;
+    let path = path.as_bytes();
+    let mut operation = AsyncFsOperation::from_start(
+        unsafe { trueos_cabi_async_fs_list_dir_start(path.as_ptr(), path.len()) },
+        "list_dir start",
+    )?;
+    operation.ready().await?;
+    let len = unsafe { trueos_cabi_async_fs_result_len(operation.id) };
+    if len < 0 {
+        return Err(fs_status_to_io(len as i32, "list_dir len"));
+    }
+    let mut bytes = vec![0u8; len as usize];
+    let mut offset = 0usize;
+    while offset < bytes.len() {
+        let end = core::cmp::min(offset.saturating_add(FS_TRANSFER_CHUNK_BYTES), bytes.len());
+        let got = unsafe {
+            trueos_cabi_async_fs_result_read(
+                operation.id,
+                offset,
+                bytes[offset..end].as_mut_ptr(),
+                end - offset,
+            )
+        };
+        if got < 0 {
+            return Err(fs_status_to_io(got as i32, "list_dir read"));
+        }
+        if got == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                "TRUEOS async fs list_dir ended before its reported length",
+            ));
+        }
+        offset = offset.saturating_add(got as usize);
+    }
+    operation.discard();
+    let listing = String::from_utf8(bytes).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "TRUEOS async fs list_dir returned invalid UTF-8",
+        )
+    })?;
+    Ok(listing
+        .lines()
+        .filter(|name| !name.is_empty() && *name != "...")
+        .map(String::from)
+        .collect())
+}
+
+async fn exists_async(path: &Path) -> io::Result<bool> {
+    match stat_async(path).await {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
+async fn create_dir_all_async(path: &Path) -> io::Result<()> {
+    let path = cabi_path_string(path, true)?;
+    let path = path.as_bytes();
+    let mut operation = AsyncFsOperation::from_start(
+        unsafe { trueos_cabi_async_fs_create_dir_all_start(path.as_ptr(), path.len()) },
+        "create_dir_all start",
+    )?;
+    operation.ready().await?;
+    operation.discard();
+    Ok(())
+}
+
+async fn remove_async(path: &Path) -> io::Result<()> {
+    let path = cabi_path_string(path, false)?;
+    let path = path.as_bytes();
+    let mut operation = AsyncFsOperation::from_start(
+        unsafe { trueos_cabi_async_fs_remove_start(path.as_ptr(), path.len()) },
+        "remove start",
+    )?;
+    operation.ready().await?;
+    operation.discard();
+    Ok(())
+}
+
+fn read_sync(path: &Path) -> io::Result<Vec<u8>> {
+    block_on_async_fs(read_async(path))
+}
+
+fn write_sync(path: &Path, contents: &[u8]) -> io::Result<()> {
+    block_on_async_fs(write_async(path, contents))
+}
+
+fn exists_sync(path: &Path) -> io::Result<bool> {
+    block_on_async_fs(exists_async(path))
+}
+
+fn stat_sync(path: &Path) -> io::Result<Metadata> {
+    block_on_async_fs(stat_async(path))
 }
 
 #[derive(Clone, Debug)]
@@ -685,18 +888,21 @@ impl Seek for &TrueosFile {
 }
 
 pub(crate) async fn read(path: &Path) -> io::Result<Vec<u8>> {
-    read_sync(path)
+    read_async(path).await
 }
 
 pub(crate) async fn read_to_string(path: &Path) -> io::Result<String> {
     let bytes = read(path).await?;
     String::from_utf8(bytes).map_err(|_| {
-        io::Error::new(io::ErrorKind::InvalidData, "TRUEOS fs CABI file is not valid UTF-8")
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "TRUEOS fs CABI file is not valid UTF-8",
+        )
     })
 }
 
 pub(crate) async fn write(path: &Path, contents: &[u8]) -> io::Result<()> {
-    write_sync(path, contents)
+    write_async(path, contents).await
 }
 
 pub(crate) async fn create_dir(path: &Path) -> io::Result<()> {
@@ -704,22 +910,16 @@ pub(crate) async fn create_dir(path: &Path) -> io::Result<()> {
 }
 
 pub(crate) async fn create_dir_all(path: &Path) -> io::Result<()> {
-    let path = cabi_path_string(path, true)?;
-    let path = path.as_bytes();
-    let rc = unsafe { trueos_cabi_fs_create_dir_all(path.as_ptr(), path.len()) };
-    if rc != 0 {
-        return Err(fs_status_to_io(rc, "create_dir_all"));
-    }
-    Ok(())
+    create_dir_all_async(path).await
 }
 
 pub(crate) async fn try_exists(path: &Path) -> io::Result<bool> {
-    exists_sync(path)
+    exists_async(path).await
 }
 
 pub(crate) async fn canonicalize(path: &Path) -> io::Result<PathBuf> {
     let canonical = TrueosPath::parse(path, true)?;
-    if !canonical.is_root() && !exists_sync(path)? {
+    if !canonical.is_root() && !exists_async(path).await? {
         return Err(io::Error::new(
             io::ErrorKind::NotFound,
             "TRUEOS fs canonicalize target does not exist",
@@ -730,11 +930,23 @@ pub(crate) async fn canonicalize(path: &Path) -> io::Result<PathBuf> {
 }
 
 pub(crate) async fn metadata(path: &Path) -> io::Result<Metadata> {
-    stat_sync(path)
+    stat_async(path).await
 }
 
-pub(crate) async fn read_dir(_path: &Path) -> io::Result<TrueosReadDir> {
-    unsupported("read_dir")
+pub(crate) async fn read_dir(path: &Path) -> io::Result<TrueosReadDir> {
+    let mut entries = Vec::new();
+    for file_name in list_dir_async(path).await? {
+        let entry_path = path.join(file_name.as_str());
+        let metadata = stat_async(&entry_path).await?;
+        entries.push(TrueosDirEntry {
+            path: entry_path,
+            file_name,
+            metadata,
+        });
+    }
+    Ok(TrueosReadDir {
+        entries: entries.into_iter(),
+    })
 }
 
 pub(crate) async fn set_permissions(_path: &Path, _perm: Permissions) -> io::Result<()> {
@@ -742,11 +954,5 @@ pub(crate) async fn set_permissions(_path: &Path, _perm: Permissions) -> io::Res
 }
 
 pub(crate) async fn remove_file(path: &Path) -> io::Result<()> {
-    let path = cabi_path_string(path, false)?;
-    let path = path.as_bytes();
-    let rc = unsafe { trueos_cabi_fs_remove(path.as_ptr(), path.len()) };
-    if rc != 0 {
-        return Err(fs_status_to_io(rc, "remove_file"));
-    }
-    Ok(())
+    remove_async(path).await
 }

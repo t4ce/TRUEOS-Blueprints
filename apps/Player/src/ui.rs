@@ -1,4 +1,5 @@
 use std::{
+    cell::Cell as StateCell,
     io,
     path::Path,
     sync::atomic::{AtomicU8, Ordering},
@@ -8,7 +9,10 @@ use std::{
 use anyhow::Result;
 use crossterm::{
     cursor::{SetCursorStyle, Show},
-    event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
+    event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers,
+        MouseButton, MouseEvent, MouseEventKind,
+    },
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
@@ -56,8 +60,17 @@ const PROMPT_PREFIX: &str = "┠╴╶╴ ─╴ ╶── ╶───Prompt �
 const SYSTEM_SUFFIX: &str = "├─── System───╴ ──╴ ╶─ ╶╴╶";
 const SYSTEM_EDGE: &str = "┨";
 
+/// Action requested when the terminal UI closes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UiExit {
+    /// Restore the terminal and hand control back to the mini-VM shell.
+    ReturnToShell,
+    /// Shut down the current Blueprint after restoring the terminal.
+    Terminate,
+}
+
 /// Runs the terminal UI with the provided data/configuration.
-pub fn run(config: UiConfig) -> Result<()> {
+pub fn run(config: UiConfig) -> Result<UiExit> {
     tokio_worker_probe();
     let mut terminal = setup_terminal()?;
     let result = App::new(config).run(&mut terminal);
@@ -129,6 +142,7 @@ fn setup_terminal() -> Result<Terminal<CrosstermBackend<io::Stdout>>> {
     execute!(
         stdout,
         EnterAlternateScreen,
+        EnableMouseCapture,
         Show,
         SetCursorStyle::BlinkingBlock
     )?;
@@ -140,6 +154,7 @@ fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Re
     disable_raw_mode()?;
     execute!(
         terminal.backend_mut(),
+        DisableMouseCapture,
         SetCursorStyle::DefaultUserShape,
         Show,
         LeaveAlternateScreen
@@ -179,7 +194,8 @@ struct App {
     idle_cursor_sweep_done: bool,
     last_tick: Instant,
     last_progress_tick: Instant,
-    should_quit: bool,
+    exit: Option<UiExit>,
+    transport_hitbox: StateCell<Option<Rect>>,
     default_file_path: String,
     next_file_path: String,
     default_track: Track,
@@ -235,7 +251,8 @@ impl App {
             idle_cursor_sweep_done: false,
             last_tick: now,
             last_progress_tick: now,
-            should_quit: false,
+            exit: None,
+            transport_hitbox: StateCell::new(None),
             default_file_path: config.default_file_path,
             next_file_path: config.next_file_path,
             default_track,
@@ -247,21 +264,24 @@ impl App {
         }
     }
 
-    fn run(mut self, terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
-        while !self.should_quit {
+    fn run(mut self, terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<UiExit> {
+        while self.exit.is_none() {
             terminal.draw(|frame| self.draw(frame))?;
 
             let timeout = Duration::from_millis(80);
             if event::poll(timeout)? {
-                if let Event::Key(key) = event::read()? {
-                    self.handle_key(key);
+                match event::read()? {
+                    Event::Key(key) => self.handle_key(key),
+                    Event::Mouse(mouse) => self.handle_mouse(mouse),
+                    Event::Resize(_, _) => self.transport_hitbox.set(None),
+                    _ => {}
                 }
             }
 
             self.tick();
         }
 
-        Ok(())
+        Ok(self.exit.unwrap_or(UiExit::ReturnToShell))
     }
 
     fn tick(&mut self) {
@@ -346,10 +366,10 @@ impl App {
         self.record_user_input();
         match key.code {
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.shutdown("quit: ctrl-c")
+                self.finish(UiExit::ReturnToShell, "quit: ctrl-c")
             }
             KeyCode::Char('q') if HOTKEYS_ENABLED && self.input.is_empty() => {
-                self.shutdown("quit: q")
+                self.finish(UiExit::ReturnToShell, "quit: q")
             }
             KeyCode::Esc => {
                 self.input.clear();
@@ -389,6 +409,22 @@ impl App {
         }
     }
 
+    fn handle_mouse(&mut self, mouse: MouseEvent) {
+        if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
+            return;
+        }
+
+        let Some(hitbox) = self.transport_hitbox.get() else {
+            return;
+        };
+        if !rect_contains(hitbox, mouse.column, mouse.row) {
+            return;
+        }
+
+        self.record_user_input();
+        self.toggle_playback();
+    }
+
     fn submit(&mut self) {
         let command = self.input.trim().to_string();
         if command.is_empty() {
@@ -415,6 +451,7 @@ impl App {
     }
 
     fn draw(&self, frame: &mut Frame) {
+        self.transport_hitbox.set(None);
         HOTKEY_STATE.store(self.hotkey_state(), Ordering::Relaxed);
         let area = frame.area();
         frame.render_widget(Clear, area);
@@ -921,6 +958,7 @@ impl App {
             .border_set(border::ROUNDED)
             .border_style(Style::default().fg(Color::DarkGray));
         let inner = block.inner(area);
+        self.transport_hitbox.set(Some(inner));
         frame.render_widget(block, area);
 
         let hot = Style::default().fg(SYSTEM_BG).add_modifier(Modifier::BOLD);
@@ -1274,12 +1312,10 @@ impl App {
     }
 
     fn toggle_playback(&mut self) {
-        self.playing = !self.playing;
         if self.playing {
-            self.respond("play: visual timeline running; audio engine not attached");
-            self.last_progress_tick = Instant::now();
+            self.pause_playback();
         } else {
-            self.respond("pause: timeline held");
+            self.play_loaded();
         }
     }
 
@@ -1409,10 +1445,10 @@ impl App {
         }
     }
 
-    fn shutdown(&mut self, message: impl Into<String>) {
+    fn finish(&mut self, exit: UiExit, message: impl Into<String>) {
         self.playback.close_stream();
         self.respond(message);
-        self.should_quit = true;
+        self.exit = Some(exit);
     }
 
     fn respond(&mut self, message: impl Into<String>) {
@@ -1514,11 +1550,11 @@ impl control::ControlEventHandler for App {
     }
 
     fn on_quit(&mut self, _event: &control::ParsedCommand) {
-        self.shutdown("shutdown: leaving tui demo");
+        self.finish(UiExit::ReturnToShell, "quit: returning to mini-VM shell");
     }
 
     fn on_terminate(&mut self, _event: &control::ParsedCommand) {
-        self.shutdown("shutdown: leaving tui demo");
+        self.finish(UiExit::Terminate, "terminate: shutting down Blueprint");
     }
 
     fn on_mainview(&mut self, _event: &control::ParsedCommand) {
@@ -1963,6 +1999,13 @@ fn justified_line(
 
 fn block_title_style() -> Style {
     Style::default().fg(COMMAND_FG).add_modifier(Modifier::BOLD)
+}
+
+fn rect_contains(area: Rect, column: u16, row: u16) -> bool {
+    column >= area.x
+        && column < area.x.saturating_add(area.width)
+        && row >= area.y
+        && row < area.y.saturating_add(area.height)
 }
 
 fn inset_x(area: Rect, margin: u16) -> Rect {

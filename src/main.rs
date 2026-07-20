@@ -1943,6 +1943,12 @@ fn source_overlay_patches(
 
     ensure_overlay_registry_sources(app_dir, manifest_path, work_dir)?;
 
+    // Crossterm's Unix event backend pulls both crates transitively. An app
+    // without a checked-in Cargo.lock does not mention either one until after
+    // this function has generated the isolated build manifest and Cargo has
+    // resolved it, which is too late to select their TRUEOS overlays.
+    let uses_crossterm = manifest_or_lock_requires_crossterm_overlays(app_dir, manifest_path)?;
+
     add_blueprint_vendor_patches(app_dir, &mut out);
 
     if let Ok(path) = nightly_rust_src_path("vendor/libc-0.2.186")
@@ -2023,7 +2029,7 @@ fn source_overlay_patches(
         out.push(CratePatch::new("argmax", path));
     }
 
-    if manifest_or_lock_mentions_crate(app_dir, manifest_path, "rustix")? {
+    if uses_crossterm || manifest_or_lock_mentions_crate(app_dir, manifest_path, "rustix")? {
         let rustix_0_38 = stage_rustix_trueos_overlay(work_dir, "0.38.44")?;
         let rustix_1_1 = stage_rustix_trueos_overlay(work_dir, "1.1.4")?;
         out.retain(|patch| patch.name != "rustix");
@@ -2031,13 +2037,14 @@ fn source_overlay_patches(
         out.push(CratePatch::alias("rustix_1_1", "rustix", rustix_1_1));
     }
 
-    if manifest_or_lock_mentions_crate(app_dir, manifest_path, "signal-hook-mio")? {
+    if uses_crossterm || manifest_or_lock_mentions_crate(app_dir, manifest_path, "signal-hook-mio")?
+    {
         let path = stage_signal_hook_mio_trueos_overlay(work_dir)?;
         out.retain(|patch| patch.name != "signal-hook-mio");
         out.push(CratePatch::new("signal-hook-mio", path));
     }
 
-    if manifest_or_lock_mentions_crate(app_dir, manifest_path, "crossterm")? {
+    if uses_crossterm {
         let crossterm_0_28 = stage_crossterm_trueos_overlay(work_dir, "0.28.1")?;
         let crossterm_0_29 = stage_crossterm_trueos_overlay(work_dir, "0.29.0")?;
         out.retain(|patch| patch.name != "crossterm");
@@ -2110,6 +2117,24 @@ fn manifest_or_lock_mentions_crate(
     Ok(lock
         .lines()
         .any(|line| line.trim() == format!("name = \"{crate_name}\"")))
+}
+
+fn manifest_or_lock_requires_crossterm_overlays(
+    app_dir: &Path,
+    manifest_path: &Path,
+) -> Result<bool, String> {
+    if manifest_or_lock_mentions_crate(app_dir, manifest_path, "crossterm")? {
+        return Ok(true);
+    }
+
+    let manifest = fs::read_to_string(manifest_path).map_err(io_string)?;
+    Ok(manifest.lines().any(|line| {
+        line.split('#')
+            .next()
+            .unwrap_or("")
+            .split(['\'', '"'])
+            .any(|value| value == "crossterm" || value.ends_with("/crossterm"))
+    }))
 }
 
 fn stage_ctrlc_trueos_overlay(work_dir: &Path) -> Result<PathBuf, String> {
@@ -2305,6 +2330,7 @@ fn ensure_overlay_registry_sources(
     manifest_path: &Path,
     work_dir: &Path,
 ) -> Result<(), String> {
+    let uses_crossterm = manifest_or_lock_requires_crossterm_overlays(app_dir, manifest_path)?;
     let registry_overlays = [
         ("argmax", "0.4.0", "argmax-0.4.0"),
         ("crossterm", "0.28.1", "crossterm-0.28.1"),
@@ -2320,8 +2346,11 @@ fn ensure_overlay_registry_sources(
     ];
     let mut missing = Vec::new();
     for (crate_name, version, source_dir) in registry_overlays {
+        let required_by_crossterm =
+            uses_crossterm && matches!(crate_name, "crossterm" | "rustix" | "signal-hook-mio");
         if find_cargo_registry_crate(source_dir).is_none()
-            && manifest_or_lock_mentions_crate(app_dir, manifest_path, crate_name)?
+            && (required_by_crossterm
+                || manifest_or_lock_mentions_crate(app_dir, manifest_path, crate_name)?)
         {
             missing.push((crate_name, version, source_dir));
         }
@@ -4403,10 +4432,10 @@ fn materialized_workspace_dependency(
                 .to_string(),
             )
         ),
-        "trueos" => path_dependency_line(
-            dep_name,
-            &staged_blueprint_path(blueprint_root, work_dir, "api"),
-        ),
+        // Keep the SDK and all of its relative `../crates/*` dependencies on
+        // one canonical path identity. Cargo does not canonicalize a staging
+        // symlink consistently when it writes package IDs to Cargo.lock.
+        "trueos" => path_dependency_line(dep_name, &blueprint_root.join("api")),
         "trueos-chat" => path_dependency_line(dep_name, &blueprint_root.join("apps/chatserver/trueos-chat")),
         "trueos-currency" => {
             path_dependency_line(dep_name, &blueprint_root.join("../uiout/currency_reqwest/trueos-currency"))
@@ -4478,6 +4507,20 @@ mod workspace_dependency_tests {
         );
 
         assert_eq!(resolved, canonical);
+    }
+
+    #[test]
+    fn trueos_workspace_dependency_uses_the_canonical_sdk_path() {
+        let resolved = materialized_workspace_dependency(
+            Path::new("/sdk/apps/example"),
+            Path::new("/sdk"),
+            Path::new("/staging/work/example"),
+            &[],
+            "trueos",
+        )
+        .expect("materialize trueos workspace dependency");
+
+        assert_eq!(resolved, "trueos = { path = \"/sdk/api\" }");
     }
 }
 
