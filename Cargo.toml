@@ -28,6 +28,7 @@ members = [
     "apps/particle",
     "probes/unix_api_probe",
     "probes/rusqlite_probe",
+    "probes/rusqlite_multirt",
     "apps/skybox",
     "apps/swarm",
     "apps/system-services",

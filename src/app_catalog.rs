@@ -447,6 +447,7 @@ replicatable = true
             "panick",
             "posix_fd_probe",
             "rusqlite_probe",
+            "rusqlite_multirt",
             "test_some_crates",
             "tokio_fs",
             "tokio_mrt",
