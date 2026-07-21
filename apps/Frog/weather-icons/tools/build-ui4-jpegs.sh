@@ -8,6 +8,7 @@ output_64="$output_root/64"
 output_128="$output_root/128"
 frame_count=${UI4_WEATHER_FRAME_COUNT:-10}
 background=${UI4_WEATHER_BACKGROUND:-142238}
+capture_size=256
 
 case "$frame_count" in
     ''|*[!0-9]*)
@@ -71,7 +72,7 @@ while IFS= read -r source; do
             | head -n 1
     )
     period=${period:-1}
-    strip_width=$((frame_count * 128))
+    strip_width=$((frame_count * capture_size))
     strip="$work_dir/$icon.png"
     capture_url="file://$script_dir/ui4-capture.html?icon=$icon&frames=$frame_count&period=$period&background=$background"
 
@@ -90,31 +91,107 @@ while IFS= read -r source; do
         --run-all-compositor-stages-before-draw \
         --user-data-dir="$profile_dir" \
         --virtual-time-budget=3000 \
-        --window-size="$strip_width,128" \
+        --window-size="$strip_width,$capture_size" \
         --screenshot="$strip" \
         "$capture_url" >/dev/null 2>&1
 
     dimensions=$(magick identify -format '%wx%h' "$strip")
-    if [[ "$dimensions" != "${strip_width}x128" ]]; then
+    if [[ "$dimensions" != "${strip_width}x${capture_size}" ]]; then
         echo "$icon capture has unexpected dimensions $dimensions" >&2
         exit 1
     fi
 
+    # Derive one content rectangle for the complete sequence. Every frame is
+    # normalized with this same union, preserving motion while removing the
+    # very large and inconsistent internal padding in the source SVGs.
+    union_left=$capture_size
+    union_top=$capture_size
+    union_right=0
+    union_bottom=0
     for ((frame_index = 0; frame_index < frame_count; frame_index += 1)); do
         frame=$(printf '%03d' "$frame_index")
-        x=$((frame_index * 128))
-        output_name="$icon-frame-$frame.jpg"
-
+        x=$((frame_index * capture_size))
+        cell="$work_dir/$icon-cell-$frame.png"
         magick "$strip" \
-            -crop "128x128+$x+0" +repage \
+            -crop "${capture_size}x${capture_size}+$x+0" +repage \
+            "$cell"
+        bounds=$(magick "$cell" -fuzz 4% -trim -format '%wx%h%O' info: 2>/dev/null || true)
+        if [[ "$bounds" =~ ^([0-9]+)x([0-9]+)\+([0-9]+)\+([0-9]+)$ ]]; then
+            content_width=${BASH_REMATCH[1]}
+            content_height=${BASH_REMATCH[2]}
+            content_x=${BASH_REMATCH[3]}
+            content_y=${BASH_REMATCH[4]}
+            if ((content_width > 1 && content_height > 1)); then
+                ((content_x < union_left)) && union_left=$content_x
+                ((content_y < union_top)) && union_top=$content_y
+                content_right=$((content_x + content_width))
+                content_bottom=$((content_y + content_height))
+                ((content_right > union_right)) && union_right=$content_right
+                ((content_bottom > union_bottom)) && union_bottom=$content_bottom
+            fi
+        fi
+    done
+    if ((union_right <= union_left || union_bottom <= union_top)); then
+        union_left=0
+        union_top=0
+        union_right=$capture_size
+        union_bottom=$capture_size
+    else
+        padding=8
+        union_left=$((union_left > padding ? union_left - padding : 0))
+        union_top=$((union_top > padding ? union_top - padding : 0))
+        union_right=$((union_right + padding < capture_size ? union_right + padding : capture_size))
+        union_bottom=$((union_bottom + padding < capture_size ? union_bottom + padding : capture_size))
+    fi
+    for ((frame_index = 0; frame_index < frame_count; frame_index += 1)); do
+        frame=$(printf '%03d' "$frame_index")
+        output_name="$icon-frame-$frame.jpg"
+        cell="$work_dir/$icon-cell-$frame.png"
+        normalized="$work_dir/$icon-normalized-$frame.png"
+        crop_left=$union_left
+        crop_top=$union_top
+        crop_right=$union_right
+        crop_bottom=$union_bottom
+        if ((frame_index == 0)); then
+            # Frame zero is the deliberately static bring-up image. Fit it
+            # tightly on its own; animated frames continue to share the union
+            # bounds above so their relative motion remains stable.
+            bounds=$(magick "$cell" -fuzz 4% -trim -format '%wx%h%O' info: 2>/dev/null || true)
+            if [[ "$bounds" =~ ^([0-9]+)x([0-9]+)\+([0-9]+)\+([0-9]+)$ ]]; then
+                content_width=${BASH_REMATCH[1]}
+                content_height=${BASH_REMATCH[2]}
+                content_x=${BASH_REMATCH[3]}
+                content_y=${BASH_REMATCH[4]}
+                if ((content_width > 1 && content_height > 1)); then
+                    padding=8
+                    crop_left=$((content_x > padding ? content_x - padding : 0))
+                    crop_top=$((content_y > padding ? content_y - padding : 0))
+                    content_right=$((content_x + content_width))
+                    content_bottom=$((content_y + content_height))
+                    crop_right=$((content_right + padding < capture_size ? content_right + padding : capture_size))
+                    crop_bottom=$((content_bottom + padding < capture_size ? content_bottom + padding : capture_size))
+                fi
+            fi
+        fi
+        crop_width=$((crop_right - crop_left))
+        crop_height=$((crop_bottom - crop_top))
+
+        magick "$cell" \
+            -crop "${crop_width}x${crop_height}+$crop_left+$crop_top" +repage \
+            -filter Lanczos \
+            -resize 112x96 \
+            -gravity center \
+            -background "#$background" \
+            -extent 128x128 \
+            "$normalized"
+        magick "$normalized" \
             -alpha off \
             -colorspace sRGB \
             -sampling-factor 4:4:4 \
             -quality 90 \
             -strip \
             "$output_128/$output_name"
-        magick "$strip" \
-            -crop "128x128+$x+0" +repage \
+        magick "$normalized" \
             -filter Lanczos \
             -resize 64x64 \
             -alpha off \
@@ -125,14 +202,12 @@ while IFS= read -r source; do
             "$output_64/$output_name"
 
         if ((frame_index == 0)); then
-            magick "$strip" \
-                -crop "128x128+$x+0" +repage \
+            magick "$normalized" \
                 -alpha set \
                 -channel A -evaluate set 100% +channel \
                 -depth 8 \
                 "rgba:$output_128/$icon-frame-000.rgba"
-            magick "$strip" \
-                -crop "128x128+$x+0" +repage \
+            magick "$normalized" \
                 -filter Lanczos \
                 -resize 64x64 \
                 -alpha set \

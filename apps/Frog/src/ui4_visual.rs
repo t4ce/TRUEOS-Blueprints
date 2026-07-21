@@ -8,7 +8,7 @@ pub const FRAME_WIDTH: u32 = 960;
 pub const FRAME_HEIGHT: u32 = 640;
 
 const BG: [u8; 4] = [9, 15, 22, 255];
-// Frame-00 icon assets use the same opaque matte, so their native 1:1 edges
+// Frame-000 icon assets use the same opaque matte, so their native 1:1 edges
 // disappear into icon-bearing panels without runtime alpha/JPEG work.
 const PANEL: [u8; 4] = [20, 34, 56, 255];
 const PANEL_2: [u8; 4] = [25, 42, 58, 255];
@@ -64,7 +64,7 @@ fn static_icon(icon: WeatherIcon, size: u32) -> Option<IconImage<'static>> {
         (64, WeatherIcon::Rain) => static_icon_frame!(64, "rainy-2"),
         (64, WeatherIcon::Thunder) => static_icon_frame!(64, "thunderstorms"),
         (64, WeatherIcon::Snow) => static_icon_frame!(64, "snowy-1"),
-        (64, WeatherIcon::Fog) => static_icon_frame!(64, "fog"),
+        (64, WeatherIcon::Fog) => static_icon_frame!(64, "fog-day"),
         (128, WeatherIcon::ClearDay) => static_icon_frame!(128, "clear-day"),
         (128, WeatherIcon::ClearNight) => static_icon_frame!(128, "clear-night"),
         (128, WeatherIcon::PartlyDay) => static_icon_frame!(128, "cloudy-2-day"),
@@ -74,7 +74,7 @@ fn static_icon(icon: WeatherIcon, size: u32) -> Option<IconImage<'static>> {
         (128, WeatherIcon::Rain) => static_icon_frame!(128, "rainy-2"),
         (128, WeatherIcon::Thunder) => static_icon_frame!(128, "thunderstorms"),
         (128, WeatherIcon::Snow) => static_icon_frame!(128, "snowy-1"),
-        (128, WeatherIcon::Fog) => static_icon_frame!(128, "fog"),
+        (128, WeatherIcon::Fog) => static_icon_frame!(128, "fog-day"),
         _ => return None,
     };
     Some(IconImage {
@@ -554,12 +554,67 @@ mod tests {
     #[test]
     fn snapshot_scene_is_full_opaque_native_frame() {
         let scene = render_snapshot(&crate::weather::demo_snapshot(), |_icon, _size| None);
+        assert_eq!((FRAME_X, FRAME_Y), (480, 72));
         assert_eq!(
             scene.pixels.len(),
             FRAME_WIDTH as usize * FRAME_HEIGHT as usize * 4
         );
         assert!(scene.pixels.chunks_exact(4).all(|pixel| pixel[3] == 255));
         assert!(!scene.text.is_empty());
+        assert!(scene.text.iter().all(|item| {
+            !item.text.is_empty()
+                && item.x.is_finite()
+                && item.y.is_finite()
+                && item.pixels.is_finite()
+                && item.pixels > 0.0
+                && item.color[3] == 255
+        }));
+    }
+
+    #[test]
+    fn all_weather_variants_have_opaque_static_native_icons() {
+        let variants = [
+            WeatherIcon::ClearDay,
+            WeatherIcon::ClearNight,
+            WeatherIcon::PartlyDay,
+            WeatherIcon::PartlyNight,
+            WeatherIcon::Cloud,
+            WeatherIcon::RainDay,
+            WeatherIcon::Rain,
+            WeatherIcon::Thunder,
+            WeatherIcon::Snow,
+            WeatherIcon::Fog,
+        ];
+        for icon in variants {
+            for size in [64, 128] {
+                let frame = static_icon(icon, size).expect("mapped Frog weather icon");
+                assert_eq!((frame.width, frame.height), (size, size));
+                assert_eq!(frame.rgba.len(), size as usize * size as usize * 4);
+                assert!(frame.rgba.chunks_exact(4).all(|pixel| pixel[3] == 255));
+
+                let mut left = size;
+                let mut top = size;
+                let mut right = 0;
+                let mut bottom = 0;
+                for y in 0..size {
+                    for x in 0..size {
+                        let offset = (y as usize * size as usize + x as usize) * 4;
+                        if frame.rgba[offset..offset + 3] != PANEL[..3] {
+                            left = left.min(x);
+                            top = top.min(y);
+                            right = right.max(x + 1);
+                            bottom = bottom.max(y + 1);
+                        }
+                    }
+                }
+                let visible_width = right.saturating_sub(left);
+                let visible_height = bottom.saturating_sub(top);
+                assert!(
+                    visible_width.max(visible_height) >= size / 2,
+                    "{icon:?} {size}px frame retained excessive SVG padding: visible={visible_width}x{visible_height}"
+                );
+            }
+        }
     }
 
     #[test]

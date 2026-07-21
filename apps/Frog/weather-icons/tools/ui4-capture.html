@@ -16,20 +16,22 @@
 
       body {
         display: flex;
-        height: 128px;
+        height: 256px;
       }
 
       .frame {
         align-items: center;
         display: flex;
-        flex: 0 0 128px;
-        height: 128px;
+        flex: 0 0 256px;
+        height: 256px;
         justify-content: center;
       }
 
       object {
-        height: 96px;
-        width: 112px;
+        height: 48px;
+        transform: scale(4);
+        transform-origin: center;
+        width: 56px;
       }
     </style>
   </head>
@@ -53,7 +55,7 @@
         throw new Error("period must be positive");
       }
 
-      document.body.style.width = `${frameCount * 128}px`;
+      document.body.style.width = `${frameCount * 256}px`;
       document.body.style.background = background;
 
       const loaded = [];
@@ -74,6 +76,19 @@
           image.addEventListener("error", reject, { once: true });
           image.addEventListener("load", () => {
             const svg = image.contentDocument.documentElement;
+
+            // These source SVGs declare a fixed CSS viewport but no viewBox.
+            // Preserve the authored coordinate system before capturing the
+            // whole object at 4x; the generator then performs content-aware
+            // normalization without rasterizing the tiny original directly.
+            const sourceWidth = Number.parseFloat(svg.getAttribute("width")) || 56;
+            const sourceHeight = Number.parseFloat(svg.getAttribute("height")) || 48;
+            if (!svg.hasAttribute("viewBox")) {
+              svg.setAttribute("viewBox", `0 0 ${sourceWidth} ${sourceHeight}`);
+            }
+            svg.setAttribute("width", "100%");
+            svg.setAttribute("height", "100%");
+            svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
 
             if (typeof svg.pauseAnimations === "function") {
               svg.pauseAnimations();
