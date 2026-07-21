@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Frog UI4 weather sprite capture</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        overflow: hidden;
+      }
+
+      body {
+        display: flex;
+        height: 128px;
+      }
+
+      .frame {
+        align-items: center;
+        display: flex;
+        flex: 0 0 128px;
+        height: 128px;
+        justify-content: center;
+      }
+
+      object {
+        height: 96px;
+        width: 112px;
+      }
+    </style>
+  </head>
+  <body>
+    <script>
+      "use strict";
+
+      const query = new URLSearchParams(window.location.search);
+      const icon = query.get("icon") || "clear-day";
+      const frameCount = Number.parseInt(query.get("frames") || "10", 10);
+      const periodSeconds = Number.parseFloat(query.get("period") || "1");
+      const background = `#${query.get("background") || "142238"}`;
+
+      if (!/^[a-z0-9-]+$/.test(icon)) {
+        throw new Error("invalid icon name");
+      }
+      if (!Number.isInteger(frameCount) || frameCount < 1 || frameCount > 10) {
+        throw new Error("frame count must be between 1 and 10");
+      }
+      if (!Number.isFinite(periodSeconds) || periodSeconds <= 0) {
+        throw new Error("period must be positive");
+      }
+
+      document.body.style.width = `${frameCount * 128}px`;
+      document.body.style.background = background;
+
+      const loaded = [];
+      for (let frameIndex = 0; frameIndex < frameCount; frameIndex += 1) {
+        const holder = document.createElement("div");
+        const image = document.createElement("object");
+        const sourceSet = frameIndex === 0 ? "static" : "animated";
+        const seconds = periodSeconds * frameIndex / frameCount;
+
+        holder.className = "frame";
+        holder.style.background = background;
+        image.type = "image/svg+xml";
+        image.data = `../${sourceSet}/${icon}.svg`;
+        holder.appendChild(image);
+        document.body.appendChild(holder);
+
+        loaded.push(new Promise((resolve, reject) => {
+          image.addEventListener("error", reject, { once: true });
+          image.addEventListener("load", () => {
+            const svg = image.contentDocument.documentElement;
+
+            if (typeof svg.pauseAnimations === "function") {
+              svg.pauseAnimations();
+            }
+            if (typeof svg.setCurrentTime === "function") {
+              svg.setCurrentTime(seconds);
+            }
+            for (const animation of svg.getAnimations({ subtree: true })) {
+              animation.pause();
+              animation.currentTime = seconds * 1000;
+            }
+            resolve();
+          }, { once: true });
+        }));
+      }
+
+      Promise.all(loaded).then(() => {
+        document.documentElement.dataset.captureReady = "true";
+      });
+    </script>
+  </body>
+</html>

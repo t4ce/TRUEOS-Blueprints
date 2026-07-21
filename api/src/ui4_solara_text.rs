@@ -72,6 +72,28 @@ pub struct PanEvent {
     pub vcursor: bool,
 }
 
+/// Held HID usages for the keyboard routed to this focused UI4 frame.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct KeyboardState {
+    pub controller_id: u32,
+    pub slot_id: u32,
+    pub ep_target: u32,
+    pub combo_id: u32,
+    pub modifiers: u8,
+    pub source_kind: u8,
+    pub virtual_keyboard: bool,
+    pub keys: [u8; 6],
+    pub ascii: [u8; 6],
+    pub key_down_bits: [u32; 8],
+}
+
+impl KeyboardState {
+    pub fn is_down(&self, hid_usage: u8) -> bool {
+        let key = hid_usage as usize;
+        self.key_down_bits[key / 32] & (1u32 << (key % 32)) != 0
+    }
+}
+
 /// Camera basis and destination rectangle for the kernel RGB565 skybox
 /// sampler. The source image is retained by the frame after upload.
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
@@ -157,6 +179,25 @@ impl Frame {
         }
     }
 
+    /// Open a one-buffer snapshot frame.
+    ///
+    /// Each successful publish makes that allocation immutable. Calling
+    /// `begin` again prepares a new one-buffer generation privately; the
+    /// kernel swaps it into the same window only after the next publish.
+    pub fn open_immutable(x: i32, y: i32, width: u32, height: u32) -> Result<Self, Error> {
+        let window_id =
+            unsafe { v::bp_abi::trueos_cabi_ui4_scene_frame_open_immutable(x, y, width, height) };
+        if window_id == 0 {
+            Err(Error::Ui4)
+        } else {
+            Ok(Self {
+                window_id,
+                width,
+                height,
+            })
+        }
+    }
+
     /// Open a triple-buffered scene frame for continuously shaded content.
     pub fn open_streaming(x: i32, y: i32, width: u32, height: u32) -> Result<Self, Error> {
         let window_id =
@@ -221,6 +262,32 @@ impl Frame {
             dy: raw.dy,
             combo_id: raw.combo_id,
             vcursor: raw.vcursor != 0,
+        }))
+    }
+
+    /// Sample held keys only from the keyboard routed to this frame's focus.
+    /// Click/tap the frame first to establish its UI4 focus route.
+    pub fn keyboard_state(&self) -> Result<Option<KeyboardState>, Error> {
+        let mut raw = v::bp_abi::TrueosUi4KeyboardState::default();
+        let result =
+            unsafe { v::bp_abi::trueos_cabi_ui4_scene_keyboard_state(self.window_id, &mut raw) };
+        if result == 1 {
+            return Ok(None);
+        }
+        if result != 0 {
+            return Err(error_from_status(result));
+        }
+        Ok(Some(KeyboardState {
+            controller_id: raw.controller_id,
+            slot_id: raw.slot_id,
+            ep_target: raw.ep_target,
+            combo_id: raw.combo_id,
+            modifiers: raw.modifiers,
+            source_kind: raw.source_kind,
+            virtual_keyboard: raw.virtual_keyboard != 0,
+            keys: raw.keys,
+            ascii: raw.ascii,
+            key_down_bits: raw.key_down_bits,
         }))
     }
 

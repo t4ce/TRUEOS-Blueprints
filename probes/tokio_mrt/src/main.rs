@@ -1,7 +1,7 @@
 #![no_std]
 
 use trueos::{
-    clock, 
+    clock,
     logl::{self, level},
     rng, t, vshell,
 };
@@ -21,5 +21,4 @@ fn main() {
     let _ = t::runtime::current_thread()
         .build()
         .map(|runtime| runtime.block_on(t::fs::write("/hello_world.txt", b"hello world")));
-
 }

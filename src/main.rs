@@ -2017,6 +2017,11 @@ fn source_overlay_patches(
 
     add_getrandom_source_overlays(app_dir, &mut out);
 
+    if manifest_or_lock_mentions_crate(app_dir, manifest_path, "socket2")? {
+        let socket2_0_5 = stage_socket2_trueos_overlay(work_dir, "0.5.10")?;
+        out.push(CratePatch::alias("socket2_0_5", "socket2", socket2_0_5));
+    }
+
     if manifest_or_lock_mentions_crate(app_dir, manifest_path, "ctrlc")? {
         let path = stage_ctrlc_trueos_overlay(work_dir)?;
         out.retain(|patch| patch.name != "ctrlc");
@@ -2204,6 +2209,22 @@ fn stage_signal_hook_mio_trueos_overlay(work_dir: &Path) -> Result<PathBuf, Stri
     Ok(staged)
 }
 
+fn stage_socket2_trueos_overlay(work_dir: &Path, version: &str) -> Result<PathBuf, String> {
+    let source_name = format!("socket2-{version}");
+    let source = find_cargo_registry_crate(&source_name).ok_or_else(|| {
+        format!(
+            "missing Cargo registry source for {source_name}; run `cargo fetch` for the app once"
+        )
+    })?;
+    let staged = work_dir
+        .join("source-overlay-crates")
+        .join(format!("socket2-{version}-trueos"));
+    reset_dir(&staged)?;
+    copy_app_tree(&source, &staged)?;
+    patch_socket2_trueos_overlay(&staged)?;
+    Ok(staged)
+}
+
 fn stage_futures_timer_trueos_overlay(work_dir: &Path) -> Result<PathBuf, String> {
     const FUTURES_TIMER_VERSION: &str = "3.0.4";
     let source_name = format!("futures-timer-{FUTURES_TIMER_VERSION}");
@@ -2341,6 +2362,7 @@ fn ensure_overlay_registry_sources(
         ("rustix", "0.38.44", "rustix-0.38.44"),
         ("rustix", "1.1.4", "rustix-1.1.4"),
         ("signal-hook-mio", "0.2.5", "signal-hook-mio-0.2.5"),
+        ("socket2", "0.5.10", "socket2-0.5.10"),
         ("tokio-stream", "0.1.17", "tokio-stream-0.1.17"),
         ("tonic", "0.14.6", "tonic-0.14.6"),
     ];
@@ -2669,6 +2691,14 @@ fn patch_signal_hook_mio_trueos_overlay(crate_dir: &Path) -> Result<(), String> 
     )
 }
 
+fn patch_socket2_trueos_overlay(crate_dir: &Path) -> Result<(), String> {
+    replace_file_text(
+        &crate_dir.join("src/sys/unix.rs"),
+        "    target_os = \"cygwin\",\n))]\ntype IovLen = c_int;",
+        "    target_os = \"cygwin\",\n    target_os = \"trueos\",\n    target_os = \"zkvm\",\n))]\ntype IovLen = c_int;",
+    )
+}
+
 fn patch_crossterm_trueos_overlay(crate_dir: &Path) -> Result<(), String> {
     let mio_path = crate_dir.join("src/event/source/unix/mio.rs");
     normalize_line_endings(&mio_path)?;
@@ -2770,6 +2800,16 @@ fn patch_hyper_util_tokio_std_overlay(crate_dir: &Path) -> Result<(), String> {
         &crate_dir.join("src/client/legacy/pool.rs"),
         "now.saturating_duration_since(instant) > timeout",
         "now.duration_since(instant) > timeout",
+    )?;
+    replace_file_text(
+        &crate_dir.join("src/client/legacy/connect/http.rs"),
+        "            socket.bind(&SocketAddr::new((*addr).into(), 0).into())?;",
+        "            socket\n                .bind(&SocketAddr::new((*addr).into(), 0).into())\n                .map_err(|_| io::Error::new(io::ErrorKind::AddrNotAvailable, \"socket bind failed\"))?;",
+    )?;
+    replace_file_text(
+        &crate_dir.join("src/client/legacy/connect/http.rs"),
+        "                socket.bind(&any.into())?;",
+        "                socket\n                    .bind(&any.into())\n                    .map_err(|_| io::Error::new(io::ErrorKind::AddrNotAvailable, \"socket bind failed\"))?;",
     )?;
     Ok(())
 }
@@ -2931,6 +2971,7 @@ fn staged_manifest_for_overlay(
     if !nested_workspace_package {
         ensure_standalone_manifest_workspace(&staged_manifest)?;
     }
+    canonicalize_staged_blueprint_dependency_paths(app_dir, &staged_app_dir)?;
     rewrite_staged_source_for_target(app_dir, &staged_app_dir, &staged_manifest, build_settings)?;
     let staged_source_overlay = staged_source_overlay(source_overlay, work_dir);
 
@@ -4208,6 +4249,111 @@ fn materialize_trueos_blueprint_dependency(
     insert_manifest_dependency(manifest_path, &dependency)
 }
 
+fn canonicalize_staged_blueprint_dependency_paths(
+    app_dir: &Path,
+    staged_app_dir: &Path,
+) -> Result<(), String> {
+    let blueprint_root = blueprint_root(app_dir).unwrap_or_else(|| app_dir.to_path_buf());
+    let canonical_blueprint_root =
+        fs::canonicalize(&blueprint_root).unwrap_or_else(|_| blueprint_root.clone());
+    canonicalize_staged_blueprint_dependency_paths_in_dir(staged_app_dir, &canonical_blueprint_root)
+}
+
+fn canonicalize_staged_blueprint_dependency_paths_in_dir(
+    dir: &Path,
+    canonical_blueprint_root: &Path,
+) -> Result<(), String> {
+    for entry in fs::read_dir(dir).map_err(io_string)? {
+        let entry = entry.map_err(io_string)?;
+        let path = entry.path();
+        let file_type = entry.file_type().map_err(io_string)?;
+        if file_type.is_dir() {
+            let name = entry.file_name();
+            if !matches!(name.to_str(), Some(".git" | "target" | "dist")) {
+                canonicalize_staged_blueprint_dependency_paths_in_dir(
+                    &path,
+                    canonical_blueprint_root,
+                )?;
+            }
+        } else if file_type.is_file() && entry.file_name() == "Cargo.toml" {
+            canonicalize_staged_blueprint_manifest_dependency_paths(
+                &path,
+                canonical_blueprint_root,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn canonicalize_staged_blueprint_manifest_dependency_paths(
+    manifest_path: &Path,
+    canonical_blueprint_root: &Path,
+) -> Result<(), String> {
+    let manifest_dir = manifest_path.parent().unwrap_or(manifest_path);
+    let cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
+    let mut changed = false;
+    let mut out = String::with_capacity(cargo_toml.len());
+
+    for line in cargo_toml.lines() {
+        let mut rewritten = None;
+        if let Some((dependency, dependency_path)) = inline_dependency_name_and_path(line) {
+            let dependency_path = PathBuf::from(dependency_path);
+            let staged_path = if dependency_path.is_absolute() {
+                dependency_path
+            } else {
+                manifest_dir.join(dependency_path)
+            };
+            if let Ok(canonical_path) = fs::canonicalize(staged_path)
+                && canonical_path.starts_with(&canonical_blueprint_root)
+            {
+                rewritten = dependency_with_rewritten_path(line, dependency, &canonical_path);
+            }
+        }
+        let output_line = rewritten.as_deref().unwrap_or(line);
+        changed |= output_line != line;
+        out.push_str(output_line);
+        out.push('\n');
+    }
+
+    if changed {
+        fs::write(manifest_path, out).map_err(io_string)?;
+    }
+    Ok(())
+}
+
+fn inline_dependency_name_and_path(line: &str) -> Option<(&str, String)> {
+    let declaration = line
+        .split_once('#')
+        .map_or(line, |(declaration, _)| declaration);
+    let (key, value) = declaration.split_once('=')?;
+    let dependency = key.trim();
+    let path = inline_table_path(value.trim())?;
+    Some((dependency, path))
+}
+
+fn dependency_with_rewritten_path(line: &str, dep_name: &str, path: &Path) -> Option<String> {
+    let (declaration, comment) = line.split_once('#').unwrap_or((line, ""));
+    let (key, value) = declaration.split_once('=')?;
+    if key.trim() != dep_name {
+        return None;
+    }
+
+    let old_path = inline_table_path(value.trim())?;
+    let old_path = toml_string(old_path.as_str());
+    let offset = value.find(old_path.as_str())?;
+    let mut rewritten = String::with_capacity(line.len().saturating_add(path.as_os_str().len()));
+    rewritten.push_str(key);
+    rewritten.push('=');
+    rewritten.push_str(&value[..offset]);
+    rewritten.push_str(toml_string(path.to_string_lossy().as_ref()).as_str());
+    rewritten.push_str(&value[offset + old_path.len()..]);
+    if !comment.is_empty() {
+        rewritten.push('#');
+        rewritten.push_str(comment);
+    }
+    Some(rewritten)
+}
+
 fn insert_manifest_dependency(manifest_path: &Path, dependency: &str) -> Result<(), String> {
     let cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
     let mut out = String::with_capacity(cargo_toml.len() + dependency.len() + 2);
@@ -4521,6 +4667,30 @@ mod workspace_dependency_tests {
         .expect("materialize trueos workspace dependency");
 
         assert_eq!(resolved, "trueos = { path = \"/sdk/api\" }");
+    }
+
+    #[test]
+    fn direct_trueos_dependency_rewrite_preserves_options() {
+        let line =
+            "trueos = { path = \"../../api\", features = [\"tokio-runtime\"], optional = true }";
+        let rewritten = dependency_with_rewritten_path(line, "trueos", Path::new("/sdk/api"))
+            .expect("rewrite direct trueos dependency");
+
+        assert_eq!(
+            rewritten,
+            "trueos = { path = \"/sdk/api\", features = [\"tokio-runtime\"], optional = true }"
+        );
+    }
+
+    #[test]
+    fn direct_blueprint_dependency_rewrite_supports_other_crates() {
+        let line = "trueos-math = { path = \"../../crates/trueos-math\" }";
+        let (dependency, _) = inline_dependency_name_and_path(line)
+            .expect("recognize direct Blueprint crate dependency");
+        assert_eq!(
+            dependency_with_rewritten_path(line, dependency, Path::new("/sdk/crates/trueos-math"),),
+            Some("trueos-math = { path = \"/sdk/crates/trueos-math\" }".to_string())
+        );
     }
 }
 

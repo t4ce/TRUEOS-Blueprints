@@ -8,8 +8,8 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use trueos::logl::{self, level};
-use trueos::ui4_scene::{Damage, Error as Ui4Error, Frame, rgba};
-use trueos::{async_fs, env, hid, vshell, vsys};
+use trueos::ui4_scene::{Damage, Error as Ui4Error, Frame, KeyboardState, rgba};
+use trueos::{async_fs, env, vshell, vsys};
 use trueos_gboi::{GameBoyButton, GameBoyEmulator};
 
 const DEFAULT_ROM_PATH: &str = "common/gboi.gb";
@@ -71,7 +71,7 @@ fn main() {
     logl::log(
         level::INFO,
         format_args!(
-            "gboi: UI4 frame={}x{} buffers=2; Esc exits; shell commands are independent",
+            "gboi: UI4 frame={}x{} buffers=2; click for keyboard focus; Esc exits",
             FRAME_WIDTH, FRAME_HEIGHT
         ),
     );
@@ -91,11 +91,20 @@ fn main() {
             shell_prompt();
         }
 
-        let keyboards = hid::hid_hut_keyboards();
-        if key_is_down(&keyboards, KEY_ESCAPE) {
+        let keyboard = match frame.keyboard_state() {
+            Ok(keyboard) => keyboard,
+            Err(error) => {
+                logl::log(
+                    level::ERROR,
+                    format_args!("gboi: UI4 keyboard-state read failed error={error:?}"),
+                );
+                break;
+            }
+        };
+        if key_is_down(keyboard.as_ref(), KEY_ESCAPE) {
             break;
         }
-        sync_buttons(&mut emulator, &keyboards);
+        sync_buttons(&mut emulator, keyboard.as_ref());
 
         emulator.tick();
         emulator.render(&mut argb, FRAME_WIDTH as usize, FRAME_HEIGHT as usize);
@@ -323,7 +332,7 @@ fn present_frame(frame: &mut Frame, rgba8: &[u8]) -> Result<(), Ui4Error> {
     frame.publish(Damage::full(FRAME_WIDTH, FRAME_HEIGHT))
 }
 
-fn sync_buttons(emulator: &mut GameBoyEmulator, keyboards: &[hid::TrueosHidHutKeyboardState]) {
+fn sync_buttons(emulator: &mut GameBoyEmulator, keyboard: Option<&KeyboardState>) {
     let mappings: &[(GameBoyButton, &[u8])] = &[
         (GameBoyButton::Right, &[KEY_D, KEY_ARROW_RIGHT]),
         (GameBoyButton::Left, &[KEY_A, KEY_ARROW_LEFT]),
@@ -340,16 +349,13 @@ fn sync_buttons(emulator: &mut GameBoyEmulator, keyboards: &[hid::TrueosHidHutKe
             button,
             key_codes
                 .iter()
-                .any(|key_code| key_is_down(keyboards, *key_code)),
+                .any(|key_code| key_is_down(keyboard, *key_code)),
         );
     }
 }
 
-fn key_is_down(keyboards: &[hid::TrueosHidHutKeyboardState], key_code: u8) -> bool {
-    let key = key_code as usize;
-    keyboards
-        .iter()
-        .any(|keyboard| keyboard.key_down_bits[key / 32] & (1u32 << (key % 32)) != 0)
+fn key_is_down(keyboard: Option<&KeyboardState>, key_code: u8) -> bool {
+    keyboard.is_some_and(|keyboard| keyboard.is_down(key_code))
 }
 
 fn argb_to_rgba8(source: &[u32], destination: &mut [u8]) {

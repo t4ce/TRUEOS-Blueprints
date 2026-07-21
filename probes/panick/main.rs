@@ -1,11 +1,6 @@
 use core::ffi::c_char;
 
-use trueos::{
-    logl,
-    logl::level,
-    platform,
-    vfs,
-};
+use trueos::{logl, logl::level, platform, vfs};
 
 const PROBE_DIR: &[u8] = b"/common";
 const PROBE_PATH_BYTES: &[u8] = b"/common/panick-memory-probe.bin";
@@ -38,15 +33,28 @@ fn run_safe_controls() -> Result<(), &'static str> {
     vfs::write_file(PROBE_PATH_BYTES, b"panick-pointer-probe\n").map_err(|_| "vfs.write_file")?;
 
     log_stage("cabi_read_len_probe");
-    let len = unsafe { trueos_cabi_fs_read_file(PROBE_PATH_BYTES.as_ptr(), PROBE_PATH_BYTES.len(), core::ptr::null_mut(), 0) };
-    logl::log(level::INFO, format_args!("panick: cabi len probe rc={}", len));
+    let len = unsafe {
+        trueos_cabi_fs_read_file(
+            PROBE_PATH_BYTES.as_ptr(),
+            PROBE_PATH_BYTES.len(),
+            core::ptr::null_mut(),
+            0,
+        )
+    };
+    logl::log(
+        level::INFO,
+        format_args!("panick: cabi len probe rc={}", len),
+    );
     if len <= 0 {
         return Err("cabi_read_len_probe");
     }
 
     log_stage("libc_write_bad_fd_control");
     let rc = unsafe { write(-1, b"x".as_ptr().cast(), 1) };
-    logl::log(level::INFO, format_args!("panick: libc write bad-fd rc={}", rc));
+    logl::log(
+        level::INFO,
+        format_args!("panick: libc write bad-fd rc={}", rc),
+    );
 
     Ok(())
 }
@@ -80,7 +88,10 @@ fn run_dangerous_posix_probe(path_ptr: *mut u8) {
     log_stage("dangerous_posix_read_bad_pointer");
     let fd = unsafe { open(PROBE_PATH_CSTR.as_ptr().cast(), O_RDONLY, 0) };
     if fd < 0 {
-        logl::log(level::ERROR, "panick: open failed for dangerous posix probe");
+        logl::log(
+            level::ERROR,
+            "panick: open failed for dangerous posix probe",
+        );
         return;
     }
 
@@ -92,7 +103,10 @@ fn run_dangerous_posix_probe(path_ptr: *mut u8) {
         ),
     );
     let rc = unsafe { read(fd, path_ptr.cast(), 16) };
-    logl::log(level::WARN, format_args!("panick: dangerous posix probe rc={}", rc));
+    logl::log(
+        level::WARN,
+        format_args!("panick: dangerous posix probe rc={}", rc),
+    );
     let _ = unsafe { close(fd) };
 }
 

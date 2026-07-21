@@ -38,7 +38,7 @@ use trueos::{
         net::{TcpStream, UdpSocket},
         sync::RwLock,
     },
-    vfs, vnet,
+    vnet,
 };
 use trueos_esp::{gate, swarm};
 
@@ -298,24 +298,36 @@ fn workspace_sketch_path(name: &str) -> String {
     format!("{}/{}", SWARM_SKETCH_DIR, name)
 }
 
-fn workspace_sketch_names() -> Vec<String> {
-    let mut names = vfs::list_dir_utf8(SWARM_SKETCH_DIR.as_bytes())
-        .unwrap_or_default()
-        .lines()
-        .filter_map(|name| normalize_sketch_name(name).ok())
-        .take(SWARM_SKETCH_MAX_FILES)
-        .collect::<Vec<_>>();
+async fn workspace_sketch_names() -> Vec<String> {
+    let Ok(mut entries) = fs::read_dir(SWARM_SKETCH_DIR).await else {
+        return Vec::new();
+    };
+    let mut names = Vec::new();
+    while names.len() < SWARM_SKETCH_MAX_FILES {
+        let entry = match entries.next_entry().await {
+            Ok(Some(entry)) => entry,
+            Ok(None) | Err(_) => break,
+        };
+        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+        let name = entry.file_name();
+        #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if let Ok(name) = normalize_sketch_name(&name) {
+            names.push(name);
+        }
+    }
     names.sort_by_key(|name| name.to_ascii_lowercase());
     names
 }
 
-fn sketch_rows() -> Vec<SketchRow> {
+async fn sketch_rows() -> Vec<SketchRow> {
     let mut rows = Vec::new();
-    for name in workspace_sketch_names() {
+    for name in workspace_sketch_names().await {
         let path = workspace_sketch_path(&name);
-        let bytes = vfs::stat(path.as_bytes())
+        let bytes = fs::metadata(path.as_str())
+            .await
             .ok()
-            .map(|stat| stat.len.min(usize::MAX as u64) as usize)
+            .map(|stat| stat.len().min(usize::MAX as u64) as usize)
             .unwrap_or(0);
         rows.push(SketchRow {
             id: workspace_sketch_id(&name),
@@ -468,6 +480,7 @@ async fn handle_healthz(State(state): State<AppState>) -> Response {
 
 async fn handle_snapshot(State(state): State<AppState>) -> Response {
     let now_ms = monotonic_ms(&state);
+    let sketches = sketch_rows().await;
     let shared = state.shared.read().await;
     let devices = shared
         .registry
@@ -475,8 +488,6 @@ async fn handle_snapshot(State(state): State<AppState>) -> Response {
         .iter()
         .map(|snapshot| device_row(snapshot, now_ms))
         .collect();
-    let sketches = sketch_rows();
-
     json_response(
         200,
         &SnapshotResponse {
