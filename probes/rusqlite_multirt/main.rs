@@ -4,11 +4,13 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use rusqlite_fork::{Connection, MAIN_DB, params};
-use trueos::{logl, logl::level, platform, t, vfs, vsys};
+use trueos::{async_fs, logl, logl::level, platform, t, vsys};
 
 const COMMON_DIR: &str = "/common";
 const DB_PATH: &str = "/common/usersettings-multirt.db";
-const WORKERS: usize = 4;
+// Exercise a meaningful chunk of the 18 VM-visible carriers without turning
+// this focused SQLite/runtime probe into a full-system saturation test.
+const WORKERS: usize = 8;
 const BATCHES_PER_WORKER: usize = 16;
 const ROWS_PER_BATCH: usize = 16;
 const OPS_PER_WORKER: usize = BATCHES_PER_WORKER * ROWS_PER_BATCH;
@@ -92,12 +94,14 @@ struct MultiRtReport {
 
 impl Database {
     fn open() -> Result<Self, ProbeError> {
-        vfs::create_dir_all(COMMON_DIR.as_bytes()).map_err(ProbeError::Vfs)?;
+        async_fs::block_on(async_fs::create_dir_all(COMMON_DIR.as_bytes()))
+            .map_err(ProbeError::Vfs)?;
         let mut conn = Connection::open_in_memory()?;
         let mut loaded_bytes = 0;
 
-        if vfs::exists(DB_PATH.as_bytes()).unwrap_or(false) {
-            let bytes = vfs::read_file(DB_PATH.as_bytes()).map_err(ProbeError::Vfs)?;
+        if async_fs::block_on(async_fs::exists(DB_PATH.as_bytes())).unwrap_or(false) {
+            let bytes = async_fs::block_on(async_fs::read_file(DB_PATH.as_bytes()))
+                .map_err(ProbeError::Vfs)?;
             loaded_bytes = bytes.len();
             if !bytes.is_empty() {
                 conn.deserialize_read_exact(MAIN_DB, bytes.as_slice(), bytes.len(), false)?;
@@ -188,13 +192,15 @@ impl Database {
 
     fn persist(&self) -> Result<Vec<u8>, ProbeError> {
         let image = self.serialize()?;
-        vfs::write_file(DB_PATH.as_bytes(), &image).map_err(ProbeError::Vfs)?;
+        async_fs::block_on(async_fs::write_file(DB_PATH.as_bytes(), &image))
+            .map_err(ProbeError::Vfs)?;
         Ok(image)
     }
 }
 
 fn run_cold_read() -> Result<ColdReport, ProbeError> {
-    let existed_before_bootstrap = vfs::exists(DB_PATH.as_bytes()).unwrap_or(false);
+    let existed_before_bootstrap =
+        async_fs::block_on(async_fs::exists(DB_PATH.as_bytes())).unwrap_or(false);
 
     // Bootstrap first so even a pristine VM performs a genuine persisted
     // cold read below rather than only exercising an empty in-memory open.
@@ -365,7 +371,7 @@ fn persist_summary(image: Arc<Vec<u8>>, summary: Summary) -> Result<usize, Probe
     )?;
     let data = conn.serialize(MAIN_DB)?;
     let bytes = data.len();
-    vfs::write_file(DB_PATH.as_bytes(), &data).map_err(ProbeError::Vfs)?;
+    async_fs::block_on(async_fs::write_file(DB_PATH.as_bytes(), &data)).map_err(ProbeError::Vfs)?;
     Ok(bytes)
 }
 
@@ -388,6 +394,10 @@ async fn run_multirt() -> Result<MultiRtReport, ProbeError> {
         ),
     );
 
+    // TRUEOS persistence currently stores a whole serialized SQLite image, not
+    // a shared SQLite VFS. Give each lane its own Connection and snapshot: this
+    // proves concurrent SQLite/runtime execution without claiming WAL or
+    // shared-file locking semantics that the platform does not expose yet.
     let image = Arc::new(cold.image.clone());
     let ready = Arc::new(AtomicUsize::new(0));
     let release = Arc::new(AtomicUsize::new(0));
@@ -424,15 +434,6 @@ async fn run_multirt() -> Result<MultiRtReport, ProbeError> {
     while let Some(joined) = workers.join_next().await {
         reports.push(joined.map_err(|_| ProbeError::Executor("pressure worker join"))??);
     }
-    if ready_before_release != WORKERS || reports.len() != WORKERS {
-        return Err(ProbeError::Invariant(format!(
-            "blocking fleet did not become concurrent ready={} joined={} expected={} wait_ms={waited_ms}",
-            ready_before_release,
-            reports.len(),
-            WORKERS
-        )));
-    }
-
     reports.sort_by_key(|report| report.worker);
     let distinct_threads = reports
         .iter()
@@ -440,9 +441,16 @@ async fn run_multirt() -> Result<MultiRtReport, ProbeError> {
         .collect::<BTreeSet<_>>()
         .len();
     let max_active = max_active.load(Ordering::Acquire);
-    if max_active != WORKERS || distinct_threads != WORKERS {
+    if ready_before_release != WORKERS
+        || reports.len() != WORKERS
+        || max_active != WORKERS
+        || distinct_threads != WORKERS
+    {
         return Err(ProbeError::Invariant(format!(
-            "workers did not occupy distinct concurrent lanes max_active={max_active} distinct_threads={distinct_threads} expected={WORKERS}"
+            "blocking fleet did not become concurrent ready={} joined={} max_active={max_active} distinct_threads={distinct_threads} expected={} wait_ms={waited_ms}",
+            ready_before_release,
+            reports.len(),
+            WORKERS,
         )));
     }
 

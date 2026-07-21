@@ -1,7 +1,7 @@
 use core::fmt;
 
 use rusqlite_fork::{Connection, MAIN_DB, params};
-use trueos::{logl, logl::level, platform, vfs};
+use trueos::{async_fs, logl, logl::level, platform};
 
 const COMMON_DIR: &str = "/common";
 const DB_PATH: &str = "/common/usersettings.db";
@@ -51,12 +51,14 @@ struct ProbeReport {
 
 impl Database {
     fn open() -> Result<Self, ProbeError> {
-        vfs::create_dir_all(COMMON_DIR.as_bytes()).map_err(ProbeError::Vfs)?;
+        async_fs::block_on(async_fs::create_dir_all(COMMON_DIR.as_bytes()))
+            .map_err(ProbeError::Vfs)?;
         let mut conn = Connection::open_in_memory()?;
         let mut loaded_bytes = 0;
 
-        if vfs::exists(DB_PATH.as_bytes()).unwrap_or(false) {
-            let bytes = vfs::read_file(DB_PATH.as_bytes()).map_err(ProbeError::Vfs)?;
+        if async_fs::block_on(async_fs::exists(DB_PATH.as_bytes())).unwrap_or(false) {
+            let bytes = async_fs::block_on(async_fs::read_file(DB_PATH.as_bytes()))
+                .map_err(ProbeError::Vfs)?;
             loaded_bytes = bytes.len();
             if !bytes.is_empty() {
                 conn.deserialize_read_exact(MAIN_DB, bytes.as_slice(), bytes.len(), false)?;
@@ -141,13 +143,15 @@ impl Database {
     fn persist(&self) -> Result<usize, ProbeError> {
         let data = self.conn.serialize(MAIN_DB)?;
         let len = data.len();
-        vfs::write_file(DB_PATH.as_bytes(), &data).map_err(ProbeError::Vfs)?;
+        async_fs::block_on(async_fs::write_file(DB_PATH.as_bytes(), &data))
+            .map_err(ProbeError::Vfs)?;
         Ok(len)
     }
 }
 
 fn run_probe() -> Result<ProbeReport, ProbeError> {
-    let existed_before_open = vfs::exists(DB_PATH.as_bytes()).unwrap_or(false);
+    let existed_before_open =
+        async_fs::block_on(async_fs::exists(DB_PATH.as_bytes())).unwrap_or(false);
     let db = Database::open()?;
     let sqlite_version = db.sqlite_version()?;
 

@@ -27,20 +27,32 @@ use crate::loom::sync::Condvar;
 
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
 #[derive(Debug)]
-struct Condvar;
+#[repr(transparent)]
+struct Condvar {
+    // The TRUEOS wait bridge keys queues by this object's address. This must
+    // have storage: Rust does not assign stable or unique addresses to ZSTs.
+    wait_key_anchor: u8,
+}
+
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+const _: () = assert!(core::mem::size_of::<Condvar>() != 0);
 
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
 impl Condvar {
     fn new() -> Self {
-        Condvar
+        Condvar { wait_key_anchor: 0 }
+    }
+
+    fn wait_key(&self) -> u64 {
+        self as *const Condvar as usize as u64
     }
 
     fn notify_one(&self) {
-        let _ = crate::platform::wake_one(self as *const Condvar as usize as u64);
+        let _ = crate::platform::wake_one(self.wait_key());
     }
 
     fn notify_all(&self) {
-        let _ = crate::platform::wake_all(self as *const Condvar as usize as u64);
+        let _ = crate::platform::wake_all(self.wait_key());
     }
 }
 
@@ -626,7 +638,7 @@ impl Inner {
                         break;
                     }
 
-                    let wait_key = &self.condvar as *const Condvar as usize as u64;
+                    let wait_key = self.condvar.wait_key();
                     let observed = crate::platform::wait_observe(wait_key);
                     drop(shared);
                     let now = crate::platform::monotonic_nanos();
