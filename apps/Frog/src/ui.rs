@@ -31,15 +31,21 @@ const BLUE: Color = Color::Rgb(111, 169, 242);
 const WARN: Color = Color::Rgb(255, 193, 109);
 const REFRESH_SECS: u64 = 600;
 
-pub fn run<F, P>(initial: WeatherSnapshot, mut refresh: F, mut publish_visual: P) -> Result<()>
+pub trait WeatherVisual {
+    fn publish_snapshot(&mut self, snapshot: &WeatherSnapshot);
+
+    fn poll(&mut self) {}
+}
+
+pub fn run<F, V>(initial: WeatherSnapshot, mut refresh: F, visual: &mut V) -> Result<()>
 where
     F: FnMut(&mut String) -> Result<WeatherSnapshot>,
-    P: FnMut(&WeatherSnapshot),
+    V: WeatherVisual,
 {
     let mut terminal = setup_terminal()?;
     let mut app = App::new(initial);
-    publish_visual(&app.snapshot);
-    let result = app.run(&mut terminal, &mut refresh, &mut publish_visual);
+    visual.publish_snapshot(&app.snapshot);
+    let result = app.run(&mut terminal, &mut refresh, visual);
     restore_terminal(&mut terminal)?;
     result
 }
@@ -91,46 +97,47 @@ impl App {
         }
     }
 
-    fn run<F, P>(
+    fn run<F, V>(
         mut self,
         terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
         refresh: &mut F,
-        publish_visual: &mut P,
+        visual: &mut V,
     ) -> Result<()>
     where
         F: FnMut(&mut String) -> Result<WeatherSnapshot>,
-        P: FnMut(&WeatherSnapshot),
+        V: WeatherVisual,
     {
         while !self.should_quit {
             terminal.draw(|frame| self.draw(frame))?;
+            visual.poll();
 
             if self.refresh_pending
                 || self.last_refresh.elapsed() >= Duration::from_secs(REFRESH_SECS)
             {
                 self.refresh_pending = false;
-                self.refresh(refresh, publish_visual);
+                self.refresh(refresh, visual);
             }
 
             if event::poll(Duration::from_millis(120))? {
                 if let Event::Key(key) = event::read()? {
-                    self.handle_key(key, refresh, publish_visual);
+                    self.handle_key(key, refresh, visual);
                 }
             }
         }
         Ok(())
     }
 
-    fn handle_key<F, P>(&mut self, key: KeyEvent, refresh: &mut F, publish_visual: &mut P)
+    fn handle_key<F, V>(&mut self, key: KeyEvent, refresh: &mut F, visual: &mut V)
     where
         F: FnMut(&mut String) -> Result<WeatherSnapshot>,
-        P: FnMut(&WeatherSnapshot),
+        V: WeatherVisual,
     {
         match key.code {
             KeyCode::Char('q') | KeyCode::Esc => self.should_quit = true,
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.should_quit = true;
             }
-            KeyCode::Char('r') => self.refresh(refresh, publish_visual),
+            KeyCode::Char('r') => self.refresh(refresh, visual),
             KeyCode::Down | KeyCode::Char('j') => self.select_next(),
             KeyCode::Up | KeyCode::Char('k') => self.select_prev(),
             KeyCode::Home => self.selected = 0,
@@ -141,10 +148,10 @@ impl App {
         }
     }
 
-    fn refresh<F, P>(&mut self, refresh: &mut F, publish_visual: &mut P)
+    fn refresh<F, V>(&mut self, refresh: &mut F, visual: &mut V)
     where
         F: FnMut(&mut String) -> Result<WeatherSnapshot>,
-        P: FnMut(&WeatherSnapshot),
+        V: WeatherVisual,
     {
         match refresh(&mut self.status) {
             Ok(snapshot) => {
@@ -154,7 +161,7 @@ impl App {
                     .min(self.snapshot.days.len().saturating_sub(1));
                 self.status = String::from("fresh weather ready");
                 self.last_refresh = Instant::now();
-                publish_visual(&self.snapshot);
+                visual.publish_snapshot(&self.snapshot);
             }
             Err(err) => {
                 self.status = format!("refresh failed: {err}");
