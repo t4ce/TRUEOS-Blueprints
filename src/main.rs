@@ -58,6 +58,7 @@ impl CratePatch {
 
 const CARGO_CACHE_DIR_ENV: &str = "TRUEOS_BLUEPRINT_CARGO_CACHE_DIR";
 const TARGET_SPEC_ENV: &str = "TRUEOS_BLUEPRINT_TARGET_SPEC";
+const TRUEOS_LIBC_VENDOR_DIR: &str = "libc-0.2.186";
 const RUSTFLAGS_ENCODED_SEPARATOR: char = '\u{1f}';
 const TRUEOS_CHECK_CFG_FLAG: &str = "--check-cfg=cfg(target_os,values(\"trueos\",\"zkvm\"))";
 const BLUEPRINT_RUSTFLAGS: &[&str] =
@@ -1951,12 +1952,13 @@ fn source_overlay_patches(
 
     add_blueprint_vendor_patches(app_dir, &mut out);
 
-    if let Ok(path) = nightly_rust_src_path("vendor/libc-0.2.186")
-        && path.is_dir()
-    {
-        out.retain(|patch| patch.name != "libc");
-        out.push(CratePatch::new("libc", path));
-    }
+    let libc_path = find_blueprint_vendor_dir(app_dir, TRUEOS_LIBC_VENDOR_DIR).ok_or_else(|| {
+        format!(
+            "missing required TRUEOS libc overlay vendor/{TRUEOS_LIBC_VENDOR_DIR}; restore the complete TRUEOS-Blueprints checkout"
+        )
+    })?;
+    out.retain(|patch| patch.name != "libc");
+    out.push(CratePatch::new("libc", libc_path));
 
     if let Some(path) = find_vendor_dir(app_dir, "tokio-1.52.3") {
         out.retain(|patch| patch.name != "tokio");

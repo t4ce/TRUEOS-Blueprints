@@ -27,6 +27,18 @@ result to change while `copied_upload_bytes` remains zero. The report also
 requires a real GuC serial and verifies that CPU and PPGTT translations resolve
 to identical pages.
 
+After that correctness gate, the same headless binary extracts the useful part
+of the upstream stress TUI without compiling its terminal stack. A 1,024-row
+SceneDB worker runs 128 CPU-checked AABB dispatches through TRUEOS's
+`pthread_create` background-AP service lane while the Hull thread fills the
+guest's reported vGPU memory quota to at least 94%, verifies an over-quota
+allocation is rejected, and performs 64 allocation/unmap/remap cycles. Each
+cycle touches and flushes both ends of a page-backed region. The stress PASS
+line requires monotonically increasing physical completion serials, identical
+CPU/GPU positional tokens, mapping identity, zero copied-upload bytes, and full
+buffer retirement. This is finite and log-driven; no TUI, WGPU, telemetry, or
+random-number API is used by the stress path.
+
 Build the Blueprint from the repository root with:
 
 ```sh

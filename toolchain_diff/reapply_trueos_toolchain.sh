@@ -3,7 +3,8 @@ set -euo pipefail
 
 TOOLCHAIN="${1:-nightly-x86_64-unknown-linux-gnu}"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-TRUEOS_REPO_ROOT="${TRUEOS_REPO_ROOT:-/home/t4ce/REPOS/TRUEOS}"
+BLUEPRINT_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+TRUEOS_REPO_ROOT="${TRUEOS_REPO_ROOT:-$BLUEPRINT_ROOT}"
 RUST_SRC="$(rustup run "$TOOLCHAIN" rustc --print sysroot)/lib/rustlib/src/rust"
 PATCH_FILE="$SCRIPT_DIR/trueos-nightly-rust-src.patch"
 LIBC_SRC="$TRUEOS_REPO_ROOT/vendor/libc-0.2.186"
@@ -58,4 +59,4 @@ PY
 
 rm -rf "$SCRIPT_DIR/../target/trueos-blueprint/cargo-cache/x86_64-unknown-trueos"
 
-echo "TRUEOS rust-src toolchain patch restored for $TOOLCHAIN"
+echo "TRUEOS rust-src toolchain patch restored from $TRUEOS_REPO_ROOT for $TOOLCHAIN"

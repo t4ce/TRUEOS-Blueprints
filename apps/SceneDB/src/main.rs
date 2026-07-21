@@ -1,5 +1,8 @@
 use pulsar_scenedb::{Aabb, NULL_ROW, SpatialCell};
 
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+mod stress;
+
 const ROWS: usize = 256;
 const OUTPUT_ROWS: usize = ROWS + 4;
 const TRAILING_TOKEN: u32 = 0xA5A5_A5A5;
@@ -200,8 +203,8 @@ fn run_trueos_proof() -> Result<(), String> {
     // Only its two X-bound words are published; no buffer upload occurs.
     cell.storage_mut().user_column_mut::<f32>(0)[100] = 50.0;
     cell.storage_mut().user_column_mut::<f32>(1)[100] = 50.5;
-    flush_row_word(&cell, 0, 100)?;
-    flush_row_word(&cell, 1, 100)?;
+    flush_row_word(&cell, ROWS, 0, 100)?;
+    flush_row_word(&cell, ROWS, 1, 100)?;
 
     let mut cpu_second = vec![TRAILING_TOKEN; OUTPUT_ROWS];
     let cpu_second_hits = cell.query_aabb(&q, &mut cpu_second);
@@ -260,6 +263,24 @@ fn run_trueos_proof() -> Result<(), String> {
     );
     drop(output);
     drop(cell);
+
+    let stress = stress::run(device, queue)?;
+    println!(
+        "SceneDB vVideoMem STRESS PASS mode=headless-background rows={} dispatches={} allocation_churn={} quota_rejections={} peak_bytes={} quota_bytes={} peak_percent={} peak_buffers={} serials={}->{} copied_upload_bytes={} flushed_vvideo_bytes={} mapping_identity=1 mapping_digest=0x{:016X}",
+        1024,
+        stress.dispatches,
+        stress.churn_cycles,
+        stress.quota_rejections,
+        stress.peak_bytes,
+        stress.quota_bytes,
+        stress.peak_bytes.saturating_mul(100) / stress.quota_bytes.max(1),
+        stress.peak_buffers,
+        stress.first_serial,
+        stress.last_serial,
+        stress.copied_upload_bytes,
+        stress.flushed_vvideo_bytes,
+        stress.mapping_digest,
+    );
     device
         .destroy_queue(queue)
         .map_err(|error| format!("destroy queue: {error}"))?;
@@ -269,10 +290,15 @@ fn run_trueos_proof() -> Result<(), String> {
 }
 
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-fn flush_row_word(cell: &SpatialCell, column: usize, row: usize) -> Result<(), String> {
+fn flush_row_word(
+    cell: &SpatialCell,
+    capacity: usize,
+    column: usize,
+    row: usize,
+) -> Result<(), String> {
     use pulsar_scenedb::trueos_vvideo::TrueosVVideoBacking;
     let storage = cell.storage();
-    let range = storage.user_column_byte_range(column, ROWS as u32);
+    let range = storage.user_column_byte_range(column, capacity as u32);
     let backing = storage
         .page_backing::<TrueosVVideoBacking>()
         .ok_or_else(|| "SceneDB page is not vVideoMem-backed".to_string())?;
