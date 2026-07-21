@@ -43,7 +43,7 @@ where
     V: WeatherVisual,
 {
     let mut terminal = setup_terminal()?;
-    let mut app = App::new(initial);
+    let app = App::new(initial);
     visual.publish_snapshot(&app.snapshot);
     let result = app.run(&mut terminal, &mut refresh, visual);
     restore_terminal(&mut terminal)?;

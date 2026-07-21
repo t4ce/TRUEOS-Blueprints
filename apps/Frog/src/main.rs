@@ -1,6 +1,7 @@
 // trueos-blueprint: features=["tokio-net-probe"]
 
 mod ui;
+mod ui4_visual;
 mod weather;
 
 use anyhow::Result;
@@ -8,10 +9,15 @@ use anyhow::Result;
 fn main() -> Result<()> {
     let runtime = runtime()?;
     let initial = weather::demo_snapshot();
-    let result = ui::run(initial, |status| {
-        *status = String::from("refreshing live OpenWeather data");
-        runtime.block_on(weather::load_weather_snapshot())
-    });
+    let mut visual = ui4_visual::FrogVisual::new();
+    let result = ui::run(
+        initial,
+        |status| {
+            *status = String::from("refreshing live OpenWeather data");
+            runtime.block_on(weather::load_weather_snapshot())
+        },
+        &mut visual,
+    );
 
     #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
     trueos::vshell::leave_terminal_handoff();

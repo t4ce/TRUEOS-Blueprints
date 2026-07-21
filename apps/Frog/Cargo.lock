@@ -1869,6 +1869,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "trueos-math"
+version = "0.1.0"
+dependencies = [
+ "libm",
+]
+
+[[package]]
 name = "trueos-weather"
 version = "0.1.0"
 dependencies = [
@@ -1967,6 +1974,7 @@ dependencies = [
  "serde_json",
  "skrifa",
  "spin 0.10.0",
+ "trueos-math",
 ]
 
 [[package]]
