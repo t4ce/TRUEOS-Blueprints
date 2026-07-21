@@ -115,6 +115,7 @@ impl ActorRegistry {
     pub fn tick_all(&mut self, world: &mut World) {
         for entry in &mut self.entries {
             if entry.alive {
+                #[cfg(feature = "profiling")]
                 profiling::profile_scope!(format!("Actor::Tick::{}", entry.entity));
                 entry.actor.tick(entry.entity, world);
             }

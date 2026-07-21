@@ -68,6 +68,18 @@ impl SpatialCell {
         })
     }
 
+    pub fn new_in(
+        capacity: u32,
+        allocator: &dyn crate::page::PageBackingAllocator,
+    ) -> Result<Self, LayoutError> {
+        let columns = [ColumnDesc::of::<f32>(); SPATIAL_COLUMNS];
+        Ok(Self {
+            storage: CellStorage::new_in(&columns, capacity, allocator)?,
+            #[cfg(feature = "telemetry")]
+            telemetry_cell_id: 0,
+        })
+    }
+
     pub fn alloc(&mut self, bounds: Aabb) -> Option<Handle> {
         let h = self.storage.alloc()?;
         let row = self.storage.row_of(h).unwrap() as usize;
@@ -165,11 +177,31 @@ impl SpatialCell {
         let max_y = &self.storage.user_column::<f32>(COL_MAX_Y)[..len];
         let min_z = &self.storage.user_column::<f32>(COL_MIN_Z)[..len];
         let max_z = &self.storage.user_column::<f32>(COL_MAX_Z)[..len];
-        let qb = crate::simd::QueryBounds { min: q.min, max: q.max };
-        let cols = crate::simd::Columns { min_x, max_x, min_y, max_y, min_z, max_z };
+        let qb = crate::simd::QueryBounds {
+            min: q.min,
+            max: q.max,
+        };
+        let cols = crate::simd::Columns {
+            min_x,
+            max_x,
+            min_y,
+            max_y,
+            min_z,
+            max_z,
+        };
         let n = crate::simd::aabb_scan(&qb, &cols, liveness_words, len, out);
         #[cfg(feature = "telemetry")]
-        crate::telemetry::log_query("AABB", self.telemetry_cell_id, _t0.elapsed().as_nanos() as u64, n as u32, len as u32, &format!("min=[{:.1} {:.1} {:.1}] max=[{:.1} {:.1} {:.1}]", q.min[0], q.min[1], q.min[2], q.max[0], q.max[1], q.max[2]));
+        crate::telemetry::log_query(
+            "AABB",
+            self.telemetry_cell_id,
+            _t0.elapsed().as_nanos() as u64,
+            n as u32,
+            len as u32,
+            &format!(
+                "min=[{:.1} {:.1} {:.1}] max=[{:.1} {:.1} {:.1}]",
+                q.min[0], q.min[1], q.min[2], q.max[0], q.max[1], q.max[2]
+            ),
+        );
         n
     }
 
@@ -186,8 +218,14 @@ impl SpatialCell {
     pub fn query_frustum(&self, f: &Frustum, out: &mut [u32]) -> u32 {
         let len = self.storage.rows_in_use() as usize;
         let n_words = len.div_ceil(64);
-        let words: Vec<u64> = self.storage.liveness().words().iter().take(n_words)
-            .map(|w| w.load(std::sync::atomic::Ordering::Relaxed)).collect();
+        let words: Vec<u64> = self
+            .storage
+            .liveness()
+            .words()
+            .iter()
+            .take(n_words)
+            .map(|w| w.load(std::sync::atomic::Ordering::Relaxed))
+            .collect();
         self.query_frustum_in(f, &words, out)
     }
 
@@ -217,10 +255,27 @@ impl SpatialCell {
         let min_z = &self.storage.user_column::<f32>(COL_MIN_Z)[..len];
         let max_z = &self.storage.user_column::<f32>(COL_MAX_Z)[..len];
         let fp = crate::simd::FrustumPlanes { planes: f.planes };
-        let cols = crate::simd::Columns { min_x, max_x, min_y, max_y, min_z, max_z };
+        let cols = crate::simd::Columns {
+            min_x,
+            max_x,
+            min_y,
+            max_y,
+            min_z,
+            max_z,
+        };
         let n = crate::simd::frustum_scan(&fp, &cols, liveness_words, len, out);
         #[cfg(feature = "telemetry")]
-        crate::telemetry::log_query("Frustum", self.telemetry_cell_id, _t0.elapsed().as_nanos() as u64, n as u32, len as u32, &format!("planes=[{:.2} {:.2} {:.2} {:.2} ..]", f.planes[0][0], f.planes[0][1], f.planes[0][2], f.planes[0][3]));
+        crate::telemetry::log_query(
+            "Frustum",
+            self.telemetry_cell_id,
+            _t0.elapsed().as_nanos() as u64,
+            n as u32,
+            len as u32,
+            &format!(
+                "planes=[{:.2} {:.2} {:.2} {:.2} ..]",
+                f.planes[0][0], f.planes[0][1], f.planes[0][2], f.planes[0][3]
+            ),
+        );
         n
     }
 
@@ -257,8 +312,18 @@ impl SpatialCell {
         let max_y = &self.storage.user_column::<f32>(COL_MAX_Y)[..len];
         let min_z = &self.storage.user_column::<f32>(COL_MIN_Z)[..len];
         let max_z = &self.storage.user_column::<f32>(COL_MAX_Z)[..len];
-        let qb = crate::simd::QueryBounds { min: q.min, max: q.max };
-        let cols = crate::simd::Columns { min_x, max_x, min_y, max_y, min_z, max_z };
+        let qb = crate::simd::QueryBounds {
+            min: q.min,
+            max: q.max,
+        };
+        let cols = crate::simd::Columns {
+            min_x,
+            max_x,
+            min_y,
+            max_y,
+            min_z,
+            max_z,
+        };
         crate::simd::aabb_scan_scalar(&qb, &cols, &words, len, out)
     }
 
@@ -287,7 +352,14 @@ impl SpatialCell {
         let min_z = &self.storage.user_column::<f32>(COL_MIN_Z)[..len];
         let max_z = &self.storage.user_column::<f32>(COL_MAX_Z)[..len];
         let fp = crate::simd::FrustumPlanes { planes: f.planes };
-        let cols = crate::simd::Columns { min_x, max_x, min_y, max_y, min_z, max_z };
+        let cols = crate::simd::Columns {
+            min_x,
+            max_x,
+            min_y,
+            max_y,
+            min_z,
+            max_z,
+        };
         crate::simd::frustum_scan_scalar(&fp, &cols, &words, len, out)
     }
 
@@ -339,7 +411,9 @@ mod tests {
     fn query_writes_token_per_row_position() {
         let mut c = SpatialCell::new(256).unwrap();
         let ha = c.alloc(aabb([0.0, 0.0, 0.0], [1.0, 1.0, 1.0])).unwrap();
-        let _hb = c.alloc(aabb([10.0, 10.0, 10.0], [11.0, 11.0, 11.0])).unwrap();
+        let _hb = c
+            .alloc(aabb([10.0, 10.0, 10.0], [11.0, 11.0, 11.0]))
+            .unwrap();
         let hc = c.alloc(aabb([0.5, 0.5, 0.5], [2.0, 2.0, 2.0])).unwrap();
 
         let mut out = vec![0u32; c.rows_in_use() as usize];
@@ -391,16 +465,22 @@ mod tests {
         for _ in 0..50 {
             let qmin: [f32; 3] = std::array::from_fn(|_| rng.gen_range(-100.0..100.0));
             let qext: [f32; 3] = std::array::from_fn(|_| rng.gen_range(0.0..50.0));
-            let q = aabb(qmin, [qmin[0] + qext[0], qmin[1] + qext[1], qmin[2] + qext[2]]);
+            let q = aabb(
+                qmin,
+                [qmin[0] + qext[0], qmin[1] + qext[1], qmin[2] + qext[2]],
+            );
             let mut out = vec![0u32; c.rows_in_use() as usize];
             let n = c.query_aabb(&q, &mut out) as usize;
             let expected: Vec<u32> = boxes
                 .iter()
                 .enumerate()
                 .filter(|(_, b)| {
-                    b.min[0] <= q.max[0] && b.max[0] >= q.min[0]
-                        && b.min[1] <= q.max[1] && b.max[1] >= q.min[1]
-                        && b.min[2] <= q.max[2] && b.max[2] >= q.min[2]
+                    b.min[0] <= q.max[0]
+                        && b.max[0] >= q.min[0]
+                        && b.min[1] <= q.max[1]
+                        && b.max[1] >= q.min[1]
+                        && b.min[2] <= q.max[2]
+                        && b.max[2] >= q.min[2]
                 })
                 .map(|(i, _)| i as u32)
                 .collect();
@@ -419,7 +499,10 @@ mod tests {
     }
 
     fn unit_box(at: [f32; 3]) -> Aabb {
-        Aabb { min: at, max: [at[0] + 1.0, at[1] + 1.0, at[2] + 1.0] }
+        Aabb {
+            min: at,
+            max: [at[0] + 1.0, at[1] + 1.0, at[2] + 1.0],
+        }
     }
 
     #[test]
@@ -428,7 +511,10 @@ mod tests {
         let h = c.alloc(aabb([0.0; 3], [1.0; 3])).unwrap();
         let row = c.row_of(h).unwrap() as usize;
         c.storage_mut().column_for_mut::<[f32; 16]>().unwrap()[row] = [7.0; 16];
-        assert_eq!(c.storage().column_for::<[f32; 16]>().unwrap()[row], [7.0; 16]);
+        assert_eq!(
+            c.storage().column_for::<[f32; 16]>().unwrap()[row],
+            [7.0; 16]
+        );
         // Bounds columns unaffected and still positional:
         assert_eq!(c.storage().user_column::<f32>(0)[row], 0.0);
     }
@@ -444,14 +530,22 @@ mod tests {
         let h = c.alloc(aabb([0.0; 3], [1.0; 3])).unwrap();
         let row = c.row_of(h).unwrap() as usize;
         c.storage_mut().column_for_mut::<[f32; 16]>().unwrap()[row] = [7.0; 16];
-        c.storage_mut().column_for_mut::<InstanceInfo>().unwrap()[row] =
-            InstanceInfo { mesh_index: 42, flags: 1 };
+        c.storage_mut().column_for_mut::<InstanceInfo>().unwrap()[row] = InstanceInfo {
+            mesh_index: 42,
+            flags: 1,
+        };
         assert_eq!(
             c.storage().column_for::<InstanceInfo>().unwrap()[row],
-            InstanceInfo { mesh_index: 42, flags: 1 }
+            InstanceInfo {
+                mesh_index: 42,
+                flags: 1
+            }
         );
         // Independent of the transform column written just above:
-        assert_eq!(c.storage().column_for::<[f32; 16]>().unwrap()[row], [7.0; 16]);
+        assert_eq!(
+            c.storage().column_for::<[f32; 16]>().unwrap()[row],
+            [7.0; 16]
+        );
         // Bounds columns unaffected and still positional:
         assert_eq!(c.storage().user_column::<f32>(0)[row], 0.0);
     }
@@ -482,8 +576,8 @@ mod tests {
         // Six planes of an axis-aligned box [-10,10]^3, inward normals.
         // Plane: (nx,ny,nz,d) with point inside iff n·p + d >= 0.
         let planes = [
-            [1.0, 0.0, 0.0, 10.0],   // x >= -10
-            [-1.0, 0.0, 0.0, 10.0],  // x <= 10
+            [1.0, 0.0, 0.0, 10.0],  // x >= -10
+            [-1.0, 0.0, 0.0, 10.0], // x <= 10
             [0.0, 1.0, 0.0, 10.0],
             [0.0, -1.0, 0.0, 10.0],
             [0.0, 0.0, 1.0, 10.0],

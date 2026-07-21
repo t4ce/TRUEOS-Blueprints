@@ -105,8 +105,12 @@ pub use lease::{Lease, LeaseMask, Scratchpad, DECAY_FRAMES, LEASE_SLOTS};
 pub use liveness::LivenessMask;
 pub use page::{
     Column, ColumnDesc, GenericColumn, LayoutError, Page, PageLayout, Pod, PodColumn,
-    DEFAULT_PAGE_CAPACITY, MAX_PAGE_CAPACITY, MAX_STRIDE_BYTES,
+    HeapPageAllocator, PageBacking, PageBackingAllocator, DEFAULT_PAGE_CAPACITY,
+    MAX_PAGE_CAPACITY, MAX_STRIDE_BYTES,
 };
+
+#[cfg(all(feature = "trueos-vvideo", any(target_os = "trueos", target_os = "zkvm")))]
+pub mod trueos_vvideo;
 pub use time::GameTime;
 pub use query::{QueryIter, WorldQuery};
 pub use registry::{HandleRegistry, NULL_ROW};

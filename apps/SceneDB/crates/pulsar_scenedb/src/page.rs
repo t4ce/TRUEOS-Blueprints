@@ -1,6 +1,7 @@
 use std::alloc::{alloc_zeroed, dealloc, Layout};
 use std::any::Any;
 use std::mem::MaybeUninit;
+use std::ops::Range;
 
 /// Hard ceiling on per-page element capacity (spec §4.3).
 pub const MAX_PAGE_CAPACITY: u32 = 1024;
@@ -108,7 +109,9 @@ impl<T: 'static> GenericColumn<T> {
     /// Write a value into slot `idx`.  Drops any previously-initialized value.
     pub fn set(&mut self, idx: usize, value: T) {
         if idx < self.data.len() && self.is_init(idx) {
-            unsafe { self.data[idx].assume_init_drop(); }
+            unsafe {
+                self.data[idx].assume_init_drop();
+            }
             self.data[idx] = MaybeUninit::new(value);
         } else {
             // Extend vec if necessary (shouldn't happen in normal use — rows
@@ -124,7 +127,9 @@ impl<T: 'static> GenericColumn<T> {
     /// Drop the value at `idx` and mark the slot uninitialized.
     pub fn free(&mut self, idx: usize) {
         if idx < self.data.len() && self.is_init(idx) {
-            unsafe { self.data[idx].assume_init_drop(); }
+            unsafe {
+                self.data[idx].assume_init_drop();
+            }
             self.data[idx] = MaybeUninit::uninit();
             self.clear_init(idx);
         }
@@ -168,7 +173,9 @@ impl<T: 'static> Drop for GenericColumn<T> {
     fn drop(&mut self) {
         for idx in 0..self.data.len() {
             if self.is_init(idx) {
-                unsafe { self.data[idx].assume_init_drop(); }
+                unsafe {
+                    self.data[idx].assume_init_drop();
+                }
             }
         }
     }
@@ -182,7 +189,9 @@ impl<T: 'static> GenericColumnAny for GenericColumn<T> {
     fn pop_row(&mut self) {
         let idx = self.data.len().wrapping_sub(1);
         if self.is_init(idx) {
-            unsafe { self.data[idx].assume_init_drop(); }
+            unsafe {
+                self.data[idx].assume_init_drop();
+            }
             self.clear_init(idx);
         }
         self.data.pop();
@@ -253,6 +262,83 @@ pub enum LayoutError {
     StrideExceeded { stride: u32 },
     BadCapacity { capacity: u32 },
     AlignmentExceeded { align: u32 },
+    BackingAllocation,
+}
+
+/// Stable, zero-initialized storage for a Pod page or liveness mask.
+///
+/// # Safety
+///
+/// `as_mut_ptr()` must remain valid and uniquely owned for `len()` bytes until
+/// the backing is dropped. The region must start zeroed and satisfy the
+/// alignment requested from [`PageBackingAllocator`].
+pub unsafe trait PageBacking: Any + Send + Sync {
+    fn as_mut_ptr(&self) -> *mut u8;
+    fn len(&self) -> usize;
+    fn flush(&self, range: Range<usize>) -> Result<(), ()>;
+    fn invalidate(&self, range: Range<usize>) -> Result<(), ()>;
+    fn as_any(&self) -> &dyn Any;
+}
+
+/// Allocation seam used by Pod pages and liveness masks. The default path
+/// remains the process heap; TRUEOS supplies a vVideoMem implementation.
+pub trait PageBackingAllocator: Send + Sync {
+    fn allocate_zeroed(
+        &self,
+        bytes: usize,
+        align: usize,
+    ) -> Result<Box<dyn PageBacking>, LayoutError>;
+}
+
+struct HeapBacking {
+    data: *mut u8,
+    layout: Layout,
+}
+
+unsafe impl Send for HeapBacking {}
+unsafe impl Sync for HeapBacking {}
+
+unsafe impl PageBacking for HeapBacking {
+    fn as_mut_ptr(&self) -> *mut u8 {
+        self.data
+    }
+    fn len(&self) -> usize {
+        self.layout.size()
+    }
+    fn flush(&self, _range: Range<usize>) -> Result<(), ()> {
+        Ok(())
+    }
+    fn invalidate(&self, _range: Range<usize>) -> Result<(), ()> {
+        Ok(())
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+impl Drop for HeapBacking {
+    fn drop(&mut self) {
+        unsafe { dealloc(self.data, self.layout) };
+    }
+}
+
+#[derive(Copy, Clone, Debug, Default)]
+pub struct HeapPageAllocator;
+
+impl PageBackingAllocator for HeapPageAllocator {
+    fn allocate_zeroed(
+        &self,
+        bytes: usize,
+        align: usize,
+    ) -> Result<Box<dyn PageBacking>, LayoutError> {
+        let layout = Layout::from_size_align(bytes.max(align), align)
+            .map_err(|_| LayoutError::BackingAllocation)?;
+        let data = unsafe { alloc_zeroed(layout) };
+        if data.is_null() {
+            return Err(LayoutError::BackingAllocation);
+        }
+        Ok(Box::new(HeapBacking { data, layout }))
+    }
 }
 
 /// Computed byte layout for a page: per-column offsets within one contiguous
@@ -308,7 +394,9 @@ impl PageLayout {
 #[inline]
 fn next_multiple(n: usize, m: usize) -> usize {
     // m is always COLUMN_ALIGN (64); n is bounded by MAX_STRIDE_BYTES * MAX_PAGE_CAPACITY.
-    n.div_ceil(m).checked_mul(m).expect("page layout size overflow")
+    n.div_ceil(m)
+        .checked_mul(m)
+        .expect("page layout size overflow")
 }
 
 /// One SoA page: a single 64-byte-aligned contiguous allocation holding all
@@ -320,7 +408,7 @@ fn next_multiple(n: usize, m: usize) -> usize {
 pub struct Page {
     data: *mut u8,
     layout: PageLayout,
-    alloc_layout: Layout,
+    backing: Box<dyn PageBacking>,
     len: u32,
     generic_columns: Vec<Box<dyn GenericColumnAny>>,
 }
@@ -332,21 +420,29 @@ unsafe impl Sync for Page {}
 
 impl Page {
     pub fn new(layout: &PageLayout) -> Self {
-        let alloc_layout =
-            Layout::from_size_align(layout.total_bytes.max(COLUMN_ALIGN), COLUMN_ALIGN)
-                .expect("page layout is valid");
-        // SAFETY: size is non-zero (max'd with COLUMN_ALIGN), align is 64.
-        let data = unsafe { alloc_zeroed(alloc_layout) };
-        if data.is_null() {
-            std::alloc::handle_alloc_error(alloc_layout);
+        Self::new_in(layout, &HeapPageAllocator).expect("default page allocation failed")
+    }
+
+    pub fn new_in(
+        layout: &PageLayout,
+        allocator: &dyn PageBackingAllocator,
+    ) -> Result<Self, LayoutError> {
+        let backing =
+            allocator.allocate_zeroed(layout.total_bytes.max(COLUMN_ALIGN), COLUMN_ALIGN)?;
+        let data = backing.as_mut_ptr();
+        if data.is_null()
+            || backing.len() < layout.total_bytes
+            || !(data as usize).is_multiple_of(COLUMN_ALIGN)
+        {
+            return Err(LayoutError::BackingAllocation);
         }
-        Self {
+        Ok(Self {
             data,
             layout: layout.clone(),
-            alloc_layout,
+            backing,
             len: 0,
             generic_columns: Vec::new(),
-        }
+        })
     }
 
     #[inline]
@@ -369,6 +465,25 @@ impl Page {
 
     pub fn layout(&self) -> &PageLayout {
         &self.layout
+    }
+
+    pub fn backing<T: Any>(&self) -> Option<&T> {
+        self.backing.as_any().downcast_ref::<T>()
+    }
+
+    pub fn column_byte_range(&self, col: usize, rows: u32) -> Range<usize> {
+        assert!(rows <= self.layout.capacity);
+        let start = self.layout.column_offsets[col];
+        let bytes = self.layout.column_descs[col].size as usize * rows as usize;
+        start..start + bytes
+    }
+
+    pub fn flush_column(&self, col: usize, rows: u32) -> Result<(), ()> {
+        self.backing.flush(self.column_byte_range(col, rows))
+    }
+
+    pub fn invalidate_column(&self, col: usize, rows: u32) -> Result<(), ()> {
+        self.backing.invalidate(self.column_byte_range(col, rows))
     }
 
     /// Reserve the next row, returning its index. None when full.
@@ -481,13 +596,6 @@ impl Page {
             "column type size mismatch"
         );
         self.layout.capacity as usize
-    }
-}
-
-impl Drop for Page {
-    fn drop(&mut self) {
-        // SAFETY: data was allocated with alloc_layout in Page::new.
-        unsafe { dealloc(self.data, self.alloc_layout) };
     }
 }
 

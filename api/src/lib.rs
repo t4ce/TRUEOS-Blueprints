@@ -14,6 +14,7 @@ pub use v::env;
 pub use v::vaudio as audio;
 pub use v::vclock as clock;
 pub use v::vfs_async as async_fs;
+pub use v::vgpu;
 pub use v::vinput as hid;
 pub use v::vmail;
 pub use v::vnet;

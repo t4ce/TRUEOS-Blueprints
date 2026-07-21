@@ -3,12 +3,24 @@ name = "SceneDB"
 version = "0.1.0"
 edition = "2024"
 
+[[bin]]
+name = "scenedb-vvideomem"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+pulsar_scenedb = { path = "crates/pulsar_scenedb", default-features = false }
+
+[target.'cfg(any(target_os = "trueos", target_os = "zkvm"))'.dependencies]
+pulsar_scenedb = { path = "crates/pulsar_scenedb", default-features = false, features = ["trueos-vvideo"] }
+trueos = { path = "../../api" }
+
 [workspace]
 members = [
     "crates/pulsar_scenedb",
-    "crates/pulsar_scenedb_derive",
-    "crates/scenedb_dashboard",
 ]
+default-members = ["."]
 resolver = "2"
 
 [workspace.package]
@@ -27,3 +39,6 @@ socket2 = "0.5"
 syn = { version = "2.0", features = ["full", "extra-traits"] }
 quote = "1.0"
 proc-macro2 = { version = "1.0", features = ["span-locations"] }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("trueos", "zkvm"))'] }

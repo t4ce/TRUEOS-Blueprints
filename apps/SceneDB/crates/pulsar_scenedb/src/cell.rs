@@ -2,7 +2,7 @@ use crate::cell_type::{GenericColumnDesc, RegisteredCellType};
 use crate::component::ComponentId;
 use crate::handle::Handle;
 use crate::liveness::LivenessMask;
-use crate::page::{ColumnDesc, GenericColumn, LayoutError, Page, PageLayout};
+use crate::page::{ColumnDesc, GenericColumn, LayoutError, Page, PageBackingAllocator, PageLayout};
 use crate::registry::HandleRegistry;
 use crate::token::TypeToken;
 use std::any::TypeId;
@@ -47,12 +47,32 @@ pub(crate) struct PendingRetire {
 impl CellStorage {
     pub fn new(user_columns: &[ColumnDesc], capacity: u32) -> Result<Self, LayoutError> {
         let mut columns = Vec::with_capacity(user_columns.len() + 1);
-        columns.push(ColumnDesc::of::<u32>()); // slot-ID column
+        columns.push(ColumnDesc::of::<u32>());
         columns.extend_from_slice(user_columns);
         let layout = PageLayout::new(&columns, capacity)?;
         Ok(Self {
             page: Page::new(&layout),
             liveness: LivenessMask::new(capacity),
+            registry: HandleRegistry::new(),
+            user_column_count: user_columns.len(),
+            token_index: Vec::new(),
+            generic_token_index: Vec::new(),
+            pins: vec![0u64; capacity.div_ceil(64) as usize],
+        })
+    }
+
+    pub fn new_in(
+        user_columns: &[ColumnDesc],
+        capacity: u32,
+        allocator: &dyn PageBackingAllocator,
+    ) -> Result<Self, LayoutError> {
+        let mut columns = Vec::with_capacity(user_columns.len() + 1);
+        columns.push(ColumnDesc::of::<u32>()); // slot-ID column
+        columns.extend_from_slice(user_columns);
+        let layout = PageLayout::new(&columns, capacity)?;
+        Ok(Self {
+            page: Page::new_in(&layout, allocator)?,
+            liveness: LivenessMask::new_in(capacity, allocator)?,
             registry: HandleRegistry::new(),
             user_column_count: user_columns.len(),
             token_index: Vec::new(),
@@ -79,7 +99,9 @@ impl CellStorage {
         for (gen_idx, entry) in cell_type.generic_entries.iter().enumerate() {
             let col = (entry.construct)(capacity);
             storage.page.push_generic_column(col);
-            storage.generic_token_index.push((entry.component_id, entry.type_id, gen_idx));
+            storage
+                .generic_token_index
+                .push((entry.component_id, entry.type_id, gen_idx));
         }
         Ok(storage)
     }
@@ -363,6 +385,22 @@ impl CellStorage {
         self.page.column_slice_mut::<T>(user_col + 1)
     }
 
+    pub fn page_backing<T: std::any::Any>(&self) -> Option<&T> {
+        self.page.backing::<T>()
+    }
+
+    pub fn user_column_byte_range(&self, user_col: usize, rows: u32) -> std::ops::Range<usize> {
+        self.page.column_byte_range(user_col + 1, rows)
+    }
+
+    pub fn flush_user_column(&self, user_col: usize, rows: u32) -> Result<(), ()> {
+        self.page.flush_column(user_col + 1, rows)
+    }
+
+    pub fn invalidate_user_column(&self, user_col: usize, rows: u32) -> Result<(), ()> {
+        self.page.invalidate_column(user_col + 1, rows)
+    }
+
     /// Access the token→user-column index (telemetry).
     pub(crate) fn token_index_slice(&self) -> &[(ComponentId, usize)] {
         &self.token_index
@@ -454,7 +492,7 @@ mod tests {
         let hb_row_before = c.row_of(hb).unwrap();
         c.free(hb);
         c.compact(); // swap-and-pop: hc moves into hb's old row
-        // hc's handle still resolves to hc's data:
+                     // hc's handle still resolves to hc's data:
         let hc_row = c.row_of(hc).unwrap();
         assert_eq!(c.user_column::<f32>(0)[hc_row as usize], 3.0);
         // and it moved into the vacated row:
@@ -501,7 +539,11 @@ mod tests {
         assert_eq!(c.rows_in_use(), 3);
         for &(i, h) in &[(0usize, hs[0]), (2, hs[2]), (4, hs[4])] {
             let row = c.row_of(h).unwrap() as usize;
-            assert_eq!(c.user_column::<f32>(0)[row], i as f32, "survivor {i} intact");
+            assert_eq!(
+                c.user_column::<f32>(0)[row],
+                i as f32,
+                "survivor {i} intact"
+            );
         }
         for &h in &[hs[1], hs[3], hs[5]] {
             assert_eq!(c.row_of(h), None);
@@ -562,7 +604,11 @@ mod tests {
         // Physical survival: hc (moved into row 0) + pinned hb = 2 rows. A
         // pin-ignoring compaction would tail-pop hb's row without touching
         // the registry mapping, so row_of alone cannot catch that.
-        assert_eq!(c.rows_in_use(), 2, "pinned row physically survives compaction");
+        assert_eq!(
+            c.rows_in_use(),
+            2,
+            "pinned row physically survives compaction"
+        );
         // Pinned row untouched at its original index; its bytes are preserved.
         assert!(c.is_row_pinned(row_b));
         assert_eq!(c.row_of(hb), Some(row_b), "pinned row not moved");

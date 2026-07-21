@@ -1,3 +1,5 @@
+use crate::page::{LayoutError, PageBacking, PageBackingAllocator};
+use std::any::Any;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Atomic liveness bitmask — 1 bit per page element (spec §4.4, C2).
@@ -34,42 +36,118 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// mutex) between writer and reader — see `gpu::phase`'s module doc for the
 /// precise statement; a bare fence pair with neither is not sufficient.
 pub struct LivenessMask {
-    words: Vec<AtomicU64>,
+    storage: LivenessStorage,
+}
+
+enum LivenessStorage {
+    Heap(Vec<AtomicU64>),
+    Backed {
+        backing: Box<dyn PageBacking>,
+        words: usize,
+    },
 }
 
 impl LivenessMask {
     pub fn new(capacity: u32) -> Self {
         let n_words = capacity.div_ceil(64) as usize;
         Self {
-            words: (0..n_words).map(|_| AtomicU64::new(0)).collect(),
+            storage: LivenessStorage::Heap((0..n_words).map(|_| AtomicU64::new(0)).collect()),
+        }
+    }
+
+    pub fn new_in(
+        capacity: u32,
+        allocator: &dyn PageBackingAllocator,
+    ) -> Result<Self, LayoutError> {
+        let words = capacity.div_ceil(64) as usize;
+        let bytes = words
+            .checked_mul(std::mem::size_of::<AtomicU64>())
+            .ok_or(LayoutError::BackingAllocation)?;
+        let backing = allocator.allocate_zeroed(bytes, std::mem::align_of::<AtomicU64>())?;
+        if backing.as_mut_ptr().is_null()
+            || backing.len() < bytes
+            || !(backing.as_mut_ptr() as usize).is_multiple_of(std::mem::align_of::<AtomicU64>())
+        {
+            return Err(LayoutError::BackingAllocation);
+        }
+        Ok(Self {
+            storage: LivenessStorage::Backed { backing, words },
+        })
+    }
+
+    fn words_slice(&self) -> &[AtomicU64] {
+        match &self.storage {
+            LivenessStorage::Heap(words) => words,
+            LivenessStorage::Backed { backing, words } => unsafe {
+                std::slice::from_raw_parts(backing.as_mut_ptr() as *const AtomicU64, *words)
+            },
+        }
+    }
+
+    pub fn backing<T: Any>(&self) -> Option<&T> {
+        match &self.storage {
+            LivenessStorage::Heap(_) => None,
+            LivenessStorage::Backed { backing, .. } => backing.as_any().downcast_ref::<T>(),
+        }
+    }
+
+    pub fn flush_words(&self, words: usize) -> Result<(), ()> {
+        match &self.storage {
+            LivenessStorage::Heap(_) => Ok(()),
+            LivenessStorage::Backed {
+                backing,
+                words: capacity,
+            } => {
+                if words > *capacity {
+                    return Err(());
+                }
+                backing.flush(0..words * std::mem::size_of::<AtomicU64>())
+            }
+        }
+    }
+
+    pub fn invalidate_words(&self, words: usize) -> Result<(), ()> {
+        match &self.storage {
+            LivenessStorage::Heap(_) => Ok(()),
+            LivenessStorage::Backed {
+                backing,
+                words: capacity,
+            } => {
+                if words > *capacity {
+                    return Err(());
+                }
+                backing.invalidate(0..words * std::mem::size_of::<AtomicU64>())
+            }
         }
     }
 
     /// Marks `row` live. `row` must be `< capacity` (caller contract).
     #[inline]
     pub fn set_live(&self, row: u32) {
-        debug_assert!((row / 64) < self.words.len() as u32, "row {row} out of range");
-        self.words[(row / 64) as usize].fetch_or(1u64 << (row % 64), Ordering::Relaxed);
+        let words = self.words_slice();
+        debug_assert!((row / 64) < words.len() as u32, "row {row} out of range");
+        words[(row / 64) as usize].fetch_or(1u64 << (row % 64), Ordering::Relaxed);
     }
 
     /// Marks `row` dead (deferred — physical removal happens at compaction).
     /// `row` must be `< capacity` (caller contract).
     #[inline]
     pub fn set_dead(&self, row: u32) {
-        debug_assert!((row / 64) < self.words.len() as u32, "row {row} out of range");
-        self.words[(row / 64) as usize].fetch_and(!(1u64 << (row % 64)), Ordering::Relaxed);
+        let words = self.words_slice();
+        debug_assert!((row / 64) < words.len() as u32, "row {row} out of range");
+        words[(row / 64) as usize].fetch_and(!(1u64 << (row % 64)), Ordering::Relaxed);
     }
 
     #[inline]
     pub fn is_live(&self, row: u32) -> bool {
-        self.words[(row / 64) as usize].load(Ordering::Relaxed) & (1u64 << (row % 64)) != 0
+        self.words_slice()[(row / 64) as usize].load(Ordering::Relaxed) & (1u64 << (row % 64)) != 0
     }
 
     /// Number of live elements. Must only be called in the harvest phase
     /// (no concurrent `set_live`/`set_dead`); the result is not a consistent
     /// snapshot if writers run concurrently.
     pub fn live_count(&self) -> u32 {
-        self.words
+        self.words_slice()
             .iter()
             .map(|w| w.load(Ordering::Relaxed).count_ones())
             .sum()
@@ -80,13 +158,16 @@ impl LivenessMask {
     /// Harvest-phase only (no concurrent writers). `len` must not exceed the
     /// mask capacity rounded up to a multiple of 64.
     pub fn dead_rows(&self, len: u32) -> impl Iterator<Item = u32> + '_ {
-        debug_assert!(len as usize <= self.words.len() * 64, "len {len} exceeds mask capacity");
+        debug_assert!(
+            len as usize <= self.words_slice().len() * 64,
+            "len {len} exceeds mask capacity"
+        );
         (0..len).filter(move |&row| !self.is_live(row))
     }
 
     /// Raw word access (uploaded alongside columns for GPU-side liveness).
     pub fn words(&self) -> &[AtomicU64] {
-        &self.words
+        self.words_slice()
     }
 }
 

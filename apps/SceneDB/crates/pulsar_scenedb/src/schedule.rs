@@ -52,11 +52,14 @@ impl Schedule {
     /// Execute all registered systems in order.
     ///
     /// Each system receives `&mut world` and `time`.  Profiling scopes are
-    /// emitted for the overall run and for each named system.
+    /// emitted for the overall run and for each named system when the
+    /// `profiling` feature is enabled.
     pub fn run(&mut self, world: &mut World, time: GameTime) {
+        #[cfg(feature = "profiling")]
         profiling::profile_scope!("Schedule::run");
-        for (name, system) in &mut self.systems {
-            profiling::profile_scope!(format!("Schedule::System::{}", name));
+        for (_name, system) in &mut self.systems {
+            #[cfg(feature = "profiling")]
+            profiling::profile_scope!(format!("Schedule::System::{}", _name));
             system(world, time);
         }
     }

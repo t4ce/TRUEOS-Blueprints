@@ -40,6 +40,7 @@ pub mod vcabi;
 pub mod vclock;
 pub mod vfetch;
 pub mod vfs_async;
+pub mod vgpu;
 pub mod vhttp_srv;
 pub mod vinput;
 pub mod vmail;
