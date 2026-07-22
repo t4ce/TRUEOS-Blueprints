@@ -57,6 +57,45 @@ pub struct TrueosUi4PanEvent {
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default)]
+pub struct TrueosUi4ResizeEvent {
+    pub old_width: u32,
+    pub old_height: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Default)]
+pub struct TrueosUi4CursorSource {
+    pub controller_id: u32,
+    pub slot_id: u32,
+    pub ep_target: u32,
+    pub hid_kind: u32,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Default)]
+pub struct TrueosUi4PointerEvent {
+    pub controller_id: u32,
+    pub slot_id: u32,
+    pub ep_target: u32,
+    pub hid_kind: u32,
+    pub x: u32,
+    pub y: u32,
+    pub local_x: i32,
+    pub local_y: i32,
+    pub dx: i32,
+    pub dy: i32,
+    pub wheel: i32,
+    pub buttons_down: u32,
+    pub buttons_pressed: u32,
+    pub buttons_released: u32,
+    pub combo_id: u32,
+    pub vcursor: u32,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Default)]
 pub struct TrueosUi4KeyboardState {
     pub controller_id: u32,
     pub slot_id: u32,
@@ -160,6 +199,10 @@ unsafe extern "C" {
     pub fn trueos_cabi_ui4_solara_frame_begin(window_id: u32, clear_rgba: u32) -> i32;
     pub fn trueos_cabi_ui4_scene_pan_event_take(window_id: u32, out: *mut TrueosUi4PanEvent)
     -> i32;
+    pub fn trueos_cabi_ui4_scene_resize_event_take(
+        window_id: u32,
+        out: *mut TrueosUi4ResizeEvent,
+    ) -> i32;
     pub fn trueos_cabi_ui4_scene_keyboard_state(
         window_id: u32,
         out: *mut TrueosUi4KeyboardState,
@@ -193,6 +236,16 @@ unsafe extern "C" {
     pub fn trueos_cabi_ui4_solara_frame_close(window_id: u32) -> i32;
     pub fn trueos_cabi_ui4_solara_frame_close_requested(window_id: u32, flags: u32) -> i32;
     pub fn trueos_cabi_ui4_scene_frame_set_position(window_id: u32, x: i32, y: i32) -> i32;
+    pub fn trueos_cabi_ui4_scene_set_custom_cursor(window_id: u32, enabled: u32) -> i32;
+    pub fn trueos_cabi_ui4_scene_set_cursor_icon(
+        window_id: u32,
+        source: *const TrueosUi4CursorSource,
+        icon: u32,
+    ) -> i32;
+    pub fn trueos_cabi_ui4_scene_pointer_event_take(
+        window_id: u32,
+        out: *mut TrueosUi4PointerEvent,
+    ) -> i32;
     pub fn trueos_cabi_ui4_scene_frame_resize(window_id: u32, width: u32, height: u32) -> i32;
     pub fn trueos_cabi_ui4_scene_frame_write_opaque_rgba8(
         window_id: u32,

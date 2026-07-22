@@ -15,11 +15,13 @@ const FRAME_WIDTH: u32 = 448;
 const FRAME_HEIGHT: u32 = 408;
 const FRAME_X: i32 = 520;
 const FRAME_Y: i32 = 105;
+const MAXIMIZED_CONTENT_SCALE: f32 = 4.0;
 
 const BOARD_X: f32 = 28.0;
 const BOARD_Y: f32 = 44.0;
 const CELL: f32 = 16.0;
 const SIDE_X: f32 = 222.0;
+const PLAYABLE_CONTENT_BOTTOM: f32 = BOARD_Y + CELL * BOARD_HEIGHT as f32 + 10.0;
 
 const BG: [u8; 4] = [8, 16, 24, 255];
 const PANEL: [u8; 4] = [15, 29, 42, 255];
@@ -73,6 +75,47 @@ fn main() {
     let mut repaint_ms = 0_u32;
 
     'running: loop {
+        let mut resized = false;
+        loop {
+            let resize = match frame.take_resize_event() {
+                Ok(Some(resize)) => resize,
+                Ok(None) => break,
+                Err(error) => {
+                    logl::log(
+                        level::ERROR,
+                        format_args!("cut_tetris: resize event failed: {error:?}"),
+                    );
+                    break;
+                }
+            };
+            if resize.width == frame.width() && resize.height == frame.height() {
+                continue;
+            }
+            if let Err(error) = frame.resize(resize.width, resize.height) {
+                logl::log(
+                    level::ERROR,
+                    format_args!(
+                        "cut_tetris: resize {}x{} -> {}x{} failed: {error:?}",
+                        resize.old_width, resize.old_height, resize.width, resize.height
+                    ),
+                );
+                continue;
+            }
+            renderer.resize(resize.width, resize.height);
+            resized = true;
+            logl::log(
+                level::INFO,
+                format_args!(
+                    "cut_tetris: resized {}x{} -> {}x{} content_scale={}x",
+                    resize.old_width,
+                    resize.old_height,
+                    resize.width,
+                    resize.height,
+                    renderer.content_scale() as u32
+                ),
+            );
+        }
+
         while let Some(event) = input::pop_keyboard_output() {
             if event.kind == input::KEYBOARD_OUTPUT_KIND_KEY {
                 match event.key_code {
@@ -125,7 +168,7 @@ fn main() {
 
         game.tick(16);
         repaint_ms = repaint_ms.saturating_add(16);
-        if game.consume_changed() || repaint_ms >= 50 {
+        if resized || game.consume_changed() || repaint_ms >= 50 {
             repaint_ms = 0;
             if let Err(error) = renderer.present(&mut frame, &game) {
                 logl::log(
@@ -147,8 +190,16 @@ struct Renderer {
 impl Renderer {
     fn new() -> Self {
         Self {
-            canvas: Canvas::new(),
+            canvas: Canvas::new(FRAME_WIDTH, FRAME_HEIGHT),
         }
+    }
+
+    fn resize(&mut self, width: u32, height: u32) {
+        self.canvas.resize(width, height);
+    }
+
+    fn content_scale(&self) -> f32 {
+        self.canvas.scale
     }
 
     fn present(
@@ -156,11 +207,13 @@ impl Renderer {
         frame: &mut Frame,
         game: &Game<BOARD_WIDTH, BOARD_HEIGHT>,
     ) -> Result<(), UiError> {
+        let width = frame.width();
+        let height = frame.height();
         self.canvas.clear(BG);
         draw_game(&mut self.canvas, game);
         frame.begin(rgba(BG[0], BG[1], BG[2], BG[3]))?;
         frame.write_opaque_rgba8(self.canvas.pixels.as_slice())?;
-        frame.publish(Damage::full(FRAME_WIDTH, FRAME_HEIGHT))
+        frame.publish(Damage::full(width, height))
     }
 }
 
@@ -317,13 +370,47 @@ fn draw_game(rects: &mut Canvas, game: &Game<BOARD_WIDTH, BOARD_HEIGHT>) {
 
 struct Canvas {
     pixels: Vec<u8>,
+    width: u32,
+    height: u32,
+    scale: f32,
+    origin_x: f32,
+    origin_y: f32,
 }
 
 impl Canvas {
-    fn new() -> Self {
-        Self {
-            pixels: alloc::vec![0; FRAME_WIDTH as usize * FRAME_HEIGHT as usize * 4],
+    fn new(width: u32, height: u32) -> Self {
+        let mut canvas = Self {
+            pixels: Vec::new(),
+            width: 0,
+            height: 0,
+            scale: 1.0,
+            origin_x: 0.0,
+            origin_y: 0.0,
+        };
+        canvas.resize(width, height);
+        canvas
+    }
+
+    fn resize(&mut self, width: u32, height: u32) {
+        self.width = width;
+        self.height = height;
+        self.scale = if width == FRAME_WIDTH && height == FRAME_HEIGHT {
+            1.0
+        } else {
+            MAXIMIZED_CONTENT_SCALE
+        };
+        if self.scale == 1.0 {
+            self.origin_x = 0.0;
+            self.origin_y = 0.0;
+        } else {
+            // UI4's 2560x1440 maximize target is 192 pixels shorter than the
+            // complete 4x decoration canvas. Center horizontally and anchor
+            // the cutter at the bottom: title, side panel, and the complete
+            // 4x 10x20 play board remain visible; only the help footer clips.
+            self.origin_x = (width as f32 - FRAME_WIDTH as f32 * self.scale) * 0.5;
+            self.origin_y = height as f32 - PLAYABLE_CONTENT_BOTTOM * self.scale;
         }
+        self.pixels.resize(width as usize * height as usize * 4, 0);
     }
 
     fn clear(&mut self, color: [u8; 4]) {
@@ -336,16 +423,20 @@ impl Canvas {
         if width <= 0.0 || height <= 0.0 {
             return;
         }
-        let left = (x.max(0.0) as usize).min(FRAME_WIDTH as usize);
-        let top = (y.max(0.0) as usize).min(FRAME_HEIGHT as usize);
-        let right = ((x + width).max(0.0) as usize).min(FRAME_WIDTH as usize);
-        let bottom = ((y + height).max(0.0) as usize).min(FRAME_HEIGHT as usize);
+        let x = self.origin_x + x * self.scale;
+        let y = self.origin_y + y * self.scale;
+        let width = width * self.scale;
+        let height = height * self.scale;
+        let left = (x.max(0.0) as usize).min(self.width as usize);
+        let top = (y.max(0.0) as usize).min(self.height as usize);
+        let right = ((x + width).max(0.0) as usize).min(self.width as usize);
+        let bottom = ((y + height).max(0.0) as usize).min(self.height as usize);
         if left >= right || top >= bottom {
             return;
         }
         for pixel_y in top..bottom {
-            let start = (pixel_y * FRAME_WIDTH as usize + left) * 4;
-            let end = (pixel_y * FRAME_WIDTH as usize + right) * 4;
+            let start = (pixel_y * self.width as usize + left) * 4;
+            let end = (pixel_y * self.width as usize + right) * 4;
             for pixel in self.pixels[start..end].chunks_exact_mut(4) {
                 pixel.copy_from_slice(&color);
             }

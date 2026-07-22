@@ -26,13 +26,19 @@ pub(crate) fn verify_before_pack(
         return Ok(());
     }
 
-    let blueprint_root = blueprint_root.ok_or_else(|| {
-        format!(
-            "CABI pack guard cannot locate the Blueprint SDK root; run from TRUEOS-Blueprints or set {ABI_GUARD_ENV}=off for an intentional isolated build"
-        )
-    })?;
+    let Some(blueprint_root) = blueprint_root else {
+        println!(
+            "trueos-blueprint: CABI pack guard skipped: Blueprint SDK root unavailable and no sibling TRUEOS checkout can be discovered"
+        );
+        return Ok(());
+    };
     let blueprint_abi = blueprint_root.join(ABI_DECLARATIONS_RELATIVE);
-    let kernel_root = locate_kernel_repo(blueprint_root)?;
+    let Some(kernel_root) = locate_kernel_repo(blueprint_root)? else {
+        println!(
+            "trueos-blueprint: CABI pack guard skipped: no sibling directory named trueos (case-insensitive)"
+        );
+        return Ok(());
+    };
     let kernel_abi = kernel_root.join(ABI_DECLARATIONS_RELATIVE);
 
     let imports = undefined_cabi_imports(linked_object)?;
@@ -73,7 +79,7 @@ pub(crate) fn verify_before_pack(
 
     if !failures.is_empty() {
         return Err(format!(
-            "CABI contract mismatch before pack; no .bp was produced:\n{}\nBlueprint declarations: {}\nkernel declarations: {}\nExisting CABI symbol signatures are immutable. Restore the old signature and add a new versioned/instance symbol instead. Set {KERNEL_REPO_ENV} to compare against another kernel checkout. {ABI_GUARD_ENV}=off is available only for an intentional isolated build.",
+            "CABI contract mismatch before pack; no .bp was produced:\n{}\nBlueprint declarations: {}\nkernel declarations: {}\nExisting CABI symbol signatures are immutable. Restore the old signature and add a new versioned/instance symbol instead. Set {KERNEL_REPO_ENV} to compare against another kernel checkout. {ABI_GUARD_ENV}=off is available for an intentional migration build.",
             failures.join("\n"),
             blueprint_abi.display(),
             kernel_abi.display(),
@@ -127,19 +133,67 @@ fn guard_disabled() -> bool {
         .is_some_and(|value| matches!(value.trim(), "0" | "false" | "off" | "no"))
 }
 
-fn locate_kernel_repo(blueprint_root: &Path) -> Result<PathBuf, String> {
-    let configured = env::var_os(KERNEL_REPO_ENV)
+fn locate_kernel_repo(blueprint_root: &Path) -> Result<Option<PathBuf>, String> {
+    if let Some(configured) = env::var_os(KERNEL_REPO_ENV)
         .filter(|value| !value.is_empty())
-        .map(PathBuf::from);
-    let sibling = blueprint_root.parent().map(|parent| parent.join("TRUEOS"));
-    for candidate in configured.into_iter().chain(sibling) {
-        if candidate.join(ABI_DECLARATIONS_RELATIVE).is_file() {
-            return Ok(candidate);
+        .map(PathBuf::from)
+    {
+        if configured.join(ABI_DECLARATIONS_RELATIVE).is_file() {
+            return Ok(Some(configured));
+        }
+        return Err(format!(
+            "CABI pack guard cannot find kernel ABI declarations at configured {KERNEL_REPO_ENV}={} (expected {ABI_DECLARATIONS_RELATIVE})",
+            configured.display(),
+        ));
+    }
+
+    let Some(parent) = blueprint_root.parent() else {
+        return Ok(None);
+    };
+    let entries = fs::read_dir(parent).map_err(|err| {
+        format!(
+            "CABI pack guard cannot inspect Blueprint sibling directory {}: {err}",
+            parent.display(),
+        )
+    })?;
+    let mut siblings = Vec::new();
+    for entry in entries {
+        let path = entry
+            .map_err(|err| {
+                format!(
+                    "CABI pack guard cannot inspect an entry in Blueprint sibling directory {}: {err}",
+                    parent.display(),
+                )
+            })?
+            .path();
+        if path.is_dir() && is_trueos_directory_name(&path) {
+            siblings.push(path);
         }
     }
-    Err(format!(
-        "CABI pack guard cannot find the kernel ABI declarations; set {KERNEL_REPO_ENV} to a TRUEOS checkout containing {ABI_DECLARATIONS_RELATIVE}, or set {ABI_GUARD_ENV}=off for an intentional isolated build"
-    ))
+    siblings.sort();
+
+    match siblings.as_slice() {
+        [] => Ok(None),
+        [sibling] if sibling.join(ABI_DECLARATIONS_RELATIVE).is_file() => Ok(Some(sibling.clone())),
+        [sibling] => Err(format!(
+            "CABI pack guard found sibling TRUEOS directory {} but it does not contain {ABI_DECLARATIONS_RELATIVE}; set {ABI_GUARD_ENV}=off only for an intentional migration build",
+            sibling.display(),
+        )),
+        _ => Err(format!(
+            "CABI pack guard found multiple case-insensitive TRUEOS sibling directories ({}); set {KERNEL_REPO_ENV} to select one explicitly",
+            siblings
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", "),
+        )),
+    }
+}
+
+fn is_trueos_directory_name(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case("trueos"))
 }
 
 fn undefined_cabi_imports(object: &Path) -> Result<BTreeSet<String>, String> {
@@ -372,5 +426,14 @@ mod tests {
             contracts["trueos_cabi_probe"].canonical,
             "fn trueos_cabi_probe(unsafeextern\"C\"fn(u32,*mutu8)->i32,usize)->()"
         );
+    }
+
+    #[test]
+    fn trueos_sibling_name_is_ascii_case_insensitive() {
+        for name in ["trueos", "TRUEOS", "TrueOS", "tRuEoS"] {
+            assert!(is_trueos_directory_name(Path::new(name)));
+        }
+        assert!(!is_trueos_directory_name(Path::new("TRUEOS-Blueprints")));
+        assert!(!is_trueos_directory_name(Path::new("trueos-kernel")));
     }
 }

@@ -50,6 +50,38 @@ pub struct CursorSource {
     pub hid_kind: u32,
 }
 
+/// Kernel-provided slot-4 cursor sprites for a UI4 frame.
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+#[repr(u32)]
+pub enum CursorIcon {
+    #[default]
+    Default = 0,
+    Loading = 1,
+    ResizeHorizontal = 2,
+    ResizeVertical = 3,
+    ResizeDiagonal = 4,
+    /// The selected frame paints its own cursor pixels.
+    AppOwned = 5,
+}
+
+/// One selected-frame pointer event after UI4 hit testing and capture.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct PointerEvent {
+    pub source: CursorSource,
+    pub x: u32,
+    pub y: u32,
+    pub local_x: i32,
+    pub local_y: i32,
+    pub dx: i32,
+    pub dy: i32,
+    pub wheel: i16,
+    pub buttons_down: u32,
+    pub buttons_pressed: u32,
+    pub buttons_released: u32,
+    pub combo_id: u32,
+    pub vcursor: bool,
+}
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum PanPhase {
     Begin,
@@ -72,7 +104,20 @@ pub struct PanEvent {
     pub vcursor: bool,
 }
 
-/// Held HID usages for the keyboard routed to this focused UI4 frame.
+/// A UI4 maximize/restore request for this frame's backing extent.
+///
+/// The frame remains valid at its current size until the Blueprint chooses to
+/// call [`Frame::resize`]. Ignoring this event keeps the old pixels centered
+/// 1:1 inside the broker-owned maximize geometry.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct ResizeEvent {
+    pub old_width: u32,
+    pub old_height: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Held HID usages for the keyboard routed to this selected UI4 frame.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct KeyboardState {
     pub controller_id: u32,
@@ -250,6 +295,44 @@ impl Frame {
         status(unsafe { v::bp_abi::trueos_cabi_ui4_solara_frame_begin(self.window_id, clear_rgba) })
     }
 
+    /// Take the next selected-frame pointer event. The click which selected
+    /// this frame is absorbed by UI4 and is never returned here.
+    pub fn take_pointer_event(&mut self) -> Result<Option<PointerEvent>, Error> {
+        let mut raw = v::bp_abi::TrueosUi4PointerEvent::default();
+        let result = unsafe {
+            v::bp_abi::trueos_cabi_ui4_scene_pointer_event_take(self.window_id, &mut raw)
+        };
+        if result == 1 {
+            return Ok(None);
+        }
+        if result != 0 {
+            return Err(error_from_status(result));
+        }
+        let Ok(wheel) = i16::try_from(raw.wheel) else {
+            return Err(Error::Invalid);
+        };
+        Ok(Some(PointerEvent {
+            source: CursorSource {
+                controller_id: raw.controller_id,
+                slot_id: raw.slot_id,
+                ep_target: raw.ep_target,
+                hid_kind: raw.hid_kind,
+            },
+            x: raw.x,
+            y: raw.y,
+            local_x: raw.local_x,
+            local_y: raw.local_y,
+            dx: raw.dx,
+            dy: raw.dy,
+            wheel,
+            buttons_down: raw.buttons_down,
+            buttons_pressed: raw.buttons_pressed,
+            buttons_released: raw.buttons_released,
+            combo_id: raw.combo_id,
+            vcursor: raw.vcursor != 0,
+        }))
+    }
+
     /// Take the next app-owned middle-button pan event for this frame.
     pub fn take_pan_event(&mut self) -> Result<Option<PanEvent>, Error> {
         let mut raw = v::bp_abi::TrueosUi4PanEvent::default();
@@ -286,8 +369,27 @@ impl Frame {
         }))
     }
 
-    /// Sample held keys only from the keyboard routed to this frame's focus.
-    /// Click/tap the frame first to establish its UI4 focus route.
+    /// Take the next UI4 maximize/restore extent request for this frame.
+    pub fn take_resize_event(&mut self) -> Result<Option<ResizeEvent>, Error> {
+        let mut raw = v::bp_abi::TrueosUi4ResizeEvent::default();
+        let result =
+            unsafe { v::bp_abi::trueos_cabi_ui4_scene_resize_event_take(self.window_id, &mut raw) };
+        if result == 1 {
+            return Ok(None);
+        }
+        if result != 0 {
+            return Err(error_from_status(result));
+        }
+        Ok(Some(ResizeEvent {
+            old_width: raw.old_width,
+            old_height: raw.old_height,
+            width: raw.width,
+            height: raw.height,
+        }))
+    }
+
+    /// Sample held keys only from the keyboard routed to this selected frame.
+    /// Click/tap the frame first to establish the global UI4 selection.
     pub fn keyboard_state(&self) -> Result<Option<KeyboardState>, Error> {
         let mut raw = v::bp_abi::TrueosUi4KeyboardState::default();
         let result =
@@ -314,6 +416,42 @@ impl Frame {
 
     pub fn set_position(&mut self, x: i32, y: i32) -> Result<(), Error> {
         status(unsafe { v::bp_abi::trueos_cabi_ui4_scene_frame_set_position(self.window_id, x, y) })
+    }
+
+    /// Compatibility shorthand for a frame-wide [`CursorIcon::AppOwned`].
+    pub fn set_custom_cursor(&mut self, enabled: bool) -> Result<(), Error> {
+        status(unsafe {
+            v::bp_abi::trueos_cabi_ui4_scene_set_custom_cursor(self.window_id, u32::from(enabled))
+        })
+    }
+
+    /// Set the selected frame's fallback cursor for every source which does
+    /// not have its own override.
+    pub fn set_cursor_icon(&mut self, icon: CursorIcon) -> Result<(), Error> {
+        status(unsafe {
+            v::bp_abi::trueos_cabi_ui4_scene_set_cursor_icon(
+                self.window_id,
+                core::ptr::null(),
+                icon as u32,
+            )
+        })
+    }
+
+    /// Override the cursor sprite for one of UI4's independent cursor routes.
+    pub fn set_cursor_icon_for(
+        &mut self,
+        source: CursorSource,
+        icon: CursorIcon,
+    ) -> Result<(), Error> {
+        let source = v::bp_abi::TrueosUi4CursorSource {
+            controller_id: source.controller_id,
+            slot_id: source.slot_id,
+            ep_target: source.ep_target,
+            hid_kind: source.hid_kind,
+        };
+        status(unsafe {
+            v::bp_abi::trueos_cabi_ui4_scene_set_cursor_icon(self.window_id, &source, icon as u32)
+        })
     }
 
     pub fn resize(&mut self, width: u32, height: u32) -> Result<(), Error> {

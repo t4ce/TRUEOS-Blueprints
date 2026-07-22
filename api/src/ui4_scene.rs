@@ -4,6 +4,6 @@
 //! this name describes the general frame boundary used by shaded scenes.
 
 pub use crate::ui4_solara_text::{
-    CloseRequest, Damage, Error, Frame, KeyboardState, SkyboxRenderParams, SpriteCorner,
-    SpriteQuad, rgba,
+    CloseRequest, CursorIcon, CursorSource, Damage, Error, Frame, KeyboardState, PointerEvent,
+    ResizeEvent, SkyboxRenderParams, SpriteCorner, SpriteQuad, rgba,
 };
