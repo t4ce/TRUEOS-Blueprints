@@ -15,6 +15,7 @@ use trueos_gboi::{GameBoyButton, GameBoyEmulator};
 const DEFAULT_ROM_PATH: &str = "common/gboi.gb";
 
 const FRAME_SCALE: usize = 4;
+const MAXIMIZED_FRAME_SCALE: usize = FRAME_SCALE * 3 / 2;
 const FRAME_WIDTH: u32 = (trueos_gboi::gpu::SCREEN_W * FRAME_SCALE) as u32;
 const FRAME_HEIGHT: u32 = (trueos_gboi::gpu::SCREEN_H * FRAME_SCALE) as u32;
 const FRAME_X: i32 = 96;
@@ -79,13 +80,23 @@ fn main() {
     shell_line("gboi: commands: list [app|common], load <path>, status, help");
     shell_prompt();
 
-    let pixel_count = FRAME_WIDTH as usize * FRAME_HEIGHT as usize;
-    let mut argb = vec![0u32; pixel_count];
-    let mut rgba8 = vec![0u8; pixel_count * 4];
+    let mut layout = DisplayLayout::new(FRAME_WIDTH, FRAME_HEIGHT)
+        .expect("the initial UI4 frame fits the native Game Boy display");
+    let mut argb = vec![0u32; layout.content_pixel_count()];
+    let mut rgba8 = vec![0u8; layout.frame_pixel_count() * 4];
+    clear_rgba8(&mut rgba8);
     let mut frame_number = 0u64;
     let mut shell = ShellInput::new();
 
     loop {
+        if let Err(error) = handle_resize_events(&mut frame, &mut layout, &mut argb, &mut rgba8) {
+            logl::log(
+                level::ERROR,
+                format_args!("gboi: UI4 resize-event read failed error={error:?}"),
+            );
+            break;
+        }
+
         if let Some(command) = shell.poll() {
             handle_shell_command(command.as_str(), &mut emulator, &mut current_rom);
             shell_prompt();
@@ -107,8 +118,8 @@ fn main() {
         sync_buttons(&mut emulator, keyboard.as_ref());
 
         emulator.tick();
-        emulator.render(&mut argb, FRAME_WIDTH as usize, FRAME_HEIGHT as usize);
-        argb_to_rgba8(&argb, &mut rgba8);
+        emulator.render(&mut argb, layout.content_width, layout.content_height);
+        argb_to_centered_rgba8(&argb, &mut rgba8, layout);
 
         if let Err(error) = present_frame(&mut frame, rgba8.as_slice()) {
             logl::log(
@@ -329,7 +340,110 @@ fn present_frame(frame: &mut Frame, rgba8: &[u8]) -> Result<(), Ui4Error> {
         }
     }
     frame.write_opaque_rgba8(rgba8)?;
-    frame.publish(Damage::full(FRAME_WIDTH, FRAME_HEIGHT))
+    frame.publish(Damage::full(frame.width(), frame.height()))
+}
+
+#[derive(Clone, Copy)]
+struct DisplayLayout {
+    frame_width: usize,
+    frame_height: usize,
+    content_width: usize,
+    content_height: usize,
+    content_x: usize,
+    content_y: usize,
+    scale: usize,
+}
+
+impl DisplayLayout {
+    fn new(frame_width: u32, frame_height: u32) -> Option<Self> {
+        let frame_width = frame_width as usize;
+        let frame_height = frame_height as usize;
+        let fit_scale = (frame_width / trueos_gboi::gpu::SCREEN_W)
+            .min(frame_height / trueos_gboi::gpu::SCREEN_H);
+        if fit_scale == 0 {
+            return None;
+        }
+        let maximized = frame_width > FRAME_WIDTH as usize || frame_height > FRAME_HEIGHT as usize;
+        let requested_scale = if maximized {
+            MAXIMIZED_FRAME_SCALE
+        } else {
+            FRAME_SCALE
+        };
+        let scale = requested_scale.min(fit_scale);
+        let content_width = trueos_gboi::gpu::SCREEN_W * scale;
+        let content_height = trueos_gboi::gpu::SCREEN_H * scale;
+        Some(Self {
+            frame_width,
+            frame_height,
+            content_width,
+            content_height,
+            content_x: (frame_width - content_width) / 2,
+            content_y: (frame_height - content_height) / 2,
+            scale,
+        })
+    }
+
+    const fn frame_pixel_count(self) -> usize {
+        self.frame_width * self.frame_height
+    }
+
+    const fn content_pixel_count(self) -> usize {
+        self.content_width * self.content_height
+    }
+}
+
+fn handle_resize_events(
+    frame: &mut Frame,
+    layout: &mut DisplayLayout,
+    argb: &mut Vec<u32>,
+    rgba8: &mut Vec<u8>,
+) -> Result<(), Ui4Error> {
+    while let Some(resize) = frame.take_resize_event()? {
+        if resize.width == frame.width() && resize.height == frame.height() {
+            continue;
+        }
+        let Some(next_layout) = DisplayLayout::new(resize.width, resize.height) else {
+            logl::log(
+                level::WARN,
+                format_args!(
+                    "gboi: ignored resize {}x{} -> {}x{}; native display does not fit",
+                    resize.old_width, resize.old_height, resize.width, resize.height
+                ),
+            );
+            continue;
+        };
+        if let Err(error) = frame.resize(resize.width, resize.height) {
+            logl::log(
+                level::WARN,
+                format_args!(
+                    "gboi: resize {}x{} -> {}x{} failed: {error:?}",
+                    resize.old_width, resize.old_height, resize.width, resize.height
+                ),
+            );
+            continue;
+        }
+
+        *layout = next_layout;
+        argb.resize(layout.content_pixel_count(), 0);
+        rgba8.resize(layout.frame_pixel_count() * 4, 0);
+        clear_rgba8(rgba8);
+        logl::log(
+            level::INFO,
+            format_args!(
+                "gboi: resized {}x{} -> {}x{} content={}x{} scale={}x centered={},{}",
+                resize.old_width,
+                resize.old_height,
+                resize.width,
+                resize.height,
+                layout.content_width,
+                layout.content_height,
+                layout.scale,
+                layout.content_x,
+                layout.content_y
+            ),
+        );
+    }
+    Ok(())
 }
 
 fn sync_buttons(emulator: &mut GameBoyEmulator, keyboard: Option<&KeyboardState>) {
@@ -358,11 +472,26 @@ fn key_is_down(keyboard: Option<&KeyboardState>, key_code: u8) -> bool {
     keyboard.is_some_and(|keyboard| keyboard.is_down(key_code))
 }
 
-fn argb_to_rgba8(source: &[u32], destination: &mut [u8]) {
-    for (pixel, rgba) in source.iter().zip(destination.chunks_exact_mut(4)) {
-        rgba[0] = ((pixel >> 16) & 0xFF) as u8;
-        rgba[1] = ((pixel >> 8) & 0xFF) as u8;
-        rgba[2] = (pixel & 0xFF) as u8;
-        rgba[3] = u8::MAX;
+fn argb_to_centered_rgba8(source: &[u32], destination: &mut [u8], layout: DisplayLayout) {
+    for source_y in 0..layout.content_height {
+        let source_start = source_y * layout.content_width;
+        let destination_start =
+            ((layout.content_y + source_y) * layout.frame_width + layout.content_x) * 4;
+        let source_row = &source[source_start..source_start + layout.content_width];
+        let destination_row =
+            &mut destination[destination_start..destination_start + layout.content_width * 4];
+        for (pixel, rgba) in source_row.iter().zip(destination_row.chunks_exact_mut(4)) {
+            rgba[0] = ((pixel >> 16) & 0xFF) as u8;
+            rgba[1] = ((pixel >> 8) & 0xFF) as u8;
+            rgba[2] = (pixel & 0xFF) as u8;
+            rgba[3] = u8::MAX;
+        }
+    }
+}
+
+fn clear_rgba8(pixels: &mut [u8]) {
+    pixels.fill(0);
+    for pixel in pixels.chunks_exact_mut(4) {
+        pixel[3] = u8::MAX;
     }
 }
