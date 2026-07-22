@@ -115,6 +115,27 @@ pub struct SkyboxRenderParams {
     pub rect_height: u32,
 }
 
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
+pub struct SpriteCorner {
+    pub x: f32,
+    pub y: f32,
+    pub u: f32,
+    pub v: f32,
+}
+
+/// One ordered draw from a frame-retained straight-alpha RGBA sprite. Sprite
+/// id zero is the frame-owned white pixel and is useful for solid rectangles.
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
+pub struct SpriteQuad {
+    pub sprite_id: u32,
+    pub c0: SpriteCorner,
+    pub c1: SpriteCorner,
+    pub c2: SpriteCorner,
+    pub c3: SpriteCorner,
+    pub color_rgba: u32,
+    pub source_over: bool,
+}
+
 impl Damage {
     pub const fn full(width: u32, height: u32) -> Self {
         Self {
@@ -317,6 +338,77 @@ impl Frame {
                 rgba.as_ptr(),
                 rgba.len(),
             )
+        })
+    }
+
+    /// Retain one decoded RGBA sprite in the UI4 frame's warm source set.
+    /// Upload is normally performed once; later frames submit only quad data.
+    pub fn upload_sprite_rgba8(
+        &mut self,
+        sprite_id: u32,
+        width: u32,
+        height: u32,
+        rgba: &[u8],
+    ) -> Result<(), Error> {
+        let Some(expected) = (width as usize)
+            .checked_mul(height as usize)
+            .and_then(|pixels| pixels.checked_mul(4))
+        else {
+            return Err(Error::Invalid);
+        };
+        if sprite_id == 0 || rgba.len() != expected {
+            return Err(Error::Invalid);
+        }
+        status(unsafe {
+            v::bp_abi::trueos_cabi_ui4_scene_sprite_upload_rgba8(
+                self.window_id,
+                sprite_id,
+                width,
+                height,
+                rgba.as_ptr(),
+                rgba.len(),
+            )
+        })
+    }
+
+    /// Acquire a back buffer whose opaque clear is performed by the first GPU
+    /// sprite batch rather than by a CPU full-frame paint.
+    pub fn begin_sprite_frame(&mut self, clear_rgba: u32) -> Result<(), Error> {
+        status(unsafe {
+            v::bp_abi::trueos_cabi_ui4_scene_sprite_frame_begin(self.window_id, clear_rgba)
+        })
+    }
+
+    /// Render ordered retained sprites and solid rectangles into the active
+    /// sprite-frame lease. Scenes larger than one hardware worklist are split
+    /// by the kernel while preserving order.
+    pub fn draw_sprite_quads(&mut self, quads: &[SpriteQuad]) -> Result<(), Error> {
+        let raw = quads
+            .iter()
+            .map(|quad| v::bp_abi::TrueosUi4SpriteQuad {
+                sprite_id: quad.sprite_id,
+                c0_x: quad.c0.x,
+                c0_y: quad.c0.y,
+                c0_u: quad.c0.u,
+                c0_v: quad.c0.v,
+                c1_x: quad.c1.x,
+                c1_y: quad.c1.y,
+                c1_u: quad.c1.u,
+                c1_v: quad.c1.v,
+                c2_x: quad.c2.x,
+                c2_y: quad.c2.y,
+                c2_u: quad.c2.u,
+                c2_v: quad.c2.v,
+                c3_x: quad.c3.x,
+                c3_y: quad.c3.y,
+                c3_u: quad.c3.u,
+                c3_v: quad.c3.v,
+                color_rgba: quad.color_rgba,
+                flags: u32::from(quad.source_over),
+            })
+            .collect::<Vec<_>>();
+        status(unsafe {
+            v::bp_abi::trueos_cabi_ui4_scene_sprite_quads(self.window_id, raw.as_ptr(), raw.len())
         })
     }
 
