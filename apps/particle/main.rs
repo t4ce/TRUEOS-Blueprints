@@ -5,7 +5,7 @@ extern crate alloc;
 use alloc::vec::Vec;
 
 use trueos::ui4_scene::{Damage, Error, Frame, rgba};
-use trueos::ui4_solara_text::{SpriteCorner, SpriteQuad};
+use trueos::ui4_solara_text::{Font, MAX_SCENE_TEXT_ROWS_PER_CALL, SceneTextRow};
 use trueos::{logl, vsys};
 
 const FRAME_X: i32 = 640;
@@ -14,16 +14,12 @@ const FRAME_WIDTH: u32 = 640;
 const FRAME_HEIGHT: u32 = 400;
 const FRAME_MS: u64 = 33;
 const PARTICLE_COUNT: usize = 48;
-const PARTICLE_SPRITE_ID: u32 = 1;
-const PARTICLE_TEXTURE_SIZE: u32 = 32;
+const GLYPH: &str = "§";
 const GRAVITY: f32 = 118.0;
 const BACKGROUND: u32 = rgba(7, 11, 17, 255);
-const COLORS: [u32; 4] = [
-    rgba(255, 201, 103, 255),
-    rgba(255, 126, 95, 255),
-    rgba(180, 132, 255, 255),
-    rgba(102, 214, 255, 255),
-];
+const PARTICLE_COLOR: u32 = rgba(102, 214, 255, 255);
+
+const _: () = assert!(PARTICLE_COUNT <= MAX_SCENE_TEXT_ROWS_PER_CALL);
 
 #[derive(Clone, Copy)]
 struct Vec2 {
@@ -38,48 +34,17 @@ struct Particle {
     age: f32,
     lifetime: f32,
     size: f32,
-    color: usize,
 }
 
 impl Particle {
-    fn sprite_quad(self) -> SpriteQuad {
+    fn scene_row(self) -> SceneTextRow<'static> {
         let remaining = (1.0 - self.age / self.lifetime).clamp(0.0, 1.0);
-        let size = self.size * (0.58 + remaining * 0.42);
-        let half_size = size * 0.5;
-        let left = self.position.x - half_size;
-        let top = self.position.y - half_size;
-        let right = self.position.x + half_size;
-        let bottom = self.position.y + half_size;
-        let [red, green, blue, _] = COLORS[self.color].to_le_bytes();
-
-        SpriteQuad {
-            sprite_id: PARTICLE_SPRITE_ID,
-            c0: SpriteCorner {
-                x: left,
-                y: top,
-                u: 0.0,
-                v: 0.0,
-            },
-            c1: SpriteCorner {
-                x: right,
-                y: top,
-                u: 1.0,
-                v: 0.0,
-            },
-            c2: SpriteCorner {
-                x: right,
-                y: bottom,
-                u: 1.0,
-                v: 1.0,
-            },
-            c3: SpriteCorner {
-                x: left,
-                y: bottom,
-                u: 0.0,
-                v: 1.0,
-            },
-            color_rgba: rgba(red, green, blue, (remaining * 255.0) as u8),
-            source_over: true,
+        let font_pixels = self.size * (0.58 + remaining * 0.42);
+        SceneTextRow {
+            text: GLYPH,
+            x: self.position.x - font_pixels * 0.24,
+            y: self.position.y - font_pixels * 0.50,
+            font_pixels,
         }
     }
 }
@@ -137,7 +102,6 @@ impl ParticleSystem {
             age: 0.0,
             lifetime: self.rng.range(1.6, 3.8),
             size: self.rng.range(22.0, 52.0),
-            color: self.rng.next_u32() as usize % COLORS.len(),
         }
     }
 }
@@ -175,74 +139,42 @@ impl DemoRng {
 }
 
 struct ParticleRenderer {
-    quads: Vec<SpriteQuad>,
+    rows: Vec<SceneTextRow<'static>>,
 }
 
 impl ParticleRenderer {
     fn new() -> Self {
         Self {
-            quads: Vec::with_capacity(PARTICLE_COUNT),
+            rows: Vec::with_capacity(PARTICLE_COUNT),
         }
     }
 
     fn present(&mut self, frame: &mut Frame, system: &ParticleSystem) -> Result<(), Error> {
-        self.quads.clear();
+        self.rows.clear();
         for particle in system.particles().iter().copied() {
-            self.quads.push(particle.sprite_quad());
+            self.rows.push(particle.scene_row());
         }
 
-        frame.begin_sprite_frame(BACKGROUND)?;
-        frame.draw_sprite_quads(self.quads.as_slice())?;
+        frame.begin(BACKGROUND)?;
+        frame.draw_text_scene(
+            Font::Default,
+            (FRAME_WIDTH, FRAME_HEIGHT),
+            PARTICLE_COLOR,
+            self.rows.as_slice(),
+        )?;
         frame.publish(Damage::full(FRAME_WIDTH, FRAME_HEIGHT))
     }
-}
-
-fn particle_texture() -> Vec<u8> {
-    let size = PARTICLE_TEXTURE_SIZE as usize;
-    let center = (PARTICLE_TEXTURE_SIZE as f32 - 1.0) * 0.5;
-    let mut pixels = alloc::vec![0; size * size * 4];
-
-    for y in 0..size {
-        for x in 0..size {
-            let normalized_x = (x as f32 - center) / center;
-            let normalized_y = (y as f32 - center) / center;
-            let distance_squared = normalized_x * normalized_x + normalized_y * normalized_y;
-            let alpha = if distance_squared >= 1.0 {
-                0
-            } else {
-                let falloff = 1.0 - distance_squared;
-                (falloff * falloff * 255.0) as u8
-            };
-            let offset = (y * size + x) * 4;
-            pixels[offset..offset + 4].copy_from_slice(&[255, 255, 255, alpha]);
-        }
-    }
-
-    pixels
 }
 
 fn main() {
     logl::log(
         logl::level::INFO,
-        "particle: opening UI4 retained-sprite GPGPU scene",
+        "particle: opening UI4 batched kernel-font scene",
     );
     let Ok(mut frame) = Frame::open_streaming(FRAME_X, FRAME_Y, FRAME_WIDTH, FRAME_HEIGHT) else {
         logl::log(logl::level::ERROR, "particle: UI4 frame open failed");
         return;
     };
-    let texture = particle_texture();
-    if let Err(error) = frame.upload_sprite_rgba8(
-        PARTICLE_SPRITE_ID,
-        PARTICLE_TEXTURE_SIZE,
-        PARTICLE_TEXTURE_SIZE,
-        texture.as_slice(),
-    ) {
-        logl::log(
-            logl::level::ERROR,
-            format_args!("particle: retained sprite upload failed: {error:?}"),
-        );
-        return;
-    }
 
     let mut system = ParticleSystem::new();
     let mut renderer = ParticleRenderer::new();
