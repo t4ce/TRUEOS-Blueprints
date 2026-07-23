@@ -106,6 +106,8 @@ const BLUEPRINT_VENDOR_PATCHES: &[(&str, &str)] = &[
     ("rayon-core", "rayon/rayon-core"),
     ("reqwest", "reqwest-0.13.3"),
     ("ring", "ring-0.17.14"),
+    ("russh", "russh-0.62.4"),
+    ("russh-cryptovec", "russh-cryptovec-0.62.0"),
     ("rustls-rustcrypto", "rustls-rustcrypto-0.0.2-alpha"),
     ("serde_urlencoded", "serde_urlencoded-0.7.1"),
     ("socket2", "socket2-0.6.3"),

@@ -257,6 +257,39 @@ pub fn attached_write(bytes: &[u8]) -> usize {
     write(bytes)
 }
 
+pub fn ssh_shell_open(cols: u32, rows: u32) -> Option<u32> {
+    let session = unsafe { vcabi::trueos_cabi_ssh_shell_open(cols, rows) };
+    u32::try_from(session).ok().filter(|session| *session != 0)
+}
+
+pub fn ssh_shell_write(session: u32, bytes: &[u8]) -> Result<usize, ()> {
+    if bytes.is_empty() {
+        return Ok(0);
+    }
+    let written = unsafe {
+        vcabi::trueos_cabi_ssh_shell_write(session, bytes.as_ptr(), bytes.len())
+    };
+    usize::try_from(written).map_err(|_| ())
+}
+
+pub fn ssh_shell_read(session: u32, output: &mut [u8]) -> Result<usize, ()> {
+    if output.is_empty() {
+        return Ok(0);
+    }
+    let read = unsafe {
+        vcabi::trueos_cabi_ssh_shell_read(session, output.as_mut_ptr(), output.len())
+    };
+    usize::try_from(read).map_err(|_| ())
+}
+
+pub fn ssh_shell_resize(session: u32, cols: u32, rows: u32) -> bool {
+    unsafe { vcabi::trueos_cabi_ssh_shell_resize(session, cols, rows) == 0 }
+}
+
+pub fn ssh_shell_close(session: u32) -> bool {
+    unsafe { vcabi::trueos_cabi_ssh_shell_close(session) == 0 }
+}
+
 #[inline]
 pub fn shell2_raw_write(bytes: &[u8]) -> usize {
     if bytes.is_empty() {

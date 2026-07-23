@@ -26,10 +26,13 @@ members = [
     "probes/posix_fd_probe",
     "probes/panick",
     "apps/particle",
+    "apps/shell",
     "probes/unix_api_probe",
     "probes/rusqlite_probe",
     "probes/rusqlite_multirt",
     "apps/skybox",
+    "apps/ssh",
+    "apps/sshd",
     "apps/swarm",
     "apps/system-services",
     "probes/test_some_crates",
@@ -236,6 +239,8 @@ quinn-proto = { path = "vendor/quinn-proto-0.11.14" }
 quinn-udp = { path = "vendor/quinn-udp-0.5.14" }
 reqwest = { path = "vendor/reqwest-0.13.3" }
 ring = { path = "vendor/ring-0.17.14" }
+russh = { path = "vendor/russh-0.62.4" }
+russh-cryptovec = { path = "vendor/russh-cryptovec-0.62.0" }
 rayon = { path = "vendor/rayon" }
 rayon-core = { path = "vendor/rayon/rayon-core" }
 rustls-rustcrypto = { path = "vendor/rustls-rustcrypto-0.0.2-alpha" }

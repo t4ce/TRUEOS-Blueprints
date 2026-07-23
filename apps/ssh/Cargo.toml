@@ -1,0 +1,21 @@
+[package]
+name = "ssh"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[[bin]]
+name = "ssh"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0"
+rand = "0.10"
+russh = { version = "=0.62.4", default-features = false, features = ["ring"] }
+tokio = { version = "=1.52.3", default-features = false, features = ["full"] }
+
+[target.'cfg(any(target_os = "trueos", target_os = "zkvm"))'.dependencies]
+trueos = { path = "../../api" }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("trueos", "zkvm"))'] }

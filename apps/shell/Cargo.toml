@@ -1,0 +1,14 @@
+[package]
+name = "shell"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[[bin]]
+name = "shell"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+trueos = { workspace = true, features = ["ui4-scene"] }

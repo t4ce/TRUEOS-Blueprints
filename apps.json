@@ -19,6 +19,7 @@
     "tantivy",
     "prismq",
     "particle",
+    "shell",
     "rebels-in-the-sky",
     "txt",
     "qjs",
@@ -36,6 +37,8 @@
       "optional": true
     },
     "skybox",
+    "ssh",
+    "sshd",
     "swarm",
     "superseedr",
     "system-services",
