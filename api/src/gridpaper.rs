@@ -368,7 +368,7 @@ pub fn close_instance(instance: InstanceId) -> Result<(), Error> {
     status(unsafe { v::bp_abi::trueos_cabi_gridpaper_close_instance(instance.raw()) })
 }
 
-/// Take one focused-GridPaper F10 request, if present.
+/// Take one focused-GridPaper Print Screen request, if present.
 pub fn take_print_request() -> Option<PrintRequest> {
     let token = unsafe { v::bp_abi::trueos_cabi_gridpaper_print_request_take() };
     (token != 0 && token <= u32::MAX as u64).then_some(PrintRequest {

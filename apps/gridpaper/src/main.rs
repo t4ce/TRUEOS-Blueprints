@@ -95,7 +95,7 @@ fn main() {
     let mut print_jobs = [None; TRACKED_PRINT_JOBS];
     let mut next_print_status_ms = start_ms;
     loop {
-        drain_f10_print_requests(&mut print_jobs);
+        drain_print_screen_requests(&mut print_jobs);
         let now_ms = clock::monotonic_millis();
         if now_ms >= next_print_status_ms {
             poll_print_jobs(&mut print_jobs);
@@ -151,7 +151,7 @@ fn main() {
     }
 }
 
-fn drain_f10_print_requests(jobs: &mut [Option<TrackedPrintJob>; TRACKED_PRINT_JOBS]) {
+fn drain_print_screen_requests(jobs: &mut [Option<TrackedPrintJob>; TRACKED_PRINT_JOBS]) {
     while let Some(request) = trueos::gridpaper::take_print_request() {
         match print2d::submit_gridpaper_request(request.token()) {
             Ok(id) => {
@@ -159,7 +159,7 @@ fn drain_f10_print_requests(jobs: &mut [Option<TrackedPrintJob>; TRACKED_PRINT_J
                 logl::log(
                     level::INFO,
                     format_args!(
-                        "gridpaper: print2d job={} state=Queued trigger=F10",
+                        "gridpaper: print2d job={} state=Queued trigger=PrintScreen",
                         id.get()
                     ),
                 );
@@ -172,7 +172,7 @@ fn drain_f10_print_requests(jobs: &mut [Option<TrackedPrintJob>; TRACKED_PRINT_J
             Err(error) => {
                 logl::log(
                     level::WARN,
-                    format_args!("gridpaper: F10 print submit failed: {error:?}"),
+                    format_args!("gridpaper: Print Screen submit failed: {error:?}"),
                 );
                 break;
             }
