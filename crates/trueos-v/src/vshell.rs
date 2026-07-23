@@ -266,9 +266,8 @@ pub fn ssh_shell_write(session: u32, bytes: &[u8]) -> Result<usize, ()> {
     if bytes.is_empty() {
         return Ok(0);
     }
-    let written = unsafe {
-        vcabi::trueos_cabi_ssh_shell_write(session, bytes.as_ptr(), bytes.len())
-    };
+    let written =
+        unsafe { vcabi::trueos_cabi_ssh_shell_write(session, bytes.as_ptr(), bytes.len()) };
     usize::try_from(written).map_err(|_| ())
 }
 
@@ -276,9 +275,8 @@ pub fn ssh_shell_read(session: u32, output: &mut [u8]) -> Result<usize, ()> {
     if output.is_empty() {
         return Ok(0);
     }
-    let read = unsafe {
-        vcabi::trueos_cabi_ssh_shell_read(session, output.as_mut_ptr(), output.len())
-    };
+    let read =
+        unsafe { vcabi::trueos_cabi_ssh_shell_read(session, output.as_mut_ptr(), output.len()) };
     usize::try_from(read).map_err(|_| ())
 }
 

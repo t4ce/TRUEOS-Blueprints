@@ -43,9 +43,7 @@ impl Options {
                     port = Some(parse_port(&value)?);
                 }
                 "-l" => user = Some(args.next().context("ssh: -l requires a user")?),
-                "-i" => {
-                    identity = PathBuf::from(args.next().context("ssh: -i requires a path")?)
-                }
+                "-i" => identity = PathBuf::from(args.next().context("ssh: -i requires a path")?),
                 "--accept-new" => accept_new = true,
                 "-h" | "--help" | "help" => {
                     print_usage();
@@ -176,9 +174,7 @@ impl client::Handler for ClientHandler {
                 if let Err(err) =
                     learn_known_host(Path::new(KNOWN_HOSTS), &self.host_token, server_public_key)
                 {
-                    terminal_write(
-                        format!("ssh: could not save known host: {err}\r\n").as_bytes(),
-                    );
+                    terminal_write(format!("ssh: could not save known host: {err}\r\n").as_bytes());
                     return Ok(false);
                 }
                 Ok(true)
@@ -229,8 +225,7 @@ fn known_host_status(path: &Path, host: &str, key: &PublicKey) -> KnownHostStatu
 
 fn learn_known_host(path: &Path, host: &str, key: &PublicKey) -> Result<()> {
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("create {}", parent.display()))?;
+        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
     }
     let encoded = key.to_openssh().context("encode server public key")?;
     let mut file = fs::OpenOptions::new()
@@ -248,8 +243,7 @@ fn load_or_create_identity(path: &Path) -> Result<PrivateKey> {
             .with_context(|| format!("load SSH identity {}", path.display()));
     }
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("create {}", parent.display()))?;
+        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
     }
     let key = PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519)
         .context("generate Ed25519 SSH identity")?;
@@ -516,10 +510,8 @@ async fn terminal_read_line(prompt: &str, echo: bool) -> Result<String> {
 
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
 fn terminal_enter() {
-    let size = trueos::vshell::konsole_size().unwrap_or(trueos::vshell::KonsoleSize {
-        cols: 80,
-        rows: 24,
-    });
+    let size = trueos::vshell::konsole_size()
+        .unwrap_or(trueos::vshell::KonsoleSize { cols: 80, rows: 24 });
     let _ = trueos::vshell::konsole_begin_frame(
         size.cols,
         size.rows,
@@ -590,9 +582,50 @@ fn main() {
                 terminal_write(format!("\r\nssh: {err:#}\r\n").as_bytes());
             }
         }
-        Err(err) => terminal_write(format!("ssh: runtime initialization failed: {err}\r\n").as_bytes()),
+        Err(err) => {
+            terminal_write(format!("ssh: runtime initialization failed: {err}\r\n").as_bytes())
+        }
     }
 
     #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
     trueos::vshell::leave_terminal_handoff();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn endpoint_accepts_shell2_and_ipv6_forms() {
+        assert_eq!(
+            split_endpoint("192.168.178.94:4548").unwrap(),
+            ("192.168.178.94".into(), Some(4548))
+        );
+        assert_eq!(
+            split_endpoint("192.168.178.111").unwrap(),
+            ("192.168.178.111".into(), None)
+        );
+        assert_eq!(
+            split_endpoint("[fe80::1]:2222").unwrap(),
+            ("fe80::1".into(), Some(2222))
+        );
+        assert_eq!(split_endpoint("fe80::1").unwrap(), ("fe80::1".into(), None));
+    }
+
+    #[test]
+    fn endpoint_rejects_a_bare_trailing_colon() {
+        assert!(split_endpoint("192.168.178.111:").is_err());
+    }
+
+    #[test]
+    fn local_escape_only_disconnects_at_line_start() {
+        let mut escape = LocalEscape::new();
+        let mut output = Vec::new();
+        assert!(!escape.forward(b"echo ~. stays\r\n", &mut output));
+        assert_eq!(output, b"echo ~. stays\r\n");
+
+        output.clear();
+        assert!(escape.forward(b"~.", &mut output));
+        assert!(output.is_empty());
+    }
 }

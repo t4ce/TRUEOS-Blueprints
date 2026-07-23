@@ -5,8 +5,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
-use russh::keys::ssh_key::{Algorithm, LineEnding, PublicKey};
 use russh::keys::PrivateKey;
+use russh::keys::ssh_key::{Algorithm, LineEnding, PublicKey};
 use russh::server::{self, Msg, Server as _, Session};
 use russh::{Channel, ChannelId, MethodKind, MethodSet};
 
@@ -50,11 +50,13 @@ impl server::Handler for Client {
         user: &str,
         key: &PublicKey,
     ) -> Result<server::Auth, Self::Error> {
-        Ok(if user == "root" && self.authorized.iter().any(|known| known == key) {
-            server::Auth::Accept
-        } else {
-            server::Auth::reject()
-        })
+        Ok(
+            if user == "root" && self.authorized.iter().any(|known| known == key) {
+                server::Auth::Accept
+            } else {
+                server::Auth::reject()
+            },
+        )
     }
 
     async fn channel_open_session(
@@ -64,11 +66,9 @@ impl server::Handler for Client {
         _: &mut Session,
     ) -> Result<(), Self::Error> {
         if self.channel.is_some() {
-            reply.reject(
-                russh::ChannelOpenFailure::ResourceShortage,
-                "one session channel per connection",
-            )
-            .await;
+            reply
+                .reject(russh::ChannelOpenFailure::ResourceShortage)
+                .await;
         } else {
             self.channel = Some(channel.id());
             reply.accept().await;
@@ -152,20 +152,12 @@ impl server::Handler for Client {
         Ok(())
     }
 
-    async fn channel_close(
-        &mut self,
-        _: ChannelId,
-        _: &mut Session,
-    ) -> Result<(), Self::Error> {
+    async fn channel_close(&mut self, _: ChannelId, _: &mut Session) -> Result<(), Self::Error> {
         self.close_bridge();
         Ok(())
     }
 
-    async fn channel_eof(
-        &mut self,
-        _: ChannelId,
-        _: &mut Session,
-    ) -> Result<(), Self::Error> {
+    async fn channel_eof(&mut self, _: ChannelId, _: &mut Session) -> Result<(), Self::Error> {
         self.close_bridge();
         Ok(())
     }
@@ -248,7 +240,7 @@ async fn serve(port: u16) -> Result<()> {
     let host_key = load_or_create_host_key(Path::new(HOST_KEY_PATH))?;
     let config = Arc::new(server::Config {
         server_id: russh::SshId::Standard("SSH-2.0-TRUEOS".into()),
-        methods: MethodSet::from([MethodKind::PublicKey]),
+        methods: MethodSet::from(&[MethodKind::PublicKey][..]),
         keys: vec![host_key],
         auth_rejection_time: Duration::from_secs(1),
         inactivity_timeout: Some(Duration::from_secs(3600)),
