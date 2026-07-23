@@ -32,7 +32,6 @@ members = [
     "probes/rusqlite_multirt",
     "apps/skybox",
     "apps/ssh",
-    "apps/sshd",
     "apps/swarm",
     "apps/system-services",
     "probes/test_some_crates",
