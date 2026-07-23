@@ -1,4 +1,3 @@
-use std::env;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -17,6 +16,37 @@ const INPUT_POLL: Duration = Duration::from_millis(5);
 const KNOWN_HOSTS: &str = ".ssh/known_hosts";
 const DEFAULT_IDENTITY: &str = ".ssh/id_ed25519";
 
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+fn stage_log(stage: &str) {
+    trueos::logl::log(
+        trueos::logl::level::INFO,
+        format_args!("ssh: stage={stage}"),
+    );
+}
+
+#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+fn stage_log(_stage: &str) {}
+
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+fn process_args() -> Vec<String> {
+    trueos::env::args().collect()
+}
+
+#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+fn process_args() -> Vec<String> {
+    std::env::args().collect()
+}
+
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+fn process_var(key: &str) -> Option<String> {
+    trueos::env::var(key).ok()
+}
+
+#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+fn process_var(key: &str) -> Option<String> {
+    std::env::var(key).ok()
+}
+
 #[derive(Debug)]
 struct Options {
     host: String,
@@ -29,7 +59,7 @@ struct Options {
 
 impl Options {
     fn parse() -> Result<Self> {
-        let mut args = env::args().skip(1);
+        let mut args = process_args().into_iter().skip(1);
         let mut port = None;
         let mut user = None;
         let mut identity = PathBuf::from(DEFAULT_IDENTITY);
@@ -348,15 +378,6 @@ async fn authenticate_keyboard_interactive(
 }
 
 async fn run_session(options: Options) -> Result<()> {
-    terminal_enter();
-    terminal_write(
-        format!(
-            "ssh: connecting to {}:{} as {}\r\n",
-            options.host, options.port, options.user
-        )
-        .as_bytes(),
-    );
-
     let config = Arc::new(client::Config {
         inactivity_timeout: Some(Duration::from_secs(600)),
         ..Default::default()
@@ -365,26 +386,25 @@ async fn run_session(options: Options) -> Result<()> {
         host_token: options.host_token.clone(),
         accept_new: options.accept_new,
     };
-    let mut session = client::connect(config, (options.host.as_str(), options.port), handler)
-        .await
-        .with_context(|| format!("connect {}:{}", options.host, options.port))?;
+    let mut session = tokio::time::timeout(
+        Duration::from_secs(15),
+        client::connect(config, (options.host.as_str(), options.port), handler),
+    )
+    .await
+    .context("SSH connect timed out after 15 seconds")?
+    .with_context(|| format!("connect {}:{}", options.host, options.port))?;
+    stage_log("transport-connected");
     authenticate(&mut session, &options).await?;
+    stage_log("authenticated");
 
     let channel = session
         .channel_open_session()
         .await
         .context("open SSH session channel")?;
     let (mut cols, mut rows) = terminal_size();
+    let term = process_var("TERM").unwrap_or_else(|| String::from("xterm-256color"));
     channel
-        .request_pty(
-            true,
-            env::var("TERM").as_deref().unwrap_or("xterm-256color"),
-            cols,
-            rows,
-            0,
-            0,
-            &[(Pty::ECHO, 1)],
-        )
+        .request_pty(true, &term, cols, rows, 0, 0, &[(Pty::ECHO, 1)])
         .await
         .context("request remote PTY")?;
     channel
@@ -559,6 +579,7 @@ fn terminal_size() -> (u32, u32) {
 }
 
 fn main() {
+    stage_log("main-enter");
     let options = match Options::parse() {
         Ok(options) => options,
         Err(err) => {
@@ -567,6 +588,16 @@ fn main() {
             return;
         }
     };
+    stage_log("options-parsed");
+    terminal_enter();
+    terminal_write(
+        format!(
+            "ssh: connecting to {}:{} as {}\r\n",
+            options.host, options.port, options.user
+        )
+        .as_bytes(),
+    );
+    stage_log("terminal-entered");
 
     #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
     let runtime = trueos::runtime::current_thread_net().build();
@@ -577,8 +608,11 @@ fn main() {
 
     match runtime {
         Ok(runtime) => {
+            stage_log("runtime-ready");
             let local = tokio::task::LocalSet::new();
-            if let Err(err) = local.block_on(&runtime, run_session(options)) {
+            let result = local.block_on(&runtime, run_session(options));
+            runtime.shutdown_background();
+            if let Err(err) = result {
                 terminal_write(format!("\r\nssh: {err:#}\r\n").as_bytes());
             }
         }
@@ -588,7 +622,11 @@ fn main() {
     }
 
     #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-    trueos::vshell::leave_terminal_handoff();
+    {
+        stage_log("session-ended");
+        trueos::vshell::leave_terminal_handoff();
+        let _ = trueos::vshell::shutdown_current_blueprint("ssh session ended");
+    }
 }
 
 #[cfg(test)]
