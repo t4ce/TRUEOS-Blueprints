@@ -17,6 +17,54 @@ pub const MAX_ANIMATION_DURATION_MS: u32 = 600_000;
 /// one producer.
 pub const INSTANCE_CAPACITY: usize = 1;
 
+/// Logical grid extent carried beside the fixed-capacity page image.
+///
+/// The backing buffer and row stride remain [`COLUMNS`] by [`ROWS`]; this
+/// extent selects the visible top-left rectangle.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct GridSize {
+    columns: u16,
+    rows: u16,
+}
+
+impl GridSize {
+    pub const FULL: Self = Self {
+        columns: COLUMNS as u16,
+        rows: ROWS as u16,
+    };
+
+    pub const fn new(columns: usize, rows: usize) -> Result<Self, GridSizeError> {
+        if columns == 0 || columns > COLUMNS || rows == 0 || rows > ROWS {
+            Err(GridSizeError { columns, rows })
+        } else {
+            Ok(Self {
+                columns: columns as u16,
+                rows: rows as u16,
+            })
+        }
+    }
+
+    pub const fn columns(self) -> usize {
+        self.columns as usize
+    }
+
+    pub const fn rows(self) -> usize {
+        self.rows as usize
+    }
+}
+
+impl Default for GridSize {
+    fn default() -> Self {
+        Self::FULL
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct GridSizeError {
+    pub columns: usize,
+    pub rows: usize,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct InstanceId(u32);
 
@@ -256,6 +304,7 @@ pub enum Error {
     InvalidAnimation,
     InvalidInstance,
     PoolFull,
+    InvalidGridSize,
     Unknown(i32),
 }
 
@@ -289,6 +338,46 @@ pub fn submit_instance_snapshot(
             instance.raw(),
             generation,
             u32::from(scale_percent),
+            raw.as_ptr(),
+            raw.len(),
+        )
+    })
+}
+
+/// Submit a fixed-capacity page with a positive logical extent no larger than
+/// the current column and row soft caps.
+pub fn submit_sized_snapshot(
+    size: GridSize,
+    generation: u64,
+    scale_percent: u16,
+    raw: &[u8; PAGE_BYTES],
+) -> Result<(), Error> {
+    status(unsafe {
+        v::bp_abi::trueos_cabi_gridpaper_snapshot_submit_sized(
+            generation,
+            u32::from(scale_percent),
+            size.columns() as u32,
+            size.rows() as u32,
+            raw.as_ptr(),
+            raw.len(),
+        )
+    })
+}
+
+pub fn submit_instance_sized_snapshot(
+    instance: InstanceId,
+    size: GridSize,
+    generation: u64,
+    scale_percent: u16,
+    raw: &[u8; PAGE_BYTES],
+) -> Result<(), Error> {
+    status(unsafe {
+        v::bp_abi::trueos_cabi_gridpaper_snapshot_submit_instance_sized(
+            instance.raw(),
+            generation,
+            u32::from(scale_percent),
+            size.columns() as u32,
+            size.rows() as u32,
             raw.as_ptr(),
             raw.len(),
         )
@@ -394,6 +483,30 @@ fn status(code: i32) -> Result<(), Error> {
         -5 => Err(Error::InvalidAnimation),
         -6 => Err(Error::InvalidInstance),
         -7 => Err(Error::PoolFull),
+        -8 => Err(Error::InvalidGridSize),
         other => Err(Error::Unknown(other)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_positive_extent_through_the_soft_caps_is_valid() {
+        for columns in 1..=COLUMNS {
+            for rows in 1..=ROWS {
+                assert_eq!(
+                    GridSize::new(columns, rows),
+                    Ok(GridSize {
+                        columns: columns as u16,
+                        rows: rows as u16,
+                    })
+                );
+            }
+        }
+        for (columns, rows) in [(0, 1), (1, 0), (COLUMNS + 1, 1), (1, ROWS + 1)] {
+            assert!(GridSize::new(columns, rows).is_err());
+        }
     }
 }

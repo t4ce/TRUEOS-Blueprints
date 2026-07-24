@@ -7,7 +7,7 @@ use gridpaper::{
     SnapshotCadence,
 };
 use trueos::{
-    clock,
+    clock, env,
     logl::{self, level},
     platform, print2d, vshell,
 };
@@ -75,6 +75,13 @@ const RAINBOW_COLORS: [Rgba8; COLOR_KEYFRAME_CAPACITY - 1] = [
 ];
 
 fn main() {
+    let grid_size = match requested_grid_size() {
+        Ok(size) => size,
+        Err(error) => {
+            logl::log(level::ERROR, error);
+            return;
+        }
+    };
     let start_ms = clock::monotonic_millis();
     let config = GridPaperConfig {
         cadence: SnapshotCadence::EveryEditsOrMillis {
@@ -89,7 +96,7 @@ fn main() {
     install_full_rainbow_text_animations(&mut page);
     initialize_unicode_demo(&mut page, start_ms);
     let mut submitted_animation_generation = u64::MAX;
-    submit_to_kernel(&page, &mut submitted_animation_generation);
+    submit_to_kernel(&page, grid_size, &mut submitted_animation_generation);
 
     let mut input = [0_u8; 64];
     let mut print_jobs = [None; TRACKED_PRINT_JOBS];
@@ -114,7 +121,7 @@ fn main() {
             b"snapshot" => {
                 let now_ms = clock::monotonic_millis();
                 let _ = page.publish(now_ms);
-                submit_to_kernel(&page, &mut submitted_animation_generation);
+                submit_to_kernel(&page, grid_size, &mut submitted_animation_generation);
             }
             b"clear" => {
                 let now_ms = clock::monotonic_millis();
@@ -122,7 +129,7 @@ fn main() {
                 edit.raw_mut().fill(0);
                 let _ = edit.finish();
                 let _ = page.publish(now_ms);
-                submit_to_kernel(&page, &mut submitted_animation_generation);
+                submit_to_kernel(&page, grid_size, &mut submitted_animation_generation);
             }
             bytes => match core::str::from_utf8(bytes) {
                 Ok(text) => match Cell::new(text, Color::BrightBlue, Color::White, CellStyle::BOLD)
@@ -133,7 +140,7 @@ fn main() {
                         let _ = edit.set_cell(0, 0, cell);
                         let _ = edit.finish();
                         let _ = page.publish(now_ms);
-                        submit_to_kernel(&page, &mut submitted_animation_generation);
+                        submit_to_kernel(&page, grid_size, &mut submitted_animation_generation);
                     }
                     Err(error) => {
                         logl::log(level::WARN, format_args!("gridpaper: {error}"));
@@ -341,13 +348,52 @@ fn install_full_rainbow_text_animations(page: &mut GridPaper) {
     }
 }
 
-fn submit_to_kernel(page: &GridPaper, submitted_animation_generation: &mut u64) {
+fn requested_grid_size() -> Result<trueos::gridpaper::GridSize, &'static str> {
+    let mut args = env::args().skip(1);
+    let Some(first) = args.next() else {
+        return Ok(trueos::gridpaper::GridSize::FULL);
+    };
+    let Some((columns, rows)) = first
+        .split_once('x')
+        .or_else(|| first.split_once('X'))
+        .or_else(|| first.split_once("by"))
+    else {
+        return Err("gridpaper: expected grid size as COLUMNSxROWS");
+    };
+    if args.next().is_some() {
+        return Err("gridpaper: expected one grid size, for example 12x20");
+    }
+    let columns = columns
+        .parse::<usize>()
+        .map_err(|_| "gridpaper: grid columns must be a positive integer")?;
+    let rows = rows
+        .parse::<usize>()
+        .map_err(|_| "gridpaper: grid rows must be a positive integer")?;
+    trueos::gridpaper::GridSize::new(columns, rows)
+        .map_err(|_| "gridpaper: grid size must be within 1x1 and 39x55")
+}
+
+fn submit_to_kernel(
+    page: &GridPaper,
+    grid_size: trueos::gridpaper::GridSize,
+    submitted_animation_generation: &mut u64,
+) {
     let snapshot = page.snapshot();
-    if let Err(error) = trueos::gridpaper::submit_snapshot(
-        snapshot.generation(),
-        snapshot.scale_percent(),
-        snapshot.raw(),
-    ) {
+    let submitted = if grid_size == trueos::gridpaper::GridSize::FULL {
+        trueos::gridpaper::submit_snapshot(
+            snapshot.generation(),
+            snapshot.scale_percent(),
+            snapshot.raw(),
+        )
+    } else {
+        trueos::gridpaper::submit_sized_snapshot(
+            grid_size,
+            snapshot.generation(),
+            snapshot.scale_percent(),
+            snapshot.raw(),
+        )
+    };
+    if let Err(error) = submitted {
         logl::log(
             level::WARN,
             format_args!("gridpaper: kernel snapshot submit failed error={error:?}"),
