@@ -89,12 +89,17 @@ impl InstanceId {
 }
 
 const ANIMATION_WIRE_VERSION: u8 = 1;
+const FONT_INSTANCE_WIRE_VERSION: u8 = 2;
 const ANIMATION_WIRE_HEADER_BYTES: usize = 4;
 const ANIMATION_RECORD_HEADER_BYTES: usize = 12;
+const FONT_INSTANCE_RECORD_HEADER_BYTES: usize = 40;
 const ANIMATION_KEYFRAME_BYTES: usize = 8;
 pub const MAX_ANIMATION_WIRE_BYTES: usize = ANIMATION_WIRE_HEADER_BYTES
     + TEXT_COLOR_ANIMATION_SLOTS
         * (ANIMATION_RECORD_HEADER_BYTES + COLOR_KEYFRAME_CAPACITY * ANIMATION_KEYFRAME_BYTES);
+pub const MAX_FONT_INSTANCE_WIRE_BYTES: usize = ANIMATION_WIRE_HEADER_BYTES
+    + TEXT_COLOR_ANIMATION_SLOTS
+        * (FONT_INSTANCE_RECORD_HEADER_BYTES + COLOR_KEYFRAME_CAPACITY * ANIMATION_KEYFRAME_BYTES);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PrintRequest {
@@ -285,6 +290,209 @@ impl ColorAnimation {
     }
 }
 
+/// Static presentation properties consumed by the persistent GPU font engine.
+/// Rotation is expressed in 1/100 degree and scale/opacity in 1/1000 units.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FontStyle {
+    rotation_centidegrees: i16,
+    scale_permille: u16,
+    opacity_permille: u16,
+    background: Rgba8,
+}
+
+impl FontStyle {
+    pub const IDENTITY: Self = Self {
+        rotation_centidegrees: 0,
+        scale_permille: 1_000,
+        opacity_permille: 1_000,
+        background: Rgba8::TRANSPARENT,
+    };
+
+    pub const fn new(
+        rotation_centidegrees: i16,
+        scale_permille: u16,
+        opacity_permille: u16,
+        background: Rgba8,
+    ) -> Result<Self, AnimationDefinitionError> {
+        if rotation_centidegrees < -18_000 || rotation_centidegrees > 18_000 {
+            return Err(AnimationDefinitionError::Rotation(rotation_centidegrees));
+        }
+        if scale_permille < 125 || scale_permille > 8_000 {
+            return Err(AnimationDefinitionError::Scale(scale_permille));
+        }
+        if opacity_permille > 1_000 {
+            return Err(AnimationDefinitionError::Opacity(opacity_permille));
+        }
+        Ok(Self {
+            rotation_centidegrees,
+            scale_permille,
+            opacity_permille,
+            background,
+        })
+    }
+
+    pub const fn rotation_centidegrees(self) -> i16 {
+        self.rotation_centidegrees
+    }
+
+    pub const fn scale_permille(self) -> u16 {
+        self.scale_permille
+    }
+
+    pub const fn opacity_permille(self) -> u16 {
+        self.opacity_permille
+    }
+
+    pub const fn background(self) -> Rgba8 {
+        self.background
+    }
+}
+
+impl Default for FontStyle {
+    fn default() -> Self {
+        Self::IDENTITY
+    }
+}
+
+/// Bounded predefined sine/cosine animation evaluated by the C++ GPU kernel.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TrigAnimation {
+    period_ms: u32,
+    phase_permille: u16,
+    rotation_amplitude_centidegrees: i16,
+    scale_amplitude_permille: i16,
+    opacity_amplitude_permille: i16,
+    translation_x_tenths_px: i16,
+    translation_y_tenths_px: i16,
+}
+
+impl TrigAnimation {
+    pub const NONE: Self = Self {
+        period_ms: 0,
+        phase_permille: 0,
+        rotation_amplitude_centidegrees: 0,
+        scale_amplitude_permille: 0,
+        opacity_amplitude_permille: 0,
+        translation_x_tenths_px: 0,
+        translation_y_tenths_px: 0,
+    };
+
+    #[allow(clippy::too_many_arguments)]
+    pub const fn new(
+        period_ms: u32,
+        phase_permille: u16,
+        rotation_amplitude_centidegrees: i16,
+        scale_amplitude_permille: i16,
+        opacity_amplitude_permille: i16,
+        translation_x_tenths_px: i16,
+        translation_y_tenths_px: i16,
+    ) -> Result<Self, AnimationDefinitionError> {
+        if period_ms < MIN_ANIMATION_DURATION_MS || period_ms > MAX_ANIMATION_DURATION_MS {
+            return Err(AnimationDefinitionError::MotionPeriod(period_ms));
+        }
+        if phase_permille > 1_000 {
+            return Err(AnimationDefinitionError::MotionPhase(phase_permille));
+        }
+        if rotation_amplitude_centidegrees < -18_000 || rotation_amplitude_centidegrees > 18_000 {
+            return Err(AnimationDefinitionError::MotionRotation(
+                rotation_amplitude_centidegrees,
+            ));
+        }
+        if scale_amplitude_permille < -875 || scale_amplitude_permille > 4_000 {
+            return Err(AnimationDefinitionError::MotionScale(
+                scale_amplitude_permille,
+            ));
+        }
+        if opacity_amplitude_permille < -1_000 || opacity_amplitude_permille > 1_000 {
+            return Err(AnimationDefinitionError::MotionOpacity(
+                opacity_amplitude_permille,
+            ));
+        }
+        Ok(Self {
+            period_ms,
+            phase_permille,
+            rotation_amplitude_centidegrees,
+            scale_amplitude_permille,
+            opacity_amplitude_permille,
+            translation_x_tenths_px,
+            translation_y_tenths_px,
+        })
+    }
+
+    pub const fn period_ms(self) -> u32 {
+        self.period_ms
+    }
+
+    pub const fn phase_permille(self) -> u16 {
+        self.phase_permille
+    }
+
+    pub const fn rotation_amplitude_centidegrees(self) -> i16 {
+        self.rotation_amplitude_centidegrees
+    }
+
+    pub const fn scale_amplitude_permille(self) -> i16 {
+        self.scale_amplitude_permille
+    }
+
+    pub const fn opacity_amplitude_permille(self) -> i16 {
+        self.opacity_amplitude_permille
+    }
+
+    pub const fn translation_x_tenths_px(self) -> i16 {
+        self.translation_x_tenths_px
+    }
+
+    pub const fn translation_y_tenths_px(self) -> i16 {
+        self.translation_y_tenths_px
+    }
+}
+
+impl Default for TrigAnimation {
+    fn default() -> Self {
+        Self::NONE
+    }
+}
+
+/// One selector-scoped GPU font program. Any member may remain at identity,
+/// allowing color-only, transform-only, or combined presentation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FontInstanceProgram {
+    color: Option<ColorAnimation>,
+    style: FontStyle,
+    motion: TrigAnimation,
+}
+
+impl FontInstanceProgram {
+    pub const fn new(
+        color: Option<ColorAnimation>,
+        style: FontStyle,
+        motion: TrigAnimation,
+    ) -> Self {
+        Self {
+            color,
+            style,
+            motion,
+        }
+    }
+
+    pub const fn color_only(color: ColorAnimation) -> Self {
+        Self::new(Some(color), FontStyle::IDENTITY, TrigAnimation::NONE)
+    }
+
+    pub const fn color(self) -> Option<ColorAnimation> {
+        self.color
+    }
+
+    pub const fn style(self) -> FontStyle {
+        self.style
+    }
+
+    pub const fn motion(self) -> TrigAnimation {
+        self.motion
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AnimationDefinitionError {
     KeyframeCount(usize),
@@ -293,6 +501,14 @@ pub enum AnimationDefinitionError {
     FirstOffset(u16),
     LastOffset(u16),
     OffsetsNotIncreasing,
+    Rotation(i16),
+    Scale(u16),
+    Opacity(u16),
+    MotionPeriod(u32),
+    MotionPhase(u16),
+    MotionRotation(i16),
+    MotionScale(i16),
+    MotionOpacity(i16),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -442,6 +658,95 @@ fn encode_text_animations(
                 keyframe.rgba.a,
             ]);
             cursor = frame_end;
+        }
+    }
+    cursor
+}
+
+/// Atomically replace the complete persistent font presentation table. The
+/// page image and Skrifa-generated coverage stay resident and unchanged.
+pub fn submit_font_instances(
+    programs: &[Option<FontInstanceProgram>; TEXT_COLOR_ANIMATION_SLOTS],
+) -> Result<(), Error> {
+    let mut wire = [0u8; MAX_FONT_INSTANCE_WIRE_BYTES];
+    let wire_len = encode_font_instances(programs, &mut wire);
+    status(unsafe {
+        v::bp_abi::trueos_cabi_gridpaper_text_animations_submit(wire.as_ptr(), wire_len)
+    })
+}
+
+pub fn submit_instance_font_instances(
+    instance: InstanceId,
+    programs: &[Option<FontInstanceProgram>; TEXT_COLOR_ANIMATION_SLOTS],
+) -> Result<(), Error> {
+    let mut wire = [0u8; MAX_FONT_INSTANCE_WIRE_BYTES];
+    let wire_len = encode_font_instances(programs, &mut wire);
+    status(unsafe {
+        v::bp_abi::trueos_cabi_gridpaper_text_animations_submit_instance(
+            instance.raw(),
+            wire.as_ptr(),
+            wire_len,
+        )
+    })
+}
+
+fn encode_font_instances(
+    programs: &[Option<FontInstanceProgram>; TEXT_COLOR_ANIMATION_SLOTS],
+    wire: &mut [u8; MAX_FONT_INSTANCE_WIRE_BYTES],
+) -> usize {
+    wire.fill(0);
+    wire[0] = FONT_INSTANCE_WIRE_VERSION;
+    wire[1] = programs.iter().flatten().count() as u8;
+    let mut cursor = ANIMATION_WIRE_HEADER_BYTES;
+    for (selector, program) in programs.iter().enumerate() {
+        let Some(program) = program else {
+            continue;
+        };
+        let header_end = cursor + FONT_INSTANCE_RECORD_HEADER_BYTES;
+        let style = program.style;
+        let motion = program.motion;
+        wire[cursor] = selector as u8;
+        if let Some(animation) = program.color {
+            wire[cursor + 1] = animation.channels.bits();
+            wire[cursor + 2] = animation.timing as u8;
+            wire[cursor + 3] = animation.iteration as u8;
+            wire[cursor + 4..cursor + 8].copy_from_slice(&animation.duration_ms.to_le_bytes());
+            wire[cursor + 8] = animation.keyframe_count;
+        }
+        wire[cursor + 12..cursor + 14].copy_from_slice(&style.rotation_centidegrees.to_le_bytes());
+        wire[cursor + 14..cursor + 16].copy_from_slice(&style.scale_permille.to_le_bytes());
+        wire[cursor + 16..cursor + 18].copy_from_slice(&style.opacity_permille.to_le_bytes());
+        wire[cursor + 18..cursor + 22].copy_from_slice(&[
+            style.background.r,
+            style.background.g,
+            style.background.b,
+            style.background.a,
+        ]);
+        wire[cursor + 22..cursor + 26].copy_from_slice(&motion.period_ms.to_le_bytes());
+        wire[cursor + 26..cursor + 28].copy_from_slice(&motion.phase_permille.to_le_bytes());
+        wire[cursor + 28..cursor + 30]
+            .copy_from_slice(&motion.rotation_amplitude_centidegrees.to_le_bytes());
+        wire[cursor + 30..cursor + 32]
+            .copy_from_slice(&motion.scale_amplitude_permille.to_le_bytes());
+        wire[cursor + 32..cursor + 34]
+            .copy_from_slice(&motion.opacity_amplitude_permille.to_le_bytes());
+        wire[cursor + 34..cursor + 36]
+            .copy_from_slice(&motion.translation_x_tenths_px.to_le_bytes());
+        wire[cursor + 36..cursor + 38]
+            .copy_from_slice(&motion.translation_y_tenths_px.to_le_bytes());
+        cursor = header_end;
+        if let Some(animation) = program.color {
+            for keyframe in animation.keyframes_slice() {
+                let frame_end = cursor + ANIMATION_KEYFRAME_BYTES;
+                wire[cursor..cursor + 2].copy_from_slice(&keyframe.offset_permille.to_le_bytes());
+                wire[cursor + 4..frame_end].copy_from_slice(&[
+                    keyframe.rgba.r,
+                    keyframe.rgba.g,
+                    keyframe.rgba.b,
+                    keyframe.rgba.a,
+                ]);
+                cursor = frame_end;
+            }
         }
     }
     cursor

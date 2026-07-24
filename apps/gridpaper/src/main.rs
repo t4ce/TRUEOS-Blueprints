@@ -3,8 +3,8 @@
 
 use gridpaper::{
     AnimationIteration, AnimationTiming, COLOR_KEYFRAME_CAPACITY, Cell, CellStyle, Color,
-    ColorAnimation, ColorChannels, ColorKeyframe, GridPaper, GridPaperConfig, PublishMode, Rgba8,
-    SnapshotCadence,
+    ColorAnimation, ColorChannels, ColorKeyframe, FontInstanceProgram, FontStyle, GridPaper,
+    GridPaperConfig, PublishMode, Rgba8, SnapshotCadence, TrigAnimation,
 };
 use trueos::{
     clock, env,
@@ -39,6 +39,13 @@ const ACTIVE_TEXT_COLORS: [Color; gridpaper::TEXT_COLOR_ANIMATION_SLOTS] = [
     Color::BrightMagenta,
     Color::BrightCyan,
     Color::BrightWhite,
+];
+const FONT_INSTANCE_DEMO_COLORS: [Color; 5] = [
+    Color::BrightRed,
+    Color::BrightYellow,
+    Color::BrightGreen,
+    Color::BrightCyan,
+    Color::BrightMagenta,
 ];
 
 const UNICODE_WAVES: [[&str; gridpaper::TEXT_COLOR_ANIMATION_SLOTS]; 3] = [
@@ -320,11 +327,10 @@ fn initialize_unicode_demo(page: &mut GridPaper, now_ms: u64) {
     let _ = page.publish(now_ms);
 }
 
-/// Exercise the complete animation table and the maximum keyframe capacity.
-/// Rotating the seven unique stops gives each selector a stable spatial phase;
-/// the eighth stop closes its loop without discontinuity.
+/// Exercise five independent persistent instances and the maximum keyframe
+/// capacity. The remaining palette layers use the kernel's identity fast path.
 fn install_full_rainbow_text_animations(page: &mut GridPaper) {
-    for (selector, color) in ACTIVE_TEXT_COLORS.iter().copied().enumerate() {
+    for (selector, color) in FONT_INSTANCE_DEMO_COLORS.iter().copied().enumerate() {
         let phase = selector % RAINBOW_COLORS.len();
         let mut keyframes = [ColorKeyframe::new(0, Rgba8::TRANSPARENT); COLOR_KEYFRAME_CAPACITY];
         for (index, keyframe) in keyframes.iter_mut().enumerate() {
@@ -343,8 +349,24 @@ fn install_full_rainbow_text_animations(page: &mut GridPaper) {
             AnimationIteration::Loop,
         )
         .expect("static full-capacity rainbow keyframes are valid");
-        page.set_text_color_animation(color, Some(animation))
-            .expect("animation selector is an active foreground color");
+        let phase_permille = (selector as u16 * 59) % 1_000;
+        let rotation_amplitude = if selector.is_multiple_of(2) {
+            240
+        } else {
+            -240
+        };
+        let motion =
+            TrigAnimation::new(7_000, phase_permille, rotation_amplitude, 45, -100, 15, 10)
+                .expect("bounded selector motion is valid");
+        page.set_font_instance_program(
+            color,
+            Some(FontInstanceProgram::new(
+                Some(animation),
+                FontStyle::IDENTITY,
+                motion,
+            )),
+        )
+        .expect("font-instance selector is an active foreground color");
     }
 }
 
@@ -400,7 +422,7 @@ fn submit_to_kernel(
         );
     }
     if snapshot.animation_generation() != *submitted_animation_generation {
-        match trueos::gridpaper::submit_text_animations(snapshot.text_color_animations()) {
+        match trueos::gridpaper::submit_font_instances(snapshot.font_instance_programs()) {
             Ok(()) => *submitted_animation_generation = snapshot.animation_generation(),
             Err(error) => logl::log(
                 level::WARN,
