@@ -660,13 +660,12 @@ impl Frame {
         })
     }
 
-    /// Advance the retained particle state and shade a complete 640x400 frame.
+    /// Advance the retained particle state and shade the complete current frame.
+    ///
+    /// Particle simulation and gather cost remain fixed at the native 640x400
+    /// logical extent; a resized frame is covered from that retained result.
     pub fn render_particle_craft(&mut self, params: &ParticleCraftParamsV1) -> Result<(), Error> {
-        if self.width != PARTICLE_CRAFT_WIDTH
-            || self.height != PARTICLE_CRAFT_HEIGHT
-            || params.active_count == 0
-            || params.active_count > PARTICLE_CRAFT_MAX_PARTICLES
-        {
+        if params.active_count == 0 || params.active_count > PARTICLE_CRAFT_MAX_PARTICLES {
             return Err(Error::Invalid);
         }
         let raw = v::bp_abi::TrueosUi4ParticleCraftParamsV1 {

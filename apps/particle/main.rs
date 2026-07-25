@@ -32,6 +32,8 @@ fn main() {
     let mut pointer_ms = 0u64;
     let mut attractor = (320.0f32, 180.0f32);
     let mut reset = true;
+    let mut frame_width = PARTICLE_CRAFT_WIDTH;
+    let mut frame_height = PARTICLE_CRAFT_HEIGHT;
 
     loop {
         vsys::poll_once();
@@ -41,10 +43,48 @@ fn main() {
         last_ms = now_ms;
 
         loop {
+            match frame.take_resize_event() {
+                Ok(Some(event)) => {
+                    if event.width == frame_width && event.height == frame_height {
+                        continue;
+                    }
+                    if let Err(error) = frame.resize(event.width, event.height) {
+                        logl::log(
+                            logl::level::ERROR,
+                            format_args!("particle: resize failed: {error:?}"),
+                        );
+                        return;
+                    }
+                    frame_width = event.width;
+                    frame_height = event.height;
+                    logl::log(
+                        logl::level::INFO,
+                        format_args!(
+                            "particle: resized {}x{} -> {}x{}",
+                            event.old_width, event.old_height, frame_width, frame_height
+                        ),
+                    );
+                }
+                Ok(None) => break,
+                Err(error) => {
+                    logl::log(
+                        logl::level::ERROR,
+                        format_args!("particle: resize event failed: {error:?}"),
+                    );
+                    return;
+                }
+            }
+        }
+
+        loop {
             match frame.take_pointer_event() {
                 Ok(Some(event)) => {
-                    attractor.0 = (event.local_x as f32).clamp(0.0, PARTICLE_CRAFT_WIDTH as f32);
-                    attractor.1 = (event.local_y as f32).clamp(0.0, PARTICLE_CRAFT_HEIGHT as f32);
+                    attractor.0 = (event.local_x as f32 * PARTICLE_CRAFT_WIDTH as f32
+                        / frame_width as f32)
+                        .clamp(0.0, PARTICLE_CRAFT_WIDTH as f32);
+                    attractor.1 = (event.local_y as f32 * PARTICLE_CRAFT_HEIGHT as f32
+                        / frame_height as f32)
+                        .clamp(0.0, PARTICLE_CRAFT_HEIGHT as f32);
                     pointer_ms = now_ms;
                 }
                 Ok(None) => break,
@@ -79,9 +119,7 @@ fn main() {
         let presented = frame
             .begin_gpu_frame()
             .and_then(|()| frame.render_particle_craft(&params))
-            .and_then(|()| {
-                frame.publish(Damage::full(PARTICLE_CRAFT_WIDTH, PARTICLE_CRAFT_HEIGHT))
-            });
+            .and_then(|()| frame.publish(Damage::full(frame_width, frame_height)));
         if let Err(error) = presented {
             logl::log(
                 logl::level::ERROR,
