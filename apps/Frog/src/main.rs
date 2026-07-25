@@ -1,4 +1,4 @@
-// trueos-blueprint: features=["tokio-net-probe"]
+// trueos-blueprint: features=["tokio-net-probe","ui4-scene"]
 
 mod ui;
 mod ui4_visual;

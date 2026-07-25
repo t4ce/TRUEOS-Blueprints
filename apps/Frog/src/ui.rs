@@ -42,9 +42,12 @@ where
     F: FnMut(&mut String) -> Result<WeatherSnapshot>,
     V: WeatherVisual,
 {
-    let mut terminal = setup_terminal()?;
     let app = App::new(initial);
+    // Establish the UI4 window while the Blueprint still owns its normal
+    // startup context. The terminal alternate-screen handoff is independent
+    // and should not gate the visual window.
     visual.publish_snapshot(&app.snapshot);
+    let mut terminal = setup_terminal()?;
     let result = app.run(&mut terminal, &mut refresh, visual);
     restore_terminal(&mut terminal)?;
     result

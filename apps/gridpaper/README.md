@@ -67,8 +67,9 @@ second glyph renders at the upper-right, giving the fixed `x²` composition.
 Focused UI4 keyboard input starts in the primary field. Typing replaces that
 single glyph and advances one cell. Tab toggles the selected cell between its
 primary and upper fields. Typing an upper glyph replaces it without advancing;
-Delete/Entf or Backspace clears it. An upper glyph cannot exist without a
-primary glyph, and deleting the primary clears both fields.
+Delete/Entf clears the active field in place. Backspace moves one cell left and
+clears the active field there. An upper glyph cannot exist without a primary
+glyph, and deleting the primary clears both fields.
 
 Print Screen captures the focused GridPaper generation immediately and hands
 its stable kernel-owned snapshot to `trueos::print2d`. The Blueprint does not
@@ -81,6 +82,14 @@ ambiguous network failure from silently resubmitting and printing a duplicate
 page. Every transition is also emitted at INFO through the kernel log router.
 Printing always renders the page at physical 100%—the demo's 150% display zoom
 and pan are intentionally not part of the A4 job.
+
+F10 is the explicit-printer path. It sends a complete, one-shot menu request to
+UI4, which draws the current printer list beside the initiating software cursor
+on slot 4. Plain-IPP printers supporting PWG Raster are selectable; discovered
+printers that the spooler cannot use are shown disabled. An outside cursor click
+or choosing an entry closes the menu, and a selection queues the same stable
+GridPaper snapshot against that printer's exact URI. UI4 keeps no persistent
+application menu registration or application-owned overlay surface.
 
 The retained text path prefers the uploaded `Inconsolata-Regular.ttf` face for
 each cell. If a Unicode value is absent from Inconsolata, the kernel selects the

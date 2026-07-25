@@ -1,4 +1,6 @@
 use std::string::String;
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+use std::time::{Duration, Instant};
 
 use crate::weather::{WeatherIcon, WeatherSnapshot};
 
@@ -6,6 +8,9 @@ pub const FRAME_X: i32 = 480;
 pub const FRAME_Y: i32 = 72;
 pub const FRAME_WIDTH: u32 = 960;
 pub const FRAME_HEIGHT: u32 = 640;
+
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+const UI4_RETRY_DELAY: Duration = Duration::from_secs(2);
 
 const BG: [u8; 4] = [9, 15, 22, 255];
 // Frame-000 icon assets use the same opaque matte, so their native 1:1 edges
@@ -90,6 +95,16 @@ pub struct FrogVisual {
     x: i32,
     y: i32,
     active_pan: Option<trueos::ui4_solara_text::CursorSource>,
+    pending_scene: Option<VisualScene>,
+    retry_at: Option<Instant>,
+    last_error: Option<trueos::ui4_scene::Error>,
+    failure_count: u32,
+}
+
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+enum PresentOutcome {
+    Complete,
+    RasterOnly(trueos::ui4_scene::Error),
 }
 
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
@@ -100,6 +115,10 @@ impl FrogVisual {
             x: FRAME_X,
             y: FRAME_Y,
             active_pan: None,
+            pending_scene: None,
+            retry_at: None,
+            last_error: None,
+            failure_count: 0,
         }
     }
 
@@ -115,7 +134,7 @@ impl FrogVisual {
         Ok(self.frame.as_mut().expect("Frog UI4 frame was just opened"))
     }
 
-    fn present(&mut self, scene: &VisualScene) -> Result<(), trueos::ui4_scene::Error> {
+    fn present(&mut self, scene: &VisualScene) -> Result<PresentOutcome, trueos::ui4_scene::Error> {
         use trueos::ui4_scene::{Damage, Error, rgba};
         use trueos::ui4_solara_text::{Font, SceneTextRow};
 
@@ -132,6 +151,7 @@ impl FrogVisual {
         }
         frame.write_opaque_rgba8(scene.pixels.as_slice())?;
 
+        let mut text_error = None;
         for color in [TEXT, DIM, ACCENT, BLUE, WARN] {
             let rows: Vec<_> = scene
                 .text
@@ -145,15 +165,102 @@ impl FrogVisual {
                 })
                 .collect();
             if !rows.is_empty() {
-                frame.draw_text_scene(
-                    Font::Default,
+                if let Err(error) = frame.draw_text_scene(
+                    Font::Inconsolata,
                     (FRAME_WIDTH, FRAME_HEIGHT),
                     rgba(color[0], color[1], color[2], color[3]),
                     rows.as_slice(),
-                )?;
+                ) {
+                    text_error = Some(error);
+                    break;
+                }
             }
         }
-        frame.publish(Damage::full(FRAME_WIDTH, FRAME_HEIGHT))
+        frame.publish(Damage::full(FRAME_WIDTH, FRAME_HEIGHT))?;
+        Ok(match text_error {
+            Some(error) => PresentOutcome::RasterOnly(error),
+            None => PresentOutcome::Complete,
+        })
+    }
+
+    fn try_present(&mut self, scene: VisualScene) {
+        match self.present(&scene) {
+            Ok(PresentOutcome::Complete) => {
+                if self.failure_count != 0 {
+                    trueos::logl::log(
+                        trueos::logl::level::INFO,
+                        format_args!(
+                            "Frog: UI4 recovered after {} deferred presentation attempt(s)",
+                            self.failure_count
+                        ),
+                    );
+                }
+                self.pending_scene = None;
+                self.retry_at = None;
+                self.last_error = None;
+                self.failure_count = 0;
+            }
+            Ok(PresentOutcome::RasterOnly(error)) => {
+                // The opaque panels and embedded weather icons are already a
+                // valid frame. Keep that window visible while the selected
+                // text face becomes available, then retry the full scene.
+                self.defer_scene(scene, error, true);
+            }
+            Err(error) => {
+                // A paint failure after begin can retain a write lease.
+                // Closing this generation is safer than overwriting it, and
+                // poll() will reopen it without waiting for a weather refresh.
+                self.frame = None;
+                self.active_pan = None;
+                self.defer_scene(scene, error, false);
+            }
+        }
+    }
+
+    fn defer_scene(
+        &mut self,
+        scene: VisualScene,
+        error: trueos::ui4_scene::Error,
+        raster_visible: bool,
+    ) {
+        self.failure_count = self.failure_count.saturating_add(1);
+        let changed = self.last_error != Some(error);
+        self.last_error = Some(error);
+        self.pending_scene = Some(scene);
+        self.retry_at = Some(Instant::now() + UI4_RETRY_DELAY);
+
+        if changed || self.failure_count == 1 || self.failure_count.is_multiple_of(10) {
+            let level = if raster_visible {
+                trueos::logl::level::WARN
+            } else {
+                trueos::logl::level::ERROR
+            };
+            trueos::logl::log(
+                level,
+                format_args!(
+                    "Frog: UI4 {} deferred: {error:?} attempt={}",
+                    if raster_visible {
+                        "text layer (raster window remains visible)"
+                    } else {
+                        "window publication"
+                    },
+                    self.failure_count
+                ),
+            );
+        }
+    }
+
+    fn retry_pending_scene(&mut self) {
+        let Some(retry_at) = self.retry_at else {
+            return;
+        };
+        if Instant::now() < retry_at {
+            return;
+        }
+        self.retry_at = None;
+        if let Some(scene) = self.pending_scene.take() {
+            self.try_present(scene);
+        }
     }
 
     fn poll_pan(&mut self) {
@@ -214,20 +321,12 @@ impl FrogVisual {
 impl crate::ui::WeatherVisual for FrogVisual {
     fn publish_snapshot(&mut self, snapshot: &WeatherSnapshot) {
         let scene = render_snapshot(snapshot, static_icon);
-        if let Err(error) = self.present(&scene) {
-            trueos::logl::log(
-                trueos::logl::level::ERROR,
-                format_args!("Frog: UI4 immutable publish failed: {error:?}"),
-            );
-            // A paint failure after begin can retain a write lease. Closing
-            // this generation is safer than attempting to overwrite it.
-            self.frame = None;
-            self.active_pan = None;
-        }
+        self.try_present(scene);
     }
 
     fn poll(&mut self) {
         self.poll_pan();
+        self.retry_pending_scene();
     }
 }
 
