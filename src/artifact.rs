@@ -4,6 +4,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use crate::toolchain;
+
 const BLUEPRINT_PAYLOAD_7Z: u16 = 2;
 pub(crate) const BLUEPRINT_CAP_REPLICATABLE: u16 = 1 << 8;
 
@@ -41,27 +43,13 @@ fn find_tool(tool_names: &[&str]) -> Result<PathBuf, String> {
 }
 
 fn rust_sysroot_bin_dir() -> Option<PathBuf> {
-    let output = Command::new("rustc")
-        .arg("+nightly")
-        .arg("--print")
-        .arg("sysroot")
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let sysroot = String::from_utf8(output.stdout).ok()?;
-    let sysroot = PathBuf::from(sysroot.trim());
+    let sysroot = toolchain::rust_sysroot().ok()?;
     let host = env::var("HOST").ok().or_else(rustc_host_triple)?;
     Some(sysroot.join("lib").join("rustlib").join(host).join("bin"))
 }
 
 fn rustc_host_triple() -> Option<String> {
-    let output = Command::new("rustc")
-        .arg("+nightly")
-        .arg("-vV")
-        .output()
-        .ok()?;
+    let output = toolchain::rustc_command().arg("-vV").output().ok()?;
     if !output.status.success() {
         return None;
     }

@@ -13,6 +13,7 @@ mod build_plan;
 mod cargo_output;
 mod cli;
 mod publish;
+mod toolchain;
 
 use app_catalog::{
     example_required_features, example_specs, manifest_declared_features, manifest_has_dependency,
@@ -133,6 +134,7 @@ fn main() {
 }
 
 fn run() -> Result<(), String> {
+    toolchain::verify_rustc_identity()?;
     let args: Vec<_> = env::args_os().skip(1).collect();
     let (app_dir, requested_apps, cargo_profile, package_catalog) = parse_cli_args(&args)?;
     let app_dir = fs::canonicalize(&app_dir)
@@ -350,12 +352,11 @@ fn build_one_target_to(
     .unwrap_or_else(|| manifest_path.to_path_buf());
     enforce_source_overlay_lock(&cargo_manifest_path, &staged_source_overlay)?;
 
-    let mut cargo = Command::new("cargo");
+    let mut cargo = toolchain::cargo_command();
     if let Some(manifest_dir) = cargo_manifest_path.parent() {
         cargo.current_dir(manifest_dir);
     }
     cargo
-        .arg("+nightly")
         .arg("rustc")
         .arg("--message-format=json-render-diagnostics")
         .arg("-Z")
@@ -615,9 +616,8 @@ fn run_staged_lock_overlay_update(
             return Ok(());
         }
 
-        let mut update = Command::new("cargo");
+        let mut update = toolchain::cargo_command();
         update
-            .arg("+nightly")
             .arg("update")
             .arg("--manifest-path")
             .arg(staged_manifest)
@@ -689,9 +689,8 @@ fn enforce_source_overlay_lock(
         return Ok(());
     }
 
-    let mut resolve = Command::new("cargo");
+    let mut resolve = toolchain::cargo_command();
     resolve
-        .arg("+nightly")
         .arg("metadata")
         .arg("--format-version")
         .arg("1")
@@ -965,22 +964,8 @@ fn env_path(name: &str) -> Option<PathBuf> {
 }
 
 fn ensure_rust_std_trueos_thread_set_name() -> Result<(), String> {
-    let sysroot_output = Command::new("rustc")
-        .arg("+nightly")
-        .arg("--print")
-        .arg("sysroot")
-        .output()
-        .map_err(|err| format!("rustc +nightly --print sysroot failed to start: {err}"))?;
-    if !sysroot_output.status.success() {
-        return Err(format!(
-            "rustc +nightly --print sysroot failed with status {}",
-            sysroot_output.status
-        ));
-    }
-    let sysroot = String::from_utf8(sysroot_output.stdout)
-        .map_err(|err| format!("rustc sysroot output was not UTF-8: {err}"))?;
-    let unix_thread = PathBuf::from(sysroot.trim())
-        .join("lib/rustlib/src/rust/library/std/src/sys/thread/unix.rs");
+    let unix_thread =
+        toolchain::rust_sysroot()?.join("lib/rustlib/src/rust/library/std/src/sys/thread/unix.rs");
     let source = fs::read_to_string(&unix_thread).map_err(|err| {
         format!(
             "failed to read Rust std thread source {}; install rust-src or check permissions: {err}",
@@ -1044,22 +1029,8 @@ pub fn set_name(_name: &core::ffi::CStr) {}
     Ok(())
 }
 
-fn nightly_rust_src_path(relative: &str) -> Result<PathBuf, String> {
-    let sysroot_output = Command::new("rustc")
-        .arg("+nightly")
-        .arg("--print")
-        .arg("sysroot")
-        .output()
-        .map_err(|err| format!("rustc +nightly --print sysroot failed to start: {err}"))?;
-    if !sysroot_output.status.success() {
-        return Err(format!(
-            "rustc +nightly --print sysroot failed with status {}",
-            sysroot_output.status
-        ));
-    }
-    let sysroot = String::from_utf8(sysroot_output.stdout)
-        .map_err(|err| format!("rustc sysroot output was not UTF-8: {err}"))?;
-    Ok(PathBuf::from(sysroot.trim())
+fn pinned_rust_src_path(relative: &str) -> Result<PathBuf, String> {
+    Ok(toolchain::rust_sysroot()?
         .join("lib/rustlib/src/rust/library")
         .join(relative))
 }
@@ -1070,7 +1041,7 @@ fn ensure_rust_src_replacement(
     replacement: &str,
     label: &str,
 ) -> Result<(), String> {
-    let path = nightly_rust_src_path(relative)?;
+    let path = pinned_rust_src_path(relative)?;
     let source = fs::read_to_string(&path).map_err(|err| {
         format!(
             "failed to read Rust std source {}; install rust-src or check permissions: {err}",
@@ -1199,7 +1170,7 @@ fn ensure_rust_src_libc_lock_matches_overlay(
         ));
     };
 
-    let rust_src_lock = nightly_rust_src_path("Cargo.lock")?;
+    let rust_src_lock = pinned_rust_src_path("Cargo.lock")?;
     let locked = lock_packages(&rust_src_lock)?;
     let locked_version = locked
         .iter()
@@ -1221,10 +1192,9 @@ fn ensure_rust_src_libc_lock_matches_overlay(
         overlay_version
     );
 
-    let mut update = Command::new("cargo");
+    let mut update = toolchain::cargo_command();
     update
         .current_dir(rust_src_library)
-        .arg("+nightly")
         .arg("update")
         .arg("-p")
         .arg(match locked_version {
@@ -1264,7 +1234,7 @@ fn ensure_rust_src_libc_lock_matches_overlay(
 }
 
 fn ensure_rust_std_trueos_thread_cleanup() -> Result<(), String> {
-    let unix_thread = nightly_rust_src_path("std/src/sys/thread/unix.rs")?;
+    let unix_thread = pinned_rust_src_path("std/src/sys/thread/unix.rs")?;
     let source = fs::read_to_string(&unix_thread).map_err(|err| {
         format!(
             "failed to read Rust std thread source {}; install rust-src or check permissions: {err}",
@@ -1308,7 +1278,7 @@ fn ensure_rust_std_trueos_thread_cleanup() -> Result<(), String> {
 }
 
 fn ensure_rust_std_trueos_thread_current_rebind() -> Result<(), String> {
-    let current_rs = nightly_rust_src_path("std/src/thread/current.rs")?;
+    let current_rs = pinned_rust_src_path("std/src/thread/current.rs")?;
     let source = fs::read_to_string(&current_rs).map_err(|err| {
         format!(
             "failed to read Rust std current thread source {}; install rust-src or check permissions: {err}",
@@ -1394,7 +1364,7 @@ fn ensure_rust_std_trueos_thread_current_rebind() -> Result<(), String> {
 }
 
 fn ensure_rust_std_trueos_hash_random() -> Result<(), String> {
-    let random_rs = nightly_rust_src_path("std/src/hash/random.rs")?;
+    let random_rs = pinned_rust_src_path("std/src/hash/random.rs")?;
     let source = fs::read_to_string(&random_rs).map_err(|err| {
         format!(
             "failed to read Rust std hash random source {}; install rust-src or check permissions: {err}",
@@ -1460,7 +1430,7 @@ fn ensure_rust_std_trueos_hash_random() -> Result<(), String> {
 }
 
 fn ensure_rust_std_trueos_no_threads_tls() -> Result<(), String> {
-    let no_threads_rs = nightly_rust_src_path("std/src/sys/thread_local/no_threads.rs")?;
+    let no_threads_rs = pinned_rust_src_path("std/src/sys/thread_local/no_threads.rs")?;
     let mut source = fs::read_to_string(&no_threads_rs).map_err(|err| {
         format!(
             "failed to read Rust std no_threads TLS source {}; install rust-src or check permissions: {err}",
@@ -2408,7 +2378,7 @@ fn ensure_overlay_registry_sources(
     let fetch_manifest_path = fetch_dir.join("Cargo.toml");
     fs::write(&fetch_manifest_path, fetch_manifest).map_err(io_string)?;
     fs::write(fetch_dir.join("lib.rs"), "").map_err(io_string)?;
-    let mut fetch = Command::new("cargo");
+    let mut fetch = toolchain::cargo_command();
     fetch
         .arg("fetch")
         .arg("--manifest-path")
@@ -3548,14 +3518,13 @@ fn source_overlay_version_alignment(
 }
 
 fn cargo_metadata(app_dir: &Path, manifest_path: &Path) -> Result<CargoMetadata, String> {
-    let mut metadata = Command::new("cargo");
+    let mut metadata = toolchain::cargo_command();
     if let Some(manifest_dir) = manifest_path.parent() {
         metadata.current_dir(manifest_dir);
     } else {
         metadata.current_dir(app_dir);
     }
     metadata
-        .arg("+nightly")
         .arg("metadata")
         .arg("--format-version")
         .arg("1")
