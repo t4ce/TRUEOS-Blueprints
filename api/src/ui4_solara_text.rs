@@ -722,11 +722,13 @@ impl Frame {
         })
     }
 
-    /// Draw paint records without fitting their collective bounds to a stamp.
+    /// Retain paint records without fitting their collective bounds to a stamp.
     ///
-    /// Calls are composited into the current dirty back buffer, so consumers
-    /// may issue one call per color and split large scenes into chunks.
-    pub fn draw_text_scene(
+    /// The kernel builds analytical coverage on the asynchronous FontKernel
+    /// task and keeps it GPU-VM resident behind this frame. Later paint passes
+    /// reuse the same masks when only color or a common integral translation
+    /// changed. Consumers should split large scenes into bounded calls.
+    pub fn retain_text_scene(
         &mut self,
         font: Font,
         viewport: (u32, u32),
@@ -757,6 +759,18 @@ impl Frame {
                 raw.len(),
             )
         })
+    }
+
+    /// Compatibility name for the pre-retained Solara scene API.
+    #[deprecated(note = "use retain_text_scene; draw_text_scene names the FontKernelOld contract")]
+    pub fn draw_text_scene(
+        &mut self,
+        font: Font,
+        viewport: (u32, u32),
+        color_rgba: u32,
+        rows: &[SceneTextRow<'_>],
+    ) -> Result<(), Error> {
+        self.retain_text_scene(font, viewport, color_rgba, rows)
     }
 
     pub fn publish(&mut self, damage: Damage) -> Result<(), Error> {
