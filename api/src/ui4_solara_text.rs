@@ -160,6 +160,58 @@ pub struct SkyboxRenderParams {
     pub rect_height: u32,
 }
 
+pub const PARTICLE_CRAFT_WIDTH: u32 = 640;
+pub const PARTICLE_CRAFT_HEIGHT: u32 = 400;
+pub const PARTICLE_CRAFT_PARAMS_VERSION: u32 = 1;
+pub const PARTICLE_CRAFT_FLAG_RESET: u32 = 1 << 0;
+pub const PARTICLE_CRAFT_FLAG_ATTRACTOR: u32 = 1 << 1;
+pub const PARTICLE_CRAFT_FLAG_ORBIT: u32 = 1 << 2;
+pub const PARTICLE_CRAFT_MAX_PARTICLES: u32 = 256;
+
+/// Pointer-free ParticleCraft v1 controls. Persistent particle state and GPU
+/// addresses are retained by the kernel for this frame and never cross ABI.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct ParticleCraftParamsV1 {
+    pub flags: u32,
+    pub seed: u32,
+    pub active_count: u32,
+    pub dt_seconds: f32,
+    pub time_seconds: f32,
+    pub emitter_x: f32,
+    pub emitter_y: f32,
+    pub attractor_x: f32,
+    pub attractor_y: f32,
+    pub attraction: f32,
+    pub swirl: f32,
+    pub gravity_x: f32,
+    pub gravity_y: f32,
+    pub drag: f32,
+    pub intensity: f32,
+}
+
+impl ParticleCraftParamsV1 {
+    /// The Arc Forge preset used by both the Blueprint app and `cpp particle`.
+    pub const fn arc_forge(time_seconds: f32, dt_seconds: f32, seed: u32) -> Self {
+        Self {
+            flags: PARTICLE_CRAFT_FLAG_ORBIT,
+            seed,
+            active_count: 128,
+            dt_seconds,
+            time_seconds,
+            emitter_x: 320.0,
+            emitter_y: 300.0,
+            attractor_x: 320.0,
+            attractor_y: 180.0,
+            attraction: 94.0,
+            swirl: 72.0,
+            gravity_x: 0.0,
+            gravity_y: 58.0,
+            drag: 0.42,
+            intensity: 1.0,
+        }
+    }
+}
+
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
 pub struct SpriteCorner {
     pub x: f32,
@@ -517,6 +569,12 @@ impl Frame {
         })
     }
 
+    /// Acquire a back buffer for a full-frame GPU producer. No CPU clear is
+    /// performed; the producer must overwrite the complete frame.
+    pub fn begin_gpu_frame(&mut self) -> Result<(), Error> {
+        status(unsafe { v::bp_abi::trueos_cabi_ui4_scene_sprite_frame_begin(self.window_id, 0) })
+    }
+
     /// Render ordered retained sprites and solid rectangles into the active
     /// sprite-frame lease. Scenes larger than one hardware worklist are split
     /// by the kernel while preserving order.
@@ -599,6 +657,38 @@ impl Frame {
         };
         status(unsafe {
             v::bp_abi::trueos_cabi_ui4_scene_skybox_render_rgb565(self.window_id, &raw)
+        })
+    }
+
+    /// Advance the retained particle state and shade a complete 640x400 frame.
+    pub fn render_particle_craft(&mut self, params: &ParticleCraftParamsV1) -> Result<(), Error> {
+        if self.width != PARTICLE_CRAFT_WIDTH
+            || self.height != PARTICLE_CRAFT_HEIGHT
+            || params.active_count == 0
+            || params.active_count > PARTICLE_CRAFT_MAX_PARTICLES
+        {
+            return Err(Error::Invalid);
+        }
+        let raw = v::bp_abi::TrueosUi4ParticleCraftParamsV1 {
+            version: PARTICLE_CRAFT_PARAMS_VERSION,
+            flags: params.flags,
+            seed: params.seed,
+            active_count: params.active_count,
+            dt_seconds: params.dt_seconds,
+            time_seconds: params.time_seconds,
+            emitter_x: params.emitter_x,
+            emitter_y: params.emitter_y,
+            attractor_x: params.attractor_x,
+            attractor_y: params.attractor_y,
+            attraction: params.attraction,
+            swirl: params.swirl,
+            gravity_x: params.gravity_x,
+            gravity_y: params.gravity_y,
+            drag: params.drag,
+            intensity: params.intensity,
+        };
+        status(unsafe {
+            v::bp_abi::trueos_cabi_ui4_scene_particle_craft_render(self.window_id, &raw)
         })
     }
 
