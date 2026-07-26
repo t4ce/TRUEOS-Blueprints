@@ -22,8 +22,9 @@ use app_catalog::{
     package_name, push_app_or_trueos_feature,
 };
 use artifact::{
-    AssetBundleEntry, BLUEPRINT_CAP_REPLICATABLE, attach_trueos_asset_bundle, cargo_artifact_stem,
-    collect_rlibs_for_object, entry_hint_hex, entry_symbol_name, latest_cargo_object, tool_command,
+    AssetBundleEntry, BLUEPRINT_CAP_ARGV_ENTRY_V1, BLUEPRINT_CAP_REPLICATABLE,
+    attach_trueos_asset_bundle, cargo_artifact_stem, collect_rlibs_for_object, entry_hint_hex,
+    entry_symbol_name, latest_cargo_object, tool_command, verify_abort_panic_runtime,
     write_blueprint,
 };
 use build_plan::{BuildFlavor, BuildSettings, BuildTarget, resolve_build_settings};
@@ -288,7 +289,7 @@ fn build_one_target_to(
     output_dir: &Path,
     cargo_profile: CargoProfile,
 ) -> Result<PathBuf, String> {
-    let capability_flags = if matches!(build_target, BuildTarget::Package)
+    let mut capability_flags = if matches!(build_target, BuildTarget::Package)
         && package_blueprint_replicatable(manifest_path)?
     {
         BLUEPRINT_CAP_REPLICATABLE
@@ -300,6 +301,9 @@ fn build_one_target_to(
     } else {
         None
     };
+    if rustc_tier.is_some() {
+        capability_flags |= BLUEPRINT_CAP_ARGV_ENTRY_V1;
+    }
     let cargo_profile = if matches!(build_target, BuildTarget::Package) {
         package_blueprint_profile(manifest_path)?.unwrap_or(cargo_profile)
     } else {
@@ -500,14 +504,13 @@ fn build_one_target_to(
             latest_cargo_object(&target_dir.join("examples"), &cargo_artifact_stem(name))?
         }
     };
-    let rlibs = if cargo_artifacts.rlibs.is_empty() {
-        println!(
-            "trueos-blueprint: note: cargo artifact stream yielded no target rlibs; falling back to legacy .rlink scrape"
-        );
-        collect_rlibs_for_object(&app_obj, &deps_dir)?
-    } else {
-        cargo_artifacts.rlibs
-    };
+    // Cargo's JSON stream describes every artifact produced or reused during
+    // this invocation, including mutually exclusive build-std panic runtimes.
+    // The root crate's `.rlink` is rustc's selected native link closure.
+    let rlibs = collect_rlibs_for_object(&app_obj, &deps_dir)?;
+    if matches!(build_settings.flavor, BuildFlavor::TokioStd) {
+        verify_abort_panic_runtime(&rlibs)?;
+    }
 
     let linked = work_dir.join("module.o");
     let stripped = work_dir.join("module.stripped.o");
@@ -554,22 +557,22 @@ fn build_one_target_to(
     run_command(&mut objcopy, "objcopy")?;
 
     let packaged_elf = match rustc_tier {
-        Some(RustcTier::Med | RustcTier::MedPlus) => {
+        Some(tier) => {
             let asset_elf = work_dir.join("module.assets.o");
             let assets = rustc_sysroot_asset_entries(
-                rustc_tier.expect("matched compiler tier"),
+                tier,
                 &target_spec,
                 &target_name,
                 &cargo_artifacts.sysroot_metadata,
             )?;
             println!(
                 "trueos-blueprint: embedding native rustc sysroot tier={} files={}",
-                rustc_tier_label(rustc_tier.expect("matched compiler tier")),
+                rustc_tier_label(tier),
                 assets.len()
             );
             attach_trueos_asset_bundle(&stripped, &asset_elf, &assets)?
         }
-        Some(RustcTier::Min) | None => stripped.clone(),
+        None => stripped.clone(),
     };
 
     let out = output_dir.join(format!("{output_name}.bp"));
@@ -593,14 +596,17 @@ fn rustc_sysroot_asset_entries(
     target_name: &str,
     metadata: &[cargo_output::CargoSysrootMetadataArtifact],
 ) -> Result<Vec<AssetBundleEntry>, String> {
-    if metadata.is_empty() {
-        return Err(format!(
-            "native rustc {} build produced no authenticated build-std metadata; \
-             refusing to package an unusable target sysroot",
-            rustc_tier_label(tier)
-        ));
-    }
-
+    let metadata = match tier {
+        RustcTier::Min => &[][..],
+        RustcTier::Med | RustcTier::MedPlus if metadata.is_empty() => {
+            return Err(format!(
+                "native rustc {} build produced no authenticated build-std metadata; \
+                 refusing to package an unusable target sysroot",
+                rustc_tier_label(tier)
+            ));
+        }
+        RustcTier::Med | RustcTier::MedPlus => metadata,
+    };
     let target_file = target_spec
         .file_name()
         .and_then(|name| name.to_str())
@@ -631,10 +637,19 @@ fn rustc_sysroot_asset_entries(
         metadata.len()
     );
 
-    let mut entries = Vec::with_capacity(metadata.len() + 2);
+    let target_bytes = fs::read(target_spec).map_err(io_string)?;
+    let mut entries = Vec::with_capacity(metadata.len() + 3);
     entries.push(AssetBundleEntry::new(
         format!("rustc-sysroot/{target_file}"),
-        fs::read(target_spec).map_err(io_string)?,
+        target_bytes.clone(),
+    ));
+    // `--target rustc-sysroot/<triple>.json` supplies the requested target,
+    // while rustc independently resolves its compiled host tuple when it
+    // creates the session. Make the same authenticated specification
+    // available at rustc's standard sysroot host-target fallback.
+    entries.push(AssetBundleEntry::new(
+        format!("rustc-sysroot/lib/rustlib/{target_name}/target.json"),
+        target_bytes,
     ));
     for artifact in metadata {
         let file_name = artifact

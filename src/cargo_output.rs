@@ -6,9 +6,13 @@ use std::process::Command;
 
 use crate::io_string;
 
+/// Artifacts whose identity is authenticated by Cargo's current JSON stream.
+///
+/// Native linker inputs intentionally do not live here: Cargo reports every
+/// artifact it produced or reused, while the root crate's `.rlink` records the
+/// closure rustc actually selected.
 #[derive(Default)]
 pub(crate) struct CargoBuildArtifacts {
-    pub(crate) rlibs: Vec<PathBuf>,
     /// Metadata artifacts for the standard-library closure emitted by this
     /// Cargo invocation.
     ///
@@ -181,31 +185,26 @@ fn parse_cargo_rustc_stdout(stdout: &[u8], deps_dir: &Path) -> (CargoBuildArtifa
                             continue;
                         }
 
-                        match path.extension().and_then(|extension| extension.to_str()) {
-                            Some("rlib") => {
-                                if !artifacts.rlibs.iter().any(|existing| existing == &path) {
-                                    artifacts.rlibs.push(path);
-                                }
-                            }
-                            Some("rmeta") => {
-                                let Some(package_id) = message.package_id.as_ref() else {
-                                    continue;
-                                };
-                                let Some(target) = message.target.as_ref() else {
-                                    continue;
-                                };
-                                if !is_sysroot_closure_crate(&target.name) {
-                                    continue;
-                                }
-                                sysroot_candidates.push(CargoSysrootMetadataArtifact {
-                                    package_id: package_id.clone(),
-                                    crate_name: target.name.clone(),
-                                    source_path: PathBuf::from(&target.src_path),
-                                    path,
-                                });
-                            }
-                            _ => {}
+                        if path.extension().and_then(|extension| extension.to_str())
+                            != Some("rmeta")
+                        {
+                            continue;
                         }
+                        let Some(package_id) = message.package_id.as_ref() else {
+                            continue;
+                        };
+                        let Some(target) = message.target.as_ref() else {
+                            continue;
+                        };
+                        if !is_sysroot_closure_crate(&target.name) {
+                            continue;
+                        }
+                        sysroot_candidates.push(CargoSysrootMetadataArtifact {
+                            package_id: package_id.clone(),
+                            crate_name: target.name.clone(),
+                            source_path: PathBuf::from(&target.src_path),
+                            path,
+                        });
                     }
                 }
                 "compiler-message" => {
@@ -457,7 +456,53 @@ mod tests {
             artifacts.sysroot_metadata[0].source_path.as_path(),
             vendor_libc.as_path()
         );
-        assert_eq!(artifacts.rlibs, vec![object_rlib, std_rlib, libc_rlib]);
+    }
+
+    #[test]
+    fn shuffled_panic_runtime_artifacts_are_stable_metadata_only() {
+        let deps_dir = Path::new("/tmp/trueos-target/release/deps");
+        let panic_abort_rmeta = deps_dir.join("libpanic_abort-aaaaaaaaaaaaaaaa.rmeta");
+        let panic_abort_rlib = deps_dir.join("libpanic_abort-aaaaaaaaaaaaaaaa.rlib");
+        let panic_unwind_rmeta = deps_dir.join("libpanic_unwind-bbbbbbbbbbbbbbbb.rmeta");
+        let panic_unwind_rlib = deps_dir.join("libpanic_unwind-bbbbbbbbbbbbbbbb.rlib");
+        let panic_abort = cargo_artifact(
+            "path+file:///opt/rust/lib/rustlib/src/rust/library/panic_abort#0.0.0",
+            "panic_abort",
+            "/opt/rust/lib/rustlib/src/rust/library/panic_abort/src/lib.rs",
+            &[
+                panic_abort_rmeta.to_str().unwrap(),
+                panic_abort_rlib.to_str().unwrap(),
+            ],
+        );
+        let panic_unwind = cargo_artifact(
+            "path+file:///opt/rust/lib/rustlib/src/rust/library/panic_unwind#0.0.0",
+            "panic_unwind",
+            "/opt/rust/lib/rustlib/src/rust/library/panic_unwind/src/lib.rs",
+            &[
+                panic_unwind_rmeta.to_str().unwrap(),
+                panic_unwind_rlib.to_str().unwrap(),
+            ],
+        );
+
+        let (forward, _) = parse_cargo_rustc_stdout(
+            &cargo_stdout(&[panic_abort.clone(), panic_unwind.clone()]),
+            deps_dir,
+        );
+        let (reversed, _) =
+            parse_cargo_rustc_stdout(&cargo_stdout(&[panic_unwind, panic_abort]), deps_dir);
+
+        let metadata_paths = |artifacts: &CargoBuildArtifacts| {
+            artifacts
+                .sysroot_metadata
+                .iter()
+                .map(|artifact| artifact.path.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(metadata_paths(&forward), metadata_paths(&reversed));
+        assert_eq!(
+            metadata_paths(&forward),
+            vec![panic_abort_rmeta, panic_unwind_rmeta]
+        );
     }
 
     #[test]

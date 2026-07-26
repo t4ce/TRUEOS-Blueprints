@@ -10,6 +10,7 @@ use crate::toolchain;
 
 const BLUEPRINT_PAYLOAD_7Z: u16 = 2;
 pub(crate) const BLUEPRINT_CAP_REPLICATABLE: u16 = 1 << 8;
+pub(crate) const BLUEPRINT_CAP_ARGV_ENTRY_V1: u16 = 1 << 9;
 const TRUEOS_ASSET_BUNDLE_MAGIC: &[u8; 4] = b"TRAS";
 const TRUEOS_ASSET_BUNDLE_VERSION: u16 = 1;
 const TRUEOS_ASSET_BUNDLE_FLAGS: u16 = 0;
@@ -165,6 +166,63 @@ pub(crate) fn collect_rlibs_for_object(
     } else {
         Ok(out)
     }
+}
+
+pub(crate) fn verify_abort_panic_runtime(rlibs: &[PathBuf]) -> Result<(), String> {
+    let panic_abort = rlibs
+        .iter()
+        .filter(|path| is_rlib_for_crate(path, "panic_abort"))
+        .collect::<Vec<_>>();
+    let panic_unwind = rlibs
+        .iter()
+        .filter(|path| is_rlib_for_crate(path, "panic_unwind"))
+        .collect::<Vec<_>>();
+
+    if !panic_unwind.is_empty() {
+        return Err(format!(
+            "root .rlink selected panic_unwind for a panic=abort Blueprint: {}; \
+             refusing to link mutually exclusive panic runtimes",
+            panic_unwind
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    if panic_abort.len() != 1 {
+        return Err(format!(
+            "root .rlink must select exactly one panic_abort archive for a panic=abort \
+             Blueprint; found {}{}",
+            panic_abort.len(),
+            if panic_abort.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    ": {}",
+                    panic_abort
+                        .iter()
+                        .map(|path| path.display().to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            }
+        ));
+    }
+    Ok(())
+}
+
+fn is_rlib_for_crate(path: &Path, crate_name: &str) -> bool {
+    let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    let untagged = format!("lib{crate_name}.rlib");
+    if file_name == untagged {
+        return true;
+    }
+    file_name
+        .strip_prefix(&format!("lib{crate_name}-"))
+        .and_then(|suffix| suffix.strip_suffix(".rlib"))
+        .is_some_and(|tag| !tag.is_empty())
 }
 
 fn rlib_path_from_token(token: &str, deps_dir: &Path) -> Option<PathBuf> {
@@ -720,8 +778,72 @@ mod tests {
     use super::*;
 
     #[test]
+    fn root_rlink_controls_link_closure_and_preserves_generic_unwind() {
+        let temp = test_directory("root-rlink");
+        let deps = temp.join("deps");
+        fs::create_dir_all(&deps).unwrap();
+        let app_obj = deps.join("rustc_min-1111111111111111.o");
+        let app_rlink = deps.join("rustc_min-1111111111111111.rlink");
+        let dependency = deps.join("libdependency-2222222222222222.rlib");
+        let unwind = deps.join("libunwind-3333333333333333.rlib");
+        let panic_abort = deps.join("libpanic_abort-4444444444444444.rlib");
+        let cached_panic_unwind = deps.join("libpanic_unwind-5555555555555555.rlib");
+        for path in [
+            &app_obj,
+            &dependency,
+            &unwind,
+            &panic_abort,
+            &cached_panic_unwind,
+        ] {
+            fs::write(path, []).unwrap();
+        }
+        fs::write(
+            &app_rlink,
+            format!(
+                "rlink\0{}\0{}\0{}\0",
+                dependency.display(),
+                unwind.display(),
+                panic_abort.display()
+            ),
+        )
+        .unwrap();
+
+        let rlibs = collect_rlibs_for_object(&app_obj, &deps).unwrap();
+
+        assert_eq!(rlibs, vec![dependency, unwind, panic_abort]);
+        assert!(!rlibs.contains(&cached_panic_unwind));
+        verify_abort_panic_runtime(&rlibs).unwrap();
+        fs::remove_dir_all(temp).unwrap();
+    }
+
+    #[test]
+    fn abort_runtime_validation_rejects_unwind_runtime_and_requires_abort_runtime() {
+        let panic_abort = PathBuf::from("/tmp/libpanic_abort-1111111111111111.rlib");
+        let panic_unwind = PathBuf::from("/tmp/libpanic_unwind-2222222222222222.rlib");
+        let unwind = PathBuf::from("/tmp/libunwind-3333333333333333.rlib");
+
+        verify_abort_panic_runtime(&[unwind.clone(), panic_abort.clone()]).unwrap();
+
+        let error =
+            verify_abort_panic_runtime(&[panic_abort, panic_unwind, unwind.clone()]).unwrap_err();
+        assert!(error.contains("selected panic_unwind"), "{error}");
+
+        let error = verify_abort_panic_runtime(&[unwind]).unwrap_err();
+        assert!(error.contains("exactly one panic_abort"), "{error}");
+    }
+
+    #[test]
     fn replicatable_capability_keeps_the_payload_encoding() {
         assert_eq!(blueprint_header_flags(BLUEPRINT_CAP_REPLICATABLE), 0x0102);
+    }
+
+    #[test]
+    fn argv_entry_capability_keeps_the_payload_encoding() {
+        assert_eq!(blueprint_header_flags(BLUEPRINT_CAP_ARGV_ENTRY_V1), 0x0202);
+        assert_eq!(
+            blueprint_header_flags(BLUEPRINT_CAP_REPLICATABLE | BLUEPRINT_CAP_ARGV_ENTRY_V1),
+            0x0302
+        );
     }
 
     #[test]

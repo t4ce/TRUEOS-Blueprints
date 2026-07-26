@@ -36,19 +36,34 @@ The three packages live in the exact toolchain checkout and pin Tokio
 
 | package | compiler test | packaged support | rustc workers |
 | --- | --- | --- | ---: |
-| `rustc-min` | `no_core` frontend smoke | compiler driver only | 1 |
+| `rustc-min` | `no_core` frontend smoke | target JSON only | 1 |
 | `rustc-med` | ordinary `std` Hello typecheck with `-Zno-codegen` | target JSON and target `rmeta` sysroot | 2 |
 | `rustc-med-plus` | ordinary `std` Hello object emission | med assets plus statically selected Cranelift | 4 |
 
 All three use a current-thread Tokio runtime and place the compiler invocation
 on a blocking lane. The worker count is passed to rustc at the natural query
 engine choke through `-Zthreads`; it is not a general process or IPC model.
+The Tokio blocking carrier is an additional parked supervisor and is not
+included in the advertised rustc worker count.
 
-For med and med+, the builder collects only the current build-std invocation's
-authenticated metadata closure. It writes that closure, the target JSON, and an
-exact-toolchain manifest into deterministic `.trueos.assets` data. The kernel
+All three tiers carry the target JSON both at the explicit `--target` path and
+at rustc's host-target sysroot fallback. Min's authenticated asset bundle stops
+there. For med and med+, the builder additionally collects only the current
+build-std invocation's authenticated metadata closure. It writes the assets and
+an exact-toolchain manifest into deterministic `.trueos.assets` data. The kernel
 validates the bundle, hashes every entry, rejects unsafe paths, and materializes
 it under the Blueprint's filesystem root before calling `_start`.
+
+Native compiler packages set the `argv-entry-v1` Blueprint capability. The
+kernel calls only those entries as `_start(argc, argv) -> i32`; unflagged
+packages retain the legacy no-argument entry ABI. Each compiler wrapper copies
+the loader-owned argument strings before it leaves the Hull carrier, and a
+nonzero normal return is reported after image cleanup.
+
+The packer treats the root crate's `.rlink` as the authoritative native link
+closure. Tokio/std packages must select exactly one `panic_abort` archive and
+must not select `panic_unwind`; generic `libunwind` support remains available
+for backtraces.
 
 Pack from this repository:
 
@@ -80,6 +95,9 @@ conventional hosted OS:
 - Final executable linking, Cargo's subprocess-oriented orchestration, a
   general process model, and arbitrary third-party `std` filesystem semantics
   remain outside this first native compiler contract.
+- The successful default compiler path returns through `argv-entry-v1`.
+  Compiler-fatal diagnostics still use the current `panic=abort` boundary and
+  do not yet unwind back into that status path.
 
 ## Exact archived toolchain
 
