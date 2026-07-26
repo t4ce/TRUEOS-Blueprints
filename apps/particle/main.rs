@@ -15,7 +15,7 @@ const SEED: u32 = 0xC0FF_EE51;
 fn main() {
     logl::log(
         logl::level::INFO,
-        "particle: opening ParticleCraft Arc Forge (C++/IGC, stateful two-pass)",
+        "particle: opening ParticleCraft Arc Forge (C++/IGC, stateful three-pass)",
     );
     let Ok(mut frame) = Frame::open_streaming(
         FRAME_X,
