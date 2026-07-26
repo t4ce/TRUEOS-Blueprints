@@ -326,6 +326,61 @@ pub(crate) fn package_blueprint_rustc_tier(
     Ok(None)
 }
 
+pub(crate) fn package_blueprint_rustc_payload_dependencies(
+    manifest_path: &Path,
+) -> Result<Vec<String>, String> {
+    let cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
+    let mut in_metadata = false;
+    for line in cargo_toml.lines() {
+        let trimmed = line.split('#').next().unwrap_or("").trim();
+        if trimmed.starts_with('[') {
+            in_metadata = trimmed == "[package.metadata.trueos-blueprint]";
+            continue;
+        }
+        if !in_metadata {
+            continue;
+        }
+        let Some((key, value)) = trimmed.split_once('=') else {
+            continue;
+        };
+        if key.trim() != "rustc-payload-dependencies" {
+            continue;
+        }
+        let value = value.trim();
+        if !value.starts_with('[') || !value.ends_with(']') {
+            return Err(format!(
+                "bad trueos-blueprint rustc-payload-dependencies in {}; \
+                 expected an array of direct Cargo dependency names",
+                manifest_path.display()
+            ));
+        }
+        let mut dependencies = parse_string_array(value);
+        if dependencies.iter().any(|dependency| {
+            dependency.is_empty()
+                || !dependency
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+        }) {
+            return Err(format!(
+                "bad dependency name in trueos-blueprint \
+                 rustc-payload-dependencies in {}",
+                manifest_path.display()
+            ));
+        }
+        dependencies.sort();
+        let original_len = dependencies.len();
+        dependencies.dedup();
+        if dependencies.len() != original_len {
+            return Err(format!(
+                "duplicate trueos-blueprint rustc-payload-dependencies entry in {}",
+                manifest_path.display()
+            ));
+        }
+        return Ok(dependencies);
+    }
+    Ok(Vec::new())
+}
+
 pub(crate) fn package_blueprint_replicatable(manifest_path: &Path) -> Result<bool, String> {
     let cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
     let mut in_metadata = false;
@@ -498,6 +553,34 @@ replicatable = true
         let error = package_blueprint_rustc_tier(&path).unwrap_err();
         assert!(error.contains("expected min, med, or med-plus"));
         fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn reads_sorted_rustc_payload_dependency_roots() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = env::temp_dir().join(format!("trueos-blueprint-rustc-payload-{nonce}.toml"));
+        fs::write(
+            &path,
+            r#"
+[package]
+name = "probe"
+version = "0.1.0"
+
+[package.metadata.trueos-blueprint]
+rustc-payload-dependencies = ["trueos", "itoa"]
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            package_blueprint_rustc_payload_dependencies(&path).unwrap(),
+            vec!["itoa", "trueos"]
+        );
+
+        let _ = fs::remove_file(path);
     }
 
     #[test]

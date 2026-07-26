@@ -18,8 +18,9 @@ mod toolchain;
 use app_catalog::{
     RustcTier, example_required_features, example_specs, manifest_declared_features,
     manifest_has_dependency, package_app_spec, package_app_specs, package_bin_name,
-    package_blueprint_profile, package_blueprint_replicatable, package_blueprint_rustc_tier,
-    package_name, push_app_or_trueos_feature,
+    package_blueprint_profile, package_blueprint_replicatable,
+    package_blueprint_rustc_payload_dependencies, package_blueprint_rustc_tier, package_name,
+    push_app_or_trueos_feature,
 };
 use artifact::{
     AssetBundleEntry, BLUEPRINT_CAP_ARGV_ENTRY_V1, BLUEPRINT_CAP_REPLICATABLE,
@@ -497,6 +498,23 @@ fn build_one_target_to(
     if !deps_dir.is_dir() {
         return Err(format!("missing deps dir: {}", deps_dir.display()));
     }
+    let rustc_payload = if rustc_tier.is_some() {
+        let requested = package_blueprint_rustc_payload_dependencies(&cargo_manifest_path)?;
+        if requested.is_empty() {
+            RustcPayloadSelection::default()
+        } else {
+            let metadata = cargo_metadata_for_rustc_payload(
+                &cargo_manifest_path,
+                &target_spec,
+                &staged_source_overlay,
+                no_default_features,
+                &extra_features,
+            )?;
+            select_rustc_payload(&metadata, &requested, &cargo_artifacts.target_metadata)?
+        }
+    } else {
+        RustcPayloadSelection::default()
+    };
 
     let app_obj = match &build_target {
         BuildTarget::Package => latest_cargo_object(&deps_dir, &cargo_artifact_stem(&output_name))?,
@@ -564,6 +582,7 @@ fn build_one_target_to(
                 &target_spec,
                 &target_name,
                 &cargo_artifacts.sysroot_metadata,
+                &rustc_payload,
             )?;
             println!(
                 "trueos-blueprint: embedding native rustc sysroot tier={} files={}",
@@ -594,10 +613,40 @@ fn rustc_sysroot_asset_entries(
     tier: RustcTier,
     target_spec: &Path,
     target_name: &str,
-    metadata: &[cargo_output::CargoSysrootMetadataArtifact],
+    metadata: &[cargo_output::CargoTargetMetadataArtifact],
+    payload: &RustcPayloadSelection,
 ) -> Result<Vec<AssetBundleEntry>, String> {
-    let metadata = match tier {
-        RustcTier::Min => &[][..],
+    let selected_metadata = match tier {
+        // A compiler payload is built in the same Cargo target graph as the
+        // rustc Blueprint. Cargo feature unification can therefore make an
+        // otherwise no_std payload artifact depend on target `std` metadata
+        // (for example through serde_core). Cargo metadata does not expose
+        // the injected -Zbuild-std nodes, so retain the authenticated
+        // current-invocation sysroot closure whenever a min Blueprint carries
+        // compiler payloads.
+        RustcTier::Min if !payload.artifacts.is_empty() => metadata.iter().collect(),
+        RustcTier::Min => {
+            let mut selected = Vec::with_capacity(3);
+            for crate_name in ["core", "compiler_builtins", "alloc"] {
+                let mut matches = metadata
+                    .iter()
+                    .filter(|artifact| artifact.crate_name == crate_name);
+                let Some(artifact) = matches.next() else {
+                    return Err(format!(
+                        "native rustc min build produced no authenticated build-std \
+                         {crate_name} metadata; refusing to package an unusable core sysroot"
+                    ));
+                };
+                if matches.next().is_some() {
+                    return Err(format!(
+                        "native rustc min build produced ambiguous authenticated build-std \
+                         {crate_name} metadata; refusing to guess"
+                    ));
+                }
+                selected.push(artifact);
+            }
+            selected
+        }
         RustcTier::Med | RustcTier::MedPlus if metadata.is_empty() => {
             return Err(format!(
                 "native rustc {} build produced no authenticated build-std metadata; \
@@ -605,7 +654,7 @@ fn rustc_sysroot_asset_entries(
                 rustc_tier_label(tier)
             ));
         }
-        RustcTier::Med | RustcTier::MedPlus => metadata,
+        RustcTier::Med | RustcTier::MedPlus => metadata.iter().collect(),
     };
     let target_file = target_spec
         .file_name()
@@ -626,7 +675,9 @@ fn rustc_sysroot_asset_entries(
          commit-date={}\n\
          build-host={}\n\
          target={}\n\
-         metadata-count={}\n",
+         metadata-count={}\n\
+         payload-metadata-count={}\n\
+         payload-extern-count={}\n",
         rustc_tier_label(tier),
         toolchain::RUST_TOOLCHAIN,
         identity.version,
@@ -634,11 +685,13 @@ fn rustc_sysroot_asset_entries(
         identity.commit_date,
         identity.host,
         target_name,
-        metadata.len()
+        selected_metadata.len(),
+        payload.artifacts.len(),
+        payload.direct_externs.len()
     );
 
     let target_bytes = fs::read(target_spec).map_err(io_string)?;
-    let mut entries = Vec::with_capacity(metadata.len() + 3);
+    let mut entries = Vec::with_capacity(selected_metadata.len() + payload.artifacts.len() + 3);
     entries.push(AssetBundleEntry::new(
         format!("rustc-sysroot/{target_file}"),
         target_bytes.clone(),
@@ -651,7 +704,7 @@ fn rustc_sysroot_asset_entries(
         format!("rustc-sysroot/lib/rustlib/{target_name}/target.json"),
         target_bytes,
     ));
-    for artifact in metadata {
+    for artifact in selected_metadata {
         let file_name = artifact
             .path
             .file_name()
@@ -677,6 +730,50 @@ fn rustc_sysroot_asset_entries(
         entries.push(AssetBundleEntry::new(
             format!("rustc-sysroot/lib/rustlib/{target_name}/lib/{file_name}"),
             fs::read(&artifact.path).map_err(io_string)?,
+        ));
+    }
+    for artifact in &payload.artifacts {
+        let file_name = artifact
+            .path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| {
+                format!(
+                    "bad rustc payload metadata path: {}",
+                    artifact.path.display()
+                )
+            })?;
+        if artifact
+            .path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            != Some("rmeta")
+        {
+            return Err(format!(
+                "rustc payload artifact is not metadata: {}",
+                artifact.path.display()
+            ));
+        }
+        manifest.push_str(&format!("payload={} {}\n", artifact.crate_name, file_name));
+        entries.push(AssetBundleEntry::new(
+            format!("rustc-payload/lib/{file_name}"),
+            fs::read(&artifact.path).map_err(io_string)?,
+        ));
+    }
+    for direct in &payload.direct_externs {
+        let file_name = direct
+            .path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| {
+                format!(
+                    "bad direct rustc payload metadata path: {}",
+                    direct.path.display()
+                )
+            })?;
+        manifest.push_str(&format!(
+            "extern={} {} {}\n",
+            direct.alias, direct.crate_name, file_name
         ));
     }
     entries.push(AssetBundleEntry::new(
@@ -3462,6 +3559,7 @@ struct MetadataDependency {
 
 #[derive(Deserialize)]
 struct MetadataResolve {
+    root: Option<String>,
     nodes: Vec<MetadataNode>,
 }
 
@@ -3475,6 +3573,26 @@ struct MetadataNode {
 struct MetadataNodeDep {
     name: String,
     pkg: String,
+    #[serde(default)]
+    dep_kinds: Vec<MetadataDepKind>,
+}
+
+#[derive(Deserialize)]
+struct MetadataDepKind {
+    kind: Option<String>,
+}
+
+#[derive(Debug, Default)]
+struct RustcPayloadSelection {
+    direct_externs: Vec<RustcPayloadDirectExtern>,
+    artifacts: Vec<cargo_output::CargoTargetMetadataArtifact>,
+}
+
+#[derive(Debug)]
+struct RustcPayloadDirectExtern {
+    alias: String,
+    crate_name: String,
+    path: PathBuf,
 }
 
 struct VersionAlignmentTarget {
@@ -3707,6 +3825,178 @@ fn cargo_metadata(app_dir: &Path, manifest_path: &Path) -> Result<CargoMetadata,
         .map_err(|err| format!("failed to parse cargo metadata JSON: {err}"))
 }
 
+fn cargo_metadata_for_rustc_payload(
+    manifest_path: &Path,
+    target_spec: &Path,
+    source_overlay: &[CratePatch],
+    no_default_features: bool,
+    features: &[String],
+) -> Result<CargoMetadata, String> {
+    let mut metadata = toolchain::cargo_command();
+    if let Some(manifest_dir) = manifest_path.parent() {
+        metadata.current_dir(manifest_dir);
+    }
+    metadata
+        .arg("metadata")
+        .arg("--format-version")
+        .arg("1")
+        .arg("--locked")
+        .arg("-Z")
+        .arg("json-target-spec")
+        .arg("--filter-platform")
+        .arg(target_spec)
+        .arg("--manifest-path")
+        .arg(manifest_path);
+    push_source_overlay_configs(&mut metadata, source_overlay);
+    if no_default_features {
+        metadata.arg("--no-default-features");
+    }
+    if !features.is_empty() {
+        metadata.arg("--features").arg(features.join(","));
+    }
+    metadata.env("RUSTC_BOOTSTRAP_SYNTHETIC_TARGET", "1");
+
+    let output = metadata
+        .output()
+        .map_err(|err| format!("rustc payload cargo metadata failed to start: {err}"))?;
+    let notes = write_filtered_cargo_output("rustc payload cargo metadata", &[], &output.stderr)?;
+    print_cargo_output_notes("rustc payload cargo metadata", &notes);
+    if !output.status.success() {
+        return Err(format!(
+            "rustc payload cargo metadata failed with status {}",
+            output.status
+        ));
+    }
+    serde_json::from_slice(&output.stdout)
+        .map_err(|err| format!("failed to parse rustc payload cargo metadata JSON: {err}"))
+}
+
+fn metadata_dependency_is_normal(dependency: &MetadataNodeDep) -> bool {
+    dependency.dep_kinds.is_empty() || dependency.dep_kinds.iter().any(|kind| kind.kind.is_none())
+}
+
+fn cargo_extern_name(name: &str) -> String {
+    name.replace('-', "_")
+}
+
+fn select_rustc_payload(
+    metadata: &CargoMetadata,
+    requested_roots: &[String],
+    target_artifacts: &[cargo_output::CargoTargetMetadataArtifact],
+) -> Result<RustcPayloadSelection, String> {
+    if requested_roots.is_empty() {
+        return Ok(RustcPayloadSelection::default());
+    }
+
+    let resolve = metadata
+        .resolve
+        .as_ref()
+        .ok_or_else(|| "cargo metadata returned no resolve graph for rustc payload".to_owned())?;
+    let root_id = resolve
+        .root
+        .as_deref()
+        .ok_or_else(|| "cargo metadata returned no root package for rustc payload".to_owned())?;
+    let nodes = resolve
+        .nodes
+        .iter()
+        .map(|node| (node.id.as_str(), node))
+        .collect::<HashMap<_, _>>();
+    let root = nodes
+        .get(root_id)
+        .copied()
+        .ok_or_else(|| format!("cargo metadata omitted root node {root_id}"))?;
+
+    let mut direct_packages = Vec::with_capacity(requested_roots.len());
+    for requested in requested_roots {
+        let alias = cargo_extern_name(requested);
+        let mut matches = root.deps.iter().filter(|dependency| {
+            metadata_dependency_is_normal(dependency)
+                && cargo_extern_name(&dependency.name) == alias
+        });
+        let Some(dependency) = matches.next() else {
+            return Err(format!(
+                "rustc payload dependency `{requested}` is not an active normal dependency \
+                 of Cargo root {root_id}"
+            ));
+        };
+        if matches.any(|candidate| candidate.pkg != dependency.pkg) {
+            return Err(format!(
+                "rustc payload dependency alias `{requested}` resolves ambiguously from \
+                 Cargo root {root_id}"
+            ));
+        }
+        direct_packages.push((alias, dependency.pkg.as_str()));
+    }
+
+    let mut reachable = BTreeSet::new();
+    let mut pending = direct_packages
+        .iter()
+        .map(|(_, package_id)| *package_id)
+        .collect::<Vec<_>>();
+    while let Some(package_id) = pending.pop() {
+        if !reachable.insert(package_id) {
+            continue;
+        }
+        let Some(node) = nodes.get(package_id).copied() else {
+            continue;
+        };
+        pending.extend(
+            node.deps
+                .iter()
+                .filter(|dependency| metadata_dependency_is_normal(dependency))
+                .map(|dependency| dependency.pkg.as_str()),
+        );
+    }
+
+    let artifacts = target_artifacts
+        .iter()
+        .filter(|artifact| reachable.contains(artifact.package_id.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut direct_externs = Vec::with_capacity(direct_packages.len());
+    for (alias, package_id) in direct_packages {
+        let mut matches = artifacts
+            .iter()
+            .filter(|artifact| artifact.package_id == package_id);
+        let Some(artifact) = matches.next() else {
+            return Err(format!(
+                "rustc payload dependency `{alias}` ({package_id}) produced no target rmeta; \
+                 direct proc-macro and host-only dependencies are unsupported"
+            ));
+        };
+        if matches.next().is_some() {
+            return Err(format!(
+                "rustc payload dependency `{alias}` ({package_id}) produced multiple target \
+                 rmeta artifacts; refusing to guess its library target"
+            ));
+        }
+        direct_externs.push(RustcPayloadDirectExtern {
+            alias,
+            crate_name: artifact.crate_name.clone(),
+            path: artifact.path.clone(),
+        });
+    }
+
+    for direct in &direct_externs {
+        if direct.alias != direct.crate_name
+            && artifacts
+                .iter()
+                .any(|artifact| artifact.crate_name == direct.alias && artifact.path != direct.path)
+        {
+            return Err(format!(
+                "rustc payload alias `{}` collides with a different closure crate name; \
+                 exact extern lookup would be ambiguous",
+                direct.alias
+            ));
+        }
+    }
+
+    Ok(RustcPayloadSelection {
+        direct_externs,
+        artifacts,
+    })
+}
+
 fn dependency_display_name(dependency: &MetadataDependency) -> &str {
     dependency.rename.as_deref().unwrap_or(&dependency.name)
 }
@@ -3718,6 +4008,123 @@ fn declared_dependency_for_resolved_edge<'a>(
     dependencies
         .iter()
         .find(|dependency| dependency_display_name(dependency).replace('-', "_") == resolved_name)
+}
+
+#[cfg(test)]
+mod rustc_payload_tests {
+    use super::*;
+
+    fn dependency(name: &str, package_id: &str, kind: Option<&str>) -> MetadataNodeDep {
+        MetadataNodeDep {
+            name: name.to_owned(),
+            pkg: package_id.to_owned(),
+            dep_kinds: vec![MetadataDepKind {
+                kind: kind.map(str::to_owned),
+            }],
+        }
+    }
+
+    fn artifact(
+        package_id: &str,
+        crate_name: &str,
+        file_name: &str,
+    ) -> cargo_output::CargoTargetMetadataArtifact {
+        cargo_output::CargoTargetMetadataArtifact {
+            package_id: package_id.to_owned(),
+            crate_name: crate_name.to_owned(),
+            source_path: PathBuf::from(format!("/source/{crate_name}/lib.rs")),
+            path: PathBuf::from(format!("/target/deps/{file_name}")),
+        }
+    }
+
+    #[test]
+    fn payload_selection_walks_normal_target_closure_by_package_id() {
+        let metadata = CargoMetadata {
+            packages: Vec::new(),
+            resolve: Some(MetadataResolve {
+                root: Some("root".to_owned()),
+                nodes: vec![
+                    MetadataNode {
+                        id: "root".to_owned(),
+                        deps: vec![
+                            dependency("payload-alias", "payload", None),
+                            dependency("host-tool", "host", Some("build")),
+                        ],
+                    },
+                    MetadataNode {
+                        id: "payload".to_owned(),
+                        deps: vec![
+                            dependency("same_v1", "same-1", None),
+                            dependency("same_v2", "same-2", None),
+                            dependency("build-helper", "build-helper", Some("build")),
+                        ],
+                    },
+                    MetadataNode {
+                        id: "same-1".to_owned(),
+                        deps: Vec::new(),
+                    },
+                    MetadataNode {
+                        id: "same-2".to_owned(),
+                        deps: Vec::new(),
+                    },
+                ],
+            }),
+        };
+        let artifacts = vec![
+            artifact("build-helper", "build_helper", "libbuild_helper-a.rmeta"),
+            artifact("host", "host_tool", "libhost_tool-a.rmeta"),
+            artifact("payload", "payload_lib", "libpayload_lib-a.rmeta"),
+            artifact("same-1", "same", "libsame-1111111111111111.rmeta"),
+            artifact("same-2", "same", "libsame-2222222222222222.rmeta"),
+        ];
+
+        let selected =
+            select_rustc_payload(&metadata, &["payload-alias".to_owned()], &artifacts).unwrap();
+
+        assert_eq!(selected.direct_externs.len(), 1);
+        assert_eq!(selected.direct_externs[0].alias, "payload_alias");
+        assert_eq!(selected.direct_externs[0].crate_name, "payload_lib");
+        assert_eq!(
+            selected
+                .artifacts
+                .iter()
+                .map(|artifact| artifact.package_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["payload", "same-1", "same-2"]
+        );
+    }
+
+    #[test]
+    fn payload_selection_rejects_alias_actual_name_collision() {
+        let metadata = CargoMetadata {
+            packages: Vec::new(),
+            resolve: Some(MetadataResolve {
+                root: Some("root".to_owned()),
+                nodes: vec![
+                    MetadataNode {
+                        id: "root".to_owned(),
+                        deps: vec![dependency("same", "payload", None)],
+                    },
+                    MetadataNode {
+                        id: "payload".to_owned(),
+                        deps: vec![dependency("transitive", "transitive", None)],
+                    },
+                    MetadataNode {
+                        id: "transitive".to_owned(),
+                        deps: Vec::new(),
+                    },
+                ],
+            }),
+        };
+        let artifacts = vec![
+            artifact("payload", "payload_lib", "libpayload_lib-a.rmeta"),
+            artifact("transitive", "same", "libsame-a.rmeta"),
+        ];
+
+        let error = select_rustc_payload(&metadata, &["same".to_owned()], &artifacts).unwrap_err();
+
+        assert!(error.contains("collides"));
+    }
 }
 
 #[cfg(test)]

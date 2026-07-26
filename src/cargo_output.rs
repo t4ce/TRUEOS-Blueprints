@@ -19,11 +19,18 @@ pub(crate) struct CargoBuildArtifacts {
     /// This is intentionally populated from Cargo's JSON stream rather than
     /// by inspecting `deps_dir`: that directory is a persistent cache and can
     /// contain incompatible artifacts from earlier builds.
-    pub(crate) sysroot_metadata: Vec<CargoSysrootMetadataArtifact>,
+    pub(crate) sysroot_metadata: Vec<CargoTargetMetadataArtifact>,
+    /// Every target metadata artifact emitted or reused by this Cargo
+    /// invocation in the exact target dependency directory.
+    ///
+    /// Rustc Blueprint payload closures are selected from this authenticated
+    /// inventory by Cargo package ID. Nothing is discovered by scraping the
+    /// persistent target cache.
+    pub(crate) target_metadata: Vec<CargoTargetMetadataArtifact>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct CargoSysrootMetadataArtifact {
+pub(crate) struct CargoTargetMetadataArtifact {
     pub(crate) package_id: String,
     pub(crate) crate_name: String,
     pub(crate) source_path: PathBuf,
@@ -152,6 +159,7 @@ pub(crate) fn run_cargo_rustc_command(
 fn parse_cargo_rustc_stdout(stdout: &[u8], deps_dir: &Path) -> (CargoBuildArtifacts, String) {
     let mut artifacts = CargoBuildArtifacts::default();
     let mut sysroot_candidates = Vec::new();
+    let mut target_metadata_candidates = Vec::new();
     let mut saw_build_std_anchor = false;
     let mut rendered_stdout = String::new();
 
@@ -196,15 +204,16 @@ fn parse_cargo_rustc_stdout(stdout: &[u8], deps_dir: &Path) -> (CargoBuildArtifa
                         let Some(target) = message.target.as_ref() else {
                             continue;
                         };
-                        if !is_sysroot_closure_crate(&target.name) {
-                            continue;
-                        }
-                        sysroot_candidates.push(CargoSysrootMetadataArtifact {
+                        let artifact = CargoTargetMetadataArtifact {
                             package_id: package_id.clone(),
                             crate_name: target.name.clone(),
                             source_path: PathBuf::from(&target.src_path),
                             path,
-                        });
+                        };
+                        if is_sysroot_closure_crate(&artifact.crate_name) {
+                            sysroot_candidates.push(artifact.clone());
+                        }
+                        target_metadata_candidates.push(artifact);
                     }
                 }
                 "compiler-message" => {
@@ -235,6 +244,15 @@ fn parse_cargo_rustc_stdout(stdout: &[u8], deps_dir: &Path) -> (CargoBuildArtifa
         sysroot_candidates.retain(|artifact| seen_paths.insert(artifact.path.clone()));
         artifacts.sysroot_metadata = sysroot_candidates;
     }
+    target_metadata_candidates.sort_by(|left, right| {
+        left.crate_name
+            .cmp(&right.crate_name)
+            .then_with(|| left.package_id.cmp(&right.package_id))
+            .then_with(|| left.path.cmp(&right.path))
+    });
+    let mut seen_paths = HashSet::new();
+    target_metadata_candidates.retain(|artifact| seen_paths.insert(artifact.path.clone()));
+    artifacts.target_metadata = target_metadata_candidates;
 
     (artifacts, rendered_stdout)
 }
@@ -456,6 +474,19 @@ mod tests {
             artifacts.sysroot_metadata[0].source_path.as_path(),
             vendor_libc.as_path()
         );
+        assert_eq!(
+            artifacts
+                .target_metadata
+                .iter()
+                .map(|artifact| artifact.path.as_path())
+                .collect::<Vec<_>>(),
+            vec![
+                app_rmeta.as_path(),
+                libc_rmeta.as_path(),
+                object_rmeta.as_path(),
+                std_rmeta.as_path(),
+            ]
+        );
     }
 
     #[test]
@@ -528,6 +559,14 @@ mod tests {
         let (artifacts, _) = parse_cargo_rustc_stdout(&stdout, deps_dir);
 
         assert!(artifacts.sysroot_metadata.is_empty());
+        assert_eq!(
+            artifacts
+                .target_metadata
+                .iter()
+                .map(|artifact| artifact.path.as_path())
+                .collect::<Vec<_>>(),
+            vec![object.as_path(), false_std.as_path()]
+        );
     }
 
     #[test]
