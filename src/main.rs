@@ -16,13 +16,15 @@ mod publish;
 mod toolchain;
 
 use app_catalog::{
-    example_required_features, example_specs, manifest_declared_features, manifest_has_dependency,
-    package_app_spec, package_app_specs, package_bin_name, package_blueprint_profile,
-    package_blueprint_replicatable, package_name, push_app_or_trueos_feature,
+    RustcTier, example_required_features, example_specs, manifest_declared_features,
+    manifest_has_dependency, package_app_spec, package_app_specs, package_bin_name,
+    package_blueprint_profile, package_blueprint_replicatable, package_blueprint_rustc_tier,
+    package_name, push_app_or_trueos_feature,
 };
 use artifact::{
-    BLUEPRINT_CAP_REPLICATABLE, cargo_artifact_stem, collect_rlibs_for_object, entry_hint_hex,
-    entry_symbol_name, latest_cargo_object, tool_command, write_blueprint,
+    AssetBundleEntry, BLUEPRINT_CAP_REPLICATABLE, attach_trueos_asset_bundle, cargo_artifact_stem,
+    collect_rlibs_for_object, entry_hint_hex, entry_symbol_name, latest_cargo_object, tool_command,
+    write_blueprint,
 };
 use build_plan::{BuildFlavor, BuildSettings, BuildTarget, resolve_build_settings};
 use cargo_output::{
@@ -81,6 +83,7 @@ const BLUEPRINT_VENDOR_PATCHES: &[(&str, &str)] = &[
     ("hickory-proto", "hickory-proto-0.25.2"),
     ("hickory-resolver", "hickory-resolver-0.25.2"),
     ("if-watch", "if-watch-3.2.2"),
+    ("libloading", "libloading-0.8.9"),
     ("http", "http-1.4.0"),
     ("http-body", "http-body-1.0.1"),
     ("http-body-util", "http-body-util-0.1.3"),
@@ -114,6 +117,7 @@ const BLUEPRINT_VENDOR_PATCHES: &[(&str, &str)] = &[
     ("socket2", "socket2-0.6.3"),
     ("spin", "spin-0.10.0"),
     ("sync_wrapper", "sync_wrapper-1.0.2"),
+    ("target-lexicon", "target-lexicon-0.13.5"),
     ("tokio", "tokio-1.52.3"),
     ("tokio-macros", "tokio-macros-2.7.0"),
     ("tokio-rustls", "tokio-rustls-0.26.4"),
@@ -291,6 +295,11 @@ fn build_one_target_to(
     } else {
         0
     };
+    let rustc_tier = if matches!(build_target, BuildTarget::Package) {
+        package_blueprint_rustc_tier(manifest_path)?
+    } else {
+        None
+    };
     let cargo_profile = if matches!(build_target, BuildTarget::Package) {
         package_blueprint_profile(manifest_path)?.unwrap_or(cargo_profile)
     } else {
@@ -386,6 +395,9 @@ fn build_one_target_to(
     push_trueos_cc_flags(&mut cargo);
     cargo.env("RUSTC_BOOTSTRAP_SYNTHETIC_TARGET", "1");
     cargo.env("CARGO_TARGET_DIR", &cargo_target_dir);
+    if rustc_tier.is_some() {
+        toolchain::configure_rustc_bootstrap_env(&mut cargo, &target_name)?;
+    }
     let declared_features = manifest_declared_features(&cargo_manifest_path)?;
     let has_trueos_dependency = manifest_has_dependency(&cargo_manifest_path, "trueos")?;
     let mut extra_features = required_features.to_vec();
@@ -541,11 +553,122 @@ fn build_one_target_to(
     objcopy.arg("--strip-debug").arg(&linked).arg(&stripped);
     run_command(&mut objcopy, "objcopy")?;
 
+    let packaged_elf = match rustc_tier {
+        Some(RustcTier::Med | RustcTier::MedPlus) => {
+            let asset_elf = work_dir.join("module.assets.o");
+            let assets = rustc_sysroot_asset_entries(
+                rustc_tier.expect("matched compiler tier"),
+                &target_spec,
+                &target_name,
+                &cargo_artifacts.sysroot_metadata,
+            )?;
+            println!(
+                "trueos-blueprint: embedding native rustc sysroot tier={} files={}",
+                rustc_tier_label(rustc_tier.expect("matched compiler tier")),
+                assets.len()
+            );
+            attach_trueos_asset_bundle(&stripped, &asset_elf, &assets)?
+        }
+        Some(RustcTier::Min) | None => stripped.clone(),
+    };
+
     let out = output_dir.join(format!("{output_name}.bp"));
     fs::create_dir_all(out.parent().ok_or("bad output path")?).map_err(io_string)?;
-    write_blueprint(&out, &stripped, &entry_hint_hex, capability_flags)?;
+    write_blueprint(&out, &packaged_elf, &entry_hint_hex, capability_flags)?;
     println!("packed {} -> {}", app_obj.display(), out.display());
     Ok(out)
+}
+
+fn rustc_tier_label(tier: RustcTier) -> &'static str {
+    match tier {
+        RustcTier::Min => "min",
+        RustcTier::Med => "med",
+        RustcTier::MedPlus => "med-plus",
+    }
+}
+
+fn rustc_sysroot_asset_entries(
+    tier: RustcTier,
+    target_spec: &Path,
+    target_name: &str,
+    metadata: &[cargo_output::CargoSysrootMetadataArtifact],
+) -> Result<Vec<AssetBundleEntry>, String> {
+    if metadata.is_empty() {
+        return Err(format!(
+            "native rustc {} build produced no authenticated build-std metadata; \
+             refusing to package an unusable target sysroot",
+            rustc_tier_label(tier)
+        ));
+    }
+
+    let target_file = target_spec
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| {
+            format!(
+                "bad native rustc target spec path: {}",
+                target_spec.display()
+            )
+        })?;
+    let identity = toolchain::rustc_identity()?;
+    let mut manifest = format!(
+        "format=trueos-rustc-sysroot-v1\n\
+         tier={}\n\
+         toolchain={}\n\
+         rustc={}\n\
+         commit={}\n\
+         commit-date={}\n\
+         build-host={}\n\
+         target={}\n\
+         metadata-count={}\n",
+        rustc_tier_label(tier),
+        toolchain::RUST_TOOLCHAIN,
+        identity.version,
+        identity.commit_hash,
+        identity.commit_date,
+        identity.host,
+        target_name,
+        metadata.len()
+    );
+
+    let mut entries = Vec::with_capacity(metadata.len() + 2);
+    entries.push(AssetBundleEntry::new(
+        format!("rustc-sysroot/{target_file}"),
+        fs::read(target_spec).map_err(io_string)?,
+    ));
+    for artifact in metadata {
+        let file_name = artifact
+            .path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| {
+                format!(
+                    "bad native rustc sysroot metadata path: {}",
+                    artifact.path.display()
+                )
+            })?;
+        if artifact
+            .path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            != Some("rmeta")
+        {
+            return Err(format!(
+                "native rustc sysroot artifact is not metadata: {}",
+                artifact.path.display()
+            ));
+        }
+        manifest.push_str(&format!("metadata={} {}\n", artifact.crate_name, file_name));
+        entries.push(AssetBundleEntry::new(
+            format!("rustc-sysroot/lib/rustlib/{target_name}/lib/{file_name}"),
+            fs::read(&artifact.path).map_err(io_string)?,
+        ));
+    }
+    entries.push(AssetBundleEntry::new(
+        "rustc-sysroot/TRUEOS_SYSROOT_MANIFEST",
+        manifest.into_bytes(),
+    ));
+    Ok(entries)
 }
 
 fn push_feature(features: &mut Vec<String>, feature: &str) {
@@ -668,17 +791,24 @@ fn staged_lock_overlay_aligned(
     let lock_path = generated_lock_path(staged_manifest)?;
     let locked = lock_packages(&lock_path)?;
     let mut has_overlay_version = false;
+    let mut has_same_semver_line = false;
     for package in locked
         .iter()
         .filter(|package| package.name == mismatch.name)
     {
+        if cargo_semver_same_line(&package.version, &mismatch.overlay_version) {
+            has_same_semver_line = true;
+        }
         if package.version == mismatch.overlay_version {
             has_overlay_version = true;
         } else if cargo_semver_same_line(&package.version, &mismatch.overlay_version) {
             return Ok(false);
         }
     }
-    Ok(has_overlay_version)
+    // Earlier overlay updates can remove an optional or host-only dependency
+    // from the staged graph entirely. In that case there is no remaining unit
+    // on this semver line to repin.
+    Ok(has_overlay_version || !has_same_semver_line)
 }
 
 fn enforce_source_overlay_lock(
@@ -1899,6 +2029,12 @@ fn find_blueprint_vendor_dir(app_dir: &Path, name: &str) -> Option<PathBuf> {
             return Some(candidate);
         }
     }
+    if let Some(root) = current_blueprint_root() {
+        let candidate = root.join("vendor").join(name);
+        if candidate.is_dir() {
+            return Some(candidate);
+        }
+    }
     None
 }
 
@@ -2632,14 +2768,21 @@ fn patch_rustix_trueos_overlay(crate_dir: &Path) -> Result<(), String> {
             &ioctl_mod,
             "    target_os = \"wasi\",\n    target_os = \"nto\"\n))]\ntype _RawOpcode = c::c_int;",
             "    target_os = \"wasi\",\n    target_os = \"nto\"\n))]\ntype _RawOpcode = c::c_int;\n\n#[cfg(target_os = \"trueos\")]\ntype _RawOpcode = crate::backend::c::Ioctl;",
-        )
+        )?;
     } else {
         replace_file_text(
             &ioctl_mod,
             "    target_os = \"nto\",\n    target_os = \"wasi\",\n))]\ntype _Opcode = c::c_int;",
             "    target_os = \"nto\",\n    target_os = \"wasi\",\n))]\ntype _Opcode = c::c_int;\n\n#[cfg(target_os = \"trueos\")]\ntype _Opcode = crate::backend::c::Ioctl;",
-        )
+        )?;
     }
+
+    let fallocate_types = crate_dir.join("src/backend/libc/fs/types.rs");
+    replace_file_text(
+        &fallocate_types,
+        "            target_os = \"linux\",\n            target_os = \"wasi\",\n        )))]\n        const NO_HIDE_STALE",
+        "            target_os = \"linux\",\n            target_os = \"trueos\",\n            target_os = \"wasi\",\n        )))]\n        const NO_HIDE_STALE",
+    )
 }
 
 fn patch_signal_hook_mio_trueos_overlay(crate_dir: &Path) -> Result<(), String> {

@@ -941,6 +941,13 @@ unsafe fn alloc_aligned(layout: Layout) -> *mut u8 {
 
 pub fn panic_abort(message: &str) -> ! {
     v::vsys::write_err(message.as_bytes());
+    // A Hull Blueprint is a process-shaped execution realm even though
+    // TRUEOS does not provide a conventional userspace process model.  Hand
+    // fatal termination to the VM lifecycle so the borrowed AP, console, and
+    // guest resources are released.  The call does not return for a live Hull
+    // guest; retain the spin fallback for direct/native REL execution where no
+    // stoppable VM context exists.
+    let _ = v::vshell::shutdown_current_blueprint(message);
     loop {
         core::hint::spin_loop();
     }

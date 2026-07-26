@@ -16,6 +16,13 @@ pub(crate) struct PackageAppSpec {
     pub(crate) manifest_path: PathBuf,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RustcTier {
+    Min,
+    Med,
+    MedPlus,
+}
+
 #[derive(Deserialize)]
 struct AppRegistry {
     apps: Vec<AppRegistryEntry>,
@@ -281,6 +288,44 @@ pub(crate) fn package_blueprint_profile(
     Ok(None)
 }
 
+pub(crate) fn package_blueprint_rustc_tier(
+    manifest_path: &Path,
+) -> Result<Option<RustcTier>, String> {
+    let cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
+    let mut in_metadata = false;
+    for line in cargo_toml.lines() {
+        let trimmed = line.split('#').next().unwrap_or("").trim();
+        if trimmed.starts_with('[') {
+            in_metadata = trimmed == "[package.metadata.trueos-blueprint]";
+            continue;
+        }
+        if !in_metadata {
+            continue;
+        }
+        let Some((key, value)) = trimmed.split_once('=') else {
+            continue;
+        };
+        if key.trim() != "rustc-tier" {
+            continue;
+        }
+        return match toml_string_value(value.trim()).as_deref() {
+            Some("min") => Ok(Some(RustcTier::Min)),
+            Some("med") => Ok(Some(RustcTier::Med)),
+            Some("med-plus") => Ok(Some(RustcTier::MedPlus)),
+            Some(other) => Err(format!(
+                "unsupported trueos-blueprint rustc-tier `{other}` in {}; \
+                 expected min, med, or med-plus",
+                manifest_path.display()
+            )),
+            None => Err(format!(
+                "bad trueos-blueprint rustc-tier in {}",
+                manifest_path.display()
+            )),
+        };
+    }
+    Ok(None)
+}
+
 pub(crate) fn package_blueprint_replicatable(manifest_path: &Path) -> Result<bool, String> {
     let cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
     let mut in_metadata = false;
@@ -435,6 +480,27 @@ replicatable = true
     }
 
     #[test]
+    fn reads_all_rustc_tiers_from_blueprint_metadata() {
+        for (value, expected) in [
+            ("min", RustcTier::Min),
+            ("med", RustcTier::Med),
+            ("med-plus", RustcTier::MedPlus),
+        ] {
+            let path = temporary_manifest("rustc-tier", value);
+            assert_eq!(package_blueprint_rustc_tier(&path).unwrap(), Some(expected));
+            fs::remove_file(path).unwrap();
+        }
+    }
+
+    #[test]
+    fn rejects_unknown_rustc_tier() {
+        let path = temporary_manifest("rustc-tier", "max");
+        let error = package_blueprint_rustc_tier(&path).unwrap_err();
+        assert!(error.contains("expected min, med, or med-plus"));
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
     fn root_catalogs_keep_apps_and_probes_separate() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
         let apps = registered_app_specs(root, PackageCatalog::Apps).unwrap();
@@ -463,6 +529,29 @@ replicatable = true
                 .unwrap();
             assert_eq!(probe.dir, root.join("probes").join(probe_name));
         }
+    }
+
+    fn temporary_manifest(key: &str, value: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = env::temp_dir().join(format!("trueos-blueprint-{key}-{value}-{nonce}.toml"));
+        fs::write(
+            &path,
+            format!(
+                r#"
+[package]
+name = "probe"
+version = "0.1.0"
+
+[package.metadata.trueos-blueprint]
+{key} = "{value}"
+"#
+            ),
+        )
+        .unwrap();
+        path
     }
 }
 

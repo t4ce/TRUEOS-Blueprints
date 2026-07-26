@@ -1,13 +1,35 @@
 use std::env;
 use std::fs;
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+
+use sha2::{Digest, Sha256};
 
 use crate::toolchain;
 
 const BLUEPRINT_PAYLOAD_7Z: u16 = 2;
 pub(crate) const BLUEPRINT_CAP_REPLICATABLE: u16 = 1 << 8;
+const TRUEOS_ASSET_BUNDLE_MAGIC: &[u8; 4] = b"TRAS";
+const TRUEOS_ASSET_BUNDLE_VERSION: u16 = 1;
+const TRUEOS_ASSET_BUNDLE_FLAGS: u16 = 0;
+const TRUEOS_ASSET_BUNDLE_FILE: &str = "assets.bundle";
+const TRUEOS_ASSET_SECTION: &str = ".trueos.assets";
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct AssetBundleEntry {
+    pub(crate) logical_path: String,
+    pub(crate) bytes: Vec<u8>,
+}
+
+impl AssetBundleEntry {
+    pub(crate) fn new(logical_path: impl Into<String>, bytes: impl Into<Vec<u8>>) -> Self {
+        Self {
+            logical_path: logical_path.into(),
+            bytes: bytes.into(),
+        }
+    }
+}
 
 const fn blueprint_header_flags(capability_flags: u16) -> u16 {
     BLUEPRINT_PAYLOAD_7Z | capability_flags
@@ -310,6 +332,328 @@ fn best_main_symbol_from_readelf(stdout: &str) -> Option<(u32, u32, String)> {
     rust_main
 }
 
+/// Encodes the deterministic kernel-facing asset stream stored inside the
+/// single-file 7z payload attached to a Blueprint ELF.
+pub(crate) fn encode_trueos_asset_bundle(entries: &[AssetBundleEntry]) -> Result<Vec<u8>, String> {
+    let count = u32::try_from(entries.len())
+        .map_err(|_| "TRUEOS asset bundle contains more than u32::MAX entries".to_owned())?;
+    let mut sorted = entries.iter().collect::<Vec<_>>();
+    sorted.sort_by(|left, right| {
+        left.logical_path
+            .as_bytes()
+            .cmp(right.logical_path.as_bytes())
+    });
+
+    for entry in &sorted {
+        validate_logical_asset_path(&entry.logical_path)?;
+    }
+    for duplicate in sorted.windows(2) {
+        if duplicate[0].logical_path == duplicate[1].logical_path {
+            return Err(format!(
+                "duplicate TRUEOS asset path `{}`",
+                duplicate[0].logical_path
+            ));
+        }
+    }
+
+    let encoded_lengths = sorted
+        .iter()
+        .map(|entry| {
+            let path_len = u32::try_from(entry.logical_path.len()).map_err(|_| {
+                format!(
+                    "TRUEOS asset path exceeds u32::MAX bytes: {}",
+                    entry.logical_path
+                )
+            })?;
+            let data_len = u64::try_from(entry.bytes.len()).map_err(|_| {
+                format!(
+                    "TRUEOS asset data length does not fit u64: {}",
+                    entry.logical_path
+                )
+            })?;
+            Ok((path_len, data_len))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let bundle_size = checked_asset_bundle_size(u64::from(count), encoded_lengths.iter().copied())?;
+    let mut bundle = Vec::with_capacity(bundle_size);
+    bundle.extend_from_slice(TRUEOS_ASSET_BUNDLE_MAGIC);
+    bundle.extend_from_slice(&TRUEOS_ASSET_BUNDLE_VERSION.to_le_bytes());
+    bundle.extend_from_slice(&TRUEOS_ASSET_BUNDLE_FLAGS.to_le_bytes());
+    bundle.extend_from_slice(&count.to_le_bytes());
+
+    for (entry, (path_len, data_len)) in sorted.into_iter().zip(encoded_lengths) {
+        bundle.extend_from_slice(&path_len.to_le_bytes());
+        bundle.extend_from_slice(&data_len.to_le_bytes());
+        bundle.extend_from_slice(&Sha256::digest(&entry.bytes));
+        bundle.extend_from_slice(entry.logical_path.as_bytes());
+        bundle.extend_from_slice(&entry.bytes);
+    }
+
+    debug_assert_eq!(bundle.len(), bundle_size);
+    Ok(bundle)
+}
+
+/// Attaches a compressed TRAS asset bundle to `input_elf` and returns
+/// `output_elf`.
+///
+/// The attached `.trueos.assets` section is deliberately non-SHF_ALLOC: the
+/// loader consumes it as packaging metadata rather than mapping it into the
+/// Blueprint's runtime image.
+pub(crate) fn attach_trueos_asset_bundle(
+    input_elf: &Path,
+    output_elf: &Path,
+    entries: &[AssetBundleEntry],
+) -> Result<PathBuf, String> {
+    if !input_elf.is_file() {
+        return Err(format!("missing input ELF: {}", input_elf.display()));
+    }
+    if input_elf == output_elf {
+        return Err(format!(
+            "TRUEOS asset packaging requires distinct input and output ELF paths: {}",
+            input_elf.display()
+        ));
+    }
+    let output_parent = output_elf
+        .parent()
+        .ok_or_else(|| format!("missing parent dir for {}", output_elf.display()))?;
+    if !output_parent.is_dir() {
+        return Err(format!(
+            "missing output directory for TRUEOS asset ELF: {}",
+            output_parent.display()
+        ));
+    }
+
+    let bundle = encode_trueos_asset_bundle(entries)?;
+    let archive = asset_archive_path(output_elf)?;
+    compress_trueos_asset_bundle_7z(&bundle, &archive)?;
+
+    let mut objcopy = tool_command(&["llvm-objcopy", "objcopy"])?;
+    objcopy
+        .arg("--add-section")
+        .arg(format!("{TRUEOS_ASSET_SECTION}={}", archive.display()))
+        .arg("--set-section-flags")
+        .arg(format!("{TRUEOS_ASSET_SECTION}=readonly,contents"))
+        .arg(input_elf)
+        .arg(output_elf);
+    let attach_result = crate::run_command(&mut objcopy, "objcopy TRUEOS assets");
+    if attach_result.is_err() {
+        return attach_result.map(|()| output_elf.to_path_buf());
+    }
+
+    verify_trueos_asset_section(output_elf)?;
+    checked_u32_container_size(
+        fs::metadata(output_elf).map_err(io_string)?.len(),
+        "packaged ELF",
+    )?;
+    fs::remove_file(&archive).map_err(|err| {
+        format!(
+            "failed to remove temporary TRUEOS asset archive {}: {err}",
+            archive.display()
+        )
+    })?;
+    Ok(output_elf.to_path_buf())
+}
+
+fn validate_logical_asset_path(path: &str) -> Result<(), String> {
+    if path.is_empty() {
+        return Err("TRUEOS asset path must not be empty".to_owned());
+    }
+    if path.starts_with('/')
+        || path.ends_with('/')
+        || path.contains('\\')
+        || path.contains('\0')
+        || (path.as_bytes().get(1) == Some(&b':') && path.as_bytes()[0].is_ascii_alphabetic())
+    {
+        return Err(format!(
+            "TRUEOS asset path must be a normalized relative path: `{path}`"
+        ));
+    }
+    for component in path.split('/') {
+        if component.is_empty()
+            || component == "."
+            || component == ".."
+            || component.bytes().any(|byte| byte < b' ' || byte == 0x7f)
+        {
+            return Err(format!(
+                "TRUEOS asset path contains an unsafe component: `{path}`"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn checked_asset_bundle_size(
+    entry_count: u64,
+    entry_lengths: impl IntoIterator<Item = (u32, u64)>,
+) -> Result<usize, String> {
+    if entry_count > u64::from(u32::MAX) {
+        return Err("TRUEOS asset bundle contains more than u32::MAX entries".to_owned());
+    }
+
+    // magic + version + flags + count
+    let mut total = 4u64 + 2 + 2 + 4;
+    for (path_len, data_len) in entry_lengths {
+        // path_len + data_len + SHA-256 + path + data
+        total = total
+            .checked_add(4 + 8 + 32)
+            .and_then(|value| value.checked_add(u64::from(path_len)))
+            .and_then(|value| value.checked_add(data_len))
+            .ok_or_else(|| "TRUEOS asset bundle size overflow".to_owned())?;
+    }
+    checked_u32_container_size(total, "uncompressed TRUEOS asset bundle")?;
+    usize::try_from(total)
+        .map_err(|_| "TRUEOS asset bundle size does not fit host usize".to_owned())
+}
+
+fn checked_u32_container_size(size: u64, label: &str) -> Result<u32, String> {
+    u32::try_from(size).map_err(|_| {
+        format!("{label} is {size} bytes, exceeding the current u32 Blueprint container limit")
+    })
+}
+
+fn asset_archive_path(output_elf: &Path) -> Result<PathBuf, String> {
+    let file_name = output_elf
+        .file_name()
+        .ok_or_else(|| format!("missing file name for {}", output_elf.display()))?;
+    let mut archive_name = file_name.to_os_string();
+    archive_name.push(".trueos-assets.7z");
+    Ok(output_elf.with_file_name(archive_name))
+}
+
+fn compress_trueos_asset_bundle_7z(bundle: &[u8], archive: &Path) -> Result<(), String> {
+    checked_u32_container_size(
+        u64::try_from(bundle.len())
+            .map_err(|_| "TRUEOS asset bundle length does not fit u64".to_owned())?,
+        "uncompressed TRUEOS asset bundle",
+    )?;
+    if archive.exists() {
+        fs::remove_file(archive).map_err(|err| {
+            format!(
+                "failed to replace TRUEOS asset archive {}: {err}",
+                archive.display()
+            )
+        })?;
+    }
+
+    let mut seven_zip = tool_command(&["7z", "7zz"])?;
+    seven_zip
+        .arg("a")
+        .arg("-t7z")
+        .arg("-mx=9")
+        .arg("-m0=LZMA2")
+        .arg("-mmt=off")
+        .arg("-ms=off")
+        .arg("-mtc=off")
+        .arg("-mtm=off")
+        .arg("-mta=off")
+        .arg("-bd")
+        .arg("-y")
+        .arg(archive)
+        .arg(format!("-si{TRUEOS_ASSET_BUNDLE_FILE}"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = seven_zip.spawn().map_err(|err| {
+        format!(
+            "7z TRUEOS asset compression failed to start for {}: {err}",
+            archive.display()
+        )
+    })?;
+    let write_result = child
+        .stdin
+        .take()
+        .ok_or_else(|| "7z TRUEOS asset compression did not provide stdin".to_owned())
+        .and_then(|mut stdin| {
+            stdin
+                .write_all(bundle)
+                .map_err(|err| format!("failed to stream TRUEOS assets to 7z: {err}"))
+        });
+    let output = child
+        .wait_with_output()
+        .map_err(|err| format!("failed to wait for 7z TRUEOS asset compression: {err}"))?;
+    write_result?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "7z TRUEOS asset compression failed with status {}: {}",
+            output.status,
+            stderr.trim()
+        ));
+    }
+    checked_u32_container_size(
+        fs::metadata(archive).map_err(io_string)?.len(),
+        "compressed TRUEOS asset archive",
+    )?;
+    Ok(())
+}
+
+fn verify_trueos_asset_section(elf: &Path) -> Result<(), String> {
+    let mut readobj = tool_command(&["llvm-readobj"])?;
+    let output =
+        readobj.arg("--sections").arg(elf).output().map_err(|err| {
+            format!("llvm-readobj TRUEOS asset verification failed to start: {err}")
+        })?;
+    if !output.status.success() {
+        return Err(format!(
+            "llvm-readobj TRUEOS asset verification failed with status {}",
+            output.status
+        ));
+    }
+    let stdout = String::from_utf8(output.stdout)
+        .map_err(|err| format!("llvm-readobj section output was not UTF-8: {err}"))?;
+    let Some(has_alloc_flag) = trueos_asset_section_alloc_flag(&stdout) else {
+        return Err(format!(
+            "objcopy output {} is missing {TRUEOS_ASSET_SECTION}",
+            elf.display()
+        ));
+    };
+    if has_alloc_flag {
+        return Err(format!(
+            "objcopy marked {TRUEOS_ASSET_SECTION} SHF_ALLOC in {}; \
+             asset packaging sections must not consume runtime image space",
+            elf.display()
+        ));
+    }
+    Ok(())
+}
+
+fn trueos_asset_section_alloc_flag(readobj: &str) -> Option<bool> {
+    let mut in_section = false;
+    let mut is_asset_section = false;
+    let mut has_alloc_flag = false;
+    for line in readobj.lines() {
+        let trimmed = line.trim();
+        if trimmed == "Section {" {
+            in_section = true;
+            is_asset_section = false;
+            has_alloc_flag = false;
+            continue;
+        }
+        if !in_section {
+            continue;
+        }
+        if let Some(name) = trimmed.strip_prefix("Name: ") {
+            is_asset_section = name
+                .split_whitespace()
+                .next()
+                .is_some_and(|name| name == TRUEOS_ASSET_SECTION);
+            continue;
+        }
+        if is_asset_section && trimmed.starts_with("SHF_ALLOC ") {
+            has_alloc_flag = true;
+            continue;
+        }
+        if trimmed == "}" {
+            if is_asset_section {
+                return Some(has_alloc_flag);
+            }
+            in_section = false;
+        }
+    }
+    None
+}
+
 pub(crate) fn write_blueprint(
     out: &Path,
     stripped: &Path,
@@ -319,14 +663,24 @@ pub(crate) fn write_blueprint(
     let raw = fs::read(stripped).map_err(io_string)?;
     let payload = compress_blueprint_payload(stripped)?;
     let entry = u64::from_str_radix(entry_hint_hex, 16).map_err(|err| err.to_string())?;
+    let payload_len = checked_u32_container_size(
+        u64::try_from(payload.len())
+            .map_err(|_| "Blueprint payload length does not fit u64".to_owned())?,
+        "Blueprint payload",
+    )?;
+    let raw_len = checked_u32_container_size(
+        u64::try_from(raw.len())
+            .map_err(|_| "Blueprint raw module length does not fit u64".to_owned())?,
+        "Blueprint raw module",
+    )?;
 
     let mut bytes = Vec::with_capacity(24 + payload.len());
     bytes.extend_from_slice(b"TRBP");
     bytes.extend_from_slice(&1u16.to_le_bytes());
     bytes.extend_from_slice(&blueprint_header_flags(capability_flags).to_le_bytes());
     bytes.extend_from_slice(&entry.to_le_bytes());
-    bytes.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-    bytes.extend_from_slice(&(raw.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(&payload_len.to_le_bytes());
+    bytes.extend_from_slice(&raw_len.to_le_bytes());
     bytes.extend_from_slice(&payload);
     fs::write(out, bytes).map_err(io_string)
 }
@@ -361,10 +715,184 @@ fn io_string(err: io::Error) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
     use super::*;
 
     #[test]
     fn replicatable_capability_keeps_the_payload_encoding() {
         assert_eq!(blueprint_header_flags(BLUEPRINT_CAP_REPLICATABLE), 0x0102);
+    }
+
+    #[test]
+    fn asset_bundle_is_sorted_versioned_and_hashed() {
+        let entries = [
+            AssetBundleEntry::new("share/z.txt", b"z".to_vec()),
+            AssetBundleEntry::new("bin/a", b"alpha".to_vec()),
+        ];
+        let encoded = encode_trueos_asset_bundle(&entries).unwrap();
+        let reversed =
+            encode_trueos_asset_bundle(&[entries[1].clone(), entries[0].clone()]).unwrap();
+        assert_eq!(encoded, reversed);
+        assert_eq!(&encoded[..4], b"TRAS");
+        assert_eq!(u16_at(&encoded, 4), 1);
+        assert_eq!(u16_at(&encoded, 6), 0);
+        assert_eq!(u32_at(&encoded, 8), 2);
+
+        let mut offset = 12;
+        let path_len = usize::try_from(u32_at(&encoded, offset)).unwrap();
+        offset += 4;
+        let data_len = usize::try_from(u64_at(&encoded, offset)).unwrap();
+        offset += 8;
+        let expected_digest = Sha256::digest(b"alpha");
+        assert_eq!(&encoded[offset..offset + 32], &expected_digest[..]);
+        offset += 32;
+        assert_eq!(&encoded[offset..offset + path_len], b"bin/a");
+        offset += path_len;
+        assert_eq!(&encoded[offset..offset + data_len], b"alpha");
+    }
+
+    #[test]
+    fn asset_bundle_rejects_traversal_ambiguous_paths_and_duplicates() {
+        for path in [
+            "",
+            ".",
+            "..",
+            "../escape",
+            "a/../escape",
+            "/absolute",
+            "a//b",
+            "a/",
+            r"a\b",
+            "C:/drive",
+        ] {
+            let error =
+                encode_trueos_asset_bundle(&[AssetBundleEntry::new(path, Vec::new())]).unwrap_err();
+            assert!(error.contains("asset path"), "{path:?}: {error}");
+        }
+
+        let error = encode_trueos_asset_bundle(&[
+            AssetBundleEntry::new("bin/rustc", b"a".to_vec()),
+            AssetBundleEntry::new("bin/rustc", b"b".to_vec()),
+        ])
+        .unwrap_err();
+        assert!(error.contains("duplicate TRUEOS asset path"));
+    }
+
+    #[test]
+    fn asset_bundle_rejects_u32_container_overflow() {
+        let error = checked_asset_bundle_size(1, [(1, u64::from(u32::MAX))]).unwrap_err();
+        assert!(error.contains("u32 Blueprint container limit"));
+        let error = checked_asset_bundle_size(u64::from(u32::MAX) + 1, []).unwrap_err();
+        assert!(error.contains("more than u32::MAX entries"));
+    }
+
+    #[test]
+    fn asset_7z_is_deterministic_and_elf_section_is_not_allocated() {
+        let temp = test_directory("asset-section");
+        let bundle = encode_trueos_asset_bundle(&[
+            AssetBundleEntry::new("bin/rustc", b"compiler".to_vec()),
+            AssetBundleEntry::new("lib/sysroot.rmeta", b"metadata".to_vec()),
+        ])
+        .unwrap();
+        let archive_a = temp.join("a.7z");
+        let archive_b = temp.join("b.7z");
+        compress_trueos_asset_bundle_7z(&bundle, &archive_a).unwrap();
+        compress_trueos_asset_bundle_7z(&bundle, &archive_b).unwrap();
+        assert_eq!(fs::read(&archive_a).unwrap(), fs::read(&archive_b).unwrap());
+        assert_eq!(extract_asset_bundle(&archive_a), bundle);
+
+        let input = temp.join("input.elf");
+        fs::copy(env::current_exe().unwrap(), &input).unwrap();
+        let output = temp.join("packaged.elf");
+        let entries = [
+            AssetBundleEntry::new("lib/sysroot.rmeta", b"metadata".to_vec()),
+            AssetBundleEntry::new("bin/rustc", b"compiler".to_vec()),
+        ];
+        assert_eq!(
+            attach_trueos_asset_bundle(&input, &output, &entries).unwrap(),
+            output
+        );
+        verify_trueos_asset_section(&output).unwrap();
+
+        let dumped_archive = temp.join("dumped.7z");
+        let mut objcopy = tool_command(&["llvm-objcopy", "objcopy"]).unwrap();
+        objcopy
+            .arg("--dump-section")
+            .arg(format!(
+                "{TRUEOS_ASSET_SECTION}={}",
+                dumped_archive.display()
+            ))
+            .arg(&output);
+        crate::run_command(&mut objcopy, "objcopy dump TRUEOS assets").unwrap();
+        assert_eq!(extract_asset_bundle(&dumped_archive), bundle);
+
+        fs::remove_dir_all(temp).unwrap();
+    }
+
+    #[test]
+    fn readobj_asset_flag_parser_distinguishes_allocated_sections() {
+        let non_alloc = r#"
+Section {
+  Name: .trueos.assets (1)
+  Flags [ (0x0)
+  ]
+}
+"#;
+        assert_eq!(trueos_asset_section_alloc_flag(non_alloc), Some(false));
+
+        let allocated = r#"
+Section {
+  Name: .trueos.assets (1)
+  Flags [ (0x2)
+    SHF_ALLOC (0x2)
+  ]
+}
+"#;
+        assert_eq!(trueos_asset_section_alloc_flag(allocated), Some(true));
+    }
+
+    fn extract_asset_bundle(archive: &Path) -> Vec<u8> {
+        let mut seven_zip = tool_command(&["7z", "7zz"]).unwrap();
+        let output = seven_zip
+            .arg("e")
+            .arg("-so")
+            .arg("-bd")
+            .arg(archive)
+            .arg(TRUEOS_ASSET_BUNDLE_FILE)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "7z extraction failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        output.stdout
+    }
+
+    fn u16_at(bytes: &[u8], offset: usize) -> u16 {
+        u16::from_le_bytes(bytes[offset..offset + 2].try_into().unwrap())
+    }
+
+    fn u32_at(bytes: &[u8], offset: usize) -> u32 {
+        u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap())
+    }
+
+    fn u64_at(bytes: &[u8], offset: usize) -> u64 {
+        u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap())
+    }
+
+    fn test_directory(label: &str) -> PathBuf {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let unique = NEXT.fetch_add(1, Ordering::Relaxed);
+        let path = env::temp_dir().join(format!(
+            "trueos-blueprint-artifact-test-{}-{label}-{unique}",
+            std::process::id()
+        ));
+        if path.exists() {
+            fs::remove_dir_all(&path).unwrap();
+        }
+        fs::create_dir_all(&path).unwrap();
+        path
     }
 }
