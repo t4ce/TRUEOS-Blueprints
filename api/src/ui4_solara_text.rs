@@ -166,7 +166,7 @@ pub const PARTICLE_CRAFT_PARAMS_VERSION: u32 = 1;
 pub const PARTICLE_CRAFT_FLAG_RESET: u32 = 1 << 0;
 pub const PARTICLE_CRAFT_FLAG_ATTRACTOR: u32 = 1 << 1;
 pub const PARTICLE_CRAFT_FLAG_ORBIT: u32 = 1 << 2;
-pub const PARTICLE_CRAFT_MAX_PARTICLES: u32 = 256;
+pub const PARTICLE_CRAFT_MAX_PARTICLES: u32 = 1024;
 
 /// Pointer-free ParticleCraft v1 controls. Persistent particle state and GPU
 /// addresses are retained by the kernel for this frame and never cross ABI.
@@ -195,7 +195,7 @@ impl ParticleCraftParamsV1 {
         Self {
             flags: PARTICLE_CRAFT_FLAG_ORBIT,
             seed,
-            active_count: 128,
+            active_count: PARTICLE_CRAFT_MAX_PARTICLES,
             dt_seconds,
             time_seconds,
             emitter_x: 320.0,
