@@ -121,28 +121,55 @@ pub mod logl {
 
     #[inline]
     pub fn log(level: u8, message: impl IntoLogMessage) {
-        let stream = if level <= level::ERROR { 2 } else { 1 };
-        message.with_log_message(|line| {
-            v::vsys::write_stream(stream, line.as_bytes());
-            if !line.ends_with('\n') {
-                v::vsys::write_stream(stream, b"\n");
-            }
-        });
+        message.emit_log(level);
     }
 
     #[inline]
     pub fn log_record(level: u8, target: &str, message: impl IntoLogMessage) -> i32 {
-        message.with_log_message(|message| v::vsys::log_record(u32::from(level), target, message))
+        message.emit_log_record(level, target)
+    }
+
+    #[inline]
+    fn emit_str(level: u8, line: &str) {
+        let stream = if level <= level::ERROR { 2 } else { 1 };
+        v::vsys::write_stream(stream, line.as_bytes());
+        if line.as_bytes().last().copied() != Some(b'\n') {
+            v::vsys::write_stream(stream, b"\n");
+        }
     }
 
     pub trait IntoLogMessage {
         fn with_log_message<R>(self, f: impl FnOnce(&str) -> R) -> R;
+
+        #[doc(hidden)]
+        #[inline]
+        fn emit_log(self, level: u8) {
+            self.with_log_message(|line| emit_str(level, line));
+        }
+
+        #[doc(hidden)]
+        #[inline]
+        fn emit_log_record(self, level: u8, target: &str) -> i32 {
+            self.with_log_message(|message| {
+                v::vsys::log_record(u32::from(level), target, message)
+            })
+        }
     }
 
     impl IntoLogMessage for &str {
         #[inline]
         fn with_log_message<R>(self, f: impl FnOnce(&str) -> R) -> R {
             f(self)
+        }
+
+        #[inline]
+        fn emit_log(self, level: u8) {
+            emit_str(level, self);
+        }
+
+        #[inline]
+        fn emit_log_record(self, level: u8, target: &str) -> i32 {
+            v::vsys::log_record(u32::from(level), target, self)
         }
     }
 
