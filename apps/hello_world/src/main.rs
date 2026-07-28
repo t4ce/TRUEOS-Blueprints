@@ -6,249 +6,265 @@ use alloc::vec::Vec;
 
 use trueos::hid::{
     MOUSE_MOTION_EASING_FAST_LINEAR, MOUSE_MOTION_EASING_NATURAL, MOUSE_MOTION_FLAG_CLEAR_QUEUE,
-    MOUSE_MOTION_OPCODE_BUTTONS, MOUSE_MOTION_OPCODE_STROKE, MOUSE_MOTION_PATH_LINE,
-    MOUSE_MOTION_PATH_QUADRATIC, MouseMotionCommand, VCursor,
+    MOUSE_MOTION_OPCODE_BUTTONS, MOUSE_MOTION_OPCODE_STROKE, MOUSE_MOTION_PATH_CUBIC,
+    MOUSE_MOTION_PATH_LINE, MouseMotionCommand, VCursor,
 };
 use trueos::logl::{self, level};
-use trueos::ui4_scene::{CursorIcon, CursorSource, Damage, Frame, rgba};
-use trueos::ui4_solara_text::{Font, SceneTextRow};
+use trueos::ui4_scene::{Damage, Frame, output_dimensions, rgba};
 use trueos::vsys;
 
-const FRAME_X: i32 = 420;
-const FRAME_Y: i32 = 220;
-const FRAME_WIDTH: u32 = 440;
-const FRAME_HEIGHT: u32 = 240;
+const WINDOW_COUNT: usize = 5;
+const FRAME_WIDTH: u32 = 96;
+const FRAME_HEIGHT: u32 = 64;
+const ORBIT_RADIUS: i32 = 100;
+const PRIMARY_BUTTON: u32 = 1 << 0;
 const SECONDARY_BUTTON: u32 = 1 << 1;
 
-const CURSOR_LABELS: [&str; 5] = [
-    "hello-leader",
-    "hello-dancer-a",
-    "hello-dancer-b",
-    "hello-scout-a",
-    "hello-scout-b",
-];
-const CURSOR_ICONS: [CursorIcon; 5] = [
-    CursorIcon::Default,
-    CursorIcon::Loading,
-    CursorIcon::ResizeHorizontal,
-    CursorIcon::ResizeVertical,
-    CursorIcon::ResizeDiagonal,
+const CURSOR_LABELS: [&str; WINDOW_COUNT] = [
+    "hello-orbit-a",
+    "hello-orbit-b",
+    "hello-orbit-c",
+    "hello-orbit-d",
+    "hello-orbit-e",
 ];
 
-const CIRCLE: [(i32, i32); 9] = [
-    (0, -18),
-    (13, -13),
-    (18, 0),
-    (13, 13),
-    (0, 18),
-    (-13, 13),
-    (-18, 0),
-    (-13, -13),
-    (0, 0),
+const FRAME_COLORS: [u32; WINDOW_COUNT] = [
+    rgba(8, 52, 28, 255),
+    rgba(8, 44, 52, 255),
+    rgba(20, 34, 68, 255),
+    rgba(52, 28, 64, 255),
+    rgba(72, 46, 12, 255),
 ];
+
+// Sixteen points keep each program comfortably below the mediated cursor's
+// bounded queue while cubic controls turn the polygon into a smooth circle.
+const ORBIT_POINTS: [(i32, i32); 16] = [
+    (100, 0),
+    (92, 38),
+    (71, 71),
+    (38, 92),
+    (0, 100),
+    (-38, 92),
+    (-71, 71),
+    (-92, 38),
+    (-100, 0),
+    (-92, -38),
+    (-71, -71),
+    (-38, -92),
+    (0, -100),
+    (38, -92),
+    (71, -71),
+    (92, -38),
+];
+
+const START_POINT: [usize; WINDOW_COUNT] = [0, 3, 6, 10, 13];
+const CLOCKWISE: [bool; WINDOW_COUNT] = [true, false, true, false, true];
 
 fn main() {
-    logl::log(
-        level::INFO,
-        "hello_world: opening UI4 five-cursor automation demo",
-    );
-    let Ok(mut frame) = Frame::open(FRAME_X, FRAME_Y, FRAME_WIDTH, FRAME_HEIGHT) else {
-        logl::log(level::ERROR, "hello_world: UI4 frame open failed");
-        return;
-    };
-    if let Err(error) = present_hello(&mut frame) {
-        logl::log(
-            level::ERROR,
-            format_args!("hello_world: initial frame publish failed: {error:?}"),
-        );
-        return;
-    }
-
-    let mut cursors = Vec::with_capacity(CURSOR_LABELS.len());
-    for (label, icon) in CURSOR_LABELS.into_iter().zip(CURSOR_ICONS) {
-        let Ok(cursor) = VCursor::request(label) else {
+    let (output_width, output_height) = match output_dimensions() {
+        Ok(dimensions) => dimensions,
+        Err(error) => {
             logl::log(
                 level::ERROR,
-                format_args!("hello_world: virtual cursor request failed label={label}"),
+                format_args!("hello_world: UI4 output dimensions unavailable: {error:?}"),
             );
             return;
+        }
+    };
+    let center = ((output_width / 2) as i32, (output_height / 2) as i32);
+    let frame_origin = (
+        center.0 - FRAME_WIDTH as i32 / 2,
+        center.1 - FRAME_HEIGHT as i32 / 2,
+    );
+    logl::log(
+        level::INFO,
+        format_args!(
+            "hello_world: five-window orbit demo output={}x{} center={},{} radius={ORBIT_RADIUS}",
+            output_width, output_height, center.0, center.1,
+        ),
+    );
+
+    let mut frames = Vec::with_capacity(WINDOW_COUNT);
+    let mut cursors = Vec::with_capacity(WINDOW_COUNT);
+    for index in 0..WINDOW_COUNT {
+        let mut frame = match open_frame(index, frame_origin) {
+            Ok(frame) => frame,
+            Err(()) => return,
         };
-        let source = CursorSource {
-            controller_id: 0,
-            slot_id: cursor.slot_id(),
-            ep_target: 0,
-            hid_kind: 0,
+        if wait_for_first_presentation(&mut frame, index).is_err() {
+            return;
+        }
+        frames.push(frame);
+
+        let cursor = match VCursor::request(CURSOR_LABELS[index]) {
+            Ok(cursor) => cursor,
+            Err(error) => {
+                logl::log(
+                    level::ERROR,
+                    format_args!(
+                        "hello_world: cursor request failed index={index} label={} error={error}",
+                        CURSOR_LABELS[index],
+                    ),
+                );
+                return;
+            }
         };
-        if let Err(error) = frame.set_cursor_icon_for(source, icon) {
+        logl::log(
+            level::INFO,
+            format_args!(
+                "hello_world: pair ready index={index} window={} cursor_handle={} cursor_slot={} direction={}",
+                frames[index].window_id(),
+                cursor.handle(),
+                cursor.slot_id(),
+                if CLOCKWISE[index] {
+                    "clockwise"
+                } else {
+                    "counter-clockwise"
+                },
+            ),
+        );
+
+        if let Err(error) = queue_orbit(&cursor, center, START_POINT[index], CLOCKWISE[index]) {
             logl::log(
                 level::ERROR,
-                format_args!(
-                    "hello_world: cursor override failed label={label} slot={} error={error:?}",
-                    cursor.slot_id(),
-                ),
+                format_args!("hello_world: orbit program rejected index={index} error={error}"),
+            );
+            return;
+        }
+        if let Err(error) = wait_for_cursor(&cursor, frames.as_mut_slice()) {
+            logl::log(
+                level::ERROR,
+                format_args!("hello_world: orbit wait failed index={index} error={error}"),
             );
             return;
         }
         cursors.push(cursor);
     }
 
-    // Cursor capabilities allocate at screen center but remain visually quiet
-    // until their first program command. This makes the one-second pause part
-    // of the visible Hello World sequence rather than startup latency.
-    vsys::sleep_ms(1_000);
-
-    if let Err(error) = queue_demo(cursors.as_slice()) {
-        logl::log(
-            level::ERROR,
-            format_args!("hello_world: cursor program rejected error={error}"),
-        );
-        return;
-    }
     logl::log(
         level::INFO,
-        "hello_world: five AI cursor programs queued; leader selects then right-drags the frame",
+        "hello_world: five windows orbited from screen center; all frames and cursors retained",
     );
-
     loop {
-        // The demo is an input target as well as an automation producer. Drain
-        // its selected-frame events so a long cursor dance never fills the
-        // per-owner input queue.
-        while matches!(frame.take_pointer_event(), Ok(Some(_))) {}
+        drain_pointer_events(frames.as_mut_slice());
         vsys::poll_once();
         vsys::sleep_ms(16);
     }
 }
 
-fn present_hello(frame: &mut Frame) -> Result<(), trueos::ui4_scene::Error> {
-    const ROWS: [SceneTextRow<'static>; 4] = [
-        SceneTextRow {
-            text: "HELLO, UI4",
-            x: 38.0,
-            y: 42.0,
-            font_pixels: 34.0,
-        },
-        SceneTextRow {
-            text: "five mediated AI cursors",
-            x: 40.0,
-            y: 94.0,
-            font_pixels: 22.0,
-        },
-        SceneTextRow {
-            text: "one selects + right-drags this frame",
-            x: 40.0,
-            y: 136.0,
-            font_pixels: 18.0,
-        },
-        SceneTextRow {
-            text: "the others dance along the top",
-            x: 40.0,
-            y: 170.0,
-            font_pixels: 18.0,
-        },
-    ];
-    frame.begin(rgba(10, 16, 28, 255))?;
-    frame.draw_text_scene(
-        Font::Default,
-        (FRAME_WIDTH, FRAME_HEIGHT),
-        rgba(126, 224, 255, 255),
-        &ROWS,
-    )?;
-    frame.publish(Damage::full(FRAME_WIDTH, FRAME_HEIGHT))
+fn open_frame(index: usize, origin: (i32, i32)) -> Result<Frame, ()> {
+    let mut frame =
+        Frame::open_immutable(origin.0, origin.1, FRAME_WIDTH, FRAME_HEIGHT).map_err(|error| {
+            logl::log(
+                level::ERROR,
+                format_args!("hello_world: frame open failed index={index} error={error:?}"),
+            );
+        })?;
+    frame
+        .begin(FRAME_COLORS[index])
+        .and_then(|()| frame.publish(Damage::full(FRAME_WIDTH, FRAME_HEIGHT)))
+        .map_err(|error| {
+            logl::log(
+                level::ERROR,
+                format_args!("hello_world: frame publish failed index={index} error={error:?}"),
+            );
+        })?;
+    Ok(frame)
 }
 
-fn queue_demo(cursors: &[VCursor]) -> Result<(), i32> {
-    if cursors.len() != 5 {
-        return Err(-1);
+fn wait_for_first_presentation(frame: &mut Frame, index: usize) -> Result<(), ()> {
+    loop {
+        match frame.take_first_presentation() {
+            Ok(true) => return Ok(()),
+            Ok(false) => {
+                vsys::poll_once();
+                vsys::sleep_ms(1);
+            }
+            Err(error) => {
+                logl::log(
+                    level::ERROR,
+                    format_args!(
+                        "hello_world: first presentation failed index={index} error={error:?}"
+                    ),
+                );
+                return Err(());
+            }
+        }
     }
-    queue_leader(&cursors[0])?;
-    queue_dancer(&cursors[1], FRAME_X + 150, FRAME_Y + 30, false)?;
-    queue_dancer(&cursors[2], FRAME_X + 285, FRAME_Y + 30, true)?;
-    queue_scout(&cursors[3], FRAME_X + 70, FRAME_Y + 42, -1)?;
-    queue_scout(
-        &cursors[4],
-        FRAME_X + FRAME_WIDTH as i32 - 70,
-        FRAME_Y + 42,
-        1,
-    )
 }
 
-fn queue_leader(cursor: &VCursor) -> Result<(), i32> {
-    let target = (FRAME_X + 86, FRAME_Y + 92);
+fn queue_orbit(
+    cursor: &VCursor,
+    center: (i32, i32),
+    start: usize,
+    clockwise: bool,
+) -> Result<(), i32> {
     cursor.submit(stroke(
-        target.0,
-        target.1,
-        320,
+        center.0,
+        center.1,
+        48,
         MOUSE_MOTION_EASING_FAST_LINEAR,
         MOUSE_MOTION_FLAG_CLEAR_QUEUE,
     ))?;
 
-    // The first right-click selects the frame and is intentionally absorbed by
-    // UI4. Short stationary strokes make down/up observable as a real gesture.
-    cursor.submit(buttons(SECONDARY_BUTTON, 0))?;
+    // Selection is deliberately a complete primary gesture. UI4 absorbs it,
+    // then the separately clocked secondary gesture owns the frame drag.
+    cursor.submit(buttons(PRIMARY_BUTTON, 0))?;
     cursor.submit(stroke(
-        target.0,
-        target.1,
+        center.0,
+        center.1,
         72,
         MOUSE_MOTION_EASING_NATURAL,
         0,
     ))?;
-    cursor.submit(buttons(0, SECONDARY_BUTTON))?;
+    cursor.submit(buttons(0, PRIMARY_BUTTON))?;
     cursor.submit(stroke(
-        target.0,
-        target.1,
+        center.0,
+        center.1,
         96,
         MOUSE_MOTION_EASING_NATURAL,
         0,
     ))?;
 
-    // The second right-button gesture is delivered to the already-selected
-    // frame. The closed path moves the frame in a tiny circle and returns it.
     cursor.submit(buttons(SECONDARY_BUTTON, 0))?;
-    for (dx, dy) in CIRCLE {
-        cursor.submit(curved_stroke(target.0 + dx, target.1 + dy, 140))?;
+    let radial = ORBIT_POINTS[start];
+    cursor.submit(stroke(
+        center.0 + radial.0,
+        center.1 + radial.1,
+        240,
+        MOUSE_MOTION_EASING_NATURAL,
+        0,
+    ))?;
+
+    let direction = if clockwise { 1isize } else { -1isize };
+    let mut from = radial;
+    for step in 1..=ORBIT_POINTS.len() {
+        let point_index = (start as isize + direction * step as isize)
+            .rem_euclid(ORBIT_POINTS.len() as isize) as usize;
+        let to = ORBIT_POINTS[point_index];
+        cursor.submit(orbit_stroke(center, from, to, clockwise))?;
+        from = to;
     }
     cursor.submit(buttons(0, SECONDARY_BUTTON))
 }
 
-fn queue_dancer(cursor: &VCursor, base_x: i32, base_y: i32, mirror: bool) -> Result<(), i32> {
-    cursor.submit(stroke(
-        base_x,
-        base_y,
-        360,
-        MOUSE_MOTION_EASING_FAST_LINEAR,
-        MOUSE_MOTION_FLAG_CLEAR_QUEUE,
-    ))?;
-    cursor.submit(stroke(base_x, base_y, 290, MOUSE_MOTION_EASING_NATURAL, 0))?;
-    for (index, (dx, dy)) in CIRCLE.into_iter().enumerate() {
-        let wiggle = if index.is_multiple_of(2) { 11 } else { -11 };
-        let (dance_x, dance_y) = if mirror {
-            (base_x + dx + wiggle, base_y + dy - wiggle / 2)
-        } else {
-            (base_x + dx - wiggle, base_y + dy + wiggle / 2)
-        };
-        cursor.submit(curved_stroke(dance_x, dance_y, 140))?;
+fn wait_for_cursor(cursor: &VCursor, frames: &mut [Frame]) -> Result<(), i32> {
+    loop {
+        drain_pointer_events(frames);
+        match cursor.idle()? {
+            true => return Ok(()),
+            false => {
+                vsys::poll_once();
+                vsys::sleep_ms(8);
+            }
+        }
     }
-    Ok(())
 }
 
-fn queue_scout(cursor: &VCursor, base_x: i32, base_y: i32, direction: i32) -> Result<(), i32> {
-    cursor.submit(stroke(
-        base_x,
-        base_y,
-        430,
-        MOUSE_MOTION_EASING_FAST_LINEAR,
-        MOUSE_MOTION_FLAG_CLEAR_QUEUE,
-    ))?;
-    cursor.submit(stroke(base_x, base_y, 220, MOUSE_MOTION_EASING_NATURAL, 0))?;
-    for step in 0..8i32 {
-        let side = if step % 2 == 0 { 1 } else { -1 };
-        cursor.submit(curved_stroke(
-            base_x + direction * (18 + side * 8),
-            base_y + side * 10,
-            170,
-        ))?;
+fn drain_pointer_events(frames: &mut [Frame]) {
+    for frame in frames {
+        while matches!(frame.take_pointer_event(), Ok(Some(_))) {}
     }
-    cursor.submit(curved_stroke(base_x, base_y, 170))
 }
 
 fn stroke(x: i32, y: i32, duration_ms: u32, easing: u8, flags: u8) -> MouseMotionCommand {
@@ -264,16 +280,32 @@ fn stroke(x: i32, y: i32, duration_ms: u32, easing: u8, flags: u8) -> MouseMotio
     }
 }
 
-fn curved_stroke(x: i32, y: i32, duration_ms: u32) -> MouseMotionCommand {
+fn orbit_stroke(
+    center: (i32, i32),
+    from: (i32, i32),
+    to: (i32, i32),
+    clockwise: bool,
+) -> MouseMotionCommand {
+    let direction = if clockwise { 1 } else { -1 };
+    let tangent = |point: (i32, i32)| {
+        (
+            direction * -point.1 * 13 / ORBIT_RADIUS,
+            direction * point.0 * 13 / ORBIT_RADIUS,
+        )
+    };
+    let from_tangent = tangent(from);
+    let to_tangent = tangent(to);
     MouseMotionCommand {
         opcode: MOUSE_MOTION_OPCODE_STROKE,
-        path: MOUSE_MOTION_PATH_QUADRATIC,
+        path: MOUSE_MOTION_PATH_CUBIC,
         easing: MOUSE_MOTION_EASING_NATURAL,
-        duration_ms,
-        x,
-        y,
-        control1_x: x,
-        control1_y: y - 9,
+        duration_ms: 110,
+        x: center.0 + to.0,
+        y: center.1 + to.1,
+        control1_x: center.0 + from.0 + from_tangent.0,
+        control1_y: center.1 + from.1 + from_tangent.1,
+        control2_x: center.0 + to.0 - to_tangent.0,
+        control2_y: center.1 + to.1 - to_tangent.1,
         ..MouseMotionCommand::default()
     }
 }

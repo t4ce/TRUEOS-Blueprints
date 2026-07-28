@@ -165,7 +165,11 @@ impl FrogVisual {
                 })
                 .collect();
             if !rows.is_empty() {
-                if let Err(error) = frame.draw_text_scene(
+                // Weather labels change only with the snapshot. Ask
+                // FontKernel for a one-shot GPU-VM RGBA stamp and let UI4
+                // release it after this publication; no retained mask or
+                // per-frame font-instance work remains behind.
+                if let Err(error) = frame.stamp_text_scene(
                     Font::Inconsolata,
                     (FRAME_WIDTH, FRAME_HEIGHT),
                     rgba(color[0], color[1], color[2], color[3]),
@@ -240,7 +244,7 @@ impl FrogVisual {
                 format_args!(
                     "Frog: UI4 {} deferred: {error:?} attempt={}",
                     if raster_visible {
-                        "text layer (raster window remains visible)"
+                        "stamped text layer (raster window remains visible)"
                     } else {
                         "window publication"
                     },

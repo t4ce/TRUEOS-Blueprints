@@ -8,5 +8,5 @@ pub use crate::ui4_solara_text::{
     PARTICLE_CRAFT_FLAG_ATTRACTOR, PARTICLE_CRAFT_FLAG_ORBIT, PARTICLE_CRAFT_FLAG_RESET,
     PARTICLE_CRAFT_HEIGHT, PARTICLE_CRAFT_MAX_PARTICLES, PARTICLE_CRAFT_PARAMS_VERSION,
     PARTICLE_CRAFT_WIDTH, ParticleCraftParamsV1, PointerEvent, ResizeEvent, SkyboxRenderParams,
-    SpriteCorner, SpriteQuad, rgba,
+    SpriteCorner, SpriteQuad, output_dimensions, rgba,
 };

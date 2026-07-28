@@ -3,6 +3,7 @@
 use alloc::vec::Vec;
 
 pub const MAX_SCENE_TEXT_ROWS_PER_CALL: usize = 64;
+const FONT_ID_STAMP_ONCE: u32 = 1 << 31;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct FontSize {
@@ -48,6 +49,18 @@ pub struct CursorSource {
     pub slot_id: u32,
     pub ep_target: u32,
     pub hid_kind: u32,
+}
+
+/// Return the physical UI4/cursor output extent in pixels.
+pub fn output_dimensions() -> Result<(u32, u32), Error> {
+    let packed = unsafe { v::bp_abi::trueos_cabi_ui4_scene_output_dimensions() };
+    let width = (packed >> 32) as u32;
+    let height = packed as u32;
+    if width == 0 || height == 0 {
+        Err(Error::Ui4)
+    } else {
+        Ok((width, height))
+    }
 }
 
 /// Kernel-provided slot-4 cursor sprites for a UI4 frame.
@@ -440,6 +453,18 @@ impl Frame {
         }))
     }
 
+    /// Take the one-shot event proving that this window's first published
+    /// frame crossed the compositor's physical SURFLIVE handoff.
+    pub fn take_first_presentation(&mut self) -> Result<bool, Error> {
+        let result =
+            unsafe { v::bp_abi::trueos_cabi_ui4_scene_first_presentation_take(self.window_id) };
+        match result {
+            0 => Ok(true),
+            1 => Ok(false),
+            _ => Err(error_from_status(result)),
+        }
+    }
+
     /// Sample held keys only from the keyboard routed to this selected frame.
     /// Click/tap the frame first to establish the global UI4 selection.
     pub fn keyboard_state(&self) -> Result<Option<KeyboardState>, Error> {
@@ -727,7 +752,9 @@ impl Frame {
     /// The kernel builds analytical coverage on the asynchronous FontKernel
     /// task and keeps it GPU-VM resident behind this frame. Later paint passes
     /// reuse the same masks when only color or a common integral translation
-    /// changed. Consumers should split large scenes into bounded calls.
+    /// changed. The destination must be opened with [`Frame::open_streaming`]
+    /// so the final compute release can cross UI4's triple-buffered scene
+    /// handoff. Consumers should split large scenes into bounded calls.
     pub fn retain_text_scene(
         &mut self,
         font: Font,
@@ -761,16 +788,42 @@ impl Frame {
         })
     }
 
-    /// Compatibility name for the pre-retained Solara scene API.
-    #[deprecated(note = "use retain_text_scene; draw_text_scene names the FontKernelOld contract")]
-    pub fn draw_text_scene(
+    /// Asynchronously rasterize fixed text once and composite its RGBA stamp.
+    ///
+    /// This is the economical path for static labels or infrequently refreshed
+    /// dashboards. The kernel owns the temporary GPU-VM stamp through UI4
+    /// publication and releases it after the frame has been presented.
+    pub fn stamp_text_scene(
         &mut self,
         font: Font,
         viewport: (u32, u32),
         color_rgba: u32,
         rows: &[SceneTextRow<'_>],
     ) -> Result<(), Error> {
-        self.retain_text_scene(font, viewport, color_rgba, rows)
+        if viewport != (self.width, self.height) {
+            return Err(Error::Invalid);
+        }
+        let raw: Vec<_> = rows
+            .iter()
+            .map(|row| v::bp_abi::TrueosUi4SolaraSceneTextRow {
+                text_ptr: row.text.as_ptr(),
+                text_len: row.text.len(),
+                x: row.x,
+                y: row.y,
+                font_pixels: row.font_pixels,
+            })
+            .collect();
+        status(unsafe {
+            v::bp_abi::trueos_cabi_ui4_solara_text_scene(
+                self.window_id,
+                font as u32 | FONT_ID_STAMP_ONCE,
+                viewport.0,
+                viewport.1,
+                color_rgba,
+                raw.as_ptr(),
+                raw.len(),
+            )
+        })
     }
 
     pub fn publish(&mut self, damage: Damage) -> Result<(), Error> {
