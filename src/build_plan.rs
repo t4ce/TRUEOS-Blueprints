@@ -20,7 +20,10 @@ pub(crate) enum BuildFlavor {
 impl BuildFlavor {
     pub(crate) fn cache_label(self) -> &'static str {
         match self {
-            BuildFlavor::TokioStd => "tokio-platform",
+            // Cargo does not reliably invalidate cached build-std artifacts
+            // after the pinned external rust-src tree is patched. Bump this
+            // revision whenever the TRUEOS std hooks change.
+            BuildFlavor::TokioStd => "tokio-platform-v2",
             BuildFlavor::ThinNoStd => "thin-nostd",
         }
     }

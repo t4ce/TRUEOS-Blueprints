@@ -108,7 +108,7 @@ pub mod platform {
 }
 
 pub mod logl {
-    use alloc::string::{String, ToString};
+    use alloc::string::String;
     use core::fmt::Write as _;
 
     pub mod level {
@@ -119,35 +119,39 @@ pub mod logl {
         pub const TRACE: u8 = 5;
     }
 
+    #[inline]
     pub fn log(level: u8, message: impl IntoLogMessage) {
         let stream = if level <= level::ERROR { 2 } else { 1 };
-        let line = message.into_log_message();
-        v::vsys::write_stream(stream, line.as_bytes());
-        if !line.ends_with('\n') {
-            v::vsys::write_stream(stream, b"\n");
-        }
+        message.with_log_message(|line| {
+            v::vsys::write_stream(stream, line.as_bytes());
+            if !line.ends_with('\n') {
+                v::vsys::write_stream(stream, b"\n");
+            }
+        });
     }
 
+    #[inline]
     pub fn log_record(level: u8, target: &str, message: impl IntoLogMessage) -> i32 {
-        let message = message.into_log_message();
-        v::vsys::log_record(u32::from(level), target, message.as_str())
+        message.with_log_message(|message| v::vsys::log_record(u32::from(level), target, message))
     }
 
     pub trait IntoLogMessage {
-        fn into_log_message(self) -> String;
+        fn with_log_message<R>(self, f: impl FnOnce(&str) -> R) -> R;
     }
 
     impl IntoLogMessage for &str {
-        fn into_log_message(self) -> String {
-            self.to_string()
+        #[inline]
+        fn with_log_message<R>(self, f: impl FnOnce(&str) -> R) -> R {
+            f(self)
         }
     }
 
     impl IntoLogMessage for core::fmt::Arguments<'_> {
-        fn into_log_message(self) -> String {
+        #[inline]
+        fn with_log_message<R>(self, f: impl FnOnce(&str) -> R) -> R {
             let mut out = String::new();
             let _ = out.write_fmt(self);
-            out
+            f(out.as_str())
         }
     }
 }

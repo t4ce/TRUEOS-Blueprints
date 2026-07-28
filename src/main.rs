@@ -1277,6 +1277,61 @@ fn pinned_rust_src_path(relative: &str) -> Result<PathBuf, String> {
         .join(relative))
 }
 
+const TRUEOS_STD_RANDOM_BACKEND: &str = r#"//! TRUEOS kernel random source.
+
+unsafe extern "C" {
+    fn sys_rand(recv_buf: *mut u32, words: usize);
+}
+
+pub fn fill_bytes(bytes: &mut [u8]) {
+    let (pre, words, post) = unsafe { bytes.align_to_mut::<u32>() };
+    if !words.is_empty() {
+        unsafe {
+            sys_rand(words.as_mut_ptr(), words.len());
+        }
+    }
+
+    let mut buf = [0u32; 2];
+    let len = (pre.len() + post.len() + size_of::<u32>() - 1) / size_of::<u32>();
+    if len != 0 {
+        unsafe { sys_rand(buf.as_mut_ptr(), len) };
+    }
+
+    let buf = buf.map(u32::to_ne_bytes);
+    let buf = buf.as_flattened();
+    pre.copy_from_slice(&buf[..pre.len()]);
+    post.copy_from_slice(&buf[pre.len()..pre.len() + post.len()]);
+}
+"#;
+
+fn ensure_rust_src_file(relative: &str, contents: &str, label: &str) -> Result<(), String> {
+    let path = pinned_rust_src_path(relative)?;
+    match fs::read_to_string(&path) {
+        Ok(source) if source == contents => return Ok(()),
+        Ok(_) => {
+            return Err(format!(
+                "failed to restore {}; existing {label} source differs from the pinned contents",
+                path.display()
+            ));
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => {
+            return Err(format!(
+                "failed to read Rust std source {}: {err}",
+                path.display()
+            ));
+        }
+    }
+
+    fs::write(&path, contents)
+        .map_err(|err| format!("failed to create Rust std source {}: {err}", path.display()))?;
+    println!(
+        "trueos-blueprint: restored rust-src TRUEOS {label}: {}",
+        path.display()
+    );
+    Ok(())
+}
+
 fn ensure_rust_src_replacement(
     relative: &str,
     needle: &str,
@@ -1311,6 +1366,11 @@ fn ensure_rust_src_replacement(
 }
 
 fn ensure_rust_std_trueos_cfg_hooks() -> Result<(), String> {
+    ensure_rust_src_file(
+        "std/src/sys/random/trueos.rs",
+        TRUEOS_STD_RANDOM_BACKEND,
+        "random backend",
+    )?;
     ensure_rust_src_replacement(
         "std/src/os/mod.rs",
         "        #[cfg(target_os = \"linux\")]\n        pub mod linux;",
@@ -1337,15 +1397,21 @@ fn ensure_rust_std_trueos_cfg_hooks() -> Result<(), String> {
     )?;
     ensure_rust_src_replacement(
         "std/src/sys/random/mod.rs",
-        "        all(target_family = \"wasm\", target_os = \"unknown\"),\n        target_os = \"xous\",",
-        "        all(target_family = \"wasm\", target_os = \"unknown\"),\n        target_os = \"trueos\",\n        target_os = \"xous\",",
-        "random fallback",
+        "    target_os = \"trusty\" => {\n        mod trusty;\n        pub use trusty::fill_bytes;\n    }",
+        "    target_os = \"trueos\" => {\n        mod trueos;\n        pub use trueos::fill_bytes;\n    }\n    target_os = \"trusty\" => {\n        mod trusty;\n        pub use trusty::fill_bytes;\n    }",
+        "random backend selection",
     )?;
     ensure_rust_src_replacement(
         "std/src/sys/random/mod.rs",
-        "#[cfg(not(any(\n    target_os = \"linux\",\n    target_os = \"android\",",
+        "        all(target_family = \"wasm\", target_os = \"unknown\"),\n        target_os = \"trueos\",\n        target_os = \"xous\",",
+        "        all(target_family = \"wasm\", target_os = \"unknown\"),\n        target_os = \"xous\",",
+        "unsupported random fallback exclusion",
+    )?;
+    ensure_rust_src_replacement(
+        "std/src/sys/random/mod.rs",
         "#[cfg(not(any(\n    target_os = \"linux\",\n    target_os = \"trueos\",\n    target_os = \"android\",",
-        "HashMap random fallback",
+        "#[cfg(not(any(\n    target_os = \"linux\",\n    target_os = \"android\",",
+        "generic HashMap random keys",
     )?;
     ensure_rust_src_replacement(
         "std/src/sys/args/unix.rs",
