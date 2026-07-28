@@ -19,8 +19,6 @@ pub(crate) struct PackageAppSpec {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum RustcTier {
     Min,
-    Med,
-    MedPlus,
 }
 
 #[derive(Deserialize)]
@@ -310,11 +308,9 @@ pub(crate) fn package_blueprint_rustc_tier(
         }
         return match toml_string_value(value.trim()).as_deref() {
             Some("min") => Ok(Some(RustcTier::Min)),
-            Some("med") => Ok(Some(RustcTier::Med)),
-            Some("med-plus") => Ok(Some(RustcTier::MedPlus)),
             Some(other) => Err(format!(
                 "unsupported trueos-blueprint rustc-tier `{other}` in {}; \
-                 expected min, med, or med-plus",
+                 expected min",
                 manifest_path.display()
             )),
             None => Err(format!(
@@ -535,23 +531,20 @@ replicatable = true
     }
 
     #[test]
-    fn reads_all_rustc_tiers_from_blueprint_metadata() {
-        for (value, expected) in [
-            ("min", RustcTier::Min),
-            ("med", RustcTier::Med),
-            ("med-plus", RustcTier::MedPlus),
-        ] {
-            let path = temporary_manifest("rustc-tier", value);
-            assert_eq!(package_blueprint_rustc_tier(&path).unwrap(), Some(expected));
-            fs::remove_file(path).unwrap();
-        }
+    fn reads_native_rustc_contract_from_blueprint_metadata() {
+        let path = temporary_manifest("rustc-tier", "min");
+        assert_eq!(
+            package_blueprint_rustc_tier(&path).unwrap(),
+            Some(RustcTier::Min)
+        );
+        fs::remove_file(path).unwrap();
     }
 
     #[test]
     fn rejects_unknown_rustc_tier() {
         let path = temporary_manifest("rustc-tier", "max");
         let error = package_blueprint_rustc_tier(&path).unwrap_err();
-        assert!(error.contains("expected min, med, or med-plus"));
+        assert!(error.contains("expected min"));
         fs::remove_file(path).unwrap();
     }
 

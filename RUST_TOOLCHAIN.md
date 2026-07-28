@@ -29,28 +29,28 @@ worker-local storage/TLS. The patched `libc` source remains repository-owned at
 At startup the Blueprint builder verifies the full rustc commit hash before it
 may modify `rust-src`. A missing or different toolchain fails closed.
 
-## Native rustc Blueprint tiers
+## Native rustc Blueprint
 
-The three packages live in the exact toolchain checkout and pin Tokio
-`=1.52.3` with default features disabled:
+The exact toolchain checkout contains one native compiler appliance,
+`rustc-min`. It pins Tokio `=1.52.3` with default features disabled and keeps
+rustc at one query worker.
 
-| package | compiler test | packaged support | rustc workers |
-| --- | --- | --- | ---: |
-| `rustc-min` | `no_core` frontend smoke | target JSON only | 1 |
-| `rustc-med` | ordinary `std` Hello typecheck with `-Zno-codegen` | target JSON and target `rmeta` sysroot | 2 |
-| `rustc-med-plus` | ordinary `std` Hello object emission | med assets plus statically selected Cranelift | 4 |
+The former med and med+ bring-up packages have been folded into min. Min now
+embeds the authenticated target JSON, the current build-std metadata closure,
+and the selected TrueOS API payload; selects the static Cranelift backend;
+compiles `/common/localcompile/main.rs` to an x86-64 relocatable object;
+validates the object and its loader contract; and publishes
+`/common/localcompile/local.bp`.
 
-All three use a current-thread Tokio runtime and place the compiler invocation
-on a blocking lane. The worker count is passed to rustc at the natural query
-engine choke through `-Zthreads`; it is not a general process or IPC model.
-The Tokio blocking carrier is an additional parked supervisor and is not
-included in the advertised rustc worker count.
+It uses a current-thread Tokio runtime and places the compiler invocation on a
+blocking lane. `-Zthreads=1` keeps rustc's query engine single-worker, while the
+Tokio blocking carrier remains a separate parked supervisor. This is not a
+general process or IPC model.
 
-All three tiers carry the target JSON both at the explicit `--target` path and
-at rustc's host-target sysroot fallback. Min's authenticated asset bundle stops
-there. For med and med+, the builder additionally collects only the current
-build-std invocation's authenticated metadata closure. It writes the assets and
-an exact-toolchain manifest into deterministic `.trueos.assets` data. The kernel
+The package carries the target JSON both at the explicit `--target` path and at
+rustc's host-target sysroot fallback. The builder collects only authenticated
+metadata from the current build-std invocation and writes it with an
+exact-toolchain manifest into deterministic `.trueos.assets` data. The kernel
 validates the bundle, hashes every entry, rejects unsafe paths, and materializes
 it under the Blueprint's filesystem root before calling `_start`.
 
@@ -73,9 +73,7 @@ TRUEOS_BLUEPRINT_SKIP_APPS_PUBLISH=1 \
 cargo bp /home/t4ce/REPOS/TRUEOS-Rust-Toolchain-nightly-2026-07-10/blueprints/rustc-min
 ```
 
-Replace `rustc-min` with `rustc-med` or `rustc-med-plus` for the other tiers.
-The resulting files are `dist/rustc-min.bp`, `dist/rustc-med.bp`, and
-`dist/rustc-med-plus.bp`.
+The resulting file is `dist/rustc-min.bp`.
 
 ## Deliberate boundary
 
@@ -89,9 +87,9 @@ conventional hosted OS:
   loading, signals, `fork`, or `exec`. Process-shaped compatibility names that
   can still occur on diagnostic or dormant paths fail explicitly with
   `ENOSYS`/`EPERM` instead of pretending success.
-- Med performs parsing, expansion, resolution, and typechecking. Med+ emits a
-  relocatable x86-64 object with statically linked Cranelift. It does not embed
-  the LLVM backend or a C++ runtime.
+- Min performs parsing, expansion, resolution, typechecking, and relocatable
+  x86-64 object emission with statically linked Cranelift. It does not embed the
+  LLVM backend or a C++ runtime.
 - Final executable linking, Cargo's subprocess-oriented orchestration, a
   general process model, and arbitrary third-party `std` filesystem semantics
   remain outside this first native compiler contract.

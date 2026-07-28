@@ -143,16 +143,20 @@ pub mod logl {
 
         #[doc(hidden)]
         #[inline]
-        fn emit_log(self, level: u8) {
+        fn emit_log(self, level: u8)
+        where
+            Self: Sized,
+        {
             self.with_log_message(|line| emit_str(level, line));
         }
 
         #[doc(hidden)]
         #[inline]
-        fn emit_log_record(self, level: u8, target: &str) -> i32 {
-            self.with_log_message(|message| {
-                v::vsys::log_record(u32::from(level), target, message)
-            })
+        fn emit_log_record(self, level: u8, target: &str) -> i32
+        where
+            Self: Sized,
+        {
+            self.with_log_message(|message| v::vsys::log_record(u32::from(level), target, message))
         }
     }
 

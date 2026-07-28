@@ -604,8 +604,6 @@ fn build_one_target_to(
 fn rustc_tier_label(tier: RustcTier) -> &'static str {
     match tier {
         RustcTier::Min => "min",
-        RustcTier::Med => "med",
-        RustcTier::MedPlus => "med-plus",
     }
 }
 
@@ -647,14 +645,6 @@ fn rustc_sysroot_asset_entries(
             }
             selected
         }
-        RustcTier::Med | RustcTier::MedPlus if metadata.is_empty() => {
-            return Err(format!(
-                "native rustc {} build produced no authenticated build-std metadata; \
-                 refusing to package an unusable target sysroot",
-                rustc_tier_label(tier)
-            ));
-        }
-        RustcTier::Med | RustcTier::MedPlus => metadata.iter().collect(),
     };
     let target_file = target_spec
         .file_name()
