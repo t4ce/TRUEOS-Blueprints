@@ -43,11 +43,13 @@ validates the object and its loader contract; and publishes
 `/common/localcompile/local.bp`.
 
 The managed default source is a self-contained Gridpaper one-shot. It constructs
-a valid 39×55 page, submits it through the kernel Gridpaper snapshot ABI, and
-parks cooperatively on the Blueprint poll/sleep calls. Keeping this seed
-monolithic is deliberate: Cranelift does not support full-graph LTO, and a
-general source using non-inline functions from embedded `rmeta` still needs the
-future in-process relocatable-link stage.
+a valid 39×55 page in static zero-filled storage, submits it through the kernel
+Gridpaper snapshot ABI, and parks cooperatively on the Blueprint poll/sleep
+calls. Static storage avoids making Cranelift compile a 27,885-byte automatic
+stack initialization on the target. Keeping this seed monolithic is deliberate:
+Cranelift does not support full-graph LTO, and a general source using non-inline
+functions from embedded `rmeta` still needs the future in-process
+relocatable-link stage.
 
 It uses a current-thread Tokio runtime and places the compiler invocation on a
 blocking lane. `-Zthreads=1` keeps rustc's query engine single-worker, while the

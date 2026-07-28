@@ -16,6 +16,8 @@ const COLOR_BRIGHT_WHITE: u8 = 16;
 const COLOR_TRANSPARENT: u8 = 17;
 const STYLE_BOLD: u8 = 1;
 
+static mut PAGE: [u8; PAGE_BYTES] = [0; PAGE_BYTES];
+
 unsafe extern "C" {
     fn trueos_cabi_gridpaper_snapshot_submit(
         generation: u64,
@@ -30,11 +32,11 @@ unsafe extern "C" {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() -> ! {
-    let mut page = [0_u8; PAGE_BYTES];
-    draw_rustc_gridpaper(&mut page);
+    let page = unsafe { &mut *(&raw mut PAGE) };
+    draw_rustc_gridpaper(page);
 
     let status = unsafe {
-        trueos_cabi_gridpaper_snapshot_submit(1, 100, page.as_ptr(), page.len())
+        trueos_cabi_gridpaper_snapshot_submit(1, 100, page.as_ptr(), PAGE_BYTES)
     };
     if status == 0 {
         write_log(b"rustc one-shot: Gridpaper snapshot submitted\n");

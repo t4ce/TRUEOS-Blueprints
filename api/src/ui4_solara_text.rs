@@ -4,6 +4,8 @@ use alloc::vec::Vec;
 
 pub const MAX_SCENE_TEXT_ROWS_PER_CALL: usize = 64;
 const FONT_ID_STAMP_ONCE: u32 = 1 << 31;
+const FONT_ID_TEXT_BACKBUFFER: u32 = 1 << 30;
+const TEXT_BACKBUFFER_SPRITE_ID: u32 = u32::MAX;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct FontSize {
@@ -788,11 +790,114 @@ impl Frame {
         })
     }
 
-    /// Asynchronously rasterize fixed text once and composite its RGBA stamp.
+    /// Retain document text for one persistent, offscreen RGBA8 canvas.
+    ///
+    /// Call this one or more times between [`Frame::begin_sprite_frame`] and
+    /// [`Frame::publish_text_backbuffer_view`]. The kernel retains analytical
+    /// glyph coverage for every layer, materializes the complete canvas once,
+    /// and then releases the masks. Subsequent viewport pans sample the warm
+    /// RGBA8 canvas without rebuilding text or entering FontKernel again.
+    pub fn retain_text_backbuffer(
+        &mut self,
+        font: Font,
+        canvas: (u32, u32),
+        color_rgba: u32,
+        rows: &[SceneTextRow<'_>],
+    ) -> Result<(), Error> {
+        let raw: Vec<_> = rows
+            .iter()
+            .map(|row| v::bp_abi::TrueosUi4SolaraSceneTextRow {
+                text_ptr: row.text.as_ptr(),
+                text_len: row.text.len(),
+                x: row.x,
+                y: row.y,
+                font_pixels: row.font_pixels,
+            })
+            .collect();
+        status(unsafe {
+            v::bp_abi::trueos_cabi_ui4_solara_text_scene(
+                self.window_id,
+                font as u32 | FONT_ID_TEXT_BACKBUFFER,
+                canvas.0,
+                canvas.1,
+                color_rgba,
+                raw.as_ptr(),
+                raw.len(),
+            )
+        })
+    }
+
+    /// Crop the persistent text canvas into the active UI4 sprite-frame lease
+    /// and publish it. No font work occurs after the first successful call.
+    pub fn publish_text_backbuffer_view(
+        &mut self,
+        canvas: (u32, u32),
+        origin: (u32, u32),
+    ) -> Result<(), Error> {
+        let Some(right) = origin.0.checked_add(self.width) else {
+            return Err(Error::Invalid);
+        };
+        let Some(bottom) = origin.1.checked_add(self.height) else {
+            return Err(Error::Invalid);
+        };
+        if canvas.0 == 0 || canvas.1 == 0 || right > canvas.0 || bottom > canvas.1 {
+            return Err(Error::Invalid);
+        }
+        let u0 = origin.0 as f32 / canvas.0 as f32;
+        let v0 = origin.1 as f32 / canvas.1 as f32;
+        let u1 = right as f32 / canvas.0 as f32;
+        let v1 = bottom as f32 / canvas.1 as f32;
+        let quad = SpriteQuad {
+            sprite_id: TEXT_BACKBUFFER_SPRITE_ID,
+            c0: SpriteCorner {
+                x: 0.0,
+                y: 0.0,
+                u: u0,
+                v: v0,
+            },
+            c1: SpriteCorner {
+                x: self.width as f32,
+                y: 0.0,
+                u: u1,
+                v: v0,
+            },
+            c2: SpriteCorner {
+                x: self.width as f32,
+                y: self.height as f32,
+                u: u1,
+                v: v1,
+            },
+            c3: SpriteCorner {
+                x: 0.0,
+                y: self.height as f32,
+                u: u0,
+                v: v1,
+            },
+            color_rgba: rgba(255, 255, 255, 255),
+            source_over: false,
+        };
+        self.draw_sprite_quads(core::slice::from_ref(&quad))?;
+        self.publish(Damage::full(self.width, self.height))
+    }
+
+    /// Acquire a new UI4 lease, crop the already-materialized text canvas, and
+    /// publish it. This is the complete steady-state pan operation.
+    pub fn present_text_backbuffer_view(
+        &mut self,
+        canvas: (u32, u32),
+        origin: (u32, u32),
+        clear_rgba: u32,
+    ) -> Result<(), Error> {
+        self.begin_sprite_frame(clear_rgba)?;
+        self.publish_text_backbuffer_view(canvas, origin)
+    }
+
+    /// Asynchronously rasterize fixed text once into the leased UI4 frame.
     ///
     /// This is the economical path for static labels or infrequently refreshed
-    /// dashboards. The kernel owns the temporary GPU-VM stamp through UI4
-    /// publication and releases it after the frame has been presented.
+    /// dashboards. Multiple calls before publication become ordered layers in
+    /// one FontKernel request; no intermediate full-frame RGBA allocation or
+    /// follow-up UI4 compositor pass is required.
     pub fn stamp_text_scene(
         &mut self,
         font: Font,

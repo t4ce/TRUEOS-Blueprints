@@ -121,9 +121,24 @@ impl App {
                 self.refresh(refresh, visual);
             }
 
-            if event::poll(Duration::from_millis(120))? {
-                if let Event::Key(key) = event::read()? {
-                    self.handle_key(key, refresh, visual);
+            match event::poll(Duration::from_millis(120)) {
+                Ok(true) => match event::read() {
+                    Ok(Event::Key(key)) => self.handle_key(key, refresh, visual),
+                    Ok(_) => {}
+                    Err(err) => {
+                        self.status = format!("input read unavailable: {err}");
+                        std::thread::sleep(Duration::from_millis(250));
+                    }
+                },
+                Ok(false) => {}
+                Err(err) => {
+                    // Input is ancillary to the weather refresh and UI4
+                    // snapshot. In particular, an unavailable SIGWINCH/event
+                    // source must not unwind Frog, drop the immutable frame,
+                    // and make a healthy live-weather update look like a
+                    // graphics crash.
+                    self.status = format!("input polling unavailable: {err}");
+                    std::thread::sleep(Duration::from_millis(250));
                 }
             }
         }

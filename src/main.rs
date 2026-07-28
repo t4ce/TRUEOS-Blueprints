@@ -3019,13 +3019,43 @@ fn patch_crossterm_trueos_overlay(crate_dir: &Path) -> Result<(), String> {
     )?;
     replace_file_text(
         &mio_path,
+        "use signal_hook_mio::v1_0::Signals;",
+        "#[cfg(not(any(target_os = \"trueos\", target_os = \"zkvm\")))]\nuse signal_hook_mio::v1_0::Signals;",
+    )?;
+    replace_file_text(
+        &mio_path,
+        "    source::EventSource, sys::unix::parse::parse_event, timeout::PollTimeout, Event, InternalEvent,\n};",
+        "    source::EventSource, sys::unix::parse::parse_event, timeout::PollTimeout, InternalEvent,\n};\n#[cfg(not(any(target_os = \"trueos\", target_os = \"zkvm\")))]\nuse crate::event::Event;",
+    )?;
+    replace_file_text(
+        &mio_path,
+        "const SIGNAL_TOKEN: Token = Token(1);",
+        "#[cfg(not(any(target_os = \"trueos\", target_os = \"zkvm\")))]\nconst SIGNAL_TOKEN: Token = Token(1);",
+    )?;
+    replace_file_text(
+        &mio_path,
+        "    signals: Signals,",
+        "    #[cfg(not(any(target_os = \"trueos\", target_os = \"zkvm\")))]\n    signals: Signals,",
+    )?;
+    replace_file_text(
+        &mio_path,
+        "        trueos_event_probe(b\"[crossterm-resize-probe:INFO] sigwinch register begin\\n\");\n        let mut signals = Signals::new([signal_hook::consts::SIGWINCH])\n            .map_err(mio_to_io_error)?;\n        registry\n            .register(&mut signals, SIGNAL_TOKEN, Interest::READABLE)\n            .map_err(mio_to_io_error)?;\n        trueos_event_probe(b\"[crossterm-resize-probe:INFO] sigwinch register ready\\n\");",
+        "        #[cfg(not(any(target_os = \"trueos\", target_os = \"zkvm\")))]\n        let mut signals = {\n            trueos_event_probe(b\"[crossterm-resize-probe:INFO] sigwinch register begin\\n\");\n            let mut signals = Signals::new([signal_hook::consts::SIGWINCH])\n                .map_err(mio_to_io_error)?;\n            registry\n                .register(&mut signals, SIGNAL_TOKEN, Interest::READABLE)\n                .map_err(mio_to_io_error)?;\n            trueos_event_probe(b\"[crossterm-resize-probe:INFO] sigwinch register ready\\n\");\n            signals\n        };\n        #[cfg(any(target_os = \"trueos\", target_os = \"zkvm\"))]\n        trueos_event_probe(\n            b\"[crossterm-resize-probe:INFO] sigwinch unavailable; tty polling active\\n\",\n        );",
+    )?;
+    replace_file_text(
+        &mio_path,
+        "            signals,",
+        "            #[cfg(not(any(target_os = \"trueos\", target_os = \"zkvm\")))]\n            signals,",
+    )?;
+    replace_file_text(
+        &mio_path,
         "                if e.kind() == io::ErrorKind::Interrupted {\n                    continue;\n                } else {\n                    return Err(e);\n                }",
         "                if e.kind() == mio::io::ErrorKind::Interrupted {\n                    continue;\n                } else {\n                    return Err(mio_to_io_error(e));\n                }",
     )?;
     replace_file_text(
         &mio_path,
         "                    SIGNAL_TOKEN => {\n                        if self.signals.pending().next() == Some(signal_hook::consts::SIGWINCH) {",
-        "                    SIGNAL_TOKEN => {\n                        trueos_event_probe(b\"[crossterm-resize-probe:INFO] signal token ready\\n\");\n                        if self.signals.pending().next() == Some(signal_hook::consts::SIGWINCH) {\n                            trueos_event_probe(b\"[crossterm-resize-probe:INFO] sigwinch -> resize event\\n\");",
+        "                    #[cfg(not(any(target_os = \"trueos\", target_os = \"zkvm\")))]\n                    SIGNAL_TOKEN => {\n                        trueos_event_probe(b\"[crossterm-resize-probe:INFO] signal token ready\\n\");\n                        if self.signals.pending().next() == Some(signal_hook::consts::SIGWINCH) {\n                            trueos_event_probe(b\"[crossterm-resize-probe:INFO] sigwinch -> resize event\\n\");",
     )?;
 
     let terminal_unix_path = crate_dir.join("src/terminal/sys/unix.rs");
