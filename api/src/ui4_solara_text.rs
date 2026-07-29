@@ -154,6 +154,18 @@ impl KeyboardState {
     }
 }
 
+/// One UI4 cursor/combo route scoped to this frame.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct InputRoute {
+    pub cursor: CursorSource,
+    pub combo_id: u32,
+    pub color_rgba: u32,
+    pub selected_for_window: bool,
+    pub application_focus: bool,
+    pub vcursor: bool,
+    pub keyboard: Option<KeyboardState>,
+}
+
 /// Camera basis and destination rectangle for the kernel RGB565 skybox
 /// sampler. The source image is retained by the frame after upload.
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
@@ -491,6 +503,37 @@ impl Frame {
             ascii: raw.ascii,
             key_down_bits: raw.key_down_bits,
         }))
+    }
+
+    /// Snapshot every UI4 cursor/combo route with its exact selection state
+    /// for this frame and its paired sanitized held keyboard state.
+    pub fn input_routes(&self) -> Result<Vec<InputRoute>, Error> {
+        let count = unsafe {
+            v::bp_abi::trueos_cabi_ui4_scene_input_routes(self.window_id, core::ptr::null_mut(), 0)
+        };
+        if count < 0 {
+            return Err(error_from_status(count as i32));
+        }
+        let capacity = usize::try_from(count).map_err(|_| Error::Invalid)?;
+        let mut raw = alloc::vec![
+            v::bp_abi::TrueosUi4InputRouteState::default();
+            capacity
+        ];
+        if capacity == 0 {
+            return Ok(Vec::new());
+        }
+        let returned = unsafe {
+            v::bp_abi::trueos_cabi_ui4_scene_input_routes(
+                self.window_id,
+                raw.as_mut_ptr(),
+                raw.len() as u32,
+            )
+        };
+        if returned < 0 {
+            return Err(error_from_status(returned as i32));
+        }
+        raw.truncate(core::cmp::min(returned as usize, raw.len()));
+        Ok(raw.into_iter().map(input_route_from_raw).collect())
     }
 
     pub fn set_position(&mut self, x: i32, y: i32) -> Result<(), Error> {
@@ -954,6 +997,36 @@ impl Frame {
             self.window_id = 0;
         }
         result
+    }
+}
+
+fn input_route_from_raw(raw: v::bp_abi::TrueosUi4InputRouteState) -> InputRoute {
+    let keyboard =
+        (raw.flags & v::bp_abi::UI4_INPUT_ROUTE_KEYBOARD_PRESENT != 0).then_some(KeyboardState {
+            controller_id: raw.keyboard_controller_id,
+            slot_id: raw.keyboard_slot_id,
+            ep_target: raw.keyboard_ep_target,
+            combo_id: raw.combo_id,
+            modifiers: raw.keyboard_modifiers,
+            source_kind: raw.keyboard_source_kind,
+            virtual_keyboard: raw.virtual_keyboard != 0,
+            keys: raw.keys,
+            ascii: raw.ascii,
+            key_down_bits: raw.key_down_bits,
+        });
+    InputRoute {
+        cursor: CursorSource {
+            controller_id: raw.cursor_controller_id,
+            slot_id: raw.cursor_slot_id,
+            ep_target: raw.cursor_ep_target,
+            hid_kind: raw.cursor_hid_kind,
+        },
+        combo_id: raw.combo_id,
+        color_rgba: raw.color_rgba,
+        selected_for_window: raw.flags & v::bp_abi::UI4_INPUT_ROUTE_SELECTED_FOR_WINDOW != 0,
+        application_focus: raw.flags & v::bp_abi::UI4_INPUT_ROUTE_APP_FOCUS != 0,
+        vcursor: raw.flags & v::bp_abi::UI4_INPUT_ROUTE_VCURSOR != 0,
+        keyboard,
     }
 }
 

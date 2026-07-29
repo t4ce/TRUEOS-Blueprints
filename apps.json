@@ -32,6 +32,11 @@
       "optional": true
     },
     {
+      "name": "tinyfighter",
+      "path": "../TinyFighter",
+      "optional": true
+    },
+    {
       "name": "solara",
       "path": "../solara",
       "optional": true
