@@ -54,6 +54,7 @@ pub mod vshell;
 pub mod vsys;
 pub mod vsystem_services;
 pub mod vthermal;
+pub mod vusb;
 
 #[macro_export]
 macro_rules! shell_line {

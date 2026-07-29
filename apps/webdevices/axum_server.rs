@@ -29,6 +29,7 @@ use trueos::{
     printers, rapl, runtime, thermal,
     time::{self, Duration},
     tokio::{self, net::SocketAddr},
+    usb,
 };
 
 const WEBDEVICES_HTTP_TCP_PORT: u16 = 10;
@@ -203,6 +204,8 @@ struct DeviceGroup {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct UsbSnapshot {
+    vlayer_available: bool,
+    snapshot_bytes: usize,
     count: usize,
     device_count: usize,
     controller_count: usize,
@@ -210,6 +213,7 @@ struct UsbSnapshot {
     devices: Vec<serde_json::Value>,
     controllers: Vec<serde_json::Value>,
     topology: Vec<serde_json::Value>,
+    probe_error: Option<String>,
     unavailable_reason: &'static str,
 }
 
@@ -651,6 +655,13 @@ fn pci_payload() -> DeviceGroup {
     }
 }
 
+fn usb_payload(pci_devices: &[serde_json::Value]) -> UsbSnapshot {
+    match usb::snapshot_text() {
+        Ok(text) if !text.is_empty() => parse_usb_snapshot(&text),
+        Ok(_) | Err(_) => usb_payload_from_pci(pci_devices),
+    }
+}
+
 fn usb_payload_from_pci(pci_devices: &[serde_json::Value]) -> UsbSnapshot {
     let mut controllers = Vec::new();
     for device in pci_devices {
@@ -684,6 +695,8 @@ fn usb_payload_from_pci(pci_devices: &[serde_json::Value]) -> UsbSnapshot {
     }
 
     UsbSnapshot {
+        vlayer_available: false,
+        snapshot_bytes: 0,
         count: 0,
         device_count: 0,
         controller_count: controllers.len(),
@@ -691,8 +704,328 @@ fn usb_payload_from_pci(pci_devices: &[serde_json::Value]) -> UsbSnapshot {
         devices: Vec::new(),
         controllers,
         topology: Vec::new(),
+        probe_error: None,
         unavailable_reason: "USB controllers are projected from PCI; USB devices and input topology are not exported yet",
     }
+}
+
+fn parse_usb_snapshot(text: &str) -> UsbSnapshot {
+    let mut devices = Vec::new();
+    let mut controllers = Vec::new();
+    let mut topology = Vec::new();
+    let mut probe_error = None;
+
+    for line in text.lines() {
+        let fields: Vec<&str> = line.split('\t').collect();
+        match fields.first().copied() {
+            Some("summary") if fields.len() >= 4 => {
+                if fields[3] != "-" && !fields[3].is_empty() {
+                    probe_error = Some(fields[3].to_string());
+                }
+            }
+            Some("controller") if fields.len() >= 12 => {
+                controllers.push(serde_json::json!({
+                    "id": parse_u64(fields[1]).unwrap_or(0),
+                    "bdf": fields[2],
+                    "vendorId": fields[3],
+                    "deviceId": fields[4],
+                    "phase": fields[5],
+                    "lifecycle": fields[6],
+                    "eventReady": fields[7] == "1",
+                    "rootPortChangeSeen": fields[8] == "1",
+                    "emptyProbeStreak": parse_u64(fields[9]).unwrap_or(0),
+                    "lastProbeState": fields[10],
+                    "lastProbeDeviceCount": parse_u64(fields[11]).unwrap_or(0),
+                    "ports": [],
+                }));
+            }
+            Some("port") if fields.len() >= 10 => {
+                let controller_id = parse_u64(fields[1]).unwrap_or(0);
+                if let Some(controller) = controllers.iter_mut().find(|controller| {
+                    controller.get("id").and_then(serde_json::Value::as_u64) == Some(controller_id)
+                }) {
+                    if let Some(ports) = controller
+                        .get_mut("ports")
+                        .and_then(serde_json::Value::as_array_mut)
+                    {
+                        ports.push(serde_json::json!({
+                            "id": parse_u64(fields[2]).unwrap_or(0),
+                            "connected": fields[3] == "1",
+                            "enabled": fields[4] == "1",
+                            "speed": fields[5],
+                            "linkState": fields[6],
+                            "portsc": fields[7],
+                            "portpmsc": fields[8],
+                            "portli": fields[9],
+                        }));
+                    }
+                }
+            }
+            Some("device") if fields.len() >= 22 => {
+                let stable_id = fields[1].to_string();
+                devices.push(serde_json::json!({
+                    "id": format!("usb-{}", stable_id),
+                    "stableId": stable_id,
+                    "controllerId": parse_u64(fields[2]).unwrap_or(0),
+                    "slotId": parse_u64(fields[3]).unwrap_or(0),
+                    "rootPortId": parse_u64(fields[4]).unwrap_or(0),
+                    "portId": parse_u64(fields[5]).unwrap_or(0),
+                    "route": fields[6],
+                    "speed": fields[7],
+                    "vendorId": fields[8],
+                    "productId": fields[9],
+                    "class": fields[10],
+                    "subclass": fields[11],
+                    "protocol": fields[12],
+                    "classCode": format!("{}/{}/{}", fields[10], fields[11], fields[12]),
+                    "className": usb_class_name(fields[10]),
+                    "usbVersion": fields[13],
+                    "deviceVersion": fields[14],
+                    "numConfigurations": parse_u64(fields[15]).unwrap_or(0),
+                    "maxPacketSize0": parse_u64(fields[16]).unwrap_or(0),
+                    "parentHubSlotId": parse_optional_u64(fields[17]),
+                    "manufacturer": empty_to_none(fields[18]),
+                    "product": empty_to_none(fields[19]),
+                    "serial": empty_to_none(fields[20]),
+                    "path": fields[21].split('.').filter_map(|part| parse_u64(part)).collect::<Vec<_>>(),
+                    "hubPath": [],
+                    "configurations": [],
+                    "interfaceCount": 0,
+                    "endpointCount": 0,
+                }));
+            }
+            Some("config") if fields.len() >= 5 => {
+                if let Some(device) = usb_device_mut(&mut devices, fields[1]) {
+                    if let Some(configurations) = device
+                        .get_mut("configurations")
+                        .and_then(serde_json::Value::as_array_mut)
+                    {
+                        configurations.push(serde_json::json!({
+                            "value": parse_u64(fields[2]).unwrap_or(0),
+                            "attributes": fields[3],
+                            "maxPower": parse_u64(fields[4]).unwrap_or(0),
+                            "interfaces": [],
+                        }));
+                    }
+                }
+            }
+            Some("interface") if fields.len() >= 8 => {
+                if let Some(configuration) =
+                    usb_configuration_mut(&mut devices, fields[1], fields[2])
+                {
+                    if let Some(interfaces) = configuration
+                        .get_mut("interfaces")
+                        .and_then(serde_json::Value::as_array_mut)
+                    {
+                        interfaces.push(serde_json::json!({
+                            "number": parse_u64(fields[3]).unwrap_or(0),
+                            "alternateSetting": parse_u64(fields[4]).unwrap_or(0),
+                            "class": fields[5],
+                            "subclass": fields[6],
+                            "protocol": fields[7],
+                            "classCode": format!("{}/{}/{}", fields[5], fields[6], fields[7]),
+                            "className": usb_class_name(fields[5]),
+                            "endpoints": [],
+                        }));
+                    }
+                }
+            }
+            Some("endpoint") if fields.len() >= 9 => {
+                if let Some(interface) =
+                    usb_interface_mut(&mut devices, fields[1], fields[2], fields[3], fields[4])
+                {
+                    if let Some(endpoints) = interface
+                        .get_mut("endpoints")
+                        .and_then(serde_json::Value::as_array_mut)
+                    {
+                        endpoints.push(serde_json::json!({
+                            "address": fields[5],
+                            "transferType": fields[6],
+                            "maxPacketSize": parse_u64(fields[7]).unwrap_or(0),
+                            "interval": parse_u64(fields[8]).unwrap_or(0),
+                        }));
+                    }
+                }
+            }
+            Some("hop") if fields.len() >= 6 => {
+                if let Some(device) = usb_device_mut(&mut devices, fields[1]) {
+                    if let Some(hub_path) = device
+                        .get_mut("hubPath")
+                        .and_then(serde_json::Value::as_array_mut)
+                    {
+                        hub_path.push(serde_json::json!({
+                            "slotId": parse_u64(fields[2]).unwrap_or(0),
+                            "portId": parse_u64(fields[3]).unwrap_or(0),
+                            "depth": parse_u64(fields[4]).unwrap_or(0),
+                            "speed": fields[5],
+                        }));
+                    }
+                }
+            }
+            Some("topology") if fields.len() >= 14 => {
+                let vendor_id = optional_text(fields[9]);
+                let product_id = optional_text(fields[10]);
+                topology.push(serde_json::json!({
+                    "kind": fields[1],
+                    "controllerId": parse_u64(fields[2]).unwrap_or(0),
+                    "rootPortId": parse_u64(fields[3]).unwrap_or(0),
+                    "portId": parse_u64(fields[4]).unwrap_or(0),
+                    "depth": parse_u64(fields[5]).unwrap_or(0),
+                    "slotId": parse_optional_u64(fields[6]),
+                    "parentSlotId": parse_optional_u64(fields[7]),
+                    "speed": fields[8],
+                    "vendorId": vendor_id,
+                    "productId": product_id,
+                    "vidPid": match (vendor_id, product_id) {
+                        (Some(vendor), Some(product)) => format!("{}:{}", vendor, product),
+                        _ => "-".to_string(),
+                    },
+                    "class": optional_text(fields[11]),
+                    "subclass": optional_text(fields[12]),
+                    "protocol": optional_text(fields[13]),
+                }));
+            }
+            _ => {}
+        }
+    }
+
+    for device in &mut devices {
+        finalize_usb_device(device);
+    }
+    UsbSnapshot {
+        vlayer_available: true,
+        snapshot_bytes: text.len(),
+        count: devices.len(),
+        device_count: devices.len(),
+        controller_count: controllers.len(),
+        topology_count: topology.len(),
+        devices,
+        controllers,
+        topology,
+        probe_error,
+        unavailable_reason: "",
+    }
+}
+
+fn usb_device_mut<'a>(
+    devices: &'a mut [serde_json::Value],
+    stable_id: &str,
+) -> Option<&'a mut serde_json::Value> {
+    devices.iter_mut().find(|device| {
+        device.get("stableId").and_then(serde_json::Value::as_str) == Some(stable_id)
+    })
+}
+
+fn usb_configuration_mut<'a>(
+    devices: &'a mut [serde_json::Value],
+    stable_id: &str,
+    value: &str,
+) -> Option<&'a mut serde_json::Value> {
+    let value = parse_u64(value)?;
+    usb_device_mut(devices, stable_id)?
+        .get_mut("configurations")?
+        .as_array_mut()?
+        .iter_mut()
+        .find(|configuration| {
+            configuration
+                .get("value")
+                .and_then(serde_json::Value::as_u64)
+                == Some(value)
+        })
+}
+
+fn usb_interface_mut<'a>(
+    devices: &'a mut [serde_json::Value],
+    stable_id: &str,
+    configuration_value: &str,
+    interface_number: &str,
+    alternate_setting: &str,
+) -> Option<&'a mut serde_json::Value> {
+    let interface_number = parse_u64(interface_number)?;
+    let alternate_setting = parse_u64(alternate_setting)?;
+    usb_configuration_mut(devices, stable_id, configuration_value)?
+        .get_mut("interfaces")?
+        .as_array_mut()?
+        .iter_mut()
+        .find(|interface| {
+            interface.get("number").and_then(serde_json::Value::as_u64) == Some(interface_number)
+                && interface
+                    .get("alternateSetting")
+                    .and_then(serde_json::Value::as_u64)
+                    == Some(alternate_setting)
+        })
+}
+
+fn finalize_usb_device(device: &mut serde_json::Value) {
+    let Some(configurations) = device
+        .get("configurations")
+        .and_then(serde_json::Value::as_array)
+    else {
+        return;
+    };
+    let mut interface_count = 0u64;
+    let mut endpoint_count = 0u64;
+    let mut effective_class = device
+        .get("class")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("00");
+    for configuration in configurations {
+        for interface in configuration
+            .get("interfaces")
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            interface_count = interface_count.saturating_add(1);
+            endpoint_count = endpoint_count.saturating_add(
+                interface
+                    .get("endpoints")
+                    .and_then(serde_json::Value::as_array)
+                    .map(|endpoints| endpoints.len() as u64)
+                    .unwrap_or(0),
+            );
+            if effective_class == "00" {
+                effective_class = interface
+                    .get("class")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("00");
+            }
+        }
+    }
+    let class_name = usb_class_name(effective_class);
+    if let Some(object) = device.as_object_mut() {
+        object.insert("interfaceCount".to_string(), interface_count.into());
+        object.insert("endpointCount".to_string(), endpoint_count.into());
+        object.insert("className".to_string(), class_name.into());
+    }
+}
+
+fn usb_class_name(class: &str) -> &'static str {
+    match class.trim_start_matches("0x").to_ascii_uppercase().as_str() {
+        "00" => "per-interface",
+        "01" => "audio",
+        "02" | "0A" => "communications",
+        "03" => "HID input",
+        "06" => "imaging",
+        "07" => "printer",
+        "08" => "mass storage",
+        "09" => "hub",
+        "0B" => "smart card",
+        "0E" => "video",
+        "E0" => "wireless",
+        "EF" => "miscellaneous",
+        "FE" => "application specific",
+        "FF" => "vendor specific",
+        _ => "unknown",
+    }
+}
+
+fn optional_text(value: &str) -> Option<&str> {
+    (value != "-" && !value.is_empty()).then_some(value)
+}
+
+fn empty_to_none(value: &str) -> Option<&str> {
+    (!value.is_empty()).then_some(value)
 }
 
 fn json_str<'a>(value: &'a serde_json::Value, key: &str) -> &'a str {
@@ -793,7 +1126,7 @@ fn pci_device_to_json(device: PciDeviceDraft) -> serde_json::Value {
 
 async fn handle_snapshot() -> Response {
     let pci = pci_payload();
-    let usb = usb_payload_from_pci(&pci.devices);
+    let usb = usb_payload(&pci.devices);
     json_response(
         200,
         &HardwareSnapshot {
@@ -809,7 +1142,7 @@ async fn handle_snapshot() -> Response {
             printers: printer_payload(),
             pci,
             usb,
-            note: "webdevices is running as a blueprint axum app with vlayer-backed PCI, RAPL, thermal, and printer snapshots",
+            note: "webdevices is running as a blueprint axum app with vlayer-backed PCI, USB, RAPL, thermal, and printer snapshots",
         },
     )
 }
@@ -856,6 +1189,19 @@ async fn handle_thermal_snapshot() -> Response {
     }
 }
 
+async fn handle_usb_snapshot() -> Response {
+    match usb::snapshot_text() {
+        Ok(text) if !text.is_empty() => {
+            response(200, "text/plain; charset=utf-8", text.into_bytes(), true)
+        }
+        Ok(_) | Err(_) => text_response(
+            503,
+            "text/plain; charset=utf-8",
+            "USB vlayer surface is unavailable\n",
+        ),
+    }
+}
+
 async fn handle_printer_snapshot() -> Response {
     let snapshot = printer_payload();
     let status = if snapshot.vlayer_available { 200 } else { 503 };
@@ -887,6 +1233,7 @@ fn router() -> Router {
         .route("/api/rapl/snapshot", get(handle_rapl_snapshot))
         .route("/api/rapl/history", get(handle_rapl_history))
         .route("/api/thermal/snapshot", get(handle_thermal_snapshot))
+        .route("/api/usb/snapshot", get(handle_usb_snapshot))
         .route("/api/printers/snapshot", get(handle_printer_snapshot))
         .route(
             "/api/printers/snapshot.txt",

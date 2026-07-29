@@ -472,19 +472,47 @@
     }
 
     function renderUsbDetails(device) {
+      const configurations = device.configurations || [];
+      const interfaces = configurations.flatMap((configuration) =>
+        (configuration.interfaces || []).map((interface) => ({ configuration, interface }))
+      );
       $('detail-kv').innerHTML = kvHtml([
         ['Controller', device.controllerId],
         ['Slot', device.slotId],
         ['Port', `${device.rootPortId}.${device.portId}`],
         ['VID:PID', `${device.vendorId}:${device.productId}`],
         ['Class', device.classCode],
+        ['USB version', device.usbVersion],
+        ['Device version', device.deviceVersion],
         ['Speed', device.speed],
         ['Route', device.route],
         ['Interfaces', device.interfaceCount],
         ['Endpoints', device.endpointCount],
+        ['EP0 packet', device.maxPacketSize0],
+        ['Path', (device.path || []).join('.') || '-'],
+        ['Manufacturer', device.manufacturer || '-'],
         ['Serial', device.serial || '-']
       ]);
-      $('detail-extra').innerHTML = '';
+      $('detail-extra').innerHTML = `
+        <div class="panel" style="margin-top:12px">
+          <div class="panel-head"><h2>Configurations and interfaces</h2><span class="tag">${interfaces.length}</span></div>
+          <div class="bars">${interfaces.length ? interfaces.map(({ configuration, interface }) => `
+            <div class="mini">
+              <strong>Config ${esc(configuration.value)} / interface ${esc(interface.number)} alt ${esc(interface.alternateSetting)}</strong>
+              <span>${esc(interface.classCode)} ${esc(interface.className)} / attributes ${esc(configuration.attributes)} / max power ${esc(configuration.maxPower)}</span>
+              ${(interface.endpoints || []).length ? (interface.endpoints || []).map((endpoint) => `
+                <span>EP ${esc(endpoint.address)} / ${esc(endpoint.transferType)} / packet ${esc(endpoint.maxPacketSize)} / interval ${esc(endpoint.interval)}</span>
+              `).join('') : '<span>No endpoints declared.</span>'}
+            </div>
+          `).join('') : '<div class="empty">No configuration descriptors exported.</div>'}</div>
+        </div>
+        ${(device.hubPath || []).length ? `
+        <div class="panel" style="margin-top:12px">
+          <div class="panel-head"><h2>Hub path</h2><span class="tag">${device.hubPath.length}</span></div>
+          <div class="ports">${device.hubPath.map((hop) => `
+            <div class="mini"><strong>Hub slot ${esc(hop.slotId)} / port ${esc(hop.portId)}</strong><span>depth ${esc(hop.depth)} / ${esc(hop.speed)}</span></div>
+          `).join('')}</div>
+        </div>` : ''}`;
     }
 
     function renderControllerDetails(ctrl) {
