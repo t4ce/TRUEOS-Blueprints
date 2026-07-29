@@ -14,7 +14,6 @@ const DAILY_ROW_COUNT: usize = 8;
 pub struct WeatherSnapshot {
     pub location: Location,
     pub source: String,
-    pub updated_line: String,
     pub current: Option<CurrentWeather>,
     pub days: Vec<ForecastDay>,
     pub note: String,
@@ -85,26 +84,6 @@ impl WeatherIcon {
     }
 }
 
-pub fn demo_snapshot() -> WeatherSnapshot {
-    let location = fallback_location();
-    match trueos_weather::oc3::decode_onecall_raw_safe(bundled_demo_json()) {
-        Ok(response) => build_snapshot(
-            location,
-            response,
-            String::from("bundled OpenWeather demo; live refresh pending"),
-            String::from("drawing immediately while live weather loads"),
-        ),
-        Err(_) => WeatherSnapshot {
-            location,
-            source: String::from("bundled OpenWeather demo unavailable"),
-            updated_line: String::from("ready"),
-            current: None,
-            days: Vec::new(),
-            note: String::from("demo decode failed; press r to retry live weather"),
-        },
-    }
-}
-
 pub async fn load_weather_snapshot() -> Result<WeatherSnapshot> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_millis(FETCH_TIMEOUT_MS))
@@ -121,24 +100,19 @@ pub async fn load_weather_snapshot() -> Result<WeatherSnapshot> {
         }
     };
 
-    let (raw_weather, source) = match fetch_text(&client, forecast_url(&location).as_str()).await {
-        Ok(raw) => (raw, String::from("live OpenWeather 3.0 onecall metric/de")),
-        Err(err) => {
-            note = join_note(
-                note.as_str(),
-                format!("forecast failed: {err}; using bundled demo").as_str(),
-            );
-            (
-                String::from(bundled_demo_json()),
-                String::from("bundled OpenWeather demo fallback"),
-            )
-        }
-    };
+    let raw_weather = fetch_text(&client, forecast_url(&location).as_str())
+        .await
+        .context("fetch live OpenWeather forecast")?;
 
     let response = trueos_weather::oc3::decode_onecall_raw_safe(raw_weather.as_str())
         .map_err(|_| anyhow!("decode OpenWeather onecall response"))?;
 
-    Ok(build_snapshot(location, response, source, note))
+    Ok(build_snapshot(
+        location,
+        response,
+        String::from("live OpenWeather 3.0 onecall metric/de"),
+        note,
+    ))
 }
 
 fn fallback_location() -> Location {
@@ -259,20 +233,10 @@ fn build_snapshot(
     WeatherSnapshot {
         location,
         source,
-        updated_line: String::from("ready"),
         current,
         days,
         note,
     }
-}
-
-fn bundled_demo_json() -> &'static str {
-    trueos_weather::DEMO_JSON
-        .lines()
-        .rev()
-        .map(str::trim)
-        .find(|line| line.starts_with('{'))
-        .unwrap_or(trueos_weather::DEMO_JSON)
 }
 
 fn weather_icon_for(weather: Option<&trueos_weather::WetterInfo>) -> WeatherIcon {
@@ -327,14 +291,6 @@ fn title_case(input: &str) -> String {
         return String::new();
     };
     first.to_uppercase().chain(chars).collect()
-}
-
-fn join_note(left: &str, right: &str) -> String {
-    if left.is_empty() {
-        String::from(right)
-    } else {
-        format!("{right}; {left}")
-    }
 }
 
 fn rounded(value: f64) -> i32 {
