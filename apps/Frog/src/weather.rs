@@ -54,7 +54,7 @@ pub struct ForecastDay {
     pub uvi: i32,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WeatherIcon {
     ClearDay,
     ClearNight,
@@ -69,6 +69,19 @@ pub enum WeatherIcon {
 }
 
 impl WeatherIcon {
+    pub const ALL: [Self; 10] = [
+        Self::ClearDay,
+        Self::ClearNight,
+        Self::PartlyDay,
+        Self::PartlyNight,
+        Self::Cloud,
+        Self::RainDay,
+        Self::Rain,
+        Self::Thunder,
+        Self::Snow,
+        Self::Fog,
+    ];
+
     pub const fn glyph(self) -> &'static str {
         match self {
             Self::ClearDay => "☀",

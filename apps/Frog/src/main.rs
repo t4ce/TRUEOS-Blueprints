@@ -28,12 +28,13 @@ fn run<R>(runtime: &R) -> Result<()>
 where
     R: RuntimeBlockOn,
 {
-    let visual = ui4_visual::FrogVisual::open()?;
+    let mut visual = ui4_visual::FrogVisual::open()?;
     let snapshot = runtime.block_on_weather()?;
 
     // Standard output is the Shell2 data path for this non-TUI Blueprint.
     // Nothing is printed until a live OpenWeather response has been decoded.
     print_snapshot(&snapshot);
+    visual.show_snapshot(snapshot)?;
 
     visual.wait_for_escape()
 }

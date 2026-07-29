@@ -21,7 +21,13 @@ Each frame `000` also has a same-name `.rgba` sidecar. It contains headerless,
 row-major RGBA8 pixels with an opaque alpha byte: 65,536 bytes at 128px and
 16,384 bytes at 64px. These sidecars let the kernel-facing UI4 renderer embed
 the initial icon without introducing a JPEG decoder. Animated sidecars are not
-generated; the JPEG sequence remains the compact source for that later step.
+generated in this directory.
+
+Frog's ten runtime weather families additionally have complete transparent
+animation sequences under `ui4-rgba/64`. They are derived from the compact
+JPEG sequence by `tools/build-frog-animation-rgba.sh`, which removes the
+capture matte and writes straight-alpha 64x64 RGBA8 frames for UI4's retained
+sprite uploader.
 
 All JPEGs are square RGB images on a `#142238` matte because JPEG cannot carry
 the SVGs' transparency. The generator removes the source SVGs' large internal
@@ -47,6 +53,12 @@ For a first-frame-only development bundle:
 
 ```sh
 UI4_WEATHER_FRAME_COUNT=1 tools/build-ui4-jpegs.sh
+```
+
+Rebuild Frog's runtime animation sidecars after rebuilding the JPEG sequence:
+
+```sh
+tools/build-frog-animation-rgba.sh
 ```
 
 The frame count is constrained to 1 through 10. Set
