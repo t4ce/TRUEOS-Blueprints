@@ -1,5 +1,7 @@
 #![no_std]
 
+// trueos-blueprint: features = ["lumen"]
+
 extern crate alloc;
 
 use alloc::string::{String, ToString};
