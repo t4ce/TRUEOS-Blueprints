@@ -13,7 +13,8 @@ const CHECKPOINT_VERSION: u64 = 1;
 const POLL_MS: u64 = 10;
 const MAX_WAIT_POLLS: usize = 18_000;
 const INPUT_BYTES: usize = 4096;
-const SPINNER_CADENCE_POLLS: usize = 40;
+const SPINNER_CADENCE_POLLS: usize = 4;
+const SPINNER_MAX_SHIFT_CELLS: usize = 5;
 const SPINNER_FRAMES: &[&str] = &["⢈", "⡈", "⡐", "⡠", "⣀", "⢄", "⢂", "⢁", "⡁"];
 
 const SYSTEM_PROMPT: &str = concat!(
@@ -111,6 +112,7 @@ struct ProgressSpinner {
     label: &'static str,
     frame: usize,
     cadence: usize,
+    shift_cells: usize,
 }
 
 impl ProgressSpinner {
@@ -119,6 +121,7 @@ impl ProgressSpinner {
             label,
             frame: 0,
             cadence: 0,
+            shift_cells: 0,
         };
         spinner.draw();
         spinner
@@ -130,15 +133,28 @@ impl ProgressSpinner {
             return;
         }
         self.cadence = 0;
-        self.frame = (self.frame + 1) % SPINNER_FRAMES.len();
+        self.frame += 1;
+        if self.frame == SPINNER_FRAMES.len() {
+            self.frame = 0;
+            self.shift_cells = (self.shift_cells + 1) % SPINNER_MAX_SHIFT_CELLS.saturating_add(1);
+        }
         self.draw();
     }
 
     fn draw(&self) {
-        vshell::progress_linef(format_args!(
-            "{} {}",
-            self.label, SPINNER_FRAMES[self.frame]
-        ));
+        let mut line = String::with_capacity(
+            self.label
+                .len()
+                .saturating_add(self.shift_cells)
+                .saturating_add(1)
+                .saturating_add(SPINNER_FRAMES[self.frame].len()),
+        );
+        line.push_str(self.label);
+        for _ in 0..=self.shift_cells {
+            line.push(' ');
+        }
+        line.push_str(SPINNER_FRAMES[self.frame]);
+        vshell::progress_line(line.as_str());
     }
 }
 
