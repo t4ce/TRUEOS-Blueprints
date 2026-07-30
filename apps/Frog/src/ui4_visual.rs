@@ -8,7 +8,7 @@ pub const FRAME_HEIGHT: u32 = 1080;
 const FRAME_ALPHA: u8 = 64;
 const ICON_SIZE: u32 = 64;
 const ANIMATION_FRAME_COUNT: usize = 10;
-const TEXT_ONLINE: bool = false;
+const TEXT_ONLINE: bool = true;
 
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
 const KEY_ESCAPE: u8 = 0x29;
@@ -18,9 +18,6 @@ const KEY_SPACE: u8 = 0x2c;
 const INPUT_POLL_MS: u64 = 16;
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
 const ANIMATION_POLL_MS: u64 = 100;
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-const TEXT_SPRITE_ID: u32 = u32::MAX;
-
 const TEXT: [u8; 4] = [232, 239, 246, 255];
 const DIM: [u8; 4] = [145, 160, 176, 255];
 const ACCENT: [u8; 4] = [114, 210, 174, 255];
@@ -251,7 +248,7 @@ impl FrogVisual {
                 )
             })
             .unwrap_or((0, 0));
-        let frame = Frame::open_immutable(x, y, FRAME_WIDTH, FRAME_HEIGHT)
+        let frame = Frame::open_streaming(x, y, FRAME_WIDTH, FRAME_HEIGHT)
             .map_err(|error| anyhow!("open Frog UI4 frame: {error:?}"))?;
         let now = std::time::Instant::now();
         let mut visual = Self {
@@ -366,7 +363,7 @@ impl FrogVisual {
 
     fn render_scene(&mut self, rebuild_text: bool) -> Result<(), trueos::ui4_scene::Error> {
         use trueos::ui4_scene::{Damage, Error, rgba};
-        use trueos::ui4_solara_text::{Font, SceneTextRow};
+        use trueos::ui4_solara_text::{Font, FontCanvasRow};
 
         let elapsed_ms = self.animation_started.elapsed().as_millis() as u64;
         let width = self.frame.width();
@@ -396,17 +393,42 @@ impl FrogVisual {
                 .copied()
                 .filter(|quad| quad.sprite_id == 0),
         );
-        if TEXT_ONLINE {
-            quads.extend(
-                text_regions(&layout)
-                    .into_iter()
-                    .map(|rect| text_sprite_quad(rect, width, height)),
-            );
-        }
-        // Keep uploaded weather sprites above the retained font canvas. Some
-        // deployed UI4 kernels materialize that canvas with an opaque empty
-        // area, so a full-frame text quad can otherwise mask every icon.
         quads.extend(scene_quads.into_iter().filter(|quad| quad.sprite_id != 0));
+
+        if let Some(text) = text.as_ref() {
+            let rows = text
+                .iter()
+                .map(|item| FontCanvasRow {
+                    text: item.text.as_str(),
+                    x: item.x,
+                    y: item.y,
+                    font_pixels: item.pixels,
+                    color_rgba: rgba(item.color[0], item.color[1], item.color[2], item.color[3]),
+                })
+                .collect::<Vec<_>>();
+            loop {
+                match self.frame.retain_font_canvas(
+                    Font::Inconsolata,
+                    (width, height),
+                    rows.as_slice(),
+                ) {
+                    Ok(()) => break,
+                    Err(Error::Busy) => {
+                        trueos::vsys::poll_once();
+                        trueos::vsys::sleep_ms(1);
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+            self.text_ready = true;
+        }
+
+        if TEXT_ONLINE && !self.text_ready {
+            return Err(trueos::ui4_scene::Error::InvalidState);
+        }
+        if TEXT_ONLINE {
+            quads.push(self.frame.font_canvas_quad((width, height), (0, 0))?);
+        }
 
         loop {
             match self.frame.begin_sprite_frame(rgba(0, 0, 0, 0)) {
@@ -418,45 +440,17 @@ impl FrogVisual {
                 Err(error) => return Err(error),
             }
         }
-
-        if let Some(text) = text.as_ref() {
-            for color in [TEXT, DIM, ACCENT] {
-                let rows: Vec<_> = text
-                    .iter()
-                    .filter(|item| item.color == color)
-                    .map(|item| SceneTextRow {
-                        text: item.text.as_str(),
-                        x: item.x,
-                        y: item.y,
-                        font_pixels: item.pixels,
-                    })
-                    .collect();
-                if !rows.is_empty() {
-                    loop {
-                        match self.frame.retain_text_backbuffer(
-                            Font::Inconsolata,
-                            (width, height),
-                            rgba(color[0], color[1], color[2], color[3]),
-                            rows.as_slice(),
-                        ) {
-                            Ok(()) => break,
-                            Err(Error::Busy) => {
-                                trueos::vsys::poll_once();
-                                trueos::vsys::sleep_ms(1);
-                            }
-                            Err(error) => return Err(error),
-                        }
-                    }
-                }
-            }
-            self.text_ready = true;
-        }
-
-        if TEXT_ONLINE && !self.text_ready {
-            return Err(trueos::ui4_scene::Error::InvalidState);
-        }
         self.frame.draw_sprite_quads(quads.as_slice())?;
-        self.frame.publish(Damage::full(width, height))?;
+        loop {
+            match self.frame.publish(Damage::full(width, height)) {
+                Ok(()) => break,
+                Err(Error::Busy) => {
+                    trueos::vsys::poll_once();
+                    trueos::vsys::sleep_ms(1);
+                }
+                Err(error) => return Err(error),
+            }
+        }
         self.last_signature = self.animation_signature();
         Ok(())
     }
@@ -578,68 +572,6 @@ fn sprite_quad(
         },
         color_rgba,
         source_over,
-    }
-}
-
-fn text_regions(layout: &SceneLayout) -> Vec<Rect> {
-    let general_x = layout.general.x + layout.general.height.min(112.0) + 20.0;
-    let mut regions = Vec::with_capacity(layout.forecasts.len() + 1);
-    regions.push(Rect {
-        x: general_x,
-        y: layout.general.y,
-        width: (layout.general.x + layout.general.width - general_x).max(1.0),
-        height: layout.general.height,
-    });
-    regions.extend(layout.forecasts.iter().map(|row| {
-        let x = row.x + 92.0;
-        Rect {
-            x,
-            y: row.y,
-            width: (row.x + row.width - x).max(1.0),
-            height: row.height,
-        }
-    }));
-    regions
-}
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-fn text_sprite_quad(
-    rect: Rect,
-    canvas_width: u32,
-    canvas_height: u32,
-) -> trueos::ui4_scene::SpriteQuad {
-    use trueos::ui4_scene::{SpriteCorner, SpriteQuad, rgba};
-
-    let width = canvas_width as f32;
-    let height = canvas_height as f32;
-    SpriteQuad {
-        sprite_id: TEXT_SPRITE_ID,
-        c0: SpriteCorner {
-            x: rect.x,
-            y: rect.y,
-            u: rect.x / width,
-            v: rect.y / height,
-        },
-        c1: SpriteCorner {
-            x: rect.x + rect.width,
-            y: rect.y,
-            u: (rect.x + rect.width) / width,
-            v: rect.y / height,
-        },
-        c2: SpriteCorner {
-            x: rect.x + rect.width,
-            y: rect.y + rect.height,
-            u: (rect.x + rect.width) / width,
-            v: (rect.y + rect.height) / height,
-        },
-        c3: SpriteCorner {
-            x: rect.x,
-            y: rect.y + rect.height,
-            u: rect.x / width,
-            v: (rect.y + rect.height) / height,
-        },
-        color_rgba: rgba(255, 255, 255, 255),
-        source_over: true,
     }
 }
 
@@ -780,20 +712,5 @@ mod tests {
     #[test]
     fn black_frame_uses_quarter_alpha() {
         assert_eq!(FRAME_ALPHA as u16, (u8::MAX as u16 + 1) / 4);
-    }
-
-    #[test]
-    fn text_regions_leave_the_weather_icon_column_uncovered() {
-        let layout = scene_layout(FRAME_WIDTH, FRAME_HEIGHT, 8);
-        let regions = text_regions(&layout);
-        assert_eq!(regions.len(), 9);
-
-        let general_icon_right =
-            layout.general.x + 20.0 + (layout.general.height.min(112.0) - 24.0);
-        assert!(regions[0].x > general_icon_right);
-        for (row, region) in layout.forecasts.iter().zip(&regions[1..]) {
-            let icon_right = row.x + 18.0 + (row.height.min(76.0) - 12.0);
-            assert!(region.x > icon_right);
-        }
     }
 }

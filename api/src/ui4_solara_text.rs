@@ -37,6 +37,16 @@ pub struct SceneTextRow<'a> {
     pub font_pixels: f32,
 }
 
+/// One colored text run in a retained transparent RGBA8 font canvas.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct FontCanvasRow<'a> {
+    pub text: &'a str,
+    pub x: f32,
+    pub y: f32,
+    pub font_pixels: f32,
+    pub color_rgba: u32,
+}
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct Damage {
     pub x: u32,
@@ -831,6 +841,115 @@ impl Frame {
                 raw.len(),
             )
         })
+    }
+
+    /// Build or replace one persistent transparent premultiplied-RGBA8 font
+    /// canvas. All colors and rows are submitted together; internal coverage
+    /// layers are not exposed to the consumer. This call waits for FontKernel
+    /// without holding a UI4 frame lease.
+    pub fn retain_font_canvas(
+        &mut self,
+        font: Font,
+        canvas: (u32, u32),
+        rows: &[FontCanvasRow<'_>],
+    ) -> Result<(), Error> {
+        if canvas.0 == 0 || canvas.1 == 0 || rows.is_empty() {
+            return Err(Error::Invalid);
+        }
+        let raw: Vec<_> = rows
+            .iter()
+            .map(|row| v::bp_abi::TrueosUi4FontCanvasRow {
+                text_ptr: row.text.as_ptr(),
+                text_len: row.text.len(),
+                x: row.x,
+                y: row.y,
+                font_pixels: row.font_pixels,
+                color_rgba: row.color_rgba,
+            })
+            .collect();
+        status(unsafe {
+            v::bp_abi::trueos_cabi_ui4_font_canvas(
+                self.window_id,
+                font as u32,
+                canvas.0,
+                canvas.1,
+                raw.as_ptr(),
+                raw.len(),
+            )
+        })
+    }
+
+    /// Describe a viewport crop of the retained font canvas. The quad uses
+    /// source-over so transparent canvas pixels preserve the scene below it.
+    pub fn font_canvas_quad(
+        &self,
+        canvas: (u32, u32),
+        origin: (u32, u32),
+    ) -> Result<SpriteQuad, Error> {
+        let Some(right) = origin.0.checked_add(self.width) else {
+            return Err(Error::Invalid);
+        };
+        let Some(bottom) = origin.1.checked_add(self.height) else {
+            return Err(Error::Invalid);
+        };
+        if canvas.0 == 0 || canvas.1 == 0 || right > canvas.0 || bottom > canvas.1 {
+            return Err(Error::Invalid);
+        }
+        let u0 = origin.0 as f32 / canvas.0 as f32;
+        let v0 = origin.1 as f32 / canvas.1 as f32;
+        let u1 = right as f32 / canvas.0 as f32;
+        let v1 = bottom as f32 / canvas.1 as f32;
+        Ok(SpriteQuad {
+            sprite_id: TEXT_BACKBUFFER_SPRITE_ID,
+            c0: SpriteCorner {
+                x: 0.0,
+                y: 0.0,
+                u: u0,
+                v: v0,
+            },
+            c1: SpriteCorner {
+                x: self.width as f32,
+                y: 0.0,
+                u: u1,
+                v: v0,
+            },
+            c2: SpriteCorner {
+                x: self.width as f32,
+                y: self.height as f32,
+                u: u1,
+                v: v1,
+            },
+            c3: SpriteCorner {
+                x: 0.0,
+                y: self.height as f32,
+                u: u0,
+                v: v1,
+            },
+            color_rgba: rgba(255, 255, 255, 255),
+            source_over: true,
+        })
+    }
+
+    /// Compose a retained font-canvas viewport into the active sprite frame.
+    pub fn draw_font_canvas_view(
+        &mut self,
+        canvas: (u32, u32),
+        origin: (u32, u32),
+    ) -> Result<(), Error> {
+        let quad = self.font_canvas_quad(canvas, origin)?;
+        self.draw_sprite_quads(core::slice::from_ref(&quad))
+    }
+
+    /// Acquire, compose, and publish one viewport of a warm font canvas.
+    pub fn present_font_canvas_view(
+        &mut self,
+        canvas: (u32, u32),
+        origin: (u32, u32),
+        clear_rgba: u32,
+    ) -> Result<(), Error> {
+        self.begin_sprite_frame(clear_rgba)?;
+        self.draw_font_canvas_view(canvas, origin)?;
+        self.publish(Damage::full(self.width, self.height))
     }
 
     /// Retain document text for one persistent, offscreen RGBA8 canvas.

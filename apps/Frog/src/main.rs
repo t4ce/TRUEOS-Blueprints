@@ -1,13 +1,17 @@
 // trueos-blueprint: features=["tokio-net-probe"]
 
+mod ui4_visual;
 mod weather;
 
 use anyhow::Result;
 
 fn main() -> Result<()> {
     let runtime = runtime()?;
-    let result = runtime.block_on_weather().map(|snapshot| {
+    let result = runtime.block_on_weather().and_then(|snapshot| {
         print_snapshot(&snapshot);
+        let mut visual = ui4_visual::FrogVisual::open()?;
+        visual.show_snapshot(snapshot)?;
+        visual.wait_for_escape()
     });
     if let Err(error) = result.as_ref() {
         eprintln!("Frog weather error: {error:#}");
@@ -15,7 +19,7 @@ fn main() -> Result<()> {
 
     runtime.shutdown_background();
     shutdown_blueprint(if result.is_ok() {
-        "Frog printed live weather"
+        "Frog closed live weather view"
     } else {
         "Frog weather request failed"
     });
