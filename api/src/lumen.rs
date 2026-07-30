@@ -109,3 +109,9 @@ pub fn close() -> Result<(), Error> {
 pub fn play_emotion(idea: &str) -> Result<(), Error> {
     result(unsafe { v::bp_abi::trueos_cabi_spirit_emotion_play(idea.as_ptr(), idea.len()) })
 }
+
+pub fn present_reply(turn: u64, text: &str) -> Result<(), Error> {
+    result(unsafe {
+        v::bp_abi::trueos_cabi_spirit_response_present(turn, text.as_ptr(), text.len())
+    })
+}

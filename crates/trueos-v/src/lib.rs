@@ -35,6 +35,7 @@ pub mod env;
 pub mod ffi;
 pub mod qjs_abi;
 pub mod sync;
+pub mod varchive;
 pub mod vaudio;
 pub mod vcabi;
 pub mod vclock;

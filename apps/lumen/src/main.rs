@@ -250,35 +250,48 @@ fn run_prompt(state: &mut LogicalState, prompt: &str) -> Result<(), String> {
     let raw = lumen::take_reply(status).map_err(|error| alloc::format!("read {error:?}"))?;
     let raw = String::from_utf8_lossy(&raw);
     let adapted = adapt_tool_reply(raw.as_ref(), emotion_tool_requested(prompt));
+    let response_turn = state.turns.saturating_add(1);
     match adapted.tool {
         ToolDisposition::None => {
-            vshell::linef(format_args!("lumen: {}", adapted.text));
+            emit_text_reply(response_turn, adapted.text.as_str());
         }
         ToolDisposition::Executed => {
             if adapted.text.is_empty() {
                 vshell::line("lumen-bp: tool objective handed to Spirit");
             } else {
-                vshell::linef(format_args!("lumen: {}", adapted.text));
+                emit_text_reply(response_turn, adapted.text.as_str());
             }
         }
         ToolDisposition::Rejected => {
             vshell::line("lumen-bp: suppressed tool objective without explicit user intent");
             if adapted.text.is_empty() {
-                vshell::linef(format_args!("lumen: {}", rejected_tool_fallback(prompt)));
+                emit_text_reply(response_turn, rejected_tool_fallback(prompt));
             } else {
-                vshell::linef(format_args!("lumen: {}", adapted.text));
+                emit_text_reply(response_turn, adapted.text.as_str());
             }
         }
         ToolDisposition::Failed => {
             if adapted.text.is_empty() {
-                vshell::line("lumen: Spirit could not accept that emotion right now.");
+                emit_text_reply(
+                    response_turn,
+                    "Spirit could not accept that emotion right now.",
+                );
             } else {
-                vshell::linef(format_args!("lumen: {}", adapted.text));
+                emit_text_reply(response_turn, adapted.text.as_str());
             }
         }
     }
-    state.turns = state.turns.saturating_add(1);
+    state.turns = response_turn;
     Ok(())
+}
+
+fn emit_text_reply(turn: u64, text: &str) {
+    if let Err(error) = lumen::present_reply(turn, text) {
+        vshell::linef(format_args!(
+            "lumen-bp: Spirit response handoff failed error={error:?}"
+        ));
+    }
+    vshell::linef(format_args!("lumen: {text}"));
 }
 
 fn wait_for_phase(expected: u32) -> Result<lumen::TrueosLumenStatus, String> {
