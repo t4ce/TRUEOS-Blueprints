@@ -248,9 +248,11 @@ fn run_prompt(state: &mut LogicalState, prompt: &str) -> Result<(), String> {
     state.reply_tail = status.reply_tail;
     state.reply_tail_len = tail_len;
     let raw = lumen::take_reply(status).map_err(|error| alloc::format!("read {error:?}"))?;
-    let raw = String::from_utf8_lossy(&raw);
-    let adapted = adapt_tool_reply(raw.as_ref(), emotion_tool_requested(prompt));
     let response_turn = state.turns.saturating_add(1);
+    let tool_authorized = emotion_tool_requested(prompt);
+    log_raw_reply(response_turn, raw.as_slice(), tool_authorized);
+    let raw = String::from_utf8_lossy(&raw);
+    let adapted = adapt_tool_reply(raw.as_ref(), tool_authorized);
     match adapted.tool {
         ToolDisposition::None => {
             emit_text_reply(response_turn, adapted.text.as_str());
@@ -283,6 +285,27 @@ fn run_prompt(state: &mut LogicalState, prompt: &str) -> Result<(), String> {
     }
     state.turns = response_turn;
     Ok(())
+}
+
+fn log_raw_reply(turn: u64, raw: &[u8], tool_authorized: bool) {
+    match core::str::from_utf8(raw) {
+        Ok(text) => vshell::linef(format_args!(
+            "lumen-bp: raw-reply turn={} bytes={} utf8=1 tool_authorized={} text={:?}",
+            turn,
+            raw.len(),
+            tool_authorized as u8,
+            text,
+        )),
+        Err(error) => vshell::linef(format_args!(
+            "lumen-bp: raw-reply turn={} bytes={} utf8=0 tool_authorized={} valid_up_to={} error_len={:?} raw_bytes={:?}",
+            turn,
+            raw.len(),
+            tool_authorized as u8,
+            error.valid_up_to(),
+            error.error_len(),
+            raw,
+        )),
+    };
 }
 
 fn emit_text_reply(turn: u64, text: &str) {
