@@ -1,14 +1,10 @@
-use std::io::{self, Write};
-use std::sync::atomic::{AtomicUsize, Ordering};
-
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use tokio_stream::wrappers::TcpListenerStream;
 use tonic::{Request, Response, Status};
 use tracing::Instrument;
-use tracing_subscriber::fmt::MakeWriter;
 use trueos::{
     logl::{self, level},
-    runtime,
+    runtime, trace,
 };
 
 pub mod stack {
@@ -23,44 +19,6 @@ const GENERATION: u32 = 0x5453_0001;
 const REQUEST_PREFIX: &[u8] = b"trueos/";
 const REQUEST_BODY: &[u8] = b"tokio-stack";
 const RESPONSE_PREFIX: &[u8] = b"materialized:";
-static TRACE_WRITES: AtomicUsize = AtomicUsize::new(0);
-
-#[derive(Clone, Copy)]
-struct BlueprintTraceMakeWriter;
-
-struct BlueprintTraceWriter;
-
-impl<'writer> MakeWriter<'writer> for BlueprintTraceMakeWriter {
-    type Writer = BlueprintTraceWriter;
-
-    fn make_writer(&'writer self) -> Self::Writer {
-        BlueprintTraceWriter
-    }
-}
-
-impl Write for BlueprintTraceWriter {
-    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        if !bytes.is_empty() {
-            TRACE_WRITES.fetch_add(1, Ordering::Relaxed);
-            match core::str::from_utf8(bytes) {
-                Ok(text) => logl::log(
-                    level::INFO,
-                    format_args!("tokio_stack: tracing {}", text.trim_end()),
-                ),
-                Err(_) => logl::log(
-                    level::INFO,
-                    format_args!("tokio_stack: tracing bytes={}", bytes.len()),
-                ),
-            }
-        }
-        Ok(bytes.len())
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
 #[derive(Default)]
 struct Witness;
 
@@ -99,14 +57,6 @@ impl StackWitness for Witness {
 fn main() {
     logl::log(level::INFO, format_args!("tokio_stack: start"));
 
-    let subscriber = tracing_subscriber::fmt()
-        .with_ansi(false)
-        .without_time()
-        .with_target(true)
-        .with_max_level(tracing::Level::TRACE)
-        .with_writer(BlueprintTraceMakeWriter)
-        .finish();
-
     let runtime = match runtime::current_thread_net().build() {
         Ok(runtime) => runtime,
         Err(error) => {
@@ -118,7 +68,8 @@ fn main() {
         }
     };
 
-    let result = tracing::subscriber::with_default(subscriber, || {
+    let emitted_before = trace::emitted_events();
+    let result = trace::with_default(|| {
         runtime.block_on(run_probe().instrument(tracing::info_span!(
             "tokio_stack.materialization",
             generation = GENERATION
@@ -126,11 +77,11 @@ fn main() {
     });
 
     match result {
-        Ok(()) if TRACE_WRITES.load(Ordering::Relaxed) > 0 => logl::log(
+        Ok(()) if trace::emitted_events() > emitted_before => logl::log(
             level::INFO,
             format_args!(
-                "tokio_stack: done runtime=mio,tokio bytes=direct hyper=tcp tower=service tracing=span tonic=grpc trace_writes={}",
-                TRACE_WRITES.load(Ordering::Relaxed)
+                "tokio_stack: done runtime=mio,tokio bytes=direct hyper=tcp tower=service tracing=kernel-log tonic=grpc trace_events={}",
+                trace::emitted_events() - emitted_before
             ),
         ),
         Ok(()) => logl::log(

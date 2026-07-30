@@ -318,6 +318,7 @@ fn build_one_target_to(
         ensure_rust_std_trueos_thread_current_rebind()?;
         ensure_rust_std_trueos_hash_random()?;
         ensure_rust_std_trueos_no_threads_tls()?;
+        ensure_rust_std_trueos_no_backtrace()?;
     }
 
     let output_name = match &build_target {
@@ -2184,6 +2185,40 @@ unsafe impl Sync for LocalPointer {}"#,
         no_threads_rs.display()
     );
     Ok(())
+}
+
+fn ensure_rust_std_trueos_no_backtrace() -> Result<(), String> {
+    ensure_rust_src_replacement(
+        "std/src/sys/backtrace.rs",
+        r#"    pub(crate) fn print(&mut self, w: &mut dyn Write, format: PrintFmt) -> io::Result<()> {
+        // There are issues currently linking libbacktrace into tests, and in"#,
+        r#"    pub(crate) fn print(&mut self, w: &mut dyn Write, format: PrintFmt) -> io::Result<()> {
+        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+        {
+            let _ = (w, format);
+            return Ok(());
+        }
+
+        #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+        {
+        // There are issues currently linking libbacktrace into tests, and in"#,
+        "panic backtrace exclusion start",
+    )?;
+    ensure_rust_src_replacement(
+        "std/src/sys/backtrace.rs",
+        r#"        write!(w, "{}", DisplayBacktrace { format })
+    }
+}
+
+/// # Safety"#,
+        r#"        write!(w, "{}", DisplayBacktrace { format })
+        }
+    }
+}
+
+/// # Safety"#,
+        "panic backtrace exclusion end",
+    )
 }
 
 fn find_vendor_dir(app_dir: &Path, name: &str) -> Option<PathBuf> {

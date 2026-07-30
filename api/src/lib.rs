@@ -2,7 +2,7 @@
 
 extern crate alloc;
 pub extern crate alloc as alloc_crate;
-#[cfg(feature = "tokio-runtime")]
+#[cfg(any(feature = "tokio-runtime", feature = "tracing"))]
 extern crate std;
 use core::alloc::{GlobalAlloc, Layout};
 use core::ptr::null_mut;
@@ -69,6 +69,9 @@ pub mod gridpaper;
 
 #[cfg(feature = "lumen")]
 pub mod lumen;
+
+#[cfg(feature = "tracing")]
+pub mod trace;
 
 pub mod platform {
     pub use alloc::borrow::{Cow, ToOwned};
