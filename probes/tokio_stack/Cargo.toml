@@ -8,6 +8,9 @@ build = "build.rs"
 name = "tokio_stack"
 path = "main.rs"
 
+[features]
+trueos-blueprint = ["trueos/tracing"]
+
 [dependencies]
 bytes = { version = "=1.11.1", default-features = false }
 prost = "=0.14.4"
