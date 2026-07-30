@@ -2225,6 +2225,10 @@ fn source_overlay_patches(
     // this function has generated the isolated build manifest and Cargo has
     // resolved it, which is too late to select their TRUEOS overlays.
     let uses_crossterm = manifest_or_lock_requires_crossterm_overlays(app_dir, manifest_path)?;
+    // Tonic's `channel` transport feature pulls hyper-timeout transitively.
+    // Select both overlays from the direct Tonic declaration so packages
+    // without a local Cargo.lock still materialize the TRUEOS I/O types.
+    let uses_tonic = manifest_or_lock_mentions_crate(app_dir, manifest_path, "tonic")?;
 
     add_blueprint_vendor_patches(app_dir, &mut out);
 
@@ -2264,7 +2268,7 @@ fn source_overlay_patches(
         out.push(CratePatch::new("hyper-rustls", path));
     }
 
-    if manifest_or_lock_mentions_crate(app_dir, manifest_path, "hyper-timeout")? {
+    if uses_tonic || manifest_or_lock_mentions_crate(app_dir, manifest_path, "hyper-timeout")? {
         out.retain(|patch| patch.name != "hyper-timeout");
         out.push(CratePatch::new(
             "hyper-timeout",
@@ -2272,7 +2276,7 @@ fn source_overlay_patches(
         ));
     }
 
-    if manifest_or_lock_mentions_crate(app_dir, manifest_path, "tonic")? {
+    if uses_tonic {
         out.retain(|patch| patch.name != "tonic");
         out.push(CratePatch::new(
             "tonic",
@@ -2630,6 +2634,7 @@ fn ensure_overlay_registry_sources(
     work_dir: &Path,
 ) -> Result<(), String> {
     let uses_crossterm = manifest_or_lock_requires_crossterm_overlays(app_dir, manifest_path)?;
+    let uses_tonic = manifest_or_lock_mentions_crate(app_dir, manifest_path, "tonic")?;
     let registry_overlays = [
         ("argmax", "0.4.0", "argmax-0.4.0"),
         ("crossterm", "0.28.1", "crossterm-0.28.1"),
@@ -2648,8 +2653,10 @@ fn ensure_overlay_registry_sources(
     for (crate_name, version, source_dir) in registry_overlays {
         let required_by_crossterm =
             uses_crossterm && matches!(crate_name, "crossterm" | "rustix" | "signal-hook-mio");
+        let required_by_tonic = uses_tonic && crate_name == "hyper-timeout";
         if find_cargo_registry_crate(source_dir).is_none()
             && (required_by_crossterm
+                || required_by_tonic
                 || manifest_or_lock_mentions_crate(app_dir, manifest_path, crate_name)?)
         {
             missing.push((crate_name, version, source_dir));

@@ -595,6 +595,7 @@ rustc-payload-dependencies = ["trueos", "itoa"]
             "tokio_mrt",
             "tokio_net",
             "tokio_rt",
+            "tokio_stack",
             "unix_api_probe",
             "wls",
         ] {

@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package trueos.stack;
+
+service StackWitness {
+  rpc Materialize(StackRequest) returns (StackReply);
+}
+
+message StackRequest {
+  bytes payload = 1;
+  uint32 generation = 2;
+}
+
+message StackReply {
+  bytes payload = 1;
+  uint32 generation = 2;
+  string runtime = 3;
+}

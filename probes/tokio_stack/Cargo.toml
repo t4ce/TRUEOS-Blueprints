@@ -1,0 +1,25 @@
+[package]
+name = "tokio_stack"
+version = "0.1.0"
+edition = "2024"
+build = "build.rs"
+
+[[bin]]
+name = "tokio_stack"
+path = "main.rs"
+
+[dependencies]
+bytes = { version = "=1.11.1", default-features = false }
+prost = "=0.14.4"
+tokio = { version = "=1.52.3", default-features = false, features = ["macros", "net", "rt", "sync", "time"] }
+tokio-stream = { version = "=0.1.17", default-features = false, features = ["net"] }
+tonic = { version = "=0.14.6", default-features = false, features = ["codegen", "router", "transport"] }
+tonic-prost = { version = "=0.14.6", default-features = false }
+tower = { version = "=0.5.3", default-features = false, features = ["util"] }
+tracing = { version = "=0.1.44", default-features = false, features = ["attributes", "std"] }
+tracing-subscriber = { version = "=0.3.23", default-features = false, features = ["fmt", "registry", "std"] }
+trueos.workspace = true
+
+[build-dependencies]
+protoc-bin-vendored = "=3.2.0"
+tonic-prost-build = "=0.14.6"
