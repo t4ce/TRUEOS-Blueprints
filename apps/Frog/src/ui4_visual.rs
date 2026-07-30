@@ -8,6 +8,7 @@ pub const FRAME_HEIGHT: u32 = 1080;
 const FRAME_ALPHA: u8 = 64;
 const ICON_SIZE: u32 = 64;
 const ANIMATION_FRAME_COUNT: usize = 10;
+const TEXT_ONLINE: bool = false;
 
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
 const KEY_ESCAPE: u8 = 0x29;
@@ -375,7 +376,7 @@ impl FrogVisual {
             .as_ref()
             .expect("weather scene requires a snapshot");
         let layout = scene_layout(width, height, snapshot.days.len());
-        let text = rebuild_text.then(|| build_text(snapshot, &layout));
+        let text = (TEXT_ONLINE && rebuild_text).then(|| build_text(snapshot, &layout));
         let mut quads = Vec::with_capacity(layout.forecasts.len() * 2 + 5);
         quads.push(sprite_quad(
             0,
@@ -388,18 +389,24 @@ impl FrogVisual {
             rgba(0, 0, 0, FRAME_ALPHA),
             true,
         ));
-        quads.extend(build_quads(snapshot, &layout, elapsed_ms));
-        quads.push(sprite_quad(
-            TEXT_SPRITE_ID,
-            Rect {
-                x: 0.0,
-                y: 0.0,
-                width: width as f32,
-                height: height as f32,
-            },
-            rgba(255, 255, 255, 255),
-            true,
-        ));
+        let scene_quads = build_quads(snapshot, &layout, elapsed_ms);
+        quads.extend(
+            scene_quads
+                .iter()
+                .copied()
+                .filter(|quad| quad.sprite_id == 0),
+        );
+        if TEXT_ONLINE {
+            quads.extend(
+                text_regions(&layout)
+                    .into_iter()
+                    .map(|rect| text_sprite_quad(rect, width, height)),
+            );
+        }
+        // Keep uploaded weather sprites above the retained font canvas. Some
+        // deployed UI4 kernels materialize that canvas with an opaque empty
+        // area, so a full-frame text quad can otherwise mask every icon.
+        quads.extend(scene_quads.into_iter().filter(|quad| quad.sprite_id != 0));
 
         loop {
             match self.frame.begin_sprite_frame(rgba(0, 0, 0, 0)) {
@@ -445,7 +452,7 @@ impl FrogVisual {
             self.text_ready = true;
         }
 
-        if !self.text_ready {
+        if TEXT_ONLINE && !self.text_ready {
             return Err(trueos::ui4_scene::Error::InvalidState);
         }
         self.frame.draw_sprite_quads(quads.as_slice())?;
@@ -571,6 +578,68 @@ fn sprite_quad(
         },
         color_rgba,
         source_over,
+    }
+}
+
+fn text_regions(layout: &SceneLayout) -> Vec<Rect> {
+    let general_x = layout.general.x + layout.general.height.min(112.0) + 20.0;
+    let mut regions = Vec::with_capacity(layout.forecasts.len() + 1);
+    regions.push(Rect {
+        x: general_x,
+        y: layout.general.y,
+        width: (layout.general.x + layout.general.width - general_x).max(1.0),
+        height: layout.general.height,
+    });
+    regions.extend(layout.forecasts.iter().map(|row| {
+        let x = row.x + 92.0;
+        Rect {
+            x,
+            y: row.y,
+            width: (row.x + row.width - x).max(1.0),
+            height: row.height,
+        }
+    }));
+    regions
+}
+
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+fn text_sprite_quad(
+    rect: Rect,
+    canvas_width: u32,
+    canvas_height: u32,
+) -> trueos::ui4_scene::SpriteQuad {
+    use trueos::ui4_scene::{SpriteCorner, SpriteQuad, rgba};
+
+    let width = canvas_width as f32;
+    let height = canvas_height as f32;
+    SpriteQuad {
+        sprite_id: TEXT_SPRITE_ID,
+        c0: SpriteCorner {
+            x: rect.x,
+            y: rect.y,
+            u: rect.x / width,
+            v: rect.y / height,
+        },
+        c1: SpriteCorner {
+            x: rect.x + rect.width,
+            y: rect.y,
+            u: (rect.x + rect.width) / width,
+            v: rect.y / height,
+        },
+        c2: SpriteCorner {
+            x: rect.x + rect.width,
+            y: rect.y + rect.height,
+            u: (rect.x + rect.width) / width,
+            v: (rect.y + rect.height) / height,
+        },
+        c3: SpriteCorner {
+            x: rect.x,
+            y: rect.y + rect.height,
+            u: rect.x / width,
+            v: (rect.y + rect.height) / height,
+        },
+        color_rgba: rgba(255, 255, 255, 255),
+        source_over: true,
     }
 }
 
@@ -711,5 +780,20 @@ mod tests {
     #[test]
     fn black_frame_uses_quarter_alpha() {
         assert_eq!(FRAME_ALPHA as u16, (u8::MAX as u16 + 1) / 4);
+    }
+
+    #[test]
+    fn text_regions_leave_the_weather_icon_column_uncovered() {
+        let layout = scene_layout(FRAME_WIDTH, FRAME_HEIGHT, 8);
+        let regions = text_regions(&layout);
+        assert_eq!(regions.len(), 9);
+
+        let general_icon_right =
+            layout.general.x + 20.0 + (layout.general.height.min(112.0) - 24.0);
+        assert!(regions[0].x > general_icon_right);
+        for (row, region) in layout.forecasts.iter().zip(&regions[1..]) {
+            let icon_right = row.x + 18.0 + (row.height.min(76.0) - 12.0);
+            assert!(region.x > icon_right);
+        }
     }
 }

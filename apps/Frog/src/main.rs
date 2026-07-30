@@ -1,42 +1,37 @@
-// trueos-blueprint: features=["tokio-net-probe","ui4-scene"]
+// trueos-blueprint: features=["tokio-net-probe"]
 
-mod ui4_visual;
 mod weather;
 
 use anyhow::Result;
 
 fn main() -> Result<()> {
     let runtime = runtime()?;
-    let result = run(&runtime);
-
-    // No terminal mode was entered. Finish Tokio's background work before
-    // returning the Blueprint's shell and VM authority.
-    runtime.shutdown_background();
-
-    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-    {
-        trueos::vshell::leave_terminal_handoff();
-        if result.is_ok() {
-            let _ = trueos::vshell::shutdown_current_blueprint("Frog exited via Escape");
-        }
+    let result = runtime.block_on_weather().map(|snapshot| {
+        print_snapshot(&snapshot);
+    });
+    if let Err(error) = result.as_ref() {
+        eprintln!("Frog weather error: {error:#}");
     }
+
+    runtime.shutdown_background();
+    shutdown_blueprint(if result.is_ok() {
+        "Frog printed live weather"
+    } else {
+        "Frog weather request failed"
+    });
 
     result
 }
 
-fn run<R>(runtime: &R) -> Result<()>
-where
-    R: RuntimeBlockOn,
-{
-    let mut visual = ui4_visual::FrogVisual::open()?;
-    let snapshot = runtime.block_on_weather()?;
+fn shutdown_blueprint(reason: &str) {
+    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+    {
+        trueos::vshell::leave_terminal_handoff();
+        let _ = trueos::vshell::shutdown_current_blueprint(reason);
+    }
 
-    // Standard output is the Shell2 data path for this non-TUI Blueprint.
-    // Nothing is printed until a live OpenWeather response has been decoded.
-    print_snapshot(&snapshot);
-    visual.show_snapshot(snapshot)?;
-
-    visual.wait_for_escape()
+    #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+    let _ = reason;
 }
 
 fn print_snapshot(snapshot: &weather::WeatherSnapshot) {

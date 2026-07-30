@@ -28,9 +28,17 @@ Blueprint VMs carrying that tag. Enter the displayed VM slot ID to toggle that
 instance between running and paused; there is no implicit VM0 fallback and no
 separate `unpause` tab.
 
-This probe demonstrates that a fresh or resumed instance can reacquire an
-external resource and exercises the tagged F2 selection UX. It does **not** make
-the current VM snapshot format safe to clone. A real F2 pause/replicate path must
-first ask the app to quiesce and drop external handles, then checkpoint logical
-state, create a new instance identity, and finally let each instance reacquire
-its own resources.
+This Blueprint implements the cooperative lifecycle boundary. It polls for
+`PreparePause`, stops accepting and drops its listener, acknowledges `Ready`,
+and returns from that call only after `Resume`. It then logs the host-issued
+instance/lineage identity and reacquires a conflict-safe listener.
+
+Every fresh launch receives its own writable root:
+
+```text
+apps/hello_world_replicatable/<instance-guid>
+```
+
+The VM checkpoint owns in-memory `LogicalState`; the platform does not copy
+application files into another instance root. A Blueprint that wants files in a
+future clone must arrange that explicitly while handling `PreparePause`.

@@ -11,12 +11,13 @@ The package opt-in is explicit metadata which is encoded into the `.bp` header:
 replicatable = true
 ```
 
-F2 uses that artifact capability to filter its `pause` table. Blank submit lists
-only tagged running or latched VM slots; submitting a displayed VM ID toggles
-pause/resume. `unpause` is retained only as a command alias, not a separate tab,
-and neither action silently defaults to VM0. Paused slots keep independent VM
-store devices, so saving a second slot does not replace the first slot's
-checkpoint index.
+F2 requires both the artifact tag and imports of the lifecycle
+poll/Ready/identity ABI before exposing an app in its `pause` table. Metadata
+alone is not a safety claim. Blank submit lists only protocol-capable running or
+latched VM slots; submitting a displayed VM ID toggles pause/resume. `unpause`
+is retained only as a command alias, not a separate tab, and neither action
+silently defaults to VM0. Paused slots keep independent VM store devices, so
+saving a second slot does not replace the first slot's checkpoint index.
 
 Both attached control paths, including the inner Hull `vmx>` mini shell, follow
 the same distinction: `stop` exits without a checkpoint, `pause` enters the
@@ -40,7 +41,8 @@ The host-side flow should be two phase:
    capabilities, and returns `Ready { checkpoint_version }`.
 3. F2 freezes/checkpoints only after `Ready`. Timeout fails safely unless the
    user explicitly requests a force stop.
-4. Resume or replicate assigns a fresh instance identity and sends
+4. Resume retains the instance identity and increments its generation.
+   Replication assigns a fresh instance identity and sends
    `Resume { operation, instance, lineage, generation }`.
 5. The app reconstructs external resources and reports `Running` or a typed
    rebind failure.
@@ -97,10 +99,17 @@ app-specific boundary.
 
 ## Instance identity
 
-Replication must create a new instance ID while preserving a lineage ID. App
-filesystem roots should default to per-instance writable overlays with an
-explicit read-only/common mount. This prevents two resumed copies from silently
-writing the same state directory.
+Every fresh launch receives a UUIDv4 instance and lineage ID. Its writable root
+is `apps/<archive-stem>/<instance-guid>`; same-instance Resume keeps that root
+and increments `TRUEOS_APP_GENERATION`. `TRUEOS_APP_INSTANCE`,
+`TRUEOS_APP_LINEAGE`, and `TRUEOS_APP_IS_CLONE` expose the remaining identity.
+This prevents repeated launches from silently writing the same state directory.
+
+TRUEOS does not copy mutable app files as part of VM pause, snapshot, or clone.
+The Blueprint owns that decision at `PreparePause`: it may copy selected files,
+write an app-level checkpoint, use immutable shared data, or deliberately start
+the clone with an empty root. The explicit `apps/common` surface remains for
+declared shared/read-only data, not as the default writable home.
 
 ## First vertical slice
 
@@ -130,10 +139,21 @@ continues after the exact pause boundary instead of entering the Blueprint at
 its default seed again. Formats v1 and v2 remain readable with their historical
 checkpoint-and-restart semantics.
 
-The listener adapter is reactive recovery after same-slot resume; it is not the
-two-phase `PreparePause`/`Ready` contract described above. That poll/ack ABI is
-still required before metadata becomes a production safety guarantee for apps
-with writes, outgoing sessions, or other in-flight work. Cross-host replication
-must remain disabled until the checkpoint also relocates or serializes every
-guest-writable backing and rebuilds host capabilities under the new VM
-principal.
+The lifecycle ABI now exposes operation-scoped `PreparePause`, an exact `Ready`
+VMCALL checkpoint boundary, and post-resume identity. A successful Ready call
+does not return to Blueprint code before the checkpoint; it returns after
+Resume, when the app can rebuild resources. Requests expire after the host
+deadline and leave the VM running when the app does not acknowledge.
+
+`hello_world_replicatable` is the end-to-end implementation: its accept loop
+polls the lifecycle request, drops the listener before Ready, and reacquires a
+conflict-safe port after Resume. The generic listener adapter remains reactive
+recovery and is not by itself a Ready implementation for other apps.
+
+Cross-slot and cross-host memory cloning remains disabled. The current snapshot
+retains the source VM's guest heap arena and allocator metadata; copying only
+the CPU/stack/page-table image would alias or lose writable Rust state. The
+remaining v-layer must serialize or copy every guest-writable backing, rebuild
+allocator mappings for the destination VM principal, and then issue a new
+instance identity while preserving lineage. No UI action should label a
+same-slot Resume as a clone until that invariant is met.

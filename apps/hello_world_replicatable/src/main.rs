@@ -5,13 +5,15 @@ use core::net::Ipv4Addr;
 use trueos::{
     env,
     logl::{self, level},
-    t,
+    replication, t,
 };
 
 const DEFAULT_PREFERRED_PORT: u16 = 48_080;
 const MAX_INCREMENT_ATTEMPTS: u16 = 32;
 const ACCEPT_RETRY_DELAY_MS: u64 = 100;
 const MAX_CONSECUTIVE_ACCEPT_ERRORS: u8 = 8;
+const LIFECYCLE_POLL_MS: u64 = 100;
+const CHECKPOINT_VERSION: u64 = 1;
 const GREETING: &[u8] = b"hello from a replicatable TRUEOS Blueprint\n";
 
 #[derive(Clone, Copy)]
@@ -72,6 +74,10 @@ async fn run(policy: PortPolicy) {
     };
 
     loop {
+        if let Some(prepare) = replication::poll_prepare_pause() {
+            resume_after_ready(prepare).await;
+            continue;
+        }
         let Some(listener) = acquire_listener(policy).await else {
             logl::log(
                 level::ERROR,
@@ -99,18 +105,44 @@ async fn run(policy: PortPolicy) {
             ),
         );
 
-        // A future F2 PreparePause hook belongs at this ownership boundary:
-        // stop accepting, drop the listener, checkpoint only LogicalState, then
-        // acknowledge quiescence. Resume/replicate calls acquire_listener again.
-        serve_until_rebind(listener, &mut state).await;
-        logl::log(
-            level::WARN,
-            format_args!(
-                "replicatable: listener unhealthy; releasing and rebinding generation={}",
-                state.generation
+        match serve_until_boundary(listener, &mut state).await {
+            ServeBoundary::PreparePause(prepare) => resume_after_ready(prepare).await,
+            ServeBoundary::ListenerUnhealthy => logl::log(
+                level::WARN,
+                format_args!(
+                    "replicatable: listener unhealthy; releasing and rebinding generation={}",
+                    state.generation
+                ),
             ),
-        );
+        }
         t::time::sleep(t::time::Duration::from_millis(ACCEPT_RETRY_DELAY_MS)).await;
+    }
+}
+
+async fn resume_after_ready(prepare: replication::PreparePause) {
+    logl::log(
+        level::INFO,
+        format_args!(
+            "replicatable: PreparePause operation={} reason={:?}; listener released, Ready",
+            prepare.operation(),
+            prepare.reason
+        ),
+    );
+    match replication::ready(prepare, CHECKPOINT_VERSION) {
+        Ok(resume) => logl::log(
+            level::INFO,
+            format_args!(
+                "replicatable: Resume instance={} lineage={} generation={} clone={}",
+                resume.instance_guid(),
+                resume.lineage_guid(),
+                resume.generation,
+                resume.is_clone
+            ),
+        ),
+        Err(error) => logl::log(
+            level::WARN,
+            format_args!("replicatable: Ready rejected: {:?}", error),
+        ),
     }
 }
 
@@ -163,13 +195,26 @@ async fn acquire_listener(policy: PortPolicy) -> Option<t::net::TcpListener> {
     }
 }
 
-async fn serve_until_rebind(listener: t::net::TcpListener, state: &mut LogicalState) {
+enum ServeBoundary {
+    PreparePause(replication::PreparePause),
+    ListenerUnhealthy,
+}
+
+async fn serve_until_boundary(
+    listener: t::net::TcpListener,
+    state: &mut LogicalState,
+) -> ServeBoundary {
     use t::io::AsyncWriteExt;
 
     let mut consecutive_errors = 0u8;
     loop {
-        match listener.accept().await {
-            Ok((mut stream, peer)) => {
+        let accept = t::time::timeout(
+            t::time::Duration::from_millis(LIFECYCLE_POLL_MS),
+            listener.accept(),
+        )
+        .await;
+        match accept {
+            Ok(Ok((mut stream, peer))) => {
                 consecutive_errors = 0;
                 state.accepted_connections = state.accepted_connections.saturating_add(1);
                 logl::log(
@@ -186,7 +231,7 @@ async fn serve_until_rebind(listener: t::net::TcpListener, state: &mut LogicalSt
                     );
                 }
             }
-            Err(err) => {
+            Ok(Err(err)) => {
                 consecutive_errors = consecutive_errors.saturating_add(1);
                 logl::log(
                     level::WARN,
@@ -196,9 +241,15 @@ async fn serve_until_rebind(listener: t::net::TcpListener, state: &mut LogicalSt
                     ),
                 );
                 if consecutive_errors >= MAX_CONSECUTIVE_ACCEPT_ERRORS {
-                    return;
+                    return ServeBoundary::ListenerUnhealthy;
                 }
                 t::time::sleep(t::time::Duration::from_millis(ACCEPT_RETRY_DELAY_MS)).await;
+            }
+            Err(_) => {
+                if let Some(prepare) = replication::poll_prepare_pause() {
+                    // Returning drops the listener before Ready is acknowledged.
+                    return ServeBoundary::PreparePause(prepare);
+                }
             }
         }
     }

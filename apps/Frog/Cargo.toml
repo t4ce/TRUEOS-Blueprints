@@ -15,7 +15,7 @@ tokio = { version = "=1.52.3", default-features = false, features = ["full"] }
 trueos-weather = { path = "trueos-weather" }
 
 [target.'cfg(any(target_os = "trueos", target_os = "zkvm"))'.dependencies]
-trueos = { path = "../../api", features = ["tokio-net-probe", "ui4-scene"] }
+trueos = { path = "../../api", features = ["tokio-net-probe"] }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("trueos", "zkvm"))'] }

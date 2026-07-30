@@ -7,4 +7,4 @@ edition = "2024"
 replicatable = true
 
 [dependencies]
-trueos.workspace = true
+trueos = { workspace = true, features = ["tokio-net-probe"] }
