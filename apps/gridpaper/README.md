@@ -2,11 +2,14 @@
 
 `gridpaper` is a no-heap DIN A4 grid document and Blueprint demo app.
 
-The Blueprint opts into the F2 replicatable lifecycle. On pause, TRUEOS detaches
-the VM owner's UI4 presentation while retaining the kernel-owned Gridpaper page,
-3D scene, GPU allocations, and last front buffer. Resuming the same VM slot
-re-arms that producer and attaches a new UI4 window session to the retained
-scene; the Blueprint does not checkpoint UI4 or GPU handles.
+The Blueprint implements the two-phase F2 replicatable lifecycle. At
+PreparePause one atomic service operation captures any UI4 cell edits into its
+own fixed page buffers and releases the kernel Gridpaper lease; only then does
+the app report Ready. UI4 sessions, frames, GPU scenes, focus, selection, and
+pan are disposable projections and are never checkpointed. After Resume
+(including clone Resume), the Blueprint resubmits its page and animation table
+and the kernel builds a fresh projection. Forced stop/crash teardown also
+releases any remaining Gridpaper lease.
 
 The physical page is 210 mm by 297 mm. Its centered grid has 39 columns and 55
 rows of 5 mm cells, for a 195 mm by 275 mm grid and 2,145 addressable cells.

@@ -9,11 +9,12 @@ use gridpaper::{
 use trueos::{
     clock, env,
     logl::{self, level},
-    platform, print2d, vshell,
+    platform, print2d, replication, vshell,
 };
 
 const TRACKED_PRINT_JOBS: usize = 8;
 const PRINT_STATUS_INTERVAL_MS: u64 = 250;
+const CHECKPOINT_VERSION: u64 = 1;
 
 #[derive(Clone, Copy)]
 struct TrackedPrintJob {
@@ -109,6 +110,17 @@ fn main() {
     let mut print_jobs = [None; TRACKED_PRINT_JOBS];
     let mut next_print_status_ms = start_ms;
     loop {
+        if let Some(prepare) = replication::poll_prepare_pause() {
+            prepare_pause(
+                prepare,
+                &mut page,
+                grid_size,
+                &mut submitted_animation_generation,
+                &mut print_jobs,
+                &mut next_print_status_ms,
+            );
+            continue;
+        }
         drain_print_screen_requests(&mut print_jobs);
         let now_ms = clock::monotonic_millis();
         if now_ms >= next_print_status_ms {
@@ -163,6 +175,81 @@ fn main() {
             format_args!("gridpaper: kernel close failed error={error:?}"),
         );
     }
+}
+
+fn prepare_pause(
+    prepare: replication::PreparePause,
+    page: &mut GridPaper,
+    grid_size: trueos::gridpaper::GridSize,
+    submitted_animation_generation: &mut u64,
+    print_jobs: &mut [Option<TrackedPrintJob>; TRACKED_PRINT_JOBS],
+    next_print_status_ms: &mut u64,
+) {
+    if let Err(error) = checkpoint_and_release_kernel_page(page) {
+        logl::log(
+            level::WARN,
+            format_args!(
+                "gridpaper: PreparePause operation={} page checkpoint/release failed error={error:?}; not Ready",
+                prepare.operation()
+            ),
+        );
+        return;
+    }
+
+    // Print jobs are host-owned work, not cloneable Blueprint capabilities.
+    // Submitted jobs continue independently; resumed instances start tracking
+    // only jobs they submit themselves.
+    print_jobs.fill(None);
+    logl::log(
+        level::INFO,
+        format_args!(
+            "gridpaper: PreparePause operation={} reason={:?}; page checkpointed, UI4 frame and scene release committed, Ready",
+            prepare.operation(),
+            prepare.reason
+        ),
+    );
+
+    let resume = replication::ready(prepare, CHECKPOINT_VERSION);
+
+    // Checkpoint/release already succeeded even if Ready became stale, so
+    // always rebuild the disposable projection before returning to the loop.
+    *submitted_animation_generation = u64::MAX;
+    submit_to_kernel(page, grid_size, submitted_animation_generation);
+    *next_print_status_ms = clock::monotonic_millis().saturating_add(PRINT_STATUS_INTERVAL_MS);
+
+    match resume {
+        Ok(resume) => logl::log(
+            level::INFO,
+            format_args!(
+                "gridpaper: Resume instance={} lineage={} generation={} clone={}; page and animations resubmitted",
+                resume.instance_guid(),
+                resume.lineage_guid(),
+                resume.generation,
+                resume.is_clone
+            ),
+        ),
+        Err(error) => logl::log(
+            level::WARN,
+            format_args!("gridpaper: Ready rejected error={error:?}; kernel projection restored"),
+        ),
+    }
+}
+
+fn checkpoint_and_release_kernel_page(
+    page: &mut GridPaper,
+) -> Result<(), trueos::gridpaper::Error> {
+    let mut raw = [0u8; gridpaper::PAGE_BYTES];
+    trueos::gridpaper::checkpoint_snapshot(&mut raw)?;
+    if page.snapshot().raw() != &raw {
+        let now_ms = clock::monotonic_millis();
+        {
+            let mut edit = page.edit(now_ms);
+            edit.raw_mut().copy_from_slice(&raw);
+            let _ = edit.finish();
+        }
+        let _ = page.publish(now_ms);
+    }
+    Ok(())
 }
 
 fn drain_print_screen_requests(jobs: &mut [Option<TrackedPrintJob>; TRACKED_PRINT_JOBS]) {

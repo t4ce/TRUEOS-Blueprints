@@ -33,10 +33,17 @@ This Blueprint implements the cooperative lifecycle boundary. It polls for
 and returns from that call only after `Resume`. It then logs the host-issued
 instance/lineage identity and reacquires a conflict-safe listener.
 
-Every fresh launch receives its own writable root:
+An ordinary launch keeps the baseline single-app writable root:
 
 ```text
-apps/hello_world_replicatable/<instance-guid>
+apps/hello_world_replicatable
+```
+
+An explicitly named additional instance, for example
+`start new hello_world_replicatable DualBoot_Test`, receives:
+
+```text
+apps/hello_world_replicatable/dualboot_test--<instance-guid>
 ```
 
 The VM checkpoint owns in-memory `LogicalState`; the platform does not copy

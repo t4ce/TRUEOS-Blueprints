@@ -560,6 +560,31 @@ pub fn submit_instance_snapshot(
     })
 }
 
+/// Copy the latest logical page and atomically release its kernel projection.
+///
+/// UI4 cell edits are mirrored into this image. Replicatable producers should
+/// call this at PreparePause, copy the result into their checkpointed state,
+/// and then report Ready. The UI4 frame and GPU scene are disposable after this
+/// call and must be recreated by submitting state after Resume.
+pub fn checkpoint_snapshot(out: &mut [u8; PAGE_BYTES]) -> Result<(), Error> {
+    status(unsafe {
+        v::bp_abi::trueos_cabi_gridpaper_snapshot_checkpoint(out.as_mut_ptr(), out.len())
+    })
+}
+
+pub fn checkpoint_instance_snapshot(
+    instance: InstanceId,
+    out: &mut [u8; PAGE_BYTES],
+) -> Result<(), Error> {
+    status(unsafe {
+        v::bp_abi::trueos_cabi_gridpaper_snapshot_checkpoint_instance(
+            instance.raw(),
+            out.as_mut_ptr(),
+            out.len(),
+        )
+    })
+}
+
 /// Submit a fixed-capacity page with a positive logical extent no larger than
 /// the current column and row soft caps.
 pub fn submit_sized_snapshot(
@@ -753,7 +778,10 @@ fn encode_font_instances(
 }
 
 /// Detach this Blueprint producer and return its kernel GridPaper pool lease.
-/// VM lifecycle pause/resume remains the retained-scene path.
+///
+/// This invalidates the service-owned UI4 presentation, frame, and GPU scene.
+/// The producer keeps logical page data in its own memory and must submit it
+/// again after Resume.
 pub fn close() -> Result<(), Error> {
     status(unsafe { v::bp_abi::trueos_cabi_gridpaper_close() })
 }

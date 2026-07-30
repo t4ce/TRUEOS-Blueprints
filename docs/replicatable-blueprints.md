@@ -99,11 +99,25 @@ app-specific boundary.
 
 ## Instance identity
 
-Every fresh launch receives a UUIDv4 instance and lineage ID. Its writable root
-is `apps/<archive-stem>/<instance-guid>`; same-instance Resume keeps that root
-and increments `TRUEOS_APP_GENERATION`. `TRUEOS_APP_INSTANCE`,
-`TRUEOS_APP_LINEAGE`, and `TRUEOS_APP_IS_CLONE` expose the remaining identity.
-This prevents repeated launches from silently writing the same state directory.
+Every fresh launch receives a UUIDv4 instance and lineage ID. The ordinary
+single-instance commands retain the simple writable root
+`apps/<archive-stem>`. An explicit
+`start new <app> <name>` or `online new <app> <name>` creates
+`apps/<archive-stem>/<name>--<instance-guid>` instead. Same-instance Resume
+keeps that root and increments `TRUEOS_APP_GENERATION`.
+`TRUEOS_APP_INSTANCE`, `TRUEOS_APP_LINEAGE`, `TRUEOS_APP_INSTANCE_NAME`, and
+`TRUEOS_APP_IS_CLONE` expose the identity.
+
+Only one running or paused default instance of an app is permitted. A second
+ordinary launch is refused with guidance to use `new`, avoiding accidental
+shared writes to the baseline directory. `dl` remains installation-only:
+download first, then use `start new` when a separate runtime instance is
+desired.
+
+Future peer-created instances use
+`peer-<origin>--<name>--<instance-guid>` as their directory component and
+publish `TRUEOS_APP_PEER_ORIGIN`. Peer snapshot Resume remains gated until the
+writable-memory relocation invariant is implemented.
 
 TRUEOS does not copy mutable app files as part of VM pause, snapshot, or clone.
 The Blueprint owns that decision at `PreparePause`: it may copy selected files,
