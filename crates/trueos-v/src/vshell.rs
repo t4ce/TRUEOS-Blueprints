@@ -188,10 +188,15 @@ pub fn uart1_shell_write(bytes: &[u8]) -> usize {
 
 #[inline]
 pub fn shell2_print_line(bytes: &[u8]) -> usize {
-    if bytes.is_empty() {
-        return 0;
-    }
-    unsafe { vcabi::trueos_cabi_shell2_print_line(bytes.as_ptr(), bytes.len()) }
+    let written = if bytes.is_empty() {
+        0
+    } else {
+        unsafe { vcabi::trueos_cabi_shell_attached_write(bytes.as_ptr(), bytes.len()) }
+    };
+    let newline = b"\r\n";
+    written.saturating_add(unsafe {
+        vcabi::trueos_cabi_shell_attached_write(newline.as_ptr(), newline.len())
+    })
 }
 
 #[inline]

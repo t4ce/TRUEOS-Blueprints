@@ -962,7 +962,6 @@ unsafe extern "C" {
     pub fn trueos_cabi_lifecycle_poll(out: *mut TrueosLifecyclePreparePause) -> i32;
     pub fn trueos_cabi_lifecycle_ready(operation: u64, checkpoint_version: u64) -> i32;
     pub fn trueos_cabi_lifecycle_identity(out: *mut TrueosLifecycleIdentity) -> i32;
-    pub fn trueos_cabi_shell2_print_line(data_ptr: *const u8, data_len: usize) -> usize;
     pub fn trueos_cabi_shell1_submit_input(data_ptr: *const u8, data_len: usize) -> usize;
     pub fn trueos_cabi_shell_attached_write(data_ptr: *const u8, data_len: usize) -> usize;
     pub fn trueos_cabi_shell_attached_read_byte() -> i32;
