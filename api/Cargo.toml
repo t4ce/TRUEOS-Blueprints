@@ -14,6 +14,7 @@ ui3 = []
 ui4-solara-text = []
 ui4-scene = ["ui4-solara-text"]
 gridpaper = []
+lumen = []
 
 [lib]
 name = "trueos"

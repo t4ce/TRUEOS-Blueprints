@@ -1,0 +1,11 @@
+[package]
+name = "lumen"
+version = "0.1.0"
+edition = "2024"
+
+[package.metadata.trueos-blueprint]
+replicatable = true
+
+[dependencies]
+trueos = { workspace = true, features = ["lumen"] }
+

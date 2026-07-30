@@ -67,6 +67,9 @@ pub mod lifecycle;
 #[cfg(feature = "gridpaper")]
 pub mod gridpaper;
 
+#[cfg(feature = "lumen")]
+pub mod lumen;
+
 pub mod platform {
     pub use alloc::borrow::{Cow, ToOwned};
     pub use alloc::boxed::Box;

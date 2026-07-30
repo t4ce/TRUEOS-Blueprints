@@ -1,0 +1,25 @@
+# Lumen
+
+This is the first replicatable Lumen template Blueprint.
+
+The Blueprint owns the personality/tool prompt, conversation turn and reply
+tail, strict tool-call adapter, and a portable checkpoint containing
+short-convolution and attention KV state. TRUEOS retains the immutable LFM2.5
+model, tokenizer artifact, packed C++/IGC program, and GuC/RCS execution lane.
+
+On initial launch the app prefills only its fixed system/tool prefix. At
+`PreparePause` it asks the kernel Lumen capability to export mutable inference
+state into Blueprint memory, releases the live inference session, and reports
+`Ready`. After same-instance or clone `Resume`, it uploads that state into a
+fresh kernel session and reacquires execution capability.
+
+The intended bring-up is:
+
+1. Start `lumen.bp`; wait for `template ready`.
+2. Replicate the paused template through the F2 lifecycle.
+3. Resume the private child and type a prompt.
+4. Confirm the first user turn starts at the restored prefix position without
+   re-prefilling the tool/personality schema.
+
+Typing a prompt before replication remains supported for ABI bring-up.
+
