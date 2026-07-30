@@ -13,11 +13,6 @@
     "ipp-printer",
     "esp32_stt",
     "flight_controller_sim",
-    {
-      "name": "reticulum",
-      "path": "apps/Reticulum-rs"
-    },
-    "tantivy",
     "prismq",
     "particle",
     "shell",

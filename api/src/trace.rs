@@ -44,7 +44,11 @@ impl Subscriber for KernelSubscriber {
             metadata.name()
         );
         attributes.record(&mut visitor);
-        let _ = logl::log_record(level(metadata.level()), metadata.target(), visitor.line.as_str());
+        let _ = logl::log_record(
+            level(metadata.level()),
+            metadata.target(),
+            visitor.line.as_str(),
+        );
         Id::from_non_zero_u64(nonzero)
     }
 

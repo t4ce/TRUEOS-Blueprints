@@ -39,7 +39,7 @@ The 2026-07-30 v3 evidence was:
 
 | Witness | Raw relocatable | Packed Blueprint | Kernel ABI imports |
 | --- | ---: | ---: | ---: |
-| `tokio_stack` | 4,226,360 bytes | 582,285 bytes | 10 |
+| `tokio_stack` | 4,228,720 bytes | 581,864 bytes | 10 |
 | `tokio_rt` | 879,936 bytes | 113,276 bytes | 9 |
 | `framework_stack` | 657,104 bytes | 102,735 bytes | 8 |
 
