@@ -13,6 +13,8 @@ const CHECKPOINT_VERSION: u64 = 1;
 const POLL_MS: u64 = 10;
 const MAX_WAIT_POLLS: usize = 18_000;
 const INPUT_BYTES: usize = 4096;
+const SPINNER_CADENCE_POLLS: usize = 40;
+const SPINNER_FRAMES: &[&str] = &["⢈", "⡈", "⡐", "⡠", "⣀", "⢄", "⢂", "⢁", "⡁"];
 
 const SYSTEM_PROMPT: &str = concat!(
     "You are Lilly, a concise helpful assistant. ",
@@ -46,14 +48,14 @@ impl LogicalState {
 }
 
 fn main() {
-    vshell::line("lumen-bp: opening prefilled template");
+    let mut spinner = ProgressSpinner::start("lumen-bp: opening prefilled template");
     if let Err(error) = lumen::open_template(SYSTEM_PROMPT) {
         vshell::linef(format_args!(
             "lumen-bp: template open failed error={error:?}"
         ));
         return;
     }
-    let ready = match wait_for_phase(lumen::LUMEN_PHASE_READY) {
+    let ready = match wait_for_phase_with_spinner(lumen::LUMEN_PHASE_READY, &mut spinner) {
         Ok(status) => status,
         Err(error) => {
             vshell::linef(format_args!(
@@ -102,6 +104,41 @@ fn main() {
             vshell::linef(format_args!("lumen-bp: prompt failed error={error}"));
             return;
         }
+    }
+}
+
+struct ProgressSpinner {
+    label: &'static str,
+    frame: usize,
+    cadence: usize,
+}
+
+impl ProgressSpinner {
+    fn start(label: &'static str) -> Self {
+        let spinner = Self {
+            label,
+            frame: 0,
+            cadence: 0,
+        };
+        spinner.draw();
+        spinner
+    }
+
+    fn tick(&mut self) {
+        self.cadence = self.cadence.saturating_add(1);
+        if self.cadence < SPINNER_CADENCE_POLLS {
+            return;
+        }
+        self.cadence = 0;
+        self.frame = (self.frame + 1) % SPINNER_FRAMES.len();
+        self.draw();
+    }
+
+    fn draw(&self) {
+        vshell::progress_linef(format_args!(
+            "{} {}",
+            self.label, SPINNER_FRAMES[self.frame]
+        ));
     }
 }
 
@@ -210,10 +247,7 @@ fn run_prompt(state: &mut LogicalState, prompt: &str) -> Result<(), String> {
         ToolDisposition::Rejected => {
             vshell::line("lumen-bp: suppressed tool objective without explicit user intent");
             if adapted.text.is_empty() {
-                vshell::linef(format_args!(
-                    "lumen: {}",
-                    rejected_tool_fallback(prompt)
-                ));
+                vshell::linef(format_args!("lumen: {}", rejected_tool_fallback(prompt)));
             } else {
                 vshell::linef(format_args!("lumen: {}", adapted.text));
             }
@@ -231,6 +265,20 @@ fn run_prompt(state: &mut LogicalState, prompt: &str) -> Result<(), String> {
 }
 
 fn wait_for_phase(expected: u32) -> Result<lumen::TrueosLumenStatus, String> {
+    wait_for_phase_inner(expected, None)
+}
+
+fn wait_for_phase_with_spinner(
+    expected: u32,
+    spinner: &mut ProgressSpinner,
+) -> Result<lumen::TrueosLumenStatus, String> {
+    wait_for_phase_inner(expected, Some(spinner))
+}
+
+fn wait_for_phase_inner(
+    expected: u32,
+    mut spinner: Option<&mut ProgressSpinner>,
+) -> Result<lumen::TrueosLumenStatus, String> {
     for _ in 0..MAX_WAIT_POLLS {
         let status = lumen::status().map_err(|error| alloc::format!("status {error:?}"))?;
         if status.phase == expected {
@@ -238,6 +286,9 @@ fn wait_for_phase(expected: u32) -> Result<lumen::TrueosLumenStatus, String> {
         }
         if status.phase == lumen::LUMEN_PHASE_ERROR {
             return Err(alloc::format!("kernel error={}", status.error));
+        }
+        if let Some(spinner) = spinner.as_deref_mut() {
+            spinner.tick();
         }
         platform::poll_once();
         platform::sleep_ms(POLL_MS);
@@ -313,9 +364,7 @@ fn emotion_tool_requested(prompt: &str) -> bool {
         "sadness", "spirit", "surprise",
     ];
     ACTIONS.iter().any(|word| contains_ascii_word(prompt, word))
-        && TARGETS
-            .iter()
-            .any(|word| contains_ascii_word(prompt, word))
+        && TARGETS.iter().any(|word| contains_ascii_word(prompt, word))
 }
 
 fn contains_ascii_word(text: &str, expected: &str) -> bool {
