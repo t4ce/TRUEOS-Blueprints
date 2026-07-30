@@ -23,18 +23,28 @@ pub struct KernelSubscriber;
 
 impl Subscriber for KernelSubscriber {
     #[inline]
-    fn enabled(&self, _metadata: &Metadata<'_>) -> bool {
-        true
+    fn enabled(&self, metadata: &Metadata<'_>) -> bool {
+        metadata.level() <= &Level::INFO
     }
 
     #[inline]
     fn max_level_hint(&self) -> Option<LevelFilter> {
-        Some(LevelFilter::TRACE)
+        Some(LevelFilter::INFO)
     }
 
-    fn new_span(&self, _attributes: &Attributes<'_>) -> Id {
+    fn new_span(&self, attributes: &Attributes<'_>) -> Id {
         let raw = NEXT_SPAN_ID.fetch_add(1, Ordering::Relaxed);
         let nonzero = NonZeroU64::new(raw).unwrap_or(NonZeroU64::MIN);
+        let metadata = attributes.metadata();
+        let mut visitor = FieldVisitor::default();
+        let _ = write!(
+            visitor.line,
+            "span.new id={} name={}",
+            nonzero,
+            metadata.name()
+        );
+        attributes.record(&mut visitor);
+        let _ = logl::log_record(level(metadata.level()), metadata.target(), visitor.line.as_str());
         Id::from_non_zero_u64(nonzero)
     }
 
