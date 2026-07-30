@@ -16,14 +16,15 @@ const INPUT_BYTES: usize = 4096;
 
 const SYSTEM_PROMPT: &str = concat!(
     "You are Lilly, a concise helpful assistant. ",
-    "You can directly ask Spirit to play an emotion; this is a real action, not a hypothetical ",
-    "external tool. List of tools: [{\"name\":\"play_emotion\",\"description\":\"Play one fitting ",
-    "emotional idea through Lilly when it adds meaning.\",\"parameters\":{\"type\":\"object\",",
+    "Default to a natural-language reply without a tool. Call play_emotion only when the current ",
+    "user explicitly asks Lilly or Spirit to play, show, or express an emotion. Never call it for ",
+    "a greeting, an ordinary question, or merely emotional wording. The Spirit action is real. ",
+    "List of tools: [{\"name\":\"play_emotion\",\"description\":\"Play one explicitly requested ",
+    "emotional idea through Lilly.\",\"parameters\":{\"type\":\"object\",",
     "\"properties\":{\"idea\":{\"type\":\"string\",\"enum\":[\"anger\",\"disgust\",",
     "\"fear\",\"joy\",\"sadness\",\"surprise\"]}},\"required\":[\"idea\"],",
     "\"additionalProperties\":false}}]. ",
-    "Invoke it immediately when requested. Use at most one tool call per reply and continue with ",
-    "the natural-language answer."
+    "Use at most one tool call and otherwise answer in plain text."
 );
 
 struct LogicalState {
@@ -194,11 +195,36 @@ fn run_prompt(state: &mut LogicalState, prompt: &str) -> Result<(), String> {
     state.reply_tail_len = tail_len;
     let raw = lumen::take_reply(status).map_err(|error| alloc::format!("read {error:?}"))?;
     let raw = String::from_utf8_lossy(&raw);
-    let adapted = adapt_tool_reply(raw.as_ref());
-    if adapted.tool_only {
-        vshell::line("lumen-bp: tool objective handed to Spirit");
-    } else {
-        vshell::linef(format_args!("lumen: {}", adapted.text));
+    let adapted = adapt_tool_reply(raw.as_ref(), emotion_tool_requested(prompt));
+    match adapted.tool {
+        ToolDisposition::None => {
+            vshell::linef(format_args!("lumen: {}", adapted.text));
+        }
+        ToolDisposition::Executed => {
+            if adapted.text.is_empty() {
+                vshell::line("lumen-bp: tool objective handed to Spirit");
+            } else {
+                vshell::linef(format_args!("lumen: {}", adapted.text));
+            }
+        }
+        ToolDisposition::Rejected => {
+            vshell::line("lumen-bp: suppressed tool objective without explicit user intent");
+            if adapted.text.is_empty() {
+                vshell::linef(format_args!(
+                    "lumen: {}",
+                    rejected_tool_fallback(prompt)
+                ));
+            } else {
+                vshell::linef(format_args!("lumen: {}", adapted.text));
+            }
+        }
+        ToolDisposition::Failed => {
+            if adapted.text.is_empty() {
+                vshell::line("lumen: Spirit could not accept that emotion right now.");
+            } else {
+                vshell::linef(format_args!("lumen: {}", adapted.text));
+            }
+        }
     }
     state.turns = state.turns.saturating_add(1);
     Ok(())
@@ -221,23 +247,30 @@ fn wait_for_phase(expected: u32) -> Result<lumen::TrueosLumenStatus, String> {
 
 struct AdaptedReply {
     text: String,
-    tool_only: bool,
+    tool: ToolDisposition,
 }
 
-fn adapt_tool_reply(raw: &str) -> AdaptedReply {
+enum ToolDisposition {
+    None,
+    Executed,
+    Rejected,
+    Failed,
+}
+
+fn adapt_tool_reply(raw: &str, tool_authorized: bool) -> AdaptedReply {
     const START: &str = "<|tool_call_start|>";
     const END: &str = "<|tool_call_end|>";
     let Some(start) = raw.find(START) else {
         return AdaptedReply {
             text: raw.trim().to_string(),
-            tool_only: false,
+            tool: ToolDisposition::None,
         };
     };
     let payload_start = start + START.len();
     let Some(relative_end) = raw[payload_start..].find(END) else {
         return AdaptedReply {
             text: remove_span(raw, start, raw.len()),
-            tool_only: false,
+            tool: ToolDisposition::Rejected,
         };
     };
     let payload_end = payload_start + relative_end;
@@ -245,18 +278,60 @@ fn adapt_tool_reply(raw: &str) -> AdaptedReply {
     let Some(idea) = parse_emotion_call(&raw[payload_start..payload_end]) else {
         return AdaptedReply {
             text: remove_span(raw, start, span_end),
-            tool_only: false,
+            tool: ToolDisposition::Rejected,
         };
     };
     let text = remove_span(raw, start, span_end);
+    if !tool_authorized {
+        return AdaptedReply {
+            text,
+            tool: ToolDisposition::Rejected,
+        };
+    }
     let accepted = lumen::play_emotion(idea).is_ok();
     vshell::linef(format_args!(
         "lumen-bp: Spirit emotion idea={} accepted={}",
         idea, accepted as u8
     ));
     AdaptedReply {
-        tool_only: text.is_empty(),
         text,
+        tool: if accepted {
+            ToolDisposition::Executed
+        } else {
+            ToolDisposition::Failed
+        },
+    }
+}
+
+fn emotion_tool_requested(prompt: &str) -> bool {
+    const ACTIONS: &[&str] = &[
+        "animate", "display", "express", "invoke", "make", "perform", "play", "show", "trigger",
+        "use",
+    ];
+    const TARGETS: &[&str] = &[
+        "anger", "disgust", "emotion", "emotions", "fear", "happy", "joy", "lilly", "sad",
+        "sadness", "spirit", "surprise",
+    ];
+    ACTIONS.iter().any(|word| contains_ascii_word(prompt, word))
+        && TARGETS
+            .iter()
+            .any(|word| contains_ascii_word(prompt, word))
+}
+
+fn contains_ascii_word(text: &str, expected: &str) -> bool {
+    text.split(|ch: char| !ch.is_ascii_alphanumeric())
+        .any(|word| word.eq_ignore_ascii_case(expected))
+}
+
+fn rejected_tool_fallback(prompt: &str) -> &'static str {
+    const GREETINGS: &[&str] = &["hello", "hey", "hi"];
+    if GREETINGS
+        .iter()
+        .any(|word| contains_ascii_word(prompt, word))
+    {
+        "Hello! How can I help you today?"
+    } else {
+        "I could not form a text reply for that turn; please try the request once more."
     }
 }
 
@@ -312,4 +387,23 @@ fn trim_ascii(mut bytes: &[u8]) -> &[u8] {
         bytes = &bytes[..bytes.len() - 1];
     }
     bytes
+}
+
+#[cfg(test)]
+mod tests {
+    use super::emotion_tool_requested;
+
+    #[test]
+    fn ordinary_language_does_not_authorize_spirit() {
+        assert!(!emotion_tool_requested("hi"));
+        assert!(!emotion_tool_requested("What is joy?"));
+        assert!(!emotion_tool_requested("I feel sad today."));
+    }
+
+    #[test]
+    fn explicit_emotion_actions_authorize_spirit() {
+        assert!(emotion_tool_requested("Please play joy."));
+        assert!(emotion_tool_requested("Ask Spirit to show an emotion."));
+        assert!(emotion_tool_requested("Can Lilly express surprise?"));
+    }
 }
