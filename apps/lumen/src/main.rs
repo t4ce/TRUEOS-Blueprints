@@ -242,7 +242,8 @@ fn run_prompt(state: &mut LogicalState, prompt: &str) -> Result<(), String> {
         prompt,
     )
     .map_err(|error| alloc::format!("submit {error:?}"))?;
-    let status = wait_for_phase(lumen::LUMEN_PHASE_REPLY_READY)?;
+    let mut spinner = ProgressSpinner::start("lumen-bp: reasoning");
+    let status = wait_for_phase_with_spinner(lumen::LUMEN_PHASE_REPLY_READY, &mut spinner)?;
     let tail_len = (status.reply_tail_len as usize).min(state.reply_tail.len());
     state.reply_tail = status.reply_tail;
     state.reply_tail_len = tail_len;
