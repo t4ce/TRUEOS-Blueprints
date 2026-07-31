@@ -1,6 +1,6 @@
 use player_scope::ui::{PlaylistEntryData, TrackData, UiConfig};
 
-const DEFAULT_FILE_PATH: &str = "/apps/scope/tui/aud.m4a";
+const DEFAULT_FILE_PATH: &str = "aud.m4a";
 const NEXT_FILE_PATH: &str = "/apps/scope/tui/wide-demo.flac";
 
 pub fn config() -> UiConfig {
@@ -28,7 +28,7 @@ pub fn config() -> UiConfig {
 
 fn default_track() -> TrackData {
     TrackData {
-        file: "aud.mp4".into(),
+        file: "aud.m4a".into(),
         album: "scope".into(),
         artist: "tui".into(),
         codec: "AAC (LC)".into(),

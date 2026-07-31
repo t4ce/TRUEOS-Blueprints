@@ -19,14 +19,19 @@ const SPINNER_FRAMES: &[&str] = &["⢈", "⡈", "⡐", "⡠", "⣀", "⢄", "⢂
 
 const SYSTEM_PROMPT: &str = concat!(
     "You are Lilly, a concise helpful assistant. ",
-    "Default to a natural-language reply. You may call play_emotion when it helps express the ",
-    "response through Lilly. The Spirit action is real. ",
-    "List of tools: [{\"name\":\"play_emotion\",\"description\":\"Play one emotional idea ",
-    "through Lilly.\",\"parameters\":{\"type\":\"object\",",
+    "Respond with exactly one tool call. Use text for every ordinary answer, ",
+    "play_emotion only when an emotion should be shown, and move only when movement is requested. ",
+    "The Spirit actions are real. List of tools: ",
+    "[{\"name\":\"text\",\"parameters\":{\"type\":\"object\",",
+    "\"properties\":{\"text\":{\"type\":\"string\"}},\"required\":[\"text\"]}},",
+    "{\"name\":\"play_emotion\",\"parameters\":{\"type\":\"object\",",
     "\"properties\":{\"idea\":{\"type\":\"string\",\"enum\":[\"anger\",\"disgust\",",
     "\"fear\",\"joy\",\"sadness\",\"surprise\"]}},\"required\":[\"idea\"],",
-    "\"additionalProperties\":false}}]. ",
-    "Use at most one tool call and otherwise answer in plain text."
+    "\"additionalProperties\":false}},",
+    "{\"name\":\"move\",\"parameters\":{\"type\":\"object\",",
+    "\"properties\":{\"x\":{\"type\":\"number\",\"minimum\":0,\"maximum\":1},",
+    "\"y\":{\"type\":\"number\",\"minimum\":0,\"maximum\":1}},",
+    "\"required\":[\"x\",\"y\"],\"additionalProperties\":false}}]."
 );
 
 struct LogicalState {
@@ -255,6 +260,9 @@ fn run_prompt(state: &mut LogicalState, prompt: &str) -> Result<(), String> {
         ToolDisposition::None => {
             emit_text_reply(response_turn, adapted.text.as_str());
         }
+        ToolDisposition::Text(text) => {
+            emit_text_reply(response_turn, text.as_str());
+        }
         ToolDisposition::Executed => {
             if adapted.text.is_empty() {
                 vshell::line("lumen-bp: tool objective handed to Spirit");
@@ -274,7 +282,7 @@ fn run_prompt(state: &mut LogicalState, prompt: &str) -> Result<(), String> {
             if adapted.text.is_empty() {
                 emit_text_reply(
                     response_turn,
-                    "Spirit could not accept that emotion right now.",
+                    "Spirit could not accept that action right now.",
                 );
             } else {
                 emit_text_reply(response_turn, adapted.text.as_str());
@@ -352,6 +360,7 @@ struct AdaptedReply {
 
 enum ToolDisposition {
     None,
+    Text(String),
     Executed,
     Rejected,
     Failed,
@@ -392,9 +401,21 @@ fn route_tool_call(payload: &str) -> ToolDisposition {
         return ToolDisposition::Rejected;
     };
     match call.name {
+        "text" => route_text(call.arguments),
         "play_emotion" => route_play_emotion(call.arguments),
+        "move" => route_move(call.arguments),
         _ => ToolDisposition::Rejected,
     }
+}
+
+fn route_text(arguments: &str) -> ToolDisposition {
+    let Some(text) = parse_string_argument(arguments, "text") else {
+        return ToolDisposition::Rejected;
+    };
+    if text.trim().is_empty() {
+        return ToolDisposition::Rejected;
+    }
+    ToolDisposition::Text(text)
 }
 
 fn route_play_emotion(arguments: &str) -> ToolDisposition {
@@ -405,6 +426,22 @@ fn route_play_emotion(arguments: &str) -> ToolDisposition {
     vshell::linef(format_args!(
         "lumen-bp: Spirit emotion idea={} accepted={}",
         idea, accepted as u8
+    ));
+    if accepted {
+        ToolDisposition::Executed
+    } else {
+        ToolDisposition::Failed
+    }
+}
+
+fn route_move(arguments: &str) -> ToolDisposition {
+    let Some((x, y)) = parse_move_arguments(arguments) else {
+        return ToolDisposition::Rejected;
+    };
+    let accepted = lumen::move_spirit(x, y).is_ok();
+    vshell::linef(format_args!(
+        "lumen-bp: Spirit move x={:.3} y={:.3} accepted={}",
+        x, y, accepted as u8
     ));
     if accepted {
         ToolDisposition::Executed
@@ -450,6 +487,55 @@ fn parse_emotion_idea(arguments: &str) -> Option<&'static str> {
     }
 }
 
+fn parse_string_argument(arguments: &str, name: &str) -> Option<String> {
+    let value = arguments
+        .strip_prefix(name)?
+        .trim()
+        .strip_prefix('=')?
+        .trim();
+    let quote = value.as_bytes().first().copied()?;
+    if !matches!(quote, b'\'' | b'"') || value.as_bytes().last().copied() != Some(quote) {
+        return None;
+    }
+    let inner = value.get(1..value.len().checked_sub(1)?)?;
+    let mut output = String::with_capacity(inner.len());
+    let mut chars = inner.chars();
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
+            output.push(ch);
+            continue;
+        }
+        match chars.next()? {
+            '\\' => output.push('\\'),
+            '"' => output.push('"'),
+            '\'' => output.push('\''),
+            'n' => output.push('\n'),
+            'r' => output.push('\r'),
+            't' => output.push('\t'),
+            _ => return None,
+        }
+    }
+    Some(output)
+}
+
+fn parse_move_arguments(arguments: &str) -> Option<(f32, f32)> {
+    let mut x = None;
+    let mut y = None;
+    for argument in arguments.split(',') {
+        let (name, value) = argument.split_once('=')?;
+        let value = value.trim().parse::<f32>().ok()?;
+        if !value.is_finite() || !(0.0..=1.0).contains(&value) {
+            return None;
+        }
+        match name.trim() {
+            "x" if x.is_none() => x = Some(value),
+            "y" if y.is_none() => y = Some(value),
+            _ => return None,
+        }
+    }
+    Some((x?, y?))
+}
+
 fn rejected_tool_fallback() -> &'static str {
     "I could not form a valid tool call or text reply for that turn; please try once more."
 }
@@ -478,7 +564,7 @@ fn trim_ascii(mut bytes: &[u8]) -> &[u8] {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_emotion_idea, parse_tool_call};
+    use super::{parse_emotion_idea, parse_move_arguments, parse_string_argument, parse_tool_call};
 
     #[test]
     fn structured_tool_call_routes_by_registered_name() {
@@ -492,5 +578,22 @@ mod tests {
         assert!(parse_tool_call("play_emotion idea='joy'").is_none());
         assert_eq!(parse_emotion_idea("idea='calm'"), None);
         assert_eq!(parse_emotion_idea("idea=joy"), None);
+    }
+
+    #[test]
+    fn text_argument_unescapes_model_function_syntax() {
+        assert_eq!(
+            parse_string_argument(r#"text=\"Hello, \\\"Lilly\\\"!\""#, "text").as_deref(),
+            Some("Hello, \"Lilly\"!")
+        );
+        assert!(parse_string_argument("text=hello", "text").is_none());
+    }
+
+    #[test]
+    fn move_arguments_are_named_bounded_and_order_independent() {
+        assert_eq!(parse_move_arguments("x=0.25, y=1"), Some((0.25, 1.0)));
+        assert_eq!(parse_move_arguments("y=0.75,x=0"), Some((0.0, 0.75)));
+        assert!(parse_move_arguments("x=-0.1,y=0.5").is_none());
+        assert!(parse_move_arguments("x=0.5,x=0.6,y=0.5").is_none());
     }
 }

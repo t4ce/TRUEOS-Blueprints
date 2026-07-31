@@ -127,6 +127,10 @@ pub enum M4aDecodeError {
     InvalidPcmSampleCount {
         samples: usize,
     },
+    PcmSampleCountOverflow,
+    PcmAllocationFailed {
+        samples: usize,
+    },
     DecodeFailed,
 }
 
@@ -148,6 +152,8 @@ impl M4aDecodeError {
             Self::InvalidPacketRange => -13,
             Self::InvalidPcmSampleCount { .. } => -14,
             Self::DecodeFailed => -15,
+            Self::PcmSampleCountOverflow => -16,
+            Self::PcmAllocationFailed { .. } => -17,
         }
     }
 
@@ -204,6 +210,26 @@ pub fn decode_m4a_to_pcm_48k_stereo_s16(
     let mut source_rate = demuxed.sample_rate.unwrap_or(0);
     let mut source_channels = usize::from(demuxed.channel_count.unwrap_or(0));
     let mut source_stereo = Vec::new();
+    let expected_source_frames =
+        demuxed
+            .packets
+            .iter()
+            .try_fold(0usize, |total_frames, packet| {
+                let packet_frames = usize::try_from(packet.duration.unwrap_or(1024))
+                    .map_err(|_| M4aDecodeError::PcmSampleCountOverflow)?;
+                total_frames
+                    .checked_add(packet_frames)
+                    .ok_or(M4aDecodeError::PcmSampleCountOverflow)
+            })?;
+    let expected_source_samples = expected_source_frames
+        .checked_mul(PCM_CHANNELS)
+        .ok_or(M4aDecodeError::PcmSampleCountOverflow)?;
+    let expected_capacity = if source_rate == 0 {
+        expected_source_samples
+    } else {
+        expected_source_samples.max(resampled_sample_count(expected_source_frames, source_rate)?)
+    };
+    reserve_pcm_samples(&mut source_stereo, expected_capacity)?;
 
     for (idx, packet_range) in demuxed.packets.iter().copied().enumerate() {
         let packet_data = demuxed
@@ -230,8 +256,16 @@ pub fn decode_m4a_to_pcm_48k_stereo_s16(
         return Err(M4aDecodeError::DecodeFailed);
     }
 
-    let samples = resample_stereo_s16_to_48k(source_stereo.as_slice(), source_rate)?;
+    let samples = resample_stereo_s16_to_48k(source_stereo, source_rate)?;
     DecodedPcm48kStereo::new(samples)
+}
+
+fn reserve_pcm_samples(samples: &mut Vec<i16>, additional: usize) -> Result<(), M4aDecodeError> {
+    samples
+        .try_reserve_exact(additional)
+        .map_err(|_| M4aDecodeError::PcmAllocationFailed {
+            samples: samples.len().saturating_add(additional),
+        })
 }
 
 fn append_decoded_as_stereo_s16(
@@ -251,6 +285,12 @@ fn append_decoded_as_stereo_s16(
             set_or_check_stream_shape(rate, channels, source_rate, source_channels)?;
 
             let frames = buf.frames();
+            let additional = frames
+                .checked_mul(PCM_CHANNELS)
+                .ok_or(M4aDecodeError::PcmSampleCountOverflow)?;
+            if out.capacity().saturating_sub(out.len()) < additional {
+                reserve_pcm_samples(out, additional)?;
+            }
             let left = buf.chan(0);
             let right = if channels == 2 {
                 Some(buf.chan(1))
@@ -275,6 +315,12 @@ fn append_decoded_as_stereo_s16(
             set_or_check_stream_shape(rate, channels, source_rate, source_channels)?;
 
             let frames = buf.frames();
+            let additional = frames
+                .checked_mul(PCM_CHANNELS)
+                .ok_or(M4aDecodeError::PcmSampleCountOverflow)?;
+            if out.capacity().saturating_sub(out.len()) < additional {
+                reserve_pcm_samples(out, additional)?;
+            }
             let left = buf.chan(0);
             let right = if channels == 2 {
                 Some(buf.chan(1))
@@ -326,7 +372,7 @@ fn f32_to_i16(sample: f32) -> i16 {
 }
 
 fn resample_stereo_s16_to_48k(
-    samples: &[i16],
+    mut samples: Vec<i16>,
     source_rate: u32,
 ) -> Result<Vec<i16>, M4aDecodeError> {
     if source_rate == 0 {
@@ -338,7 +384,7 @@ fn resample_stereo_s16_to_48k(
         });
     }
     if source_rate == PCM_SAMPLE_RATE_HZ {
-        return Ok(samples.to_vec());
+        return Ok(samples);
     }
 
     let in_frames = samples.len() / PCM_CHANNELS;
@@ -346,33 +392,72 @@ fn resample_stereo_s16_to_48k(
         return Err(M4aDecodeError::DecodeFailed);
     }
 
+    let out_samples = resampled_sample_count(in_frames, source_rate)?;
+    let out_frames = out_samples / PCM_CHANNELS;
+
+    if source_rate < PCM_SAMPLE_RATE_HZ {
+        let (first_left, first_right) = resampled_frame(&samples, in_frames, source_rate, 0);
+        let additional = out_samples.saturating_sub(samples.len());
+        reserve_pcm_samples(&mut samples, additional)?;
+        samples.resize(out_samples, 0);
+
+        // Expanding from the end keeps every source frame intact until it has
+        // been consumed. Frame zero is written last because its interpolation
+        // also reads source frame one.
+        for out_idx in (1..out_frames).rev() {
+            let (left, right) = resampled_frame(&samples, in_frames, source_rate, out_idx);
+            samples[out_idx * 2] = left;
+            samples[out_idx * 2 + 1] = right;
+        }
+        samples[0] = first_left;
+        samples[1] = first_right;
+    } else {
+        // Compaction is safe from the front: every source frame read for a
+        // downsample lies at or beyond the output frame being overwritten.
+        for out_idx in 0..out_frames {
+            let (left, right) = resampled_frame(&samples, in_frames, source_rate, out_idx);
+            samples[out_idx * 2] = left;
+            samples[out_idx * 2 + 1] = right;
+        }
+        samples.truncate(out_samples);
+    }
+
+    Ok(samples)
+}
+
+fn resampled_sample_count(in_frames: usize, source_rate: u32) -> Result<usize, M4aDecodeError> {
+    if source_rate == 0 {
+        return Err(M4aDecodeError::UnsupportedDecodedRate);
+    }
     let out_frames = (((in_frames as u128) * u128::from(PCM_SAMPLE_RATE_HZ))
         / u128::from(source_rate))
     .max(1)
     .min(usize::MAX as u128) as usize;
-    let mut out = Vec::with_capacity(out_frames.saturating_mul(PCM_CHANNELS));
+    out_frames
+        .checked_mul(PCM_CHANNELS)
+        .ok_or(M4aDecodeError::PcmSampleCountOverflow)
+}
 
-    for out_idx in 0..out_frames {
-        let pos_num = (out_idx as u128) * u128::from(source_rate);
-        let src_idx = (pos_num / u128::from(PCM_SAMPLE_RATE_HZ)) as usize;
-        let frac = (pos_num % u128::from(PCM_SAMPLE_RATE_HZ)) as u32;
-        let a = src_idx.min(in_frames - 1);
-        let b = (a + 1).min(in_frames - 1);
-        out.push(lerp_i16(
-            samples[a * 2],
-            samples[b * 2],
-            frac,
-            PCM_SAMPLE_RATE_HZ,
-        ));
-        out.push(lerp_i16(
+fn resampled_frame(
+    samples: &[i16],
+    in_frames: usize,
+    source_rate: u32,
+    out_idx: usize,
+) -> (i16, i16) {
+    let pos_num = (out_idx as u128) * u128::from(source_rate);
+    let src_idx = (pos_num / u128::from(PCM_SAMPLE_RATE_HZ)) as usize;
+    let frac = (pos_num % u128::from(PCM_SAMPLE_RATE_HZ)) as u32;
+    let a = src_idx.min(in_frames - 1);
+    let b = (a + 1).min(in_frames - 1);
+    (
+        lerp_i16(samples[a * 2], samples[b * 2], frac, PCM_SAMPLE_RATE_HZ),
+        lerp_i16(
             samples[a * 2 + 1],
             samples[b * 2 + 1],
             frac,
             PCM_SAMPLE_RATE_HZ,
-        ));
-    }
-
-    Ok(out)
+        ),
+    )
 }
 
 fn lerp_i16(a: i16, b: i16, frac: u32, denom: u32) -> i16 {
@@ -569,4 +654,51 @@ fn fmt_fourcc(f: &mut fmt::Formatter<'_>, bytes: [u8; 4]) -> fmt::Result {
         f.write_str(c.encode_utf8(&mut [0; 4]))?;
     }
     f.write_str("'")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn in_place_resampling_matches_separate_output() {
+        let samples = (0..257i32)
+            .flat_map(|frame| {
+                let left = ((frame * 193) % 65_535 - 32_768) as i16;
+                let right = ((frame * 389) % 65_535 - 32_768) as i16;
+                [left, right]
+            })
+            .collect::<Vec<_>>();
+
+        for rate in [8_000, 24_000, 44_100, 48_000, 50_000, 96_000] {
+            let expected = reference_resample(samples.as_slice(), rate);
+            let actual = resample_stereo_s16_to_48k(samples.clone(), rate).unwrap();
+            assert_eq!(actual, expected, "source rate {rate}");
+        }
+    }
+
+    #[test]
+    fn in_place_resampling_accepts_one_frame() {
+        for rate in [8_000, 44_100, 96_000] {
+            let actual = resample_stereo_s16_to_48k(vec![123, -456], rate).unwrap();
+            assert!(actual.chunks_exact(2).all(|frame| frame == [123, -456]));
+        }
+    }
+
+    fn reference_resample(samples: &[i16], source_rate: u32) -> Vec<i16> {
+        if source_rate == PCM_SAMPLE_RATE_HZ {
+            return samples.to_vec();
+        }
+
+        let in_frames = samples.len() / PCM_CHANNELS;
+        let out_samples = resampled_sample_count(in_frames, source_rate).unwrap();
+        let out_frames = out_samples / PCM_CHANNELS;
+        let mut out = Vec::with_capacity(out_samples);
+        for out_idx in 0..out_frames {
+            let (left, right) = resampled_frame(samples, in_frames, source_rate, out_idx);
+            out.push(left);
+            out.push(right);
+        }
+        out
+    }
 }

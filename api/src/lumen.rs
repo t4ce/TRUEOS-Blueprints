@@ -115,3 +115,15 @@ pub fn present_reply(turn: u64, text: &str) -> Result<(), Error> {
         v::bp_abi::trueos_cabi_spirit_response_present(turn, text.as_ptr(), text.len())
     })
 }
+
+/// Move Spirit to one normalized scanout point. Both axes are inclusive 0..=1.
+pub fn move_spirit(x_normalized: f32, y_normalized: f32) -> Result<(), Error> {
+    if !x_normalized.is_finite()
+        || !y_normalized.is_finite()
+        || !(0.0..=1.0).contains(&x_normalized)
+        || !(0.0..=1.0).contains(&y_normalized)
+    {
+        return Err(Error(-3));
+    }
+    result(unsafe { v::bp_abi::trueos_cabi_spirit_move(x_normalized, y_normalized) })
+}
