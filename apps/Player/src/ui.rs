@@ -78,6 +78,65 @@ pub fn run(config: UiConfig) -> Result<UiExit> {
     result
 }
 
+/// Runs Player as a command/response service on the attached VMX minishell.
+///
+/// TRUEOS owns line editing and command echo. Player only consumes completed
+/// command lines and emits the corresponding response and next prompt through
+/// the attached-session vlayer. Ratatui and terminal raw mode are never entered.
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+pub fn run_vmx_minishell(config: UiConfig) -> Result<UiExit> {
+    tokio_worker_probe();
+    let mut app = App::new(config);
+    let mut input = String::new();
+
+    vmx_shell_line(&app.shell_response);
+    vmx_shell_prompt();
+
+    while app.exit.is_none() {
+        while let Some(byte) = trueos::vshell::attached_read_byte() {
+            match byte {
+                b'\r' | b'\n' => {
+                    let command = input.trim();
+                    if !command.is_empty() {
+                        app.run_command(command);
+                        vmx_shell_line(&app.shell_response);
+                    }
+                    input.clear();
+                    if app.exit.is_none() {
+                        vmx_shell_prompt();
+                    }
+                }
+                0x08 | 0x7f => {
+                    input.pop();
+                }
+                byte if byte.is_ascii_graphic() || byte == b' ' => {
+                    if input.len() < 512 {
+                        input.push(char::from(byte));
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        app.tick();
+        trueos::platform::poll_once();
+        trueos::platform::sleep_ms(10);
+    }
+
+    Ok(app.exit.unwrap_or(UiExit::ReturnToShell))
+}
+
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+fn vmx_shell_line(text: &str) {
+    let _ = trueos::vshell::attached_write(text.as_bytes());
+    let _ = trueos::vshell::attached_write(b"\r\n");
+}
+
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+fn vmx_shell_prompt() {
+    let _ = trueos::vshell::attached_write(b"player> ");
+}
+
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
 fn tokio_worker_probe() {
     let Ok(runtime) = trueos::runtime::current_thread().build() else {
@@ -168,6 +227,7 @@ struct App {
     input: String,
     cursor: usize,
     last_response: String,
+    shell_response: String,
     file_path: String,
     track: Track,
     playback: playback::PlaybackEngine,
@@ -217,10 +277,12 @@ impl App {
         let now = Instant::now();
         let default_track: Track = config.default_track.into();
         let next_track: Track = config.next_track.into();
+        let shell_response = config.ready_response.clone();
         Self {
             input: String::new(),
             cursor: 0,
             last_response: config.ready_response,
+            shell_response,
             file_path: config.default_file_path.clone(),
             track: default_track.clone(),
             playback: playback::PlaybackEngine::new(config.initial_volume),
@@ -442,7 +504,7 @@ impl App {
             Ok(event) => control::dispatch(self, &event),
             Err(control::ParseCommandError::Empty) => {}
             Err(control::ParseCommandError::Unknown(action)) => {
-                self.respond(format!("{action}: command logged but not wired"));
+                self.respond(format!("error: unknown command '{action}'; use help"));
             }
             Err(control::ParseCommandError::Ambiguous { input, matches }) => {
                 self.respond(format!("{input}: ambiguous, matches {}", matches.join("/")));
@@ -1454,6 +1516,7 @@ impl App {
     fn respond(&mut self, message: impl Into<String>) {
         let message = message.into();
         self.last_response = compact_response(&message);
+        self.shell_response.clone_from(&message);
         self.log(message);
     }
 
@@ -1781,7 +1844,9 @@ impl control::ControlEventHandler for App {
     }
 
     fn on_help(&mut self, _event: &control::ParsedCommand) {
-        self.respond(format!("commands: {}", control::command_names()));
+        self.respond(
+            "commands: load <path> | play/start | pause/stop | next | prev | goto <time> | volume [0-100] | mute | unmute | playlist/list | help/commands/? | quit | terminate",
+        );
     }
 }
 

@@ -100,7 +100,7 @@ pub const COMMAND_SPECS: &[CommandSpec] = &[
     },
     CommandSpec {
         command: Command::Play,
-        aliases: &["p", "▶"],
+        aliases: &["p", "start", "▶"],
     },
     CommandSpec {
         command: Command::Pause,
@@ -188,7 +188,7 @@ pub const COMMAND_SPECS: &[CommandSpec] = &[
     },
     CommandSpec {
         command: Command::Playlist,
-        aliases: &["y"],
+        aliases: &["y", "list"],
     },
     CommandSpec {
         command: Command::PlaylistTop,
@@ -224,9 +224,25 @@ pub const COMMAND_SPECS: &[CommandSpec] = &[
     },
     CommandSpec {
         command: Command::Help,
-        aliases: &["?"],
+        aliases: &["?", "commands"],
     },
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::{Command, parse_command};
+
+    #[test]
+    fn shell_friendly_aliases_resolve() {
+        for (input, expected) in [
+            ("start", Command::Play),
+            ("list", Command::Playlist),
+            ("commands", Command::Help),
+        ] {
+            assert_eq!(parse_command(input).unwrap().command, expected);
+        }
+    }
+}
 
 /// A parsed command action plus the remaining prompt arguments.
 #[derive(Debug, Clone)]
