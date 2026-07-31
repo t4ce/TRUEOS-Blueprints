@@ -78,6 +78,7 @@ const BLUEPRINT_VENDOR_PATCHES: &[(&str, &str)] = &[
     ("crossbeam-epoch", "crossbeam-epoch-0.9.18"),
     ("crossbeam-utils", "crossbeam-utils-0.8.21"),
     ("form_urlencoded", "form_urlencoded-1.2.2"),
+    ("fdeflate", "fdeflate-0.3.7"),
     ("futures-core", "futures-core-0.3.32"),
     ("futures-task", "futures-task-0.3.32"),
     ("futures-util", "futures-util-0.3.32"),
@@ -116,6 +117,7 @@ const BLUEPRINT_VENDOR_PATCHES: &[(&str, &str)] = &[
     ("russh-cryptovec", "russh-cryptovec-0.62.0"),
     ("rustls-rustcrypto", "rustls-rustcrypto-0.0.2-alpha"),
     ("serde_urlencoded", "serde_urlencoded-0.7.1"),
+    ("simd-adler32", "simd-adler32-0.3.8"),
     ("socket2", "socket2-0.6.3"),
     ("spin", "spin-0.10.0"),
     ("sync_wrapper", "sync_wrapper-1.0.2"),
@@ -130,6 +132,9 @@ const BLUEPRINT_VENDOR_PATCHES: &[(&str, &str)] = &[
     ("tower-layer", "tower-layer-0.3.3"),
     ("tower-service", "tower-service-0.3.3"),
     ("want", "want-0.3.1"),
+    ("png", "png-0.18.1"),
+    ("zune-core", "zune-core-0.5.1"),
+    ("zune-jpeg", "zune-jpeg-0.5.15"),
 ];
 
 fn main() {
@@ -2222,7 +2227,11 @@ fn ensure_rust_std_trueos_no_backtrace() -> Result<(), String> {
 }
 
 fn find_vendor_dir(app_dir: &Path, name: &str) -> Option<PathBuf> {
-    find_blueprint_vendor_dir(app_dir, name)
+    find_blueprint_vendor_dir(app_dir, name).or_else(|| {
+        let kernel_manifest = trueos_kernel_manifest(app_dir)?;
+        let candidate = kernel_manifest.parent()?.join("vendor").join(name);
+        candidate.is_dir().then_some(candidate)
+    })
 }
 
 fn find_blueprint_vendor_dir(app_dir: &Path, name: &str) -> Option<PathBuf> {
@@ -2388,7 +2397,7 @@ fn source_overlay_patches(
 
 fn add_blueprint_vendor_patches(app_dir: &Path, patches: &mut Vec<CratePatch>) {
     for (name, vendor_dir) in BLUEPRINT_VENDOR_PATCHES {
-        let Some(path) = find_blueprint_vendor_dir(app_dir, vendor_dir) else {
+        let Some(path) = find_vendor_dir(app_dir, vendor_dir) else {
             continue;
         };
         patches.retain(|patch| patch.name != *name && patch.key != *name);
@@ -4725,7 +4734,7 @@ fn link_blueprint_siblings_for_staged_app(app_dir: &Path, work_dir: &Path) -> Re
         &blueprint_root.join("crates"),
     )?;
 
-    if let Some(kernel_manifest) = explicit_trueos_kernel_manifest()
+    if let Some(kernel_manifest) = trueos_kernel_manifest(app_dir)
         && let Some(kernel_root) = kernel_manifest.parent()
     {
         link_staged_sibling(&staging_root.join("TRUEOS"), kernel_root)?;
@@ -4793,12 +4802,18 @@ fn staged_source_overlay(source_overlay: &[CratePatch], _work_dir: &Path) -> Vec
         .collect()
 }
 
-fn explicit_trueos_kernel_manifest() -> Option<PathBuf> {
+fn trueos_kernel_manifest(app_dir: &Path) -> Option<PathBuf> {
     if let Some(root) = env::var_os("TRUEOS_BLUEPRINT_KERNEL_ROOT") {
         let candidate = PathBuf::from(root).join("Cargo.toml");
         if candidate.is_file() {
             return Some(candidate);
         }
+    }
+
+    let blueprint_root = blueprint_root(app_dir)?;
+    let candidate = blueprint_root.parent()?.join("TRUEOS").join("Cargo.toml");
+    if candidate.is_file() && package_name(&candidate).ok().as_deref() == Some("TRUEOS") {
+        return Some(candidate);
     }
 
     None

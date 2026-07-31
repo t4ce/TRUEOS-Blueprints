@@ -18,6 +18,7 @@ members = [
     "apps/gboi",
     "apps/hello_world",
     "apps/hello_world_replicatable",
+    "apps/image-viewer",
     "apps/lumen",
     "apps/ipp-printer",
     "apps/esp32_stt",
@@ -203,6 +204,12 @@ serde_json = "=1.0.150"
 sha2 = "=0.10.9"
 
 [patch.crates-io]
+crc32fast = { path = "../TRUEOS/vendor/crc32fast-1.5.0" }
+fdeflate = { path = "../TRUEOS/vendor/fdeflate-0.3.7" }
+png = { path = "../TRUEOS/vendor/png-0.18.1" }
+simd-adler32 = { path = "../TRUEOS/vendor/simd-adler32-0.3.8" }
+zune-core = { path = "../TRUEOS/vendor/zune-core-0.5.1" }
+zune-jpeg = { path = "../TRUEOS/vendor/zune-jpeg-0.5.15" }
 axum = { path = "vendor/axum-0.8.9" }
 axum-core = { path = "vendor/axum-core-0.5.6" }
 base64 = { path = "vendor/base64-0.22.1" }

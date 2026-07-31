@@ -1,0 +1,21 @@
+[package]
+name = "image-viewer"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+build = "build.rs"
+
+[package.metadata.trueos-blueprint]
+replicatable = false
+
+[[bin]]
+name = "image-viewer"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+core3 = { version = "0.1.2", default-features = false, features = ["alloc"] }
+png = { version = "0.18.1", default-features = false }
+trueos = { workspace = true, features = ["ui4-scene"] }
+zune-jpeg = { version = "0.5.15", default-features = false, features = ["x86", "portable_simd"] }
