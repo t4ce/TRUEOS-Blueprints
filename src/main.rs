@@ -78,7 +78,6 @@ const BLUEPRINT_VENDOR_PATCHES: &[(&str, &str)] = &[
     ("crossbeam-epoch", "crossbeam-epoch-0.9.18"),
     ("crossbeam-utils", "crossbeam-utils-0.8.21"),
     ("form_urlencoded", "form_urlencoded-1.2.2"),
-    ("fdeflate", "fdeflate-0.3.7"),
     ("futures-core", "futures-core-0.3.32"),
     ("futures-task", "futures-task-0.3.32"),
     ("futures-util", "futures-util-0.3.32"),
@@ -117,7 +116,6 @@ const BLUEPRINT_VENDOR_PATCHES: &[(&str, &str)] = &[
     ("russh-cryptovec", "russh-cryptovec-0.62.0"),
     ("rustls-rustcrypto", "rustls-rustcrypto-0.0.2-alpha"),
     ("serde_urlencoded", "serde_urlencoded-0.7.1"),
-    ("simd-adler32", "simd-adler32-0.3.8"),
     ("socket2", "socket2-0.6.3"),
     ("spin", "spin-0.10.0"),
     ("sync_wrapper", "sync_wrapper-1.0.2"),
@@ -132,7 +130,12 @@ const BLUEPRINT_VENDOR_PATCHES: &[(&str, &str)] = &[
     ("tower-layer", "tower-layer-0.3.3"),
     ("tower-service", "tower-service-0.3.3"),
     ("want", "want-0.3.1"),
+];
+const TRUEOS_IMAGE_CODEC_VENDOR_PATCHES: &[(&str, &str)] = &[
+    ("crc32fast", "crc32fast-1.5.0"),
+    ("fdeflate", "fdeflate-0.3.7"),
     ("png", "png-0.18.1"),
+    ("simd-adler32", "simd-adler32-0.3.8"),
     ("zune-core", "zune-core-0.5.1"),
     ("zune-jpeg", "zune-jpeg-0.5.15"),
 ];
@@ -2227,11 +2230,13 @@ fn ensure_rust_std_trueos_no_backtrace() -> Result<(), String> {
 }
 
 fn find_vendor_dir(app_dir: &Path, name: &str) -> Option<PathBuf> {
-    find_blueprint_vendor_dir(app_dir, name).or_else(|| {
-        let kernel_manifest = trueos_kernel_manifest(app_dir)?;
-        let candidate = kernel_manifest.parent()?.join("vendor").join(name);
-        candidate.is_dir().then_some(candidate)
-    })
+    find_blueprint_vendor_dir(app_dir, name)
+}
+
+fn find_trueos_kernel_vendor_dir(app_dir: &Path, name: &str) -> Option<PathBuf> {
+    let kernel_manifest = trueos_kernel_manifest(app_dir)?;
+    let candidate = kernel_manifest.parent()?.join("vendor").join(name);
+    candidate.is_dir().then_some(candidate)
 }
 
 fn find_blueprint_vendor_dir(app_dir: &Path, name: &str) -> Option<PathBuf> {
@@ -2273,8 +2278,11 @@ fn source_overlay_patches(
     // Select both overlays from the direct Tonic declaration so packages
     // without a local Cargo.lock still materialize the TRUEOS I/O types.
     let uses_tonic = manifest_or_lock_mentions_crate(app_dir, manifest_path, "tonic")?;
+    let uses_png = manifest_or_lock_mentions_crate(app_dir, manifest_path, "png")?;
+    let uses_zune_jpeg = manifest_or_lock_mentions_crate(app_dir, manifest_path, "zune-jpeg")?;
 
     add_blueprint_vendor_patches(app_dir, &mut out);
+    add_trueos_image_codec_vendor_patches(app_dir, &mut out, uses_png, uses_zune_jpeg);
 
     let libc_path = find_blueprint_vendor_dir(app_dir, TRUEOS_LIBC_VENDOR_DIR).ok_or_else(|| {
         format!(
@@ -2397,7 +2405,30 @@ fn source_overlay_patches(
 
 fn add_blueprint_vendor_patches(app_dir: &Path, patches: &mut Vec<CratePatch>) {
     for (name, vendor_dir) in BLUEPRINT_VENDOR_PATCHES {
-        let Some(path) = find_vendor_dir(app_dir, vendor_dir) else {
+        let Some(path) = find_blueprint_vendor_dir(app_dir, vendor_dir) else {
+            continue;
+        };
+        patches.retain(|patch| patch.name != *name && patch.key != *name);
+        patches.push(CratePatch::new(*name, path));
+    }
+}
+
+fn add_trueos_image_codec_vendor_patches(
+    app_dir: &Path,
+    patches: &mut Vec<CratePatch>,
+    uses_png: bool,
+    uses_zune_jpeg: bool,
+) {
+    for (name, vendor_dir) in TRUEOS_IMAGE_CODEC_VENDOR_PATCHES {
+        let selected = match *name {
+            "crc32fast" | "fdeflate" | "png" | "simd-adler32" => uses_png,
+            "zune-core" | "zune-jpeg" => uses_zune_jpeg,
+            _ => false,
+        };
+        if !selected {
+            continue;
+        }
+        let Some(path) = find_trueos_kernel_vendor_dir(app_dir, vendor_dir) else {
             continue;
         };
         patches.retain(|patch| patch.name != *name && patch.key != *name);
