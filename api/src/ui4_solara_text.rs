@@ -2,6 +2,8 @@
 
 use alloc::vec::Vec;
 
+use crate::input::TrueosKeyboardOutputEvent;
+
 pub const MAX_SCENE_TEXT_ROWS_PER_CALL: usize = 64;
 const FONT_ID_STAMP_ONCE: u32 = 1 << 31;
 const FONT_ID_TEXT_BACKBUFFER: u32 = 1 << 30;
@@ -420,6 +422,23 @@ impl Frame {
             combo_id: raw.combo_id,
             vcursor: raw.vcursor != 0,
         }))
+    }
+
+    /// Take the next key/text transition already routed by UI4 to this exact
+    /// owner and window. Complete text bursts are queued atomically; an
+    /// upstream truncation is discarded before any part reaches this method.
+    pub fn take_keyboard_event(&mut self) -> Result<Option<TrueosKeyboardOutputEvent>, Error> {
+        let mut event = TrueosKeyboardOutputEvent::default();
+        let result = unsafe {
+            v::bp_abi::trueos_cabi_ui4_scene_keyboard_event_take(self.window_id, &mut event)
+        };
+        if result == 1 {
+            return Ok(None);
+        }
+        if result != 0 {
+            return Err(error_from_status(result));
+        }
+        Ok(Some(event))
     }
 
     /// Take the next app-owned middle-button pan event for this frame.

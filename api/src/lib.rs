@@ -32,21 +32,90 @@ pub use v::vusb as usb;
 
 /// Keyboard events translated by the kernel's shared HID input broker.
 ///
-/// `hid` exposes device-oriented input state. This small facade exposes the
-/// focus-independent key/text stream used by interactive Blueprint windows.
+/// `hid` exposes device-oriented input state. This facade retains the global
+/// focus-independent stream for diagnostics; UI4 windows consume routed events
+/// through `ui4_scene::Frame::take_keyboard_event`.
 pub mod input {
+    pub const KEYBOARD_TEXT_BURST_MAX_SCALARS: usize = 256;
+    pub const KEYBOARD_OUTPUT_FLAG_PRESS: u32 = 1 << 0;
+    pub const KEYBOARD_OUTPUT_FLAG_SYNTHETIC: u32 = 1 << 1;
+    pub const KEYBOARD_OUTPUT_FLAG_TEXT_BURST_START: u32 = 1 << 2;
+    pub const KEYBOARD_OUTPUT_FLAG_TEXT_BURST_END: u32 = 1 << 3;
+    pub const KEYBOARD_OUTPUT_FLAG_TEXT_BURST: u32 = 1 << 4;
     pub const KEYBOARD_OUTPUT_KIND_TEXT: u8 = 1;
     pub const KEYBOARD_OUTPUT_KIND_KEY: u8 = 2;
 
+    pub const KEYBOARD_KEY_BACKSPACE: u16 = 1;
+    pub const KEYBOARD_KEY_TAB: u16 = 2;
     pub const KEYBOARD_KEY_ENTER: u16 = 3;
     pub const KEYBOARD_KEY_ESCAPE: u16 = 4;
     pub const KEYBOARD_KEY_SPACE: u16 = 5;
+    pub const KEYBOARD_KEY_DELETE: u16 = 6;
+    pub const KEYBOARD_KEY_INSERT: u16 = 7;
+    pub const KEYBOARD_KEY_HOME: u16 = 8;
+    pub const KEYBOARD_KEY_END: u16 = 9;
+    pub const KEYBOARD_KEY_PAGE_UP: u16 = 10;
+    pub const KEYBOARD_KEY_PAGE_DOWN: u16 = 11;
     pub const KEYBOARD_KEY_ARROW_UP: u16 = 12;
     pub const KEYBOARD_KEY_ARROW_DOWN: u16 = 13;
     pub const KEYBOARD_KEY_ARROW_LEFT: u16 = 14;
     pub const KEYBOARD_KEY_ARROW_RIGHT: u16 = 15;
+    pub const KEYBOARD_KEY_F1: u16 = 101;
+    pub const KEYBOARD_KEY_F2: u16 = 102;
+    pub const KEYBOARD_KEY_F3: u16 = 103;
+    pub const KEYBOARD_KEY_F4: u16 = 104;
+    pub const KEYBOARD_KEY_F5: u16 = 105;
+    pub const KEYBOARD_KEY_F6: u16 = 106;
+    pub const KEYBOARD_KEY_F7: u16 = 107;
+    pub const KEYBOARD_KEY_F8: u16 = 108;
+    pub const KEYBOARD_KEY_F9: u16 = 109;
+    pub const KEYBOARD_KEY_F10: u16 = 110;
+    pub const KEYBOARD_KEY_F11: u16 = 111;
+    pub const KEYBOARD_KEY_F12: u16 = 112;
 
     pub use v::bp_abi::TrueosKeyboardOutputEvent;
+
+    #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+    pub struct KeyboardOutputBatch {
+        pub len: usize,
+        pub dropped: u32,
+    }
+
+    /// A private cursor over the shared keyboard-output ring.
+    ///
+    /// Unlike `pop_keyboard_output`, reading here never consumes events for
+    /// another Blueprint. This is a global diagnostic stream; interactive UI4
+    /// windows should use `Frame::take_keyboard_event` for routed delivery.
+    #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+    pub struct KeyboardOutputReader {
+        read_seq: u64,
+    }
+
+    impl KeyboardOutputReader {
+        pub const fn new() -> Self {
+            Self { read_seq: 0 }
+        }
+
+        pub fn read(&mut self, out: &mut [TrueosKeyboardOutputEvent]) -> KeyboardOutputBatch {
+            let mut next_seq = self.read_seq;
+            let mut dropped = 0u32;
+            let out_cap = u32::try_from(out.len()).unwrap_or(u32::MAX);
+            let len = unsafe {
+                v::bp_abi::trueos_cabi_input_read_keyboard_output_since(
+                    self.read_seq,
+                    out.as_mut_ptr(),
+                    out_cap,
+                    &mut next_seq,
+                    &mut dropped,
+                )
+            } as usize;
+            self.read_seq = next_seq;
+            KeyboardOutputBatch {
+                len: len.min(out.len()),
+                dropped,
+            }
+        }
+    }
 
     #[inline]
     pub fn pop_keyboard_output() -> Option<TrueosKeyboardOutputEvent> {

@@ -1,0 +1,692 @@
+extern crate alloc;
+
+use alloc::{string::String, vec, vec::Vec};
+
+const TAB_WIDTH: usize = 8;
+const MAX_CSI_BYTES: usize = 128;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct Cursor {
+    pub(crate) col: usize,
+    pub(crate) row: usize,
+    pub(crate) visible: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ParserState {
+    Ground,
+    Escape,
+    Csi,
+    Osc,
+    OscEscape,
+}
+
+/// A compact, glyph-only terminal screen for the UI4 shell frontend.
+///
+/// Every Unicode scalar occupies exactly one cell. Styling sequences are
+/// accepted but intentionally ignored; UI4 owns the current presentation.
+pub(crate) struct Terminal {
+    cols: usize,
+    rows: usize,
+    cells: Vec<char>,
+    cursor_col: usize,
+    cursor_row: usize,
+    saved_col: usize,
+    saved_row: usize,
+    cursor_visible: bool,
+    pending_wrap: bool,
+    scroll_top: usize,
+    scroll_bottom: usize,
+    parser_state: ParserState,
+    csi_buf: Vec<u8>,
+    csi_overflow: bool,
+    utf8_buf: [u8; 4],
+    utf8_len: usize,
+    utf8_expected: usize,
+    dirty: bool,
+}
+
+impl Terminal {
+    pub(crate) fn new(cols: usize, rows: usize) -> Self {
+        let cols = cols.max(1);
+        let rows = rows.max(1);
+        Self {
+            cols,
+            rows,
+            cells: vec![' '; cols.saturating_mul(rows)],
+            cursor_col: 0,
+            cursor_row: 0,
+            saved_col: 0,
+            saved_row: 0,
+            cursor_visible: true,
+            pending_wrap: false,
+            scroll_top: 0,
+            scroll_bottom: rows - 1,
+            parser_state: ParserState::Ground,
+            csi_buf: Vec::new(),
+            csi_overflow: false,
+            utf8_buf: [0; 4],
+            utf8_len: 0,
+            utf8_expected: 0,
+            dirty: true,
+        }
+    }
+
+    pub(crate) fn dimensions(&self) -> (usize, usize) {
+        (self.cols, self.rows)
+    }
+
+    pub(crate) fn cursor(&self) -> Cursor {
+        Cursor {
+            col: self.cursor_col,
+            row: self.cursor_row,
+            visible: self.cursor_visible,
+        }
+    }
+
+    pub(crate) fn is_dirty(&self) -> bool {
+        self.dirty
+    }
+
+    pub(crate) fn take_dirty(&mut self) -> bool {
+        core::mem::replace(&mut self.dirty, false)
+    }
+
+    /// Return one fixed-width string per screen row, including trailing spaces.
+    pub(crate) fn render_rows(&self) -> Vec<String> {
+        let mut rendered = Vec::with_capacity(self.rows);
+        for row in 0..self.rows {
+            let start = row * self.cols;
+            let end = start + self.cols;
+            rendered.push(self.cells[start..end].iter().collect());
+        }
+        rendered
+    }
+
+    /// Resize while retaining the overlapping top-left portion of the screen.
+    pub(crate) fn resize(&mut self, cols: usize, rows: usize) {
+        let cols = cols.max(1);
+        let rows = rows.max(1);
+        if cols == self.cols && rows == self.rows {
+            return;
+        }
+
+        let old_cols = self.cols;
+        let old_rows = self.rows;
+        let old_cells = core::mem::take(&mut self.cells);
+        let mut cells = vec![' '; cols.saturating_mul(rows)];
+        let copy_cols = old_cols.min(cols);
+        let copy_rows = old_rows.min(rows);
+        for row in 0..copy_rows {
+            let old_start = row * old_cols;
+            let new_start = row * cols;
+            cells[new_start..new_start + copy_cols]
+                .copy_from_slice(&old_cells[old_start..old_start + copy_cols]);
+        }
+
+        self.cols = cols;
+        self.rows = rows;
+        self.cells = cells;
+        self.cursor_col = self.cursor_col.min(cols - 1);
+        self.cursor_row = self.cursor_row.min(rows - 1);
+        self.saved_col = self.saved_col.min(cols - 1);
+        self.saved_row = self.saved_row.min(rows - 1);
+        self.pending_wrap = false;
+        self.scroll_top = 0;
+        self.scroll_bottom = rows - 1;
+        self.reset_parser();
+        self.dirty = true;
+    }
+
+    /// Clear the screen and all parser/cursor state without changing its size.
+    pub(crate) fn reset(&mut self) {
+        self.cells.fill(' ');
+        self.cursor_col = 0;
+        self.cursor_row = 0;
+        self.saved_col = 0;
+        self.saved_row = 0;
+        self.cursor_visible = true;
+        self.pending_wrap = false;
+        self.scroll_top = 0;
+        self.scroll_bottom = self.rows - 1;
+        self.reset_parser();
+        self.dirty = true;
+    }
+
+    /// Ingest an arbitrary byte chunk. UTF-8 and escape sequences may span calls.
+    pub(crate) fn feed(&mut self, bytes: &[u8]) {
+        for &byte in bytes {
+            self.feed_byte(byte);
+        }
+    }
+
+    fn reset_parser(&mut self) {
+        self.parser_state = ParserState::Ground;
+        self.csi_buf.clear();
+        self.csi_overflow = false;
+        self.utf8_len = 0;
+        self.utf8_expected = 0;
+    }
+
+    fn feed_byte(&mut self, byte: u8) {
+        match self.parser_state {
+            ParserState::Ground => self.feed_ground_byte(byte),
+            ParserState::Escape => self.feed_escape_byte(byte),
+            ParserState::Csi => self.feed_csi_byte(byte),
+            ParserState::Osc => match byte {
+                0x07 => self.parser_state = ParserState::Ground,
+                0x1b => self.parser_state = ParserState::OscEscape,
+                _ => {}
+            },
+            ParserState::OscEscape => match byte {
+                b'\\' | 0x07 => self.parser_state = ParserState::Ground,
+                0x1b => {}
+                _ => self.parser_state = ParserState::Osc,
+            },
+        }
+    }
+
+    fn feed_ground_byte(&mut self, byte: u8) {
+        if self.utf8_expected != 0 {
+            if byte & 0xc0 == 0x80 {
+                self.utf8_buf[self.utf8_len] = byte;
+                self.utf8_len += 1;
+                if self.utf8_len == self.utf8_expected {
+                    let ch = core::str::from_utf8(&self.utf8_buf[..self.utf8_len])
+                        .ok()
+                        .and_then(|text| text.chars().next())
+                        .unwrap_or('\u{fffd}');
+                    self.utf8_len = 0;
+                    self.utf8_expected = 0;
+                    self.put_char(ch);
+                }
+                return;
+            }
+
+            self.utf8_len = 0;
+            self.utf8_expected = 0;
+            self.put_char('\u{fffd}');
+            // The non-continuation byte may itself begin text or a control
+            // sequence, so process it again after closing the malformed scalar.
+        }
+
+        match byte {
+            0x1b => self.parser_state = ParserState::Escape,
+            b'\r' => self.carriage_return(),
+            b'\n' | 0x0b | 0x0c => self.line_feed(),
+            0x08 => self.backspace(),
+            b'\t' => self.horizontal_tab(),
+            0x00..=0x1f | 0x7f => {}
+            0x20..=0x7e => self.put_char(byte as char),
+            0xc2..=0xdf => self.begin_utf8(byte, 2),
+            0xe0..=0xef => self.begin_utf8(byte, 3),
+            0xf0..=0xf4 => self.begin_utf8(byte, 4),
+            _ => self.put_char('\u{fffd}'),
+        }
+    }
+
+    fn begin_utf8(&mut self, byte: u8, expected: usize) {
+        self.utf8_buf[0] = byte;
+        self.utf8_len = 1;
+        self.utf8_expected = expected;
+    }
+
+    fn feed_escape_byte(&mut self, byte: u8) {
+        self.parser_state = ParserState::Ground;
+        match byte {
+            b'[' => {
+                self.csi_buf.clear();
+                self.csi_overflow = false;
+                self.parser_state = ParserState::Csi;
+            }
+            b']' => self.parser_state = ParserState::Osc,
+            b'7' => {
+                self.saved_col = self.cursor_col;
+                self.saved_row = self.cursor_row;
+            }
+            b'8' => self.restore_cursor(),
+            b'D' => self.line_feed(),
+            b'E' => {
+                self.line_feed();
+                self.carriage_return();
+            }
+            b'M' => self.reverse_index(),
+            b'c' => self.reset(),
+            0x1b => self.parser_state = ParserState::Escape,
+            _ => {}
+        }
+    }
+
+    fn feed_csi_byte(&mut self, byte: u8) {
+        match byte {
+            0x40..=0x7e => {
+                if !self.csi_overflow {
+                    self.execute_csi(byte);
+                }
+                self.csi_buf.clear();
+                self.csi_overflow = false;
+                self.parser_state = ParserState::Ground;
+            }
+            0x1b => {
+                self.csi_buf.clear();
+                self.csi_overflow = false;
+                self.parser_state = ParserState::Escape;
+            }
+            0x18 | 0x1a => {
+                self.csi_buf.clear();
+                self.csi_overflow = false;
+                self.parser_state = ParserState::Ground;
+            }
+            0x20..=0x3f => {
+                if self.csi_buf.len() < MAX_CSI_BYTES {
+                    self.csi_buf.push(byte);
+                } else {
+                    self.csi_overflow = true;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn execute_csi(&mut self, final_byte: u8) {
+        let (private, params) = parse_csi_params(&self.csi_buf);
+        self.pending_wrap = false;
+        match final_byte {
+            b'A' => self.move_cursor_vertical(-cursor_count(&params)),
+            b'B' => self.move_cursor_vertical(cursor_count(&params)),
+            b'C' => self.move_cursor_horizontal(cursor_count(&params)),
+            b'D' => self.move_cursor_horizontal(-cursor_count(&params)),
+            b'E' => {
+                self.move_cursor_vertical(cursor_count(&params));
+                self.carriage_return();
+            }
+            b'F' => {
+                self.move_cursor_vertical(-cursor_count(&params));
+                self.carriage_return();
+            }
+            b'G' => {
+                let col = position_param(&params, 0);
+                self.set_cursor(self.cursor_row, col - 1);
+            }
+            b'H' | b'f' => {
+                let row = position_param(&params, 0);
+                let col = position_param(&params, 1);
+                self.set_cursor(row - 1, col - 1);
+            }
+            b'd' => {
+                let row = position_param(&params, 0);
+                self.set_cursor(row - 1, self.cursor_col);
+            }
+            b'J' => self.erase_display(params.first().copied().unwrap_or(0)),
+            b'K' => self.erase_line(params.first().copied().unwrap_or(0)),
+            b'L' => self.insert_lines(count_param(&params)),
+            b'M' => self.delete_lines(count_param(&params)),
+            b'S' => self.shift_lines_up(self.scroll_top, self.scroll_bottom, count_param(&params)),
+            b'T' => {
+                self.shift_lines_down(self.scroll_top, self.scroll_bottom, count_param(&params))
+            }
+            b'r' if !private => self.set_scroll_region(&params),
+            b's' => {
+                self.saved_col = self.cursor_col;
+                self.saved_row = self.cursor_row;
+            }
+            b'u' => self.restore_cursor(),
+            b'h' | b'l' if private && params.contains(&25) => {
+                let visible = final_byte == b'h';
+                if self.cursor_visible != visible {
+                    self.cursor_visible = visible;
+                    self.dirty = true;
+                }
+            }
+            // SGR and device-control/reporting sequences do not affect this
+            // glyph-only model.
+            b'm' | b'n' | b'c' | b'q' | b'h' | b'l' => {}
+            _ => {}
+        }
+    }
+
+    fn set_cursor(&mut self, row: usize, col: usize) {
+        self.cursor_row = row.min(self.rows - 1);
+        self.cursor_col = col.min(self.cols - 1);
+        self.dirty = true;
+    }
+
+    fn move_cursor_vertical(&mut self, delta: isize) {
+        self.cursor_row = self
+            .cursor_row
+            .saturating_add_signed(delta)
+            .min(self.rows - 1);
+        self.dirty = true;
+    }
+
+    fn move_cursor_horizontal(&mut self, delta: isize) {
+        self.cursor_col = self
+            .cursor_col
+            .saturating_add_signed(delta)
+            .min(self.cols - 1);
+        self.dirty = true;
+    }
+
+    fn restore_cursor(&mut self) {
+        self.cursor_col = self.saved_col.min(self.cols - 1);
+        self.cursor_row = self.saved_row.min(self.rows - 1);
+        self.pending_wrap = false;
+        self.dirty = true;
+    }
+
+    fn carriage_return(&mut self) {
+        self.cursor_col = 0;
+        self.pending_wrap = false;
+        self.dirty = true;
+    }
+
+    fn backspace(&mut self) {
+        self.cursor_col = self.cursor_col.saturating_sub(1);
+        self.pending_wrap = false;
+        self.dirty = true;
+    }
+
+    fn horizontal_tab(&mut self) {
+        let next = (self.cursor_col / TAB_WIDTH + 1).saturating_mul(TAB_WIDTH);
+        self.cursor_col = next.min(self.cols - 1);
+        self.pending_wrap = false;
+        self.dirty = true;
+    }
+
+    fn line_feed(&mut self) {
+        self.pending_wrap = false;
+        if self.cursor_row == self.scroll_bottom {
+            self.shift_lines_up(self.scroll_top, self.scroll_bottom, 1);
+        } else {
+            self.cursor_row = self.cursor_row.saturating_add(1).min(self.rows - 1);
+            self.dirty = true;
+        }
+    }
+
+    fn reverse_index(&mut self) {
+        self.pending_wrap = false;
+        if self.cursor_row == self.scroll_top {
+            self.shift_lines_down(self.scroll_top, self.scroll_bottom, 1);
+        } else {
+            self.cursor_row = self.cursor_row.saturating_sub(1);
+            self.dirty = true;
+        }
+    }
+
+    fn put_char(&mut self, ch: char) {
+        if self.pending_wrap {
+            self.cursor_col = 0;
+            self.line_feed();
+        }
+
+        let index = self.cursor_row * self.cols + self.cursor_col;
+        self.cells[index] = ch;
+        if self.cursor_col == self.cols - 1 {
+            self.pending_wrap = true;
+        } else {
+            self.cursor_col += 1;
+        }
+        self.dirty = true;
+    }
+
+    fn erase_display(&mut self, mode: usize) {
+        match mode {
+            0 => {
+                self.clear_line_range(self.cursor_row, self.cursor_col, self.cols);
+                for row in self.cursor_row + 1..self.rows {
+                    self.clear_line_range(row, 0, self.cols);
+                }
+            }
+            1 => {
+                for row in 0..self.cursor_row {
+                    self.clear_line_range(row, 0, self.cols);
+                }
+                self.clear_line_range(self.cursor_row, 0, self.cursor_col + 1);
+            }
+            2 | 3 => self.clear_all(),
+            _ => {}
+        }
+    }
+
+    fn erase_line(&mut self, mode: usize) {
+        match mode {
+            0 => self.clear_line_range(self.cursor_row, self.cursor_col, self.cols),
+            1 => self.clear_line_range(self.cursor_row, 0, self.cursor_col + 1),
+            2 => self.clear_line_range(self.cursor_row, 0, self.cols),
+            _ => {}
+        }
+    }
+
+    fn clear_all(&mut self) {
+        self.cells.fill(' ');
+        self.dirty = true;
+    }
+
+    fn clear_line_range(&mut self, row: usize, start: usize, end: usize) {
+        if row >= self.rows {
+            return;
+        }
+        let start = start.min(self.cols);
+        let end = end.min(self.cols);
+        if start >= end {
+            return;
+        }
+        let line_start = row * self.cols;
+        self.cells[line_start + start..line_start + end].fill(' ');
+        self.dirty = true;
+    }
+
+    fn insert_lines(&mut self, count: usize) {
+        if self.cursor_row < self.scroll_top || self.cursor_row > self.scroll_bottom {
+            return;
+        }
+        self.shift_lines_down(self.cursor_row, self.scroll_bottom, count);
+    }
+
+    fn delete_lines(&mut self, count: usize) {
+        if self.cursor_row < self.scroll_top || self.cursor_row > self.scroll_bottom {
+            return;
+        }
+        self.shift_lines_up(self.cursor_row, self.scroll_bottom, count);
+    }
+
+    fn shift_lines_up(&mut self, top: usize, bottom: usize, count: usize) {
+        if top > bottom || bottom >= self.rows {
+            return;
+        }
+        let height = bottom - top + 1;
+        let count = count.max(1).min(height);
+        if count < height {
+            let source_start = (top + count) * self.cols;
+            let source_end = (bottom + 1) * self.cols;
+            let destination = top * self.cols;
+            self.cells
+                .copy_within(source_start..source_end, destination);
+        }
+        for row in bottom + 1 - count..=bottom {
+            self.clear_line_range(row, 0, self.cols);
+        }
+        self.dirty = true;
+    }
+
+    fn shift_lines_down(&mut self, top: usize, bottom: usize, count: usize) {
+        if top > bottom || bottom >= self.rows {
+            return;
+        }
+        let height = bottom - top + 1;
+        let count = count.max(1).min(height);
+        if count < height {
+            let source_start = top * self.cols;
+            let source_end = (bottom + 1 - count) * self.cols;
+            let destination = (top + count) * self.cols;
+            self.cells
+                .copy_within(source_start..source_end, destination);
+        }
+        for row in top..top + count {
+            self.clear_line_range(row, 0, self.cols);
+        }
+        self.dirty = true;
+    }
+
+    fn set_scroll_region(&mut self, params: &[usize]) {
+        let top = position_param(params, 0);
+        let bottom = match params.get(1).copied().unwrap_or(0) {
+            0 => self.rows,
+            value => value,
+        };
+        if top <= bottom && bottom <= self.rows {
+            self.scroll_top = top - 1;
+            self.scroll_bottom = bottom - 1;
+        } else {
+            self.scroll_top = 0;
+            self.scroll_bottom = self.rows - 1;
+        }
+        self.cursor_col = 0;
+        self.cursor_row = 0;
+        self.pending_wrap = false;
+        self.dirty = true;
+    }
+}
+
+fn parse_csi_params(raw: &[u8]) -> (bool, Vec<usize>) {
+    let private = raw.first() == Some(&b'?');
+    let raw = if private { &raw[1..] } else { raw };
+    if raw.is_empty() {
+        return (private, Vec::new());
+    }
+
+    let mut params = Vec::new();
+    for field in raw.split(|byte| *byte == b';') {
+        let mut value = 0usize;
+        let mut valid = !field.is_empty();
+        for &byte in field {
+            if !byte.is_ascii_digit() {
+                valid = false;
+                break;
+            }
+            value = value
+                .saturating_mul(10)
+                .saturating_add((byte - b'0') as usize);
+        }
+        params.push(if valid { value } else { 0 });
+    }
+    (private, params)
+}
+
+fn count_param(params: &[usize]) -> usize {
+    params.first().copied().unwrap_or(1).max(1)
+}
+
+fn cursor_count(params: &[usize]) -> isize {
+    count_param(params).min(isize::MAX as usize) as isize
+}
+
+fn position_param(params: &[usize], index: usize) -> usize {
+    params.get(index).copied().unwrap_or(1).max(1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rows(terminal: &Terminal) -> Vec<String> {
+        terminal.render_rows()
+    }
+
+    #[test]
+    fn wraps_and_scrolls_at_the_bottom_margin() {
+        let mut terminal = Terminal::new(4, 2);
+        terminal.feed(b"abcdEFGHx");
+
+        assert_eq!(rows(&terminal), ["EFGH", "x   "]);
+        assert_eq!(
+            terminal.cursor(),
+            Cursor {
+                col: 1,
+                row: 1,
+                visible: true
+            }
+        );
+    }
+
+    #[test]
+    fn keeps_utf8_and_csi_state_across_chunks() {
+        let mut terminal = Terminal::new(8, 2);
+        terminal.feed(&[0xe2]);
+        terminal.feed(&[0x98]);
+        terminal.feed(&[0x83]);
+        terminal.feed(b"abc\x1b[2;");
+        terminal.feed(b"3HZ");
+
+        assert_eq!(rows(&terminal), ["\u{2603}abc    ", "  Z     "]);
+    }
+
+    #[test]
+    fn malformed_utf8_does_not_consume_following_ascii() {
+        let mut terminal = Terminal::new(4, 1);
+        terminal.feed(&[0xe2, b'X']);
+
+        assert_eq!(rows(&terminal), ["\u{fffd}X  "]);
+    }
+
+    #[test]
+    fn erases_ranges_and_ignores_sgr() {
+        let mut terminal = Terminal::new(6, 2);
+        terminal.feed(b"abcdef\r\n123456\x1b[1;3H\x1b[31m\x1b[K");
+
+        assert_eq!(rows(&terminal), ["ab    ", "123456"]);
+    }
+
+    #[test]
+    fn inserts_and_deletes_lines_inside_scroll_region() {
+        let mut terminal = Terminal::new(3, 4);
+        terminal.feed(b"aaa\r\nbbb\r\nccc\r\nddd");
+        terminal.feed(b"\x1b[2;4r\x1b[3;1H\x1b[L");
+        assert_eq!(rows(&terminal), ["aaa", "bbb", "   ", "ccc"]);
+
+        terminal.feed(b"\x1b[M");
+        assert_eq!(rows(&terminal), ["aaa", "bbb", "ccc", "   "]);
+    }
+
+    #[test]
+    fn ignores_osc_terminated_by_bel_or_split_st() {
+        let mut terminal = Terminal::new(8, 1);
+        terminal.feed(b"A\x1b]0;title\x07B\x1b]777;ignored\x1b");
+        terminal.feed(b"\\C");
+
+        assert_eq!(rows(&terminal), ["ABC     "]);
+    }
+
+    #[test]
+    fn tracks_cursor_visibility_save_and_restore() {
+        let mut terminal = Terminal::new(5, 2);
+        terminal.feed(b"ab\x1b[s\x1b[2;5H\x1b[?25lX\x1b[u");
+
+        assert_eq!(
+            terminal.cursor(),
+            Cursor {
+                col: 2,
+                row: 0,
+                visible: false
+            }
+        );
+        terminal.feed(b"\x1b[?25h");
+        assert!(terminal.cursor().visible);
+    }
+
+    #[test]
+    fn resize_preserves_the_overlapping_cells() {
+        let mut terminal = Terminal::new(4, 2);
+        terminal.feed(b"ab\r\ncd");
+        assert!(terminal.take_dirty());
+        assert!(!terminal.is_dirty());
+
+        terminal.resize(3, 3);
+        assert_eq!(terminal.dimensions(), (3, 3));
+        assert_eq!(rows(&terminal), ["ab ", "cd ", "   "]);
+        assert!(terminal.take_dirty());
+
+        terminal.reset();
+        assert_eq!(rows(&terminal), ["   ", "   ", "   "]);
+    }
+}
