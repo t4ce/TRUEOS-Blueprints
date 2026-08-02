@@ -19,6 +19,7 @@ members = [
     "apps/gboi",
     "apps/hello_world",
     "apps/hello_world_replicatable",
+    "apps/img",
     "apps/image-viewer",
     "apps/lumen",
     "apps/ipp-printer",

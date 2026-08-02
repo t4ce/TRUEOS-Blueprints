@@ -1,0 +1,19 @@
+[package]
+name = "img"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+build = "build.rs"
+
+[package.metadata.trueos-blueprint]
+replicatable = false
+
+[[bin]]
+name = "img"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+trueos = { workspace = true, features = ["ui4-scene"] }
+zune-jpeg = { version = "0.5.15", default-features = false, features = ["x86", "portable_simd"] }
