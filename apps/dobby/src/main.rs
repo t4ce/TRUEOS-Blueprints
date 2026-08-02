@@ -24,6 +24,8 @@ const DEFAULT_MODEL: &str = "gpt-oss-120b";
 const DEFAULT_LOOP_INTERVAL_MS: u64 = 5_000;
 const FREE_TRIAL_AUTONOMOUS_RPM_INTERVAL_MS: u64 = 15_000;
 const EVENT_LOOP_SLEEP_MS: u64 = 20;
+const UI4_BUSY_RETRY_MS: u64 = 4_000;
+const UI4_BUSY_RETRY_SLEEP_MS: u64 = 20;
 const REQUEST_TIMEOUT_MS: u32 = 30_000;
 const NORMAL_TURNS_PER_CHAT: u8 = 10;
 const NORMAL_MAX_COMPLETION_TOKENS: u64 = 512;
@@ -38,6 +40,7 @@ const MAX_REMOTE_BODY_BYTES: usize = 150 * 1_024;
 const MAX_VISIBLE_TEXT_BYTES: usize = 100;
 const MAX_UI4_TYPE_BYTES: usize = 256;
 const MAX_UI4_TYPE_SCALARS: usize = 64;
+const MAX_COMPACT_TURN_BYTES: usize = 4 * 1_024;
 const MAX_CARRY_BYTES: usize = 4 * 1_024;
 const INPUT_BYTES: usize = 2 * 1_024;
 const FETCH_PENDING: i32 = -8;
@@ -1215,6 +1218,24 @@ impl ToolExecution {
     }
 }
 
+fn retry_ui4_busy<T>(
+    mut operation: impl FnMut() -> Result<T, spirit::Error>,
+) -> Result<T, spirit::Error> {
+    let started_ms = clock::monotonic_millis();
+    loop {
+        match operation() {
+            Err(error)
+                if error == spirit::DOBBY_UI4_BUSY
+                    && clock::monotonic_millis().saturating_sub(started_ms) < UI4_BUSY_RETRY_MS =>
+            {
+                platform::poll_once();
+                platform::sleep_ms(UI4_BUSY_RETRY_SLEEP_MS);
+            }
+            result => return result,
+        }
+    }
+}
+
 fn base64_encode(bytes: &[u8]) -> String {
     const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut encoded = String::with_capacity(bytes.len().saturating_add(2) / 3 * 4);
@@ -1270,7 +1291,7 @@ fn execute_tool(state: &mut AppState, call: &ToolCall) -> ToolExecution {
                 .and_then(parse_window_id)
                 .map_err(|reason| format!("rejected: {reason}"))
                 .and_then(|window_id| {
-                    spirit::dobby_ui4_focus(window_id)
+                    retry_ui4_busy(|| spirit::dobby_ui4_focus(window_id))
                         .map(|()| window_id)
                         .map_err(|error| format!("failed: UI4 focus unavailable error={error:?}"))
                 });
@@ -1282,7 +1303,7 @@ fn execute_tool(state: &mut AppState, call: &ToolCall) -> ToolExecution {
                 Err(reason) => ToolExecution::plain(reason, false),
             }
         }
-        "ui4_observe" => match spirit::dobby_ui4_observe() {
+        "ui4_observe" => match retry_ui4_busy(spirit::dobby_ui4_observe) {
             Ok(observation) => {
                 if !observation.png.starts_with(b"\x89PNG\r\n\x1a\n") {
                     return ToolExecution::plain(
@@ -1338,7 +1359,7 @@ fn execute_tool(state: &mut AppState, call: &ToolCall) -> ToolExecution {
                 .filter(|_| x <= 1_000 && y <= 1_000)
                 .ok_or_else(|| "rejected: invalid UI4 pointer action".to_string())
                 .and_then(|action| {
-                    spirit::dobby_ui4_pointer(x as u16, y as u16, action)
+                    retry_ui4_busy(|| spirit::dobby_ui4_pointer(x as u16, y as u16, action))
                         .map_err(|error| format!("failed: UI4 pointer unavailable error={error:?}"))
                 });
             match result {
@@ -1354,7 +1375,7 @@ fn execute_tool(state: &mut AppState, call: &ToolCall) -> ToolExecution {
                 .get("text")
                 .and_then(Value::as_str)
                 .unwrap_or_default();
-            match spirit::dobby_ui4_type(text) {
+            match retry_ui4_busy(|| spirit::dobby_ui4_type(text)) {
                 Ok(()) => ToolExecution::plain(
                     format!(
                         "ok: queued {} characters through Spirit keyboard",
@@ -1386,7 +1407,7 @@ fn execute_tool(state: &mut AppState, call: &ToolCall) -> ToolExecution {
                 _ => None,
             };
             match key {
-                Some(key) => match spirit::dobby_ui4_key(key) {
+                Some(key) => match retry_ui4_busy(|| spirit::dobby_ui4_key(key)) {
                     Ok(()) => ToolExecution::plain(format!("ok: key {name} queued"), true),
                     Err(error) => ToolExecution::plain(
                         format!("failed: Spirit UI4 key unavailable error={error:?}"),
@@ -1614,8 +1635,59 @@ fn start_next_request(state: &mut AppState) {
     });
 }
 
+fn append_bounded_record(record: &mut String, text: &str) {
+    if record.len() >= MAX_COMPACT_TURN_BYTES {
+        return;
+    }
+    let remaining = MAX_COMPACT_TURN_BYTES - record.len();
+    record.push_str(truncate_utf8(text, remaining).as_str());
+}
+
+fn compact_turn_record(messages: &[Value]) -> String {
+    let mut record = "Dobby tool record:".to_string();
+    for message in messages {
+        match message.get("role").and_then(Value::as_str) {
+            Some("assistant") => {
+                let Some(calls) = message.get("tool_calls").and_then(Value::as_array) else {
+                    continue;
+                };
+                for call in calls {
+                    let name = call
+                        .get("function")
+                        .and_then(|function| function.get("name"))
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown");
+                    let arguments = call
+                        .get("function")
+                        .and_then(|function| function.get("arguments"))
+                        .and_then(Value::as_str)
+                        .unwrap_or("{}");
+                    append_bounded_record(&mut record, format!("\n- {name} {arguments}").as_str());
+                }
+            }
+            Some("tool") => {
+                if let Some(content) = message.get("content").and_then(Value::as_str) {
+                    append_bounded_record(&mut record, format!(" => {content}").as_str());
+                }
+            }
+            _ => {}
+        }
+    }
+    record
+}
+
 fn commit_normal_history(state: &mut AppState, messages: Vec<Value>) {
-    state.conversation.messages = messages;
+    let prefix_len = state.conversation.messages.len();
+    let mut compact = state.conversation.messages.clone();
+    if let Some(user_message) = messages.get(prefix_len) {
+        compact.push(user_message.clone());
+    }
+    let record_start = prefix_len.saturating_add(1).min(messages.len());
+    compact.push(json!({
+        "role": "assistant",
+        "content": compact_turn_record(&messages[record_start..]),
+    }));
+    state.conversation.messages = compact;
     state.conversation.normal_turns = state.conversation.normal_turns.saturating_add(1);
     if state.conversation.normal_turns >= NORMAL_TURNS_PER_CHAT {
         state.conversation.summary_due = true;
@@ -2080,6 +2152,12 @@ mod host_test_abi {
     }
 
     #[unsafe(no_mangle)]
+    extern "C" fn trueos_cabi_poll_once() {}
+
+    #[unsafe(no_mangle)]
+    extern "C" fn trueos_cabi_sleep_ms(_ms: u64) {}
+
+    #[unsafe(no_mangle)]
     extern "C" fn trueos_cabi_blueprint_shutdown(_data: *const u8, _len: usize) -> i32 {
         0
     }
@@ -2158,6 +2236,19 @@ mod host_test_abi {
     #[unsafe(no_mangle)]
     extern "C" fn trueos_cabi_dobby_ui4_key(_key: u32) -> i32 {
         0
+    }
+
+    #[unsafe(no_mangle)]
+    extern "C" fn trueos_cabi_net_fetch_post_json_bytes_start_with_timeout(
+        _url_ptr: *const u8,
+        _url_len: usize,
+        _body_ptr: *const u8,
+        _body_len: usize,
+        _bearer_ptr: *const u8,
+        _bearer_len: usize,
+        _timeout_ms: u32,
+    ) -> u32 {
+        42
     }
 }
 
@@ -2380,6 +2471,58 @@ mod tests {
                 .as_str()
                 .unwrap()
                 .contains("PNG omitted")
+        );
+    }
+
+    #[test]
+    fn information_tool_continues_without_spending_an_extra_logical_turn() {
+        let mut state = AppState::new(config(), None);
+        let mut messages = initial_messages(None);
+        messages.push(json!({"role":"user","content":"inspect"}));
+        let request = InFlight {
+            operation: 3,
+            idea: QueuedIdea {
+                kind: IdeaKind::User,
+                session: state.session,
+                prompt: "inspect".to_string(),
+            },
+            request_messages: Some(messages.clone()),
+            history_messages: Some(messages),
+            tool_round: 0,
+            tool_calls: 0,
+            started_ms: 0,
+        };
+        let inventory_response = br#"{
+            "choices":[{"message":{"role":"assistant","content":null,"tool_calls":[
+                {"id":"call_windows","type":"function","function":{"name":"ui4_windows","arguments":"{}"}}
+            ]}}]
+        }"#;
+
+        finish_normal(&mut state, request, inventory_response);
+
+        assert_eq!(state.conversation.normal_turns, 0);
+        let continuation = state.in_flight.take().unwrap();
+        assert_eq!(continuation.operation, 42);
+        assert_eq!(continuation.tool_round, 1);
+        assert_eq!(continuation.tool_calls, 1);
+
+        let final_response = br#"{
+            "choices":[{"message":{"role":"assistant","content":null,"tool_calls":[
+                {"id":"call_text","type":"function","function":{"name":"text","arguments":"{\"text\":\"I found the windows.\"}"}}
+            ]}}]
+        }"#;
+        finish_normal(&mut state, continuation, final_response);
+
+        assert!(state.in_flight.is_none());
+        assert_eq!(state.conversation.normal_turns, 1);
+        assert_eq!(state.remote_requests, 1);
+        assert_eq!(state.conversation.messages.len(), 3);
+        assert!(
+            state
+                .conversation
+                .messages
+                .iter()
+                .all(|message| message["role"] != "tool")
         );
     }
 

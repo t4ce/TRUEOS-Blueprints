@@ -15,6 +15,9 @@ const DOBBY_UI4_READ_CHUNK: usize = 16 * 1024;
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct Error(pub i32);
 
+/// The shared Lilly cursor/keyboard serializer is still draining an earlier program.
+pub const DOBBY_UI4_BUSY: Error = Error(v::bp_abi::DOBBY_UI4_ERROR_BUSY);
+
 fn result(code: i32) -> Result<(), Error> {
     if code == 0 { Ok(()) } else { Err(Error(code)) }
 }

@@ -2,10 +2,27 @@
 
 Dobby is an OpenAI-compatible remote-inference TRUEOS Blueprint. All
 conversation policy, the five-second autonomous loop, the serialized idea
-queue, tool-call handling, and ten-turn summary rollover live in the app. The
-kernel only supplies generic JSON POST and silent Spirit presentation
-capabilities. Cerebras remains the default endpoint, but a compatible facade
-can be selected in `config.json`.
+queue, bounded multi-tool loop, and ten-turn summary rollover live in the app.
+The Dobby-only Spirit/UI4 bridge supplies live brokered-window inventory,
+Lilly-scoped focus, gridded selected-window capture, and serialized cursor and
+keyboard operations. It is separate from Shell2 and Lumen and is restricted to
+the Dobby Blueprint owner. Cerebras remains the default endpoint, but a
+compatible multimodal facade can be selected in `config.json`.
+
+Ordinary turns expose the three small Spirit actions (`text`, `play_emotion`,
+and whole-screen `move`) plus six UI4 actions: list windows, focus a returned
+opaque window ID, observe the focused window, point/click, type text, and press
+a named key. An observation is an adaptively reduced PNG capped at 64 KiB with
+a light `0..1000` grid; pointer coordinates use that same window-local scale.
+PNG bytes exist only in the active request and are replaced by compact text in
+conversation memory.
+
+One logical turn may use at most four remote rounds and sixteen ordered tool
+calls (at most eight in one response). Busy Lilly cursor/keyboard programs are
+retried serially for a bounded interval, so a returned `pointer -> type -> key`
+batch cannot interleave half-actions. The completed logical turn is compacted
+to one action record, keeping the ten-turn context small; only the existing
+single 500-token summary request crosses a chat rollover.
 
 On first launch the app creates `config.json` in its persistent TRUEOSFS app
 root (`apps/dobby/config.json` for the default instance). Put the selected
@@ -73,4 +90,6 @@ Rust compiler and registering them in the database; Dobby's command named
 Invocation leaves the autonomous loop stopped until `start` is entered.
 
 Text uses the silent Spirit ingress. This Blueprint never calls the Lumen reply
-presenter or any TTS/audio API.
+presenter or any TTS/audio API. The private `remoteAI` Copilot facade accepts
+the inline PNG and translates ordered multi-tool responses; providers without
+vision support still work for the original non-visual Spirit actions.
