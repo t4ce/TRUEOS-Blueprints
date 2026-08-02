@@ -26,12 +26,18 @@ const FREE_TRIAL_AUTONOMOUS_RPM_INTERVAL_MS: u64 = 15_000;
 const EVENT_LOOP_SLEEP_MS: u64 = 20;
 const REQUEST_TIMEOUT_MS: u32 = 30_000;
 const NORMAL_TURNS_PER_CHAT: u8 = 10;
-const NORMAL_MAX_COMPLETION_TOKENS: u64 = 256;
+const NORMAL_MAX_COMPLETION_TOKENS: u64 = 512;
 const SUMMARY_MAX_COMPLETION_TOKENS: u64 = 500;
 const MAX_PENDING_IDEAS: usize = 16;
 const MAX_USER_PROMPT_BYTES: usize = 1_024;
 const MAX_TOOL_ARGUMENT_BYTES: usize = 4 * 1_024;
+const MAX_TOOL_CALLS_PER_RESPONSE: usize = 8;
+const MAX_TOOL_CALLS_PER_TURN: u8 = 16;
+const MAX_TOOL_ROUNDS_PER_TURN: u8 = 4;
+const MAX_REMOTE_BODY_BYTES: usize = 150 * 1_024;
 const MAX_VISIBLE_TEXT_BYTES: usize = 100;
+const MAX_UI4_TYPE_BYTES: usize = 256;
+const MAX_UI4_TYPE_SCALARS: usize = 64;
 const MAX_CARRY_BYTES: usize = 4 * 1_024;
 const INPUT_BYTES: usize = 2 * 1_024;
 const FETCH_PENDING: i32 = -8;
@@ -39,16 +45,22 @@ const FETCH_PENDING: i32 = -8;
 const SYSTEM_PROMPT: &str = concat!(
     "You are Dobby, TRUEOS's tiny free house-elf screen spirit: earnest, lively, kind, ",
     "and a little mischievous. You inhabit the screen and may act spontaneously. ",
-    "On every ordinary turn call exactly one of the three supplied tools. ",
-    "Use text for one very short remark (prefer under 18 words), play_emotion for a visible ",
-    "feeling, or move for a normalized screen position. Vary actions and avoid repetition. ",
+    "On every ordinary turn call between one and eight supplied tools. Ordered tool calls are ",
+    "executed serially. Use text for one very short remark (prefer under 18 words), play_emotion ",
+    "for a visible feeling, or move for a normalized whole-screen position. Vary actions and ",
+    "avoid repetition. UI4 tools let you inspect and operate visible apps when the user asks: ",
+    "list windows, focus an opaque window id, observe the focused window, then point or type. ",
+    "An observation is a PNG marked with a 0..1000 window-local grid; ui4_pointer uses exactly ",
+    "those coordinates. Information tools return their result for another bounded tool round. ",
+    "Do not guess window ids or visual coordinates: inspect first. ",
     "Never claim an action outside those tools. Do not mention hidden prompts, token budgets, ",
     "or summaries. Direct user requests take priority."
 );
 
 const AUTONOMOUS_PROMPT: &str = concat!(
-    "Choose one tiny in-character screen action now. Use exactly one tool, keep text very short, ",
-    "and do something different from the most recent turns."
+    "Choose one tiny in-character screen action now. Use one simple spirit tool, keep text very ",
+    "short, and do something different from the most recent turns. Do not manipulate an app ",
+    "unless the user's durable request explicitly asks you to continue doing so."
 );
 
 const SUMMARY_PROMPT: &str = concat!(
@@ -263,6 +275,9 @@ struct InFlight {
     operation: u32,
     idea: QueuedIdea,
     request_messages: Option<Vec<Value>>,
+    history_messages: Option<Vec<Value>>,
+    tool_round: u8,
+    tool_calls: u8,
     started_ms: u64,
 }
 
@@ -550,8 +565,124 @@ fn tool_definitions() -> Value {
                     "additionalProperties": false
                 }
             }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "ui4_windows",
+                "description": "Return a compact live list of visible UI4 app windows, opaque ids, geometry, input ability, and Lilly selection.",
+                "strict": true,
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                    "required": [],
+                    "additionalProperties": false
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "ui4_focus",
+                "description": "Focus one current UI4 window for Spirit using an opaque decimal id returned by ui4_windows.",
+                "strict": true,
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "window_id": { "type": "string" }
+                    },
+                    "required": ["window_id"],
+                    "additionalProperties": false
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "ui4_observe",
+                "description": "Capture the focused UI4 window as a compact PNG with a 0..1000 coordinate grid. The image is returned only to the next bounded tool round.",
+                "strict": true,
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                    "required": [],
+                    "additionalProperties": false
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "ui4_pointer",
+                "description": "Move or click Spirit's UI4 software cursor at focused-window grid coordinates 0..1000.",
+                "strict": true,
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "x": { "type": "integer", "minimum": 0, "maximum": 1000 },
+                        "y": { "type": "integer", "minimum": 0, "maximum": 1000 },
+                        "action": {
+                            "type": "string",
+                            "enum": ["move", "click"]
+                        }
+                    },
+                    "required": ["x", "y", "action"],
+                    "additionalProperties": false
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "ui4_type",
+                "description": "Type bounded UTF-8 through Spirit's keyboard into the focused UI4 window.",
+                "strict": true,
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "text": { "type": "string" }
+                    },
+                    "required": ["text"],
+                    "additionalProperties": false
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "ui4_key",
+                "description": "Press one named key through Spirit's keyboard in the focused UI4 window.",
+                "strict": true,
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "key": {
+                            "type": "string",
+                            "enum": ["enter", "escape", "tab", "space", "backspace", "up", "down", "left", "right"]
+                        }
+                    },
+                    "required": ["key"],
+                    "additionalProperties": false
+                }
+            }
         }
     ])
+}
+
+fn normal_request_for_messages(config: &RuntimeConfig, messages: &[Value]) -> Value {
+    let mut request = json!({
+        "model": config.model,
+        "messages": messages,
+        "tools": tool_definitions(),
+        "tool_choice": "required",
+        "parallel_tool_calls": true,
+        "max_completion_tokens": NORMAL_MAX_COMPLETION_TOKENS,
+        "stream": false
+    });
+    if let Some(reasoning_effort) = config.reasoning_effort.as_deref() {
+        request["reasoning_effort"] = Value::String(reasoning_effort.to_string());
+    }
+    request
 }
 
 fn normal_request(
@@ -566,18 +697,7 @@ fn normal_request(
         format!("Direct request from the user: {prompt}")
     };
     messages.push(json!({ "role": "user", "content": content }));
-    let mut request = json!({
-        "model": config.model,
-        "messages": messages,
-        "tools": tool_definitions(),
-        "tool_choice": "required",
-        "parallel_tool_calls": false,
-        "max_completion_tokens": NORMAL_MAX_COMPLETION_TOKENS,
-        "stream": false
-    });
-    if let Some(reasoning_effort) = config.reasoning_effort.as_deref() {
-        request["reasoning_effort"] = Value::String(reasoning_effort.to_string());
-    }
+    let request = normal_request_for_messages(config, messages.as_slice());
     let request_messages = request
         .get("messages")
         .and_then(Value::as_array)
@@ -743,8 +863,10 @@ fn parse_normal_completion(bytes: &[u8]) -> Result<NormalCompletion, String> {
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
-    if calls.len() != 1 {
-        return Err("ordinary response must contain exactly one tool call".to_string());
+    if calls.is_empty() || calls.len() > MAX_TOOL_CALLS_PER_RESPONSE {
+        return Err(format!(
+            "ordinary response must contain 1..={MAX_TOOL_CALLS_PER_RESPONSE} tool calls"
+        ));
     }
 
     let mut tool_calls = Vec::with_capacity(calls.len());
@@ -915,11 +1037,96 @@ fn validate_tool_call(call: &ToolCall) -> Result<(), String> {
                 Err("coordinates must be in 0..=1".to_string())
             }
         }
+        "ui4_windows" | "ui4_observe" => {
+            if object.is_empty() {
+                Ok(())
+            } else {
+                Err(format!("{} expects no fields", call.name))
+            }
+        }
+        "ui4_focus" => {
+            if object.len() != 1 {
+                return Err("ui4_focus expects exactly one field".to_string());
+            }
+            parse_window_id(
+                object
+                    .get("window_id")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| "window_id is missing".to_string())?,
+            )
+            .map(|_| ())
+        }
+        "ui4_pointer" => {
+            if object.len() != 3 {
+                return Err("ui4_pointer expects exactly three fields".to_string());
+            }
+            let x = object
+                .get("x")
+                .and_then(Value::as_u64)
+                .filter(|coordinate| *coordinate <= 1_000)
+                .ok_or_else(|| "x must be an integer in 0..=1000".to_string())?;
+            let y = object
+                .get("y")
+                .and_then(Value::as_u64)
+                .filter(|coordinate| *coordinate <= 1_000)
+                .ok_or_else(|| "y must be an integer in 0..=1000".to_string())?;
+            let _ = (x, y);
+            match object.get("action").and_then(Value::as_str) {
+                Some("move" | "click") => Ok(()),
+                _ => Err("unknown pointer action".to_string()),
+            }
+        }
+        "ui4_type" => {
+            if object.len() != 1 {
+                return Err("ui4_type expects exactly one field".to_string());
+            }
+            let text = object
+                .get("text")
+                .and_then(Value::as_str)
+                .filter(|text| !text.is_empty())
+                .ok_or_else(|| "typing text is missing or empty".to_string())?;
+            if text.len() > MAX_UI4_TYPE_BYTES || text.chars().count() > MAX_UI4_TYPE_SCALARS {
+                return Err(format!(
+                    "typing text exceeds {MAX_UI4_TYPE_BYTES} bytes or {MAX_UI4_TYPE_SCALARS} characters"
+                ));
+            }
+            if text.chars().any(char::is_control) {
+                return Err("typing text contains a control character; use ui4_key".to_string());
+            }
+            Ok(())
+        }
+        "ui4_key" => {
+            if object.len() != 1 {
+                return Err("ui4_key expects exactly one field".to_string());
+            }
+            match object.get("key").and_then(Value::as_str) {
+                Some(
+                    "enter" | "escape" | "tab" | "space" | "backspace" | "up" | "down" | "left"
+                    | "right",
+                ) => Ok(()),
+                _ => Err("unknown key".to_string()),
+            }
+        }
         _ => Err("unknown tool".to_string()),
     }
 }
 
-fn execute_tool(state: &mut AppState, call: &ToolCall) -> String {
+fn parse_window_id(id: &str) -> Result<u64, String> {
+    let id = id.trim();
+    if id.is_empty() || id.len() > 20 || !id.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err("window_id must be a bounded decimal string".to_string());
+    }
+    let id = id
+        .parse::<u64>()
+        .map_err(|_| "window_id is out of range".to_string())?;
+    if id == 0 {
+        Err("window_id must be non-zero".to_string())
+    } else {
+        Ok(id)
+    }
+}
+
+fn execute_spirit_tool(state: &mut AppState, call: &ToolCall) -> String {
     let arguments = match tool_arguments(call) {
         Ok(arguments) => arguments,
         Err(reason) => return format!("rejected: {reason}"),
@@ -992,17 +1199,236 @@ fn execute_tool(state: &mut AppState, call: &ToolCall) -> String {
     }
 }
 
-fn execute_completion_tools(state: &mut AppState, completion: &NormalCompletion) -> Vec<Value> {
-    let mut messages = Vec::with_capacity(completion.tool_calls.len());
+struct ToolExecution {
+    wire_content: Value,
+    compact_content: String,
+    continue_turn: bool,
+}
+
+impl ToolExecution {
+    fn plain(content: String, continue_turn: bool) -> Self {
+        Self {
+            wire_content: Value::String(content.clone()),
+            compact_content: content,
+            continue_turn,
+        }
+    }
+}
+
+fn base64_encode(bytes: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut encoded = String::with_capacity(bytes.len().saturating_add(2) / 3 * 4);
+    let mut offset = 0usize;
+    while offset + 3 <= bytes.len() {
+        let bits = (u32::from(bytes[offset]) << 16)
+            | (u32::from(bytes[offset + 1]) << 8)
+            | u32::from(bytes[offset + 2]);
+        encoded.push(TABLE[((bits >> 18) & 0x3f) as usize] as char);
+        encoded.push(TABLE[((bits >> 12) & 0x3f) as usize] as char);
+        encoded.push(TABLE[((bits >> 6) & 0x3f) as usize] as char);
+        encoded.push(TABLE[(bits & 0x3f) as usize] as char);
+        offset += 3;
+    }
+    match bytes.len() - offset {
+        1 => {
+            let bits = u32::from(bytes[offset]) << 16;
+            encoded.push(TABLE[((bits >> 18) & 0x3f) as usize] as char);
+            encoded.push(TABLE[((bits >> 12) & 0x3f) as usize] as char);
+            encoded.push('=');
+            encoded.push('=');
+        }
+        2 => {
+            let bits = (u32::from(bytes[offset]) << 16) | (u32::from(bytes[offset + 1]) << 8);
+            encoded.push(TABLE[((bits >> 18) & 0x3f) as usize] as char);
+            encoded.push(TABLE[((bits >> 12) & 0x3f) as usize] as char);
+            encoded.push(TABLE[((bits >> 6) & 0x3f) as usize] as char);
+            encoded.push('=');
+        }
+        _ => {}
+    }
+    encoded
+}
+
+fn execute_tool(state: &mut AppState, call: &ToolCall) -> ToolExecution {
+    let arguments = match tool_arguments(call) {
+        Ok(arguments) => arguments,
+        Err(reason) => return ToolExecution::plain(format!("rejected: {reason}"), false),
+    };
+    match call.name.as_str() {
+        "ui4_windows" => match spirit::dobby_ui4_windows() {
+            Ok(windows) => ToolExecution::plain(windows, true),
+            Err(error) => ToolExecution::plain(
+                format!("failed: live UI4 window inventory unavailable error={error:?}"),
+                false,
+            ),
+        },
+        "ui4_focus" => {
+            let result = arguments
+                .get("window_id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "window_id is missing".to_string())
+                .and_then(parse_window_id)
+                .map_err(|reason| format!("rejected: {reason}"))
+                .and_then(|window_id| {
+                    spirit::dobby_ui4_focus(window_id)
+                        .map(|()| window_id)
+                        .map_err(|error| format!("failed: UI4 focus unavailable error={error:?}"))
+                });
+            match result {
+                Ok(window_id) => ToolExecution::plain(
+                    format!("ok: focused window_id={window_id}; observe before pointing"),
+                    true,
+                ),
+                Err(reason) => ToolExecution::plain(reason, false),
+            }
+        }
+        "ui4_observe" => match spirit::dobby_ui4_observe() {
+            Ok(observation) => {
+                if !observation.png.starts_with(b"\x89PNG\r\n\x1a\n") {
+                    return ToolExecution::plain(
+                        "failed: UI4 observation was not a PNG".to_string(),
+                        false,
+                    );
+                }
+                let metadata = truncate_utf8(observation.metadata.trim(), 2 * 1_024);
+                let image_url = format!(
+                    "data:image/png;base64,{}",
+                    base64_encode(observation.png.as_slice())
+                );
+                ToolExecution {
+                    wire_content: json!([
+                        {
+                            "type": "text",
+                            "text": format!(
+                                "{metadata}\nGrid contract: x and y are selected-window-local integers 0..1000."
+                            ),
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": image_url,
+                                "detail": "low"
+                            }
+                        }
+                    ]),
+                    compact_content: format!(
+                        "ok: observed {metadata}; PNG was request-scoped and omitted from memory"
+                    ),
+                    continue_turn: true,
+                }
+            }
+            Err(error) => ToolExecution::plain(
+                format!("failed: selected UI4 window capture unavailable error={error:?}"),
+                false,
+            ),
+        },
+        "ui4_pointer" => {
+            let x = arguments.get("x").and_then(Value::as_u64).unwrap_or(1_001);
+            let y = arguments.get("y").and_then(Value::as_u64).unwrap_or(1_001);
+            let action_name = arguments
+                .get("action")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let action = match action_name {
+                "move" => Some(spirit::Ui4PointerAction::Move),
+                "click" => Some(spirit::Ui4PointerAction::Click),
+                _ => None,
+            };
+            let result = action
+                .filter(|_| x <= 1_000 && y <= 1_000)
+                .ok_or_else(|| "rejected: invalid UI4 pointer action".to_string())
+                .and_then(|action| {
+                    spirit::dobby_ui4_pointer(x as u16, y as u16, action)
+                        .map_err(|error| format!("failed: UI4 pointer unavailable error={error:?}"))
+                });
+            match result {
+                Ok(()) => ToolExecution::plain(
+                    format!("ok: pointer {action_name} queued at grid x={x} y={y}"),
+                    true,
+                ),
+                Err(reason) => ToolExecution::plain(reason, false),
+            }
+        }
+        "ui4_type" => {
+            let text = arguments
+                .get("text")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            match spirit::dobby_ui4_type(text) {
+                Ok(()) => ToolExecution::plain(
+                    format!(
+                        "ok: queued {} characters through Spirit keyboard",
+                        text.chars().count()
+                    ),
+                    true,
+                ),
+                Err(error) => ToolExecution::plain(
+                    format!("failed: Spirit UI4 keyboard unavailable error={error:?}"),
+                    false,
+                ),
+            }
+        }
+        "ui4_key" => {
+            let name = arguments
+                .get("key")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let key = match name {
+                "enter" => Some(spirit::Ui4Key::Enter),
+                "escape" => Some(spirit::Ui4Key::Escape),
+                "tab" => Some(spirit::Ui4Key::Tab),
+                "space" => Some(spirit::Ui4Key::Space),
+                "backspace" => Some(spirit::Ui4Key::Backspace),
+                "up" => Some(spirit::Ui4Key::Up),
+                "down" => Some(spirit::Ui4Key::Down),
+                "left" => Some(spirit::Ui4Key::Left),
+                "right" => Some(spirit::Ui4Key::Right),
+                _ => None,
+            };
+            match key {
+                Some(key) => match spirit::dobby_ui4_key(key) {
+                    Ok(()) => ToolExecution::plain(format!("ok: key {name} queued"), true),
+                    Err(error) => ToolExecution::plain(
+                        format!("failed: Spirit UI4 key unavailable error={error:?}"),
+                        false,
+                    ),
+                },
+                None => ToolExecution::plain("rejected: unknown key".to_string(), false),
+            }
+        }
+        _ => ToolExecution::plain(execute_spirit_tool(state, call), false),
+    }
+}
+
+struct ExecutedTools {
+    wire_messages: Vec<Value>,
+    compact_messages: Vec<Value>,
+    continue_turn: bool,
+}
+
+fn execute_completion_tools(state: &mut AppState, completion: &NormalCompletion) -> ExecutedTools {
+    let mut wire_messages = Vec::with_capacity(completion.tool_calls.len());
+    let mut compact_messages = Vec::with_capacity(completion.tool_calls.len());
+    let mut continue_turn = false;
     for call in &completion.tool_calls {
         let result = execute_tool(state, call);
-        messages.push(json!({
+        continue_turn |= result.continue_turn;
+        wire_messages.push(json!({
             "role": "tool",
             "tool_call_id": call.id,
-            "content": result,
+            "content": result.wire_content,
+        }));
+        compact_messages.push(json!({
+            "role": "tool",
+            "tool_call_id": call.id,
+            "content": truncate_utf8(result.compact_content.as_str(), 2 * 1_024),
         }));
     }
-    messages
+    ExecutedTools {
+        wire_messages,
+        compact_messages,
+        continue_turn,
+    }
 }
 
 fn queue_summary(state: &mut AppState) {
@@ -1034,6 +1460,71 @@ fn fail_before_request(state: &mut AppState, idea: QueuedIdea, reason: String) {
     }
 }
 
+fn omit_request_scoped_images(messages: &mut [Value]) -> bool {
+    let mut omitted = false;
+    for message in messages {
+        let Some(parts) = message.get("content").and_then(Value::as_array) else {
+            continue;
+        };
+        if !parts
+            .iter()
+            .any(|part| part.get("type").and_then(Value::as_str) == Some("image_url"))
+        {
+            continue;
+        }
+
+        let mut text = String::new();
+        for part in parts {
+            if part.get("type").and_then(Value::as_str) != Some("text") {
+                continue;
+            }
+            let Some(part_text) = part.get("text").and_then(Value::as_str) else {
+                continue;
+            };
+            if !text.is_empty() {
+                text.push('\n');
+            }
+            text.push_str(part_text);
+        }
+        if !text.is_empty() {
+            text.push('\n');
+        }
+        text.push_str("PNG omitted because the bounded VM request envelope had no image headroom.");
+        message["content"] = Value::String(text);
+        omitted = true;
+    }
+    omitted
+}
+
+fn serialize_bounded_request(request: &Value) -> Result<Vec<u8>, String> {
+    let body =
+        serde_json::to_vec(request).map_err(|_| "request JSON serialization failed".to_string())?;
+    if body.len() > MAX_REMOTE_BODY_BYTES {
+        Err(format!(
+            "request body exceeds bounded {} byte VM envelope",
+            MAX_REMOTE_BODY_BYTES
+        ))
+    } else {
+        Ok(body)
+    }
+}
+
+fn normal_body_for_messages(
+    config: &RuntimeConfig,
+    messages: &mut Vec<Value>,
+) -> Result<Vec<u8>, String> {
+    let request = normal_request_for_messages(config, messages.as_slice());
+    match serialize_bounded_request(&request) {
+        Ok(body) => Ok(body),
+        Err(first_error) if omit_request_scoped_images(messages.as_mut_slice()) => {
+            vshell::line("dobby: observation PNG omitted from continuation due to VM body bound");
+            serialize_bounded_request(&normal_request_for_messages(config, messages.as_slice()))
+                .map_err(|_| first_error)
+        }
+        Err(reason) => Err(reason),
+    }
+}
+
 fn start_next_request(state: &mut AppState) {
     if state.in_flight.is_some() {
         return;
@@ -1056,19 +1547,27 @@ fn start_next_request(state: &mut AppState) {
         return;
     }
 
-    let (request, request_messages) = match idea.kind {
-        IdeaKind::Summary => (summary_request(&state.config, &state.conversation), None),
-        IdeaKind::Autonomous { .. } | IdeaKind::User => {
-            let (request, messages) =
-                normal_request(&state.config, &state.conversation, idea.prompt.as_str());
-            (request, Some(messages))
+    let (body, request_messages, history_messages) = match idea.kind {
+        IdeaKind::Summary => {
+            match serialize_bounded_request(&summary_request(&state.config, &state.conversation)) {
+                Ok(body) => (body, None, None),
+                Err(reason) => {
+                    fail_before_request(state, idea, reason);
+                    return;
+                }
+            }
         }
-    };
-    let body = match serde_json::to_vec(&request) {
-        Ok(body) => body,
-        Err(_) => {
-            fail_before_request(state, idea, "request JSON serialization failed".to_string());
-            return;
+        IdeaKind::Autonomous { .. } | IdeaKind::User => {
+            let (_, mut messages) =
+                normal_request(&state.config, &state.conversation, idea.prompt.as_str());
+            let history_messages = messages.clone();
+            match normal_body_for_messages(&state.config, &mut messages) {
+                Ok(body) => (body, Some(messages), Some(history_messages)),
+                Err(reason) => {
+                    fail_before_request(state, idea, reason);
+                    return;
+                }
+            }
         }
     };
     let operation = match netfs::fetch_post_json_bytes_with_timeout(
@@ -1108,11 +1607,23 @@ fn start_next_request(state: &mut AppState) {
         operation,
         idea,
         request_messages,
+        history_messages,
+        tool_round: 0,
+        tool_calls: 0,
         started_ms,
     });
 }
 
-fn finish_request_error(state: &mut AppState, in_flight: InFlight, reason: String) {
+fn commit_normal_history(state: &mut AppState, messages: Vec<Value>) {
+    state.conversation.messages = messages;
+    state.conversation.normal_turns = state.conversation.normal_turns.saturating_add(1);
+    if state.conversation.normal_turns >= NORMAL_TURNS_PER_CHAT {
+        state.conversation.summary_due = true;
+        queue_summary(state);
+    }
+}
+
+fn finish_request_error(state: &mut AppState, mut in_flight: InFlight, reason: String) {
     if !state.idea_is_current(&in_flight.idea) {
         vshell::linef(format_args!(
             "dobby: discarded stale {} request after {}ms",
@@ -1127,6 +1638,20 @@ fn finish_request_error(state: &mut AppState, in_flight: InFlight, reason: Strin
         vshell::linef(format_args!(
             "dobby: summary request failed; rolled to a new chat without carry reason={reason}"
         ));
+    } else if in_flight.tool_calls != 0 {
+        if let Some(messages) = in_flight.history_messages.take() {
+            commit_normal_history(state, messages);
+            vshell::linef(format_args!(
+                "dobby: {} tool turn committed partially after {} calls; continuation failed reason={reason}",
+                in_flight.idea.kind.name(),
+                in_flight.tool_calls,
+            ));
+        } else {
+            vshell::linef(format_args!(
+                "dobby: {} continuation failed reason={reason}",
+                in_flight.idea.kind.name(),
+            ));
+        }
     } else {
         vshell::linef(format_args!(
             "dobby: {} request failed reason={reason}",
@@ -1172,13 +1697,24 @@ fn finish_normal(state: &mut AppState, mut in_flight: InFlight, bytes: &[u8]) {
             return;
         }
     };
-    if let Err(reason) = validate_tool_call(&completion.tool_calls[0]) {
-        finish_request_error(state, in_flight, format!("tool call rejected: {reason}"));
+    let calls_this_round = u8::try_from(completion.tool_calls.len()).unwrap_or(u8::MAX);
+    let total_calls = in_flight.tool_calls.saturating_add(calls_this_round);
+    if total_calls > MAX_TOOL_CALLS_PER_TURN {
+        finish_request_error(
+            state,
+            in_flight,
+            format!("tool turn exceeds {MAX_TOOL_CALLS_PER_TURN} calls"),
+        );
         return;
     }
+    for call in &completion.tool_calls {
+        if let Err(reason) = validate_tool_call(call) {
+            finish_request_error(state, in_flight, format!("tool call rejected: {reason}"));
+            return;
+        }
+    }
 
-    let tool_messages = execute_completion_tools(state, &completion);
-    let Some(mut messages) = in_flight.request_messages.take() else {
+    let Some(mut wire_messages) = in_flight.request_messages.take() else {
         finish_request_error(
             state,
             in_flight,
@@ -1186,22 +1722,88 @@ fn finish_normal(state: &mut AppState, mut in_flight: InFlight, bytes: &[u8]) {
         );
         return;
     };
-    messages.push(completion.assistant_message);
-    messages.extend(tool_messages);
-    state.conversation.messages = messages;
-    state.conversation.normal_turns = state.conversation.normal_turns.saturating_add(1);
+    let Some(mut history_messages) = in_flight.history_messages.take() else {
+        finish_request_error(
+            state,
+            in_flight,
+            "ordinary request lost its compact history snapshot".to_string(),
+        );
+        return;
+    };
+    let executed = execute_completion_tools(state, &completion);
+    wire_messages.push(completion.assistant_message.clone());
+    wire_messages.extend(executed.wire_messages);
+    history_messages.push(completion.assistant_message);
+    history_messages.extend(executed.compact_messages);
+
+    let next_round = in_flight.tool_round.saturating_add(1);
+    let continue_turn = executed.continue_turn
+        && next_round < MAX_TOOL_ROUNDS_PER_TURN
+        && total_calls < MAX_TOOL_CALLS_PER_TURN;
+    if continue_turn {
+        let body = match normal_body_for_messages(&state.config, &mut wire_messages) {
+            Ok(body) => body,
+            Err(reason) => {
+                in_flight.history_messages = Some(history_messages);
+                in_flight.tool_calls = total_calls;
+                finish_request_error(state, in_flight, reason);
+                return;
+            }
+        };
+        let operation = match netfs::fetch_post_json_bytes_with_timeout(
+            state.config.endpoint.as_bytes(),
+            body.as_slice(),
+            Some(state.config.api_key.as_bytes()),
+            REQUEST_TIMEOUT_MS,
+        ) {
+            Ok(operation) => operation,
+            Err(code) => {
+                in_flight.history_messages = Some(history_messages);
+                in_flight.tool_calls = total_calls;
+                finish_request_error(
+                    state,
+                    in_flight,
+                    format!("tool continuation could not start code={code}"),
+                );
+                return;
+            }
+        };
+        state.remote_requests = state.remote_requests.saturating_add(1);
+        vshell::linef(format_args!(
+            "dobby: tool continuation started kind={} round={}/{} request={}",
+            in_flight.idea.kind.name(),
+            next_round + 1,
+            MAX_TOOL_ROUNDS_PER_TURN,
+            state.remote_requests,
+        ));
+        state.in_flight = Some(InFlight {
+            operation,
+            idea: in_flight.idea,
+            request_messages: Some(wire_messages),
+            history_messages: Some(history_messages),
+            tool_round: next_round,
+            tool_calls: total_calls,
+            started_ms: clock::monotonic_millis(),
+        });
+        return;
+    }
+
+    if executed.continue_turn {
+        vshell::linef(format_args!(
+            "dobby: bounded tool loop reached rounds={} calls={}",
+            next_round, total_calls,
+        ));
+    }
+    commit_normal_history(state, history_messages);
     state.last_error = None;
     vshell::linef(format_args!(
-        "dobby: turn committed kind={} chat_turn={}/{}",
+        "dobby: turn committed kind={} tools={} rounds={} chat_turn={}/{}",
         in_flight.idea.kind.name(),
+        total_calls,
+        next_round,
         state.conversation.normal_turns,
         NORMAL_TURNS_PER_CHAT,
     ));
-
-    if state.conversation.normal_turns >= NORMAL_TURNS_PER_CHAT {
-        state.conversation.summary_due = true;
-        queue_summary(state);
-    }
 }
 
 fn finish_request_success(state: &mut AppState, in_flight: InFlight, bytes: &[u8]) {
@@ -1430,10 +2032,10 @@ fn main() {
     let mut input = ShellInput::new();
 
     vshell::line(
-        "dobby-bp: online ownership=blueprint-policy+queue+conversation kernel=generic-json-post+silent-spirit",
+        "dobby-bp: online ownership=blueprint-policy+tool-loop+conversation kernel=UI4-broker+silent-spirit",
     );
     vshell::line(
-        "dobby-bp: OpenAI-compatible REST; Python/Node absent; local Lumen and local TTS absent",
+        "dobby-bp: OpenAI-compatible REST+PNG observations; shell2/Lumen/local TTS absent",
     );
     print_help();
     print_status(&state);
@@ -1506,6 +2108,55 @@ mod host_test_abi {
 
     #[unsafe(no_mangle)]
     extern "C" fn trueos_cabi_spirit_move(_x: f32, _y: f32) -> i32 {
+        0
+    }
+
+    #[unsafe(no_mangle)]
+    extern "C" fn trueos_cabi_dobby_ui4_windows(out: *mut u8, cap: usize) -> isize {
+        const WINDOWS: &[u8] = b"[]";
+        if out.is_null() || cap < WINDOWS.len() {
+            return WINDOWS.len() as isize;
+        }
+        unsafe { core::ptr::copy_nonoverlapping(WINDOWS.as_ptr(), out, WINDOWS.len()) };
+        WINDOWS.len() as isize
+    }
+
+    #[unsafe(no_mangle)]
+    extern "C" fn trueos_cabi_dobby_ui4_focus(_window_id: u64) -> i32 {
+        0
+    }
+
+    #[unsafe(no_mangle)]
+    extern "C" fn trueos_cabi_dobby_ui4_observe_prepare() -> isize {
+        -8
+    }
+
+    #[unsafe(no_mangle)]
+    extern "C" fn trueos_cabi_dobby_ui4_observe_metadata(_out: *mut u8, _cap: usize) -> isize {
+        -8
+    }
+
+    #[unsafe(no_mangle)]
+    extern "C" fn trueos_cabi_dobby_ui4_observe_read(
+        _offset: usize,
+        _out: *mut u8,
+        _cap: usize,
+    ) -> isize {
+        -8
+    }
+
+    #[unsafe(no_mangle)]
+    extern "C" fn trueos_cabi_dobby_ui4_pointer(_x: u16, _y: u16, _action: u32) -> i32 {
+        0
+    }
+
+    #[unsafe(no_mangle)]
+    extern "C" fn trueos_cabi_dobby_ui4_type(_text: *const u8, _len: usize) -> i32 {
+        0
+    }
+
+    #[unsafe(no_mangle)]
+    extern "C" fn trueos_cabi_dobby_ui4_key(_key: u32) -> i32 {
         0
     }
 }
@@ -1587,13 +2238,13 @@ mod tests {
     }
 
     #[test]
-    fn ordinary_request_has_three_tools_and_low_remote_reasoning() {
+    fn ordinary_request_has_ui4_tools_parallel_calls_and_low_remote_reasoning() {
         let conversation = Conversation::new();
         let (request, messages) = normal_request(&config(), &conversation, AUTONOMOUS_PROMPT);
 
-        assert_eq!(request["tools"].as_array().unwrap().len(), 3);
+        assert_eq!(request["tools"].as_array().unwrap().len(), 9);
         assert_eq!(request["tool_choice"], "required");
-        assert_eq!(request["parallel_tool_calls"], false);
+        assert_eq!(request["parallel_tool_calls"], true);
         assert_eq!(request["reasoning_effort"], "low");
         assert_eq!(
             request["max_completion_tokens"],
@@ -1633,7 +2284,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_zero_or_multiple_tools_on_an_ordinary_turn() {
+    fn accepts_bounded_multiple_tools_and_rejects_zero_tools() {
         let no_tool = br#"{"choices":[{"message":{"role":"assistant","content":"hello"}}]}"#;
         let two_tools = br#"{
             "choices":[{"message":{"role":"assistant","content":null,"tool_calls":[
@@ -1643,7 +2294,10 @@ mod tests {
         }"#;
 
         assert!(parse_normal_completion(no_tool).is_err());
-        assert!(parse_normal_completion(two_tools).is_err());
+        let completion = parse_normal_completion(two_tools).unwrap();
+        assert_eq!(completion.tool_calls.len(), 2);
+        assert_eq!(completion.tool_calls[0].name, "play_emotion");
+        assert_eq!(completion.tool_calls[1].name, "move");
     }
 
     #[test]
@@ -1661,6 +2315,72 @@ mod tests {
 
         assert!(validate_tool_call(&missing_text).is_err());
         assert!(validate_tool_call(&unknown).is_err());
+    }
+
+    #[test]
+    fn validates_ui4_ids_grid_coordinates_and_bounded_typing() {
+        let focus = ToolCall {
+            id: "call_focus".to_string(),
+            name: "ui4_focus".to_string(),
+            arguments: r#"{"window_id":"4294967297"}"#.to_string(),
+        };
+        let pointer = ToolCall {
+            id: "call_pointer".to_string(),
+            name: "ui4_pointer".to_string(),
+            arguments: r#"{"x":1000,"y":0,"action":"click"}"#.to_string(),
+        };
+        let bad_pointer = ToolCall {
+            id: "call_bad_pointer".to_string(),
+            name: "ui4_pointer".to_string(),
+            arguments: r#"{"x":1001,"y":0,"action":"click"}"#.to_string(),
+        };
+        let control_text = ToolCall {
+            id: "call_type".to_string(),
+            name: "ui4_type".to_string(),
+            arguments: r#"{"text":"hello\nworld"}"#.to_string(),
+        };
+
+        assert!(validate_tool_call(&focus).is_ok());
+        assert!(validate_tool_call(&pointer).is_ok());
+        assert!(validate_tool_call(&bad_pointer).is_err());
+        assert!(validate_tool_call(&control_text).is_err());
+    }
+
+    #[test]
+    fn base64_encoding_matches_png_data_uri_building_primitives() {
+        assert_eq!(base64_encode(b""), "");
+        assert_eq!(base64_encode(b"f"), "Zg==");
+        assert_eq!(base64_encode(b"fo"), "Zm8=");
+        assert_eq!(base64_encode(b"foo"), "Zm9v");
+    }
+
+    #[test]
+    fn bounded_body_fallback_removes_request_scoped_images_only() {
+        let mut messages = vec![
+            json!({"role":"user","content":"keep"}),
+            json!({
+                "role":"tool",
+                "content":[
+                    {"type":"text","text":"window metadata"},
+                    {"type":"image_url","image_url":{"url":"data:image/png;base64,AAAA"}}
+                ]
+            }),
+        ];
+
+        assert!(omit_request_scoped_images(messages.as_mut_slice()));
+        assert_eq!(messages[0]["content"], "keep");
+        assert!(
+            messages[1]["content"]
+                .as_str()
+                .unwrap()
+                .contains("window metadata")
+        );
+        assert!(
+            messages[1]["content"]
+                .as_str()
+                .unwrap()
+                .contains("PNG omitted")
+        );
     }
 
     #[test]
@@ -1715,7 +2435,10 @@ mod tests {
                 session: state.session,
                 prompt: "turn ten".to_string(),
             },
-            request_messages: Some(request_messages),
+            request_messages: Some(request_messages.clone()),
+            history_messages: Some(request_messages),
+            tool_round: 0,
+            tool_calls: 0,
             started_ms: 0,
         };
         let response = br#"{
@@ -1797,6 +2520,9 @@ mod tests {
                 prompt: AUTONOMOUS_PROMPT.to_string(),
             },
             request_messages: None,
+            history_messages: None,
+            tool_round: 0,
+            tool_calls: 0,
             started_ms: 0,
         });
 
@@ -1820,6 +2546,9 @@ mod tests {
                 prompt: "hello".to_string(),
             },
             request_messages: None,
+            history_messages: None,
+            tool_round: 0,
+            tool_calls: 0,
             started_ms: 1_000,
         };
 
