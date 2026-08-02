@@ -9,6 +9,7 @@ members = [
     "api",
     "apps/chatserver",
     "apps/cut_tetris",
+    "apps/dobby",
     "probes/condvar",
     "probes/cross",
     "apps/file-system",

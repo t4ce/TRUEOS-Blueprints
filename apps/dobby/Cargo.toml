@@ -1,0 +1,13 @@
+[package]
+name = "dobby"
+version = "0.1.0"
+edition = "2024"
+
+[package.metadata.trueos-blueprint]
+replicatable = false
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+trueos = { workspace = true, features = ["spirit"] }
+

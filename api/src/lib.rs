@@ -138,6 +138,9 @@ pub mod lifecycle;
 #[cfg(feature = "gridpaper")]
 pub mod gridpaper;
 
+#[cfg(feature = "spirit")]
+pub mod spirit;
+
 #[cfg(feature = "lumen")]
 pub mod lumen;
 
