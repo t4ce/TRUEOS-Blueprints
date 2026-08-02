@@ -8,3 +8,6 @@ package-lock.json
 !apps/monaco/package.json
 !apps/monaco/package-lock.json
 temp_*/
+
+# Local Dobby runtime credentials; this file is uploaded to TRUEOSFS.
+/apps/dobby/config.json

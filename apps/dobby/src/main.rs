@@ -17,7 +17,7 @@ use trueos::{async_fs, clock, env, netfs, platform, spirit, vshell};
 // Async filesystem paths are rooted in this Blueprint's persistent app root,
 // which materializes as apps/dobby (or the named-instance equivalent).
 const CONFIG_PATH: &str = "config.json";
-const API_KEY_PLACEHOLDER: &str = "ENTER_CEREBRAS_API_KEY_HERE";
+const API_KEY_PLACEHOLDER: &str = "ENTER_REMOTE_AI_API_KEY_HERE";
 const DEFAULT_ENDPOINT: &str = "https://api.cerebras.ai/v1/chat/completions";
 const DEFAULT_MODEL: &str = "gpt-oss-120b";
 
@@ -57,13 +57,19 @@ const SUMMARY_PROMPT: &str = concat!(
     "Return only the memo as ordinary text and do not call a tool."
 );
 
+fn default_reasoning_effort() -> Option<String> {
+    Some("low".to_string())
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default)]
 struct RuntimeConfig {
     api_key: String,
     endpoint: String,
+    allow_insecure_http: bool,
     model: String,
-    reasoning_effort: String,
+    #[serde(default = "default_reasoning_effort")]
+    reasoning_effort: Option<String>,
     loop_interval_ms: u64,
 }
 
@@ -72,8 +78,9 @@ impl Default for RuntimeConfig {
         Self {
             api_key: String::new(),
             endpoint: DEFAULT_ENDPOINT.to_string(),
+            allow_insecure_http: false,
             model: DEFAULT_MODEL.to_string(),
-            reasoning_effort: "low".to_string(),
+            reasoning_effort: default_reasoning_effort(),
             loop_interval_ms: DEFAULT_LOOP_INTERVAL_MS,
         }
     }
@@ -87,27 +94,30 @@ impl RuntimeConfig {
         if self.model.trim().is_empty() {
             self.model = DEFAULT_MODEL.to_string();
         }
-        if self.reasoning_effort.trim().is_empty() {
-            self.reasoning_effort = "low".to_string();
-        }
         if self.loop_interval_ms == 0 {
             self.loop_interval_ms = DEFAULT_LOOP_INTERVAL_MS;
         }
         self.api_key = self.api_key.trim().to_string();
         self.endpoint = self.endpoint.trim().to_string();
         self.model = self.model.trim().to_string();
-        self.reasoning_effort = self.reasoning_effort.trim().to_string();
+        self.reasoning_effort = self
+            .reasoning_effort
+            .map(|effort| effort.trim().to_string())
+            .filter(|effort| !effort.is_empty());
         self
     }
 
     fn api_key_configured(&self) -> bool {
         let key = self.api_key.trim();
-        !key.is_empty() && !key.contains("ENTER_") && key != API_KEY_PLACEHOLDER
+        !key.is_empty()
+            && !key.contains("ENTER_")
+            && !key.contains("REPLACE_")
+            && key != API_KEY_PLACEHOLDER
     }
 
     fn validate(&self) -> Result<(), String> {
-        if !self.endpoint.starts_with("https://") || self.endpoint.len() > 512 {
-            return Err("endpoint must be a bounded https:// URL".to_string());
+        if self.endpoint.len() > 512 {
+            return Err("endpoint URL is too long".to_string());
         }
         if self
             .endpoint
@@ -116,17 +126,52 @@ impl RuntimeConfig {
         {
             return Err("endpoint contains invalid whitespace or a control character".to_string());
         }
+        if !self.endpoint.starts_with("https://") {
+            if !self.endpoint.starts_with("http://") {
+                return Err(
+                    "endpoint must use https:// or an explicitly allowed private http:// URL"
+                        .to_string(),
+                );
+            }
+            if !self.allow_insecure_http {
+                return Err(
+                    "private http:// endpoint requires allow_insecure_http=true".to_string()
+                );
+            }
+            if self.endpoint.len() > 256 {
+                return Err("private http:// endpoint URL is too long".to_string());
+            }
+            if !is_literal_private_http_endpoint(self.endpoint.as_str()) {
+                return Err(
+                    "http:// endpoint must use a literal loopback or RFC1918 IPv4 address"
+                        .to_string(),
+                );
+            }
+        }
         if self.model.is_empty() || self.model.len() > 128 {
             return Err("model name is empty or too long".to_string());
         }
         if self.model.bytes().any(|byte| byte.is_ascii_control()) {
             return Err("model name contains an invalid control character".to_string());
         }
-        if !matches!(
-            self.reasoning_effort.as_str(),
-            "none" | "low" | "medium" | "high"
-        ) {
-            return Err("reasoning_effort must be none, low, medium, or high".to_string());
+        match (self.model.as_str(), self.reasoning_effort.as_deref()) {
+            ("gpt-oss-120b", None | Some("low" | "medium" | "high")) => {}
+            ("gpt-oss-120b", Some(_)) => {
+                return Err(
+                    "gpt-oss-120b reasoning_effort must be low, medium, high, or null".to_string(),
+                );
+            }
+            ("zai-glm-4.7", None | Some("none")) => {}
+            ("zai-glm-4.7", Some(_)) => {
+                return Err("zai-glm-4.7 reasoning_effort must be none or null".to_string());
+            }
+            (_, Some(_)) => {
+                return Err(
+                    "reasoning_effort is unknown for this model; set it to null to omit the field"
+                        .to_string(),
+                );
+            }
+            (_, None) => {}
         }
         if self.api_key.len() > 2_048 {
             return Err("API key is too long".to_string());
@@ -139,6 +184,56 @@ impl RuntimeConfig {
         }
         Ok(())
     }
+}
+
+fn parse_ipv4_literal(host: &str) -> Option<[u8; 4]> {
+    let mut octets = [0u8; 4];
+    let mut parts = host.split('.');
+    for octet in &mut octets {
+        let part = parts.next()?;
+        if part.is_empty() || !part.bytes().all(|byte| byte.is_ascii_digit()) {
+            return None;
+        }
+        *octet = part.parse::<u8>().ok()?;
+    }
+    if parts.next().is_some() {
+        return None;
+    }
+    Some(octets)
+}
+
+fn is_loopback_or_rfc1918(ip: [u8; 4]) -> bool {
+    ip[0] == 127
+        || ip[0] == 10
+        || (ip[0] == 172 && (16..=31).contains(&ip[1]))
+        || (ip[0] == 192 && ip[1] == 168)
+}
+
+fn is_literal_private_http_endpoint(endpoint: &str) -> bool {
+    let Some(rest) = endpoint.strip_prefix("http://") else {
+        return false;
+    };
+    let authority_end = rest
+        .find(|character| matches!(character, '/' | '?' | '#'))
+        .unwrap_or(rest.len());
+    let authority = &rest[..authority_end];
+    if authority.is_empty() || authority.contains('@') {
+        return false;
+    }
+
+    let host = if let Some((host, port)) = authority.rsplit_once(':') {
+        if host.contains(':')
+            || port.is_empty()
+            || !port.bytes().all(|byte| byte.is_ascii_digit())
+            || port.parse::<u16>().ok().filter(|port| *port != 0).is_none()
+        {
+            return false;
+        }
+        host
+    } else {
+        authority
+    };
+    parse_ipv4_literal(host).is_some_and(is_loopback_or_rfc1918)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -169,6 +264,12 @@ struct InFlight {
     idea: QueuedIdea,
     request_messages: Option<Vec<Value>>,
     started_ms: u64,
+}
+
+impl InFlight {
+    fn hard_timeout_elapsed(&self, now_ms: u64) -> bool {
+        now_ms.saturating_sub(self.started_ms) >= u64::from(REQUEST_TIMEOUT_MS)
+    }
 }
 
 struct Conversation {
@@ -465,16 +566,18 @@ fn normal_request(
         format!("Direct request from the user: {prompt}")
     };
     messages.push(json!({ "role": "user", "content": content }));
-    let request = json!({
+    let mut request = json!({
         "model": config.model,
         "messages": messages,
         "tools": tool_definitions(),
         "tool_choice": "required",
         "parallel_tool_calls": false,
         "max_completion_tokens": NORMAL_MAX_COMPLETION_TOKENS,
-        "reasoning_effort": config.reasoning_effort,
         "stream": false
     });
+    if let Some(reasoning_effort) = config.reasoning_effort.as_deref() {
+        request["reasoning_effort"] = Value::String(reasoning_effort.to_string());
+    }
     let request_messages = request
         .get("messages")
         .and_then(Value::as_array)
@@ -486,24 +589,28 @@ fn normal_request(
 fn summary_request(config: &RuntimeConfig, conversation: &Conversation) -> Value {
     let mut messages = conversation.messages.clone();
     messages.push(json!({ "role": "user", "content": SUMMARY_PROMPT }));
-    json!({
+    let mut request = json!({
         "model": config.model,
         "messages": messages,
         "max_completion_tokens": SUMMARY_MAX_COMPLETION_TOKENS,
-        "reasoning_effort": config.reasoning_effort,
         "stream": false
-    })
+    });
+    if let Some(reasoning_effort) = config.reasoning_effort.as_deref() {
+        request["reasoning_effort"] = Value::String(reasoning_effort.to_string());
+    }
+    request
 }
 
 fn write_config_template() -> Result<(), String> {
     let template = json!({
         "api_key": API_KEY_PLACEHOLDER,
         "endpoint": DEFAULT_ENDPOINT,
+        "allow_insecure_http": false,
         "model": DEFAULT_MODEL,
         "reasoning_effort": "low",
         "loop_interval_ms": DEFAULT_LOOP_INTERVAL_MS,
-        "note": "Create a key in the Cerebras Cloud console. The Dobby Blueprint never prints this value.",
-        "free_trial_note": "For autonomous RPM only, 15000ms averages below the current 5 RPM Free Trial after summaries. User prompts and token quotas still count separately."
+        "note": "Set a bearer token for the selected OpenAI-compatible provider or private facade. The Dobby Blueprint never prints this value.",
+        "free_trial_note": "For the default Cerebras endpoint only, 15000ms averages below the current 5 RPM Free Trial after summaries. User prompts and token quotas still count separately."
     });
     let bytes = serde_json::to_vec_pretty(&template)
         .map_err(|_| "could not serialize config template".to_string())?;
@@ -542,9 +649,15 @@ fn load_runtime_config() -> (RuntimeConfig, Option<String>) {
             }
         };
 
-    if let Ok(key) = env::var("CEREBRAS_API_KEY")
-        && !key.trim().is_empty()
-    {
+    let environment_key = env::var("REMOTE_AI_API_KEY")
+        .ok()
+        .filter(|key| !key.trim().is_empty())
+        .or_else(|| {
+            env::var("CEREBRAS_API_KEY")
+                .ok()
+                .filter(|key| !key.trim().is_empty())
+        });
+    if let Some(key) = environment_key {
         config.api_key = key.trim().to_string();
     }
     if let Err(reason) = config.validate() {
@@ -555,7 +668,7 @@ fn load_runtime_config() -> (RuntimeConfig, Option<String>) {
             config,
             load_warning.or_else(|| {
                 Some(format!(
-                    "API key missing; edit {CONFIG_PATH} or set CEREBRAS_API_KEY"
+                    "API key missing; edit {CONFIG_PATH} or set REMOTE_AI_API_KEY"
                 ))
             }),
         );
@@ -570,8 +683,19 @@ fn reload_config(state: &mut AppState) {
     match state.config_error.as_deref() {
         Some(reason) => vshell::linef(format_args!("dobby: config not ready reason={reason}")),
         None => vshell::linef(format_args!(
-            "dobby: config ready provider=cerebras model={} reasoning={} interval_ms={} key=redacted",
-            state.config.model, state.config.reasoning_effort, state.config.loop_interval_ms,
+            "dobby: config ready transport={} model={} reasoning={} interval_ms={} key=redacted",
+            if state.config.endpoint.starts_with("https://") {
+                "https"
+            } else {
+                "private-http"
+            },
+            state.config.model,
+            state
+                .config
+                .reasoning_effort
+                .as_deref()
+                .unwrap_or("provider-default"),
+            state.config.loop_interval_ms,
         )),
     };
     if state.running {
@@ -580,7 +704,9 @@ fn reload_config(state: &mut AppState) {
 }
 
 fn warn_if_free_trial_cadence(config: &RuntimeConfig) {
-    if config.loop_interval_ms < FREE_TRIAL_AUTONOMOUS_RPM_INTERVAL_MS {
+    if config.endpoint == DEFAULT_ENDPOINT
+        && config.loop_interval_ms < FREE_TRIAL_AUTONOMOUS_RPM_INTERVAL_MS
+    {
         vshell::line(
             "dobby: note: requested 5s exceeds Free Trial 5 RPM; 15000ms is autonomous-RPM-safe only",
         );
@@ -956,7 +1082,7 @@ fn start_next_request(state: &mut AppState) {
             fail_before_request(
                 state,
                 idea,
-                format!("HTTPS operation could not start code={code}"),
+                format!("remote operation could not start code={code}"),
             );
             return;
         }
@@ -968,9 +1094,14 @@ fn start_next_request(state: &mut AppState) {
         state.next_autonomous_ms = started_ms.saturating_add(state.config.loop_interval_ms);
     }
     vshell::linef(format_args!(
-        "dobby: remote request started kind={} request={} provider=cerebras model={}",
+        "dobby: remote request started kind={} request={} transport={} model={}",
         idea.kind.name(),
         state.remote_requests,
+        if state.config.endpoint.starts_with("https://") {
+            "https"
+        } else {
+            "private-http"
+        },
         state.config.model,
     ));
     state.in_flight = Some(InFlight {
@@ -1086,17 +1217,40 @@ fn poll_request(state: &mut AppState) {
         return;
     };
     match netfs::fetch_bytes_result_len(operation) {
-        Err(FETCH_PENDING) => {}
+        Err(FETCH_PENDING) => {
+            let now_ms = clock::monotonic_millis();
+            let timed_out = state
+                .in_flight
+                .as_ref()
+                .is_some_and(|request| request.hard_timeout_elapsed(now_ms));
+            if !timed_out {
+                return;
+            }
+
+            let _ = netfs::fetch_bytes_discard(operation);
+            let Some(in_flight) = state.in_flight.take() else {
+                return;
+            };
+            finish_request_error(
+                state,
+                in_flight,
+                format!("remote request exceeded local {REQUEST_TIMEOUT_MS}ms deadline"),
+            );
+        }
         Err(code) => {
             let _ = netfs::fetch_bytes_discard(operation);
             let Some(in_flight) = state.in_flight.take() else {
                 return;
             };
-            finish_request_error(state, in_flight, format!("HTTPS failed code={code}"));
+            finish_request_error(
+                state,
+                in_flight,
+                format!("remote request failed code={code}"),
+            );
         }
         Ok(_) => {
             let result = netfs::fetch_bytes_read(operation)
-                .map_err(|code| format!("HTTPS response read failed code={code}"));
+                .map_err(|code| format!("remote response read failed code={code}"));
             let _ = netfs::fetch_bytes_discard(operation);
             let Some(in_flight) = state.in_flight.take() else {
                 return;
@@ -1170,7 +1324,11 @@ fn print_status(state: &AppState) {
         },
         key,
         state.config.model,
-        state.config.reasoning_effort,
+        state
+            .config
+            .reasoning_effort
+            .as_deref()
+            .unwrap_or("provider-default"),
         state.config.loop_interval_ms,
         state.remote_requests,
     ));
@@ -1272,10 +1430,10 @@ fn main() {
     let mut input = ShellInput::new();
 
     vshell::line(
-        "dobby-bp: online ownership=blueprint-policy+queue+conversation kernel=generic-https+silent-spirit",
+        "dobby-bp: online ownership=blueprint-policy+queue+conversation kernel=generic-json-post+silent-spirit",
     );
     vshell::line(
-        "dobby-bp: Cerebras direct REST; Python/Node absent; local Lumen and local TTS absent",
+        "dobby-bp: OpenAI-compatible REST; Python/Node absent; local Lumen and local TTS absent",
     );
     print_help();
     print_status(&state);
@@ -1360,10 +1518,72 @@ mod tests {
         RuntimeConfig {
             api_key: "secret".to_string(),
             endpoint: DEFAULT_ENDPOINT.to_string(),
+            allow_insecure_http: false,
             model: DEFAULT_MODEL.to_string(),
-            reasoning_effort: "low".to_string(),
+            reasoning_effort: Some("low".to_string()),
             loop_interval_ms: DEFAULT_LOOP_INTERVAL_MS,
         }
+    }
+
+    #[test]
+    fn private_http_requires_explicit_opt_in() {
+        let mut config = config();
+        config.endpoint = "http://192.168.178.111:8080/v1/chat/completions".to_string();
+        assert!(config.validate().is_err());
+
+        config.allow_insecure_http = true;
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn private_http_accepts_only_literal_loopback_or_rfc1918_ipv4() {
+        let accepted = [
+            "http://127.0.0.1/v1/chat/completions",
+            "http://127.255.255.254:8080/v1/chat/completions",
+            "http://10.0.0.1/v1/chat/completions",
+            "http://172.16.0.1/v1/chat/completions",
+            "http://172.31.255.255/v1/chat/completions",
+            "http://192.168.178.111:8080/v1/chat/completions",
+        ];
+        for endpoint in accepted {
+            let mut config = config();
+            config.endpoint = endpoint.to_string();
+            config.allow_insecure_http = true;
+            assert!(config.validate().is_ok(), "should accept {endpoint}");
+        }
+
+        let rejected = [
+            "http://localhost:8080/v1/chat/completions",
+            "http://8.8.8.8/v1/chat/completions",
+            "http://169.254.1.1/v1/chat/completions",
+            "http://172.15.255.255/v1/chat/completions",
+            "http://172.32.0.1/v1/chat/completions",
+            "http://192.168.178.111:0/v1/chat/completions",
+            "http://192.168.178.111:not-a-port/v1/chat/completions",
+            "http://192.168.178.111@8.8.8.8/v1/chat/completions",
+            "http://[::1]:8080/v1/chat/completions",
+        ];
+        for endpoint in rejected {
+            let mut config = config();
+            config.endpoint = endpoint.to_string();
+            config.allow_insecure_http = true;
+            assert!(config.validate().is_err(), "should reject {endpoint}");
+        }
+    }
+
+    #[test]
+    fn legacy_config_defaults_private_http_opt_in_to_false() {
+        let config: RuntimeConfig = serde_json::from_value(json!({
+            "api_key": "secret",
+            "endpoint": DEFAULT_ENDPOINT,
+            "model": DEFAULT_MODEL,
+            "reasoning_effort": "low",
+            "loop_interval_ms": DEFAULT_LOOP_INTERVAL_MS
+        }))
+        .unwrap();
+
+        assert!(!config.allow_insecure_http);
+        assert!(config.validate().is_ok());
     }
 
     #[test]
@@ -1396,7 +1616,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_openai_compatible_cerebras_tool_call() {
+    fn parses_openai_compatible_tool_call() {
         let response = br#"{
             "choices":[{"message":{"role":"assistant","content":null,"tool_calls":[
                 {"id":"call_1","type":"function","function":{"name":"move","arguments":"{\"x\":0.25,\"y\":0.75}"}}
@@ -1446,13 +1666,35 @@ mod tests {
     #[test]
     fn configurable_reasoning_effort_reaches_normal_and_summary_requests() {
         let mut config = config();
-        config.reasoning_effort = "none".to_string();
+        config.model = "zai-glm-4.7".to_string();
+        config.reasoning_effort = Some("none".to_string());
+        assert!(config.validate().is_ok());
         let conversation = Conversation::new();
         let (normal, _) = normal_request(&config, &conversation, AUTONOMOUS_PROMPT);
         let summary = summary_request(&config, &conversation);
 
         assert_eq!(normal["reasoning_effort"], "none");
         assert_eq!(summary["reasoning_effort"], "none");
+    }
+
+    #[test]
+    fn reasoning_effort_is_model_aware_and_can_be_omitted() {
+        let mut config = config();
+        config.reasoning_effort = Some("none".to_string());
+        assert!(config.validate().is_err());
+
+        config.model = "zai-glm-4.7".to_string();
+        config.reasoning_effort = Some("low".to_string());
+        assert!(config.validate().is_err());
+
+        config.model = "future-model".to_string();
+        config.reasoning_effort = None;
+        assert!(config.validate().is_ok());
+        let conversation = Conversation::new();
+        let (normal, _) = normal_request(&config, &conversation, AUTONOMOUS_PROMPT);
+        let summary = summary_request(&config, &conversation);
+        assert!(normal.get("reasoning_effort").is_none());
+        assert!(summary.get("reasoning_effort").is_none());
     }
 
     #[test]
@@ -1566,6 +1808,25 @@ mod tests {
         assert!(matches!(state.pending[0].kind, IdeaKind::User));
         assert_eq!(state.take_stale_in_flight().unwrap().operation, 7);
         assert!(state.in_flight.is_none());
+    }
+
+    #[test]
+    fn in_flight_hard_timeout_trips_at_request_deadline() {
+        let request = InFlight {
+            operation: 9,
+            idea: QueuedIdea {
+                kind: IdeaKind::User,
+                session: 1,
+                prompt: "hello".to_string(),
+            },
+            request_messages: None,
+            started_ms: 1_000,
+        };
+
+        assert!(!request.hard_timeout_elapsed(1_000));
+        assert!(!request.hard_timeout_elapsed(1_000 + u64::from(REQUEST_TIMEOUT_MS) - 1));
+        assert!(request.hard_timeout_elapsed(1_000 + u64::from(REQUEST_TIMEOUT_MS)));
+        assert!(!request.hard_timeout_elapsed(999));
     }
 
     #[test]
