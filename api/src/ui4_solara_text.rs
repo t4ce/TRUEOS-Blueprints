@@ -206,6 +206,30 @@ pub const PARTICLE_CRAFT_FLAG_RESET: u32 = 1 << 0;
 pub const PARTICLE_CRAFT_FLAG_ATTRACTOR: u32 = 1 << 1;
 pub const PARTICLE_CRAFT_FLAG_ORBIT: u32 = 1 << 2;
 pub const PARTICLE_CRAFT_MAX_PARTICLES: u32 = 256;
+pub const UI4_VISUAL_SOFT_CAP_HZ: u32 = 60;
+pub const SHADERTOY_PARAMS_VERSION: u32 = 1;
+pub const SHADERTOY_MANDELBROT: u32 = 1;
+pub const SHADERTOY_CUBE_FIELD: u32 = 2;
+pub const SHADERTOY_NGUYEN: u32 = 3;
+
+/// Pointer-free controls for a kernel-reviewed ShaderToy catalog entry.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct ShadertoyParamsV1 {
+    pub shader_id: u32,
+    pub frame: u32,
+    pub time_seconds: f32,
+    pub delta_seconds: f32,
+    pub frame_rate: f32,
+    pub sample_rate: f32,
+    pub mouse_x: f32,
+    pub mouse_y: f32,
+    pub click_x: f32,
+    pub click_y: f32,
+    pub date_year: f32,
+    pub date_month: f32,
+    pub date_day: f32,
+    pub date_seconds: f32,
+}
 
 /// Pointer-free ParticleCraft v1 controls. Persistent particle state and GPU
 /// addresses are retained by the kernel for this frame and never cross ABI.
@@ -359,6 +383,32 @@ impl Frame {
     pub fn open_streaming(x: i32, y: i32, width: u32, height: u32) -> Result<Self, Error> {
         let window_id =
             unsafe { v::bp_abi::trueos_cabi_ui4_scene_frame_open_streaming(x, y, width, height) };
+        if window_id == 0 {
+            Err(Error::Ui4)
+        } else {
+            Ok(Self {
+                window_id,
+                width,
+                height,
+            })
+        }
+    }
+
+    /// Open a triple-buffered visual frame with kernel-brokered cadence.
+    /// Requests above 60 Hz are rejected at both API and kernel boundaries.
+    pub fn open_visual(
+        x: i32,
+        y: i32,
+        width: u32,
+        height: u32,
+        target_hz: u32,
+    ) -> Result<Self, Error> {
+        if target_hz == 0 || target_hz > UI4_VISUAL_SOFT_CAP_HZ {
+            return Err(Error::Invalid);
+        }
+        let window_id = unsafe {
+            v::bp_abi::trueos_cabi_ui4_scene_frame_open_visual(x, y, width, height, target_hz)
+        };
         if window_id == 0 {
             Err(Error::Ui4)
         } else {
@@ -788,6 +838,36 @@ impl Frame {
         status(unsafe {
             v::bp_abi::trueos_cabi_ui4_scene_particle_craft_render(self.window_id, &raw)
         })
+    }
+
+    /// Render one immutable, offline-validated ShaderToy catalog artifact into
+    /// the active visual-frame lease.
+    pub fn render_shadertoy(&mut self, params: &ShadertoyParamsV1) -> Result<(), Error> {
+        if !matches!(
+            params.shader_id,
+            SHADERTOY_MANDELBROT | SHADERTOY_CUBE_FIELD | SHADERTOY_NGUYEN
+        ) {
+            return Err(Error::Invalid);
+        }
+        let raw = v::bp_abi::TrueosUi4ShadertoyParamsV1 {
+            version: SHADERTOY_PARAMS_VERSION,
+            shader_id: params.shader_id,
+            frame: params.frame,
+            flags: 0,
+            time_seconds: params.time_seconds,
+            delta_seconds: params.delta_seconds,
+            frame_rate: params.frame_rate,
+            sample_rate: params.sample_rate,
+            mouse_x: params.mouse_x,
+            mouse_y: params.mouse_y,
+            click_x: params.click_x,
+            click_y: params.click_y,
+            date_year: params.date_year,
+            date_month: params.date_month,
+            date_day: params.date_day,
+            date_seconds: params.date_seconds,
+        };
+        status(unsafe { v::bp_abi::trueos_cabi_ui4_scene_shadertoy_render(self.window_id, &raw) })
     }
 
     pub fn draw_text_rows(

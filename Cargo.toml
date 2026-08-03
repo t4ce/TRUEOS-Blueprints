@@ -31,6 +31,7 @@ members = [
     "probes/panick",
     "apps/particle",
     "apps/shell",
+    "apps/shadertoy",
     "probes/unix_api_probe",
     "probes/rusqlite_probe",
     "probes/rusqlite_multirt",

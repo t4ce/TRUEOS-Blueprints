@@ -8,6 +8,7 @@ pub use crate::ui4_solara_text::{
     InputRoute, KeyboardState, PARTICLE_CRAFT_FLAG_ATTRACTOR, PARTICLE_CRAFT_FLAG_ORBIT,
     PARTICLE_CRAFT_FLAG_RESET, PARTICLE_CRAFT_HEIGHT, PARTICLE_CRAFT_MAX_PARTICLES,
     PARTICLE_CRAFT_PARAMS_VERSION, PARTICLE_CRAFT_WIDTH, PanEvent, PanPhase, ParticleCraftParamsV1,
-    PointerEvent, ResizeEvent, SceneTextRow, SkyboxRenderParams, SpriteCorner, SpriteQuad, TextRow,
-    font_sizes, output_dimensions, rgba,
+    PointerEvent, ResizeEvent, SHADERTOY_CUBE_FIELD, SHADERTOY_MANDELBROT, SHADERTOY_NGUYEN,
+    SHADERTOY_PARAMS_VERSION, SceneTextRow, ShadertoyParamsV1, SkyboxRenderParams, SpriteCorner,
+    SpriteQuad, TextRow, UI4_VISUAL_SOFT_CAP_HZ, font_sizes, output_dimensions, rgba,
 };

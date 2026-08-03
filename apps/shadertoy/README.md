@@ -1,25 +1,26 @@
-# Shadertoy archive blueprint
+# ShaderToy visual Blueprint
 
-Fetch one or more public Shadertoy URLs and preserve their complete render-pass
-graph under a directory named after each shader:
-
-```text
-shadertoy https://www.shadertoy.com/view/mslfR2
-shadertoy -o shaders <url-or-id> [<url-or-id> ...]
-```
-
-If Shadertoy blocks its legacy page endpoint, create an app key at
-`https://www.shadertoy.com/myapps` and pass it through the launch environment:
+Package it with:
 
 ```text
-SHADERTOY_API_KEY=<key> shadertoy <url-or-id>
+!cargo bp shadertoy
 ```
 
-`--api-key <key>` is also accepted. The key is used for the official API
-request and is never written to the archive.
+The app opens a UI4 visual-mode frame at 30 Hz. The kernel brokers admission,
+triple buffering, compute completion, and publication, and rejects visual rates
+above the current 60 Hz policy ceiling. Use Left/Right or F1-F3 to select the
+three reviewed shaders; Escape closes the app.
 
-Each shader-title directory contains the untouched HTTP response, the complete
-shader and info JSON, and one ordered directory per render pass. Every pass
-retains `code.glsl`, `inputs.json`, `outputs.json`, and `pass.json`; this covers
-Image, Buffer, Common, Sound, texture/cubemap/media channels, keyboard,
-microphone, webcam, and future input types without narrowing their schema.
+This first ABI is intentionally narrow pending the security analysis. The
+Blueprint sends only a catalog id plus pointer-free ShaderToy uniforms. It
+cannot send GLSL, SPIR-V, Zebin, GPU addresses, or arbitrary dispatch geometry.
+The exact ADL-S SIMD16 artifacts are generated from the reviewed GLSL sources
+in the TRUEOS kernel tree with:
+
+```text
+make intel-gpu-bake-shadertoy-cpp
+```
+
+The original GLSL remains beside the baked kernel sources for review. The
+Blueprint embeds the admitted artifact hashes so its catalog and kernel image
+can be compared directly.
