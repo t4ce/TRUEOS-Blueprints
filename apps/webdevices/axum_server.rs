@@ -26,7 +26,7 @@ use trueos::{
     logl::level,
     pci,
     platform::{self, io},
-    printers, rapl, runtime, thermal,
+    printers, rapl, runtime, system_services, thermal,
     time::{self, Duration},
     tokio::{self, net::SocketAddr},
     usb,
@@ -50,6 +50,7 @@ struct HardwareSnapshot {
     rapl: RaplSnapshot,
     thermal: ThermalSnapshot,
     printers: PrinterSnapshot,
+    task_profile: TaskProfileSnapshot,
     pci: DeviceGroup,
     usb: UsbSnapshot,
     note: &'static str,
@@ -61,6 +62,31 @@ struct ServiceSnapshot {
     name: &'static str,
     port: Option<u16>,
     bind: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TaskProfileSnapshot {
+    vlayer_available: bool,
+    history_count: usize,
+    history_capacity: usize,
+    latest: Option<TaskProfilePoint>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TaskProfilePoint {
+    sequence: u64,
+    now_ms: u64,
+    heartbeat_gap_ms: u64,
+    polls: u64,
+    busy_us: u64,
+    busy_permille: u64,
+    top_task: String,
+    top_total_us: u64,
+    longest_task: String,
+    longest_poll_us: u64,
+    slow_polls: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -435,6 +461,55 @@ fn parse_snapshot_scalar(text: &str, key: &str) -> Option<u64> {
     text.lines()
         .map(str::trim)
         .find_map(|line| line.strip_prefix(&prefix).and_then(parse_optional_u64))
+}
+
+fn task_profile_payload() -> TaskProfileSnapshot {
+    let Ok(text) = system_services::snapshot_text() else {
+        return TaskProfileSnapshot {
+            vlayer_available: false,
+            history_count: 0,
+            history_capacity: 0,
+            latest: None,
+        };
+    };
+    let history_capacity = parse_snapshot_scalar(&text, "task_profile_history_capacity")
+        .unwrap_or(0) as usize;
+    let mut history_count = 0usize;
+    let mut latest = None;
+    for line in text.lines().filter(|line| {
+        line.starts_with("task-profile\t") && !line.starts_with("task-profile\tsequence\t")
+    }) {
+        let fields = line.split('\t').collect::<Vec<_>>();
+        if fields.len() != 21 {
+            continue;
+        }
+        let number = |index: usize| fields[index].parse::<u64>().ok();
+        let Some(point) = (|| {
+            Some(TaskProfilePoint {
+                sequence: number(1)?,
+                now_ms: number(2)?,
+                heartbeat_gap_ms: number(3)?,
+                polls: number(7)?,
+                busy_us: number(8)?,
+                busy_permille: number(9)?,
+                top_task: fields[10].to_string(),
+                top_total_us: number(13)?,
+                longest_task: fields[14].to_string(),
+                longest_poll_us: number(16)?,
+                slow_polls: number(17)?,
+            })
+        })() else {
+            continue;
+        };
+        history_count = history_count.saturating_add(1);
+        latest = Some(point);
+    }
+    TaskProfileSnapshot {
+        vlayer_available: !text.is_empty(),
+        history_count,
+        history_capacity,
+        latest,
+    }
 }
 
 fn parse_thermal_rows(text: &str) -> (Option<ThermalPackageRow>, Vec<ThermalCoreRow>) {
@@ -1140,9 +1215,10 @@ async fn handle_snapshot() -> Response {
             rapl: rapl_payload(),
             thermal: thermal_payload(),
             printers: printer_payload(),
+            task_profile: task_profile_payload(),
             pci,
             usb,
-            note: "webdevices is running as a blueprint axum app with vlayer-backed PCI, USB, RAPL, thermal, and printer snapshots",
+            note: "webdevices is running as a blueprint axum app with shared vlayer-backed device and BSP task snapshots",
         },
     )
 }

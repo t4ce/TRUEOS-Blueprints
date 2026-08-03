@@ -42,12 +42,17 @@
 
     function render(snapshot) {
       const summary = snapshot.summary || {};
-      $('subtitle').textContent = `${snapshot.serviceCount} registered · live at kernel t+${Math.round(snapshot.generatedAtMs / 1000)}s`;
+      const task = snapshot.taskProfile;
+      const historyCount = snapshot.taskProfileHistory?.length || 0;
+      $('subtitle').textContent = `${snapshot.serviceCount} registered · kernel t+${Math.round(snapshot.generatedAtMs / 1000)}s · ${historyCount}/${snapshot.taskProfileHistoryCapacity || 0} execution snapshots`;
       $('summary').innerHTML = `
         <span class="summary-chip started"><strong>${summary.started || 0}</strong> started</span>
         <span class="summary-chip waiting"><strong>${summary.waiting || 0}</strong> waiting</span>
         <span class="summary-chip disabled"><strong>${summary.disabled || 0}</strong> disabled</span>
-        <span class="summary-chip pools"><strong>${summary.pools || 0}</strong> pools</span>`;
+        <span class="summary-chip pools"><strong>${summary.pools || 0}</strong> pools</span>
+        <span class="summary-chip"><strong>${task ? (task.busyPermille / 10).toFixed(1) : '0.0'}%</strong> BSP busy</span>
+        <span class="summary-chip"><strong>${task?.heartbeatGapMs || 0}ms</strong> heartbeat</span>
+        <span class="summary-chip" title="${esc(task?.topTask || 'waiting')}"><strong>${task?.polls || 0}</strong> polls · ${esc(task?.topTask?.split('::').pop() || 'waiting')}</span>`;
       $('grid').innerHTML = (snapshot.services || []).map((service) => `
         <article class="service-card status-${service.status.toLowerCase()} ${service.kind === 'pool' ? 'pool-card' : ''}">
           <div class="service-card-head">

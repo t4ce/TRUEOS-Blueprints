@@ -49,6 +49,9 @@ struct ServicesSnapshot {
     service_count: usize,
     summary: Summary,
     services: Vec<ServiceRow>,
+    task_profile_history_capacity: usize,
+    task_profile: Option<TaskProfileRow>,
+    task_profile_history: Vec<TaskProfileRow>,
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -74,6 +77,31 @@ struct ServiceRow {
     kind: String,
     requires: Vec<String>,
     status: &'static str,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TaskProfileRow {
+    sequence: u64,
+    now_ms: u64,
+    heartbeat_gap_ms: u64,
+    executor: String,
+    spawned: u64,
+    ready: u64,
+    polls: u64,
+    busy_us: u64,
+    busy_permille: u64,
+    top_task: String,
+    top_task_id: String,
+    top_polls: u64,
+    top_total_us: u64,
+    longest_task: String,
+    longest_task_id: String,
+    longest_poll_us: u64,
+    slow_polls: u64,
+    dropped: u64,
+    mismatches: u64,
+    readiness: String,
 }
 
 fn status_code(status: u16) -> StatusCode {
@@ -145,6 +173,8 @@ fn parse_snapshot(text: &str) -> Result<ServicesSnapshot, String> {
     let mut readiness_mask = String::from("0x00000000");
     let mut declared_count = None;
     let mut services = Vec::new();
+    let mut task_profile_history_capacity = 0usize;
+    let mut task_profile_history = Vec::new();
 
     for line in text.lines() {
         if let Some(value) = line.strip_prefix("generated_at_ms=") {
@@ -153,8 +183,14 @@ fn parse_snapshot(text: &str) -> Result<ServicesSnapshot, String> {
             readiness_mask = value.to_string();
         } else if let Some(value) = line.strip_prefix("service_count=") {
             declared_count = value.parse::<usize>().ok();
+        } else if let Some(value) = line.strip_prefix("task_profile_history_capacity=") {
+            task_profile_history_capacity = value.parse::<usize>().unwrap_or(0);
         } else if line.starts_with("service\t") && !line.starts_with("service\tname\t") {
             services.push(parse_service_row(line)?);
+        } else if line.starts_with("task-profile\t")
+            && !line.starts_with("task-profile\tsequence\t")
+        {
+            task_profile_history.push(parse_task_profile_row(line)?);
         }
     }
 
@@ -176,13 +212,54 @@ fn parse_snapshot(text: &str) -> Result<ServicesSnapshot, String> {
         }
     }
 
+    let task_profile = task_profile_history.last().cloned();
     Ok(ServicesSnapshot {
-        schema: "trueos.system-services.v1",
+        schema: "trueos.system-services.v2",
         generated_at_ms,
         readiness_mask,
         service_count: declared_count.unwrap_or(services.len()),
         summary,
         services,
+        task_profile_history_capacity,
+        task_profile,
+        task_profile_history,
+    })
+}
+
+fn parse_task_profile_row(line: &str) -> Result<TaskProfileRow, String> {
+    let fields = line.split('\t').collect::<Vec<_>>();
+    if fields.len() != 21 {
+        return Err(format!(
+            "bad task profile row with {} fields",
+            fields.len()
+        ));
+    }
+    let number = |index: usize| -> Result<u64, String> {
+        fields[index]
+            .parse::<u64>()
+            .map_err(|_| format!("bad task profile number at field {}", index))
+    };
+    Ok(TaskProfileRow {
+        sequence: number(1)?,
+        now_ms: number(2)?,
+        heartbeat_gap_ms: number(3)?,
+        executor: fields[4].to_string(),
+        spawned: number(5)?,
+        ready: number(6)?,
+        polls: number(7)?,
+        busy_us: number(8)?,
+        busy_permille: number(9)?,
+        top_task: fields[10].to_string(),
+        top_task_id: fields[11].to_string(),
+        top_polls: number(12)?,
+        top_total_us: number(13)?,
+        longest_task: fields[14].to_string(),
+        longest_task_id: fields[15].to_string(),
+        longest_poll_us: number(16)?,
+        slow_polls: number(17)?,
+        dropped: number(18)?,
+        mismatches: number(19)?,
+        readiness: fields[20].to_string(),
     })
 }
 

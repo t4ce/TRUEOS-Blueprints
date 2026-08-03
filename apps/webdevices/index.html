@@ -232,6 +232,7 @@
     function render() {
       const snap = state.snapshot;
       if (!snap) return;
+      const task = snap.taskProfile?.latest;
       $('subtitle').textContent = `${snap.service.primaryIpv4 || 'no-ip'}:${snap.service.port || '-'} / refreshed ${new Date().toLocaleTimeString()}`;
       $('stat-pci').textContent = snap.pci.count;
       $('stat-usb').textContent = snap.usb.deviceCount ?? snap.usb.count ?? 0;
@@ -255,7 +256,12 @@
         ['RAPL', snap.rapl?.sampleValid ? 'sample valid' : (snap.rapl?.vlayerAvailable ? 'waiting' : 'unavailable')],
         ['RAPL history', `${snap.rapl?.historyBytes ?? 0} bytes`],
         ['Thermal', snap.thermal?.sampleValid ? `${snap.thermal.cores?.length || 0} cores` : (snap.thermal?.vlayerAvailable ? 'waiting' : 'unavailable')],
-        ['Printers', printerStatus(snap.printers)]
+        ['Printers', printerStatus(snap.printers)],
+        ['BSP executor', task ? `${(task.busyPermille / 10).toFixed(1)}% / ${task.polls} polls` : 'waiting'],
+        ['BSP heartbeat', task ? `${task.heartbeatGapMs}ms` : '-'],
+        ['BSP top task', task?.topTask?.split('::').pop() || '-'],
+        ['Longest poll', task ? `${task.longestPollUs}us` : '-'],
+        ['Task history', `${snap.taskProfile?.historyCount || 0}/${snap.taskProfile?.historyCapacity || 0}`]
       ]);
       $('probe-tag').className = snap.usb.probeError ? 'tag warn' : 'tag ok';
       $('probe-tag').textContent = snap.usb.probeError || snap.usb.unavailableReason || 'probe ok';
