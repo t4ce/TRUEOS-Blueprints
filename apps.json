@@ -47,7 +47,6 @@
     "system-services",
     "webdevices",
     "webmail",
-    "SceneDB",
     {
       "name": "rustc-min",
       "path": "../TRUEOS-Rust-Toolchain-nightly-2026-07-10/blueprints/rustc-min",
