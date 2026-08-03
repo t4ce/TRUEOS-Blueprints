@@ -394,7 +394,7 @@ impl Frame {
         }
     }
 
-    /// Open a triple-buffered visual frame with kernel-brokered cadence.
+    /// Open a GPU-only dirty/double visual frame with kernel-brokered cadence.
     /// Requests above 60 Hz are rejected at both API and kernel boundaries.
     pub fn open_visual(
         x: i32,
@@ -722,6 +722,13 @@ impl Frame {
     /// performed; the producer must overwrite the complete frame.
     pub fn begin_gpu_frame(&mut self) -> Result<(), Error> {
         status(unsafe { v::bp_abi::trueos_cabi_ui4_scene_sprite_frame_begin(self.window_id, 0) })
+    }
+
+    /// Wait for the kernel's visual cadence deadline and acquire the next
+    /// GPU-only back buffer. The VMCALL remains pending while it waits, so one
+    /// call consumes one admission ticket without guest-side polling.
+    pub fn begin_visual_gpu_frame(&mut self) -> Result<(), Error> {
+        status(unsafe { v::bp_abi::trueos_cabi_ui4_scene_visual_frame_begin(self.window_id) })
     }
 
     /// Render ordered retained sprites and solid rectangles into the active

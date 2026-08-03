@@ -141,18 +141,9 @@ fn main() {
             }
         }
 
-        loop {
-            match frame.begin_gpu_frame() {
-                Ok(()) => break,
-                Err(Error::Busy) => {
-                    vsys::poll_once();
-                    vsys::sleep_ms(1);
-                }
-                Err(error) => {
-                    fail("frame begin", error);
-                    return;
-                }
-            }
+        if let Err(error) = frame.begin_visual_gpu_frame() {
+            fail("frame begin", error);
+            return;
         }
 
         let now_ns = clock::monotonic_nanos();
@@ -181,18 +172,9 @@ fn main() {
             fail("kernel render", error);
             return;
         }
-        loop {
-            match frame.publish(Damage::full(width, height)) {
-                Ok(()) => break,
-                Err(Error::Busy) => {
-                    vsys::poll_once();
-                    vsys::sleep_ms(1);
-                }
-                Err(error) => {
-                    fail("frame publish", error);
-                    return;
-                }
-            }
+        if let Err(error) = frame.publish(Damage::full(width, height)) {
+            fail("frame publish", error);
+            return;
         }
         previous_ns = now_ns;
         frame_number = frame_number.wrapping_add(1);
