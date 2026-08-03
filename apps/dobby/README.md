@@ -25,17 +25,18 @@ to one action record, keeping the ten-turn context small; only the existing
 single 500-token summary request crosses a chat rollover.
 
 On first launch the app creates `config.json` in its persistent TRUEOSFS app
-root (`apps/dobby/config.json` for the default instance). Put the selected
-provider or facade bearer token in that file. `REMOTE_AI_API_KEY` is also
-honored if the launcher already provides it in the Blueprint environment;
-`CEREBRAS_API_KEY` remains a legacy fallback. The key is never printed.
+root (`apps/dobby/config.json` for the default instance). The default template
+targets the local remoteAI facade at `http://192.168.178.111:3042` and does not
+require a key for private HTTP. `REMOTE_AI_API_KEY` is still honored for HTTPS
+providers (`CEREBRAS_API_KEY` remains a legacy fallback). The key is never
+printed.
 
-HTTPS is required by default. A development facade on the same trusted LAN may
-be selected with an explicit opt-in:
+HTTPS is required for remote providers. A local remoteAI facade on this trusted
+LAN is configured explicitly here:
 
 ```json
 {
-  "api_key": "ENTER_A_PRIVATE_FACADE_TOKEN_HERE",
+  "api_key": "",
   "endpoint": "http://192.168.178.111:3042/v1/chat/completions",
   "allow_insecure_http": true,
   "model": "auto",

@@ -20,6 +20,8 @@ const CONFIG_PATH: &str = "config.json";
 const API_KEY_PLACEHOLDER: &str = "ENTER_REMOTE_AI_API_KEY_HERE";
 const DEFAULT_ENDPOINT: &str = "https://api.cerebras.ai/v1/chat/completions";
 const DEFAULT_MODEL: &str = "gpt-oss-120b";
+const DEFAULT_LOCAL_REMOTEAI_ENDPOINT: &str = "http://192.168.178.111:3042/v1/chat/completions";
+const DEFAULT_LOCAL_REMOTEAI_MODEL: &str = "auto";
 
 const DEFAULT_LOOP_INTERVAL_MS: u64 = 5_000;
 const FREE_TRIAL_AUTONOMOUS_RPM_INTERVAL_MS: u64 = 15_000;
@@ -198,6 +200,17 @@ impl RuntimeConfig {
             return Err("loop_interval_ms must be between 1000 and 3600000".to_string());
         }
         Ok(())
+    }
+}
+
+fn local_remoteai_defaults() -> RuntimeConfig {
+    RuntimeConfig {
+        api_key: String::new(),
+        endpoint: DEFAULT_LOCAL_REMOTEAI_ENDPOINT.to_string(),
+        allow_insecure_http: true,
+        model: DEFAULT_LOCAL_REMOTEAI_MODEL.to_string(),
+        reasoning_effort: None,
+        loop_interval_ms: DEFAULT_LOOP_INTERVAL_MS,
     }
 }
 
@@ -725,14 +738,15 @@ fn summary_request(config: &RuntimeConfig, conversation: &Conversation) -> Value
 }
 
 fn write_config_template() -> Result<(), String> {
+    let template = local_remoteai_defaults();
     let template = json!({
-        "api_key": API_KEY_PLACEHOLDER,
-        "endpoint": DEFAULT_ENDPOINT,
-        "allow_insecure_http": false,
-        "model": DEFAULT_MODEL,
-        "reasoning_effort": "low",
+        "api_key": "",
+        "endpoint": template.endpoint,
+        "allow_insecure_http": template.allow_insecure_http,
+        "model": template.model,
+        "reasoning_effort": template.reasoning_effort,
         "loop_interval_ms": DEFAULT_LOOP_INTERVAL_MS,
-        "note": "Set a bearer token for the selected OpenAI-compatible provider or private facade. The Dobby Blueprint never prints this value.",
+        "note": "Set api_key for HTTPS providers. The Dobby Blueprint never prints this value.",
         "free_trial_note": "For the default Cerebras endpoint only, 15000ms averages below the current 5 RPM Free Trial after summaries. User prompts and token quotas still count separately."
     });
     let bytes = serde_json::to_vec_pretty(&template)
@@ -759,10 +773,10 @@ fn load_runtime_config() -> (RuntimeConfig, Option<String>) {
             Err(async_fs::ERR_NOT_FOUND) => {
                 let warning = write_config_template().err().or_else(|| {
                     Some(format!(
-                        "API key missing; edit {CONFIG_PATH} and run `dobby reload`"
+                        "could not create {CONFIG_PATH}; using local defaults for this session"
                     ))
                 });
-                (RuntimeConfig::default(), warning)
+                (local_remoteai_defaults(), warning)
             }
             Err(code) => {
                 return (
@@ -786,7 +800,7 @@ fn load_runtime_config() -> (RuntimeConfig, Option<String>) {
     if let Err(reason) = config.validate() {
         return (config, Some(reason));
     }
-    if !config.api_key_configured() {
+    if config.endpoint.starts_with("https://") && !config.api_key_configured() {
         return (
             config,
             load_warning.or_else(|| {
@@ -1560,7 +1574,9 @@ fn start_next_request(state: &mut AppState) {
         }
     };
 
-    if state.config_error.is_some() || !state.config.api_key_configured() {
+    if state.config_error.is_some()
+        || (state.config.endpoint.starts_with("https://") && !state.config.api_key_configured())
+    {
         reload_config(state);
     }
     if let Some(reason) = state.config_error.clone() {
@@ -1591,10 +1607,15 @@ fn start_next_request(state: &mut AppState) {
             }
         }
     };
+    let api_key = if state.config.endpoint.starts_with("https://") {
+        Some(state.config.api_key.as_bytes())
+    } else {
+        None
+    };
     let operation = match netfs::fetch_post_json_bytes_with_timeout(
         state.config.endpoint.as_bytes(),
         body.as_slice(),
-        Some(state.config.api_key.as_bytes()),
+        api_key.filter(|key| !key.is_empty()),
         REQUEST_TIMEOUT_MS,
     ) {
         Ok(operation) => operation,
@@ -1822,10 +1843,15 @@ fn finish_normal(state: &mut AppState, mut in_flight: InFlight, bytes: &[u8]) {
                 return;
             }
         };
+        let api_key = if state.config.endpoint.starts_with("https://") {
+            Some(state.config.api_key.as_bytes())
+        } else {
+            None
+        };
         let operation = match netfs::fetch_post_json_bytes_with_timeout(
             state.config.endpoint.as_bytes(),
             body.as_slice(),
-            Some(state.config.api_key.as_bytes()),
+            api_key.filter(|key| !key.is_empty()),
             REQUEST_TIMEOUT_MS,
         ) {
             Ok(operation) => operation,
@@ -1979,10 +2005,14 @@ fn print_status(state: &AppState) {
         .as_ref()
         .map(|request| request.idea.kind.name())
         .unwrap_or("idle");
-    let key = if state.config.api_key_configured() && state.config_error.is_none() {
-        "configured"
+    let key = if state.config.endpoint.starts_with("https://") {
+        if state.config.api_key_configured() && state.config_error.is_none() {
+            "configured"
+        } else {
+            "missing"
+        }
     } else {
-        "missing"
+        "optional"
     };
     vshell::linef(format_args!(
         "dobby: mode={} activity={} queued={} chat_turns={}/{} carry={} key={} model={} reasoning={} interval_ms={} requests={}",
