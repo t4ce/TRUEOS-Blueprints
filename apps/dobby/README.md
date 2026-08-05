@@ -72,7 +72,7 @@ cargo bp dobby
 Invoke it on TRUEOS with `online dobby` or `§§dobby`. The VMX minishell is
 available automatically; only a TUI needs an additional process. Within that
 Matrix slot, bare commands go to Dobby and VM controls use the `vmx` prefix
-(for example, `vmx stop`). An optional `dobby` prefix is accepted too. Use the
+(for example, `vmx_stop`). An optional `dobby` prefix is accepted too. Use the
 TRUEOS `stop`/`leave` lifecycle or Escape to leave the Blueprint. App-level
 `start` applies to artifacts compiled directly on TRUEOS after invoking the
 Rust compiler and registering them in the database; Dobby's command named

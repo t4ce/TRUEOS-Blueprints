@@ -1995,7 +1995,7 @@ fn schedule_autonomous_if_due(state: &mut AppState) {
 fn print_help() {
     vshell::line("dobby: commands `start|stop|reset|reload|status|help|quit` or any user request");
     vshell::line(
-        "dobby: optional `dobby` prefix is accepted; VM controls use `vmx`, for example `vmx stop`",
+        "dobby: optional `dobby` prefix is accepted; VM controls use `vmx_`, for example `vmx_stop`",
     );
 }
 
