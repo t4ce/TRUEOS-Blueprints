@@ -248,7 +248,12 @@ impl FrogVisual {
                 )
             })
             .unwrap_or((0, 0));
-        let frame = Frame::open_streaming(x, y, FRAME_WIDTH, FRAME_HEIGHT)
+        // Weather updates arrive on the order of minutes and the sprites are
+        // small, so continuous shading buys nothing here. A one-buffer
+        // snapshot holds a single allocation instead of a triple-buffered
+        // ring, which is what kept this open failing against DMA capacity
+        // once several UI4 consumers were already resident.
+        let frame = Frame::open_immutable(x, y, FRAME_WIDTH, FRAME_HEIGHT)
             .map_err(|error| anyhow!("open Frog UI4 frame: {error:?}"))?;
         let now = std::time::Instant::now();
         let mut visual = Self {
