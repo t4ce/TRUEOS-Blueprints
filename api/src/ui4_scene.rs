@@ -5,10 +5,12 @@
 
 pub use crate::ui4_solara_text::{
     CloseRequest, CursorIcon, CursorSource, Damage, Error, Font, FontCanvasRow, FontSize, Frame,
-    InputRoute, KeyboardState, PARTICLE_CRAFT_FLAG_ATTRACTOR, PARTICLE_CRAFT_FLAG_ORBIT,
-    PARTICLE_CRAFT_FLAG_RESET, PARTICLE_CRAFT_HEIGHT, PARTICLE_CRAFT_MAX_PARTICLES,
-    PARTICLE_CRAFT_PARAMS_VERSION, PARTICLE_CRAFT_WIDTH, PanEvent, PanPhase, ParticleCraftParamsV1,
-    PointerEvent, ResizeEvent, SHADERTOY_CUBE_FIELD, SHADERTOY_MANDELBROT, SHADERTOY_NGUYEN,
-    SHADERTOY_PARAMS_VERSION, SceneTextRow, ShadertoyParamsV1, SkyboxRenderParams, SpriteCorner,
-    SpriteQuad, TextRow, UI4_VISUAL_SOFT_CAP_HZ, font_sizes, output_dimensions, rgba,
+    InputRoute, KeyboardState, MAX_MENU_ENTRIES, MAX_MENU_LABEL_BYTES, MenuCloseReason, MenuEntry,
+    PARTICLE_CRAFT_FLAG_ATTRACTOR, PARTICLE_CRAFT_FLAG_ORBIT, PARTICLE_CRAFT_FLAG_RESET,
+    PARTICLE_CRAFT_HEIGHT, PARTICLE_CRAFT_MAX_PARTICLES, PARTICLE_CRAFT_PARAMS_VERSION,
+    PARTICLE_CRAFT_WIDTH, POINTER_BUTTON_MIDDLE, POINTER_BUTTON_PRIMARY, POINTER_BUTTON_SECONDARY,
+    PanEvent, PanPhase, ParticleCraftParamsV1, PointerEvent, ResizeEvent, SHADERTOY_CUBE_FIELD,
+    SHADERTOY_MANDELBROT, SHADERTOY_NGUYEN, SHADERTOY_PARAMS_VERSION, SceneTextRow,
+    ShadertoyParamsV1, SkyboxRenderParams, SpriteCorner, SpriteQuad, TextRow,
+    UI4_VISUAL_SOFT_CAP_HZ, font_sizes, output_dimensions, rgba, worker_slot,
 };

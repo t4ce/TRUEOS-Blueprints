@@ -15,6 +15,7 @@ members = [
     "apps/file-system",
     "apps/fileexplorer",
     "probes/framework_stack",
+    "apps/grid",
     "apps/gridpaper",
     "apps/gboi",
     "apps/hello_world",

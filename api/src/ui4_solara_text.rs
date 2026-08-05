@@ -65,6 +65,88 @@ pub struct CursorSource {
     pub hid_kind: u32,
 }
 
+/// Pointer button bits shared with UI4's input broker.
+pub const POINTER_BUTTON_PRIMARY: u32 = 1 << 0;
+pub const POINTER_BUTTON_SECONDARY: u32 = 1 << 1;
+pub const POINTER_BUTTON_MIDDLE: u32 = 1 << 2;
+
+/// Longest label UI4 accepts for one context-menu row.
+pub const MAX_MENU_LABEL_BYTES: usize = 64;
+/// Most rows one invocation may carry.
+pub const MAX_MENU_ENTRIES: usize = 16;
+
+/// One context-menu row and the handler to run when it is chosen.
+///
+/// The handler is an ordinary function pointer over the caller's own state, so
+/// a Blueprint registers behaviour per row and never handles an action id: the
+/// ids are this module's private wire detail.
+pub struct MenuEntry<'a, S> {
+    label: &'a str,
+    enabled: bool,
+    on_click: fn(&mut S),
+}
+
+fn menu_noop<S>(_: &mut S) {}
+
+impl<'a, S> MenuEntry<'a, S> {
+    /// A selectable row which runs `on_click` when chosen.
+    pub const fn new(label: &'a str, on_click: fn(&mut S)) -> Self {
+        Self {
+            label,
+            enabled: true,
+            on_click,
+        }
+    }
+
+    /// A greyed row. UI4 shows the label but reports no selection for it.
+    pub const fn disabled(label: &'a str) -> Self {
+        Self {
+            label,
+            enabled: false,
+            on_click: menu_noop::<S>,
+        }
+    }
+
+    pub const fn label(&self) -> &'a str {
+        self.label
+    }
+
+    pub const fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+}
+
+/// Why a context-menu invocation ended.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum MenuCloseReason {
+    Selected,
+    Dismissed,
+    Replaced,
+    OwnerReleased,
+    WindowClosed,
+}
+
+impl MenuCloseReason {
+    const fn from_raw(raw: u32) -> Self {
+        match raw {
+            0 => Self::Selected,
+            2 => Self::Replaced,
+            3 => Self::OwnerReleased,
+            4 => Self::WindowClosed,
+            _ => Self::Dismissed,
+        }
+    }
+}
+
+/// The worker lane this Blueprint was placed on.
+///
+/// The hypervisor gives every live Blueprint VM its own reserved lane, so this
+/// is a stable, distinct small integer per running instance — enough for an
+/// instance to place itself without being told who it is at the call site.
+pub fn worker_slot() -> u32 {
+    unsafe { v::bp_abi::trueos_cabi_wls_current_slot() }
+}
+
 /// Return the physical UI4/cursor output extent in pixels.
 pub fn output_dimensions() -> Result<(u32, u32), Error> {
     let packed = unsafe { v::bp_abi::trueos_cabi_ui4_scene_output_dimensions() };
@@ -434,6 +516,82 @@ impl Frame {
 
     pub fn begin(&mut self, clear_rgba: u32) -> Result<(), Error> {
         status(unsafe { v::bp_abi::trueos_cabi_ui4_solara_frame_begin(self.window_id, clear_rgba) })
+    }
+
+    /// Give this frame a standing context menu, replacing any previous one.
+    ///
+    /// The frame owns the menu over its own pixels: UI4 raises it when a
+    /// secondary click lands on this window, so the app never watches for the
+    /// click itself. A window which registers nothing leaves that gesture to
+    /// the kernel's desktop menu. UI4 owns rendering, hit testing, and
+    /// teardown.
+    ///
+    /// Poll [`Frame::pump_context_menu`] with the same slice to run handlers.
+    /// See [`Frame::clear_context_menu`] to give the gesture back.
+    pub fn register_context_menu<S>(&mut self, entries: &[MenuEntry<'_, S>]) -> Result<(), Error> {
+        if entries.is_empty() || entries.len() > MAX_MENU_ENTRIES {
+            return Err(Error::Invalid);
+        }
+        let mut raw = Vec::with_capacity(entries.len());
+        for (index, entry) in entries.iter().enumerate() {
+            if entry.label.is_empty() || entry.label.len() > MAX_MENU_LABEL_BYTES {
+                return Err(Error::Invalid);
+            }
+            raw.push(v::bp_abi::TrueosUi4ContextMenuEntry {
+                label_ptr: entry.label.as_ptr(),
+                label_len: entry.label.len(),
+                // Slice position is the wire identity, so a handler is found
+                // again without the caller ever naming an id.
+                action_id: index as u32 + 1,
+                enabled: u32::from(entry.enabled),
+            });
+        }
+        status(unsafe {
+            v::bp_abi::trueos_cabi_ui4_context_menu_register(
+                self.window_id,
+                raw.as_ptr(),
+                raw.len(),
+            )
+        })
+    }
+
+    /// Drop this frame's standing menu. Secondary clicks over this window fall
+    /// back to the kernel's desktop menu.
+    pub fn clear_context_menu(&mut self) -> Result<(), Error> {
+        status(unsafe {
+            v::bp_abi::trueos_cabi_ui4_context_menu_register(self.window_id, core::ptr::null(), 0)
+        })
+    }
+
+    /// Take one completed context-menu outcome and run the chosen row's
+    /// handler against `state`.
+    ///
+    /// Returns the close reason when an invocation completed this call, or
+    /// `None` while none has. Pass the same `entries` slice used to open the
+    /// menu; a selection outside it runs no handler.
+    pub fn pump_context_menu<S>(
+        &mut self,
+        entries: &[MenuEntry<'_, S>],
+        state: &mut S,
+    ) -> Result<Option<MenuCloseReason>, Error> {
+        let mut event = v::bp_abi::TrueosUi4ContextMenuEvent::default();
+        let taken = unsafe {
+            v::bp_abi::trueos_cabi_ui4_context_menu_event_take(self.window_id, &mut event)
+        };
+        if taken == 1 {
+            return Ok(None);
+        }
+        status(taken)?;
+        if event.selected != 0
+            && let Some(entry) = event
+                .action_id
+                .checked_sub(1)
+                .and_then(|index| entries.get(index as usize))
+            && entry.enabled
+        {
+            (entry.on_click)(state);
+        }
+        Ok(Some(MenuCloseReason::from_raw(event.reason)))
     }
 
     /// Take the next selected-frame pointer event. The click which selected
