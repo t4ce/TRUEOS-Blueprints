@@ -130,6 +130,8 @@ pub mod ui4_solara_text;
 
 pub mod ui4_scene;
 
+pub mod image_source;
+
 pub mod replication;
 
 #[cfg(feature = "lifecycle-net")]

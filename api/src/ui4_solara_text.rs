@@ -777,6 +777,16 @@ impl Frame {
         status(unsafe { v::bp_abi::trueos_cabi_ui4_scene_frame_set_position(self.window_id, x, y) })
     }
 
+    /// Exclude this frame from UI4 cursor selection and pointer hit testing.
+    pub fn set_hit_testable(&mut self, enabled: bool) -> Result<(), Error> {
+        status(unsafe {
+            v::bp_abi::trueos_cabi_ui4_scene_frame_set_hit_testable(
+                self.window_id,
+                enabled as u32,
+            )
+        })
+    }
+
     /// Compatibility shorthand for a frame-wide [`CursorIcon::AppOwned`].
     pub fn set_custom_cursor(&mut self, enabled: bool) -> Result<(), Error> {
         status(unsafe {

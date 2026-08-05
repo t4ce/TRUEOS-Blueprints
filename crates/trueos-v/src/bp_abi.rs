@@ -227,6 +227,15 @@ pub struct TrueosUi4KeyboardState {
     pub key_down_bits: [u32; 8],
 }
 
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+pub struct TrueosImageSourceInfo {
+    pub format: u32,
+    pub width: u32,
+    pub height: u32,
+    pub byte_len: u32,
+}
+
 pub const UI4_INPUT_ROUTE_SELECTED_FOR_WINDOW: u32 = 1 << 0;
 pub const UI4_INPUT_ROUTE_APP_FOCUS: u32 = 1 << 1;
 pub const UI4_INPUT_ROUTE_VCURSOR: u32 = 1 << 2;
@@ -465,6 +474,18 @@ unsafe extern "C" {
         height: u32,
         target_hz: u32,
     ) -> u32;
+    pub fn trueos_cabi_image_source_info(
+        name_ptr: *const u8,
+        name_len: usize,
+        out: *mut TrueosImageSourceInfo,
+    ) -> i32;
+    pub fn trueos_cabi_image_source_read(
+        name_ptr: *const u8,
+        name_len: usize,
+        offset: usize,
+        out_ptr: *mut u8,
+        out_cap: usize,
+    ) -> isize;
     pub fn trueos_cabi_ui4_solara_frame_begin(window_id: u32, clear_rgba: u32) -> i32;
     pub fn trueos_cabi_ui4_scene_pan_event_take(window_id: u32, out: *mut TrueosUi4PanEvent)
     -> i32;
@@ -520,6 +541,7 @@ unsafe extern "C" {
     pub fn trueos_cabi_ui4_solara_frame_close(window_id: u32) -> i32;
     pub fn trueos_cabi_ui4_solara_frame_close_requested(window_id: u32, flags: u32) -> i32;
     pub fn trueos_cabi_ui4_scene_frame_set_position(window_id: u32, x: i32, y: i32) -> i32;
+    pub fn trueos_cabi_ui4_scene_frame_set_hit_testable(window_id: u32, enabled: u32) -> i32;
     pub fn trueos_cabi_ui4_scene_set_custom_cursor(window_id: u32, enabled: u32) -> i32;
     pub fn trueos_cabi_ui4_scene_set_cursor_icon(
         window_id: u32,
