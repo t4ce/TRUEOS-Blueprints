@@ -756,57 +756,6 @@ mod ui3_core {
         }
 
         #[inline]
-        pub fn upload_texture_rgba_image_now(
-            tex_id: u32,
-            width: u32,
-            height: u32,
-            rgba: &[u8],
-        ) -> bool {
-            unsafe {
-                super::trueos_cabi_gfx_upload_texture_rgba_image(
-                    tex_id,
-                    width,
-                    height,
-                    rgba.as_ptr(),
-                    rgba.len(),
-                ) == 0
-            }
-        }
-
-        #[inline]
-        pub fn upload_skybox_rgb565_now(
-            skybox_id: u32,
-            width: u32,
-            height: u32,
-            rgb565: &[u8],
-        ) -> bool {
-            unsafe {
-                super::trueos_cabi_gfx_upload_skybox_rgb565(
-                    skybox_id,
-                    width,
-                    height,
-                    rgb565.as_ptr(),
-                    rgb565.len(),
-                ) == 0
-            }
-        }
-
-        #[inline]
-        pub fn texture_status(tex_id: u32) -> i32 {
-            unsafe { super::trueos_cabi_gfx_texture_status(tex_id) }
-        }
-
-        #[inline]
-        pub fn texture_dimensions(tex_id: u32) -> Option<(u32, u32)> {
-            let mut width = 0u32;
-            let mut height = 0u32;
-            let rc = unsafe {
-                super::trueos_cabi_gfx_texture_dimensions(tex_id, &mut width, &mut height)
-            };
-            (rc == 0).then_some((width, height))
-        }
-
-        #[inline]
         pub fn begin_frame_preserve(clear_rgb: u32) -> i32 {
             let frame_id = super::CURRENT_FRAME_ID.load(Ordering::Relaxed);
             unsafe { super::trueos_cabi_ui3_frame_begin(frame_id, clear_rgb, 1, 1) }
@@ -909,26 +858,6 @@ mod ui3_core {
     }
 
     unsafe extern "C" {
-        fn trueos_cabi_gfx_texture_dimensions(
-            tex_id: u32,
-            out_width: *mut u32,
-            out_height: *mut u32,
-        ) -> i32;
-        fn trueos_cabi_gfx_texture_status(tex_id: u32) -> i32;
-        fn trueos_cabi_gfx_upload_texture_rgba_image(
-            tex_id: u32,
-            width: u32,
-            height: u32,
-            data_ptr: *const u8,
-            data_len: usize,
-        ) -> i32;
-        fn trueos_cabi_gfx_upload_skybox_rgb565(
-            skybox_id: u32,
-            width: u32,
-            height: u32,
-            data_ptr: *const u8,
-            data_len: usize,
-        ) -> i32;
         fn trueos_cabi_ui3_frame_create(
             x: i32,
             y: i32,

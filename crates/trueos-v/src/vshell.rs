@@ -256,14 +256,6 @@ pub fn error(text: &str) -> usize {
 }
 
 #[inline]
-pub fn shell1_submit_input(bytes: &[u8]) -> usize {
-    if bytes.is_empty() {
-        return 0;
-    }
-    unsafe { vcabi::trueos_cabi_shell1_submit_input(bytes.as_ptr(), bytes.len()) }
-}
-
-#[inline]
 pub fn write(bytes: &[u8]) -> usize {
     if bytes.is_empty() {
         return 0;
@@ -585,51 +577,4 @@ pub fn konsole_set_cursor(row: u32, col: u32, visible: bool) -> i32 {
 #[inline]
 pub fn konsole_end_frame() -> i32 {
     unsafe { vcabi::trueos_cabi_konsole_end_frame() }
-}
-
-#[inline]
-pub fn shell_command_registry_json() -> Option<String> {
-    let len = unsafe { vcabi::trueos_cabi_shell_command_registry_json(core::ptr::null_mut(), 0) };
-    if len <= 0 {
-        return None;
-    }
-
-    let mut bytes = vec![0u8; len as usize];
-    let got =
-        unsafe { vcabi::trueos_cabi_shell_command_registry_json(bytes.as_mut_ptr(), bytes.len()) };
-    if got <= 0 {
-        return None;
-    }
-    bytes.truncate(got as usize);
-    String::from_utf8(bytes).ok()
-}
-
-#[inline]
-pub fn shell1_history_total_lines() -> usize {
-    unsafe { vcabi::trueos_cabi_shell_history_lines_all() }
-}
-
-#[inline]
-pub fn shell1_history_text_since(start_line: usize, max_lines: usize) -> Option<String> {
-    let len = unsafe {
-        vcabi::trueos_cabi_shell_history_lines(start_line, max_lines, core::ptr::null_mut(), 0)
-    };
-    if len <= 0 {
-        return None;
-    }
-
-    let mut bytes = vec![0u8; len as usize];
-    let got = unsafe {
-        vcabi::trueos_cabi_shell_history_lines(
-            start_line,
-            max_lines,
-            bytes.as_mut_ptr(),
-            bytes.len(),
-        )
-    };
-    if got <= 0 {
-        return None;
-    }
-    bytes.truncate(got as usize);
-    String::from_utf8(bytes).ok()
 }
