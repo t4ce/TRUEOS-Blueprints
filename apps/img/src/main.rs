@@ -46,14 +46,29 @@ struct View {
 }
 
 impl View {
-    fn new(viewport_width: u32, viewport_height: u32, image_width: u32, image_height: u32) -> Self {
+    fn new(
+        viewport_width: u32,
+        viewport_height: u32,
+        image_width: u32,
+        image_height: u32,
+        alignment: Alignment,
+    ) -> Self {
+        let overflow_x = image_width.saturating_sub(viewport_width) as f32;
+        let overflow_y = image_height.saturating_sub(viewport_height) as f32;
+        let (offset_x, offset_y) = match alignment {
+            Alignment::Center => (-overflow_x * 0.5, -overflow_y * 0.5),
+            Alignment::TopLeft => (0.0, 0.0),
+            Alignment::TopRight => (-overflow_x, 0.0),
+            Alignment::BottomLeft => (0.0, -overflow_y),
+            Alignment::BottomRight => (-overflow_x, -overflow_y),
+        };
         let mut view = Self {
             viewport_width,
             viewport_height,
             image_width,
             image_height,
-            offset_x: 0.0,
-            offset_y: 0.0,
+            offset_x,
+            offset_y,
         };
         view.clamp_offsets();
         view
@@ -175,7 +190,13 @@ fn run_line(line: &str, frames: &mut Vec<OpenFrame>) {
         logl::log(level::ERROR, format_args!("img: hit-test source={path} error={error:?}"));
         return;
     }
-    let view = View::new(viewport_width, viewport_height, image.width, image.height);
+    let view = View::new(
+        viewport_width,
+        viewport_height,
+        image.width,
+        image.height,
+        alignment,
+    );
     if let Err(error) = present(&mut frame, view, &image) {
         logl::log(level::ERROR, format_args!("img: present source={path} error={error:?}"));
         return;
