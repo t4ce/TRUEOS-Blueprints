@@ -17,4 +17,4 @@ test = false
 bench = false
 
 [dependencies]
-trueos = { workspace = true, features = ["ui4-scene"] }
+trueos = { workspace = true, features = ["gridpaper"] }
