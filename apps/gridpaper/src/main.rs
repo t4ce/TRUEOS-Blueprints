@@ -1,28 +1,30 @@
-// trueos-blueprint: features=["gridpaper"]
+// trueos-blueprint: features=["ui4-scene"]
 #![no_std]
 
-use gridpaper::{
-    AnimationIteration, AnimationTiming, COLOR_KEYFRAME_CAPACITY, Cell, CellStyle, Color,
-    ColorAnimation, ColorChannels, ColorKeyframe, FontInstanceProgram, FontStyle, GridPaper,
-    GridPaperConfig, PublishMode, Rgba8, SnapshotCadence, TrigAnimation,
-};
+extern crate alloc;
+
+use alloc::vec::Vec;
+use gridpaper::{Cell, CellStyle, Color, GridPaper, GridPaperConfig, PublishMode, SnapshotCadence};
 use trueos::{
     clock, env,
     logl::{self, level},
-    platform, print2d, replication, vshell,
+    replication,
+    ui4_scene::{
+        CloseRequest, Damage, Error as Ui4Error, Font, Frame, SceneTextRow, output_dimensions, rgba,
+    },
+    vshell, vsys,
 };
 
-const TRACKED_PRINT_JOBS: usize = 8;
-const PRINT_STATUS_INTERVAL_MS: u64 = 250;
 const CHECKPOINT_VERSION: u64 = 1;
+const FRAME_MARGIN: u32 = 40;
+const FRAME_CASCADE_PIXELS: u32 = 56;
+const FRAME_CASCADE_STEPS: u32 = 4;
+const FRAME_PADDING: f32 = 20.0;
+const CELL_PIXELS: f32 = 18.0;
+const PAPER_COLOR: u32 = rgba(248, 250, 252, 255);
+const TEXT_COLOR_COUNT: usize = 17;
 
-#[derive(Clone, Copy)]
-struct TrackedPrintJob {
-    id: print2d::JobId,
-    state: print2d::JobState,
-}
-
-const ACTIVE_TEXT_COLORS: [Color; gridpaper::TEXT_COLOR_ANIMATION_SLOTS] = [
+const ACTIVE_TEXT_COLORS: [Color; TEXT_COLOR_COUNT] = [
     Color::Default,
     Color::Black,
     Color::Red,
@@ -41,15 +43,8 @@ const ACTIVE_TEXT_COLORS: [Color; gridpaper::TEXT_COLOR_ANIMATION_SLOTS] = [
     Color::BrightCyan,
     Color::BrightWhite,
 ];
-const FONT_INSTANCE_DEMO_COLORS: [Color; 5] = [
-    Color::BrightRed,
-    Color::BrightYellow,
-    Color::BrightGreen,
-    Color::BrightCyan,
-    Color::BrightMagenta,
-];
 
-const UNICODE_WAVES: [[&str; gridpaper::TEXT_COLOR_ANIMATION_SLOTS]; 3] = [
+const UNICODE_WAVES: [[&str; TEXT_COLOR_COUNT]; 3] = [
     [
         "α", "β", "γ", "δ", "λ", "π", "Σ", "Ω", "∞", "∫", "√", "≈", "≠", "≤", "≥", "±", "∂",
     ],
@@ -66,21 +61,22 @@ const ASCII_SPECIMEN_ROWS: [(usize, usize); 3] = [(14, 17), (31, 34), (48, 51)];
 const ASCII_SPECIMEN_STYLES: [CellStyle; ASCII_SPECIMEN_ROWS.len()] =
     [CellStyle::NONE, CellStyle::BOLD, CellStyle::ITALIC];
 const ASCII_SPECIMEN_COLOR_PHASES: [usize; ASCII_SPECIMEN_ROWS.len()] = [0, 5, 10];
-
 const WAVE_BASE_ROWS: [usize; UNICODE_WAVES.len()] = [5, 22, 39];
-const WAVE_ROW_OFFSETS: [usize; gridpaper::TEXT_COLOR_ANIMATION_SLOTS] =
+const WAVE_ROW_OFFSETS: [usize; TEXT_COLOR_COUNT] =
     [0, 1, 3, 5, 6, 5, 3, 1, 0, 1, 3, 5, 6, 5, 3, 1, 0];
-const RAINBOW_KEYFRAME_OFFSETS: [u16; COLOR_KEYFRAME_CAPACITY] =
-    [0, 143, 286, 429, 571, 714, 857, 1_000];
-const RAINBOW_COLORS: [Rgba8; COLOR_KEYFRAME_CAPACITY - 1] = [
-    Rgba8::new(255, 72, 96, 255),
-    Rgba8::new(255, 142, 56, 224),
-    Rgba8::new(255, 220, 72, 255),
-    Rgba8::new(72, 224, 112, 224),
-    Rgba8::new(64, 216, 232, 255),
-    Rgba8::new(72, 112, 255, 224),
-    Rgba8::new(224, 72, 240, 255),
-];
+
+#[derive(Clone, Copy)]
+struct GridSize {
+    columns: usize,
+    rows: usize,
+}
+
+impl GridSize {
+    const FULL: Self = Self {
+        columns: gridpaper::COLUMNS,
+        rows: gridpaper::ROWS,
+    };
+}
 
 fn main() {
     let grid_size = match requested_grid_size() {
@@ -100,55 +96,84 @@ fn main() {
         initial_time_ms: start_ms,
     };
     let mut page = GridPaper::new(config);
-    page.set_scale_percent(100);
-    install_full_rainbow_text_animations(&mut page);
     initialize_unicode_demo(&mut page, start_ms);
-    let mut submitted_animation_generation = u64::MAX;
-    submit_to_kernel(&page, grid_size, &mut submitted_animation_generation);
+
+    let mut frame = match open_frame(grid_size) {
+        Ok(frame) => frame,
+        Err(error) => {
+            logl::log(
+                level::ERROR,
+                format_args!("gridpaper: UI4 frame open failed error={error:?}"),
+            );
+            return;
+        }
+    };
+    if let Err(error) = present_page(&mut frame, &page, grid_size) {
+        logl::log(
+            level::ERROR,
+            format_args!("gridpaper: initial UI4 publish failed error={error:?}"),
+        );
+        return;
+    }
+
+    logl::log(
+        level::INFO,
+        format_args!(
+            "gridpaper: direct UI4 frame submitted window={} grid={}x{} font=NotoSansSc animations=ignored renderer=blueprint-font-canvas",
+            frame.window_id(),
+            grid_size.columns,
+            grid_size.rows,
+        ),
+    );
 
     let mut input = [0_u8; 64];
-    let mut print_jobs = [None; TRACKED_PRINT_JOBS];
-    let mut next_print_status_ms = start_ms;
     loop {
         if let Some(prepare) = replication::poll_prepare_pause() {
-            prepare_pause(
-                prepare,
-                &mut page,
-                grid_size,
-                &mut submitted_animation_generation,
-                &mut print_jobs,
-                &mut next_print_status_ms,
-            );
+            if let Err(error) = recreate_after_pause(prepare, &mut frame, &page, grid_size) {
+                logl::log(
+                    level::WARN,
+                    format_args!("gridpaper: replication UI4 recreate failed error={error:?}"),
+                );
+            }
             continue;
         }
-        drain_print_screen_requests(&mut print_jobs);
-        let now_ms = clock::monotonic_millis();
-        if now_ms >= next_print_status_ms {
-            poll_print_jobs(&mut print_jobs);
-            next_print_status_ms = now_ms.saturating_add(PRINT_STATUS_INTERVAL_MS);
+
+        if frame.take_first_presentation().unwrap_or(false) {
+            logl::log(
+                level::INFO,
+                format_args!(
+                    "gridpaper: direct UI4 frame visible window={}",
+                    frame.window_id()
+                ),
+            );
+        }
+        if let Err(error) = drain_ui4_pointer_input(&mut frame) {
+            logl::log(
+                level::WARN,
+                format_args!("gridpaper: UI4 pointer drain failed error={error:?}"),
+            );
         }
 
         let read = vshell::read(&mut input);
         if read == 0 {
-            platform::poll_once();
-            platform::sleep_ms(16);
+            vsys::poll_once();
+            vsys::sleep_ms(16);
             continue;
         }
         let command = trim_ascii(&input[..read]);
-        match command {
-            b"quit" => break,
-            b"snapshot" => {
-                let now_ms = clock::monotonic_millis();
-                let _ = page.publish(now_ms);
-                submit_to_kernel(&page, grid_size, &mut submitted_animation_generation);
+        let update = match command {
+            b"quit" => {
+                let _ = frame.close(CloseRequest::default());
+                return;
             }
+            b"snapshot" => true,
             b"clear" => {
                 let now_ms = clock::monotonic_millis();
                 let mut edit = page.edit(now_ms);
                 edit.raw_mut().fill(0);
                 let _ = edit.finish();
                 let _ = page.publish(now_ms);
-                submit_to_kernel(&page, grid_size, &mut submitted_animation_generation);
+                true
             }
             bytes => match core::str::from_utf8(bytes) {
                 Ok(text) => match Cell::new(text, Color::BrightBlue, Color::White, CellStyle::BOLD)
@@ -159,308 +184,261 @@ fn main() {
                         let _ = edit.set_cell(0, 0, cell);
                         let _ = edit.finish();
                         let _ = page.publish(now_ms);
-                        submit_to_kernel(&page, grid_size, &mut submitted_animation_generation);
+                        true
                     }
                     Err(error) => {
                         logl::log(level::WARN, format_args!("gridpaper: {error}"));
+                        false
                     }
                 },
-                Err(_) => logl::log(level::WARN, format_args!("gridpaper: invalid UTF-8")),
+                Err(_) => {
+                    logl::log(level::WARN, format_args!("gridpaper: invalid UTF-8"));
+                    false
+                }
             },
+        };
+        if update && let Err(error) = present_page(&mut frame, &page, grid_size) {
+            logl::log(
+                level::WARN,
+                format_args!("gridpaper: direct UI4 publish failed error={error:?}"),
+            );
         }
-    }
-    if let Err(error) = trueos::gridpaper::close() {
-        logl::log(
-            level::WARN,
-            format_args!("gridpaper: kernel close failed error={error:?}"),
-        );
     }
 }
 
-fn prepare_pause(
+fn recreate_after_pause(
     prepare: replication::PreparePause,
-    page: &mut GridPaper,
-    grid_size: trueos::gridpaper::GridSize,
-    submitted_animation_generation: &mut u64,
-    print_jobs: &mut [Option<TrackedPrintJob>; TRACKED_PRINT_JOBS],
-    next_print_status_ms: &mut u64,
-) {
-    if let Err(error) = checkpoint_and_release_kernel_page(page) {
-        logl::log(
-            level::WARN,
-            format_args!(
-                "gridpaper: PreparePause operation={} page checkpoint/release failed error={error:?}; not Ready",
-                prepare.operation()
-            ),
-        );
-        return;
-    }
-
-    // Print jobs are host-owned work, not cloneable Blueprint capabilities.
-    // Submitted jobs continue independently; resumed instances start tracking
-    // only jobs they submit themselves.
-    print_jobs.fill(None);
+    frame: &mut Frame,
+    page: &GridPaper,
+    grid_size: GridSize,
+) -> Result<(), Ui4Error> {
+    let replacement = open_frame(grid_size)?;
+    let old_frame = core::mem::replace(frame, replacement);
+    let _ = old_frame.close(CloseRequest::default());
+    present_page(frame, page, grid_size)?;
+    let resume = replication::ready(prepare, CHECKPOINT_VERSION);
     logl::log(
         level::INFO,
         format_args!(
-            "gridpaper: PreparePause operation={} reason={:?}; page checkpointed, UI4 frame and scene release committed, Ready",
+            "gridpaper: PreparePause operation={} reason={:?}; direct UI4 frame rebuilt resume={:?}",
             prepare.operation(),
-            prepare.reason
+            prepare.reason,
+            resume,
         ),
     );
-
-    let resume = replication::ready(prepare, CHECKPOINT_VERSION);
-
-    // Checkpoint/release already succeeded even if Ready became stale, so
-    // always rebuild the disposable projection before returning to the loop.
-    *submitted_animation_generation = u64::MAX;
-    submit_to_kernel(page, grid_size, submitted_animation_generation);
-    *next_print_status_ms = clock::monotonic_millis().saturating_add(PRINT_STATUS_INTERVAL_MS);
-
-    match resume {
-        Ok(resume) => logl::log(
-            level::INFO,
-            format_args!(
-                "gridpaper: Resume instance={} lineage={} generation={} clone={}; page and animations resubmitted",
-                resume.instance_guid(),
-                resume.lineage_guid(),
-                resume.generation,
-                resume.is_clone
-            ),
-        ),
-        Err(error) => logl::log(
-            level::WARN,
-            format_args!("gridpaper: Ready rejected error={error:?}; kernel projection restored"),
-        ),
-    }
-}
-
-fn checkpoint_and_release_kernel_page(
-    page: &mut GridPaper,
-) -> Result<(), trueos::gridpaper::Error> {
-    let mut raw = [0u8; gridpaper::PAGE_BYTES];
-    trueos::gridpaper::checkpoint_snapshot(&mut raw)?;
-    if page.snapshot().raw() != &raw {
-        let now_ms = clock::monotonic_millis();
-        {
-            let mut edit = page.edit(now_ms);
-            edit.raw_mut().copy_from_slice(&raw);
-            let _ = edit.finish();
-        }
-        let _ = page.publish(now_ms);
-    }
     Ok(())
 }
 
-fn drain_print_screen_requests(jobs: &mut [Option<TrackedPrintJob>; TRACKED_PRINT_JOBS]) {
-    while let Some(request) = trueos::gridpaper::take_print_request() {
-        match print2d::submit_gridpaper_request(request.token()) {
-            Ok(id) => {
-                remember_print_job(jobs, id);
-                logl::log(
-                    level::INFO,
-                    format_args!(
-                        "gridpaper: print2d job={} state=Queued trigger=PrintScreen",
-                        id.get()
-                    ),
-                );
+fn open_frame(grid_size: GridSize) -> Result<Frame, Ui4Error> {
+    let (output_width, output_height) = output_dimensions().unwrap_or((2_560, 1_440));
+    let natural_width = FRAME_PADDING * 2.0 + grid_size.columns as f32 * CELL_PIXELS;
+    let natural_height = FRAME_PADDING * 2.0 + grid_size.rows as f32 * CELL_PIXELS;
+    let available_width = output_width.saturating_sub(FRAME_MARGIN * 2).max(1) as f32;
+    let available_height = output_height.saturating_sub(FRAME_MARGIN * 2).max(1) as f32;
+    let scale = (available_width / natural_width)
+        .min(available_height / natural_height)
+        .min(1.0);
+    let width = (natural_width * scale).max(1.0) as u32;
+    let height = (natural_height * scale).max(1.0) as u32;
+    let offset = instance_cascade_offset();
+    let x = output_width
+        .saturating_sub(width)
+        .saturating_div(2)
+        .saturating_add(offset)
+        .min(output_width.saturating_sub(width)) as i32;
+    let y = output_height
+        .saturating_sub(height)
+        .saturating_div(2)
+        .saturating_add(offset)
+        .min(output_height.saturating_sub(height)) as i32;
+    Frame::open_immutable(x, y, width, height)
+}
+
+fn instance_cascade_offset() -> u32 {
+    let instance_name = env::var("TRUEOS_APP_INSTANCE_NAME").ok();
+    let instance_index = instance_name
+        .as_deref()
+        .and_then(|name| name.rsplit_once('_'))
+        .and_then(|(_, suffix)| suffix.parse::<u32>().ok())
+        .unwrap_or(0);
+    instance_index % FRAME_CASCADE_STEPS * FRAME_CASCADE_PIXELS
+}
+
+fn drain_ui4_pointer_input(frame: &mut Frame) -> Result<(), Ui4Error> {
+    while frame.take_pointer_event()?.is_some() {}
+    while frame.take_pan_event()?.is_some() {}
+    Ok(())
+}
+
+fn present_page(frame: &mut Frame, page: &GridPaper, grid_size: GridSize) -> Result<(), Ui4Error> {
+    let scale = ((frame.width() as f32 - FRAME_PADDING * 2.0) / grid_size.columns as f32)
+        .min((frame.height() as f32 - FRAME_PADDING * 2.0) / grid_size.rows as f32);
+    let origin_x = (frame.width() as f32 - grid_size.columns as f32 * scale) * 0.5;
+    let origin_y = (frame.height() as f32 - grid_size.rows as f32 * scale) * 0.5;
+    let snapshot = page.snapshot();
+    let mut cells = Vec::with_capacity(grid_size.columns * grid_size.rows);
+    for row in 0..grid_size.rows {
+        for column in 0..grid_size.columns {
+            cells.push(snapshot.cell(column, row).unwrap_or_else(|_| Cell::blank()));
+        }
+    }
+
+    let mut rows_by_color: [Vec<SceneTextRow<'_>>; TEXT_COLOR_COUNT] =
+        core::array::from_fn(|_| Vec::new());
+
+    for row in 0..grid_size.rows {
+        for column in 0..grid_size.columns {
+            let cell = &cells[row * grid_size.columns + column];
+            let x = origin_x + column as f32 * scale;
+            let y = origin_y + row as f32 * scale;
+            let color_index = cell.foreground() as usize;
+            let rows = rows_by_color
+                .get_mut(color_index)
+                .expect("validated Gridpaper foreground color");
+            if !cell.primary().is_empty() {
+                rows.push(SceneTextRow {
+                    text: cell.primary(),
+                    x: x + scale * 0.22,
+                    y: y + scale * 0.08,
+                    font_pixels: scale * 0.72,
+                });
             }
-            Err(print2d::Error::QueueFull) => {
-                // The kernel deliberately leaves this token available; retry
-                // it after the spooler drains one slot.
-                break;
-            }
-            Err(error) => {
-                logl::log(
-                    level::WARN,
-                    format_args!("gridpaper: Print Screen submit failed: {error:?}"),
-                );
-                break;
+            if let Some(upper) = cell.upper() {
+                rows.push(SceneTextRow {
+                    text: upper,
+                    x: x + scale * 0.62,
+                    y,
+                    font_pixels: scale * 0.42,
+                });
             }
         }
     }
-}
 
-fn remember_print_job(
-    jobs: &mut [Option<TrackedPrintJob>; TRACKED_PRINT_JOBS],
-    id: print2d::JobId,
-) {
-    if let Some(slot) = jobs.iter_mut().find(|slot| slot.is_none()) {
-        *slot = Some(TrackedPrintJob {
-            id,
-            state: print2d::JobState::Queued,
-        });
-    } else {
-        logl::log(
-            level::WARN,
-            format_args!("gridpaper: print2d tracking full job={}", id.get()),
-        );
-    }
-}
-
-fn poll_print_jobs(jobs: &mut [Option<TrackedPrintJob>; TRACKED_PRINT_JOBS]) {
-    for slot in jobs {
-        let Some(mut tracked) = *slot else {
+    retry_busy(|| frame.begin(PAPER_COLOR))?;
+    for (color, rows) in ACTIVE_TEXT_COLORS.iter().copied().zip(rows_by_color.iter()) {
+        if rows.is_empty() {
             continue;
-        };
-        match print2d::status(tracked.id) {
-            Ok(state) => {
-                if state != tracked.state {
-                    logl::log(
-                        level::INFO,
-                        format_args!(
-                            "gridpaper: print2d job={} state={state:?}",
-                            tracked.id.get()
-                        ),
-                    );
-                    tracked.state = state;
-                }
-                if state.is_done() {
-                    *slot = None;
-                } else {
-                    *slot = Some(tracked);
-                }
-            }
-            Err(error) => {
-                logl::log(
-                    level::WARN,
-                    format_args!(
-                        "gridpaper: print2d status failed job={} error={error:?}",
-                        tracked.id.get()
-                    ),
-                );
-                *slot = None;
-            }
         }
+        retry_busy(|| {
+            frame.stamp_text_scene(
+                Font::NotoSansSc,
+                (frame.width(), frame.height()),
+                color_rgba(color),
+                rows,
+            )
+        })?;
     }
+    retry_busy(|| frame.publish(Damage::full(frame.width(), frame.height())))
 }
 
-/// Place three sparse Unicode waves and normal/bold/italic ASCII specimens in
-/// one edit. Untouched cells remain empty.
+fn color_rgba(color: Color) -> u32 {
+    let (red, green, blue) = match color {
+        Color::Default => (26, 38, 54),
+        Color::Black => (0, 0, 0),
+        Color::Red => (190, 52, 52),
+        Color::Green => (42, 132, 82),
+        Color::Yellow => (168, 118, 20),
+        Color::Blue => (45, 96, 190),
+        Color::Magenta => (160, 54, 154),
+        Color::Cyan => (20, 130, 146),
+        Color::White => (246, 248, 250),
+        Color::BrightBlack => (94, 108, 124),
+        Color::BrightRed => (232, 69, 69),
+        Color::BrightGreen => (52, 173, 102),
+        Color::BrightYellow => (224, 170, 42),
+        Color::BrightBlue => (78, 130, 238),
+        Color::BrightMagenta => (212, 76, 204),
+        Color::BrightCyan => (44, 188, 207),
+        Color::BrightWhite => (255, 255, 255),
+        Color::Transparent => (0, 0, 0),
+    };
+    rgba(
+        red,
+        green,
+        blue,
+        if color == Color::Transparent { 0 } else { 255 },
+    )
+}
+
 fn initialize_unicode_demo(page: &mut GridPaper, now_ms: u64) {
-    {
-        let mut edit = page.edit(now_ms);
-        edit.raw_mut().fill(0);
-        for (wave_index, glyphs) in UNICODE_WAVES.iter().enumerate() {
-            for (selector, glyph) in glyphs.iter().enumerate() {
-                let column = 2 + selector * 2;
-                let row = WAVE_BASE_ROWS[wave_index] + WAVE_ROW_OFFSETS[selector];
-                let style = match wave_index {
-                    0 => CellStyle::NONE,
-                    1 => CellStyle::BOLD,
-                    _ => match selector % 4 {
-                        0 => CellStyle::UNDERLINE,
-                        1 => CellStyle::STRIKEOUT,
-                        2 => CellStyle::ITALIC,
-                        _ => CellStyle::BOLD.union(CellStyle::UNDERLINE),
-                    },
-                };
-                let cell = Cell::new(
-                    glyph,
-                    ACTIVE_TEXT_COLORS[selector],
-                    Color::Transparent,
-                    style,
-                )
-                .expect("static Unicode demo glyph fits one cell");
-                edit.set_cell(column, row, cell)
-                    .expect("static Unicode demo coordinate is in bounds");
-            }
-        }
-        for (specimen, ((digit_row, letter_row), style)) in ASCII_SPECIMEN_ROWS
-            .iter()
-            .copied()
-            .zip(ASCII_SPECIMEN_STYLES.iter().copied())
-            .enumerate()
-        {
-            let color_phase = ASCII_SPECIMEN_COLOR_PHASES[specimen];
-            for (index, glyph) in ASCII_DIGITS.iter().enumerate() {
-                let cell = Cell::new(
-                    glyph,
-                    ACTIVE_TEXT_COLORS[(index + color_phase) % ACTIVE_TEXT_COLORS.len()],
-                    Color::Transparent,
-                    style,
-                )
-                .expect("static ASCII digit fits one cell");
-                edit.set_cell(9 + index * 2, digit_row, cell)
-                    .expect("static ASCII digit coordinate is in bounds");
-            }
-            for (index, glyph) in ASCII_LETTERS.iter().enumerate() {
-                let cell = Cell::new(
-                    glyph,
-                    ACTIVE_TEXT_COLORS[(index + 10 + color_phase) % ACTIVE_TEXT_COLORS.len()],
-                    Color::Transparent,
-                    style,
-                )
-                .expect("static ASCII letter fits one cell");
-                edit.set_cell(12 + index * 2, letter_row, cell)
-                    .expect("static ASCII letter coordinate is in bounds");
-            }
-        }
-        edit.set_cell(
-            18,
-            11,
-            Cell::with_upper(
-                "x",
-                "²",
-                Color::BrightBlue,
+    let mut edit = page.edit(now_ms);
+    edit.raw_mut().fill(0);
+    for (wave_index, glyphs) in UNICODE_WAVES.iter().enumerate() {
+        for (selector, glyph) in glyphs.iter().enumerate() {
+            let column = 2 + selector * 2;
+            let row = WAVE_BASE_ROWS[wave_index] + WAVE_ROW_OFFSETS[selector];
+            let style = match wave_index {
+                0 => CellStyle::NONE,
+                1 => CellStyle::BOLD,
+                _ => match selector % 4 {
+                    0 => CellStyle::UNDERLINE,
+                    1 => CellStyle::STRIKEOUT,
+                    2 => CellStyle::ITALIC,
+                    _ => CellStyle::BOLD.union(CellStyle::UNDERLINE),
+                },
+            };
+            let cell = Cell::new(
+                glyph,
+                ACTIVE_TEXT_COLORS[selector],
                 Color::Transparent,
-                CellStyle::NONE,
+                style,
             )
-            .expect("static x-squared demo fits one cell"),
-        )
-        .expect("static x-squared demo coordinate is in bounds");
-        let _ = edit.finish();
+            .expect("static Unicode demo glyph fits one cell");
+            edit.set_cell(column, row, cell)
+                .expect("static Unicode demo coordinate is in bounds");
+        }
     }
+    for (specimen, ((digit_row, letter_row), style)) in ASCII_SPECIMEN_ROWS
+        .iter()
+        .copied()
+        .zip(ASCII_SPECIMEN_STYLES.iter().copied())
+        .enumerate()
+    {
+        let color_phase = ASCII_SPECIMEN_COLOR_PHASES[specimen];
+        for (index, glyph) in ASCII_DIGITS.iter().enumerate() {
+            let cell = Cell::new(
+                glyph,
+                ACTIVE_TEXT_COLORS[(index + color_phase) % ACTIVE_TEXT_COLORS.len()],
+                Color::Transparent,
+                style,
+            )
+            .expect("static ASCII digit fits one cell");
+            edit.set_cell(9 + index * 2, digit_row, cell)
+                .expect("static ASCII digit coordinate is in bounds");
+        }
+        for (index, glyph) in ASCII_LETTERS.iter().enumerate() {
+            let cell = Cell::new(
+                glyph,
+                ACTIVE_TEXT_COLORS[(index + 10 + color_phase) % ACTIVE_TEXT_COLORS.len()],
+                Color::Transparent,
+                style,
+            )
+            .expect("static ASCII letter fits one cell");
+            edit.set_cell(12 + index * 2, letter_row, cell)
+                .expect("static ASCII letter coordinate is in bounds");
+        }
+    }
+    edit.set_cell(
+        18,
+        11,
+        Cell::with_upper(
+            "x",
+            "²",
+            Color::BrightBlue,
+            Color::Transparent,
+            CellStyle::NONE,
+        )
+        .expect("static x-squared demo fits one cell"),
+    )
+    .expect("static x-squared demo coordinate is in bounds");
+    let _ = edit.finish();
     let _ = page.publish(now_ms);
 }
 
-/// Exercise five independent persistent instances and the maximum keyframe
-/// capacity. The remaining palette layers use the kernel's identity fast path.
-fn install_full_rainbow_text_animations(page: &mut GridPaper) {
-    for (selector, color) in FONT_INSTANCE_DEMO_COLORS.iter().copied().enumerate() {
-        let phase = selector % RAINBOW_COLORS.len();
-        let mut keyframes = [ColorKeyframe::new(0, Rgba8::TRANSPARENT); COLOR_KEYFRAME_CAPACITY];
-        for (index, keyframe) in keyframes.iter_mut().enumerate() {
-            let stop = if index + 1 == COLOR_KEYFRAME_CAPACITY {
-                phase
-            } else {
-                (index + phase) % RAINBOW_COLORS.len()
-            };
-            *keyframe = ColorKeyframe::new(RAINBOW_KEYFRAME_OFFSETS[index], RAINBOW_COLORS[stop]);
-        }
-        let animation = ColorAnimation::keyframes(
-            &keyframes,
-            ColorChannels::RGBA,
-            7_000,
-            AnimationTiming::Linear,
-            AnimationIteration::Loop,
-        )
-        .expect("static full-capacity rainbow keyframes are valid");
-        let phase_permille = (selector as u16 * 59) % 1_000;
-        let rotation_amplitude = if selector.is_multiple_of(2) {
-            240
-        } else {
-            -240
-        };
-        let motion =
-            TrigAnimation::new(7_000, phase_permille, rotation_amplitude, 45, -100, 15, 10)
-                .expect("bounded selector motion is valid");
-        page.set_font_instance_program(
-            color,
-            Some(FontInstanceProgram::new(
-                Some(animation),
-                FontStyle::IDENTITY,
-                motion,
-            )),
-        )
-        .expect("font-instance selector is an active foreground color");
-    }
-}
-
-fn requested_grid_size() -> Result<trueos::gridpaper::GridSize, &'static str> {
+fn requested_grid_size() -> Result<GridSize, &'static str> {
     let mut args = env::args().skip(1);
     let Some(first) = args.next() else {
-        return Ok(trueos::gridpaper::GridSize::FULL);
+        return Ok(GridSize::FULL);
     };
     let Some((columns, rows)) = first
         .split_once('x')
@@ -478,43 +456,21 @@ fn requested_grid_size() -> Result<trueos::gridpaper::GridSize, &'static str> {
     let rows = rows
         .parse::<usize>()
         .map_err(|_| "gridpaper: grid rows must be a positive integer")?;
-    trueos::gridpaper::GridSize::new(columns, rows)
-        .map_err(|_| "gridpaper: grid size must be within 1x1 and 39x55")
+    if columns == 0 || columns > gridpaper::COLUMNS || rows == 0 || rows > gridpaper::ROWS {
+        return Err("gridpaper: grid size must be within 1x1 and 39x55");
+    }
+    Ok(GridSize { columns, rows })
 }
 
-fn submit_to_kernel(
-    page: &GridPaper,
-    grid_size: trueos::gridpaper::GridSize,
-    submitted_animation_generation: &mut u64,
-) {
-    let snapshot = page.snapshot();
-    let submitted = if grid_size == trueos::gridpaper::GridSize::FULL {
-        trueos::gridpaper::submit_snapshot(
-            snapshot.generation(),
-            snapshot.scale_percent(),
-            snapshot.raw(),
-        )
-    } else {
-        trueos::gridpaper::submit_sized_snapshot(
-            grid_size,
-            snapshot.generation(),
-            snapshot.scale_percent(),
-            snapshot.raw(),
-        )
-    };
-    if let Err(error) = submitted {
-        logl::log(
-            level::WARN,
-            format_args!("gridpaper: kernel snapshot submit failed error={error:?}"),
-        );
-    }
-    if snapshot.animation_generation() != *submitted_animation_generation {
-        match trueos::gridpaper::submit_font_instances(snapshot.font_instance_programs()) {
-            Ok(()) => *submitted_animation_generation = snapshot.animation_generation(),
-            Err(error) => logl::log(
-                level::WARN,
-                format_args!("gridpaper: kernel text animations submit failed error={error:?}"),
-            ),
+fn retry_busy(mut operation: impl FnMut() -> Result<(), Ui4Error>) -> Result<(), Ui4Error> {
+    loop {
+        match operation() {
+            Ok(()) => return Ok(()),
+            Err(Ui4Error::Busy) => {
+                vsys::poll_once();
+                vsys::sleep_ms(1);
+            }
+            Err(error) => return Err(error),
         }
     }
 }
