@@ -42,6 +42,11 @@
       "path": "../solara",
       "optional": true
     },
+    {
+      "name": "yazi",
+      "path": "../RustAVX/yazi",
+      "optional": true
+    },
     "skybox",
     "ssh",
     "swarm",

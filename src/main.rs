@@ -97,6 +97,7 @@ const BLUEPRINT_VENDOR_PATCHES: &[(&str, &str)] = &[
     ("libp2p-quic", "libp2p-quic-0.13.1"),
     ("libp2p-tcp", "libp2p-tcp-0.44.1"),
     ("log", "log-0.4.32"),
+    ("lua-src", "lua-src-550.1.1-trueos"),
     ("matchit", "matchit-0.8.4"),
     ("memchr", "memchr-2.8.2"),
     ("mime", "mime-0.3.17"),
