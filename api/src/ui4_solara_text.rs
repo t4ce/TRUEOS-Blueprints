@@ -780,10 +780,7 @@ impl Frame {
     /// Exclude this frame from UI4 cursor selection and pointer hit testing.
     pub fn set_hit_testable(&mut self, enabled: bool) -> Result<(), Error> {
         status(unsafe {
-            v::bp_abi::trueos_cabi_ui4_scene_frame_set_hit_testable(
-                self.window_id,
-                enabled as u32,
-            )
+            v::bp_abi::trueos_cabi_ui4_scene_frame_set_hit_testable(self.window_id, enabled as u32)
         })
     }
 
@@ -1153,22 +1150,23 @@ impl Frame {
         })
     }
 
-    /// Describe a viewport crop of the retained font canvas. The quad uses
-    /// source-over so transparent canvas pixels preserve the scene below it.
+    /// Describe the available portion of a viewport crop of the retained font
+    /// canvas. If the frame is larger than the remaining canvas, the quad ends
+    /// at the canvas edge and leaves the rest of the frame untouched. The quad
+    /// uses source-over so transparent canvas pixels preserve the scene below
+    /// it.
     pub fn font_canvas_quad(
         &self,
         canvas: (u32, u32),
         origin: (u32, u32),
     ) -> Result<SpriteQuad, Error> {
-        let Some(right) = origin.0.checked_add(self.width) else {
-            return Err(Error::Invalid);
-        };
-        let Some(bottom) = origin.1.checked_add(self.height) else {
-            return Err(Error::Invalid);
-        };
-        if canvas.0 == 0 || canvas.1 == 0 || right > canvas.0 || bottom > canvas.1 {
+        if canvas.0 == 0 || canvas.1 == 0 || origin.0 >= canvas.0 || origin.1 >= canvas.1 {
             return Err(Error::Invalid);
         }
+        let visible_width = self.width.min(canvas.0 - origin.0);
+        let visible_height = self.height.min(canvas.1 - origin.1);
+        let right = origin.0 + visible_width;
+        let bottom = origin.1 + visible_height;
         let u0 = origin.0 as f32 / canvas.0 as f32;
         let v0 = origin.1 as f32 / canvas.1 as f32;
         let u1 = right as f32 / canvas.0 as f32;
@@ -1182,20 +1180,20 @@ impl Frame {
                 v: v0,
             },
             c1: SpriteCorner {
-                x: self.width as f32,
+                x: visible_width as f32,
                 y: 0.0,
                 u: u1,
                 v: v0,
             },
             c2: SpriteCorner {
-                x: self.width as f32,
-                y: self.height as f32,
+                x: visible_width as f32,
+                y: visible_height as f32,
                 u: u1,
                 v: v1,
             },
             c3: SpriteCorner {
                 x: 0.0,
-                y: self.height as f32,
+                y: visible_height as f32,
                 u: u0,
                 v: v1,
             },

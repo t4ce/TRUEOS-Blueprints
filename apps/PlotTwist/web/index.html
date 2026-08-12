@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>PlotTwist</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <main id="app">
+    <section id="connect" class="card connect-card">
+      <p class="eyebrow">TRUEOS BLUEPRINT</p>
+      <h1>Plot<span>Twist</span></h1>
+      <p class="lede">Draw the equation. Bend the arena. Delete their smileys.</p>
+      <label>Nickname<input id="nickname" maxlength="24" autocomplete="nickname" placeholder="Graph Goblin"></label>
+      <fieldset><legend>Choose a face</legend><div id="presets" class="presets"></div></fieldset>
+      <label class="upload">Or upload an image<input id="avatarFile" type="file" accept="image/png,image/jpeg,image/webp"><small>Centered, cropped, and downscaled to 64 × 64.</small></label>
+      <img id="avatarPreview" class="avatar-preview hidden" alt="avatar preview">
+      <button id="connectButton" class="primary">Enter the plotting room</button>
+      <p id="connectError" class="error"></p>
+      <small class="credit">Preset graphics: Twemoji, CC-BY 4.0.</small>
+    </section>
+
+    <section id="browser" class="hidden browser">
+      <header><div><p class="eyebrow">PLOT TWIST</p><h2>Open lobbies</h2></div><button id="createButton" class="primary">Create lobby</button></header>
+      <div id="lobbies" class="lobby-list"></div>
+      <p id="browserError" class="error"></p>
+    </section>
+
+    <section id="room" class="hidden room">
+      <header><div><p class="eyebrow">LOBBY <span id="lobbyId"></span></p><h2 id="lobbyName"></h2></div><div id="phaseBadge" class="badge"></div></header>
+      <div id="players" class="players"></div>
+      <div class="lobby-actions"><button id="readyButton" class="primary">Ready</button><button id="leaveButton">Leave</button></div>
+      <p class="hint">Any change, unready, join, or leave cancels the countdown and resets it.</p>
+      <p id="roomError" class="error"></p>
+    </section>
+
+    <section id="game" class="hidden game">
+      <canvas id="world"></canvas>
+      <div id="labels"></div>
+      <div class="hud top-hud"><strong id="turnLabel">Round 1</strong><span id="timer">1:00</span><span id="cameraHelp">WASD move · QE height · drag to look · click ground to measure</span></div>
+      <aside class="hud social-panel">
+        <div class="panel-head"><strong>Radio</strong><div><button id="pauseButton">Pause</button><button id="endButton" class="danger">End</button></div></div>
+        <div id="chat" class="chat"></div>
+        <form id="chatForm"><input id="chatInput" maxlength="240" placeholder="Message the lobby"><button>Send</button></form>
+      </aside>
+      <aside class="hud plot-panel">
+        <p class="eyebrow">YOUR ONE SHOT</p>
+        <form id="plotForm"><input id="expression" maxlength="160" spellcheck="false" value="y = sin(x / 35) * 120"><button class="primary">Plot</button></form>
+        <p class="syntax">Try <code>y=...</code>, <code>x=...</code>, <code>x²+y²=...</code>, <code>circle(cx,cy,r)</code>, or <code>segment(x1,y1,x2,y2)</code>.</p>
+        <div id="measurements" class="measurements"></div>
+        <p id="gameError" class="error"></p>
+      </aside>
+    </section>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

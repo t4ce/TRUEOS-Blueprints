@@ -10,7 +10,10 @@ use terminal::Terminal;
 use trueos::input::{self, TrueosKeyboardOutputEvent};
 use trueos::logl::{self, level};
 use trueos::ui4_scene::{Damage, Error as UiError, Font, Frame, SceneTextRow, rgba};
-use trueos::vshell::{SHELL2_FRONTEND_READ_DROPPED, Shell2Frontend, Shell2FrontendError};
+use trueos::vshell::{
+    SHELL2_FRONTEND_DIRECT_HANDOFF, SHELL2_FRONTEND_READ_DROPPED, Shell2Frontend,
+    Shell2FrontendError,
+};
 use trueos::vsys;
 
 // The terminal intentionally has no font metrics protocol yet. Shell2 wraps at
@@ -237,6 +240,10 @@ fn drain_shell_output(
         }
         if read.len != 0 {
             terminal.feed(&bytes[..read.len]);
+        }
+        let responses = terminal.take_responses();
+        if read.flags & SHELL2_FRONTEND_DIRECT_HANDOFF != 0 && !responses.is_empty() {
+            submit_input(frontend, responses.as_slice())?;
         }
         if read.len < bytes.len() {
             break;

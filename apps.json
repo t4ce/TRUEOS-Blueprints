@@ -19,10 +19,10 @@
     "flight_controller_sim",
     "prismq",
     "particle",
+    "PlotTwist",
     "shadertoy",
     "shell",
     "rebels-in-the-sky",
-    "txt",
     "qjs",
     "monaco",
     "Frog",
@@ -40,6 +40,11 @@
     {
       "name": "solara",
       "path": "../solara",
+      "optional": true
+    },
+    {
+      "name": "edit",
+      "path": "../edit",
       "optional": true
     },
     {

@@ -18,7 +18,7 @@ mod toolchain;
 use app_catalog::{
     RustcTier, example_required_features, example_specs, manifest_declared_features,
     manifest_has_dependency, package_app_spec, package_app_specs, package_bin_name,
-    package_blueprint_profile, package_blueprint_replicatable,
+    package_blueprint_argv_entry_v1, package_blueprint_profile, package_blueprint_replicatable,
     package_blueprint_rustc_payload_dependencies, package_blueprint_rustc_tier, package_name,
     push_app_or_trueos_feature,
 };
@@ -130,6 +130,7 @@ const BLUEPRINT_VENDOR_PATCHES: &[(&str, &str)] = &[
     ("tower-http", "tower-http-0.6.9"),
     ("tower-layer", "tower-layer-0.3.3"),
     ("tower-service", "tower-service-0.3.3"),
+    ("uzers", "uzers-0.12.2-trueos"),
     ("want", "want-0.3.1"),
 ];
 const TRUEOS_IMAGE_CODEC_VENDOR_PATCHES: &[(&str, &str)] = &[
@@ -311,7 +312,7 @@ fn build_one_target_to(
     } else {
         None
     };
-    if rustc_tier.is_some() {
+    if rustc_tier.is_some() || package_blueprint_argv_entry_v1(manifest_path)? {
         capability_flags |= BLUEPRINT_CAP_ARGV_ENTRY_V1;
     }
     let cargo_profile = if matches!(build_target, BuildTarget::Package) {
@@ -2283,7 +2284,9 @@ fn source_overlay_patches(
     let uses_zune_jpeg = manifest_or_lock_mentions_crate(app_dir, manifest_path, "zune-jpeg")?;
 
     add_blueprint_vendor_patches(app_dir, &mut out);
-    add_trueos_image_codec_vendor_patches(app_dir, &mut out, uses_png, uses_zune_jpeg);
+    if matches!(build_settings.flavor, BuildFlavor::ThinNoStd) {
+        add_trueos_image_codec_vendor_patches(app_dir, &mut out, uses_png, uses_zune_jpeg);
+    }
 
     let libc_path = find_blueprint_vendor_dir(app_dir, TRUEOS_LIBC_VENDOR_DIR).ok_or_else(|| {
         format!(
@@ -2293,7 +2296,51 @@ fn source_overlay_patches(
     out.retain(|patch| patch.name != "libc");
     out.push(CratePatch::new("libc", libc_path));
 
-    if let Some(path) = find_vendor_dir(app_dir, "tokio-1.52.3") {
+    if matches!(build_settings.flavor, BuildFlavor::TokioStd) {
+        let path =
+            find_blueprint_vendor_dir(app_dir, "tokio-1.52.3-trueos-std").ok_or_else(|| {
+                "missing required TokioStd Tokio overlay vendor/tokio-1.52.3-trueos-std".to_string()
+            })?;
+        out.retain(|patch| patch.name != "tokio");
+        out.push(CratePatch::new("tokio", path));
+
+        let mio_path =
+            find_blueprint_vendor_dir(app_dir, "mio-1.2.0-trueos-std").ok_or_else(|| {
+                "missing required TokioStd Mio overlay vendor/mio-1.2.0-trueos-std".to_string()
+            })?;
+        out.retain(|patch| patch.name != "mio");
+        out.push(CratePatch::new("mio", mio_path));
+
+        let socket2_path = find_blueprint_vendor_dir(app_dir, "socket2-0.6.3-trueos-std")
+            .ok_or_else(|| {
+                "missing required TokioStd socket2 overlay vendor/socket2-0.6.3-trueos-std"
+                    .to_string()
+            })?;
+        out.retain(|patch| patch.name != "socket2");
+        out.push(CratePatch::new("socket2", socket2_path));
+
+        let bytes_path =
+            find_blueprint_vendor_dir(app_dir, "bytes-1.11.1-trueos-std").ok_or_else(|| {
+                "missing required TokioStd bytes overlay vendor/bytes-1.11.1-trueos-std".to_string()
+            })?;
+        out.retain(|patch| patch.name != "bytes");
+        out.push(CratePatch::new("bytes", bytes_path));
+
+        let tokio_util_path = find_blueprint_vendor_dir(app_dir, "tokio-util-0.7.18-trueos-std")
+            .ok_or_else(|| {
+                "missing required TokioStd tokio-util overlay vendor/tokio-util-0.7.18-trueos-std"
+                    .to_string()
+            })?;
+        out.retain(|patch| patch.name != "tokio-util");
+        out.push(CratePatch::new("tokio-util", tokio_util_path));
+
+        let russh_path =
+            find_blueprint_vendor_dir(app_dir, "russh-0.62.4-trueos-std").ok_or_else(|| {
+                "missing required TokioStd russh overlay vendor/russh-0.62.4-trueos-std".to_string()
+            })?;
+        out.retain(|patch| patch.name != "russh");
+        out.push(CratePatch::new("russh", russh_path));
+    } else if let Some(path) = find_vendor_dir(app_dir, "tokio-1.52.3") {
         out.retain(|patch| patch.name != "tokio");
         out.push(CratePatch::new("tokio", path));
     }

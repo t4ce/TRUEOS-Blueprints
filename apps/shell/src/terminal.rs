@@ -43,6 +43,7 @@ pub(crate) struct Terminal {
     utf8_buf: [u8; 4],
     utf8_len: usize,
     utf8_expected: usize,
+    responses: Vec<u8>,
     dirty: bool,
 }
 
@@ -68,6 +69,7 @@ impl Terminal {
             utf8_buf: [0; 4],
             utf8_len: 0,
             utf8_expected: 0,
+            responses: Vec::new(),
             dirty: true,
         }
     }
@@ -90,6 +92,13 @@ impl Terminal {
 
     pub(crate) fn take_dirty(&mut self) -> bool {
         core::mem::replace(&mut self.dirty, false)
+    }
+
+    /// Take terminal-generated replies such as device attributes and cursor
+    /// position reports. The frontend sends these back to the current direct
+    /// handoff owner through the same channel as keyboard input.
+    pub(crate) fn take_responses(&mut self) -> Vec<u8> {
+        core::mem::take(&mut self.responses)
     }
 
     /// Return one fixed-width string per screen row, including trailing spaces.
@@ -150,6 +159,7 @@ impl Terminal {
         self.scroll_top = 0;
         self.scroll_bottom = self.rows - 1;
         self.reset_parser();
+        self.responses.clear();
         self.dirty = true;
     }
 
@@ -338,7 +348,20 @@ impl Terminal {
                     self.dirty = true;
                 }
             }
-            // SGR and device-control/reporting sequences do not affect this
+            // Device Status Report: answer a cursor-position query using the
+            // terminal model's one-based coordinates.
+            b'n' if !private && params.first().copied().unwrap_or(0) == 6 => {
+                let response = alloc::format!(
+                    "\x1b[{};{}R",
+                    self.cursor_row.saturating_add(1),
+                    self.cursor_col.saturating_add(1)
+                );
+                self.responses.extend_from_slice(response.as_bytes());
+            }
+            // Primary Device Attributes. VT100-with-advanced-video is a small,
+            // conservative identity understood by terminal applications.
+            b'c' if !private => self.responses.extend_from_slice(b"\x1b[?1;2c"),
+            // SGR and remaining device-control sequences do not affect this
             // glyph-only model.
             b'm' | b'n' | b'c' | b'q' | b'h' | b'l' => {}
             _ => {}
@@ -688,5 +711,14 @@ mod tests {
 
         terminal.reset();
         assert_eq!(rows(&terminal), ["   ", "   ", "   "]);
+    }
+
+    #[test]
+    fn answers_cursor_and_device_attribute_queries() {
+        let mut terminal = Terminal::new(8, 2);
+        terminal.feed("\r…\x1b[6n\x1b[c".as_bytes());
+
+        assert_eq!(terminal.take_responses(), b"\x1b[1;2R\x1b[?1;2c");
+        assert!(terminal.take_responses().is_empty());
     }
 }

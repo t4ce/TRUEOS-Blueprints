@@ -183,6 +183,7 @@ fn package_app_spec_required(app: &RegisteredAppSpec) -> Result<PackageAppSpec, 
 fn virtual_package_app_manifest_path(dir: &Path, app_name: &str) -> PathBuf {
     match app_name {
         "helix" => dir.join("helix-term").join("Cargo.toml"),
+        "edit" => dir.join("crates").join("edit").join("Cargo.toml"),
         "matrix" => dir.join("src").join("main").join("Cargo.toml"),
         "yazi" => dir.join("yazi-fm").join("Cargo.toml"),
         _ => dir.join("src").join("main").join("Cargo.toml"),
@@ -408,6 +409,40 @@ pub(crate) fn package_blueprint_replicatable(manifest_path: &Path) -> Result<boo
     Ok(false)
 }
 
+pub(crate) fn package_blueprint_argv_entry_v1(manifest_path: &Path) -> Result<bool, String> {
+    let cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
+    let mut in_metadata = false;
+    for line in cargo_toml.lines() {
+        let trimmed = line.split('#').next().unwrap_or("").trim();
+        if trimmed.starts_with('[') {
+            in_metadata = trimmed == "[package.metadata.trueos-blueprint]";
+            continue;
+        }
+        if !in_metadata {
+            continue;
+        }
+        let Some((key, value)) = trimmed.split_once('=') else {
+            continue;
+        };
+        if key.trim() != "entry-abi" {
+            continue;
+        }
+        return match toml_string_value(value.trim()).as_deref() {
+            Some("legacy") => Ok(false),
+            Some("argv-v1") => Ok(true),
+            Some(other) => Err(format!(
+                "unsupported trueos-blueprint entry-abi `{other}` in {}; expected legacy or argv-v1",
+                manifest_path.display()
+            )),
+            None => Err(format!(
+                "bad trueos-blueprint entry-abi in {}",
+                manifest_path.display()
+            )),
+        };
+    }
+    Ok(false)
+}
+
 pub(crate) fn manifest_declared_features(manifest_path: &Path) -> Result<Vec<String>, String> {
     let cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
     let mut in_features = false;
@@ -529,6 +564,21 @@ replicatable = true
         assert!(package_blueprint_replicatable(&path).unwrap());
 
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn reads_argv_entry_abi_from_blueprint_metadata() {
+        let path = temporary_manifest("entry-abi", "argv-v1");
+        assert!(package_blueprint_argv_entry_v1(&path).unwrap());
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn rejects_unknown_entry_abi() {
+        let path = temporary_manifest("entry-abi", "argv-v2");
+        let error = package_blueprint_argv_entry_v1(&path).unwrap_err();
+        assert!(error.contains("expected legacy or argv-v1"));
+        fs::remove_file(path).unwrap();
     }
 
     #[test]

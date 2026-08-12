@@ -1,0 +1,28 @@
+[package]
+name = "PlotTwist"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[package.metadata.trueos-blueprint]
+replicatable = true
+
+[lib]
+name = "plot_twist"
+path = "src/lib.rs"
+
+[[bin]]
+name = "PlotTwist"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+
+[target.'cfg(target_os = "trueos")'.dependencies]
+axum = { version = "0.8.9", default-features = false, features = ["http1", "json"] }
+hyper = { workspace = true, features = ["server", "http1"] }
+tower.workspace = true
+trueos = { workspace = true, features = ["lifecycle-net"] }
