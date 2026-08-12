@@ -25,6 +25,7 @@ pub const BUFFER_USAGE_STORAGE: u32 = 1 << 2;
 pub const BUFFER_USAGE_COPY_SRC: u32 = 1 << 3;
 pub const BUFFER_USAGE_COPY_DST: u32 = 1 << 4;
 pub const BUFFER_INFO_FLAG_VVIDEO_MEM: u32 = 1 << 0;
+pub const SURFACE_FORMAT_RGBA8_UNORM_SRGB: u32 = 1;
 const VVIDEO_PAGE_BYTES: usize = 4096;
 
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
@@ -130,6 +131,17 @@ pub struct BufferSlice {
 
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 #[repr(C)]
+pub struct SurfaceInfo {
+    pub surface: u64,
+    pub bytes: u64,
+    pub width: u32,
+    pub height: u32,
+    pub pitch: u32,
+    pub format: u32,
+}
+
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+#[repr(C)]
 pub struct TimelinePoint {
     pub value: u64,
     pub physical_serial: u64,
@@ -151,6 +163,10 @@ pub struct Device(u64);
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(transparent)]
 pub struct Buffer(u64);
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[repr(transparent)]
+pub struct Surface(u64);
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct Queue {
@@ -270,6 +286,27 @@ impl Device {
         })
     }
 
+    pub fn acquire_ui4_surface(self, window_id: u32) -> Result<Ui4Surface, i32> {
+        let mut info = SurfaceInfo::default();
+        rc_result(unsafe {
+            vcabi::trueos_cabi_vgpu_ui4_surface_acquire(self.0, window_id, &mut info)
+        })?;
+        if info.surface == 0
+            || info.width == 0
+            || info.height == 0
+            || info.pitch < info.width.saturating_mul(4)
+            || info.format != SURFACE_FORMAT_RGBA8_UNORM_SRGB
+        {
+            return Err(ERR_IO);
+        }
+        Ok(Ui4Surface {
+            device: self,
+            surface: Surface(info.surface),
+            info,
+            live: true,
+        })
+    }
+
     pub fn buffer_info(self, buffer: Buffer) -> Result<BufferInfo, i32> {
         let mut info = BufferInfo::default();
         rc_result(unsafe { vcabi::trueos_cabi_vgpu_buffer_info(self.0, buffer.0, &mut info) })?;
@@ -315,6 +352,33 @@ impl Device {
         Ok(point)
     }
 
+    /// Submit one complete WebGPU render-pass clear to an imported UI4
+    /// surface. The surface is consumed: successful retirement transfers its
+    /// exact producer release back to UI4, while failure remains fail-closed.
+    pub fn submit_ui4_clear(
+        self,
+        queue: Queue,
+        surface: Ui4Surface,
+        rgba8_srgb: u32,
+    ) -> Result<TimelinePoint, i32> {
+        if queue.device != self || surface.device != self {
+            return Err(ERR_BAD_HANDLE);
+        }
+        let mut surface = surface;
+        let mut point = TimelinePoint::default();
+        rc_result(unsafe {
+            vcabi::trueos_cabi_vgpu_ui4_surface_clear_submit(
+                self.0,
+                queue.handle,
+                surface.surface.0,
+                rgba8_srgb,
+                &mut point,
+            )
+        })?;
+        surface.live = false;
+        Ok(point)
+    }
+
     pub fn timeline(self, queue: Queue) -> Result<TimelineStatus, i32> {
         if queue.device != self {
             return Err(ERR_BAD_HANDLE);
@@ -346,6 +410,47 @@ impl Device {
 impl Buffer {
     pub const fn raw(self) -> u64 {
         self.0
+    }
+}
+
+#[derive(Debug)]
+pub struct Ui4Surface {
+    device: Device,
+    surface: Surface,
+    info: SurfaceInfo,
+    live: bool,
+}
+
+impl Ui4Surface {
+    pub const fn info(&self) -> SurfaceInfo {
+        self.info
+    }
+
+    pub const fn surface(&self) -> Surface {
+        self.surface
+    }
+
+    pub fn discard(mut self) -> Result<(), i32> {
+        let result = rc_result(unsafe {
+            vcabi::trueos_cabi_vgpu_ui4_surface_discard(self.device.0, self.surface.0)
+        });
+        if result.is_ok() {
+            self.live = false;
+        }
+        result
+    }
+}
+
+impl Drop for Ui4Surface {
+    fn drop(&mut self) {
+        if self.live {
+            let rc = unsafe {
+                vcabi::trueos_cabi_vgpu_ui4_surface_discard(self.device.0, self.surface.0)
+            };
+            if rc == 0 {
+                self.live = false;
+            }
+        }
     }
 }
 
@@ -483,6 +588,7 @@ mod tests {
         assert_eq!(core::mem::size_of::<DeviceDiagnostics>(), 32);
         assert_eq!(core::mem::size_of::<BufferInfo>(), 16);
         assert_eq!(core::mem::size_of::<BufferSlice>(), 24);
+        assert_eq!(core::mem::size_of::<SurfaceInfo>(), 32);
         assert_eq!(core::mem::size_of::<TimelinePoint>(), 16);
         assert_eq!(core::mem::size_of::<TimelineStatus>(), 32);
     }

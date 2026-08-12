@@ -1,0 +1,36 @@
+[package]
+name = "heliov"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[package.metadata.trueos-blueprint]
+replicatable = false
+
+[[bin]]
+name = "heliov"
+path = "src/main.rs"
+
+[dependencies]
+# This must remain a real dependency. HelioV is not allowed to replace Helio's
+# scene or renderer with a second TRUEOS-specific implementation.
+helio = { path = "../../../Helio/crates/helio", default-features = false }
+helio-scenedb = { path = "../../../Helio/crates/helio-scenedb", default-features = false }
+libhelio = { path = "../../../Helio/crates/libhelio" }
+trueos = { path = "../../api", features = ["ui4-scene"] }
+# Compile the public custom-backend interface that the TRUEOS adapter must
+# implement. This is the same patched WGPU package Helio consumes.
+wgpu = { path = "../../../Helio/vendor/wgpu/wgpu", default-features = false, features = ["custom", "std", "wgsl"] }
+
+[workspace]
+members = ["."]
+resolver = "2"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("trueos", "zkvm"))'] }
+
+# Helio intentionally carries a patched WGPU 30 tree. SceneDB declares WGPU
+# through crates.io, so an external Blueprint workspace must repeat Helio's
+# patch or Cargo creates two nominally equal but type-incompatible GPU APIs.
+[patch.crates-io]
+wgpu = { path = "../../../Helio/vendor/wgpu/wgpu" }

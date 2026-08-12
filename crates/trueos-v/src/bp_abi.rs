@@ -920,6 +920,19 @@ unsafe extern "C" {
         buffer: u64,
         out_info: *mut crate::vgpu::BufferInfo,
     ) -> i32;
+    pub fn trueos_cabi_vgpu_ui4_surface_acquire(
+        device: u64,
+        window_id: u32,
+        out: *mut crate::vgpu::SurfaceInfo,
+    ) -> i32;
+    pub fn trueos_cabi_vgpu_ui4_surface_discard(device: u64, surface: u64) -> i32;
+    pub fn trueos_cabi_vgpu_ui4_surface_clear_submit(
+        device: u64,
+        queue: u64,
+        surface: u64,
+        rgba8_srgb: u32,
+        out_point: *mut crate::vgpu::TimelinePoint,
+    ) -> i32;
     pub fn trueos_cabi_vgpu_vvideo_create(
         device: u64,
         guest_va: u64,

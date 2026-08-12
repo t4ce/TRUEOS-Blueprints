@@ -2447,8 +2447,61 @@ fn source_overlay_patches(
         ));
     }
 
+    add_manifest_path_patches(manifest_path, &mut out)?;
+
     out.sort_by(|a, b| a.key.cmp(&b.key));
     Ok(out)
+}
+
+/// Preserve explicit local source patches while still routing them through
+/// the Blueprint packer's audited `--config patch.crates-io` mechanism.
+///
+/// Staged manifests deliberately have their patch section stripped. Without
+/// materializing path patches here, an external engine workspace can compile
+/// against one patched crate while a transitive dependency resolves a second,
+/// nominally equal crates.io copy. Rust then treats their public types as
+/// unrelated. Only local path patches are admitted; git/registry replacement
+/// policy remains owned by the packer.
+fn add_manifest_path_patches(
+    manifest_path: &Path,
+    patches: &mut Vec<CratePatch>,
+) -> Result<(), String> {
+    let manifest_dir = manifest_path.parent().unwrap_or(manifest_path);
+    let cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
+    let mut in_patch = false;
+    for line in cargo_toml.lines() {
+        let trimmed = line.split('#').next().unwrap_or("").trim();
+        if trimmed.starts_with('[') {
+            in_patch = trimmed == "[patch.crates-io]";
+            continue;
+        }
+        if !in_patch || trimmed.is_empty() {
+            continue;
+        }
+        let Some((key, dependency_path)) = inline_dependency_name_and_path(line) else {
+            continue;
+        };
+        let dependency_path = PathBuf::from(dependency_path);
+        let resolved = if dependency_path.is_absolute() {
+            dependency_path
+        } else {
+            manifest_dir.join(dependency_path)
+        };
+        let canonical = fs::canonicalize(&resolved).map_err(|error| {
+            format!(
+                "failed to resolve path patch `{key}` at {}: {error}",
+                resolved.display()
+            )
+        })?;
+        let package = package_name(&canonical.join("Cargo.toml"))?;
+        patches.retain(|patch| patch.key != key && patch.name != package);
+        patches.push(if package == key {
+            CratePatch::new(key, canonical)
+        } else {
+            CratePatch::alias(key, package, canonical)
+        });
+    }
+    Ok(())
 }
 
 fn add_blueprint_vendor_patches(app_dir: &Path, patches: &mut Vec<CratePatch>) {
@@ -3402,6 +3455,7 @@ fn staged_manifest_for_overlay(
     })?;
     let staged_manifest = staged_app_dir.join(manifest_relative);
     let nested_workspace_package = manifest_relative.components().count() > 1;
+    canonicalize_staged_manifest_paths_from_original(manifest_path, &staged_manifest)?;
     strip_manifest_patch_section(&staged_manifest)?;
     if !nested_workspace_package {
         materialize_staged_workspace_dependencies(
@@ -3441,6 +3495,116 @@ fn staged_manifest_for_overlay(
     }
 
     Ok(Some(staged_manifest))
+}
+
+/// Staging copies only the application tree. Resolve dependency paths against
+/// the original manifest before that move so sibling engine workspaces remain
+/// the same Cargo package identities instead of accidentally pointing under
+/// `target/trueos-blueprint`.
+fn canonicalize_staged_manifest_paths_from_original(
+    original_manifest: &Path,
+    staged_manifest: &Path,
+) -> Result<(), String> {
+    let original_dir = original_manifest.parent().unwrap_or(original_manifest);
+    let cargo_toml = fs::read_to_string(staged_manifest).map_err(io_string)?;
+    let mut changed = false;
+    let mut out = String::with_capacity(cargo_toml.len());
+    for line in cargo_toml.lines() {
+        let rewritten = inline_dependency_name_and_path(line).and_then(|(dependency, path)| {
+            let path = PathBuf::from(path);
+            if path.is_absolute() {
+                return None;
+            }
+            fs::canonicalize(original_dir.join(path))
+                .ok()
+                .and_then(|canonical| dependency_with_rewritten_path(line, dependency, &canonical))
+        });
+        let output_line = rewritten.as_deref().unwrap_or(line);
+        changed |= output_line != line;
+        out.push_str(output_line);
+        out.push('\n');
+    }
+    if changed {
+        fs::write(staged_manifest, out).map_err(io_string)?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod external_path_overlay_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_TEST_DIR: AtomicU64 = AtomicU64::new(0);
+
+    fn test_dir(name: &str) -> PathBuf {
+        let serial = NEXT_TEST_DIR.fetch_add(1, Ordering::Relaxed);
+        let path = env::temp_dir().join(format!(
+            "trueos-blueprint-{name}-{}-{serial}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&path).expect("create isolated test directory");
+        path
+    }
+
+    #[test]
+    fn app_path_patch_becomes_an_audited_source_overlay() {
+        let root = test_dir("path-patch");
+        let app = root.join("app");
+        let engine = root.join("engine-wgpu");
+        fs::create_dir_all(&app).unwrap();
+        fs::create_dir_all(&engine).unwrap();
+        fs::write(
+            engine.join("Cargo.toml"),
+            "[package]\nname = \"wgpu\"\nversion = \"30.0.0\"\n",
+        )
+        .unwrap();
+        let manifest = app.join("Cargo.toml");
+        fs::write(
+            &manifest,
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[patch.crates-io]\nwgpu = { path = \"../engine-wgpu\" }\n",
+        )
+        .unwrap();
+
+        let mut patches = Vec::new();
+        add_manifest_path_patches(&manifest, &mut patches).unwrap();
+
+        assert_eq!(patches.len(), 1);
+        assert_eq!(patches[0].key, "wgpu");
+        assert_eq!(patches[0].name, "wgpu");
+        assert_eq!(patches[0].path, fs::canonicalize(&engine).unwrap());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn staged_relative_dependency_keeps_its_original_package_identity() {
+        let root = test_dir("staged-path");
+        let app = root.join("app");
+        let engine = root.join("engine");
+        let staged = root.join("staged/Cargo.toml");
+        fs::create_dir_all(&app).unwrap();
+        fs::create_dir_all(&engine).unwrap();
+        fs::create_dir_all(staged.parent().unwrap()).unwrap();
+        fs::write(
+            engine.join("Cargo.toml"),
+            "[package]\nname = \"engine\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        let source = "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\nengine = { path = \"../engine\" }\n";
+        let original = app.join("Cargo.toml");
+        fs::write(&original, source).unwrap();
+        fs::write(&staged, source).unwrap();
+
+        canonicalize_staged_manifest_paths_from_original(&original, &staged).unwrap();
+
+        let rewritten = fs::read_to_string(&staged).unwrap();
+        let canonical = fs::canonicalize(engine).unwrap();
+        assert!(rewritten.contains(&format!(
+            "engine = {{ path = \"{}\" }}",
+            canonical.display()
+        )));
+        fs::remove_dir_all(root).unwrap();
+    }
 }
 
 fn rewrite_staged_source_for_target(
