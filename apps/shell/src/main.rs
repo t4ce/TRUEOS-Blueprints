@@ -6,10 +6,13 @@ mod terminal;
 
 use alloc::vec::Vec;
 
-use terminal::Terminal;
+use terminal::{MouseButton, Terminal};
 use trueos::input::{self, TrueosKeyboardOutputEvent};
 use trueos::logl::{self, level};
-use trueos::ui4_scene::{Damage, Error as UiError, Font, Frame, SceneTextRow, rgba};
+use trueos::ui4_scene::{
+    Damage, Error as UiError, Font, Frame, POINTER_BUTTON_MIDDLE, POINTER_BUTTON_PRIMARY,
+    POINTER_BUTTON_SECONDARY, PointerEvent, SceneTextRow, rgba,
+};
 use trueos::vshell::{
     SHELL2_FRONTEND_DIRECT_HANDOFF, SHELL2_FRONTEND_READ_DROPPED, Shell2Frontend,
     Shell2FrontendError,
@@ -27,7 +30,7 @@ const FRAME_WIDTH: u32 = 1_024;
 const FRAME_HEIGHT: u32 = 576;
 const FRAME_PADDING_PX: u32 = 12;
 const FONT_PIXELS: f32 = 18.0;
-const MONO_GLYPH_ADVANCE_PX: f32 = FONT_PIXELS * 0.5;
+const MONO_GLYPH_ADVANCE_PX: u32 = 9;
 const TERMINAL_ROWS: usize = ((FRAME_HEIGHT - FRAME_PADDING_PX * 2) / ROW_HEIGHT_PX) as usize;
 const TERMINAL_COLS: usize = CHARACTERS_PER_ROW_SOFT_CAP;
 
@@ -92,18 +95,18 @@ impl PendingTextBurst {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum KeyboardInputError {
+enum InputError {
     Ui(UiError),
     Shell(Shell2FrontendError),
 }
 
-impl From<UiError> for KeyboardInputError {
+impl From<UiError> for InputError {
     fn from(error: UiError) -> Self {
         Self::Ui(error)
     }
 }
 
-impl From<Shell2FrontendError> for KeyboardInputError {
+impl From<Shell2FrontendError> for InputError {
     fn from(error: Shell2FrontendError) -> Self {
         Self::Shell(error)
     }
@@ -199,6 +202,14 @@ fn main() {
             return;
         }
 
+        if let Err(error) = drain_pointer_input(&mut frame, &terminal, &frontend) {
+            logl::log(
+                level::ERROR,
+                format_args!("shell: routed pointer input failed: {error:?}"),
+            );
+            return;
+        }
+
         if terminal.take_dirty()
             && let Err(error) = present_terminal(&mut frame, &terminal)
         {
@@ -256,7 +267,7 @@ fn drain_keyboard_input(
     frame: &mut Frame,
     state: &mut KeyboardInputState,
     frontend: &Shell2Frontend,
-) -> Result<(), KeyboardInputError> {
+) -> Result<(), InputError> {
     while let Some(event) = frame.take_keyboard_event()? {
         handle_keyboard_event(state, frontend, event)?;
     }
@@ -267,7 +278,7 @@ fn handle_keyboard_event(
     state: &mut KeyboardInputState,
     frontend: &Shell2Frontend,
     event: TrueosKeyboardOutputEvent,
-) -> Result<(), KeyboardInputError> {
+) -> Result<(), InputError> {
     let burst_member = event.flags & input::KEYBOARD_OUTPUT_FLAG_TEXT_BURST != 0;
     let burst_start = event.flags & input::KEYBOARD_OUTPUT_FLAG_TEXT_BURST_START != 0;
     let burst_end = event.flags & input::KEYBOARD_OUTPUT_FLAG_TEXT_BURST_END != 0;
@@ -333,6 +344,73 @@ fn handle_keyboard_event(
         _ => state.suppressed_text = None,
     }
     Ok(())
+}
+
+fn drain_pointer_input(
+    frame: &mut Frame,
+    terminal: &Terminal,
+    frontend: &Shell2Frontend,
+) -> Result<(), InputError> {
+    while let Some(event) = frame.take_pointer_event()? {
+        let (col, row) = pointer_cell(event.local_x, event.local_y);
+
+        for (mask, button) in mouse_buttons() {
+            if event.buttons_pressed & mask != 0
+                && let Some(sequence) = terminal.mouse_button(button, true, col, row)
+            {
+                submit_input(frontend, sequence.as_slice())?;
+            }
+        }
+        for (mask, button) in mouse_buttons() {
+            if event.buttons_released & mask != 0
+                && let Some(sequence) = terminal.mouse_button(button, false, col, row)
+            {
+                submit_input(frontend, sequence.as_slice())?;
+            }
+        }
+
+        if event.wheel != 0 {
+            let steps = usize::from(event.wheel.unsigned_abs()).min(8);
+            for _ in 0..steps {
+                if let Some(sequence) = terminal.mouse_wheel(event.wheel > 0, col, row) {
+                    submit_input(frontend, sequence.as_slice())?;
+                }
+            }
+        }
+
+        if pointer_event_is_motion(event)
+            && let Some(sequence) = terminal.mouse_motion(held_mouse_button(event), col, row)
+        {
+            submit_input(frontend, sequence.as_slice())?;
+        }
+    }
+    Ok(())
+}
+
+fn pointer_cell(local_x: i32, local_y: i32) -> (usize, usize) {
+    let x = local_x.saturating_sub(FRAME_PADDING_PX as i32).max(0) as u32;
+    let y = local_y.saturating_sub(FRAME_PADDING_PX as i32).max(0) as u32;
+    let col = ((x / MONO_GLYPH_ADVANCE_PX) as usize).min(TERMINAL_COLS - 1);
+    let row = ((y / ROW_HEIGHT_PX) as usize).min(TERMINAL_ROWS - 1);
+    (col, row)
+}
+
+fn mouse_buttons() -> [(u32, MouseButton); 3] {
+    [
+        (POINTER_BUTTON_PRIMARY, MouseButton::Left),
+        (POINTER_BUTTON_MIDDLE, MouseButton::Middle),
+        (POINTER_BUTTON_SECONDARY, MouseButton::Right),
+    ]
+}
+
+fn held_mouse_button(event: PointerEvent) -> Option<MouseButton> {
+    mouse_buttons()
+        .into_iter()
+        .find_map(|(mask, button)| (event.buttons_down & mask != 0).then_some(button))
+}
+
+fn pointer_event_is_motion(event: PointerEvent) -> bool {
+    event.wheel == 0 && event.buttons_pressed == 0 && event.buttons_released == 0
 }
 
 fn handle_text_burst(
@@ -525,7 +603,7 @@ fn present_terminal(frame: &mut Frame, terminal: &Terminal) -> Result<(), UiErro
     let cursor = terminal.cursor();
     let cursor_scene = [SceneTextRow {
         text: "_",
-        x: FRAME_PADDING_PX as f32 + cursor.col as f32 * MONO_GLYPH_ADVANCE_PX,
+        x: FRAME_PADDING_PX as f32 + cursor.col as f32 * MONO_GLYPH_ADVANCE_PX as f32,
         y: FRAME_PADDING_PX as f32 + cursor.row as f32 * ROW_HEIGHT_PX as f32,
         font_pixels: FONT_PIXELS,
     }];

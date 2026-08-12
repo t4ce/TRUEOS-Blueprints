@@ -7,7 +7,7 @@ mod server {
     use alloc::{string::ToString, sync::Arc, vec::Vec};
     use core::{
         pin::Pin,
-        sync::atomic::{AtomicU16, Ordering},
+        sync::atomic::{AtomicU16, AtomicUsize, Ordering},
         task::{Context, Poll},
     };
     use std::net::SocketAddr;
@@ -53,6 +53,7 @@ mod server {
         ("1f920", include_str!("../web/emoji/1f920.svg")),
     ];
     static BOUND_PORT: AtomicU16 = AtomicU16::new(0);
+    static CONNECTION_COUNT: AtomicUsize = AtomicUsize::new(0);
 
     struct HyperIo<T>(T);
 
@@ -273,9 +274,27 @@ mod server {
         let app = router(state);
         loop {
             let (stream, _) = listener.accept().await;
+            let connection = CONNECTION_COUNT.fetch_add(1, Ordering::Relaxed);
+            logl::log(
+                level::INFO,
+                format_args!("PlotTwist: accepted connection={connection}"),
+            );
             let app = app.clone();
             tokio::task::spawn_local(async move {
+                logl::log(
+                    level::INFO,
+                    format_args!("PlotTwist: HTTP task start connection={connection}"),
+                );
                 let service = service_fn(move |request| {
+                    logl::log(
+                        level::INFO,
+                        format_args!(
+                            "PlotTwist: HTTP request connection={} method={} uri={}",
+                            connection,
+                            request.method(),
+                            request.uri()
+                        ),
+                    );
                     let mut app = app.clone();
                     async move { app.call(request).await }
                 });
@@ -285,7 +304,10 @@ mod server {
                 {
                     logl::log(
                         level::WARN,
-                        format_args!("PlotTwist: connection failed {err:?}"),
+                        format_args!(
+                            "PlotTwist: connection={} failed {err:?}",
+                            connection
+                        ),
                     );
                 }
             });

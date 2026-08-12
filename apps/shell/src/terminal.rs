@@ -13,6 +13,23 @@ pub(crate) struct Cursor {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum MouseButton {
+    Left,
+    Middle,
+    Right,
+}
+
+impl MouseButton {
+    const fn protocol_code(self) -> u8 {
+        match self {
+            Self::Left => 0,
+            Self::Middle => 1,
+            Self::Right => 2,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ParserState {
     Ground,
     Escape,
@@ -44,6 +61,11 @@ pub(crate) struct Terminal {
     utf8_len: usize,
     utf8_expected: usize,
     responses: Vec<u8>,
+    mouse_normal_tracking: bool,
+    mouse_button_tracking: bool,
+    mouse_any_tracking: bool,
+    mouse_sgr_encoding: bool,
+    mouse_urxvt_encoding: bool,
     dirty: bool,
 }
 
@@ -70,6 +92,11 @@ impl Terminal {
             utf8_len: 0,
             utf8_expected: 0,
             responses: Vec::new(),
+            mouse_normal_tracking: false,
+            mouse_button_tracking: false,
+            mouse_any_tracking: false,
+            mouse_sgr_encoding: false,
+            mouse_urxvt_encoding: false,
             dirty: true,
         }
     }
@@ -99,6 +126,39 @@ impl Terminal {
     /// handoff owner through the same channel as keyboard input.
     pub(crate) fn take_responses(&mut self) -> Vec<u8> {
         core::mem::take(&mut self.responses)
+    }
+
+    pub(crate) fn mouse_button(
+        &self,
+        button: MouseButton,
+        pressed: bool,
+        col: usize,
+        row: usize,
+    ) -> Option<Vec<u8>> {
+        if !self.mouse_tracking_enabled() {
+            return None;
+        }
+        Some(self.encode_mouse(button.protocol_code(), !pressed, col, row))
+    }
+
+    pub(crate) fn mouse_motion(
+        &self,
+        held_button: Option<MouseButton>,
+        col: usize,
+        row: usize,
+    ) -> Option<Vec<u8>> {
+        if !self.mouse_any_tracking && !(self.mouse_button_tracking && held_button.is_some()) {
+            return None;
+        }
+        let button = held_button.map_or(3, MouseButton::protocol_code);
+        Some(self.encode_mouse(button | 32, false, col, row))
+    }
+
+    pub(crate) fn mouse_wheel(&self, upward: bool, col: usize, row: usize) -> Option<Vec<u8>> {
+        if !self.mouse_tracking_enabled() {
+            return None;
+        }
+        Some(self.encode_mouse(if upward { 64 } else { 65 }, false, col, row))
     }
 
     /// Return one fixed-width string per screen row, including trailing spaces.
@@ -160,6 +220,11 @@ impl Terminal {
         self.scroll_bottom = self.rows - 1;
         self.reset_parser();
         self.responses.clear();
+        self.mouse_normal_tracking = false;
+        self.mouse_button_tracking = false;
+        self.mouse_any_tracking = false;
+        self.mouse_sgr_encoding = false;
+        self.mouse_urxvt_encoding = false;
         self.dirty = true;
     }
 
@@ -341,13 +406,7 @@ impl Terminal {
                 self.saved_row = self.cursor_row;
             }
             b'u' => self.restore_cursor(),
-            b'h' | b'l' if private && params.contains(&25) => {
-                let visible = final_byte == b'h';
-                if self.cursor_visible != visible {
-                    self.cursor_visible = visible;
-                    self.dirty = true;
-                }
-            }
+            b'h' | b'l' if private => self.set_private_modes(&params, final_byte == b'h'),
             // Device Status Report: answer a cursor-position query using the
             // terminal model's one-based coordinates.
             b'n' if !private && params.first().copied().unwrap_or(0) == 6 => {
@@ -372,6 +431,61 @@ impl Terminal {
         self.cursor_row = row.min(self.rows - 1);
         self.cursor_col = col.min(self.cols - 1);
         self.dirty = true;
+    }
+
+    fn set_private_modes(&mut self, params: &[usize], enabled: bool) {
+        for &mode in params {
+            match mode {
+                25 => {
+                    if self.cursor_visible != enabled {
+                        self.cursor_visible = enabled;
+                        self.dirty = true;
+                    }
+                }
+                1000 => self.mouse_normal_tracking = enabled,
+                1002 => self.mouse_button_tracking = enabled,
+                1003 => self.mouse_any_tracking = enabled,
+                1006 => self.mouse_sgr_encoding = enabled,
+                1015 => self.mouse_urxvt_encoding = enabled,
+                _ => {}
+            }
+        }
+    }
+
+    fn mouse_tracking_enabled(&self) -> bool {
+        self.mouse_normal_tracking || self.mouse_button_tracking || self.mouse_any_tracking
+    }
+
+    fn encode_mouse(&self, button_code: u8, release: bool, col: usize, row: usize) -> Vec<u8> {
+        let col = col.min(self.cols - 1).saturating_add(1);
+        let row = row.min(self.rows - 1).saturating_add(1);
+        if self.mouse_sgr_encoding {
+            return alloc::format!(
+                "\x1b[<{};{};{}{}",
+                button_code,
+                col,
+                row,
+                if release { 'm' } else { 'M' }
+            )
+            .into_bytes();
+        }
+        if self.mouse_urxvt_encoding {
+            let code = if release { 3 } else { button_code };
+            return alloc::format!("\x1b[{};{};{}M", code.saturating_add(32), col, row)
+                .into_bytes();
+        }
+
+        // The original X10 encoding has one byte per coordinate. This shell's
+        // fixed grid is comfortably inside its 223-cell representable range.
+        let code = if release { 3 } else { button_code };
+        vec![
+            0x1b,
+            b'[',
+            b'M',
+            code.saturating_add(32),
+            (col as u8).saturating_add(32),
+            (row as u8).saturating_add(32),
+        ]
     }
 
     fn move_cursor_vertical(&mut self, delta: isize) {
@@ -720,5 +834,50 @@ mod tests {
 
         assert_eq!(terminal.take_responses(), b"\x1b[1;2R\x1b[?1;2c");
         assert!(terminal.take_responses().is_empty());
+    }
+
+    #[test]
+    fn reports_sgr_mouse_only_when_the_application_requests_it() {
+        let mut terminal = Terminal::new(100, 27);
+        assert_eq!(terminal.mouse_button(MouseButton::Left, true, 4, 2), None);
+
+        terminal.feed(b"\x1b[?1000h\x1b[?1002h\x1b[?1015h\x1b[?1006h");
+        assert_eq!(
+            terminal.mouse_button(MouseButton::Left, true, 4, 2),
+            Some(b"\x1b[<0;5;3M".to_vec())
+        );
+        assert_eq!(
+            terminal.mouse_button(MouseButton::Right, false, 4, 2),
+            Some(b"\x1b[<2;5;3m".to_vec())
+        );
+        assert_eq!(
+            terminal.mouse_motion(Some(MouseButton::Middle), 4, 2),
+            Some(b"\x1b[<33;5;3M".to_vec())
+        );
+        assert_eq!(
+            terminal.mouse_wheel(true, 4, 2),
+            Some(b"\x1b[<64;5;3M".to_vec())
+        );
+
+        terminal.feed(b"\x1b[?1006l\x1b[?1015l\x1b[?1002l\x1b[?1000l");
+        assert_eq!(terminal.mouse_button(MouseButton::Left, true, 4, 2), None);
+    }
+
+    #[test]
+    fn any_motion_and_button_motion_modes_remain_distinct() {
+        let mut terminal = Terminal::new(8, 4);
+        terminal.feed(b"\x1b[?1002h\x1b[?1006h");
+        assert_eq!(terminal.mouse_motion(None, 1, 1), None);
+        assert!(
+            terminal
+                .mouse_motion(Some(MouseButton::Left), 1, 1)
+                .is_some()
+        );
+
+        terminal.feed(b"\x1b[?1003h");
+        assert_eq!(
+            terminal.mouse_motion(None, 1, 1),
+            Some(b"\x1b[<35;2;2M".to_vec())
+        );
     }
 }
