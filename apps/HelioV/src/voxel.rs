@@ -97,6 +97,51 @@ pub fn mesh_fingerprint(mesh: &MeshUpload) -> u64 {
     hash
 }
 
+/// Project Helio-authored world positions for the first authenticated
+/// position3 shader package. Camera ownership stays in the Blueprint and the
+/// live UI4 aspect is the only platform input. A later camera-uniform package
+/// moves this multiplication into the vertex shader without changing mesh or
+/// draw ownership.
+pub fn project_clip_positions(positions: &[[f32; 3]], aspect: f32) -> Vec<[f32; 3]> {
+    let eye = [13.0, 10.0, 15.0];
+    let target = [3.5, 1.7, 3.5];
+    let forward = normalize(sub(target, eye));
+    let right = normalize(cross(forward, [0.0, 1.0, 0.0]));
+    let up = cross(right, forward);
+    let tan_half_fov = (46.0_f32.to_radians() * 0.5).tan();
+    let aspect = aspect.max(0.01);
+    positions
+        .iter()
+        .map(|position| {
+            let relative = sub(*position, eye);
+            let depth = dot(relative, forward).max(0.1);
+            [
+                dot(relative, right) / (depth * tan_half_fov * aspect),
+                dot(relative, up) / (depth * tan_half_fov),
+                ((depth - 0.1) / (80.0 - 0.1)).clamp(0.0, 1.0),
+            ]
+        })
+        .collect()
+}
+
+fn sub(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+}
+fn dot(a: [f32; 3], b: [f32; 3]) -> f32 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+    [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ]
+}
+fn normalize(value: [f32; 3]) -> [f32; 3] {
+    let length = dot(value, value).sqrt().max(f32::EPSILON);
+    [value[0] / length, value[1] / length, value[2] / length]
+}
+
 #[derive(Clone, Copy)]
 struct Face {
     neighbour: [i32; 3],
@@ -105,12 +150,66 @@ struct Face {
 }
 
 const FACES: [Face; 6] = [
-    Face { neighbour: [1, 0, 0], normal: [1.0, 0.0, 0.0], corners: [[1.0,0.0,0.0],[1.0,1.0,0.0],[1.0,1.0,1.0],[1.0,0.0,1.0]] },
-    Face { neighbour: [-1, 0, 0], normal: [-1.0, 0.0, 0.0], corners: [[0.0,0.0,1.0],[0.0,1.0,1.0],[0.0,1.0,0.0],[0.0,0.0,0.0]] },
-    Face { neighbour: [0, 1, 0], normal: [0.0, 1.0, 0.0], corners: [[0.0,1.0,0.0],[0.0,1.0,1.0],[1.0,1.0,1.0],[1.0,1.0,0.0]] },
-    Face { neighbour: [0, -1, 0], normal: [0.0, -1.0, 0.0], corners: [[0.0,0.0,1.0],[0.0,0.0,0.0],[1.0,0.0,0.0],[1.0,0.0,1.0]] },
-    Face { neighbour: [0, 0, 1], normal: [0.0, 0.0, 1.0], corners: [[1.0,0.0,1.0],[1.0,1.0,1.0],[0.0,1.0,1.0],[0.0,0.0,1.0]] },
-    Face { neighbour: [0, 0, -1], normal: [0.0, 0.0, -1.0], corners: [[0.0,0.0,0.0],[0.0,1.0,0.0],[1.0,1.0,0.0],[1.0,0.0,0.0]] },
+    Face {
+        neighbour: [1, 0, 0],
+        normal: [1.0, 0.0, 0.0],
+        corners: [
+            [1.0, 0.0, 0.0],
+            [1.0, 1.0, 0.0],
+            [1.0, 1.0, 1.0],
+            [1.0, 0.0, 1.0],
+        ],
+    },
+    Face {
+        neighbour: [-1, 0, 0],
+        normal: [-1.0, 0.0, 0.0],
+        corners: [
+            [0.0, 0.0, 1.0],
+            [0.0, 1.0, 1.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0],
+        ],
+    },
+    Face {
+        neighbour: [0, 1, 0],
+        normal: [0.0, 1.0, 0.0],
+        corners: [
+            [0.0, 1.0, 0.0],
+            [0.0, 1.0, 1.0],
+            [1.0, 1.0, 1.0],
+            [1.0, 1.0, 0.0],
+        ],
+    },
+    Face {
+        neighbour: [0, -1, 0],
+        normal: [0.0, -1.0, 0.0],
+        corners: [
+            [0.0, 0.0, 1.0],
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [1.0, 0.0, 1.0],
+        ],
+    },
+    Face {
+        neighbour: [0, 0, 1],
+        normal: [0.0, 0.0, 1.0],
+        corners: [
+            [1.0, 0.0, 1.0],
+            [1.0, 1.0, 1.0],
+            [0.0, 1.0, 1.0],
+            [0.0, 0.0, 1.0],
+        ],
+    },
+    Face {
+        neighbour: [0, 0, -1],
+        normal: [0.0, 0.0, -1.0],
+        corners: [
+            [0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [1.0, 1.0, 0.0],
+            [1.0, 0.0, 0.0],
+        ],
+    },
 ];
 
 fn emit_face(
@@ -128,7 +227,11 @@ fn emit_face(
             _ => [1.0, 0.0],
         };
         vertices.push(PackedVertex::from_components(
-            [origin[0] + corner[0], origin[1] + corner[1], origin[2] + corner[2]],
+            [
+                origin[0] + corner[0],
+                origin[1] + corner[1],
+                origin[2] + corner[2],
+            ],
             face.normal,
             uv,
             [1.0, 0.0, 0.0],
@@ -149,6 +252,19 @@ mod tests {
         assert!(first.solid_voxels > 0);
         assert_eq!(first.mesh.indices.len() % 6, 0);
         assert!(first.mesh.vertices.len() < first.solid_voxels * 24);
-        assert_eq!(mesh_fingerprint(&first.mesh), mesh_fingerprint(&second.mesh));
+        assert_eq!(
+            mesh_fingerprint(&first.mesh),
+            mesh_fingerprint(&second.mesh)
+        );
+    }
+
+    #[test]
+    fn projection_is_finite_and_tracks_live_aspect() {
+        let positions = [[0.0, 0.0, 0.0], [7.0, 4.0, 7.0]];
+        let wide = project_clip_positions(&positions, 16.0 / 9.0);
+        let square = project_clip_positions(&positions, 1.0);
+        assert!(wide.iter().flatten().all(|component| component.is_finite()));
+        assert_ne!(wide[0][0], square[0][0]);
+        assert_eq!(wide[0][1], square[0][1]);
     }
 }

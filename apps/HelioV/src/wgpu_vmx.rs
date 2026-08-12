@@ -6,19 +6,21 @@
 
 use std::pin::Pin;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
 
 use trueos::clock;
-use trueos::vgpu::{
-    self, BUFFER_USAGE_COPY_DST, BUFFER_USAGE_COPY_SRC, BUFFER_USAGE_MAP_READ,
-    BUFFER_USAGE_MAP_WRITE, BUFFER_USAGE_STORAGE, Capabilities, QueueClass,
-};
 use trueos::ui4_scene::{Damage, Frame};
+use trueos::vgpu::{
+    self, BUFFER_USAGE_COPY_DST, BUFFER_USAGE_COPY_SRC, BUFFER_USAGE_INDEX, BUFFER_USAGE_MAP_READ,
+    BUFFER_USAGE_MAP_WRITE, BUFFER_USAGE_STORAGE, BUFFER_USAGE_VERTEX, Capabilities, IndexedDraw,
+    QueueClass, SHADER_PACKAGE_CLIP_POSITION3_RGBA_FNV1A64,
+};
 use wgpu::custom::*;
 
 const WITNESS: &[u8] = b"HelioV/WGPU/custom/VMX";
 const ERR_INVALID_ARGUMENT: i32 = -22;
+pub const VOXEL_SHADER_WGSL: &str = "@vertex\nfn vs_main(@location(0) position: vec3<f32>) -> @builtin(position) vec4<f32> {\n    return vec4<f32>(position, 1.0);\n}\n\n@fragment\nfn fs_main() -> @location(0) vec4<f32> {\n    return vec4<f32>(0.18, 0.72, 0.32, 1.0);\n}\n";
 
 pub struct BackendFailure {
     pub stage: &'static str,
@@ -35,6 +37,7 @@ pub struct SurfaceProbe {
     frame: Frame,
     device: wgpu::Device,
     queue: wgpu::Queue,
+    graphics: VoxelGraphics,
 }
 
 pub struct ResizePresentation {
@@ -141,11 +144,13 @@ pub fn acquire_ui4_texture(
     ))
 }
 
-pub fn probe_ui4_surface_path() -> Result<SurfaceProbe, BackendFailure> {
+pub fn probe_ui4_surface_path(mesh: &helio::MeshUpload) -> Result<SurfaceProbe, BackendFailure> {
     let mut frame = Frame::open_streaming(120, 96, 640, 360)
         .map_err(|_| fail("ui4-frame-open", vgpu::ERR_IO))?;
     let (device, queue) = open_device_queue()?;
-    let first = render_clear_frame(&mut frame, &device, &queue)?;
+    let graphics =
+        VoxelGraphics::new(&device, &queue, mesh, aspect(frame.width(), frame.height()))?;
+    let first = render_voxel_frame(&mut frame, &device, &queue, &graphics)?;
     let presentation_deadline = clock::monotonic_millis().saturating_add(3_000);
     loop {
         match frame.take_first_presentation() {
@@ -168,6 +173,7 @@ pub fn probe_ui4_surface_path() -> Result<SurfaceProbe, BackendFailure> {
         frame,
         device,
         queue,
+        graphics,
     })
 }
 
@@ -198,7 +204,10 @@ impl SurfaceProbe {
         self.frame
             .resize(event.width, event.height)
             .map_err(|_| fail("ui4-resize-stage", vgpu::ERR_IO))?;
-        let rendered = render_clear_frame(&mut self.frame, &self.device, &self.queue)?;
+        self.graphics
+            .update_projection(&self.queue, aspect(event.width, event.height))?;
+        let rendered =
+            render_voxel_frame(&mut self.frame, &self.device, &self.queue, &self.graphics)?;
         self.width = rendered.width;
         self.height = rendered.height;
         self.pitch = rendered.pitch;
@@ -226,10 +235,103 @@ struct RenderedFrame {
     timeline: u64,
 }
 
-fn render_clear_frame(
+struct VoxelGraphics {
+    world_positions: Vec<[f32; 3]>,
+    vertex_buffer: wgpu::Buffer,
+    index_buffer: wgpu::Buffer,
+    pipeline: wgpu::RenderPipeline,
+    index_count: u32,
+}
+
+impl VoxelGraphics {
+    fn new(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        mesh: &helio::MeshUpload,
+        aspect: f32,
+    ) -> Result<Self, BackendFailure> {
+        let world_positions: Vec<_> = mesh.vertices.iter().map(|vertex| vertex.position).collect();
+        let projected = crate::voxel::project_clip_positions(&world_positions, aspect);
+        let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Helio voxel projected positions"),
+            size: byte_len(&projected) as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Helio voxel indices"),
+            size: byte_len(&mesh.indices) as u64,
+            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&vertex_buffer, 0, bytes_of_slice(&projected));
+        queue.write_buffer(&index_buffer, 0, bytes_of_slice(&mesh.indices));
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("HelioV authenticated position3 shader package"),
+            source: wgpu::ShaderSource::Wgsl(VOXEL_SHADER_WGSL.into()),
+        });
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("HelioV VMX voxel pipeline"),
+            layout: None,
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &[Some(wgpu::VertexBufferLayout {
+                    array_stride: core::mem::size_of::<[f32; 3]>() as u64,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &[wgpu::VertexAttribute {
+                        format: wgpu::VertexFormat::Float32x3,
+                        offset: 0,
+                        shader_location: 0,
+                    }],
+                })],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+        if let Some(code) = take_device_error(device) {
+            return Err(fail("voxel-graphics-create", code));
+        }
+        Ok(Self {
+            world_positions,
+            vertex_buffer,
+            index_buffer,
+            pipeline,
+            index_count: u32::try_from(mesh.indices.len())
+                .map_err(|_| fail("voxel-index-count", ERR_INVALID_ARGUMENT))?,
+        })
+    }
+
+    fn update_projection(&self, queue: &wgpu::Queue, aspect: f32) -> Result<(), BackendFailure> {
+        let projected = crate::voxel::project_clip_positions(&self.world_positions, aspect);
+        queue.write_buffer(&self.vertex_buffer, 0, bytes_of_slice(&projected));
+        Ok(())
+    }
+}
+
+fn render_voxel_frame(
     frame: &mut Frame,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
+    graphics: &VoxelGraphics,
 ) -> Result<RenderedFrame, BackendFailure> {
     frame
         .begin_gpu_frame()
@@ -244,11 +346,11 @@ fn render_clear_frame(
     }
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-        label: Some("HelioV VMX clear encoder"),
+        label: Some("HelioV VMX indexed voxel encoder"),
     });
     {
-        let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("HelioV VMX UI4 clear"),
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("HelioV VMX UI4 voxel draw"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: &view,
                 depth_slice: None,
@@ -268,10 +370,14 @@ fn render_clear_frame(
             occlusion_query_set: None,
             multiview_mask: None,
         });
+        pass.set_pipeline(&graphics.pipeline);
+        pass.set_vertex_buffer(0, graphics.vertex_buffer.slice(..));
+        pass.set_index_buffer(graphics.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+        pass.draw_indexed(0..graphics.index_count, 0, 0..1);
     }
     let _submission = queue.submit([encoder.finish()]);
     if let Some(code) = take_device_error(device) {
-        return Err(fail("ui4-clear-submit", code));
+        return Err(fail("ui4-indexed-submit", code));
     }
     frame
         .publish(Damage::full(info.width, info.height))
@@ -289,6 +395,14 @@ fn render_clear_frame(
         bytes: info.bytes,
         timeline,
     })
+}
+
+fn byte_len<T>(values: &[T]) -> usize {
+    values.len().saturating_mul(core::mem::size_of::<T>())
+}
+
+fn bytes_of_slice<T>(values: &[T]) -> &[u8] {
+    unsafe { core::slice::from_raw_parts(values.as_ptr().cast::<u8>(), byte_len(values)) }
 }
 
 fn aspect(width: u32, height: u32) -> f32 {
@@ -386,16 +500,65 @@ struct VmxTextureView {
 }
 
 #[derive(Debug)]
+struct VmxShaderModule {
+    shared: Arc<SharedDevice>,
+    shader: vgpu::ShaderModule,
+}
+
+impl Drop for VmxShaderModule {
+    fn drop(&mut self) {
+        let _ = self.shared.device.destroy_shader_module(self.shader);
+    }
+}
+
+impl ShaderModuleInterface for VmxShaderModule {
+    fn get_compilation_info(&self) -> Pin<Box<dyn ShaderCompilationInfoFuture>> {
+        Box::pin(std::future::ready(wgpu::CompilationInfo {
+            messages: Vec::new(),
+        }))
+    }
+}
+
+#[derive(Debug)]
+struct VmxRenderPipeline {
+    shared: Arc<SharedDevice>,
+    pipeline: vgpu::RenderPipeline,
+}
+
+impl Drop for VmxRenderPipeline {
+    fn drop(&mut self) {
+        let _ = self.shared.device.destroy_render_pipeline(self.pipeline);
+    }
+}
+
+impl RenderPipelineInterface for VmxRenderPipeline {
+    fn get_bind_group_layout(&self, _index: u32) -> DispatchBindGroupLayout {
+        unsupported("pipeline has no bind groups")
+    }
+}
+
+#[derive(Debug)]
 enum VmxCommand {
     Clear {
         surface: Arc<Mutex<Option<vgpu::Ui4Surface>>>,
         rgba8_srgb: u32,
     },
+    Indexed {
+        surface: Arc<Mutex<Option<vgpu::Ui4Surface>>>,
+        pipeline: DispatchRenderPipeline,
+        vertex: DispatchBuffer,
+        vertex_offset: u64,
+        index: DispatchBuffer,
+        index_offset: u64,
+        first_index: u32,
+        index_count: u32,
+        clear_rgba8_srgb: u32,
+    },
 }
 
 #[derive(Debug)]
 struct VmxCommandEncoder {
-    commands: Mutex<Vec<VmxCommand>>,
+    commands: Arc<Mutex<Vec<VmxCommand>>>,
 }
 
 #[derive(Debug)]
@@ -404,10 +567,28 @@ struct VmxCommandBuffer {
 }
 
 #[derive(Debug)]
-struct VmxRenderPass;
+struct VmxRenderPass {
+    commands: Arc<Mutex<Vec<VmxCommand>>>,
+    surface: Arc<Mutex<Option<vgpu::Ui4Surface>>>,
+    clear_rgba8_srgb: u32,
+    pipeline: Option<DispatchRenderPipeline>,
+    vertex: Option<(DispatchBuffer, u64)>,
+    index: Option<(DispatchBuffer, u64)>,
+    emitted: bool,
+}
 
 impl Drop for VmxRenderPass {
-    fn drop(&mut self) {}
+    fn drop(&mut self) {
+        if !self.emitted {
+            self.commands
+                .lock()
+                .expect("VMX command encoder mutex")
+                .push(VmxCommand::Clear {
+                    surface: Arc::clone(&self.surface),
+                    rgba8_srgb: self.clear_rgba8_srgb,
+                });
+        }
+    }
 }
 
 impl Drop for VmxBuffer {
@@ -476,10 +657,7 @@ impl DeviceInterface for VmxDevice {
         // WGPU 30 has no public `Backend::Custom` discriminator; `Noop` is the
         // only non-hosted placeholder. Execution is not a noop: the custom
         // dispatch object below owns the real VMX device.
-        let mut info = wgpu::AdapterInfo::new(
-            wgpu::DeviceType::IntegratedGpu,
-            wgpu::Backend::Noop,
-        );
+        let mut info = wgpu::AdapterInfo::new(wgpu::DeviceType::IntegratedGpu, wgpu::Backend::Noop);
         info.name = "TRUEOS VMX vGPU".into();
         info.vendor = 0x8086;
         info.driver = "TRUEOS mediated Intel GPU".into();
@@ -509,10 +687,27 @@ impl DeviceInterface for VmxDevice {
 
     fn create_shader_module(
         &self,
-        _desc: wgpu::ShaderModuleDescriptor<'_>,
+        desc: wgpu::ShaderModuleDescriptor<'_>,
         _checks: wgpu::ShaderRuntimeChecks,
     ) -> DispatchShaderModule {
-        unsupported("shader modules")
+        let wgpu::ShaderSource::Wgsl(source) = desc.source else {
+            return unsupported("non-WGSL shader module");
+        };
+        let digest = fnv1a64(source.as_bytes());
+        if source.as_ref() != VOXEL_SHADER_WGSL
+            || digest != SHADER_PACKAGE_CLIP_POSITION3_RGBA_FNV1A64
+        {
+            return unsupported("WGSL has no authenticated TRUEOS AOT package");
+        }
+        let shader = self
+            .shared
+            .device
+            .create_shader_module(digest)
+            .unwrap_or_else(|code| panic!("VMX shader package admission failed: {code}"));
+        DispatchShaderModule::custom(VmxShaderModule {
+            shared: Arc::clone(&self.shared),
+            shader,
+        })
     }
 
     unsafe fn create_shader_module_passthrough(
@@ -522,35 +717,161 @@ impl DeviceInterface for VmxDevice {
         unsupported("shader module passthrough")
     }
 
-    fn create_bind_group_layout(&self, _: &wgpu::BindGroupLayoutDescriptor<'_>) -> DispatchBindGroupLayout { unsupported("bind group layouts") }
-    fn create_bind_group(&self, _: &wgpu::BindGroupDescriptor<'_>) -> DispatchBindGroup { unsupported("bind groups") }
-    fn create_pipeline_layout(&self, _: &wgpu::PipelineLayoutDescriptor<'_>) -> DispatchPipelineLayout { unsupported("pipeline layouts") }
-    fn create_render_pipeline(&self, _: &wgpu::RenderPipelineDescriptor<'_>) -> DispatchRenderPipeline { unsupported("render pipelines") }
-    fn create_mesh_pipeline(&self, _: &wgpu::MeshPipelineDescriptor<'_>) -> DispatchRenderPipeline { unsupported("mesh pipelines") }
-    fn create_compute_pipeline(&self, _: &wgpu::ComputePipelineDescriptor<'_>) -> DispatchComputePipeline { unsupported("compute pipelines") }
-    unsafe fn create_pipeline_cache(&self, _: &wgpu::PipelineCacheDescriptor<'_>) -> DispatchPipelineCache { unsupported("pipeline caches") }
-    fn create_texture(&self, _: &wgpu::TextureDescriptor<'_>) -> DispatchTexture { unsupported("textures") }
-    fn create_external_texture(&self, _: &wgpu::ExternalTextureDescriptor<'_>, _: &[&wgpu::TextureView]) -> DispatchExternalTexture { unsupported("external textures") }
-    fn create_blas(&self, _: &wgpu::CreateBlasDescriptor<'_>, _: wgpu::BlasGeometrySizeDescriptors) -> (Option<u64>, DispatchBlas) { unsupported("BLAS") }
-    fn create_tlas(&self, _: &wgpu::CreateTlasDescriptor<'_>) -> DispatchTlas { unsupported("TLAS") }
-    fn create_sampler(&self, _: &wgpu::SamplerDescriptor<'_>) -> DispatchSampler { unsupported("samplers") }
-    fn create_query_set(&self, _: &wgpu::QuerySetDescriptor<'_>) -> DispatchQuerySet { unsupported("query sets") }
-    fn create_command_encoder(&self, _: &wgpu::CommandEncoderDescriptor<'_>) -> DispatchCommandEncoder {
-        DispatchCommandEncoder::custom(VmxCommandEncoder {
-            commands: Mutex::new(Vec::new()),
+    fn create_bind_group_layout(
+        &self,
+        _: &wgpu::BindGroupLayoutDescriptor<'_>,
+    ) -> DispatchBindGroupLayout {
+        unsupported("bind group layouts")
+    }
+    fn create_bind_group(&self, _: &wgpu::BindGroupDescriptor<'_>) -> DispatchBindGroup {
+        unsupported("bind groups")
+    }
+    fn create_pipeline_layout(
+        &self,
+        _: &wgpu::PipelineLayoutDescriptor<'_>,
+    ) -> DispatchPipelineLayout {
+        unsupported("pipeline layouts")
+    }
+    fn create_render_pipeline(
+        &self,
+        desc: &wgpu::RenderPipelineDescriptor<'_>,
+    ) -> DispatchRenderPipeline {
+        let shader = desc
+            .vertex
+            .module
+            .as_custom::<VmxShaderModule>()
+            .expect("VMX pipeline received a foreign vertex shader");
+        let fragment = desc
+            .fragment
+            .as_ref()
+            .expect("VMX graphics package requires a fragment stage");
+        let fragment_shader = fragment
+            .module
+            .as_custom::<VmxShaderModule>()
+            .expect("VMX pipeline received a foreign fragment shader");
+        let buffers: Vec<_> = desc.vertex.buffers.iter().flatten().collect();
+        let targets: Vec<_> = fragment.targets.iter().flatten().collect();
+        if shader.shader != fragment_shader.shader
+            || desc.vertex.entry_point != Some("vs_main")
+            || fragment.entry_point != Some("fs_main")
+            || buffers.len() != 1
+            || targets.len() != 1
+            || targets[0].format != wgpu::TextureFormat::Rgba8UnormSrgb
+            || targets[0].blend.is_some()
+            || targets[0].write_mask != wgpu::ColorWrites::ALL
+            || desc.primitive.topology != wgpu::PrimitiveTopology::TriangleList
+            || desc.primitive.strip_index_format.is_some()
+            || desc.primitive.front_face != wgpu::FrontFace::Ccw
+            || desc.primitive.cull_mode.is_some()
+            || desc.primitive.polygon_mode != wgpu::PolygonMode::Fill
+            || desc.primitive.unclipped_depth
+            || desc.primitive.conservative
+            || desc.depth_stencil.is_some()
+            || desc.multisample.count != 1
+            || desc.multisample.mask != !0
+            || desc.multisample.alpha_to_coverage_enabled
+            || desc.multiview_mask.is_some()
+            || desc.cache.is_some()
+        {
+            return unsupported("render pipeline outside authenticated package interface");
+        }
+        let attributes = buffers[0].attributes;
+        if buffers[0].step_mode != wgpu::VertexStepMode::Vertex
+            || attributes.len() != 1
+            || attributes[0].shader_location != 0
+            || attributes[0].format != wgpu::VertexFormat::Float32x3
+        {
+            return unsupported("vertex layout outside position3 package interface");
+        }
+        let pipeline = self
+            .shared
+            .device
+            .create_render_pipeline(
+                shader.shader,
+                u32::try_from(buffers[0].array_stride).expect("VMX vertex stride"),
+                u32::try_from(attributes[0].offset).expect("VMX position offset"),
+            )
+            .unwrap_or_else(|code| panic!("VMX render pipeline admission failed: {code}"));
+        DispatchRenderPipeline::custom(VmxRenderPipeline {
+            shared: Arc::clone(&self.shared),
+            pipeline,
         })
     }
-    fn create_render_bundle_encoder(&self, _: &wgpu::RenderBundleEncoderDescriptor<'_>) -> DispatchRenderBundleEncoder { unsupported("render bundles") }
+    fn create_mesh_pipeline(&self, _: &wgpu::MeshPipelineDescriptor<'_>) -> DispatchRenderPipeline {
+        unsupported("mesh pipelines")
+    }
+    fn create_compute_pipeline(
+        &self,
+        _: &wgpu::ComputePipelineDescriptor<'_>,
+    ) -> DispatchComputePipeline {
+        unsupported("compute pipelines")
+    }
+    unsafe fn create_pipeline_cache(
+        &self,
+        _: &wgpu::PipelineCacheDescriptor<'_>,
+    ) -> DispatchPipelineCache {
+        unsupported("pipeline caches")
+    }
+    fn create_texture(&self, _: &wgpu::TextureDescriptor<'_>) -> DispatchTexture {
+        unsupported("textures")
+    }
+    fn create_external_texture(
+        &self,
+        _: &wgpu::ExternalTextureDescriptor<'_>,
+        _: &[&wgpu::TextureView],
+    ) -> DispatchExternalTexture {
+        unsupported("external textures")
+    }
+    fn create_blas(
+        &self,
+        _: &wgpu::CreateBlasDescriptor<'_>,
+        _: wgpu::BlasGeometrySizeDescriptors,
+    ) -> (Option<u64>, DispatchBlas) {
+        unsupported("BLAS")
+    }
+    fn create_tlas(&self, _: &wgpu::CreateTlasDescriptor<'_>) -> DispatchTlas {
+        unsupported("TLAS")
+    }
+    fn create_sampler(&self, _: &wgpu::SamplerDescriptor<'_>) -> DispatchSampler {
+        unsupported("samplers")
+    }
+    fn create_query_set(&self, _: &wgpu::QuerySetDescriptor<'_>) -> DispatchQuerySet {
+        unsupported("query sets")
+    }
+    fn create_command_encoder(
+        &self,
+        _: &wgpu::CommandEncoderDescriptor<'_>,
+    ) -> DispatchCommandEncoder {
+        DispatchCommandEncoder::custom(VmxCommandEncoder {
+            commands: Arc::new(Mutex::new(Vec::new())),
+        })
+    }
+    fn create_render_bundle_encoder(
+        &self,
+        _: &wgpu::RenderBundleEncoderDescriptor<'_>,
+    ) -> DispatchRenderBundleEncoder {
+        unsupported("render bundles")
+    }
 
     fn set_device_lost_callback(&self, _callback: BoxDeviceLostCallback) {}
     fn on_uncaptured_error(&self, _handler: Arc<dyn wgpu::UncapturedErrorHandler>) {}
-    fn push_error_scope(&self, _filter: wgpu::ErrorFilter) -> u32 { 0 }
-    fn pop_error_scope(&self, _index: u32) -> Pin<Box<dyn PopErrorScopeFuture>> { Box::pin(std::future::ready(None)) }
+    fn push_error_scope(&self, _filter: wgpu::ErrorFilter) -> u32 {
+        0
+    }
+    fn pop_error_scope(&self, _index: u32) -> Pin<Box<dyn PopErrorScopeFuture>> {
+        Box::pin(std::future::ready(None))
+    }
     unsafe fn start_graphics_debugger_capture(&self) {}
     unsafe fn stop_graphics_debugger_capture(&self) {}
-    fn poll(&self, _poll: wgpu::wgt::PollType<u64>) -> Result<wgpu::PollStatus, wgpu::PollError> { Ok(wgpu::PollStatus::QueueEmpty) }
-    fn get_internal_counters(&self) -> wgpu::InternalCounters { wgpu::InternalCounters::default() }
-    fn generate_allocator_report(&self) -> Option<wgpu::AllocatorReport> { None }
+    fn poll(&self, _poll: wgpu::wgt::PollType<u64>) -> Result<wgpu::PollStatus, wgpu::PollError> {
+        Ok(wgpu::PollStatus::QueueEmpty)
+    }
+    fn get_internal_counters(&self) -> wgpu::InternalCounters {
+        wgpu::InternalCounters::default()
+    }
+    fn generate_allocator_report(&self) -> Option<wgpu::AllocatorReport> {
+        None
+    }
     fn destroy(&self) {}
 }
 
@@ -568,10 +889,34 @@ impl QueueInterface for VmxQueue {
         }
     }
 
-    fn create_staging_buffer(&self, _size: wgpu::BufferSize) -> Option<DispatchQueueWriteBuffer> { None }
-    fn validate_write_buffer(&self, _buffer: &DispatchBuffer, _offset: wgpu::BufferAddress, _size: wgpu::BufferSize) -> Option<()> { Some(()) }
-    fn write_staging_buffer(&self, _: &DispatchBuffer, _: wgpu::BufferAddress, _: &DispatchQueueWriteBuffer) { unsupported::<()>("staging buffers") }
-    fn write_texture(&self, _: wgpu::TexelCopyTextureInfo<'_>, _: &[u8], _: wgpu::TexelCopyBufferLayout, _: wgpu::Extent3d) { unsupported::<()>("texture writes") }
+    fn create_staging_buffer(&self, _size: wgpu::BufferSize) -> Option<DispatchQueueWriteBuffer> {
+        None
+    }
+    fn validate_write_buffer(
+        &self,
+        _buffer: &DispatchBuffer,
+        _offset: wgpu::BufferAddress,
+        _size: wgpu::BufferSize,
+    ) -> Option<()> {
+        Some(())
+    }
+    fn write_staging_buffer(
+        &self,
+        _: &DispatchBuffer,
+        _: wgpu::BufferAddress,
+        _: &DispatchQueueWriteBuffer,
+    ) {
+        unsupported::<()>("staging buffers")
+    }
+    fn write_texture(
+        &self,
+        _: wgpu::TexelCopyTextureInfo<'_>,
+        _: &[u8],
+        _: wgpu::TexelCopyBufferLayout,
+        _: wgpu::Extent3d,
+    ) {
+        unsupported::<()>("texture writes")
+    }
     fn submit(&self, command_buffers: &mut dyn Iterator<Item = DispatchCommandBuffer>) -> u64 {
         let mut timeline = 0;
         for command_buffer in command_buffers {
@@ -579,17 +924,69 @@ impl QueueInterface for VmxQueue {
                 .as_custom::<VmxCommandBuffer>()
                 .expect("VMX queue received a foreign command buffer");
             let commands = core::mem::take(
-                &mut *command_buffer.commands.lock().expect("VMX command buffer mutex"),
+                &mut *command_buffer
+                    .commands
+                    .lock()
+                    .expect("VMX command buffer mutex"),
             );
             for command in commands {
                 match command {
-                    VmxCommand::Clear { surface, rgba8_srgb } => {
+                    VmxCommand::Clear {
+                        surface,
+                        rgba8_srgb,
+                    } => {
                         let target = surface
                             .lock()
                             .expect("VMX surface mutex")
                             .take()
                             .expect("VMX command targeted a consumed UI4 surface");
-                        match self.shared.device.submit_ui4_clear(self.queue, target, rgba8_srgb) {
+                        match self
+                            .shared
+                            .device
+                            .submit_ui4_clear(self.queue, target, rgba8_srgb)
+                        {
+                            Ok(point) => timeline = timeline.max(point.value),
+                            Err(code) => self.shared.record_error(code),
+                        }
+                    }
+                    VmxCommand::Indexed {
+                        surface,
+                        pipeline,
+                        vertex,
+                        vertex_offset,
+                        index,
+                        index_offset,
+                        first_index,
+                        index_count,
+                        clear_rgba8_srgb,
+                    } => {
+                        let target = surface
+                            .lock()
+                            .expect("VMX surface mutex")
+                            .take()
+                            .expect("VMX draw targeted a consumed UI4 surface");
+                        let pipeline = pipeline
+                            .as_custom::<VmxRenderPipeline>()
+                            .expect("VMX draw pipeline");
+                        let vertex = vertex.as_custom::<VmxBuffer>().expect("VMX vertex buffer");
+                        let index = index.as_custom::<VmxBuffer>().expect("VMX index buffer");
+                        let descriptor = IndexedDraw {
+                            vertex_offset,
+                            index_offset,
+                            index_count,
+                            first_index,
+                            base_vertex: 0,
+                            clear_rgba8_srgb,
+                            ..IndexedDraw::default()
+                        };
+                        match self.shared.device.submit_ui4_indexed(
+                            self.queue,
+                            target,
+                            pipeline.pipeline,
+                            vertex.buffer,
+                            index.buffer,
+                            descriptor,
+                        ) {
                             Ok(point) => timeline = timeline.max(point.value),
                             Err(code) => self.shared.record_error(code),
                         }
@@ -597,23 +994,65 @@ impl QueueInterface for VmxQueue {
                 }
             }
         }
-        self.shared.last_submission.store(timeline, Ordering::Release);
+        self.shared
+            .last_submission
+            .store(timeline, Ordering::Release);
         timeline
     }
-    fn get_timestamp_period(&self) -> f32 { 1.0 }
-    fn on_submitted_work_done(&self, callback: BoxSubmittedWorkDoneCallback) { callback(); }
-    fn compact_blas(&self, _blas: &DispatchBlas) -> (Option<u64>, DispatchBlas) { unsupported("BLAS compaction") }
-    fn present(&self, _detail: &DispatchSurfaceOutputDetail) { unsupported::<()>("presentation") }
+    fn get_timestamp_period(&self) -> f32 {
+        1.0
+    }
+    fn on_submitted_work_done(&self, callback: BoxSubmittedWorkDoneCallback) {
+        callback();
+    }
+    fn compact_blas(&self, _blas: &DispatchBlas) -> (Option<u64>, DispatchBlas) {
+        unsupported("BLAS compaction")
+    }
+    fn present(&self, _detail: &DispatchSurfaceOutputDetail) {
+        unsupported::<()>("presentation")
+    }
 }
 
 impl CommandBufferInterface for VmxCommandBuffer {}
 
 impl CommandEncoderInterface for VmxCommandEncoder {
-    fn copy_buffer_to_buffer(&self, _: &DispatchBuffer, _: wgpu::BufferAddress, _: &DispatchBuffer, _: wgpu::BufferAddress, _: Option<wgpu::BufferAddress>) { unsupported::<()>("buffer copies") }
-    fn copy_buffer_to_texture(&self, _: wgpu::TexelCopyBufferInfo<'_>, _: wgpu::TexelCopyTextureInfo<'_>, _: wgpu::Extent3d) { unsupported::<()>("buffer-to-texture copies") }
-    fn copy_texture_to_buffer(&self, _: wgpu::TexelCopyTextureInfo<'_>, _: wgpu::TexelCopyBufferInfo<'_>, _: wgpu::Extent3d) { unsupported::<()>("texture-to-buffer copies") }
-    fn copy_texture_to_texture(&self, _: wgpu::TexelCopyTextureInfo<'_>, _: wgpu::TexelCopyTextureInfo<'_>, _: wgpu::Extent3d) { unsupported::<()>("texture copies") }
-    fn begin_compute_pass(&self, _: &wgpu::ComputePassDescriptor<'_>) -> DispatchComputePass { unsupported("compute passes") }
+    fn copy_buffer_to_buffer(
+        &self,
+        _: &DispatchBuffer,
+        _: wgpu::BufferAddress,
+        _: &DispatchBuffer,
+        _: wgpu::BufferAddress,
+        _: Option<wgpu::BufferAddress>,
+    ) {
+        unsupported::<()>("buffer copies")
+    }
+    fn copy_buffer_to_texture(
+        &self,
+        _: wgpu::TexelCopyBufferInfo<'_>,
+        _: wgpu::TexelCopyTextureInfo<'_>,
+        _: wgpu::Extent3d,
+    ) {
+        unsupported::<()>("buffer-to-texture copies")
+    }
+    fn copy_texture_to_buffer(
+        &self,
+        _: wgpu::TexelCopyTextureInfo<'_>,
+        _: wgpu::TexelCopyBufferInfo<'_>,
+        _: wgpu::Extent3d,
+    ) {
+        unsupported::<()>("texture-to-buffer copies")
+    }
+    fn copy_texture_to_texture(
+        &self,
+        _: wgpu::TexelCopyTextureInfo<'_>,
+        _: wgpu::TexelCopyTextureInfo<'_>,
+        _: wgpu::Extent3d,
+    ) {
+        unsupported::<()>("texture copies")
+    }
+    fn begin_compute_pass(&self, _: &wgpu::ComputePassDescriptor<'_>) -> DispatchComputePass {
+        unsupported("compute passes")
+    }
     fn begin_render_pass(&self, desc: &wgpu::RenderPassDescriptor<'_>) -> DispatchRenderPass {
         if desc.depth_stencil_attachment.is_some()
             || desc.timestamp_writes.is_some()
@@ -639,14 +1078,15 @@ impl CommandEncoderInterface for VmxCommandEncoder {
             .as_custom::<VmxTextureView>()
             .expect("VMX render pass received a foreign texture view");
         let _keep_device_alive = &target.shared;
-        self.commands
-            .lock()
-            .expect("VMX command encoder mutex")
-            .push(VmxCommand::Clear {
-                surface: Arc::clone(&target.surface),
-                rgba8_srgb: opaque_clear_rgba8_srgb(color),
-            });
-        DispatchRenderPass::custom(VmxRenderPass)
+        DispatchRenderPass::custom(VmxRenderPass {
+            commands: Arc::clone(&self.commands),
+            surface: Arc::clone(&target.surface),
+            clear_rgba8_srgb: opaque_clear_rgba8_srgb(color),
+            pipeline: None,
+            vertex: None,
+            index: None,
+            emitted: false,
+        })
     }
     fn finish(&mut self) -> DispatchCommandBuffer {
         DispatchCommandBuffer::custom(VmxCommandBuffer {
@@ -655,49 +1095,210 @@ impl CommandEncoderInterface for VmxCommandEncoder {
             )),
         })
     }
-    fn clear_texture(&self, _: &DispatchTexture, _: &wgpu::ImageSubresourceRange) { unsupported::<()>("texture clears") }
-    fn clear_buffer(&self, _: &DispatchBuffer, _: wgpu::BufferAddress, _: Option<wgpu::BufferAddress>) { unsupported::<()>("buffer clears") }
+    fn clear_texture(&self, _: &DispatchTexture, _: &wgpu::ImageSubresourceRange) {
+        unsupported::<()>("texture clears")
+    }
+    fn clear_buffer(
+        &self,
+        _: &DispatchBuffer,
+        _: wgpu::BufferAddress,
+        _: Option<wgpu::BufferAddress>,
+    ) {
+        unsupported::<()>("buffer clears")
+    }
     fn insert_debug_marker(&self, _: &str) {}
     fn push_debug_group(&self, _: &str) {}
     fn pop_debug_group(&self) {}
-    fn write_timestamp(&self, _: &DispatchQuerySet, _: u32) { unsupported::<()>("timestamps") }
-    fn resolve_query_set(&self, _: &DispatchQuerySet, _: u32, _: u32, _: &DispatchBuffer, _: wgpu::BufferAddress) { unsupported::<()>("query resolution") }
-    fn mark_acceleration_structures_built<'a>(&self, _: &mut dyn Iterator<Item = &'a wgpu::Blas>, _: &mut dyn Iterator<Item = &'a wgpu::Tlas>) { unsupported::<()>("acceleration structures") }
-    fn build_acceleration_structures<'a>(&self, _: &mut dyn Iterator<Item = &'a wgpu::BlasBuildEntry<'a>>, _: &mut dyn Iterator<Item = &'a wgpu::Tlas>) { unsupported::<()>("acceleration structures") }
-    fn transition_resources<'a>(&mut self, _: &mut dyn Iterator<Item = wgpu::wgt::BufferTransition<&'a DispatchBuffer>>, _: &mut dyn Iterator<Item = wgpu::wgt::TextureTransition<&'a DispatchTexture>>) {}
+    fn write_timestamp(&self, _: &DispatchQuerySet, _: u32) {
+        unsupported::<()>("timestamps")
+    }
+    fn resolve_query_set(
+        &self,
+        _: &DispatchQuerySet,
+        _: u32,
+        _: u32,
+        _: &DispatchBuffer,
+        _: wgpu::BufferAddress,
+    ) {
+        unsupported::<()>("query resolution")
+    }
+    fn mark_acceleration_structures_built<'a>(
+        &self,
+        _: &mut dyn Iterator<Item = &'a wgpu::Blas>,
+        _: &mut dyn Iterator<Item = &'a wgpu::Tlas>,
+    ) {
+        unsupported::<()>("acceleration structures")
+    }
+    fn build_acceleration_structures<'a>(
+        &self,
+        _: &mut dyn Iterator<Item = &'a wgpu::BlasBuildEntry<'a>>,
+        _: &mut dyn Iterator<Item = &'a wgpu::Tlas>,
+    ) {
+        unsupported::<()>("acceleration structures")
+    }
+    fn transition_resources<'a>(
+        &mut self,
+        _: &mut dyn Iterator<Item = wgpu::wgt::BufferTransition<&'a DispatchBuffer>>,
+        _: &mut dyn Iterator<Item = wgpu::wgt::TextureTransition<&'a DispatchTexture>>,
+    ) {
+    }
 }
 
 impl RenderPassInterface for VmxRenderPass {
-    fn set_pipeline(&mut self, _: &DispatchRenderPipeline) { unsupported::<()>("render pipelines") }
-    fn set_bind_group(&mut self, _: u32, _: Option<&DispatchBindGroup>, _: &[wgpu::DynamicOffset]) { unsupported::<()>("bind groups") }
-    fn set_index_buffer(&mut self, _: &DispatchBuffer, _: wgpu::IndexFormat, _: wgpu::BufferAddress, _: Option<wgpu::BufferSize>) { unsupported::<()>("index buffers") }
-    fn set_vertex_buffer(&mut self, _: u32, _: Option<&DispatchBuffer>, _: wgpu::BufferAddress, _: Option<wgpu::BufferSize>) { unsupported::<()>("vertex buffers") }
-    fn set_immediates(&mut self, _: u32, _: &[u8]) { unsupported::<()>("immediates") }
+    fn set_pipeline(&mut self, pipeline: &DispatchRenderPipeline) {
+        self.pipeline = Some(pipeline.clone());
+    }
+    fn set_bind_group(&mut self, _: u32, _: Option<&DispatchBindGroup>, _: &[wgpu::DynamicOffset]) {
+        unsupported::<()>("bind groups")
+    }
+    fn set_index_buffer(
+        &mut self,
+        buffer: &DispatchBuffer,
+        format: wgpu::IndexFormat,
+        offset: wgpu::BufferAddress,
+        _: Option<wgpu::BufferSize>,
+    ) {
+        if format != wgpu::IndexFormat::Uint32 {
+            unsupported::<()>("non-u32 index buffer");
+        }
+        self.index = Some((buffer.clone(), offset));
+    }
+    fn set_vertex_buffer(
+        &mut self,
+        slot: u32,
+        buffer: Option<&DispatchBuffer>,
+        offset: wgpu::BufferAddress,
+        _: Option<wgpu::BufferSize>,
+    ) {
+        if slot != 0 {
+            unsupported::<()>("vertex buffer slot other than zero");
+        }
+        self.vertex = buffer.map(|buffer| (buffer.clone(), offset));
+    }
+    fn set_immediates(&mut self, _: u32, _: &[u8]) {
+        unsupported::<()>("immediates")
+    }
     fn set_blend_constant(&mut self, _: wgpu::Color) {}
     fn set_scissor_rect(&mut self, _: u32, _: u32, _: u32, _: u32) {}
     fn set_viewport(&mut self, _: f32, _: f32, _: f32, _: f32, _: f32, _: f32) {}
     fn set_stencil_reference(&mut self, _: u32) {}
-    fn draw(&mut self, _: core::ops::Range<u32>, _: core::ops::Range<u32>) { unsupported::<()>("draw") }
-    fn draw_indexed(&mut self, _: core::ops::Range<u32>, _: i32, _: core::ops::Range<u32>) { unsupported::<()>("indexed draw") }
-    fn draw_mesh_tasks(&mut self, _: u32, _: u32, _: u32) { unsupported::<()>("mesh draw") }
-    fn draw_indirect(&mut self, _: &DispatchBuffer, _: wgpu::BufferAddress) { unsupported::<()>("indirect draw") }
-    fn draw_indexed_indirect(&mut self, _: &DispatchBuffer, _: wgpu::BufferAddress) { unsupported::<()>("indexed indirect draw") }
-    fn draw_mesh_tasks_indirect(&mut self, _: &DispatchBuffer, _: wgpu::BufferAddress) { unsupported::<()>("mesh indirect draw") }
-    fn multi_draw_indirect(&mut self, _: &DispatchBuffer, _: wgpu::BufferAddress, _: u32) { unsupported::<()>("multi draw") }
-    fn multi_draw_indexed_indirect(&mut self, _: &DispatchBuffer, _: wgpu::BufferAddress, _: u32) { unsupported::<()>("multi indexed draw") }
-    fn multi_draw_indirect_count(&mut self, _: &DispatchBuffer, _: wgpu::BufferAddress, _: &DispatchBuffer, _: wgpu::BufferAddress, _: u32) { unsupported::<()>("counted multi draw") }
-    fn multi_draw_mesh_tasks_indirect(&mut self, _: &DispatchBuffer, _: wgpu::BufferAddress, _: u32) { unsupported::<()>("multi mesh draw") }
-    fn multi_draw_indexed_indirect_count(&mut self, _: &DispatchBuffer, _: wgpu::BufferAddress, _: &DispatchBuffer, _: wgpu::BufferAddress, _: u32) { unsupported::<()>("counted indexed draw") }
-    fn multi_draw_mesh_tasks_indirect_count(&mut self, _: &DispatchBuffer, _: wgpu::BufferAddress, _: &DispatchBuffer, _: wgpu::BufferAddress, _: u32) { unsupported::<()>("counted mesh draw") }
+    fn draw(&mut self, _: core::ops::Range<u32>, _: core::ops::Range<u32>) {
+        unsupported::<()>("draw")
+    }
+    fn draw_indexed(
+        &mut self,
+        indices: core::ops::Range<u32>,
+        base_vertex: i32,
+        instances: core::ops::Range<u32>,
+    ) {
+        if self.emitted || indices.is_empty() || base_vertex != 0 || instances != (0..1) {
+            unsupported::<()>("indexed draw range outside frontier contract");
+        }
+        let pipeline = self
+            .pipeline
+            .take()
+            .expect("draw_indexed requires a pipeline");
+        let (vertex, vertex_offset) = self
+            .vertex
+            .take()
+            .expect("draw_indexed requires vertex buffer 0");
+        let (index, index_offset) = self
+            .index
+            .take()
+            .expect("draw_indexed requires an index buffer");
+        self.commands
+            .lock()
+            .expect("VMX command encoder mutex")
+            .push(VmxCommand::Indexed {
+                surface: Arc::clone(&self.surface),
+                pipeline,
+                vertex,
+                vertex_offset,
+                index,
+                index_offset,
+                first_index: indices.start,
+                index_count: indices.end - indices.start,
+                clear_rgba8_srgb: self.clear_rgba8_srgb,
+            });
+        self.emitted = true;
+    }
+    fn draw_mesh_tasks(&mut self, _: u32, _: u32, _: u32) {
+        unsupported::<()>("mesh draw")
+    }
+    fn draw_indirect(&mut self, _: &DispatchBuffer, _: wgpu::BufferAddress) {
+        unsupported::<()>("indirect draw")
+    }
+    fn draw_indexed_indirect(&mut self, _: &DispatchBuffer, _: wgpu::BufferAddress) {
+        unsupported::<()>("indexed indirect draw")
+    }
+    fn draw_mesh_tasks_indirect(&mut self, _: &DispatchBuffer, _: wgpu::BufferAddress) {
+        unsupported::<()>("mesh indirect draw")
+    }
+    fn multi_draw_indirect(&mut self, _: &DispatchBuffer, _: wgpu::BufferAddress, _: u32) {
+        unsupported::<()>("multi draw")
+    }
+    fn multi_draw_indexed_indirect(&mut self, _: &DispatchBuffer, _: wgpu::BufferAddress, _: u32) {
+        unsupported::<()>("multi indexed draw")
+    }
+    fn multi_draw_indirect_count(
+        &mut self,
+        _: &DispatchBuffer,
+        _: wgpu::BufferAddress,
+        _: &DispatchBuffer,
+        _: wgpu::BufferAddress,
+        _: u32,
+    ) {
+        unsupported::<()>("counted multi draw")
+    }
+    fn multi_draw_mesh_tasks_indirect(
+        &mut self,
+        _: &DispatchBuffer,
+        _: wgpu::BufferAddress,
+        _: u32,
+    ) {
+        unsupported::<()>("multi mesh draw")
+    }
+    fn multi_draw_indexed_indirect_count(
+        &mut self,
+        _: &DispatchBuffer,
+        _: wgpu::BufferAddress,
+        _: &DispatchBuffer,
+        _: wgpu::BufferAddress,
+        _: u32,
+    ) {
+        unsupported::<()>("counted indexed draw")
+    }
+    fn multi_draw_mesh_tasks_indirect_count(
+        &mut self,
+        _: &DispatchBuffer,
+        _: wgpu::BufferAddress,
+        _: &DispatchBuffer,
+        _: wgpu::BufferAddress,
+        _: u32,
+    ) {
+        unsupported::<()>("counted mesh draw")
+    }
     fn insert_debug_marker(&mut self, _: &str) {}
     fn push_debug_group(&mut self, _: &str) {}
     fn pop_debug_group(&mut self) {}
-    fn write_timestamp(&mut self, _: &DispatchQuerySet, _: u32) { unsupported::<()>("timestamps") }
-    fn begin_occlusion_query(&mut self, _: u32) { unsupported::<()>("occlusion queries") }
-    fn end_occlusion_query(&mut self) { unsupported::<()>("occlusion queries") }
-    fn begin_pipeline_statistics_query(&mut self, _: &DispatchQuerySet, _: u32) { unsupported::<()>("pipeline statistics") }
-    fn end_pipeline_statistics_query(&mut self) { unsupported::<()>("pipeline statistics") }
-    fn execute_bundles(&mut self, _: &mut dyn Iterator<Item = &DispatchRenderBundle>) { unsupported::<()>("render bundles") }
+    fn write_timestamp(&mut self, _: &DispatchQuerySet, _: u32) {
+        unsupported::<()>("timestamps")
+    }
+    fn begin_occlusion_query(&mut self, _: u32) {
+        unsupported::<()>("occlusion queries")
+    }
+    fn end_occlusion_query(&mut self) {
+        unsupported::<()>("occlusion queries")
+    }
+    fn begin_pipeline_statistics_query(&mut self, _: &DispatchQuerySet, _: u32) {
+        unsupported::<()>("pipeline statistics")
+    }
+    fn end_pipeline_statistics_query(&mut self) {
+        unsupported::<()>("pipeline statistics")
+    }
+    fn execute_bundles(&mut self, _: &mut dyn Iterator<Item = &DispatchRenderBundle>) {
+        unsupported::<()>("render bundles")
+    }
 }
 
 fn opaque_clear_rgba8_srgb(color: wgpu::Color) -> u32 {
@@ -718,8 +1319,12 @@ fn opaque_clear_rgba8_srgb(color: wgpu::Color) -> u32 {
 
 fn vmx_buffer_usage(usage: wgpu::BufferUsages) -> u32 {
     let mut out = 0;
-    if usage.contains(wgpu::BufferUsages::MAP_READ) { out |= BUFFER_USAGE_MAP_READ; }
-    if usage.contains(wgpu::BufferUsages::MAP_WRITE) { out |= BUFFER_USAGE_MAP_WRITE; }
+    if usage.contains(wgpu::BufferUsages::MAP_READ) {
+        out |= BUFFER_USAGE_MAP_READ;
+    }
+    if usage.contains(wgpu::BufferUsages::MAP_WRITE) {
+        out |= BUFFER_USAGE_MAP_WRITE;
+    }
     // The VMX v1 broker implements WGPU queue uploads/readback through its
     // bounded CPU transfer calls. Grant those internal capabilities whenever
     // the public WGPU buffer permits the corresponding copy direction; this
@@ -730,10 +1335,30 @@ fn vmx_buffer_usage(usage: wgpu::BufferUsages) -> u32 {
     if usage.contains(wgpu::BufferUsages::COPY_DST) {
         out |= BUFFER_USAGE_COPY_DST | BUFFER_USAGE_MAP_WRITE;
     }
-    if usage.intersects(wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::INDEX | wgpu::BufferUsages::INDIRECT) {
+    if usage.intersects(
+        wgpu::BufferUsages::UNIFORM
+            | wgpu::BufferUsages::STORAGE
+            | wgpu::BufferUsages::VERTEX
+            | wgpu::BufferUsages::INDEX
+            | wgpu::BufferUsages::INDIRECT,
+    ) {
         out |= BUFFER_USAGE_STORAGE;
     }
+    if usage.contains(wgpu::BufferUsages::VERTEX) {
+        out |= BUFFER_USAGE_VERTEX;
+    }
+    if usage.contains(wgpu::BufferUsages::INDEX) {
+        out |= BUFFER_USAGE_INDEX;
+    }
     out
+}
+
+fn fnv1a64(bytes: &[u8]) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325u64;
+    for byte in bytes {
+        hash = (hash ^ u64::from(*byte)).wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
 }
 
 fn unsupported<T>(operation: &'static str) -> T {
@@ -742,4 +1367,17 @@ fn unsupported<T>(operation: &'static str) -> T {
 
 const fn fail(stage: &'static str, code: i32) -> BackendFailure {
     BackendFailure { stage, code }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn authenticated_wgsl_digest_matches_the_public_vgpu_contract() {
+        assert_eq!(
+            fnv1a64(VOXEL_SHADER_WGSL.as_bytes()),
+            SHADER_PACKAGE_CLIP_POSITION3_RGBA_FNV1A64,
+        );
+    }
 }

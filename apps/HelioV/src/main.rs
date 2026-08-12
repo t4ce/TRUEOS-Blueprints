@@ -51,17 +51,14 @@ fn main() {
             logl::level::ERROR,
             format_args!(
                 "HelioV: VMX vGPU probe failed stage={} rc={}; Helio render remains disabled",
-                failure.stage,
-                failure.code,
+                failure.stage, failure.code,
             ),
         ),
     }
     match wgpu_vmx::probe_wgpu_buffer_path() {
         Ok(bytes) => logl::log(
             logl::level::INFO,
-            format_args!(
-                "HelioV: WGPU custom Device/Queue buffer path ready roundtrip={bytes}"
-            ),
+            format_args!("HelioV: WGPU custom Device/Queue buffer path ready roundtrip={bytes}"),
         ),
         Err(failure) => logl::log(
             logl::level::ERROR,
@@ -87,18 +84,18 @@ fn main() {
             format_args!("HelioV: SceneDB partner probe failed invariant={failure}"),
         ),
     }
-    match wgpu_vmx::probe_ui4_surface_path() {
+    match wgpu_vmx::probe_ui4_surface_path(&chunk.mesh) {
         Ok(mut report) => {
             logl::log(
                 logl::level::INFO,
                 format_args!(
-                    "HelioV: WGPU render-pass clear retired and SURFLIVE confirmed extent={}x{} pitch={} bytes={} timeline={} path=wgpu::CommandEncoder->VMX-iGPU->UI4-release->SURFLIVE",
+                    "HelioV: Helio voxel shader/pipeline indexed draw retired and SURFLIVE confirmed extent={}x{} pitch={} bytes={} timeline={} path=Helio-MeshUpload->WGPU-indexed-draw->VMX-Render->UI4-release->SURFLIVE",
                     report.width, report.height, report.pitch, report.bytes, report.timeline,
                 ),
             );
             logl::log(
                 logl::level::INFO,
-                "HelioV: visible WGPU command submission is live; shader/pipeline and indexed voxel draw remain pending, no alternate renderer is permitted",
+                "HelioV: visible voxel submission is live; authenticated shader module, graphics pipeline, vertex/index bindings, and draw_indexed all executed through the ordinary TRUEOS Render frontier",
             );
             // Retain the proof while already obeying UI4's transactional
             // maximize/restore protocol. The shader milestone replaces the
@@ -145,6 +142,6 @@ fn main() {
     }
     logl::log(
         logl::level::ERROR,
-        "HelioV: WGPU presentation proof failed; shader/pipeline bring-up remains disabled",
+        "HelioV: indexed WGPU presentation stopped before the SURFLIVE event loop",
     );
 }
