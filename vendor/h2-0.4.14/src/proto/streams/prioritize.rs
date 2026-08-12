@@ -10,6 +10,7 @@ use bytes::buf::Take;
 use std::{
     cmp::{self, Ordering},
     fmt, mem,
+    io::IoSlice,
     task::{Context, Poll, Waker},
 };
 use tokio::io;
@@ -918,7 +919,7 @@ where
         self.inner.chunk()
     }
 
-    fn chunks_vectored<'a>(&'a self, dst: &mut [io::IoSlice<'a>]) -> usize {
+    fn chunks_vectored<'a>(&'a self, dst: &mut [IoSlice<'a>]) -> usize {
         self.inner.chunks_vectored(dst)
     }
 

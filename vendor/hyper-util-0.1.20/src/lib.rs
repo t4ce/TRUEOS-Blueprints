@@ -1,5 +1,5 @@
 #![deny(missing_docs)]
-#![cfg_attr(not(feature = "std"), no_std)]
+#![cfg_attr(all(not(feature = "std"), not(target_os = "trueos")), no_std)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 //! Utilities for working with hyper.
@@ -10,7 +10,7 @@
 #![allow(missing_docs)]
 extern crate alloc;
 
-#[cfg(not(feature = "std"))]
+#[cfg(all(not(feature = "std"), not(target_os = "trueos")))]
 extern crate self as std;
 
 #[cfg(not(feature = "std"))]
@@ -71,10 +71,17 @@ pub mod future {
     pub use core::future::*;
 }
 
-#[cfg(not(feature = "std"))]
+#[cfg(all(not(feature = "std"), not(target_os = "trueos")))]
 pub mod io {
     //! no_std stand-in for the small `std::io` surface used here.
     pub use tokio::io::{Error, ErrorKind, IoSlice, Result};
+}
+
+#[cfg(all(not(feature = "std"), target_os = "trueos"))]
+pub mod io {
+    //! TRUEOS links the build-std `std::io` implementation even when a
+    //! transitive dependency disables hyper-util's Cargo `std` feature.
+    pub use ::std::io::*;
 }
 
 #[cfg(not(feature = "std"))]

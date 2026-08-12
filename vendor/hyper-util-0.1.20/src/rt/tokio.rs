@@ -55,6 +55,7 @@ use alloc::{boxed::Box, vec::Vec};
 use core::time::Duration;
 use std::{
     future::Future,
+    io::IoSlice,
     pin::Pin,
     task::{Context, Poll},
 };
@@ -127,7 +128,7 @@ fn hyper_to_tokio_error(err: hyper_io::Error) -> tokio_io::Error {
 }
 
 fn tokio_to_hyper_slices<'buf>(
-    bufs: &'buf [tokio_io::IoSlice<'buf>],
+    bufs: &'buf [IoSlice<'buf>],
 ) -> Vec<hyper_io::IoSlice<'buf>> {
     // On TRUEOS both sides re-export `trueos-io` platform I/O. Keep the
     // conversion shape so the bridge remains source-compatible upstream.
@@ -136,10 +137,8 @@ fn tokio_to_hyper_slices<'buf>(
 
 fn hyper_to_tokio_slices<'buf>(
     bufs: &'buf [hyper_io::IoSlice<'buf>],
-) -> Vec<tokio_io::IoSlice<'buf>> {
-    // On TRUEOS both sides re-export `trueos-io` platform I/O. Keep the
-    // conversion shape so the bridge remains source-compatible upstream.
-    bufs.iter().map(|buf| tokio_io::IoSlice::new(&**buf)).collect()
+) -> Vec<IoSlice<'buf>> {
+    bufs.iter().map(|buf| IoSlice::new(&**buf)).collect()
 }
 
 /// Future executor that utilises `tokio` threads.
@@ -348,7 +347,7 @@ where
     fn poll_write_vectored(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-        bufs: &[tokio_io::IoSlice<'_>],
+        bufs: &[IoSlice<'_>],
     ) -> Poll<Result<usize, tokio_io::Error>> {
         let bufs = tokio_to_hyper_slices(bufs);
         hyper::rt::Write::poll_write_vectored(self.project().inner, cx, &bufs)

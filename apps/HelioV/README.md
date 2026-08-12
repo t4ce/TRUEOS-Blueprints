@@ -34,27 +34,42 @@ stored by SceneDB. Render work must originate from Helio's graph and passes.
 4. The same backend runs a second Helio graph without TRUEOS renderer changes.
 5. Textures are added only after the texture-free coloured voxel path renders.
 
-The current first-stage executable generates a face-culled chunk directly as
-Helio `MeshUpload`/`PackedVertex` data, compiles WGPU's real `custom` backend
-contract, and probes the VMX vGPU device/buffer/render-queue/timeline ABI. It
-also constructs real WGPU custom `Device`/`Queue` objects and runs a canonical
-Helio `SceneObject` through SceneDB insert, mirrored edit, remove, row reuse,
-despawn, and GPU flush paths. It also acquires an actual UI4 Blueprint back
-buffer, maps that exact allocation into the caller's isolated VMX GPUVM, and
-exposes it as a `wgpu::Texture`. A normal WGPU command encoder records a
-render-pass `LoadOp::Clear`; queue submission executes and retires the mediated
-Intel operation, revokes the tenant mapping, transfers the exact producer
-release to UI4, publishes the frame, and waits for the physical SURFLIVE
-acknowledgment. The retained dark-blue frame is therefore a command and
-presentation proof, not a CPU paint or alternate renderer. Generic shader,
-pipeline, binding, and indexed-draw objects remain the next boundary.
+The current executable generates a deterministic, face-culled 6x6 chunk world
+with terrain, water, trees, houses, and a leaning tower directly as Helio
+`MeshUpload`/`PackedVertex` data. It compiles WGPU's real `custom` backend
+contract and probes the VMX vGPU device/buffer/render-queue/timeline ABI. Real
+WGPU custom `Device`/`Queue` objects drive one canonical Helio `SceneObject`
+partner per chunk through SceneDB insert, mirrored edit, remove, row reuse,
+despawn, GPU flush, and repeated component-buffer growth paths. HelioV enables
+SceneDB's additive CPU-shadow reallocation policy for this DirtyTracked object
+authority, so the current TRUEOS backend needs only buffer creation and
+`Queue::write_buffer`; normal Helio remains on GPU-copy growth and no `Once`
+handoff is weakened. An actual UI4 Blueprint back buffer is mapped into
+the caller's isolated VMX GPUVM and exposed as a `wgpu::Texture`. A normal WGPU
+command encoder creates the authenticated shader and graphics pipeline, binds
+the Helio-authored vertex/index buffers, executes `draw_indexed`, retires the
+mediated Intel work, transfers its exact release to UI4, publishes, and reaches
+physical SURFLIVE. The visible green voxel world is therefore real indexed GPU
+work, not a CPU paint or alternate renderer.
 
 The retained proof already follows UI4's maximize/restore procedure. It stages
 a private replacement generation, imports that exact new lease into VMX,
 submits and publishes a complete frame, and updates the render-loop projection
-aspect before UI4 commits the swap. The planned 2560x1440 bare-metal check is
-therefore a real target reallocation and presentation test, not stretching the
-640x360 front.
+aspect before UI4 commits the swap. The confirmed 640x360 to 2560x1440 and
+restore path is a real target reallocation and presentation test, not a stretch
+of the old front.
+
+Camera control now uses Helio's shared platform-neutral `FlyCamera` and
+`NavigationState`. The local UI4 adapter samples `input_routes`, selects only
+the application-focused cursor/combo and its paired keyboard, and clears held
+state whenever that route changes. This preserves TRUEOS multi-mouse and
+multi-keyboard isolation instead of collapsing devices into global engine
+input. Primary-button drag looks; WASD moves; Space/Shift move vertically; and
+Control boosts. UI4 deliberately absorbs the gesture which first selects a
+frame, so activate HelioV with one click and release before starting the first
+primary-button look drag or using the keyboard. Projection remains a
+compatibility upload for the current position-only shader package and is
+refreshed after both camera and resize changes.
 
 Current result: `cargo bp apps/HelioV` compiles the complete target dependency
 closure and emits `dist/heliov.bp`. See [GPU_BOUNDARY.md](GPU_BOUNDARY.md) for

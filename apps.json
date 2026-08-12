@@ -49,6 +49,11 @@
       "optional": true
     },
     {
+      "name": "ferrumc",
+      "path": "../ferrumc",
+      "optional": true
+    },
+    {
       "name": "yazi",
       "path": "../RustAVX/yazi",
       "optional": true

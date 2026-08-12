@@ -22,9 +22,7 @@ mod stream;
 #[cfg(any(feature = "native-tls", feature = "__rustls-tls", feature = "connect"))]
 mod tls;
 
-#[cfg(target_os = "trueos")]
-use tungstenite::io::{Error as CompatIoError, ErrorKind as CompatIoErrorKind, Read, Write};
-#[cfg(not(target_os = "trueos"))]
+#[allow(unused_imports)]
 use std::io::{Error as CompatIoError, ErrorKind as CompatIoErrorKind, Read, Write};
 
 use compat::{cvt, AllowStd, ContextWaker};

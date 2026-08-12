@@ -1,16 +1,21 @@
-//! Buffer-first WGPU custom backend over the VMX vGPU ABI.
+//! WGPU custom backend over the VMX vGPU ABI.
 //!
-//! This is deliberately a partial backend: the methods for GPU object classes
-//! that VMX does not expose yet fail loudly. Buffer allocation and queue writes
-//! are real WGPU calls backed by opaque TRUEOS device/buffer/queue handles.
+//! This is deliberately a partial backend: unsupported GPU object classes fail
+//! loudly. Buffers and linear RGBA8 textures are real vGPU allocations; the
+//! latter deliberately reuse VMX's generic opaque buffer residency rather than
+//! introducing an application- or voxel-specific kernel object.
 
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
 
+use helio::{
+    FlyCamera, FlyCameraConfig, MaterialAsset, MaterialTextureRef, PerspectiveLens, Scene,
+    TextureSamplerDesc, TextureUpload,
+};
 use trueos::clock;
-use trueos::ui4_scene::{Damage, Frame};
+use trueos::ui4_scene::{Damage, Error as Ui4Error, Frame};
 use trueos::vgpu::{
     self, BUFFER_USAGE_COPY_DST, BUFFER_USAGE_COPY_SRC, BUFFER_USAGE_INDEX, BUFFER_USAGE_MAP_READ,
     BUFFER_USAGE_MAP_WRITE, BUFFER_USAGE_STORAGE, BUFFER_USAGE_VERTEX, Capabilities, IndexedDraw,
@@ -18,9 +23,11 @@ use trueos::vgpu::{
 };
 use wgpu::custom::*;
 
+use crate::ui4_input::Ui4FlyInput;
+
 const WITNESS: &[u8] = b"HelioV/WGPU/custom/VMX";
 const ERR_INVALID_ARGUMENT: i32 = -22;
-pub const VOXEL_SHADER_WGSL: &str = "@vertex\nfn vs_main(@location(0) position: vec3<f32>) -> @builtin(position) vec4<f32> {\n    return vec4<f32>(position, 1.0);\n}\n\n@fragment\nfn fs_main() -> @location(0) vec4<f32> {\n    return vec4<f32>(0.18, 0.72, 0.32, 1.0);\n}\n";
+pub const VOXEL_SHADER_WGSL: &str = include_str!("voxel_textured.wgsl");
 
 pub struct BackendFailure {
     pub stage: &'static str,
@@ -38,6 +45,13 @@ pub struct SurfaceProbe {
     device: wgpu::Device,
     queue: wgpu::Queue,
     graphics: VoxelGraphics,
+    camera: FlyCamera,
+    lens: PerspectiveLens,
+    input: Ui4FlyInput,
+    last_input_millis: u64,
+    camera_dirty: bool,
+    input_live: bool,
+    _scene: Scene,
 }
 
 pub struct ResizePresentation {
@@ -49,6 +63,19 @@ pub struct ResizePresentation {
     pub bytes: u64,
     pub timeline: u64,
     pub aspect: f32,
+}
+
+pub struct InputPresentation {
+    pub position: [f32; 3],
+    pub yaw: f32,
+    pub pitch: f32,
+    pub timeline: u64,
+}
+
+pub struct HelioAssetProof {
+    pub texture_slot: u32,
+    pub material_slot: u32,
+    pub binding_epoch: u64,
 }
 
 pub fn probe_wgpu_buffer_path() -> Result<usize, BackendFailure> {
@@ -136,9 +163,13 @@ pub fn acquire_ui4_texture(
     };
     Ok(wgpu::Texture::from_custom(
         VmxTexture {
-            shared: Arc::clone(&device.shared),
-            surface: Arc::new(Mutex::new(Some(surface))),
-            info,
+            storage: Arc::new(VmxTextureStorage {
+                shared: Arc::clone(&device.shared),
+                backing: VmxTextureBacking::Ui4 {
+                    surface: Mutex::new(Some(surface)),
+                    info,
+                },
+            }),
         },
         &descriptor,
     ))
@@ -148,9 +179,44 @@ pub fn probe_ui4_surface_path(mesh: &helio::MeshUpload) -> Result<SurfaceProbe, 
     let mut frame = Frame::open_streaming(120, 96, 640, 360)
         .map_err(|_| fail("ui4-frame-open", vgpu::ERR_IO))?;
     let (device, queue) = open_device_queue()?;
-    let graphics =
-        VoxelGraphics::new(&device, &queue, mesh, aspect(frame.width(), frame.height()))?;
+    let (mut scene, assets) = build_helio_material_scene(&device, &queue)?;
+    let camera = FlyCamera::look_at(
+        glam::Vec3::new(65.0, 42.0, 68.0),
+        glam::Vec3::new(24.0, 7.0, 24.0),
+        FlyCameraConfig {
+            movement_speed: 12.0,
+            boost_multiplier: 3.0,
+            normalize_movement: true,
+            ..FlyCameraConfig::default()
+        },
+    );
+    let lens = PerspectiveLens {
+        fov_y_radians: 48.0_f32.to_radians(),
+        near: 0.1,
+        far: 180.0,
+    };
+    let graphics = VoxelGraphics::new(
+        &device,
+        &queue,
+        mesh,
+        aspect(frame.width(), frame.height()),
+        &camera,
+        lens,
+    )?;
     let first = render_voxel_frame(&mut frame, &device, &queue, &graphics)?;
+    scene.flush();
+    if let Some(code) = take_device_error(&device) {
+        return Err(fail("helio-scene-flush", code));
+    }
+    trueos::logl::log(
+        trueos::logl::level::INFO,
+        format_args!(
+            "HelioV: high-level Helio Scene material authority ready texture={} material={} texture_binding_epoch={} path=Scene::insert_texture->SceneDB-TextureResidency->Scene::insert_material_asset->Scene::flush",
+            assets.texture_slot,
+            assets.material_slot,
+            assets.binding_epoch,
+        ),
+    );
     let presentation_deadline = clock::monotonic_millis().saturating_add(3_000);
     loop {
         match frame.take_first_presentation() {
@@ -174,7 +240,76 @@ pub fn probe_ui4_surface_path(mesh: &helio::MeshUpload) -> Result<SurfaceProbe, 
         device,
         queue,
         graphics,
+        camera,
+        lens,
+        input: Ui4FlyInput::new(),
+        last_input_millis: clock::monotonic_millis(),
+        camera_dirty: false,
+        input_live: false,
+        _scene: scene,
     })
+}
+
+fn build_helio_material_scene(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+) -> Result<(Scene, HelioAssetProof), BackendFailure> {
+    const SIDE: u32 = 16;
+    let mut rgba = Vec::with_capacity((SIDE * SIDE * 4) as usize);
+    for y in 0..SIDE {
+        for x in 0..SIDE {
+            let light = ((x / 4) ^ (y / 4)) & 1 == 0;
+            rgba.extend_from_slice(if light {
+                &[104, 164, 102, 255]
+            } else {
+                &[49, 91, 62, 255]
+            });
+        }
+    }
+    let mut scene = Scene::new(Arc::new(device.clone()), Arc::new(queue.clone()));
+    let texture = scene
+        .insert_texture(TextureUpload::rgba8(
+            "HelioV terrain checker",
+            SIDE,
+            SIDE,
+            true,
+            rgba,
+            TextureSamplerDesc {
+                mag_filter: wgpu::FilterMode::Nearest,
+                min_filter: wgpu::FilterMode::Nearest,
+                mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+                ..TextureSamplerDesc::default()
+            },
+        ))
+        .map_err(|_| fail("helio-texture-insert", ERR_INVALID_ARGUMENT))?;
+    let material = scene
+        .insert_material_asset(MaterialAsset {
+            gpu: libhelio::GpuMaterial {
+                base_color: [1.0, 1.0, 1.0, 1.0],
+                emissive: [0.0; 4],
+                roughness_metallic: [0.88, 0.0, 1.5, 0.0],
+                tex_base_color: libhelio::GpuMaterial::NO_TEXTURE,
+                tex_normal: libhelio::GpuMaterial::NO_TEXTURE,
+                tex_roughness: libhelio::GpuMaterial::NO_TEXTURE,
+                tex_emissive: libhelio::GpuMaterial::NO_TEXTURE,
+                tex_occlusion: libhelio::GpuMaterial::NO_TEXTURE,
+                workflow: 0,
+                flags: 0,
+                material_class: 0,
+                class_params: [0.0; 4],
+            },
+            textures: helio::MaterialTextures {
+                base_color: Some(MaterialTextureRef::new(texture)),
+                ..helio::MaterialTextures::default()
+            },
+        })
+        .map_err(|_| fail("helio-material-insert", ERR_INVALID_ARGUMENT))?;
+    let proof = HelioAssetProof {
+        texture_slot: texture.slot(),
+        material_slot: material.slot(),
+        binding_epoch: scene.texture_binding_version(),
+    };
+    Ok((scene, proof))
 }
 
 impl SurfaceProbe {
@@ -204,8 +339,12 @@ impl SurfaceProbe {
         self.frame
             .resize(event.width, event.height)
             .map_err(|_| fail("ui4-resize-stage", vgpu::ERR_IO))?;
-        self.graphics
-            .update_projection(&self.queue, aspect(event.width, event.height))?;
+        self.graphics.update_projection(
+            &self.queue,
+            aspect(event.width, event.height),
+            &self.camera,
+            self.lens,
+        )?;
         let rendered =
             render_voxel_frame(&mut self.frame, &self.device, &self.queue, &self.graphics)?;
         self.width = rendered.width;
@@ -223,6 +362,53 @@ impl SurfaceProbe {
             bytes: rendered.bytes,
             timeline: rendered.timeline,
             aspect: self.aspect,
+        }))
+    }
+
+    /// Consume the application-focused UI4 cursor/keyboard route, update the
+    /// shared Helio camera, and publish only when the pose changed. A primary
+    /// drag looks; WASD/Space/Shift move; Control boosts.
+    pub fn present_pending_input(&mut self) -> Result<Option<InputPresentation>, BackendFailure> {
+        let now = clock::monotonic_millis();
+        let delta_seconds = now.saturating_sub(self.last_input_millis) as f32 / 1_000.0;
+        self.last_input_millis = now;
+        let input = self
+            .input
+            .sample(&mut self.frame)
+            .map_err(|error| fail("ui4-input-route", ui4_error_code(error)))?;
+        self.camera_dirty |= self.camera.update(input, delta_seconds);
+        if !self.camera_dirty {
+            return Ok(None);
+        }
+
+        self.graphics.update_projection(
+            &self.queue,
+            aspect(self.width, self.height),
+            &self.camera,
+            self.lens,
+        )?;
+        let rendered =
+            match render_voxel_frame(&mut self.frame, &self.device, &self.queue, &self.graphics) {
+                Ok(rendered) => rendered,
+                Err(failure)
+                    if failure.stage == "ui4-frame-begin" && failure.code == vgpu::ERR_BUSY =>
+                {
+                    return Ok(None);
+                }
+                Err(failure) => return Err(failure),
+            };
+        self.timeline = rendered.timeline;
+        self.camera_dirty = false;
+
+        if self.input_live {
+            return Ok(None);
+        }
+        self.input_live = true;
+        Ok(Some(InputPresentation {
+            position: self.camera.position().to_array(),
+            yaw: self.camera.yaw(),
+            pitch: self.camera.pitch(),
+            timeline: rendered.timeline,
         }))
     }
 }
@@ -249,9 +435,12 @@ impl VoxelGraphics {
         queue: &wgpu::Queue,
         mesh: &helio::MeshUpload,
         aspect: f32,
+        camera: &FlyCamera,
+        lens: PerspectiveLens,
     ) -> Result<Self, BackendFailure> {
         let world_positions: Vec<_> = mesh.vertices.iter().map(|vertex| vertex.position).collect();
-        let projected = crate::voxel::project_clip_positions(&world_positions, aspect);
+        let projected =
+            crate::voxel::project_clip_positions(&world_positions, aspect, camera, lens);
         let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Helio voxel projected positions"),
             size: byte_len(&projected) as u64,
@@ -320,8 +509,15 @@ impl VoxelGraphics {
         })
     }
 
-    fn update_projection(&self, queue: &wgpu::Queue, aspect: f32) -> Result<(), BackendFailure> {
-        let projected = crate::voxel::project_clip_positions(&self.world_positions, aspect);
+    fn update_projection(
+        &self,
+        queue: &wgpu::Queue,
+        aspect: f32,
+        camera: &FlyCamera,
+        lens: PerspectiveLens,
+    ) -> Result<(), BackendFailure> {
+        let projected =
+            crate::voxel::project_clip_positions(&self.world_positions, aspect, camera, lens);
         queue.write_buffer(&self.vertex_buffer, 0, bytes_of_slice(&projected));
         Ok(())
     }
@@ -335,12 +531,15 @@ fn render_voxel_frame(
 ) -> Result<RenderedFrame, BackendFailure> {
     frame
         .begin_gpu_frame()
-        .map_err(|_| fail("ui4-frame-begin", vgpu::ERR_IO))?;
+        .map_err(|error| fail("ui4-frame-begin", ui4_error_code(error)))?;
     let texture = acquire_ui4_texture(device, frame.window_id())?;
-    let info = texture
+    let custom_texture = texture
         .as_custom::<VmxTexture>()
-        .ok_or_else(|| fail("ui4-texture-downcast", vgpu::ERR_BAD_HANDLE))?
-        .info;
+        .ok_or_else(|| fail("ui4-texture-downcast", vgpu::ERR_BAD_HANDLE))?;
+    let VmxTextureBacking::Ui4 { info, .. } = &custom_texture.storage.backing else {
+        return Err(fail("ui4-texture-backing", vgpu::ERR_BAD_HANDLE));
+    };
+    let info = *info;
     if info.width != frame.width() || info.height != frame.height() {
         return Err(fail("ui4-surface-extent", ERR_INVALID_ARGUMENT));
     }
@@ -409,6 +608,15 @@ fn aspect(width: u32, height: u32) -> f32 {
     width as f32 / height as f32
 }
 
+const fn ui4_error_code(error: Ui4Error) -> i32 {
+    match error {
+        Ui4Error::Invalid => ERR_INVALID_ARGUMENT,
+        Ui4Error::Busy => vgpu::ERR_BUSY,
+        Ui4Error::Unknown(code) => code,
+        _ => vgpu::ERR_IO,
+    }
+}
+
 pub fn take_device_error(device: &wgpu::Device) -> Option<i32> {
     device
         .as_custom::<VmxDevice>()
@@ -465,18 +673,63 @@ struct VmxBuffer {
     destroyed: AtomicBool,
 }
 
-struct VmxTexture {
+#[derive(Clone, Copy, Debug)]
+struct LinearTextureInfo {
+    width: u32,
+    height: u32,
+    layers: u32,
+    bytes_per_pixel: u32,
+    bytes_per_row: u32,
+}
+
+#[derive(Debug)]
+enum VmxTextureBacking {
+    Ui4 {
+        surface: Mutex<Option<vgpu::Ui4Surface>>,
+        info: vgpu::SurfaceInfo,
+    },
+    Linear {
+        buffer: vgpu::Buffer,
+        info: LinearTextureInfo,
+        destroyed: AtomicBool,
+    },
+}
+
+#[derive(Debug)]
+struct VmxTextureStorage {
     shared: Arc<SharedDevice>,
-    surface: Arc<Mutex<Option<vgpu::Ui4Surface>>>,
-    info: vgpu::SurfaceInfo,
+    backing: VmxTextureBacking,
+}
+
+impl Drop for VmxTextureStorage {
+    fn drop(&mut self) {
+        match &self.backing {
+            VmxTextureBacking::Ui4 { surface, .. } => {
+                let _ = surface.lock().expect("VMX surface mutex").take();
+            }
+            VmxTextureBacking::Linear {
+                buffer,
+                destroyed,
+                ..
+            } => {
+                if !destroyed.swap(true, Ordering::AcqRel) {
+                    let _ = self.shared.device.destroy_buffer(*buffer);
+                }
+            }
+        }
+    }
+}
+
+struct VmxTexture {
+    storage: Arc<VmxTextureStorage>,
 }
 
 impl core::fmt::Debug for VmxTexture {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         formatter
             .debug_struct("VmxTexture")
-            .field("device", &self.shared.device.raw())
-            .field("info", &self.info)
+            .field("device", &self.storage.shared.device.raw())
+            .field("backing", &self.storage.backing)
             .finish_non_exhaustive()
     }
 }
@@ -489,14 +742,34 @@ impl Drop for VmxTexture {
 
 impl VmxTexture {
     fn destroy_once(&self) {
-        let _ = self.surface.lock().expect("VMX surface mutex").take();
+        match &self.storage.backing {
+            VmxTextureBacking::Ui4 { surface, .. } => {
+                let _ = surface.lock().expect("VMX surface mutex").take();
+            }
+            VmxTextureBacking::Linear {
+                buffer,
+                destroyed,
+                ..
+            } => {
+                if !destroyed.swap(true, Ordering::AcqRel) {
+                    let _ = self.storage.shared.device.destroy_buffer(*buffer);
+                }
+            }
+        }
     }
 }
 
 #[derive(Debug)]
 struct VmxTextureView {
-    shared: Arc<SharedDevice>,
-    surface: Arc<Mutex<Option<vgpu::Ui4Surface>>>,
+    storage: Arc<VmxTextureStorage>,
+}
+
+#[derive(Debug)]
+struct VmxSampler {
+    address_mode_u: wgpu::AddressMode,
+    address_mode_v: wgpu::AddressMode,
+    mag_filter: wgpu::FilterMode,
+    min_filter: wgpu::FilterMode,
 }
 
 #[derive(Debug)]
@@ -632,8 +905,7 @@ impl BufferInterface for VmxBuffer {
 impl TextureInterface for VmxTexture {
     fn create_view(&self, _desc: &wgpu::TextureViewDescriptor<'_>) -> DispatchTextureView {
         DispatchTextureView::custom(VmxTextureView {
-            shared: Arc::clone(&self.shared),
-            surface: Arc::clone(&self.surface),
+            storage: Arc::clone(&self.storage),
         })
     }
 
@@ -643,6 +915,8 @@ impl TextureInterface for VmxTexture {
 }
 
 impl TextureViewInterface for VmxTextureView {}
+
+impl SamplerInterface for VmxSampler {}
 
 impl DeviceInterface for VmxDevice {
     fn features(&self) -> wgpu::Features {
@@ -812,8 +1086,65 @@ impl DeviceInterface for VmxDevice {
     ) -> DispatchPipelineCache {
         unsupported("pipeline caches")
     }
-    fn create_texture(&self, _: &wgpu::TextureDescriptor<'_>) -> DispatchTexture {
-        unsupported("textures")
+    fn create_texture(&self, desc: &wgpu::TextureDescriptor<'_>) -> DispatchTexture {
+        let supported_format = matches!(
+            desc.format,
+            wgpu::TextureFormat::Rgba8Unorm | wgpu::TextureFormat::Rgba8UnormSrgb
+        );
+        if !supported_format
+            || desc.dimension != wgpu::TextureDimension::D2
+            || desc.size.width == 0
+            || desc.size.height == 0
+            || desc.size.depth_or_array_layers == 0
+            || desc.mip_level_count != 1
+            || desc.sample_count != 1
+            || !desc.view_formats.is_empty()
+        {
+            return unsupported("texture outside linear RGBA8 VMX contract");
+        }
+        let bytes_per_pixel = 4u32;
+        let Some(bytes_per_row) = desc.size.width.checked_mul(bytes_per_pixel) else {
+            return unsupported("texture row size overflow");
+        };
+        let Some(bytes) = u64::from(bytes_per_row)
+            .checked_mul(u64::from(desc.size.height))
+            .and_then(|bytes| bytes.checked_mul(u64::from(desc.size.depth_or_array_layers)))
+            .and_then(|bytes| usize::try_from(bytes).ok())
+        else {
+            return unsupported("texture allocation overflow");
+        };
+        let buffer = self
+            .shared
+            .device
+            .create_buffer(
+                bytes,
+                BUFFER_USAGE_STORAGE | BUFFER_USAGE_COPY_SRC | BUFFER_USAGE_COPY_DST,
+            )
+            .unwrap_or_else(|code| {
+                panic!(
+                    "VMX vGPU texture backing creation failed: {code}; label={:?} extent={}x{}x{} bytes={bytes}",
+                    desc.label,
+                    desc.size.width,
+                    desc.size.height,
+                    desc.size.depth_or_array_layers,
+                )
+            });
+        DispatchTexture::custom(VmxTexture {
+            storage: Arc::new(VmxTextureStorage {
+                shared: Arc::clone(&self.shared),
+                backing: VmxTextureBacking::Linear {
+                    buffer,
+                    info: LinearTextureInfo {
+                        width: desc.size.width,
+                        height: desc.size.height,
+                        layers: desc.size.depth_or_array_layers,
+                        bytes_per_pixel,
+                        bytes_per_row,
+                    },
+                    destroyed: AtomicBool::new(false),
+                },
+            }),
+        })
     }
     fn create_external_texture(
         &self,
@@ -832,8 +1163,34 @@ impl DeviceInterface for VmxDevice {
     fn create_tlas(&self, _: &wgpu::CreateTlasDescriptor<'_>) -> DispatchTlas {
         unsupported("TLAS")
     }
-    fn create_sampler(&self, _: &wgpu::SamplerDescriptor<'_>) -> DispatchSampler {
-        unsupported("samplers")
+    fn create_sampler(&self, desc: &wgpu::SamplerDescriptor<'_>) -> DispatchSampler {
+        if desc.compare.is_some()
+            || desc.anisotropy_clamp != 1
+            || !desc.lod_min_clamp.is_finite()
+            || !desc.lod_max_clamp.is_finite()
+            || desc.lod_min_clamp < 0.0
+            || desc.lod_max_clamp < desc.lod_min_clamp
+            || !matches!(
+                desc.address_mode_u,
+                wgpu::AddressMode::ClampToEdge | wgpu::AddressMode::Repeat
+            )
+            || !matches!(
+                desc.address_mode_v,
+                wgpu::AddressMode::ClampToEdge | wgpu::AddressMode::Repeat
+            )
+            || !matches!(
+                desc.address_mode_w,
+                wgpu::AddressMode::ClampToEdge | wgpu::AddressMode::Repeat
+            )
+        {
+            return unsupported("sampler outside baseline repeat/clamp contract");
+        }
+        DispatchSampler::custom(VmxSampler {
+            address_mode_u: desc.address_mode_u,
+            address_mode_v: desc.address_mode_v,
+            mag_filter: desc.mag_filter,
+            min_filter: desc.min_filter,
+        })
     }
     fn create_query_set(&self, _: &wgpu::QuerySetDescriptor<'_>) -> DispatchQuerySet {
         unsupported("query sets")
@@ -910,12 +1267,78 @@ impl QueueInterface for VmxQueue {
     }
     fn write_texture(
         &self,
-        _: wgpu::TexelCopyTextureInfo<'_>,
-        _: &[u8],
-        _: wgpu::TexelCopyBufferLayout,
-        _: wgpu::Extent3d,
+        destination: wgpu::TexelCopyTextureInfo<'_>,
+        data: &[u8],
+        layout: wgpu::TexelCopyBufferLayout,
+        size: wgpu::Extent3d,
     ) {
-        unsupported::<()>("texture writes")
+        let Some(texture) = destination.texture.as_custom::<VmxTexture>() else {
+            return unsupported::<()>("foreign texture write");
+        };
+        let VmxTextureBacking::Linear {
+            buffer,
+            info,
+            destroyed,
+        } = &texture.storage.backing
+        else {
+            return unsupported::<()>("writes to imported UI4 texture");
+        };
+        if destroyed.load(Ordering::Acquire)
+            || destination.mip_level != 0
+            || destination.aspect != wgpu::TextureAspect::All
+            || size.width == 0
+            || size.height == 0
+            || size.depth_or_array_layers == 0
+            || destination.origin.x.saturating_add(size.width) > info.width
+            || destination.origin.y.saturating_add(size.height) > info.height
+            || destination
+                .origin
+                .z
+                .saturating_add(size.depth_or_array_layers)
+                > info.layers
+        {
+            self.shared.record_error(ERR_INVALID_ARGUMENT);
+            return;
+        }
+        let source_row_bytes = size.width.saturating_mul(info.bytes_per_pixel);
+        let source_pitch = layout.bytes_per_row.unwrap_or(source_row_bytes);
+        let source_rows = layout.rows_per_image.unwrap_or(size.height);
+        if source_pitch < source_row_bytes || source_rows < size.height {
+            self.shared.record_error(ERR_INVALID_ARGUMENT);
+            return;
+        }
+        for layer in 0..size.depth_or_array_layers {
+            for row in 0..size.height {
+                let source_offset = layout.offset
+                    + u64::from(layer) * u64::from(source_rows) * u64::from(source_pitch)
+                    + u64::from(row) * u64::from(source_pitch);
+                let destination_offset = (u64::from(destination.origin.z + layer)
+                    * u64::from(info.height)
+                    + u64::from(destination.origin.y + row))
+                    * u64::from(info.bytes_per_row)
+                    + u64::from(destination.origin.x) * u64::from(info.bytes_per_pixel);
+                let Ok(source_offset) = usize::try_from(source_offset) else {
+                    self.shared.record_error(ERR_INVALID_ARGUMENT);
+                    return;
+                };
+                let Some(source_end) = source_offset.checked_add(source_row_bytes as usize) else {
+                    self.shared.record_error(ERR_INVALID_ARGUMENT);
+                    return;
+                };
+                let Some(source) = data.get(source_offset..source_end) else {
+                    self.shared.record_error(ERR_INVALID_ARGUMENT);
+                    return;
+                };
+                if let Err(code) = self.shared.device.write_buffer(
+                    *buffer,
+                    destination_offset as usize,
+                    source,
+                ) {
+                    self.shared.record_error(code);
+                    return;
+                }
+            }
+        }
     }
     fn submit(&self, command_buffers: &mut dyn Iterator<Item = DispatchCommandBuffer>) -> u64 {
         let mut timeline = 0;
@@ -1077,10 +1500,14 @@ impl CommandEncoderInterface for VmxCommandEncoder {
             .view
             .as_custom::<VmxTextureView>()
             .expect("VMX render pass received a foreign texture view");
-        let _keep_device_alive = &target.shared;
+        let VmxTextureBacking::Ui4 { surface, .. } = &target.storage.backing else {
+            return unsupported("render pass target is not an imported UI4 surface");
+        };
         DispatchRenderPass::custom(VmxRenderPass {
             commands: Arc::clone(&self.commands),
-            surface: Arc::clone(&target.surface),
+            surface: Arc::new(Mutex::new(
+                surface.lock().expect("VMX surface mutex").take(),
+            )),
             clear_rgba8_srgb: opaque_clear_rgba8_srgb(color),
             pipeline: None,
             vertex: None,

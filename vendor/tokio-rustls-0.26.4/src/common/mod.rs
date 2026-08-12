@@ -1,10 +1,10 @@
-use std::io::{self as std_io, BufRead as _, IoSlice as StdIoSlice, Read, Write};
+use std::io::{self as std_io, BufRead as _, IoSlice, Read, Write};
 use core::ops::{Deref, DerefMut};
 use core::pin::Pin;
 use core::task::{Context, Poll};
 
 use rustls::{ConnectionCommon, SideData};
-use tokio::io::{self, AsyncBufRead, AsyncRead, AsyncWrite, IoSlice, ReadBuf};
+use tokio::io::{self, AsyncBufRead, AsyncRead, AsyncWrite, ReadBuf};
 
 mod handshake;
 pub(crate) use handshake::{IoSession, MidHandshake};
@@ -356,9 +356,9 @@ where
 
         loop {
             let mut would_block = false;
-            let std_bufs: Vec<StdIoSlice<'_>> = bufs
+            let std_bufs: Vec<IoSlice<'_>> = bufs
                 .iter()
-                .map(|buf| StdIoSlice::new(buf.as_ref()))
+                .map(|buf| IoSlice::new(buf.as_ref()))
                 .collect();
             let written = self
                 .session
@@ -467,7 +467,7 @@ impl<T: AsyncWrite + Unpin> Write for SyncWriteAdapter<'_, '_, T> {
     }
 
     #[inline]
-    fn write_vectored(&mut self, bufs: &[StdIoSlice<'_>]) -> std_io::Result<usize> {
+    fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> std_io::Result<usize> {
         let tokio_bufs: Vec<IoSlice<'_>> = bufs
             .iter()
             .map(|buf| IoSlice::new(buf.as_ref()))
@@ -479,4 +479,3 @@ impl<T: AsyncWrite + Unpin> Write for SyncWriteAdapter<'_, '_, T> {
         self.poll_with(|io, cx| io.poll_flush(cx))
     }
 }
-

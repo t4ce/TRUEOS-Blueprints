@@ -1,5 +1,5 @@
 use core::future::Future;
-use std::io::BufRead as _;
+use std::io::{BufRead as _, IoSlice};
 use std::io as std_io;
 #[cfg(unix)]
 use std::os::unix::io::{AsRawFd, RawFd};
@@ -11,7 +11,7 @@ use core::task::{Context, Poll};
 
 use rustls::server::AcceptedAlert;
 use rustls::{ServerConfig, ServerConnection};
-use tokio::io::{self, AsyncBufRead, AsyncRead, AsyncWrite, IoSlice, ReadBuf};
+use tokio::io::{self, AsyncBufRead, AsyncRead, AsyncWrite, ReadBuf};
 
 use crate::common::{
     std_to_tokio_error, IoSession, MidHandshake, Stream, SyncReadAdapter, SyncWriteAdapter,

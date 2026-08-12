@@ -3,11 +3,6 @@ use core::{
     pin::Pin,
     task::{Context, Poll},
 };
-#[cfg(target_os = "trueos")]
-use tungstenite::io::{
-    Error as CompatIoError, ErrorKind as CompatIoErrorKind, Read, Result as CompatIoResult, Write,
-};
-#[cfg(not(target_os = "trueos"))]
 use std::io::{
     Error as CompatIoError, ErrorKind as CompatIoErrorKind, Read, Result as CompatIoResult, Write,
 };

@@ -41,13 +41,14 @@
 use std::os::unix::io::{AsRawFd, RawFd};
 #[cfg(windows)]
 use std::os::windows::io::{AsRawSocket, RawSocket};
+use std::io::IoSlice;
 use core::pin::Pin;
 use core::task::{Context, Poll};
 
 pub use rustls;
 
 use rustls::CommonState;
-use tokio::io::{self, AsyncBufRead, AsyncRead, AsyncWrite, IoSlice, ReadBuf};
+use tokio::io::{self, AsyncBufRead, AsyncRead, AsyncWrite, ReadBuf};
 
 macro_rules! ready {
     ( $e:expr ) => {

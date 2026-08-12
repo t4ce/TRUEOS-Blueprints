@@ -3271,8 +3271,8 @@ fn normalize_line_endings(path: &Path) -> Result<(), String> {
 fn patch_hyper_util_tokio_std_overlay(crate_dir: &Path) -> Result<(), String> {
     replace_file_text(
         &crate_dir.join("src/rt/tokio.rs"),
-        "fn hyper_to_tokio_slices<'buf>(\n    bufs: &'buf [hyper_io::IoSlice<'buf>],\n) -> Vec<tokio_io::IoSlice<'buf>> {\n    // On TRUEOS both sides re-export `trueos-io` platform I/O. Keep the\n    // conversion shape so the bridge remains source-compatible upstream.\n    bufs.iter().map(|buf| tokio_io::IoSlice::new(&**buf)).collect()\n}",
-        "fn hyper_to_tokio_slices<'buf>(\n    bufs: &'buf [hyper_io::IoSlice<'buf>],\n) -> Vec<tokio_io::IoSlice<'buf>> {\n    // On TRUEOS both sides re-export `trueos-io` platform I/O. Keep the\n    // conversion shape so the bridge remains source-compatible upstream.\n    bufs.iter().map(|buf| tokio_io::IoSlice::new(&**buf)).collect()\n}\n\n#[cfg(any(target_os = \"trueos\", target_os = \"zkvm\"))]\nfn hyper_to_tokio_instant(deadline: Instant) -> tokio::time::Instant {\n    let hyper_now = Instant::now();\n    let tokio_now = tokio::time::Instant::now();\n    if deadline >= hyper_now {\n        tokio_now + deadline.duration_since(hyper_now)\n    } else {\n        tokio_now - hyper_now.duration_since(deadline)\n    }\n}\n\n#[cfg(not(any(target_os = \"trueos\", target_os = \"zkvm\")))]\nfn hyper_to_tokio_instant(deadline: Instant) -> tokio::time::Instant {\n    deadline.into()\n}\n\n#[cfg(any(target_os = \"trueos\", target_os = \"zkvm\"))]\nfn tokio_to_hyper_instant(instant: tokio::time::Instant) -> Instant {\n    let tokio_now = tokio::time::Instant::now();\n    let hyper_now = Instant::now();\n    if instant >= tokio_now {\n        hyper_now + (instant - tokio_now)\n    } else {\n        hyper_now - (tokio_now - instant)\n    }\n}\n\n#[cfg(not(any(target_os = \"trueos\", target_os = \"zkvm\")))]\nfn tokio_to_hyper_instant(instant: tokio::time::Instant) -> Instant {\n    instant.into()\n}",
+        "fn hyper_to_tokio_slices<'buf>(\n    bufs: &'buf [hyper_io::IoSlice<'buf>],\n) -> Vec<IoSlice<'buf>> {\n    bufs.iter().map(|buf| IoSlice::new(&**buf)).collect()\n}",
+        "fn hyper_to_tokio_slices<'buf>(\n    bufs: &'buf [hyper_io::IoSlice<'buf>],\n) -> Vec<IoSlice<'buf>> {\n    bufs.iter().map(|buf| IoSlice::new(&**buf)).collect()\n}\n\n#[cfg(any(target_os = \"trueos\", target_os = \"zkvm\"))]\nfn hyper_to_tokio_instant(deadline: Instant) -> tokio::time::Instant {\n    let hyper_now = Instant::now();\n    let tokio_now = tokio::time::Instant::now();\n    if deadline >= hyper_now {\n        tokio_now + deadline.duration_since(hyper_now)\n    } else {\n        tokio_now - hyper_now.duration_since(deadline)\n    }\n}\n\n#[cfg(not(any(target_os = \"trueos\", target_os = \"zkvm\")))]\nfn hyper_to_tokio_instant(deadline: Instant) -> tokio::time::Instant {\n    deadline.into()\n}\n\n#[cfg(any(target_os = \"trueos\", target_os = \"zkvm\"))]\nfn tokio_to_hyper_instant(instant: tokio::time::Instant) -> Instant {\n    let tokio_now = tokio::time::Instant::now();\n    let hyper_now = Instant::now();\n    if instant >= tokio_now {\n        hyper_now + (instant - tokio_now)\n    } else {\n        hyper_now - (tokio_now - instant)\n    }\n}\n\n#[cfg(not(any(target_os = \"trueos\", target_os = \"zkvm\")))]\nfn tokio_to_hyper_instant(instant: tokio::time::Instant) -> Instant {\n    instant.into()\n}",
     )?;
     replace_file_text(
         &crate_dir.join("src/rt/tokio.rs"),
@@ -5359,7 +5359,7 @@ fn materialized_workspace_dependency(
     let line = match dep_name {
         "anyhow" => "anyhow = { version = \"1.0\", default-features = false }".to_string(),
         "axum" => format!(
-            "axum = {{ path = {}, default-features = false, features = [\"http1\", \"json\", \"tokio\"] }}",
+            "axum = {{ path = {}, default-features = false, features = [\"http1\", \"json\", \"tokio\", \"ws\"] }}",
             toml_string(
                 &workspace_dependency_vendor_path(
                     source_overlay,
@@ -5385,7 +5385,7 @@ fn materialized_workspace_dependency(
             )
         }
         "hyper" => format!(
-            "hyper = {{ path = {}, default-features = false, features = [\"client\", \"server\", \"http1\"] }}",
+            "hyper = {{ path = {}, default-features = false, features = [\"client\", \"server\", \"http1\", \"std\"] }}",
             toml_string(
                 &workspace_dependency_vendor_path(
                     source_overlay,
@@ -5399,7 +5399,7 @@ fn materialized_workspace_dependency(
         ),
         "hyper-util" => {
             format!(
-                "hyper-util = {{ path = {}, default-features = false, features = [\"tokio\"] }}",
+                "hyper-util = {{ path = {}, default-features = false, features = [\"std\", \"tokio\"] }}",
                 toml_string(
                     &workspace_dependency_vendor_path(
                         source_overlay,
@@ -5419,7 +5419,7 @@ fn materialized_workspace_dependency(
                 .to_string()
         }
         "reqwest" => format!(
-            "reqwest = {{ path = {}, default-features = false, features = [\"json\", \"rustls\", \"http2\"] }}",
+            "reqwest = {{ path = {}, default-features = false, features = [\"json\", \"rustls\"] }}",
             toml_string(
                 &workspace_dependency_vendor_path(
                     source_overlay,

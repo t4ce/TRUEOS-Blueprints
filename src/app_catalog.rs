@@ -184,6 +184,7 @@ fn virtual_package_app_manifest_path(dir: &Path, app_name: &str) -> PathBuf {
     match app_name {
         "helix" => dir.join("helix-term").join("Cargo.toml"),
         "edit" => dir.join("crates").join("edit").join("Cargo.toml"),
+        "ferrumc" => dir.join("src").join("bin").join("Cargo.toml"),
         "matrix" => dir.join("src").join("main").join("Cargo.toml"),
         "yazi" => dir.join("yazi-fm").join("Cargo.toml"),
         _ => dir.join("src").join("main").join("Cargo.toml"),
@@ -515,6 +516,15 @@ mod tests {
     use super::*;
     use std::env;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn resolves_ferrumc_virtual_workspace_package() {
+        let root = Path::new("/workspace/ferrumc");
+        assert_eq!(
+            virtual_package_app_manifest_path(root, "ferrumc"),
+            root.join("src/bin/Cargo.toml")
+        );
+    }
 
     #[test]
     fn manifest_has_dependency_sees_target_dependencies() {

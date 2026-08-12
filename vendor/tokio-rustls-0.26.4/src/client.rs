@@ -1,5 +1,5 @@
 use core::future::Future;
-use std::io::BufRead as _;
+use std::io::{BufRead as _, IoSlice};
 #[cfg(unix)]
 use std::os::unix::io::{AsRawFd, RawFd};
 #[cfg(windows)]
@@ -11,7 +11,7 @@ use core::task::Waker;
 use core::task::{Context, Poll};
 
 use rustls::{pki_types::ServerName, ClientConfig, ClientConnection};
-use tokio::io::{self, AsyncBufRead, AsyncRead, AsyncWrite, IoSlice, ReadBuf};
+use tokio::io::{self, AsyncBufRead, AsyncRead, AsyncWrite, ReadBuf};
 
 use crate::common::{IoSession, MidHandshake, Stream, TlsState};
 
@@ -371,7 +371,7 @@ where
 
         #[cfg(feature = "early-data")]
         {
-            let bufs = [io::IoSlice::new(buf)];
+            let bufs = [IoSlice::new(buf)];
             let written = poll_handle_early_data(
                 &mut this.state,
                 &mut stream,

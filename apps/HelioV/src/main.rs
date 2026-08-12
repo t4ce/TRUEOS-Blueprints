@@ -8,22 +8,28 @@
 mod backend_contract;
 mod platform;
 mod scenedb_probe;
+mod ui4_input;
 mod voxel;
 mod wgpu_vmx;
 
 use trueos::{logl, vsys};
 
 fn main() {
-    let chunk = voxel::build_voxel_chunk();
-    let fingerprint = voxel::mesh_fingerprint(&chunk.mesh);
+    let world = voxel::build_voxel_world();
+    let fingerprint = voxel::mesh_fingerprint(&world.mesh);
 
     logl::log(
         logl::level::INFO,
         format_args!(
-            "HelioV: real Helio Blueprint entered; voxels={} vertices={} indices={} mesh_fingerprint=0x{fingerprint:016x}",
-            chunk.solid_voxels,
-            chunk.mesh.vertices.len(),
-            chunk.mesh.indices.len(),
+            "HelioV: real Helio Blueprint entered; world={}x{} chunks={} voxels={} water={} landmarks={} vertices={} indices={} mesh_fingerprint=0x{fingerprint:016x}",
+            voxel::WORLD_SIDE,
+            voxel::WORLD_SIDE,
+            world.chunks.len(),
+            world.solid_voxels,
+            world.water_voxels,
+            world.landmark_voxels,
+            world.mesh.vertices.len(),
+            world.mesh.indices.len(),
         ),
     );
     logl::log(
@@ -68,11 +74,13 @@ fn main() {
             ),
         ),
     }
-    match scenedb_probe::probe_partner_lifecycle() {
+    match scenedb_probe::probe_partner_lifecycle(&world.chunks) {
         Ok(report) => logl::log(
             logl::level::INFO,
             format_args!(
-                "HelioV: SceneDB Helio-object partner lifecycle ready row={} flush_ranges={} flush_bytes={} stale_after_despawn={}",
+                "HelioV: SceneDB Helio-object world lifecycle ready growth=cpu-shadow-rewrite chunks={} row_span={} reused_row={} flush_ranges={} flush_bytes={} stale_after_despawn={}",
+                report.chunk_objects,
+                report.row_span,
                 report.reused_row,
                 report.flush_ranges,
                 report.flush_bytes,
@@ -84,7 +92,7 @@ fn main() {
             format_args!("HelioV: SceneDB partner probe failed invariant={failure}"),
         ),
     }
-    match wgpu_vmx::probe_ui4_surface_path(&chunk.mesh) {
+    match wgpu_vmx::probe_ui4_surface_path(&world.mesh) {
         Ok(mut report) => {
             logl::log(
                 logl::level::INFO,
@@ -96,6 +104,10 @@ fn main() {
             logl::log(
                 logl::level::INFO,
                 "HelioV: visible voxel submission is live; authenticated shader module, graphics pipeline, vertex/index bindings, and draw_indexed all executed through the ordinary TRUEOS Render frontier",
+            );
+            logl::log(
+                logl::level::INFO,
+                "HelioV: Helio fly camera armed through UI4; click and release the frame once to establish focus, then use primary-drag + WASD + Space/Shift + Ctrl",
             );
             // Retain the proof while already obeying UI4's transactional
             // maximize/restore protocol. The shader milestone replaces the
@@ -123,6 +135,31 @@ fn main() {
                             logl::level::ERROR,
                             format_args!(
                                 "HelioV: transactional UI4 resize failed stage={} rc={}; previous SURFLIVE generation was not replaced",
+                                failure.stage, failure.code,
+                            ),
+                        );
+                        return;
+                    }
+                }
+                match report.present_pending_input() {
+                    Ok(Some(input)) => logl::log(
+                        logl::level::INFO,
+                        format_args!(
+                            "HelioV: UI4-routed Helio fly camera live position=({:.3},{:.3},{:.3}) yaw={:.3} pitch={:.3} timeline={} controls=primary-drag+WASD+Space/Shift+Ctrl",
+                            input.position[0],
+                            input.position[1],
+                            input.position[2],
+                            input.yaw,
+                            input.pitch,
+                            input.timeline,
+                        ),
+                    ),
+                    Ok(None) => {}
+                    Err(failure) => {
+                        logl::log(
+                            logl::level::ERROR,
+                            format_args!(
+                                "HelioV: UI4-routed Helio camera failed stage={} rc={}",
                                 failure.stage, failure.code,
                             ),
                         );

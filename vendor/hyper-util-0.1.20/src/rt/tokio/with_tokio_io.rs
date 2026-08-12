@@ -1,5 +1,6 @@
 use pin_project_lite::pin_project;
 use std::{
+    io::IoSlice,
     pin::Pin,
     task::{Context, Poll},
 };
@@ -93,7 +94,7 @@ where
     fn poll_write_vectored(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-        bufs: &[tokio_io::IoSlice<'_>],
+        bufs: &[IoSlice<'_>],
     ) -> Poll<Result<usize, tokio_io::Error>> {
         let bufs = tokio_to_hyper_slices(bufs);
         hyper::rt::Write::poll_write_vectored(self.project().inner, cx, &bufs)

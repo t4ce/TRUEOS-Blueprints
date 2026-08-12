@@ -17,6 +17,7 @@ path = "src/main.rs"
 helio = { path = "../../../Helio/crates/helio", default-features = false }
 helio-scenedb = { path = "../../../Helio/crates/helio-scenedb", default-features = false }
 libhelio = { path = "../../../Helio/crates/libhelio" }
+glam = { version = "0.33", default-features = false, features = ["libm"] }
 trueos = { path = "../../api", features = ["ui4-scene"] }
 # Compile the public custom-backend interface that the TRUEOS adapter must
 # implement. This is the same patched WGPU package Helio consumes.

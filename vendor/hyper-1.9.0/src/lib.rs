@@ -10,7 +10,13 @@
 #![cfg_attr(all(test, feature = "full"), deny(warnings))]
 #![cfg_attr(all(test, feature = "nightly"), feature(test))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
-#![cfg_attr(any(target_os = "trueos", target_os = "zkvm"), no_std)]
+#![cfg_attr(
+    all(
+        target_os = "zkvm",
+        not(feature = "std")
+    ),
+    no_std
+)]
 
 //! # hyper
 //!
@@ -99,7 +105,10 @@
 
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
 extern crate alloc;
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+#[cfg(all(
+    target_os = "zkvm",
+    not(feature = "std")
+))]
 extern crate self as std;
 
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
@@ -146,9 +155,22 @@ pub mod future {
 // Hyper's runtime I/O traits use the same TRUEOS platform I/O vocabulary as
 // Tokio. Ecosystem trait boundaries that require real `std::io` are handled at
 // the Blueprint overlay layer.
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+#[cfg(all(
+    target_os = "zkvm",
+    not(feature = "std")
+))]
 pub mod io {
     pub use trueos_io::*;
+}
+
+#[cfg(target_os = "trueos")]
+pub mod io {
+    pub use ::std::io::*;
+}
+
+#[cfg(all(target_os = "zkvm", feature = "std"))]
+pub mod io {
+    pub use ::std::io::*;
 }
 
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
