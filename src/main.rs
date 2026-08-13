@@ -3456,6 +3456,7 @@ fn staged_manifest_for_overlay(
     let staged_manifest = staged_app_dir.join(manifest_relative);
     let nested_workspace_package = manifest_relative.components().count() > 1;
     canonicalize_staged_manifest_paths_from_original(manifest_path, &staged_manifest)?;
+    isolate_staged_workspace_members(&staged_manifest)?;
     strip_manifest_patch_section(&staged_manifest)?;
     if !nested_workspace_package {
         materialize_staged_workspace_dependencies(
@@ -3528,6 +3529,90 @@ fn canonicalize_staged_manifest_paths_from_original(
         fs::write(staged_manifest, out).map_err(io_string)?;
     }
     Ok(())
+}
+
+/// Build only the selected package from a staged application workspace.
+///
+/// Direct path dependencies are rewritten to their canonical source paths
+/// above. Keeping copied workspace members as well would give Cargo two path
+/// identities for the same name and version: one below the staging directory
+/// and one at the canonical source path. That cannot be represented in a
+/// lockfile unambiguously.
+fn isolate_staged_workspace_members(manifest_path: &Path) -> Result<(), String> {
+    let cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
+    let mut out = String::with_capacity(cargo_toml.len());
+    let mut in_workspace = false;
+    let mut skipping_array = false;
+    let mut array_depth = 0i32;
+
+    for line in cargo_toml.lines() {
+        if skipping_array {
+            array_depth += toml_array_bracket_delta(line);
+            if array_depth <= 0 {
+                skipping_array = false;
+            }
+            continue;
+        }
+
+        let trimmed = line.split('#').next().unwrap_or("").trim();
+        if trimmed.starts_with('[') {
+            in_workspace = trimmed == "[workspace]";
+        }
+
+        let Some((key, value)) = trimmed.split_once('=') else {
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        };
+        let key = key.trim();
+        if !in_workspace || !matches!(key, "members" | "default-members") {
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        }
+
+        let indent_len = line.len() - line.trim_start().len();
+        out.push_str(&line[..indent_len]);
+        out.push_str(key);
+        out.push_str(" = [\".\"]\n");
+
+        array_depth = toml_array_bracket_delta(value);
+        skipping_array = array_depth > 0;
+    }
+
+    fs::write(manifest_path, out).map_err(io_string)
+}
+
+fn toml_array_bracket_delta(line: &str) -> i32 {
+    let mut delta = 0i32;
+    let mut quoted = false;
+    let mut escaped = false;
+    for character in line.chars() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if quoted && character == '\\' {
+            escaped = true;
+            continue;
+        }
+        if character == '"' {
+            quoted = !quoted;
+            continue;
+        }
+        if quoted || character == '#' {
+            if character == '#' && !quoted {
+                break;
+            }
+            continue;
+        }
+        match character {
+            '[' => delta += 1,
+            ']' => delta -= 1,
+            _ => {}
+        }
+    }
+    delta
 }
 
 #[cfg(test)]
@@ -3603,6 +3688,25 @@ mod external_path_overlay_tests {
             "engine = {{ path = \"{}\" }}",
             canonical.display()
         )));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn staged_workspace_only_keeps_the_selected_root_package() {
+        let root = test_dir("staged-workspace-members");
+        let manifest = root.join("Cargo.toml");
+        fs::write(
+            &manifest,
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[workspace]\nmembers = [\n    \".\",\n    \"crates/renderer\",\n]\ndefault-members = [\"crates/renderer\"]\nresolver = \"3\"\n\n[workspace.dependencies]\nserde = \"1\"\n",
+        )
+        .unwrap();
+
+        isolate_staged_workspace_members(&manifest).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(&manifest).unwrap(),
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[workspace]\nmembers = [\".\"]\ndefault-members = [\".\"]\nresolver = \"3\"\n\n[workspace.dependencies]\nserde = \"1\"\n"
+        );
         fs::remove_dir_all(root).unwrap();
     }
 }

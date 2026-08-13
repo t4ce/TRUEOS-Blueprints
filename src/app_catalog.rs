@@ -129,6 +129,7 @@ pub(crate) fn package_app_spec(
     app_name: &str,
     package_catalog: PackageCatalog,
 ) -> Result<Option<PackageAppSpec>, String> {
+    let app_name = package_app_lookup_name(app_name);
     let Some(app) = registered_app_specs(app_dir, package_catalog)?
         .into_iter()
         .find(|app| app.name == app_name)
@@ -136,6 +137,13 @@ pub(crate) fn package_app_spec(
         return Ok(None);
     };
     package_app_spec_required(&app).map(Some)
+}
+
+fn package_app_lookup_name(app_name: &str) -> &str {
+    match app_name {
+        "ferrumc" => "pumpkin",
+        _ => app_name,
+    }
 }
 
 fn package_app_spec_required(app: &RegisteredAppSpec) -> Result<PackageAppSpec, String> {
@@ -184,7 +192,7 @@ fn virtual_package_app_manifest_path(dir: &Path, app_name: &str) -> PathBuf {
     match app_name {
         "helix" => dir.join("helix-term").join("Cargo.toml"),
         "edit" => dir.join("crates").join("edit").join("Cargo.toml"),
-        "ferrumc" => dir.join("src").join("bin").join("Cargo.toml"),
+        "pumpkin" => dir.join("crates").join("pumpkin").join("Cargo.toml"),
         "matrix" => dir.join("src").join("main").join("Cargo.toml"),
         "yazi" => dir.join("yazi-fm").join("Cargo.toml"),
         _ => dir.join("src").join("main").join("Cargo.toml"),
@@ -518,12 +526,14 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
-    fn resolves_ferrumc_virtual_workspace_package() {
-        let root = Path::new("/workspace/ferrumc");
+    fn resolves_pumpkin_workspace_package_and_legacy_lookup() {
+        let root = Path::new("/workspace/Pumpkin");
         assert_eq!(
-            virtual_package_app_manifest_path(root, "ferrumc"),
-            root.join("src/bin/Cargo.toml")
+            virtual_package_app_manifest_path(root, "pumpkin"),
+            root.join("crates/pumpkin/Cargo.toml")
         );
+        assert_eq!(package_app_lookup_name("ferrumc"), "pumpkin");
+        assert_eq!(package_app_lookup_name("pumpkin"), "pumpkin");
     }
 
     #[test]
@@ -648,9 +658,11 @@ rustc-payload-dependencies = ["trueos", "itoa"]
             "cross",
             "framework_stack",
             "panick",
+            "posix_file_world_probe",
             "posix_fd_probe",
             "rusqlite_probe",
             "rusqlite_multirt",
+            "signal_probe",
             "test_some_crates",
             "tokio_fs",
             "tokio_mrt",

@@ -1,0 +1,12 @@
+[package]
+name = "signal_probe"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "signal_probe"
+path = "main.rs"
+
+[dependencies]
+tokio.workspace = true
+trueos.workspace = true

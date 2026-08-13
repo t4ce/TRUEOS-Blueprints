@@ -49,8 +49,8 @@
       "optional": true
     },
     {
-      "name": "ferrumc",
-      "path": "../ferrumc",
+      "name": "pumpkin",
+      "path": "../Pumpkin",
       "optional": true
     },
     {
