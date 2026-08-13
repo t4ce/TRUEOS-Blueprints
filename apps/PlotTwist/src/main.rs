@@ -304,10 +304,7 @@ mod server {
                 {
                     logl::log(
                         level::WARN,
-                        format_args!(
-                            "PlotTwist: connection={} failed {err:?}",
-                            connection
-                        ),
+                        format_args!("PlotTwist: connection={} failed {err:?}", connection),
                     );
                 }
             });

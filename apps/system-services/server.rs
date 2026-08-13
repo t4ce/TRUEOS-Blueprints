@@ -229,10 +229,7 @@ fn parse_snapshot(text: &str) -> Result<ServicesSnapshot, String> {
 fn parse_task_profile_row(line: &str) -> Result<TaskProfileRow, String> {
     let fields = line.split('\t').collect::<Vec<_>>();
     if fields.len() != 21 {
-        return Err(format!(
-            "bad task profile row with {} fields",
-            fields.len()
-        ));
+        return Err(format!("bad task profile row with {} fields", fields.len()));
     }
     let number = |index: usize| -> Result<u64, String> {
         fields[index]

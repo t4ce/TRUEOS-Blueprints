@@ -3,7 +3,12 @@
 
 extern crate alloc;
 
-use alloc::{format, string::{String, ToString}, vec, vec::Vec};
+use alloc::{
+    format,
+    string::{String, ToString},
+    vec,
+    vec::Vec,
+};
 use core3::io::Cursor;
 use trueos::logl::{self, level};
 use trueos::ui4_scene::{Damage, Error as Ui4Error, Frame, output_dimensions, rgba};
@@ -81,10 +86,17 @@ impl View {
     }
 
     fn clamp_offsets(&mut self) {
-        self.offset_x = clamp_axis(self.offset_x, self.viewport_width as f32, self.image_width as f32);
-        self.offset_y = clamp_axis(self.offset_y, self.viewport_height as f32, self.image_height as f32);
+        self.offset_x = clamp_axis(
+            self.offset_x,
+            self.viewport_width as f32,
+            self.image_width as f32,
+        );
+        self.offset_y = clamp_axis(
+            self.offset_y,
+            self.viewport_height as f32,
+            self.image_height as f32,
+        );
     }
-
 }
 
 fn clamp_axis(offset: f32, viewport: f32, content: f32) -> f32 {
@@ -101,7 +113,11 @@ fn main() {
     let script = launch_script();
     logl::log(
         level::INFO,
-        format_args!("img: vFile launch read ok bytes={} lines={}", script.len(), script.lines().count()),
+        format_args!(
+            "img: vFile launch read ok bytes={} lines={}",
+            script.len(),
+            script.lines().count()
+        ),
     );
     for line in script.lines() {
         run_line(line, &mut frames);
@@ -119,12 +135,18 @@ fn launch_script() -> String {
         Ok(bytes) => match String::from_utf8(bytes) {
             Ok(script) => script,
             Err(_) => {
-                logl::log(level::ERROR, format_args!("img: vFile launch invalid UTF-8"));
+                logl::log(
+                    level::ERROR,
+                    format_args!("img: vFile launch invalid UTF-8"),
+                );
                 String::new()
             }
         },
         Err(code) => {
-            logl::log(level::ERROR, format_args!("img: vFile launch read code={code}"));
+            logl::log(
+                level::ERROR,
+                format_args!("img: vFile launch read code={code}"),
+            );
             String::new()
         }
     }
@@ -156,38 +178,59 @@ fn run_line(line: &str, frames: &mut Vec<OpenFrame>) {
             "nohit" => hit_testable = false,
             "hit" => hit_testable = true,
             _ => {
-                logl::log(level::WARN, format_args!("img: unknown show option={option}"));
+                logl::log(
+                    level::WARN,
+                    format_args!("img: unknown show option={option}"),
+                );
                 return;
             }
         }
     }
     if frames.len() >= MAX_FRAMES {
-        logl::log(level::WARN, format_args!("img: frame cap={} source={path}", MAX_FRAMES));
+        logl::log(
+            level::WARN,
+            format_args!("img: frame cap={} source={path}", MAX_FRAMES),
+        );
         return;
     }
     let image = match load_image(path.trim()) {
         Ok(image) => image,
         Err(error) => {
-            logl::log(level::ERROR, format_args!("img: show source={path} error={error}"));
+            logl::log(
+                level::ERROR,
+                format_args!("img: show source={path} error={error}"),
+            );
             return;
         }
     };
     let (output_width, output_height) = output_dimensions().unwrap_or((2_560, 1_440));
     let viewport_width = image.width.min(output_width).max(1);
     let viewport_height = image.height.min(output_height).max(1);
-    let (x, y) = aligned_position(output_width, output_height, viewport_width, viewport_height, alignment);
+    let (x, y) = aligned_position(
+        output_width,
+        output_height,
+        viewport_width,
+        viewport_height,
+        alignment,
+    );
     let mut frame = match Frame::open_immutable(x, y, viewport_width, viewport_height) {
         Ok(frame) => frame,
         Err(error) => {
             logl::log(
                 level::ERROR,
-                format_args!("img: viewport rejected source={path} image={}x{} viewport={}x{} error={error:?}", image.width, image.height, viewport_width, viewport_height),
+                format_args!(
+                    "img: viewport rejected source={path} image={}x{} viewport={}x{} error={error:?}",
+                    image.width, image.height, viewport_width, viewport_height
+                ),
             );
             return;
         }
     };
     if let Err(error) = frame.set_hit_testable(hit_testable) {
-        logl::log(level::ERROR, format_args!("img: hit-test source={path} error={error:?}"));
+        logl::log(
+            level::ERROR,
+            format_args!("img: hit-test source={path} error={error:?}"),
+        );
         return;
     }
     let view = View::new(
@@ -198,7 +241,10 @@ fn run_line(line: &str, frames: &mut Vec<OpenFrame>) {
         alignment,
     );
     if let Err(error) = present(&mut frame, view, &image) {
-        logl::log(level::ERROR, format_args!("img: present source={path} error={error:?}"));
+        logl::log(
+            level::ERROR,
+            format_args!("img: present source={path} error={error:?}"),
+        );
         return;
     }
     logl::log(
@@ -258,7 +304,8 @@ fn present(frame: &mut Frame, view: View, image: &Image) -> Result<(), Ui4Error>
         .min(view.viewport_height as usize - destination_y);
     for row in 0..copy_height {
         let source_start = ((source_y + row) * image.width as usize + source_x) * 4;
-        let destination_start = ((destination_y + row) * view.viewport_width as usize + destination_x) * 4;
+        let destination_start =
+            ((destination_y + row) * view.viewport_width as usize + destination_x) * 4;
         let byte_len = copy_width * 4;
         viewport[destination_start..destination_start + byte_len]
             .copy_from_slice(&image.rgba[source_start..source_start + byte_len]);
@@ -278,11 +325,13 @@ fn service_frames(frames: &mut Vec<OpenFrame>) {
             let open = &mut frames[index];
             loop {
                 match open.frame.take_keyboard_event() {
-                    Ok(Some(event)) if event.kind == input::KEYBOARD_OUTPUT_KIND_KEY
-                        && event.key_code == input::KEYBOARD_KEY_ESCAPE
-                        && event.flags & input::KEYBOARD_OUTPUT_FLAG_PRESS != 0 => {
-                            close = true;
-                        }
+                    Ok(Some(event))
+                        if event.kind == input::KEYBOARD_OUTPUT_KIND_KEY
+                            && event.key_code == input::KEYBOARD_KEY_ESCAPE
+                            && event.flags & input::KEYBOARD_OUTPUT_FLAG_PRESS != 0 =>
+                    {
+                        close = true;
+                    }
                     Ok(Some(_)) => {}
                     Ok(None) => break,
                     Err(error) => {
@@ -306,12 +355,21 @@ fn service_frames(frames: &mut Vec<OpenFrame>) {
             }
             while open.frame.take_resize_event().ok().flatten().is_some() {}
             if repaint && let Err(error) = present(&mut open.frame, open.view, &open.image) {
-                logl::log(level::WARN, format_args!("img: pan repaint error={error:?}"));
+                logl::log(
+                    level::WARN,
+                    format_args!("img: pan repaint error={error:?}"),
+                );
             }
         }
         if close {
             let closed = frames.swap_remove(index);
-            logl::log(level::INFO, format_args!("img: close window={} source=escape", closed.frame.window_id()));
+            logl::log(
+                level::INFO,
+                format_args!(
+                    "img: close window={} source=escape",
+                    closed.frame.window_id()
+                ),
+            );
             drop(closed);
         } else {
             index += 1;
@@ -321,7 +379,8 @@ fn service_frames(frames: &mut Vec<OpenFrame>) {
 
 fn load_image(source: &str) -> Result<Image, String> {
     if source.starts_with("kernel:") {
-        let (info, bytes) = image_source::read(source).map_err(|code| format!("kernel source code={code}"))?;
+        let (info, bytes) =
+            image_source::read(source).map_err(|code| format!("kernel source code={code}"))?;
         return match info.format {
             image_source::FORMAT_JPEG => decode_jpeg(bytes.as_slice()).map_err(String::from),
             image_source::FORMAT_RGBA8 => image_from_rgba(info.width, info.height, bytes),
@@ -339,16 +398,12 @@ fn decode_jpeg(bytes: &[u8]) -> Result<Image, &'static str> {
         .jpeg_set_out_colorspace(ColorSpace::RGBA)
         .set_use_unsafe(true);
     let mut decoder = JpegDecoder::new_with_options(ZCursor::new(bytes), options);
-    decoder
-        .decode_headers()
-        .map_err(|_| "invalid JPEG")?;
+    decoder.decode_headers().map_err(|_| "invalid JPEG")?;
     let info = decoder.info().ok_or("JPEG has no dimensions")?;
     let width = u32::from(info.width);
     let height = u32::from(info.height);
     let expected = checked_rgba_len(width, height).ok_or("JPEG dimensions rejected")?;
-    let rgba = decoder
-        .decode()
-        .map_err(|_| "JPEG decode failed")?;
+    let rgba = decoder.decode().map_err(|_| "JPEG decode failed")?;
     if rgba.len() != expected {
         return Err("built-in JPEG decoded size mismatch");
     }
@@ -362,16 +417,23 @@ fn decode_jpeg(bytes: &[u8]) -> Result<Image, &'static str> {
 fn decode_png(bytes: &[u8]) -> Result<Image, String> {
     let mut decoder = png::Decoder::new(Cursor::new(bytes));
     decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
-    let mut reader = decoder.read_info().map_err(|_| String::from("invalid PNG"))?;
+    let mut reader = decoder
+        .read_info()
+        .map_err(|_| String::from("invalid PNG"))?;
     let width = reader.info().width;
     let height = reader.info().height;
-    let expected = checked_rgba_len(width, height).ok_or_else(|| String::from("PNG dimensions rejected"))?;
-    let output_len = reader.output_buffer_size().ok_or_else(|| String::from("PNG output too large"))?;
+    let expected =
+        checked_rgba_len(width, height).ok_or_else(|| String::from("PNG dimensions rejected"))?;
+    let output_len = reader
+        .output_buffer_size()
+        .ok_or_else(|| String::from("PNG output too large"))?;
     if output_len > expected {
         return Err(String::from("PNG output layout rejected"));
     }
     let mut decoded = vec![0u8; output_len];
-    let info = reader.next_frame(&mut decoded).map_err(|_| String::from("PNG decode failed"))?;
+    let info = reader
+        .next_frame(&mut decoded)
+        .map_err(|_| String::from("PNG decode failed"))?;
     decoded.truncate(info.buffer_size());
     let pixels = expected / 4;
     let rgba = match info.color_type {
@@ -393,24 +455,38 @@ fn decode_png(bytes: &[u8]) -> Result<Image, String> {
         png::ColorType::GrayscaleAlpha if decoded.len() == pixels * 2 => {
             let mut rgba = Vec::with_capacity(expected);
             for gray_alpha in decoded.chunks_exact(2) {
-                rgba.extend_from_slice(&[gray_alpha[0], gray_alpha[0], gray_alpha[0], gray_alpha[1]]);
+                rgba.extend_from_slice(&[
+                    gray_alpha[0],
+                    gray_alpha[0],
+                    gray_alpha[0],
+                    gray_alpha[1],
+                ]);
             }
             rgba
         }
         _ => return Err(String::from("unsupported PNG output layout")),
     };
-    Ok(Image { width, height, rgba })
+    Ok(Image {
+        width,
+        height,
+        rgba,
+    })
 }
 
 fn image_from_rgba(width: u32, height: u32, mut rgba: Vec<u8>) -> Result<Image, String> {
-    let expected = checked_rgba_len(width, height).ok_or_else(|| String::from("RGBA dimensions rejected"))?;
+    let expected =
+        checked_rgba_len(width, height).ok_or_else(|| String::from("RGBA dimensions rejected"))?;
     if rgba.len() != expected {
         return Err(String::from("RGBA byte length mismatch"));
     }
     for alpha in rgba.iter_mut().skip(3).step_by(4) {
         *alpha = u8::MAX;
     }
-    Ok(Image { width, height, rgba })
+    Ok(Image {
+        width,
+        height,
+        rgba,
+    })
 }
 
 fn checked_rgba_len(width: u32, height: u32) -> Option<usize> {

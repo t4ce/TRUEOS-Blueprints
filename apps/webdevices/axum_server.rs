@@ -472,8 +472,8 @@ fn task_profile_payload() -> TaskProfileSnapshot {
             latest: None,
         };
     };
-    let history_capacity = parse_snapshot_scalar(&text, "task_profile_history_capacity")
-        .unwrap_or(0) as usize;
+    let history_capacity =
+        parse_snapshot_scalar(&text, "task_profile_history_capacity").unwrap_or(0) as usize;
     let mut history_count = 0usize;
     let mut latest = None;
     for line in text.lines().filter(|line| {

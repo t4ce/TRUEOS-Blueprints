@@ -33,16 +33,13 @@ pub const SHADER_PACKAGE_CLIP_POSITION3_RGBA_FNV1A64: u64 = 0x1438_5963_136A_A36
 /// and a fragment-stage sampled RGBA8 texture plus filtering sampler.
 pub const SHADER_PACKAGE_CLIP_POSITION3_UV_TEXTURE_FNV1A64: u64 = 0xD2A3_B942_FA09_24B6;
 /// Diagnostic-only fixed mip-0 texel load used during Intel sampler bring-up.
-pub const SHADER_PACKAGE_CLIP_POSITION3_UV_TEXEL_LOAD_FNV1A64: u64 =
-    0x0CFE_4DDB_C885_8871;
+pub const SHADER_PACKAGE_CLIP_POSITION3_UV_TEXEL_LOAD_FNV1A64: u64 = 0x0CFE_4DDB_C885_8871;
 pub const SAMPLER_ADDRESS_U_REPEAT: u32 = 1 << 0;
 pub const SAMPLER_ADDRESS_V_REPEAT: u32 = 1 << 1;
 pub const SAMPLER_MAG_LINEAR: u32 = 1 << 2;
 pub const SAMPLER_MIN_LINEAR: u32 = 1 << 3;
-pub const SAMPLER_FLAGS_ALL: u32 = SAMPLER_ADDRESS_U_REPEAT
-    | SAMPLER_ADDRESS_V_REPEAT
-    | SAMPLER_MAG_LINEAR
-    | SAMPLER_MIN_LINEAR;
+pub const SAMPLER_FLAGS_ALL: u32 =
+    SAMPLER_ADDRESS_U_REPEAT | SAMPLER_ADDRESS_V_REPEAT | SAMPLER_MAG_LINEAR | SAMPLER_MIN_LINEAR;
 const VVIDEO_PAGE_BYTES: usize = 4096;
 
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
@@ -358,7 +355,9 @@ impl Device {
 
     pub fn create_shader_module(self, package_digest: u64) -> Result<ShaderModule, i32> {
         let mut handle = 0;
-        rc_result(unsafe { vcabi::trueos_cabi_vgpu_shader_module_create(self.0, package_digest, &mut handle) })?;
+        rc_result(unsafe {
+            vcabi::trueos_cabi_vgpu_shader_module_create(self.0, package_digest, &mut handle)
+        })?;
         (handle != 0).then_some(ShaderModule(handle)).ok_or(ERR_IO)
     }
 
@@ -366,10 +365,25 @@ impl Device {
         rc_result(unsafe { vcabi::trueos_cabi_vgpu_shader_module_destroy(self.0, shader.0) })
     }
 
-    pub fn create_render_pipeline(self, shader: ShaderModule, vertex_stride: u32, position_offset: u32) -> Result<RenderPipeline, i32> {
+    pub fn create_render_pipeline(
+        self,
+        shader: ShaderModule,
+        vertex_stride: u32,
+        position_offset: u32,
+    ) -> Result<RenderPipeline, i32> {
         let mut handle = 0;
-        rc_result(unsafe { vcabi::trueos_cabi_vgpu_render_pipeline_create(self.0, shader.0, vertex_stride, position_offset, &mut handle) })?;
-        (handle != 0).then_some(RenderPipeline(handle)).ok_or(ERR_IO)
+        rc_result(unsafe {
+            vcabi::trueos_cabi_vgpu_render_pipeline_create(
+                self.0,
+                shader.0,
+                vertex_stride,
+                position_offset,
+                &mut handle,
+            )
+        })?;
+        (handle != 0)
+            .then_some(RenderPipeline(handle))
+            .ok_or(ERR_IO)
     }
 
     pub fn destroy_render_pipeline(self, pipeline: RenderPipeline) -> Result<(), i32> {
@@ -469,12 +483,7 @@ impl Device {
         draw.texture_reserved = 0;
         let mut point = TimelinePoint::default();
         rc_result(unsafe {
-            vcabi::trueos_cabi_vgpu_ui4_indexed_submit(
-                self.0,
-                queue.handle,
-                &draw,
-                &mut point,
-            )
+            vcabi::trueos_cabi_vgpu_ui4_indexed_submit(self.0, queue.handle, &draw, &mut point)
         })?;
         surface.live = false;
         Ok(point)
@@ -656,7 +665,6 @@ impl Queue {
     pub const fn raw(self) -> u64 {
         self.handle
     }
-
 }
 
 fn rc_result(rc: i32) -> Result<(), i32> {

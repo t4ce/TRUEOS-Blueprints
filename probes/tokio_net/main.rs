@@ -195,6 +195,12 @@ async fn run_probe() -> Result<(), &'static str> {
 
     logl::log(
         level::INFO,
+        format_args!("tokio_net: stage net.udp.loopback_roundtrip"),
+    );
+    probe_udp_loopback().await?;
+
+    logl::log(
+        level::INFO,
         format_args!("tokio_net: stage net.tcp.loopback_roundtrip"),
     );
     match probe_tcp_loopback().await {
@@ -315,6 +321,47 @@ async fn try_probe_udp_bind() -> Result<(), &'static str> {
     logl::log(
         level::INFO,
         format_args!("tokio_net: success net.udp.bind local={}", local),
+    );
+    Ok(())
+}
+
+async fn probe_udp_loopback() -> Result<(), &'static str> {
+    let sender = t::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .map_err(|_| "net.udp.loopback.sender_bind")?;
+    let receiver = t::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .map_err(|_| "net.udp.loopback.receiver_bind")?;
+    let receiver_addr = receiver
+        .local_addr()
+        .map_err(|_| "net.udp.loopback.receiver_local_addr")?;
+
+    let sent = sender
+        .send_to(b"ping", receiver_addr)
+        .await
+        .map_err(|_| "net.udp.loopback.send_to")?;
+    if sent != 4 {
+        return Err("net.udp.loopback.send_len");
+    }
+
+    let mut buffer = [0u8; 4];
+    let (received, peer) = t::time::timeout(
+        t::time::Duration::from_millis(PROBE_WAIT_BUDGET_MS),
+        receiver.recv_from(&mut buffer),
+    )
+    .await
+    .map_err(|_| "net.udp.loopback.recv_timeout")?
+    .map_err(|_| "net.udp.loopback.recv_from")?;
+    if received != buffer.len() || buffer != *b"ping" {
+        return Err("net.udp.loopback.payload");
+    }
+
+    logl::log(
+        level::INFO,
+        format_args!(
+            "tokio_net: success net.udp.loopback_roundtrip peer={} destination={}",
+            peer, receiver_addr
+        ),
     );
     Ok(())
 }
