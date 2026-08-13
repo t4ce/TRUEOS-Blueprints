@@ -250,6 +250,29 @@ async fn run_probe() -> Result<(), &'static str> {
         format_args!("tokio_fs: success fs.metadata.dir"),
     );
 
+    logl::log(level::INFO, format_args!("tokio_fs: stage fs.read_dir"));
+    let mut entries = t::fs::read_dir(PROBE_DIR)
+        .await
+        .map_err(|_| "fs.read_dir")?;
+    let mut found_nested = false;
+    while let Some(entry) = entries
+        .next_entry()
+        .await
+        .map_err(|_| "fs.read_dir.next_entry")?
+    {
+        if entry.file_name() == "nested" {
+            found_nested = entry
+                .file_type()
+                .await
+                .map_err(|_| "fs.read_dir.file_type")?
+                .is_dir();
+        }
+    }
+    if !found_nested {
+        return Err("fs.read_dir.missing_nested");
+    }
+    logl::log(level::INFO, format_args!("tokio_fs: success fs.read_dir"));
+
     logl::log(
         level::INFO,
         format_args!("tokio_fs: stage fs.canonicalize.trueos"),
@@ -257,14 +280,14 @@ async fn run_probe() -> Result<(), &'static str> {
     let canonical = t::fs::canonicalize(format!("{}/./nested/../nested/probe.txt", PROBE_DIR))
         .await
         .map_err(|_| "fs.canonicalize.trueos")?;
-    if canonical != t::tokio::path::Path::new("/").join(PROBE_NESTED_PATH) {
+    if canonical != trueos::platform::path::Path::new("/").join(PROBE_NESTED_PATH) {
         return Err("fs.canonicalize.trueos.value");
     }
     logl::log(
         level::INFO,
         format_args!(
             "tokio_fs: success fs.canonicalize.trueos path={}",
-            canonical.as_os_str()
+            canonical.display()
         ),
     );
 
