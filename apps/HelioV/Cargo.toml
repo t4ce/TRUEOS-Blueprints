@@ -7,6 +7,13 @@ license = "MIT OR Apache-2.0"
 [package.metadata.trueos-blueprint]
 replicatable = false
 
+[features]
+# The current bare-metal artifact is deliberately one diagnostic rung below
+# the final material shader. Disable default features to restore filtered
+# textureSample after fixed mip-0 sampling retires on the physical ADL-S GPU.
+default = ["texture-bringup-fixed-load"]
+texture-bringup-fixed-load = []
+
 [[bin]]
 name = "heliov"
 path = "src/main.rs"

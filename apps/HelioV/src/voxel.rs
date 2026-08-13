@@ -29,6 +29,21 @@ pub struct WorldBuild {
     pub chunks: Vec<WorldChunk>,
 }
 
+/// One top-facing quad used only by the opt-in sampler bring-up package. It
+/// keeps vertex fetch, interpolation, index fetch and UI4 presentation real
+/// while removing 41k vertices and world visibility from the failure domain.
+#[cfg(feature = "texture-bringup-fixed-load")]
+pub fn texture_bringup_quad() -> MeshUpload {
+    let mut vertices = Vec::with_capacity(4);
+    let mut indices = Vec::with_capacity(6);
+    emit_face(&mut vertices, &mut indices, [18.0, 7.0, 18.0], FACES[2]);
+    for vertex in &mut vertices {
+        vertex.position[0] = 18.0 + (vertex.position[0] - 18.0) * 12.0;
+        vertex.position[2] = 18.0 + (vertex.position[2] - 18.0) * 12.0;
+    }
+    MeshUpload { vertices, indices }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Block {
     Air,

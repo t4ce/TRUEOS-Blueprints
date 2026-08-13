@@ -44,13 +44,20 @@ despawn, GPU flush, and repeated component-buffer growth paths. HelioV enables
 SceneDB's additive CPU-shadow reallocation policy for this DirtyTracked object
 authority, so the current TRUEOS backend needs only buffer creation and
 `Queue::write_buffer`; normal Helio remains on GPU-copy growth and no `Once`
-handoff is weakened. An actual UI4 Blueprint back buffer is mapped into
-the caller's isolated VMX GPUVM and exposed as a `wgpu::Texture`. A normal WGPU
-command encoder creates the authenticated shader and graphics pipeline, binds
-the Helio-authored vertex/index buffers, executes `draw_indexed`, retires the
-mediated Intel work, transfers its exact release to UI4, publishes, and reaches
-physical SURFLIVE. The visible green voxel world is therefore real indexed GPU
-work, not a CPU paint or alternate renderer.
+handoff is weakened. An actual UI4 Blueprint back buffer is mapped into the
+caller's isolated VMX GPUVM and exposed as a `wgpu::Texture`. The untextured
+indexed path and UI4 SURFLIVE handoff are proven. The first shader sampler read
+is **not** proven: the ADL-S Render0 submission currently fails to retire.
+Earlier JPG/PNG/video work proved decode, upload, blit and presentation as
+separate operations, not a texture sampled by a mesh fragment shader.
+
+The default build therefore runs a dedicated fixed-mip texel-load probe over
+one four-vertex Helio quad. It keeps the ordinary WGPU texture/view/sampler,
+bind-group, pipeline, indexed-draw and UI4 path but removes the full voxel mesh,
+implicit derivatives and filtering from the failure domain. The normal
+`textureSample` voxel package remains intact behind `--no-default-features` and
+is re-enabled only after the fixed load retires. There is no CPU paint or
+alternate renderer fallback.
 
 The retained proof already follows UI4's maximize/restore procedure. It stages
 a private replacement generation, imports that exact new lease into VMX,
@@ -72,8 +79,9 @@ compatibility upload for the current position-only shader package and is
 refreshed after both camera and resize changes.
 
 Current result: `cargo bp apps/HelioV` compiles the complete target dependency
-closure and emits `dist/heliov.bp`. See [GPU_BOUNDARY.md](GPU_BOUNDARY.md) for
-the measured boundary, rather than a guessed list of platform problems.
+closure and emits `dist/heliov.bp`. Its default artifact is intentionally the
+fixed-texel diagnostic rung. See [GPU_BOUNDARY.md](GPU_BOUNDARY.md) for the
+measured boundary, rather than a guessed list of platform problems.
 
 Build from the Blueprint repository root:
 
