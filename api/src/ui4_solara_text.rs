@@ -216,8 +216,9 @@ pub struct PanEvent {
 /// A UI4 maximize/restore request for this frame's backing extent.
 ///
 /// The frame remains valid at its current size until the Blueprint chooses to
-/// call [`Frame::resize`]. Ignoring this event keeps the old pixels centered
-/// 1:1 inside the broker-owned maximize geometry.
+/// call [`Frame::resize`]. UI4 may smoothly scale those old pixels toward the
+/// final geometry, but the application receives only this one final extent;
+/// presentation-animation samples are never reported as resize events.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct ResizeEvent {
     pub old_width: u32,
@@ -685,7 +686,7 @@ impl Frame {
         }))
     }
 
-    /// Take the next UI4 maximize/restore extent request for this frame.
+    /// Take the next final UI4 maximize/restore extent for this frame.
     pub fn take_resize_event(&mut self) -> Result<Option<ResizeEvent>, Error> {
         let mut raw = v::bp_abi::TrueosUi4ResizeEvent::default();
         let result =
