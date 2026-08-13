@@ -1,9 +1,6 @@
-#[allow(unused_imports)]
-use crate::runtime::prelude::*;
-
-use core::any::Any;
-use ::core::fmt;
-use crate::io;
+use std::any::Any;
+use std::fmt;
+use std::io;
 
 use super::Id;
 use crate::util::SyncWrapper;
@@ -51,7 +48,7 @@ impl JoinError {
     /// ```
     /// # #[cfg(not(target_family = "wasm"))]
     /// # {
-    /// use ::core::panic;
+    /// use std::panic;
     ///
     /// #[tokio::main]
     /// async fn main() {
@@ -78,7 +75,7 @@ impl JoinError {
     /// # Examples
     ///
     /// ```should_panic,ignore-wasm
-    /// use ::core::panic;
+    /// use std::panic;
     ///
     /// #[tokio::main]
     /// async fn main() {
@@ -105,7 +102,7 @@ impl JoinError {
     /// # Examples
     ///
     /// ```should_panic,ignore-wasm
-    /// use ::core::panic;
+    /// use std::panic;
     ///
     /// #[tokio::main]
     /// async fn main() {
@@ -141,7 +138,11 @@ impl fmt::Display for JoinError {
             Repr::Cancelled => write!(fmt, "task {} was cancelled", self.id),
             Repr::Panic(p) => match panic_payload_as_str(p) {
                 Some(panic_str) => {
-                    write!(fmt, "task {} panicked with message {:?}", self.id, panic_str)
+                    write!(
+                        fmt,
+                        "task {} panicked with message {:?}",
+                        self.id, panic_str
+                    )
                 }
                 None => {
                     write!(fmt, "task {} panicked", self.id)
@@ -165,7 +166,7 @@ impl fmt::Debug for JoinError {
     }
 }
 
-impl core::error::Error for JoinError {}
+impl std::error::Error for JoinError {}
 
 impl From<JoinError> for io::Error {
     fn from(src: JoinError) -> io::Error {

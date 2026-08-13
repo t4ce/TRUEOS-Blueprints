@@ -1,6 +1,6 @@
-use tokio::io;
-use alloc::sync::Arc;
-use core::mem::MaybeUninit;
+use std::io;
+use std::mem::MaybeUninit;
+use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncReadExt};
 
 /// Read data from an `AsyncRead` into an `Arc`.
@@ -11,7 +11,7 @@ use tokio::io::{AsyncRead, AsyncReadExt};
 ///
 /// ```
 /// # #[tokio::main(flavor = "current_thread")]
-/// # async fn main() -> tokio::io::Result<()> {
+/// # async fn main() -> std::io::Result<()> {
 /// use tokio_util::io::read_exact_arc;
 ///
 /// let read = tokio::io::repeat(42);

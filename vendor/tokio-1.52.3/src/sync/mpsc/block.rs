@@ -1,12 +1,11 @@
 use crate::loom::cell::UnsafeCell;
 use crate::loom::sync::atomic::{AtomicPtr, AtomicUsize};
 
-use alloc::alloc::{alloc, handle_alloc_error, Layout};
-use alloc::boxed::Box;
-use core::mem::MaybeUninit;
-use core::ops;
-use core::ptr::{self, NonNull};
-use core::sync::atomic::Ordering::{self, AcqRel, Acquire, Release};
+use std::alloc::Layout;
+use std::mem::MaybeUninit;
+use std::ops;
+use std::ptr::{self, NonNull};
+use std::sync::atomic::Ordering::{self, AcqRel, Acquire, Release};
 
 /// A block in a linked list.
 ///
@@ -97,10 +96,10 @@ impl<T> Block<T> {
         unsafe {
             // Allocate the block on the heap.
             // SAFETY: The size of the Block<T> is non-zero, since it is at least the size of the header.
-            let block = alloc(Layout::new::<Block<T>>()) as *mut Block<T>;
+            let block = std::alloc::alloc(Layout::new::<Block<T>>()) as *mut Block<T>;
             let block = match NonNull::new(block) {
                 Some(block) => block,
-                None => handle_alloc_error(Layout::new::<Block<T>>()),
+                None => std::alloc::handle_alloc_error(Layout::new::<Block<T>>()),
             };
 
             // Write the header to the block.
@@ -219,11 +218,6 @@ impl<T> Block<T> {
     /// Signal to the receiver that the sender half of the list is closed.
     pub(crate) unsafe fn tx_close(&self) {
         self.header.ready_slots.fetch_or(TX_CLOSED, Release);
-    }
-
-    pub(crate) unsafe fn is_closed(&self) -> bool {
-        let ready_bits = self.header.ready_slots.load(Acquire);
-        is_tx_closed(ready_bits)
     }
 
     /// Resets the block to a blank state. This enables reusing blocks in the
@@ -458,4 +452,21 @@ impl<T> ops::Index<usize> for Values<T> {
     fn index(&self, index: usize) -> &Self::Output {
         self.0.index(index)
     }
+}
+
+#[cfg(all(test, not(loom)))]
+#[test]
+fn assert_no_stack_overflow() {
+    // https://github.com/tokio-rs/tokio/issues/5293
+
+    struct Foo {
+        _a: [u8; 2_000_000],
+    }
+
+    assert_eq!(
+        Layout::new::<MaybeUninit<Block<Foo>>>(),
+        Layout::new::<Block<Foo>>()
+    );
+
+    let _block = Block::<Foo>::new(0);
 }

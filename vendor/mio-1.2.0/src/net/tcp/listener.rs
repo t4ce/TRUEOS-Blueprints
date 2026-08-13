@@ -9,8 +9,7 @@ use std::os::hermit::io::{AsFd, AsRawFd, BorrowedFd, FromRawFd, IntoRawFd, Owned
 use std::os::windows::io::{
     AsRawSocket, AsSocket, BorrowedSocket, FromRawSocket, IntoRawSocket, OwnedSocket, RawSocket,
 };
-use ::core::fmt;
-use crate::io;
+use std::{fmt, io};
 
 use crate::io_source::IoSource;
 use crate::net::TcpStream;
@@ -21,7 +20,6 @@ use crate::net::TcpStream;
 ))]
 use crate::sys::tcp::set_reuseaddr;
 #[cfg(not(all(target_os = "wasi", target_env = "p1")))]
-#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
 use crate::sys::tcp::{bind, listen, new_for_addr};
 use crate::{event, sys, Interest, Registry, Token};
 
@@ -31,11 +29,11 @@ use crate::{event, sys, Interest, Registry, Token};
 ///
 #[cfg_attr(feature = "os-poll", doc = "```")]
 #[cfg_attr(not(feature = "os-poll"), doc = "```ignore")]
-/// # use core::error::Error;
+/// # use std::error::Error;
 /// # fn main() -> Result<(), Box<dyn Error>> {
 /// use mio::{Events, Interest, Poll, Token};
 /// use mio::net::TcpListener;
-/// use core::time::Duration;
+/// use std::time::Duration;
 ///
 /// let mut listener = TcpListener::bind("127.0.0.1:34255".parse()?)?;
 ///
@@ -67,46 +65,34 @@ impl TcpListener {
     /// 4. Calls `listen` on the socket to prepare it to receive new connections.
     #[cfg(not(all(target_os = "wasi", target_env = "p1")))]
     pub fn bind(addr: SocketAddr) -> io::Result<TcpListener> {
-        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-        {
-            let _ = addr;
-            Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                "mio zkvm TCP listener backend is not wired yet",
-            ))
-        }
+        let socket = new_for_addr(addr)?;
+        #[cfg(any(unix, target_os = "hermit", target_os = "wasi"))]
+        let listener = unsafe { TcpListener::from_raw_fd(socket) };
+        #[cfg(windows)]
+        let listener = unsafe { TcpListener::from_raw_socket(socket as _) };
 
-        #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-        {
-            let socket = new_for_addr(addr)?;
-            #[cfg(any(unix, target_os = "hermit", target_os = "wasi"))]
-            let listener = unsafe { TcpListener::from_raw_fd(socket) };
-            #[cfg(windows)]
-            let listener = unsafe { TcpListener::from_raw_socket(socket as _) };
+        // On platforms with Berkeley-derived sockets, this allows to quickly
+        // rebind a socket, without needing to wait for the OS to clean up the
+        // previous one.
+        //
+        // On Windows, this allows rebinding sockets which are actively in use,
+        // which allows “socket hijacking”, so we explicitly don't set it here.
+        // https://docs.microsoft.com/en-us/windows/win32/winsock/using-so-reuseaddr-and-so-exclusiveaddruse
+        #[cfg(not(windows))]
+        set_reuseaddr(&listener.inner, true)?;
 
-            // On platforms with Berkeley-derived sockets, this allows to quickly
-            // rebind a socket, without needing to wait for the OS to clean up the
-            // previous one.
-            //
-            // On Windows, this allows rebinding sockets which are actively in use,
-            // which allows “socket hijacking”, so we explicitly don't set it here.
-            // https://docs.microsoft.com/en-us/windows/win32/winsock/using-so-reuseaddr-and-so-exclusiveaddruse
-            #[cfg(not(windows))]
-            set_reuseaddr(&listener.inner, true)?;
-
-            bind(&listener.inner, addr)?;
-            // Use the same backlog value as the standard libary.
-            // <https://github.com/rust-lang/rust/blob/0028f344ce9f64766259577c998a1959ca1f6a0b/library/std/src/sys/net/connection/socket/mod.rs#L559-L571>
-            let backlog = if cfg!(target_os = "horizon") {
-                20
-            } else if cfg!(target_os = "haiku") {
-                32
-            } else {
-                128
-            };
-            listen(&listener.inner, backlog)?;
-            Ok(listener)
-        }
+        bind(&listener.inner, addr)?;
+        // Use the same backlog value as the standard libary.
+        // <https://github.com/rust-lang/rust/blob/0028f344ce9f64766259577c998a1959ca1f6a0b/library/std/src/sys/net/connection/socket/mod.rs#L559-L571>
+        let backlog = if cfg!(target_os = "horizon") {
+            20
+        } else if cfg!(target_os = "haiku") {
+            32
+        } else {
+            128
+        };
+        listen(&listener.inner, backlog)?;
+        Ok(listener)
     }
 
     /// Creates a new `TcpListener` from a standard `net::TcpListener`.
@@ -314,11 +300,6 @@ impl From<TcpListener> for net::TcpListener {
             #[cfg(any(unix, target_os = "hermit", target_os = "wasi"))]
             {
                 net::TcpListener::from_raw_fd(listener.into_raw_fd())
-            }
-            #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-            {
-                let _ = listener;
-                panic!("mio zkvm backend cannot convert TcpListener into std yet")
             }
             #[cfg(windows)]
             {

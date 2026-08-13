@@ -1,21 +1,15 @@
-#![cfg_attr(any(target_os = "trueos", target_os = "zkvm"), allow(dead_code))]
-
-use core::ops::{Deref, DerefMut};
-#[cfg(any(
-    all(unix, not(any(target_os = "trueos", target_os = "zkvm"))),
-    target_os = "wasi"
-))]
+use std::ops::{Deref, DerefMut};
+#[cfg(any(unix, target_os = "wasi"))]
 use std::os::fd::AsRawFd;
 // TODO: once <https://github.com/rust-lang/rust/issues/126198> is fixed this
 // can use `std::os::fd` and be merged with the above.
-use crate::io;
-use ::core::fmt;
-#[cfg(debug_assertions)]
-use core::sync::atomic::{AtomicUsize, Ordering};
 #[cfg(target_os = "hermit")]
 use std::os::hermit::io::AsRawFd;
 #[cfg(windows)]
 use std::os::windows::io::AsRawSocket;
+#[cfg(debug_assertions)]
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::{fmt, io};
 
 use crate::sys::IoSourceState;
 use crate::{event, Interest, Registry, Token};
@@ -83,7 +77,6 @@ impl<T> IoSource<T> {
     /// [`deregister`] it.
     ///
     /// [`deregister`]: Registry::deregister
-    #[allow(dead_code)]
     pub fn into_inner(self) -> T {
         self.inner
     }
@@ -112,7 +105,7 @@ impl<T> DerefMut for IoSource<T> {
 }
 
 #[cfg(any(
-    all(unix, not(any(target_os = "trueos", target_os = "zkvm"))),
+    unix,
     target_os = "hermit",
     all(target_os = "wasi", not(target_env = "p1"))
 ))]
@@ -148,37 +141,6 @@ where
         #[cfg(debug_assertions)]
         self.selector_id.remove_association(registry)?;
         self.state.deregister(registry, self.inner.as_raw_fd())
-    }
-}
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-impl<T> event::Source for IoSource<T> {
-    fn register(
-        &mut self,
-        registry: &Registry,
-        token: Token,
-        interests: Interest,
-    ) -> io::Result<()> {
-        #[cfg(debug_assertions)]
-        self.selector_id.associate(registry)?;
-        self.state.register(registry, token, interests)
-    }
-
-    fn reregister(
-        &mut self,
-        registry: &Registry,
-        token: Token,
-        interests: Interest,
-    ) -> io::Result<()> {
-        #[cfg(debug_assertions)]
-        self.selector_id.check_association(registry)?;
-        self.state.reregister(registry, token, interests)
-    }
-
-    fn deregister(&mut self, registry: &Registry) -> io::Result<()> {
-        #[cfg(debug_assertions)]
-        self.selector_id.remove_association(registry)?;
-        self.state.deregister(registry)
     }
 }
 

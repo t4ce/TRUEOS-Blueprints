@@ -8,12 +8,12 @@ use crate::sync::mpsc::{bounded, list, unbounded};
 use crate::sync::notify::Notify;
 use crate::util::cacheline::CachePadded;
 
-use alloc::vec::Vec;
-use ::core::fmt;
-use ::core::panic;
-use core::sync::atomic::Ordering::{AcqRel, Acquire, Relaxed, Release};
-use core::task::Poll::{Pending, Ready};
-use core::task::{ready, Context, Poll};
+use std::fmt;
+use std::panic;
+use std::process;
+use std::sync::atomic::Ordering::{AcqRel, Acquire, Relaxed, Release};
+use std::task::Poll::{Pending, Ready};
+use std::task::{ready, Context, Poll};
 
 /// Channel sender.
 pub(crate) struct Tx<T, S> {
@@ -436,7 +436,9 @@ impl<T, S: Semaphore> Rx<T, S> {
                         }
                         TryPopResult::Closed => return Err(TryRecvError::Disconnected),
                         // If close() was called, an empty queue should report Disconnected.
-                        TryPopResult::Empty if rx_fields.rx_closed => {
+                        TryPopResult::Empty
+                            if rx_fields.rx_closed && self.inner.semaphore.is_idle() =>
+                        {
                             return Err(TryRecvError::Disconnected)
                         }
                         TryPopResult::Empty => return Err(TryRecvError::Empty),
@@ -597,7 +599,7 @@ impl Semaphore for unbounded::Semaphore {
 
         if prev >> 1 == 0 {
             // Something went wrong
-            ::core::panic!("unbounded channel permit underflow");
+            process::abort();
         }
     }
 
@@ -606,7 +608,7 @@ impl Semaphore for unbounded::Semaphore {
 
         if (prev >> 1) < n {
             // Something went wrong
-            ::core::panic!("unbounded channel permit underflow");
+            process::abort();
         }
     }
 

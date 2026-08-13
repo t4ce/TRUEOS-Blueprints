@@ -1,12 +1,11 @@
 use crate::io::util::DEFAULT_BUF_SIZE;
 use crate::io::{AsyncBufRead, AsyncRead, AsyncSeek, AsyncWrite, ReadBuf};
-use crate::runtime::prelude::*;
 
 use pin_project_lite::pin_project;
-use ::core::fmt;
-use crate::io::{self, IoSlice, SeekFrom, Write};
-use core::pin::Pin;
-use core::task::{ready, Context, Poll};
+use std::fmt;
+use std::io::{self, IoSlice, SeekFrom, Write};
+use std::pin::Pin;
+use std::task::{ready, Context, Poll};
 
 pin_project! {
     /// Wraps a writer and buffers its output.
@@ -297,5 +296,15 @@ impl<W: fmt::Debug> fmt::Debug for BufWriter<W> {
             )
             .field("written", &self.written)
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn assert_unpin() {
+        crate::is_unpin::<BufWriter<()>>();
     }
 }

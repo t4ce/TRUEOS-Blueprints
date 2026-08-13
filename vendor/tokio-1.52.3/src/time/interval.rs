@@ -1,13 +1,10 @@
 use crate::time::{sleep_until, Duration, Instant, Sleep};
 use crate::util::trace;
 
-use alloc::boxed::Box;
-use core::future::{poll_fn, Future};
-use core::option::Option;
-use ::core::panic::Location;
-use core::pin::Pin;
-use core::task::{ready, Context, Poll};
-use core::{assert, derive};
+use std::future::{poll_fn, Future};
+use std::panic::Location;
+use std::pin::Pin;
+use std::task::{ready, Context, Poll};
 
 /// Creates new [`Interval`] that yields with interval of `period`. The first
 /// tick completes immediately. The default [`MissedTickBehavior`] is
@@ -419,7 +416,7 @@ impl Interval {
     /// ```
     /// use tokio::time;
     ///
-    /// use core::time::Duration;
+    /// use std::time::Duration;
     ///
     /// # #[tokio::main(flavor = "current_thread")]
     /// # async fn main() {
@@ -459,7 +456,7 @@ impl Interval {
     ///
     /// When this method returns `Poll::Pending`, the current task is scheduled
     /// to receive a wakeup when the instant has elapsed. Note that on multiple
-    /// calls to `poll_tick`, only the [`Waker`](core::task::Waker) from the
+    /// calls to `poll_tick`, only the [`Waker`](std::task::Waker) from the
     /// [`Context`] passed to the most recent call is scheduled to receive a
     /// wakeup.
     pub fn poll_tick(&mut self, cx: &mut Context<'_>) -> Poll<Instant> {
@@ -507,7 +504,7 @@ impl Interval {
     /// ```
     /// use tokio::time;
     ///
-    /// use core::time::Duration;
+    /// use std::time::Duration;
     ///
     /// # #[tokio::main(flavor = "current_thread")]
     /// # async fn main() {
@@ -539,7 +536,7 @@ impl Interval {
     /// ```
     /// use tokio::time;
     ///
-    /// use core::time::Duration;
+    /// use std::time::Duration;
     ///
     /// # #[tokio::main(flavor = "current_thread")]
     /// # async fn main() {
@@ -560,7 +557,7 @@ impl Interval {
         self.delay.as_mut().reset(Instant::now());
     }
 
-    /// Resets the interval after the specified [`core::time::Duration`].
+    /// Resets the interval after the specified [`std::time::Duration`].
     ///
     /// This method ignores [`MissedTickBehavior`] strategy.
     ///
@@ -571,7 +568,7 @@ impl Interval {
     /// ```
     /// use tokio::time;
     ///
-    /// use core::time::Duration;
+    /// use std::time::Duration;
     ///
     /// # #[tokio::main(flavor = "current_thread")]
     /// # async fn main() {
@@ -607,7 +604,7 @@ impl Interval {
     /// ```
     /// use tokio::time::{self, Instant};
     ///
-    /// use core::time::Duration;
+    /// use std::time::Duration;
     ///
     /// # #[tokio::main(flavor = "current_thread")]
     /// # async fn main() {

@@ -2,15 +2,13 @@ use crate::io::util::read_line::finish_string_read;
 use crate::io::util::read_to_end::read_to_end_internal;
 use crate::io::util::vec_with_initialized::VecWithInitialized;
 use crate::io::AsyncRead;
-use crate::runtime::prelude::*;
 
 use pin_project_lite::pin_project;
-use core::future::Future;
-use core::marker::PhantomPinned;
-use core::mem;
-use core::pin::Pin;
-use core::task::{ready, Context, Poll};
-use crate::io;
+use std::future::Future;
+use std::marker::PhantomPinned;
+use std::pin::Pin;
+use std::task::{ready, Context, Poll};
+use std::{io, mem};
 
 pin_project! {
     /// Future for the [`read_to_string`](super::AsyncReadExt::read_to_string) method.

@@ -1,13 +1,10 @@
-#[allow(unused_imports)]
-use crate::runtime::prelude::*;
-
 use super::{Context, CONTEXT};
 
 use crate::runtime::{scheduler, TryCurrentError};
 use crate::util::markers::SyncNotSend;
 
-use core::cell::{Cell, RefCell};
-use core::marker::PhantomData;
+use std::cell::{Cell, RefCell};
+use std::marker::PhantomData;
 
 #[derive(Debug)]
 #[must_use]

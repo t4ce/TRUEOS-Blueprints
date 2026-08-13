@@ -1,6 +1,3 @@
-#[allow(unused_imports)]
-use crate::runtime::prelude::*;
-
 use super::{Entry, EntryHandle, RegistrationQueueEntry};
 use crate::util::linked_list;
 
@@ -41,3 +38,6 @@ impl RegistrationQueue {
         self.list.pop_front()
     }
 }
+
+#[cfg(test)]
+mod tests;

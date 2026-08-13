@@ -2,10 +2,7 @@
 //!
 //! This implementation may eventually be extracted into a separate `tokio-taskdump` crate.
 
-#[allow(unused_imports)]
-use crate::runtime::prelude::*;
-
-use core::ptr;
+use std::ptr;
 
 use crate::runtime::task::trace::{trace_with, Trace, TraceMeta};
 

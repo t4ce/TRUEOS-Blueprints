@@ -2,9 +2,9 @@ use crate::io::util::{BufReader, BufWriter};
 use crate::io::{AsyncBufRead, AsyncRead, AsyncSeek, AsyncWrite, ReadBuf};
 
 use pin_project_lite::pin_project;
-use crate::io::{self, IoSlice, SeekFrom};
-use core::pin::Pin;
-use core::task::{Context, Poll};
+use std::io::{self, IoSlice, SeekFrom};
+use std::pin::Pin;
+use std::task::{Context, Poll};
 
 pin_project! {
     /// Wraps a type that is [`AsyncWrite`] and [`AsyncRead`], and buffers its input and output.
@@ -193,5 +193,15 @@ impl<RW: AsyncRead + AsyncWrite> AsyncBufRead for BufStream<RW> {
 
     fn consume(self: Pin<&mut Self>, amt: usize) {
         self.project().inner.consume(amt);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn assert_unpin() {
+        crate::is_unpin::<BufStream<()>>();
     }
 }

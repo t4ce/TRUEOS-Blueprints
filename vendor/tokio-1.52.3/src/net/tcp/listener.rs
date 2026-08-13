@@ -6,10 +6,10 @@ cfg_not_wasip1! {
     use crate::net::{to_socket_addrs, ToSocketAddrs};
 }
 
-use crate::io;
-use ::core::fmt;
-use core::task::{ready, Context, Poll};
+use std::fmt;
+use std::io;
 use std::net::{self, SocketAddr};
+use std::task::{ready, Context, Poll};
 
 cfg_net! {
     /// A TCP socket server, listening for connections.
@@ -120,7 +120,7 @@ impl TcpListener {
             }))
         }
 
-        pub fn bind_addr(addr: SocketAddr) -> io::Result<TcpListener> {
+        fn bind_addr(addr: SocketAddr) -> io::Result<TcpListener> {
             let listener = mio::net::TcpListener::bind(addr)?;
             TcpListener::new(listener)
         }
@@ -220,7 +220,7 @@ impl TcpListener {
     /// # Examples
     ///
     /// ```rust,no_run
-    /// use core::error::Error;
+    /// use std::error::Error;
     /// use tokio::net::TcpListener;
     ///
     /// #[tokio::main]
@@ -242,19 +242,11 @@ impl TcpListener {
     /// explicitly with [`Runtime::enter`](crate::runtime::Runtime::enter) function.
     #[track_caller]
     pub fn from_std(listener: net::TcpListener) -> io::Result<TcpListener> {
-        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-        {
-            return Ok(listener);
-        }
+        check_socket_for_blocking(&listener)?;
 
-        #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-        {
-            check_socket_for_blocking(&listener)?;
-
-            let io = mio::net::TcpListener::from_std(listener);
-            let io = PollEvented::new(io)?;
-            Ok(TcpListener { io })
-        }
+        let io = mio::net::TcpListener::from_std(listener);
+        let io = PollEvented::new(io)?;
+        Ok(TcpListener { io })
     }
 
     /// Turns a [`tokio::net::TcpListener`] into a [`std::net::TcpListener`].
@@ -265,7 +257,7 @@ impl TcpListener {
     /// # Examples
     ///
     /// ```rust,no_run
-    /// use core::error::Error;
+    /// use std::error::Error;
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<(), Box<dyn Error>> {
@@ -280,7 +272,7 @@ impl TcpListener {
     /// [`std::net::TcpListener`]: std::net::TcpListener
     /// [`set_nonblocking`]: fn@std::net::TcpListener::set_nonblocking
     pub fn into_std(self) -> io::Result<std::net::TcpListener> {
-        #[cfg(all(unix, not(any(target_os = "trueos", target_os = "zkvm"))))]
+        #[cfg(unix)]
         {
             use std::os::unix::io::{FromRawFd, IntoRawFd};
             self.io
@@ -305,14 +297,6 @@ impl TcpListener {
                 .into_inner()
                 .map(|io| io.into_raw_fd())
                 .map(|raw_fd| unsafe { std::net::TcpListener::from_raw_fd(raw_fd) })
-        }
-
-        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-        {
-            Err(io::Error::new(
-                io::ErrorKind::Other,
-                "tokio zkvm TcpListener::into_std is not backed by raw fds",
-            ))
         }
     }
 
@@ -403,7 +387,6 @@ impl TcpListener {
     }
 }
 
-#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
 impl TryFrom<net::TcpListener> for TcpListener {
     type Error = io::Error;
 
@@ -422,7 +405,7 @@ impl fmt::Debug for TcpListener {
     }
 }
 
-#[cfg(all(unix, not(any(target_os = "trueos", target_os = "zkvm"))))]
+#[cfg(unix)]
 mod sys {
     use super::TcpListener;
     use std::os::unix::prelude::*;

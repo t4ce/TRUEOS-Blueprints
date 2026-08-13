@@ -1,10 +1,10 @@
 use crate::io::{AsyncBufRead, AsyncRead, ReadBuf};
 
 use pin_project_lite::pin_project;
-use ::core::fmt;
-use crate::io;
-use core::pin::Pin;
-use core::task::{ready, Context, Poll};
+use std::fmt;
+use std::io;
+use std::pin::Pin;
+use std::task::{ready, Context, Poll};
 
 pin_project! {
     /// Stream for the [`chain`](super::AsyncReadExt::chain) method.
@@ -130,5 +130,15 @@ where
         } else {
             me.second.consume(amt)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn assert_unpin() {
+        crate::is_unpin::<Chain<(), ()>>();
     }
 }

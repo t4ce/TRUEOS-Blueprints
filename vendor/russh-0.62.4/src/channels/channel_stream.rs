@@ -1,7 +1,8 @@
+use std::io;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-use tokio::io::{self, AsyncRead, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncWrite};
 
 use super::io::{ChannelCloseOnDrop, ChannelRx, ChannelTx};
 use super::{ChannelId, ChannelMsg};

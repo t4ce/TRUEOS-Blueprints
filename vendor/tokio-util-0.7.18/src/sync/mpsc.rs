@@ -1,7 +1,7 @@
 use futures_sink::Sink;
-use core::pin::Pin;
-use core::task::{Context, Poll};
-use core::{fmt, mem};
+use std::pin::Pin;
+use std::task::{Context, Poll};
+use std::{fmt, mem};
 use tokio::sync::mpsc::OwnedPermit;
 use tokio::sync::mpsc::Sender;
 
@@ -27,7 +27,7 @@ impl<T> fmt::Display for PollSendError<T> {
     }
 }
 
-impl<T: fmt::Debug> core::error::Error for PollSendError<T> {}
+impl<T: fmt::Debug> std::error::Error for PollSendError<T> {}
 
 #[derive(Debug)]
 enum State<T> {

@@ -1,6 +1,6 @@
 use crate::{sys, Registry, Token};
 
-use crate::io;
+use std::io;
 
 /// Waker allows cross-thread waking of [`Poll`].
 ///
@@ -36,9 +36,9 @@ use crate::io;
 ///
 #[cfg_attr(feature = "os-poll", doc = "```")]
 #[cfg_attr(not(feature = "os-poll"), doc = "```ignore")]
-/// # fn main() -> Result<(), Box<dyn core::error::Error>> {
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// use std::thread;
-/// use core::time::Duration;
+/// use std::time::Duration;
 /// use std::sync::Arc;
 ///
 /// use mio::{Events, Token, Poll, Waker};

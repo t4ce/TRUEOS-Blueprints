@@ -6,18 +6,15 @@
 //! The collections can be closed to prevent adding new tasks during shutdown of
 //! the scheduler with the collection.
 
-#[allow(unused_imports)]
-use crate::runtime::prelude::*;
-
+use crate::future::Future;
 use crate::loom::cell::UnsafeCell;
 use crate::runtime::task::{JoinHandle, LocalNotified, Notified, Schedule, SpawnLocation, Task};
 use crate::util::linked_list::{Link, LinkedList};
 use crate::util::sharded_list;
-use core::future::Future;
 
-use core::marker::PhantomData;
-use core::num::NonZeroU64;
-use core::sync::atomic::{AtomicBool, Ordering};
+use crate::loom::sync::atomic::{AtomicBool, Ordering};
+use std::marker::PhantomData;
+use std::num::NonZeroU64;
 
 // The id from the module below is used to verify whether a given task is stored
 // in this OwnedTasks, or some other task. The counter starts at one so we can
@@ -29,7 +26,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 // mixed up runtimes happen to have the same id.
 
 cfg_has_atomic_u64! {
-    use core::sync::atomic::AtomicU64;
+    use std::sync::atomic::AtomicU64;
 
     static NEXT_OWNED_TASKS_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -44,7 +41,7 @@ cfg_has_atomic_u64! {
 }
 
 cfg_not_has_atomic_u64! {
-    use core::sync::atomic::AtomicU32;
+    use std::sync::atomic::AtomicU32;
 
     static NEXT_OWNED_TASKS_ID: AtomicU32 = AtomicU32::new(1);
 
@@ -80,10 +77,11 @@ struct OwnedTasksInner<S: 'static> {
 impl<S: 'static> OwnedTasks<S> {
     pub(crate) fn new(num_cores: usize) -> Self {
         let shard_size = Self::gen_shared_list_size(num_cores);
-        let list = List::new(shard_size);
-        let closed = AtomicBool::new(false);
-        let id = get_next_id();
-        Self { list, closed, id }
+        Self {
+            list: List::new(shard_size),
+            closed: AtomicBool::new(false),
+            id: get_next_id(),
+        }
     }
 
     /// Binds the provided task to this `OwnedTasks` instance. This fails if the
@@ -350,5 +348,23 @@ impl<S: 'static> LocalOwnedTasks<S> {
 
     pub(crate) fn is_empty(&self) -> bool {
         self.with_inner(|inner| inner.list.is_empty())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // This test may run in parallel with other tests, so we only test that ids
+    // come in increasing order.
+    #[test]
+    fn test_id_not_broken() {
+        let mut last_id = get_next_id();
+
+        for _ in 0..1000 {
+            let next_id = get_next_id();
+            assert!(last_id < next_id);
+            last_id = next_id;
+        }
     }
 }

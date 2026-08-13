@@ -10,8 +10,8 @@
 # See Cargo.toml.orig for the original contents.
 
 [package]
-edition = "2024"
-rust-version = "1.85"
+edition = "2021"
+rust-version = "1.71"
 name = "mio"
 version = "1.2.0"
 authors = [
@@ -80,6 +80,8 @@ default = ["log"]
 net = []
 os-ext = [
     "os-poll",
+    "windows-sys/Win32_System_Pipes",
+    "windows-sys/Win32_Security",
 ]
 os-poll = []
 
@@ -115,17 +117,6 @@ required-features = [
 version = "0.4.8"
 optional = true
 
-[target.'cfg(any(target_os = "trueos", target_os = "zkvm"))'.dependencies.core3]
-version = "0.1.2"
-default-features = false
-features = ["alloc"]
-
-[target.'cfg(any(target_os = "trueos", target_os = "zkvm"))'.dependencies.trueos-io]
-path = "../../crates/trueos-io"
-
-[target.'cfg(any(target_os = "trueos", target_os = "zkvm"))'.dependencies.spin]
-version = "0.10"
-
 [dev-dependencies.env_logger]
 version = "0.11"
 default-features = false
@@ -133,11 +124,25 @@ default-features = false
 [dev-dependencies.rand]
 version = "0.9"
 
-[target.'cfg(any(all(unix, not(any(target_os = "trueos", target_os = "zkvm"))), target_os = "hermit", target_os = "wasi"))'.dependencies.libc]
+[target.'cfg(any(unix, target_os = "hermit", target_os = "wasi"))'.dependencies.libc]
 version = "0.2.183"
 
 [target.'cfg(target_os = "wasi")'.dependencies.wasi]
 version = "0.11.0"
+
+[target."cfg(windows)".dependencies.windows-sys]
+version = "0.61"
+features = [
+    "Wdk_Foundation",
+    "Wdk_Storage_FileSystem",
+    "Wdk_System_IO",
+    "Win32_Foundation",
+    "Win32_Networking_WinSock",
+    "Win32_Storage_FileSystem",
+    "Win32_Security",
+    "Win32_System_IO",
+    "Win32_System_WindowsProgramming",
+]
 
 [lints.rust.unexpected_cfgs]
 level = "warn"
@@ -145,4 +150,5 @@ priority = 0
 check-cfg = [
     "cfg(mio_unsupported_force_poll_poll)",
     "cfg(mio_unsupported_force_waker_pipe)",
+    'cfg(target_os, values("trueos"))',
 ]

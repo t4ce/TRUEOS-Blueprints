@@ -18,23 +18,20 @@
 // the MSRV to 1.81.0.
 #![allow(unsafe_op_in_unsafe_fn)]
 
-#[allow(unused_imports)]
-use crate::runtime::prelude::*;
-
+use crate::future::Future;
 use crate::loom::cell::UnsafeCell;
 use crate::runtime::context;
 use crate::runtime::task::raw::{self, Vtable};
 use crate::runtime::task::state::State;
 use crate::runtime::task::{Id, Schedule, TaskHarnessScheduleHooks};
 use crate::util::linked_list;
-use core::future::Future;
 
+use std::num::NonZeroU64;
 #[cfg(tokio_unstable)]
-use ::core::panic::Location;
-use core::num::NonZeroU64;
-use core::pin::Pin;
-use core::ptr::NonNull;
-use core::task::{Context, Poll, Waker};
+use std::panic::Location;
+use std::pin::Pin;
+use std::ptr::NonNull;
+use std::task::{Context, Poll, Waker};
 
 /// The task cell. Contains the components of the task.
 ///
@@ -416,7 +413,7 @@ impl<T: Future, S: Schedule> Core<T, S> {
     ///
     /// The caller must ensure it is safe to mutate the `stage` field.
     pub(super) fn take_output(&self) -> super::Result<T::Output> {
-        use core::mem;
+        use std::mem;
 
         self.stage.stage.with_mut(|ptr| {
             // Safety:: the caller ensures mutual exclusion to the field.
@@ -565,4 +562,10 @@ impl Trailer {
             None => panic!("waker missing"),
         });
     }
+}
+
+#[test]
+#[cfg(not(loom))]
+fn header_lte_cache_line() {
+    assert!(std::mem::size_of::<Header>() <= 8 * std::mem::size_of::<*const ()>());
 }

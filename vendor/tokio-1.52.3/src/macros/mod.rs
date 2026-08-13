@@ -10,7 +10,7 @@ mod loom;
 mod pin;
 
 #[macro_use]
-pub(crate) mod thread_local;
+mod thread_local;
 
 #[macro_use]
 mod addr_of;

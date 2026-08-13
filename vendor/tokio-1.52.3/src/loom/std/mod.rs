@@ -26,26 +26,17 @@ pub(crate) mod future {
 }
 
 pub(crate) mod hint {
-    pub(crate) use core::hint::spin_loop;
+    pub(crate) use std::hint::spin_loop;
 }
 
 pub(crate) mod rand {
-    #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
     use std::collections::hash_map::RandomState;
-    #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-    use core::hash::{BuildHasher, Hash, Hasher};
-    use core::sync::atomic::AtomicU32;
-    use core::sync::atomic::Ordering::Relaxed;
+    use std::hash::{BuildHasher, Hash, Hasher};
+    use std::sync::atomic::AtomicU32;
+    use std::sync::atomic::Ordering::Relaxed;
 
     static COUNTER: AtomicU32 = AtomicU32::new(1);
 
-    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-    pub(crate) fn seed() -> u64 {
-        let value = COUNTER.fetch_add(1, Relaxed) as u64;
-        0x9e37_79b9_7f4a_7c15 ^ value.wrapping_mul(0xbf58_476d_1ce4_e5b9)
-    }
-
-    #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
     pub(crate) fn seed() -> u64 {
         let rand_state = RandomState::new();
         // Hash some unique-ish data to generate some new state
@@ -67,37 +58,15 @@ pub(crate) mod sync {
         Condvar, Mutex, MutexGuard, RwLock, RwLockReadGuard, WaitTimeoutResult,
     };
 
-    #[cfg(all(
-        not(all(feature = "parking_lot", not(miri))),
-        not(any(target_os = "trueos", target_os = "zkvm"))
-    ))]
+    #[cfg(not(all(feature = "parking_lot", not(miri))))]
     #[allow(unused_imports)]
     pub(crate) use std::sync::{Condvar, MutexGuard, RwLockReadGuard, WaitTimeoutResult};
-
-    #[cfg(all(
-        not(all(feature = "parking_lot", not(miri))),
-        any(target_os = "trueos", target_os = "zkvm")
-    ))]
-    #[allow(unused_imports)]
-    pub(crate) use crate::sync::{Condvar, WaitTimeoutResult};
 
     #[cfg(not(all(feature = "parking_lot", not(miri))))]
     pub(crate) use crate::loom::std::mutex::Mutex;
 
-    #[cfg(all(
-        not(all(feature = "parking_lot", not(miri))),
-        any(target_os = "trueos", target_os = "zkvm")
-    ))]
-    pub(crate) use crate::loom::std::mutex::MutexGuard;
-
     #[cfg(not(all(feature = "parking_lot", not(miri))))]
     pub(crate) use crate::loom::std::rwlock::RwLock;
-
-    #[cfg(all(
-        not(all(feature = "parking_lot", not(miri))),
-        any(target_os = "trueos", target_os = "zkvm")
-    ))]
-    pub(crate) use crate::loom::std::rwlock::{RwLockReadGuard, RwLockWriteGuard};
 
     pub(crate) mod atomic {
         pub(crate) use crate::loom::std::atomic_u16::AtomicU16;
@@ -105,27 +74,16 @@ pub(crate) mod sync {
         pub(crate) use crate::loom::std::atomic_u64::AtomicU64;
         pub(crate) use crate::loom::std::atomic_usize::AtomicUsize;
 
-        pub(crate) use core::sync::atomic::{fence, AtomicBool, AtomicPtr, AtomicU8, Ordering};
+        pub(crate) use std::sync::atomic::{fence, AtomicBool, AtomicPtr, AtomicU8, Ordering};
     }
 
     pub(crate) use super::barrier::Barrier;
 }
 
 pub(crate) mod sys {
-    #[cfg(all(
-        feature = "rt-multi-thread",
-        any(target_os = "trueos", target_os = "zkvm")
-    ))]
+    #[cfg(feature = "rt-multi-thread")]
     pub(crate) fn num_cpus() -> usize {
-        crate::platform::cpu_count()
-    }
-
-    #[cfg(all(
-        feature = "rt-multi-thread",
-        not(any(target_os = "trueos", target_os = "zkvm"))
-    ))]
-    pub(crate) fn num_cpus() -> usize {
-        use core::num::NonZeroUsize;
+        use std::num::NonZeroUsize;
 
         const ENV_WORKER_THREADS: &str = "TOKIO_WORKER_THREADS";
 
@@ -155,12 +113,12 @@ pub(crate) mod sys {
 pub(crate) mod thread {
     #[inline]
     pub(crate) fn yield_now() {
-        core::hint::spin_loop();
+        std::hint::spin_loop();
     }
 
     #[allow(unused_imports)]
     pub(crate) use std::thread::{
-        AccessError, Builder, JoinHandle, LocalKey, Result, Thread, ThreadId, current, panicking,
-        park, park_timeout, sleep, spawn,
+        current, panicking, park, park_timeout, sleep, spawn, AccessError, Builder, JoinHandle,
+        LocalKey, Result, Thread, ThreadId,
     };
 }

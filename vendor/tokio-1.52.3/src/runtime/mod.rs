@@ -71,7 +71,7 @@
 //! use tokio::io::{AsyncReadExt, AsyncWriteExt};
 //!
 //! #[tokio::main]
-//! async fn main() -> Result<(), Box<dyn core::error::Error>> {
+//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     let listener = TcpListener::bind("127.0.0.1:8080").await?;
 //!
 //!     loop {
@@ -117,7 +117,7 @@
 //! use tokio::io::{AsyncReadExt, AsyncWriteExt};
 //! use tokio::runtime::Runtime;
 //!
-//! fn main() -> Result<(), Box<dyn core::error::Error>> {
+//! fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     // Create the runtime
 //!     let rt  = Runtime::new()?;
 //!
@@ -174,7 +174,7 @@
 //! # {
 //! use tokio::runtime;
 //!
-//! # fn main() -> Result<(), Box<dyn core::error::Error>> {
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let threaded_rt = runtime::Runtime::new()?;
 //! # Ok(()) }
 //! # }
@@ -191,7 +191,7 @@
 //! ```
 //! use tokio::runtime;
 //!
-//! # fn main() -> Result<(), Box<dyn core::error::Error>> {
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let rt = runtime::Builder::new_current_thread()
 //!     .build()?;
 //! # Ok(()) }
@@ -367,8 +367,8 @@
 //! three times in a row, it is temporarily disabled until the worker thread has
 //! scheduled a task that didn't come from the lifo slot. The lifo slot can be
 //! disabled using the [`disable_lifo_slot`] setting. The lifo slot is separate
-//! from the local queue, and is stolen from by other worker threads only when
-//! a worker's local queue has been drained.
+//! from the local queue, so other worker threads cannot steal the task in the
+//! lifo slot.
 //!
 //! When a task is woken from a thread that is not a worker thread, then the
 //! task is placed in the global queue.
@@ -380,8 +380,8 @@
 //! On Linux, file descriptor table growth can stall worker threads. See the
 //! [`prewarm-fd-table`] example.
 //!
-//! [`poll`]: core::future::Future::poll
-//! [`wake`]: core::task::Waker::wake
+//! [`poll`]: std::future::Future::poll
+//! [`wake`]: std::task::Waker::wake
 //! [`yield_now`]: crate::task::yield_now
 //! [blocking the thread]: https://ryhl.io/blog/async-what-is-blocking/
 //! [current thread runtime]: crate::runtime::Builder::new_current_thread
@@ -394,30 +394,11 @@
 //! [`worker_mean_poll_time`]: crate::runtime::RuntimeMetrics::worker_mean_poll_time
 //! [`prewarm-fd-table`]: https://github.com/tokio-rs/tokio/blob/master/examples/prewarm-fd-table.rs
 
-#[allow(unused_imports)]
-use crate::runtime::prelude::*;
-
 // At the top due to macros
-
-pub(crate) mod prelude {
-    #[allow(unused_imports)]
-    pub(crate) use alloc::{
-        borrow::ToOwned,
-        boxed::Box,
-        format,
-        string::{String, ToString},
-        sync::{Arc, Weak},
-        vec,
-        vec::Vec,
-    };
-    #[allow(unused_imports)]
-    pub(crate) use core::prelude::rust_2024::*;
-    #[allow(unused_imports)]
-    pub(crate) use core::{
-        assert, assert_eq, assert_ne, cfg, debug_assert, debug_assert_eq, debug_assert_ne, matches,
-        panic, unreachable, write,
-    };
-}
+#[cfg(test)]
+#[cfg(not(target_family = "wasm"))]
+#[macro_use]
+mod tests;
 
 pub(crate) mod context;
 
@@ -449,8 +430,8 @@ cfg_time! {
     #[cfg(all(tokio_unstable, feature = "rt-multi-thread"))]
     pub(crate) mod time_alt;
 
-    use core::task::{Context, Poll};
-    use core::pin::Pin;
+    use std::task::{Context, Poll};
+    use std::pin::Pin;
 
     #[derive(Debug)]
     pub(crate) enum Timer {
@@ -683,5 +664,5 @@ cfg_rt! {
     pub(crate) use metrics::{MetricsBatch, SchedulerMetrics, WorkerMetrics, HistogramBuilder};
 
     /// After thread starts / before thread stops
-    type Callback = alloc::sync::Arc<dyn Fn() + Send + Sync>;
+    type Callback = std::sync::Arc<dyn Fn() + Send + Sync>;
 }

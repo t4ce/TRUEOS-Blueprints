@@ -1,10 +1,8 @@
 use crate::buf::{IntoIter, UninitSlice};
 use crate::{Buf, BufMut};
 
-#[cfg(all(feature = "std", not(any(target_os = "trueos", target_os = "zkvm"))))]
+#[cfg(feature = "std")]
 use std::io::IoSlice;
-#[cfg(all(feature = "std", any(target_os = "trueos", target_os = "zkvm")))]
-use trueos_io::IoSlice;
 
 /// A `Chain` sequences two buffers.
 ///

@@ -1,12 +1,9 @@
-#[allow(unused_imports)]
-use crate::runtime::prelude::*;
-
 use super::{EntryHandle, TempLocalContext};
 use crate::runtime::scheduler::Handle as SchedulerHandle;
 use crate::time::Instant;
 
-use core::pin::Pin;
-use core::task::{Context, Poll};
+use std::pin::Pin;
+use std::task::{Context, Poll};
 
 #[cfg(any(feature = "rt", feature = "rt-multi-thread"))]
 use crate::util::error::RUNTIME_SHUTTING_DOWN_ERROR;
@@ -24,8 +21,8 @@ pub(crate) struct Timer {
     deadline: Instant,
 }
 
-impl ::core::fmt::Debug for Timer {
-    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+impl std::fmt::Debug for Timer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Timer")
             .field("deadline", &self.deadline)
             .finish()

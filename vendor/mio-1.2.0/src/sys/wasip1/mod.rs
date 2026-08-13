@@ -13,19 +13,19 @@
 //!
 //! In summary, this only (barely) works using a single thread.
 
-use crate::io;
-use core::cmp::min;
+use std::cmp::min;
+use std::io;
 #[cfg(all(feature = "net", debug_assertions))]
-use core::sync::atomic::{AtomicUsize, Ordering};
-use core::time::Duration;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 #[cfg(feature = "net")]
 use crate::{Interest, Token};
 
 cfg_net! {
     pub(crate) mod tcp {
-        use crate::io;
+        use std::io;
         use std::net::{self, SocketAddr};
 
         pub(crate) fn accept(listener: &net::TcpListener) -> io::Result<(net::TcpStream, SocketAddr)> {
@@ -257,7 +257,7 @@ pub(crate) type Events = Vec<Event>;
 pub(crate) type Event = wasi::Event;
 
 pub(crate) mod event {
-    use ::core::fmt;
+    use std::fmt;
 
     use crate::sys::Event;
     use crate::Token;

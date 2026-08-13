@@ -6,9 +6,6 @@
 
 //! Time driver.
 
-#[allow(unused_imports)]
-use crate::runtime::prelude::*;
-
 mod entry;
 pub(crate) use entry::TimerEntry;
 use entry::{EntryList, TimerHandle, TimerShared, MAX_SAFE_MILLIS_DURATION};
@@ -24,14 +21,14 @@ mod wheel;
 #[cfg(all(tokio_unstable, feature = "rt-multi-thread"))]
 use super::time_alt;
 
-use core::sync::atomic::{AtomicBool, Ordering};
+use crate::loom::sync::atomic::{AtomicBool, Ordering};
 use crate::loom::sync::Mutex;
 use crate::runtime::driver::{self, IoHandle, IoStack};
 use crate::time::error::Error;
 use crate::time::{Clock, Duration};
 use crate::util::WakeList;
 
-use ::core::fmt;
+use std::fmt;
 use std::{num::NonZeroU64, ptr::NonNull};
 
 /// Time implementation that drives [`Sleep`][sleep], [`Interval`][interval], and [`Timeout`][timeout].
@@ -237,7 +234,7 @@ impl Driver {
 
                 if duration > Duration::from_millis(0) {
                     if let Some(limit) = limit {
-                        duration = core::cmp::min(limit, duration);
+                        duration = std::cmp::min(limit, duration);
                     }
 
                     self.park_thread_timeout(rt_handle, duration);
@@ -491,3 +488,6 @@ impl fmt::Debug for Inner {
         fmt.debug_struct("Inner").finish()
     }
 }
+
+#[cfg(test)]
+mod tests;

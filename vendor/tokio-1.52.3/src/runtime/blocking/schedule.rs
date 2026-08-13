@@ -1,6 +1,3 @@
-#[allow(unused_imports)]
-use crate::runtime::prelude::*;
-
 #[cfg(feature = "test-util")]
 use crate::runtime::scheduler;
 use crate::runtime::task::{self, Task, TaskHarnessScheduleHooks};

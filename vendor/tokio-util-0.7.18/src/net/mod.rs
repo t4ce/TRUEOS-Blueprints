@@ -3,10 +3,10 @@
 //! TCP/UDP/Unix helpers for tokio.
 
 use crate::either::Either;
-use core::future::Future;
-use core::pin::Pin;
-use core::task::{Context, Poll};
-use tokio::io::Result;
+use std::future::Future;
+use std::io::Result;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 
 #[cfg(unix)]
 pub mod unix;
@@ -35,7 +35,7 @@ pub trait Listener {
 
 impl Listener for tokio::net::TcpListener {
     type Io = tokio::net::TcpStream;
-    type Addr = tokio::net::SocketAddr;
+    type Addr = std::net::SocketAddr;
 
     fn poll_accept(&mut self, cx: &mut Context<'_>) -> Poll<Result<(Self::Io, Self::Addr)>> {
         Self::poll_accept(self, cx)

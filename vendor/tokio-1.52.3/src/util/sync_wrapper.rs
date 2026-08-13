@@ -3,10 +3,7 @@
 //!
 //! A similar primitive is provided in the `sync_wrapper` crate.
 
-use alloc::boxed::Box;
-
-use crate::runtime::prelude::*;
-use core::any::Any;
+use std::any::Any;
 
 pub(crate) struct SyncWrapper<T> {
     value: T,

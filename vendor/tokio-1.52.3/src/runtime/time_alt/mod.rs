@@ -1,6 +1,3 @@
-#[allow(unused_imports)]
-use crate::runtime::prelude::*;
-
 pub(crate) mod context;
 pub(super) use context::{LocalContext, TempLocalContext};
 
@@ -22,3 +19,6 @@ pub(super) use wheel::Wheel;
 
 mod wake_queue;
 pub(crate) use wake_queue::WakeQueue;
+
+#[cfg(test)]
+mod tests;

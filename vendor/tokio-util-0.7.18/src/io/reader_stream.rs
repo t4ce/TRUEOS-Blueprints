@@ -1,8 +1,8 @@
 use bytes::{Bytes, BytesMut};
 use futures_core::stream::Stream;
 use pin_project_lite::pin_project;
-use core::pin::Pin;
-use core::task::{Context, Poll};
+use std::pin::Pin;
+use std::task::{Context, Poll};
 use tokio::io::AsyncRead;
 
 const DEFAULT_CAPACITY: usize = 4096;
@@ -17,7 +17,7 @@ pin_project! {
     ///
     /// ```
     /// # #[tokio::main(flavor = "current_thread")]
-    /// # async fn main() -> tokio::io::Result<()> {
+    /// # async fn main() -> std::io::Result<()> {
     /// use tokio_stream::StreamExt;
     /// use tokio_util::io::ReaderStream;
     ///
@@ -56,7 +56,7 @@ pin_project! {
 
 impl<R: AsyncRead> ReaderStream<R> {
     /// Convert an [`AsyncRead`] into a [`Stream`] with item type
-    /// `Result<Bytes, tokio::io::Error>`.
+    /// `Result<Bytes, std::io::Error>`.
     ///
     /// Currently, the default capacity 4096 bytes (4 KiB).
     /// This capacity is not part of the semver contract
@@ -74,7 +74,7 @@ impl<R: AsyncRead> ReaderStream<R> {
     }
 
     /// Convert an [`AsyncRead`] into a [`Stream`] with item type
-    /// `Result<Bytes, tokio::io::Error>`,
+    /// `Result<Bytes, std::io::Error>`,
     /// with a specific read buffer initial capacity.
     ///
     /// [`AsyncRead`]: tokio::io::AsyncRead
@@ -89,7 +89,7 @@ impl<R: AsyncRead> ReaderStream<R> {
 }
 
 impl<R: AsyncRead> Stream for ReaderStream<R> {
-    type Item = tokio::io::Result<Bytes>;
+    type Item = std::io::Result<Bytes>;
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         use crate::util::poll_read_buf;
 

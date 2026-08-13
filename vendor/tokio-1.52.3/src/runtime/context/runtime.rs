@@ -1,12 +1,9 @@
-#[allow(unused_imports)]
-use crate::runtime::prelude::*;
-
 use super::{BlockingRegionGuard, SetCurrentGuard, CONTEXT};
 
 use crate::runtime::scheduler;
 use crate::util::rand::{FastRand, RngSeed};
 
-use ::core::fmt;
+use std::fmt;
 
 #[derive(Debug, Clone, Copy)]
 #[must_use]

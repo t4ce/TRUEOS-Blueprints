@@ -1,13 +1,10 @@
-#[allow(unused_imports)]
-use crate::runtime::prelude::*;
-
 use crate::runtime::task::{Header, RawTask, Schedule};
 
-use core::marker::PhantomData;
-use core::mem::ManuallyDrop;
-use core::ops;
-use core::ptr::NonNull;
-use core::task::{RawWaker, RawWakerVTable, Waker};
+use std::marker::PhantomData;
+use std::mem::ManuallyDrop;
+use std::ops;
+use std::ptr::NonNull;
+use std::task::{RawWaker, RawWakerVTable, Waker};
 
 pub(super) struct WakerRef<'a, S: 'static> {
     waker: ManuallyDrop<Waker>,

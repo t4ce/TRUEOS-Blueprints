@@ -2,10 +2,8 @@ use crate::Buf;
 
 use core::cmp;
 
-#[cfg(all(feature = "std", not(any(target_os = "trueos", target_os = "zkvm"))))]
+#[cfg(feature = "std")]
 use std::io::IoSlice;
-#[cfg(all(feature = "std", any(target_os = "trueos", target_os = "zkvm")))]
-use trueos_io::IoSlice;
 
 /// A `Buf` adapter which limits the bytes read from an underlying buffer.
 ///

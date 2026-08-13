@@ -71,7 +71,7 @@
 //! use tokio::task;
 //!
 //! # #[tokio::main(flavor = "current_thread")]
-//! # async fn main() -> Result<(), Box<dyn core::error::Error>> {
+//! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let join = task::spawn(async {
 //!     // ...
 //!     "hello world!"
@@ -110,7 +110,7 @@
 //! feature flag is enabled.
 //!
 //! [`task::spawn`]: crate::task::spawn()
-//! [future]: core::future::Future
+//! [future]: std::future::Future
 //! [`std::thread::spawn`]: std::thread::spawn
 //! [`JoinHandle`]: crate::task::JoinHandle
 //! [thread_join]: std::thread::JoinHandle
@@ -200,7 +200,7 @@
 //!
 //! ```rust
 //! # use tokio::task;
-//! # async fn docs() -> Result<(), Box<dyn core::error::Error>>{
+//! # async fn docs() -> Result<(), Box<dyn std::error::Error>>{
 //! let join = task::spawn_blocking(|| {
 //!     // do some compute-heavy work or call synchronous code
 //!     "blocking completed"
@@ -273,9 +273,6 @@
 //! [rt-multi-thread]: ../runtime/index.html#threaded-scheduler
 //! [`task::yield_now`]: crate::task::yield_now()
 //! [`thread::yield_now`]: std::thread::yield_now
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-pub use core::task::{ready, Context, Poll, RawWaker, RawWakerVTable, Waker};
 
 cfg_rt! {
     pub use crate::runtime::task::{JoinError, JoinHandle};

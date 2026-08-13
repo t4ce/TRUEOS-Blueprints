@@ -1,10 +1,6 @@
 use alloc::collections::VecDeque;
 #[cfg(feature = "std")]
-#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
 use std::io;
-#[cfg(feature = "std")]
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-use trueos_io as io;
 
 use super::Buf;
 

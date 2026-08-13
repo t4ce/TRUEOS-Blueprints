@@ -33,6 +33,7 @@ impl UCred {
 
 #[cfg(any(
     target_os = "linux",
+    target_os = "trueos",
     target_os = "redox",
     target_os = "android",
     target_os = "openbsd",
@@ -62,17 +63,12 @@ pub(crate) use self::impl_solaris::get_peer_cred;
 #[cfg(target_os = "aix")]
 pub(crate) use self::impl_aix::get_peer_cred;
 
-#[cfg(any(
-    target_os = "espidf",
-    target_os = "vita",
-    target_os = "hurd",
-    target_os = "trueos",
-    any(target_os = "trueos", target_os = "zkvm")
-))]
+#[cfg(any(target_os = "espidf", target_os = "vita", target_os = "hurd"))]
 pub(crate) use self::impl_noproc::get_peer_cred;
 
 #[cfg(any(
     target_os = "linux",
+    target_os = "trueos",
     target_os = "redox",
     target_os = "android",
     target_os = "openbsd",
@@ -89,6 +85,7 @@ pub(crate) mod impl_linux {
     use libc::sockpeercred as ucred;
     #[cfg(any(
         target_os = "linux",
+        target_os = "trueos",
         target_os = "redox",
         target_os = "android",
         target_os = "haiku",
@@ -141,8 +138,8 @@ pub(crate) mod impl_netbsd {
     use crate::net::unix::{self, UnixStream};
 
     use libc::{c_void, getsockopt, socklen_t, unpcbid, LOCAL_PEEREID, SOL_SOCKET};
-    use crate::io;
-    use core::mem::size_of;
+    use std::io;
+    use std::mem::size_of;
     use std::os::unix::io::AsRawFd;
 
     pub(crate) fn get_peer_cred(sock: &UnixStream) -> io::Result<super::UCred> {
@@ -183,8 +180,8 @@ pub(crate) mod impl_bsd {
     use crate::net::unix::{self, UnixStream};
 
     use libc::getpeereid;
-    use crate::io;
-    use core::mem::MaybeUninit;
+    use std::io;
+    use std::mem::MaybeUninit;
     use std::os::unix::io::AsRawFd;
 
     pub(crate) fn get_peer_cred(sock: &UnixStream) -> io::Result<super::UCred> {
@@ -220,9 +217,9 @@ pub(crate) mod impl_macos {
     use crate::net::unix::{self, UnixStream};
 
     use libc::{c_void, getpeereid, getsockopt, pid_t, LOCAL_PEEREPID, SOL_LOCAL};
-    use crate::io;
-    use core::mem::size_of;
-    use core::mem::MaybeUninit;
+    use std::io;
+    use std::mem::size_of;
+    use std::mem::MaybeUninit;
     use std::os::unix::io::AsRawFd;
 
     pub(crate) fn get_peer_cred(sock: &UnixStream) -> io::Result<super::UCred> {
@@ -265,9 +262,9 @@ pub(crate) mod impl_macos {
 #[cfg(any(target_os = "solaris", target_os = "illumos"))]
 pub(crate) mod impl_solaris {
     use crate::net::unix::{self, UnixStream};
-    use crate::io;
+    use std::io;
     use std::os::unix::io::AsRawFd;
-    use core::ptr;
+    use std::ptr;
 
     pub(crate) fn get_peer_cred(sock: &UnixStream) -> io::Result<super::UCred> {
         unsafe {
@@ -298,15 +295,15 @@ pub(crate) mod impl_solaris {
 #[cfg(target_os = "aix")]
 pub(crate) mod impl_aix {
     use crate::net::unix::UnixStream;
-    use crate::io;
+    use std::io;
     use std::os::unix::io::AsRawFd;
 
     pub(crate) fn get_peer_cred(sock: &UnixStream) -> io::Result<super::UCred> {
         unsafe {
             let raw_fd = sock.as_raw_fd();
 
-            let mut uid = core::mem::MaybeUninit::uninit();
-            let mut gid = core::mem::MaybeUninit::uninit();
+            let mut uid = std::mem::MaybeUninit::uninit();
+            let mut gid = std::mem::MaybeUninit::uninit();
 
             let ret = libc::getpeereid(raw_fd, uid.as_mut_ptr(), gid.as_mut_ptr());
 
@@ -323,16 +320,10 @@ pub(crate) mod impl_aix {
     }
 }
 
-#[cfg(any(
-    target_os = "espidf",
-    target_os = "vita",
-    target_os = "hurd",
-    target_os = "trueos",
-    any(target_os = "trueos", target_os = "zkvm")
-))]
+#[cfg(any(target_os = "espidf", target_os = "vita", target_os = "hurd"))]
 pub(crate) mod impl_noproc {
     use crate::net::unix::UnixStream;
-    use crate::io;
+    use std::io;
 
     pub(crate) fn get_peer_cred(_sock: &UnixStream) -> io::Result<super::UCred> {
         Ok(super::UCred {

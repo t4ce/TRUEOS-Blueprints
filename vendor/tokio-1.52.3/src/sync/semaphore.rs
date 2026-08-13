@@ -2,7 +2,7 @@ use super::batch_semaphore as ll; // low level implementation
 use super::{AcquireError, TryAcquireError};
 #[cfg(all(tokio_unstable, feature = "tracing"))]
 use crate::util::trace;
-use crate::loom::sync::Arc;
+use std::sync::Arc;
 
 /// Counting semaphore performing asynchronous permit acquisition.
 ///
@@ -428,6 +428,20 @@ pub struct OwnedSemaphorePermit {
     permits: u32,
 }
 
+#[test]
+#[cfg(not(loom))]
+fn bounds() {
+    fn check_unpin<T: Unpin>() {}
+    // This has to take a value, since the async fn's return type is unnameable.
+    fn check_send_sync_val<T: Send + Sync>(_t: T) {}
+    fn check_send_sync<T: Send + Sync>() {}
+    check_unpin::<Semaphore>();
+    check_unpin::<SemaphorePermit<'_>>();
+    check_send_sync::<Semaphore>();
+
+    let semaphore = Semaphore::new(0);
+    check_send_sync_val(semaphore.acquire());
+}
 
 impl Semaphore {
     /// The maximum number of permits which a semaphore can hold. It is `usize::MAX >> 3`.
@@ -442,7 +456,7 @@ impl Semaphore {
     pub fn new(permits: usize) -> Self {
         #[cfg(all(tokio_unstable, feature = "tracing"))]
         let resource_span = {
-            let location = ::core::panic::Location::caller();
+            let location = std::panic::Location::caller();
 
             tracing::trace_span!(
                 parent: None,
@@ -956,7 +970,6 @@ impl Semaphore {
     }
 }
 
-
 impl<'a> SemaphorePermit<'a> {
     /// Forgets the permit **without** releasing it back to the semaphore.
     /// This can be used to reduce the amount of permits available from a
@@ -1018,7 +1031,7 @@ impl<'a> SemaphorePermit<'a> {
     #[track_caller]
     pub fn merge(&mut self, mut other: Self) {
         assert!(
-            core::ptr::eq(self.sem, other.sem),
+            std::ptr::eq(self.sem, other.sem),
             "merging permits from different semaphore instances"
         );
         self.permits += other.permits;

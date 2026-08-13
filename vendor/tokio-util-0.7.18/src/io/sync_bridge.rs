@@ -1,6 +1,7 @@
+use std::io::{BufRead, Read, Seek, Write};
 use tokio::io::{
     AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt, AsyncWrite,
-    AsyncWriteExt, BufRead, Read, Seek, Write,
+    AsyncWriteExt,
 };
 
 /// Use a [`tokio::io::AsyncRead`] synchronously as a [`std::io::Read`] or
@@ -47,7 +48,7 @@ use tokio::io::{
 /// use std::io::Cursor;
 /// # mod blake3 { pub fn hash(_: &[u8]) {} }
 ///
-/// async fn hash_contents(mut reader: impl AsyncRead + Unpin) -> Result<(), tokio::io::Error> {
+/// async fn hash_contents(mut reader: impl AsyncRead + Unpin) -> Result<(), std::io::Error> {
 ///    // Read all data from the reader into a Vec<u8>.
 ///    let mut data = Vec::new();
 ///    reader.read_to_end(&mut data).await?;
@@ -59,7 +60,7 @@ use tokio::io::{
 /// }
 ///
 /// # #[tokio::main(flavor = "current_thread")]
-/// # async fn main() -> Result<(), tokio::io::Error> {
+/// # async fn main() -> Result<(), std::io::Error> {
 /// // Example: In-memory data.
 /// let data = b"Hello, world!"; // A byte slice.
 /// let reader = Cursor::new(data); // Create an in-memory AsyncRead.
@@ -85,7 +86,7 @@ use tokio::io::{
 ///
 /// /// Asynchronously streams data from an async reader, processes it in chunks,
 /// /// and hashes the data incrementally.
-/// async fn hash_stream(mut reader: impl AsyncRead + Unpin, mut hasher: Hasher) -> Result<(), tokio::io::Error> {
+/// async fn hash_stream(mut reader: impl AsyncRead + Unpin, mut hasher: Hasher) -> Result<(), std::io::Error> {
 ///    // Create a buffer to read data into, sized for performance.
 ///    let mut data = vec![0; 16 * 1024];
 ///    loop {
@@ -104,7 +105,7 @@ use tokio::io::{
 /// }
 ///
 /// # #[tokio::main(flavor = "current_thread")]
-/// # async fn main() -> Result<(), tokio::io::Error> {
+/// # async fn main() -> Result<(), std::io::Error> {
 /// // Example: In-memory data.
 /// let data = b"Hello, world!"; // A byte slice.
 /// let reader = Cursor::new(data); // Create an in-memory AsyncRead.
@@ -132,7 +133,7 @@ use tokio::io::{
 /// use tokio::io::AsyncRead;
 ///
 /// /// Asynchronously compresses data from an async reader using Gzip and an async encoder.
-/// async fn compress_data(mut reader: impl AsyncRead + Unpin) -> Result<(), tokio::io::Error> {
+/// async fn compress_data(mut reader: impl AsyncRead + Unpin) -> Result<(), std::io::Error> {
 ///    let writer = tokio::io::sink();
 ///
 ///    // Create a Gzip encoder that wraps the writer.
@@ -145,7 +146,7 @@ use tokio::io::{
 ///}
 ///
 /// #[tokio::main]
-/// async fn main() -> Result<(), tokio::io::Error> {
+/// async fn main() -> Result<(), std::io::Error> {
 ///     // Example: In-memory data.
 ///     let data = b"Hello, world!"; // A byte slice.
 ///     let reader = Cursor::new(data); // Create an in-memory AsyncRead.
@@ -178,14 +179,14 @@ use tokio::io::{
 /// # }
 /// # mod serde_json {
 /// #     use super::serde::DeserializeOwned;
-/// #     pub fn from_slice<T: DeserializeOwned>(_: &[u8]) -> Result<T, tokio::io::Error> {
+/// #     pub fn from_slice<T: DeserializeOwned>(_: &[u8]) -> Result<T, std::io::Error> {
 /// #         unimplemented!()
 /// #     }
 /// # }
 /// # #[derive(Debug)] struct MyStruct;
 ///
 ///
-/// async fn parse_json(mut reader: impl AsyncRead + Unpin) -> Result<MyStruct, tokio::io::Error> {
+/// async fn parse_json(mut reader: impl AsyncRead + Unpin) -> Result<MyStruct, std::io::Error> {
 ///    // Read all data from the reader into a Vec<u8>.
 ///    let mut data = Vec::new();
 ///    reader.read_to_end(&mut data).await?;
@@ -197,7 +198,7 @@ use tokio::io::{
 ///}
 ///
 /// #[tokio::main]
-/// async fn main() -> Result<(), tokio::io::Error> {
+/// async fn main() -> Result<(), std::io::Error> {
 ///     // Example: In-memory data.
 ///     let data = b"Hello, world!"; // A byte slice.
 ///     let reader = Cursor::new(data); // Create an in-memory AsyncRead.
@@ -226,7 +227,7 @@ use tokio::io::{
 /// use std::io::Cursor;
 ///
 /// /// Wraps an async reader with `SyncIoBridge` and performs synchronous I/O operations in a blocking task.
-/// async fn process_sync_io(reader: impl AsyncRead + Unpin + Send + 'static) -> Result<Vec<u8>, tokio::io::Error> {
+/// async fn process_sync_io(reader: impl AsyncRead + Unpin + Send + 'static) -> Result<Vec<u8>, std::io::Error> {
 ///    // Wrap the async reader with `SyncIoBridge` to allow synchronous reading.
 ///    let mut sync_reader = SyncIoBridge::new(reader);
 ///
@@ -237,7 +238,7 @@ use tokio::io::{
 ///        // Copy data from the sync_reader to the buffer.
 ///        std::io::copy(&mut sync_reader, &mut buffer)?;
 ///        // Return the buffer containing the copied data.
-///        Ok::<_, tokio::io::Error>(buffer)
+///        Ok::<_, std::io::Error>(buffer)
 ///    })
 ///    .await??;
 ///
@@ -246,7 +247,7 @@ use tokio::io::{
 ///}
 ///
 /// #[tokio::main]
-/// async fn main() -> Result<(), tokio::io::Error> {
+/// async fn main() -> Result<(), std::io::Error> {
 ///     // Example: In-memory data.
 ///     let data = b"Hello, world!"; // A byte slice.
 ///     let reader = Cursor::new(data); // Create an in-memory AsyncRead.
@@ -266,7 +267,7 @@ pub struct SyncIoBridge<T> {
 }
 
 impl<T: AsyncBufRead + Unpin> BufRead for SyncIoBridge<T> {
-    fn fill_buf(&mut self) -> tokio::io::Result<&[u8]> {
+    fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
         let src = &mut self.src;
         self.rt.block_on(AsyncBufReadExt::fill_buf(src))
     }
@@ -276,34 +277,34 @@ impl<T: AsyncBufRead + Unpin> BufRead for SyncIoBridge<T> {
         AsyncBufReadExt::consume(src, amt)
     }
 
-    fn read_until(&mut self, byte: u8, buf: &mut Vec<u8>) -> tokio::io::Result<usize> {
+    fn read_until(&mut self, byte: u8, buf: &mut Vec<u8>) -> std::io::Result<usize> {
         let src = &mut self.src;
         self.rt
             .block_on(AsyncBufReadExt::read_until(src, byte, buf))
     }
-    fn read_line(&mut self, buf: &mut String) -> tokio::io::Result<usize> {
+    fn read_line(&mut self, buf: &mut String) -> std::io::Result<usize> {
         let src = &mut self.src;
         self.rt.block_on(AsyncBufReadExt::read_line(src, buf))
     }
 }
 
 impl<T: AsyncRead + Unpin> Read for SyncIoBridge<T> {
-    fn read(&mut self, buf: &mut [u8]) -> tokio::io::Result<usize> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         let src = &mut self.src;
         self.rt.block_on(AsyncReadExt::read(src, buf))
     }
 
-    fn read_to_end(&mut self, buf: &mut Vec<u8>) -> tokio::io::Result<usize> {
+    fn read_to_end(&mut self, buf: &mut Vec<u8>) -> std::io::Result<usize> {
         let src = &mut self.src;
         self.rt.block_on(src.read_to_end(buf))
     }
 
-    fn read_to_string(&mut self, buf: &mut String) -> tokio::io::Result<usize> {
+    fn read_to_string(&mut self, buf: &mut String) -> std::io::Result<usize> {
         let src = &mut self.src;
         self.rt.block_on(src.read_to_string(buf))
     }
 
-    fn read_exact(&mut self, buf: &mut [u8]) -> tokio::io::Result<()> {
+    fn read_exact(&mut self, buf: &mut [u8]) -> std::io::Result<()> {
         let src = &mut self.src;
         // The AsyncRead trait returns the count, synchronous doesn't.
         let _n = self.rt.block_on(src.read_exact(buf))?;
@@ -312,29 +313,29 @@ impl<T: AsyncRead + Unpin> Read for SyncIoBridge<T> {
 }
 
 impl<T: AsyncWrite + Unpin> Write for SyncIoBridge<T> {
-    fn write(&mut self, buf: &[u8]) -> tokio::io::Result<usize> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         let src = &mut self.src;
         self.rt.block_on(src.write(buf))
     }
 
-    fn flush(&mut self) -> tokio::io::Result<()> {
+    fn flush(&mut self) -> std::io::Result<()> {
         let src = &mut self.src;
         self.rt.block_on(src.flush())
     }
 
-    fn write_all(&mut self, buf: &[u8]) -> tokio::io::Result<()> {
+    fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
         let src = &mut self.src;
         self.rt.block_on(src.write_all(buf))
     }
 
-    fn write_vectored(&mut self, bufs: &[tokio::io::IoSlice<'_>]) -> tokio::io::Result<usize> {
+    fn write_vectored(&mut self, bufs: &[std::io::IoSlice<'_>]) -> std::io::Result<usize> {
         let src = &mut self.src;
         self.rt.block_on(src.write_vectored(bufs))
     }
 }
 
 impl<T: AsyncSeek + Unpin> Seek for SyncIoBridge<T> {
-    fn seek(&mut self, pos: tokio::io::SeekFrom) -> tokio::io::Result<u64> {
+    fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
         let src = &mut self.src;
         self.rt.block_on(AsyncSeekExt::seek(src, pos))
     }
@@ -360,7 +361,7 @@ impl<T: AsyncWrite + Unpin> SyncIoBridge<T> {
     /// This method returns the same errors as [`AsyncWriteExt::shutdown`].
     ///
     /// [`AsyncWriteExt::shutdown`]: tokio::io::AsyncWriteExt::shutdown
-    pub fn shutdown(&mut self) -> tokio::io::Result<()> {
+    pub fn shutdown(&mut self) -> std::io::Result<()> {
         let src = &mut self.src;
         self.rt.block_on(src.shutdown())
     }

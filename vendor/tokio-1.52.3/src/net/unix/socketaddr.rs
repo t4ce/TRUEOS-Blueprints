@@ -1,5 +1,5 @@
-use ::core::fmt;
-use crate::path::Path;
+use std::fmt;
+use std::path::Path;
 
 /// An address associated with a Tokio Unix socket.
 ///

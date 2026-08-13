@@ -1,10 +1,7 @@
-#[allow(unused_imports)]
-use crate::runtime::prelude::*;
-
 #[cfg(tokio_internal_mt_counters)]
 mod imp {
-    use core::sync::atomic::AtomicUsize;
-    use core::sync::atomic::Ordering::Relaxed;
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::Ordering::Relaxed;
 
     static NUM_MAINTENANCE: AtomicUsize = AtomicUsize::new(0);
     static NUM_NOTIFY_LOCAL: AtomicUsize = AtomicUsize::new(0);

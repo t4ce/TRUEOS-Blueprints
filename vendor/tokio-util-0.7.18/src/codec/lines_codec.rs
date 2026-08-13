@@ -2,9 +2,7 @@ use crate::codec::decoder::Decoder;
 use crate::codec::encoder::Encoder;
 
 use bytes::{Buf, BufMut, BytesMut};
-use core::{cmp, fmt};
-use std::str;
-use tokio::io;
+use std::{cmp, fmt, io, str};
 
 /// A simple [`Decoder`] and [`Encoder`] implementation that splits up data into lines.
 ///
@@ -231,4 +229,4 @@ impl From<io::Error> for LinesCodecError {
     }
 }
 
-impl core::error::Error for LinesCodecError {}
+impl std::error::Error for LinesCodecError {}

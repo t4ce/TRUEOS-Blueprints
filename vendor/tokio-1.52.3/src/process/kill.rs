@@ -1,4 +1,4 @@
-use crate::io;
+use std::io;
 
 /// An interface for killing a running process.
 pub(crate) trait Kill {

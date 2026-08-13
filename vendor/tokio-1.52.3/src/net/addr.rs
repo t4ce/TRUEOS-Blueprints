@@ -1,14 +1,6 @@
-use crate::io;
-use crate::runtime::prelude::*;
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-use alloc::{borrow::ToOwned, string::String, vec::Vec};
-use core::future;
+use std::future;
+use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-unsafe extern "C" {
-    fn trueos_cabi_dns_resolve_ipv4(host: *const u8, host_len: usize, out_octets: *mut u8) -> i32;
-}
 
 /// Converts or resolves without blocking to one or more `SocketAddr` values.
 ///
@@ -27,71 +19,6 @@ unsafe extern "C" {
 pub trait ToSocketAddrs: sealed::ToSocketAddrsPriv {}
 
 type ReadyFuture<T> = future::Ready<io::Result<T>>;
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-fn trueos_dns_status_to_io(rc: i32) -> io::Error {
-    let (kind, detail) = match rc {
-        5 => (
-            io::ErrorKind::Other,
-            "TRUEOS secure DNS resolve failed: no answer or bad name",
-        ),
-        22 => (
-            io::ErrorKind::InvalidInput,
-            "TRUEOS secure DNS resolve failed: invalid input",
-        ),
-        110 => (
-            io::ErrorKind::TimedOut,
-            "TRUEOS secure DNS resolve failed: timeout, no NIC, or resolver runtime error",
-        ),
-        _ => (
-            io::ErrorKind::Other,
-            "TRUEOS secure DNS resolve failed: unknown status",
-        ),
-    };
-    io::Error::new(kind, detail)
-}
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-fn trueos_resolve_host_port(host: &str, port: u16) -> io::Result<alloc::vec::IntoIter<SocketAddr>> {
-    let host = host.trim().trim_end_matches('.');
-    if host.is_empty() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "empty hostname",
-        ));
-    }
-
-    let mut octets = [0u8; 4];
-    let rc =
-        unsafe { trueos_cabi_dns_resolve_ipv4(host.as_ptr(), host.len(), octets.as_mut_ptr()) };
-    if rc != 0 {
-        return Err(trueos_dns_status_to_io(rc));
-    }
-
-    Ok(alloc::vec![SocketAddr::V4(SocketAddrV4::new(
-        Ipv4Addr::new(octets[0], octets[1], octets[2], octets[3]),
-        port,
-    ))]
-    .into_iter())
-}
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-fn trueos_resolve_addr_string(addr: &str) -> io::Result<alloc::vec::IntoIter<SocketAddr>> {
-    let Some((host, port)) = addr.rsplit_once(':') else {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "missing socket port",
-        ));
-    };
-    let port = port
-        .parse::<u16>()
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid socket port"))?;
-    let host = host
-        .strip_prefix('[')
-        .and_then(|host| host.strip_suffix(']'))
-        .unwrap_or(host);
-    trueos_resolve_host_port(host, port)
-}
 
 cfg_net! {
     pub(crate) fn to_socket_addrs<T>(arg: T) -> T::Future
@@ -205,7 +132,7 @@ impl sealed::ToSocketAddrsPriv for (Ipv6Addr, u16) {
 impl ToSocketAddrs for &[SocketAddr] {}
 
 impl sealed::ToSocketAddrsPriv for &[SocketAddr] {
-    type Iter = alloc::vec::IntoIter<SocketAddr>;
+    type Iter = std::vec::IntoIter<SocketAddr>;
     type Future = ReadyFuture<Self::Iter>;
 
     fn to_socket_addrs(&self, _: sealed::Internal) -> Self::Future {
@@ -239,7 +166,6 @@ cfg_net! {
         type Future = sealed::MaybeReady;
 
         fn to_socket_addrs(&self, _: sealed::Internal) -> Self::Future {
-            #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
             use crate::blocking::spawn_blocking;
             use sealed::MaybeReady;
 
@@ -250,22 +176,12 @@ cfg_net! {
                 return MaybeReady(sealed::State::Ready(Some(addr)));
             }
 
-            #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-            {
-                return MaybeReady(sealed::State::ReadyMore(Some(
-                    trueos_resolve_addr_string(self),
-                )));
-            }
-
-            #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-            {
             // Run DNS lookup on the blocking pool
             let s = self.to_owned();
 
             MaybeReady(sealed::State::Blocking(spawn_blocking(move || {
                 std::net::ToSocketAddrs::to_socket_addrs(&s)
             })))
-            }
         }
     }
 
@@ -278,7 +194,6 @@ cfg_net! {
         type Future = sealed::MaybeReady;
 
         fn to_socket_addrs(&self, _: sealed::Internal) -> Self::Future {
-            #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
             use crate::blocking::spawn_blocking;
             use sealed::MaybeReady;
 
@@ -299,21 +214,11 @@ cfg_net! {
                 return MaybeReady(sealed::State::Ready(Some(addr)));
             }
 
-            #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-            {
-                return MaybeReady(sealed::State::ReadyMore(Some(
-                    trueos_resolve_host_port(host, port),
-                )));
-            }
-
-            #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-            {
             let host = host.to_owned();
 
             MaybeReady(sealed::State::Blocking(spawn_blocking(move || {
                 std::net::ToSocketAddrs::to_socket_addrs(&(&host[..], port))
             })))
-            }
         }
     }
 
@@ -349,8 +254,8 @@ pub(crate) mod sealed {
     //! part of the `ToSocketAddrs` public API. The details will change over
     //! time.
 
-    use crate::io;
-    use core::future::Future;
+    use std::future::Future;
+    use std::io;
     use std::net::SocketAddr;
 
     #[doc(hidden)]
@@ -368,9 +273,9 @@ pub(crate) mod sealed {
         use crate::blocking::JoinHandle;
 
         use std::option;
-        use core::pin::Pin;
-        use core::task::{ready,Context, Poll};
-        use alloc::vec;
+        use std::pin::Pin;
+        use std::task::{ready,Context, Poll};
+        use std::vec;
 
         #[doc(hidden)]
         #[derive(Debug)]
@@ -379,7 +284,6 @@ pub(crate) mod sealed {
         #[derive(Debug)]
         pub(super) enum State {
             Ready(Option<SocketAddr>),
-            ReadyMore(Option<io::Result<vec::IntoIter<SocketAddr>>>),
             Blocking(JoinHandle<io::Result<vec::IntoIter<SocketAddr>>>),
         }
 
@@ -398,10 +302,6 @@ pub(crate) mod sealed {
                     State::Ready(ref mut i) => {
                         let iter = OneOrMore::One(i.take().into_iter());
                         Poll::Ready(Ok(iter))
-                    }
-                    State::ReadyMore(ref mut i) => {
-                        let res = i.take().expect("polled after completion");
-                        Poll::Ready(res.map(OneOrMore::More))
                     }
                     State::Blocking(ref mut rx) => {
                         let res = ready!(Pin::new(rx).poll(cx))?.map(OneOrMore::More);

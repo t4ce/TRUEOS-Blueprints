@@ -1,6 +1,3 @@
-#[allow(unused_imports)]
-use crate::runtime::prelude::*;
-
 use super::{Entry, EntryHandle, WakeQueueEntry};
 use crate::util::linked_list;
 
@@ -48,3 +45,6 @@ impl WakeQueue {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

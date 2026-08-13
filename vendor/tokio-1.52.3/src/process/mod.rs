@@ -17,7 +17,7 @@
 //! use tokio::process::Command;
 //!
 //! #[tokio::main]
-//! async fn main() -> Result<(), Box<dyn core::error::Error>> {
+//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     // The usage is similar as with the standard library's `Command` type
 //!     let mut child = Command::new("echo")
 //!         .arg("hello")
@@ -31,7 +31,6 @@
 //!     Ok(())
 //! }
 //! ```
-
 //!
 //! Next, let's take a look at an example where we not only spawn `echo hello
 //! world` but we also capture its output.
@@ -40,7 +39,7 @@
 //! use tokio::process::Command;
 //!
 //! #[tokio::main]
-//! async fn main() -> Result<(), Box<dyn core::error::Error>> {
+//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     // Like above, but use `output` which returns a future instead of
 //!     // immediately returning the `Child`.
 //!     let output = Command::new("echo").arg("hello").arg("world")
@@ -63,7 +62,7 @@
 //! use std::process::Stdio;
 //!
 //! #[tokio::main]
-//! async fn main() -> Result<(), Box<dyn core::error::Error>> {
+//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     let mut cmd = Command::new("cat");
 //!
 //!     // Specify that we want the command's standard output piped back to us.
@@ -108,7 +107,7 @@
 //! use std::process::Stdio;
 //!
 //! #[tokio::main]
-//! async fn main() -> Result<(), Box<dyn core::error::Error>> {
+//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     let mut cmd = Command::new("sort");
 //!
 //!     // Specifying that we want pipe both the output and the input.
@@ -160,7 +159,7 @@
 //! use std::process::Stdio;
 //!
 //! #[tokio::main]
-//! async fn main() -> Result<(), Box<dyn core::error::Error>> {
+//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     let mut echo = Command::new("echo")
 //!         .arg("hello world!")
 //!         .stdout(Stdio::piped())
@@ -228,10 +227,10 @@
 //! [`Child`]: crate::process::Child
 
 #[path = "unix/mod.rs"]
-#[cfg(all(unix, not(any(target_os = "trueos", target_os = "zkvm"))))]
+#[cfg(unix)]
 mod imp;
 
-#[cfg(all(unix, not(any(target_os = "trueos", target_os = "zkvm"))))]
+#[cfg(unix)]
 pub(crate) mod unix {
     pub(crate) use super::imp::*;
 }
@@ -240,36 +239,20 @@ pub(crate) mod unix {
 #[cfg(windows)]
 mod imp;
 
-#[path = "zkvm.rs"]
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-mod imp;
-
 mod kill;
 
 use crate::io::{AsyncRead, AsyncWrite, ReadBuf};
 use crate::process::kill::Kill;
-use crate::runtime::prelude::*;
 
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-pub use self::imp::{ExitStatus, Output, Stdio};
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-use self::imp::{Child as StdChild, Command as StdCommand};
-use alloc::vec::Vec;
-use core::future::Future;
-use core::pin::Pin;
-use core::task::{ready, Context, Poll};
 use std::ffi::OsStr;
-use crate::io;
-use crate::path::Path;
-#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+use std::future::Future;
+use std::io;
+use std::path::Path;
+use std::pin::Pin;
 use std::process::{Child as StdChild, Command as StdCommand, ExitStatus, Output, Stdio};
+use std::task::{ready, Context, Poll};
 
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-pub fn abort() -> ! {
-    ::core::panic!("abort")
-}
-
-#[cfg(all(unix, not(any(target_os = "trueos", target_os = "zkvm"))))]
+#[cfg(unix)]
 use std::os::unix::process::CommandExt;
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -698,8 +681,8 @@ impl Command {
     /// Sets the child process's user ID. This translates to a
     /// `setuid` call in the child process. Failure in the `setuid`
     /// call will cause the spawn to fail.
-    #[cfg(all(unix, not(any(target_os = "trueos", target_os = "zkvm"))))]
-    #[cfg_attr(docsrs, doc(cfg(all(unix, not(any(target_os = "trueos", target_os = "zkvm"))))))]
+    #[cfg(unix)]
+    #[cfg_attr(docsrs, doc(cfg(unix)))]
     pub fn uid(&mut self, id: u32) -> &mut Command {
         #[cfg(target_os = "nto")]
         let id = id as i32;
@@ -709,8 +692,8 @@ impl Command {
 
     /// Similar to `uid` but sets the group ID of the child process. This has
     /// the same semantics as the `uid` field.
-    #[cfg(all(unix, not(any(target_os = "trueos", target_os = "zkvm"))))]
-    #[cfg_attr(docsrs, doc(cfg(all(unix, not(any(target_os = "trueos", target_os = "zkvm"))))))]
+    #[cfg(unix)]
+    #[cfg_attr(docsrs, doc(cfg(unix)))]
     pub fn gid(&mut self, id: u32) -> &mut Command {
         #[cfg(target_os = "nto")]
         let id = id as i32;
@@ -722,8 +705,8 @@ impl Command {
     ///
     /// Set the first process argument, `argv[0]`, to something other than the
     /// default executable path.
-    #[cfg(all(unix, not(any(target_os = "trueos", target_os = "zkvm"))))]
-    #[cfg_attr(docsrs, doc(cfg(all(unix, not(any(target_os = "trueos", target_os = "zkvm"))))))]
+    #[cfg(unix)]
+    #[cfg_attr(docsrs, doc(cfg(unix)))]
     pub fn arg0<S>(&mut self, arg: S) -> &mut Command
     where
         S: AsRef<OsStr>,
@@ -761,8 +744,8 @@ impl Command {
     /// When this closure is run, aspects such as the stdio file descriptors and
     /// working directory have successfully been changed, so output to these
     /// locations may not appear where intended.
-    #[cfg(all(unix, not(any(target_os = "trueos", target_os = "zkvm"))))]
-    #[cfg_attr(docsrs, doc(cfg(all(unix, not(any(target_os = "trueos", target_os = "zkvm"))))))]
+    #[cfg(unix)]
+    #[cfg_attr(docsrs, doc(cfg(unix)))]
     pub unsafe fn pre_exec<F>(&mut self, f: F) -> &mut Command
     where
         F: FnMut() -> io::Result<()> + Send + Sync + 'static,
@@ -802,8 +785,8 @@ impl Command {
     /// ```
     ///
     /// [signal handler]: crate::signal
-    #[cfg(all(unix, not(any(target_os = "trueos", target_os = "zkvm"))))]
-    #[cfg_attr(docsrs, doc(cfg(all(unix, not(any(target_os = "trueos", target_os = "zkvm"))))))]
+    #[cfg(unix)]
+    #[cfg_attr(docsrs, doc(cfg(unix)))]
     pub fn process_group(&mut self, pgroup: i32) -> &mut Command {
         self.std.process_group(pgroup);
         self
@@ -1526,16 +1509,10 @@ impl ChildStdin {
     /// This method may fail if an error is encountered when setting the pipe to
     /// non-blocking mode, or when registering the pipe with the runtime's IO
     /// driver.
-    #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
     pub fn from_std(inner: std::process::ChildStdin) -> io::Result<Self> {
         Ok(Self {
             inner: imp::stdio(inner)?,
         })
-    }
-
-    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-    pub fn from_std(inner: imp::ChildStdio) -> io::Result<Self> {
-        Ok(Self { inner })
     }
 }
 
@@ -1547,16 +1524,10 @@ impl ChildStdout {
     /// This method may fail if an error is encountered when setting the pipe to
     /// non-blocking mode, or when registering the pipe with the runtime's IO
     /// driver.
-    #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
     pub fn from_std(inner: std::process::ChildStdout) -> io::Result<Self> {
         Ok(Self {
             inner: imp::stdio(inner)?,
         })
-    }
-
-    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-    pub fn from_std(inner: imp::ChildStdio) -> io::Result<Self> {
-        Ok(Self { inner })
     }
 }
 
@@ -1568,16 +1539,10 @@ impl ChildStderr {
     /// This method may fail if an error is encountered when setting the pipe to
     /// non-blocking mode, or when registering the pipe with the runtime's IO
     /// driver.
-    #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
     pub fn from_std(inner: std::process::ChildStderr) -> io::Result<Self> {
         Ok(Self {
             inner: imp::stdio(inner)?,
         })
-    }
-
-    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-    pub fn from_std(inner: imp::ChildStdio) -> io::Result<Self> {
-        Ok(Self { inner })
     }
 }
 
@@ -1655,8 +1620,8 @@ impl TryInto<Stdio> for ChildStderr {
     }
 }
 
-#[cfg(all(unix, not(any(target_os = "trueos", target_os = "zkvm"))))]
-#[cfg_attr(docsrs, doc(cfg(all(unix, not(any(target_os = "trueos", target_os = "zkvm"))))))]
+#[cfg(unix)]
+#[cfg_attr(docsrs, doc(cfg(unix)))]
 mod sys {
     use std::{
         io,
@@ -1758,10 +1723,10 @@ mod test {
     use super::ChildDropGuard;
 
     use futures::future::FutureExt;
-    use core::future::Future;
-    use crate::io;
-    use core::pin::Pin;
-    use core::task::{Context, Poll};
+    use std::future::Future;
+    use std::io;
+    use std::pin::Pin;
+    use std::task::{Context, Poll};
 
     struct Mock {
         num_kills: usize,
@@ -1800,7 +1765,90 @@ mod test {
         }
     }
 
+    #[test]
+    fn kills_on_drop_if_specified() {
+        let mut mock = Mock::new();
 
+        {
+            let guard = ChildDropGuard {
+                inner: &mut mock,
+                kill_on_drop: true,
+            };
+            drop(guard);
+        }
 
+        assert_eq!(1, mock.num_kills);
+        assert_eq!(0, mock.num_polls);
+    }
 
+    #[test]
+    fn no_kill_on_drop_by_default() {
+        let mut mock = Mock::new();
+
+        {
+            let guard = ChildDropGuard {
+                inner: &mut mock,
+                kill_on_drop: false,
+            };
+            drop(guard);
+        }
+
+        assert_eq!(0, mock.num_kills);
+        assert_eq!(0, mock.num_polls);
+    }
+
+    #[test]
+    fn no_kill_if_already_killed() {
+        let mut mock = Mock::new();
+
+        {
+            let mut guard = ChildDropGuard {
+                inner: &mut mock,
+                kill_on_drop: true,
+            };
+            let _ = guard.kill();
+            drop(guard);
+        }
+
+        assert_eq!(1, mock.num_kills);
+        assert_eq!(0, mock.num_polls);
+    }
+
+    #[test]
+    fn no_kill_if_reaped() {
+        let mut mock_pending = Mock::with_result(Poll::Pending);
+        let mut mock_reaped = Mock::with_result(Poll::Ready(Ok(())));
+        let mut mock_err = Mock::with_result(Poll::Ready(Err(())));
+
+        let waker = futures::task::noop_waker();
+        let mut context = Context::from_waker(&waker);
+        {
+            let mut guard = ChildDropGuard {
+                inner: &mut mock_pending,
+                kill_on_drop: true,
+            };
+            let _ = guard.poll_unpin(&mut context);
+
+            let mut guard = ChildDropGuard {
+                inner: &mut mock_reaped,
+                kill_on_drop: true,
+            };
+            let _ = guard.poll_unpin(&mut context);
+
+            let mut guard = ChildDropGuard {
+                inner: &mut mock_err,
+                kill_on_drop: true,
+            };
+            let _ = guard.poll_unpin(&mut context);
+        }
+
+        assert_eq!(1, mock_pending.num_kills);
+        assert_eq!(1, mock_pending.num_polls);
+
+        assert_eq!(0, mock_reaped.num_kills);
+        assert_eq!(1, mock_reaped.num_polls);
+
+        assert_eq!(1, mock_err.num_kills);
+        assert_eq!(1, mock_err.num_polls);
+    }
 }

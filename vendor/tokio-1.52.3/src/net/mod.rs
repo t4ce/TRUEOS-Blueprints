@@ -29,11 +29,6 @@
 //! [`AsyncFd`]: crate::io::unix::AsyncFd
 
 mod addr;
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-pub use core::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
-#[cfg(all(feature = "net", any(target_os = "trueos", target_os = "zkvm")))]
-pub use socket2::net::Shutdown;
-
 cfg_not_wasip1! {
     #[cfg(feature = "net")]
     pub(crate) use addr::to_socket_addrs;
@@ -48,7 +43,6 @@ cfg_net! {
     pub use tcp::listener::TcpListener;
     pub use tcp::stream::TcpStream;
     cfg_not_wasip1! {
-        #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
         pub use tcp::socket::TcpSocket;
 
         mod udp;

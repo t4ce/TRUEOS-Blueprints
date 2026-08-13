@@ -1,11 +1,11 @@
 use hashbrown::hash_table::Entry;
 use hashbrown::{HashMap, HashTable};
-use ::core::fmt;
-use core::future::Future;
-use core::marker::PhantomData;
 use std::borrow::Borrow;
 use std::collections::hash_map::RandomState;
+use std::fmt;
+use std::future::Future;
 use std::hash::{BuildHasher, Hash};
+use std::marker::PhantomData;
 use tokio::runtime::Handle;
 use tokio::task::{AbortHandle, Id, JoinError, JoinSet, LocalSet};
 
@@ -403,7 +403,7 @@ where
             Entry::Occupied(occ) => {
                 // There was a previous task spawned with the same key! Cancel
                 // that task, and remove its ID from the map of hashes by task IDs.
-                (key, abort) = core::mem::replace(occ.into_mut(), (key, abort));
+                (key, abort) = std::mem::replace(occ.into_mut(), (key, abort));
 
                 // Remove the old task ID.
                 let _prev_hash = self.hashes_by_task.remove(&abort.id());
@@ -674,8 +674,9 @@ where
     /// ```
     #[inline]
     pub fn reserve(&mut self, additional: usize) {
-        self.tasks_by_key
-            .reserve(additional, |(k, _)| self.hashes_by_task.hasher().hash_one(k));
+        self.tasks_by_key.reserve(additional, |(k, _)| {
+            self.hashes_by_task.hasher().hash_one(k)
+        });
         self.hashes_by_task.reserve(additional);
     }
 
@@ -731,8 +732,9 @@ where
     #[inline]
     pub fn shrink_to(&mut self, min_capacity: usize) {
         self.hashes_by_task.shrink_to(min_capacity);
-        self.tasks_by_key
-            .shrink_to(min_capacity, |(k, _)| self.hashes_by_task.hasher().hash_one(k))
+        self.tasks_by_key.shrink_to(min_capacity, |(k, _)| {
+            self.hashes_by_task.hasher().hash_one(k)
+        })
     }
 
     /// Look up a task in the map by its key, returning the key and abort handle.

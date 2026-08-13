@@ -1,6 +1,3 @@
-#[allow(unused_imports)]
-use crate::runtime::prelude::*;
-
 cfg_rt! {
     pub(crate) mod current_thread;
     pub(crate) use current_thread::CurrentThread;
@@ -71,13 +68,13 @@ impl Handle {
 }
 
 cfg_rt! {
-    use core::future::Future;
-    use alloc::sync::Arc;
+    use crate::future::Future;
+    use crate::loom::sync::Arc;
     use crate::runtime::{blocking, task::{Id, SpawnLocation}};
     use crate::runtime::context;
     use crate::task::JoinHandle;
     use crate::util::RngSeedGenerator;
-    use core::task::Waker;
+    use std::task::Waker;
 
     macro_rules! match_flavor {
         ($self:expr, $ty:ident($h:ident) => $e:expr) => {

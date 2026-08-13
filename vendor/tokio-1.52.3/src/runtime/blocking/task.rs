@@ -1,9 +1,6 @@
-#[allow(unused_imports)]
-use crate::runtime::prelude::*;
-
-use core::future::Future;
-use core::pin::Pin;
-use core::task::{Context, Poll};
+use std::future::Future;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 
 /// Converts a function to a future that completes on poll.
 pub(crate) struct BlockingTask<T> {

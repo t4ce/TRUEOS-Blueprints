@@ -2,9 +2,9 @@
 
 use crate::io::{AsyncBufRead, AsyncRead, AsyncWrite, ReadBuf};
 
-use crate::io;
-use core::pin::Pin;
-use core::task::{Context, Poll};
+use std::io;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 
 /// Join two values implementing `AsyncRead` and `AsyncWrite` into a
 /// single handle.

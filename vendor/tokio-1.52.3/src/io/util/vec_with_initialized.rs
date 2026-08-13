@@ -1,6 +1,5 @@
 use crate::io::ReadBuf;
-use crate::runtime::prelude::*;
-use core::mem::MaybeUninit;
+use std::mem::MaybeUninit;
 
 /// Something that looks like a `Vec<u8>`.
 ///
@@ -36,7 +35,7 @@ impl VecWithInitialized<Vec<u8>> {
     #[cfg(feature = "io-util")]
     pub(crate) fn take(&mut self) -> Vec<u8> {
         self.num_initialized = 0;
-        core::mem::take(&mut self.vec)
+        std::mem::take(&mut self.vec)
     }
 }
 
@@ -80,7 +79,7 @@ where
         let len = vec.len();
         let cap = vec.capacity();
         let ptr = vec.as_mut_ptr().cast::<MaybeUninit<u8>>();
-        let slice = unsafe { core::slice::from_raw_parts_mut::<'a, MaybeUninit<u8>>(ptr, cap) };
+        let slice = unsafe { std::slice::from_raw_parts_mut::<'a, MaybeUninit<u8>>(ptr, cap) };
 
         // SAFETY: This is safe because the safety invariants of
         // VecWithInitialized say that the first num_initialized bytes must be

@@ -1,8 +1,8 @@
 use bytes::BufMut;
-use core::future::Future;
-use tokio::io;
-use core::pin::Pin;
-use core::task::{Context, Poll};
+use std::future::Future;
+use std::io;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 use tokio::io::AsyncRead;
 
 /// Read data from an `AsyncRead` into an implementer of the [`BufMut`] trait.
@@ -17,7 +17,7 @@ use tokio::io::AsyncRead;
 /// use tokio::io::Result;
 /// use tokio_util::io::{StreamReader, read_buf};
 /// # #[tokio::main(flavor = "current_thread")]
-/// # async fn main() -> tokio::io::Result<()> {
+/// # async fn main() -> std::io::Result<()> {
 ///
 /// // Create a reader from an iterator. This particular reader will always be
 /// // ready.

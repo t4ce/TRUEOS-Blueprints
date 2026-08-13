@@ -6,12 +6,12 @@ use crate::runtime::scheduler;
 use mio::event::Source;
 use mio::Registry;
 use mio::Token;
-use ::core::fmt;
-use crate::io;
-use core::ops::{Deref, DerefMut};
+use std::fmt;
+use std::io;
+use std::ops::{Deref, DerefMut};
 use std::os::fd::{AsFd, BorrowedFd};
 use std::os::unix::io::{AsRawFd, RawFd};
-use core::task::{ready, Context, Poll};
+use std::task::{ready, Context, Poll};
 
 /// Like [`mio::event::Source`], but for POSIX AIO only.
 ///

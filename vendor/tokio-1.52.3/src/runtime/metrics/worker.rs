@@ -1,12 +1,6 @@
-#[allow(unused_imports)]
-use crate::runtime::prelude::*;
-
 use crate::runtime::Config;
 use crate::util::metric_atomics::{MetricAtomicU64, MetricAtomicUsize};
-use core::sync::atomic::Ordering::Relaxed;
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-use crate::loom::sync::Mutex;
-#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+use std::sync::atomic::Ordering::Relaxed;
 use std::sync::Mutex;
 use std::thread::ThreadId;
 
@@ -83,10 +77,7 @@ impl WorkerMetrics {
     }
 
     pub(crate) fn set_thread_id(&self, thread_id: ThreadId) {
-        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-        { *self.thread_id.lock() = Some(thread_id); }
-        #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-        { *self.thread_id.lock().unwrap() = Some(thread_id); }
+        *self.thread_id.lock().unwrap() = Some(thread_id);
     }
 
     cfg_metrics_variant! {

@@ -2,9 +2,9 @@ use futures_sink::Sink;
 
 use futures_core::stream::Stream;
 use pin_project_lite::pin_project;
-use tokio::io;
-use core::pin::Pin;
-use core::task::{ready, Context, Poll};
+use std::io;
+use std::pin::Pin;
+use std::task::{ready, Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite};
 
 pin_project! {

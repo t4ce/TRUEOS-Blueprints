@@ -1,4 +1,4 @@
-use core::future::Future;
+use std::future::Future;
 
 cfg_rt! {
     #[track_caller]

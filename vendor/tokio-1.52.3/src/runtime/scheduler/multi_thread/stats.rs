@@ -1,10 +1,6 @@
-#[allow(unused_imports)]
-use crate::runtime::prelude::*;
-
 use crate::runtime::{Config, MetricsBatch, WorkerMetrics};
 
-use crate::time::Instant;
-use core::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Per-worker statistics. This is used for both tuning the scheduler and
 /// reporting runtime-level metrics/stats.
@@ -109,8 +105,7 @@ impl Stats {
             let mean_poll_duration = elapsed / num_polls;
 
             // Compute the alpha weighted by the number of tasks polled this batch.
-            let weighted_alpha = 1.0
-                - pow_by_squaring(1.0 - TASK_POLL_TIME_EWMA_ALPHA, self.tasks_polled_in_batch);
+            let weighted_alpha = 1.0 - (1.0 - TASK_POLL_TIME_EWMA_ALPHA).powf(num_polls);
 
             // Now compute the new weighted average task poll time.
             self.task_poll_time_ewma = weighted_alpha * mean_poll_duration
@@ -139,16 +134,4 @@ impl Stats {
     pub(crate) fn incr_overflow_count(&mut self) {
         self.batch.incr_overflow_count();
     }
-}
-
-fn pow_by_squaring(mut base: f64, mut exponent: usize) -> f64 {
-    let mut out = 1.0;
-    while exponent != 0 {
-        if exponent & 1 == 1 {
-            out *= base;
-        }
-        base *= base;
-        exponent >>= 1;
-    }
-    out
 }

@@ -1,11 +1,10 @@
-#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
 use crate::io::blocking::Blocking;
 use crate::io::{AsyncRead, ReadBuf};
 
-use crate::io;
-use core::pin::Pin;
-use core::task::Context;
-use core::task::Poll;
+use std::io;
+use std::pin::Pin;
+use std::task::Context;
+use std::task::Poll;
 
 cfg_io_std! {
     /// A handle to the standard input stream of a process.
@@ -27,15 +26,8 @@ cfg_io_std! {
     /// [`stdin`]: fn@stdin
     /// [`AsyncRead`]: trait@AsyncRead
     #[derive(Debug)]
-    #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
     pub struct Stdin {
-        std: Blocking<crate::io::Stdin>,
-    }
-
-    #[derive(Debug)]
-    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-    pub struct Stdin {
-        _priv: (),
+        std: Blocking<std::io::Stdin>,
     }
 
     /// Constructs a new handle to the standard input of the current process.
@@ -48,7 +40,6 @@ cfg_io_std! {
     ///
     /// For interactive uses, it is recommended to spawn a thread dedicated to
     /// user input and use blocking IO directly in that thread.
-    #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
     pub fn stdin() -> Stdin {
         let std = io::stdin();
         // SAFETY: The `Read` implementation of `std` does not read from the
@@ -59,14 +50,9 @@ cfg_io_std! {
             std,
         }
     }
-
-    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-    pub fn stdin() -> Stdin {
-        Stdin { _priv: () }
-    }
 }
 
-#[cfg(all(unix, not(any(target_os = "trueos", target_os = "zkvm"))))]
+#[cfg(unix)]
 mod sys {
     use std::os::unix::io::{AsFd, AsRawFd, BorrowedFd, RawFd};
 
@@ -74,7 +60,7 @@ mod sys {
 
     impl AsRawFd for Stdin {
         fn as_raw_fd(&self) -> RawFd {
-            crate::io::stdin().as_raw_fd()
+            std::io::stdin().as_raw_fd()
         }
     }
 
@@ -90,7 +76,7 @@ cfg_windows! {
 
     impl AsRawHandle for Stdin {
         fn as_raw_handle(&self) -> RawHandle {
-            crate::io::stdin().as_raw_handle()
+            std::io::stdin().as_raw_handle()
         }
     }
 
@@ -102,18 +88,11 @@ cfg_windows! {
 }
 
 impl AsyncRead for Stdin {
-    #[cfg_attr(any(target_os = "trueos", target_os = "zkvm"), allow(unused_mut))]
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
-        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-        {
-            let _ = (self, cx, buf);
-            return Poll::Ready(Ok(()));
-        }
-        #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
         Pin::new(&mut self.std).poll_read(cx, buf)
     }
 }

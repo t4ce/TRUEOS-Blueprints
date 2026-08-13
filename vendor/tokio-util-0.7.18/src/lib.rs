@@ -5,7 +5,6 @@
     rust_2018_idioms,
     unreachable_pub
 )]
-#![allow(missing_docs)]
 #![doc(test(
     no_crate_inject,
     attr(deny(warnings, rust_2018_idioms), allow(dead_code, unused_variables))
@@ -17,8 +16,6 @@
 //! This crate is not versioned in lockstep with the core
 //! [`tokio`] crate. However, `tokio-util` _will_ respect Rust's
 //! semantic versioning policy, especially with regard to breaking changes.
-
-extern crate alloc;
 
 #[macro_use]
 mod cfg;

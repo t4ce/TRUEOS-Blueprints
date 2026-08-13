@@ -1,7 +1,7 @@
 use super::RngSeed;
 
 use std::collections::hash_map::DefaultHasher;
-use core::hash::Hasher;
+use std::hash::Hasher;
 
 impl RngSeed {
     /// Generates a seed from the provided byte slice.

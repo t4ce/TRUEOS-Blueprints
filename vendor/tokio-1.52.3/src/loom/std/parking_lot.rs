@@ -3,11 +3,11 @@
 //!
 //! This can be extended to additional types/methods as required.
 
-use ::core::fmt;
-use core::marker::PhantomData;
-use core::ops::{Deref, DerefMut};
-use std::sync::TryLockError;
-use core::time::Duration;
+use std::fmt;
+use std::marker::PhantomData;
+use std::ops::{Deref, DerefMut};
+use std::sync::{LockResult, TryLockError};
+use std::time::Duration;
 
 // All types in this file are marked with PhantomData to ensure that
 // parking_lot's send_guard feature does not leak through and affect when Tokio
@@ -18,13 +18,13 @@ use core::time::Duration;
 // Types that do not need wrapping
 pub(crate) use parking_lot::WaitTimeoutResult;
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct Mutex<T: ?Sized>(PhantomData<std::sync::Mutex<T>>, parking_lot::Mutex<T>);
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct RwLock<T>(PhantomData<std::sync::RwLock<T>>, parking_lot::RwLock<T>);
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct Condvar(PhantomData<std::sync::Condvar>, parking_lot::Condvar);
 
 #[derive(Debug)]
@@ -49,11 +49,6 @@ impl<T> Mutex<T> {
     #[inline]
     pub(crate) fn new(t: T) -> Mutex<T> {
         Mutex(PhantomData, parking_lot::Mutex::new(t))
-    }
-
-    #[inline]
-    pub(crate) fn into_inner(self) -> T {
-        self.1.into_inner()
     }
 
     #[inline]
@@ -162,7 +157,7 @@ impl Condvar {
     pub(crate) fn wait<'a, T>(
         &self,
         mut guard: MutexGuard<'a, T>,
-    ) -> Result<MutexGuard<'a, T>, ()> {
+    ) -> LockResult<MutexGuard<'a, T>> {
         self.1.wait(&mut guard.1);
         Ok(guard)
     }
@@ -172,7 +167,7 @@ impl Condvar {
         &self,
         mut guard: MutexGuard<'a, T>,
         timeout: Duration,
-    ) -> Result<(MutexGuard<'a, T>, WaitTimeoutResult), ()> {
+    ) -> LockResult<(MutexGuard<'a, T>, WaitTimeoutResult)> {
         let wtr = self.1.wait_for(&mut guard.1, timeout);
         Ok((guard, wtr))
     }

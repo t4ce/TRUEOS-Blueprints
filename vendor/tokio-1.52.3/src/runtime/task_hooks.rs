@@ -1,8 +1,5 @@
-#[allow(unused_imports)]
-use crate::runtime::prelude::*;
-
 use super::Config;
-use core::marker::PhantomData;
+use std::marker::PhantomData;
 
 impl TaskHooks {
     pub(crate) fn spawn(&self, meta: &TaskMeta<'_>) {
@@ -77,10 +74,10 @@ impl<'a> TaskMeta<'a> {
 
     /// Return the source code location where the task was spawned.
     #[cfg(tokio_unstable)]
-    pub fn spawned_at(&self) -> &'static ::core::panic::Location<'static> {
+    pub fn spawned_at(&self) -> &'static std::panic::Location<'static> {
         self.spawned_at.0
     }
 }
 
 /// Runs on specific task-related events
-pub(crate) type TaskCallback = alloc::sync::Arc<dyn Fn(&TaskMeta<'_>) + Send + Sync>;
+pub(crate) type TaskCallback = std::sync::Arc<dyn Fn(&TaskMeta<'_>) + Send + Sync>;

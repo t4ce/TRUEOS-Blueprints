@@ -7,13 +7,10 @@
     allow(dead_code)
 )]
 
-#[allow(unused_imports)]
-use crate::runtime::prelude::*;
-
 use crate::runtime::park::{ParkThread, UnparkThread};
 
-use crate::io;
-use core::time::Duration;
+use std::io;
+use std::time::Duration;
 
 #[derive(Debug)]
 pub(crate) struct Driver {
@@ -152,17 +149,6 @@ cfg_io_driver! {
     fn create_io_stack(enabled: bool, nevents: usize) -> io::Result<(IoStack, IoHandle, SignalHandle)> {
         #[cfg(loom)]
         assert!(!enabled);
-
-        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-        crate::platform::log(
-            3,
-            alloc::format!(
-                "tokio-platform: create_io_stack enabled={} nevents={}\n",
-                enabled,
-                nevents
-            )
-            .as_bytes(),
-        );
 
         let ret = if enabled {
             let (io_driver, io_handle) = crate::runtime::io::Driver::new(nevents)?;

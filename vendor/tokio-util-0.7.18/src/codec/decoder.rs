@@ -3,7 +3,7 @@ use crate::codec::Framed;
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use bytes::BytesMut;
-use tokio::io;
+use std::io;
 
 /// Decoding of frames via buffers.
 ///
@@ -93,7 +93,7 @@ pub trait Decoder {
     /// strategy is:
     ///
     /// ```no_run
-    /// # use tokio::io;
+    /// # use std::io;
     /// #
     /// # use bytes::BytesMut;
     /// # use tokio_util::codec::Decoder;

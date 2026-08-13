@@ -1,6 +1,3 @@
-#[allow(unused_imports)]
-use crate::runtime::prelude::*;
-
 use super::Handle;
 use crate::runtime::WorkerMetrics;
 

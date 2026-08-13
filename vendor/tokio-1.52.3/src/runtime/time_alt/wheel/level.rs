@@ -1,10 +1,6 @@
-#[allow(unused_imports)]
-use crate::runtime::prelude::*;
-
 use super::{EntryHandle, EntryList};
-use ::core::fmt;
-use core::ptr::NonNull;
-use std::array;
+use std::ptr::NonNull;
+use std::{array, fmt};
 
 /// Wheel for a single level in the timer. This wheel contains 64 slots.
 pub(crate) struct Level {
@@ -149,7 +145,7 @@ impl Level {
     pub(crate) fn take_slot(&mut self, slot: usize) -> EntryList {
         self.occupied &= !occupied_bit(slot);
 
-        core::mem::take(&mut self.slot[slot])
+        std::mem::take(&mut self.slot[slot])
     }
 }
 
@@ -176,4 +172,23 @@ fn level_range(level: usize) -> u64 {
 /// Converts a duration (milliseconds) and a level to a slot position.
 fn slot_for(duration: u64, level: usize) -> usize {
     ((duration >> (level * 6)) % LEVEL_MULT as u64) as usize
+}
+
+#[cfg(all(test, not(loom)))]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_slot_for() {
+        for pos in 0..64 {
+            assert_eq!(pos as usize, slot_for(pos, 0));
+        }
+
+        for level in 1..5 {
+            for pos in level..64 {
+                let a = pos * 64_usize.pow(level as u32);
+                assert_eq!(pos, slot_for(a as u64, level));
+            }
+        }
+    }
 }

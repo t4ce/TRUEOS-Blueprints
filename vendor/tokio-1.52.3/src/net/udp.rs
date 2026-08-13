@@ -1,11 +1,11 @@
 use crate::io::{Interest, PollEvented, ReadBuf, Ready};
-use crate::net::{ToSocketAddrs, to_socket_addrs};
+use crate::net::{to_socket_addrs, ToSocketAddrs};
 use crate::util::check_socket_for_blocking;
 
-use crate::io;
-use ::core::fmt;
-use core::task::{Context, Poll, ready};
+use std::fmt;
+use std::io;
 use std::net::{self, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::task::{ready, Context, Poll};
 
 cfg_io_util! {
     use bytes::BufMut;
@@ -166,7 +166,7 @@ impl UdpSocket {
         }))
     }
 
-    pub fn bind_addr(addr: SocketAddr) -> io::Result<UdpSocket> {
+    fn bind_addr(addr: SocketAddr) -> io::Result<UdpSocket> {
         let sys = mio::net::UdpSocket::bind(addr)?;
         UdpSocket::new(sys)
     }
@@ -225,18 +225,10 @@ impl UdpSocket {
     /// ```
     #[track_caller]
     pub fn from_std(socket: net::UdpSocket) -> io::Result<UdpSocket> {
-        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-        {
-            return Ok(socket);
-        }
+        check_socket_for_blocking(&socket)?;
 
-        #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-        {
-            check_socket_for_blocking(&socket)?;
-
-            let io = mio::net::UdpSocket::from_std(socket);
-            UdpSocket::new(io)
-        }
+        let io = mio::net::UdpSocket::from_std(socket);
+        UdpSocket::new(io)
     }
 
     /// Turns a [`tokio::net::UdpSocket`] into a [`std::net::UdpSocket`].
@@ -247,7 +239,7 @@ impl UdpSocket {
     /// # Examples
     ///
     /// ```rust,no_run
-    /// use core::error::Error;
+    /// use std::error::Error;
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<(), Box<dyn Error>> {
@@ -262,7 +254,7 @@ impl UdpSocket {
     /// [`std::net::UdpSocket`]: std::net::UdpSocket
     /// [`set_nonblocking`]: fn@std::net::UdpSocket::set_nonblocking
     pub fn into_std(self) -> io::Result<std::net::UdpSocket> {
-        #[cfg(not(any(windows, any(target_os = "trueos", target_os = "zkvm"))))]
+        #[cfg(not(windows))]
         {
             use std::os::fd::{FromRawFd, IntoRawFd};
             self.io
@@ -278,14 +270,6 @@ impl UdpSocket {
                 .into_inner()
                 .map(|io| io.into_raw_socket())
                 .map(|raw_socket| unsafe { std::net::UdpSocket::from_raw_socket(raw_socket) })
-        }
-
-        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-        {
-            Err(io::Error::new(
-                io::ErrorKind::Other,
-                "tokio zkvm UdpSocket::into_std is not backed by raw fds",
-            ))
         }
     }
 
@@ -838,7 +822,7 @@ impl UdpSocket {
         let n = ready!(self.io.registration().poll_read_io(cx, || {
             // Safety: will not read the maybe uninitialized bytes.
             let b = unsafe {
-                &mut *(buf.unfilled_mut() as *mut [core::mem::MaybeUninit<u8>] as *mut [u8])
+                &mut *(buf.unfilled_mut() as *mut [std::mem::MaybeUninit<u8>] as *mut [u8])
             };
 
             self.io.recv(b)
@@ -962,7 +946,7 @@ impl UdpSocket {
             self.io.registration().try_io(Interest::READABLE, || {
                 let dst = buf.chunk_mut();
                 let dst =
-                    unsafe { &mut *(dst as *mut _ as *mut [core::mem::MaybeUninit<u8>] as *mut [u8]) };
+                    unsafe { &mut *(dst as *mut _ as *mut [std::mem::MaybeUninit<u8>] as *mut [u8]) };
 
                 let n = (*self.io).recv(dst)?;
 
@@ -1012,7 +996,7 @@ impl UdpSocket {
                 .async_io(Interest::READABLE | Interest::ERROR, || {
                 let dst = buf.chunk_mut();
                 let dst =
-                    unsafe { &mut *(dst as *mut _ as *mut [core::mem::MaybeUninit<u8>] as *mut [u8]) };
+                    unsafe { &mut *(dst as *mut _ as *mut [std::mem::MaybeUninit<u8>] as *mut [u8]) };
 
                 let n = (*self.io).recv(dst)?;
 
@@ -1088,7 +1072,7 @@ impl UdpSocket {
             self.io.registration().try_io(Interest::READABLE, || {
                 let dst = buf.chunk_mut();
                 let dst =
-                    unsafe { &mut *(dst as *mut _ as *mut [core::mem::MaybeUninit<u8>] as *mut [u8]) };
+                    unsafe { &mut *(dst as *mut _ as *mut [std::mem::MaybeUninit<u8>] as *mut [u8]) };
 
                 let (n, addr) = (*self.io).recv_from(dst)?;
 
@@ -1146,7 +1130,7 @@ impl UdpSocket {
                 .async_io(Interest::READABLE | Interest::ERROR, || {
                 let dst = buf.chunk_mut();
                 let dst =
-                    unsafe { &mut *(dst as *mut _ as *mut [core::mem::MaybeUninit<u8>] as *mut [u8]) };
+                    unsafe { &mut *(dst as *mut _ as *mut [std::mem::MaybeUninit<u8>] as *mut [u8]) };
 
                 let (n, addr) = (*self.io).recv_from(dst)?;
 
@@ -1257,7 +1241,7 @@ impl UdpSocket {
     ///
     /// ```no_run
     /// use tokio::net::UdpSocket;
-    /// use core::error::Error;
+    /// use std::error::Error;
     /// use std::io;
     ///
     /// #[tokio::main]
@@ -1383,7 +1367,7 @@ impl UdpSocket {
         let (n, addr) = ready!(self.io.registration().poll_read_io(cx, || {
             // Safety: will not read the maybe uninitialized bytes.
             let b = unsafe {
-                &mut *(buf.unfilled_mut() as *mut [core::mem::MaybeUninit<u8>] as *mut [u8])
+                &mut *(buf.unfilled_mut() as *mut [std::mem::MaybeUninit<u8>] as *mut [u8])
             };
 
             self.io.recv_from(b)
@@ -1633,7 +1617,7 @@ impl UdpSocket {
         let n = ready!(self.io.registration().poll_read_io(cx, || {
             // Safety: will not read the maybe uninitialized bytes.
             let b = unsafe {
-                &mut *(buf.unfilled_mut() as *mut [core::mem::MaybeUninit<u8>] as *mut [u8])
+                &mut *(buf.unfilled_mut() as *mut [std::mem::MaybeUninit<u8>] as *mut [u8])
             };
 
             self.io.peek(b)
@@ -1782,7 +1766,7 @@ impl UdpSocket {
         let (n, addr) = ready!(self.io.registration().poll_read_io(cx, || {
             // Safety: will not read the maybe uninitialized bytes.
             let b = unsafe {
-                &mut *(buf.unfilled_mut() as *mut [core::mem::MaybeUninit<u8>] as *mut [u8])
+                &mut *(buf.unfilled_mut() as *mut [std::mem::MaybeUninit<u8>] as *mut [u8])
             };
 
             self.io.peek_from(b)
@@ -2320,7 +2304,6 @@ impl UdpSocket {
     }
 }
 
-#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
 impl TryFrom<std::net::UdpSocket> for UdpSocket {
     type Error = io::Error;
 
@@ -2339,7 +2322,7 @@ impl fmt::Debug for UdpSocket {
     }
 }
 
-#[cfg(not(any(windows, any(target_os = "trueos", target_os = "zkvm"))))]
+#[cfg(not(windows))]
 mod sys {
     use super::UdpSocket;
     use std::os::fd::{AsFd, AsRawFd, BorrowedFd, RawFd};

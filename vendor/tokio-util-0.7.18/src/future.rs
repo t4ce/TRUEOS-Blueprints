@@ -3,7 +3,7 @@
 mod with_cancellation_token;
 use with_cancellation_token::{WithCancellationTokenFuture, WithCancellationTokenFutureOwned};
 
-use core::future::Future;
+use std::future::Future;
 
 use crate::sync::CancellationToken;
 
@@ -27,7 +27,7 @@ pub trait FutureExt: Future {
         /// # }
         /// ```
         #[track_caller]
-        fn timeout(self, timeout: hostlib::time::Duration) -> tokio::time::Timeout<Self>
+        fn timeout(self, timeout: std::time::Duration) -> tokio::time::Timeout<Self>
         where
             Self: Sized,
         {
@@ -80,7 +80,7 @@ pub trait FutureExt: Future {
     /// let token = CancellationToken::new();
     /// let token_clone = token.clone();
     /// tokio::spawn(async move {
-    ///     tokio::time::sleep(hostlib::time::Duration::from_millis(10)).await;
+    ///     tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     ///     token.cancel();
     /// });
     /// assert!(rx.with_cancellation_token(&token_clone).await.is_none())
@@ -117,7 +117,7 @@ pub trait FutureExt: Future {
     /// let token = CancellationToken::new();
     /// let token_clone = token.clone();
     /// tokio::spawn(async move {
-    ///     tokio::time::sleep(hostlib::time::Duration::from_millis(10)).await;
+    ///     tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     ///     token.cancel();
     /// });
     /// assert!(rx.with_cancellation_token_owned(token_clone).await.is_none())

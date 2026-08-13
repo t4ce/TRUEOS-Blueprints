@@ -10,15 +10,15 @@ use tokio::time::{sleep_until, Duration, Instant, Sleep};
 
 use core::ops::{Index, IndexMut};
 use slab::Slab;
-use core::cmp;
+use std::cmp;
 use std::collections::HashMap;
-use core::convert::From;
-use ::core::fmt;
-use ::core::fmt::Debug;
-use core::future::Future;
-use core::marker::PhantomData;
-use core::pin::Pin;
-use core::task::{self, ready, Poll, Waker};
+use std::convert::From;
+use std::fmt;
+use std::fmt::Debug;
+use std::future::Future;
+use std::marker::PhantomData;
+use std::pin::Pin;
+use std::task::{self, ready, Poll, Waker};
 
 /// A queue of delayed elements.
 ///
@@ -79,8 +79,7 @@ use core::task::{self, ready, Poll, Waker};
 ///
 /// use std::collections::HashMap;
 /// use std::task::{ready, Context, Poll};
-/// use std as hostlib;
-/// use hostlib::time::Duration;
+/// use std::time::Duration;
 /// # type CacheKey = String;
 /// # type Value = String;
 ///
@@ -460,8 +459,7 @@ impl<T> DelayQueue<T> {
     ///
     /// ```rust
     /// # use tokio_util::time::DelayQueue;
-    /// # use std as hostlib;
-/// use hostlib::time::Duration;
+    /// # use std::time::Duration;
     ///
     /// # #[tokio::main(flavor = "current_thread")]
     /// # async fn main() {
@@ -637,8 +635,7 @@ impl<T> DelayQueue<T> {
     ///
     /// ```rust
     /// use tokio_util::time::DelayQueue;
-    /// use std as hostlib;
-/// use hostlib::time::Duration;
+    /// use std::time::Duration;
     ///
     /// # #[tokio::main(flavor = "current_thread")]
     /// # async fn main() {
@@ -693,8 +690,7 @@ impl<T> DelayQueue<T> {
     ///
     /// ```rust
     /// use tokio_util::time::DelayQueue;
-    /// use std as hostlib;
-/// use hostlib::time::Duration;
+    /// use std::time::Duration;
     ///
     /// # #[tokio::main(flavor = "current_thread")]
     /// # async fn main() {
@@ -745,8 +741,7 @@ impl<T> DelayQueue<T> {
     ///
     /// ```rust
     /// use tokio_util::time::DelayQueue;
-    /// use std as hostlib;
-/// use hostlib::time::Duration;
+    /// use std::time::Duration;
     ///
     /// # #[tokio::main(flavor = "current_thread")]
     /// # async fn main() {
@@ -800,8 +795,7 @@ impl<T> DelayQueue<T> {
     ///
     /// ```rust
     /// use tokio_util::time::DelayQueue;
-    /// use std as hostlib;
-/// use hostlib::time::Duration;
+    /// use std::time::Duration;
     ///
     /// # #[tokio::main(flavor = "current_thread")]
     /// # async fn main() {
@@ -902,8 +896,7 @@ impl<T> DelayQueue<T> {
     ///
     /// ```rust
     /// use tokio_util::time::DelayQueue;
-    /// use std as hostlib;
-/// use hostlib::time::Duration;
+    /// use std::time::Duration;
     ///
     /// # #[tokio::main(flavor = "current_thread")]
     /// # async fn main() {
@@ -936,8 +929,7 @@ impl<T> DelayQueue<T> {
     ///
     /// ```rust
     /// use tokio_util::time::DelayQueue;
-    /// use std as hostlib;
-/// use hostlib::time::Duration;
+    /// use std::time::Duration;
     ///
     /// # #[tokio::main(flavor = "current_thread")]
     /// # async fn main() {
@@ -989,8 +981,7 @@ impl<T> DelayQueue<T> {
     ///
     /// ```rust
     /// use tokio_util::time::DelayQueue;
-    /// use std as hostlib;
-/// use hostlib::time::Duration;
+    /// use std::time::Duration;
     ///
     /// # #[tokio::main(flavor = "current_thread")]
     /// # async fn main() {
@@ -1021,8 +1012,7 @@ impl<T> DelayQueue<T> {
     ///
     /// ```rust
     /// use tokio_util::time::DelayQueue;
-    /// use std as hostlib;
-/// use hostlib::time::Duration;
+    /// use std::time::Duration;
     ///
     /// # #[tokio::main(flavor = "current_thread")]
     /// # async fn main() {
@@ -1064,8 +1054,7 @@ impl<T> DelayQueue<T> {
     ///
     /// ```rust
     /// use tokio_util::time::DelayQueue;
-    /// use std as hostlib;
-/// use hostlib::time::Duration;
+    /// use std::time::Duration;
     ///
     /// # #[tokio::main(flavor = "current_thread")]
     /// # async fn main() {
@@ -1100,8 +1089,7 @@ impl<T> DelayQueue<T> {
     ///
     /// ```
     /// use tokio_util::time::DelayQueue;
-    /// use std as hostlib;
-/// use hostlib::time::Duration;
+    /// use std::time::Duration;
     ///
     /// # #[tokio::main(flavor = "current_thread")]
     /// # async fn main() {
@@ -1131,8 +1119,7 @@ impl<T> DelayQueue<T> {
     ///
     /// ```
     /// use tokio_util::time::DelayQueue;
-    /// use std as hostlib;
-/// use hostlib::time::Duration;
+    /// use std::time::Duration;
     ///
     /// # #[tokio::main(flavor = "current_thread")]
     /// # async fn main() {

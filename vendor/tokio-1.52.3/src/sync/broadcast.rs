@@ -123,14 +123,13 @@ use crate::task::coop::cooperative;
 use crate::util::linked_list::{self, GuardedLinkedList, LinkedList};
 use crate::util::WakeList;
 
-use alloc::{boxed::Box, vec::Vec};
-use ::core::fmt;
-use core::future::Future;
-use core::marker::PhantomPinned;
-use core::pin::Pin;
-use core::ptr::NonNull;
-use core::sync::atomic::Ordering::{AcqRel, Acquire, Relaxed, Release, SeqCst};
-use core::task::{ready, Context, Poll, Waker};
+use std::fmt;
+use std::future::Future;
+use std::marker::PhantomPinned;
+use std::pin::Pin;
+use std::ptr::NonNull;
+use std::sync::atomic::Ordering::{AcqRel, Acquire, Relaxed, Release, SeqCst};
+use std::task::{ready, Context, Poll, Waker};
 
 /// Sending-half of the [`broadcast`] channel.
 ///
@@ -248,7 +247,7 @@ pub struct Receiver<T> {
 pub mod error {
     //! Broadcast error types
 
-    use ::core::fmt;
+    use std::fmt;
 
     /// Error returned by the [`send`] function on a [`Sender`].
     ///
@@ -267,7 +266,7 @@ pub mod error {
         }
     }
 
-    impl<T: fmt::Debug> core::error::Error for SendError<T> {}
+    impl<T: fmt::Debug> std::error::Error for SendError<T> {}
 
     /// An error returned from the [`recv`] function on a [`Receiver`].
     ///
@@ -295,7 +294,7 @@ pub mod error {
         }
     }
 
-    impl core::error::Error for RecvError {}
+    impl std::error::Error for RecvError {}
 
     /// An error returned from the [`try_recv`] function on a [`Receiver`].
     ///
@@ -331,7 +330,7 @@ pub mod error {
         }
     }
 
-    impl core::error::Error for TryRecvError {}
+    impl std::error::Error for TryRecvError {}
 }
 
 use self::error::{RecvError, SendError, TryRecvError};
@@ -504,7 +503,7 @@ const MAX_RECEIVERS: usize = usize::MAX >> 2;
 /// This will panic if `capacity` is equal to `0`.
 ///
 /// This pre-allocates space for `capacity` messages. Allocation failure may result in a panic or
-/// [an allocation error](alloc::alloc::handle_alloc_error).
+/// [an allocation error](std::alloc::handle_alloc_error).
 #[track_caller]
 pub fn channel<T: Clone>(capacity: usize) -> (Sender<T>, Receiver<T>) {
     // SAFETY: In the line below we are creating one extra receiver, so there will be 1 in total.
@@ -1005,7 +1004,7 @@ impl<T> Shared<T> {
         // * This wrapper will empty the list on drop. It is critical for safety
         //   that we will not leave any list entry with a pointer to the local
         //   guard node after this function returns / panics.
-        let mut list = WaitersList::new(core::mem::take(&mut tail.waiters), guard.as_ref(), self);
+        let mut list = WaitersList::new(std::mem::take(&mut tail.waiters), guard.as_ref(), self);
 
         let mut wakers = WakeList::new();
         'outer: loop {
@@ -1391,7 +1390,7 @@ impl<T: Clone> Receiver<T> {
     /// ```
     pub fn resubscribe(&self) -> Self {
         let shared = self.shared.clone();
-        new_receiver::<T>(shared)
+        new_receiver(shared)
     }
     /// Receives the next value for this receiver.
     ///
@@ -1721,3 +1720,40 @@ impl<'a, T> Drop for RecvGuard<'a, T> {
 
 fn is_unpin<T: Unpin>() {}
 
+#[cfg(not(loom))]
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn receiver_count_on_sender_constructor() {
+        let sender = Sender::<i32>::new(16);
+        assert_eq!(sender.receiver_count(), 0);
+
+        let rx_1 = sender.subscribe();
+        assert_eq!(sender.receiver_count(), 1);
+
+        let rx_2 = rx_1.resubscribe();
+        assert_eq!(sender.receiver_count(), 2);
+
+        let rx_3 = sender.subscribe();
+        assert_eq!(sender.receiver_count(), 3);
+
+        drop(rx_3);
+        drop(rx_1);
+        assert_eq!(sender.receiver_count(), 1);
+
+        drop(rx_2);
+        assert_eq!(sender.receiver_count(), 0);
+    }
+
+    #[cfg(not(loom))]
+    #[test]
+    fn receiver_count_on_channel_constructor() {
+        let (sender, rx) = channel::<i32>(16);
+        assert_eq!(sender.receiver_count(), 1);
+
+        let _rx_2 = rx.resubscribe();
+        assert_eq!(sender.receiver_count(), 2);
+    }
+}

@@ -1,9 +1,6 @@
-#[allow(unused_imports)]
-use crate::runtime::prelude::*;
-
 use super::{Driver, Handle, TOKEN_SIGNAL};
 
-use crate::io;
+use std::io;
 
 impl Handle {
     pub(crate) fn register_signal_receiver(

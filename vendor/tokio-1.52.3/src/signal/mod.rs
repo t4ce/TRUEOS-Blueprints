@@ -16,7 +16,7 @@
 //! use tokio::signal;
 //!
 //! #[tokio::main]
-//! async fn main() -> Result<(), Box<dyn core::error::Error>> {
+//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     signal::ctrl_c().await?;
 //!     println!("ctrl-c received!");
 //!     Ok(())
@@ -30,7 +30,7 @@
 //! use tokio::signal::unix::{signal, SignalKind};
 //!
 //! #[tokio::main]
-//! async fn main() -> Result<(), Box<dyn core::error::Error>> {
+//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     // An infinite stream of hangup signals.
 //!     let mut stream = signal(SignalKind::hangup())?;
 //!
@@ -43,22 +43,18 @@
 //! # }
 //! ```
 use crate::sync::watch::Receiver;
-use core::task::{Context, Poll};
+use std::task::{Context, Poll};
 
 #[cfg(feature = "signal")]
 mod ctrl_c;
 #[cfg(feature = "signal")]
 pub use ctrl_c::ctrl_c;
 
-#[cfg(all(unix, not(any(target_os = "trueos", target_os = "zkvm"))))]
+#[cfg(unix)]
 pub(crate) mod registry;
 
-#[cfg(all(unix, not(any(target_os = "trueos", target_os = "zkvm"))))]
 pub mod unix;
-#[cfg(windows)]
 pub mod windows;
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-mod zkvm;
 
 mod reusable_box;
 use self::reusable_box::ReusableBoxFuture;
@@ -81,7 +77,7 @@ impl RxFuture {
     }
 
     async fn recv(&mut self) {
-        use core::future::poll_fn;
+        use std::future::poll_fn;
         poll_fn(|cx| self.poll_recv(cx)).await
     }
 

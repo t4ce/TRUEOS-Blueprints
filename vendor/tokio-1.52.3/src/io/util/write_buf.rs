@@ -2,11 +2,11 @@ use crate::io::AsyncWrite;
 
 use bytes::Buf;
 use pin_project_lite::pin_project;
-use core::future::Future;
-use crate::io::{self, IoSlice};
-use core::marker::PhantomPinned;
-use core::pin::Pin;
-use core::task::{ready, Context, Poll};
+use std::future::Future;
+use std::io::{self, IoSlice};
+use std::marker::PhantomPinned;
+use std::pin::Pin;
+use std::task::{ready, Context, Poll};
 
 pin_project! {
     /// A future to write some of the buffer to an `AsyncWrite`.
@@ -52,8 +52,7 @@ where
 
         let n = if me.writer.is_write_vectored() {
             let mut slices = [IoSlice::new(&[]); MAX_VECTOR_ELEMENTS];
-            slices[0] = IoSlice::new(me.buf.chunk());
-            let cnt = 1;
+            let cnt = me.buf.chunks_vectored(&mut slices);
             ready!(Pin::new(&mut *me.writer).poll_write_vectored(cx, &slices[..cnt]))?
         } else {
             ready!(Pin::new(&mut *me.writer).poll_write(cx, me.buf.chunk()))?

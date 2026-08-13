@@ -2,13 +2,8 @@
 //!
 //! See [`Handle::dump`][crate::runtime::Handle::dump].
 
-#[allow(unused_imports)]
-use crate::runtime::prelude::*;
-
-use crate::path::{Path, PathBuf};
 use crate::task::Id;
-use ::core::fmt;
-use std::future::Future;
+use std::{fmt, future::Future, path::Path};
 
 pub use crate::runtime::task::trace::{trace_with, Root, TraceMeta};
 
@@ -42,7 +37,7 @@ pub struct Task {
 /// This type exists to get the auto traits correct, the public API
 /// uses raw pointers to make life easier for users.
 #[derive(Copy, Clone, Debug)]
-struct Address(*mut core::ffi::c_void);
+struct Address(*mut std::ffi::c_void);
 
 // Safe since Address should not be dereferenced
 unsafe impl Send for Address {}
@@ -56,7 +51,7 @@ pub struct BacktraceSymbol {
     name: Option<Box<[u8]>>,
     name_demangled: Option<Box<str>>,
     addr: Option<Address>,
-    filename: Option<PathBuf>,
+    filename: Option<std::path::PathBuf>,
     lineno: Option<u32>,
     colno: Option<u32>,
 }
@@ -85,7 +80,7 @@ impl BacktraceSymbol {
     }
 
     /// Returns the starting address of this symbol.
-    pub fn addr(&self) -> Option<*mut core::ffi::c_void> {
+    pub fn addr(&self) -> Option<*mut std::ffi::c_void> {
         self.addr.map(|addr| addr.0)
     }
 
@@ -136,12 +131,12 @@ impl BacktraceFrame {
     /// Return the instruction pointer of this frame.
     ///
     /// See the ABI docs for your platform for the exact meaning.
-    pub fn ip(&self) -> *mut core::ffi::c_void {
+    pub fn ip(&self) -> *mut std::ffi::c_void {
         self.ip.0
     }
 
     /// Returns the starting symbol address of the frame of this function.
-    pub fn symbol_address(&self) -> *mut core::ffi::c_void {
+    pub fn symbol_address(&self) -> *mut std::ffi::c_void {
         self.symbol_address.0
     }
 
@@ -175,7 +170,7 @@ impl Backtrace {
 ///
 /// <div class="warning">
 ///
-/// Resolving a backtrace, either via the [`Display`][::core::fmt::Display] impl or via
+/// Resolving a backtrace, either via the [`Display`][std::fmt::Display] impl or via
 /// [`resolve_backtraces`][Trace::resolve_backtraces], parses debuginfo, which is
 /// possibly a CPU-expensive operation that can take a platform-specific but
 /// long time to run - often over 100 milliseconds, especially if the current
@@ -202,7 +197,7 @@ impl Trace {
     /// [`poll`] to a bottom-level Tokio future - so if something like [`join!`] is
     /// used, there will be a backtrace for each future in the join.
     ///
-    /// [`poll`]: core::future::Future::poll
+    /// [`poll`]: std::future::Future::poll
     /// [`join!`]: macro@join
     pub fn resolve_backtraces(&self) -> Vec<Backtrace> {
         self.inner
@@ -240,16 +235,16 @@ impl Trace {
     ///
     /// Example usage:
     /// ```
-    /// use core::future::Future;
-    /// use core::task::Poll;
+    /// use std::future::Future;
+    /// use std::task::Poll;
     /// use tokio::runtime::dump::Trace;
     ///
     /// # async fn test_fn() {
     /// // some future
-    /// let mut test_future = core::pin::pin!(async move { tokio::task::yield_now().await; 0 });
+    /// let mut test_future = std::pin::pin!(async move { tokio::task::yield_now().await; 0 });
     ///
     /// // trace it once, see what it's doing
-    /// let (trace, res) = Trace::root(core::future::poll_fn(|cx| {
+    /// let (trace, res) = Trace::root(std::future::poll_fn(|cx| {
     ///     let (res, trace) = Trace::capture(|| test_future.as_mut().poll(cx));
     ///     Poll::Ready((trace, res))
     /// })).await;

@@ -1,6 +1,3 @@
-#[allow(unused_imports)]
-use crate::runtime::prelude::*;
-
 use super::BOX_FUTURE_THRESHOLD;
 use crate::runtime::blocking::BlockingPool;
 use crate::runtime::scheduler::CurrentThread;
@@ -9,10 +6,10 @@ use crate::task::JoinHandle;
 use crate::util::error::RUNTIME_SHUTTING_DOWN_ERROR;
 use crate::util::trace::SpawnMeta;
 
-use core::future::Future;
-use crate::io;
-use core::mem;
-use core::time::Duration;
+use std::future::Future;
+use std::io;
+use std::mem;
+use std::time::Duration;
 
 cfg_rt_multi_thread! {
     use crate::runtime::Builder;
@@ -92,8 +89,8 @@ cfg_rt_multi_thread! {
 /// [`Handle`]: struct@Handle
 /// [main]: macro@crate::main
 /// [`tokio::spawn`]: crate::spawn
-/// [`Arc::try_unwrap`]: alloc::sync::Arc::try_unwrap
-/// [Arc]: alloc::sync::Arc
+/// [`Arc::try_unwrap`]: std::sync::Arc::try_unwrap
+/// [Arc]: std::sync::Arc
 /// [`shutdown_background`]: method@Runtime::shutdown_background
 /// [`shutdown_timeout`]: method@Runtime::shutdown_timeout
 #[derive(Debug)]
@@ -174,7 +171,7 @@ impl Runtime {
     /// [runtime builder]: crate::runtime::Builder
     #[cfg(feature = "rt-multi-thread")]
     #[cfg_attr(docsrs, doc(cfg(feature = "rt-multi-thread")))]
-    pub fn new() -> crate::io::Result<Runtime> {
+    pub fn new() -> std::io::Result<Runtime> {
         Builder::new_multi_thread().enable_all().build()
     }
 
@@ -434,7 +431,7 @@ impl Runtime {
     /// use tokio::task;
     ///
     /// use std::thread;
-    /// use core::time::Duration;
+    /// use std::time::Duration;
     ///
     /// fn main() {
     ///    let runtime = Runtime::new().unwrap();
@@ -516,12 +513,12 @@ impl Drop for Runtime {
     }
 }
 
-impl ::core::panic::UnwindSafe for Runtime {}
+impl std::panic::UnwindSafe for Runtime {}
 
-impl ::core::panic::RefUnwindSafe for Runtime {}
+impl std::panic::RefUnwindSafe for Runtime {}
 
-fn display_eq(d: impl ::core::fmt::Display, s: &str) -> bool {
-    use ::core::fmt::Write;
+fn display_eq(d: impl std::fmt::Display, s: &str) -> bool {
+    use std::fmt::Write;
 
     struct FormatEq<'r> {
         remainder: &'r str,
@@ -529,7 +526,7 @@ fn display_eq(d: impl ::core::fmt::Display, s: &str) -> bool {
     }
 
     impl<'r> Write for FormatEq<'r> {
-        fn write_str(&mut self, s: &str) -> ::core::fmt::Result {
+        fn write_str(&mut self, s: &str) -> std::fmt::Result {
             if !self.unequal {
                 if let Some(new_remainder) = self.remainder.strip_prefix(s) {
                     self.remainder = new_remainder;
@@ -579,18 +576,9 @@ fn display_eq(d: impl ::core::fmt::Display, s: &str) -> bool {
 /// ```
 pub fn is_rt_shutdown_err(err: &io::Error) -> bool {
     if let Some(inner) = err.get_ref() {
-        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-        {
-            return err.kind() == io::ErrorKind::Other
-                && display_eq(inner, RUNTIME_SHUTTING_DOWN_ERROR);
-        }
-
-        #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-        {
-            err.kind() == io::ErrorKind::Other
-                && inner.source().is_none()
-                && display_eq(inner, RUNTIME_SHUTTING_DOWN_ERROR)
-        }
+        err.kind() == io::ErrorKind::Other
+            && inner.source().is_none()
+            && display_eq(inner, RUNTIME_SHUTTING_DOWN_ERROR)
     } else {
         false
     }

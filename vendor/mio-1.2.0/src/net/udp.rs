@@ -18,9 +18,7 @@ use std::os::hermit::io::{AsFd, AsRawFd, BorrowedFd, FromRawFd, IntoRawFd, Owned
 use std::os::windows::io::{
     AsRawSocket, AsSocket, BorrowedSocket, FromRawSocket, IntoRawSocket, OwnedSocket, RawSocket,
 };
-use ::core::fmt;
-use crate::io;
-use std::{net};
+use std::{fmt, io, net};
 
 use crate::io_source::IoSource;
 use crate::{event, sys, Interest, Registry, Token};
@@ -35,7 +33,7 @@ use crate::{event, sys, Interest, Registry, Token};
 ///
 #[cfg_attr(feature = "os-poll", doc = "```")]
 #[cfg_attr(not(feature = "os-poll"), doc = "```ignore")]
-/// # use core::error::Error;
+/// # use std::error::Error;
 /// #
 /// # fn main() -> Result<(), Box<dyn Error>> {
 /// # // Temporarily disabled on WASI pending https://github.com/WebAssembly/wasi-libc/pull/740:
@@ -46,7 +44,7 @@ use crate::{event, sys, Interest, Registry, Token};
 ///
 /// use mio::net::UdpSocket;
 /// use mio::{Events, Interest, Poll, Token};
-/// use core::time::Duration;
+/// use std::time::Duration;
 ///
 /// const SENDER: Token = Token(0);
 /// const ECHOER: Token = Token(1);
@@ -107,7 +105,7 @@ impl UdpSocket {
     ///
     #[cfg_attr(feature = "os-poll", doc = "```")]
     #[cfg_attr(not(feature = "os-poll"), doc = "```ignore")]
-    /// # use core::error::Error;
+    /// # use std::error::Error;
     /// #
     /// # fn main() -> Result<(), Box<dyn Error>> {
     /// use mio::net::UdpSocket;
@@ -154,7 +152,7 @@ impl UdpSocket {
         any(not(feature = "os-poll"), target_os = "freebsd"),
         doc = "```ignore"
     )]
-    /// # use core::error::Error;
+    /// # use std::error::Error;
     /// #
     /// # fn main() -> Result<(), Box<dyn Error>> {
     /// use mio::net::UdpSocket;
@@ -175,7 +173,7 @@ impl UdpSocket {
     ///
     #[cfg_attr(feature = "os-poll", doc = "```")]
     #[cfg_attr(not(feature = "os-poll"), doc = "```ignore")]
-    /// # use core::error::Error;
+    /// # use std::error::Error;
     /// #
     /// # fn main() -> Result<(), Box<dyn Error>> {
     /// use mio::net::UdpSocket;
@@ -201,7 +199,7 @@ impl UdpSocket {
     /// # Examples
     ///
     /// ```no_run
-    /// # use core::error::Error;
+    /// # use std::error::Error;
     /// # fn main() -> Result<(), Box<dyn Error>> {
     /// use mio::net::UdpSocket;
     ///
@@ -234,7 +232,7 @@ impl UdpSocket {
     /// # Examples
     ///
     /// ```no_run
-    /// # use core::error::Error;
+    /// # use std::error::Error;
     /// #
     /// # fn main() -> Result<(), Box<dyn Error>> {
     /// use mio::net::UdpSocket;
@@ -270,7 +268,7 @@ impl UdpSocket {
     /// # Examples
     ///
     /// ```no_run
-    /// # use core::error::Error;
+    /// # use std::error::Error;
     /// #
     /// # fn main() -> Result<(), Box<dyn Error>> {
     /// use mio::net::UdpSocket;
@@ -345,7 +343,7 @@ impl UdpSocket {
     ///
     #[cfg_attr(feature = "os-poll", doc = "```")]
     #[cfg_attr(not(feature = "os-poll"), doc = "```ignore")]
-    /// # use core::error::Error;
+    /// # use std::error::Error;
     /// #
     /// # fn main() -> Result<(), Box<dyn Error>> {
     /// # // WASI does not yet support broadcast.
@@ -377,7 +375,7 @@ impl UdpSocket {
     ///
     #[cfg_attr(feature = "os-poll", doc = "```")]
     #[cfg_attr(not(feature = "os-poll"), doc = "```ignore")]
-    /// # use core::error::Error;
+    /// # use std::error::Error;
     /// #
     /// # fn main() -> Result<(), Box<dyn Error>> {
     /// # // WASI does not yet support broadcast.
@@ -460,7 +458,7 @@ impl UdpSocket {
     ///
     #[cfg_attr(feature = "os-poll", doc = "```")]
     #[cfg_attr(not(feature = "os-poll"), doc = "```ignore")]
-    /// # use core::error::Error;
+    /// # use std::error::Error;
     /// #
     /// # fn main() -> Result<(), Box<dyn Error>> {
     /// use mio::net::UdpSocket;
@@ -489,7 +487,7 @@ impl UdpSocket {
     ///
     #[cfg_attr(feature = "os-poll", doc = "```")]
     #[cfg_attr(not(feature = "os-poll"), doc = "```ignore")]
-    /// # use core::error::Error;
+    /// # use std::error::Error;
     /// #
     /// # fn main() -> Result<(), Box<dyn Error>> {
     /// use mio::net::UdpSocket;
@@ -580,10 +578,10 @@ impl UdpSocket {
     ///
     #[cfg_attr(unix, doc = "```no_run")]
     #[cfg_attr(windows, doc = "```ignore")]
-    /// # use core::error::Error;
+    /// # use std::error::Error;
     /// #
     /// # fn main() -> Result<(), Box<dyn Error>> {
-    /// use crate::io;
+    /// use std::io;
     /// #[cfg(any(unix, target_os = "wasi"))]
     /// use std::os::fd::AsRawFd;
     /// #[cfg(windows)]
@@ -603,7 +601,7 @@ impl UdpSocket {
     ///     #[cfg(unix)]
     ///     let res = unsafe { libc::recv(dgram.as_raw_fd(), buf_ptr, buf.len(), 0) };
     ///     #[cfg(windows)]
-    ///     let res = unsafe { libc::recvfrom(dgram.as_raw_socket() as usize, buf_ptr, buf.len() as i32, 0, core::ptr::null_mut(), core::ptr::null_mut()) };
+    ///     let res = unsafe { libc::recvfrom(dgram.as_raw_socket() as usize, buf_ptr, buf.len() as i32, 0, std::ptr::null_mut(), std::ptr::null_mut()) };
     ///     if res != -1 {
     ///         Ok(res as usize)
     ///     } else {
@@ -771,11 +769,6 @@ impl From<UdpSocket> for net::UdpSocket {
             #[cfg(any(unix, target_os = "hermit", target_os = "wasi"))]
             {
                 net::UdpSocket::from_raw_fd(socket.into_raw_fd())
-            }
-            #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-            {
-                let _ = socket;
-                panic!("mio zkvm backend cannot convert UdpSocket into std yet")
             }
             #[cfg(windows)]
             {

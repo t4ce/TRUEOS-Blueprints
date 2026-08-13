@@ -1,11 +1,9 @@
-#[cfg(all(unix, not(any(target_os = "trueos", target_os = "zkvm"))))]
+#[cfg(unix)]
 use super::unix::{self as os_impl};
 #[cfg(windows)]
 use super::windows::{self as os_impl};
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-use super::zkvm::{self as os_impl};
 
-use crate::io;
+use std::io;
 
 /// Completes when a "ctrl-c" notification is sent to the process.
 ///

@@ -563,7 +563,7 @@ impl PacketWriter {
         self.write_buffer.seqn = Wrapping(0);
     }
 
-    pub async fn flush_into<W: AsyncWrite + Unpin>(&mut self, w: &mut W) -> tokio::io::Result<()> {
+    pub async fn flush_into<W: AsyncWrite + Unpin>(&mut self, w: &mut W) -> std::io::Result<()> {
         if !self.write_buffer.buffer.is_empty() {
             w.write_all(&self.write_buffer.buffer).await?;
             w.flush().await?;

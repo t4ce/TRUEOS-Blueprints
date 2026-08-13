@@ -3,9 +3,6 @@
     allow(dead_code)
 )]
 
-#[allow(unused_imports)]
-use crate::runtime::prelude::*;
-
 use crate::runtime::task;
 
 pub(crate) struct Synced {

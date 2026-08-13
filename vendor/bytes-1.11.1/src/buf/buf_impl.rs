@@ -5,10 +5,8 @@ use crate::buf::{take, Chain, Take};
 use crate::{min_u64_usize, saturating_sub_usize_u64};
 use crate::{panic_advance, panic_does_not_fit, TryGetError};
 
-#[cfg(all(feature = "std", not(any(target_os = "trueos", target_os = "zkvm"))))]
+#[cfg(feature = "std")]
 use std::io::IoSlice;
-#[cfg(all(feature = "std", any(target_os = "trueos", target_os = "zkvm")))]
-use trueos_io::IoSlice;
 
 use alloc::boxed::Box;
 

@@ -1,6 +1,3 @@
-#[allow(unused_imports)]
-use crate::runtime::prelude::*;
-
 // Signal handling
 cfg_signal_internal_and_unix! {
     mod signal;
@@ -19,10 +16,10 @@ use crate::runtime::io::registration_set;
 use crate::runtime::io::{IoDriverMetrics, RegistrationSet, ScheduledIo};
 
 use mio::event::Source;
-use ::core::fmt;
-use crate::io;
-use alloc::sync::Arc;
-use core::time::Duration;
+use std::fmt;
+use std::io;
+use std::sync::Arc;
+use std::time::Duration;
 
 /// I/O driver, backed by Mio.
 pub(crate) struct Driver {
@@ -185,24 +182,6 @@ impl Driver {
         handle.release_pending_registrations();
 
         let events = &mut self.events;
-
-        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-        crate::platform::log(
-            3,
-            alloc::format!(
-                "tokio-platform: io-driver turn max_wait_ns={} events_cap={}\n",
-                max_wait
-                    .map(|duration| {
-                        duration
-                            .as_secs()
-                            .saturating_mul(1_000_000_000)
-                            .saturating_add(u64::from(duration.subsec_nanos()))
-                    })
-                    .unwrap_or(u64::MAX),
-                events.capacity()
-            )
-            .as_bytes(),
-        );
 
         // Block waiting for an event to happen, peeling out how many events
         // happened.

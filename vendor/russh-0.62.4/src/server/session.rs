@@ -1,10 +1,11 @@
 use std::collections::{HashMap, VecDeque};
+use std::io::ErrorKind;
 use std::sync::Arc;
 
 use channels::WindowSizeRef;
 use kex::ServerKex;
 use log::debug;
-use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, ErrorKind};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc::{Receiver, Sender, channel};
 use tokio::sync::oneshot;
 

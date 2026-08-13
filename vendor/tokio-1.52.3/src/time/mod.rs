@@ -24,7 +24,7 @@
 //! Wait 100ms and print "100 ms have elapsed"
 //!
 //! ```
-//! use core::time::Duration;
+//! use std::time::Duration;
 //! use tokio::time::sleep;
 //!
 //! # #[tokio::main(flavor = "current_thread")]
@@ -90,9 +90,6 @@ cfg_test_util! {
     pub use clock::{advance, pause, resume};
 }
 
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-pub(crate) mod zkvm;
-
 pub mod error;
 
 mod instant;
@@ -110,4 +107,4 @@ pub use timeout::{timeout, timeout_at, Timeout};
 
 // Re-export for convenience
 #[doc(no_inline)]
-pub use core::time::Duration;
+pub use std::time::Duration;

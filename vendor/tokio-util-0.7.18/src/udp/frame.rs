@@ -5,9 +5,9 @@ use tokio::{io::ReadBuf, net::UdpSocket};
 
 use bytes::{BufMut, BytesMut};
 use futures_sink::Sink;
-use tokio::io;
-use core::pin::Pin;
-use core::task::{ready, Context, Poll};
+use std::io;
+use std::pin::Pin;
+use std::task::{ready, Context, Poll};
 use std::{
     borrow::Borrow,
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},

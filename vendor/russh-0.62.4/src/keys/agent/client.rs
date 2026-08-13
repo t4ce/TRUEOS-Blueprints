@@ -58,7 +58,7 @@ impl<S: AgentStream + Unpin> AgentClient<S> {
     }
 }
 
-#[cfg(all(unix, not(any(target_os = "trueos", target_os = "zkvm"))))]
+#[cfg(unix)]
 impl AgentClient<tokio::net::UnixStream> {
     /// Connect to an SSH agent via the provided
     /// stream (on Unix, usually a Unix-domain socket).
@@ -79,7 +79,7 @@ impl AgentClient<tokio::net::UnixStream> {
             return Err(Error::EnvVar("SSH_AUTH_SOCK"));
         };
         match Self::connect_uds(var).await {
-            Err(Error::IO(io_err)) if io_err.kind() == tokio::io::ErrorKind::NotFound => {
+            Err(Error::IO(io_err)) if io_err.kind() == std::io::ErrorKind::NotFound => {
                 Err(Error::BadAuthSock)
             }
             owise => owise,

@@ -166,7 +166,7 @@ cfg_rt! {
     /// [`thread::spawn`]: fn@std::thread::spawn
     /// [`shutdown_timeout`]: fn@crate::runtime::Runtime::shutdown_timeout
     /// [bridgesync]: https://tokio.rs/tokio/topics/bridging
-    /// [`AtomicBool`]: struct@core::sync::atomic::AtomicBool
+    /// [`AtomicBool`]: struct@std::sync::atomic::AtomicBool
     /// [`abort`]: crate::task::JoinHandle::abort
     ///
     /// # Examples
@@ -176,7 +176,7 @@ cfg_rt! {
     /// ```
     /// use tokio::task;
     ///
-    /// # async fn docs() -> Result<(), Box<dyn core::error::Error>>{
+    /// # async fn docs() -> Result<(), Box<dyn std::error::Error>>{
     /// // Initial input
     /// let mut v = "Hello, ".to_string();
     /// let res = task::spawn_blocking(move || {

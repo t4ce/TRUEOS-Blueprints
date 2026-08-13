@@ -1,6 +1,5 @@
-use ::core::fmt;
-use core::num::NonZeroU8;
-use std::ops;
+use std::num::NonZeroU8;
+use std::{fmt, ops};
 
 /// Interest used in registering.
 ///

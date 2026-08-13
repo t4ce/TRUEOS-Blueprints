@@ -1,5 +1,5 @@
-use crate::io;
-use crate::path::Path;
+use std::io;
+use std::path::Path;
 
 use std::os::unix::io::{AsFd, AsRawFd, BorrowedFd, FromRawFd, IntoRawFd, RawFd};
 
@@ -24,7 +24,7 @@ cfg_net_unix! {
     ///
     /// ```no_run
     /// use tokio::net::UnixSocket;
-    /// use core::error::Error;
+    /// use std::error::Error;
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<(), Box<dyn Error>> {
@@ -42,7 +42,7 @@ cfg_net_unix! {
     ///
     /// ```no_run
     /// use tokio::net::UnixSocket;
-    /// use core::error::Error;
+    /// use std::error::Error;
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<(), Box<dyn Error>> {
@@ -61,7 +61,7 @@ cfg_net_unix! {
     ///
     /// ```no_run
     /// use tokio::net::UnixSocket;
-    /// use core::error::Error;
+    /// use std::error::Error;
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<(), Box<dyn Error>> {

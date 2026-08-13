@@ -1,7 +1,7 @@
-use core::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 cfg_64bit_metrics! {
-    use core::sync::atomic::AtomicU64;
+    use std::sync::atomic::AtomicU64;
 }
 
 /// `AtomicU64` that is a no-op on platforms without 64-bit atomics

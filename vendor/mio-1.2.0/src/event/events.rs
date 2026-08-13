@@ -1,7 +1,7 @@
 use crate::event::Event;
 use crate::sys;
 
-use ::core::fmt;
+use std::fmt;
 
 /// A collection of readiness events.
 ///
@@ -19,10 +19,10 @@ use ::core::fmt;
 ///
 #[cfg_attr(feature = "os-poll", doc = "```")]
 #[cfg_attr(not(feature = "os-poll"), doc = "```ignore")]
-/// # use core::error::Error;
+/// # use std::error::Error;
 /// # fn main() -> Result<(), Box<dyn Error>> {
 /// use mio::{Events, Poll};
-/// use core::time::Duration;
+/// use std::time::Duration;
 ///
 /// let mut events = Events::with_capacity(1024);
 /// let mut poll = Poll::new()?;
@@ -54,10 +54,10 @@ pub struct Events {
 ///
 #[cfg_attr(feature = "os-poll", doc = "```")]
 #[cfg_attr(not(feature = "os-poll"), doc = "```ignore")]
-/// # use core::error::Error;
+/// # use std::error::Error;
 /// # fn main() -> Result<(), Box<dyn Error>> {
 /// use mio::{Events, Poll};
-/// use core::time::Duration;
+/// use std::time::Duration;
 ///
 /// let mut events = Events::with_capacity(1024);
 /// let mut poll = Poll::new()?;
@@ -127,10 +127,10 @@ impl Events {
     ///
     #[cfg_attr(feature = "os-poll", doc = "```")]
     #[cfg_attr(not(feature = "os-poll"), doc = "```ignore")]
-    /// # use core::error::Error;
+    /// # use std::error::Error;
     /// # fn main() -> Result<(), Box<dyn Error>> {
     /// use mio::{Events, Poll};
-    /// use core::time::Duration;
+    /// use std::time::Duration;
     ///
     /// let mut events = Events::with_capacity(1024);
     /// let mut poll = Poll::new()?;
@@ -163,10 +163,10 @@ impl Events {
     ///
     #[cfg_attr(feature = "os-poll", doc = "```")]
     #[cfg_attr(not(feature = "os-poll"), doc = "```ignore")]
-    /// # use core::error::Error;
+    /// # use std::error::Error;
     /// # fn main() -> Result<(), Box<dyn Error>> {
     /// use mio::{Events, Poll};
-    /// use core::time::Duration;
+    /// use std::time::Duration;
     ///
     /// let mut events = Events::with_capacity(1024);
     /// let mut poll = Poll::new()?;

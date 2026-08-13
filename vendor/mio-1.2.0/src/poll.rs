@@ -1,8 +1,3 @@
-use crate::io;
-use ::core::fmt;
-#[cfg(all(debug_assertions, not(target_os = "wasi")))]
-use core::sync::atomic::{AtomicBool, Ordering};
-use core::time::Duration;
 #[cfg(all(
     unix,
     not(mio_unsupported_force_poll_poll),
@@ -15,22 +10,20 @@ use core::time::Duration;
         target_os = "hurd",
         target_os = "nto",
         target_os = "solaris",
+        target_os = "trueos",
         target_os = "vita",
         target_os = "cygwin",
-        target_os = "trueos",
-        target_os = "zkvm",
     )),
 ))]
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, RawFd};
 #[cfg(all(debug_assertions, not(target_os = "wasi")))]
+use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(all(debug_assertions, not(target_os = "wasi")))]
 use std::sync::Arc;
+use std::time::Duration;
+use std::{fmt, io};
 
 use crate::{event, sys, Events, Interest, Token};
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-unsafe extern "Rust" {
-    fn trueos_tokio_platform_log(level: u32, bytes: *const u8, len: usize);
-}
 
 /// Polls for readiness events on all registered values.
 ///
@@ -59,7 +52,7 @@ unsafe extern "Rust" {
 ///
 #[cfg_attr(all(feature = "os-poll", feature = "net"), doc = "```")]
 #[cfg_attr(not(all(feature = "os-poll", feature = "net")), doc = "```ignore")]
-/// # use core::error::Error;
+/// # use std::error::Error;
 /// # fn main() -> Result<(), Box<dyn Error>> {
 /// use mio::{Events, Poll, Interest, Token};
 /// use mio::net::TcpStream;
@@ -120,7 +113,7 @@ unsafe extern "Rust" {
 /// there is no guarantee that another readiness event will be delivered, even
 /// if further data is received for the event source.
 ///
-/// [`WouldBlock`]: crate::io::ErrorKind::WouldBlock
+/// [`WouldBlock`]: std::io::ErrorKind::WouldBlock
 ///
 /// ### Readiness operations
 ///
@@ -156,13 +149,13 @@ unsafe extern "Rust" {
 ///
 #[cfg_attr(all(feature = "os-poll", feature = "net"), doc = "```")]
 #[cfg_attr(not(all(feature = "os-poll", feature = "net")), doc = "```ignore")]
-/// # use core::error::Error;
+/// # use std::error::Error;
 /// # use std::net;
 /// # fn main() -> Result<(), Box<dyn Error>> {
 /// use mio::{Poll, Interest, Token};
 /// use mio::net::TcpStream;
 /// use std::net::SocketAddr;
-/// use core::time::Duration;
+/// use std::time::Duration;
 /// use std::thread;
 ///
 /// let address: SocketAddr = "127.0.0.1:0".parse()?;
@@ -307,10 +300,10 @@ impl Poll {
         /// # Examples
         ///
         /// ```
-        /// # use core::error::Error;
+        /// # use std::error::Error;
         /// # fn main() -> Result<(), Box<dyn Error>> {
         /// use mio::{Poll, Events};
-        /// use core::time::Duration;
+        /// use std::time::Duration;
         ///
         /// let mut poll = match Poll::new() {
         ///     Ok(poll) => poll,
@@ -394,7 +387,7 @@ impl Poll {
     ///
     #[cfg_attr(all(feature = "os-poll", feature = "net"), doc = "```")]
     #[cfg_attr(not(all(feature = "os-poll", feature = "net")), doc = "```ignore")]
-    /// # use core::error::Error;
+    /// # use std::error::Error;
     /// # fn main() -> Result<(), Box<dyn Error>> {
     /// # // WASI does not yet support multithreading:
     /// # if cfg!(target_os = "wasi") { return Ok(()) }
@@ -445,29 +438,6 @@ impl Poll {
     ///
     /// [struct]: #
     pub fn poll(&mut self, events: &mut Events, timeout: Option<Duration>) -> io::Result<()> {
-        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-        {
-            use core::sync::atomic::{AtomicU32, Ordering};
-            static MIO_POLL_LOG_COUNT: AtomicU32 = AtomicU32::new(0);
-            let count = MIO_POLL_LOG_COUNT.fetch_add(1, Ordering::Relaxed);
-            if count < 16 || count.is_power_of_two() {
-                let timeout_ns = timeout
-                    .map(|duration| {
-                        duration
-                            .as_secs()
-                            .saturating_mul(1_000_000_000)
-                            .saturating_add(u64::from(duration.subsec_nanos()))
-                    })
-                    .unwrap_or(u64::MAX);
-                let msg = alloc::format!(
-                    "mio: poll enter count={} timeout_ns={} cap={}\n",
-                    count,
-                    timeout_ns,
-                    events.capacity()
-                );
-                unsafe { trueos_tokio_platform_log(3, msg.as_ptr(), msg.len()) };
-            }
-        }
         self.registry.selector.select(events.sys(), timeout)
     }
 }
@@ -484,10 +454,9 @@ impl Poll {
         target_os = "hurd",
         target_os = "nto",
         target_os = "solaris",
+        target_os = "trueos",
         target_os = "vita",
         target_os = "cygwin",
-        target_os = "trueos",
-        target_os = "zkvm",
     )),
 ))]
 impl AsRawFd for Poll {
@@ -558,15 +527,13 @@ impl Registry {
     ///
     #[cfg_attr(all(feature = "os-poll", feature = "net"), doc = "```")]
     #[cfg_attr(not(all(feature = "os-poll", feature = "net")), doc = "```ignore")]
-    /// # use core::error::Error;
+    /// # use std::error::Error;
     /// # use std::net;
     /// # fn main() -> Result<(), Box<dyn Error>> {
     /// use mio::{Events, Poll, Interest, Token};
     /// use mio::net::TcpStream;
     /// use std::net::SocketAddr;
-    /// use core::time::Duration;
-    /// use std as hostlib;
-    /// use hostlib::time::Instant;
+    /// use std::time::{Duration, Instant};
     ///
     /// let mut poll = Poll::new()?;
     ///
@@ -638,7 +605,7 @@ impl Registry {
     ///
     #[cfg_attr(all(feature = "os-poll", feature = "net"), doc = "```")]
     #[cfg_attr(not(all(feature = "os-poll", feature = "net")), doc = "```ignore")]
-    /// # use core::error::Error;
+    /// # use std::error::Error;
     /// # use std::net;
     /// # fn main() -> Result<(), Box<dyn Error>> {
     /// use mio::{Poll, Interest, Token};
@@ -705,13 +672,13 @@ impl Registry {
     ///
     #[cfg_attr(all(feature = "os-poll", feature = "net"), doc = "```")]
     #[cfg_attr(not(all(feature = "os-poll", feature = "net")), doc = "```ignore")]
-    /// # use core::error::Error;
+    /// # use std::error::Error;
     /// # use std::net;
     /// # fn main() -> Result<(), Box<dyn Error>> {
     /// use mio::{Events, Poll, Interest, Token};
     /// use mio::net::TcpStream;
     /// use std::net::SocketAddr;
-    /// use core::time::Duration;
+    /// use std::time::Duration;
     ///
     /// let mut poll = Poll::new()?;
     ///
@@ -790,10 +757,9 @@ impl fmt::Debug for Registry {
         target_os = "hurd",
         target_os = "nto",
         target_os = "solaris",
+        target_os = "trueos",
         target_os = "vita",
         target_os = "cygwin",
-        target_os = "trueos",
-        target_os = "zkvm",
     )),
 ))]
 impl AsFd for Registry {
@@ -814,14 +780,35 @@ impl AsFd for Registry {
         target_os = "hurd",
         target_os = "nto",
         target_os = "solaris",
+        target_os = "trueos",
         target_os = "vita",
         target_os = "cygwin",
-        target_os = "trueos",
-        target_os = "zkvm",
     )),
 ))]
 impl AsRawFd for Registry {
     fn as_raw_fd(&self) -> RawFd {
         self.selector.as_raw_fd()
+    }
+}
+
+cfg_os_poll! {
+    #[cfg(all(
+        unix,
+        not(mio_unsupported_force_poll_poll),
+        not(any(
+            target_os = "aix",
+            target_os = "espidf",
+            target_os = "hermit",
+            target_os = "hurd",
+            target_os = "nto",
+            target_os = "solaris",
+            target_os = "vita",
+            target_os = "cygwin",
+        )),
+    ))]
+    #[test]
+    pub fn as_raw_fd() {
+        let poll = Poll::new().unwrap();
+        assert!(poll.as_raw_fd() > 0);
     }
 }

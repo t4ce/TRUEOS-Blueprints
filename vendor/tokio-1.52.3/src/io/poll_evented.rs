@@ -3,11 +3,11 @@ use crate::runtime::io::Registration;
 use crate::runtime::scheduler;
 
 use mio::event::Source;
-use ::core::fmt;
-use crate::io;
-use core::ops::Deref;
-use ::core::panic::{RefUnwindSafe, UnwindSafe};
-use core::task::ready;
+use std::fmt;
+use std::io;
+use std::ops::Deref;
+use std::panic::{RefUnwindSafe, UnwindSafe};
+use std::task::ready;
 
 cfg_io_driver! {
     /// Associates an I/O resource that implements the [`std::io::Read`] and/or
@@ -154,7 +154,7 @@ feature! {
     #![any(feature = "net", all(unix, feature = "process"))]
 
     use crate::io::ReadBuf;
-    use core::task::{Context, Poll};
+    use std::task::{Context, Poll};
 
     impl<E: Source> PollEvented<E> {
         // Safety: The caller must ensure that `E` can read into uninitialized memory
@@ -166,34 +166,12 @@ feature! {
         where
             &'a E: io::Read + 'a,
         {
-            use crate::io::Read;
+            use std::io::Read;
 
-            #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-            {
-                let b = unsafe {
-                    &mut *(buf.unfilled_mut() as *mut [core::mem::MaybeUninit<u8>] as *mut [u8])
-                };
-
-                match self.io.as_ref().unwrap().read(b) {
-                    Ok(n) => {
-                        unsafe { buf.assume_init(n) };
-                        buf.advance(n);
-                        return Poll::Ready(Ok(()));
-                    }
-                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-                        crate::platform::poll_once();
-                        cx.waker().wake_by_ref();
-                        return Poll::Pending;
-                    }
-                    Err(e) => return Poll::Ready(Err(e)),
-                }
-            }
-
-            #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
             loop {
                 let evt = ready!(self.registration.poll_read_ready(cx))?;
 
-                let b = unsafe { &mut *(buf.unfilled_mut() as *mut [core::mem::MaybeUninit<u8>] as *mut [u8]) };
+                let b = unsafe { &mut *(buf.unfilled_mut() as *mut [std::mem::MaybeUninit<u8>] as *mut [u8]) };
 
                 // used only when the cfgs below apply
                 #[allow(unused_variables)]
@@ -252,22 +230,8 @@ feature! {
         where
             &'a E: io::Write + 'a,
         {
-            use crate::io::Write;
+            use std::io::Write;
 
-            #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-            {
-                match self.io.as_ref().unwrap().write(buf) {
-                    Ok(n) => return Poll::Ready(Ok(n)),
-                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-                        crate::platform::poll_once();
-                        cx.waker().wake_by_ref();
-                        return Poll::Pending;
-                    }
-                    Err(e) => return Poll::Ready(Err(e)),
-                }
-            }
-
-            #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
             loop {
                 let evt = ready!(self.registration.poll_write_ready(cx))?;
 
@@ -321,24 +285,8 @@ feature! {
         where
             &'a E: io::Write + 'a,
         {
-            #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-            {
-                return self.registration.poll_write_io(cx, || {
-                    let buf = bufs
-                        .iter()
-                        .find(|buf| !buf.is_empty())
-                        .map(|buf| &buf[..])
-                        .unwrap_or(&[]);
-                    let mut io = self.io.as_ref().unwrap();
-                    trueos_io::Write::write(&mut io, buf)
-                });
-            }
-
-            #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-            {
-            use crate::io::Write;
+            use std::io::Write;
             self.registration.poll_write_io(cx, || self.io.as_ref().unwrap().write_vectored(bufs))
-            }
         }
     }
 }

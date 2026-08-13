@@ -1,13 +1,10 @@
-#[allow(unused_imports)]
-use crate::runtime::prelude::*;
-
 use super::{EnterRuntime, CONTEXT};
 
 use crate::loom::thread::AccessError;
 use crate::util::markers::NotSendOrSync;
 
-use core::marker::PhantomData;
-use core::time::Duration;
+use std::marker::PhantomData;
+use std::time::Duration;
 
 /// Guard tracking that a caller has entered a blocking region.
 #[must_use]
@@ -61,7 +58,7 @@ impl BlockingRegionGuard {
     /// which that future completes.
     pub(crate) fn block_on<F>(&mut self, f: F) -> Result<F::Output, AccessError>
     where
-        F: core::future::Future,
+        F: std::future::Future,
     {
         use crate::runtime::park::CachedParkThread;
 
@@ -75,25 +72,26 @@ impl BlockingRegionGuard {
     /// `timeout` elapses, then `Err` is returned.
     pub(crate) fn block_on_timeout<F>(&mut self, f: F, timeout: Duration) -> Result<F::Output, ()>
     where
-        F: core::future::Future,
+        F: std::future::Future,
     {
         use crate::runtime::park::CachedParkThread;
-        use core::task::Context;
-        use core::task::Poll::Ready;
+        use std::task::Context;
+        use std::task::Poll::Ready;
+        use std::time::Instant;
 
         let mut park = CachedParkThread::new();
         let waker = park.waker().map_err(|_| ())?;
         let mut cx = Context::from_waker(&waker);
 
         pin!(f);
-        let when = crate::time::Instant::now().into_std() + timeout;
+        let when = Instant::now() + timeout;
 
         loop {
             if let Ready(v) = crate::task::coop::budget(|| f.as_mut().poll(&mut cx)) {
                 return Ok(v);
             }
 
-            let now = crate::time::Instant::now().into_std();
+            let now = Instant::now();
 
             if now >= when {
                 return Err(());

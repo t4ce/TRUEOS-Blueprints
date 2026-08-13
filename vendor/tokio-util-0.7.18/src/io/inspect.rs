@@ -1,7 +1,7 @@
 use pin_project_lite::pin_project;
-use tokio::io::{IoSlice, Result};
-use core::pin::Pin;
-use core::task::{ready, Context, Poll};
+use std::io::{IoSlice, Result};
+use std::pin::Pin;
+use std::task::{ready, Context, Poll};
 
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
@@ -56,21 +56,21 @@ impl<R: AsyncWrite, F> AsyncWrite for InspectReader<R, F> {
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &[u8],
-    ) -> Poll<core::result::Result<usize, tokio::io::Error>> {
+    ) -> Poll<std::result::Result<usize, std::io::Error>> {
         self.project().reader.poll_write(cx, buf)
     }
 
     fn poll_flush(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-    ) -> Poll<core::result::Result<(), tokio::io::Error>> {
+    ) -> Poll<std::result::Result<(), std::io::Error>> {
         self.project().reader.poll_flush(cx)
     }
 
     fn poll_shutdown(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-    ) -> Poll<core::result::Result<(), tokio::io::Error>> {
+    ) -> Poll<std::result::Result<(), std::io::Error>> {
         self.project().reader.poll_shutdown(cx)
     }
 
@@ -173,7 +173,7 @@ impl<W: AsyncRead, F> AsyncRead for InspectWriter<W, F> {
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
-    ) -> Poll<tokio::io::Result<()>> {
+    ) -> Poll<std::io::Result<()>> {
         self.project().writer.poll_read(cx, buf)
     }
 }

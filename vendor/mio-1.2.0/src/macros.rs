@@ -89,18 +89,10 @@ macro_rules! error {
 
 macro_rules! log {
     ($level: ident, $($t:tt)*) => {
-        #[cfg(all(feature = "log", any(target_os = "trueos", target_os = "zkvm")))]
-        { $crate::zkvm_compat::log(stringify!($level), format_args!($($t)*)) }
-        #[cfg(all(feature = "log", not(any(target_os = "trueos", target_os = "zkvm"))))]
+        #[cfg(feature = "log")]
         { log::$level!($($t)*) }
         // Silence unused variables warnings.
         #[cfg(not(feature = "log"))]
         { if false { let _ = ( $($t)* ); } }
     }
-}
-
-macro_rules! unsupported_io {
-    ($detail:literal) => {
-        return Err($crate::zkvm_compat::unsupported_io_error($detail))
-    };
 }

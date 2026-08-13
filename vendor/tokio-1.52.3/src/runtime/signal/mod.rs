@@ -2,16 +2,13 @@
 
 //! Signal driver
 
-#[allow(unused_imports)]
-use crate::runtime::prelude::*;
-
 use crate::runtime::{driver, io};
 use crate::signal::registry::globals;
 
 use mio::net::UnixStream;
-use crate::io::{self as std_io, Read};
+use std::io::{self as std_io, Read};
 use std::sync::{Arc, Weak};
-use core::time::Duration;
+use std::time::Duration;
 
 /// Responsible for registering wakeups when an OS signal is received, and
 /// subsequently dispatching notifications to any signal listeners as appropriate.
@@ -44,7 +41,7 @@ pub(crate) struct Handle {
 impl Driver {
     /// Creates a new signal `Driver` instance that delegates wakeups to `park`.
     pub(crate) fn new(io: io::Driver, io_handle: &io::Handle) -> std_io::Result<Self> {
-        use core::mem::ManuallyDrop;
+        use std::mem::ManuallyDrop;
         use std::os::unix::io::{AsRawFd, FromRawFd};
 
         // NB: We give each driver a "fresh" receiver file descriptor to avoid

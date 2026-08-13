@@ -1,7 +1,4 @@
-#[allow(unused_imports)]
-use crate::runtime::prelude::*;
-
-use core::marker::PhantomData;
+use std::marker::PhantomData;
 
 /// [`LocalRuntime`]-only config options
 ///

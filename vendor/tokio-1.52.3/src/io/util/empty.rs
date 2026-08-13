@@ -1,10 +1,10 @@
 use crate::io::util::poll_proceed_and_make_progress;
 use crate::io::{AsyncBufRead, AsyncRead, AsyncSeek, AsyncWrite, ReadBuf};
 
-use ::core::fmt;
-use crate::io::{self, SeekFrom};
-use core::pin::Pin;
-use core::task::{ready, Context, Poll};
+use std::fmt;
+use std::io::{self, SeekFrom};
+use std::pin::Pin;
+use std::task::{ready, Context, Poll};
 
 cfg_io_util! {
     /// `Empty` ignores any data written via [`AsyncWrite`], and will always be empty
@@ -150,5 +150,15 @@ impl AsyncSeek for Empty {
 impl fmt::Debug for Empty {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.pad("Empty { .. }")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn assert_unpin() {
+        crate::is_unpin::<Empty>();
     }
 }

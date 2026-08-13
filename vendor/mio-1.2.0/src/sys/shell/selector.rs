@@ -1,394 +1,40 @@
-use alloc::{
-    collections::{BTreeMap, VecDeque},
-    sync::Arc,
-    vec::Vec,
-};
-use core::sync::atomic::{AtomicUsize, Ordering};
-use core::time::Duration;
-use spin::Mutex;
-#[cfg(all(unix, not(any(target_os = "trueos", target_os = "zkvm"))))]
+use std::io;
+#[cfg(unix)]
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, RawFd};
-use trueos_io as io;
+use std::time::Duration;
 
-use crate::{Interest, Token};
-
-#[derive(Clone, Copy, Debug)]
-pub struct Event {
-    token: Token,
-    readiness: Ready,
-}
+pub type Event = usize;
 
 pub type Events = Vec<Event>;
 
-#[derive(Clone, Copy, Debug, Default)]
-struct Ready {
-    readable: bool,
-    writable: bool,
-    error: bool,
-    read_closed: bool,
-    write_closed: bool,
-    priority: bool,
-    aio: bool,
-    lio: bool,
-}
-
-#[allow(dead_code)]
-#[derive(Clone, Copy, Debug)]
-struct Registration {
-    token: Token,
-    interests: Interest,
-}
-
-#[derive(Debug, Default)]
-struct SelectorState {
-    registrations: Mutex<BTreeMap<usize, Registration>>,
-    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-    fd_registrations: Mutex<BTreeMap<i32, Registration>>,
-    ready: Mutex<VecDeque<Event>>,
-}
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default)]
-struct PollFd {
-    fd: i32,
-    events: i16,
-    revents: i16,
-}
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-const POLLIN: i16 = 0x001;
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-const POLLOUT: i16 = 0x004;
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-const POLLERR: i16 = 0x008;
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-const POLLHUP: i16 = 0x010;
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-const POLLNVAL: i16 = 0x020;
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-unsafe extern "C" {
-    fn poll(fds: *mut PollFd, nfds: usize, timeout: i32) -> i32;
-    fn __errno_location() -> *mut i32;
-}
-
-static NEXT_SELECTOR_ID: AtomicUsize = AtomicUsize::new(1);
-
 #[derive(Debug)]
-pub struct Selector {
-    id: usize,
-    state: Arc<SelectorState>,
-}
+pub struct Selector {}
 
 impl Selector {
-    pub fn new() -> io::Result<Selector> {
-        Ok(Selector {
-            id: NEXT_SELECTOR_ID.fetch_add(1, Ordering::Relaxed),
-            state: Arc::new(SelectorState::default()),
-        })
-    }
-
     pub fn try_clone(&self) -> io::Result<Selector> {
-        Ok(Selector {
-            id: self.id,
-            state: Arc::clone(&self.state),
-        })
+        os_required!();
     }
 
-    pub fn select(&self, events: &mut Events, timeout: Option<Duration>) -> io::Result<()> {
-        events.clear();
-
-        if self.drain_ready(events) {
-            return Ok(());
-        }
-
-        if self.drain_socket_ready(events) {
-            return Ok(());
-        }
-
-        if self.drain_fd_ready_timeout(events, Some(Duration::ZERO)) {
-            return Ok(());
-        }
-
-        if matches!(timeout, Some(duration) if duration.is_zero()) {
-            return Ok(());
-        }
-
-        let deadline = timeout.map(|duration| {
-            crate::zkvm_compat::now_nanos()
-                .saturating_add(crate::zkvm_compat::duration_to_nanos(duration))
-        });
-
-        const SELECT_PARK_SLICE: Duration = Duration::from_millis(10);
-
-        loop {
-            let timeout_slice = match deadline {
-                Some(deadline) => {
-                    let now = crate::zkvm_compat::now_nanos();
-                    if now >= deadline {
-                        return Ok(());
-                    }
-                    let remaining = Duration::from_nanos(deadline.saturating_sub(now));
-                    Some(core::cmp::min(remaining, SELECT_PARK_SLICE))
-                }
-                None => Some(SELECT_PARK_SLICE),
-            };
-
-            if self.drain_socket_ready_timeout(events, timeout_slice) {
-                return Ok(());
-            }
-
-            if self.drain_fd_ready_timeout(events, timeout_slice) {
-                return Ok(());
-            }
-
-            if self.drain_ready(events) {
-                return Ok(());
-            }
-
-            if let Some(deadline) = deadline {
-                if crate::zkvm_compat::now_nanos() >= deadline {
-                    return Ok(());
-                }
-            }
-        }
-    }
-
-    pub(crate) fn register_source(
-        &self,
-        source_id: usize,
-        token: Token,
-        interests: Interest,
-    ) -> io::Result<()> {
-        let mut registrations = self.state.registrations.lock();
-        registrations.insert(source_id, Registration { token, interests });
-        Ok(())
-    }
-
-    pub(crate) fn reregister_source(
-        &self,
-        source_id: usize,
-        token: Token,
-        interests: Interest,
-    ) -> io::Result<()> {
-        self.register_source(source_id, token, interests)
-    }
-
-    pub(crate) fn deregister_source(&self, source_id: usize) -> io::Result<()> {
-        let mut registrations = self.state.registrations.lock();
-        registrations.remove(&source_id);
-        Ok(())
-    }
-
-    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-    pub(crate) fn register_fd_source(
-        &self,
-        fd: i32,
-        token: Token,
-        interests: Interest,
-    ) -> io::Result<()> {
-        let mut registrations = self.state.fd_registrations.lock();
-        registrations.insert(fd, Registration { token, interests });
-        Ok(())
-    }
-
-    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-    pub(crate) fn reregister_fd_source(
-        &self,
-        fd: i32,
-        token: Token,
-        interests: Interest,
-    ) -> io::Result<()> {
-        self.register_fd_source(fd, token, interests)
-    }
-
-    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-    pub(crate) fn deregister_fd_source(&self, fd: i32) -> io::Result<()> {
-        let mut registrations = self.state.fd_registrations.lock();
-        registrations.remove(&fd);
-        Ok(())
-    }
-
-    pub(crate) fn push_waker_event(&self, token: Token) -> io::Result<()> {
-        let mut ready = self.state.ready.lock();
-        ready.push_back(Event {
-            token,
-            readiness: Ready {
-                readable: true,
-                ..Ready::default()
-            },
-        });
-        Ok(())
-    }
-
-    fn drain_ready(&self, events: &mut Events) -> bool {
-        let mut ready = self.state.ready.lock();
-        while events.len() < events.capacity() {
-            let Some(event) = ready.pop_front() else {
-                break;
-            };
-            events.push(event);
-        }
-        !events.is_empty()
-    }
-
-    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-    fn drain_fd_ready_timeout(&self, events: &mut Events, timeout: Option<Duration>) -> bool {
-        let remaining = events.capacity().saturating_sub(events.len());
-        if remaining == 0 {
-            return !events.is_empty();
-        }
-
-        let registrations = self.state.fd_registrations.lock();
-        if registrations.is_empty() {
-            return !events.is_empty();
-        }
-
-        let mut pollfds = Vec::new();
-        for (&fd, registration) in registrations.iter() {
-            if pollfds.len() >= remaining {
-                break;
-            }
-            pollfds.push(PollFd {
-                fd,
-                events: poll_events(registration.interests),
-                revents: 0,
-            });
-        }
-        drop(registrations);
-
-        let timeout_ms = timeout_to_millis(timeout);
-        let ready = unsafe { poll(pollfds.as_mut_ptr(), pollfds.len(), timeout_ms) };
-        if ready <= 0 {
-            return !events.is_empty();
-        }
-
-        let registrations = self.state.fd_registrations.lock();
-        for pollfd in pollfds {
-            if events.len() >= events.capacity() || pollfd.revents == 0 {
-                continue;
-            }
-            let Some(registration) = registrations.get(&pollfd.fd) else {
-                continue;
-            };
-            events.push(Event {
-                token: registration.token,
-                readiness: readiness_from_poll(pollfd.revents),
-            });
-        }
-
-        !events.is_empty()
-    }
-
-    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-    fn drain_socket_ready(&self, events: &mut Events) -> bool {
-        self.drain_socket_ready_timeout(events, Some(Duration::ZERO))
-    }
-
-    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-    fn drain_socket_ready_timeout(&self, events: &mut Events, timeout: Option<Duration>) -> bool {
-        let remaining = events.capacity().saturating_sub(events.len());
-        if remaining == 0 {
-            return !events.is_empty();
-        }
-
-        let mut raw_events = Vec::with_capacity(remaining);
-        crate::zkvm_net::selector_poll(self.id, &mut raw_events, timeout);
-        for raw in raw_events {
-            if events.len() >= events.capacity() {
-                break;
-            }
-            events.push(Event {
-                token: Token(raw.token),
-                readiness: Ready::from_zkvm_bits(raw.readiness),
-            });
-        }
-
-        !events.is_empty()
-    }
-
-    #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-    fn drain_socket_ready(&self, events: &mut Events) -> bool {
-        !events.is_empty()
+    pub fn select(&self, _: &mut Events, _: Option<Duration>) -> io::Result<()> {
+        os_required!();
     }
 }
 
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-fn poll_events(interests: Interest) -> i16 {
-    let mut events = 0;
-    if interests.is_readable() {
-        events |= POLLIN;
-    }
-    if interests.is_writable() {
-        events |= POLLOUT;
-    }
-    events
-}
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-fn readiness_from_poll(revents: i16) -> Ready {
-    Ready {
-        readable: (revents & POLLIN) != 0,
-        writable: (revents & POLLOUT) != 0,
-        error: (revents & (POLLERR | POLLNVAL)) != 0,
-        read_closed: (revents & POLLHUP) != 0,
-        write_closed: (revents & POLLHUP) != 0,
-        ..Ready::default()
-    }
-}
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-fn timeout_to_millis(timeout: Option<Duration>) -> i32 {
-    match timeout {
-        None => -1,
-        Some(duration) => {
-            let millis = duration.as_millis();
-            i32::try_from(millis).unwrap_or(i32::MAX)
-        }
-    }
-}
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-#[allow(dead_code)]
-fn last_errno() -> i32 {
-    unsafe {
-        let errno = __errno_location();
-        if errno.is_null() {
-            0
-        } else {
-            *errno
-        }
-    }
-}
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-impl Ready {
-    fn from_zkvm_bits(bits: u8) -> Self {
-        Self {
-            readable: (bits & crate::zkvm_net::READY_READABLE) != 0,
-            writable: (bits & crate::zkvm_net::READY_WRITABLE) != 0,
-            error: (bits & crate::zkvm_net::READY_ERROR) != 0,
-            read_closed: (bits & crate::zkvm_net::READY_READ_CLOSED) != 0,
-            write_closed: (bits & crate::zkvm_net::READY_WRITE_CLOSED) != 0,
-            ..Self::default()
-        }
-    }
-}
-
-#[cfg(all(unix, not(any(target_os = "trueos", target_os = "zkvm"))))]
+#[cfg(unix)]
 cfg_os_ext! {
+    use crate::{Interest, Token};
+
     impl Selector {
         pub fn register(&self, _: RawFd, _: Token, _: Interest) -> io::Result<()> {
-            unsupported_io!("mio zkvm selector registration backend is not wired yet");
+            os_required!();
         }
 
         pub fn reregister(&self, _: RawFd, _: Token, _: Interest) -> io::Result<()> {
-            unsupported_io!("mio zkvm selector reregistration backend is not wired yet");
+            os_required!();
         }
 
         pub fn deregister(&self, _: RawFd) -> io::Result<()> {
-            unsupported_io!("mio zkvm selector deregistration backend is not wired yet");
+            os_required!();
         }
     }
 }
@@ -399,36 +45,36 @@ cfg_any_os_ext! {
 
     impl Selector {
         pub fn register(&self, _: wasi::Fd, _: Token, _: Interest) -> io::Result<()> {
-            unsupported_io!("mio zkvm selector registration backend is not wired yet");
+            os_required!();
         }
 
         pub fn reregister(&self, _: wasi::Fd, _: Token, _: Interest) -> io::Result<()> {
-            unsupported_io!("mio zkvm selector reregistration backend is not wired yet");
+            os_required!();
         }
 
         pub fn deregister(&self, _: wasi::Fd) -> io::Result<()> {
-            unsupported_io!("mio zkvm selector deregistration backend is not wired yet");
+            os_required!();
         }
     }
 }
 
 cfg_io_source! {
-    #[cfg(any(debug_assertions, any(target_os = "trueos", target_os = "zkvm")))]
+    #[cfg(debug_assertions)]
     impl Selector {
         pub fn id(&self) -> usize {
-            self.id
+            os_required!();
         }
     }
 }
 
-#[cfg(all(unix, not(any(target_os = "trueos", target_os = "zkvm"))))]
+#[cfg(unix)]
 impl AsFd for Selector {
     fn as_fd(&self) -> BorrowedFd<'_> {
         os_required!()
     }
 }
 
-#[cfg(all(unix, not(any(target_os = "trueos", target_os = "zkvm"))))]
+#[cfg(unix)]
 impl AsRawFd for Selector {
     fn as_raw_fd(&self) -> RawFd {
         os_required!()
@@ -439,57 +85,45 @@ impl AsRawFd for Selector {
 pub mod event {
     use crate::sys::Event;
     use crate::Token;
-    use ::core::fmt;
+    use std::fmt;
 
-    pub fn token(event: &Event) -> Token {
-        event.token
+    pub fn token(_: &Event) -> Token {
+        os_required!();
     }
 
-    pub fn is_readable(event: &Event) -> bool {
-        event.readiness.readable
+    pub fn is_readable(_: &Event) -> bool {
+        os_required!();
     }
 
-    pub fn is_writable(event: &Event) -> bool {
-        event.readiness.writable
+    pub fn is_writable(_: &Event) -> bool {
+        os_required!();
     }
 
-    pub fn is_error(event: &Event) -> bool {
-        event.readiness.error
+    pub fn is_error(_: &Event) -> bool {
+        os_required!();
     }
 
-    pub fn is_read_closed(event: &Event) -> bool {
-        event.readiness.read_closed
+    pub fn is_read_closed(_: &Event) -> bool {
+        os_required!();
     }
 
-    pub fn is_write_closed(event: &Event) -> bool {
-        event.readiness.write_closed
+    pub fn is_write_closed(_: &Event) -> bool {
+        os_required!();
     }
 
-    pub fn is_priority(event: &Event) -> bool {
-        event.readiness.priority
+    pub fn is_priority(_: &Event) -> bool {
+        os_required!();
     }
 
-    pub fn is_aio(event: &Event) -> bool {
-        event.readiness.aio
+    pub fn is_aio(_: &Event) -> bool {
+        os_required!();
     }
 
-    pub fn is_lio(event: &Event) -> bool {
-        event.readiness.lio
+    pub fn is_lio(_: &Event) -> bool {
+        os_required!();
     }
 
-    pub fn debug_details(f: &mut fmt::Formatter<'_>, event: &Event) -> fmt::Result {
-        write!(
-            f,
-            "zkvm(token={:?}, readable={}, writable={}, error={}, read_closed={}, write_closed={}, priority={}, aio={}, lio={})",
-            event.token,
-            event.readiness.readable,
-            event.readiness.writable,
-            event.readiness.error,
-            event.readiness.read_closed,
-            event.readiness.write_closed,
-            event.readiness.priority,
-            event.readiness.aio,
-            event.readiness.lio,
-        )
+    pub fn debug_details(_: &mut fmt::Formatter<'_>, _: &Event) -> fmt::Result {
+        os_required!();
     }
 }

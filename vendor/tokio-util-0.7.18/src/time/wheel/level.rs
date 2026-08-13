@@ -1,6 +1,6 @@
 use crate::time::wheel::Stack;
 
-use ::core::fmt;
+use std::fmt;
 
 /// Wheel for a single level in the timer. This wheel contains 64 slots.
 pub(crate) struct Level<T> {
@@ -176,4 +176,23 @@ fn level_range(level: usize) -> u64 {
 /// Convert a duration (milliseconds) and a level to a slot position
 fn slot_for(duration: u64, level: usize) -> usize {
     ((duration >> (level * 6)) % LEVEL_MULT as u64) as usize
+}
+
+#[cfg(all(test, not(loom)))]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_slot_for() {
+        for pos in 0..64 {
+            assert_eq!(pos as usize, slot_for(pos, 0));
+        }
+
+        for level in 1..5 {
+            for pos in level..64 {
+                let a = pos * 64_usize.pow(level as u32);
+                assert_eq!(pos, slot_for(a as u64, level));
+            }
+        }
+    }
 }

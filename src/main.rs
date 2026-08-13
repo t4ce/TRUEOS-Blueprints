@@ -2296,52 +2296,6 @@ fn source_overlay_patches(
     out.retain(|patch| patch.name != "libc");
     out.push(CratePatch::new("libc", libc_path));
 
-    if matches!(build_settings.flavor, BuildFlavor::TokioStd) {
-        let path = stage_tokio_std_native_fs_overlay(app_dir, work_dir)?;
-        out.retain(|patch| patch.name != "tokio");
-        out.push(CratePatch::new("tokio", path));
-
-        let mio_path =
-            find_blueprint_vendor_dir(app_dir, "mio-1.2.0-trueos-std").ok_or_else(|| {
-                "missing required TokioStd Mio overlay vendor/mio-1.2.0-trueos-std".to_string()
-            })?;
-        out.retain(|patch| patch.name != "mio");
-        out.push(CratePatch::new("mio", mio_path));
-
-        let socket2_path = find_blueprint_vendor_dir(app_dir, "socket2-0.6.3-trueos-std")
-            .ok_or_else(|| {
-                "missing required TokioStd socket2 overlay vendor/socket2-0.6.3-trueos-std"
-                    .to_string()
-            })?;
-        out.retain(|patch| patch.name != "socket2");
-        out.push(CratePatch::new("socket2", socket2_path));
-
-        let bytes_path =
-            find_blueprint_vendor_dir(app_dir, "bytes-1.11.1-trueos-std").ok_or_else(|| {
-                "missing required TokioStd bytes overlay vendor/bytes-1.11.1-trueos-std".to_string()
-            })?;
-        out.retain(|patch| patch.name != "bytes");
-        out.push(CratePatch::new("bytes", bytes_path));
-
-        let tokio_util_path = find_blueprint_vendor_dir(app_dir, "tokio-util-0.7.18-trueos-std")
-            .ok_or_else(|| {
-                "missing required TokioStd tokio-util overlay vendor/tokio-util-0.7.18-trueos-std"
-                    .to_string()
-            })?;
-        out.retain(|patch| patch.name != "tokio-util");
-        out.push(CratePatch::new("tokio-util", tokio_util_path));
-
-        let russh_path =
-            find_blueprint_vendor_dir(app_dir, "russh-0.62.4-trueos-std").ok_or_else(|| {
-                "missing required TokioStd russh overlay vendor/russh-0.62.4-trueos-std".to_string()
-            })?;
-        out.retain(|patch| patch.name != "russh");
-        out.push(CratePatch::new("russh", russh_path));
-    } else if let Some(path) = find_vendor_dir(app_dir, "tokio-1.52.3") {
-        out.retain(|patch| patch.name != "tokio");
-        out.push(CratePatch::new("tokio", path));
-    }
-
     if matches!(build_settings.flavor, BuildFlavor::TokioStd)
         && manifest_or_lock_mentions_crate(app_dir, manifest_path, "futures-timer")?
     {
@@ -2448,83 +2402,6 @@ fn source_overlay_patches(
 
     out.sort_by(|a, b| a.key.cmp(&b.key));
     Ok(out)
-}
-
-/// Compose the full upstream-style Tokio runtime/network overlay with the
-/// native TRUEOS async filesystem backend.  TokioStd used to retain Tokio's
-/// ordinary `spawn_blocking(std::fs::...)` implementation, which sent
-/// `tokio::fs::read_dir` back through the incomplete Unix DIR ABI.  TRUEOSFS
-/// is already exposed as an async CABI and the thin Tokio overlay contains the
-/// corresponding Tokio `File`/`ReadDir` implementation, so use that same
-/// backend for std-enabled applications as well.
-fn stage_tokio_std_native_fs_overlay(app_dir: &Path, work_dir: &Path) -> Result<PathBuf, String> {
-    let std_source =
-        find_blueprint_vendor_dir(app_dir, "tokio-1.52.3-trueos-std").ok_or_else(|| {
-            "missing required TokioStd Tokio overlay vendor/tokio-1.52.3-trueos-std".to_string()
-        })?;
-    let native_source = find_blueprint_vendor_dir(app_dir, "tokio-1.52.3").ok_or_else(|| {
-        "missing required native TRUEOS Tokio overlay vendor/tokio-1.52.3".to_string()
-    })?;
-    let staged = work_dir
-        .join("source-overlay-crates")
-        .join("tokio-1.52.3-trueos-std-native-fs");
-    reset_dir(&staged)?;
-    copy_app_tree(&std_source, &staged)?;
-    copy_app_tree(&native_source.join("src/fs"), &staged.join("src/fs"))?;
-
-    replace_file_text(
-        &staged.join("src/lib.rs"),
-        "#[cfg(all(\n    not(tokio_unstable),\n    target_family = \"wasm\",",
-        "extern crate alloc;\n\npub(crate) mod ffi {\n    pub(crate) use std::ffi::*;\n}\n\npub(crate) mod path {\n    pub(crate) use std::path::*;\n}\n\n#[cfg(all(\n    not(tokio_unstable),\n    target_family = \"wasm\",",
-    )?;
-    replace_file_text(
-        &staged.join("src/fs/trueos.rs"),
-        "use crate::io::ReadBuf;\nuse crate::io::{self, Read, Seek, SeekFrom, Write};",
-        "use crate::io::{self, ReadBuf};\nuse std::io::{Read, Seek, SeekFrom, Write};",
-    )?;
-    for path in [
-        staged.join("src/fs/read.rs"),
-        staged.join("src/fs/read_to_string.rs"),
-        staged.join("src/fs/trueos.rs"),
-    ] {
-        replace_file_text(&path, "use crate::runtime::prelude::*;\n", "")?;
-    }
-    replace_file_text(
-        &staged.join("src/fs/file.rs"),
-        "use crate::io::{self, Seek, SeekFrom};",
-        "use crate::io::{self, SeekFrom};\nuse std::io::Seek;",
-    )?;
-    replace_file_text(
-        &staged.join("src/fs/file.rs"),
-        "bufs: &[io::IoSlice<'_>]",
-        "bufs: &[std::io::IoSlice<'_>]",
-    )?;
-    replace_file_text(
-        &staged.join("src/fs/trueos.rs"),
-        "        self.file_name.clone()",
-        "        self.file_name.clone().into()",
-    )?;
-    replace_file_text(
-        &staged.join("src/fs/trueos.rs"),
-        "                Component::Normal(part) => {\n                    if part.as_bytes().contains(&0) {",
-        "                Component::Normal(part) => {\n                    let part = part.to_str().ok_or_else(|| {\n                        io::Error::new(\n                            io::ErrorKind::InvalidInput,\n                            \"TRUEOS fs paths must be valid UTF-8\",\n                        )\n                    })?;\n                    if part.as_bytes().contains(&0) {",
-    )?;
-    replace_file_text(
-        &staged.join("src/fs/trueos.rs"),
-        "                    components.push(String::from(part));",
-        "                    components.push(String::from(part));",
-    )?;
-    replace_file_text(
-        &staged.join("src/fs/trueos.rs"),
-        "    fn trueos_cabi_async_fs_discard(id: u32) -> i32;",
-        "    fn trueos_cabi_async_fs_discard(id: u32) -> i32;\n    fn trueos_cabi_poll_once();",
-    )?;
-    replace_file_text(
-        &staged.join("src/fs/trueos.rs"),
-        "crate::platform::poll_once()",
-        "unsafe { trueos_cabi_poll_once() }",
-    )?;
-    Ok(staged)
 }
 
 /// Preserve explicit local source patches while still routing them through
@@ -2993,11 +2870,6 @@ fn patch_tonic_trueos_overlay(crate_dir: &Path) -> Result<(), String> {
         &crate_dir.join("src/transport/channel/service/io.rs"),
         "use std::io::{self, IoSlice};",
         "use hyper::io::{self, IoSlice};",
-    )?;
-    replace_file_text(
-        &crate_dir.join("src/transport/server/service/io.rs"),
-        "use std::io;\nuse std::io::IoSlice;",
-        "use tokio::io;\nuse tokio::io::IoSlice;",
     )?;
     replace_file_text(
         &crate_dir.join("src/transport/server/incoming.rs"),

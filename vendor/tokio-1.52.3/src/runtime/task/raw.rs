@@ -7,16 +7,13 @@
 // the MSRV to 1.81.0.
 #![allow(unsafe_op_in_unsafe_fn)]
 
-#[allow(unused_imports)]
-use crate::runtime::prelude::*;
-
+use crate::future::Future;
 use crate::runtime::task::core::{Core, Trailer};
 use crate::runtime::task::{Cell, Harness, Header, Id, Schedule, State};
 #[cfg(tokio_unstable)]
-use ::core::panic::Location;
-use core::future::Future;
-use core::ptr::NonNull;
-use core::task::{Poll, Waker};
+use std::panic::Location;
+use std::ptr::NonNull;
+use std::task::{Poll, Waker};
 
 /// Raw task handle
 #[derive(Clone)]
@@ -89,32 +86,34 @@ impl<T: Future, S: Schedule> OffsetHelper<T, S> {
     // inside `get_trailer_offset` because trait bounds on generic parameters
     // of const fn are unstable on our MSRV.
     const TRAILER_OFFSET: usize = get_trailer_offset(
-        core::mem::size_of::<Header>(),
-        core::mem::size_of::<Core<T, S>>(),
-        core::mem::align_of::<Core<T, S>>(),
-        core::mem::align_of::<Trailer>(),
+        std::mem::size_of::<Header>(),
+        std::mem::size_of::<Core<T, S>>(),
+        std::mem::align_of::<Core<T, S>>(),
+        std::mem::align_of::<Trailer>(),
     );
 
     // The `scheduler` is the first field of `Core`, so it has the same
     // offset as `Core`.
-    const SCHEDULER_OFFSET: usize =
-        get_core_offset(core::mem::size_of::<Header>(), core::mem::align_of::<Core<T, S>>());
+    const SCHEDULER_OFFSET: usize = get_core_offset(
+        std::mem::size_of::<Header>(),
+        std::mem::align_of::<Core<T, S>>(),
+    );
 
     const ID_OFFSET: usize = get_id_offset(
-        core::mem::size_of::<Header>(),
-        core::mem::align_of::<Core<T, S>>(),
-        core::mem::size_of::<S>(),
-        core::mem::align_of::<Id>(),
+        std::mem::size_of::<Header>(),
+        std::mem::align_of::<Core<T, S>>(),
+        std::mem::size_of::<S>(),
+        std::mem::align_of::<Id>(),
     );
 
     #[cfg(tokio_unstable)]
     const SPAWN_LOCATION_OFFSET: usize = get_spawn_location_offset(
-        core::mem::size_of::<Header>(),
-        core::mem::align_of::<Core<T, S>>(),
-        core::mem::size_of::<S>(),
-        core::mem::align_of::<Id>(),
-        core::mem::size_of::<Id>(),
-        core::mem::align_of::<&'static Location<'static>>(),
+        std::mem::size_of::<Header>(),
+        std::mem::align_of::<Core<T, S>>(),
+        std::mem::size_of::<S>(),
+        std::mem::align_of::<Id>(),
+        std::mem::size_of::<Id>(),
+        std::mem::align_of::<&'static Location<'static>>(),
     );
 }
 

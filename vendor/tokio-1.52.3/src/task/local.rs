@@ -10,17 +10,15 @@ use crate::sync::AtomicWaker;
 use crate::util::trace::SpawnMeta;
 use crate::util::RcCell;
 
-use alloc::boxed::Box;
-use alloc::collections::VecDeque;
-use alloc::rc::Rc;
-use core::cell::Cell;
-use core::future::Future;
-use core::marker::PhantomData;
-use core::option::Option::{self, None, Some};
-use core::pin::Pin;
-use core::result::Result::{Err, Ok};
-use core::task::{Context as TaskContext, Poll};
-use core::{assert, debug_assert, fmt, mem, panic};
+use std::cell::Cell;
+use std::collections::VecDeque;
+use std::fmt;
+use std::future::Future;
+use std::marker::PhantomData;
+use std::mem;
+use std::pin::Pin;
+use std::rc::Rc;
+use std::task::Poll;
 
 use pin_project_lite::pin_project;
 
@@ -218,7 +216,7 @@ cfg_rt! {
     /// # }
     /// ```
     ///
-    /// [`Send`]: trait@core::marker::Send
+    /// [`Send`]: trait@std::marker::Send
     /// [local task set]: struct@LocalSet
     /// [`Runtime::block_on`]: method@crate::runtime::Runtime::block_on
     /// [`task::spawn_local`]: fn@spawn_local
@@ -399,7 +397,7 @@ cfg_rt! {
         F: Future + 'static,
         F::Output: 'static,
     {
-        let fut_size = mem::size_of::<F>();
+        let fut_size = std::mem::size_of::<F>();
         if fut_size > BOX_FUTURE_THRESHOLD {
             spawn_local_inner(Box::pin(future), SpawnMeta::new_unnamed(fut_size))
         } else {
@@ -868,7 +866,7 @@ cfg_unstable! {
         /// spawned task.
         ///
         /// By default, an unhandled panic (i.e. a panic not caught by
-        /// [`core::panic::catch_unwind`]) has no impact on the `LocalSet`'s
+        /// [`std::panic::catch_unwind`]) has no impact on the `LocalSet`'s
         /// execution. The panic is error value is forwarded to the task's
         /// [`JoinHandle`] and all other spawned tasks continue running.
         ///
@@ -942,7 +940,7 @@ impl fmt::Debug for LocalSet {
 impl Future for LocalSet {
     type Output = ();
 
-    fn poll(self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<Self::Output> {
+    fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         let _no_blocking = crate::runtime::context::disallow_block_in_place();
 
         // Register the waker before starting to work
@@ -1058,7 +1056,7 @@ impl Context {
 impl<T: Future> Future for RunUntil<'_, T> {
     type Output = T::Output;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<Self::Output> {
+    fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         let me = self.project();
 
         me.local_set.with(|| {
@@ -1132,7 +1130,7 @@ impl Shared {
     }
 
     fn ptr_eq(&self, other: &Shared) -> bool {
-        core::ptr::eq(self, other)
+        std::ptr::eq(self, other)
     }
 }
 
@@ -1220,7 +1218,7 @@ impl LocalState {
         self.assert_called_from_owner_thread();
 
         self.local_queue
-            .with_mut(|ptr| mem::take(unsafe { &mut (*ptr) }))
+            .with_mut(|ptr| std::mem::take(unsafe { &mut (*ptr) }))
     }
 
     unsafe fn task_remove(&self, task: &Task<Arc<Shared>>) -> Option<Task<Arc<Shared>>> {
@@ -1279,3 +1277,73 @@ impl LocalState {
 // This is `Send` because it is stored in `Shared`. It is up to the caller to
 // ensure they are on the same thread that owns the `LocalSet`.
 unsafe impl Send for LocalState {}
+
+#[cfg(all(test, not(loom)))]
+mod tests {
+    use super::*;
+
+    // Does a `LocalSet` running on a current-thread runtime...basically work?
+    //
+    // This duplicates a test in `tests/task_local_set.rs`, but because this is
+    // a lib test, it will run under Miri, so this is necessary to catch stacked
+    // borrows violations in the `LocalSet` implementation.
+    #[test]
+    fn local_current_thread_scheduler() {
+        let f = async {
+            LocalSet::new()
+                .run_until(async {
+                    spawn_local(async {}).await.unwrap();
+                })
+                .await;
+        };
+        crate::runtime::Builder::new_current_thread()
+            .build()
+            .expect("rt")
+            .block_on(f)
+    }
+
+    // Tests that when a task on a `LocalSet` is woken by an io driver on the
+    // same thread, the task is woken to the localset's local queue rather than
+    // its remote queue.
+    //
+    // This test has to be defined in the `local.rs` file as a lib test, rather
+    // than in `tests/`, because it makes assertions about the local set's
+    // internal state.
+    #[test]
+    fn wakes_to_local_queue() {
+        use super::*;
+        use crate::sync::Notify;
+        let rt = crate::runtime::Builder::new_current_thread()
+            .build()
+            .expect("rt");
+        rt.block_on(async {
+            let local = LocalSet::new();
+            let notify = Arc::new(Notify::new());
+            let task = local.spawn_local({
+                let notify = notify.clone();
+                async move {
+                    notify.notified().await;
+                }
+            });
+            let mut run_until = Box::pin(local.run_until(async move {
+                task.await.unwrap();
+            }));
+
+            // poll the run until future once
+            std::future::poll_fn(|cx| {
+                let _ = run_until.as_mut().poll(cx);
+                Poll::Ready(())
+            })
+            .await;
+
+            notify.notify_one();
+            let task = unsafe { local.context.shared.local_state.task_pop_front() };
+            // TODO(eliza): it would be nice to be able to assert that this is
+            // the local task.
+            assert!(
+                task.is_some(),
+                "task should have been notified to the LocalSet's local queue"
+            );
+        })
+    }
+}

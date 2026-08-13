@@ -5,12 +5,12 @@ use crate::io::{AsyncRead, AsyncWrite, PollEvented, ReadBuf, Ready};
 
 use mio::unix::pipe as mio_pipe;
 use std::fs::File;
-use crate::io::{self, Read, Write};
+use std::io::{self, Read, Write};
 use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::io::{AsFd, AsRawFd, BorrowedFd, FromRawFd, IntoRawFd, OwnedFd, RawFd};
-use crate::path::Path;
-use core::pin::Pin;
-use core::task::{Context, Poll};
+use std::path::Path;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 
 cfg_io_util! {
     use bytes::BufMut;
@@ -38,7 +38,7 @@ cfg_io_util! {
 /// use tokio::net::unix::pipe;
 /// use tokio::process::Command;
 /// # use tokio::io::AsyncReadExt;
-/// # use core::error::Error;
+/// # use std::error::Error;
 ///
 /// # async fn dox() -> Result<(), Box<dyn Error>> {
 /// let (tx, mut rx) = pipe::pipe()?;
@@ -88,7 +88,7 @@ pub fn pipe() -> io::Result<(Sender, Receiver)> {
 ///
 /// ```no_run
 /// use tokio::net::unix::pipe;
-/// # use core::error::Error;
+/// # use std::error::Error;
 ///
 /// const FIFO_NAME: &str = "path/to/a/fifo";
 ///
@@ -104,7 +104,7 @@ pub fn pipe() -> io::Result<(Sender, Receiver)> {
 /// ```ignore
 /// use tokio::net::unix::pipe;
 /// use nix::{unistd::mkfifo, sys::stat::Mode};
-/// # use core::error::Error;
+/// # use std::error::Error;
 ///
 /// // Our program has exclusive access to this path.
 /// const FIFO_NAME: &str = "path/to/a/new/fifo";
@@ -189,7 +189,7 @@ impl OpenOptions {
     /// ```no_run
     /// use tokio::net::unix::pipe;
     /// use nix::{unistd::mkfifo, sys::stat::Mode};
-    /// # use core::error::Error;
+    /// # use std::error::Error;
     ///
     /// // Our program has exclusive access to this path.
     /// const FIFO_NAME: &str = "path/to/a/new/fifo";
@@ -313,7 +313,7 @@ enum PipeEnd {
 ///
 /// const FIFO_NAME: &str = "path/to/a/fifo";
 ///
-/// # async fn dox() -> Result<(), Box<dyn core::error::Error>> {
+/// # async fn dox() -> Result<(), Box<dyn std::error::Error>> {
 /// // Wait for a reader to open the file.
 /// let tx = loop {
 ///     match pipe::OpenOptions::new().open_sender(FIFO_NAME) {
@@ -349,7 +349,7 @@ enum PipeEnd {
 ///
 /// const FIFO_NAME: &str = "path/to/a/fifo";
 ///
-/// # async fn dox() -> Result<(), Box<dyn core::error::Error>> {
+/// # async fn dox() -> Result<(), Box<dyn std::error::Error>> {
 /// let mut tx = pipe::OpenOptions::new()
 ///     .read_write(true)
 ///     .open_sender(FIFO_NAME)?;
@@ -446,7 +446,7 @@ impl Sender {
     /// use tokio::net::unix::pipe;
     /// use std::fs::OpenOptions;
     /// use std::os::unix::fs::{FileTypeExt, OpenOptionsExt};
-    /// # use core::error::Error;
+    /// # use std::error::Error;
     ///
     /// const FIFO_NAME: &str = "path/to/a/fifo";
     ///
@@ -617,6 +617,14 @@ impl Sender {
     /// number of bytes written. If the pipe is not ready to write data,
     /// `Err(io::ErrorKind::WouldBlock)` is returned.
     ///
+    /// # Notes
+    ///
+    /// To avoid unnecessary syscalls, this will only attempt the write
+    /// operation if the OS has informed Tokio that this pipe has become
+    /// writable. Because of this, `try_write()` may fail with a
+    /// [`WouldBlock`] error if Tokio has not yet heard from the OS that
+    /// this pipe has become writable.
+    ///
     /// # Examples
     ///
     /// ```no_run
@@ -650,6 +658,8 @@ impl Sender {
     ///     Ok(())
     /// }
     /// ```
+    ///
+    /// [`WouldBlock`]: std::io::ErrorKind::WouldBlock
     pub fn try_write(&self, buf: &[u8]) -> io::Result<usize> {
         self.io
             .registration()
@@ -680,6 +690,14 @@ impl Sender {
     /// If data is successfully written, `Ok(n)` is returned, where `n` is the
     /// number of bytes written. If the pipe is not ready to write data,
     /// `Err(io::ErrorKind::WouldBlock)` is returned.
+    ///
+    /// # Notes
+    ///
+    /// To avoid unnecessary syscalls, this will only attempt the write
+    /// operation if the OS has informed Tokio that this pipe has become
+    /// writable. Because of this, `try_write_vectored()` may fail with a
+    /// [`WouldBlock`] error if Tokio has not yet heard from the OS that
+    /// this pipe has become writable.
     ///
     /// # Examples
     ///
@@ -716,6 +734,8 @@ impl Sender {
     ///     Ok(())
     /// }
     /// ```
+    ///
+    /// [`WouldBlock`]: std::io::ErrorKind::WouldBlock
     pub fn try_write_vectored(&self, buf: &[io::IoSlice<'_>]) -> io::Result<usize> {
         self.io
             .registration()
@@ -836,7 +856,7 @@ impl AsFd for Sender {
 ///
 /// const FIFO_NAME: &str = "path/to/a/fifo";
 ///
-/// # async fn dox() -> Result<(), Box<dyn core::error::Error>> {
+/// # async fn dox() -> Result<(), Box<dyn std::error::Error>> {
 /// let mut rx = pipe::OpenOptions::new().open_receiver(FIFO_NAME)?;
 /// loop {
 ///     let mut msg = vec![0; 256];
@@ -872,7 +892,7 @@ impl AsFd for Sender {
 /// ```ignore
 /// use tokio::net::unix::pipe;
 /// use tokio::io::AsyncReadExt;
-/// # use core::error::Error;
+/// # use std::error::Error;
 ///
 /// const FIFO_NAME: &str = "path/to/a/fifo";
 ///
@@ -974,7 +994,7 @@ impl Receiver {
     /// use tokio::net::unix::pipe;
     /// use std::fs::OpenOptions;
     /// use std::os::unix::fs::{FileTypeExt, OpenOptionsExt};
-    /// # use core::error::Error;
+    /// # use std::error::Error;
     ///
     /// const FIFO_NAME: &str = "path/to/a/fifo";
     ///
@@ -1152,6 +1172,14 @@ impl Receiver {
     /// If the pipe is not ready to read data,
     /// `Err(io::ErrorKind::WouldBlock)` is returned.
     ///
+    /// # Notes
+    ///
+    /// To avoid unnecessary syscalls, this will only attempt the read
+    /// operation if the OS has informed Tokio that this pipe has become
+    /// readable. Because of this, `try_read()` may fail with a
+    /// [`WouldBlock`] error if Tokio has not yet heard from the OS that
+    /// this pipe has become readable.
+    ///
     /// # Examples
     ///
     /// ```no_run
@@ -1189,6 +1217,8 @@ impl Receiver {
     ///     Ok(())
     /// }
     /// ```
+    ///
+    /// [`WouldBlock`]: std::io::ErrorKind::WouldBlock
     pub fn try_read(&self, buf: &mut [u8]) -> io::Result<usize> {
         self.io
             .registration()
@@ -1219,6 +1249,14 @@ impl Receiver {
     /// number of bytes read. `Ok(0)` indicates the pipe's writing end is
     /// closed and will no longer write data. If the pipe is not ready to read
     /// data `Err(io::ErrorKind::WouldBlock)` is returned.
+    ///
+    /// # Notes
+    ///
+    /// To avoid unnecessary syscalls, this will only attempt the read
+    /// operation if the OS has informed Tokio that this pipe has become
+    /// readable. Because of this, `try_read_vectored()` may fail with a
+    /// [`WouldBlock`] error if Tokio has not yet heard from the OS that
+    /// this pipe has become readable.
     ///
     /// # Examples
     ///
@@ -1263,6 +1301,8 @@ impl Receiver {
     ///     Ok(())
     /// }
     /// ```
+    ///
+    /// [`WouldBlock`]: std::io::ErrorKind::WouldBlock
     pub fn try_read_vectored(&self, bufs: &mut [io::IoSliceMut<'_>]) -> io::Result<usize> {
         self.io
             .registration()
@@ -1322,6 +1362,14 @@ impl Receiver {
         /// closed and will no longer write data. If the pipe is not ready to read
         /// data `Err(io::ErrorKind::WouldBlock)` is returned.
         ///
+        /// # Notes
+        ///
+        /// To avoid unnecessary syscalls, this will only attempt the read
+        /// operation if the OS has informed Tokio that this pipe has become
+        /// readable. Because of this, `try_read_buf()` may fail with a
+        /// [`WouldBlock`] error if Tokio has not yet heard from the OS that
+        /// this pipe has become readable.
+        ///
         /// # Examples
         ///
         /// ```no_run
@@ -1358,13 +1406,15 @@ impl Receiver {
         ///     Ok(())
         /// }
         /// ```
+        ///
+        /// [`WouldBlock`]: std::io::ErrorKind::WouldBlock
         pub fn try_read_buf<B: BufMut>(&self, buf: &mut B) -> io::Result<usize> {
             self.io.registration().try_io(Interest::READABLE, || {
-                use crate::io::Read;
+                use std::io::Read;
 
                 let dst = buf.chunk_mut();
                 let dst =
-                    unsafe { &mut *(dst as *mut _ as *mut [core::mem::MaybeUninit<u8>] as *mut [u8]) };
+                    unsafe { &mut *(dst as *mut _ as *mut [std::mem::MaybeUninit<u8>] as *mut [u8]) };
 
                 // Safety: `mio_pipe::Receiver` uses a `std::fs::File` underneath,
                 // which correctly handles reads into uninitialized memory.
@@ -1433,7 +1483,7 @@ impl AsFd for Receiver {
 fn is_pipe(fd: BorrowedFd<'_>) -> io::Result<bool> {
     // Safety: `libc::stat` is C-like struct used for syscalls and all-zero
     // byte pattern forms a valid value.
-    let mut stat: libc::stat = unsafe { core::mem::zeroed() };
+    let mut stat: libc::stat = unsafe { std::mem::zeroed() };
 
     // Safety: it's safe to call `fstat` with a valid, open file descriptor
     // and a valid pointer to a `stat` struct.

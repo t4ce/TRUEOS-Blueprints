@@ -1,15 +1,11 @@
-#[allow(unused_imports)]
-use crate::runtime::prelude::*;
-
 use crate::runtime::metrics::WorkerMetrics;
 
 cfg_unstable_metrics! {
     use crate::runtime::metrics::HistogramBatch;
 }
 
-use crate::time::Instant;
-use core::sync::atomic::Ordering::Relaxed;
-use core::time::Duration;
+use std::sync::atomic::Ordering::Relaxed;
+use std::time::{Duration, Instant};
 
 pub(crate) struct MetricsBatch {
     /// The total busy duration in nanoseconds.
@@ -295,7 +291,11 @@ pub(crate) fn duration_as_u64(dur: Duration) -> u64 {
 /// Gate unsupported time metrics for `wasm32-unknown-unknown`
 /// <https://github.com/tokio-rs/tokio/issues/7319>
 fn now() -> Option<Instant> {
-    if cfg!(all(target_arch = "wasm32", target_os = "unknown", target_vendor = "unknown")) {
+    if cfg!(all(
+        target_arch = "wasm32",
+        target_os = "unknown",
+        target_vendor = "unknown"
+    )) {
         None
     } else {
         Some(Instant::now())

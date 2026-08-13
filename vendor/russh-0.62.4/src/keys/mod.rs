@@ -133,15 +133,6 @@ pub enum Error {
     AgentProtocolError,
     #[error("Agent failure")]
     AgentFailure,
-    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-    #[error(transparent)]
-    IO(#[from] tokio::io::Error),
-
-    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-    #[error(transparent)]
-    StdIO(#[from] std::io::Error),
-
-    #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
     #[error(transparent)]
     IO(#[from] std::io::Error),
 

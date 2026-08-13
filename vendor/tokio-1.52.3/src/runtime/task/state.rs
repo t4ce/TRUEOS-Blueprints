@@ -1,10 +1,7 @@
-#[allow(unused_imports)]
-use crate::runtime::prelude::*;
+use crate::loom::sync::atomic::AtomicUsize;
 
-use core::sync::atomic::AtomicUsize;
-
-use ::core::fmt;
-use core::sync::atomic::Ordering::{AcqRel, Acquire, Release};
+use std::fmt;
+use std::sync::atomic::Ordering::{AcqRel, Acquire, Release};
 
 pub(super) struct State {
     val: AtomicUsize,
@@ -200,7 +197,12 @@ impl State {
     /// Returns true if the task should be deallocated.
     pub(super) fn transition_to_terminal(&self, count: usize) -> bool {
         let prev = Snapshot(self.val.fetch_sub(count * REF_ONE, AcqRel));
-        assert!(prev.ref_count() >= count, "current: {}, sub: {}", prev.ref_count(), count);
+        assert!(
+            prev.ref_count() >= count,
+            "current: {}, sub: {}",
+            prev.ref_count(),
+            count
+        );
         prev.ref_count() == count
     }
 
@@ -361,7 +363,7 @@ impl State {
     /// Optimistically tries to swap the state assuming the join handle is
     /// __immediately__ dropped on spawn.
     pub(super) fn drop_join_handle_fast(&self) -> Result<(), ()> {
-        use core::sync::atomic::Ordering::Relaxed;
+        use std::sync::atomic::Ordering::Relaxed;
 
         // Relaxed is acceptable as if this function is called and succeeds,
         // then nothing has been done w/ the join handle.
@@ -477,9 +479,8 @@ impl State {
     }
 
     pub(super) fn ref_inc(&self) {
-        use core::sync::atomic::Ordering::Relaxed;
-        #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
         use std::process;
+        use std::sync::atomic::Ordering::Relaxed;
 
         // Using a relaxed ordering is alright here, as knowledge of the
         // original reference prevents other threads from erroneously deleting
@@ -496,9 +497,6 @@ impl State {
 
         // If the reference count overflowed, abort.
         if prev > isize::MAX as usize {
-            #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-            panic!("tokio task reference count overflow");
-            #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
             process::abort();
         }
     }

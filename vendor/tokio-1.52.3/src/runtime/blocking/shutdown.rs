@@ -3,13 +3,10 @@
 //! Each worker holds the `Sender` half. When all the `Sender` halves are
 //! dropped, the `Receiver` receives a notification.
 
-#[allow(unused_imports)]
-use crate::runtime::prelude::*;
-
-use alloc::sync::Arc;
+use crate::loom::sync::Arc;
 use crate::sync::oneshot;
 
-use core::time::Duration;
+use std::time::Duration;
 
 #[derive(Debug, Clone)]
 pub(super) struct Sender {

@@ -2,7 +2,7 @@ use crate::codec::decoder::Decoder;
 use crate::codec::encoder::Encoder;
 
 use bytes::{BufMut, Bytes, BytesMut};
-use tokio::io;
+use std::io;
 
 /// A simple [`Decoder`] and [`Encoder`] implementation that just ships bytes around.
 ///
@@ -15,7 +15,7 @@ use tokio::io;
 ///
 /// [`AsyncRead`]: tokio::io::AsyncRead
 /// [`BytesMut`]: bytes::BytesMut
-/// [`Error`]: tokio::io::Error
+/// [`Error`]: std::io::Error
 ///
 /// ```
 /// # mod hidden {
@@ -27,14 +27,14 @@ use tokio::io;
 ///
 /// # enum File {}
 /// # impl File {
-/// #     async fn open(_name: &str) -> Result<impl AsyncRead, tokio::io::Error> {
+/// #     async fn open(_name: &str) -> Result<impl AsyncRead, std::io::Error> {
 /// #         use std::io::Cursor;
 /// #         Ok(Cursor::new(vec![0, 1, 2, 3, 4, 5]))
 /// #     }
 /// # }
 /// #
 /// # #[tokio::main(flavor = "current_thread")]
-/// # async fn main() -> Result<(), tokio::io::Error> {
+/// # async fn main() -> Result<(), std::io::Error> {
 /// let my_async_read = File::open("filename.txt").await?;
 /// let my_stream_of_bytes = FramedRead::new(my_async_read, BytesCodec::new());
 /// # Ok(())

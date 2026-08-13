@@ -1,9 +1,9 @@
 use bytes::Buf;
 use futures_core::stream::Stream;
 use futures_sink::Sink;
-use tokio::io;
-use core::pin::Pin;
-use core::task::{Context, Poll};
+use std::io;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 use tokio::io::{AsyncBufRead, AsyncRead, ReadBuf};
 
 /// Convert a [`Stream`] of byte chunks into an [`AsyncRead`].
@@ -20,7 +20,7 @@ use tokio::io::{AsyncBufRead, AsyncRead, ReadBuf};
 /// use tokio::io::{AsyncReadExt, Result};
 /// use tokio_util::io::StreamReader;
 /// # #[tokio::main(flavor = "current_thread")]
-/// # async fn main() -> tokio::io::Result<()> {
+/// # async fn main() -> std::io::Result<()> {
 ///
 /// // Create a stream from an iterator.
 /// let stream = tokio_stream::iter(vec![
@@ -52,7 +52,7 @@ use tokio::io::{AsyncBufRead, AsyncRead, ReadBuf};
 /// # }
 /// ```
 ///
-/// If the stream produces errors which are not [`tokio::io::Error`],
+/// If the stream produces errors which are not [`std::io::Error`],
 /// the errors can be converted using [`StreamExt`] to map each
 /// element.
 ///
@@ -62,7 +62,7 @@ use tokio::io::{AsyncBufRead, AsyncRead, ReadBuf};
 /// use tokio_util::io::StreamReader;
 /// use tokio_stream::StreamExt;
 /// # #[tokio::main(flavor = "current_thread")]
-/// # async fn main() -> tokio::io::Result<()> {
+/// # async fn main() -> std::io::Result<()> {
 ///
 /// // Create a stream from an iterator, including an error.
 /// let stream = tokio_stream::iter(vec![
@@ -71,9 +71,9 @@ use tokio::io::{AsyncBufRead, AsyncRead, ReadBuf};
 ///     Result::Err("Something bad happened!")
 /// ]);
 ///
-/// // Use StreamExt to map the stream and error to a tokio::io::Error
+/// // Use StreamExt to map the stream and error to a std::io::Error
 /// let stream = stream.map(|result| result.map_err(|err| {
-///     tokio::io::Error::new(tokio::io::ErrorKind::Other, err)
+///     std::io::Error::new(std::io::ErrorKind::Other, err)
 /// }));
 ///
 /// // Convert it to an AsyncRead.
@@ -90,7 +90,7 @@ use tokio::io::{AsyncBufRead, AsyncRead, ReadBuf};
 ///
 /// // Reading the next chunk will produce an error
 /// let error = read.read(&mut buf).await.unwrap_err();
-/// assert_eq!(error.kind(), tokio::io::ErrorKind::Other);
+/// assert_eq!(error.kind(), std::io::ErrorKind::Other);
 /// assert_eq!(error.into_inner().unwrap().to_string(), "Something bad happened!");
 ///
 /// // We have now reached the end.
@@ -109,7 +109,7 @@ use tokio::io::{AsyncBufRead, AsyncRead, ReadBuf};
 /// use tokio::io::{Result, AsyncBufReadExt};
 /// use tokio_util::io::StreamReader;
 /// # #[tokio::main(flavor = "current_thread")]
-/// # async fn main() -> tokio::io::Result<()> {
+/// # async fn main() -> std::io::Result<()> {
 ///
 /// // Create a stream of byte chunks.
 /// let stream = tokio_stream::iter(vec![
@@ -164,7 +164,7 @@ impl<S, B, E> StreamReader<S, B>
 where
     S: Stream<Item = Result<B, E>>,
     B: Buf,
-    E: Into<tokio::io::Error>,
+    E: Into<std::io::Error>,
 {
     /// Convert a stream of byte chunks into an [`AsyncRead`].
     ///
@@ -174,7 +174,7 @@ where
     ///
     /// [`Result`]: std::result::Result
     /// [`Buf`]: bytes::Buf
-    /// [io error]: tokio::io::Error
+    /// [io error]: std::io::Error
     pub fn new(stream: S) -> Self {
         Self {
             inner: stream,
@@ -241,7 +241,7 @@ impl<S, B, E> AsyncRead for StreamReader<S, B>
 where
     S: Stream<Item = Result<B, E>>,
     B: Buf,
-    E: Into<tokio::io::Error>,
+    E: Into<std::io::Error>,
 {
     fn poll_read(
         mut self: Pin<&mut Self>,
@@ -257,7 +257,7 @@ where
             Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
             Poll::Pending => return Poll::Pending,
         };
-        let len = core::cmp::min(inner_buf.len(), buf.remaining());
+        let len = std::cmp::min(inner_buf.len(), buf.remaining());
         buf.put_slice(&inner_buf[..len]);
 
         self.consume(len);
@@ -269,7 +269,7 @@ impl<S, B, E> AsyncBufRead for StreamReader<S, B>
 where
     S: Stream<Item = Result<B, E>>,
     B: Buf,
-    E: Into<tokio::io::Error>,
+    E: Into<std::io::Error>,
 {
     fn poll_fill_buf(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<&[u8]>> {
         loop {

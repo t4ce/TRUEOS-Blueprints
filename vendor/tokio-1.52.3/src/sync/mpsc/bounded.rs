@@ -8,9 +8,8 @@ cfg_time! {
     use crate::time::Duration;
 }
 
-use alloc::vec::Vec;
-use ::core::fmt;
-use core::task::{Context, Poll};
+use std::fmt;
+use std::task::{Context, Poll};
 
 /// Sends values to the associated `Receiver`.
 ///
@@ -242,7 +241,7 @@ impl<T> Receiver<T> {
     /// # }
     /// ```
     pub async fn recv(&mut self) -> Option<T> {
-        use core::future::poll_fn;
+        use std::future::poll_fn;
         poll_fn(|cx| self.chan.recv(cx)).await
     }
 
@@ -318,7 +317,7 @@ impl<T> Receiver<T> {
     /// # }
     /// ```
     pub async fn recv_many(&mut self, buffer: &mut Vec<T>, limit: usize) -> usize {
-        use core::future::poll_fn;
+        use std::future::poll_fn;
         poll_fn(|cx| self.chan.recv_many(cx, buffer, limit)).await
     }
 
@@ -675,8 +674,8 @@ impl<T> Receiver<T> {
     /// # Examples
     ///
     /// ```
-    /// use core::task::{Context, Poll};
-    /// use core::pin::Pin;
+    /// use std::task::{Context, Poll};
+    /// use std::pin::Pin;
     /// use tokio::sync::mpsc;
     /// use futures::Future;
     ///
@@ -1691,7 +1690,7 @@ impl<T> Permit<'_, T> {
     /// # }
     /// ```
     pub fn send(self, value: T) {
-        use core::mem;
+        use std::mem;
 
         self.chan.send(value);
 
@@ -1745,7 +1744,7 @@ impl<'a, T> Iterator for PermitIterator<'a, T> {
     }
 }
 impl<T> ExactSizeIterator for PermitIterator<'_, T> {}
-impl<T> core::iter::FusedIterator for PermitIterator<'_, T> {}
+impl<T> std::iter::FusedIterator for PermitIterator<'_, T> {}
 
 impl<T> Drop for PermitIterator<'_, T> {
     fn drop(&mut self) {
@@ -1854,14 +1853,12 @@ impl<T> OwnedPermit<T> {
     ///
     /// [`Sender`]: Sender
     pub fn release(mut self) -> Sender<T> {
-        use chan::Semaphore;
-
         let chan = self.chan.take().unwrap_or_else(|| {
             unreachable!("OwnedPermit channel is only taken when the permit is moved")
         });
 
         // Add the permit back to the semaphore
-        chan.semaphore().add_permit();
+        drop(Permit { chan: &chan });
         Sender { chan }
     }
 
@@ -1920,21 +1917,10 @@ impl<T> OwnedPermit<T> {
 
 impl<T> Drop for OwnedPermit<T> {
     fn drop(&mut self) {
-        use chan::Semaphore;
-
         // Are we still holding onto the sender?
         if let Some(chan) = self.chan.take() {
-            let semaphore = chan.semaphore();
-
-            // Add the permit back to the semaphore
-            semaphore.add_permit();
-
-            // If this `OwnedPermit` is holding the last sender for this
-            // channel, wake the receiver so that it can be notified that the
-            // channel is closed.
-            if semaphore.is_closed() && semaphore.is_idle() {
-                chan.wake_rx();
-            }
+            // Reuse Drop impl of non-owned Permit.
+            drop(Permit { chan: &chan });
         }
 
         // Otherwise, do nothing.

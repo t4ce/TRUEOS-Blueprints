@@ -86,7 +86,7 @@ impl<R: AsyncRead + Unpin> AsyncRead for SshRead<R> {
         mut self: Pin<&mut Self>,
         cx: &mut Context,
         buf: &mut ReadBuf,
-    ) -> Poll<Result<(), tokio::io::Error>> {
+    ) -> Poll<Result<(), std::io::Error>> {
         if let Some(mut id) = self.id.take() {
             trace!("id {:?} {:?}", id.total, id.bytes_read);
             if id.total > id.bytes_read {
@@ -116,18 +116,18 @@ impl<R: AsyncWrite + Unpin> AsyncWrite for SshRead<R> {
         mut self: Pin<&mut Self>,
         cx: &mut Context,
         buf: &[u8],
-    ) -> Poll<Result<usize, tokio::io::Error>> {
+    ) -> Poll<Result<usize, std::io::Error>> {
         AsyncWrite::poll_write(Pin::new(&mut self.r), cx, buf)
     }
 
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), tokio::io::Error>> {
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), std::io::Error>> {
         AsyncWrite::poll_flush(Pin::new(&mut self.r), cx)
     }
 
     fn poll_shutdown(
         mut self: Pin<&mut Self>,
         cx: &mut Context,
-    ) -> Poll<Result<(), tokio::io::Error>> {
+    ) -> Poll<Result<(), std::io::Error>> {
         AsyncWrite::poll_shutdown(Pin::new(&mut self.r), cx)
     }
 }

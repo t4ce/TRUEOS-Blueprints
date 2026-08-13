@@ -10,13 +10,10 @@ use crate::{
     util::trace,
 };
 
-use core::derive;
-use core::future::{Future, IntoFuture};
-use core::option::Option::{None, Some};
-use core::pin::Pin;
-use core::result::Result::{self, Err, Ok};
-use core::task::{self, Poll};
 use pin_project_lite::pin_project;
+use std::future::{Future, IntoFuture};
+use std::pin::Pin;
+use std::task::{self, Poll};
 
 /// Requires a `Future` to complete before the specified duration has elapsed.
 ///
@@ -55,7 +52,7 @@ use pin_project_lite::pin_project;
 /// use tokio::time::timeout;
 /// use tokio::sync::oneshot;
 ///
-/// use core::time::Duration;
+/// use std::time::Duration;
 ///
 /// # async fn dox() {
 /// let (tx, rx) = oneshot::channel();
@@ -132,7 +129,7 @@ where
 /// use tokio::time::{Instant, timeout_at};
 /// use tokio::sync::oneshot;
 ///
-/// use core::time::Duration;
+/// use std::time::Duration;
 ///
 /// # async fn dox() {
 /// let (tx, rx) = oneshot::channel();
@@ -145,16 +142,31 @@ where
 /// }
 /// # }
 /// ```
+///
+/// # Panics
+///
+/// This function panics if there is no current timer set.
+///
+/// It can be triggered when [`Builder::enable_time`] or
+/// [`Builder::enable_all`] are not included in the builder.
+///
+/// It can also panic whenever a timer is created outside of a
+/// Tokio runtime. That is why `rt.block_on(sleep(...))` will panic,
+/// since the function is executed outside of the runtime.
+/// Whereas `rt.block_on(async {sleep(...).await})` doesn't panic.
+/// And this is because wrapping the function on an async makes it lazy,
+/// and so gets executed inside the runtime successfully without
+/// panicking.
+///
+/// [`Builder::enable_time`]: crate::runtime::Builder::enable_time
+/// [`Builder::enable_all`]: crate::runtime::Builder::enable_all
+#[track_caller]
 pub fn timeout_at<F>(deadline: Instant, future: F) -> Timeout<F::IntoFuture>
 where
     F: IntoFuture,
 {
     let delay = sleep_until(deadline);
-
-    Timeout {
-        value: future.into_future(),
-        delay,
-    }
+    Timeout::new_with_delay(future.into_future(), delay)
 }
 
 pin_project! {

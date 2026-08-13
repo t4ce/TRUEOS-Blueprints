@@ -1,6 +1,5 @@
-#[allow(unused_imports)]
-use crate::runtime::prelude::*;
-
+use crate::loom::sync::atomic::AtomicBool;
+use crate::loom::sync::Arc;
 use crate::runtime::driver::{self, Driver};
 use crate::runtime::scheduler::{self, Defer, Inject};
 use crate::runtime::task::{
@@ -12,19 +11,16 @@ use crate::runtime::{
 use crate::sync::notify::Notify;
 use crate::util::atomic_cell::AtomicCell;
 use crate::util::{waker_ref, RngSeedGenerator, Wake, WakerRef};
-use alloc::sync::Arc;
-use core::sync::atomic::AtomicBool;
 
-use alloc::collections::VecDeque;
-use core::cell::RefCell;
-use ::core::fmt;
-use core::future::{poll_fn, Future};
-use core::sync::atomic::Ordering::{AcqRel, Acquire, Release};
-use core::task::Poll::{Pending, Ready};
-use core::task::Waker;
-use core::time::Duration;
-use std::thread;
+use std::cell::RefCell;
+use std::collections::VecDeque;
+use std::future::{poll_fn, Future};
+use std::sync::atomic::Ordering::{AcqRel, Acquire, Release};
+use std::task::Poll::{Pending, Ready};
+use std::task::Waker;
 use std::thread::ThreadId;
+use std::time::Duration;
+use std::{fmt, thread};
 
 /// Executes tasks on the current thread
 pub(crate) struct CurrentThread {
@@ -149,43 +145,29 @@ impl CurrentThread {
             .global_queue_interval
             .unwrap_or(DEFAULT_GLOBAL_QUEUE_INTERVAL);
 
-        let task_hooks = TaskHooks {
-            task_spawn_callback: config.before_spawn.clone(),
-            task_terminate_callback: config.after_termination.clone(),
-            #[cfg(tokio_unstable)]
-            before_poll_callback: config.before_poll.clone(),
-            #[cfg(tokio_unstable)]
-            after_poll_callback: config.after_poll.clone(),
-        };
-
-        let inject = Inject::new();
-
-        let owned = OwnedTasks::new(1);
-
-        let woken = AtomicBool::new(false);
-
-        let scheduler_metrics = SchedulerMetrics::new();
-
-        let shared = Shared {
-            inject,
-            owned,
-            woken,
-            config,
-            scheduler_metrics,
-            worker_metrics,
-        };
-
-        let handle_inner = Handle {
+        let handle = Arc::new(Handle {
             name,
-            task_hooks,
-            shared,
+            task_hooks: TaskHooks {
+                task_spawn_callback: config.before_spawn.clone(),
+                task_terminate_callback: config.after_termination.clone(),
+                #[cfg(tokio_unstable)]
+                before_poll_callback: config.before_poll.clone(),
+                #[cfg(tokio_unstable)]
+                after_poll_callback: config.after_poll.clone(),
+            },
+            shared: Shared {
+                inject: Inject::new(),
+                owned: OwnedTasks::new(1),
+                woken: AtomicBool::new(false),
+                config,
+                scheduler_metrics: SchedulerMetrics::new(),
+                worker_metrics,
+            },
             driver: driver_handle,
             blocking_spawner,
             seed_generator,
             local_tid,
-        };
-
-        let handle = Arc::new(handle_inner);
+        });
 
         let core = AtomicCell::new(Some(Box::new(Core {
             tasks: VecDeque::with_capacity(INITIAL_CAPACITY),
@@ -490,7 +472,7 @@ impl Handle {
         spawned_at: SpawnLocation,
     ) -> JoinHandle<F::Output>
     where
-        F: core::future::Future + Send + 'static,
+        F: crate::future::Future + Send + 'static,
         F::Output: Send + 'static,
     {
         let (handle, notified) = me.shared.owned.bind(future, me.clone(), id, spawned_at);
@@ -523,7 +505,7 @@ impl Handle {
         spawned_at: SpawnLocation,
     ) -> JoinHandle<F::Output>
     where
-        F: core::future::Future + 'static,
+        F: crate::future::Future + 'static,
         F::Output: 'static,
     {
         // Safety: the caller guarantees that this is only called on a `LocalRuntime`.
@@ -656,7 +638,7 @@ cfg_unstable_metrics! {
     }
 }
 
-use core::num::NonZeroU64;
+use std::num::NonZeroU64;
 
 impl Handle {
     pub(crate) fn owned_id(&self) -> NonZeroU64 {
@@ -782,7 +764,7 @@ impl CoreGuard<'_> {
     fn block_on<F: Future>(self, future: F) -> F::Output {
         let ret = self.enter(|mut core, context| {
             let waker = Handle::waker_ref(&context.handle);
-            let mut cx = core::task::Context::from_waker(&waker);
+            let mut cx = std::task::Context::from_waker(&waker);
 
             pin!(future);
 

@@ -2,14 +2,11 @@ use crate::runtime::Timer;
 use crate::time::{error::Error, Duration, Instant};
 use crate::util::trace;
 
-use core::future::Future;
-use core::option::Option::{self, None, Some};
-use ::core::panic::Location;
-use core::pin::Pin;
-use core::result::Result::{self, Err, Ok};
-use core::task::{self, ready, Poll};
-use core::{derive, panic};
 use pin_project_lite::pin_project;
+use std::future::Future;
+use std::panic::Location;
+use std::pin::Pin;
+use std::task::{self, ready, Poll};
 
 /// Waits until `deadline` is reached.
 ///
@@ -176,9 +173,9 @@ pin_project! {
     /// Use in a struct with boxing. By pinning the `Sleep` with a `Box`, the
     /// `HasSleep` struct implements `Unpin`, even though `Sleep` does not.
     /// ```
-    /// use core::future::Future;
-    /// use core::pin::Pin;
-    /// use core::task::{Context, Poll};
+    /// use std::future::Future;
+    /// use std::pin::Pin;
+    /// use std::task::{Context, Poll};
     /// use tokio::time::Sleep;
     ///
     /// struct HasSleep {
@@ -196,9 +193,9 @@ pin_project! {
     /// Use in a struct with pin projection. This method avoids the `Box`, but
     /// the `HasSleep` struct will not be `Unpin` as a consequence.
     /// ```
-    /// use core::future::Future;
-    /// use core::pin::Pin;
-    /// use core::task::{Context, Poll};
+    /// use std::future::Future;
+    /// use std::pin::Pin;
+    /// use std::task::{Context, Poll};
     /// use tokio::time::Sleep;
     /// use pin_project_lite::pin_project;
     ///
@@ -350,7 +347,7 @@ impl Sleep {
     ///
     /// See also the top-level examples.
     ///
-    /// [`Pin::as_mut`]: fn@core::pin::Pin::as_mut
+    /// [`Pin::as_mut`]: fn@std::pin::Pin::as_mut
     pub fn reset(self: Pin<&mut Self>, deadline: Instant) {
         self.reset_inner(deadline);
     }
@@ -424,7 +421,10 @@ impl Sleep {
 
         // Keep track of task budget
         #[cfg(all(tokio_unstable, feature = "tracing"))]
-        let coop = ready!(trace_poll_op!("poll_elapsed", crate::task::coop::poll_proceed(cx),));
+        let coop = ready!(trace_poll_op!(
+            "poll_elapsed",
+            crate::task::coop::poll_proceed(cx),
+        ));
 
         #[cfg(any(not(tokio_unstable), not(feature = "tracing")))]
         let coop = ready!(crate::task::coop::poll_proceed(cx));

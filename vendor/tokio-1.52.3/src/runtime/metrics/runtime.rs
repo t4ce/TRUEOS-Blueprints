@@ -1,15 +1,12 @@
-#[allow(unused_imports)]
-use crate::runtime::prelude::*;
-
 use crate::runtime::Handle;
-use core::time::Duration;
+use std::time::Duration;
 
 cfg_64bit_metrics! {
-    use core::sync::atomic::Ordering::Relaxed;
+    use std::sync::atomic::Ordering::Relaxed;
 }
 
 cfg_unstable_metrics! {
-    use core::ops::Range;
+    use std::ops::Range;
     use std::thread::ThreadId;
 }
 
@@ -429,7 +426,7 @@ impl RuntimeMetrics {
         /// ```
         ///
         /// [`enable_metrics_poll_time_histogram()`]: crate::runtime::Builder::enable_metrics_poll_time_histogram
-        /// [`Instant::now()`]: hostlib::time::Instant::now
+        /// [`Instant::now()`]: std::time::Instant::now
         pub fn poll_time_histogram_enabled(&self) -> bool {
             self.handle
                 .inner
@@ -533,7 +530,7 @@ impl RuntimeMetrics {
                 .as_ref()
                 .map(|histogram| {
                     let range = histogram.bucket_range(bucket);
-                    core::ops::Range {
+                    std::ops::Range {
                         start: Duration::from_nanos(range.start),
                         end: Duration::from_nanos(range.end),
                     }

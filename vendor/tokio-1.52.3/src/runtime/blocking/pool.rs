@@ -1,68 +1,20 @@
 //! Thread pool for blocking operations
 
-#[allow(unused_imports)]
-use crate::runtime::prelude::*;
-
-use crate::loom::sync::Mutex;
+use crate::loom::sync::{Arc, Condvar, Mutex};
 use crate::loom::thread;
 use crate::runtime::blocking::schedule::BlockingSchedule;
-use crate::runtime::blocking::{BlockingTask, shutdown};
+use crate::runtime::blocking::{shutdown, BlockingTask};
 use crate::runtime::builder::ThreadNameFn;
 use crate::runtime::task::{self, JoinHandle};
-use crate::runtime::{BOX_FUTURE_THRESHOLD, Builder, Callback, Handle};
+use crate::runtime::{Builder, Callback, Handle, BOX_FUTURE_THRESHOLD};
 use crate::util::metric_atomics::MetricAtomicUsize;
-use crate::util::trace::{SpawnMeta, blocking_task};
-use alloc::sync::Arc;
+use crate::util::trace::{blocking_task, SpawnMeta};
 
-use crate::io;
-use ::core::fmt;
-use alloc::collections::VecDeque;
-use core::sync::atomic::Ordering;
-use core::time::Duration;
-#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-use std::collections::HashMap;
-
-#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-use crate::loom::sync::Condvar;
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-#[derive(Debug)]
-#[repr(transparent)]
-struct Condvar {
-    // The TRUEOS wait bridge keys queues by this object's address. This must
-    // have storage: Rust does not assign stable or unique addresses to ZSTs.
-    wait_key_anchor: u8,
-}
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-const _: () = assert!(core::mem::size_of::<Condvar>() != 0);
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-impl Condvar {
-    fn new() -> Self {
-        Condvar { wait_key_anchor: 0 }
-    }
-
-    fn wait_key(&self) -> u64 {
-        self as *const Condvar as usize as u64
-    }
-
-    fn notify_one(&self) {
-        let _ = crate::platform::wake_one(self.wait_key());
-    }
-
-    fn notify_all(&self) {
-        let _ = crate::platform::wake_all(self.wait_key());
-    }
-}
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-type TrueosBlockingJob = Box<dyn FnOnce() + Send + 'static>;
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-unsafe extern "Rust" {
-    fn trueos_service_lane_submit_job(job: TrueosBlockingJob) -> i32;
-}
+use std::collections::{HashMap, VecDeque};
+use std::fmt;
+use std::io;
+use std::sync::atomic::Ordering;
+use std::time::Duration;
 
 pub(crate) struct BlockingPool {
     spawner: Spawner,
@@ -160,11 +112,9 @@ struct Shared {
     /// necessary but helps avoid Valgrind false positives, see
     /// <https://github.com/tokio-rs/tokio/commit/646fbae76535e397ef79dbcaacb945d4c829f666>
     /// for more information.
-    #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
     last_exiting_thread: Option<thread::JoinHandle<()>>,
     /// This holds the `JoinHandles` for all running threads; on shutdown, the thread
     /// calling shutdown handles joining on these.
-    #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
     worker_threads: HashMap<usize, thread::JoinHandle<()>>,
     /// This is a counter used to iterate `worker_threads` in a consistent order (for loom's
     /// benefit).
@@ -269,9 +219,7 @@ impl BlockingPool {
                         num_notify: 0,
                         shutdown: false,
                         shutdown_tx: Some(shutdown_tx),
-                        #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
                         last_exiting_thread: None,
-                        #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
                         worker_threads: HashMap::new(),
                         worker_thread_index: 0,
                     }),
@@ -307,27 +255,23 @@ impl BlockingPool {
         shared.shutdown_tx = None;
         self.spawner.inner.condvar.notify_all();
 
-        #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-        let last_exited_thread = core::mem::take(&mut shared.last_exiting_thread);
-        #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-        let workers = core::mem::take(&mut shared.worker_threads);
+        let last_exited_thread = std::mem::take(&mut shared.last_exiting_thread);
+        let workers = std::mem::take(&mut shared.worker_threads);
 
         drop(shared);
 
         if self.shutdown_rx.wait(timeout) {
-            #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
             let _ = last_exited_thread.map(thread::JoinHandle::join);
 
             // Loom requires that execution be deterministic, so sort by thread ID before joining.
             // (HashMaps use a randomly-seeded hash function, so the order is nondeterministic)
-            #[cfg(all(loom, not(any(target_os = "trueos", target_os = "zkvm"))))]
+            #[cfg(loom)]
             let workers: Vec<(usize, thread::JoinHandle<()>)> = {
                 let mut workers: Vec<_> = workers.into_iter().collect();
                 workers.sort_by_key(|(id, _)| *id);
                 workers
             };
 
-            #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
             for (_id, handle) in workers {
                 let _ = handle.join();
             }
@@ -356,7 +300,7 @@ impl Spawner {
         F: FnOnce() -> R + Send + 'static,
         R: Send + 'static,
     {
-        let fn_size = core::mem::size_of::<F>();
+        let fn_size = std::mem::size_of::<F>();
         let (join_handle, spawn_result) = if fn_size > BOX_FUTURE_THRESHOLD {
             self.spawn_blocking_inner(
                 Box::new(func),
@@ -394,7 +338,7 @@ impl Spawner {
             F: FnOnce() -> R + Send + 'static,
             R: Send + 'static,
         {
-            let fn_size = core::mem::size_of::<F>();
+            let fn_size = std::mem::size_of::<F>();
             let (join_handle, spawn_result) = if fn_size > BOX_FUTURE_THRESHOLD {
                 self.spawn_blocking_inner(
                     Box::new(func),
@@ -435,8 +379,12 @@ impl Spawner {
         let fut =
             blocking_task::<F, BlockingTask<F>>(BlockingTask::new(func), spawn_meta, id.as_u64());
 
-        let (task, handle) =
-            task::unowned(fut, BlockingSchedule::new(rt), id, task::SpawnLocation::capture());
+        let (task, handle) = task::unowned(
+            fut,
+            BlockingSchedule::new(rt),
+            id,
+            task::SpawnLocation::capture(),
+        );
 
         let spawned = self.spawn_task(Task::new(task, is_mandatory), rt);
         (handle, spawned)
@@ -470,42 +418,24 @@ impl Spawner {
                 if let Some(shutdown_tx) = shutdown_tx {
                     let id = shared.worker_thread_index;
 
-                    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-                    {
-                        match self.spawn_zkvm_worker(shutdown_tx, rt, id) {
-                            Ok(()) => {
-                                self.inner.metrics.inc_num_threads();
-                                shared.worker_thread_index += 1;
-                            }
-                            Err(e) => {
-                                // TRUEOS refused the worker and there is no worker to pick up
-                                // the task that has just been pushed to the queue.
-                                return Err(SpawnError::NoThreads(e));
-                            }
+                    match self.spawn_thread(shutdown_tx, rt, id) {
+                        Ok(handle) => {
+                            self.inner.metrics.inc_num_threads();
+                            shared.worker_thread_index += 1;
+                            shared.worker_threads.insert(id, handle);
                         }
-                    }
-
-                    #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-                    {
-                        match self.spawn_thread(shutdown_tx, rt, id) {
-                            Ok(handle) => {
-                                self.inner.metrics.inc_num_threads();
-                                shared.worker_thread_index += 1;
-                                shared.worker_threads.insert(id, handle);
-                            }
-                            Err(ref e)
-                                if is_temporary_os_thread_error(e)
-                                    && self.inner.metrics.num_threads() > 0 =>
-                            {
-                                // OS temporarily failed to spawn a new thread.
-                                // The task will be picked up eventually by a currently
-                                // busy thread.
-                            }
-                            Err(e) => {
-                                // The OS refused to spawn the thread and there is no thread
-                                // to pick up the task that has just been pushed to the queue.
-                                return Err(SpawnError::NoThreads(e));
-                            }
+                        Err(ref e)
+                            if is_temporary_os_thread_error(e)
+                                && self.inner.metrics.num_threads() > 0 =>
+                        {
+                            // OS temporarily failed to spawn a new thread.
+                            // The task will be picked up eventually by a currently
+                            // busy thread.
+                        }
+                        Err(e) => {
+                            // The OS refused to spawn the thread and there is no thread
+                            // to pick up the task that has just been pushed to the queue.
+                            return Err(SpawnError::NoThreads(e));
                         }
                     }
                 }
@@ -545,32 +475,6 @@ impl Spawner {
             drop(shutdown_tx);
         })
     }
-
-    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-    fn spawn_zkvm_worker(
-        &self,
-        shutdown_tx: shutdown::Sender,
-        rt: &Handle,
-        id: usize,
-    ) -> io::Result<()> {
-        crate::platform::log(4, b"tokio-platform: spawn_zkvm_worker submit\n");
-        let rt = rt.clone();
-        let job: TrueosBlockingJob = Box::new(move || {
-            crate::platform::log(4, b"tokio-platform: spawn_zkvm_worker run\n");
-            let _enter = rt.enter();
-            rt.inner.blocking_spawner().inner.run(id);
-            drop(shutdown_tx);
-        });
-
-        let rc = unsafe { trueos_service_lane_submit_job(job) };
-        if rc == 0 {
-            crate::platform::log(4, b"tokio-platform: spawn_zkvm_worker accepted\n");
-            Ok(())
-        } else {
-            crate::platform::log(5, b"tokio-platform: spawn_zkvm_worker rejected\n");
-            Err(io::Error::new(io::ErrorKind::Other, "TRUEOS background worker spawn failed"))
-        }
-    }
 }
 
 cfg_unstable_metrics! {
@@ -597,15 +501,11 @@ fn is_temporary_os_thread_error(error: &io::Error) -> bool {
 
 impl Inner {
     fn run(&self, worker_thread_id: usize) {
-        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-        let _ = worker_thread_id;
-
         if let Some(f) = &self.after_start {
             f();
         }
 
         let mut shared = self.shared.lock();
-        #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
         let mut join_on_thread = None;
         // is this thread currently counted in `num_idle_threads`?
         let mut is_counted_idle;
@@ -625,77 +525,36 @@ impl Inner {
             // mark this thread as currently counted in `num_idle_threads`.
             is_counted_idle = true;
 
-            #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-            let idle_deadline = crate::platform::monotonic_nanos()
-                .saturating_add(duration_to_nanos(self.keep_alive));
-
             while !shared.shutdown {
-                #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-                {
-                    if shared.num_notify != 0 {
-                        shared.num_notify -= 1;
-                        is_counted_idle = false;
-                        break;
-                    }
+                let lock_result = self.condvar.wait_timeout(shared, self.keep_alive).unwrap();
 
-                    let wait_key = self.condvar.wait_key();
-                    let observed = crate::platform::wait_observe(wait_key);
-                    drop(shared);
-                    let now = crate::platform::monotonic_nanos();
-                    let timeout_ms = if now >= idle_deadline {
-                        1
-                    } else {
-                        nanos_to_timeout_ms(idle_deadline.saturating_sub(now))
-                    };
-                    let _ = crate::platform::wait_after(wait_key, observed, timeout_ms);
-                    shared = self.shared.lock();
+                shared = lock_result.0;
+                let timeout_result = lock_result.1;
 
-                    if shared.num_notify != 0 {
-                        shared.num_notify -= 1;
-                        is_counted_idle = false;
-                        break;
-                    }
-
-                    if !shared.shutdown && crate::platform::monotonic_nanos() >= idle_deadline {
-                        break 'main;
-                    }
-
-                    continue;
+                if shared.num_notify != 0 {
+                    // We have received a legitimate wakeup,
+                    // acknowledge it by decrementing the counter
+                    // and transition to the BUSY state.
+                    shared.num_notify -= 1;
+                    // since this is a legitimate wakeup,
+                    // the `Spawner::spawn_task` has already decremented `num_idle_threads`.
+                    is_counted_idle = false;
+                    break;
                 }
 
-                #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-                {
-                    let lock_result = self.condvar.wait_timeout(shared, self.keep_alive).unwrap();
+                // Even if the condvar "timed out", if the pool is entering the
+                // shutdown phase, we want to perform the cleanup logic.
+                if !shared.shutdown && timeout_result.timed_out() {
+                    // We'll join the prior timed-out thread's JoinHandle after dropping the lock.
+                    // This isn't done when shutting down, because the thread calling shutdown will
+                    // handle joining everything.
+                    let my_handle = shared.worker_threads.remove(&worker_thread_id);
+                    join_on_thread = std::mem::replace(&mut shared.last_exiting_thread, my_handle);
 
-                    shared = lock_result.0;
-                    let timeout_result = lock_result.1;
-
-                    if shared.num_notify != 0 {
-                        // We have received a legitimate wakeup,
-                        // acknowledge it by decrementing the counter
-                        // and transition to the BUSY state.
-                        shared.num_notify -= 1;
-                        // since this is a legitimate wakeup,
-                        // the `Spawner::spawn_task` has already decremented `num_idle_threads`.
-                        is_counted_idle = false;
-                        break;
-                    }
-
-                    // Even if the condvar "timed out", if the pool is entering the
-                    // shutdown phase, we want to perform the cleanup logic.
-                    if !shared.shutdown && timeout_result.timed_out() {
-                        // We'll join the prior timed-out thread's JoinHandle after dropping the lock.
-                        // This isn't done when shutting down, because the thread calling shutdown will
-                        // handle joining everything.
-                        let my_handle = shared.worker_threads.remove(&worker_thread_id);
-                        join_on_thread =
-                            core::mem::replace(&mut shared.last_exiting_thread, my_handle);
-
-                        break 'main;
-                    }
-
-                    // Spurious wakeup detected, go back to sleep.
+                    break 'main;
                 }
+
+                // Spurious wakeup detected, go back to sleep.
             }
 
             if shared.shutdown {
@@ -722,7 +581,10 @@ impl Inner {
             // with a descriptive message if it is not the
             // case.
             let prev_idle = self.metrics.dec_num_idle_threads();
-            assert_ne!(prev_idle, 0, "`num_idle_threads` underflowed on thread exit");
+            assert_ne!(
+                prev_idle, 0,
+                "`num_idle_threads` underflowed on thread exit"
+            );
         }
 
         if shared.shutdown && self.metrics.num_threads() == 0 {
@@ -735,7 +597,6 @@ impl Inner {
             f();
         }
 
-        #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
         if let Some(handle) = join_on_thread {
             let _ = handle.join();
         }
@@ -746,17 +607,4 @@ impl fmt::Debug for Spawner {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt.debug_struct("blocking::Spawner").finish()
     }
-}
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-fn duration_to_nanos(duration: Duration) -> u64 {
-    duration
-        .as_secs()
-        .saturating_mul(1_000_000_000)
-        .saturating_add(u64::from(duration.subsec_nanos()))
-}
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-fn nanos_to_timeout_ms(nanos: u64) -> u64 {
-    nanos.div_ceil(1_000_000).max(1)
 }

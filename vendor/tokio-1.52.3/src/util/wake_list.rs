@@ -1,6 +1,6 @@
 use core::mem::MaybeUninit;
 use core::ptr;
-use core::task::Waker;
+use std::task::Waker;
 
 const NUM_WAKERS: usize = 32;
 

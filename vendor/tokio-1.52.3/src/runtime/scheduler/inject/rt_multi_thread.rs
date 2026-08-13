@@ -1,12 +1,9 @@
-#[allow(unused_imports)]
-use crate::runtime::prelude::*;
-
 use super::{Shared, Synced};
 
 use crate::runtime::scheduler::Lock;
 use crate::runtime::task;
 
-use core::sync::atomic::Ordering::Release;
+use std::sync::atomic::Ordering::Release;
 
 impl<'a> Lock<Synced> for &'a mut Synced {
     type Handle = &'a mut Synced;
@@ -43,7 +40,7 @@ impl<T: 'static> Shared<T> {
         let mut prev = first;
         let mut counter = 1;
 
-        // We are going to be called with an `core::iter::Chain`, and that
+        // We are going to be called with an `std::iter::Chain`, and that
         // iterator overrides `for_each` to something that is easier for the
         // compiler to optimize than a loop.
         iter.for_each(|next| {

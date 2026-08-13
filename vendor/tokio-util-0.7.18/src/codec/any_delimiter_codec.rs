@@ -2,9 +2,7 @@ use crate::codec::decoder::Decoder;
 use crate::codec::encoder::Encoder;
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
-use core::{cmp, fmt};
-use std::str;
-use tokio::io;
+use std::{cmp, fmt, io, str};
 
 const DEFAULT_SEEK_DELIMITERS: &[u8] = b",;\n\r";
 const DEFAULT_SEQUENCE_WRITER: &[u8] = b",";
@@ -17,7 +15,7 @@ const DEFAULT_SEQUENCE_WRITER: &[u8] = b",";
 /// Decode string of bytes containing various different delimiters.
 ///
 /// [`BytesMut`]: bytes::BytesMut
-/// [`Error`]: tokio::io::Error
+/// [`Error`]: std::io::Error
 ///
 /// ```
 /// use tokio_util::codec::{AnyDelimiterCodec, Decoder};
@@ -25,7 +23,7 @@ const DEFAULT_SEQUENCE_WRITER: &[u8] = b",";
 ///
 /// #
 /// # #[tokio::main(flavor = "current_thread")]
-/// # async fn main() -> Result<(), tokio::io::Error> {
+/// # async fn main() -> Result<(), std::io::Error> {
 /// let mut codec = AnyDelimiterCodec::new(b",;\r\n".to_vec(),b";".to_vec());
 /// let buf = &mut BytesMut::new();
 /// buf.reserve(200);
@@ -260,4 +258,4 @@ impl From<io::Error> for AnyDelimiterCodecError {
     }
 }
 
-impl core::error::Error for AnyDelimiterCodecError {}
+impl std::error::Error for AnyDelimiterCodecError {}

@@ -19,7 +19,7 @@
 ///
 #[cfg_attr(all(feature = "os-poll", feature = "net"), doc = "```")]
 #[cfg_attr(not(all(feature = "os-poll", feature = "net")), doc = "```ignore")]
-/// # use core::error::Error;
+/// # use std::error::Error;
 /// # fn main() -> Result<(), Box<dyn Error>> {
 /// # // WASI does not yet support multithreading:
 /// # if cfg!(target_os = "wasi") { return Ok(()) }
@@ -27,7 +27,7 @@
 /// use mio::net::TcpListener;
 ///
 /// use std::thread;
-/// use crate::io::{self, Read};
+/// use std::io::{self, Read};
 /// use std::collections::HashMap;
 ///
 /// // After this number of sockets is accepted, the server will shutdown.

@@ -5,8 +5,6 @@
     unused_imports,
     dead_code
 )]
-#![allow(missing_docs)]
-#![cfg_attr(any(target_os = "trueos", target_os = "zkvm"), no_std)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 // Disallow warnings when running tests.
 #![cfg_attr(test, deny(warnings))]
@@ -45,140 +43,16 @@
 #[cfg(all(target_family = "wasm", not(target_os = "wasi")))]
 compile_error!("This wasm target is unsupported by mio. If using Tokio, disable the net feature.");
 
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-extern crate alloc;
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-extern crate std as real_std;
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-extern crate self as std;
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-pub mod fmt {
-    //! TRUEOS no_std compatibility re-exports for existing mio paths.
-    pub use ::core::fmt::*;
-}
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-pub mod io {
-    //! TRUEOS no_std compatibility re-exports for existing mio paths.
-    pub use trueos_io::*;
-}
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-pub mod num {
-    //! TRUEOS no_std compatibility re-exports for existing mio paths.
-    pub use core::num::*;
-}
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-pub mod ops {
-    //! TRUEOS no_std compatibility re-exports for existing mio paths.
-    pub use core::ops::*;
-}
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-pub mod path {
-    //! TRUEOS no_std compatibility path vocabulary.
-    use alloc::string::String;
-    use core::ops::Deref;
-
-    /// Borrowed platform path.
-    #[derive(Debug)]
-    #[repr(transparent)]
-    pub struct Path {
-        inner: str,
-    }
-
-    /// Owned platform path.
-    #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-    pub struct PathBuf {
-        inner: String,
-    }
-
-    impl Path {
-        /// Build a borrowed path from a string-like value.
-        pub fn new<S: AsRef<str> + ?Sized>(path: &S) -> &Self {
-            unsafe { &*(path.as_ref() as *const str as *const Self) }
-        }
-
-        /// Return the path as UTF-8.
-        pub fn as_str(&self) -> &str {
-            &self.inner
-        }
-
-        /// Whether the path starts at the platform root.
-        pub fn is_absolute(&self) -> bool {
-            self.as_str().starts_with('/')
-        }
-
-        /// Return an owned copy.
-        pub fn to_path_buf(&self) -> PathBuf {
-            PathBuf {
-                inner: String::from(self.as_str()),
-            }
-        }
-    }
-
-    impl AsRef<Path> for Path {
-        fn as_ref(&self) -> &Path {
-            self
-        }
-    }
-
-    impl AsRef<Path> for str {
-        fn as_ref(&self) -> &Path {
-            Path::new(self)
-        }
-    }
-
-    impl AsRef<Path> for String {
-        fn as_ref(&self) -> &Path {
-            Path::new(self.as_str())
-        }
-    }
-
-    impl AsRef<Path> for PathBuf {
-        fn as_ref(&self) -> &Path {
-            Path::new(self.inner.as_str())
-        }
-    }
-
-    impl Deref for PathBuf {
-        type Target = Path;
-
-        fn deref(&self) -> &Self::Target {
-            self.as_ref()
-        }
-    }
-}
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-pub mod sync {
-    //! TRUEOS no_std compatibility re-exports for existing mio paths.
-    pub use alloc::sync::Arc;
-
-    /// Atomic types from core.
-    pub mod atomic {
-        pub use core::sync::atomic::*;
-    }
-}
-
 // macros used internally
 #[macro_use]
 mod macros;
 
 mod interest;
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-mod platform;
 mod poll;
 mod sys;
 mod token;
 #[cfg(not(target_os = "wasi"))]
 mod waker;
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-mod zkvm_compat;
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-mod zkvm_net;
 
 pub mod event;
 
@@ -198,19 +72,8 @@ pub use token::Token;
 #[cfg(not(target_os = "wasi"))]
 pub use waker::Waker;
 
-#[cfg(all(
-    unix,
-    not(any(target_os = "trueos", target_os = "zkvm")),
-    feature = "os-ext"
-))]
-#[cfg_attr(
-    docsrs,
-    doc(cfg(all(
-        unix,
-        not(any(target_os = "trueos", target_os = "zkvm")),
-        feature = "os-ext"
-    )))
-)]
+#[cfg(all(unix, feature = "os-ext"))]
+#[cfg_attr(docsrs, doc(cfg(all(unix, feature = "os-ext"))))]
 pub mod unix {
     //! Unix only extensions.
 
@@ -223,46 +86,6 @@ pub mod unix {
     }
 
     pub use crate::sys::SourceFd;
-}
-
-#[cfg(all(any(target_os = "trueos", target_os = "zkvm"), feature = "os-ext"))]
-pub mod unix {
-    //! TRUEOS Unix extensions.
-
-    use crate::io;
-    use crate::{event, Interest, Registry, Token};
-
-    /// Adapter for a borrowed raw fd.
-    #[derive(Debug)]
-    pub struct SourceFd<'a>(pub &'a i32);
-
-    impl event::Source for SourceFd<'_> {
-        fn register(
-            &mut self,
-            registry: &Registry,
-            token: Token,
-            interests: Interest,
-        ) -> io::Result<()> {
-            registry
-                .selector()
-                .register_fd_source(*self.0, token, interests)
-        }
-
-        fn reregister(
-            &mut self,
-            registry: &Registry,
-            token: Token,
-            interests: Interest,
-        ) -> io::Result<()> {
-            registry
-                .selector()
-                .reregister_fd_source(*self.0, token, interests)
-        }
-
-        fn deregister(&mut self, registry: &Registry) -> io::Result<()> {
-            registry.selector().deregister_fd_source(*self.0)
-        }
-    }
 }
 
 #[cfg(all(target_os = "hermit", feature = "os-ext"))]
@@ -339,7 +162,7 @@ pub mod guide {
     #![cfg_attr(feature = "os-poll", doc = "```")]
     #![cfg_attr(not(feature = "os-poll"), doc = "```ignore")]
     //! # use mio::{Poll, Events};
-    //! # fn main() -> crate::io::Result<()> {
+    //! # fn main() -> std::io::Result<()> {
     //! // `Poll` allows for polling of readiness events.
     //! let poll = Poll::new()?;
     //! // `Events` is collection of readiness `Event`s and can be filled by
@@ -375,7 +198,7 @@ pub mod guide {
     #![cfg_attr(not(all(feature = "os-poll", feature = "net")), doc = "```ignore")]
     //! # use mio::net::TcpListener;
     //! # use mio::{Poll, Token, Interest};
-    //! # fn main() -> crate::io::Result<()> {
+    //! # fn main() -> std::io::Result<()> {
     //! # let poll = Poll::new()?;
     //! # let address = "127.0.0.1:0".parse().unwrap();
     //! // Create a `TcpListener`, binding it to `address`.
@@ -412,8 +235,8 @@ pub mod guide {
     //!
     #![cfg_attr(all(feature = "os-poll", feature = "net"), doc = "```")]
     #![cfg_attr(not(all(feature = "os-poll", feature = "net")), doc = "```ignore")]
-    //! # use crate::io;
-    //! # use core::time::Duration;
+    //! # use std::io;
+    //! # use std::time::Duration;
     //! # use mio::net::TcpListener;
     //! # use mio::{Poll, Token, Interest, Events};
     //! # fn main() -> io::Result<()> {

@@ -1,8 +1,5 @@
-#[allow(unused_imports)]
-use crate::runtime::prelude::*;
-
-use core::cell::RefCell;
-use core::task::Waker;
+use std::cell::RefCell;
+use std::task::Waker;
 
 pub(crate) struct Defer {
     deferred: RefCell<Vec<Waker>>,
@@ -41,6 +38,6 @@ impl Defer {
     #[cfg(feature = "taskdump")]
     pub(crate) fn take_deferred(&self) -> Vec<Waker> {
         let mut deferred = self.deferred.borrow_mut();
-        core::mem::take(&mut *deferred)
+        std::mem::take(&mut *deferred)
     }
 }

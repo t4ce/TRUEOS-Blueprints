@@ -3,9 +3,9 @@ use bytes::BufMut;
 use crate::io::util::poll_proceed_and_make_progress;
 use crate::io::{AsyncRead, ReadBuf};
 
-use crate::io;
-use core::pin::Pin;
-use core::task::{ready, Context, Poll};
+use std::io;
+use std::pin::Pin;
+use std::task::{ready, Context, Poll};
 
 cfg_io_util! {
     /// An async reader which yields one byte over and over and over and over and
@@ -60,5 +60,15 @@ impl AsyncRead for Repeat {
         ready!(poll_proceed_and_make_progress(cx));
         buf.put_bytes(self.byte, buf.remaining());
         Poll::Ready(Ok(()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn assert_unpin() {
+        crate::is_unpin::<Repeat>();
     }
 }

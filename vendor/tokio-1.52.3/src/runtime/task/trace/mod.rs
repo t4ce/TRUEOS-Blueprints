@@ -1,20 +1,17 @@
-#[allow(unused_imports)]
-use crate::runtime::prelude::*;
-
-use alloc::sync::Arc;
+use crate::loom::sync::Arc;
 use crate::runtime::context;
 use crate::runtime::scheduler::{self, current_thread, Inject};
 use crate::task::Id;
 
 use backtrace::BacktraceFrame;
-use core::cell::Cell;
-use alloc::collections::VecDeque;
-use core::ffi::c_void;
-use ::core::fmt;
-use core::future::Future;
-use core::pin::Pin;
-use core::ptr::NonNull;
-use core::task::{self, Poll};
+use std::cell::Cell;
+use std::collections::VecDeque;
+use std::ffi::c_void;
+use std::fmt;
+use std::future::Future;
+use std::pin::Pin;
+use std::ptr::NonNull;
+use std::task::{self, Poll};
 
 mod symbol;
 mod trace_impl;
@@ -180,8 +177,8 @@ pub struct TraceMeta {
 /// # Example
 ///
 /// ```
-/// use core::future::Future;
-/// use core::task::Poll;
+/// use std::future::Future;
+/// use std::task::Poll;
 /// use tokio::runtime::dump::{trace_with, Trace, TraceMeta};
 ///
 /// fn my_trace_leaf(_meta: &TraceMeta, count: &mut u32) {
@@ -190,13 +187,13 @@ pub struct TraceMeta {
 ///
 /// # #[tokio::main(flavor = "current_thread")]
 /// # async fn main() {
-/// let mut fut = core::pin::pin!(async {
+/// let mut fut = std::pin::pin!(async {
 ///     tokio::task::yield_now().await;
 /// });
 ///
 /// let mut leaf_count = 0;
 ///
-/// Trace::root(core::future::poll_fn(|cx| {
+/// Trace::root(std::future::poll_fn(|cx| {
 ///     trace_with(
 ///         || { let _ = fut.as_mut().poll(cx); },
 ///         |meta| my_trace_leaf(meta, &mut leaf_count),
@@ -216,7 +213,7 @@ where
     // SAFETY: The raw pointer is removed from the thread local before `trace_leaf` is dropped, so
     // this transmute cannot lead to the violation of any lifetime requirements.
     let trace_leaf_dyn = unsafe {
-        core::mem::transmute::<
+        std::mem::transmute::<
             *mut (dyn FnMut(&TraceMeta) + '_),
             *mut (dyn FnMut(&TraceMeta) + 'static),
         >(trace_leaf_dyn)
@@ -328,7 +325,7 @@ impl fmt::Display for Trace {
 }
 
 fn defer<F: FnOnce() -> R, R>(f: F) -> impl Drop {
-    use core::mem::ManuallyDrop;
+    use std::mem::ManuallyDrop;
 
     struct Defer<F: FnOnce() -> R, R>(ManuallyDrop<F>);
 

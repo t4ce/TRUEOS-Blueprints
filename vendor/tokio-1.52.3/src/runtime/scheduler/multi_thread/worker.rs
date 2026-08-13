@@ -56,40 +56,27 @@
 //! the inject queue indefinitely. This would be a ref-count cycle and a memory
 //! leak.
 
-#[allow(unused_imports)]
-use crate::runtime::prelude::*;
-
-use crate::loom::sync::Mutex;
+use crate::loom::sync::{Arc, Mutex};
 use crate::runtime;
 use crate::runtime::scheduler::multi_thread::{
-    Counters, Handle, Idle, Overflow, Parker, Stats, TraceStatus, Unparker, idle, park, queue,
+    idle, park, queue, Counters, Handle, Idle, Overflow, Parker, Stats, TraceStatus, Unparker,
 };
-use crate::runtime::scheduler::{Defer, Lock, inject};
+use crate::runtime::scheduler::{inject, Defer, Lock};
 use crate::runtime::task::OwnedTasks;
 use crate::runtime::{
-    Config, SchedulerMetrics, TimerFlavor, WorkerMetrics, blocking, driver, scheduler, task,
+    blocking, driver, scheduler, task, Config, SchedulerMetrics, TimerFlavor, WorkerMetrics,
 };
-use crate::runtime::{TaskHooks, context};
+use crate::runtime::{context, TaskHooks};
 use crate::task::coop;
 use crate::util::atomic_cell::AtomicCell;
 use crate::util::rand::{FastRand, RngSeedGenerator};
-use alloc::boxed::Box;
-use alloc::sync::Arc;
 
-use core::cell::RefCell;
-use core::task::Waker;
-use core::time::Duration;
+use std::cell::RefCell;
+use std::task::Waker;
 use std::thread;
+use std::time::Duration;
 
 mod metrics;
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-type TrueosWorkerJob = Box<dyn FnOnce() + Send + 'static>;
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-unsafe extern "Rust" {
-    fn trueos_service_lane_submit_job(job: TrueosWorkerJob) -> i32;
-}
 
 cfg_taskdump! {
     mod taskdump;
@@ -100,7 +87,7 @@ cfg_not_taskdump! {
 }
 
 #[cfg(all(tokio_unstable, feature = "time"))]
-use core::sync::atomic::AtomicBool;
+use crate::loom::sync::atomic::AtomicBool;
 
 #[cfg(all(tokio_unstable, feature = "time"))]
 use crate::runtime::time_alt;
@@ -124,6 +111,13 @@ pub(super) struct Worker {
 struct Core {
     /// Used to schedule bookkeeping tasks every so often.
     tick: u32,
+
+    /// When a task is scheduled from a worker, it is stored in this slot. The
+    /// worker will check this slot for a task **before** checking the run
+    /// queue. This effectively results in the **last** scheduled task to be run
+    /// next (LIFO). This is an optimization for improving locality which
+    /// benefits message passing patterns and helps to reduce latency.
+    lifo_slot: Option<Notified>,
 
     /// When `true`, locally scheduled tasks go to the LIFO slot. When `false`,
     /// they go to the back of the `run_queue`.
@@ -295,6 +289,7 @@ pub(super) fn create(
 
         cores.push(Box::new(Core {
             tick: 0,
+            lifo_slot: None,
             lifo_enabled: !config.disable_lifo_slot,
             run_queue,
             #[cfg(all(tokio_unstable, feature = "time"))]
@@ -400,7 +395,10 @@ where
     let mut take_core = false;
 
     let setup_result = with_current(|maybe_cx| {
-        match (crate::runtime::context::current_enter_context(), maybe_cx.is_some()) {
+        match (
+            crate::runtime::context::current_enter_context(),
+            maybe_cx.is_some(),
+        ) {
             (context::EnterRuntime::Entered { .. }, true) => {
                 // We are on a thread pool runtime thread, so we just need to
                 // set up blocking.
@@ -453,7 +451,7 @@ where
         // If we heavily call `spawn_blocking`, there might be no available thread to
         // run this core. Except for the task in the lifo_slot, all tasks can be
         // stolen, so we move the task out of the lifo_slot to the run_queue.
-        if let Some(task) = core.run_queue.pop_lifo() {
+        if let Some(task) = core.lifo_slot.take() {
             core.run_queue
                 .push_back_or_overflow(task, &*cx.worker.handle, &mut core.stats);
         }
@@ -477,7 +475,7 @@ where
         // Once the blocking task is done executing, we will attempt to
         // steal the core back.
         let worker = cx.worker.clone();
-        spawn_runtime_worker(worker);
+        runtime::spawn_blocking(move || run(worker));
         Ok(())
     });
 
@@ -501,69 +499,10 @@ where
 
 impl Launch {
     pub(crate) fn launch(mut self) {
-        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-        crate::platform::log(
-            3,
-            alloc::format!(
-                "tokio-platform: multi_thread Launch::launch workers={}\n",
-                self.0.len()
-            )
-            .as_bytes(),
-        );
         for worker in self.0.drain(..) {
-            spawn_runtime_worker(worker);
+            runtime::spawn_blocking(move || run(worker));
         }
     }
-}
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-fn spawn_runtime_worker(worker: Arc<Worker>) {
-    let index = worker.index;
-    if !crate::platform::worker_carriers_enabled() {
-        crate::platform::log(
-            5,
-            alloc::format!(
-                "tokio-platform: multi_thread worker rejected index={} reason=worker-carriers-disabled\n",
-                index
-            )
-            .as_bytes(),
-        );
-        return;
-    }
-    crate::platform::log(
-        3,
-        alloc::format!("tokio-platform: multi_thread worker submit index={}\n", index).as_bytes(),
-    );
-    let job: TrueosWorkerJob = Box::new(move || {
-        crate::platform::log(
-            3,
-            alloc::format!("tokio-platform: multi_thread worker run index={}\n", index).as_bytes(),
-        );
-        run(worker);
-    });
-    let rc = unsafe { trueos_service_lane_submit_job(job) };
-    if rc == 0 {
-        crate::platform::log(
-            3,
-            alloc::format!("tokio-platform: multi_thread worker accepted index={}\n", index)
-                .as_bytes(),
-        );
-    } else {
-        crate::platform::log(
-            5,
-            alloc::format!(
-                "tokio-platform: multi_thread worker rejected index={} rc={}\n",
-                index,
-                rc
-            )
-            .as_bytes(),
-        );
-    }
-}
-
-#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-fn spawn_runtime_worker(worker: Arc<Worker>) {
-    runtime::spawn_blocking(move || run(worker));
 }
 
 fn run(worker: Arc<Worker>) {
@@ -574,9 +513,6 @@ fn run(worker: Arc<Worker>) {
         fn drop(&mut self) {
             if std::thread::panicking() {
                 eprintln!("worker thread panicking; aborting process");
-                #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-                panic!("worker thread panicked");
-                #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
                 std::process::abort();
             }
         }
@@ -768,7 +704,7 @@ impl Context {
                 };
 
                 // Check for a task in the LIFO slot
-                let task = match core.run_queue.pop_lifo() {
+                let task = match core.lifo_slot.take() {
                     Some(task) => task,
                     None => {
                         self.reset_lifo_enabled(&mut core);
@@ -835,7 +771,10 @@ impl Context {
     }
 
     fn assert_lifo_enabled_is_correct(&self, core: &Core) {
-        debug_assert_eq!(core.lifo_enabled, !self.worker.handle.shared.config.disable_lifo_slot);
+        debug_assert_eq!(
+            core.lifo_enabled,
+            !self.worker.handle.shared.config.disable_lifo_slot
+        );
     }
 
     fn maintenance(&self, mut core: Box<Core>) -> Box<Core> {
@@ -1100,7 +1039,9 @@ impl Context {
     {
         self.with_core(|maybe_core| match maybe_core {
             Some(core) if core.is_shutdown => f(Some(time_alt::TempLocalContext::new_shutdown())),
-            Some(core) => f(Some(time_alt::TempLocalContext::new_running(&mut core.time_context))),
+            Some(core) => f(Some(time_alt::TempLocalContext::new_running(
+                &mut core.time_context,
+            ))),
             None => f(None),
         })
     }
@@ -1165,7 +1106,10 @@ impl Core {
             // The worker is currently idle, pull a batch of work from the
             // injection queue. We don't want to pull *all* the work so other
             // workers can also get some.
-            let n = usize::min(worker.inject().len() / worker.handle.shared.remotes.len() + 1, cap);
+            let n = usize::min(
+                worker.inject().len() / worker.handle.shared.remotes.len() + 1,
+                cap,
+            );
 
             // Take at least one task since the first task is returned directly
             // and not pushed onto the local queue.
@@ -1186,7 +1130,7 @@ impl Core {
     }
 
     fn next_local_task(&mut self) -> Option<Notified> {
-        self.run_queue.pop_lifo().or_else(|| self.run_queue.pop())
+        self.lifo_slot.take().or_else(|| self.run_queue.pop())
     }
 
     /// Function responsible for stealing tasks from another worker
@@ -1242,7 +1186,7 @@ impl Core {
     }
 
     fn has_tasks(&self) -> bool {
-        self.run_queue.has_tasks()
+        self.lifo_slot.is_some() || self.run_queue.has_tasks()
     }
 
     fn should_notify_others(&self) -> bool {
@@ -1251,7 +1195,7 @@ impl Core {
         if self.is_searching {
             return false;
         }
-        self.run_queue.len() > 1
+        self.lifo_slot.is_some() as usize + self.run_queue.len() > 1
     }
 
     /// Prepares the worker state for parking.
@@ -1413,23 +1357,29 @@ impl Handle {
         // task must always be pushed to the back of the queue, enabling other
         // tasks to be executed. If **not** a yield, then there is more
         // flexibility and the task may go to the front of the queue.
-        if is_yield || !core.lifo_enabled {
+        let should_notify = if is_yield || !core.lifo_enabled {
             core.run_queue
                 .push_back_or_overflow(task, self, &mut core.stats);
+            true
         } else {
             // Push to the LIFO slot
-            if let Some(prev) = core.run_queue.push_lifo(task) {
-                // There was a previous task in the LIFO slot which needs
-                // to be pushed to the back of the run queue.
+            let prev = core.lifo_slot.take();
+            let ret = prev.is_some();
+
+            if let Some(prev) = prev {
                 core.run_queue
                     .push_back_or_overflow(prev, self, &mut core.stats);
             }
+
+            core.lifo_slot = Some(task);
+
+            ret
         };
 
         // Only notify if not currently parked. If `park` is `None`, then the
         // scheduling is from a resource driver. As notifications often come in
         // batches, the notification is delayed until the park is complete.
-        if core.park.is_some() {
+        if should_notify && core.park.is_some() {
             self.notify_parked_local();
         }
     }
@@ -1470,7 +1420,7 @@ impl Handle {
         // It's ok to lost the race, as another worker is
         // draining the inject_timers.
         match self.shared.synced.try_lock() {
-            Some(mut synced) => core::mem::take(&mut synced.inject_timers),
+            Some(mut synced) => std::mem::take(&mut synced.inject_timers),
             None => Vec::new(),
         }
     }
@@ -1563,7 +1513,7 @@ impl Handle {
     }
 
     fn ptr_eq(&self, other: &Handle) -> bool {
-        core::ptr::eq(self, other)
+        std::ptr::eq(self, other)
     }
 }
 

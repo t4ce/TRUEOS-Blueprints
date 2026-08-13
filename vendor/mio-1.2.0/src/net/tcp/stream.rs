@@ -1,5 +1,5 @@
-use ::core::fmt;
-use crate::io::{self, IoSlice, IoSliceMut, Read, Write};
+use std::fmt;
+use std::io::{self, IoSlice, IoSliceMut, Read, Write};
 use std::net::{self, Shutdown, SocketAddr};
 #[cfg(any(unix, target_os = "wasi"))]
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, IntoRawFd, OwnedFd, RawFd};
@@ -14,7 +14,6 @@ use std::os::windows::io::{
 
 use crate::io_source::IoSource;
 #[cfg(not(all(target_os = "wasi", target_env = "p1")))]
-#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
 use crate::sys::tcp::{connect, new_for_addr};
 use crate::{event, Interest, Registry, Token};
 
@@ -27,14 +26,14 @@ use crate::{event, Interest, Registry, Token};
 #[cfg_attr(feature = "os-poll", doc = "```")]
 #[cfg_attr(not(feature = "os-poll"), doc = "```ignore")]
 /// # use std::net::{TcpListener, SocketAddr};
-/// # use core::error::Error;
+/// # use std::error::Error;
 /// #
 /// # fn main() -> Result<(), Box<dyn Error>> {
 /// let address: SocketAddr = "127.0.0.1:0".parse()?;
 /// let listener = TcpListener::bind(address)?;
 /// use mio::{Events, Interest, Poll, Token};
 /// use mio::net::TcpStream;
-/// use core::time::Duration;
+/// use std::time::Duration;
 ///
 /// let mut stream = TcpStream::connect(listener.local_addr()?)?;
 ///
@@ -90,25 +89,13 @@ impl TcpStream {
     /// [write interest]: Interest::WRITABLE
     #[cfg(not(all(target_os = "wasi", target_env = "p1")))]
     pub fn connect(addr: SocketAddr) -> io::Result<TcpStream> {
-        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-        {
-            let _ = addr;
-            Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                "mio zkvm TCP stream backend is not wired yet",
-            ))
-        }
-
-        #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-        {
-            let socket = new_for_addr(addr)?;
-            #[cfg(any(unix, target_os = "hermit", target_os = "wasi"))]
-            let stream = unsafe { TcpStream::from_raw_fd(socket) };
-            #[cfg(windows)]
-            let stream = unsafe { TcpStream::from_raw_socket(socket as _) };
-            connect(&stream.inner, addr)?;
-            Ok(stream)
-        }
+        let socket = new_for_addr(addr)?;
+        #[cfg(any(unix, target_os = "hermit", target_os = "wasi"))]
+        let stream = unsafe { TcpStream::from_raw_fd(socket) };
+        #[cfg(windows)]
+        let stream = unsafe { TcpStream::from_raw_socket(socket as _) };
+        connect(&stream.inner, addr)?;
+        Ok(stream)
     }
 
     /// Creates a new `TcpStream` from a standard `net::TcpStream`.
@@ -245,10 +232,10 @@ impl TcpStream {
     ///
     #[cfg_attr(unix, doc = "```no_run")]
     #[cfg_attr(windows, doc = "```ignore")]
-    /// # use core::error::Error;
+    /// # use std::error::Error;
     /// #
     /// # fn main() -> Result<(), Box<dyn Error>> {
-    /// use crate::io;
+    /// use std::io;
     /// #[cfg(any(unix, target_os = "wasi"))]
     /// use std::os::fd::AsRawFd;
     /// #[cfg(windows)]
@@ -268,7 +255,7 @@ impl TcpStream {
     ///     #[cfg(unix)]
     ///     let res = unsafe { libc::recv(stream.as_raw_fd(), buf_ptr, buf.len(), 0) };
     ///     #[cfg(windows)]
-    ///     let res = unsafe { libc::recvfrom(stream.as_raw_socket() as usize, buf_ptr, buf.len() as i32, 0, core::ptr::null_mut(), core::ptr::null_mut()) };
+    ///     let res = unsafe { libc::recvfrom(stream.as_raw_socket() as usize, buf_ptr, buf.len() as i32, 0, std::ptr::null_mut(), std::ptr::null_mut()) };
     ///     if res != -1 {
     ///         Ok(res as usize)
     ///     } else {
@@ -484,11 +471,6 @@ impl From<TcpStream> for net::TcpStream {
             #[cfg(any(unix, target_os = "hermit", target_os = "wasi"))]
             {
                 net::TcpStream::from_raw_fd(stream.into_raw_fd())
-            }
-            #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-            {
-                let _ = stream;
-                panic!("mio zkvm backend cannot convert TcpStream into std yet")
             }
             #[cfg(windows)]
             {

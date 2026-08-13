@@ -6,13 +6,10 @@
 //! specified using the `T` parameter. It will usually be a `JoinHandle` or
 //! similar.
 
-use alloc::vec::Vec;
-
-use crate::runtime::prelude::*;
-use core::marker::PhantomPinned;
-use core::mem::ManuallyDrop;
-use core::ptr::NonNull;
-use core::task::{Context, Waker};
+use std::marker::PhantomPinned;
+use std::mem::ManuallyDrop;
+use std::ptr::NonNull;
+use std::task::{Context, Waker};
 
 use crate::loom::cell::UnsafeCell;
 use crate::loom::sync::{Arc, Mutex};
@@ -492,5 +489,24 @@ unsafe impl<T> linked_list::Link for ListEntry<T> {
         target: NonNull<ListEntry<T>>,
     ) -> NonNull<linked_list::Pointers<ListEntry<T>>> {
         unsafe { ListEntry::addr_of_pointers(target) }
+    }
+}
+
+#[cfg(all(test, not(loom)))]
+mod tests {
+    use crate::runtime::Builder;
+    use crate::task::JoinSet;
+
+    // A test that runs under miri.
+    //
+    // https://github.com/tokio-rs/tokio/pull/5693
+    #[test]
+    fn join_set_test() {
+        let rt = Builder::new_current_thread().build().unwrap();
+
+        let mut set = JoinSet::new();
+        set.spawn_on(futures::future::ready(()), rt.handle());
+
+        rt.block_on(set.join_next()).unwrap().unwrap();
     }
 }

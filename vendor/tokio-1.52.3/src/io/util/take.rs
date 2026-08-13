@@ -1,11 +1,10 @@
 use crate::io::{AsyncBufRead, AsyncRead, ReadBuf};
 
 use pin_project_lite::pin_project;
-use core::convert::TryFrom;
-use core::pin::Pin;
-use core::task::{ready, Context, Poll};
-use core::cmp;
-use crate::io;
+use std::convert::TryFrom;
+use std::pin::Pin;
+use std::task::{ready, Context, Poll};
+use std::{cmp, io};
 
 pin_project! {
     /// Stream for the [`take`](super::AsyncReadExt::take) method.
@@ -125,5 +124,15 @@ impl<R: AsyncBufRead> AsyncBufRead for Take<R> {
         let amt = cmp::min(amt as u64, *me.limit_) as usize;
         *me.limit_ -= amt as u64;
         me.inner.consume(amt);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn assert_unpin() {
+        crate::is_unpin::<Take<()>>();
     }
 }

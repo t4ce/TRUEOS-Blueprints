@@ -13,9 +13,9 @@ use crate::signal::RxFuture;
 use crate::sync::watch;
 
 use mio::net::UnixStream;
-use crate::io::{self, Error, ErrorKind, Write};
+use std::io::{self, Error, ErrorKind, Write};
 use std::sync::OnceLock;
-use core::task::{Context, Poll};
+use std::task::{Context, Poll};
 
 #[cfg(not(any(target_os = "linux", target_os = "illumos")))]
 pub(crate) struct OsStorage([SignalInfo; 33]);
@@ -33,13 +33,13 @@ impl Default for OsStorage {
     fn default() -> Self {
         // There are reliable signals ranging from 1 to 33 available on every Unix platform.
         #[cfg(not(any(target_os = "linux", target_os = "illumos")))]
-        let inner = core::array::from_fn(|_| SignalInfo::default());
+        let inner = std::array::from_fn(|_| SignalInfo::default());
 
         // On Linux and illumos, there are additional real-time signals
         // available. (This is also likely true on Solaris, but this should be
         // verified before being enabled.)
         #[cfg(any(target_os = "linux", target_os = "illumos"))]
-        let inner = core::iter::repeat_with(SignalInfo::default)
+        let inner = std::iter::repeat_with(SignalInfo::default)
             .take(libc::SIGRTMAX() as usize)
             .collect();
 
@@ -354,7 +354,7 @@ fn signal_enable(signal: SignalKind, handle: &Handle) -> io::Result<()> {
 /// use tokio::signal::unix::{signal, SignalKind};
 ///
 /// #[tokio::main]
-/// async fn main() -> Result<(), Box<dyn core::error::Error>> {
+/// async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ///     // An infinite stream of hangup signals.
 ///     let mut sig = signal(SignalKind::hangup())?;
 ///
@@ -438,7 +438,7 @@ impl Signal {
     /// use tokio::signal::unix::{signal, SignalKind};
     ///
     /// #[tokio::main]
-    /// async fn main() -> Result<(), Box<dyn core::error::Error>> {
+    /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ///     // An infinite stream of hangup signals.
     ///     let mut stream = signal(SignalKind::hangup())?;
     ///
@@ -465,9 +465,9 @@ impl Signal {
     /// Polling from a manually implemented future
     ///
     /// ```rust,no_run
-    /// use core::pin::Pin;
-    /// use core::future::Future;
-    /// use core::task::{Context, Poll};
+    /// use std::pin::Pin;
+    /// use std::future::Future;
+    /// use std::task::{Context, Poll};
     /// use tokio::signal::unix::Signal;
     ///
     /// struct MyFuture {
@@ -503,4 +503,48 @@ impl InternalStream for Signal {
 
 pub(crate) fn ctrl_c() -> io::Result<Signal> {
     signal(SignalKind::interrupt())
+}
+
+#[cfg(all(test, not(loom)))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn signal_enable_error_on_invalid_input() {
+        let inputs = [-1, 0];
+
+        for input in inputs {
+            assert_eq!(
+                signal_enable(SignalKind::from_raw(input), &Handle::default())
+                    .unwrap_err()
+                    .kind(),
+                ErrorKind::Other,
+            );
+        }
+    }
+
+    #[test]
+    fn signal_enable_error_on_forbidden_input() {
+        let inputs = signal_hook_registry::FORBIDDEN;
+
+        for &input in inputs {
+            assert_eq!(
+                signal_enable(SignalKind::from_raw(input), &Handle::default())
+                    .unwrap_err()
+                    .kind(),
+                ErrorKind::Other,
+            );
+        }
+    }
+
+    #[test]
+    fn from_c_int() {
+        assert_eq!(SignalKind::from(2), SignalKind::interrupt());
+    }
+
+    #[test]
+    fn into_c_int() {
+        let value: std::os::raw::c_int = SignalKind::interrupt().into();
+        assert_eq!(value, libc::SIGINT as _);
+    }
 }

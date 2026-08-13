@@ -4,25 +4,11 @@
     clippy::module_inception,
     clippy::needless_doctest_main
 )]
-#![allow(missing_docs)]
 #![warn(
     missing_debug_implementations,
     missing_docs,
     rust_2018_idioms,
     unreachable_pub
-)]
-#![cfg_attr(
-    any(target_os = "trueos", target_os = "zkvm"),
-    allow(
-        dead_code,
-        missing_debug_implementations,
-        missing_docs,
-        private_interfaces,
-        unreachable_pub,
-        unused_imports,
-        unused_mut,
-        unused_variables
-    )
 )]
 #![deny(unused_must_use, unsafe_op_in_unsafe_fn)]
 #![doc(test(
@@ -36,7 +22,6 @@
 #![cfg_attr(docsrs, allow(unused_attributes))]
 #![cfg_attr(loom, allow(dead_code, unreachable_pub))]
 #![cfg_attr(windows, allow(rustdoc::broken_intra_doc_links))]
-#![cfg_attr(any(target_os = "trueos", target_os = "zkvm"), no_std)]
 
 //! A runtime for writing reliable network applications without compromising speed.
 //!
@@ -293,7 +278,7 @@
 //! use tokio::io::{AsyncReadExt, AsyncWriteExt};
 //!
 //! #[tokio::main]
-//! async fn main() -> Result<(), Box<dyn core::error::Error>> {
+//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     let listener = TcpListener::bind("127.0.0.1:8080").await?;
 //!
 //!     loop {
@@ -478,28 +463,15 @@ compile_error! {
     "Tokio requires the platform pointer width to be at least 32 bits"
 }
 
-#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
 extern crate alloc;
 
-#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
 pub(crate) mod ffi {
     pub(crate) use std::ffi::*;
 }
 
-#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
 pub(crate) mod path {
     pub(crate) use std::path::*;
 }
-
-#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-pub(crate) mod panic {
-    pub(crate) use std::panic::{
-        AssertUnwindSafe, RefUnwindSafe, UnwindSafe, catch_unwind, resume_unwind,
-    };
-}
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-include!("trueos_std.rs");
 
 #[cfg(all(
     not(tokio_unstable),
@@ -552,9 +524,6 @@ pub mod io;
 pub mod net;
 
 mod loom;
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-pub(crate) mod platform;
 
 cfg_process! {
     pub mod process;
@@ -615,14 +584,14 @@ mod trace {
     cfg_not_taskdump! {
         #[inline(always)]
         #[allow(dead_code)]
-        pub(crate) fn trace_leaf(_: &mut core::task::Context<'_>) -> core::task::Poll<()> {
-            core::task::Poll::Ready(())
+        pub(crate) fn trace_leaf(_: &mut std::task::Context<'_>) -> std::task::Poll<()> {
+            std::task::Poll::Ready(())
         }
     }
 
     #[cfg_attr(not(feature = "sync"), allow(dead_code))]
     pub(crate) async fn async_trace_leaf() {
-        core::future::poll_fn(trace_leaf).await
+        std::future::poll_fn(trace_leaf).await
     }
 }
 
@@ -678,7 +647,7 @@ pub mod doc;
 #[allow(unused)]
 pub(crate) use self::doc::os;
 
-#[cfg(all(not(all(docsrs, unix)), not(any(target_os = "trueos", target_os = "zkvm"))))]
+#[cfg(not(all(docsrs, unix)))]
 #[allow(unused)]
 pub(crate) use std::os;
 
@@ -727,6 +696,8 @@ cfg_macros! {
 
 // TODO: rm
 #[cfg(feature = "io-util")]
+#[cfg(test)]
+fn is_unpin<T: Unpin>() {}
 
 /// fuzz test (`fuzz_linked_list`)
 #[cfg(fuzzing)]

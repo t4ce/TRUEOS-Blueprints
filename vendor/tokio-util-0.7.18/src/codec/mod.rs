@@ -114,7 +114,7 @@
 //! ```no_run
 //! use tokio::io::AsyncReadExt;
 //! # // This uses async_stream to create an example that compiles.
-//! # fn foo() -> impl futures_core::Stream<Item = tokio::io::Result<bytes::BytesMut>> { async_stream::try_stream! {
+//! # fn foo() -> impl futures_core::Stream<Item = std::io::Result<bytes::BytesMut>> { async_stream::try_stream! {
 //! # use tokio_util::codec::Decoder;
 //! # let mut decoder = tokio_util::codec::BytesCodec::new();
 //! # let io_resource = &mut &[0u8, 1, 2, 3][..];
@@ -157,7 +157,7 @@
 //!
 //! impl Decoder for MyStringDecoder {
 //!     type Item = String;
-//!     type Error = tokio::io::Error;
+//!     type Error = std::io::Error;
 //!
 //!     fn decode(
 //!         &mut self,
@@ -176,8 +176,8 @@
 //!         // Check that the length is not too large to avoid a denial of
 //!         // service attack where the server runs out of memory.
 //!         if length > MAX {
-//!             return Err(tokio::io::Error::new(
-//!                 tokio::io::ErrorKind::InvalidData,
+//!             return Err(std::io::Error::new(
+//!                 std::io::ErrorKind::InvalidData,
 //!                 format!("Frame of length {} is too large.", length)
 //!             ));
 //!         }
@@ -203,8 +203,8 @@
 //!         match String::from_utf8(data) {
 //!             Ok(string) => Ok(Some(string)),
 //!             Err(utf8_error) => {
-//!                 Err(tokio::io::Error::new(
-//!                     tokio::io::ErrorKind::InvalidData,
+//!                 Err(std::io::Error::new(
+//!                     std::io::ErrorKind::InvalidData,
 //!                     utf8_error.utf8_error(),
 //!                 ))
 //!             },
@@ -237,7 +237,7 @@
 //! # use tokio_util::codec::Encoder;
 //! # async fn next_frame() -> bytes::Bytes { bytes::Bytes::new() }
 //! # async fn no_more_frames() { }
-//! # #[tokio::main] async fn main() -> tokio::io::Result<()> {
+//! # #[tokio::main] async fn main() -> std::io::Result<()> {
 //! # let mut io_resource = tokio::io::sink();
 //! # let mut encoder = tokio_util::codec::BytesCodec::new();
 //!
@@ -282,14 +282,14 @@
 //! const MAX: usize = 8 * 1024 * 1024;
 //!
 //! impl Encoder<String> for MyStringEncoder {
-//!     type Error = tokio::io::Error;
+//!     type Error = std::io::Error;
 //!
 //!     fn encode(&mut self, item: String, dst: &mut BytesMut) -> Result<(), Self::Error> {
 //!         // Don't send a string if it is longer than the other end will
 //!         // accept.
 //!         if item.len() > MAX {
-//!             return Err(tokio::io::Error::new(
-//!                 tokio::io::ErrorKind::InvalidData,
+//!             return Err(std::io::Error::new(
+//!                 std::io::ErrorKind::InvalidData,
 //!                 format!("Frame of length {} is too large.", item.len())
 //!             ));
 //!         }

@@ -1,9 +1,9 @@
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 use bytes::{Buf, BufMut};
-use core::pin::Pin;
-use core::task::{ready, Context, Poll};
-use tokio::io::{self, IoSlice};
+use std::io::{self, IoSlice};
+use std::pin::Pin;
+use std::task::{ready, Context, Poll};
 
 /// Try to read data from an `AsyncRead` into an implementer of the [`BufMut`] trait.
 ///
@@ -19,7 +19,7 @@ use tokio::io::{self, IoSlice};
 /// use std::future::poll_fn;
 /// use std::pin::Pin;
 /// # #[tokio::main(flavor = "current_thread")]
-/// # async fn main() -> tokio::io::Result<()> {
+/// # async fn main() -> std::io::Result<()> {
 ///
 /// // Create a reader from an iterator. This particular reader will always be
 /// // ready.
@@ -130,9 +130,9 @@ pub fn poll_write_buf<T: AsyncWrite + ?Sized, B: Buf>(
     }
 
     let n = if io.is_write_vectored() {
-        let mut byte_slices = [IoSlice::new(&[]); MAX_BUFS];
-        let cnt = buf.chunks_vectored(&mut byte_slices);
-        ready!(io.poll_write_vectored(cx, &byte_slices[..cnt]))?
+        let mut slices = [IoSlice::new(&[]); MAX_BUFS];
+        let cnt = buf.chunks_vectored(&mut slices);
+        ready!(io.poll_write_vectored(cx, &slices[..cnt]))?
     } else {
         ready!(io.poll_write(cx, buf.chunk()))?
     };

@@ -1,6 +1,3 @@
-#[allow(unused_imports)]
-use crate::runtime::prelude::*;
-
 use super::MAX_SAFE_MILLIS_DURATION;
 use crate::time::{Clock, Duration, Instant};
 
@@ -40,4 +37,9 @@ impl TimeSource {
         self.instant_to_tick(clock.now())
     }
 
+    #[cfg(test)]
+    #[allow(dead_code)]
+    pub(super) fn start_time(&self) -> Instant {
+        self.start_time
+    }
 }

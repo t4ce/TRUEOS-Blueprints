@@ -1,5 +1,5 @@
 cfg_rt! {
-    use core::marker::PhantomData;
+    use std::marker::PhantomData;
 
     #[derive(Copy, Clone)]
     pub(crate) struct SpawnMeta<'a> {
@@ -53,12 +53,11 @@ cfg_rt! {
             task::{Context, Poll},
         };
         use pin_project_lite::pin_project;
-        use core::mem;
-        use core::future::Future;
+        use std::mem;
+        use std::future::Future;
         use tracing::instrument::Instrument;
         pub(crate) use tracing::instrument::Instrumented;
 
-        #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
         #[inline]
         pub(crate) fn task<F>(task: F, kind: &'static str, meta: SpawnMeta<'_>, id: u64) -> Instrumented<F> {
             fn get_span(kind: &'static str, spawn_meta: SpawnMeta<'_>, id: u64, task_size: usize) -> tracing::Span {
@@ -86,13 +85,6 @@ cfg_rt! {
             task.instrument(span)
         }
 
-        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-        #[inline]
-        pub(crate) fn task<F>(task: F, _kind: &'static str, _meta: SpawnMeta<'_>, _id: u64) -> F {
-            task
-        }
-
-        #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
         #[inline]
         pub(crate) fn blocking_task<Fn, Fut>(task: Fut, spawn_meta: SpawnMeta<'_>, id: u64) -> Instrumented<Fut> {
             let fn_size = mem::size_of::<Fn>();
@@ -108,7 +100,7 @@ cfg_rt! {
                 kind = %"blocking",
                 task.name = %spawn_meta.name.unwrap_or_default(),
                 task.id = id,
-                "fn" = %core::any::type_name::<Fn>(),
+                "fn" = %std::any::type_name::<Fn>(),
                 original_size.bytes = original_size,
                 size.bytes = fn_size,
                 loc.file = spawn_meta.spawned_at.0.file(),
@@ -117,13 +109,6 @@ cfg_rt! {
             );
             task.instrument(span)
 
-        }
-
-        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-        #[inline]
-        pub(crate) fn blocking_task<Fn, Fut>(task: Fut, _spawn_meta: SpawnMeta<'_>, _id: u64) -> Fut {
-            let _ = PhantomData::<&Fn>;
-            task
         }
 
         pub(crate) fn async_op<P,F>(inner: P, resource_span: tracing::Span, source: &str, poll_op_name: &'static str, inherits_child_attrs: bool) -> InstrumentedAsyncOp<F>
@@ -197,9 +182,9 @@ cfg_rt! {
 
 cfg_time! {
     #[track_caller]
-    pub(crate) fn caller_location() -> Option<&'static ::core::panic::Location<'static>> {
+    pub(crate) fn caller_location() -> Option<&'static std::panic::Location<'static>> {
         #[cfg(all(tokio_unstable, feature = "tracing"))]
-        return Some(::core::panic::Location::caller());
+        return Some(std::panic::Location::caller());
         #[cfg(not(all(tokio_unstable, feature = "tracing")))]
         None
     }

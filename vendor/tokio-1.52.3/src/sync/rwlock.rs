@@ -2,10 +2,10 @@ use crate::sync::batch_semaphore::{Semaphore, TryAcquireError};
 use crate::sync::mutex::TryLockError;
 #[cfg(all(tokio_unstable, feature = "tracing"))]
 use crate::util::trace;
-use core::cell::UnsafeCell;
-use core::marker;
-use core::marker::PhantomData;
-use crate::loom::sync::Arc;
+use std::cell::UnsafeCell;
+use std::marker;
+use std::marker::PhantomData;
+use std::sync::Arc;
 
 pub(crate) mod owned_read_guard;
 pub(crate) mod owned_write_guard;
@@ -48,8 +48,8 @@ const MAX_READS: u32 = 10;
 ///
 /// The type parameter `T` represents the data that this lock protects. It is
 /// required that `T` satisfies [`Send`] to be shared across threads. The RAII guards
-/// returned from the locking methods implement [`Deref`](trait@core::ops::Deref)
-/// (and [`DerefMut`](trait@core::ops::DerefMut)
+/// returned from the locking methods implement [`Deref`](trait@std::ops::Deref)
+/// (and [`DerefMut`](trait@std::ops::DerefMut)
 /// for the `write` methods) to allow access to the content of the lock.
 ///
 /// # Examples
@@ -82,7 +82,7 @@ const MAX_READS: u32 = 10;
 /// [`RwLock`]: struct@RwLock
 /// [`RwLockReadGuard`]: struct@RwLockReadGuard
 /// [`RwLockWriteGuard`]: struct@RwLockWriteGuard
-/// [`Send`]: trait@core::marker::Send
+/// [`Send`]: trait@std::marker::Send
 /// [_write-preferring_]: https://en.wikipedia.org/wiki/Readers%E2%80%93writer_lock#Priority_policies
 pub struct RwLock<T: ?Sized> {
     #[cfg(all(tokio_unstable, feature = "tracing"))]
@@ -206,7 +206,7 @@ impl<T: ?Sized> RwLock<T> {
     {
         #[cfg(all(tokio_unstable, feature = "tracing"))]
         let resource_span = {
-            let location = ::core::panic::Location::caller();
+            let location = std::panic::Location::caller();
             let resource_span = tracing::trace_span!(
                 parent: None,
                 "runtime.resource",
@@ -265,12 +265,13 @@ impl<T: ?Sized> RwLock<T> {
     ///
     /// # Panics
     ///
-    /// Panics if `max_reads` is more than `u32::MAX >> 3`.
+    /// Panics if `max_reads` is `0` or is bigger than `u32::MAX >> 3`.
     #[track_caller]
     pub fn with_max_readers(value: T, max_reads: u32) -> RwLock<T>
     where
         T: Sized,
     {
+        assert_ne!(max_reads, 0, "a RwLock may not be created with 0 readers");
         assert!(
             max_reads <= MAX_READS,
             "a RwLock may not be created with more than {MAX_READS} readers"
@@ -278,7 +279,7 @@ impl<T: ?Sized> RwLock<T> {
 
         #[cfg(all(tokio_unstable, feature = "tracing"))]
         let resource_span = {
-            let location = ::core::panic::Location::caller();
+            let location = std::panic::Location::caller();
 
             let resource_span = tracing::trace_span!(
                 parent: None,
@@ -366,11 +367,16 @@ impl<T: ?Sized> RwLock<T> {
     ///
     /// static LOCK: RwLock<i32> = RwLock::const_with_max_readers(5, 1024);
     /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if `max_reads` is `0` or is bigger than `u32::MAX >> 3`.
     #[cfg(not(all(loom, test)))]
     pub const fn const_with_max_readers(value: T, max_reads: u32) -> RwLock<T>
     where
         T: Sized,
     {
+        assert!(max_reads != 0, "a RwLock may not be created with 0 readers");
         assert!(max_reads <= MAX_READS);
 
         RwLock {
@@ -773,6 +779,7 @@ impl<T: ?Sized> RwLock<T> {
     /// ```
     pub async fn write(&self) -> RwLockWriteGuard<'_, T> {
         let acquire_fut = async {
+            debug_assert_ne!(self.mr, 0);
             self.s.acquire(self.mr as usize).await.unwrap_or_else(|_| {
                 // The semaphore was closed. but, we never explicitly close it, and we have a
                 // handle to it through the Arc, which means that this can never happen.
@@ -911,6 +918,7 @@ impl<T: ?Sized> RwLock<T> {
         let resource_span = self.resource_span.clone();
 
         let acquire_fut = async {
+            debug_assert_ne!(self.mr, 0);
             self.s.acquire(self.mr as usize).await.unwrap_or_else(|_| {
                 // The semaphore was closed. but, we never explicitly close it, and we have a
                 // handle to it through the Arc, which means that this can never happen.
@@ -975,6 +983,7 @@ impl<T: ?Sized> RwLock<T> {
     /// # }
     /// ```
     pub fn try_write(&self) -> Result<RwLockWriteGuard<'_, T>, TryLockError> {
+        debug_assert_ne!(self.mr, 0);
         match self.s.try_acquire(self.mr as usize) {
             Ok(permit) => permit,
             Err(TryAcquireError::NoPermits) => return Err(TryLockError(())),
@@ -1033,6 +1042,7 @@ impl<T: ?Sized> RwLock<T> {
     /// # }
     /// ```
     pub fn try_write_owned(self: Arc<Self>) -> Result<OwnedRwLockWriteGuard<T>, TryLockError> {
+        debug_assert_ne!(self.mr, 0);
         match self.s.try_acquire(self.mr as usize) {
             Ok(permit) => permit,
             Err(TryAcquireError::NoPermits) => return Err(TryLockError(())),
@@ -1105,11 +1115,11 @@ where
     }
 }
 
-impl<T: ?Sized> ::core::fmt::Debug for RwLock<T>
+impl<T: ?Sized> std::fmt::Debug for RwLock<T>
 where
-    T: ::core::fmt::Debug,
+    T: std::fmt::Debug,
 {
-    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut d = f.debug_struct("RwLock");
         match self.try_read() {
             Ok(inner) => d.field("data", &&*inner),

@@ -4,10 +4,10 @@ use crate::fs::UringOpenOptions;
 use crate::runtime::driver::op::{CancelData, Cancellable, Completable, CqeResult, Op};
 
 use io_uring::{opcode, types};
-use core::ffi::CString;
-use crate::io::{self, Error};
+use std::ffi::CString;
+use std::io::{self, Error};
 use std::os::fd::FromRawFd;
-use crate::path::Path;
+use std::path::Path;
 
 #[derive(Debug)]
 pub(crate) struct Open {

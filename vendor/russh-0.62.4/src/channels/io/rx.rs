@@ -1,8 +1,9 @@
 use std::borrow::BorrowMut;
+use std::io;
 use std::pin::Pin;
 use std::task::{ready, Context, Poll};
 
-use tokio::io::{self, AsyncRead};
+use tokio::io::AsyncRead;
 
 use super::{ChannelMsg, ChannelReadHalf};
 

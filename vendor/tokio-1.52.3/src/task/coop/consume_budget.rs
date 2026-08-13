@@ -12,7 +12,7 @@
 /// iterated values is cooperative.
 ///
 /// ```
-/// async fn sum_iterator(input: &mut impl core::iter::Iterator<Item=i64>) -> i64 {
+/// async fn sum_iterator(input: &mut impl std::iter::Iterator<Item=i64>) -> i64 {
 ///     let mut sum: i64 = 0;
 ///     while let Some(i) = input.next() {
 ///         sum += i;
@@ -23,10 +23,10 @@
 /// ```
 #[cfg_attr(docsrs, doc(cfg(feature = "rt")))]
 pub async fn consume_budget() {
-    let mut status = core::task::Poll::Pending;
+    let mut status = std::task::Poll::Pending;
 
-    core::future::poll_fn(move |cx| {
-        core::task::ready!(crate::trace::trace_leaf(cx));
+    std::future::poll_fn(move |cx| {
+        std::task::ready!(crate::trace::trace_leaf(cx));
         if status.is_ready() {
             return status;
         }

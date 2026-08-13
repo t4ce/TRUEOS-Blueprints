@@ -1,7 +1,7 @@
 cfg_net! {
     use crate::net::addr::{self, ToSocketAddrs};
 
-    use crate::io;
+    use std::io;
     use std::net::SocketAddr;
 
     /// Performs a DNS resolution.

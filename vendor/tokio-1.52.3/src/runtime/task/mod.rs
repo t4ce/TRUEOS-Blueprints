@@ -178,9 +178,6 @@
 //! poll call will notice it when the poll finishes, and the task is cancelled
 //! at that point.
 
-#[allow(unused_imports)]
-use crate::runtime::prelude::*;
-
 mod core;
 use self::core::Cell;
 use self::core::Header;
@@ -212,11 +209,6 @@ pub(crate) use self::raw::RawTask;
 mod state;
 use self::state::State;
 
-#[cfg(feature = "rt-multi-thread")]
-mod atomic_notified;
-#[cfg(feature = "rt-multi-thread")]
-pub(crate) use self::atomic_notified::AtomicNotified;
-
 mod waker;
 
 pub(crate) use self::spawn_location::SpawnLocation;
@@ -225,16 +217,15 @@ cfg_taskdump! {
     pub(crate) mod trace;
 }
 
+use crate::future::Future;
 use crate::util::linked_list;
 use crate::util::sharded_list;
-use ::core::future::Future;
 
 use crate::runtime::TaskCallback;
-use ::core::marker::PhantomData;
-use ::core::panic::Location;
-use ::core::ptr::NonNull;
-use ::core::fmt;
-use std::mem;
+use std::marker::PhantomData;
+use std::panic::Location;
+use std::ptr::NonNull;
+use std::{fmt, mem};
 
 /// An owned handle to the task, tracked by ref count.
 #[repr(transparent)]
@@ -387,8 +378,8 @@ cfg_rt! {
             raw: task.raw,
             _p: PhantomData,
         };
-        ::core::mem::forget(task);
-        ::core::mem::forget(notified);
+        std::mem::forget(task);
+        std::mem::forget(notified);
 
         (unowned, join)
     }
@@ -522,6 +513,11 @@ impl<S: Schedule> LocalNotified<S> {
 
 impl<S: Schedule> UnownedTask<S> {
     // Used in test of the inject queue.
+    #[cfg(test)]
+    #[cfg_attr(target_family = "wasm", allow(dead_code))]
+    pub(super) fn into_notified(self) -> Notified<S> {
+        Notified(self.into_task())
+    }
 
     fn into_task(self) -> Task<S> {
         // Convert into a task.
@@ -623,12 +619,12 @@ unsafe impl<S> sharded_list::ShardedListItem for Task<S> {
     }
 }
 
-/// Wrapper around [`::core::panic::Location`] that's conditionally compiled out
+/// Wrapper around [`std::panic::Location`] that's conditionally compiled out
 /// when `tokio_unstable` is not enabled.
 #[cfg(tokio_unstable)]
 mod spawn_location {
 
-    use ::core::panic::Location;
+    use std::panic::Location;
 
     #[derive(Copy, Clone)]
     pub(crate) struct SpawnLocation(pub &'static Location<'static>);
@@ -642,7 +638,7 @@ mod spawn_location {
 
 #[cfg(not(tokio_unstable))]
 mod spawn_location {
-    use ::core::panic::Location;
+    use std::panic::Location;
 
     #[derive(Copy, Clone)]
     pub(crate) struct SpawnLocation();
@@ -651,6 +647,12 @@ mod spawn_location {
         fn from(_: &'static Location<'static>) -> Self {
             Self()
         }
+    }
+
+    #[cfg(test)]
+    #[test]
+    fn spawn_location_is_zero_sized() {
+        assert_eq!(std::mem::size_of::<SpawnLocation>(), 0);
     }
 }
 

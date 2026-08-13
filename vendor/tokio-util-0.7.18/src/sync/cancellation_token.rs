@@ -40,14 +40,14 @@ use pin_project_lite::pin_project;
 ///                 // The token was cancelled
 ///                 5
 ///             }
-///             _ = tokio::time::sleep(hostlib::time::Duration::from_secs(9999)) => {
+///             _ = tokio::time::sleep(std::time::Duration::from_secs(9999)) => {
 ///                 99
 ///             }
 ///         }
 ///     });
 ///
 ///     tokio::spawn(async move {
-///         tokio::time::sleep(hostlib::time::Duration::from_millis(10)).await;
+///         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
 ///         token.cancel();
 ///     });
 ///
@@ -58,8 +58,8 @@ pub struct CancellationToken {
     inner: Arc<tree_node::TreeNode>,
 }
 
-impl ::core::panic::UnwindSafe for CancellationToken {}
-impl ::core::panic::RefUnwindSafe for CancellationToken {}
+impl std::panic::UnwindSafe for CancellationToken {}
+impl std::panic::RefUnwindSafe for CancellationToken {}
 
 pin_project! {
     /// A Future that is resolved once the corresponding [`CancellationToken`]
@@ -103,8 +103,8 @@ pin_project! {
 
 // ===== impl CancellationToken =====
 
-impl ::core::fmt::Debug for CancellationToken {
-    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+impl core::fmt::Debug for CancellationToken {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("CancellationToken")
             .field("is_cancelled", &self.is_cancelled())
             .finish()
@@ -167,14 +167,14 @@ impl CancellationToken {
     ///                 // The token was cancelled
     ///                 5
     ///             }
-    ///             _ = tokio::time::sleep(hostlib::time::Duration::from_secs(9999)) => {
+    ///             _ = tokio::time::sleep(std::time::Duration::from_secs(9999)) => {
     ///                 99
     ///             }
     ///         }
     ///     });
     ///
     ///     tokio::spawn(async move {
-    ///         tokio::time::sleep(hostlib::time::Duration::from_millis(10)).await;
+    ///         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     ///         token.cancel();
     ///     });
     ///
@@ -317,8 +317,8 @@ impl CancellationToken {
 
 // ===== impl WaitForCancellationFuture =====
 
-impl<'a> ::core::fmt::Debug for WaitForCancellationFuture<'a> {
-    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+impl<'a> core::fmt::Debug for WaitForCancellationFuture<'a> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("WaitForCancellationFuture").finish()
     }
 }
@@ -348,8 +348,8 @@ impl<'a> Future for WaitForCancellationFuture<'a> {
 
 // ===== impl WaitForCancellationFutureOwned =====
 
-impl ::core::fmt::Debug for WaitForCancellationFutureOwned {
-    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+impl core::fmt::Debug for WaitForCancellationFutureOwned {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("WaitForCancellationFutureOwned").finish()
     }
 }
@@ -405,8 +405,9 @@ impl Future for WaitForCancellationFutureOwned {
             // # Safety
             //
             // cancellation_token is dropped after future due to the field ordering.
-            this.future
-                .set(MaybeDangling::new(unsafe { Self::new_future(this.cancellation_token) }));
+            this.future.set(MaybeDangling::new(unsafe {
+                Self::new_future(this.cancellation_token)
+            }));
         }
     }
 }

@@ -1,13 +1,10 @@
 //! Coordinates idling workers
 
-#[allow(unused_imports)]
-use crate::runtime::prelude::*;
-
-use core::sync::atomic::AtomicUsize;
+use crate::loom::sync::atomic::AtomicUsize;
 use crate::runtime::scheduler::multi_thread::Shared;
 
-use ::core::fmt;
-use core::sync::atomic::Ordering::{self, SeqCst};
+use std::fmt;
+use std::sync::atomic::Ordering::{self, SeqCst};
 
 pub(super) struct Idle {
     /// Tracks both the number of searching workers and the number of unparked
@@ -232,3 +229,12 @@ impl fmt::Debug for State {
     }
 }
 
+#[test]
+fn test_state() {
+    assert_eq!(0, UNPARK_MASK & SEARCH_MASK);
+    assert_eq!(0, !(UNPARK_MASK | SEARCH_MASK));
+
+    let state = State::new(10);
+    assert_eq!(10, state.num_unparked());
+    assert_eq!(0, state.num_searching());
+}

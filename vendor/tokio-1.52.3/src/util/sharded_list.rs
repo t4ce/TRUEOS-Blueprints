@@ -1,8 +1,5 @@
-use alloc::{boxed::Box, vec::Vec};
-
-use crate::runtime::prelude::*;
-use core::ptr::NonNull;
-use core::sync::atomic::Ordering;
+use std::ptr::NonNull;
+use std::sync::atomic::Ordering;
 
 use crate::loom::sync::{Mutex, MutexGuard};
 use crate::util::metric_atomics::{MetricAtomicU64, MetricAtomicUsize};
@@ -43,15 +40,12 @@ impl<L, T> ShardedList<L, T> {
         let shard_mask = sharded_size - 1;
         let mut lists = Vec::with_capacity(sharded_size);
         for _ in 0..sharded_size {
-            lists.push(Mutex::new(LinkedList::<L, T>::new()));
+            lists.push(Mutex::new(LinkedList::<L, T>::new()))
         }
-        let lists = lists.into_boxed_slice();
-        let added = MetricAtomicU64::new(0);
-        let count = MetricAtomicUsize::new(0);
         Self {
-            lists,
-            added,
-            count,
+            lists: lists.into_boxed_slice(),
+            added: MetricAtomicU64::new(0),
+            count: MetricAtomicUsize::new(0),
             shard_mask,
         }
     }

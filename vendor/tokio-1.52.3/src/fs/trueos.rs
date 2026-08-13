@@ -1,13 +1,12 @@
-use crate::io::ReadBuf;
-use crate::io::{self, Read, Seek, SeekFrom, Write};
+use crate::io::{self, ReadBuf};
 use crate::loom::sync as trueos_sync;
 use crate::path::{Component, Path, PathBuf};
-use crate::runtime::prelude::*;
 use ::core::fmt;
 use ::core::future::{Future, poll_fn};
 use ::core::task::{Context, Poll, Waker};
 use alloc::string::String;
 use alloc::vec::Vec;
+use std::io::{Read, Seek, SeekFrom, Write};
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct FileType {
@@ -128,7 +127,7 @@ impl TrueosDirEntry {
     }
 
     pub(crate) fn file_name(&self) -> crate::ffi::OsString {
-        self.file_name.clone()
+        self.file_name.clone().into()
     }
 
     pub(crate) fn metadata(&self) -> io::Result<Metadata> {
@@ -186,6 +185,7 @@ unsafe extern "C" {
         out_cap: usize,
     ) -> isize;
     fn trueos_cabi_async_fs_discard(id: u32) -> i32;
+    fn trueos_cabi_poll_once();
 }
 
 const FS_TRANSFER_CHUNK_BYTES: usize = 64 * 1024;
@@ -208,7 +208,7 @@ impl AsyncFsOperation {
             let status = unsafe { trueos_cabi_async_fs_status(self.id) };
             match status {
                 0 => {
-                    crate::platform::poll_once();
+                    unsafe { trueos_cabi_poll_once() };
                     cx.waker().wake_by_ref();
                     Poll::Pending
                 }
@@ -255,6 +255,12 @@ impl TrueosPath {
                 Component::CurDir => {}
                 Component::RootDir => anchor = TrueosPathAnchor::Root,
                 Component::Normal(part) => {
+                    let part = part.to_str().ok_or_else(|| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidInput,
+                            "TRUEOS fs paths must be valid UTF-8",
+                        )
+                    })?;
                     if part.as_bytes().contains(&0) {
                         return Err(io::Error::new(
                             io::ErrorKind::InvalidInput,
@@ -347,7 +353,7 @@ fn block_on_async_fs<F: Future>(future: F) -> F::Output {
     loop {
         match future.as_mut().poll(&mut context) {
             Poll::Ready(output) => return output,
-            Poll::Pending => crate::platform::poll_once(),
+            Poll::Pending => unsafe { trueos_cabi_poll_once() },
         }
     }
 }

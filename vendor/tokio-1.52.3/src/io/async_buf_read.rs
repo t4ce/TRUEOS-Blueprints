@@ -1,10 +1,9 @@
 use crate::io::AsyncRead;
-use crate::runtime::prelude::*;
 
-use crate::io;
-use core::ops::DerefMut;
-use core::pin::Pin;
-use core::task::{Context, Poll};
+use std::io;
+use std::ops::DerefMut;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 
 /// Reads bytes asynchronously.
 ///

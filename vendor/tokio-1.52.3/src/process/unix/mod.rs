@@ -38,15 +38,15 @@ use crate::signal::unix::{signal, Signal, SignalKind};
 
 use mio::event::Source;
 use mio::unix::SourceFd;
-use ::core::fmt;
+use std::fmt;
 use std::fs::File;
-use core::future::Future;
-use crate::io;
+use std::future::Future;
+use std::io;
 use std::os::unix::io::{AsFd, AsRawFd, BorrowedFd, FromRawFd, IntoRawFd, OwnedFd, RawFd};
-use core::pin::Pin;
+use std::pin::Pin;
 use std::process::{Child as StdChild, ExitStatus, Stdio};
-use core::task::Context;
-use core::task::Poll;
+use std::task::Context;
+use std::task::Poll;
 
 impl Wait for StdChild {
     fn id(&self) -> u32 {

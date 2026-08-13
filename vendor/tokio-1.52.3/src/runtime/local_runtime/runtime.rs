@@ -1,18 +1,15 @@
 #![allow(irrefutable_let_patterns)]
 
-#[allow(unused_imports)]
-use crate::runtime::prelude::*;
-
 use crate::runtime::blocking::BlockingPool;
 use crate::runtime::scheduler::CurrentThread;
 use crate::runtime::{context, Builder, EnterGuard, Handle, BOX_FUTURE_THRESHOLD};
 use crate::task::JoinHandle;
 
 use crate::util::trace::SpawnMeta;
-use core::future::Future;
-use core::marker::PhantomData;
-use core::mem;
-use core::time::Duration;
+use std::future::Future;
+use std::marker::PhantomData;
+use std::mem;
+use std::time::Duration;
 
 /// A local Tokio runtime.
 ///
@@ -91,7 +88,7 @@ impl LocalRuntime {
     ///
     /// [mod]: crate::runtime
     /// [runtime builder]: crate::runtime::Builder
-    pub fn new() -> crate::io::Result<LocalRuntime> {
+    pub fn new() -> std::io::Result<LocalRuntime> {
         Builder::new_current_thread()
             .enable_all()
             .build_local(Default::default())
@@ -151,12 +148,12 @@ impl LocalRuntime {
         F: Future + 'static,
         F::Output: 'static,
     {
-        let fut_size = core::mem::size_of::<F>();
+        let fut_size = std::mem::size_of::<F>();
         let meta = SpawnMeta::new_unnamed(fut_size);
 
         // safety: spawn_local can only be called from `LocalRuntime`, which this is
         unsafe {
-            if core::mem::size_of::<F>() > BOX_FUTURE_THRESHOLD {
+            if std::mem::size_of::<F>() > BOX_FUTURE_THRESHOLD {
                 self.handle.spawn_local_named(Box::pin(future), meta)
             } else {
                 self.handle.spawn_local_named(future, meta)
@@ -223,7 +220,7 @@ impl LocalRuntime {
         let fut_size = mem::size_of::<F>();
         let meta = SpawnMeta::new_unnamed(fut_size);
 
-        if core::mem::size_of::<F>() > BOX_FUTURE_THRESHOLD {
+        if std::mem::size_of::<F>() > BOX_FUTURE_THRESHOLD {
             self.block_on_inner(Box::pin(future), meta)
         } else {
             self.block_on_inner(future, meta)
@@ -321,7 +318,7 @@ impl LocalRuntime {
     /// use tokio::task;
     ///
     /// use std::thread;
-    /// use core::time::Duration;
+    /// use std::time::Duration;
     ///
     /// fn main() {
     ///    let runtime = LocalRuntime::new().unwrap();
@@ -394,6 +391,6 @@ impl Drop for LocalRuntime {
     }
 }
 
-impl ::core::panic::UnwindSafe for LocalRuntime {}
+impl std::panic::UnwindSafe for LocalRuntime {}
 
-impl ::core::panic::RefUnwindSafe for LocalRuntime {}
+impl std::panic::RefUnwindSafe for LocalRuntime {}

@@ -55,7 +55,7 @@
 //! task::coop::unconstrained(fut).await;
 //! # }
 //! ```
-//! [`poll`]: method@core::future::Future::poll
+//! [`poll`]: method@std::future::Future::poll
 //! [`task::unconstrained`]: crate::task::unconstrained()
 
 cfg_rt! {
@@ -90,8 +90,6 @@ cfg_rt! {
 // the outer future against the cooperating budget.
 
 use crate::runtime::context;
-use core::derive;
-use core::option::Option::{self, None, Some};
 
 /// Opaque type tracking the amount of "work" a task may still do before
 /// yielding back to the scheduler.
@@ -181,9 +179,9 @@ fn with_budget<R>(budget: Budget, f: impl FnOnce() -> R) -> R {
 /// we can detect this scenario and ensure the timeout is always checked.
 ///
 /// ```
-/// # use core::future::Future;
-/// # use core::pin::{pin, Pin};
-/// # use core::task::{ready, Context, Poll};
+/// # use std::future::Future;
+/// # use std::pin::{pin, Pin};
+/// # use std::task::{ready, Context, Poll};
 /// # use tokio::task::coop;
 /// # use tokio::time::Sleep;
 /// pub struct Timeout<T> {
@@ -250,11 +248,11 @@ cfg_rt! {
 
 cfg_coop! {
     use pin_project_lite::pin_project;
-    use core::cell::Cell;
-    use core::future::Future;
-    use core::marker::PhantomData;
-    use core::pin::Pin;
-    use core::task::{ready, Context, Poll};
+    use std::cell::Cell;
+    use std::future::Future;
+    use std::marker::PhantomData;
+    use std::pin::Pin;
+    use std::task::{ready, Context, Poll};
 
     /// Value returned by the [`poll_proceed`] method.
     #[derive(Debug)]
@@ -313,8 +311,8 @@ cfg_coop! {
     /// is consumed. If no budget is available, the task yields to the scheduler.
     ///
     /// ```
-    /// use core::pin::Pin;
-    /// use core::task::{ready, Context, Poll};
+    /// use std::pin::Pin;
+    /// use std::task::{ready, Context, Poll};
     /// use tokio::task::coop;
     /// use futures::stream::{Stream, StreamExt};
     /// use futures::channel::mpsc::UnboundedReceiver;
@@ -491,5 +489,85 @@ cfg_coop! {
     #[inline]
     pub fn cooperative<F: Future>(fut: F) -> Coop<F> {
         Coop { fut }
+    }
+}
+
+#[cfg(all(test, not(loom)))]
+mod test {
+    use super::*;
+
+    #[cfg(all(target_family = "wasm", not(target_os = "wasi")))]
+    use wasm_bindgen_test::wasm_bindgen_test as test;
+
+    fn get() -> Budget {
+        context::budget(|cell| cell.get()).unwrap_or(Budget::unconstrained())
+    }
+
+    #[test]
+    fn budgeting() {
+        use std::future::poll_fn;
+        use tokio_test::*;
+
+        assert!(get().0.is_none());
+
+        let coop = assert_ready!(task::spawn(()).enter(|cx, _| poll_proceed(cx)));
+
+        assert!(get().0.is_none());
+        drop(coop);
+        assert!(get().0.is_none());
+
+        budget(|| {
+            assert_eq!(get().0, Budget::initial().0);
+
+            let coop = assert_ready!(task::spawn(()).enter(|cx, _| poll_proceed(cx)));
+            assert_eq!(get().0.unwrap(), Budget::initial().0.unwrap() - 1);
+            drop(coop);
+            // we didn't make progress
+            assert_eq!(get().0, Budget::initial().0);
+
+            let coop = assert_ready!(task::spawn(()).enter(|cx, _| poll_proceed(cx)));
+            assert_eq!(get().0.unwrap(), Budget::initial().0.unwrap() - 1);
+            coop.made_progress();
+            drop(coop);
+            // we _did_ make progress
+            assert_eq!(get().0.unwrap(), Budget::initial().0.unwrap() - 1);
+
+            let coop = assert_ready!(task::spawn(()).enter(|cx, _| poll_proceed(cx)));
+            assert_eq!(get().0.unwrap(), Budget::initial().0.unwrap() - 2);
+            coop.made_progress();
+            drop(coop);
+            assert_eq!(get().0.unwrap(), Budget::initial().0.unwrap() - 2);
+
+            budget(|| {
+                assert_eq!(get().0, Budget::initial().0);
+
+                let coop = assert_ready!(task::spawn(()).enter(|cx, _| poll_proceed(cx)));
+                assert_eq!(get().0.unwrap(), Budget::initial().0.unwrap() - 1);
+                coop.made_progress();
+                drop(coop);
+                assert_eq!(get().0.unwrap(), Budget::initial().0.unwrap() - 1);
+            });
+
+            assert_eq!(get().0.unwrap(), Budget::initial().0.unwrap() - 2);
+        });
+
+        assert!(get().0.is_none());
+
+        budget(|| {
+            let n = get().0.unwrap();
+
+            for _ in 0..n {
+                let coop = assert_ready!(task::spawn(()).enter(|cx, _| poll_proceed(cx)));
+                coop.made_progress();
+            }
+
+            let mut task = task::spawn(poll_fn(|cx| {
+                let coop = std::task::ready!(poll_proceed(cx));
+                coop.made_progress();
+                Poll::Ready(())
+            }));
+
+            assert_pending!(task.poll());
+        });
     }
 }

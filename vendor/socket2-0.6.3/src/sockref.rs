@@ -1,11 +1,8 @@
-use ::core::fmt;
-use core::marker::PhantomData;
-use core::mem::ManuallyDrop;
-use core::ops::Deref;
-#[cfg(any(
-    all(unix, not(any(target_os = "trueos", target_os = "zkvm"))),
-    all(target_os = "wasi", not(target_env = "p1"))
-))]
+use std::fmt;
+use std::marker::PhantomData;
+use std::mem::ManuallyDrop;
+use std::ops::Deref;
+#[cfg(any(unix, all(target_os = "wasi", not(target_env = "p1"))))]
 use std::os::fd::{AsFd, AsRawFd, FromRawFd};
 #[cfg(windows)]
 use std::os::windows::io::{AsRawSocket, AsSocket, FromRawSocket};
@@ -35,7 +32,7 @@ use crate::Socket;
 ///
 /// use socket2::SockRef;
 ///
-/// # fn main() -> Result<(), Box<dyn core::error::Error>> {
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// // Create `TcpStream` from the standard library.
 /// let address: SocketAddr = "127.0.0.1:1234".parse()?;
 /// # let b1 = std::sync::Arc::new(std::sync::Barrier::new(2));
@@ -44,7 +41,7 @@ use crate::Socket;
 /// #    let listener = std::net::TcpListener::bind(address).unwrap();
 /// #    b2.wait();
 /// #    let (stream, _) = listener.accept().unwrap();
-/// #    std::thread::sleep(core::time::Duration::from_millis(10));
+/// #    std::thread::sleep(std::time::Duration::from_millis(10));
 /// #    drop(stream);
 /// # });
 /// # b1.wait();
@@ -74,16 +71,13 @@ pub struct SockRef<'s> {
 impl<'s> Deref for SockRef<'s> {
     type Target = Socket;
 
-    fn deref(&self) -> &Socket {
+    fn deref(&self) -> &Self::Target {
         &self.socket
     }
 }
 
 /// On Windows, a corresponding `From<&impl AsSocket>` implementation exists.
-#[cfg(any(
-    all(unix, not(any(target_os = "trueos", target_os = "zkvm"))),
-    all(target_os = "wasi", not(target_env = "p1"))
-))]
+#[cfg(any(unix, all(target_os = "wasi", not(target_env = "p1"))))]
 impl<'s, S> From<&'s S> for SockRef<'s>
 where
     S: AsFd,
@@ -113,13 +107,6 @@ where
             socket: ManuallyDrop::new(unsafe { Socket::from_raw_socket(socket) }),
             _lifetime: PhantomData,
         }
-    }
-}
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-impl<'s, S> From<&'s S> for SockRef<'s> {
-    fn from(_: &'s S) -> Self {
-        panic!("socket2 SockRef is not wired to zkvm socket handles yet")
     }
 }
 

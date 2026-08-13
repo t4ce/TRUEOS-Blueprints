@@ -1,32 +1,10 @@
 #![cfg_attr(not(feature = "full"), allow(dead_code))]
 
-#[allow(unused_imports)]
-use crate::runtime::prelude::*;
+use crate::loom::sync::atomic::AtomicUsize;
+use crate::loom::sync::{Arc, Condvar, Mutex};
 
-use core::sync::atomic::AtomicUsize;
-use alloc::sync::Arc;
-use crate::loom::sync::Mutex;
-
-use core::sync::atomic::Ordering::SeqCst;
-use core::time::Duration;
-
-#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-use crate::loom::sync::Condvar;
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-#[derive(Debug)]
-struct Condvar;
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-impl Condvar {
-    fn new() -> Self {
-        Condvar
-    }
-
-    fn notify_one(&self) {}
-
-    fn notify_all(&self) {}
-}
+use std::sync::atomic::Ordering::SeqCst;
+use std::time::Duration;
 
 #[derive(Debug)]
 pub(crate) struct ParkThread {
@@ -49,29 +27,6 @@ struct Inner {
 const EMPTY: usize = 0;
 const PARKED: usize = 1;
 const NOTIFIED: usize = 2;
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-fn trueos_now_nanos() -> u64 {
-    crate::platform::monotonic_nanos()
-}
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-fn trueos_duration_nanos(duration: Duration) -> u64 {
-    duration
-        .as_secs()
-        .saturating_mul(1_000_000_000)
-        .saturating_add(u64::from(duration.subsec_nanos()))
-}
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-fn trueos_wait_key(inner: &Inner) -> u64 {
-    inner as *const Inner as usize as u64
-}
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-fn trueos_timeout_ms(remaining_nanos: u64) -> u64 {
-    remaining_nanos.div_ceil(1_000_000).max(1)
-}
 
 tokio_thread_local! {
     static CURRENT_PARKER: ParkThread = ParkThread::new();
@@ -133,7 +88,7 @@ impl Inner {
         }
 
         // Otherwise we need to coordinate going to sleep
-        let m = self.mutex.lock();
+        let mut m = self.mutex.lock();
 
         match self.state.compare_exchange(EMPTY, PARKED, SeqCst, SeqCst) {
             Ok(_) => {}
@@ -152,46 +107,19 @@ impl Inner {
             Err(actual) => panic!("inconsistent park state; actual = {actual}"),
         }
 
-        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-        {
-            drop(m);
-            let key = trueos_wait_key(self);
+        loop {
+            m = self.condvar.wait(m).unwrap();
 
-            loop {
-                match self.state.compare_exchange(NOTIFIED, EMPTY, SeqCst, SeqCst) {
-                    Ok(_) => return,
-                    Err(PARKED) => {
-                        let observed = crate::platform::wait_observe(key);
-                        match self.state.load(SeqCst) {
-                            NOTIFIED => continue,
-                            PARKED => {
-                                let _ = crate::platform::wait_after(key, observed, 0);
-                            }
-                            actual => panic!("inconsistent park state: {actual}"),
-                        }
-                    }
-                    Err(actual) => panic!("inconsistent park state; actual = {actual}"),
-                }
+            if self
+                .state
+                .compare_exchange(NOTIFIED, EMPTY, SeqCst, SeqCst)
+                .is_ok()
+            {
+                // got a notification
+                return;
             }
-        }
 
-        #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-        {
-            let mut m = m;
-            loop {
-                m = self.condvar.wait(m).unwrap();
-
-                if self
-                    .state
-                    .compare_exchange(NOTIFIED, EMPTY, SeqCst, SeqCst)
-                    .is_ok()
-                {
-                    // got a notification
-                    return;
-                }
-
-                // spurious wakeup, go back to sleep
-            }
+            // spurious wakeup, go back to sleep
         }
     }
 
@@ -208,9 +136,6 @@ impl Inner {
         }
 
         if dur == Duration::from_millis(0) {
-            #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-            crate::platform::poll_once();
-
             return;
         }
 
@@ -228,53 +153,14 @@ impl Inner {
             Err(actual) => panic!("inconsistent park_timeout state; actual = {actual}"),
         }
 
-        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-        {
-            drop(m);
-            let key = trueos_wait_key(self);
-            let deadline = trueos_now_nanos().saturating_add(trueos_duration_nanos(dur));
-
-            loop {
-                match self.state.load(SeqCst) {
-                    NOTIFIED => break,
-                    PARKED => {}
-                    actual => panic!("inconsistent park_timeout state: {actual}"),
-                }
-
-                let now = trueos_now_nanos();
-                if now >= deadline {
-                    break;
-                }
-
-                let observed = crate::platform::wait_observe(key);
-                match self.state.load(SeqCst) {
-                    NOTIFIED => continue,
-                    PARKED => {
-                        let timeout_ms = trueos_timeout_ms(deadline.saturating_sub(now));
-                        let _ = crate::platform::wait_after(key, observed, timeout_ms);
-                    }
-                    actual => panic!("inconsistent park_timeout state: {actual}"),
-                }
-            }
-        }
-
-        #[cfg(all(
-            not(any(target_os = "trueos", target_os = "zkvm")),
-            not(any(target_os = "trueos", target_os = "zkvm")),
-            not(all(target_family = "wasm", not(target_feature = "atomics")))
-        ))]
+        #[cfg(not(all(target_family = "wasm", not(target_feature = "atomics"))))]
         // Wait with a timeout, and if we spuriously wake up or otherwise wake up
         // from a notification, we just want to unconditionally set the state back to
         // empty, either consuming a notification or un-flagging ourselves as
         // parked.
         let (_m, _result) = self.condvar.wait_timeout(m, dur).unwrap();
 
-        #[cfg(all(
-            not(any(target_os = "trueos", target_os = "zkvm")),
-            not(any(target_os = "trueos", target_os = "zkvm")),
-            target_family = "wasm",
-            not(target_feature = "atomics")
-        ))]
+        #[cfg(all(target_family = "wasm", not(target_feature = "atomics")))]
         // Wasm without atomics doesn't have threads, so just sleep.
         {
             let _m = m;
@@ -314,20 +200,10 @@ impl Inner {
         // to release `lock`.
         drop(self.mutex.lock());
 
-        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-        {
-            let _ = crate::platform::wake_one(trueos_wait_key(self));
-        }
-
         self.condvar.notify_one();
     }
 
     fn shutdown(&self) {
-        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-        {
-            let _ = crate::platform::wake_all(trueos_wait_key(self));
-        }
-
         self.condvar.notify_all();
     }
 }
@@ -347,10 +223,10 @@ impl UnparkThread {
 }
 
 use crate::loom::thread::AccessError;
-use core::future::Future;
-use core::marker::PhantomData;
-use alloc::rc::Rc;
-use core::task::{RawWaker, RawWakerVTable, Waker};
+use std::future::Future;
+use std::marker::PhantomData;
+use std::rc::Rc;
+use std::task::{RawWaker, RawWakerVTable, Waker};
 
 /// Blocks the current thread using a condition variable.
 #[derive(Debug)]
@@ -396,8 +272,8 @@ impl CachedParkThread {
     }
 
     pub(crate) fn block_on<F: Future>(&mut self, f: F) -> Result<F::Output, AccessError> {
-        use core::task::Context;
-        use core::task::Poll::Ready;
+        use std::task::Context;
+        use std::task::Poll::Ready;
 
         let waker = self.waker()?;
         let mut cx = Context::from_waker(&waker);

@@ -1,6 +1,3 @@
-#[allow(unused_imports)]
-use crate::runtime::prelude::*;
-
 use io_uring::{squeue::Entry, IoUring, Probe};
 use mio::unix::SourceFd;
 use slab::Slab;
@@ -13,8 +10,7 @@ use crate::{io::Interest, loom::sync::Mutex};
 use super::{Handle, TOKEN_WAKEUP};
 
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
-use core::task::Waker;
-use std::{io, mem};
+use std::{io, mem, task::Waker};
 
 const DEFAULT_RING_SIZE: u32 = 256;
 
@@ -147,7 +143,7 @@ impl Drop for UringContext {
             self.submit().expect("Internal error when dropping driver");
         }
 
-        let mut ops = core::mem::take(&mut self.ops);
+        let mut ops = std::mem::take(&mut self.ops);
 
         // Remove all completed ops since we don't need to wait for them.
         ops.retain(|_, lifecycle| !matches!(lifecycle, Lifecycle::Completed(_)));

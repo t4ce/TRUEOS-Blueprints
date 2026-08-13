@@ -8,10 +8,10 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use bytes::BytesMut;
 use futures_sink::Sink;
 use pin_project_lite::pin_project;
-use ::core::fmt;
-use tokio::io;
-use core::pin::Pin;
-use core::task::{Context, Poll};
+use std::fmt;
+use std::io;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 
 pin_project! {
     /// A unified [`Stream`] and [`Sink`] interface to an underlying I/O object, using

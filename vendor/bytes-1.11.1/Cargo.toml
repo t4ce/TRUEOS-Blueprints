@@ -52,9 +52,6 @@ std = []
 name = "bytes"
 path = "src/lib.rs"
 
-[target.'cfg(any(target_os = "trueos", target_os = "zkvm"))'.dependencies.trueos-io]
-path = "../../crates/trueos-io"
-
 [[test]]
 name = "test_buf"
 path = "tests/test_buf.rs"

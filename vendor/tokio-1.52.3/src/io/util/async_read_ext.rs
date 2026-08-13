@@ -13,7 +13,6 @@ use crate::io::util::read_to_end::{read_to_end, ReadToEnd};
 use crate::io::util::read_to_string::{read_to_string, ReadToString};
 use crate::io::util::take::{take, Take};
 use crate::io::AsyncRead;
-use crate::runtime::prelude::*;
 
 use bytes::BufMut;
 

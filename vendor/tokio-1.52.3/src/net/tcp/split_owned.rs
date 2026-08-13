@@ -11,14 +11,13 @@
 use crate::io::{AsyncRead, AsyncWrite, Interest, ReadBuf, Ready};
 use crate::net::TcpStream;
 
-use core::error::Error;
-use ::core::fmt;
-use core::future::poll_fn;
-use core::pin::Pin;
-use core::task::{Context, Poll};
-use crate::io;
+use std::error::Error;
+use std::future::poll_fn;
 use std::net::{Shutdown, SocketAddr};
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
+use std::{fmt, io};
 
 cfg_io_util! {
     use bytes::BufMut;
@@ -90,7 +89,10 @@ pub struct ReuniteError(pub OwnedReadHalf, pub OwnedWriteHalf);
 
 impl fmt::Display for ReuniteError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "tried to reunite halves that are not from the same socket")
+        write!(
+            f,
+            "tried to reunite halves that are not from the same socket"
+        )
     }
 }
 
@@ -122,7 +124,7 @@ impl OwnedReadHalf {
     /// use tokio::io::{self, ReadBuf};
     /// use tokio::net::TcpStream;
     ///
-    /// use core::future::poll_fn;
+    /// use std::future::poll_fn;
     ///
     /// #[tokio::main]
     /// async fn main() -> io::Result<()> {
@@ -161,7 +163,7 @@ impl OwnedReadHalf {
     /// ```no_run
     /// use tokio::net::TcpStream;
     /// use tokio::io::AsyncReadExt;
-    /// use core::error::Error;
+    /// use std::error::Error;
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<(), Box<dyn Error>> {

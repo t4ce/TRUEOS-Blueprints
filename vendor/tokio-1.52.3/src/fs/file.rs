@@ -19,8 +19,9 @@ use core::task::{ready, Context, Poll};
 use crate::fs::trueos::{Metadata, Permissions};
 #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
 use std::fs::{Metadata, Permissions};
-use crate::io::{self, Seek, SeekFrom};
+use crate::io::{self, SeekFrom};
 use crate::path::Path;
+use std::io::Seek;
 
 #[cfg(not(test))]
 use crate::blocking::JoinHandle;
@@ -874,7 +875,7 @@ impl AsyncWrite for File {
     fn poll_write_vectored(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-        bufs: &[io::IoSlice<'_>],
+        bufs: &[std::io::IoSlice<'_>],
     ) -> Poll<Result<usize, io::Error>> {
         ready!(crate::trace::trace_leaf(cx));
         let me = self.get_mut();

@@ -1,13 +1,11 @@
-#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
 use crate::io::blocking::Blocking;
-#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
 use crate::io::stdio_common::SplitByUtf8BoundaryIfWindows;
 use crate::io::AsyncWrite;
 
-use crate::io;
-use core::pin::Pin;
-use core::task::Context;
-use core::task::Poll;
+use std::io;
+use std::pin::Pin;
+use std::task::Context;
+use std::task::Poll;
 
 cfg_io_std! {
     /// A handle to the standard error stream of a process.
@@ -37,15 +35,8 @@ cfg_io_std! {
     /// }
     /// ```
     #[derive(Debug)]
-    #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
     pub struct Stderr {
-        std: SplitByUtf8BoundaryIfWindows<Blocking<crate::io::Stderr>>,
-    }
-
-    #[derive(Debug)]
-    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-    pub struct Stderr {
-        _priv: (),
+        std: SplitByUtf8BoundaryIfWindows<Blocking<std::io::Stderr>>,
     }
 
     /// Constructs a new handle to the standard error of the current process.
@@ -88,7 +79,6 @@ cfg_io_std! {
     ///     Ok(())
     /// }
     /// ```
-    #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
     pub fn stderr() -> Stderr {
         let std = io::stderr();
         // SAFETY: The `Read` implementation of `std` does not read from the
@@ -99,14 +89,9 @@ cfg_io_std! {
             std: SplitByUtf8BoundaryIfWindows::new(blocking),
         }
     }
-
-    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-    pub fn stderr() -> Stderr {
-        Stderr { _priv: () }
-    }
 }
 
-#[cfg(all(unix, not(any(target_os = "trueos", target_os = "zkvm"))))]
+#[cfg(unix)]
 mod sys {
     use std::os::unix::io::{AsFd, AsRawFd, BorrowedFd, RawFd};
 
@@ -114,7 +99,7 @@ mod sys {
 
     impl AsRawFd for Stderr {
         fn as_raw_fd(&self) -> RawFd {
-            crate::io::stderr().as_raw_fd()
+            std::io::stderr().as_raw_fd()
         }
     }
 
@@ -130,7 +115,7 @@ cfg_windows! {
 
     impl AsRawHandle for Stderr {
         fn as_raw_handle(&self) -> RawHandle {
-            crate::io::stderr().as_raw_handle()
+            std::io::stderr().as_raw_handle()
         }
     }
 
@@ -142,43 +127,22 @@ cfg_windows! {
 }
 
 impl AsyncWrite for Stderr {
-    #[cfg_attr(any(target_os = "trueos", target_os = "zkvm"), allow(unused_mut))]
     fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
-        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-        {
-            let _ = (self, cx);
-            return Poll::Ready(Ok(buf.len()));
-        }
-        #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
         Pin::new(&mut self.std).poll_write(cx, buf)
     }
 
-    #[cfg_attr(any(target_os = "trueos", target_os = "zkvm"), allow(unused_mut))]
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
-        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-        {
-            let _ = (self, cx);
-            return Poll::Ready(Ok(()));
-        }
-        #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
         Pin::new(&mut self.std).poll_flush(cx)
     }
 
-    #[cfg_attr(any(target_os = "trueos", target_os = "zkvm"), allow(unused_mut))]
     fn poll_shutdown(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Result<(), io::Error>> {
-        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-        {
-            let _ = (self, cx);
-            return Poll::Ready(Ok(()));
-        }
-        #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
         Pin::new(&mut self.std).poll_shutdown(cx)
     }
 }

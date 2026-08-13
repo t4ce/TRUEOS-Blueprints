@@ -1,14 +1,11 @@
-#[allow(unused_imports)]
-use crate::runtime::prelude::*;
-
 use crate::runtime::task::{AbortHandle, Header, RawTask};
 
-use ::core::panic::{RefUnwindSafe, UnwindSafe};
-use ::core::fmt;
-use core::future::Future;
-use core::marker::PhantomData;
-use core::pin::Pin;
-use core::task::{ready, Context, Poll, Waker};
+use std::fmt;
+use std::future::Future;
+use std::marker::PhantomData;
+use std::panic::{RefUnwindSafe, UnwindSafe};
+use std::pin::Pin;
+use std::task::{ready, Context, Poll, Waker};
 
 cfg_rt! {
     /// An owned permission to join on a task (await its termination).
@@ -117,7 +114,7 @@ cfg_rt! {
     /// # {
     /// use tokio::task;
     /// use std::io;
-    /// use ::core::panic;
+    /// use std::panic;
     ///
     /// #[tokio::main]
     /// async fn main() -> io::Result<()> {
@@ -136,7 +133,7 @@ cfg_rt! {
     /// ```no_run
     /// use tokio::task;
     /// use tokio::time;
-    /// use core::time::Duration;
+    /// use std::time::Duration;
     ///
     /// # #[tokio::main(flavor = "current_thread")]
     /// # async fn main() {

@@ -1,16 +1,13 @@
 #![cfg_attr(not(feature = "net"), allow(dead_code))]
 
-#[allow(unused_imports)]
-use crate::runtime::prelude::*;
-
 use crate::io::interest::Interest;
 use crate::runtime::io::{Direction, Handle, ReadyEvent, ScheduledIo};
 use crate::runtime::scheduler;
 
 use mio::event::Source;
-use crate::io;
-use alloc::sync::Arc;
-use core::task::{ready, Context, Poll};
+use std::io;
+use std::sync::Arc;
+use std::task::{ready, Context, Poll};
 
 cfg_io_driver! {
     /// Associates an I/O resource with the reactor instance that drives it.
@@ -168,20 +165,6 @@ impl Registration {
         direction: Direction,
         mut f: impl FnMut() -> io::Result<R>,
     ) -> Poll<io::Result<R>> {
-        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-        {
-            match f() {
-                Ok(ret) => return Poll::Ready(Ok(ret)),
-                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                    crate::platform::poll_once();
-                    cx.waker().wake_by_ref();
-                    return Poll::Pending;
-                }
-                Err(e) => return Poll::Ready(Err(e)),
-            }
-        }
-
-        #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
         loop {
             let ev = ready!(self.poll_ready(cx, direction))?;
 
@@ -202,14 +185,6 @@ impl Registration {
         interest: Interest,
         f: impl FnOnce() -> io::Result<R>,
     ) -> io::Result<R> {
-        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-        {
-            let _ = interest;
-            return f();
-        }
-
-        #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-        {
         let ev = self.shared.ready_event(interest);
 
         // Don't attempt the operation if the resource is not ready.
@@ -223,7 +198,6 @@ impl Registration {
                 Err(io::ErrorKind::WouldBlock.into())
             }
             res => res,
-        }
         }
     }
 
@@ -242,25 +216,10 @@ impl Registration {
         interest: Interest,
         mut f: impl FnMut() -> io::Result<R>,
     ) -> io::Result<R> {
-        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-        {
-            let _ = interest;
-            loop {
-                match f() {
-                    Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                        crate::platform::poll_once();
-                        crate::task::yield_now().await;
-                    }
-                    x => return x,
-                }
-            }
-        }
-
-        #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
         loop {
             let event = self.readiness(interest).await?;
 
-            let coop = core::future::poll_fn(crate::task::coop::poll_proceed).await;
+            let coop = std::future::poll_fn(crate::task::coop::poll_proceed).await;
 
             match f() {
                 Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {

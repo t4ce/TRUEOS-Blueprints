@@ -1,12 +1,11 @@
 use crate::io::util::DEFAULT_BUF_SIZE;
 use crate::io::{AsyncBufRead, AsyncRead, AsyncSeek, AsyncWrite, ReadBuf};
-use crate::runtime::prelude::*;
 
 use pin_project_lite::pin_project;
-use crate::io::{self, IoSlice, SeekFrom};
-use core::pin::Pin;
-use core::task::{ready, Context, Poll};
-use core::{cmp, fmt, mem};
+use std::io::{self, IoSlice, SeekFrom};
+use std::pin::Pin;
+use std::task::{ready, Context, Poll};
+use std::{cmp, fmt, mem};
 
 pin_project! {
     /// The `BufReader` struct adds buffering to any reader.
@@ -113,7 +112,7 @@ impl<R: AsyncRead> AsyncRead for BufReader<R> {
             return Poll::Ready(res);
         }
         let rem = ready!(self.as_mut().poll_fill_buf(cx))?;
-        let amt = core::cmp::min(rem.len(), buf.remaining());
+        let amt = std::cmp::min(rem.len(), buf.remaining());
         buf.put_slice(&rem[..amt]);
         self.consume(amt);
         Poll::Ready(Ok(()))
@@ -298,5 +297,15 @@ impl<R: fmt::Debug> fmt::Debug for BufReader<R> {
                 &format_args!("{}/{}", self.cap - self.pos, self.buf.len()),
             )
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn assert_unpin() {
+        crate::is_unpin::<BufReader<()>>();
     }
 }

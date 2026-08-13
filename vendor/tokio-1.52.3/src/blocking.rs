@@ -10,17 +10,17 @@ cfg_rt! {
 }
 
 cfg_not_rt! {
-    use ::core::fmt;
-    use core::future::Future;
-    use core::pin::Pin;
-    use core::task::{Context, Poll};
+    use std::fmt;
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::task::{Context, Poll};
 
     pub(crate) fn spawn_blocking<F, R>(_f: F) -> JoinHandle<R>
     where
         F: FnOnce() -> R + Send + 'static,
         R: Send + 'static,
     {
-        assert_send_sync::<JoinHandle<core::cell::Cell<()>>>();
+        assert_send_sync::<JoinHandle<std::cell::Cell<()>>>();
         panic!("requires the `rt` Tokio feature flag")
     }
 
@@ -35,14 +35,14 @@ cfg_not_rt! {
     }
 
     pub(crate) struct JoinHandle<R> {
-        _p: core::marker::PhantomData<R>,
+        _p: std::marker::PhantomData<R>,
     }
 
     unsafe impl<T: Send> Send for JoinHandle<T> {}
     unsafe impl<T: Send> Sync for JoinHandle<T> {}
 
     impl<R> Future for JoinHandle<R> {
-        type Output = Result<R, crate::io::Error>;
+        type Output = Result<R, std::io::Error>;
 
         fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
             unreachable!()

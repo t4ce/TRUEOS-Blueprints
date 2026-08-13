@@ -87,7 +87,7 @@
 //! use tokio::sync::watch;
 //! use tokio::time::{Duration, sleep};
 //!
-//! # async fn dox() -> Result<(), Box<dyn core::error::Error>> {
+//! # async fn dox() -> Result<(), Box<dyn std::error::Error>> {
 //! let (tx, mut rx) = watch::channel("hello");
 //!
 //! tokio::spawn(async move {
@@ -168,10 +168,10 @@ use crate::task::coop::cooperative;
 use crate::loom::sync::atomic::AtomicUsize;
 use crate::loom::sync::atomic::Ordering::{AcqRel, Relaxed};
 use crate::loom::sync::{Arc, RwLock, RwLockReadGuard};
-use crate::panic;
-use ::core::fmt;
-use core::mem;
-use core::ops;
+use std::fmt;
+use std::mem;
+use std::ops;
+use std::panic;
 
 /// Receives values from the associated [`Sender`](struct@Sender).
 ///
@@ -331,8 +331,8 @@ impl<T: fmt::Debug> fmt::Debug for Shared<T> {
 pub mod error {
     //! Watch error types.
 
-    use core::error::Error;
-    use ::core::fmt;
+    use std::error::Error;
+    use std::fmt;
 
     /// Error produced when sending a value fails.
     #[derive(PartialEq, Eq, Clone, Copy)]
@@ -386,7 +386,7 @@ mod big_notify {
 
     pub(super) struct BigNotify {
         #[cfg(not(all(not(loom), feature = "sync", any(feature = "rt", feature = "macros"))))]
-        next: core::sync::atomic::AtomicUsize,
+        next: std::sync::atomic::AtomicUsize,
         inner: [Notify; 8],
     }
 
@@ -398,7 +398,7 @@ mod big_notify {
                     feature = "sync",
                     any(feature = "rt", feature = "macros")
                 )))]
-                next: core::sync::atomic::AtomicUsize::new(0),
+                next: std::sync::atomic::AtomicUsize::new(0),
                 inner: Default::default(),
             }
         }
@@ -412,10 +412,7 @@ mod big_notify {
         /// This function implements the case where randomness is not available.
         #[cfg(not(all(not(loom), feature = "sync", any(feature = "rt", feature = "macros"))))]
         pub(super) fn notified(&self) -> Notified<'_> {
-            let i = self
-                .next
-                .fetch_add(1, core::sync::atomic::Ordering::Relaxed)
-                % 8;
+            let i = self.next.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 8;
             self.inner[i].notified()
         }
 
@@ -463,7 +460,7 @@ mod state {
         /// Decrements the version.
         pub(super) fn decrement(&mut self) {
             // Using a wrapping decrement here is required to ensure that the
-            // operation is consistent with `core::sync::atomic::AtomicUsize::fetch_add()`
+            // operation is consistent with `std::sync::atomic::AtomicUsize::fetch_add()`
             // which wraps on overflow.
             self.0 = self.0.wrapping_sub(STEP_SIZE);
         }
@@ -532,7 +529,7 @@ mod state {
 /// use tokio::sync::watch;
 /// use tokio::time::{Duration, sleep};
 ///
-/// # async fn dox() -> Result<(), Box<dyn core::error::Error>> {
+/// # async fn dox() -> Result<(), Box<dyn std::error::Error>> {
 /// let (tx, mut rx) = watch::channel("hello");
 ///
 /// tokio::spawn(async move {
@@ -1474,5 +1471,86 @@ impl<T> ops::Deref for Ref<'_, T> {
 
     fn deref(&self) -> &T {
         self.inner.deref()
+    }
+}
+
+#[cfg(all(test, loom))]
+mod tests {
+    use futures::future::FutureExt;
+    use loom::thread;
+
+    // test for https://github.com/tokio-rs/tokio/issues/3168
+    #[test]
+    fn watch_spurious_wakeup() {
+        loom::model(|| {
+            let (send, mut recv) = crate::sync::watch::channel(0i32);
+
+            send.send(1).unwrap();
+
+            let send_thread = thread::spawn(move || {
+                send.send(2).unwrap();
+                send
+            });
+
+            recv.changed().now_or_never();
+
+            let send = send_thread.join().unwrap();
+            let recv_thread = thread::spawn(move || {
+                recv.changed().now_or_never();
+                recv.changed().now_or_never();
+                recv
+            });
+
+            send.send(3).unwrap();
+
+            let mut recv = recv_thread.join().unwrap();
+            let send_thread = thread::spawn(move || {
+                send.send(2).unwrap();
+            });
+
+            recv.changed().now_or_never();
+
+            send_thread.join().unwrap();
+        });
+    }
+
+    #[test]
+    fn watch_borrow() {
+        loom::model(|| {
+            let (send, mut recv) = crate::sync::watch::channel(0i32);
+
+            assert!(send.borrow().eq(&0));
+            assert!(recv.borrow().eq(&0));
+
+            send.send(1).unwrap();
+            assert!(send.borrow().eq(&1));
+
+            let send_thread = thread::spawn(move || {
+                send.send(2).unwrap();
+                send
+            });
+
+            recv.changed().now_or_never();
+
+            let send = send_thread.join().unwrap();
+            let recv_thread = thread::spawn(move || {
+                recv.changed().now_or_never();
+                recv.changed().now_or_never();
+                recv
+            });
+
+            send.send(3).unwrap();
+
+            let recv = recv_thread.join().unwrap();
+            assert!(recv.borrow().eq(&3));
+            assert!(send.borrow().eq(&3));
+
+            send.send(2).unwrap();
+
+            thread::spawn(move || {
+                assert!(recv.borrow().eq(&2));
+            });
+            assert!(send.borrow().eq(&2));
+        });
     }
 }

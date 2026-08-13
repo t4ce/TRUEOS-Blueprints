@@ -1,12 +1,12 @@
 use crate::net::{TcpListener, TcpStream};
 
-use ::core::fmt;
-use crate::io;
+use std::fmt;
+use std::io;
 use std::net::SocketAddr;
 
 #[cfg(not(windows))]
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, IntoRawFd, RawFd};
-use core::time::Duration;
+use std::time::Duration;
 
 cfg_windows! {
     use crate::os::windows::io::{AsRawSocket, FromRawSocket, IntoRawSocket, RawSocket, AsSocket, BorrowedSocket};
@@ -482,7 +482,7 @@ impl TcpSocket {
     /// ```no_run
     /// use tokio::net::TcpSocket;
     ///
-    /// # async fn dox() -> Result<(), Box<dyn core::error::Error>> {
+    /// # async fn dox() -> Result<(), Box<dyn std::error::Error>> {
     /// let socket = TcpSocket::new_v4()?;
     ///
     /// socket.set_nodelay(true)?;
@@ -504,7 +504,7 @@ impl TcpSocket {
     /// ```no_run
     /// use tokio::net::TcpSocket;
     ///
-    /// # async fn dox() -> Result<(), Box<dyn core::error::Error>> {
+    /// # async fn dox() -> Result<(), Box<dyn std::error::Error>> {
     /// let socket = TcpSocket::new_v4()?;
     ///
     /// println!("{:?}", socket.nodelay()?);
@@ -835,15 +835,6 @@ impl TcpSocket {
     /// }
     /// ```
     pub async fn connect(self, addr: SocketAddr) -> io::Result<TcpStream> {
-        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-        {
-            let _ = self;
-            let mio = mio::net::TcpStream::connect(addr)?;
-            return TcpStream::connect_mio(mio).await;
-        }
-
-        #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-        {
         if let Err(err) = self.inner.connect(&addr.into()) {
             #[cfg(not(windows))]
             if err.raw_os_error() != Some(libc::EINPROGRESS) {
@@ -871,7 +862,6 @@ impl TcpSocket {
         };
 
         TcpStream::connect_mio(mio).await
-        }
     }
 
     /// Converts the socket into a `TcpListener`.

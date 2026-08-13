@@ -14,7 +14,7 @@
 //! specified node is actually contained by the list.
 
 use core::cell::UnsafeCell;
-use ::core::fmt;
+use core::fmt;
 use core::marker::{PhantomData, PhantomPinned};
 use core::mem::ManuallyDrop;
 use core::ptr::{self, NonNull};
@@ -470,5 +470,339 @@ impl<T> fmt::Debug for Pointers<T> {
             .field("prev", &prev)
             .field("next", &next)
             .finish()
+    }
+}
+
+#[cfg(any(test, fuzzing))]
+#[cfg(not(loom))]
+pub(crate) mod tests {
+    use super::*;
+
+    use std::pin::Pin;
+
+    #[derive(Debug)]
+    #[repr(C)]
+    struct Entry {
+        pointers: Pointers<Entry>,
+        val: i32,
+    }
+
+    unsafe impl<'a> Link for &'a Entry {
+        type Handle = Pin<&'a Entry>;
+        type Target = Entry;
+
+        fn as_raw(handle: &Pin<&'_ Entry>) -> NonNull<Entry> {
+            NonNull::from(handle.get_ref())
+        }
+
+        unsafe fn from_raw(ptr: NonNull<Entry>) -> Pin<&'a Entry> {
+            Pin::new_unchecked(&*ptr.as_ptr())
+        }
+
+        unsafe fn pointers(target: NonNull<Entry>) -> NonNull<Pointers<Entry>> {
+            target.cast()
+        }
+    }
+
+    fn entry(val: i32) -> Pin<Box<Entry>> {
+        Box::pin(Entry {
+            pointers: Pointers::new(),
+            val,
+        })
+    }
+
+    fn ptr(r: &Pin<Box<Entry>>) -> NonNull<Entry> {
+        r.as_ref().get_ref().into()
+    }
+
+    fn collect_list(list: &mut LinkedList<&'_ Entry, <&'_ Entry as Link>::Target>) -> Vec<i32> {
+        let mut ret = vec![];
+
+        while let Some(entry) = list.pop_back() {
+            ret.push(entry.val);
+        }
+
+        ret
+    }
+
+    fn push_all<'a>(
+        list: &mut LinkedList<&'a Entry, <&'_ Entry as Link>::Target>,
+        entries: &[Pin<&'a Entry>],
+    ) {
+        for entry in entries.iter() {
+            list.push_front(*entry);
+        }
+    }
+
+    #[cfg(test)]
+    macro_rules! assert_clean {
+        ($e:ident) => {{
+            assert!($e.pointers.get_next().is_none());
+            assert!($e.pointers.get_prev().is_none());
+        }};
+    }
+
+    #[cfg(test)]
+    macro_rules! assert_ptr_eq {
+        ($a:expr, $b:expr) => {{
+            // Deal with mapping a Pin<&mut T> -> Option<NonNull<T>>
+            assert_eq!(Some($a.as_ref().get_ref().into()), $b)
+        }};
+    }
+
+    #[test]
+    fn const_new() {
+        const _: LinkedList<&Entry, <&Entry as Link>::Target> = LinkedList::new();
+    }
+
+    #[test]
+    fn push_and_drain() {
+        let a = entry(5);
+        let b = entry(7);
+        let c = entry(31);
+
+        let mut list = LinkedList::new();
+        assert!(list.is_empty());
+
+        list.push_front(a.as_ref());
+        assert!(!list.is_empty());
+        list.push_front(b.as_ref());
+        list.push_front(c.as_ref());
+
+        let items: Vec<i32> = collect_list(&mut list);
+        assert_eq!([5, 7, 31].to_vec(), items);
+
+        assert!(list.is_empty());
+    }
+
+    #[test]
+    fn push_pop_push_pop() {
+        let a = entry(5);
+        let b = entry(7);
+
+        let mut list = LinkedList::<&Entry, <&Entry as Link>::Target>::new();
+
+        list.push_front(a.as_ref());
+
+        let entry = list.pop_back().unwrap();
+        assert_eq!(5, entry.val);
+        assert!(list.is_empty());
+
+        list.push_front(b.as_ref());
+
+        let entry = list.pop_back().unwrap();
+        assert_eq!(7, entry.val);
+
+        assert!(list.is_empty());
+        assert!(list.pop_back().is_none());
+    }
+
+    #[test]
+    fn remove_by_address() {
+        let a = entry(5);
+        let b = entry(7);
+        let c = entry(31);
+
+        unsafe {
+            // Remove first
+            let mut list = LinkedList::new();
+
+            push_all(&mut list, &[c.as_ref(), b.as_ref(), a.as_ref()]);
+            assert!(list.remove(ptr(&a)).is_some());
+            assert_clean!(a);
+            // `a` should be no longer there and can't be removed twice
+            assert!(list.remove(ptr(&a)).is_none());
+            assert!(!list.is_empty());
+
+            assert!(list.remove(ptr(&b)).is_some());
+            assert_clean!(b);
+            // `b` should be no longer there and can't be removed twice
+            assert!(list.remove(ptr(&b)).is_none());
+            assert!(!list.is_empty());
+
+            assert!(list.remove(ptr(&c)).is_some());
+            assert_clean!(c);
+            // `b` should be no longer there and can't be removed twice
+            assert!(list.remove(ptr(&c)).is_none());
+            assert!(list.is_empty());
+        }
+
+        unsafe {
+            // Remove middle
+            let mut list = LinkedList::new();
+
+            push_all(&mut list, &[c.as_ref(), b.as_ref(), a.as_ref()]);
+
+            assert!(list.remove(ptr(&a)).is_some());
+            assert_clean!(a);
+
+            assert_ptr_eq!(b, list.head);
+            assert_ptr_eq!(c, b.pointers.get_next());
+            assert_ptr_eq!(b, c.pointers.get_prev());
+
+            let items = collect_list(&mut list);
+            assert_eq!([31, 7].to_vec(), items);
+        }
+
+        unsafe {
+            // Remove middle
+            let mut list = LinkedList::new();
+
+            push_all(&mut list, &[c.as_ref(), b.as_ref(), a.as_ref()]);
+
+            assert!(list.remove(ptr(&b)).is_some());
+            assert_clean!(b);
+
+            assert_ptr_eq!(c, a.pointers.get_next());
+            assert_ptr_eq!(a, c.pointers.get_prev());
+
+            let items = collect_list(&mut list);
+            assert_eq!([31, 5].to_vec(), items);
+        }
+
+        unsafe {
+            // Remove last
+            // Remove middle
+            let mut list = LinkedList::new();
+
+            push_all(&mut list, &[c.as_ref(), b.as_ref(), a.as_ref()]);
+
+            assert!(list.remove(ptr(&c)).is_some());
+            assert_clean!(c);
+
+            assert!(b.pointers.get_next().is_none());
+            assert_ptr_eq!(b, list.tail);
+
+            let items = collect_list(&mut list);
+            assert_eq!([7, 5].to_vec(), items);
+        }
+
+        unsafe {
+            // Remove first of two
+            let mut list = LinkedList::new();
+
+            push_all(&mut list, &[b.as_ref(), a.as_ref()]);
+
+            assert!(list.remove(ptr(&a)).is_some());
+
+            assert_clean!(a);
+
+            // a should be no longer there and can't be removed twice
+            assert!(list.remove(ptr(&a)).is_none());
+
+            assert_ptr_eq!(b, list.head);
+            assert_ptr_eq!(b, list.tail);
+
+            assert!(b.pointers.get_next().is_none());
+            assert!(b.pointers.get_prev().is_none());
+
+            let items = collect_list(&mut list);
+            assert_eq!([7].to_vec(), items);
+        }
+
+        unsafe {
+            // Remove last of two
+            let mut list = LinkedList::new();
+
+            push_all(&mut list, &[b.as_ref(), a.as_ref()]);
+
+            assert!(list.remove(ptr(&b)).is_some());
+
+            assert_clean!(b);
+
+            assert_ptr_eq!(a, list.head);
+            assert_ptr_eq!(a, list.tail);
+
+            assert!(a.pointers.get_next().is_none());
+            assert!(a.pointers.get_prev().is_none());
+
+            let items = collect_list(&mut list);
+            assert_eq!([5].to_vec(), items);
+        }
+
+        unsafe {
+            // Remove last item
+            let mut list = LinkedList::new();
+
+            push_all(&mut list, &[a.as_ref()]);
+
+            assert!(list.remove(ptr(&a)).is_some());
+            assert_clean!(a);
+
+            assert!(list.head.is_none());
+            assert!(list.tail.is_none());
+            let items = collect_list(&mut list);
+            assert!(items.is_empty());
+        }
+
+        unsafe {
+            // Remove missing
+            let mut list = LinkedList::<&Entry, <&Entry as Link>::Target>::new();
+
+            list.push_front(b.as_ref());
+            list.push_front(a.as_ref());
+
+            assert!(list.remove(ptr(&c)).is_none());
+        }
+    }
+
+    /// This is a fuzz test. You run it by entering `cargo fuzz run fuzz_linked_list` in CLI in `/tokio/` module.
+    #[cfg(fuzzing)]
+    pub fn fuzz_linked_list(ops: &[u8]) {
+        enum Op {
+            Push,
+            Pop,
+            Remove(usize),
+        }
+        use std::collections::VecDeque;
+
+        let ops = ops
+            .iter()
+            .map(|i| match i % 3u8 {
+                0 => Op::Push,
+                1 => Op::Pop,
+                2 => Op::Remove((i / 3u8) as usize),
+                _ => unreachable!(),
+            })
+            .collect::<Vec<_>>();
+
+        let mut ll = LinkedList::<&Entry, <&Entry as Link>::Target>::new();
+        let mut reference = VecDeque::new();
+
+        let entries: Vec<_> = (0..ops.len()).map(|i| entry(i as i32)).collect();
+
+        for (i, op) in ops.iter().enumerate() {
+            match op {
+                Op::Push => {
+                    reference.push_front(i as i32);
+                    assert_eq!(entries[i].val, i as i32);
+
+                    ll.push_front(entries[i].as_ref());
+                }
+                Op::Pop => {
+                    if reference.is_empty() {
+                        assert!(ll.is_empty());
+                        continue;
+                    }
+
+                    let v = reference.pop_back();
+                    assert_eq!(v, ll.pop_back().map(|v| v.val));
+                }
+                Op::Remove(n) => {
+                    if reference.is_empty() {
+                        assert!(ll.is_empty());
+                        continue;
+                    }
+
+                    let idx = n % reference.len();
+                    let expect = reference.remove(idx).unwrap();
+
+                    unsafe {
+                        let entry = ll.remove(ptr(&entries[expect as usize])).unwrap();
+                        assert_eq!(expect, entry.val);
+                    }
+                }
+            }
+        }
     }
 }

@@ -1,8 +1,7 @@
 use std::os::fd::{AsRawFd, OwnedFd, RawFd};
 use std::os::unix::ffi::OsStrExt;
 use std::sync::Arc;
-use std::{ffi::CString, io};
-use crate::path::Path;
+use std::{ffi::CString, io, path::Path};
 
 pub(crate) type ArcFd = Arc<dyn AsRawFd + Send + Sync + 'static>;
 

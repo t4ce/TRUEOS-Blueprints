@@ -1,11 +1,11 @@
 //! Module defining an Either type.
-#![allow(missing_docs)]
-use core::{
+use std::{
     future::Future,
+    io::SeekFrom,
     pin::Pin,
     task::{Context, Poll},
 };
-use tokio::io::{AsyncBufRead, AsyncRead, AsyncSeek, AsyncWrite, ReadBuf, Result, SeekFrom};
+use tokio::io::{AsyncBufRead, AsyncRead, AsyncSeek, AsyncWrite, ReadBuf, Result};
 
 /// Combines two different futures, streams, or sinks having the same associated types into a single type.
 ///
@@ -154,8 +154,8 @@ where
     fn poll_write_vectored(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-        bufs: &[tokio::io::IoSlice<'_>],
-    ) -> Poll<core::result::Result<usize, tokio::io::Error>> {
+        bufs: &[std::io::IoSlice<'_>],
+    ) -> Poll<std::result::Result<usize, std::io::Error>> {
         delegate_call!(self.poll_write_vectored(cx, bufs))
     }
 
@@ -189,25 +189,48 @@ where
     fn poll_ready(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-    ) -> Poll<core::result::Result<(), Self::Error>> {
+    ) -> Poll<std::result::Result<(), Self::Error>> {
         delegate_call!(self.poll_ready(cx))
     }
 
-    fn start_send(self: Pin<&mut Self>, item: Item) -> core::result::Result<(), Self::Error> {
+    fn start_send(self: Pin<&mut Self>, item: Item) -> std::result::Result<(), Self::Error> {
         delegate_call!(self.start_send(item))
     }
 
     fn poll_flush(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-    ) -> Poll<core::result::Result<(), Self::Error>> {
+    ) -> Poll<std::result::Result<(), Self::Error>> {
         delegate_call!(self.poll_flush(cx))
     }
 
     fn poll_close(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-    ) -> Poll<core::result::Result<(), Self::Error>> {
+    ) -> Poll<std::result::Result<(), Self::Error>> {
         delegate_call!(self.poll_close(cx))
+    }
+}
+
+#[cfg(all(test, not(loom)))]
+mod tests {
+    use super::*;
+    use tokio::io::{repeat, AsyncReadExt, Repeat};
+    use tokio_stream::{once, Once, StreamExt};
+
+    #[tokio::test]
+    async fn either_is_stream() {
+        let mut either: Either<Once<u32>, Once<u32>> = Either::Left(once(1));
+
+        assert_eq!(Some(1u32), either.next().await);
+    }
+
+    #[tokio::test]
+    async fn either_is_async_read() {
+        let mut buffer = [0; 3];
+        let mut either: Either<Repeat, Repeat> = Either::Right(repeat(0b101));
+
+        either.read_exact(&mut buffer).await.unwrap();
+        assert_eq!(buffer, [0b101, 0b101, 0b101]);
     }
 }

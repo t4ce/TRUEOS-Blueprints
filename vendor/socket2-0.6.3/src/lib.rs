@@ -24,12 +24,12 @@
 //! this crate can be a little wordy, but it should give you maximal flexibility
 //! over configuration of sockets.
 //!
-//! [`EINTR`]: crate::io::ErrorKind::Interrupted
+//! [`EINTR`]: std::io::ErrorKind::Interrupted
 //!
 //! # Examples
 //!
 //! ```no_run
-//! # fn main() -> crate::io::Result<()> {
+//! # fn main() -> std::io::Result<()> {
 //! use std::net::{SocketAddr, TcpListener};
 //! use socket2::{Socket, Domain, Type};
 //!
@@ -53,186 +53,24 @@
 //! that are not available on all OSs.
 
 #![deny(missing_docs, missing_debug_implementations, rust_2018_idioms)]
-#![cfg_attr(any(target_os = "trueos", target_os = "zkvm"), no_std)]
 // Automatically generate required OS/features for docs.rs.
 #![cfg_attr(docsrs, feature(doc_cfg))]
 // Disallow warnings when running tests.
 #![cfg_attr(test, deny(warnings))]
 // Disallow warnings in examples.
 #![doc(test(attr(deny(warnings))))]
-#![allow(missing_docs)]
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-extern crate alloc;
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-extern crate self as std;
 
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-pub mod collections {
-    //! TRUEOS no_std compatibility re-exports for existing socket2 paths.
-    pub use alloc::collections::*;
-}
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-pub mod ffi {
-    //! TRUEOS no_std compatibility re-exports for existing socket2 paths.
-    pub use core::ffi::*;
-}
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-pub mod fmt {
-    //! TRUEOS no_std compatibility re-exports for existing socket2 paths.
-    pub use ::core::fmt::*;
-}
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-pub mod hash {
-    //! TRUEOS no_std compatibility re-exports for existing socket2 paths.
-    pub use core::hash::*;
-}
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-pub mod io {
-    //! TRUEOS no_std compatibility re-exports for existing socket2 paths.
-    pub use trueos_io::*;
-}
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-pub mod marker {
-    //! TRUEOS no_std compatibility re-exports for existing socket2 paths.
-    pub use core::marker::*;
-}
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-pub mod mem {
-    //! TRUEOS no_std compatibility re-exports for existing socket2 paths.
-    pub use core::mem::*;
-}
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-pub mod net {
-    //! TRUEOS no_std compatibility re-exports for existing socket2 paths.
-    pub use core::net::*;
-
-    /// no_std equivalent of std::net::Shutdown for TRUEOS sockets.
-    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-    pub enum Shutdown {
-        /// Shut down reads.
-        Read,
-        /// Shut down writes.
-        Write,
-        /// Shut down reads and writes.
-        Both,
-    }
-
-    /// Placeholder for std conversion APIs, unsupported on TRUEOS.
-    #[derive(Debug)]
-    pub struct TcpStream;
-    /// Placeholder for std conversion APIs, unsupported on TRUEOS.
-    #[derive(Debug)]
-    pub struct TcpListener;
-    /// Placeholder for std conversion APIs, unsupported on TRUEOS.
-    #[derive(Debug)]
-    pub struct UdpSocket;
-}
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-pub mod ops {
-    //! TRUEOS no_std compatibility re-exports for existing socket2 paths.
-    pub use core::ops::*;
-}
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-pub mod path {
-    //! TRUEOS no_std compatibility path vocabulary.
-    use alloc::string::String;
-    use core::ops::Deref;
-
-    /// Borrowed platform path.
-    #[derive(Debug)]
-    #[repr(transparent)]
-    pub struct Path {
-        inner: str,
-    }
-
-    /// Owned platform path.
-    #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-    pub struct PathBuf {
-        inner: String,
-    }
-
-    impl Path {
-        /// Build a borrowed path from a string-like value.
-        pub fn new<S: AsRef<str> + ?Sized>(path: &S) -> &Self {
-            unsafe { &*(path.as_ref() as *const str as *const Self) }
-        }
-
-        /// Return the path as UTF-8.
-        pub fn as_str(&self) -> &str {
-            &self.inner
-        }
-
-        /// Whether the path starts at the platform root.
-        pub fn is_absolute(&self) -> bool {
-            self.as_str().starts_with('/')
-        }
-    }
-
-    impl AsRef<Path> for Path {
-        fn as_ref(&self) -> &Path {
-            self
-        }
-    }
-
-    impl AsRef<Path> for str {
-        fn as_ref(&self) -> &Path {
-            Path::new(self)
-        }
-    }
-
-    impl AsRef<Path> for String {
-        fn as_ref(&self) -> &Path {
-            Path::new(self.as_str())
-        }
-    }
-
-    impl AsRef<Path> for PathBuf {
-        fn as_ref(&self) -> &Path {
-            Path::new(self.inner.as_str())
-        }
-    }
-
-    impl Deref for PathBuf {
-        type Target = Path;
-
-        fn deref(&self) -> &Self::Target {
-            self.as_ref()
-        }
-    }
-}
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-pub mod ptr {
-    //! TRUEOS no_std compatibility re-exports for existing socket2 paths.
-    pub use core::ptr::*;
-}
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-pub mod slice {
-    //! TRUEOS no_std compatibility re-exports for existing socket2 paths.
-    pub use core::slice::*;
-}
-
+use std::fmt;
 #[cfg(not(any(target_os = "redox", target_os = "wasi")))]
-use crate::io::IoSlice;
-#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-use ::core::fmt;
+use std::io::IoSlice;
 #[cfg(not(any(target_os = "redox", target_os = "wasi")))]
-use core::marker::PhantomData;
+use std::marker::PhantomData;
 #[cfg(not(any(target_os = "redox", target_os = "wasi")))]
-use core::mem::MaybeUninit;
-use core::net::SocketAddr;
-use core::ops::{Deref, DerefMut};
-use core::time::Duration;
+use std::mem;
+use std::mem::MaybeUninit;
+use std::net::SocketAddr;
+use std::ops::{Deref, DerefMut};
+use std::time::Duration;
 
 /// Macro to implement `fmt::Debug` for a type, printing the constant names
 /// rather than a number.
@@ -251,8 +89,8 @@ macro_rules! impl_debug {
             $libc: ident :: $flag: ident
         ),+ $(,)*
     ) => {
-        impl ::core::fmt::Debug for $type {
-            fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+        impl std::fmt::Debug for $type {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 let string = match self.0 {
                     $(
                         $(#[$target])*
@@ -271,21 +109,13 @@ macro_rules! from {
     ($from: ty, $for: ty) => {
         impl From<$from> for $for {
             fn from(socket: $from) -> $for {
-                #[cfg(any(
-                    all(unix, not(any(target_os = "trueos", target_os = "zkvm"))),
-                    all(target_os = "wasi", not(target_env = "p1"))
-                ))]
+                #[cfg(any(unix, all(target_os = "wasi", not(target_env = "p1"))))]
                 unsafe {
                     <$for>::from_raw_fd(socket.into_raw_fd())
                 }
                 #[cfg(windows)]
                 unsafe {
                     <$for>::from_raw_socket(socket.into_raw_socket())
-                }
-                #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-                {
-                    let _ = socket;
-                    panic!("socket2 zkvm backend cannot convert std sockets yet")
                 }
             }
         }
@@ -347,22 +177,13 @@ mod socket;
 mod sockref;
 
 #[cfg_attr(
-    any(
-        all(unix, not(any(target_os = "trueos", target_os = "zkvm"))),
-        all(target_os = "wasi", not(target_env = "p1"))
-    ),
+    any(unix, all(target_os = "wasi", not(target_env = "p1"))),
     path = "sys/unix.rs"
 )]
-#[cfg_attr(any(target_os = "trueos", target_os = "zkvm"), path = "sys/zkvm.rs")]
 #[cfg_attr(windows, path = "sys/windows.rs")]
 mod sys;
 
-#[cfg(not(any(
-    windows,
-    unix,
-    any(target_os = "trueos", target_os = "zkvm"),
-    all(target_os = "wasi", not(target_env = "p1"))
-)))]
+#[cfg(not(any(windows, unix, all(target_os = "wasi", not(target_env = "p1")))))]
 compile_error!("Socket2 doesn't support the compile target");
 
 use sys::c_int;
@@ -571,7 +392,7 @@ impl RecvFlags {
 
 /// A version of [`IoSliceMut`] that allows the buffer to be uninitialised.
 ///
-/// [`IoSliceMut`]: crate::io::IoSliceMut
+/// [`IoSliceMut`]: std::io::IoSliceMut
 #[repr(transparent)]
 pub struct MaybeUninitSlice<'a>(sys::MaybeUninitSlice<'a>);
 
@@ -753,6 +574,7 @@ impl TcpKeepalive {
 /// This wraps `msghdr` on Unix and `WSAMSG` on Windows. Also see [`MsgHdrMut`]
 /// for the variant used by `recvmsg(2)`.
 #[cfg(not(any(target_os = "redox", target_os = "wasi")))]
+#[repr(transparent)]
 pub struct MsgHdr<'addr, 'bufs, 'control> {
     inner: sys::msghdr,
     #[allow(clippy::type_complexity)]
@@ -766,7 +588,7 @@ impl<'addr, 'bufs, 'control> MsgHdr<'addr, 'bufs, 'control> {
     pub fn new() -> MsgHdr<'addr, 'bufs, 'control> {
         // SAFETY: all zero is valid for `msghdr` and `WSAMSG`.
         MsgHdr {
-            inner: unsafe { core::mem::zeroed() },
+            inner: unsafe { mem::zeroed() },
             _lifetimes: PhantomData,
         }
     }
@@ -821,11 +643,15 @@ impl<'name, 'bufs, 'control> fmt::Debug for MsgHdr<'name, 'bufs, 'control> {
 /// This wraps `msghdr` on Unix and `WSAMSG` on Windows. Also see [`MsgHdr`] for
 /// the variant used by `sendmsg(2)`.
 #[cfg(not(any(target_os = "redox", target_os = "wasi")))]
+#[repr(transparent)]
 pub struct MsgHdrMut<'addr, 'bufs, 'control> {
     inner: sys::msghdr,
     #[allow(clippy::type_complexity)]
-    _lifetimes:
-        PhantomData<(&'addr mut SockAddr, &'bufs mut MaybeUninitSlice<'bufs>, &'control mut [u8])>,
+    _lifetimes: PhantomData<(
+        &'addr mut SockAddr,
+        &'bufs mut MaybeUninitSlice<'bufs>,
+        &'control mut [u8],
+    )>,
 }
 
 #[cfg(not(any(target_os = "redox", target_os = "wasi")))]
@@ -835,7 +661,7 @@ impl<'addr, 'bufs, 'control> MsgHdrMut<'addr, 'bufs, 'control> {
     pub fn new() -> MsgHdrMut<'addr, 'bufs, 'control> {
         // SAFETY: all zero is valid for `msghdr` and `WSAMSG`.
         MsgHdrMut {
-            inner: unsafe { core::mem::zeroed() },
+            inner: unsafe { mem::zeroed() },
             _lifetimes: PhantomData,
         }
     }

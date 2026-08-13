@@ -131,9 +131,7 @@ pub fn run(file: &[u8]) -> Result<u32, Error> {
     }
 
     bind_imports(image, data_directories)?;
-    let entry = image
-        .as_ptr()
-        .wrapping_add(entry_rva);
+    let entry = image.as_ptr().wrapping_add(entry_rva);
     if entry_rva >= size_of_image {
         return Err(Error::EntryOutsideImage);
     }
@@ -259,17 +257,23 @@ unsafe extern "win64" fn exit_process(exit_code: u32) {
 }
 
 fn read_u16(input: &[u8], offset: usize) -> Result<u16, Error> {
-    let raw: [u8; 2] = range(input, offset, 2)?.try_into().map_err(|_| Error::Truncated)?;
+    let raw: [u8; 2] = range(input, offset, 2)?
+        .try_into()
+        .map_err(|_| Error::Truncated)?;
     Ok(u16::from_le_bytes(raw))
 }
 
 fn read_u32(input: &[u8], offset: usize) -> Result<u32, Error> {
-    let raw: [u8; 4] = range(input, offset, 4)?.try_into().map_err(|_| Error::Truncated)?;
+    let raw: [u8; 4] = range(input, offset, 4)?
+        .try_into()
+        .map_err(|_| Error::Truncated)?;
     Ok(u32::from_le_bytes(raw))
 }
 
 fn read_u64(input: &[u8], offset: usize) -> Result<u64, Error> {
-    let raw: [u8; 8] = range(input, offset, 8)?.try_into().map_err(|_| Error::Truncated)?;
+    let raw: [u8; 8] = range(input, offset, 8)?
+        .try_into()
+        .map_err(|_| Error::Truncated)?;
     Ok(u64::from_le_bytes(raw))
 }
 
@@ -289,7 +293,10 @@ fn range(input: &[u8], offset: usize, len: usize) -> Result<&[u8], Error> {
 
 fn c_string(bytes: &[u8], offset: usize) -> Result<&[u8], Error> {
     let tail = bytes.get(offset..).ok_or(Error::Truncated)?;
-    let end = tail.iter().position(|byte| *byte == 0).ok_or(Error::Truncated)?;
+    let end = tail
+        .iter()
+        .position(|byte| *byte == 0)
+        .ok_or(Error::Truncated)?;
     Ok(&tail[..end])
 }
 

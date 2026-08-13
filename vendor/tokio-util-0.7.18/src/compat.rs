@@ -42,7 +42,7 @@
 //! use futures::io::AsyncReadExt;
 //!
 //! #[tokio::main]
-//! async fn main() -> tokio::io::Result<()> {
+//! async fn main() -> std::io::Result<()> {
 //!     let listener = TcpListener::bind("127.0.0.1:8081").await?;
 //!
 //!     tokio::spawn(async {
@@ -112,9 +112,9 @@
 //! [`compat()`]: TokioAsyncReadCompatExt::compat
 
 use pin_project_lite::pin_project;
-use tokio::io;
-use core::pin::Pin;
-use core::task::{ready, Context, Poll};
+use std::io;
+use std::pin::Pin;
+use std::task::{ready, Context, Poll};
 
 pin_project! {
     /// A compatibility layer that allows conversion between the

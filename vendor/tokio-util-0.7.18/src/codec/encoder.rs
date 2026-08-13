@@ -1,5 +1,5 @@
 use bytes::BytesMut;
-use tokio::io;
+use std::io;
 
 /// Trait of helper objects to write out messages as bytes, for use with
 /// [`FramedWrite`].

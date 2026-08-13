@@ -1,13 +1,8 @@
 #![allow(clippy::trivially_copy_pass_by_ref)]
 
-use core::option::Option;
-use core::time::Duration;
-use core::{derive, fmt, ops};
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-pub(crate) type StdInstant = Duration;
-#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-pub(crate) type StdInstant = std::time::Instant;
+use std::fmt;
+use std::ops;
+use std::time::Duration;
 
 /// A measurement of a monotonically nondecreasing clock.
 /// Opaque and useful only with `Duration`.
@@ -37,7 +32,7 @@ pub(crate) type StdInstant = std::time::Instant;
 /// take advantage of `time::pause()` and `time::advance()`.
 #[derive(Clone, Copy, Eq, PartialEq, PartialOrd, Ord, Hash)]
 pub struct Instant {
-    std: StdInstant,
+    std: std::time::Instant,
 }
 
 impl Instant {
@@ -54,8 +49,8 @@ impl Instant {
         variant::now()
     }
 
-    /// Create a `tokio::time::Instant` from a `hostlib::time::Instant`.
-    pub fn from_std(std: StdInstant) -> Instant {
+    /// Create a `tokio::time::Instant` from a `std::time::Instant`.
+    pub fn from_std(std: std::time::Instant) -> Instant {
         Instant { std }
     }
 
@@ -67,23 +62,15 @@ impl Instant {
         Self::now() + Duration::from_secs(86400 * 365 * 30)
     }
 
-    /// Convert the value into a `hostlib::time::Instant`.
-    pub fn into_std(self) -> StdInstant {
+    /// Convert the value into a `std::time::Instant`.
+    pub fn into_std(self) -> std::time::Instant {
         self.std
     }
 
     /// Returns the amount of time elapsed from another instant to this one, or
     /// zero duration if that instant is later than this one.
     pub fn duration_since(&self, earlier: Instant) -> Duration {
-        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-        {
-            return self.std.saturating_sub(earlier.std);
-        }
-
-        #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-        {
-            self.std.saturating_duration_since(earlier.std)
-        }
+        self.std.saturating_duration_since(earlier.std)
     }
 
     /// Returns the amount of time elapsed from another instant to this one, or
@@ -104,15 +91,7 @@ impl Instant {
     /// # }
     /// ```
     pub fn checked_duration_since(&self, earlier: Instant) -> Option<Duration> {
-        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-        {
-            return self.std.checked_sub(earlier.std);
-        }
-
-        #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-        {
-            self.std.checked_duration_since(earlier.std)
-        }
+        self.std.checked_duration_since(earlier.std)
     }
 
     /// Returns the amount of time elapsed from another instant to this one, or
@@ -133,15 +112,7 @@ impl Instant {
     /// }
     /// ```
     pub fn saturating_duration_since(&self, earlier: Instant) -> Duration {
-        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-        {
-            return self.std.saturating_sub(earlier.std);
-        }
-
-        #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-        {
-            self.std.saturating_duration_since(earlier.std)
-        }
+        self.std.saturating_duration_since(earlier.std)
     }
 
     /// Returns the amount of time elapsed since this instant was created,
@@ -179,14 +150,14 @@ impl Instant {
     }
 }
 
-impl From<StdInstant> for Instant {
-    fn from(time: StdInstant) -> Instant {
+impl From<std::time::Instant> for Instant {
+    fn from(time: std::time::Instant) -> Instant {
         Instant::from_std(time)
     }
 }
 
-impl From<Instant> for StdInstant {
-    fn from(time: Instant) -> StdInstant {
+impl From<Instant> for std::time::Instant {
+    fn from(time: Instant) -> std::time::Instant {
         time.into_std()
     }
 }
@@ -209,15 +180,7 @@ impl ops::Sub for Instant {
     type Output = Duration;
 
     fn sub(self, rhs: Instant) -> Duration {
-        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-        {
-            return self.std.saturating_sub(rhs.std);
-        }
-
-        #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-        {
-            self.std.saturating_duration_since(rhs.std)
-        }
+        self.std.saturating_duration_since(rhs.std)
     }
 }
 
@@ -225,7 +188,7 @@ impl ops::Sub<Duration> for Instant {
     type Output = Instant;
 
     fn sub(self, rhs: Duration) -> Instant {
-        Instant::from_std(self.std - rhs)
+        Instant::from_std(std::time::Instant::sub(self.std, rhs))
     }
 }
 
@@ -246,15 +209,7 @@ mod variant {
     use super::Instant;
 
     pub(super) fn now() -> Instant {
-        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-        {
-            return Instant::from_std(crate::time::zkvm::platform_instant_now());
-        }
-
-        #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-        {
-            Instant::from_std(std::time::Instant::now())
-        }
+        Instant::from_std(std::time::Instant::now())
     }
 }
 

@@ -1,24 +1,21 @@
 #![cfg_attr(loom, allow(unused_imports))]
 
-#[allow(unused_imports)]
-use crate::runtime::prelude::*;
-
 use crate::runtime::handle::Handle;
 use crate::runtime::{
-    Callback, HistogramBuilder, Runtime, TaskCallback, TimerFlavor, blocking, driver,
+    blocking, driver, Callback, HistogramBuilder, Runtime, TaskCallback, TimerFlavor,
 };
 #[cfg(tokio_unstable)]
-use crate::runtime::{TaskMeta, metrics::HistogramConfiguration};
+use crate::runtime::{metrics::HistogramConfiguration, TaskMeta};
 
 use crate::runtime::{LocalOptions, LocalRuntime};
 use crate::util::rand::{RngSeed, RngSeedGenerator};
 
 use crate::runtime::blocking::BlockingPool;
 use crate::runtime::scheduler::CurrentThread;
-use ::core::fmt;
-use crate::io;
+use std::fmt;
+use std::io;
 use std::thread::ThreadId;
-use core::time::Duration;
+use std::time::Duration;
 
 /// Builds Tokio Runtime with custom configuration values.
 ///
@@ -235,7 +232,7 @@ cfg_unstable! {
     }
 }
 
-pub(crate) type ThreadNameFn = alloc::sync::Arc<dyn Fn() -> String + Send + Sync + 'static>;
+pub(crate) type ThreadNameFn = std::sync::Arc<dyn Fn() -> String + Send + Sync + 'static>;
 
 #[derive(Clone, Copy)]
 pub(crate) enum Kind {
@@ -280,10 +277,7 @@ impl Builder {
     ///
     /// Configuration methods can be chained on the return value.
     pub(crate) fn new(kind: Kind, event_interval: u32) -> Builder {
-        let thread_name = alloc::sync::Arc::new(|| "tokio-rt-worker".into());
-        let seed_generator = RngSeedGenerator::new(RngSeed::new());
-
-        let builder = Builder {
+        Builder {
             kind,
 
             // Default runtime name
@@ -306,7 +300,7 @@ impl Builder {
             max_blocking_threads: 512,
 
             // Default thread name
-            thread_name,
+            thread_name: std::sync::Arc::new(|| "tokio-rt-worker".into()),
 
             // Do not set a stack size by default
             thread_stack_size: None,
@@ -332,7 +326,7 @@ impl Builder {
             global_queue_interval: None,
             event_interval,
 
-            seed_generator,
+            seed_generator: RngSeedGenerator::new(RngSeed::new()),
 
             #[cfg(tokio_unstable)]
             unhandled_panic: UnhandledPanic::Ignore,
@@ -347,8 +341,7 @@ impl Builder {
 
             // Eager driver handoff is disabled by default.
             enable_eager_driver_handoff: false,
-        };
-        builder
+        }
     }
 
     /// Enables both I/O and time drivers.
@@ -590,7 +583,7 @@ impl Builder {
     /// ```
     pub fn thread_name(&mut self, val: impl Into<String>) -> &mut Self {
         let val = val.into();
-        self.thread_name = alloc::sync::Arc::new(move || val.clone());
+        self.thread_name = std::sync::Arc::new(move || val.clone());
         self
     }
 
@@ -632,7 +625,7 @@ impl Builder {
     /// # #[cfg(not(target_family = "wasm"))]
     /// # {
     /// # use tokio::runtime;
-    /// # use core::sync::atomic::{AtomicUsize, Ordering};
+    /// # use std::sync::atomic::{AtomicUsize, Ordering};
     /// # pub fn main() {
     /// let rt = runtime::Builder::new_multi_thread()
     ///     .thread_name_fn(|| {
@@ -648,7 +641,7 @@ impl Builder {
     where
         F: Fn() -> String + Send + Sync + 'static,
     {
-        self.thread_name = alloc::sync::Arc::new(f);
+        self.thread_name = std::sync::Arc::new(f);
         self
     }
 
@@ -704,7 +697,7 @@ impl Builder {
     where
         F: Fn() + Send + Sync + 'static,
     {
-        self.after_start = Some(alloc::sync::Arc::new(f));
+        self.after_start = Some(std::sync::Arc::new(f));
         self
     }
 
@@ -732,7 +725,7 @@ impl Builder {
     where
         F: Fn() + Send + Sync + 'static,
     {
-        self.before_stop = Some(alloc::sync::Arc::new(f));
+        self.before_stop = Some(std::sync::Arc::new(f));
         self
     }
 
@@ -752,8 +745,8 @@ impl Builder {
     /// ```
     /// # #[cfg(not(target_family = "wasm"))]
     /// # {
-    /// # use alloc::sync::Arc;
-    /// # use core::sync::atomic::{AtomicBool, Ordering};
+    /// # use std::sync::Arc;
+    /// # use std::sync::atomic::{AtomicBool, Ordering};
     /// # use tokio::runtime;
     /// # use tokio::sync::Barrier;
     /// # pub fn main() {
@@ -782,8 +775,8 @@ impl Builder {
     /// ```
     /// ## Current thread executor
     /// ```
-    /// # use alloc::sync::Arc;
-    /// # use core::sync::atomic::{AtomicBool, Ordering};
+    /// # use std::sync::Arc;
+    /// # use std::sync::atomic::{AtomicBool, Ordering};
     /// # use tokio::runtime;
     /// # use tokio::sync::Barrier;
     /// # pub fn main() {
@@ -813,7 +806,7 @@ impl Builder {
     where
         F: Fn() + Send + Sync + 'static,
     {
-        self.before_park = Some(alloc::sync::Arc::new(f));
+        self.before_park = Some(std::sync::Arc::new(f));
         self
     }
 
@@ -851,7 +844,7 @@ impl Builder {
     where
         F: Fn() + Send + Sync + 'static,
     {
-        self.after_unpark = Some(alloc::sync::Arc::new(f));
+        self.after_unpark = Some(std::sync::Arc::new(f));
         self
     }
 
@@ -887,7 +880,7 @@ impl Builder {
     ///     .unwrap();
     ///
     /// runtime.block_on(async {
-    ///     tokio::task::spawn(core::future::ready(()));
+    ///     tokio::task::spawn(std::future::ready(()));
     ///
     ///     for _ in 0..64 {
     ///         tokio::task::yield_now().await;
@@ -901,7 +894,7 @@ impl Builder {
     where
         F: Fn(&TaskMeta<'_>) + Send + Sync + 'static,
     {
-        self.before_spawn = Some(alloc::sync::Arc::new(f));
+        self.before_spawn = Some(std::sync::Arc::new(f));
         self
     }
 
@@ -948,7 +941,7 @@ impl Builder {
     where
         F: Fn(&TaskMeta<'_>) + Send + Sync + 'static,
     {
-        self.before_poll = Some(alloc::sync::Arc::new(f));
+        self.before_poll = Some(std::sync::Arc::new(f));
         self
     }
 
@@ -995,7 +988,7 @@ impl Builder {
     where
         F: Fn(&TaskMeta<'_>) + Send + Sync + 'static,
     {
-        self.after_poll = Some(alloc::sync::Arc::new(f));
+        self.after_poll = Some(std::sync::Arc::new(f));
         self
     }
 
@@ -1030,7 +1023,7 @@ impl Builder {
     ///     .unwrap();
     ///
     /// runtime.block_on(async {
-    ///     tokio::task::spawn(core::future::ready(()));
+    ///     tokio::task::spawn(std::future::ready(()));
     ///
     ///     for _ in 0..64 {
     ///         tokio::task::yield_now().await;
@@ -1044,7 +1037,7 @@ impl Builder {
     where
         F: Fn(&TaskMeta<'_>) + Send + Sync + 'static,
     {
-        self.after_termination = Some(alloc::sync::Arc::new(f));
+        self.after_termination = Some(std::sync::Arc::new(f));
         self
     }
 
@@ -1067,15 +1060,6 @@ impl Builder {
     /// # }
     /// ```
     pub fn build(&mut self) -> io::Result<Runtime> {
-        #[cfg(all(any(target_os = "trueos", target_os = "zkvm"), feature = "rt-multi-thread"))]
-        if matches!(self.kind, Kind::MultiThread) && !crate::platform::worker_carriers_enabled() {
-            crate::platform::log(
-                3,
-                b"tokio-platform: multi_thread runtime coerced to current_thread; worker carriers disabled\n",
-            );
-            return self.build_current_thread_runtime();
-        }
-
         match &self.kind {
             Kind::CurrentThread => self.build_current_thread_runtime(),
             #[cfg(feature = "rt-multi-thread")]
@@ -1141,7 +1125,7 @@ impl Builder {
     /// # #[cfg(not(target_family = "wasm"))]
     /// # {
     /// # use tokio::runtime;
-    /// # use core::time::Duration;
+    /// # use std::time::Duration;
     /// # pub fn main() {
     /// let rt = runtime::Builder::new_multi_thread()
     ///     .thread_keep_alive(Duration::from_millis(100))
@@ -1243,7 +1227,7 @@ impl Builder {
         /// spawned task.
         ///
         /// By default, an unhandled panic (i.e. a panic not caught by
-        /// [`core::panic::catch_unwind`]) has no impact on the runtime's
+        /// [`std::panic::catch_unwind`]) has no impact on the runtime's
         /// execution. The panic's error value is forwarded to the task's
         /// [`JoinHandle`] and all other spawned tasks continue running.
         ///
@@ -1314,21 +1298,22 @@ impl Builder {
         /// scheduled task being polled first.
         ///
         /// To implement this heuristic, each worker thread has a slot which
-        /// holds the task that should be polled next. In earlier versions of
-        /// Tokio, this slot could not be stolen by other worker threads, which
-        /// can result in lower total throughput when tasks tend to have longer
-        /// poll times.
+        /// holds the task that should be polled next. However, this slot cannot
+        /// be stolen by other worker threads, which can result in lower total
+        /// throughput when tasks tend to have longer poll times.
         ///
         /// This configuration option will disable this heuristic resulting in
-        /// all scheduled tasks being pushed into the worker-local queue. This
-        /// was intended as a workaround for the LIFO slot not being stealable.
-        /// As of Tokio 1.51, tasks can be stolen from the LIFO slot. In a
-        /// future version, this option may be deprecated.
+        /// all scheduled tasks being pushed into the worker-local queue, which
+        /// is stealable.
+        ///
+        /// Consider trying this option when the task "scheduled" time is high
+        /// but the runtime is underutilized. Use [tokio-rs/tokio-metrics] to
+        /// collect this data.
         ///
         /// # Unstable
         ///
-        /// This configuration option was considered a workaround for the LIFO
-        /// slot not being stealable. Since this is no longer the case, we will
+        /// This configuration option is considered a workaround for the LIFO
+        /// slot not being stealable. When the slot becomes stealable, we will
         /// revisit whether or not this option is necessary. See
         /// issue [tokio-rs/tokio#4941].
         ///
@@ -1417,7 +1402,7 @@ impl Builder {
         ///     .build()
         ///     .unwrap();
         /// # // Test default values here
-        /// # fn us(n: u64) -> core::time::Duration { core::time::Duration::from_micros(n) }
+        /// # fn us(n: u64) -> std::time::Duration { std::time::Duration::from_micros(n) }
         /// # let m = rt.handle().metrics();
         /// # assert_eq!(m.poll_time_histogram_num_buckets(), 10);
         /// # assert_eq!(m.poll_time_histogram_bucket_range(0), us(0)..us(100));
@@ -1426,7 +1411,7 @@ impl Builder {
         /// ```
         ///
         /// [`Handle::metrics()`]: crate::runtime::Handle::metrics
-        /// [`Instant::now()`]: hostlib::time::Instant::now
+        /// [`Instant::now()`]: std::time::Instant::now
         /// [`LogHistogram`]: crate::runtime::LogHistogram
         /// [`metrics_poll_time_histogram_configuration()`]: Builder::metrics_poll_time_histogram_configuration
         pub fn enable_metrics_poll_time_histogram(&mut self) -> &mut Self {
@@ -1504,7 +1489,7 @@ impl Builder {
         /// # #[cfg(not(target_family = "wasm"))]
         /// # {
         /// use tokio::runtime;
-        /// use core::time::Duration;
+        /// use std::time::Duration;
         /// use tokio::runtime::HistogramConfiguration;
         ///
         /// let rt = runtime::Builder::new_multi_thread()
@@ -1524,7 +1509,7 @@ impl Builder {
         /// ```
         /// # #[cfg(not(target_family = "wasm"))]
         /// # {
-        /// use core::time::Duration;
+        /// use std::time::Duration;
         /// use tokio::runtime;
         /// use tokio::runtime::{HistogramConfiguration, LogHistogram};
         ///
@@ -1548,7 +1533,7 @@ impl Builder {
         /// to match the previous behavior, use `precision_exact(0)`. This creates a histogram
         /// where each bucket is twice the size of the previous bucket.
         /// ```rust
-        /// use core::time::Duration;
+        /// use std::time::Duration;
         /// use tokio::runtime::{HistogramConfiguration, LogHistogram};
         /// let rt = tokio::runtime::Builder::new_current_thread()
         ///     .enable_all()
@@ -1594,7 +1579,7 @@ impl Builder {
         /// # #[cfg(not(target_family = "wasm"))]
         /// # {
         /// use tokio::runtime;
-        /// use core::time::Duration;
+        /// use std::time::Duration;
         ///
         /// # #[allow(deprecated)]
         /// let rt = runtime::Builder::new_multi_thread()
@@ -1654,7 +1639,11 @@ impl Builder {
         let (scheduler, handle, blocking_pool) =
             self.build_current_thread_runtime_components(None)?;
 
-        Ok(Runtime::from_parts(Scheduler::CurrentThread(scheduler), handle, blocking_pool))
+        Ok(Runtime::from_parts(
+            Scheduler::CurrentThread(scheduler),
+            handle,
+            blocking_pool,
+        ))
     }
 
     fn build_current_thread_local_runtime(&mut self) -> io::Result<LocalRuntime> {
@@ -1676,18 +1665,14 @@ impl Builder {
         &mut self,
         local_tid: Option<ThreadId>,
     ) -> io::Result<(CurrentThread, Handle, BlockingPool)> {
-        use crate::runtime::Config;
         use crate::runtime::scheduler;
+        use crate::runtime::Config;
 
         let mut cfg = self.get_cfg();
         cfg.timer_flavor = TimerFlavor::Traditional;
-        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-        crate::platform::note_semantic_gap(crate::platform::TRUEOS_DEBUG_BUILD_DRIVER_NEW);
         let (driver, driver_handle) = driver::Driver::new(cfg)?;
 
         // Blocking pool
-        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-        crate::platform::note_semantic_gap(crate::platform::TRUEOS_DEBUG_BUILD_BLOCKING_POOL);
         let blocking_pool = blocking::create_blocking_pool(self, self.max_blocking_threads);
         let blocking_spawner = blocking_pool.spawner().clone();
 
@@ -1699,8 +1684,6 @@ impl Builder {
         // there are no futures ready to do something, it'll let the timer or
         // the reactor to generate some new stimuli for the futures to continue
         // in their life.
-        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-        crate::platform::note_semantic_gap(crate::platform::TRUEOS_DEBUG_BUILD_CURRENT_THREAD);
         let (scheduler, handle) = CurrentThread::new(
             driver,
             driver_handle,
@@ -1731,8 +1714,6 @@ impl Builder {
             self.name.clone(),
         );
 
-    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-        crate::platform::note_semantic_gap(crate::platform::TRUEOS_DEBUG_BUILD_CURRENT_THREAD_READY);
         let handle = Handle {
             inner: scheduler::Handle::CurrentThread(handle),
         };
@@ -1876,15 +1857,6 @@ cfg_rt_multi_thread! {
             use crate::runtime::scheduler::{self, MultiThread};
 
             let worker_threads = self.worker_threads.unwrap_or_else(num_cpus);
-            #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-            crate::platform::log(
-                3,
-                alloc::format!(
-                    "tokio-platform: build_threaded_runtime worker_threads={}\n",
-                    worker_threads
-                )
-                .as_bytes(),
-            );
 
             let (driver, driver_handle) = driver::Driver::new(self.get_cfg())?;
 
@@ -1947,13 +1919,19 @@ impl fmt::Debug for Builder {
         debug
             .field("worker_threads", &self.worker_threads)
             .field("max_blocking_threads", &self.max_blocking_threads)
-            .field("thread_name", &"<dyn Fn() -> String + Send + Sync + 'static>")
+            .field(
+                "thread_name",
+                &"<dyn Fn() -> String + Send + Sync + 'static>",
+            )
             .field("thread_stack_size", &self.thread_stack_size)
             .field("after_start", &self.after_start.as_ref().map(|_| "..."))
             .field("before_stop", &self.before_stop.as_ref().map(|_| "..."))
             .field("before_park", &self.before_park.as_ref().map(|_| "..."))
             .field("after_unpark", &self.after_unpark.as_ref().map(|_| "..."))
-            .field("enable_eager_driver_handoff", &self.enable_eager_driver_handoff);
+            .field(
+                "enable_eager_driver_handoff",
+                &self.enable_eager_driver_handoff,
+            );
 
         if self.name.is_none() {
             debug.finish_non_exhaustive()

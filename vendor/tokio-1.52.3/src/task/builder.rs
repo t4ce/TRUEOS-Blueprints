@@ -4,12 +4,7 @@ use crate::{
     task::{JoinHandle, LocalSet},
     util::trace::SpawnMeta,
 };
-use alloc::boxed::Box;
-use core::future::Future;
-use core::option::Option::{self, Some};
-use core::result::Result::Ok;
-use core::{derive, mem};
-use crate::io;
+use std::{future::Future, io, mem};
 
 /// Factory which is used to configure the properties of a new task.
 ///

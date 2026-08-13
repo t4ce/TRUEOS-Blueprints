@@ -1,5 +1,6 @@
 use std::convert::TryFrom;
 use std::future::Future;
+use std::io;
 use std::num::NonZeroUsize;
 use std::ops::DerefMut;
 use std::pin::Pin;
@@ -7,7 +8,7 @@ use std::sync::Arc;
 use std::task::{ready, Context, Poll};
 
 use futures::FutureExt;
-use tokio::io::{self, AsyncWrite};
+use tokio::io::AsyncWrite;
 use tokio::sync::mpsc::error::SendError;
 use tokio::sync::mpsc::{self, OwnedPermit};
 use tokio::sync::{Mutex, Notify, OwnedMutexGuard};

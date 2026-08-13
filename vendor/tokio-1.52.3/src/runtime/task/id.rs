@@ -1,10 +1,6 @@
-#[allow(unused_imports)]
-use crate::runtime::prelude::*;
-
 use crate::runtime::context;
 
-use ::core::fmt;
-use std::num::NonZeroU64;
+use std::{fmt, num::NonZeroU64};
 
 /// An opaque ID that uniquely identifies a task relative to all other currently
 /// running tasks.
@@ -71,7 +67,7 @@ impl fmt::Display for Id {
 
 impl Id {
     pub(crate) fn next() -> Self {
-        use core::sync::atomic::{AtomicU64, Ordering::Relaxed};
+        use crate::loom::sync::atomic::{AtomicU64, Ordering::Relaxed};
 
         #[cfg(all(test, loom))]
         crate::loom::lazy_static! {

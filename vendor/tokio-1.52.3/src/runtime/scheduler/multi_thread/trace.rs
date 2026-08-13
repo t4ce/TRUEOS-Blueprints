@@ -1,7 +1,4 @@
-#[allow(unused_imports)]
-use crate::runtime::prelude::*;
-
-use core::sync::atomic::{AtomicBool, Ordering};
+use crate::loom::sync::atomic::{AtomicBool, Ordering};
 use crate::loom::sync::{Barrier, Mutex};
 use crate::runtime::dump::Dump;
 use crate::runtime::scheduler::multi_thread::Handle;

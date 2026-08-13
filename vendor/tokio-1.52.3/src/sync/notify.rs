@@ -11,14 +11,14 @@ use crate::loom::sync::Mutex;
 use crate::util::linked_list::{self, GuardedLinkedList, LinkedList};
 use crate::util::WakeList;
 
-use core::future::Future;
-use core::marker::PhantomPinned;
-use ::core::panic::{RefUnwindSafe, UnwindSafe};
-use core::pin::Pin;
-use core::ptr::NonNull;
-use core::sync::atomic::Ordering::{self, Acquire, Relaxed, Release, SeqCst};
-use crate::loom::sync::Arc;
-use core::task::{Context, Poll, Waker};
+use std::future::Future;
+use std::marker::PhantomPinned;
+use std::panic::{RefUnwindSafe, UnwindSafe};
+use std::pin::Pin;
+use std::ptr::NonNull;
+use std::sync::atomic::Ordering::{self, Acquire, Relaxed, Release, SeqCst};
+use std::sync::Arc;
+use std::task::{Context, Poll, Waker};
 
 type WaitList = LinkedList<Waiter, <Waiter as linked_list::Link>::Target>;
 type GuardedWaitList = GuardedLinkedList<Waiter, <Waiter as linked_list::Link>::Target>;
@@ -774,7 +774,7 @@ impl Notify {
         // * This wrapper will empty the list on drop. It is critical for safety
         //   that we will not leave any list entry with a pointer to the local
         //   guard node after this function returns / panics.
-        let mut list = NotifyWaitersList::new(core::mem::take(&mut *waiters), guard.as_ref(), self);
+        let mut list = NotifyWaitersList::new(std::mem::take(&mut *waiters), guard.as_ref(), self);
 
         let mut wakers = WakeList::new();
         'outer: loop {
@@ -1211,7 +1211,7 @@ impl NotifiedProject<'_> {
                         // None when we reach this line.
                         unsafe {
                             old_waker =
-                                waiter.waker.with_mut(|v| core::mem::replace(&mut *v, waker));
+                                waiter.waker.with_mut(|v| std::mem::replace(&mut *v, waker));
                         }
                     }
 
@@ -1229,7 +1229,7 @@ impl NotifiedProject<'_> {
                     #[cfg(feature = "taskdump")]
                     if let Some(waker) = waker {
                         let mut ctx = Context::from_waker(waker);
-                        core::task::ready!(crate::trace::trace_leaf(&mut ctx));
+                        std::task::ready!(crate::trace::trace_leaf(&mut ctx));
                     }
 
                     if waiter.notification.load(Acquire).is_some() {
@@ -1323,7 +1323,7 @@ impl NotifiedProject<'_> {
                     #[cfg(feature = "taskdump")]
                     if let Some(waker) = waker {
                         let mut ctx = Context::from_waker(waker);
-                        core::task::ready!(crate::trace::trace_leaf(&mut ctx));
+                        std::task::ready!(crate::trace::trace_leaf(&mut ctx));
                     }
                     return Poll::Ready(());
                 }

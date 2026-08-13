@@ -860,12 +860,12 @@ impl RunningServerHandle {
     }
 }
 
-pub struct RunningServer<F: Future<Output = tokio::io::Result<()>> + Unpin + Send> {
+pub struct RunningServer<F: Future<Output = std::io::Result<()>> + Unpin + Send> {
     inner: F,
     shutdown_tx: broadcast::Sender<String>,
 }
 
-impl<F: Future<Output = tokio::io::Result<()>> + Unpin + Send> RunningServer<F> {
+impl<F: Future<Output = std::io::Result<()>> + Unpin + Send> RunningServer<F> {
     pub fn handle(&self) -> RunningServerHandle {
         RunningServerHandle {
             shutdown_tx: self.shutdown_tx.clone(),
@@ -873,8 +873,8 @@ impl<F: Future<Output = tokio::io::Result<()>> + Unpin + Send> RunningServer<F> 
     }
 }
 
-impl<F: Future<Output = tokio::io::Result<()>> + Unpin + Send> Future for RunningServer<F> {
-    type Output = tokio::io::Result<()>;
+impl<F: Future<Output = std::io::Result<()>> + Unpin + Send> Future for RunningServer<F> {
+    type Output = std::io::Result<()>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         Future::poll(Pin::new(&mut self.inner), cx)
@@ -897,7 +897,7 @@ pub trait Server {
         &mut self,
         config: Arc<Config>,
         socket: &TcpListener,
-    ) -> RunningServer<impl Future<Output = tokio::io::Result<()>> + Unpin + Send>
+    ) -> RunningServer<impl Future<Output = std::io::Result<()>> + Unpin + Send>
     where
         Self: Send,
     {
@@ -994,7 +994,7 @@ pub trait Server {
         &mut self,
         config: Arc<Config>,
         addrs: A,
-    ) -> impl Future<Output = tokio::io::Result<()>> + Send
+    ) -> impl Future<Output = std::io::Result<()>> + Send
     where
         Self: Send,
     {

@@ -45,7 +45,7 @@
 //! use futures::SinkExt;
 //! use bytes::Bytes;
 //!
-//! async fn write_frame<T>(io: T) -> Result<(), Box<dyn core::error::Error>>
+//! async fn write_frame<T>(io: T) -> Result<(), Box<dyn std::error::Error>>
 //! where
 //!     T: AsyncRead + AsyncWrite + Unpin,
 //! {
@@ -399,10 +399,9 @@ use crate::codec::{Decoder, Encoder, Framed, FramedRead, FramedWrite};
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
-use core::error::Error as StdError;
-use std::io::Cursor;
-use core::{cmp, fmt, mem};
-use tokio::io;
+use std::error::Error as StdError;
+use std::io::{self, Cursor};
+use std::{cmp, fmt, mem};
 
 /// Configure length delimited `LengthDelimitedCodec`s.
 ///
@@ -523,7 +522,7 @@ impl LengthDelimitedCodec {
             if n > self.builder.max_frame_len as u64 {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
-                    "frame length exceeds maximum",
+                    LengthDelimitedCodecError { _priv: () },
                 ));
             }
 
@@ -609,7 +608,7 @@ impl Encoder<Bytes> for LengthDelimitedCodec {
         if n > self.builder.max_frame_len {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "frame length exceeds maximum",
+                LengthDelimitedCodecError { _priv: () },
             ));
         }
 

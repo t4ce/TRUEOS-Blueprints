@@ -1,22 +1,19 @@
-#[allow(unused_imports)]
-use crate::runtime::prelude::*;
-
 use crate::io::interest::Interest;
 use crate::io::ready::Ready;
-use core::sync::atomic::AtomicUsize;
+use crate::loom::sync::atomic::AtomicUsize;
 use crate::loom::sync::Mutex;
 use crate::runtime::io::{Direction, ReadyEvent, Tick};
 use crate::util::bit;
 use crate::util::linked_list::{self, LinkedList};
 use crate::util::WakeList;
 
-use core::cell::UnsafeCell;
-use core::future::Future;
-use core::marker::PhantomPinned;
-use core::pin::Pin;
-use core::ptr::NonNull;
-use core::sync::atomic::Ordering::{AcqRel, Acquire};
-use core::task::{Context, Poll, Waker};
+use std::cell::UnsafeCell;
+use std::future::Future;
+use std::marker::PhantomPinned;
+use std::pin::Pin;
+use std::ptr::NonNull;
+use std::sync::atomic::Ordering::{AcqRel, Acquire};
+use std::task::{Context, Poll, Waker};
 
 /// Stored in the I/O driver resource slab.
 #[derive(Debug)]
@@ -430,7 +427,7 @@ impl Future for Readiness<'_> {
     type Output = ReadyEvent;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        use core::sync::atomic::Ordering::SeqCst;
+        use std::sync::atomic::Ordering::SeqCst;
 
         let (scheduled_io, state, waiter) = {
             // Safety: `Self` is `!Unpin`

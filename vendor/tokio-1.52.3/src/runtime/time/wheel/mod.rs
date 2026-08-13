@@ -1,6 +1,3 @@
-#[allow(unused_imports)]
-use crate::runtime::prelude::*;
-
 use crate::runtime::time::{TimerHandle, TimerShared};
 use crate::time::error::InsertError;
 
@@ -8,7 +5,7 @@ mod level;
 pub(crate) use self::level::Expiration;
 use self::level::Level;
 
-use std::{array, ptr::NonNull};
+use std::ptr::NonNull;
 
 use super::entry::STATE_DEREGISTERED;
 use super::EntryList;
@@ -53,9 +50,13 @@ pub(super) const MAX_DURATION: u64 = (1 << (6 * NUM_LEVELS)) - 1;
 impl Wheel {
     /// Creates a new timing wheel.
     pub(crate) fn new() -> Wheel {
+        let mut levels = Vec::with_capacity(NUM_LEVELS);
+        for i in 0..NUM_LEVELS {
+            levels.push(Level::new(i));
+        }
         Wheel {
             elapsed: 0,
-            levels: Box::new(array::from_fn(Level::new)),
+            levels: levels.into_boxed_slice().try_into().unwrap(),
             pending: EntryList::new(),
         }
     }
@@ -290,4 +291,45 @@ fn level_for(elapsed: u64, when: u64) -> usize {
     let significant = 63 - leading_zeros;
 
     significant / NUM_LEVELS
+}
+
+#[cfg(all(test, not(loom)))]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_level_for() {
+        for pos in 0..64 {
+            assert_eq!(0, level_for(0, pos), "level_for({pos}) -- binary = {pos:b}");
+        }
+
+        for level in 1..5 {
+            for pos in level..64 {
+                let a = pos * 64_usize.pow(level as u32);
+                assert_eq!(
+                    level,
+                    level_for(0, a as u64),
+                    "level_for({a}) -- binary = {a:b}"
+                );
+
+                if pos > level {
+                    let a = a - 1;
+                    assert_eq!(
+                        level,
+                        level_for(0, a as u64),
+                        "level_for({a}) -- binary = {a:b}"
+                    );
+                }
+
+                if pos < 64 {
+                    let a = a + 1;
+                    assert_eq!(
+                        level,
+                        level_for(0, a as u64),
+                        "level_for({a}) -- binary = {a:b}"
+                    );
+                }
+            }
+        }
+    }
 }
