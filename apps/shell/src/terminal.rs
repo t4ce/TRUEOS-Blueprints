@@ -38,14 +38,49 @@ enum ParserState {
     OscEscape,
 }
 
-/// A compact, glyph-only terminal screen for the UI4 shell frontend.
+/// A terminal foreground color suitable for direct renderer consumption.
 ///
-/// Every Unicode scalar occupies exactly one cell. Styling sequences are
-/// accepted but intentionally ignored; UI4 owns the current presentation.
+/// Indexed values use the conventional 256-color terminal palette. Values
+/// `0..=7` are standard ANSI colors and `8..=15` are their bright variants.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) enum ForegroundColor {
+    #[default]
+    Default,
+    Indexed(u8),
+    Rgb { red: u8, green: u8, blue: u8 },
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct CellStyle {
+    pub(crate) foreground: ForegroundColor,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct Cell {
+    pub(crate) glyph: char,
+    pub(crate) style: CellStyle,
+}
+
+impl Cell {
+    const fn blank() -> Self {
+        Self {
+            glyph: ' ',
+            style: CellStyle {
+                foreground: ForegroundColor::Default,
+            },
+        }
+    }
+}
+
+/// A compact, fixed-cell terminal screen for the UI4 shell frontend.
+///
+/// Every Unicode scalar occupies exactly one cell. Foreground SGR state is
+/// captured on each written cell; unsupported styling remains ignored.
 pub(crate) struct Terminal {
     cols: usize,
     rows: usize,
-    cells: Vec<char>,
+    cells: Vec<Cell>,
+    current_style: CellStyle,
     cursor_col: usize,
     cursor_row: usize,
     saved_col: usize,
@@ -76,7 +111,8 @@ impl Terminal {
         Self {
             cols,
             rows,
-            cells: vec![' '; cols.saturating_mul(rows)],
+            cells: vec![Cell::blank(); cols.saturating_mul(rows)],
+            current_style: CellStyle::default(),
             cursor_col: 0,
             cursor_row: 0,
             saved_col: 0,
@@ -103,6 +139,11 @@ impl Terminal {
 
     pub(crate) fn dimensions(&self) -> (usize, usize) {
         (self.cols, self.rows)
+    }
+
+    /// Return the row-major screen cells. Use `dimensions` to split rows.
+    pub(crate) fn cells(&self) -> &[Cell] {
+        &self.cells
     }
 
     pub(crate) fn cursor(&self) -> Cursor {
@@ -167,7 +208,12 @@ impl Terminal {
         for row in 0..self.rows {
             let start = row * self.cols;
             let end = start + self.cols;
-            rendered.push(self.cells[start..end].iter().collect());
+            rendered.push(
+                self.cells[start..end]
+                    .iter()
+                    .map(|cell| cell.glyph)
+                    .collect(),
+            );
         }
         rendered
     }
@@ -183,7 +229,7 @@ impl Terminal {
         let old_cols = self.cols;
         let old_rows = self.rows;
         let old_cells = core::mem::take(&mut self.cells);
-        let mut cells = vec![' '; cols.saturating_mul(rows)];
+        let mut cells = vec![Cell::blank(); cols.saturating_mul(rows)];
         let copy_cols = old_cols.min(cols);
         let copy_rows = old_rows.min(rows);
         for row in 0..copy_rows {
@@ -209,7 +255,8 @@ impl Terminal {
 
     /// Clear the screen and all parser/cursor state without changing its size.
     pub(crate) fn reset(&mut self) {
-        self.cells.fill(' ');
+        self.cells.fill(Cell::blank());
+        self.current_style = CellStyle::default();
         self.cursor_col = 0;
         self.cursor_row = 0;
         self.saved_col = 0;
@@ -420,10 +467,64 @@ impl Terminal {
             // Primary Device Attributes. VT100-with-advanced-video is a small,
             // conservative identity understood by terminal applications.
             b'c' if !private => self.responses.extend_from_slice(b"\x1b[?1;2c"),
-            // SGR and remaining device-control sequences do not affect this
-            // glyph-only model.
-            b'm' | b'n' | b'c' | b'q' | b'h' | b'l' => {}
+            b'm' if !private => self.set_graphic_rendition(&params),
+            // Remaining device-control sequences do not affect this model.
+            b'n' | b'c' | b'q' | b'h' | b'l' => {}
             _ => {}
+        }
+    }
+
+    fn set_graphic_rendition(&mut self, params: &[usize]) {
+        if params.is_empty() {
+            self.current_style = CellStyle::default();
+            return;
+        }
+
+        let mut index = 0;
+        while index < params.len() {
+            match params[index] {
+                0 => self.current_style = CellStyle::default(),
+                30..=37 => {
+                    self.current_style.foreground =
+                        ForegroundColor::Indexed((params[index] - 30) as u8);
+                }
+                39 => self.current_style.foreground = ForegroundColor::Default,
+                90..=97 => {
+                    self.current_style.foreground =
+                        ForegroundColor::Indexed((params[index] - 90 + 8) as u8);
+                }
+                38 => match params.get(index + 1).copied() {
+                    Some(5) => {
+                        if let Some(color) = params
+                            .get(index + 2)
+                            .and_then(|value| u8::try_from(*value).ok())
+                        {
+                            self.current_style.foreground = ForegroundColor::Indexed(color);
+                        }
+                        index = index.saturating_add(2);
+                    }
+                    Some(2) => {
+                        let rgb = params
+                            .get(index + 2..index + 5)
+                            .and_then(|values| match values {
+                                [red, green, blue] => Some((
+                                    u8::try_from(*red).ok()?,
+                                    u8::try_from(*green).ok()?,
+                                    u8::try_from(*blue).ok()?,
+                                )),
+                                _ => None,
+                            });
+                        if let Some((red, green, blue)) = rgb {
+                            self.current_style.foreground =
+                                ForegroundColor::Rgb { red, green, blue };
+                        }
+                        index = index.saturating_add(4);
+                    }
+                    _ => {}
+                },
+                _ => {}
+            }
+            index = index.saturating_add(1);
         }
     }
 
@@ -557,7 +658,10 @@ impl Terminal {
         }
 
         let index = self.cursor_row * self.cols + self.cursor_col;
-        self.cells[index] = ch;
+        self.cells[index] = Cell {
+            glyph: ch,
+            style: self.current_style,
+        };
         if self.cursor_col == self.cols - 1 {
             self.pending_wrap = true;
         } else {
@@ -595,7 +699,7 @@ impl Terminal {
     }
 
     fn clear_all(&mut self) {
-        self.cells.fill(' ');
+        self.cells.fill(Cell::blank());
         self.dirty = true;
     }
 
@@ -609,7 +713,7 @@ impl Terminal {
             return;
         }
         let line_start = row * self.cols;
-        self.cells[line_start + start..line_start + end].fill(' ');
+        self.cells[line_start + start..line_start + end].fill(Cell::blank());
         self.dirty = true;
     }
 
@@ -767,11 +871,45 @@ mod tests {
     }
 
     #[test]
-    fn erases_ranges_and_ignores_sgr() {
+    fn erases_ranges_without_changing_text_behavior_for_sgr() {
         let mut terminal = Terminal::new(6, 2);
         terminal.feed(b"abcdef\r\n123456\x1b[1;3H\x1b[31m\x1b[K");
 
         assert_eq!(rows(&terminal), ["ab    ", "123456"]);
+    }
+
+    #[test]
+    fn records_standard_bright_indexed_and_truecolor_foregrounds() {
+        let mut terminal = Terminal::new(8, 1);
+        terminal.feed(
+            b"\x1b[30mA\x1b[37mB\x1b[90mC\x1b[97mD\x1b[38;5;202mE\x1b[38;2;1;2;3mF",
+        );
+
+        let cells = terminal.cells();
+        assert_eq!(cells[0].style.foreground, ForegroundColor::Indexed(0));
+        assert_eq!(cells[1].style.foreground, ForegroundColor::Indexed(7));
+        assert_eq!(cells[2].style.foreground, ForegroundColor::Indexed(8));
+        assert_eq!(cells[3].style.foreground, ForegroundColor::Indexed(15));
+        assert_eq!(cells[4].style.foreground, ForegroundColor::Indexed(202));
+        assert_eq!(
+            cells[5].style.foreground,
+            ForegroundColor::Rgb {
+                red: 1,
+                green: 2,
+                blue: 3
+            }
+        );
+    }
+
+    #[test]
+    fn resets_foreground_with_default_empty_and_full_reset_sgr() {
+        let mut terminal = Terminal::new(6, 1);
+        terminal.feed(b"\x1b[31mA\x1b[39mB\x1b[32m\x1b[mC\x1b[33m\x1b[0mD");
+
+        assert_eq!(terminal.cells()[0].style.foreground, ForegroundColor::Indexed(1));
+        for cell in &terminal.cells()[1..4] {
+            assert_eq!(cell.style.foreground, ForegroundColor::Default);
+        }
     }
 
     #[test]
