@@ -5,16 +5,14 @@ extern crate alloc;
 
 use alloc::{
     format,
-    string::{String, ToString},
+    string::String,
     vec,
     vec::Vec,
 };
 use core3::io::Cursor;
 use trueos::logl::{self, level};
 use trueos::ui4_scene::{Damage, Error as Ui4Error, Frame, output_dimensions, rgba};
-use trueos::{async_fs, image_source, input, vsys};
-use zune_jpeg::JpegDecoder;
-use zune_jpeg::zune_core::{bytestream::ZCursor, colorspace::ColorSpace, options::DecoderOptions};
+use trueos::{async_fs, image_source, input, vmedia, vsys};
 
 const MAX_SOURCE_PIXELS: usize = 64 * 1024 * 1024;
 const MAX_FRAMES: usize = 32;
@@ -382,7 +380,7 @@ fn load_image(source: &str) -> Result<Image, String> {
         let (info, bytes) =
             image_source::read(source).map_err(|code| format!("kernel source code={code}"))?;
         return match info.format {
-            image_source::FORMAT_JPEG => decode_jpeg(bytes.as_slice()).map_err(String::from),
+            image_source::FORMAT_JPEG => decode_jpeg(bytes.as_slice()),
             image_source::FORMAT_RGBA8 => image_from_rgba(info.width, info.height, bytes),
             image_source::FORMAT_PNG => decode_png(bytes.as_slice()),
             _ => Err(String::from("unsupported kernel image format")),
@@ -390,27 +388,21 @@ fn load_image(source: &str) -> Result<Image, String> {
     }
     let bytes = async_fs::block_on(async_fs::read_file(source.as_bytes()))
         .map_err(|code| format!("trueosfs read code={code}"))?;
-    decode_jpeg(bytes.as_slice()).map_err(String::from)
+    decode_jpeg(bytes.as_slice())
 }
 
-fn decode_jpeg(bytes: &[u8]) -> Result<Image, &'static str> {
-    let options = DecoderOptions::default()
-        .jpeg_set_out_colorspace(ColorSpace::RGBA)
-        .set_use_unsafe(true);
-    let mut decoder = JpegDecoder::new_with_options(ZCursor::new(bytes), options);
-    decoder.decode_headers().map_err(|_| "invalid JPEG")?;
-    let info = decoder.info().ok_or("JPEG has no dimensions")?;
-    let width = u32::from(info.width);
-    let height = u32::from(info.height);
-    let expected = checked_rgba_len(width, height).ok_or("JPEG dimensions rejected")?;
-    let rgba = decoder.decode().map_err(|_| "JPEG decode failed")?;
-    if rgba.len() != expected {
-        return Err("built-in JPEG decoded size mismatch");
+fn decode_jpeg(bytes: &[u8]) -> Result<Image, String> {
+    let decoded = async_fs::block_on(vmedia::decode(vmedia::ImageFormat::Jpeg, bytes))
+        .map_err(|code| format!("kernel JPEG decode code={code}"))?;
+    let expected = checked_rgba_len(decoded.info.width, decoded.info.height)
+        .ok_or_else(|| String::from("JPEG dimensions rejected"))?;
+    if decoded.rgba.len() != expected {
+        return Err(String::from("kernel JPEG decoded size mismatch"));
     }
     Ok(Image {
-        width,
-        height,
-        rgba,
+        width: decoded.info.width,
+        height: decoded.info.height,
+        rgba: decoded.rgba,
     })
 }
 
