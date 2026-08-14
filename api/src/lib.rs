@@ -18,6 +18,7 @@ pub use v::vfs_async as async_fs;
 pub use v::vgpu;
 pub use v::vinput as hid;
 pub use v::vmail;
+pub use v::vmedia;
 pub use v::vnet;
 pub use v::vnetfs as netfs;
 pub use v::vpci as pci;
@@ -60,6 +61,7 @@ pub mod input {
     pub const KEYBOARD_KEY_ARROW_DOWN: u16 = 13;
     pub const KEYBOARD_KEY_ARROW_LEFT: u16 = 14;
     pub const KEYBOARD_KEY_ARROW_RIGHT: u16 = 15;
+    pub const KEYBOARD_KEY_START: u16 = 16;
     pub const KEYBOARD_KEY_F1: u16 = 101;
     pub const KEYBOARD_KEY_F2: u16 = 102;
     pub const KEYBOARD_KEY_F3: u16 = 103;

@@ -1,16 +1,15 @@
-//! Minimal TRUEOS host backend for the first Weave Windows CLI specimen.
+//! TRUEOS host backend for the medium Weave Windows CLI specimen.
 //!
-//! This is intentionally a vertical slice, not a general PE loader. It accepts
-//! a PE32+ x86-64 console image with no base relocations and binds exactly the
-//! three kernel32 calls used by `weave-cli-hello.exe`.
+//! This remains a deliberately bounded vertical slice: one relocation-free
+//! PE32+ console image, one kernel32 import descriptor, and fourteen shims.
 
 use core::fmt;
 use core::ptr;
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::{AtomicI32, AtomicU32, Ordering};
 
-use trueos::vsys;
+use trueos::{clock, vsys};
 
-const IMAGE_CAP: usize = 0x4000;
+const IMAGE_CAP: usize = 0x8000;
 const PE32_PLUS_MAGIC: u16 = 0x20b;
 const IMAGE_FILE_MACHINE_AMD64: u16 = 0x8664;
 const IMAGE_SUBSYSTEM_WINDOWS_CUI: u16 = 3;
@@ -19,16 +18,21 @@ const STD_OUTPUT_HANDLE: u32 = (-11i32) as u32;
 const STD_ERROR_HANDLE: u32 = (-12i32) as u32;
 const STDOUT_HANDLE: usize = 1;
 const STDERR_HANDLE: usize = 2;
+const IMPORT_COUNT: u32 = 14;
+const COMPLETE_IMPORT_MASK: u32 = (1 << IMPORT_COUNT) - 1;
+const COMMAND_LINE: &[u8] = b"hello_medium.exe --trueos-proof\0";
+const MODULE_PATH: &[u8] = b"C:\\TRUEOS\\hello_medium.exe\0";
+const ENVIRONMENT_NAME: &[u8] = b"WEAVE_MODE";
+const ENVIRONMENT_VALUE: &[u8] = b"trueos\0";
 
 static EXIT_CODE: AtomicU32 = AtomicU32::new(u32::MAX);
+static LAST_ERROR: AtomicU32 = AtomicU32::new(0);
 
 #[repr(C, align(4096))]
 struct ExecutablePeImage([u8; IMAGE_CAP]);
 
-// This arena is part of the Blueprint REL allocation. TRUEOS's trusted
-// Blueprint loader makes that allocation executable only for the duration of
-// the Blueprint entry call, which lets the mapped PE execute without granting
-// executable permission to an unrelated heap allocation.
+// The arena lives in the executable Blueprint REL allocation. TRUEOS grants
+// execute permission only for the duration of the Blueprint entry call.
 static mut PE_IMAGE: ExecutablePeImage = ExecutablePeImage([0; IMAGE_CAP]);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -60,6 +64,7 @@ impl fmt::Display for Error {
 }
 
 pub fn run(file: &[u8]) -> Result<u32, Error> {
+    vsys::write_out(b"hello_medium: loader phase=validate begin\n");
     let pe_offset = read_u32(file, 0x3c)? as usize;
     if read_u16(file, 0)? != 0x5a4d {
         return Err(Error::BadDosMagic);
@@ -89,16 +94,15 @@ pub fn run(file: &[u8]) -> Result<u32, Error> {
         return Err(Error::ImageTooLarge);
     }
 
-    // Base relocations are intentionally outside this first slice. The tiny
-    // specimen is linked entirely RIP-relative and has an empty relocation
-    // directory, so it can execute from this Blueprint-owned arena.
     let data_directories = optional + 112;
     let relocation_rva = read_u32(file, data_directories + 5 * 8)?;
     let relocation_size = read_u32(file, data_directories + 5 * 8 + 4)?;
     if relocation_rva != 0 || relocation_size != 0 {
         return Err(Error::RelocationsUnsupported);
     }
+    vsys::write_out(b"hello_medium: loader phase=validate ok pe32plus=1 console=1 relocations=0\n");
 
+    vsys::write_out(b"hello_medium: loader phase=map begin\n");
     let image = unsafe { &mut *ptr::addr_of_mut!(PE_IMAGE.0) };
     image.fill(0);
     let header_bytes = size_of_headers.min(file.len());
@@ -129,20 +133,27 @@ pub fn run(file: &[u8]) -> Result<u32, Error> {
             .ok_or(Error::SectionOutsideImage)?;
         destination.copy_from_slice(source);
     }
+    vsys::write_out(b"hello_medium: loader phase=map ok sections=3\n");
 
+    vsys::write_out(b"hello_medium: loader phase=bind begin dll=kernel32.dll\n");
     bind_imports(image, data_directories)?;
-    let entry = image.as_ptr().wrapping_add(entry_rva);
+    vsys::write_out(b"hello_medium: loader phase=bind ok imports=14\n");
+
     if entry_rva >= size_of_image {
         return Err(Error::EntryOutsideImage);
     }
-
+    let entry = image.as_ptr().wrapping_add(entry_rva);
     EXIT_CODE.store(u32::MAX, Ordering::Release);
+    LAST_ERROR.store(0, Ordering::Release);
+    vsys::write_out(b"hello_medium: loader phase=enter abi=win64\n");
     let entry_fn: extern "win64" fn() = unsafe { core::mem::transmute(entry) };
     entry_fn();
+
     let exit_code = EXIT_CODE.load(Ordering::Acquire);
     if exit_code == u32::MAX {
         Err(Error::ExitProcessNotCalled)
     } else {
+        vsys::write_out(b"hello_medium: loader phase=return exit_process=observed\n");
         Ok(exit_code)
     }
 }
@@ -159,7 +170,7 @@ fn bind_imports(image: &mut [u8; IMAGE_CAP], directories: usize) -> Result<(), E
         .ok_or(Error::MissingImports)?;
 
     let mut descriptor = import_rva;
-    let mut resolved = 0u8;
+    let mut resolved = 0u32;
     while descriptor + 20 <= import_end {
         let original_thunk = read_u32(image, descriptor)? as usize;
         let name_rva = read_u32(image, descriptor + 12)? as usize;
@@ -203,19 +214,33 @@ fn bind_imports(image: &mut [u8; IMAGE_CAP], directories: usize) -> Result<(), E
         descriptor += 20;
     }
 
-    if resolved != 0b111 {
+    if resolved != COMPLETE_IMPORT_MASK {
         return Err(Error::IncompleteContract);
     }
     Ok(())
 }
 
-fn resolve_kernel32(name: &[u8]) -> Result<(usize, u8), Error> {
-    match name {
-        b"GetStdHandle" => Ok((get_std_handle as *const () as usize, 0b001)),
-        b"WriteFile" => Ok((write_file as *const () as usize, 0b010)),
-        b"ExitProcess" => Ok((exit_process as *const () as usize, 0b100)),
-        _ => Err(Error::UnsupportedImport),
-    }
+fn resolve_kernel32(name: &[u8]) -> Result<(usize, u32), Error> {
+    let resolved = match name {
+        b"ExitProcess" => (exit_process as *const () as usize, 1 << 0),
+        b"GetCommandLineA" => (get_command_line_a as *const () as usize, 1 << 1),
+        b"GetCurrentProcessId" => (get_current_process_id as *const () as usize, 1 << 2),
+        b"GetCurrentThreadId" => (get_current_thread_id as *const () as usize, 1 << 3),
+        b"GetEnvironmentVariableA" => (get_environment_variable_a as *const () as usize, 1 << 4),
+        b"GetLastError" => (get_last_error as *const () as usize, 1 << 5),
+        b"GetModuleFileNameA" => (get_module_file_name_a as *const () as usize, 1 << 6),
+        b"GetStdHandle" => (get_std_handle as *const () as usize, 1 << 7),
+        b"GetTickCount64" => (get_tick_count64 as *const () as usize, 1 << 8),
+        b"InterlockedIncrement" => (interlocked_increment as *const () as usize, 1 << 9),
+        b"QueryPerformanceCounter" => (query_performance_counter as *const () as usize, 1 << 10),
+        b"QueryPerformanceFrequency" => {
+            (query_performance_frequency as *const () as usize, 1 << 11)
+        }
+        b"SetLastError" => (set_last_error as *const () as usize, 1 << 12),
+        b"WriteFile" => (write_file as *const () as usize, 1 << 13),
+        _ => return Err(Error::UnsupportedImport),
+    };
+    Ok(resolved)
 }
 
 unsafe extern "win64" fn get_std_handle(std_handle: u32) -> usize {
@@ -252,8 +277,95 @@ unsafe extern "win64" fn write_file(
     1
 }
 
+unsafe extern "win64" fn get_current_process_id() -> u32 {
+    1
+}
+
+unsafe extern "win64" fn get_current_thread_id() -> u32 {
+    (vsys::thread_current_id() as u32).max(1)
+}
+
+unsafe extern "win64" fn get_tick_count64() -> u64 {
+    clock::monotonic_millis()
+}
+
+unsafe extern "win64" fn query_performance_counter(value: *mut i64) -> i32 {
+    if value.is_null() {
+        return 0;
+    }
+    unsafe { value.write(clock::monotonic_nanos() as i64) };
+    1
+}
+
+unsafe extern "win64" fn query_performance_frequency(value: *mut i64) -> i32 {
+    if value.is_null() {
+        return 0;
+    }
+    unsafe { value.write(1_000_000_000) };
+    1
+}
+
+unsafe extern "win64" fn get_command_line_a() -> *mut u8 {
+    COMMAND_LINE.as_ptr() as *mut u8
+}
+
+unsafe extern "win64" fn get_environment_variable_a(
+    name: *const u8,
+    buffer: *mut u8,
+    size: u32,
+) -> u32 {
+    if name.is_null() || !unsafe { c_ptr_eq(name, ENVIRONMENT_NAME) } {
+        LAST_ERROR.store(203, Ordering::Release); // ERROR_ENVVAR_NOT_FOUND
+        return 0;
+    }
+    unsafe { copy_windows_string(ENVIRONMENT_VALUE, buffer, size) }
+}
+
+unsafe extern "win64" fn get_module_file_name_a(module: usize, buffer: *mut u8, size: u32) -> u32 {
+    if module != 0 {
+        LAST_ERROR.store(126, Ordering::Release); // ERROR_MOD_NOT_FOUND
+        return 0;
+    }
+    unsafe { copy_windows_string(MODULE_PATH, buffer, size) }
+}
+
+unsafe extern "win64" fn set_last_error(error: u32) {
+    LAST_ERROR.store(error, Ordering::Release);
+}
+
+unsafe extern "win64" fn get_last_error() -> u32 {
+    LAST_ERROR.load(Ordering::Acquire)
+}
+
+unsafe extern "win64" fn interlocked_increment(value: *mut i32) -> i32 {
+    if value.is_null() {
+        return 0;
+    }
+    let atomic = unsafe { AtomicI32::from_ptr(value) };
+    atomic.fetch_add(1, Ordering::SeqCst) + 1
+}
+
 unsafe extern "win64" fn exit_process(exit_code: u32) {
     EXIT_CODE.store(exit_code, Ordering::Release);
+}
+
+unsafe fn c_ptr_eq(mut input: *const u8, expected: &[u8]) -> bool {
+    for expected_byte in expected {
+        if unsafe { input.read() } != *expected_byte {
+            return false;
+        }
+        input = unsafe { input.add(1) };
+    }
+    (unsafe { input.read() }) == 0
+}
+
+unsafe fn copy_windows_string(source: &[u8], destination: *mut u8, capacity: u32) -> u32 {
+    let payload_len = source.len().saturating_sub(1);
+    if destination.is_null() || capacity as usize <= payload_len {
+        return source.len() as u32;
+    }
+    unsafe { ptr::copy_nonoverlapping(source.as_ptr(), destination, source.len()) };
+    payload_len as u32
 }
 
 fn read_u16(input: &[u8], offset: usize) -> Result<u16, Error> {

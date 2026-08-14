@@ -24,8 +24,8 @@ use app_catalog::{
 };
 use artifact::{
     AssetBundleEntry, BLUEPRINT_CAP_ARGV_ENTRY_V1, BLUEPRINT_CAP_REPLICATABLE,
-    attach_trueos_asset_bundle, cargo_artifact_stem, collect_rlibs_for_object, entry_hint_hex,
-    entry_symbol_name, latest_cargo_object, tool_command, verify_abort_panic_runtime,
+    attach_trueos_asset_bundle, cargo_artifact_stem, collect_rlibs_for_rlink, entry_hint_hex,
+    entry_symbol_name, latest_cargo_root_artifacts, tool_command, verify_abort_panic_runtime,
     write_blueprint,
 };
 use build_plan::{BuildFlavor, BuildSettings, BuildTarget, resolve_build_settings};
@@ -68,6 +68,22 @@ const RUSTFLAGS_ENCODED_SEPARATOR: char = '\u{1f}';
 const TRUEOS_CHECK_CFG_FLAG: &str = "--check-cfg=cfg(target_os,values(\"trueos\",\"zkvm\"))";
 const BLUEPRINT_RUSTFLAGS: &[&str] =
     &[TRUEOS_CHECK_CFG_FLAG, "-A", "warnings", "-C", "panic=abort"];
+const PUMPKIN_DEV_RUSTFLAGS: &[&str] = &["-Z", "threads=16"];
+const REL_COALESCE_LINKER_SCRIPT: &str = r#"SECTIONS
+{
+  .text : { *(.text) *(.text.*) }
+  .rodata : { *(.rodata) *(.rodata.*) }
+  .data.rel.ro : { *(.data.rel.ro) *(.data.rel.ro.*) }
+  .data : { *(.data) *(.data.*) }
+  .bss : { *(.bss) *(.bss.*) *(COMMON) }
+  .tdata : { *(.tdata) *(.tdata.*) }
+  .tbss : { *(.tbss) *(.tbss.*) }
+  .eh_frame : { *(.eh_frame) *(.eh_frame.*) }
+  .gcc_except_table : { *(.gcc_except_table) *(.gcc_except_table.*) }
+  .init_array : { *(.init_array) *(.init_array.*) }
+  .fini_array : { *(.fini_array) *(.fini_array.*) }
+}
+"#;
 const BLUEPRINT_VENDOR_PATCHES: &[(&str, &str)] = &[
     ("axum", "axum-0.8.9"),
     ("axum-core", "axum-core-0.5.6"),
@@ -407,6 +423,12 @@ fn build_one_target_to(
     }
     push_source_overlay_configs(&mut cargo, &staged_source_overlay);
     push_extra_rustflags(&mut cargo, BLUEPRINT_RUSTFLAGS);
+    if output_name == "pumpkin" && matches!(cargo_profile, CargoProfile::Dev) {
+        // Keep Cargo from oversubscribing the host while rustc parallelizes
+        // Pumpkin's unusually large crate frontend.
+        cargo.arg("--jobs").arg("2");
+        push_extra_rustflags(&mut cargo, PUMPKIN_DEV_RUSTFLAGS);
+    }
     push_bindgen_clang_args(&mut cargo);
     push_trueos_cc_flags(&mut cargo);
     cargo.env("RUSTC_BOOTSTRAP_SYNTHETIC_TARGET", "1");
@@ -527,19 +549,36 @@ fn build_one_target_to(
         RustcPayloadSelection::default()
     };
 
-    let app_obj = match &build_target {
-        BuildTarget::Package => latest_cargo_object(&deps_dir, &cargo_artifact_stem(&output_name))?,
+    let root_artifacts = match &build_target {
+        BuildTarget::Package => {
+            latest_cargo_root_artifacts(&deps_dir, &cargo_artifact_stem(&output_name))?
+        }
         BuildTarget::Example(name) => {
-            latest_cargo_object(&target_dir.join("examples"), &cargo_artifact_stem(name))?
+            latest_cargo_root_artifacts(&target_dir.join("examples"), &cargo_artifact_stem(name))?
         }
     };
     // Cargo's JSON stream describes every artifact produced or reused during
     // this invocation, including mutually exclusive build-std panic runtimes.
     // The root crate's `.rlink` is rustc's selected native link closure.
-    let rlibs = collect_rlibs_for_object(&app_obj, &deps_dir)?;
+    let rlibs = collect_rlibs_for_rlink(&root_artifacts.rlink, &deps_dir)?;
     if matches!(build_settings.flavor, BuildFlavor::TokioStd) {
         verify_abort_panic_runtime(&rlibs)?;
     }
+
+    let app_obj = if root_artifacts.objects.len() == 1 {
+        root_artifacts.objects[0].clone()
+    } else {
+        println!(
+            "trueos-blueprint: combining {} root codegen objects",
+            root_artifacts.objects.len()
+        );
+        let combined = work_dir.join("app.codegen.o");
+        let mut ld = tool_command(&["ld.lld", "rust-lld", "ld"])?;
+        ld.arg("-r").arg("-o").arg(&combined);
+        ld.args(&root_artifacts.objects);
+        run_command(&mut ld, "root codegen-unit link")?;
+        combined
+    };
 
     let linked = work_dir.join("module.o");
     let stripped = work_dir.join("module.stripped.o");
@@ -559,7 +598,13 @@ fn build_one_target_to(
     };
 
     let mut ld = tool_command(&["ld.lld", "rust-lld", "ld"])?;
-    ld.arg("-r").arg("--gc-sections").arg("-o").arg(&linked);
+    ld.arg("-r").arg("--gc-sections");
+    if output_name == "pumpkin" && matches!(cargo_profile, CargoProfile::Dev) {
+        let linker_script = work_dir.join("rel-coalesce.ld");
+        fs::write(&linker_script, REL_COALESCE_LINKER_SCRIPT).map_err(io_string)?;
+        ld.arg("-T").arg(&linker_script);
+    }
+    ld.arg("-o").arg(&linked);
     if let Some(symbol) = &entry_symbol {
         ld.arg("--undefined").arg(symbol);
     }

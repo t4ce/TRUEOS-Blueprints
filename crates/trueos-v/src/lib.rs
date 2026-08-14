@@ -45,6 +45,7 @@ pub mod vgpu;
 pub mod vhttp_srv;
 pub mod vinput;
 pub mod vmail;
+pub mod vmedia;
 pub mod vnet;
 pub mod vnetfs;
 pub mod vpci;

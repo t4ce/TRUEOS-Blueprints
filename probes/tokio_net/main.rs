@@ -9,6 +9,7 @@ use trueos::{
 
 const PROBE_WAIT_BUDGET_MS: u64 = 1_500;
 const PROBE_WAIT_SLICE_MS: u64 = 25;
+const DNS_WAIT_BUDGET_MS: u64 = 5_000;
 const REMOTE_HTTP_HOST: &str = "example.com";
 
 fn main() {
@@ -177,6 +178,17 @@ fn probe_runtime_bootstrap_surfaces() -> Result<(), &'static str> {
 async fn run_probe() -> Result<(), &'static str> {
     logl::log(
         level::INFO,
+        format_args!("tokio_net: stage net.lookup_host"),
+    );
+    let resolved = probe_lookup_host().await?;
+    logl::log(
+        level::INFO,
+        format_args!("tokio_net: stage std.tcp.connect_timeout"),
+    );
+    probe_std_tcp_connect_timeout(resolved)?;
+
+    logl::log(
+        level::INFO,
         format_args!("tokio_net: stage net.socket2.new"),
     );
     probe_socket2_surface()?;
@@ -235,6 +247,42 @@ async fn run_probe() -> Result<(), &'static str> {
         }
     }
 
+    Ok(())
+}
+
+async fn probe_lookup_host() -> Result<SocketAddr, &'static str> {
+    let mut addresses = t::time::timeout(
+        t::time::Duration::from_millis(DNS_WAIT_BUDGET_MS),
+        t::net::lookup_host((REMOTE_HTTP_HOST, 443)),
+    )
+    .await
+    .map_err(|_| "net.lookup_host.timeout")?
+    .map_err(|_| "net.lookup_host.resolve")?;
+    let address = addresses.next().ok_or("net.lookup_host.empty")?;
+    logl::log(
+        level::INFO,
+        format_args!(
+            "tokio_net: success net.lookup_host host={} address={}",
+            REMOTE_HTTP_HOST, address
+        ),
+    );
+    Ok(address)
+}
+
+fn probe_std_tcp_connect_timeout(address: SocketAddr) -> Result<(), &'static str> {
+    let stream = std::net::TcpStream::connect_timeout(
+        &address,
+        core::time::Duration::from_millis(DNS_WAIT_BUDGET_MS),
+    )
+    .map_err(|_| "std.tcp.connect_timeout")?;
+    logl::log(
+        level::INFO,
+        format_args!(
+            "tokio_net: success std.tcp.connect_timeout peer={}",
+            address
+        ),
+    );
+    drop(stream);
     Ok(())
 }
 

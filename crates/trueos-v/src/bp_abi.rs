@@ -236,6 +236,21 @@ pub struct TrueosImageSourceInfo {
     pub byte_len: u32,
 }
 
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+pub struct TrueosVmediaImageInfo {
+    pub width: u32,
+    pub height: u32,
+    pub stride_bytes: u32,
+    pub byte_len: u32,
+    pub source_format: u32,
+    pub pixel_format: u32,
+    pub backend: u32,
+    pub revision: u32,
+}
+
+const _: () = assert!(core::mem::size_of::<TrueosVmediaImageInfo>() == 32);
+
 pub const UI4_INPUT_ROUTE_SELECTED_FOR_WINDOW: u32 = 1 << 0;
 pub const UI4_INPUT_ROUTE_APP_FOCUS: u32 = 1 << 1;
 pub const UI4_INPUT_ROUTE_VCURSOR: u32 = 1 << 2;
@@ -486,6 +501,23 @@ unsafe extern "C" {
         out_ptr: *mut u8,
         out_cap: usize,
     ) -> isize;
+    pub fn trueos_cabi_vmedia_image_decode_begin(format: u32, total_len: usize) -> i32;
+    pub fn trueos_cabi_vmedia_image_decode_write(
+        id: u32,
+        offset: usize,
+        bytes_ptr: *const u8,
+        bytes_len: usize,
+    ) -> i32;
+    pub fn trueos_cabi_vmedia_image_decode_commit(id: u32) -> i32;
+    pub fn trueos_cabi_vmedia_image_decode_status(id: u32) -> i32;
+    pub fn trueos_cabi_vmedia_image_decode_info(id: u32, out: *mut TrueosVmediaImageInfo) -> i32;
+    pub fn trueos_cabi_vmedia_image_decode_read(
+        id: u32,
+        offset: usize,
+        out_ptr: *mut u8,
+        out_cap: usize,
+    ) -> isize;
+    pub fn trueos_cabi_vmedia_image_decode_discard(id: u32) -> i32;
     pub fn trueos_cabi_ui4_solara_frame_begin(window_id: u32, clear_rgba: u32) -> i32;
     pub fn trueos_cabi_ui4_scene_pan_event_take(window_id: u32, out: *mut TrueosUi4PanEvent)
     -> i32;

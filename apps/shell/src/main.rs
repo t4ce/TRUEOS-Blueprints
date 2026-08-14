@@ -550,6 +550,7 @@ fn named_key_sequence(key_code: u16) -> Option<&'static [u8]> {
         input::KEYBOARD_KEY_ARROW_DOWN => Some(b"\x1b[B"),
         input::KEYBOARD_KEY_ARROW_LEFT => Some(b"\x1b[D"),
         input::KEYBOARD_KEY_ARROW_RIGHT => Some(b"\x1b[C"),
+        input::KEYBOARD_KEY_START => Some("§".as_bytes()),
         input::KEYBOARD_KEY_F1 => Some(b"\x1bOP"),
         input::KEYBOARD_KEY_F2 => Some(b"\x1bOQ"),
         input::KEYBOARD_KEY_F3 => Some(b"\x1bOR"),

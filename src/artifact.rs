@@ -85,7 +85,22 @@ fn rustc_host_triple() -> Option<String> {
     })
 }
 
-pub(crate) fn latest_cargo_object(dir: &Path, stem: &str) -> Result<PathBuf, String> {
+#[derive(Debug)]
+pub(crate) struct CargoRootArtifacts {
+    pub(crate) objects: Vec<PathBuf>,
+    pub(crate) rlink: PathBuf,
+}
+
+/// Resolve the exact root object set recorded by rustc's newest `.rlink`.
+///
+/// With one codegen unit rustc emits `<crate>-<hash>.o`; with multiple units it
+/// emits many `<crate>-<hash>.*.rcgu.o` files. The `.rlink` is the authoritative
+/// inventory for both forms and avoids accidentally collecting stale CGUs from
+/// Cargo's persistent target directory.
+pub(crate) fn latest_cargo_root_artifacts(
+    dir: &Path,
+    stem: &str,
+) -> Result<CargoRootArtifacts, String> {
     let prefix = format!("{stem}-");
     let mut best: Option<(std::time::SystemTime, PathBuf)> = None;
     for entry in fs::read_dir(dir).map_err(io_string)? {
@@ -99,7 +114,7 @@ pub(crate) fn latest_cargo_object(dir: &Path, stem: &str) -> Result<PathBuf, Str
         };
         let Some(hash) = name
             .strip_prefix(&prefix)
-            .and_then(|rest| rest.strip_suffix(".o"))
+            .and_then(|rest| rest.strip_suffix(".rlink"))
         else {
             continue;
         };
@@ -116,35 +131,54 @@ pub(crate) fn latest_cargo_object(dir: &Path, stem: &str) -> Result<PathBuf, Str
             _ => best = Some((modified, path)),
         }
     }
-    best.map(|(_, path)| path).ok_or_else(|| {
-        format!(
-            "missing required build artifact for {stem} in {}",
-            dir.display()
-        )
-    })
+    let rlink = best
+        .map(|(_, path)| path)
+        .ok_or_else(|| format!("missing root .rlink for {stem} in {}", dir.display()))?;
+    let root_stem = rlink
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| format!("bad root .rlink path: {}", rlink.display()))?;
+    let single_object = format!("{root_stem}.o");
+    let cgu_prefix = format!("{root_stem}.");
+    let bytes = fs::read(&rlink).map_err(io_string)?;
+    let mut objects = Vec::new();
+    for token in printable_tokens(&bytes) {
+        let path = PathBuf::from(token);
+        let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        let belongs_to_root =
+            name == single_object || (name.starts_with(&cgu_prefix) && name.ends_with(".rcgu.o"));
+        if belongs_to_root && path.is_file() && !objects.iter().any(|existing| existing == &path) {
+            objects.push(path);
+        }
+    }
+    objects.sort();
+    if objects.is_empty() {
+        return Err(format!(
+            "root .rlink {} contains no build objects for {stem}",
+            rlink.display()
+        ));
+    }
+    Ok(CargoRootArtifacts { objects, rlink })
 }
 
 pub(crate) fn cargo_artifact_stem(name: &str) -> String {
     name.replace('-', "_")
 }
 
-pub(crate) fn collect_rlibs_for_object(
-    app_obj: &Path,
+pub(crate) fn collect_rlibs_for_rlink(
+    rlink: &Path,
     deps_dir: &Path,
 ) -> Result<Vec<PathBuf>, String> {
-    let Some(stem) = app_obj.file_stem().and_then(|value| value.to_str()) else {
-        return Err(format!("bad app object path: {}", app_obj.display()));
-    };
-    let rlink = app_obj.with_file_name(format!("{stem}.rlink"));
     if !rlink.is_file() {
-        return Err(format!(
-            "missing dependency metadata for {}; expected {}",
-            app_obj.display(),
-            rlink.display()
-        ));
+        return Err(format!("missing dependency metadata: {}", rlink.display()));
     }
+    collect_rlibs_from_rlink(rlink, deps_dir)
+}
 
-    let bytes = fs::read(&rlink).map_err(io_string)?;
+fn collect_rlibs_from_rlink(rlink: &Path, deps_dir: &Path) -> Result<Vec<PathBuf>, String> {
+    let bytes = fs::read(rlink).map_err(io_string)?;
     let mut out = Vec::new();
     for token in printable_tokens(&bytes) {
         let Some(path) = rlib_path_from_token(&token, deps_dir) else {
@@ -778,6 +812,32 @@ mod tests {
     use super::*;
 
     #[test]
+    fn root_rlink_selects_complete_multi_codegen_unit_object_set() {
+        let temp = test_directory("multi-cgu-root");
+        let deps = temp.join("deps");
+        fs::create_dir_all(&deps).unwrap();
+        let rlink = deps.join("pumpkin-1111111111111111.rlink");
+        let first = deps.join("pumpkin-1111111111111111.alpha.codegen.rcgu.o");
+        let second = deps.join("pumpkin-1111111111111111.beta.codegen.rcgu.o");
+        let stale = deps.join("pumpkin-1111111111111111.stale.codegen.rcgu.o");
+        for path in [&first, &second, &stale] {
+            fs::write(path, []).unwrap();
+        }
+        fs::write(
+            &rlink,
+            format!("rlink\0{}\0{}\0", second.display(), first.display()),
+        )
+        .unwrap();
+
+        let artifacts = latest_cargo_root_artifacts(&deps, "pumpkin").unwrap();
+
+        assert_eq!(artifacts.objects, vec![first, second]);
+        assert_eq!(artifacts.rlink, rlink);
+        assert!(!artifacts.objects.contains(&stale));
+        fs::remove_dir_all(temp).unwrap();
+    }
+
+    #[test]
     fn root_rlink_controls_link_closure_and_preserves_generic_unwind() {
         let temp = test_directory("root-rlink");
         let deps = temp.join("deps");
@@ -808,7 +868,7 @@ mod tests {
         )
         .unwrap();
 
-        let rlibs = collect_rlibs_for_object(&app_obj, &deps).unwrap();
+        let rlibs = collect_rlibs_for_rlink(&app_rlink, &deps).unwrap();
 
         assert_eq!(rlibs, vec![dependency, unwind, panic_abort]);
         assert!(!rlibs.contains(&cached_panic_unwind));
