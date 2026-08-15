@@ -6,19 +6,35 @@ mod weave;
 use trueos::vsys;
 
 fn main() {
-    vsys::write_out(b"hello_medium: launching embedded PE32+ through TRUEOS Weave\n");
+    let _ = vsys::log_record(
+        2,
+        "weave-boot-probe",
+        "IMPORTANT stage=launch action=begin mode=host-helpers-noop",
+    );
 
     match weave::run(pe_bytes::WINDOWS_EXE) {
         Ok(exit_code) => {
             if exit_code == 0 {
-                vsys::write_out(b"hello_medium: Windows PE returned exit_code=0\n");
+                let _ = vsys::log_record(
+                    2,
+                    "weave-boot-probe",
+                    "IMPORTANT stage=launch action=return exit_code=0",
+                );
             } else {
-                vsys::write_err(b"hello_medium: Windows PE returned nonzero exit code\n");
+                let _ = vsys::log_record(
+                    1,
+                    "weave-boot-probe",
+                    "IMPORTANT stage=launch action=return result=nonzero-exit",
+                );
             }
         }
         Err(error) => {
             let _ = error;
-            vsys::write_err(b"hello_medium: embedded Windows PE launch failed\n");
+            let _ = vsys::log_record(
+                1,
+                "weave-boot-probe",
+                "IMPORTANT stage=launch action=return result=loader-failed",
+            );
         }
     }
 }

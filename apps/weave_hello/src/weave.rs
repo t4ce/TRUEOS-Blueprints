@@ -7,7 +7,7 @@ use core::fmt;
 use core::ptr;
 use core::sync::atomic::{AtomicI32, AtomicU32, Ordering};
 
-use trueos::{clock, vsys};
+use trueos::vsys;
 
 const IMAGE_CAP: usize = 0x8000;
 const PE32_PLUS_MAGIC: u16 = 0x20b;
@@ -27,6 +27,16 @@ const ENVIRONMENT_VALUE: &[u8] = b"trueos\0";
 
 static EXIT_CODE: AtomicU32 = AtomicU32::new(u32::MAX);
 static LAST_ERROR: AtomicU32 = AtomicU32::new(0);
+
+fn important_stage(message: &str) {
+    let _ = vsys::log_record(2, "weave-boot-probe", message);
+}
+
+// Boot-isolation policy: keep the kernel32 surface contract-shaped, but do not
+// let this diagnostic specimen reach the ordinary TRUEOS console, clock, or
+// thread helpers. The IMPORTANT receipts are intentional TODO markers. Restore
+// one real helper at a time after the Blueprint/Win64 boundary is proven not to
+// disturb unrelated kernel state.
 
 #[repr(C, align(4096))]
 struct ExecutablePeImage([u8; IMAGE_CAP]);
@@ -64,7 +74,7 @@ impl fmt::Display for Error {
 }
 
 pub fn run(file: &[u8]) -> Result<u32, Error> {
-    vsys::write_out(b"hello_medium: loader phase=validate begin\n");
+    important_stage("IMPORTANT stage=loader.validate action=begin");
     let pe_offset = read_u32(file, 0x3c)? as usize;
     if read_u16(file, 0)? != 0x5a4d {
         return Err(Error::BadDosMagic);
@@ -100,9 +110,9 @@ pub fn run(file: &[u8]) -> Result<u32, Error> {
     if relocation_rva != 0 || relocation_size != 0 {
         return Err(Error::RelocationsUnsupported);
     }
-    vsys::write_out(b"hello_medium: loader phase=validate ok pe32plus=1 console=1 relocations=0\n");
+    important_stage("IMPORTANT stage=loader.validate action=complete");
 
-    vsys::write_out(b"hello_medium: loader phase=map begin\n");
+    important_stage("IMPORTANT stage=loader.map action=begin");
     let image = unsafe { &mut *ptr::addr_of_mut!(PE_IMAGE.0) };
     image.fill(0);
     let header_bytes = size_of_headers.min(file.len());
@@ -133,11 +143,11 @@ pub fn run(file: &[u8]) -> Result<u32, Error> {
             .ok_or(Error::SectionOutsideImage)?;
         destination.copy_from_slice(source);
     }
-    vsys::write_out(b"hello_medium: loader phase=map ok sections=3\n");
+    important_stage("IMPORTANT stage=loader.map action=complete sections=3");
 
-    vsys::write_out(b"hello_medium: loader phase=bind begin dll=kernel32.dll\n");
+    important_stage("IMPORTANT stage=loader.bind action=begin dll=kernel32.dll");
     bind_imports(image, data_directories)?;
-    vsys::write_out(b"hello_medium: loader phase=bind ok imports=14\n");
+    important_stage("IMPORTANT stage=loader.bind action=complete imports=14");
 
     if entry_rva >= size_of_image {
         return Err(Error::EntryOutsideImage);
@@ -145,7 +155,7 @@ pub fn run(file: &[u8]) -> Result<u32, Error> {
     let entry = image.as_ptr().wrapping_add(entry_rva);
     EXIT_CODE.store(u32::MAX, Ordering::Release);
     LAST_ERROR.store(0, Ordering::Release);
-    vsys::write_out(b"hello_medium: loader phase=enter abi=win64\n");
+    important_stage("IMPORTANT stage=loader.enter action=begin abi=win64");
     let entry_fn: extern "win64" fn() = unsafe { core::mem::transmute(entry) };
     entry_fn();
 
@@ -153,7 +163,7 @@ pub fn run(file: &[u8]) -> Result<u32, Error> {
     if exit_code == u32::MAX {
         Err(Error::ExitProcessNotCalled)
     } else {
-        vsys::write_out(b"hello_medium: loader phase=return exit_process=observed\n");
+        important_stage("IMPORTANT stage=loader.enter action=return exit_process=observed");
         Ok(exit_code)
     }
 }
@@ -244,6 +254,7 @@ fn resolve_kernel32(name: &[u8]) -> Result<(usize, u32), Error> {
 }
 
 unsafe extern "win64" fn get_std_handle(std_handle: u32) -> usize {
+    important_stage("IMPORTANT stage=kernel32.GetStdHandle action=noop-contract");
     match std_handle {
         STD_ERROR_HANDLE => STDERR_HANDLE,
         STD_OUTPUT_HANDLE => STDOUT_HANDLE,
@@ -258,19 +269,20 @@ unsafe extern "win64" fn write_file(
     bytes_written: *mut u32,
     overlapped: *mut u8,
 ) -> i32 {
+    important_stage("IMPORTANT stage=kernel32.WriteFile action=noop-contract");
     if !bytes_written.is_null() {
         unsafe { bytes_written.write(0) };
     }
     if buffer.is_null() || !overlapped.is_null() {
         return 0;
     }
-    let stream = match handle {
-        STDOUT_HANDLE => 1,
-        STDERR_HANDLE => 2,
+    match handle {
+        STDOUT_HANDLE | STDERR_HANDLE => {}
         _ => return 0,
-    };
-    let bytes = unsafe { core::slice::from_raw_parts(buffer, bytes_to_write as usize) };
-    vsys::write_stream(stream, bytes);
+    }
+    // Deliberately do not dereference or route the guest buffer during this
+    // boot diagnostic. A successful receipt preserves the Win32 probe's
+    // control flow while removing console IO as a possible corruption source.
     if !bytes_written.is_null() {
         unsafe { bytes_written.write(bytes_to_write) };
     }
@@ -278,26 +290,31 @@ unsafe extern "win64" fn write_file(
 }
 
 unsafe extern "win64" fn get_current_process_id() -> u32 {
+    important_stage("IMPORTANT stage=kernel32.GetCurrentProcessId action=noop-contract");
     1
 }
 
 unsafe extern "win64" fn get_current_thread_id() -> u32 {
-    (vsys::thread_current_id() as u32).max(1)
+    important_stage("IMPORTANT stage=kernel32.GetCurrentThreadId action=noop-contract");
+    1
 }
 
 unsafe extern "win64" fn get_tick_count64() -> u64 {
-    clock::monotonic_millis()
+    important_stage("IMPORTANT stage=kernel32.GetTickCount64 action=noop-contract");
+    1
 }
 
 unsafe extern "win64" fn query_performance_counter(value: *mut i64) -> i32 {
+    important_stage("IMPORTANT stage=kernel32.QueryPerformanceCounter action=noop-contract");
     if value.is_null() {
         return 0;
     }
-    unsafe { value.write(clock::monotonic_nanos() as i64) };
+    unsafe { value.write(1) };
     1
 }
 
 unsafe extern "win64" fn query_performance_frequency(value: *mut i64) -> i32 {
+    important_stage("IMPORTANT stage=kernel32.QueryPerformanceFrequency action=noop-contract");
     if value.is_null() {
         return 0;
     }
@@ -306,6 +323,7 @@ unsafe extern "win64" fn query_performance_frequency(value: *mut i64) -> i32 {
 }
 
 unsafe extern "win64" fn get_command_line_a() -> *mut u8 {
+    important_stage("IMPORTANT stage=kernel32.GetCommandLineA action=noop-contract");
     COMMAND_LINE.as_ptr() as *mut u8
 }
 
@@ -314,6 +332,7 @@ unsafe extern "win64" fn get_environment_variable_a(
     buffer: *mut u8,
     size: u32,
 ) -> u32 {
+    important_stage("IMPORTANT stage=kernel32.GetEnvironmentVariableA action=noop-contract");
     if name.is_null() || !unsafe { c_ptr_eq(name, ENVIRONMENT_NAME) } {
         LAST_ERROR.store(203, Ordering::Release); // ERROR_ENVVAR_NOT_FOUND
         return 0;
@@ -322,6 +341,7 @@ unsafe extern "win64" fn get_environment_variable_a(
 }
 
 unsafe extern "win64" fn get_module_file_name_a(module: usize, buffer: *mut u8, size: u32) -> u32 {
+    important_stage("IMPORTANT stage=kernel32.GetModuleFileNameA action=noop-contract");
     if module != 0 {
         LAST_ERROR.store(126, Ordering::Release); // ERROR_MOD_NOT_FOUND
         return 0;
@@ -330,14 +350,17 @@ unsafe extern "win64" fn get_module_file_name_a(module: usize, buffer: *mut u8, 
 }
 
 unsafe extern "win64" fn set_last_error(error: u32) {
+    important_stage("IMPORTANT stage=kernel32.SetLastError action=noop-contract");
     LAST_ERROR.store(error, Ordering::Release);
 }
 
 unsafe extern "win64" fn get_last_error() -> u32 {
+    important_stage("IMPORTANT stage=kernel32.GetLastError action=noop-contract");
     LAST_ERROR.load(Ordering::Acquire)
 }
 
 unsafe extern "win64" fn interlocked_increment(value: *mut i32) -> i32 {
+    important_stage("IMPORTANT stage=kernel32.InterlockedIncrement action=noop-contract");
     if value.is_null() {
         return 0;
     }
@@ -346,6 +369,7 @@ unsafe extern "win64" fn interlocked_increment(value: *mut i32) -> i32 {
 }
 
 unsafe extern "win64" fn exit_process(exit_code: u32) {
+    important_stage("IMPORTANT stage=kernel32.ExitProcess action=noop-contract");
     EXIT_CODE.store(exit_code, Ordering::Release);
 }
 
