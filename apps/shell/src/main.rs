@@ -22,11 +22,11 @@ use trueos::vsys;
 // The terminal intentionally has no font metrics protocol yet. Shell2 wraps at
 // this row width, and UI4 positions one Inconsolata glyph in each logical cell.
 const ROW_HEIGHT_PX: u32 = 20;
-const CHARACTERS_PER_ROW_SOFT_CAP: usize = 100;
+const CHARACTERS_PER_ROW_SOFT_CAP: usize = 120;
 
 const FRAME_X: i32 = 0;
 const FRAME_Y: i32 = 0;
-const FRAME_WIDTH: u32 = 1_024;
+const FRAME_WIDTH: u32 = (CHARACTERS_PER_ROW_SOFT_CAP as f32 * FONT_PIXELS/2.0) as u32 + FRAME_PADDING_PX * 2;
 const FRAME_HEIGHT: u32 = 576;
 const FRAME_PADDING_PX: u32 = 12;
 const FONT_PIXELS: f32 = 18.0;

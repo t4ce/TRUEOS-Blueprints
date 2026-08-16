@@ -28,6 +28,7 @@
     "monaco",
     "Frog",
     "Player",
+    "exp",
     {
       "name": "tactics",
       "path": "../tactics",

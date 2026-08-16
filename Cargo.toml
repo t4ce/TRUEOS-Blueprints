@@ -27,6 +27,7 @@ members = [
     "apps/esp32_stt",
     "apps/flight_controller_sim",
     "apps/monaco",
+    "apps/exp",
     "apps/prismq",
     "probes/posix_file_world_probe",
     "probes/posix_fd_probe",
