@@ -4,9 +4,9 @@ extern crate alloc;
 
 mod terminal;
 
-use alloc::vec::Vec;
+use alloc::{string::String, vec::Vec};
 
-use terminal::{MouseButton, Terminal};
+use terminal::{ForegroundColor, MouseButton, Terminal};
 use trueos::input::{self, TrueosKeyboardOutputEvent};
 use trueos::logl::{self, level};
 use trueos::ui4_scene::{
@@ -21,7 +21,7 @@ use trueos::vsys;
 
 // The terminal intentionally has no font metrics protocol yet. Shell2 wraps at
 // this row width, and UI4 positions one Inconsolata glyph in each logical cell.
-const ROW_HEIGHT_PX: u32 = 20;
+const ROW_HEIGHT_PX: u32 = 26;
 const CHARACTERS_PER_ROW_SOFT_CAP: usize = 120;
 
 const FRAME_X: i32 = 0;
@@ -29,10 +29,8 @@ const FRAME_Y: i32 = 0;
 const FRAME_WIDTH: u32 = (CHARACTERS_PER_ROW_SOFT_CAP as f32 * FONT_PIXELS/2.0) as u32 + FRAME_PADDING_PX * 2;
 const FRAME_HEIGHT: u32 = 576;
 const FRAME_PADDING_PX: u32 = 12;
-const FONT_PIXELS: f32 = 18.0;
-const MONO_GLYPH_ADVANCE_PX: u32 = 9;
-const TERMINAL_ROWS: usize = ((FRAME_HEIGHT - FRAME_PADDING_PX * 2) / ROW_HEIGHT_PX) as usize;
-const TERMINAL_COLS: usize = CHARACTERS_PER_ROW_SOFT_CAP;
+const FONT_PIXELS: f32 = 24.0;
+const MONO_GLYPH_ADVANCE_PX: u32 = 12;
 
 const BACKGROUND: u32 = rgba(0, 0, 0, 191);
 const FOREGROUND: u32 = rgba(255, 255, 255, 255);
@@ -42,6 +40,53 @@ const SHELL_ATTACH_RETRIES: usize = 1_000;
 const HID_MODIFIER_LEFT_CONTROL: u8 = 1 << 0;
 const HID_MODIFIER_RIGHT_CONTROL: u8 = 1 << 4;
 const HID_MODIFIER_CONTROL_MASK: u8 = HID_MODIFIER_LEFT_CONTROL | HID_MODIFIER_RIGHT_CONTROL;
+
+fn foreground_rgba(foreground: ForegroundColor) -> u32 {
+    match foreground {
+        ForegroundColor::Default => FOREGROUND,
+        ForegroundColor::Rgb { red, green, blue } => rgba(red, green, blue, 255),
+        ForegroundColor::Indexed(index) => ansi_indexed_rgba(index),
+    }
+}
+
+fn ansi_indexed_rgba(index: u8) -> u32 {
+    const ANSI: [(u8, u8, u8); 16] = [
+        (0, 0, 0),
+        (205, 49, 49),
+        (13, 188, 121),
+        (229, 229, 16),
+        (36, 114, 200),
+        (188, 63, 188),
+        (17, 168, 205),
+        (229, 229, 229),
+        (102, 102, 102),
+        (241, 76, 76),
+        (35, 209, 139),
+        (245, 245, 67),
+        (59, 142, 234),
+        (214, 112, 214),
+        (41, 184, 219),
+        (255, 255, 255),
+    ];
+    const CUBE_LEVELS: [u8; 6] = [0, 95, 135, 175, 215, 255];
+
+    let (red, green, blue) = match index {
+        0..=15 => ANSI[index as usize],
+        16..=231 => {
+            let cube = index - 16;
+            (
+                CUBE_LEVELS[(cube / 36) as usize],
+                CUBE_LEVELS[((cube / 6) % 6) as usize],
+                CUBE_LEVELS[(cube % 6) as usize],
+            )
+        }
+        232..=255 => {
+            let gray = 8 + (index - 232) * 10;
+            (gray, gray, gray)
+        }
+    };
+    rgba(red, green, blue, 255)
+}
 
 #[derive(Debug, Default)]
 struct KeyboardInputState {
@@ -156,7 +201,8 @@ fn main() {
         return;
     };
 
-    let mut frontend = match attach_shell_frontend() {
+    let (cols, rows) = terminal_grid_size(frame.width(), frame.height());
+    let mut frontend = match attach_shell_frontend(cols, rows) {
         Ok(frontend) => frontend,
         Err(error) => {
             logl::log(
@@ -166,7 +212,7 @@ fn main() {
             return;
         }
     };
-    let mut terminal = Terminal::new(TERMINAL_COLS, TERMINAL_ROWS);
+    let mut terminal = Terminal::new(cols, rows);
     let mut keyboard_input = KeyboardInputState::default();
 
     if let Err(error) = present_terminal(&mut frame, &terminal) {
@@ -181,11 +227,22 @@ fn main() {
         level::INFO,
         format_args!(
             "shell: local shell2 session online cols={} rows={} font=Inconsolata",
-            TERMINAL_COLS, TERMINAL_ROWS
+            cols, rows
         ),
     );
 
     loop {
+        let resized = match drain_resize_events(&mut frame, &mut frontend, &mut terminal) {
+            Ok(resized) => resized,
+            Err(error) => {
+                logl::log(
+                    level::ERROR,
+                    format_args!("shell: UI4 frame resize failed: {error:?}"),
+                );
+                return;
+            }
+        };
+
         if let Err(error) = drain_shell_output(&mut frontend, &mut terminal) {
             logl::log(
                 level::ERROR,
@@ -210,7 +267,7 @@ fn main() {
             return;
         }
 
-        if terminal.take_dirty()
+        if (resized || terminal.take_dirty())
             && let Err(error) = present_terminal(&mut frame, &terminal)
         {
             logl::log(
@@ -225,9 +282,46 @@ fn main() {
     }
 }
 
-fn attach_shell_frontend() -> Result<Shell2Frontend, Shell2FrontendError> {
+fn drain_resize_events(
+    frame: &mut Frame,
+    frontend: &mut Shell2Frontend,
+    terminal: &mut Terminal,
+) -> Result<bool, InputError> {
+    let mut resized = false;
+    while let Some(resize) = frame.take_resize_event()? {
+        if resize.width == frame.width() && resize.height == frame.height() {
+            continue;
+        }
+        frame.resize(resize.width, resize.height)?;
+        let (cols, rows) = terminal_grid_size(resize.width, resize.height);
+        if terminal.dimensions() != (cols, rows) {
+            terminal.resize(cols, rows);
+            frontend.resize(cols as u32, rows as u32)?;
+        }
+        resized = true;
+        logl::log(
+            level::INFO,
+            format_args!(
+                "shell: resized {}x{} -> {}x{} cols={} rows={}",
+                resize.old_width, resize.old_height, resize.width, resize.height, cols, rows
+            ),
+        );
+    }
+    Ok(resized)
+}
+
+fn terminal_grid_size(width: u32, height: u32) -> (usize, usize) {
+    let width = width.saturating_sub(FRAME_PADDING_PX * 2);
+    let height = height.saturating_sub(FRAME_PADDING_PX * 2);
+    (
+        (width / MONO_GLYPH_ADVANCE_PX).max(1) as usize,
+        (height / ROW_HEIGHT_PX).max(1) as usize,
+    )
+}
+
+fn attach_shell_frontend(cols: usize, rows: usize) -> Result<Shell2Frontend, Shell2FrontendError> {
     for attempt in 0..SHELL_ATTACH_RETRIES {
-        match Shell2Frontend::attach(TERMINAL_COLS as u32, TERMINAL_ROWS as u32) {
+        match Shell2Frontend::attach(cols as u32, rows as u32) {
             Ok(frontend) => return Ok(frontend),
             Err(Shell2FrontendError(-3)) if attempt + 1 < SHELL_ATTACH_RETRIES => {
                 vsys::poll_once();
@@ -352,7 +446,7 @@ fn drain_pointer_input(
     frontend: &Shell2Frontend,
 ) -> Result<(), InputError> {
     while let Some(event) = frame.take_pointer_event()? {
-        let (col, row) = pointer_cell(event.local_x, event.local_y);
+        let (col, row) = pointer_cell(event.local_x, event.local_y, terminal.dimensions());
 
         for (mask, button) in mouse_buttons() {
             if event.buttons_pressed & mask != 0
@@ -387,11 +481,11 @@ fn drain_pointer_input(
     Ok(())
 }
 
-fn pointer_cell(local_x: i32, local_y: i32) -> (usize, usize) {
+fn pointer_cell(local_x: i32, local_y: i32, dimensions: (usize, usize)) -> (usize, usize) {
     let x = local_x.saturating_sub(FRAME_PADDING_PX as i32).max(0) as u32;
     let y = local_y.saturating_sub(FRAME_PADDING_PX as i32).max(0) as u32;
-    let col = ((x / MONO_GLYPH_ADVANCE_PX) as usize).min(TERMINAL_COLS - 1);
-    let row = ((y / ROW_HEIGHT_PX) as usize).min(TERMINAL_ROWS - 1);
+    let col = ((x / MONO_GLYPH_ADVANCE_PX) as usize).min(dimensions.0 - 1);
+    let row = ((y / ROW_HEIGHT_PX) as usize).min(dimensions.1 - 1);
     (col, row)
 }
 
@@ -568,35 +662,48 @@ fn named_key_sequence(key_code: u16) -> Option<&'static [u8]> {
 }
 
 fn present_terminal(frame: &mut Frame, terminal: &Terminal) -> Result<(), UiError> {
-    let mut rendered = terminal.render_rows();
-    for row in &mut rendered {
-        while row.as_bytes().last().copied() == Some(b' ') {
-            row.pop();
-        }
-    }
-
     retry_busy(|| frame.begin(BACKGROUND))?;
 
-    // A retain call is one cached UI4 layer. Empty rows remain clear from the
-    // frame begin, while nonempty rows retain independent cached layers.
-    for (row, text) in rendered.iter().enumerate() {
-        if text.is_empty() {
+    let viewport = (frame.width(), frame.height());
+
+    let (cols, rows) = terminal.dimensions();
+    for row in 0..rows {
+        let cells = &terminal.cells()[row * cols..(row + 1) * cols];
+        let Some(last_col) = cells.iter().rposition(|cell| cell.glyph != ' ') else {
             continue;
+        };
+
+        let mut start_col = 0;
+        while start_col <= last_col {
+            let foreground = cells[start_col].style.foreground;
+            let mut end_col = start_col + 1;
+            while end_col <= last_col && cells[end_col].style.foreground == foreground {
+                end_col += 1;
+            }
+
+            let mut text = String::with_capacity(end_col - start_col);
+            for cell in &cells[start_col..end_col] {
+                text.push(cell.glyph);
+            }
+            if text.chars().any(|glyph| glyph != ' ') {
+                let scene = [SceneTextRow {
+                    text: text.as_str(),
+                    x: FRAME_PADDING_PX as f32
+                        + start_col as f32 * MONO_GLYPH_ADVANCE_PX as f32,
+                    y: FRAME_PADDING_PX as f32 + row as f32 * ROW_HEIGHT_PX as f32,
+                    font_pixels: FONT_PIXELS,
+                }];
+                retry_busy(|| {
+                    frame.retain_text_scene(
+                        Font::Inconsolata,
+                        viewport,
+                        foreground_rgba(foreground),
+                        &scene,
+                    )
+                })?;
+            }
+            start_col = end_col;
         }
-        let scene = [SceneTextRow {
-            text: text.as_str(),
-            x: FRAME_PADDING_PX as f32,
-            y: FRAME_PADDING_PX as f32 + row as f32 * ROW_HEIGHT_PX as f32,
-            font_pixels: FONT_PIXELS,
-        }];
-        retry_busy(|| {
-            frame.retain_text_scene(
-                Font::Inconsolata,
-                (FRAME_WIDTH, FRAME_HEIGHT),
-                FOREGROUND,
-                &scene,
-            )
-        })?;
     }
 
     // Inconsolata's advance is one half-em. Keeping the cursor as a single
@@ -611,7 +718,7 @@ fn present_terminal(frame: &mut Frame, terminal: &Terminal) -> Result<(), UiErro
     retry_busy(|| {
         frame.retain_text_scene(
             Font::Inconsolata,
-            (FRAME_WIDTH, FRAME_HEIGHT),
+            viewport,
             if cursor.visible {
                 FOREGROUND
             } else {
@@ -621,7 +728,7 @@ fn present_terminal(frame: &mut Frame, terminal: &Terminal) -> Result<(), UiErro
         )
     })?;
 
-    retry_busy(|| frame.publish(Damage::full(FRAME_WIDTH, FRAME_HEIGHT)))
+    retry_busy(|| frame.publish(Damage::full(viewport.0, viewport.1)))
 }
 
 fn retry_busy(mut operation: impl FnMut() -> Result<(), UiError>) -> Result<(), UiError> {
@@ -634,5 +741,31 @@ fn retry_busy(mut operation: impl FnMut() -> Result<(), UiError>) -> Result<(), 
             }
             Err(error) => return Err(error),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn maps_xterm_indexed_palette_to_rgba() {
+        assert_eq!(ansi_indexed_rgba(1), rgba(205, 49, 49, 255));
+        assert_eq!(ansi_indexed_rgba(16), rgba(0, 0, 0, 255));
+        assert_eq!(ansi_indexed_rgba(196), rgba(255, 0, 0, 255));
+        assert_eq!(ansi_indexed_rgba(255), rgba(238, 238, 238, 255));
+    }
+
+    #[test]
+    fn keeps_default_and_rgb_foregrounds_opaque() {
+        assert_eq!(foreground_rgba(ForegroundColor::Default), FOREGROUND);
+        assert_eq!(
+            foreground_rgba(ForegroundColor::Rgb {
+                red: 1,
+                green: 2,
+                blue: 3,
+            }),
+            rgba(1, 2, 3, 255)
+        );
     }
 }

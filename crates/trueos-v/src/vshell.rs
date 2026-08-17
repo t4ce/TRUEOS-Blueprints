@@ -309,6 +309,17 @@ impl Shell2Frontend {
         })
     }
 
+    /// Update the existing frontend session's terminal geometry and request a
+    /// fresh Shell2 replay for the resized view.
+    pub fn resize(&mut self, cols: u32, rows: u32) -> Result<(), Shell2FrontendError> {
+        let rc = unsafe { vcabi::trueos_cabi_shell2_frontend_attach_v1(cols, rows) };
+        if rc != 0 {
+            return Err(Shell2FrontendError(rc));
+        }
+        self.read_seq = 0;
+        Ok(())
+    }
+
     pub fn read(&mut self, out: &mut [u8]) -> Result<Shell2FrontendRead, Shell2FrontendError> {
         let mut next_seq = self.read_seq;
         let mut epoch = self.epoch;
