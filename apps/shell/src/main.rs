@@ -34,8 +34,8 @@ const MONO_GLYPH_ADVANCE_PX: u32 = 9;
 const TERMINAL_ROWS: usize = ((FRAME_HEIGHT - FRAME_PADDING_PX * 2) / ROW_HEIGHT_PX) as usize;
 const TERMINAL_COLS: usize = CHARACTERS_PER_ROW_SOFT_CAP;
 
-const BACKGROUND: u32 = rgba(0, 0, 0, 255);
-const FOREGROUND: u32 = rgba(238, 238, 238, 255);
+const BACKGROUND: u32 = rgba(0, 0, 0, 191);
+const FOREGROUND: u32 = rgba(255, 255, 255, 255);
 const POLL_INTERVAL_MS: u64 = 5;
 const SHELL_OUTPUT_BATCH_CAP: usize = 8 * 1024;
 const SHELL_ATTACH_RETRIES: usize = 1_000;
@@ -577,14 +577,14 @@ fn present_terminal(frame: &mut Frame, terminal: &Terminal) -> Result<(), UiErro
 
     retry_busy(|| frame.begin(BACKGROUND))?;
 
-    // A retain call is one cached UI4 layer. Keep one stable layer per
-    // terminal row so editing a glyph does not invalidate every other row.
+    // A retain call is one cached UI4 layer. Empty rows remain clear from the
+    // frame begin, while nonempty rows retain independent cached layers.
     for (row, text) in rendered.iter().enumerate() {
-        let empty = text.is_empty();
+        if text.is_empty() {
+            continue;
+        }
         let scene = [SceneTextRow {
-            // UI4 rejects empty and coverage-free retained runs. A black dot
-            // keeps an empty row's layer present without becoming visible.
-            text: if empty { "." } else { text.as_str() },
+            text: text.as_str(),
             x: FRAME_PADDING_PX as f32,
             y: FRAME_PADDING_PX as f32 + row as f32 * ROW_HEIGHT_PX as f32,
             font_pixels: FONT_PIXELS,
@@ -593,7 +593,7 @@ fn present_terminal(frame: &mut Frame, terminal: &Terminal) -> Result<(), UiErro
             frame.retain_text_scene(
                 Font::Inconsolata,
                 (FRAME_WIDTH, FRAME_HEIGHT),
-                if empty { BACKGROUND } else { FOREGROUND },
+                FOREGROUND,
                 &scene,
             )
         })?;
