@@ -6,11 +6,10 @@ use signal_hook_mio::v1_0::Signals;
 
 #[cfg(feature = "event-stream")]
 use crate::event::sys::Waker;
+use crate::event::Event;
 use crate::event::{
     source::EventSource, sys::unix::parse::parse_event, timeout::PollTimeout, InternalEvent,
 };
-#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-use crate::event::Event;
 use crate::terminal::sys::file_descriptor::{tty_fd, FileDesc};
 
 // Tokens to identify file descriptor
@@ -25,14 +24,72 @@ const WAKE_TOKEN: Token = Token(2);
 // is enough.
 const TTY_BUFFER_SIZE: usize = 1_024;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct TerminalSurfaceSnapshot {
+    generation: u64,
+    columns: u32,
+    rows: u32,
+}
+
+fn terminal_surface_changed(
+    previous: TerminalSurfaceSnapshot,
+    current: TerminalSurfaceSnapshot,
+) -> bool {
+    previous.generation != current.generation
+        || previous.columns != current.columns
+        || previous.rows != current.rows
+}
+
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
 unsafe extern "C" {
     fn trueos_cabi_write(stream: u32, bytes: *const u8, len: usize);
+    fn trueos_cabi_blueprint_terminal_surface_snapshot_v1(
+        out_generation: *mut u64,
+        out_cols: *mut u32,
+        out_rows: *mut u32,
+    ) -> i32;
 }
 
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
 fn trueos_event_probe(message: &[u8]) {
     unsafe { trueos_cabi_write(1, message.as_ptr(), message.len()) };
+}
+
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+fn trueos_terminal_surface_snapshot() -> io::Result<Option<TerminalSurfaceSnapshot>> {
+    let mut generation = 0;
+    let mut columns = 0;
+    let mut rows = 0;
+    let rc = unsafe {
+        trueos_cabi_blueprint_terminal_surface_snapshot_v1(&mut generation, &mut columns, &mut rows)
+    };
+    match rc {
+        0 if generation != 0 && columns != 0 && rows != 0 => Ok(Some(TerminalSurfaceSnapshot {
+            generation,
+            columns,
+            rows,
+        })),
+        // An event source may outlive a parked or detached terminal lease.
+        // Keep its last good snapshot so reentry can be compared against it.
+        -5..=-1 => Ok(None),
+        0 => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid TrueOS terminal surface snapshot",
+        )),
+        _ => Err(io::Error::new(
+            io::ErrorKind::Other,
+            "TrueOS terminal surface snapshot failed",
+        )),
+    }
+}
+
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+fn trueos_poll_timeout(timeout: &PollTimeout) -> Option<Duration> {
+    const SURFACE_POLL_SLICE: Duration = Duration::from_millis(16);
+    Some(match timeout.leftover() {
+        Some(left) if left < SURFACE_POLL_SLICE => left,
+        _ => SURFACE_POLL_SLICE,
+    })
 }
 
 #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
@@ -65,6 +122,8 @@ pub(crate) struct UnixInternalEventSource {
     parser: Parser,
     tty_buffer: [u8; TTY_BUFFER_SIZE],
     tty_fd: FileDesc<'static>,
+    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+    terminal_surface: Option<TerminalSurfaceSnapshot>,
     #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
     signals: Signals,
     #[cfg(feature = "event-stream")]
@@ -90,8 +149,8 @@ impl UnixInternalEventSource {
         #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
         let signals = {
             trueos_event_probe(b"[crossterm-resize-probe:INFO] sigwinch register begin\n");
-            let mut signals = Signals::new([signal_hook::consts::SIGWINCH])
-                .map_err(mio_to_io_error)?;
+            let mut signals =
+                Signals::new([signal_hook::consts::SIGWINCH]).map_err(mio_to_io_error)?;
             registry
                 .register(&mut signals, SIGNAL_TOKEN, Interest::READABLE)
                 .map_err(mio_to_io_error)?;
@@ -102,6 +161,8 @@ impl UnixInternalEventSource {
         trueos_event_probe(
             b"[crossterm-resize-probe:INFO] sigwinch unavailable; tty polling active\n",
         );
+        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+        let terminal_surface = trueos_terminal_surface_snapshot()?;
 
         #[cfg(feature = "event-stream")]
         let waker = Waker::new(registry, WAKE_TOKEN).map_err(mio_to_io_error)?;
@@ -112,16 +173,45 @@ impl UnixInternalEventSource {
             parser: Parser::default(),
             tty_buffer: [0u8; TTY_BUFFER_SIZE],
             tty_fd: input_fd,
+            #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+            terminal_surface,
             #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
             signals,
             #[cfg(feature = "event-stream")]
             waker,
         })
     }
+
+    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+    fn terminal_surface_event(&mut self) -> io::Result<Option<InternalEvent>> {
+        let Some(current) = trueos_terminal_surface_snapshot()? else {
+            return Ok(None);
+        };
+        let previous = self.terminal_surface.replace(current);
+        if previous.is_some_and(|previous| terminal_surface_changed(previous, current)) {
+            if previous.is_some_and(|previous| previous.generation != current.generation) {
+                // A reconnect or ownership boundary invalidates both partial
+                // escape sequences and already-parsed bytes from the prior
+                // transport incarnation.
+                self.parser = Parser::default();
+            }
+            let columns = current.columns.min(u32::from(u16::MAX)) as u16;
+            let rows = current.rows.min(u32::from(u16::MAX)) as u16;
+            trueos_event_probe(
+                b"[crossterm-resize-probe:INFO] typed surface change -> resize event\n",
+            );
+            return Ok(Some(InternalEvent::Event(Event::Resize(columns, rows))));
+        }
+        Ok(None)
+    }
 }
 
 impl EventSource for UnixInternalEventSource {
     fn try_read(&mut self, timeout: Option<Duration>) -> io::Result<Option<InternalEvent>> {
+        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+        if let Some(event) = self.terminal_surface_event()? {
+            return Ok(Some(event));
+        }
         if let Some(event) = self.parser.next() {
             return Ok(Some(event));
         }
@@ -129,7 +219,11 @@ impl EventSource for UnixInternalEventSource {
         let timeout = PollTimeout::new(timeout);
 
         loop {
-            if let Err(e) = self.poll.poll(&mut self.events, timeout.leftover()) {
+            #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+            let poll_timeout = trueos_poll_timeout(&timeout);
+            #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+            let poll_timeout = timeout.leftover();
+            if let Err(e) = self.poll.poll(&mut self.events, poll_timeout) {
                 // Mio will throw an interrupted error in case of cursor position retrieval. We need to retry until it succeeds.
                 // Previous versions of Mio (< 0.7) would automatically retry the poll call if it was interrupted (if EINTR was returned).
                 // https://docs.rs/mio/0.7.0/mio/struct.Poll.html#notes
@@ -140,8 +234,23 @@ impl EventSource for UnixInternalEventSource {
                 }
             };
 
+            #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+            if let Some(event) = self.terminal_surface_event()? {
+                return Ok(Some(event));
+            }
+
             if self.events.is_empty() {
-                // No readiness events = timeout
+                // TrueOS has no SIGWINCH delivery into a Blueprint. Its poll
+                // is sliced so both finite poll() and indefinite read() can
+                // observe an out-of-band surface-generation change.
+                #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+                {
+                    if timeout.elapsed() {
+                        return Ok(None);
+                    }
+                    continue;
+                }
+                #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
                 return Ok(None);
             }
 
@@ -179,7 +288,9 @@ impl EventSource for UnixInternalEventSource {
                     SIGNAL_TOKEN => {
                         trueos_event_probe(b"[crossterm-resize-probe:INFO] signal token ready\n");
                         if self.signals.pending().next() == Some(signal_hook::consts::SIGWINCH) {
-                            trueos_event_probe(b"[crossterm-resize-probe:INFO] sigwinch -> resize event\n");
+                            trueos_event_probe(
+                                b"[crossterm-resize-probe:INFO] sigwinch -> resize event\n",
+                            );
                             // TODO Should we remove tput?
                             //
                             // This can take a really long time, because terminal::size can
@@ -284,5 +395,39 @@ impl Iterator for Parser {
 
     fn next(&mut self) -> Option<Self::Item> {
         self.internal_events.pop_front()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{terminal_surface_changed, TerminalSurfaceSnapshot};
+
+    #[test]
+    fn surface_generation_detects_same_size_reconnect() {
+        let before = TerminalSurfaceSnapshot {
+            generation: 7,
+            columns: 120,
+            rows: 40,
+        };
+        let after = TerminalSurfaceSnapshot {
+            generation: 8,
+            ..before
+        };
+        assert!(terminal_surface_changed(before, after));
+    }
+
+    #[test]
+    fn surface_geometry_change_is_detected_without_generation_change() {
+        let before = TerminalSurfaceSnapshot {
+            generation: 7,
+            columns: 120,
+            rows: 40,
+        };
+        let after = TerminalSurfaceSnapshot {
+            columns: 121,
+            ..before
+        };
+        assert!(terminal_surface_changed(before, after));
+        assert!(!terminal_surface_changed(before, before));
     }
 }

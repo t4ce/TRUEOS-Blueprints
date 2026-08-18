@@ -1213,6 +1213,11 @@ unsafe extern "C" {
         ticket: u64,
         out_epoch: *mut u64,
     ) -> i32;
+    pub fn trueos_cabi_blueprint_terminal_surface_snapshot_v1(
+        out_generation: *mut u64,
+        out_cols: *mut u32,
+        out_rows: *mut u32,
+    ) -> i32;
     pub fn trueos_cabi_konsole_size(out_cols: *mut u32, out_rows: *mut u32) -> i32;
     pub fn trueos_cabi_konsole_begin_frame(cols: u32, rows: u32, reserved_top_rows: u32) -> i32;
     pub fn trueos_cabi_konsole_write_row(

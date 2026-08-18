@@ -2,7 +2,6 @@ extern crate alloc;
 
 use alloc::{string::String, vec};
 use core::fmt;
-use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::vcabi;
 
@@ -477,6 +476,13 @@ pub struct TerminalParkingTicket {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TerminalSurfaceSnapshot {
+    pub generation: u64,
+    pub columns: u32,
+    pub rows: u32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TerminalLeaseError {
     Unsupported,
     NotActive,
@@ -529,6 +535,28 @@ pub fn terminal_initial_lease() -> Result<TerminalLease, TerminalLeaseError> {
     }
 }
 
+pub fn terminal_surface_snapshot() -> Result<TerminalSurfaceSnapshot, TerminalLeaseError> {
+    let mut generation = 0;
+    let mut columns = 0;
+    let mut rows = 0;
+    let rc = unsafe {
+        vcabi::trueos_cabi_blueprint_terminal_surface_snapshot_v1(
+            &mut generation,
+            &mut columns,
+            &mut rows,
+        )
+    };
+    if rc == 0 && generation != 0 && columns != 0 && rows != 0 {
+        Ok(TerminalSurfaceSnapshot {
+            generation,
+            columns,
+            rows,
+        })
+    } else {
+        Err(TerminalLeaseError::from_rc(if rc == 0 { -6 } else { rc }))
+    }
+}
+
 impl TerminalLease {
     pub const fn epoch(&self) -> u64 {
         self.epoch
@@ -548,6 +576,10 @@ impl TerminalLease {
         } else {
             Err(TerminalLeaseError::from_rc(rc))
         }
+    }
+
+    pub fn surface_snapshot(&self) -> Result<TerminalSurfaceSnapshot, TerminalLeaseError> {
+        terminal_surface_snapshot()
     }
 
     pub fn release_to_shell(self) -> Result<TerminalParkingTicket, TerminalLeaseError> {
@@ -582,8 +614,9 @@ impl TerminalParkingTicket {
         }
     }
 
-    /// Convenience wait that keeps the guest executor and background work
-    /// moving between typed, nonblocking host polls.
+    /// Convenience wait that yields the guest VCPU between typed polls.
+    /// Callers that must perform work while hidden should drive
+    /// [`Self::poll_reentry`] from their own loop or executor instead.
     pub fn wait_for_reentry(self) -> Result<TerminalLease, TerminalLeaseError> {
         loop {
             match self.poll_reentry()? {
@@ -597,14 +630,11 @@ impl TerminalParkingTicket {
     }
 }
 
-static LEGACY_TERMINAL_TICKET: AtomicU64 = AtomicU64::new(0);
-
 #[inline]
 pub fn leave_terminal_handoff() {
     if let Ok(lease) = terminal_initial_lease()
-        && let Ok(ticket) = lease.release_to_shell()
+        && lease.release_to_shell().is_ok()
     {
-        LEGACY_TERMINAL_TICKET.store(ticket.ticket, Ordering::Release);
         return;
     }
     let _ = unsafe { vcabi::trueos_cabi_blueprint_return_to_cli() };
@@ -631,13 +661,6 @@ pub fn attached_read_byte() -> Option<u8> {
         Some(value as u8)
     } else {
         None
-    }
-}
-
-pub fn wait_for_terminal_reentry() {
-    let ticket = LEGACY_TERMINAL_TICKET.swap(0, Ordering::AcqRel);
-    if ticket != 0 {
-        let _ = TerminalParkingTicket { ticket }.wait_for_reentry();
     }
 }
 

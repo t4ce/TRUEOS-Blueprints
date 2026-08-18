@@ -24,7 +24,6 @@ members = [
     "apps/image-viewer",
     "apps/lumen",
     "apps/ipp-printer",
-    "apps/exp",
     "apps/esp32_stt",
     "apps/flight_controller_sim",
     "apps/monaco",

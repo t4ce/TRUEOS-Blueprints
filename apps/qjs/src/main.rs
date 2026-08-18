@@ -42,30 +42,57 @@ fn main() -> Result<()> {
     let mut app = App::new();
 
     #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-    loop {
-        app.begin_terminal_session();
-        let result = run_app(&mut app);
-        trueos::vshell::leave_terminal_handoff();
-        result?;
-        trueos::vshell::wait_for_terminal_reentry();
+    {
+        let mut lease = trueos::vshell::terminal_initial_lease()
+            .map_err(|error| terminal_lease_error("initial terminal lease", error))?;
+        loop {
+            app.begin_terminal_session();
+            let session = run_app(&mut app, || {
+                lease
+                    .acknowledge_ready()
+                    .map_err(|error| terminal_lease_error("terminal-ready acknowledgement", error))
+            });
+
+            // `run_app` has already restored raw mode, mouse capture, and the
+            // alternate screen. Only then may Shell2 take the terminal lease.
+            let ticket = lease
+                .release_to_shell()
+                .map_err(|error| terminal_lease_error("terminal lease release", error))?;
+            session?;
+            lease = ticket
+                .wait_for_reentry()
+                .map_err(|error| terminal_lease_error("terminal lease reentry", error))?;
+        }
     }
 
     #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
     {
         app.begin_terminal_session();
-        run_app(&mut app)
+        run_app(&mut app, || Ok(()))
     }
 }
 
-fn run_app(app: &mut App) -> Result<()> {
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+fn terminal_lease_error(action: &str, error: trueos::vshell::TerminalLeaseError) -> anyhow::Error {
+    anyhow::anyhow!("{action}: {error}")
+}
+
+fn run_app<F>(app: &mut App, acknowledge_ready: F) -> Result<()>
+where
+    F: FnMut() -> Result<()>,
+{
     let mut terminal = TerminalGuard::enter()?;
-    let result = run(&mut terminal.terminal, app);
+    let result = run(&mut terminal.terminal, app, acknowledge_ready);
     terminal.exit()?;
     result
 }
 
-fn run(terminal: &mut AppTerminal, app: &mut App) -> Result<()> {
+fn run<F>(terminal: &mut AppTerminal, app: &mut App, mut acknowledge_ready: F) -> Result<()>
+where
+    F: FnMut() -> Result<()>,
+{
     let mut last_output_poll = Instant::now();
+    let mut terminal_ready = false;
     loop {
         terminal.draw(|frame| {
             let area = frame.area();
@@ -74,6 +101,10 @@ fn run(terminal: &mut AppTerminal, app: &mut App) -> Result<()> {
                 frame.set_cursor_position(position);
             }
         })?;
+        if !terminal_ready {
+            acknowledge_ready()?;
+            terminal_ready = true;
+        }
 
         if app.should_quit {
             return Ok(());
@@ -102,13 +133,31 @@ struct TerminalGuard {
 
 impl TerminalGuard {
     fn enter() -> Result<Self> {
-        enable_raw_mode()?;
-        let mut output = BufWriter::with_capacity(FRAME_BUFFER_CAPACITY, stdout());
-        execute!(output, EnterAlternateScreen, EnableMouseCapture)?;
-        output.flush()?;
+        // Constructing the terminal has no terminal-mode side effects. Do it
+        // before raw mode so every subsequent partial setup can be unwound.
+        let output = BufWriter::with_capacity(FRAME_BUFFER_CAPACITY, stdout());
         let backend = CrosstermBackend::new(output);
         let mut terminal = Terminal::new(backend)?;
-        terminal.clear()?;
+        if let Err(error) = enable_raw_mode() {
+            let _ = Self::restore_terminal(&mut terminal);
+            return Err(error.into());
+        }
+        if let Err(error) = execute!(
+            terminal.backend_mut(),
+            EnterAlternateScreen,
+            EnableMouseCapture
+        ) {
+            let _ = Self::restore_terminal(&mut terminal);
+            return Err(error.into());
+        }
+        if let Err(error) = terminal.backend_mut().flush() {
+            let _ = Self::restore_terminal(&mut terminal);
+            return Err(error.into());
+        }
+        if let Err(error) = terminal.clear() {
+            let _ = Self::restore_terminal(&mut terminal);
+            return Err(error.into());
+        }
         Ok(Self {
             terminal,
             active: true,
@@ -116,17 +165,43 @@ impl TerminalGuard {
     }
 
     fn exit(&mut self) -> Result<()> {
-        if self.active {
-            disable_raw_mode()?;
-            execute!(
-                self.terminal.backend_mut(),
-                DisableMouseCapture,
-                LeaveAlternateScreen
-            )?;
-            self.terminal.show_cursor()?;
-            self.active = false;
+        if !self.active {
+            return Ok(());
         }
-        Ok(())
+        // Make Drop idempotent even if one cleanup operation fails. The helper
+        // still attempts every terminal and raw-mode restoration step.
+        self.active = false;
+        Self::restore_terminal(&mut self.terminal).map_err(Into::into)
+    }
+
+    fn restore_terminal(terminal: &mut AppTerminal) -> io::Result<()> {
+        let mut first_error = None;
+        if let Err(error) = terminal.show_cursor() {
+            first_error = Some(error);
+        }
+        if let Err(error) = execute!(
+            terminal.backend_mut(),
+            DisableMouseCapture,
+            LeaveAlternateScreen
+        ) {
+            if first_error.is_none() {
+                first_error = Some(error);
+            }
+        }
+        if let Err(error) = terminal.backend_mut().flush() {
+            if first_error.is_none() {
+                first_error = Some(error);
+            }
+        }
+        if let Err(error) = disable_raw_mode() {
+            if first_error.is_none() {
+                first_error = Some(error);
+            }
+        }
+        match first_error {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
     }
 }
 
