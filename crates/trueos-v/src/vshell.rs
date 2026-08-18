@@ -2,6 +2,7 @@ extern crate alloc;
 
 use alloc::{string::String, vec};
 use core::fmt;
+use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::vcabi;
 
@@ -463,8 +464,149 @@ pub fn qjs_workbench_close() {
     let _ = unsafe { vcabi::trueos_cabi_qjs_workbench_close_v1() };
 }
 
+/// Opaque authority for one active Blueprint terminal session.
+#[derive(Debug, Eq, PartialEq)]
+pub struct TerminalLease {
+    epoch: u64,
+}
+
+/// Opaque proof that one terminal session was returned to Shell2.
+#[derive(Debug, Eq, PartialEq)]
+pub struct TerminalParkingTicket {
+    ticket: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TerminalLeaseError {
+    Unsupported,
+    NotActive,
+    Stale,
+    Detached,
+    Busy,
+    Transport(i32),
+}
+
+impl TerminalLeaseError {
+    const fn from_rc(rc: i32) -> Self {
+        match rc {
+            -1 => Self::Unsupported,
+            -2 => Self::NotActive,
+            -3 => Self::Stale,
+            -4 => Self::Detached,
+            -5 => Self::Busy,
+            other => Self::Transport(other),
+        }
+    }
+}
+
+impl fmt::Display for TerminalLeaseError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Unsupported => formatter.write_str("terminal handoff is unsupported"),
+            Self::NotActive => formatter.write_str("terminal lease is not active"),
+            Self::Stale => formatter.write_str("terminal lease epoch is stale"),
+            Self::Detached => formatter.write_str("terminal console is detached"),
+            Self::Busy => formatter.write_str("terminal ownership could not be transferred"),
+            Self::Transport(code) => write!(formatter, "terminal lease transport error {code}"),
+        }
+    }
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub enum TerminalReentry {
+    Pending,
+    Ready(TerminalLease),
+}
+
+/// Observe the host-issued lease for the terminal session active at launch.
+pub fn terminal_initial_lease() -> Result<TerminalLease, TerminalLeaseError> {
+    let mut epoch = 0;
+    let rc = unsafe { vcabi::trueos_cabi_blueprint_terminal_lease_current_v1(0, &mut epoch) };
+    if rc == 0 && epoch != 0 {
+        Ok(TerminalLease { epoch })
+    } else {
+        Err(TerminalLeaseError::from_rc(if rc == 0 { -6 } else { rc }))
+    }
+}
+
+impl TerminalLease {
+    pub const fn epoch(&self) -> u64 {
+        self.epoch
+    }
+
+    /// Acknowledge that raw mode, the alternate screen, and the first render
+    /// boundary have been restored for this exact active epoch.
+    pub fn acknowledge_ready(&self) -> Result<(), TerminalLeaseError> {
+        let mut observed = 0;
+        let rc = unsafe {
+            vcabi::trueos_cabi_blueprint_terminal_lease_current_v1(self.epoch, &mut observed)
+        };
+        if rc == 0 && observed == self.epoch {
+            Ok(())
+        } else if rc == 0 {
+            Err(TerminalLeaseError::Stale)
+        } else {
+            Err(TerminalLeaseError::from_rc(rc))
+        }
+    }
+
+    pub fn release_to_shell(self) -> Result<TerminalParkingTicket, TerminalLeaseError> {
+        let mut ticket = 0;
+        let rc = unsafe {
+            vcabi::trueos_cabi_blueprint_terminal_lease_release_v1(self.epoch, &mut ticket)
+        };
+        if rc == 0 && ticket != 0 {
+            Ok(TerminalParkingTicket { ticket })
+        } else {
+            Err(TerminalLeaseError::from_rc(if rc == 0 { -6 } else { rc }))
+        }
+    }
+}
+
+impl TerminalParkingTicket {
+    pub const fn epoch(&self) -> u64 {
+        self.ticket
+    }
+
+    /// Poll without consuming terminal input or parking the guest VCPU.
+    pub fn poll_reentry(&self) -> Result<TerminalReentry, TerminalLeaseError> {
+        let mut epoch = 0;
+        let rc = unsafe {
+            vcabi::trueos_cabi_blueprint_terminal_lease_poll_reentry_v1(self.ticket, &mut epoch)
+        };
+        match rc {
+            1 => Ok(TerminalReentry::Pending),
+            0 if epoch != 0 => Ok(TerminalReentry::Ready(TerminalLease { epoch })),
+            0 => Err(TerminalLeaseError::Transport(-6)),
+            other => Err(TerminalLeaseError::from_rc(other)),
+        }
+    }
+
+    /// Convenience wait that keeps the guest executor and background work
+    /// moving between typed, nonblocking host polls.
+    pub fn wait_for_reentry(self) -> Result<TerminalLease, TerminalLeaseError> {
+        loop {
+            match self.poll_reentry()? {
+                TerminalReentry::Pending => {
+                    crate::vsys::poll_once();
+                    crate::vsys::sleep_ms(10);
+                }
+                TerminalReentry::Ready(lease) => return Ok(lease),
+            }
+        }
+    }
+}
+
+static LEGACY_TERMINAL_TICKET: AtomicU64 = AtomicU64::new(0);
+
 #[inline]
 pub fn leave_terminal_handoff() {
+    if let Ok(lease) = terminal_initial_lease()
+        && let Ok(ticket) = lease.release_to_shell()
+    {
+        LEGACY_TERMINAL_TICKET.store(ticket.ticket, Ordering::Release);
+        return;
+    }
     let _ = unsafe { vcabi::trueos_cabi_blueprint_return_to_cli() };
 }
 
@@ -492,15 +634,10 @@ pub fn attached_read_byte() -> Option<u8> {
     }
 }
 
-const TERMINAL_REENTRY_BYTE: u8 = 0x1f;
-
 pub fn wait_for_terminal_reentry() {
-    loop {
-        if attached_read_byte() == Some(TERMINAL_REENTRY_BYTE) {
-            return;
-        }
-        crate::vsys::poll_once();
-        crate::vsys::sleep_ms(5);
+    let ticket = LEGACY_TERMINAL_TICKET.swap(0, Ordering::AcqRel);
+    if ticket != 0 {
+        let _ = TerminalParkingTicket { ticket }.wait_for_reentry();
     }
 }
 

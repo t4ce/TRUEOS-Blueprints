@@ -93,6 +93,7 @@ const BLUEPRINT_VENDOR_PATCHES: &[(&str, &str)] = &[
     ("crossbeam-channel", "crossbeam-channel-0.5.15"),
     ("crossbeam-epoch", "crossbeam-epoch-0.9.18"),
     ("crossbeam-utils", "crossbeam-utils-0.8.21"),
+    ("crossterm", "crossterm-0.29.0-trueos"),
     ("form_urlencoded", "form_urlencoded-1.2.2"),
     ("futures-core", "futures-core-0.3.32"),
     ("futures-task", "futures-task-0.3.32"),
@@ -127,12 +128,14 @@ const BLUEPRINT_VENDOR_PATCHES: &[(&str, &str)] = &[
     ("rand", "rand-0.8.6"),
     ("rayon", "rayon"),
     ("rayon-core", "rayon/rayon-core"),
+    ("rustix", "rustix-1.1.4-trueos"),
     ("reqwest", "reqwest-0.13.3"),
     ("ring", "ring-0.17.14"),
     ("russh", "russh-0.62.4"),
     ("russh-cryptovec", "russh-cryptovec-0.62.0"),
     ("rustls-rustcrypto", "rustls-rustcrypto-0.0.2-alpha"),
     ("serde_urlencoded", "serde_urlencoded-0.7.1"),
+    ("signal-hook-mio", "signal-hook-mio-0.2.5-trueos"),
     ("socket2", "socket2-0.6.3"),
     ("spin", "spin-0.10.0"),
     ("sync_wrapper", "sync_wrapper-1.0.2"),
@@ -2316,11 +2319,17 @@ fn source_overlay_patches(
 
     ensure_overlay_registry_sources(app_dir, manifest_path, work_dir)?;
 
-    // Crossterm's Unix event backend pulls both crates transitively. An app
-    // without a checked-in Cargo.lock does not mention either one until after
-    // this function has generated the isolated build manifest and Cargo has
-    // resolved it, which is too late to select their TRUEOS overlays.
+    // Crossterm 0.29, Rustix 1.1, and signal-hook-mio are checked-in
+    // Blueprint platform vendors. Crossterm 0.28 and Rustix 0.38 still need
+    // isolated overlays because their ABI-compatible platform forks have not
+    // been promoted yet.
     let uses_crossterm = manifest_or_lock_requires_crossterm_overlays(app_dir, manifest_path)?;
+    let uses_crossterm_0_28 =
+        uses_crossterm && manifest_or_lock_requires_crossterm_0_28_overlay(app_dir, manifest_path)?;
+    let uses_rustix =
+        uses_crossterm || manifest_or_lock_mentions_crate(app_dir, manifest_path, "rustix")?;
+    let uses_rustix_0_38 =
+        uses_rustix && manifest_or_lock_requires_rustix_0_38_overlay(app_dir, manifest_path)?;
     // Tonic's `channel` transport feature pulls hyper-timeout transitively.
     // Select both overlays from the direct Tonic declaration so packages
     // without a local Cargo.lock still materialize the TRUEOS I/O types.
@@ -2412,34 +2421,19 @@ fn source_overlay_patches(
         out.push(CratePatch::new("argmax", path));
     }
 
-    if uses_crossterm || manifest_or_lock_mentions_crate(app_dir, manifest_path, "rustix")? {
+    if uses_rustix_0_38 {
         let rustix_0_38 = stage_rustix_trueos_overlay(work_dir, "0.38.44")?;
-        let rustix_1_1 = stage_rustix_trueos_overlay(work_dir, "1.1.4")?;
-        out.retain(|patch| patch.name != "rustix");
+        out.retain(|patch| patch.key != "rustix_0_38");
         out.push(CratePatch::alias("rustix_0_38", "rustix", rustix_0_38));
-        out.push(CratePatch::alias("rustix_1_1", "rustix", rustix_1_1));
     }
 
-    if uses_crossterm || manifest_or_lock_mentions_crate(app_dir, manifest_path, "signal-hook-mio")?
-    {
-        let path = stage_signal_hook_mio_trueos_overlay(work_dir)?;
-        out.retain(|patch| patch.name != "signal-hook-mio");
-        out.push(CratePatch::new("signal-hook-mio", path));
-    }
-
-    if uses_crossterm {
+    if uses_crossterm_0_28 {
         let crossterm_0_28 = stage_crossterm_trueos_overlay(work_dir, "0.28.1")?;
-        let crossterm_0_29 = stage_crossterm_trueos_overlay(work_dir, "0.29.0")?;
-        out.retain(|patch| patch.name != "crossterm");
+        out.retain(|patch| patch.key != "crossterm_0_28");
         out.push(CratePatch::alias(
             "crossterm_0_28",
             "crossterm",
             crossterm_0_28,
-        ));
-        out.push(CratePatch::alias(
-            "crossterm_0_29",
-            "crossterm",
-            crossterm_0_29,
         ));
     }
 
@@ -2596,6 +2590,66 @@ fn manifest_or_lock_requires_crossterm_overlays(
     }))
 }
 
+fn manifest_or_lock_requires_crossterm_0_28_overlay(
+    app_dir: &Path,
+    manifest_path: &Path,
+) -> Result<bool, String> {
+    let lock_path = app_dir.join("Cargo.lock");
+    if lock_path.is_file() {
+        let packages = lock_packages(&lock_path)?;
+        let crossterm_versions = packages
+            .iter()
+            .filter(|package| package.name == "crossterm")
+            .map(|package| package.version.as_str())
+            .collect::<Vec<_>>();
+        if !crossterm_versions.is_empty() {
+            return Ok(crossterm_versions
+                .iter()
+                .any(|version| version.starts_with("0.28.")));
+        }
+    }
+
+    let manifest = fs::read_to_string(manifest_path).map_err(io_string)?;
+    let direct_crossterm = manifest.lines().find(|line| {
+        line.split('#')
+            .next()
+            .unwrap_or("")
+            .trim_start()
+            .starts_with("crossterm")
+    });
+    Ok(!direct_crossterm.is_some_and(|line| line.contains("0.29")))
+}
+
+fn manifest_or_lock_requires_rustix_0_38_overlay(
+    app_dir: &Path,
+    manifest_path: &Path,
+) -> Result<bool, String> {
+    let lock_path = app_dir.join("Cargo.lock");
+    if lock_path.is_file() {
+        let packages = lock_packages(&lock_path)?;
+        let rustix_versions = packages
+            .iter()
+            .filter(|package| package.name == "rustix")
+            .map(|package| package.version.as_str())
+            .collect::<Vec<_>>();
+        if !rustix_versions.is_empty() {
+            return Ok(rustix_versions
+                .iter()
+                .any(|version| version.starts_with("0.38.")));
+        }
+    }
+
+    let manifest = fs::read_to_string(manifest_path).map_err(io_string)?;
+    let direct_rustix = manifest.lines().find(|line| {
+        line.split('#')
+            .next()
+            .unwrap_or("")
+            .trim_start()
+            .starts_with("rustix")
+    });
+    Ok(!direct_rustix.is_some_and(|line| line.contains("1.")))
+}
+
 fn stage_ctrlc_trueos_overlay(work_dir: &Path) -> Result<PathBuf, String> {
     const CTRL_C_VERSION: &str = "3.4.4";
     let source_name = format!("ctrlc-{CTRL_C_VERSION}");
@@ -2643,23 +2697,6 @@ fn stage_rustix_trueos_overlay(work_dir: &Path, version: &str) -> Result<PathBuf
     reset_dir(&staged)?;
     copy_app_tree(&source, &staged)?;
     patch_rustix_trueos_overlay(&staged)?;
-    Ok(staged)
-}
-
-fn stage_signal_hook_mio_trueos_overlay(work_dir: &Path) -> Result<PathBuf, String> {
-    const SIGNAL_HOOK_MIO_VERSION: &str = "0.2.5";
-    let source_name = format!("signal-hook-mio-{SIGNAL_HOOK_MIO_VERSION}");
-    let source = find_cargo_registry_crate(&source_name).ok_or_else(|| {
-        format!(
-            "missing Cargo registry source for {source_name}; run `cargo fetch` for the app once"
-        )
-    })?;
-    let staged = work_dir
-        .join("source-overlay-crates")
-        .join("signal-hook-mio-trueos");
-    reset_dir(&staged)?;
-    copy_app_tree(&source, &staged)?;
-    patch_signal_hook_mio_trueos_overlay(&staged)?;
     Ok(staged)
 }
 
@@ -2806,25 +2843,30 @@ fn ensure_overlay_registry_sources(
     work_dir: &Path,
 ) -> Result<(), String> {
     let uses_crossterm = manifest_or_lock_requires_crossterm_overlays(app_dir, manifest_path)?;
+    let uses_crossterm_0_28 =
+        uses_crossterm && manifest_or_lock_requires_crossterm_0_28_overlay(app_dir, manifest_path)?;
+    let uses_rustix =
+        uses_crossterm || manifest_or_lock_mentions_crate(app_dir, manifest_path, "rustix")?;
+    let uses_rustix_0_38 =
+        uses_rustix && manifest_or_lock_requires_rustix_0_38_overlay(app_dir, manifest_path)?;
     let uses_tonic = manifest_or_lock_mentions_crate(app_dir, manifest_path, "tonic")?;
     let registry_overlays = [
         ("argmax", "0.4.0", "argmax-0.4.0"),
         ("crossterm", "0.28.1", "crossterm-0.28.1"),
-        ("crossterm", "0.29.0", "crossterm-0.29.0"),
         ("ctrlc", "3.4.4", "ctrlc-3.4.4"),
         ("futures-timer", "3.0.4", "futures-timer-3.0.4"),
         ("hyper-timeout", "0.5.2", "hyper-timeout-0.5.2"),
         ("rustix", "0.38.44", "rustix-0.38.44"),
-        ("rustix", "1.1.4", "rustix-1.1.4"),
-        ("signal-hook-mio", "0.2.5", "signal-hook-mio-0.2.5"),
         ("socket2", "0.5.10", "socket2-0.5.10"),
         ("tokio-stream", "0.1.17", "tokio-stream-0.1.17"),
         ("tonic", "0.14.6", "tonic-0.14.6"),
     ];
     let mut missing = Vec::new();
     for (crate_name, version, source_dir) in registry_overlays {
-        let required_by_crossterm =
-            uses_crossterm && matches!(crate_name, "crossterm" | "rustix" | "signal-hook-mio");
+        let required_by_crossterm = (uses_crossterm_0_28
+            && matches!((crate_name, source_dir), ("crossterm", "crossterm-0.28.1")))
+            || (uses_rustix_0_38
+                && matches!((crate_name, source_dir), ("rustix", "rustix-0.38.44")));
         let required_by_tonic = uses_tonic && crate_name == "hyper-timeout";
         if find_cargo_registry_crate(source_dir).is_none()
             && (required_by_crossterm
@@ -3127,29 +3169,6 @@ fn patch_rustix_trueos_overlay(crate_dir: &Path) -> Result<(), String> {
     )
 }
 
-fn patch_signal_hook_mio_trueos_overlay(crate_dir: &Path) -> Result<(), String> {
-    replace_file_text(
-        &crate_dir.join("src/lib.rs"),
-        "        use std::io::Error;\n\n        use signal_hook::iterator",
-        "        use std::io::Error as SignalError;\n        use mio::io::{Error, ErrorKind};\n\n        use signal_hook::iterator",
-    )?;
-    replace_file_text(
-        &crate_dir.join("src/lib.rs"),
-        "        use libc::c_int;\n\n        /// A struct which mimics",
-        "        use libc::c_int;\n\n        fn map_signal_error(error: SignalError) -> Error {\n            if let Some(errno) = error.raw_os_error() {\n                return mio::io::errno_error(errno);\n            }\n            let kind = match error.kind() {\n                std::io::ErrorKind::WouldBlock => ErrorKind::WouldBlock,\n                std::io::ErrorKind::Interrupted => ErrorKind::Interrupted,\n                std::io::ErrorKind::InvalidInput => ErrorKind::InvalidInput,\n                std::io::ErrorKind::NotFound => ErrorKind::NotFound,\n                std::io::ErrorKind::PermissionDenied => ErrorKind::PermissionDenied,\n                std::io::ErrorKind::BrokenPipe => ErrorKind::BrokenPipe,\n                std::io::ErrorKind::AlreadyExists => ErrorKind::AlreadyExists,\n                std::io::ErrorKind::TimedOut => ErrorKind::TimedOut,\n                std::io::ErrorKind::ConnectionRefused => ErrorKind::ConnectionRefused,\n                std::io::ErrorKind::ConnectionReset => ErrorKind::ConnectionReset,\n                std::io::ErrorKind::ConnectionAborted => ErrorKind::ConnectionAborted,\n                std::io::ErrorKind::NotConnected => ErrorKind::NotConnected,\n                std::io::ErrorKind::AddrInUse => ErrorKind::AddrInUse,\n                std::io::ErrorKind::AddrNotAvailable => ErrorKind::AddrNotAvailable,\n                _ => ErrorKind::Other,\n            };\n            Error::new(kind, \"signal-hook-mio error\")\n        }\n\n        /// A struct which mimics",
-    )?;
-    replace_file_text(
-        &crate_dir.join("src/lib.rs"),
-        "                let delivery = SignalDelivery::with_pipe(read, write, exfiltrator, signals)?;",
-        "                let delivery = SignalDelivery::with_pipe(read, write, exfiltrator, signals)\n                    .map_err(map_signal_error)?;",
-    )?;
-    replace_file_text(
-        &crate_dir.join("src/lib.rs"),
-        "                self.0.handle().add_signal(signal)",
-        "                self.0.handle().add_signal(signal).map_err(map_signal_error)",
-    )
-}
-
 fn patch_socket2_trueos_overlay(crate_dir: &Path) -> Result<(), String> {
     replace_file_text(
         &crate_dir.join("src/sys/unix.rs"),
@@ -3226,6 +3245,10 @@ fn patch_crossterm_trueos_overlay(crate_dir: &Path) -> Result<(), String> {
         "                if e.kind() == io::ErrorKind::Interrupted {\n                    continue;\n                } else {\n                    return Err(e);\n                }",
         "                if e.kind() == mio::io::ErrorKind::Interrupted {\n                    continue;\n                } else {\n                    return Err(mio_to_io_error(e));\n                }",
     )?;
+    // Blueprint Mio follows Mio 1.x's standard-library error contract. The
+    // historical overlay used the kernel-only `mio::io` facade, which is not
+    // part of this userland vendor and made the staged backend uncompilable.
+    replace_file_text(&mio_path, "mio::io::", "io::")?;
     replace_file_text(
         &mio_path,
         "                    SIGNAL_TOKEN => {\n                        if self.signals.pending().next() == Some(signal_hook::consts::SIGWINCH) {",
@@ -6084,4 +6107,42 @@ fn reset_dir(path: &Path) -> Result<(), String> {
         fs::remove_dir_all(path).map_err(io_string)?;
     }
     fs::create_dir_all(path).map_err(io_string)
+}
+
+#[cfg(test)]
+mod terminal_platform_vendor_tests {
+    use super::*;
+
+    #[test]
+    fn terminal_stack_is_owned_by_the_blueprint_platform_vendor() {
+        for (package, vendor_dir) in [
+            ("crossterm", "crossterm-0.29.0-trueos"),
+            ("rustix", "rustix-1.1.4-trueos"),
+            ("signal-hook-mio", "signal-hook-mio-0.2.5-trueos"),
+        ] {
+            assert!(BLUEPRINT_VENDOR_PATCHES.contains(&(package, vendor_dir)));
+            assert!(
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("vendor")
+                    .join(vendor_dir)
+                    .join("Cargo.toml")
+                    .is_file()
+            );
+        }
+    }
+
+    #[test]
+    fn terminal_platform_forks_use_the_std_mio_error_contract() {
+        let vendor = Path::new(env!("CARGO_MANIFEST_DIR")).join("vendor");
+        let crossterm =
+            fs::read_to_string(vendor.join("crossterm-0.29.0-trueos/src/event/source/unix/mio.rs"))
+                .unwrap();
+        let signal_hook =
+            fs::read_to_string(vendor.join("signal-hook-mio-0.2.5-trueos/src/lib.rs")).unwrap();
+
+        assert!(crossterm.contains("fn mio_to_io_error(error: io::Error)"));
+        assert!(!crossterm.contains("mio::io"));
+        assert!(signal_hook.contains("type Error = MioIoError;"));
+        assert!(!signal_hook.contains("mio::io"));
+    }
 }

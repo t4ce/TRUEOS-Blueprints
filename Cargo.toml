@@ -230,6 +230,7 @@ crossbeam-epoch = { path = "vendor/crossbeam-epoch-0.9.18" }
 crossbeam-queue = { path = "vendor/crossbeam-queue-0.3.12" }
 crossbeam-skiplist = { path = "vendor/crossbeam-skiplist-0.1.3" }
 crossbeam-utils = { path = "vendor/crossbeam-utils-0.8.21" }
+crossterm = { path = "vendor/crossterm-0.29.0-trueos" }
 form_urlencoded = { path = "vendor/form_urlencoded-1.2.2" }
 getrandom = { path = "vendor/getrandom-0.2.17" }
 getrandom_03 = { package = "getrandom", path = "vendor/getrandom-0.3.4" }
@@ -260,8 +261,10 @@ russh = { path = "vendor/russh-0.62.4" }
 russh-cryptovec = { path = "vendor/russh-cryptovec-0.62.0" }
 rayon = { path = "vendor/rayon" }
 rayon-core = { path = "vendor/rayon/rayon-core" }
+rustix = { path = "vendor/rustix-1.1.4-trueos" }
 rustls-rustcrypto = { path = "vendor/rustls-rustcrypto-0.0.2-alpha" }
 serde_urlencoded = { path = "vendor/serde_urlencoded-0.7.1" }
+signal-hook-mio = { path = "vendor/signal-hook-mio-0.2.5-trueos" }
 socket2 = { path = "vendor/socket2-0.6.3" }
 spin = { path = "vendor/spin-0.10.0" }
 sync_wrapper = { path = "vendor/sync_wrapper-1.0.2" }

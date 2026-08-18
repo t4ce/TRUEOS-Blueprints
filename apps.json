@@ -17,6 +17,10 @@
     "image-viewer",
     "lumen",
     "ipp-printer",
+    {
+      "name": "texplo",
+      "path": "../texplo"
+    },
     "esp32_stt",
     "flight_controller_sim",
     "prismq",

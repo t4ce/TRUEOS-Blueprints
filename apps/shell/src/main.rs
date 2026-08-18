@@ -267,7 +267,7 @@ fn main() {
             return;
         }
 
-        if (resized || terminal.take_dirty())
+        if terminal.take_dirty()
             && let Err(error) = present_terminal(&mut frame, &terminal)
         {
             logl::log(
@@ -293,10 +293,21 @@ fn drain_resize_events(
             continue;
         }
         frame.resize(resize.width, resize.height)?;
+        let (old_cols, old_rows) = terminal.dimensions();
+        let (old_origin_x, old_origin_y) = centered_terminal_origin(
+            resize.width,
+            resize.height,
+            old_cols,
+            old_rows,
+        );
+        present_terminal_at(frame, terminal, old_origin_x, old_origin_y)?;
         let (cols, rows) = terminal_grid_size(resize.width, resize.height);
         if terminal.dimensions() != (cols, rows) {
             terminal.resize(cols, rows);
             frontend.resize(cols as u32, rows as u32)?;
+            // The centered old grid is already live. Wait for Shell2's fresh
+            // replay rather than publishing the new, empty terminal model.
+            let _ = terminal.take_dirty();
         }
         resized = true;
         logl::log(
@@ -316,6 +327,21 @@ fn terminal_grid_size(width: u32, height: u32) -> (usize, usize) {
     (
         (width / MONO_GLYPH_ADVANCE_PX).max(1) as usize,
         (height / ROW_HEIGHT_PX).max(1) as usize,
+    )
+}
+
+fn centered_terminal_origin(width: u32, height: u32, cols: usize, rows: usize) -> (u32, u32) {
+    let content_width = u32::try_from(cols)
+        .unwrap_or(u32::MAX)
+        .saturating_mul(MONO_GLYPH_ADVANCE_PX)
+        .saturating_add(FRAME_PADDING_PX * 2);
+    let content_height = u32::try_from(rows)
+        .unwrap_or(u32::MAX)
+        .saturating_mul(ROW_HEIGHT_PX)
+        .saturating_add(FRAME_PADDING_PX * 2);
+    (
+        width.saturating_sub(content_width) / 2,
+        height.saturating_sub(content_height) / 2,
     )
 }
 
@@ -662,6 +688,15 @@ fn named_key_sequence(key_code: u16) -> Option<&'static [u8]> {
 }
 
 fn present_terminal(frame: &mut Frame, terminal: &Terminal) -> Result<(), UiError> {
+    present_terminal_at(frame, terminal, 0, 0)
+}
+
+fn present_terminal_at(
+    frame: &mut Frame,
+    terminal: &Terminal,
+    origin_x: u32,
+    origin_y: u32,
+) -> Result<(), UiError> {
     retry_busy(|| frame.begin(BACKGROUND))?;
 
     let viewport = (frame.width(), frame.height());
@@ -688,9 +723,12 @@ fn present_terminal(frame: &mut Frame, terminal: &Terminal) -> Result<(), UiErro
             if text.chars().any(|glyph| glyph != ' ') {
                 let scene = [SceneTextRow {
                     text: text.as_str(),
-                    x: FRAME_PADDING_PX as f32
+                    x: origin_x as f32
+                        + FRAME_PADDING_PX as f32
                         + start_col as f32 * MONO_GLYPH_ADVANCE_PX as f32,
-                    y: FRAME_PADDING_PX as f32 + row as f32 * ROW_HEIGHT_PX as f32,
+                    y: origin_y as f32
+                        + FRAME_PADDING_PX as f32
+                        + row as f32 * ROW_HEIGHT_PX as f32,
                     font_pixels: FONT_PIXELS,
                 }];
                 retry_busy(|| {
@@ -711,8 +749,12 @@ fn present_terminal(frame: &mut Frame, terminal: &Terminal) -> Result<(), UiErro
     let cursor = terminal.cursor();
     let cursor_scene = [SceneTextRow {
         text: "_",
-        x: FRAME_PADDING_PX as f32 + cursor.col as f32 * MONO_GLYPH_ADVANCE_PX as f32,
-        y: FRAME_PADDING_PX as f32 + cursor.row as f32 * ROW_HEIGHT_PX as f32,
+        x: origin_x as f32
+            + FRAME_PADDING_PX as f32
+            + cursor.col as f32 * MONO_GLYPH_ADVANCE_PX as f32,
+        y: origin_y as f32
+            + FRAME_PADDING_PX as f32
+            + cursor.row as f32 * ROW_HEIGHT_PX as f32,
         font_pixels: FONT_PIXELS,
     }];
     retry_busy(|| {
