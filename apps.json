@@ -69,6 +69,7 @@
     "system-services",
     "webdevices",
     "webmail",
+        "commander",
     "weave_hello",
     {
       "name": "rustc-min",
@@ -77,3 +78,5 @@
     }
   ]
 }
+
+
