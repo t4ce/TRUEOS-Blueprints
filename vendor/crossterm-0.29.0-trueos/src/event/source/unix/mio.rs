@@ -41,8 +41,15 @@ fn terminal_surface_changed(
 }
 
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+const TRUEOS_F_GETFL: i32 = 3;
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+const TRUEOS_F_SETFL: i32 = 4;
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+const TRUEOS_O_NONBLOCK: i32 = 0o4000;
+
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
 unsafe extern "C" {
-    fn trueos_cabi_write(stream: u32, bytes: *const u8, len: usize);
+    fn fcntl(fd: i32, command: i32, argument: i32) -> i32;
     fn trueos_cabi_blueprint_terminal_surface_snapshot_v1(
         out_generation: *mut u64,
         out_cols: *mut u32,
@@ -51,8 +58,18 @@ unsafe extern "C" {
 }
 
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-fn trueos_event_probe(message: &[u8]) {
-    unsafe { trueos_cabi_write(1, message.as_ptr(), message.len()) };
+fn trueos_set_nonblocking(fd: i32) -> io::Result<()> {
+    let flags = unsafe { fcntl(fd, TRUEOS_F_GETFL, 0) };
+    if flags < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if flags & TRUEOS_O_NONBLOCK != 0 {
+        return Ok(());
+    }
+    if unsafe { fcntl(fd, TRUEOS_F_SETFL, flags | TRUEOS_O_NONBLOCK) } < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
 }
 
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
@@ -83,39 +100,6 @@ fn trueos_terminal_surface_snapshot() -> io::Result<Option<TerminalSurfaceSnapsh
     }
 }
 
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-fn trueos_poll_timeout(timeout: &PollTimeout) -> Option<Duration> {
-    const SURFACE_POLL_SLICE: Duration = Duration::from_millis(16);
-    Some(match timeout.leftover() {
-        Some(left) if left < SURFACE_POLL_SLICE => left,
-        _ => SURFACE_POLL_SLICE,
-    })
-}
-
-#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-fn trueos_event_probe(_message: &[u8]) {}
-
-fn mio_to_io_error(error: io::Error) -> io::Error {
-    let kind = match error.kind() {
-        io::ErrorKind::WouldBlock => io::ErrorKind::WouldBlock,
-        io::ErrorKind::Interrupted => io::ErrorKind::Interrupted,
-        io::ErrorKind::InvalidInput => io::ErrorKind::InvalidInput,
-        io::ErrorKind::NotFound => io::ErrorKind::NotFound,
-        io::ErrorKind::PermissionDenied => io::ErrorKind::PermissionDenied,
-        io::ErrorKind::BrokenPipe => io::ErrorKind::BrokenPipe,
-        io::ErrorKind::AlreadyExists => io::ErrorKind::AlreadyExists,
-        io::ErrorKind::TimedOut => io::ErrorKind::TimedOut,
-        io::ErrorKind::ConnectionRefused => io::ErrorKind::ConnectionRefused,
-        io::ErrorKind::ConnectionReset => io::ErrorKind::ConnectionReset,
-        io::ErrorKind::ConnectionAborted => io::ErrorKind::ConnectionAborted,
-        io::ErrorKind::NotConnected => io::ErrorKind::NotConnected,
-        io::ErrorKind::AddrInUse => io::ErrorKind::AddrInUse,
-        io::ErrorKind::AddrNotAvailable => io::ErrorKind::AddrNotAvailable,
-        _ => io::ErrorKind::Other,
-    };
-    io::Error::new(kind, "mio trueos error")
-}
-
 pub(crate) struct UnixInternalEventSource {
     poll: Poll,
     events: Events,
@@ -136,36 +120,26 @@ impl UnixInternalEventSource {
     }
 
     pub(crate) fn from_file_descriptor(input_fd: FileDesc<'static>) -> io::Result<Self> {
-        trueos_event_probe(b"[crossterm-resize-probe:INFO] event-source init\n");
-        let poll = Poll::new().map_err(mio_to_io_error)?;
+        let poll = Poll::new()?;
         let registry = poll.registry();
 
         let tty_raw_fd = input_fd.raw_fd();
+        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+        trueos_set_nonblocking(tty_raw_fd)?;
         let mut tty_ev = SourceFd(&tty_raw_fd);
-        registry
-            .register(&mut tty_ev, TTY_TOKEN, Interest::READABLE)
-            .map_err(mio_to_io_error)?;
+        registry.register(&mut tty_ev, TTY_TOKEN, Interest::READABLE)?;
 
         #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
         let signals = {
-            trueos_event_probe(b"[crossterm-resize-probe:INFO] sigwinch register begin\n");
-            let mut signals =
-                Signals::new([signal_hook::consts::SIGWINCH]).map_err(mio_to_io_error)?;
-            registry
-                .register(&mut signals, SIGNAL_TOKEN, Interest::READABLE)
-                .map_err(mio_to_io_error)?;
-            trueos_event_probe(b"[crossterm-resize-probe:INFO] sigwinch register ready\n");
+            let mut signals = Signals::new([signal_hook::consts::SIGWINCH])?;
+            registry.register(&mut signals, SIGNAL_TOKEN, Interest::READABLE)?;
             signals
         };
-        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-        trueos_event_probe(
-            b"[crossterm-resize-probe:INFO] sigwinch unavailable; tty polling active\n",
-        );
         #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
         let terminal_surface = trueos_terminal_surface_snapshot()?;
 
         #[cfg(feature = "event-stream")]
-        let waker = Waker::new(registry, WAKE_TOKEN).map_err(mio_to_io_error)?;
+        let waker = Waker::new(registry, WAKE_TOKEN)?;
 
         Ok(UnixInternalEventSource {
             poll,
@@ -197,9 +171,6 @@ impl UnixInternalEventSource {
             }
             let columns = current.columns.min(u32::from(u16::MAX)) as u16;
             let rows = current.rows.min(u32::from(u16::MAX)) as u16;
-            trueos_event_probe(
-                b"[crossterm-resize-probe:INFO] typed surface change -> resize event\n",
-            );
             return Ok(Some(InternalEvent::Event(Event::Resize(columns, rows))));
         }
         Ok(None)
@@ -219,18 +190,14 @@ impl EventSource for UnixInternalEventSource {
         let timeout = PollTimeout::new(timeout);
 
         loop {
-            #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-            let poll_timeout = trueos_poll_timeout(&timeout);
-            #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-            let poll_timeout = timeout.leftover();
-            if let Err(e) = self.poll.poll(&mut self.events, poll_timeout) {
+            if let Err(e) = self.poll.poll(&mut self.events, timeout.leftover()) {
                 // Mio will throw an interrupted error in case of cursor position retrieval. We need to retry until it succeeds.
                 // Previous versions of Mio (< 0.7) would automatically retry the poll call if it was interrupted (if EINTR was returned).
                 // https://docs.rs/mio/0.7.0/mio/struct.Poll.html#notes
                 if e.kind() == io::ErrorKind::Interrupted {
                     continue;
                 } else {
-                    return Err(mio_to_io_error(e));
+                    return Err(e);
                 }
             };
 
@@ -240,9 +207,10 @@ impl EventSource for UnixInternalEventSource {
             }
 
             if self.events.is_empty() {
-                // TrueOS has no SIGWINCH delivery into a Blueprint. Its poll
-                // is sliced so both finite poll() and indefinite read() can
-                // observe an out-of-band surface-generation change.
+                // TRUEOS may wake this poll for typed terminal state without
+                // manufacturing a readable byte or Mio token. The snapshot
+                // check above consumes a real surface change; unrelated
+                // generation wakes simply re-enter with the remaining timeout.
                 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
                 {
                     if timeout.elapsed() {
@@ -259,24 +227,16 @@ impl EventSource for UnixInternalEventSource {
                     TTY_TOKEN => {
                         loop {
                             match self.tty_fd.read(&mut self.tty_buffer) {
+                                Ok(0) => break,
                                 Ok(read_count) => {
-                                    if read_count > 0 {
-                                        self.parser.advance(
-                                            &self.tty_buffer[..read_count],
-                                            read_count == TTY_BUFFER_SIZE,
-                                        );
-                                    }
+                                    self.parser.advance(
+                                        &self.tty_buffer[..read_count],
+                                        read_count == TTY_BUFFER_SIZE,
+                                    );
                                 }
-                                Err(e) => {
-                                    // No more data to read at the moment. We will receive another event
-                                    if e.kind() == io::ErrorKind::WouldBlock {
-                                        break;
-                                    }
-                                    // once more data is available to read.
-                                    else if e.kind() == io::ErrorKind::Interrupted {
-                                        continue;
-                                    }
-                                }
+                                Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
+                                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                                Err(e) => return Err(e),
                             };
 
                             if let Some(event) = self.parser.next() {
@@ -286,11 +246,7 @@ impl EventSource for UnixInternalEventSource {
                     }
                     #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
                     SIGNAL_TOKEN => {
-                        trueos_event_probe(b"[crossterm-resize-probe:INFO] signal token ready\n");
                         if self.signals.pending().next() == Some(signal_hook::consts::SIGWINCH) {
-                            trueos_event_probe(
-                                b"[crossterm-resize-probe:INFO] sigwinch -> resize event\n",
-                            );
                             // TODO Should we remove tput?
                             //
                             // This can take a really long time, because terminal::size can

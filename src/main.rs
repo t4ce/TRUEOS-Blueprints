@@ -3177,101 +3177,16 @@ fn patch_socket2_trueos_overlay(crate_dir: &Path) -> Result<(), String> {
     )
 }
 
+const CROSSTERM_TRUEOS_MIO_SOURCE: &str =
+    include_str!("../vendor/crossterm-0.29.0-trueos/src/event/source/unix/mio.rs");
+
 fn patch_crossterm_trueos_overlay(crate_dir: &Path) -> Result<(), String> {
+    // Crossterm 0.28 and 0.29 use the same Mio event-source shape. Keep one
+    // audited TRUEOS implementation instead of replaying a growing sequence of
+    // text substitutions that can leave staged and vendored builds divergent.
     let mio_path = crate_dir.join("src/event/source/unix/mio.rs");
     normalize_line_endings(&mio_path)?;
-    replace_file_text(
-        &mio_path,
-        "const TTY_BUFFER_SIZE: usize = 1_024;\n",
-        "const TTY_BUFFER_SIZE: usize = 1_024;\n\n#[cfg(any(target_os = \"trueos\", target_os = \"zkvm\"))]\nunsafe extern \"C\" {\n    fn trueos_cabi_write(stream: u32, bytes: *const u8, len: usize);\n}\n\n#[cfg(any(target_os = \"trueos\", target_os = \"zkvm\"))]\nfn trueos_event_probe(message: &[u8]) {\n    unsafe { trueos_cabi_write(1, message.as_ptr(), message.len()) };\n}\n\n#[cfg(not(any(target_os = \"trueos\", target_os = \"zkvm\")))]\nfn trueos_event_probe(_message: &[u8]) {}\n\nfn mio_to_io_error(error: mio::io::Error) -> io::Error {\n    let kind = match error.kind() {\n        mio::io::ErrorKind::WouldBlock => io::ErrorKind::WouldBlock,\n        mio::io::ErrorKind::Interrupted => io::ErrorKind::Interrupted,\n        mio::io::ErrorKind::InvalidInput => io::ErrorKind::InvalidInput,\n        mio::io::ErrorKind::NotFound => io::ErrorKind::NotFound,\n        mio::io::ErrorKind::PermissionDenied => io::ErrorKind::PermissionDenied,\n        mio::io::ErrorKind::BrokenPipe => io::ErrorKind::BrokenPipe,\n        mio::io::ErrorKind::AlreadyExists => io::ErrorKind::AlreadyExists,\n        mio::io::ErrorKind::TimedOut => io::ErrorKind::TimedOut,\n        mio::io::ErrorKind::ConnectionRefused => io::ErrorKind::ConnectionRefused,\n        mio::io::ErrorKind::ConnectionReset => io::ErrorKind::ConnectionReset,\n        mio::io::ErrorKind::ConnectionAborted => io::ErrorKind::ConnectionAborted,\n        mio::io::ErrorKind::NotConnected => io::ErrorKind::NotConnected,\n        mio::io::ErrorKind::AddrInUse => io::ErrorKind::AddrInUse,\n        mio::io::ErrorKind::AddrNotAvailable => io::ErrorKind::AddrNotAvailable,\n        _ => io::ErrorKind::Other,\n    };\n    io::Error::new(kind, \"mio trueos error\")\n}\n",
-    )?;
-    replace_file_text(
-        &mio_path,
-        "        let poll = Poll::new()?;",
-        "        trueos_event_probe(b\"[crossterm-resize-probe:INFO] event-source init\\n\");\n        let poll = Poll::new().map_err(mio_to_io_error)?;",
-    )?;
-    replace_file_text(
-        &mio_path,
-        "        registry.register(&mut tty_ev, TTY_TOKEN, Interest::READABLE)?;",
-        "        registry\n            .register(&mut tty_ev, TTY_TOKEN, Interest::READABLE)\n            .map_err(mio_to_io_error)?;",
-    )?;
-    replace_file_text(
-        &mio_path,
-        "        let mut signals = Signals::new([signal_hook::consts::SIGWINCH])?;",
-        "        trueos_event_probe(b\"[crossterm-resize-probe:INFO] sigwinch register begin\\n\");\n        let mut signals = Signals::new([signal_hook::consts::SIGWINCH])\n            .map_err(mio_to_io_error)?;",
-    )?;
-    replace_file_text(
-        &mio_path,
-        "        registry.register(&mut signals, SIGNAL_TOKEN, Interest::READABLE)?;",
-        "        registry\n            .register(&mut signals, SIGNAL_TOKEN, Interest::READABLE)\n            .map_err(mio_to_io_error)?;\n        trueos_event_probe(b\"[crossterm-resize-probe:INFO] sigwinch register ready\\n\");",
-    )?;
-    replace_file_text(
-        &mio_path,
-        "        let waker = Waker::new(registry, WAKE_TOKEN)?;",
-        "        let waker = Waker::new(registry, WAKE_TOKEN).map_err(mio_to_io_error)?;",
-    )?;
-    replace_file_text(
-        &mio_path,
-        "use signal_hook_mio::v1_0::Signals;",
-        "#[cfg(not(any(target_os = \"trueos\", target_os = \"zkvm\")))]\nuse signal_hook_mio::v1_0::Signals;",
-    )?;
-    replace_file_text(
-        &mio_path,
-        "    source::EventSource, sys::unix::parse::parse_event, timeout::PollTimeout, Event, InternalEvent,\n};",
-        "    source::EventSource, sys::unix::parse::parse_event, timeout::PollTimeout, InternalEvent,\n};\n#[cfg(not(any(target_os = \"trueos\", target_os = \"zkvm\")))]\nuse crate::event::Event;",
-    )?;
-    replace_file_text(
-        &mio_path,
-        "const SIGNAL_TOKEN: Token = Token(1);",
-        "#[cfg(not(any(target_os = \"trueos\", target_os = \"zkvm\")))]\nconst SIGNAL_TOKEN: Token = Token(1);",
-    )?;
-    replace_file_text(
-        &mio_path,
-        "    signals: Signals,",
-        "    #[cfg(not(any(target_os = \"trueos\", target_os = \"zkvm\")))]\n    signals: Signals,",
-    )?;
-    replace_file_text(
-        &mio_path,
-        "        trueos_event_probe(b\"[crossterm-resize-probe:INFO] sigwinch register begin\\n\");\n        let mut signals = Signals::new([signal_hook::consts::SIGWINCH])\n            .map_err(mio_to_io_error)?;\n        registry\n            .register(&mut signals, SIGNAL_TOKEN, Interest::READABLE)\n            .map_err(mio_to_io_error)?;\n        trueos_event_probe(b\"[crossterm-resize-probe:INFO] sigwinch register ready\\n\");",
-        "        #[cfg(not(any(target_os = \"trueos\", target_os = \"zkvm\")))]\n        let mut signals = {\n            trueos_event_probe(b\"[crossterm-resize-probe:INFO] sigwinch register begin\\n\");\n            let mut signals = Signals::new([signal_hook::consts::SIGWINCH])\n                .map_err(mio_to_io_error)?;\n            registry\n                .register(&mut signals, SIGNAL_TOKEN, Interest::READABLE)\n                .map_err(mio_to_io_error)?;\n            trueos_event_probe(b\"[crossterm-resize-probe:INFO] sigwinch register ready\\n\");\n            signals\n        };\n        #[cfg(any(target_os = \"trueos\", target_os = \"zkvm\"))]\n        trueos_event_probe(\n            b\"[crossterm-resize-probe:INFO] sigwinch unavailable; tty polling active\\n\",\n        );",
-    )?;
-    replace_file_text(
-        &mio_path,
-        "            signals,",
-        "            #[cfg(not(any(target_os = \"trueos\", target_os = \"zkvm\")))]\n            signals,",
-    )?;
-    replace_file_text(
-        &mio_path,
-        "                if e.kind() == io::ErrorKind::Interrupted {\n                    continue;\n                } else {\n                    return Err(e);\n                }",
-        "                if e.kind() == mio::io::ErrorKind::Interrupted {\n                    continue;\n                } else {\n                    return Err(mio_to_io_error(e));\n                }",
-    )?;
-    // Blueprint Mio follows Mio 1.x's standard-library error contract. The
-    // historical overlay used the kernel-only `mio::io` facade, which is not
-    // part of this userland vendor and made the staged backend uncompilable.
-    replace_file_text(&mio_path, "mio::io::", "io::")?;
-    replace_file_text(
-        &mio_path,
-        "                    SIGNAL_TOKEN => {\n                        if self.signals.pending().next() == Some(signal_hook::consts::SIGWINCH) {",
-        "                    #[cfg(not(any(target_os = \"trueos\", target_os = \"zkvm\")))]\n                    SIGNAL_TOKEN => {\n                        trueos_event_probe(b\"[crossterm-resize-probe:INFO] signal token ready\\n\");\n                        if self.signals.pending().next() == Some(signal_hook::consts::SIGWINCH) {\n                            trueos_event_probe(b\"[crossterm-resize-probe:INFO] sigwinch -> resize event\\n\");",
-    )?;
-
-    let terminal_unix_path = crate_dir.join("src/terminal/sys/unix.rs");
-    normalize_line_endings(&terminal_unix_path)?;
-    replace_file_text(
-        &terminal_unix_path,
-        "static TERMINAL_MODE_PRIOR_RAW_MODE: Mutex<Option<Termios>> = parking_lot::const_mutex(None);\n",
-        "static TERMINAL_MODE_PRIOR_RAW_MODE: Mutex<Option<Termios>> = parking_lot::const_mutex(None);\n\n#[cfg(any(target_os = \"trueos\", target_os = \"zkvm\"))]\nstatic TRUEOS_LAST_TERMINAL_SIZE: core::sync::atomic::AtomicU32 =\n    core::sync::atomic::AtomicU32::new(u32::MAX);\n\n#[cfg(any(target_os = \"trueos\", target_os = \"zkvm\"))]\nunsafe extern \"C\" {\n    fn trueos_cabi_write(stream: u32, bytes: *const u8, len: usize);\n}\n\n#[cfg(any(target_os = \"trueos\", target_os = \"zkvm\"))]\nfn trueos_size_probe(size: &WindowSize) {\n    let packed = (u32::from(size.rows) << 16) | u32::from(size.columns);\n    let previous = TRUEOS_LAST_TERMINAL_SIZE.swap(\n        packed,\n        core::sync::atomic::Ordering::Relaxed,\n    );\n    let message = if previous == u32::MAX {\n        Some(b\"[crossterm-resize-probe:INFO] ioctl size path active\\n\".as_slice())\n    } else if previous != packed {\n        Some(b\"[crossterm-resize-probe:INFO] ioctl size changed\\n\".as_slice())\n    } else {\n        None\n    };\n    if let Some(message) = message {\n        unsafe { trueos_cabi_write(1, message.as_ptr(), message.len()) };\n    }\n}\n\n#[cfg(not(any(target_os = \"trueos\", target_os = \"zkvm\")))]\nfn trueos_size_probe(_size: &WindowSize) {}\n",
-    )?;
-    replace_file_text(
-        &terminal_unix_path,
-        "    if wrap_with_result(unsafe { ioctl(fd, TIOCGWINSZ.into(), &mut size) }).is_ok() {\n        return Ok(size.into());\n    }",
-        "    if wrap_with_result(unsafe { ioctl(fd, TIOCGWINSZ.into(), &mut size) }).is_ok() {\n        let size = WindowSize::from(size);\n        trueos_size_probe(&size);\n        return Ok(size);\n    }",
-    )?;
-    replace_file_text(
-        &terminal_unix_path,
-        "    let size = rustix::termios::tcgetwinsize(fd)?;\n    Ok(size.into())",
-        "    let size = WindowSize::from(rustix::termios::tcgetwinsize(fd)?);\n    trueos_size_probe(&size);\n    Ok(size)",
-    )
+    fs::write(&mio_path, CROSSTERM_TRUEOS_MIO_SOURCE).map_err(io_string)
 }
 
 fn normalize_line_endings(path: &Path) -> Result<(), String> {
@@ -6132,7 +6047,7 @@ mod terminal_platform_vendor_tests {
     }
 
     #[test]
-    fn terminal_platform_forks_use_the_std_mio_error_contract() {
+    fn terminal_platform_forks_use_persistent_mio_eventflow() {
         let vendor = Path::new(env!("CARGO_MANIFEST_DIR")).join("vendor");
         let crossterm =
             fs::read_to_string(vendor.join("crossterm-0.29.0-trueos/src/event/source/unix/mio.rs"))
@@ -6140,7 +6055,13 @@ mod terminal_platform_vendor_tests {
         let signal_hook =
             fs::read_to_string(vendor.join("signal-hook-mio-0.2.5-trueos/src/lib.rs")).unwrap();
 
-        assert!(crossterm.contains("fn mio_to_io_error(error: io::Error)"));
+        assert_eq!(crossterm, CROSSTERM_TRUEOS_MIO_SOURCE);
+        assert!(crossterm.contains("trueos_set_nonblocking(tty_raw_fd)?;"));
+        assert!(crossterm.contains("trueos_cabi_blueprint_terminal_surface_snapshot_v1"));
+        assert!(crossterm.contains("self.poll.poll(&mut self.events, timeout.leftover())"));
+        assert!(!crossterm.contains("SURFACE_POLL_SLICE"));
+        assert!(!crossterm.contains("crossterm-resize-probe"));
+        assert!(!crossterm.contains("trueos_mio_selector"));
         assert!(!crossterm.contains("mio::io"));
         assert!(signal_hook.contains("type Error = MioIoError;"));
         assert!(!signal_hook.contains("mio::io"));

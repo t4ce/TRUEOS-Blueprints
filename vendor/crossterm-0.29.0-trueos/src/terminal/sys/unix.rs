@@ -29,37 +29,6 @@ use std::{
 // None -> we're not in the raw mode
 static TERMINAL_MODE_PRIOR_RAW_MODE: Mutex<Option<Termios>> = parking_lot::const_mutex(None);
 
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-static TRUEOS_LAST_TERMINAL_SIZE: core::sync::atomic::AtomicU32 =
-    core::sync::atomic::AtomicU32::new(u32::MAX);
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-unsafe extern "C" {
-    fn trueos_cabi_write(stream: u32, bytes: *const u8, len: usize);
-}
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-fn trueos_size_probe(size: &WindowSize) {
-    let packed = (u32::from(size.rows) << 16) | u32::from(size.columns);
-    let previous = TRUEOS_LAST_TERMINAL_SIZE.swap(
-        packed,
-        core::sync::atomic::Ordering::Relaxed,
-    );
-    let message = if previous == u32::MAX {
-        Some(b"[crossterm-resize-probe:INFO] ioctl size path active\n".as_slice())
-    } else if previous != packed {
-        Some(b"[crossterm-resize-probe:INFO] ioctl size changed\n".as_slice())
-    } else {
-        None
-    };
-    if let Some(message) = message {
-        unsafe { trueos_cabi_write(1, message.as_ptr(), message.len()) };
-    }
-}
-
-#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-fn trueos_size_probe(_size: &WindowSize) {}
-
 pub(crate) fn is_raw_mode_enabled() -> bool {
     TERMINAL_MODE_PRIOR_RAW_MODE.lock().is_some()
 }
@@ -107,9 +76,7 @@ pub(crate) fn window_size() -> io::Result<WindowSize> {
     };
 
     if wrap_with_result(unsafe { ioctl(fd, TIOCGWINSZ.into(), &mut size) }).is_ok() {
-        let size = WindowSize::from(size);
-        trueos_size_probe(&size);
-        return Ok(size);
+        return Ok(size.into());
     }
 
     Err(std::io::Error::last_os_error().into())
@@ -124,9 +91,8 @@ pub(crate) fn window_size() -> io::Result<WindowSize> {
         // Fallback to libc::STDOUT_FILENO if /dev/tty is missing
         rustix::stdio::stdout()
     };
-    let size = WindowSize::from(rustix::termios::tcgetwinsize(fd)?);
-    trueos_size_probe(&size);
-    Ok(size)
+    let size = rustix::termios::tcgetwinsize(fd)?;
+    Ok(size.into())
 }
 
 #[allow(clippy::useless_conversion)]

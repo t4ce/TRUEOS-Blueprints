@@ -26,7 +26,6 @@
     "PlotTwist",
     "shadertoy",
     "shell",
-    "rebels-in-the-sky",
     "qjs",
     "monaco",
     "Frog",
@@ -49,11 +48,6 @@
     {
       "name": "edit",
       "path": "../edit",
-      "optional": true
-    },
-    {
-      "name": "pumpkin",
-      "path": "../Pumpkin",
       "optional": true
     },
     {
