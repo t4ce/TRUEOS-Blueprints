@@ -26,9 +26,9 @@ use trueos::{
     logl::level,
     platform::{self, io},
     runtime,
-    tokio::{self, net::SocketAddr},
+    tokio::{self},
 };
-
+use core::net::SocketAddr;
 mod monaco_assets {
     include!(concat!(env!("OUT_DIR"), "/monaco_assets.rs"));
 }

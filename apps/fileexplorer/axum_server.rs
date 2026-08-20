@@ -36,8 +36,9 @@ use trueos::{
     platform::{self, io},
     runtime,
     time::{self, Duration},
-    tokio::{self, net::SocketAddr},
+    tokio::{self},
 };
+use core::net::SocketAddr;
 
 const FILEEXPLORER_HTTP_TCP_PORT: u16 = 8;
 const FILEEXPLORER_ALT_TCP_PORT: u16 = 6;
@@ -527,9 +528,6 @@ async fn list_dir(path: &str) -> Result<Vec<String>, String> {
         .await
         .map_err(|err| format!("list entry failed {}", err))?
     {
-        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-        let name = entry.file_name();
-        #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
         let name = entry.file_name().to_string_lossy().into_owned();
         out.push(name);
     }

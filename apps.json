@@ -1,7 +1,6 @@
 {
   "apps": [
-    "chatserver",
-    "calculator",
+        "calculator",
     "cut_tetris",
     "dobby",
     "file-system",
