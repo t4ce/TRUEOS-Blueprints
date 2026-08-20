@@ -4,6 +4,7 @@ use alloc::{string::String, vec, vec::Vec};
 
 const TAB_WIDTH: usize = 8;
 const MAX_CSI_BYTES: usize = 128;
+const MAX_OSC_BYTES: usize = 64;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct Cursor {
@@ -92,10 +93,13 @@ pub(crate) struct Terminal {
     parser_state: ParserState,
     csi_buf: Vec<u8>,
     csi_overflow: bool,
+    osc_buf: Vec<u8>,
+    osc_overflow: bool,
     utf8_buf: [u8; 4],
     utf8_len: usize,
     utf8_expected: usize,
     responses: Vec<u8>,
+    zoom_percent: Option<u16>,
     mouse_normal_tracking: bool,
     mouse_button_tracking: bool,
     mouse_any_tracking: bool,
@@ -124,10 +128,13 @@ impl Terminal {
             parser_state: ParserState::Ground,
             csi_buf: Vec::new(),
             csi_overflow: false,
+            osc_buf: Vec::new(),
+            osc_overflow: false,
             utf8_buf: [0; 4],
             utf8_len: 0,
             utf8_expected: 0,
             responses: Vec::new(),
+            zoom_percent: None,
             mouse_normal_tracking: false,
             mouse_button_tracking: false,
             mouse_any_tracking: false,
@@ -167,6 +174,10 @@ impl Terminal {
     /// handoff owner through the same channel as keyboard input.
     pub(crate) fn take_responses(&mut self) -> Vec<u8> {
         core::mem::take(&mut self.responses)
+    }
+
+    pub(crate) fn take_zoom_percent(&mut self) -> Option<u16> {
+        self.zoom_percent.take()
     }
 
     pub(crate) fn mouse_button(
@@ -286,6 +297,8 @@ impl Terminal {
         self.parser_state = ParserState::Ground;
         self.csi_buf.clear();
         self.csi_overflow = false;
+        self.osc_buf.clear();
+        self.osc_overflow = false;
         self.utf8_len = 0;
         self.utf8_expected = 0;
     }
@@ -296,12 +309,19 @@ impl Terminal {
             ParserState::Escape => self.feed_escape_byte(byte),
             ParserState::Csi => self.feed_csi_byte(byte),
             ParserState::Osc => match byte {
-                0x07 => self.parser_state = ParserState::Ground,
+                0x07 => {
+                    self.finish_osc();
+                    self.parser_state = ParserState::Ground;
+                }
                 0x1b => self.parser_state = ParserState::OscEscape,
-                _ => {}
+                _ if self.osc_buf.len() < MAX_OSC_BYTES => self.osc_buf.push(byte),
+                _ => self.osc_overflow = true,
             },
             ParserState::OscEscape => match byte {
-                b'\\' | 0x07 => self.parser_state = ParserState::Ground,
+                b'\\' | 0x07 => {
+                    self.finish_osc();
+                    self.parser_state = ParserState::Ground;
+                }
                 0x1b => {}
                 _ => self.parser_state = ParserState::Osc,
             },
@@ -361,7 +381,11 @@ impl Terminal {
                 self.csi_overflow = false;
                 self.parser_state = ParserState::Csi;
             }
-            b']' => self.parser_state = ParserState::Osc,
+            b']' => {
+                self.osc_buf.clear();
+                self.osc_overflow = false;
+                self.parser_state = ParserState::Osc;
+            }
             b'7' => {
                 self.saved_col = self.cursor_col;
                 self.saved_row = self.cursor_row;
@@ -408,6 +432,19 @@ impl Terminal {
             }
             _ => {}
         }
+    }
+
+    fn finish_osc(&mut self) {
+        if !self.osc_overflow
+            && let Ok(command) = core::str::from_utf8(self.osc_buf.as_slice())
+            && let Some(percent) = command.strip_prefix("777;terminal_zoom=")
+            && let Ok(percent) = percent.parse::<u16>()
+            && (50..=200).contains(&percent)
+        {
+            self.zoom_percent = Some(percent);
+        }
+        self.osc_buf.clear();
+        self.osc_overflow = false;
     }
 
     fn execute_csi(&mut self, final_byte: u8) {
@@ -930,6 +967,17 @@ mod tests {
         terminal.feed(b"\\C");
 
         assert_eq!(rows(&terminal), ["ABC     "]);
+    }
+
+    #[test]
+    fn accepts_bounded_trueos_terminal_zoom_osc() {
+        let mut terminal = Terminal::new(8, 1);
+        terminal.feed(b"\x1b]777;terminal_zoom=125\x07");
+        assert_eq!(terminal.take_zoom_percent(), Some(125));
+        assert_eq!(terminal.take_zoom_percent(), None);
+
+        terminal.feed(b"\x1b]777;terminal_zoom=999\x07");
+        assert_eq!(terminal.take_zoom_percent(), None);
     }
 
     #[test]

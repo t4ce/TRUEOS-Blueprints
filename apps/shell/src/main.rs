@@ -19,18 +19,50 @@ use trueos::vshell::{
 };
 use trueos::vsys;
 
-// The terminal intentionally has no font metrics protocol yet. Shell2 wraps at
-// this row width, and UI4 positions one Inconsolata glyph in each logical cell.
-const ROW_HEIGHT_PX: u32 = 26;
 const CHARACTERS_PER_ROW_SOFT_CAP: usize = 120;
+const DEFAULT_ROW_HEIGHT_PX: u32 = 26;
+const DEFAULT_FONT_PIXELS: f32 = 24.0;
+const DEFAULT_MONO_GLYPH_ADVANCE_PX: u32 = 12;
+const DEFAULT_ZOOM_PERCENT: u16 = 100;
 
 const FRAME_X: i32 = 0;
 const FRAME_Y: i32 = 0;
-const FRAME_WIDTH: u32 = (CHARACTERS_PER_ROW_SOFT_CAP as f32 * FONT_PIXELS/2.0) as u32 + FRAME_PADDING_PX * 2;
+const FRAME_WIDTH: u32 =
+    CHARACTERS_PER_ROW_SOFT_CAP as u32 * DEFAULT_MONO_GLYPH_ADVANCE_PX + FRAME_PADDING_PX * 2;
 const FRAME_HEIGHT: u32 = 576;
 const FRAME_PADDING_PX: u32 = 12;
-const FONT_PIXELS: f32 = 24.0;
-const MONO_GLYPH_ADVANCE_PX: u32 = 12;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct TerminalMetrics {
+    zoom_percent: u16,
+    font_pixels: f32,
+    glyph_advance_px: u32,
+    row_height_px: u32,
+}
+
+impl TerminalMetrics {
+    fn from_zoom_percent(percent: u16) -> Self {
+        let percent = percent.clamp(50, 200);
+        let scaled = |value: u32| {
+            value
+                .saturating_mul(u32::from(percent))
+                .saturating_add(50)
+                / 100
+        };
+        Self {
+            zoom_percent: percent,
+            font_pixels: DEFAULT_FONT_PIXELS * f32::from(percent) / 100.0,
+            glyph_advance_px: scaled(DEFAULT_MONO_GLYPH_ADVANCE_PX).max(1),
+            row_height_px: scaled(DEFAULT_ROW_HEIGHT_PX).max(1),
+        }
+    }
+}
+
+impl Default for TerminalMetrics {
+    fn default() -> Self {
+        Self::from_zoom_percent(DEFAULT_ZOOM_PERCENT)
+    }
+}
 
 const BACKGROUND: u32 = rgba(0, 0, 0, 191);
 const FOREGROUND: u32 = rgba(255, 255, 255, 255);
@@ -201,7 +233,8 @@ fn main() {
         return;
     };
 
-    let (cols, rows) = terminal_grid_size(frame.width(), frame.height());
+    let mut metrics = TerminalMetrics::default();
+    let (cols, rows) = terminal_grid_size(frame.width(), frame.height(), metrics);
     let mut frontend = match attach_shell_frontend(cols, rows) {
         Ok(frontend) => frontend,
         Err(error) => {
@@ -215,7 +248,7 @@ fn main() {
     let mut terminal = Terminal::new(cols, rows);
     let mut keyboard_input = KeyboardInputState::default();
 
-    if let Err(error) = present_terminal(&mut frame, &terminal) {
+    if let Err(error) = present_terminal(&mut frame, &terminal, metrics) {
         logl::log(
             level::ERROR,
             format_args!("shell: first UI4 terminal frame failed: {error:?}"),
@@ -232,7 +265,7 @@ fn main() {
     );
 
     loop {
-        let resized = match drain_resize_events(&mut frame, &mut frontend, &mut terminal) {
+        let resized = match drain_resize_events(&mut frame, &mut frontend, &mut terminal, metrics) {
             Ok(resized) => resized,
             Err(error) => {
                 logl::log(
@@ -251,6 +284,22 @@ fn main() {
             return;
         }
 
+        if let Some(zoom_percent) = terminal.take_zoom_percent()
+            && let Err(error) = apply_terminal_zoom(
+                &mut frame,
+                &mut frontend,
+                &mut terminal,
+                &mut metrics,
+                zoom_percent,
+            )
+        {
+            logl::log(
+                level::ERROR,
+                format_args!("shell: terminal zoom failed: {error:?}"),
+            );
+            return;
+        }
+
         if let Err(error) = drain_keyboard_input(&mut frame, &mut keyboard_input, &frontend) {
             logl::log(
                 level::ERROR,
@@ -259,7 +308,7 @@ fn main() {
             return;
         }
 
-        if let Err(error) = drain_pointer_input(&mut frame, &terminal, &frontend) {
+        if let Err(error) = drain_pointer_input(&mut frame, &terminal, &frontend, metrics) {
             logl::log(
                 level::ERROR,
                 format_args!("shell: routed pointer input failed: {error:?}"),
@@ -268,7 +317,7 @@ fn main() {
         }
 
         if terminal.take_dirty()
-            && let Err(error) = present_terminal(&mut frame, &terminal)
+            && let Err(error) = present_terminal(&mut frame, &terminal, metrics)
         {
             logl::log(
                 level::ERROR,
@@ -286,6 +335,7 @@ fn drain_resize_events(
     frame: &mut Frame,
     frontend: &mut Shell2Frontend,
     terminal: &mut Terminal,
+    metrics: TerminalMetrics,
 ) -> Result<bool, InputError> {
     let mut resized = false;
     while let Some(resize) = frame.take_resize_event()? {
@@ -299,9 +349,10 @@ fn drain_resize_events(
             resize.height,
             old_cols,
             old_rows,
+            metrics,
         );
-        present_terminal_at(frame, terminal, old_origin_x, old_origin_y)?;
-        let (cols, rows) = terminal_grid_size(resize.width, resize.height);
+        present_terminal_at(frame, terminal, old_origin_x, old_origin_y, metrics)?;
+        let (cols, rows) = terminal_grid_size(resize.width, resize.height, metrics);
         if terminal.dimensions() != (cols, rows) {
             terminal.resize(cols, rows);
             frontend.resize(cols as u32, rows as u32)?;
@@ -321,28 +372,69 @@ fn drain_resize_events(
     Ok(resized)
 }
 
-fn terminal_grid_size(width: u32, height: u32) -> (usize, usize) {
+fn terminal_grid_size(
+    width: u32,
+    height: u32,
+    metrics: TerminalMetrics,
+) -> (usize, usize) {
     let width = width.saturating_sub(FRAME_PADDING_PX * 2);
     let height = height.saturating_sub(FRAME_PADDING_PX * 2);
     (
-        (width / MONO_GLYPH_ADVANCE_PX).max(1) as usize,
-        (height / ROW_HEIGHT_PX).max(1) as usize,
+        (width / metrics.glyph_advance_px).max(1) as usize,
+        (height / metrics.row_height_px).max(1) as usize,
     )
 }
 
-fn centered_terminal_origin(width: u32, height: u32, cols: usize, rows: usize) -> (u32, u32) {
+fn centered_terminal_origin(
+    width: u32,
+    height: u32,
+    cols: usize,
+    rows: usize,
+    metrics: TerminalMetrics,
+) -> (u32, u32) {
     let content_width = u32::try_from(cols)
         .unwrap_or(u32::MAX)
-        .saturating_mul(MONO_GLYPH_ADVANCE_PX)
+        .saturating_mul(metrics.glyph_advance_px)
         .saturating_add(FRAME_PADDING_PX * 2);
     let content_height = u32::try_from(rows)
         .unwrap_or(u32::MAX)
-        .saturating_mul(ROW_HEIGHT_PX)
+        .saturating_mul(metrics.row_height_px)
         .saturating_add(FRAME_PADDING_PX * 2);
     (
         width.saturating_sub(content_width) / 2,
         height.saturating_sub(content_height) / 2,
     )
+}
+
+fn apply_terminal_zoom(
+    frame: &mut Frame,
+    frontend: &mut Shell2Frontend,
+    terminal: &mut Terminal,
+    metrics: &mut TerminalMetrics,
+    zoom_percent: u16,
+) -> Result<bool, InputError> {
+    let next = TerminalMetrics::from_zoom_percent(zoom_percent);
+    if *metrics == next {
+        return Ok(false);
+    }
+
+    *metrics = next;
+    let (cols, rows) = terminal_grid_size(frame.width(), frame.height(), next);
+    terminal.resize(cols, rows);
+    frontend.resize(cols as u32, rows as u32)?;
+    logl::log(
+        level::INFO,
+        format_args!(
+            "shell: terminal zoom={} font_pixels={} cell={}x{} grid={}x{}",
+            next.zoom_percent,
+            next.font_pixels,
+            next.glyph_advance_px,
+            next.row_height_px,
+            cols,
+            rows,
+        ),
+    );
+    Ok(true)
 }
 
 fn attach_shell_frontend(cols: usize, rows: usize) -> Result<Shell2Frontend, Shell2FrontendError> {
@@ -470,9 +562,15 @@ fn drain_pointer_input(
     frame: &mut Frame,
     terminal: &Terminal,
     frontend: &Shell2Frontend,
+    metrics: TerminalMetrics,
 ) -> Result<(), InputError> {
     while let Some(event) = frame.take_pointer_event()? {
-        let (col, row) = pointer_cell(event.local_x, event.local_y, terminal.dimensions());
+        let (col, row) = pointer_cell(
+            event.local_x,
+            event.local_y,
+            terminal.dimensions(),
+            metrics,
+        );
 
         for (mask, button) in mouse_buttons() {
             if event.buttons_pressed & mask != 0
@@ -507,11 +605,16 @@ fn drain_pointer_input(
     Ok(())
 }
 
-fn pointer_cell(local_x: i32, local_y: i32, dimensions: (usize, usize)) -> (usize, usize) {
+fn pointer_cell(
+    local_x: i32,
+    local_y: i32,
+    dimensions: (usize, usize),
+    metrics: TerminalMetrics,
+) -> (usize, usize) {
     let x = local_x.saturating_sub(FRAME_PADDING_PX as i32).max(0) as u32;
     let y = local_y.saturating_sub(FRAME_PADDING_PX as i32).max(0) as u32;
-    let col = ((x / MONO_GLYPH_ADVANCE_PX) as usize).min(dimensions.0 - 1);
-    let row = ((y / ROW_HEIGHT_PX) as usize).min(dimensions.1 - 1);
+    let col = ((x / metrics.glyph_advance_px) as usize).min(dimensions.0 - 1);
+    let row = ((y / metrics.row_height_px) as usize).min(dimensions.1 - 1);
     (col, row)
 }
 
@@ -687,8 +790,12 @@ fn named_key_sequence(key_code: u16) -> Option<&'static [u8]> {
     }
 }
 
-fn present_terminal(frame: &mut Frame, terminal: &Terminal) -> Result<(), UiError> {
-    present_terminal_at(frame, terminal, 0, 0)
+fn present_terminal(
+    frame: &mut Frame,
+    terminal: &Terminal,
+    metrics: TerminalMetrics,
+) -> Result<(), UiError> {
+    present_terminal_at(frame, terminal, 0, 0, metrics)
 }
 
 fn present_terminal_at(
@@ -696,6 +803,7 @@ fn present_terminal_at(
     terminal: &Terminal,
     origin_x: u32,
     origin_y: u32,
+    metrics: TerminalMetrics,
 ) -> Result<(), UiError> {
     retry_busy(|| frame.begin(BACKGROUND))?;
 
@@ -725,11 +833,11 @@ fn present_terminal_at(
                     text: text.as_str(),
                     x: origin_x as f32
                         + FRAME_PADDING_PX as f32
-                        + start_col as f32 * MONO_GLYPH_ADVANCE_PX as f32,
+                        + start_col as f32 * metrics.glyph_advance_px as f32,
                     y: origin_y as f32
                         + FRAME_PADDING_PX as f32
-                        + row as f32 * ROW_HEIGHT_PX as f32,
-                    font_pixels: FONT_PIXELS,
+                        + row as f32 * metrics.row_height_px as f32,
+                    font_pixels: metrics.font_pixels,
                 }];
                 retry_busy(|| {
                     frame.retain_text_scene(
@@ -751,11 +859,11 @@ fn present_terminal_at(
         text: "_",
         x: origin_x as f32
             + FRAME_PADDING_PX as f32
-            + cursor.col as f32 * MONO_GLYPH_ADVANCE_PX as f32,
+            + cursor.col as f32 * metrics.glyph_advance_px as f32,
         y: origin_y as f32
             + FRAME_PADDING_PX as f32
-            + cursor.row as f32 * ROW_HEIGHT_PX as f32,
-        font_pixels: FONT_PIXELS,
+            + cursor.row as f32 * metrics.row_height_px as f32,
+        font_pixels: metrics.font_pixels,
     }];
     retry_busy(|| {
         frame.retain_text_scene(
