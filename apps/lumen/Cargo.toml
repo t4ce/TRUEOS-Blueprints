@@ -7,5 +7,6 @@ edition = "2024"
 replicatable = true
 
 [dependencies]
+crossterm = { version = "0.29", default-features = false, features = ["events", "bracketed-paste"] }
 trueos = { workspace = true, features = ["lumen"] }
 
