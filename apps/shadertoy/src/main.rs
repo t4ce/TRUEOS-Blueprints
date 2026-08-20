@@ -5,8 +5,7 @@ use trueos::input::{
     KEYBOARD_KEY_F2, KEYBOARD_KEY_F3, KEYBOARD_OUTPUT_FLAG_PRESS, KEYBOARD_OUTPUT_KIND_KEY,
 };
 use trueos::ui4_scene::{
-    Damage, Error, Frame, SHADERTOY_CUBE_FIELD, SHADERTOY_MANDELBROT, SHADERTOY_NGUYEN,
-    ShadertoyParamsV1,
+    Error, Frame, SHADERTOY_CUBE_FIELD, SHADERTOY_MANDELBROT, SHADERTOY_NGUYEN, ShadertoyParamsV1,
 };
 use trueos::{clock, logl, vsys};
 
@@ -169,11 +168,7 @@ fn main() {
             }),
         };
         if let Err(error) = frame.render_shadertoy(&params) {
-            fail("kernel render", error);
-            return;
-        }
-        if let Err(error) = frame.publish(Damage::full(width, height)) {
-            fail("frame publish", error);
+            fail("render/compute publish", error);
             return;
         }
         previous_ns = now_ns;

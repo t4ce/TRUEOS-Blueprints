@@ -46,23 +46,28 @@ authority, so the current TRUEOS backend needs only buffer creation and
 `Queue::write_buffer`; normal Helio remains on GPU-copy growth and no `Once`
 handoff is weakened. An actual UI4 Blueprint back buffer is mapped into the
 caller's isolated VMX GPUVM and exposed as a `wgpu::Texture`. The untextured
-indexed path and UI4 SURFLIVE handoff are proven. The first shader sampler read
-is **not** proven: the ADL-S Render0 submission currently fails to retire.
+indexed path and UI4 SURFLIVE handoff are proven. The authenticated fixed mip-0
+shader sampler read is now also proven through exact Render0 retirement and
+SURFLIVE on the four-vertex diagnostic rung.
 The current probe no longer synthesizes a checkerboard: it reads the kernel's
 encoded JPEG logo, decodes it through `vmedia`, bounds it to the authenticated
 16x16 mip-0 footprint, inserts it through `Scene::insert_texture`, resolves the
 exact non-compacting SceneDB residency slot, and binds that slot's canonical
-view/sampler pair. This closes asset decode and SceneDB-to-bind-group identity;
-it does not claim physical sampler retirement before a sampled frame reaches
-SURFLIVE.
+view/sampler pair. This closes asset decode, SceneDB-to-bind-group identity, and
+the first physical sampled presentation.
 
-The default build therefore runs a dedicated fixed-mip texel-load probe over
-one four-vertex Helio quad. It keeps the ordinary WGPU texture/view/sampler,
-bind-group, pipeline, indexed-draw and UI4 path but removes the full voxel mesh,
-implicit derivatives and filtering from the failure domain. The normal
-`textureSample` voxel package remains intact behind `--no-default-features` and
-is re-enabled only after the fixed load retires. There is no CPU paint or
-alternate renderer fallback.
+The next physical log proved that VMX accepts and uploads the actual
+41,784-vertex / 62,676-index Helio voxel world and launches its frame. The
+unculled sampled draw then missed Render0's bounded two-second /
+five-million-poll release window, producing `rc=-32` before SURFLIVE. The
+default build therefore retains the complete Helio `MeshUpload` but submits a
+camera-dependent index snapshot: closed-voxel backfaces and triangles wholly
+outside one frustum plane are removed. The initial view measures 31,203
+submitted indices, and camera/resize changes rebuild that snapshot. It keeps
+the ordinary WGPU texture/view/sampler, bind-group, pipeline, indexed-draw and
+UI4 path while still excluding implicit derivatives and filtering. The normal
+`textureSample` package remains intact behind `--no-default-features`. There
+is no CPU paint or alternate renderer fallback.
 
 The retained proof already follows UI4's maximize/restore procedure. It stages
 a private replacement generation, imports that exact new lease into VMX,
@@ -84,9 +89,10 @@ compatibility upload for the current position-only shader package and is
 refreshed after both camera and resize changes.
 
 Current result: `cargo bp apps/HelioV` compiles the complete target dependency
-closure and emits `dist/heliov.bp`. Its default artifact is intentionally the
-fixed-texel diagnostic rung. See [GPU_BOUNDARY.md](GPU_BOUNDARY.md) for the
-measured boundary, rather than a guessed list of platform problems.
+closure and emits `dist/heliov.bp`. Its default artifact is the fixed-texel
+visibility-compacted world retirement rung. See
+[GPU_BOUNDARY.md](GPU_BOUNDARY.md) for the measured boundary, rather than a
+guessed list of platform problems.
 
 Build from the Blueprint repository root:
 

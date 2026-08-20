@@ -7,6 +7,7 @@
 use helio::{NavigationAction, NavigationInput, NavigationState};
 use trueos::ui4_scene::{
     CursorSource, Error, Frame, InputRoute, KeyboardState, POINTER_BUTTON_PRIMARY,
+    POINTER_BUTTON_SECONDARY,
 };
 
 const HID_A: u8 = 0x04;
@@ -62,8 +63,7 @@ impl Ui4FlyInput {
                 cursor: event.source,
                 combo_id: event.combo_id,
             };
-            if !route_is_eligible(&routes, event_route)
-                || event.buttons_down & POINTER_BUTTON_PRIMARY == 0
+            if !route_is_eligible(&routes, event_route) || !primary_look_active(event.buttons_down)
             {
                 continue;
             }
@@ -132,6 +132,12 @@ fn preferred_route(
             })
         })
         .or_else(|| routes.iter().find(eligible))
+}
+
+/// UI4 reserves secondary-drag for moving the selected frame.  Do not turn a
+/// mixed-button gesture into camera look while that shell gesture is active.
+fn primary_look_active(buttons_down: u32) -> bool {
+    buttons_down & POINTER_BUTTON_PRIMARY != 0 && buttons_down & POINTER_BUTTON_SECONDARY == 0
 }
 
 fn route_keyboard_matches(route: &InputRoute, keyboard: KeyboardState) -> bool {
@@ -242,6 +248,15 @@ mod tests {
         let routes = [route(1, false, true, None), route(2, true, true, None)];
         let selected = preferred_route(&routes, None, None).expect("selected route");
         assert_eq!(selected.cursor, cursor(2));
+    }
+
+    #[test]
+    fn primary_look_excludes_secondary_frame_drag() {
+        assert!(primary_look_active(POINTER_BUTTON_PRIMARY));
+        assert!(!primary_look_active(POINTER_BUTTON_SECONDARY));
+        assert!(!primary_look_active(
+            POINTER_BUTTON_PRIMARY | POINTER_BUTTON_SECONDARY
+        ));
     }
 
     #[test]

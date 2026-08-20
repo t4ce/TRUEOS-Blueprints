@@ -1,0 +1,19 @@
+diff --git a/src/hv/mod.rs b/src/hv/mod.rs
+--- a/src/hv/mod.rs
++++ b/src/hv/mod.rs
+@@ -3,11 +3,12 @@
+         .get(vm_id as usize)
+         .and_then(|slot| {
+             slot.lock()
+                 .as_ref()
+-                .filter(|context| {
+-                    context.console_attached && !context.terminal_lease.suppresses_terminal_output()
+-                })
++                // VMX controls must remain callable while a terminal lease is
++                // parked in Shell2. Ordinary Blueprint command passthrough is
++                // still gated by `blueprint_app_command_passthrough_enabled`.
++                .filter(|context| context.console_attached)
+                 .map(|_| ())
+         })
+         .is_none()
+     {

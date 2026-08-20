@@ -1,0 +1,715 @@
+diff --git a/apps/lumen/Cargo.toml b/apps/lumen/Cargo.toml
+--- a/apps/lumen/Cargo.toml
++++ b/apps/lumen/Cargo.toml
+@@ -8,3 +8,4 @@ replicatable = true
+ 
+ [dependencies]
++crossterm = { version = "0.29", default-features = false, features = ["events", "bracketed-paste"] }
+ trueos = { workspace = true, features = ["lumen"] }
+diff --git a/apps/lumen/src/main.rs b/apps/lumen/src/main.rs
+--- a/apps/lumen/src/main.rs
++++ b/apps/lumen/src/main.rs
+@@ -1,18 +1,34 @@
+-#![no_std]
+-
+ // trueos-blueprint: features = ["lumen"]
+ 
+ extern crate alloc;
+ 
+ use alloc::string::{String, ToString};
+ use alloc::vec::Vec;
+-
+-use trueos::{lumen, platform, replication, vshell};
+-
++use std::io::{self, Write};
++use std::time::Duration;
++
++use crossterm::{
++    cursor::{MoveTo, MoveToColumn, Show},
++    event::{
++        self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent,
++        KeyEventKind, KeyModifiers,
++    },
++    execute, queue,
++    style::{Color, Print, ResetColor, SetForegroundColor},
++    terminal::{
++        self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen,
++    },
++};
++use trueos::{
++    logl::{self, level},
++    lumen, platform, replication, vshell,
++};
++
++const LOG_TARGET: &str = "lumen";
+ const CHECKPOINT_VERSION: u64 = 1;
+ const POLL_MS: u64 = 10;
++const EVENT_POLL_MS: u64 = 50;
+ const MAX_WAIT_POLLS: usize = 18_000;
+-const INPUT_BYTES: usize = 4096;
+ const SPINNER_CADENCE_POLLS: usize = 4;
+ const SPINNER_MAX_SHIFT_CELLS: usize = 5;
+ const SPINNER_FRAMES: &[&str] = &["⢈", "⡈", "⡐", "⡠", "⣀", "⢄", "⢂", "⢁", "⡁"];
+@@ -53,63 +69,569 @@
+ }
+ 
+ fn main() {
++    let lease = match vshell::terminal_initial_lease() {
++        Ok(lease) => lease,
++        Err(error) => {
++            diag(
++                level::ERROR,
++                format_args!("initial terminal lease unavailable: {error}"),
++            );
++            let _ = vshell::report_exit_reason("lumen terminal lease unavailable");
++            let _ = vshell::shutdown_current_blueprint("lumen terminal lease unavailable");
++            return;
++        }
++    };
++
++    if let Err(error) = run_lumen(lease) {
++        diag(level::ERROR, format_args!("terminal session failed: {error}"));
++        let _ = lumen::close();
++        let _ = vshell::report_exit_reason("lumen terminal session failed");
++        let _ = vshell::shutdown_current_blueprint("lumen terminal session failed");
++    }
++}
++
++fn run_lumen(mut lease: vshell::TerminalLease) -> Result<(), String> {
++    let mut state = LogicalState::new();
++    let mut editor = InputEditor::new();
++    let mut initialized = false;
++
++    loop {
++        let action = match run_terminal_session(
++            &lease,
++            &mut state,
++            &mut editor,
++            &mut initialized,
++        ) {
++            Ok(action) => action,
++            Err(error) => {
++                let _ = lease.release_to_shell();
++                return Err(error);
++            }
++        };
++
++        let ticket = lease
++            .release_to_shell()
++            .map_err(|error| format!("terminal lease release failed: {error}"))?;
++
++        match action {
++            SessionExit::ReturnToShell => {
++                lease = wait_for_reentry(ticket, &mut state)?;
++            }
++            SessionExit::Quit => {
++                let _ = lumen::close();
++                let _ = vshell::report_exit_reason("lumen user exit");
++                let _ = vshell::shutdown_current_blueprint("lumen user exit");
++                return Ok(());
++            }
++        }
++    }
++}
++
++fn run_terminal_session(
++    lease: &vshell::TerminalLease,
++    state: &mut LogicalState,
++    editor: &mut InputEditor,
++    initialized: &mut bool,
++) -> Result<SessionExit, String> {
++    let mut terminal = TerminalGuard::enter()
++        .map_err(|error| format!("terminal setup failed: {error}"))?;
++    draw_session_header(state.turns, *initialized)
++        .map_err(|error| format!("terminal header failed: {error}"))?;
++    lease
++        .acknowledge_ready()
++        .map_err(|error| format!("terminal ready acknowledgement failed: {error}"))?;
++
++    if !*initialized {
++        initialize_lumen()?;
++        *initialized = true;
++    } else {
++        vshell::linef(format_args!(
++            "lumen-bp: terminal session resumed turns={}",
++            state.turns
++        ));
++    }
++
++    redraw_prompt(editor).map_err(|error| format!("prompt render failed: {error}"))?;
++
++    loop {
++        if let Some(prepare) = replication::poll_prepare_pause() {
++            clear_prompt_for_output()
++                .map_err(|error| format!("prompt clear failed: {error}"))?;
++            if !prepare_pause(prepare, state) {
++                terminal
++                    .exit()
++                    .map_err(|error| format!("terminal restore failed: {error}"))?;
++                return Ok(SessionExit::Quit);
++            }
++            redraw_prompt(editor).map_err(|error| format!("prompt render failed: {error}"))?;
++        }
++
++        if !event::poll(Duration::from_millis(EVENT_POLL_MS))
++            .map_err(|error| format!("crossterm poll failed: {error}"))?
++        {
++            continue;
++        }
++
++        match event::read().map_err(|error| format!("crossterm read failed: {error}"))? {
++            Event::Key(key) if key_is_active(key) => {
++                if key.modifiers.contains(KeyModifiers::CONTROL)
++                    && matches!(key.code, KeyCode::Char('q') | KeyCode::Char('c'))
++                {
++                    terminal
++                        .exit()
++                        .map_err(|error| format!("terminal restore failed: {error}"))?;
++                    return Ok(SessionExit::Quit);
++                }
++
++                match key.code {
++                    KeyCode::Esc | KeyCode::F(10) => {
++                        terminal
++                            .exit()
++                            .map_err(|error| format!("terminal restore failed: {error}"))?;
++                        return Ok(SessionExit::ReturnToShell);
++                    }
++                    KeyCode::Enter => {
++                        let prompt = editor.take_submission();
++                        finish_submitted_line(prompt.as_str())
++                            .map_err(|error| format!("prompt finish failed: {error}"))?;
++                        if prompt.is_empty() {
++                            redraw_prompt(editor)
++                                .map_err(|error| format!("prompt render failed: {error}"))?;
++                            continue;
++                        }
++                        if matches!(prompt.as_str(), "quit" | ":quit" | ".quit" | ":q") {
++                            terminal
++                                .exit()
++                                .map_err(|error| format!("terminal restore failed: {error}"))?;
++                            return Ok(SessionExit::Quit);
++                        }
++                        if let Err(error) = run_prompt(state, prompt.as_str()) {
++                            vshell::linef(format_args!("lumen-bp: prompt failed error={error}"));
++                            terminal
++                                .exit()
++                                .map_err(|restore| format!(
++                                    "{error}; terminal restore failed: {restore}"
++                                ))?;
++                            return Err(error);
++                        }
++                        redraw_prompt(editor)
++                            .map_err(|error| format!("prompt render failed: {error}"))?;
++                    }
++                    KeyCode::Backspace => {
++                        editor.backspace();
++                        redraw_prompt(editor)
++                            .map_err(|error| format!("prompt render failed: {error}"))?;
++                    }
++                    KeyCode::Delete => {
++                        editor.delete();
++                        redraw_prompt(editor)
++                            .map_err(|error| format!("prompt render failed: {error}"))?;
++                    }
++                    KeyCode::Left => {
++                        editor.move_left();
++                        redraw_prompt(editor)
++                            .map_err(|error| format!("prompt render failed: {error}"))?;
++                    }
++                    KeyCode::Right => {
++                        editor.move_right();
++                        redraw_prompt(editor)
++                            .map_err(|error| format!("prompt render failed: {error}"))?;
++                    }
++                    KeyCode::Home => {
++                        editor.move_home();
++                        redraw_prompt(editor)
++                            .map_err(|error| format!("prompt render failed: {error}"))?;
++                    }
++                    KeyCode::End => {
++                        editor.move_end();
++                        redraw_prompt(editor)
++                            .map_err(|error| format!("prompt render failed: {error}"))?;
++                    }
++                    KeyCode::Up => {
++                        editor.history_up();
++                        redraw_prompt(editor)
++                            .map_err(|error| format!("prompt render failed: {error}"))?;
++                    }
++                    KeyCode::Down => {
++                        editor.history_down();
++                        redraw_prompt(editor)
++                            .map_err(|error| format!("prompt render failed: {error}"))?;
++                    }
++                    KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
++                        editor.clear();
++                        redraw_prompt(editor)
++                            .map_err(|error| format!("prompt render failed: {error}"))?;
++                    }
++                    KeyCode::Tab => {
++                        editor.insert_text("    ");
++                        redraw_prompt(editor)
++                            .map_err(|error| format!("prompt render failed: {error}"))?;
++                    }
++                    KeyCode::Char(ch)
++                        if !key.modifiers.contains(KeyModifiers::CONTROL)
++                            && !key.modifiers.contains(KeyModifiers::ALT) =>
++                    {
++                        editor.insert_char(ch);
++                        redraw_prompt(editor)
++                            .map_err(|error| format!("prompt render failed: {error}"))?;
++                    }
++                    _ => {}
++                }
++            }
++            Event::Paste(text) => {
++                editor.insert_text(text.as_str());
++                redraw_prompt(editor).map_err(|error| format!("prompt render failed: {error}"))?;
++            }
++            Event::Resize(_, _) => {
++                redraw_prompt(editor).map_err(|error| format!("prompt render failed: {error}"))?;
++            }
++            _ => {}
++        }
++    }
++}
++
++fn initialize_lumen() -> Result<(), String> {
+     let mut spinner = ProgressSpinner::start("lumen-bp: opening prefilled template");
+-    if let Err(error) = lumen::open_template(SYSTEM_PROMPT) {
+-        vshell::linef(format_args!(
+-            "lumen-bp: template open failed error={error:?}"
+-        ));
+-        return;
+-    }
+-    let ready = match wait_for_phase_with_spinner(lumen::LUMEN_PHASE_READY, &mut spinner) {
+-        Ok(status) => status,
+-        Err(error) => {
+-            vshell::linef(format_args!(
+-                "lumen-bp: template prefill failed error={error}"
+-            ));
+-            return;
+-        }
+-    };
++    lumen::open_template(SYSTEM_PROMPT)
++        .map_err(|error| format!("template open failed: {error:?}"))?;
++    let ready = wait_for_phase_with_spinner(lumen::LUMEN_PHASE_READY, &mut spinner)?;
++    clear_prompt_for_output()
++        .map_err(|error| format!("template status clear failed: {error}"))?;
+     vshell::linef(format_args!(
+         "lumen-bp: template ready prefix_tokens={} ownership=blueprint-policy+logical-state/kernel-model+igc+guc",
+         ready.position
+     ));
+     vshell::line(
+-        "lumen-bp: replicate/pause this template now, or type a prompt for direct ABI bring-up",
++        "lumen-bp: type a prompt · Esc/F10 returns to Shell2 · vmx_tui resumes this session",
+     );
+-
+-    let mut state = LogicalState::new();
+-    let mut input = [0u8; INPUT_BYTES];
++    Ok(())
++}
++
++fn wait_for_reentry(
++    ticket: vshell::TerminalParkingTicket,
++    state: &mut LogicalState,
++) -> Result<vshell::TerminalLease, String> {
+     loop {
+-        if let Some(prepare) = replication::poll_prepare_pause() {
+-            if !prepare_pause(prepare, &mut state) {
+-                return;
+-            }
+-            continue;
+-        }
+-
+-        let read = vshell::read(&mut input);
+-        if read == 0 {
+-            platform::poll_once();
+-            platform::sleep_ms(16);
+-            continue;
+-        }
+-        let prompt = trim_ascii(&input[..read]);
+-        if prompt == b"quit" {
+-            let _ = lumen::close();
++        if let Some(prepare) = replication::poll_prepare_pause()
++            && !prepare_pause(prepare, state)
++        {
++            return Err(String::from("Lumen restore failed while terminal was parked"));
++        }
++
++        match ticket
++            .poll_reentry()
++            .map_err(|error| format!("terminal reentry poll failed: {error}"))?
++        {
++            vshell::TerminalReentry::Pending => {
++                platform::poll_once();
++                platform::sleep_ms(POLL_MS);
++            }
++            vshell::TerminalReentry::Ready(lease) => return Ok(lease),
++        }
++    }
++}
++
++#[derive(Clone, Copy, Debug, Eq, PartialEq)]
++enum SessionExit {
++    ReturnToShell,
++    Quit,
++}
++
++struct TerminalGuard {
++    active: bool,
++}
++
++impl TerminalGuard {
++    fn enter() -> io::Result<Self> {
++        terminal::enable_raw_mode()?;
++        let mut out = io::stdout();
++        if let Err(error) = execute!(
++            &mut out,
++            EnterAlternateScreen,
++            EnableBracketedPaste,
++            Clear(ClearType::All),
++            MoveTo(0, 0),
++            Show
++        ) {
++            let _ = execute!(
++                &mut out,
++                DisableBracketedPaste,
++                ResetColor,
++                Show,
++                LeaveAlternateScreen
++            );
++            let _ = terminal::disable_raw_mode();
++            return Err(error);
++        }
++        if let Err(error) = out.flush() {
++            let _ = execute!(
++                &mut out,
++                DisableBracketedPaste,
++                ResetColor,
++                Show,
++                LeaveAlternateScreen
++            );
++            let _ = terminal::disable_raw_mode();
++            return Err(error);
++        }
++        Ok(Self { active: true })
++    }
++
++    fn exit(&mut self) -> io::Result<()> {
++        if !self.active {
++            return Ok(());
++        }
++        self.active = false;
++
++        let mut first_error = None;
++        let mut out = io::stdout();
++        if let Err(error) = execute!(
++            &mut out,
++            DisableBracketedPaste,
++            ResetColor,
++            Show,
++            LeaveAlternateScreen
++        ) {
++            first_error = Some(error);
++        }
++        if let Err(error) = out.flush()
++            && first_error.is_none()
++        {
++            first_error = Some(error);
++        }
++        if let Err(error) = terminal::disable_raw_mode()
++            && first_error.is_none()
++        {
++            first_error = Some(error);
++        }
++        match first_error {
++            Some(error) => Err(error),
++            None => Ok(()),
++        }
++    }
++}
++
++impl Drop for TerminalGuard {
++    fn drop(&mut self) {
++        let _ = self.exit();
++    }
++}
++
++struct InputEditor {
++    text: String,
++    cursor: usize,
++    history: Vec<String>,
++    history_index: Option<usize>,
++}
++
++impl InputEditor {
++    fn new() -> Self {
++        Self {
++            text: String::new(),
++            cursor: 0,
++            history: Vec::new(),
++            history_index: None,
++        }
++    }
++
++    fn insert_char(&mut self, ch: char) {
++        if ch.is_control() {
+             return;
+         }
+-        let Ok(prompt) = core::str::from_utf8(prompt) else {
+-            vshell::line("lumen-bp: prompt must be UTF-8");
+-            continue;
++        self.text.insert(self.cursor, ch);
++        self.cursor += ch.len_utf8();
++        self.history_index = None;
++    }
++
++    fn insert_text(&mut self, text: &str) {
++        for ch in text.chars() {
++            match ch {
++                '\r' | '\n' => self.insert_char(' '),
++                '\t' => {
++                    for _ in 0..4 {
++                        self.insert_char(' ');
++                    }
++                }
++                _ => self.insert_char(ch),
++            }
++        }
++    }
++
++    fn backspace(&mut self) {
++        let Some((start, _)) = self.text[..self.cursor].char_indices().next_back() else {
++            return;
+         };
+-        if prompt.is_empty() {
+-            continue;
+-        }
+-        if let Err(error) = run_prompt(&mut state, prompt) {
+-            vshell::linef(format_args!("lumen-bp: prompt failed error={error}"));
++        self.text.drain(start..self.cursor);
++        self.cursor = start;
++        self.history_index = None;
++    }
++
++    fn delete(&mut self) {
++        let Some(ch) = self.text[self.cursor..].chars().next() else {
+             return;
+-        }
+-    }
++        };
++        let end = self.cursor + ch.len_utf8();
++        self.text.drain(self.cursor..end);
++        self.history_index = None;
++    }
++
++    fn move_left(&mut self) {
++        if let Some((start, _)) = self.text[..self.cursor].char_indices().next_back() {
++            self.cursor = start;
++        }
++    }
++
++    fn move_right(&mut self) {
++        if let Some(ch) = self.text[self.cursor..].chars().next() {
++            self.cursor += ch.len_utf8();
++        }
++    }
++
++    fn move_home(&mut self) {
++        self.cursor = 0;
++    }
++
++    fn move_end(&mut self) {
++        self.cursor = self.text.len();
++    }
++
++    fn clear(&mut self) {
++        self.text.clear();
++        self.cursor = 0;
++        self.history_index = None;
++    }
++
++    fn history_up(&mut self) {
++        if self.history.is_empty() {
++            return;
++        }
++        let index = self
++            .history_index
++            .and_then(|index| index.checked_sub(1))
++            .unwrap_or(self.history.len() - 1);
++        self.history_index = Some(index);
++        self.text.clone_from(&self.history[index]);
++        self.cursor = self.text.len();
++    }
++
++    fn history_down(&mut self) {
++        let Some(index) = self.history_index else {
++            return;
++        };
++        if index + 1 < self.history.len() {
++            let next = index + 1;
++            self.history_index = Some(next);
++            self.text.clone_from(&self.history[next]);
++            self.cursor = self.text.len();
++        } else {
++            self.clear();
++        }
++    }
++
++    fn take_submission(&mut self) -> String {
++        let raw = core::mem::take(&mut self.text);
++        self.cursor = 0;
++        self.history_index = None;
++        let prompt = raw.trim().to_string();
++        if !prompt.is_empty()
++            && self
++                .history
++                .last()
++                .is_none_or(|previous| previous != &prompt)
++        {
++            self.history.push(prompt.clone());
++        }
++        prompt
++    }
++
++    fn visible_window(&self, width: usize) -> (String, usize) {
++        let width = width.max(1);
++        let chars: Vec<char> = self.text.chars().collect();
++        let cursor_chars = self.text[..self.cursor].chars().count();
++        let start = cursor_chars.saturating_sub(width.saturating_sub(1));
++        let end = (start + width).min(chars.len());
++        let visible = chars[start..end].iter().collect();
++        (visible, cursor_chars.saturating_sub(start))
++    }
++}
++
++fn draw_session_header(turns: u64, resumed: bool) -> io::Result<()> {
++    let mut out = io::stdout();
++    execute!(
++        &mut out,
++        Clear(ClearType::All),
++        MoveTo(0, 0),
++        SetForegroundColor(Color::Cyan),
++        Print("TRUEOS LUMEN"),
++        ResetColor,
++        Print("\r\n"),
++        Print("Direct Crossterm terminal session\r\n"),
++        Print("Esc/F10: return to Shell2 · vmx_tui: resume · Ctrl-Q/Ctrl-C: quit\r\n"),
++        SetForegroundColor(Color::DarkGrey),
++        Print(format!(
++            "session={} turns={} input=Mio/Crossterm terminal handoff\r\n\r\n",
++            if resumed { "resumed" } else { "initial" },
++            turns
++        )),
++        ResetColor
++    )?;
++    out.flush()
++}
++
++fn redraw_prompt(editor: &InputEditor) -> io::Result<()> {
++    const PREFIX: &str = "lumen> ";
++    let width = terminal::size()
++        .map(|(columns, _)| usize::from(columns).saturating_sub(PREFIX.len()))
++        .unwrap_or(73)
++        .max(1);
++    let (visible, cursor) = editor.visible_window(width);
++    let column = PREFIX
++        .chars()
++        .count()
++        .saturating_add(cursor)
++        .min(u16::MAX as usize) as u16;
++
++    let mut out = io::stdout();
++    queue!(
++        &mut out,
++        MoveToColumn(0),
++        Clear(ClearType::CurrentLine),
++        SetForegroundColor(Color::Yellow),
++        Print(PREFIX),
++        ResetColor,
++        Print(visible),
++        MoveToColumn(column)
++    )?;
++    out.flush()
++}
++
++fn clear_prompt_for_output() -> io::Result<()> {
++    let mut out = io::stdout();
++    queue!(&mut out, MoveToColumn(0), Clear(ClearType::CurrentLine))?;
++    out.flush()
++}
++
++fn finish_submitted_line(text: &str) -> io::Result<()> {
++    let mut out = io::stdout();
++    queue!(
++        &mut out,
++        MoveToColumn(0),
++        Clear(ClearType::CurrentLine),
++        SetForegroundColor(Color::Yellow),
++        Print("lumen> "),
++        ResetColor,
++        Print(text),
++        Print("\r\n")
++    )?;
++    out.flush()
++}
++
++fn key_is_active(key: KeyEvent) -> bool {
++    matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat)
++}
++
++fn diag(message_level: u8, message: impl logl::IntoLogMessage) {
++    let _ = logl::log_record(message_level, LOG_TARGET, message);
+ }
+ 
+ struct ProgressSpinner {
+@@ -250,3 +774,5 @@
+     let mut spinner = ProgressSpinner::start("lumen-bp: reasoning");
+     let status = wait_for_phase_with_spinner(lumen::LUMEN_PHASE_REPLY_READY, &mut spinner)?;
++    clear_prompt_for_output()
++        .map_err(|error| format!("reasoning status clear failed: {error}"))?;
+     let tail_len = (status.reply_tail_len as usize).min(state.reply_tail.len());
+@@ -296,20 +820,26 @@
+ fn log_raw_reply(turn: u64, raw: &[u8]) {
+     match core::str::from_utf8(raw) {
+-        Ok(text) => vshell::linef(format_args!(
+-            "lumen-bp: raw-reply turn={} bytes={} utf8=1 text={:?}",
+-            turn,
+-            raw.len(),
+-            text,
+-        )),
+-        Err(error) => vshell::linef(format_args!(
+-            "lumen-bp: raw-reply turn={} bytes={} utf8=0 valid_up_to={} error_len={:?} raw_bytes={:?}",
+-            turn,
+-            raw.len(),
+-            error.valid_up_to(),
+-            error.error_len(),
+-            raw,
+-        )),
+-    };
++        Ok(text) => diag(
++            level::INFO,
++            format_args!(
++                "raw-reply turn={} bytes={} utf8=1 text={:?}",
++                turn,
++                raw.len(),
++                text,
++            ),
++        ),
++        Err(error) => diag(
++            level::INFO,
++            format_args!(
++                "raw-reply turn={} bytes={} utf8=0 valid_up_to={} error_len={:?} raw_bytes={:?}",
++                turn,
++                raw.len(),
++                error.valid_up_to(),
++                error.error_len(),
++                raw,
++            ),
++        ),
++    }
+ }
+ 
+ fn emit_text_reply(turn: u64, text: &str) {

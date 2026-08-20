@@ -229,31 +229,10 @@ pub fn probe_ui4_surface_path(mesh: &helio::MeshUpload) -> Result<SurfaceProbe, 
         near: 0.1,
         far: 180.0,
     };
-    #[cfg(feature = "texture-bringup-fixed-load")]
-    let graphics = {
-        let probe_mesh = crate::voxel::texture_bringup_quad();
-        trueos::logl::log(
-            trueos::logl::level::INFO,
-            format_args!(
-                "HelioV: texture bring-up draw isolated world_vertices={} world_indices={} probe_vertices={} probe_indices={} retained_world_unchanged=true",
-                mesh.vertices.len(),
-                mesh.indices.len(),
-                probe_mesh.vertices.len(),
-                probe_mesh.indices.len(),
-            ),
-        );
-        VoxelGraphics::new(
-            &device,
-            &queue,
-            &scene,
-            assets.texture_residency_slot,
-            &probe_mesh,
-            aspect(frame.width(), frame.height()),
-            &camera,
-            lens,
-        )?
-    };
-    #[cfg(not(feature = "texture-bringup-fixed-load"))]
+    // The fixed-load package remains the authenticated sampling rung, but it
+    // now exercises the actual Helio voxel mesh with its SceneDB-resident
+    // material texture rather than the isolated six-index quad. Filtering is
+    // still deliberately out of scope.
     let graphics = VoxelGraphics::new(
         &device,
         &queue,
@@ -264,6 +243,17 @@ pub fn probe_ui4_surface_path(mesh: &helio::MeshUpload) -> Result<SurfaceProbe, 
         &camera,
         lens,
     )?;
+    trueos::logl::log(
+        trueos::logl::level::INFO,
+        format_args!(
+            "HelioV: fixed-load texture stage submits visibility-compacted Helio voxel world vertices={} source_indices={} submitted_indices={} texture_extent={}x{} material_source=SceneDB-TextureResidency compaction=closed-voxel-backface+frustum",
+            mesh.vertices.len(),
+            mesh.indices.len(),
+            graphics.index_count,
+            assets.texture_width,
+            assets.texture_height,
+        ),
+    );
     let first = render_voxel_frame(&mut frame, &device, &queue, &graphics)?;
     scene.flush();
     if let Some(code) = take_device_error(&device) {
@@ -594,6 +584,7 @@ struct RenderedFrame {
 struct VoxelGraphics {
     world_positions: Vec<[f32; 3]>,
     texture_coordinates: Vec<[f32; 2]>,
+    world_indices: Vec<u32>,
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     material_bind_group: wgpu::BindGroup,
@@ -625,6 +616,13 @@ impl VoxelGraphics {
             camera,
             lens,
         );
+        let visible_indices = crate::voxel::visible_voxel_indices(
+            &world_positions,
+            &mesh.indices,
+            aspect,
+            camera,
+            lens,
+        );
         let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Helio voxel projected positions"),
             size: byte_len(&projected) as u64,
@@ -638,7 +636,9 @@ impl VoxelGraphics {
             mapped_at_creation: false,
         });
         queue.write_buffer(&vertex_buffer, 0, bytes_of_slice(&projected));
-        queue.write_buffer(&index_buffer, 0, bytes_of_slice(&mesh.indices));
+        if !visible_indices.is_empty() {
+            queue.write_buffer(&index_buffer, 0, bytes_of_slice(&visible_indices));
+        }
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("HelioV authenticated position3-uv-texture shader package"),
             source: wgpu::ShaderSource::Wgsl(VOXEL_SHADER_WGSL.into()),
@@ -737,17 +737,18 @@ impl VoxelGraphics {
         Ok(Self {
             world_positions,
             texture_coordinates,
+            world_indices: mesh.indices.clone(),
             vertex_buffer,
             index_buffer,
             material_bind_group,
             pipeline,
-            index_count: u32::try_from(mesh.indices.len())
+            index_count: u32::try_from(visible_indices.len())
                 .map_err(|_| fail("voxel-index-count", ERR_INVALID_ARGUMENT))?,
         })
     }
 
     fn update_projection(
-        &self,
+        &mut self,
         queue: &wgpu::Queue,
         aspect: f32,
         camera: &FlyCamera,
@@ -760,7 +761,19 @@ impl VoxelGraphics {
             camera,
             lens,
         );
+        let visible_indices = crate::voxel::visible_voxel_indices(
+            &self.world_positions,
+            &self.world_indices,
+            aspect,
+            camera,
+            lens,
+        );
         queue.write_buffer(&self.vertex_buffer, 0, bytes_of_slice(&projected));
+        if !visible_indices.is_empty() {
+            queue.write_buffer(&self.index_buffer, 0, bytes_of_slice(&visible_indices));
+        }
+        self.index_count = u32::try_from(visible_indices.len())
+            .map_err(|_| fail("voxel-index-count", ERR_INVALID_ARGUMENT))?;
         Ok(())
     }
 }
@@ -811,11 +824,13 @@ fn render_voxel_frame(
             occlusion_query_set: None,
             multiview_mask: None,
         });
-        pass.set_pipeline(&graphics.pipeline);
-        pass.set_bind_group(0, &graphics.material_bind_group, &[]);
-        pass.set_vertex_buffer(0, graphics.vertex_buffer.slice(..));
-        pass.set_index_buffer(graphics.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-        pass.draw_indexed(0..graphics.index_count, 0, 0..1);
+        if graphics.index_count != 0 {
+            pass.set_pipeline(&graphics.pipeline);
+            pass.set_bind_group(0, &graphics.material_bind_group, &[]);
+            pass.set_vertex_buffer(0, graphics.vertex_buffer.slice(..));
+            pass.set_index_buffer(graphics.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            pass.draw_indexed(0..graphics.index_count, 0, 0..1);
+        }
     }
     let _submission = queue.submit([encoder.finish()]);
     if let Some(code) = take_device_error(device) {

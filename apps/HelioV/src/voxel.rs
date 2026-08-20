@@ -29,21 +29,6 @@ pub struct WorldBuild {
     pub chunks: Vec<WorldChunk>,
 }
 
-/// One top-facing quad used only by the opt-in sampler bring-up package. It
-/// keeps vertex fetch, interpolation, index fetch and UI4 presentation real
-/// while removing 41k vertices and world visibility from the failure domain.
-#[cfg(feature = "texture-bringup-fixed-load")]
-pub fn texture_bringup_quad() -> MeshUpload {
-    let mut vertices = Vec::with_capacity(4);
-    let mut indices = Vec::with_capacity(6);
-    emit_face(&mut vertices, &mut indices, [18.0, 7.0, 18.0], FACES[2]);
-    for vertex in &mut vertices {
-        vertex.position[0] = 18.0 + (vertex.position[0] - 18.0) * 12.0;
-        vertex.position[2] = 18.0 + (vertex.position[2] - 18.0) * 12.0;
-    }
-    MeshUpload { vertices, indices }
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Block {
     Air,
@@ -416,6 +401,81 @@ pub fn project_clip_positions(
         .collect()
 }
 
+/// Compact the closed voxel surface to triangles which can contribute to the
+/// current camera. The source `MeshUpload` remains authoritative and unchanged;
+/// this only builds the direct-draw index snapshot consumed by the narrow VMX
+/// compatibility path.
+///
+/// HelioV emits independent outward-facing voxel triangles. Back faces are
+/// therefore hidden by the same closed solid, while triangles wholly outside
+/// one view-frustum plane cannot reach the target. Removing both classes keeps
+/// a camera update inside Render0's bounded single-draw retirement window
+/// without truncating the world or changing vertex/texture identity.
+pub fn visible_voxel_indices(
+    positions: &[[f32; 3]],
+    indices: &[u32],
+    aspect: f32,
+    camera: &FlyCamera,
+    lens: PerspectiveLens,
+) -> Vec<u32> {
+    let eye = camera.position();
+    let basis = camera.basis();
+    let forward = basis.forward;
+    let right = basis.right;
+    let up = right.cross(forward).normalize_or_zero();
+    let tan_half_fov = (lens.fov_y_radians * 0.5).tan().max(f32::EPSILON);
+    let horizontal_extent = tan_half_fov * aspect.max(0.01);
+    let near = lens.near.max(0.0);
+    let far = lens.far.max(near + f32::EPSILON);
+    let mut visible = Vec::with_capacity(indices.len());
+
+    for triangle in indices.chunks_exact(3) {
+        let &[a_index, b_index, c_index] = triangle else {
+            continue;
+        };
+        let (Some(&a), Some(&b), Some(&c)) = (
+            positions.get(a_index as usize),
+            positions.get(b_index as usize),
+            positions.get(c_index as usize),
+        ) else {
+            continue;
+        };
+        let a = glam::Vec3::from_array(a);
+        let b = glam::Vec3::from_array(b);
+        let c = glam::Vec3::from_array(c);
+        let normal = (b - a).cross(c - a);
+        if !normal.is_finite()
+            || normal.length_squared() <= f32::EPSILON
+            || normal.dot(eye - (a + b + c) / 3.0) <= 0.0
+        {
+            continue;
+        }
+
+        let camera_space = [a, b, c].map(|position| {
+            let relative = position - eye;
+            glam::Vec3::new(relative.dot(right), relative.dot(up), relative.dot(forward))
+        });
+        let wholly_outside = camera_space.iter().all(|point| point.z < near)
+            || camera_space.iter().all(|point| point.z > far)
+            || camera_space
+                .iter()
+                .all(|point| point.z >= near && point.x < -point.z * horizontal_extent)
+            || camera_space
+                .iter()
+                .all(|point| point.z >= near && point.x > point.z * horizontal_extent)
+            || camera_space
+                .iter()
+                .all(|point| point.z >= near && point.y < -point.z * tan_half_fov)
+            || camera_space
+                .iter()
+                .all(|point| point.z >= near && point.y > point.z * tan_half_fov);
+        if !wholly_outside {
+            visible.extend_from_slice(triangle);
+        }
+    }
+    visible
+}
+
 fn sub(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
     [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
 }
@@ -575,5 +635,60 @@ mod tests {
         assert!(wide.iter().flatten().all(|component| component.is_finite()));
         assert_ne!(wide[0][0], square[0][0]);
         assert_eq!(wide[0][1], square[0][1]);
+    }
+
+    #[test]
+    fn initial_camera_compacts_the_world_without_truncating_source_mesh() {
+        let world = build_voxel_world();
+        let camera = FlyCamera::look_at(
+            glam::Vec3::new(65.0, 42.0, 68.0),
+            glam::Vec3::new(24.0, 7.0, 24.0),
+            Default::default(),
+        );
+        let lens = PerspectiveLens {
+            fov_y_radians: 48.0_f32.to_radians(),
+            near: 0.1,
+            far: 180.0,
+        };
+        let positions: Vec<_> = world
+            .mesh
+            .vertices
+            .iter()
+            .map(|vertex| vertex.position)
+            .collect();
+        let visible =
+            visible_voxel_indices(&positions, &world.mesh.indices, 16.0 / 9.0, &camera, lens);
+        assert_eq!(visible.len(), 31_203);
+        assert_eq!(visible.len() % 3, 0);
+        assert!(visible.len() < world.mesh.indices.len());
+        assert_eq!(world.mesh.indices.len(), 62_676);
+    }
+
+    #[test]
+    fn camera_looking_away_from_world_has_an_empty_visible_snapshot() {
+        let world = build_voxel_world();
+        let camera = FlyCamera::look_at(
+            glam::Vec3::new(65.0, 42.0, 68.0),
+            glam::Vec3::new(100.0, 42.0, 100.0),
+            Default::default(),
+        );
+        let positions: Vec<_> = world
+            .mesh
+            .vertices
+            .iter()
+            .map(|vertex| vertex.position)
+            .collect();
+        let visible = visible_voxel_indices(
+            &positions,
+            &world.mesh.indices,
+            16.0 / 9.0,
+            &camera,
+            PerspectiveLens {
+                fov_y_radians: 48.0_f32.to_radians(),
+                near: 0.1,
+                far: 180.0,
+            },
+        );
+        assert!(visible.is_empty());
     }
 }

@@ -570,6 +570,13 @@ unsafe extern "C" {
         damage_width: u32,
         damage_height: u32,
     ) -> i32;
+    pub fn trueos_cabi_ui4_scene_compute_frame_publish(
+        window_id: u32,
+        damage_x: u32,
+        damage_y: u32,
+        damage_width: u32,
+        damage_height: u32,
+    ) -> i32;
     pub fn trueos_cabi_ui4_solara_frame_close(window_id: u32) -> i32;
     pub fn trueos_cabi_ui4_solara_frame_close_requested(window_id: u32, flags: u32) -> i32;
     pub fn trueos_cabi_ui4_scene_frame_set_position(window_id: u32, x: i32, y: i32) -> i32;

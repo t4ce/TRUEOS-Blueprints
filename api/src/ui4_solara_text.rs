@@ -1013,9 +1013,21 @@ impl Frame {
         })
     }
 
-    /// Render one immutable, offline-validated ShaderToy catalog artifact into
-    /// the active visual-frame lease.
+    /// Render and publish one immutable, offline-validated ShaderToy catalog
+    /// artifact. ShaderToy always overwrites its complete visual-frame surface,
+    /// so the completed compute lease is published with full-frame damage.
     pub fn render_shadertoy(&mut self, params: &ShadertoyParamsV1) -> Result<(), Error> {
+        self.render_shadertoy_unpublished(params)?;
+        self.publish_compute(Damage::full(self.width, self.height))
+    }
+
+    /// Render one reviewed ShaderToy artifact into the active visual-frame
+    /// lease without publishing it. This is only for a caller that will make
+    /// the matching explicit [`Self::publish_compute`] call itself.
+    pub fn render_shadertoy_unpublished(
+        &mut self,
+        params: &ShadertoyParamsV1,
+    ) -> Result<(), Error> {
         if !matches!(
             params.shader_id,
             SHADERTOY_MANDELBROT | SHADERTOY_CUBE_FIELD | SHADERTOY_NGUYEN
@@ -1366,6 +1378,24 @@ impl Frame {
         })
     }
 
+    /// Publish the active visual/compute frame. The producer's completion
+    /// fence is held by UI4 and bound to this canvas' current lease; neither
+    /// Solara nor a 3D render-scene path participates in the handoff.
+    pub fn publish_compute(&mut self, damage: Damage) -> Result<(), Error> {
+        status(unsafe {
+            v::bp_abi::trueos_cabi_ui4_scene_compute_frame_publish(
+                self.window_id,
+                damage.x,
+                damage.y,
+                damage.width,
+                damage.height,
+            )
+        })
+    }
+
+    /// Legacy broad publisher for callers that publish CPU or text content
+    /// through this UI4 canvas. Compute producers should use
+    /// [`Self::publish_compute`] so their release semantics stay explicit.
     pub fn publish(&mut self, damage: Damage) -> Result<(), Error> {
         status(unsafe {
             v::bp_abi::trueos_cabi_ui4_solara_frame_publish(
