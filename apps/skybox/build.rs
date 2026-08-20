@@ -1,16 +1,14 @@
 use std::env;
 use std::fs::File;
-use std::io::{BufReader, Write};
-use std::path::{Path, PathBuf};
+use std::io::Write;
+use std::path::PathBuf;
 
 fn main() {
     println!("cargo:rerun-if-changed=assets/skybox8k.png");
 
-    let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
-    let source = manifest_dir.join("assets/skybox8k.png");
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
 
-    let texture = read_png_rgb(&source);
+    let texture = read_png_rgb(include_bytes!("assets/skybox8k.png"));
     let rgb565_path = out_dir.join("skybox_rgb565.bin");
     let meta_path = out_dir.join("skybox_meta.rs");
 
@@ -43,12 +41,11 @@ struct RgbImage {
     pixels: Vec<u8>,
 }
 
-fn read_png_rgb(path: &Path) -> RgbImage {
-    let file = File::open(path).unwrap();
-    let mut decoder = png::Decoder::new(BufReader::new(file));
+fn read_png_rgb(bytes: &[u8]) -> RgbImage {
+    let mut decoder = png::Decoder::new(png::io::Cursor::new(bytes));
     decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
     let mut reader = decoder.read_info().unwrap();
-    let mut buffer = vec![0u8; reader.output_buffer_size()];
+    let mut buffer = vec![0u8; reader.output_buffer_size().unwrap()];
     let info = reader.next_frame(&mut buffer).unwrap();
     let bytes = &buffer[..info.buffer_size()];
     let channels = match info.color_type {

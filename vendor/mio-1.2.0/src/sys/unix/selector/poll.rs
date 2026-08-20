@@ -150,6 +150,22 @@ impl Debug for PollFd {
     }
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum RegistrationMode {
+    /// Raw registrations, such as `SourceFd`, retain their interests until an
+    /// explicit reregister or deregister operation changes them.
+    Persistent,
+    /// Mio-managed `IoSource` registrations emulate edge-triggered delivery.
+    /// `IoSourceState::do_io` rearms them after I/O reaches `WouldBlock`.
+    ManagedOneShot,
+}
+
+impl RegistrationMode {
+    fn disarm_after_event(self) -> bool {
+        matches!(self, Self::ManagedOneShot)
+    }
+}
+
 /// Data associated with a file descriptor in a poller.
 #[derive(Debug, Clone)]
 struct FdData {
@@ -157,6 +173,9 @@ struct FdData {
     poll_fds_index: usize,
     /// The key of the `Event` associated with this file descriptor.
     token: Token,
+    /// Whether the selector retains the interest or waits for Mio-managed I/O
+    /// to rearm it after a `WouldBlock` result.
+    registration_mode: RegistrationMode,
     /// Used to communicate with IoSourceState when we need to internally deregister
     /// based on a closed fd.
     shared_record: Arc<RegistrationRecord>,
@@ -285,10 +304,13 @@ impl SelectorState {
                             closed_raw_fds.push(poll_fd.fd);
                         }
 
-                        // Remove the interest which just got triggered the IoSourceState's do_io
-                        // wrapper used with this selector will add back the interest using
-                        // reregister.
-                        poll_fd.events &= !poll_fd.revents;
+                        if fd_data.registration_mode.disarm_after_event() {
+                            // Mio-managed `IoSource` registrations emulate edge-triggered
+                            // delivery. Their `do_io` wrapper rearms the interest after the
+                            // operation reaches `WouldBlock`. Raw `SourceFd` registrations
+                            // stay persistent and continue to observe later readiness edges.
+                            poll_fd.events &= !poll_fd.revents;
+                        }
 
                         // Minor optimization to potentially avoid looping n times where n is the
                         // number of input fds (i.e. we might loop between m and n times where m is
@@ -312,7 +334,8 @@ impl SelectorState {
     }
 
     pub fn register(&self, fd: RawFd, token: Token, interests: Interest) -> io::Result<()> {
-        self.register_internal(fd, token, interests).map(|_| ())
+        self.register_with_mode(fd, token, interests, RegistrationMode::Persistent)
+            .map(|_| ())
     }
 
     pub fn register_internal(
@@ -320,6 +343,16 @@ impl SelectorState {
         fd: RawFd,
         token: Token,
         interests: Interest,
+    ) -> io::Result<Arc<RegistrationRecord>> {
+        self.register_with_mode(fd, token, interests, RegistrationMode::ManagedOneShot)
+    }
+
+    fn register_with_mode(
+        &self,
+        fd: RawFd,
+        token: Token,
+        interests: Interest,
+        registration_mode: RegistrationMode,
     ) -> io::Result<Arc<RegistrationRecord>> {
         #[cfg(all(debug_assertions, not(target_os = "wasi")))]
         if Some(fd) == self.notify_waker.fd() {
@@ -360,6 +393,7 @@ impl SelectorState {
                 FdData {
                     poll_fds_index,
                     token,
+                    registration_mode,
                     shared_record: record.clone(),
                 },
             );

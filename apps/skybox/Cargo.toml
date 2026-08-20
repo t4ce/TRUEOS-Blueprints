@@ -12,4 +12,4 @@ libm.workspace = true
 trueos = { workspace = true, features = ["ui4-scene"] }
 
 [build-dependencies]
-png = "0.17"
+png = { version = "0.18.1", default-features = false }

@@ -31,11 +31,6 @@
     "Frog",
     "Player",
     {
-      "name": "tactics",
-      "path": "../tactics",
-      "optional": true
-    },
-    {
       "name": "tinyfighter",
       "path": "../TinyFighter",
       "optional": true
@@ -71,5 +66,4 @@
     }
   ]
 }
-
 

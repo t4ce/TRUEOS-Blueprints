@@ -28,9 +28,10 @@ use trueos::{
     platform::{self, io},
     printers, rapl, runtime, system_services, thermal,
     time::{self, Duration},
-    tokio::{self, net::SocketAddr},
+    tokio::{self},
     usb,
 };
+use core::net::SocketAddr;
 
 const WEBDEVICES_HTTP_TCP_PORT: u16 = 10;
 const WEBDEVICES_BIND_RETRY_MS: u64 = 1000;

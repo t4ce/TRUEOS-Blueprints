@@ -27,8 +27,9 @@ use trueos::{
     platform::{self, io},
     runtime, system_services,
     time::{self, Duration},
-    tokio::{self, net::SocketAddr},
+    tokio::{self},
 };
+use std::net::SocketAddr;
 
 const HTTP_TCP_PORT: u16 = 11_011;
 #[allow(non_upper_case_globals)]

@@ -308,9 +308,6 @@ async fn workspace_sketch_names() -> Vec<String> {
             Ok(Some(entry)) => entry,
             Ok(None) | Err(_) => break,
         };
-        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-        let name = entry.file_name();
-        #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
         let name = entry.file_name().to_string_lossy().into_owned();
         if let Ok(name) = normalize_sketch_name(&name) {
             names.push(name);
