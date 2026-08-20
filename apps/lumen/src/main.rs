@@ -10,14 +10,12 @@ use std::time::Duration;
 use crossterm::{
     cursor::{MoveTo, MoveToColumn, Show},
     event::{
-        self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent,
-        KeyEventKind, KeyModifiers,
+        self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyEventKind,
+        KeyModifiers,
     },
     execute, queue,
     style::{Color, Print, ResetColor, SetForegroundColor},
-    terminal::{
-        self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen,
-    },
+    terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use trueos::{
     logl::{self, level},
@@ -83,7 +81,10 @@ fn main() {
     };
 
     if let Err(error) = run_lumen(lease) {
-        diag(level::ERROR, format_args!("terminal session failed: {error}"));
+        diag(
+            level::ERROR,
+            format_args!("terminal session failed: {error}"),
+        );
         let _ = lumen::close();
         let _ = vshell::report_exit_reason("lumen terminal session failed");
         let _ = vshell::shutdown_current_blueprint("lumen terminal session failed");
@@ -96,12 +97,7 @@ fn run_lumen(mut lease: vshell::TerminalLease) -> Result<(), String> {
     let mut initialized = false;
 
     loop {
-        let action = match run_terminal_session(
-            &lease,
-            &mut state,
-            &mut editor,
-            &mut initialized,
-        ) {
+        let action = match run_terminal_session(&lease, &mut state, &mut editor, &mut initialized) {
             Ok(action) => action,
             Err(error) => {
                 let _ = lease.release_to_shell();
@@ -133,8 +129,8 @@ fn run_terminal_session(
     editor: &mut InputEditor,
     initialized: &mut bool,
 ) -> Result<SessionExit, String> {
-    let mut terminal = TerminalGuard::enter()
-        .map_err(|error| format!("terminal setup failed: {error}"))?;
+    let mut terminal =
+        TerminalGuard::enter().map_err(|error| format!("terminal setup failed: {error}"))?;
     draw_session_header(state.turns, *initialized)
         .map_err(|error| format!("terminal header failed: {error}"))?;
     lease
@@ -155,8 +151,7 @@ fn run_terminal_session(
 
     loop {
         if let Some(prepare) = replication::poll_prepare_pause() {
-            clear_prompt_for_output()
-                .map_err(|error| format!("prompt clear failed: {error}"))?;
+            clear_prompt_for_output().map_err(|error| format!("prompt clear failed: {error}"))?;
             if !prepare_pause(prepare, state) {
                 terminal
                     .exit()
@@ -207,11 +202,9 @@ fn run_terminal_session(
                         }
                         if let Err(error) = run_prompt(state, prompt.as_str()) {
                             vshell::linef(format_args!("lumen-bp: prompt failed error={error}"));
-                            terminal
-                                .exit()
-                                .map_err(|restore| format!(
-                                    "{error}; terminal restore failed: {restore}"
-                                ))?;
+                            terminal.exit().map_err(|restore| {
+                                format!("{error}; terminal restore failed: {restore}")
+                            })?;
                             return Err(error);
                         }
                         redraw_prompt(editor)
@@ -295,8 +288,7 @@ fn initialize_lumen() -> Result<(), String> {
     lumen::open_template(SYSTEM_PROMPT)
         .map_err(|error| format!("template open failed: {error:?}"))?;
     let ready = wait_for_phase_with_spinner(lumen::LUMEN_PHASE_READY, &mut spinner)?;
-    clear_prompt_for_output()
-        .map_err(|error| format!("template status clear failed: {error}"))?;
+    clear_prompt_for_output().map_err(|error| format!("template status clear failed: {error}"))?;
     vshell::linef(format_args!(
         "lumen-bp: template ready prefix_tokens={} ownership=blueprint-policy+logical-state/kernel-model+igc+guc",
         ready.position
@@ -315,7 +307,9 @@ fn wait_for_reentry(
         if let Some(prepare) = replication::poll_prepare_pause()
             && !prepare_pause(prepare, state)
         {
-            return Err(String::from("Lumen restore failed while terminal was parked"));
+            return Err(String::from(
+                "Lumen restore failed while terminal was parked",
+            ));
         }
 
         match ticket
@@ -770,8 +764,7 @@ fn run_prompt(state: &mut LogicalState, prompt: &str) -> Result<(), String> {
     .map_err(|error| alloc::format!("submit {error:?}"))?;
     let mut spinner = ProgressSpinner::start("lumen-bp: reasoning");
     let status = wait_for_phase_with_spinner(lumen::LUMEN_PHASE_REPLY_READY, &mut spinner)?;
-    clear_prompt_for_output()
-        .map_err(|error| format!("reasoning status clear failed: {error}"))?;
+    clear_prompt_for_output().map_err(|error| format!("reasoning status clear failed: {error}"))?;
     let tail_len = (status.reply_tail_len as usize).min(state.reply_tail.len());
     state.reply_tail = status.reply_tail;
     state.reply_tail_len = tail_len;
