@@ -20,7 +20,7 @@ The relative dependency paths in `Cargo.toml` are written for that location.
 - maps Crossterm keyboard events into `KeyboardControlCommand`
 - maps terminal mouse cell coordinates across the current TRUEOS output
 - maps click/drag/wheel into `MouseMotionCommand`
-- uses `Ctrl-]` as the Commander escape so ordinary `Esc` can be forwarded
+- exits on `Esc`, `Ctrl-Q`, or `Ctrl-]`
 - restores terminal state, removes the combo and releases virtual-device capabilities on exit
 - releases the terminal lease back to Shell2 before shutting down
 

@@ -45,11 +45,6 @@
       "path": "../edit",
       "optional": true
     },
-    {
-      "name": "yazi",
-      "path": "../RustAVX/yazi",
-      "optional": true
-    },
     "skybox",
     "ssh",
     "swarm",
@@ -57,7 +52,7 @@
     "system-services",
     "webdevices",
     "webmail",
-        "commander",
+    "commander",
     "weave_hello",
     {
       "name": "rustc-min",

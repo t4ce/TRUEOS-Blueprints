@@ -20,6 +20,12 @@ failure from implicit-derivative/filter failure and emits sampler/row/fault plus
 stage-frontier diagnostics on timeout. Building HelioV with
 `--no-default-features` restores the canonical filtered voxel material package.
 
+Its pixels now come from `kernel:logo`: the Blueprint reads encoded JPEG bytes,
+decodes them through `vmedia`, downsamples to the package's bounded 16x16 mip-0
+footprint, inserts the upload through the real Helio `Scene`, and binds the
+view/sampler at `TextureResidency::slot_for`. The public `TextureId` entity slot
+is logged separately and is never treated as a renderer array index.
+
 ## Proven now
 
 - The Blueprint builder compiles the actual `helio`, `helio-scenedb`,
@@ -43,9 +49,9 @@ stage-frontier diagnostics on timeout. Building HelioV with
   presence, and generation columns rebuild replacement allocations from their
   complete CPU shadows using `Queue::write_buffer`. Default Helio/SceneDB
   authorities retain GPU-copy growth, `Once` columns are ineligible, and
-  TRUEOS gains no demo-specific kernel path. The high-level
-  `helio::Scene` is intentionally not constructed until texture/sampler
-  support satisfies its real constructor contract.
+  TRUEOS gains no demo-specific kernel path. The high-level `helio::Scene` is
+  now constructed for the bounded texture/material witness; the complete
+  `helio::Renderer` graph remains outside this compatibility rung.
 - The voxel source produces a deterministic face-culled 6x6 chunk world as
   Helio `MeshUpload` data, retaining per-chunk bounds and index ranges. No
   Stratum runtime and no TRUEOS-specific renderer, scene store, or material
@@ -58,9 +64,16 @@ stage-frontier diagnostics on timeout. Building HelioV with
 - WGPU command encoding, command-buffer submission, exact Intel retirement,
   and UI4 presentation are proven for render-pass clear and the untextured
   indexed graphics package. HelioV also creates a real Helio/SceneDB texture
-  and material, WGPU RGBA8 texture/view/sampler, bind group, sampled WGSL
-  module, immutable pipeline and indexed draw. That sampled submission reaches
-  Render0 but currently does not retire; it is the active bring-up frontier.
+  and material from a kernel JPEG decoded by `vmedia`, resolves the canonical
+  non-compacting residency slot, and creates the WGPU RGBA8
+  texture/view/sampler, bind group, sampled WGSL module, immutable pipeline and
+  indexed draw. That sampled submission reaches Render0 but currently does not
+  retire; it is the active bring-up frontier.
+- A separate build-time TRUEOS capture now compiles Helio's unmodified
+  G-buffer WGSL to Intel SIMD8 VS/FS ISA with the real 40-byte vertex layout,
+  two bind groups, 256-wide texture/sampler arrays, eight color targets, and
+  depth. This proves the native compiler ABI; it does not imply that the
+  current VMX adapter can replay the full pass.
 - Maximize/restore consumes UI4's resize event and stages its private
   replacement generation. HelioV begins and imports that exact new lease,
   updates the camera projection and vertex upload from the new aspect, submits
@@ -136,7 +149,9 @@ unsupported and unexposed; this is the explicit staging policy behind
    transform/remove/regrow proof. Extend that identity into mesh residency,
    compaction, visibility, and indexed-indirect drawing.
 4. Run a second Helio graph through the unchanged WGPU/VMX interface.
-5. Add texture residency/upload as a separate milestone.
+5. Texture decode, residency, upload, and exact slot binding now exist in the
+   bounded probe. Extend that authority to the descriptor arrays and material
+   buffers consumed by the full G-buffer after the sampler retirement gate.
 
 Step 2's visible indexed frame establishes the first real graphics territory.
 Passing steps 2–4 in their complete form establishes that the adapter is an

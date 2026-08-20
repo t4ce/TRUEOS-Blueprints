@@ -48,8 +48,13 @@ handoff is weakened. An actual UI4 Blueprint back buffer is mapped into the
 caller's isolated VMX GPUVM and exposed as a `wgpu::Texture`. The untextured
 indexed path and UI4 SURFLIVE handoff are proven. The first shader sampler read
 is **not** proven: the ADL-S Render0 submission currently fails to retire.
-Earlier JPG/PNG/video work proved decode, upload, blit and presentation as
-separate operations, not a texture sampled by a mesh fragment shader.
+The current probe no longer synthesizes a checkerboard: it reads the kernel's
+encoded JPEG logo, decodes it through `vmedia`, bounds it to the authenticated
+16x16 mip-0 footprint, inserts it through `Scene::insert_texture`, resolves the
+exact non-compacting SceneDB residency slot, and binds that slot's canonical
+view/sampler pair. This closes asset decode and SceneDB-to-bind-group identity;
+it does not claim physical sampler retirement before a sampled frame reaches
+SURFLIVE.
 
 The default build therefore runs a dedicated fixed-mip texel-load probe over
 one four-vertex Helio quad. It keeps the ordinary WGPU texture/view/sampler,

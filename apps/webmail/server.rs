@@ -23,9 +23,10 @@ use trueos::{
     platform::{self, io},
     runtime,
     time::{self, Duration},
-    tokio::{self, net::SocketAddr},
+    tokio::{self},
     vmail,
 };
+use core::net::SocketAddr;
 
 const WEBMAIL_HTTP_TCP_PORT: u16 = 4;
 const WEBMAIL_BIND_RETRY_MS: u64 = 1000;

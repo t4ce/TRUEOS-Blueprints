@@ -552,9 +552,13 @@ impl Drop for RemoteCommander {
 }
 
 fn commander_exit_key(key: KeyEvent) -> bool {
-    matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat)
-        && key.code == KeyCode::Char(COMMANDER_EXIT_CHAR)
-        && key.modifiers.contains(KeyModifiers::CONTROL)
+    if !matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
+        return false;
+    }
+
+    matches!(key.code, KeyCode::Esc)
+        || (matches!(key.code, KeyCode::Char(COMMANDER_EXIT_CHAR | 'q' | 'Q'))
+            && key.modifiers.contains(KeyModifiers::CONTROL))
 }
 
 fn hid_modifiers(modifiers: KeyModifiers) -> u8 {
@@ -616,7 +620,7 @@ fn draw_panel(geometry: &TerminalGeometry, remote: &RemoteCommander) -> io::Resu
         Print("Terminal cell coordinates are normalized across the TRUEOS output.\r\n\r\n"),
         SetForegroundColor(Color::Yellow),
         SetAttribute(Attribute::Bold),
-        Print("Ctrl-]  release Commander and return to Shell2"),
+        Print("Esc / Ctrl-Q / Ctrl-]  release Commander and return to Shell2"),
         SetAttribute(Attribute::Reset),
         ResetColor,
     )?;

@@ -14,44 +14,46 @@ use helio::{
     FlyCamera, FlyCameraConfig, MaterialAsset, MaterialTextureRef, PerspectiveLens, Scene,
     TextureSamplerDesc, TextureUpload,
 };
-use trueos::clock;
 use trueos::ui4_scene::{Damage, Error as Ui4Error, Frame};
+#[cfg(feature = "texture-bringup-fixed-load")]
+use trueos::vgpu::SHADER_PACKAGE_CLIP_POSITION3_UV_TEXEL_LOAD_FNV1A64;
+#[cfg(not(feature = "texture-bringup-fixed-load"))]
+use trueos::vgpu::SHADER_PACKAGE_CLIP_POSITION3_UV_TEXTURE_FNV1A64;
 use trueos::vgpu::{
     self, BUFFER_USAGE_COPY_DST, BUFFER_USAGE_COPY_SRC, BUFFER_USAGE_INDEX, BUFFER_USAGE_MAP_READ,
     BUFFER_USAGE_MAP_WRITE, BUFFER_USAGE_STORAGE, BUFFER_USAGE_VERTEX, Capabilities, IndexedDraw,
     QueueClass,
 };
-#[cfg(not(feature = "texture-bringup-fixed-load"))]
-use trueos::vgpu::SHADER_PACKAGE_CLIP_POSITION3_UV_TEXTURE_FNV1A64;
-#[cfg(feature = "texture-bringup-fixed-load")]
-use trueos::vgpu::SHADER_PACKAGE_CLIP_POSITION3_UV_TEXEL_LOAD_FNV1A64;
+use trueos::{async_fs, clock, image_source, vmedia};
 use wgpu::custom::*;
 
 use crate::ui4_input::Ui4FlyInput;
 
 const WITNESS: &[u8] = b"HelioV/WGPU/custom/VMX";
 const ERR_INVALID_ARGUMENT: i32 = -22;
+// The authenticated texture-load package addresses a 16 x 16 mip-0 grid.
+// Keep the resident witness exactly that size: it proves the native JPEG
+// decode and SceneDB upload without exhausting the 32 MiB VMX vGPU budget.
+const FIXED_TEXTURE_PROBE_SIDE: u32 = 16;
 // Linear textures are opaque WGPU resources, but Queue::write_texture reaches
 // VMX through the same bounded CPU transfer primitive as Queue::write_buffer.
 // COPY_DST therefore carries the broker-internal MAP_WRITE authority just as
 // `vmx_buffer_usage` does for ordinary WGPU buffers.
-const LINEAR_TEXTURE_BACKING_USAGE: u32 = BUFFER_USAGE_STORAGE
-    | BUFFER_USAGE_COPY_SRC
-    | BUFFER_USAGE_COPY_DST
-    | BUFFER_USAGE_MAP_WRITE;
+const LINEAR_TEXTURE_BACKING_USAGE: u32 =
+    BUFFER_USAGE_STORAGE | BUFFER_USAGE_COPY_SRC | BUFFER_USAGE_COPY_DST | BUFFER_USAGE_MAP_WRITE;
 #[cfg(feature = "texture-bringup-fixed-load")]
 pub const VOXEL_SHADER_WGSL: &str = include_str!("texture_probe_load.wgsl");
 #[cfg(not(feature = "texture-bringup-fixed-load"))]
 pub const VOXEL_SHADER_WGSL: &str = include_str!("voxel_textured.wgsl");
 
 #[cfg(feature = "texture-bringup-fixed-load")]
-pub const TEXTURE_BRINGUP_CONTRACT: &str = "fixed-texel-load/mip0/no-filter/no-implicit-derivatives";
+pub const TEXTURE_BRINGUP_CONTRACT: &str =
+    "fixed-texel-load/mip0/no-filter/no-implicit-derivatives";
 #[cfg(not(feature = "texture-bringup-fixed-load"))]
 pub const TEXTURE_BRINGUP_CONTRACT: &str = "filtered-sample/material-path";
 
 #[cfg(feature = "texture-bringup-fixed-load")]
-const AUTHENTICATED_SHADER_DIGEST: u64 =
-    SHADER_PACKAGE_CLIP_POSITION3_UV_TEXEL_LOAD_FNV1A64;
+const AUTHENTICATED_SHADER_DIGEST: u64 = SHADER_PACKAGE_CLIP_POSITION3_UV_TEXEL_LOAD_FNV1A64;
 #[cfg(not(feature = "texture-bringup-fixed-load"))]
 const AUTHENTICATED_SHADER_DIGEST: u64 = SHADER_PACKAGE_CLIP_POSITION3_UV_TEXTURE_FNV1A64;
 
@@ -100,8 +102,14 @@ pub struct InputPresentation {
 
 pub struct HelioAssetProof {
     pub texture_slot: u32,
+    pub texture_residency_slot: u32,
     pub material_slot: u32,
     pub binding_epoch: u64,
+    pub texture_width: u32,
+    pub texture_height: u32,
+    pub encoded_bytes: usize,
+    pub decoded_bytes: usize,
+    pub decode_backend: vmedia::DecodeBackend,
 }
 
 pub fn probe_wgpu_buffer_path() -> Result<usize, BackendFailure> {
@@ -238,6 +246,7 @@ pub fn probe_ui4_surface_path(mesh: &helio::MeshUpload) -> Result<SurfaceProbe, 
             &device,
             &queue,
             &scene,
+            assets.texture_residency_slot,
             &probe_mesh,
             aspect(frame.width(), frame.height()),
             &camera,
@@ -249,6 +258,7 @@ pub fn probe_ui4_surface_path(mesh: &helio::MeshUpload) -> Result<SurfaceProbe, 
         &device,
         &queue,
         &scene,
+        assets.texture_residency_slot,
         mesh,
         aspect(frame.width(), frame.height()),
         &camera,
@@ -262,9 +272,16 @@ pub fn probe_ui4_surface_path(mesh: &helio::MeshUpload) -> Result<SurfaceProbe, 
     trueos::logl::log(
         trueos::logl::level::INFO,
         format_args!(
-            "HelioV: high-level Helio Scene material authority ready texture={} material={} texture_binding_epoch={} path=Scene::insert_texture->SceneDB-TextureResidency->Scene::insert_material_asset->Scene::flush",
+            "HelioV: kernel JPEG decoded backend={:?} decoded_bytes={} encoded_bytes={} resident_extent={}x{} then Helio Scene material authority ready texture_entity_slot={} texture_residency_slot={} material={} bound_texture_residency_slot={} texture_binding_epoch={} path=vmedia::decode->RGBA8->fixed-probe-resample->Scene::insert_texture->SceneDB-TextureResidency->canonical-view-sampler-bind-group->Scene::insert_material_asset->Scene::flush",
+            assets.decode_backend,
+            assets.decoded_bytes,
+            assets.encoded_bytes,
+            assets.texture_width,
+            assets.texture_height,
             assets.texture_slot,
+            assets.texture_residency_slot,
             assets.material_slot,
+            assets.texture_residency_slot,
             assets.binding_epoch,
         ),
     );
@@ -305,29 +322,76 @@ fn build_helio_material_scene(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
 ) -> Result<(Scene, HelioAssetProof), BackendFailure> {
-    const SIDE: u32 = 16;
-    let mut rgba = Vec::with_capacity((SIDE * SIDE * 4) as usize);
-    for y in 0..SIDE {
-        for x in 0..SIDE {
-            let light = ((x / 4) ^ (y / 4)) & 1 == 0;
-            rgba.extend_from_slice(if light {
-                &[104, 164, 102, 255]
-            } else {
-                &[49, 91, 62, 255]
-            });
-        }
+    // `kernel:logo` deliberately provides encoded JPEG bytes. The Blueprint
+    // receives no kernel image pointer and must use vmedia to obtain the
+    // bounded RGBA8 payload that SceneDB will make texture-resident.
+    let (source_info, encoded_jpeg) =
+        image_source::read("kernel:logo").map_err(|code| fail("jpeg-source-read", code))?;
+    if source_info.format != image_source::FORMAT_JPEG {
+        return Err(fail("jpeg-source-format", ERR_INVALID_ARGUMENT));
     }
+    let encoded_bytes = encoded_jpeg.len();
+    let decoded = async_fs::block_on(vmedia::decode(
+        vmedia::ImageFormat::Jpeg,
+        encoded_jpeg.as_slice(),
+    ))
+    .map_err(|code| fail("vmedia-jpeg-decode", code))?;
+    let expected_rgba_bytes = decoded
+        .info
+        .width
+        .checked_mul(decoded.info.height)
+        .and_then(|pixels| pixels.checked_mul(4))
+        .and_then(|bytes| usize::try_from(bytes).ok())
+        .ok_or_else(|| fail("vmedia-jpeg-layout", ERR_INVALID_ARGUMENT))?;
+    if decoded.info.stride_bytes != decoded.info.width.saturating_mul(4)
+        || decoded.rgba.len() != expected_rgba_bytes
+    {
+        return Err(fail("vmedia-jpeg-layout", ERR_INVALID_ARGUMENT));
+    }
+    if decoded.info.width == 0 || decoded.info.height == 0 {
+        return Err(fail("vmedia-jpeg-layout", ERR_INVALID_ARGUMENT));
+    }
+    let decoded_width = decoded.info.width;
+    let decoded_height = decoded.info.height;
+    let decoded_bytes = decoded.rgba.len();
+    let decode_backend = decoded.info.backend;
+    let texture_width = FIXED_TEXTURE_PROBE_SIDE;
+    let texture_height = FIXED_TEXTURE_PROBE_SIDE;
+    let resident_rgba = resample_rgba8_nearest(
+        decoded.rgba.as_slice(),
+        decoded_width,
+        decoded_height,
+        texture_width,
+        texture_height,
+    )?;
+    // This must precede SceneDB texture creation. If the renderer rejects an
+    // allocation, validation still learns which kernel media backend decoded
+    // the source and the exact payload handed toward GPU residency.
+    trueos::logl::log(
+        trueos::logl::level::INFO,
+        format_args!(
+            "HelioV: vmedia JPEG decoded before SceneDB allocation backend={:?} decoded_extent={}x{} decoded_bytes={} encoded_bytes={} resident_extent={}x{} resident_bytes={} policy=fixed-texture-load-witness",
+            decode_backend,
+            decoded_width,
+            decoded_height,
+            decoded_bytes,
+            encoded_bytes,
+            texture_width,
+            texture_height,
+            resident_rgba.len(),
+        ),
+    );
     let mut scene = Scene::new(Arc::new(device.clone()), Arc::new(queue.clone()));
     if let Some(code) = take_device_error(device) {
         return Err(fail("helio-scene-create", code));
     }
     let texture = scene
         .insert_texture(TextureUpload::rgba8(
-            "HelioV terrain checker",
-            SIDE,
-            SIDE,
+            "HelioV vmedia JPEG terrain witness",
+            texture_width,
+            texture_height,
             true,
-            rgba,
+            resident_rgba,
             TextureSamplerDesc {
                 mag_filter: wgpu::FilterMode::Nearest,
                 min_filter: wgpu::FilterMode::Nearest,
@@ -361,12 +425,61 @@ fn build_helio_material_scene(
             },
         })
         .map_err(|_| fail("helio-material-insert", ERR_INVALID_ARGUMENT))?;
+    let texture_residency_slot = scene
+        .texture_residency_slot(texture)
+        .ok_or_else(|| fail("helio-texture-residency-slot", ERR_INVALID_ARGUMENT))?;
     let proof = HelioAssetProof {
         texture_slot: texture.slot(),
+        texture_residency_slot,
         material_slot: material.slot(),
         binding_epoch: scene.texture_binding_version(),
+        texture_width,
+        texture_height,
+        encoded_bytes,
+        decoded_bytes,
+        decode_backend,
     };
     Ok((scene, proof))
+}
+
+fn resample_rgba8_nearest(
+    source: &[u8],
+    source_width: u32,
+    source_height: u32,
+    target_width: u32,
+    target_height: u32,
+) -> Result<Vec<u8>, BackendFailure> {
+    if source_width == 0 || source_height == 0 || target_width == 0 || target_height == 0 {
+        return Err(fail("vmedia-jpeg-resample", ERR_INVALID_ARGUMENT));
+    }
+    let target_bytes = target_width
+        .checked_mul(target_height)
+        .and_then(|pixels| pixels.checked_mul(4))
+        .and_then(|bytes| usize::try_from(bytes).ok())
+        .ok_or_else(|| fail("vmedia-jpeg-resample", ERR_INVALID_ARGUMENT))?;
+    let mut target = vec![0; target_bytes];
+    for target_y in 0..target_height {
+        let source_y =
+            (u64::from(target_y) * u64::from(source_height) / u64::from(target_height)) as usize;
+        for target_x in 0..target_width {
+            let source_x =
+                (u64::from(target_x) * u64::from(source_width) / u64::from(target_width)) as usize;
+            let source_offset = (source_y
+                .checked_mul(source_width as usize)
+                .and_then(|row| row.checked_add(source_x))
+                .ok_or_else(|| fail("vmedia-jpeg-resample", ERR_INVALID_ARGUMENT))?)
+            .checked_mul(4)
+            .ok_or_else(|| fail("vmedia-jpeg-resample", ERR_INVALID_ARGUMENT))?;
+            let target_offset = ((target_y as usize * target_width as usize) + target_x as usize)
+                .checked_mul(4)
+                .ok_or_else(|| fail("vmedia-jpeg-resample", ERR_INVALID_ARGUMENT))?;
+            let source_texel = source
+                .get(source_offset..source_offset + 4)
+                .ok_or_else(|| fail("vmedia-jpeg-resample", ERR_INVALID_ARGUMENT))?;
+            target[target_offset..target_offset + 4].copy_from_slice(source_texel);
+        }
+    }
+    Ok(target)
 }
 
 impl SurfaceProbe {
@@ -493,6 +606,7 @@ impl VoxelGraphics {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         scene: &Scene,
+        texture_slot: u32,
         mesh: &helio::MeshUpload,
         aspect: f32,
         camera: &FlyCamera,
@@ -561,11 +675,15 @@ impl VoxelGraphics {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(scene.texture_view_for_slot(0)),
+                    resource: wgpu::BindingResource::TextureView(
+                        scene.texture_view_for_slot(texture_slot as usize),
+                    ),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::Sampler(scene.texture_sampler_for_slot(0)),
+                    resource: wgpu::BindingResource::Sampler(
+                        scene.texture_sampler_for_slot(texture_slot as usize),
+                    ),
                 },
             ],
         });
@@ -855,9 +973,7 @@ impl Drop for VmxTextureStorage {
                 let _ = surface.lock().expect("VMX surface mutex").take();
             }
             VmxTextureBacking::Linear {
-                buffer,
-                destroyed,
-                ..
+                buffer, destroyed, ..
             } => {
                 if !destroyed.swap(true, Ordering::AcqRel) {
                     let _ = self.shared.device.destroy_buffer(*buffer);
@@ -888,9 +1004,7 @@ impl VmxTexture {
                 let _ = surface.lock().expect("VMX surface mutex").take();
             }
             VmxTextureBacking::Linear {
-                buffer,
-                destroyed,
-                ..
+                buffer, destroyed, ..
             } => {
                 if !destroyed.swap(true, Ordering::AcqRel) {
                     let _ = self.storage.shared.device.destroy_buffer(*buffer);
@@ -1132,9 +1246,7 @@ impl DeviceInterface for VmxDevice {
             return unsupported("non-WGSL shader module");
         };
         let digest = fnv1a64(source.as_bytes());
-        if source.as_ref() != VOXEL_SHADER_WGSL
-            || digest != AUTHENTICATED_SHADER_DIGEST
-        {
+        if source.as_ref() != VOXEL_SHADER_WGSL || digest != AUTHENTICATED_SHADER_DIGEST {
             return unsupported("WGSL has no authenticated TRUEOS AOT package");
         }
         let shader = self
@@ -1179,8 +1291,7 @@ impl DeviceInterface for VmxDevice {
         let sampler_ok = sampler.is_some_and(|entry| {
             entry.visibility == wgpu::ShaderStages::FRAGMENT
                 && entry.count.is_none()
-                && entry.ty
-                    == wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering)
+                && entry.ty == wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering)
         });
         if !texture_ok || !sampler_ok {
             return unsupported("bind group layout outside one sampled texture contract");
@@ -1198,8 +1309,7 @@ impl DeviceInterface for VmxDevice {
         else {
             return unsupported("bind group missing sampled texture view");
         };
-        let Some(wgpu::BindingResource::Sampler(sampler)) =
-            sampler.map(|entry| &entry.resource)
+        let Some(wgpu::BindingResource::Sampler(sampler)) = sampler.map(|entry| &entry.resource)
         else {
             return unsupported("bind group missing filtering sampler");
         };
@@ -1564,11 +1674,11 @@ impl QueueInterface for VmxQueue {
                     self.shared.record_error(ERR_INVALID_ARGUMENT);
                     return;
                 };
-                if let Err(code) = self.shared.device.write_buffer(
-                    *buffer,
-                    destination_offset as usize,
-                    source,
-                ) {
+                if let Err(code) =
+                    self.shared
+                        .device
+                        .write_buffer(*buffer, destination_offset as usize, source)
+                {
                     self.shared.record_error(code);
                     return;
                 }
@@ -1632,8 +1742,11 @@ impl QueueInterface for VmxQueue {
                         let material = material
                             .as_custom::<VmxBindGroup>()
                             .expect("VMX material bind group");
-                        let VmxTextureBacking::Linear { buffer: texture, info, .. } =
-                            &material.texture.backing
+                        let VmxTextureBacking::Linear {
+                            buffer: texture,
+                            info,
+                            ..
+                        } = &material.texture.backing
                         else {
                             unreachable!("sampled UI4 targets are rejected at bind-group creation")
                         };
