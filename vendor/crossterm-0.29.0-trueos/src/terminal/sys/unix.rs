@@ -2,10 +2,9 @@
 
 #[cfg(feature = "events")]
 use crate::event::KeyboardEnhancementFlags;
-use crate::terminal::{
-    sys::file_descriptor::{tty_fd, FileDesc},
-    WindowSize,
-};
+#[cfg(not(target_os = "trueos"))]
+use crate::terminal::sys::file_descriptor::FileDesc;
+use crate::terminal::{sys::file_descriptor::tty_fd, WindowSize};
 #[cfg(feature = "libc")]
 use libc::{
     cfmakeraw, ioctl, tcgetattr, tcsetattr, termios as Termios, winsize, STDOUT_FILENO, TCSANOW,
@@ -67,7 +66,16 @@ pub(crate) fn window_size() -> io::Result<WindowSize> {
         ws_ypixel: 0,
     };
 
+    // TRUEOS terminals are typed console surfaces, not `/dev` nodes. Trying
+    // `/dev/tty` here routes a guaranteed miss through TRUEOSFS every time an
+    // immediate-mode UI asks for its layout. Stdout already implements the
+    // terminal ioctl, so use it directly and keep geometry reads allocation-
+    // and filesystem-free.
+    #[cfg(target_os = "trueos")]
+    let fd = STDOUT_FILENO;
+    #[cfg(not(target_os = "trueos"))]
     let file = File::open("/dev/tty").map(|file| (FileDesc::new(file.into_raw_fd(), true)));
+    #[cfg(not(target_os = "trueos"))]
     let fd = if let Ok(file) = &file {
         file.raw_fd()
     } else {
@@ -84,7 +92,13 @@ pub(crate) fn window_size() -> io::Result<WindowSize> {
 
 #[cfg(not(feature = "libc"))]
 pub(crate) fn window_size() -> io::Result<WindowSize> {
+    // See the libc implementation above: TRUEOS owns terminal geometry at
+    // the stdout ABI boundary and has no `/dev/tty` node to discover first.
+    #[cfg(target_os = "trueos")]
+    let fd = rustix::stdio::stdout();
+    #[cfg(not(target_os = "trueos"))]
     let file = File::open("/dev/tty").map(|file| FileDesc::Owned(file.into()));
+    #[cfg(not(target_os = "trueos"))]
     let fd = if let Ok(file) = &file {
         file.as_fd()
     } else {
