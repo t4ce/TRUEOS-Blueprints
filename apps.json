@@ -13,10 +13,7 @@
     "image-viewer",
     "lumen",
     "ipp-printer",
-    {
-      "name": "texplo",
-      "path": "../texplo"
-    },
+    "texplo",
     "esp32_stt",
     "flight_controller_sim",
     "prismq",
@@ -33,16 +30,8 @@
       "path": "../TinyFighter",
       "optional": true
     },
-    {
-      "name": "solara",
-      "path": "../solara",
-      "optional": true
-    },
-    {
-      "name": "edit",
-      "path": "../edit",
-      "optional": true
-    },
+    "solara",
+    "edit",
     "skybox",
     "ssh",
     "swarm",
@@ -58,4 +47,3 @@
     }
   ]
 }
-
