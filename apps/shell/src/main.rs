@@ -72,6 +72,16 @@ const SHELL_ATTACH_RETRIES: usize = 1_000;
 const HID_MODIFIER_LEFT_CONTROL: u8 = 1 << 0;
 const HID_MODIFIER_RIGHT_CONTROL: u8 = 1 << 4;
 const HID_MODIFIER_CONTROL_MASK: u8 = HID_MODIFIER_LEFT_CONTROL | HID_MODIFIER_RIGHT_CONTROL;
+const MATRIX_STATUS_ROW: usize = 1;
+const MATRIX_CLICK_PREFIX_BYTE: u8 = 0xff;
+const MATRIX_CLICK_SUFFIX_BYTE: u8 = 0x00;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct MatrixSlotHover {
+    start_col: usize,
+    end_col: usize,
+    command: String,
+}
 
 fn foreground_rgba(foreground: ForegroundColor) -> u32 {
     match foreground {
@@ -247,8 +257,9 @@ fn main() {
     };
     let mut terminal = Terminal::new(cols, rows);
     let mut keyboard_input = KeyboardInputState::default();
+    let mut matrix_slot_hover = None;
 
-    if let Err(error) = present_terminal(&mut frame, &terminal, metrics) {
+    if let Err(error) = present_terminal(&mut frame, &terminal, metrics, None) {
         logl::log(
             level::ERROR,
             format_args!("shell: first UI4 terminal frame failed: {error:?}"),
@@ -308,16 +319,32 @@ fn main() {
             return;
         }
 
-        if let Err(error) = drain_pointer_input(&mut frame, &terminal, &frontend, metrics) {
-            logl::log(
-                level::ERROR,
-                format_args!("shell: routed pointer input failed: {error:?}"),
-            );
-            return;
+        let mut hover_changed = match drain_pointer_input(
+            &mut frame,
+            &terminal,
+            &frontend,
+            metrics,
+            &mut matrix_slot_hover,
+        ) {
+            Ok(changed) => changed,
+            Err(error) => {
+                logl::log(
+                    level::ERROR,
+                    format_args!("shell: routed pointer input failed: {error:?}"),
+                );
+                return;
+            }
+        };
+
+        if terminal.mouse_tracking_enabled() && matrix_slot_hover.take().is_some() {
+            // A direct terminal owner gets unmodified pointer semantics.
+            // Shell2's status strip is not live during that handoff.
+            hover_changed = true;
         }
 
-        if terminal.take_dirty()
-            && let Err(error) = present_terminal(&mut frame, &terminal, metrics)
+        if (terminal.take_dirty() || hover_changed)
+            && let Err(error) =
+                present_terminal(&mut frame, &terminal, metrics, matrix_slot_hover.as_ref())
         {
             logl::log(
                 level::ERROR,
@@ -351,7 +378,7 @@ fn drain_resize_events(
             old_rows,
             metrics,
         );
-        present_terminal_at(frame, terminal, old_origin_x, old_origin_y, metrics)?;
+        present_terminal_at(frame, terminal, old_origin_x, old_origin_y, metrics, None)?;
         let (cols, rows) = terminal_grid_size(resize.width, resize.height, metrics);
         if terminal.dimensions() != (cols, rows) {
             terminal.resize(cols, rows);
@@ -563,7 +590,9 @@ fn drain_pointer_input(
     terminal: &Terminal,
     frontend: &Shell2Frontend,
     metrics: TerminalMetrics,
-) -> Result<(), InputError> {
+    matrix_slot_hover: &mut Option<MatrixSlotHover>,
+) -> Result<bool, InputError> {
+    let initial_hover = matrix_slot_hover.clone();
     while let Some(event) = frame.take_pointer_event()? {
         let (col, row) = pointer_cell(
             event.local_x,
@@ -571,6 +600,22 @@ fn drain_pointer_input(
             terminal.dimensions(),
             metrics,
         );
+
+        let hovered_slot =
+            pointer_matrix_cell(event.local_x, event.local_y, terminal.dimensions(), metrics)
+                .and_then(|(col, row)| matrix_slot_at(terminal, col, row));
+        if !terminal.mouse_tracking_enabled() {
+            *matrix_slot_hover = hovered_slot.clone();
+            if event.buttons_pressed & POINTER_BUTTON_PRIMARY != 0
+                && let Some(slot) = hovered_slot
+            {
+                let mut submission = Vec::with_capacity(slot.command.len() + 2);
+                submission.push(MATRIX_CLICK_PREFIX_BYTE);
+                submission.extend_from_slice(slot.command.as_bytes());
+                submission.push(MATRIX_CLICK_SUFFIX_BYTE);
+                submit_input(frontend, submission.as_slice())?;
+            }
+        }
 
         for (mask, button) in mouse_buttons() {
             if event.buttons_pressed & mask != 0
@@ -602,7 +647,60 @@ fn drain_pointer_input(
             submit_input(frontend, sequence.as_slice())?;
         }
     }
-    Ok(())
+    Ok(*matrix_slot_hover != initial_hover)
+}
+
+fn pointer_matrix_cell(
+    local_x: i32,
+    local_y: i32,
+    dimensions: (usize, usize),
+    metrics: TerminalMetrics,
+) -> Option<(usize, usize)> {
+    let x = local_x.checked_sub(FRAME_PADDING_PX as i32)?;
+    let y = local_y.checked_sub(FRAME_PADDING_PX as i32)?;
+    if x < 0 || y < 0 {
+        return None;
+    }
+    let col = x as u32 / metrics.glyph_advance_px;
+    let row = y as u32 / metrics.row_height_px;
+    (col < dimensions.0 as u32 && row < dimensions.1 as u32).then_some((col as usize, row as usize))
+}
+
+fn matrix_slot_at(terminal: &Terminal, col: usize, row: usize) -> Option<MatrixSlotHover> {
+    if row != MATRIX_STATUS_ROW {
+        return None;
+    }
+    let (cols, rows) = terminal.dimensions();
+    if col >= cols || row >= rows {
+        return None;
+    }
+    let cells = &terminal.cells()[row * cols..(row + 1) * cols];
+    let start_col = (0..=col)
+        .rev()
+        .find(|&candidate| cells[candidate].glyph == '§')?;
+    if cells[start_col..col].iter().any(|cell| cell.glyph == ' ') {
+        return None;
+    }
+    if start_col != 0 && cells[start_col - 1].glyph != ' ' {
+        return None;
+    }
+    let end_col = cells[start_col..]
+        .iter()
+        .position(|cell| cell.glyph == ' ')
+        .map_or(cols, |offset| start_col + offset);
+    if col >= end_col {
+        return None;
+    }
+
+    let mut command = String::with_capacity(end_col - start_col + 1);
+    for cell in &cells[start_col..end_col] {
+        command.push(cell.glyph);
+    }
+    Some(MatrixSlotHover {
+        start_col,
+        end_col,
+        command,
+    })
 }
 
 fn pointer_cell(
@@ -794,8 +892,9 @@ fn present_terminal(
     frame: &mut Frame,
     terminal: &Terminal,
     metrics: TerminalMetrics,
+    matrix_slot_hover: Option<&MatrixSlotHover>,
 ) -> Result<(), UiError> {
-    present_terminal_at(frame, terminal, 0, 0, metrics)
+    present_terminal_at(frame, terminal, 0, 0, metrics, matrix_slot_hover)
 }
 
 fn present_terminal_at(
@@ -804,6 +903,7 @@ fn present_terminal_at(
     origin_x: u32,
     origin_y: u32,
     metrics: TerminalMetrics,
+    matrix_slot_hover: Option<&MatrixSlotHover>,
 ) -> Result<(), UiError> {
     retry_busy(|| frame.begin(BACKGROUND))?;
 
@@ -818,9 +918,9 @@ fn present_terminal_at(
 
         let mut start_col = 0;
         while start_col <= last_col {
-            let foreground = cells[start_col].style.foreground;
+            let style = cells[start_col].style;
             let mut end_col = start_col + 1;
-            while end_col <= last_col && cells[end_col].style.foreground == foreground {
+            while end_col <= last_col && cells[end_col].style == style {
                 end_col += 1;
             }
 
@@ -843,13 +943,69 @@ fn present_terminal_at(
                     frame.retain_text_scene(
                         Font::Inconsolata,
                         viewport,
-                        foreground_rgba(foreground),
+                        foreground_rgba(style.foreground),
+                        &scene,
+                    )
+                })?;
+            }
+            if style.underline {
+                let mut underline = String::with_capacity(end_col - start_col);
+                for _ in start_col..end_col {
+                    underline.push('_');
+                }
+                let scene = [SceneTextRow {
+                    text: underline.as_str(),
+                    x: origin_x as f32
+                        + FRAME_PADDING_PX as f32
+                        + start_col as f32 * metrics.glyph_advance_px as f32,
+                    y: origin_y as f32
+                        + FRAME_PADDING_PX as f32
+                        + row as f32 * metrics.row_height_px as f32,
+                    font_pixels: metrics.font_pixels,
+                }];
+                retry_busy(|| {
+                    frame.retain_text_scene(
+                        Font::Inconsolata,
+                        viewport,
+                        foreground_rgba(style.foreground),
                         &scene,
                     )
                 })?;
             }
             start_col = end_col;
         }
+    }
+
+    if let Some(hover) = matrix_slot_hover.filter(|hover| {
+        matrix_slot_at(terminal, hover.start_col, MATRIX_STATUS_ROW)
+            .is_some_and(|current| current == **hover)
+    }) {
+        let mut underline = String::with_capacity(hover.end_col - hover.start_col);
+        for _ in hover.start_col..hover.end_col {
+            underline.push('_');
+        }
+        let scene = [SceneTextRow {
+            text: underline.as_str(),
+            x: origin_x as f32
+                + FRAME_PADDING_PX as f32
+                + hover.start_col as f32 * metrics.glyph_advance_px as f32,
+            y: origin_y as f32
+                + FRAME_PADDING_PX as f32
+                + MATRIX_STATUS_ROW as f32 * metrics.row_height_px as f32,
+            font_pixels: metrics.font_pixels,
+        }];
+        let (cols, _) = terminal.dimensions();
+        let foreground = terminal.cells()[MATRIX_STATUS_ROW * cols + hover.start_col]
+            .style
+            .foreground;
+        retry_busy(|| {
+            frame.retain_text_scene(
+                Font::Inconsolata,
+                viewport,
+                foreground_rgba(foreground),
+                &scene,
+            )
+        })?;
     }
 
     // Inconsolata's advance is one half-em. Keeping the cursor as a single

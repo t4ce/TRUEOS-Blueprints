@@ -54,6 +54,7 @@ pub(crate) enum ForegroundColor {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct CellStyle {
     pub(crate) foreground: ForegroundColor,
+    pub(crate) underline: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -68,6 +69,7 @@ impl Cell {
             glyph: ' ',
             style: CellStyle {
                 foreground: ForegroundColor::Default,
+                underline: false,
             },
         }
     }
@@ -521,6 +523,8 @@ impl Terminal {
         while index < params.len() {
             match params[index] {
                 0 => self.current_style = CellStyle::default(),
+                4 => self.current_style.underline = true,
+                24 => self.current_style.underline = false,
                 30..=37 => {
                     self.current_style.foreground =
                         ForegroundColor::Indexed((params[index] - 30) as u8);
@@ -590,7 +594,7 @@ impl Terminal {
         }
     }
 
-    fn mouse_tracking_enabled(&self) -> bool {
+    pub(crate) fn mouse_tracking_enabled(&self) -> bool {
         self.mouse_normal_tracking || self.mouse_button_tracking || self.mouse_any_tracking
     }
 
