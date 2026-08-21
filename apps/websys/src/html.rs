@@ -1,6 +1,6 @@
 use crate::tree::{RecordKeyLabel, TreeNode, encode_path_segments};
-use file_system::jobs::{JobSnapshot, JobStatus};
-use file_system::path::Path;
+use websys::jobs::{JobSnapshot, JobStatus};
+use websys::path::Path;
 
 pub const STYLE_PATH: &str = "/ui/style.css";
 

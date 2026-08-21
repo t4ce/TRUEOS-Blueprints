@@ -2,7 +2,7 @@
 
 ## Goal
 
-Define the basic feature scope for `TRUEOS-file-system` and capture the next implementation priorities for the current stage.
+Define the basic feature scope for `websys` and capture the next implementation priorities for the current stage.
 
 ## Current State
 

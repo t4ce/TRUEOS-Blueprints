@@ -1,4 +1,4 @@
-use file_system::TRUEOS_TILE_DEBUG_FRAME_0;
+use websys::TRUEOS_TILE_DEBUG_FRAME_0;
 
 fn main() {
     let frame = TRUEOS_TILE_DEBUG_FRAME_0;

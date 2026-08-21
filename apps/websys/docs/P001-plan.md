@@ -6,7 +6,7 @@
 |------|---------|
 | Plan ID | `P001` |
 | Scope documents | `S001+basic-feature.md`, `S002+style-and-async-jobs.md` |
-| Target | Establish the basic feature roadmap for `TRUEOS-file-system` |
+| Target | Establish the basic feature roadmap for `websys` |
 | Focus | Core behavior stability, browser usability, runtime configuration, broader usage readiness, UI consistency, and asynchronous file operations |
 
 ## Current Completion

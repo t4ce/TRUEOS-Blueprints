@@ -16,7 +16,7 @@ default = []
 trueos = []
 
 [dependencies]
-crossterm = { version = "=0.29.0", default-features = false, features = ["events"] }
+crossterm = { version = "=0.29.0", default-features = false, features = ["events", "bracketed-paste"] }
 redb = { version = "=4.2.0", default-features = false, features = ["experimental-api-5"] }
 
 [profile.dev]

@@ -1,6 +1,6 @@
-use file_system::path::{Path, PathBuf};
 #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
 use std::fs;
+use websys::path::{Path, PathBuf};
 
 use crate::AppError;
 

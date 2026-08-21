@@ -11,7 +11,7 @@ members = [
     "apps/dobby",
     "probes/condvar",
     "probes/cross",
-    "apps/file-system",
+    "apps/websys",
     "probes/framework_stack",
     "apps/gridpaper",
     "apps/gboi",

@@ -2,7 +2,7 @@
 
 ## Goal
 
-Define the next feature scope for UI consistency and asynchronous file operation handling in `TRUEOS-file-system`.
+Define the next feature scope for UI consistency and asynchronous file operation handling in `websys`.
 
 ## Feature List
 

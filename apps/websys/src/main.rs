@@ -32,11 +32,11 @@ use {
     tower::Service,
 };
 
-use file_system::{
+use tree::{resolve_under_root, scan_dir};
+use websys::{
     JobQueue,
     path::{Path, PathBuf},
 };
-use tree::{resolve_under_root, scan_dir};
 
 const PORT: u16 = 54321;
 
@@ -730,7 +730,7 @@ async fn submit_selection_download_to(
         .as_nanos();
     let destination = format!(
         "{}/selection-{stamp}.7z",
-        file_system::jobs::DOWNLOAD_STAGING_DIR
+        websys::jobs::DOWNLOAD_STAGING_DIR
     );
     let job = jobs
         .enqueue_archive(sources, destination, true)

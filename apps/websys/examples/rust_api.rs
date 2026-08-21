@@ -1,11 +1,11 @@
 use std::error::Error;
 use std::time::Duration;
 
-use file_system::{JobQueue, JobRequest, JobStatus};
+use websys::{JobQueue, JobRequest, JobStatus};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn Error>> {
-    let root = std::env::temp_dir().join("trueos-file-system-rust-api");
+    let root = std::env::temp_dir().join("trueos-websys-rust-api");
 
     if tokio::fs::try_exists(&root).await? {
         tokio::fs::remove_dir_all(&root).await?;

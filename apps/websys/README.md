@@ -1,4 +1,4 @@
-# TRUEOS File System
+# TRUEOS Websys
 
 A lightweight file manager and static file server written in Rust. It serves files from configurable app and common roots and provides an HTML file-tree browser for navigation.
 
@@ -29,11 +29,11 @@ Built with [Axum](https://github.com/tokio-rs/axum) and the native TrueOS asynch
 
 ```bash
 # Clone and enter the repo
-git clone https://github.com/iamwjun/TRUEOS-file-system.git
-cd TRUEOS-file-system
+git clone https://github.com/t4ce/TRUEOS-Blueprints.git
+cd TRUEOS-Blueprints
 
 # Run with the bundled example directory
-cargo run -- example
+cargo run -p websys -- example
 ```
 
 Then open:
@@ -55,14 +55,14 @@ The server listens on **port `54321`** (`0.0.0.0`). Set `TRUEOS_APP_FS_PORT` to 
 
 ```bash
 # Default root: current directory
-cargo run
+cargo run -p websys
 
 # Custom root directory
-cargo run -- /path/to/files
+cargo run -p websys -- /path/to/files
 
 # Release build
-cargo build --release
-./target/release/file-system /path/to/files
+cargo build -p websys --release
+./target/release/websys /path/to/files
 ```
 
 ### CLI
@@ -73,12 +73,12 @@ cargo build --release
 
 ## Rust API
 
-The crate now exposes a reusable Rust API as `file_system`, so callers can submit file jobs without going through HTTP.
+The crate exposes a reusable Rust API as `websys`, so callers can submit file jobs without going through HTTP.
 
 ```rust
 use std::time::Duration;
 
-use file_system::{JobQueue, JobRequest, JobStatus};
+use websys::{JobQueue, JobRequest, JobStatus};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -130,7 +130,7 @@ For a complete program, see `cargo run --example rust_api`.
 The image-derived tile debug frame is also available as a Rust style object.
 
 ```rust
-use file_system::TRUEOS_TILE_DEBUG_FRAME_0;
+use websys::TRUEOS_TILE_DEBUG_FRAME_0;
 
 fn main() {
     let frame = TRUEOS_TILE_DEBUG_FRAME_0;
@@ -176,7 +176,7 @@ Notes:
 ## Project layout
 
 ```
-TRUEOS-file-system/
+TRUEOS-Blueprints/apps/websys/
 ├── assets/
 │   └── ui.css     # Shared CSS tokens and component styles
 ├── Cargo.toml

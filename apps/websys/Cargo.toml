@@ -1,5 +1,5 @@
 [package]
-name = "file-system"
+name = "websys"
 version = "0.0.2"
 edition = "2024"
 

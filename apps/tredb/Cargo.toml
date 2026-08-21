@@ -13,7 +13,7 @@ default = ["trueos"]
 trueos = ["dep:trueos"]
 
 [dependencies]
-crossterm = { path = "../../vendor/crossterm-0.29.0-trueos", default-features = false, features = ["events"] }
+crossterm = { path = "../../vendor/crossterm-0.29.0-trueos", default-features = false, features = ["events", "bracketed-paste"] }
 redb = { version = "=4.2.0", default-features = false, features = ["experimental-api-5"] }
 trueos = { path = "../../api", optional = true }
 

@@ -1,7 +1,8 @@
 use std::fmt;
 
 use redb::{
-    backends::InMemoryBackend, Database, ReadableTable, TableDefinition, TableHandle,
+    backends::InMemoryBackend, Database, ReadableDatabase, ReadableTable, TableDefinition,
+    TableHandle,
 };
 
 use crate::model::{DbSnapshot, RowSnapshot, TableSnapshot};
@@ -195,7 +196,7 @@ impl Store {
                 .map_err(StoreError::redb)?;
             drop(
                 packets
-                    .insert(&b"header"[..], &[0_u8, 255, 16, 32])
+                    .insert(&b"header"[..], &[0_u8, 255, 16, 32][..])
                     .map_err(StoreError::redb)?,
             );
         }

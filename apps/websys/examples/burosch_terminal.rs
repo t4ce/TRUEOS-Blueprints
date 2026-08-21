@@ -1,6 +1,4 @@
-use file_system::{
-    BUROSCH_AVEC_TERMINAL_PATTERN, ColorRampStyle, CssColor, TerminalTestPatternStyle,
-};
+use websys::{BUROSCH_AVEC_TERMINAL_PATTERN, ColorRampStyle, CssColor, TerminalTestPatternStyle};
 
 #[derive(Clone, Copy)]
 struct TerminalCell {
