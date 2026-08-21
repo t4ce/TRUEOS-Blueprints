@@ -1,0 +1,10 @@
+{
+  "buildins": [
+    "commander",
+    "ssh",
+    "img",
+    "texplo",
+    "edit",
+    "shell"
+  ]
+}

@@ -10,7 +10,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1.0"
-ratatui = { path = "../../vendor/ratatui/ratatui", version = "=0.30.2", default-features = false, features = ["crossterm"] }
+crossterm = { path = "../../vendor/crossterm-0.29.0-trueos", default-features = false, features = ["events"] }
 trueos-math = { path = "../../crates/trueos-math" }
 
 [target.'cfg(any(target_os = "trueos", target_os = "zkvm"))'.dependencies]

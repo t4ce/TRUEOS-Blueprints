@@ -1,47 +1,76 @@
-use std::io::{self, BufWriter};
+use std::io::{self, BufWriter, Write};
 use std::time::Duration;
 
 use anyhow::Result;
-use ratatui::crossterm::{
+use crossterm::{
     cursor::{Hide, Show},
     event::{
         self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers,
         MouseButton, MouseEvent, MouseEventKind,
     },
-    execute,
-    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
-};
-use ratatui::{
-    Frame, Terminal,
-    backend::CrosstermBackend,
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
-    text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
+    execute, queue,
+    style::{
+        Attribute, Color, Print, ResetColor, SetAttribute, SetBackgroundColor, SetForegroundColor,
+    },
+    terminal::{
+        self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode,
+        enable_raw_mode,
+    },
 };
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
 use trueos::calculator_base::{
-    CALCULATOR_FUNCTIONS, CALCULATOR_PROTOCOL_VERSION, CalculatorFunctionSpec, CalculatorOperation,
-    evaluate,
+    CALCULATOR_FUNCTIONS, CALCULATOR_PROTOCOL_VERSION, CalculatorOperation, evaluate,
 };
 #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
 use trueos_math::calculator_base::{
-    CALCULATOR_FUNCTIONS, CALCULATOR_PROTOCOL_VERSION, CalculatorFunctionSpec, CalculatorOperation,
+    CALCULATOR_FUNCTIONS, CALCULATOR_PROTOCOL_VERSION, CalculatorOperation,
     evaluate_operation as evaluate,
 };
 
 const MAX_BUTTONS: usize = 32;
 const INPUT_POLL_INTERVAL: Duration = Duration::from_millis(16);
 const FRAME_BUFFER_CAPACITY: usize = 128 * 1024;
-const BG: Color = Color::Rgb(8, 11, 18);
-const PANEL: Color = Color::Rgb(18, 24, 35);
-const PANEL_ALT: Color = Color::Rgb(25, 34, 48);
-const TEXT: Color = Color::Rgb(229, 235, 244);
-const DIM: Color = Color::Rgb(132, 147, 168);
-const ACCENT: Color = Color::Rgb(103, 211, 189);
-const BLUE: Color = Color::Rgb(111, 169, 242);
-const WARN: Color = Color::Rgb(247, 190, 94);
-const ERROR: Color = Color::Rgb(247, 117, 131);
+const BG: Color = Color::Rgb { r: 8, g: 11, b: 18 };
+const PANEL: Color = Color::Rgb {
+    r: 18,
+    g: 24,
+    b: 35,
+};
+const PANEL_ALT: Color = Color::Rgb {
+    r: 25,
+    g: 34,
+    b: 48,
+};
+const TEXT: Color = Color::Rgb {
+    r: 229,
+    g: 235,
+    b: 244,
+};
+const DIM: Color = Color::Rgb {
+    r: 132,
+    g: 147,
+    b: 168,
+};
+const ACCENT: Color = Color::Rgb {
+    r: 103,
+    g: 211,
+    b: 189,
+};
+const BLUE: Color = Color::Rgb {
+    r: 111,
+    g: 169,
+    b: 242,
+};
+const WARN: Color = Color::Rgb {
+    r: 247,
+    g: 190,
+    b: 94,
+};
+const ERROR: Color = Color::Rgb {
+    r: 247,
+    g: 117,
+    b: 131,
+};
 
 fn main() -> Result<()> {
     let result = run();
@@ -59,27 +88,54 @@ fn run() -> Result<()> {
     result
 }
 
-type CalculatorTerminal = Terminal<CrosstermBackend<BufWriter<io::Stdout>>>;
+type CalculatorTerminal = BufWriter<io::Stdout>;
 
 fn setup_terminal() -> Result<CalculatorTerminal> {
     enable_raw_mode()?;
-    // Crossterm emits several small writes per changed cell. Buffer a complete
-    // Ratatui frame so TRUEOS only has to cross the VM console ABI once.
+    // Buffer a complete frame so TRUEOS only crosses the VM console ABI once.
     let mut stdout = BufWriter::with_capacity(FRAME_BUFFER_CAPACITY, io::stdout());
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture, Hide)?;
-    Ok(Terminal::new(CrosstermBackend::new(stdout))?)
+    Ok(stdout)
 }
 
 fn restore_terminal(terminal: &mut CalculatorTerminal) -> Result<()> {
     disable_raw_mode()?;
     execute!(
-        terminal.backend_mut(),
+        terminal,
         DisableMouseCapture,
         Show,
+        ResetColor,
         LeaveAlternateScreen
     )?;
-    terminal.show_cursor()?;
     Ok(())
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct Rect {
+    x: u16,
+    y: u16,
+    width: u16,
+    height: u16,
+}
+
+impl Rect {
+    const fn new(x: u16, y: u16, width: u16, height: u16) -> Self {
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+
+    const fn inner(self) -> Self {
+        Self::new(
+            self.x.saturating_add(1),
+            self.y.saturating_add(1),
+            self.width.saturating_sub(2),
+            self.height.saturating_sub(2),
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -165,7 +221,7 @@ impl Default for App {
 
 impl App {
     fn run(mut self, terminal: &mut CalculatorTerminal) -> Result<()> {
-        terminal.draw(|frame| self.draw(frame))?;
+        self.draw(terminal)?;
 
         while !self.should_quit {
             if !event::poll(INPUT_POLL_INTERVAL)? {
@@ -193,7 +249,7 @@ impl App {
             }
 
             if redraw && !self.should_quit {
-                terminal.draw(|frame| self.draw(frame))?;
+                self.draw(terminal)?;
             }
         }
         Ok(())
@@ -450,134 +506,150 @@ impl App {
             self.dropdown_offset = self.dropdown_index + 1 - visible;
         }
     }
+}
 
-    fn draw(&mut self, frame: &mut Frame<'_>) {
-        self.hit_boxes = HitBoxes::default();
-        let area = frame.area();
-        frame.render_widget(Block::default().style(Style::default().bg(BG)), area);
-
-        let root = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(3),
-                Constraint::Length(7),
-                Constraint::Length(3),
-                Constraint::Min(6),
-                Constraint::Length(3),
-            ])
-            .split(area);
-        self.draw_header(frame, root[0]);
-        self.draw_io(frame, root[1]);
-        self.draw_controls(frame, root[2]);
-        self.draw_button_grid(frame, root[3]);
-        self.draw_footer(frame, root[4]);
-        if self.dropdown_open {
-            self.draw_dropdown(frame, area);
-        }
+impl App {
+    fn draw(&mut self, out: &mut impl Write) -> io::Result<()> {
+        let (width, height) = terminal::size()?;
+        self.draw_sized(out, width, height)
     }
 
-    fn draw_header(&self, frame: &mut Frame<'_>, area: Rect) {
+    fn draw_sized(&mut self, out: &mut impl Write, width: u16, height: u16) -> io::Result<()> {
+        self.hit_boxes = HitBoxes::default();
+        let screen = Rect::new(0, 0, width, height);
+        queue!(out, SetBackgroundColor(BG), Clear(ClearType::All), Hide)?;
+
+        let header = Rect::new(0, 0, width, height.min(3));
+        let io_area = Rect::new(0, 3.min(height), width, height.saturating_sub(3).min(7));
+        let controls = Rect::new(0, 10.min(height), width, height.saturating_sub(10).min(3));
+        let footer_height = height.saturating_sub(13).min(3);
+        let footer = Rect::new(
+            0,
+            height.saturating_sub(footer_height),
+            width,
+            footer_height,
+        );
+        let grid_y = 13.min(height);
+        let grid = Rect::new(0, grid_y, width, footer.y.saturating_sub(grid_y));
+
+        self.draw_header(out, header)?;
+        self.draw_io(out, io_area)?;
+        self.draw_controls(out, controls)?;
+        self.draw_button_grid(out, grid)?;
+        self.draw_footer(out, footer)?;
+        if self.dropdown_open {
+            self.draw_dropdown(out, screen)?;
+        } else if self.focus == Focus::Input {
+            let inner = self.hit_boxes.input.inner();
+            let shown_len = self.input.chars().count().min(inner.width as usize) as u16;
+            queue!(
+                out,
+                crossterm::cursor::MoveTo(inner.x + shown_len, inner.y),
+                Show
+            )?;
+        }
+        queue!(out, ResetColor, SetAttribute(Attribute::Reset))?;
+        out.flush()
+    }
+
+    fn draw_header(&self, out: &mut impl Write, area: Rect) -> io::Result<()> {
+        draw_panel(out, area, "custom calculator", PANEL)?;
         let selected = self
             .selected_operation()
             .map(|operation| operation.spec().name)
             .unwrap_or("none");
-        frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled(
-                    "TRUEOS Calculator",
-                    Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(
-                    format!(
-                        "  protocol v{}  selected: {}  pad: {}/{}",
-                        CALCULATOR_PROTOCOL_VERSION,
-                        selected,
-                        self.buttons.len(),
-                        MAX_BUTTONS
-                    ),
-                    Style::default().fg(DIM),
-                ),
-            ]))
-            .block(panel("custom calculator"))
-            .style(Style::default().bg(PANEL)),
-            area,
+        let text = format!(
+            "TRUEOS Calculator  protocol v{}  selected: {}  pad: {}/{}",
+            CALCULATOR_PROTOCOL_VERSION,
+            selected,
+            self.buttons.len(),
+            MAX_BUTTONS
         );
+        write_at(
+            out,
+            area.x + 1,
+            area.y + 1,
+            area.width.saturating_sub(2),
+            &text,
+            ACCENT,
+            PANEL,
+            true,
+        )
     }
 
-    fn draw_io(&mut self, frame: &mut Frame<'_>, area: Rect) {
-        let rows = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Length(3), Constraint::Length(4)])
-            .split(area);
-        self.hit_boxes.input = rows[0];
-
-        let input_width = rows[0].width.saturating_sub(2) as usize;
-        let start = self.input.len().saturating_sub(input_width);
-        let shown = self.input.get(start..).unwrap_or(self.input.as_str());
-        let input_style = if self.focus == Focus::Input {
-            Style::default().fg(Color::Black).bg(ACCENT)
+    fn draw_io(&mut self, out: &mut impl Write, area: Rect) -> io::Result<()> {
+        let input = Rect::new(area.x, area.y, area.width, area.height.min(3));
+        let output = Rect::new(
+            area.x,
+            area.y.saturating_add(input.height),
+            area.width,
+            area.height.saturating_sub(input.height),
+        );
+        self.hit_boxes.input = input;
+        let (input_fg, input_bg) = if self.focus == Focus::Input {
+            (Color::Black, ACCENT)
         } else {
-            Style::default().fg(TEXT).bg(PANEL_ALT)
+            (TEXT, PANEL_ALT)
         };
-        frame.render_widget(
-            Paragraph::new(shown)
-                .block(panel("Input · comma or space separated"))
-                .style(input_style),
-            rows[0],
-        );
-        if self.focus == Focus::Input && !self.dropdown_open {
-            frame.set_cursor_position((
-                rows[0].x + 1 + shown.len().min(input_width) as u16,
-                rows[0].y + 1,
-            ));
-        }
+        draw_panel(out, input, "Input · comma or space separated", input_bg)?;
+        let input_width = input.width.saturating_sub(2) as usize;
+        let shown = tail_chars(&self.input, input_width);
+        write_at(
+            out,
+            input.x + 1,
+            input.y + 1,
+            input.width.saturating_sub(2),
+            &shown,
+            input_fg,
+            input_bg,
+            false,
+        )?;
 
-        let output_color = if self.status_is_error { ERROR } else { TEXT };
-        frame.render_widget(
-            Paragraph::new(self.output.as_str())
-                .block(panel("Output"))
-                .style(Style::default().fg(output_color).bg(PANEL))
-                .wrap(Wrap { trim: true }),
-            rows[1],
-        );
+        draw_panel(out, output, "Output", PANEL)?;
+        let color = if self.status_is_error { ERROR } else { TEXT };
+        draw_wrapped(out, output.inner(), &self.output, color, PANEL)
     }
 
-    fn draw_controls(&mut self, frame: &mut Frame<'_>, area: Rect) {
-        let controls = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Percentage(30),
-                Constraint::Percentage(30),
-                Constraint::Percentage(40),
-            ])
-            .split(area);
+    fn draw_controls(&mut self, out: &mut impl Write, area: Rect) -> io::Result<()> {
+        let first = area.width.saturating_mul(30) / 100;
+        let second = area.width.saturating_mul(30) / 100;
+        let controls = [
+            Rect::new(area.x, area.y, first, area.height),
+            Rect::new(area.x + first, area.y, second, area.height),
+            Rect::new(
+                area.x + first + second,
+                area.y,
+                area.width.saturating_sub(first + second),
+                area.height,
+            ),
+        ];
         self.hit_boxes.add = controls[0];
         self.hit_boxes.remove = controls[1];
         self.hit_boxes.evaluate = controls[2];
         draw_action(
-            frame,
+            out,
             controls[0],
             "+ Add function",
             self.focus == Focus::Add,
             BLUE,
-        );
+        )?;
         draw_action(
-            frame,
+            out,
             controls[1],
             "- Remove selected",
             self.focus == Focus::Remove,
             WARN,
-        );
+        )?;
         draw_action(
-            frame,
+            out,
             controls[2],
             "= Evaluate",
             self.focus == Focus::Evaluate,
             ACCENT,
-        );
+        )
     }
 
-    fn draw_button_grid(&mut self, frame: &mut Frame<'_>, area: Rect) {
+    fn draw_button_grid(&mut self, out: &mut impl Write, area: Rect) -> io::Result<()> {
         let columns = grid_columns(area.width.saturating_sub(2), self.buttons.len());
         self.hit_boxes.button_columns = columns;
         let rows = if columns == 0 {
@@ -585,104 +657,121 @@ impl App {
         } else {
             self.buttons.len().div_ceil(columns)
         };
-        let title = format!(
-            "Custom buttons · layout hint {} columns x {} rows",
-            columns, rows
-        );
-        let block = panel(title);
-        let inner = block.inner(area);
-        frame.render_widget(block, area);
+        draw_panel(
+            out,
+            area,
+            &format!("Custom buttons · layout hint {columns} columns x {rows} rows"),
+            PANEL,
+        )?;
+        let inner = area.inner();
         self.hit_boxes.buttons.reserve(self.buttons.len());
         if self.buttons.is_empty() {
-            frame.render_widget(
-                Paragraph::new("No custom buttons. Choose Add function; = remains available.")
-                    .alignment(Alignment::Center)
-                    .style(Style::default().fg(DIM)),
+            return write_centered(
+                out,
                 inner,
+                "No custom buttons. Choose Add function; = remains available.",
+                DIM,
+                PANEL,
+                false,
             );
-            return;
         }
 
-        let row_areas = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints((0..rows).map(|_| Constraint::Length(3)))
-            .split(inner);
-        for (row_index, row_area) in row_areas.iter().enumerate() {
-            let start = row_index * columns;
+        for row in 0..rows {
+            let start = row * columns;
             let end = (start + columns).min(self.buttons.len());
-            if start >= end {
-                break;
-            }
-            let cells = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints((start..end).map(|_| Constraint::Ratio(1, columns as u32)))
-                .split(*row_area);
+            let cell_width = inner.width / columns as u16;
             for (offset, operation) in self.buttons[start..end].iter().enumerate() {
                 let index = start + offset;
-                let cell = cells[offset];
+                let x = inner.x + offset as u16 * cell_width;
+                let width = if offset + 1 == columns || index + 1 == self.buttons.len() {
+                    inner.x + inner.width - x
+                } else {
+                    cell_width
+                };
+                let row_y = inner.y + row as u16 * 3;
+                let cell = Rect::new(
+                    x,
+                    row_y,
+                    width,
+                    3.min(inner.y.saturating_add(inner.height).saturating_sub(row_y)),
+                );
                 self.hit_boxes.buttons.push(cell);
-                let selected = self.focus == Focus::Buttons && index == self.selected_button;
-                draw_action(frame, cell, operation.spec().label, selected, BLUE);
+                draw_action(
+                    out,
+                    cell,
+                    operation.spec().label,
+                    self.focus == Focus::Buttons && index == self.selected_button,
+                    BLUE,
+                )?;
             }
         }
+        Ok(())
     }
 
-    fn draw_footer(&self, frame: &mut Frame<'_>, area: Rect) {
-        frame.render_widget(
-            Paragraph::new(
-                "Mouse: click controls/buttons · Keyboard: Tab focus, arrows move, Enter activate, Del remove, Esc quit",
-            )
-            .block(panel("controls"))
-            .style(Style::default().fg(DIM).bg(PANEL))
-            .alignment(Alignment::Center),
-            area,
-        );
+    fn draw_footer(&self, out: &mut impl Write, area: Rect) -> io::Result<()> {
+        draw_panel(out, area, "controls", PANEL)?;
+        write_centered(
+            out,
+            area.inner(),
+            "Mouse: click controls/buttons · Keyboard: Tab focus, arrows move, Enter activate, Del remove, Esc quit",
+            DIM,
+            PANEL,
+            false,
+        )
     }
 
-    fn draw_dropdown(&mut self, frame: &mut Frame<'_>, screen: Rect) {
-        let width = screen.width.saturating_sub(4).clamp(30, 76);
-        let height = screen.height.saturating_sub(4).clamp(8, 24);
+    fn draw_dropdown(&mut self, out: &mut impl Write, screen: Rect) -> io::Result<()> {
+        let width = screen
+            .width
+            .saturating_sub(4)
+            .clamp(30, 76)
+            .min(screen.width);
+        let height = screen
+            .height
+            .saturating_sub(4)
+            .clamp(8, 24)
+            .min(screen.height);
         let area = centered_rect(screen, width, height);
         self.hit_boxes.dropdown = area;
-        frame.render_widget(Clear, area);
+        draw_panel(
+            out,
+            area,
+            &format!(
+                "Add function · {} operations · Enter/click to add",
+                CALCULATOR_FUNCTIONS.len()
+            ),
+            PANEL,
+        )?;
 
-        let inner_height = height.saturating_sub(2) as usize;
+        let inner = area.inner();
+        let inner_height = inner.height as usize;
         if self.dropdown_index < self.dropdown_offset {
             self.dropdown_offset = self.dropdown_index;
         }
-        if self.dropdown_index >= self.dropdown_offset + inner_height {
+        if inner_height > 0 && self.dropdown_index >= self.dropdown_offset + inner_height {
             self.dropdown_offset = self.dropdown_index + 1 - inner_height;
         }
         let end = (self.dropdown_offset + inner_height).min(CALCULATOR_FUNCTIONS.len());
-        let visible = &CALCULATOR_FUNCTIONS[self.dropdown_offset..end];
-        let items = visible.iter().map(dropdown_item).collect::<Vec<_>>();
-        let list = List::new(items)
-            .block(panel(format!(
-                "Add function · {} operations · Enter/click to add",
-                CALCULATOR_FUNCTIONS.len()
-            )))
-            .style(Style::default().fg(TEXT).bg(PANEL))
-            .highlight_style(Style::default().fg(Color::Black).bg(ACCENT))
-            .highlight_symbol("› ");
-        let mut state = ListState::default();
-        state.select(Some(self.dropdown_index - self.dropdown_offset));
-        frame.render_stateful_widget(list, area, &mut state);
-
-        let inner = Rect::new(
-            area.x + 1,
-            area.y + 1,
-            area.width.saturating_sub(2),
-            area.height.saturating_sub(2),
-        );
-        self.hit_boxes.dropdown_items = (self.dropdown_offset..end)
-            .enumerate()
-            .map(|(row, index)| {
-                (
-                    index,
-                    Rect::new(inner.x, inner.y + row as u16, inner.width, 1),
-                )
-            })
-            .collect();
+        self.hit_boxes.dropdown_items.clear();
+        for (row, index) in (self.dropdown_offset..end).enumerate() {
+            let spec = &CALCULATOR_FUNCTIONS[index];
+            let selected = index == self.dropdown_index;
+            let fg = if selected { Color::Black } else { TEXT };
+            let bg = if selected { ACCENT } else { PANEL };
+            let line = format!(
+                "{} {:<12} {:<22} {} · {}",
+                if selected { '›' } else { ' ' },
+                spec.label,
+                spec.name,
+                spec.category,
+                spec.arguments
+            );
+            let item = Rect::new(inner.x, inner.y + row as u16, inner.width, 1);
+            fill_rect(out, item, bg)?;
+            write_at(out, item.x, item.y, item.width, &line, fg, bg, selected)?;
+            self.hit_boxes.dropdown_items.push((index, item));
+        }
+        Ok(())
     }
 }
 
@@ -716,50 +805,197 @@ fn format_value(value: f64) -> String {
     }
 }
 
-fn dropdown_item(spec: &CalculatorFunctionSpec) -> ListItem<'static> {
-    ListItem::new(Line::from(vec![
-        Span::styled(format!("{:<12}", spec.label), Style::default().fg(ACCENT)),
-        Span::styled(format!("{:<22}", spec.name), Style::default().fg(TEXT)),
-        Span::styled(
-            format!("{} · {}", spec.category, spec.arguments),
-            Style::default().fg(DIM),
-        ),
-    ]))
-}
-
 fn draw_action(
-    frame: &mut Frame<'_>,
+    out: &mut impl Write,
     area: Rect,
-    label: impl Into<String>,
+    label: &str,
     selected: bool,
     accent: Color,
-) {
-    let style = if selected {
-        Style::default()
-            .fg(Color::Black)
-            .bg(accent)
-            .add_modifier(Modifier::BOLD)
+) -> io::Result<()> {
+    let (fg, bg) = if selected {
+        (Color::Black, accent)
     } else {
-        Style::default().fg(TEXT).bg(PANEL_ALT)
+        (TEXT, PANEL_ALT)
     };
-    frame.render_widget(
-        Paragraph::new(label.into())
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(accent)),
-            )
-            .alignment(Alignment::Center)
-            .style(style),
-        area,
-    );
+    draw_box(out, area, accent, bg)?;
+    write_centered(out, area.inner(), label, fg, bg, selected)
 }
 
-fn panel<'a>(title: impl Into<Line<'a>>) -> Block<'a> {
-    Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Rgb(58, 76, 99)))
-        .title(title)
+fn draw_panel(out: &mut impl Write, area: Rect, title: &str, background: Color) -> io::Result<()> {
+    draw_box(
+        out,
+        area,
+        Color::Rgb {
+            r: 58,
+            g: 76,
+            b: 99,
+        },
+        background,
+    )?;
+    if area.width > 4 && area.height > 0 {
+        write_at(
+            out,
+            area.x + 2,
+            area.y,
+            area.width.saturating_sub(4),
+            title,
+            DIM,
+            background,
+            false,
+        )?;
+    }
+    Ok(())
+}
+
+fn draw_box(out: &mut impl Write, area: Rect, border: Color, background: Color) -> io::Result<()> {
+    if area.width == 0 || area.height == 0 {
+        return Ok(());
+    }
+    fill_rect(out, area, background)?;
+    if area.width < 2 || area.height < 2 {
+        return Ok(());
+    }
+    let horizontal = "─".repeat(area.width.saturating_sub(2) as usize);
+    queue!(
+        out,
+        SetForegroundColor(border),
+        SetBackgroundColor(background),
+        crossterm::cursor::MoveTo(area.x, area.y),
+        Print("┌"),
+        Print(&horizontal),
+        Print("┐"),
+        crossterm::cursor::MoveTo(area.x, area.y + area.height - 1),
+        Print("└"),
+        Print(&horizontal),
+        Print("┘")
+    )?;
+    for row in area.y + 1..area.y + area.height - 1 {
+        queue!(
+            out,
+            crossterm::cursor::MoveTo(area.x, row),
+            Print("│"),
+            crossterm::cursor::MoveTo(area.x + area.width - 1, row),
+            Print("│")
+        )?;
+    }
+    Ok(())
+}
+
+fn fill_rect(out: &mut impl Write, area: Rect, background: Color) -> io::Result<()> {
+    if area.width == 0 || area.height == 0 {
+        return Ok(());
+    }
+    let blank = " ".repeat(area.width as usize);
+    queue!(out, SetBackgroundColor(background))?;
+    for row in area.y..area.y.saturating_add(area.height) {
+        queue!(out, crossterm::cursor::MoveTo(area.x, row), Print(&blank))?;
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_at(
+    out: &mut impl Write,
+    x: u16,
+    y: u16,
+    width: u16,
+    text: &str,
+    foreground: Color,
+    background: Color,
+    bold: bool,
+) -> io::Result<()> {
+    if width == 0 {
+        return Ok(());
+    }
+    let clipped: String = text.chars().take(width as usize).collect();
+    queue!(
+        out,
+        SetForegroundColor(foreground),
+        SetBackgroundColor(background),
+        SetAttribute(if bold {
+            Attribute::Bold
+        } else {
+            Attribute::NormalIntensity
+        }),
+        crossterm::cursor::MoveTo(x, y),
+        Print(clipped),
+        SetAttribute(Attribute::NormalIntensity)
+    )
+}
+
+fn write_centered(
+    out: &mut impl Write,
+    area: Rect,
+    text: &str,
+    foreground: Color,
+    background: Color,
+    bold: bool,
+) -> io::Result<()> {
+    if area.width == 0 || area.height == 0 {
+        return Ok(());
+    }
+    let len = text.chars().count().min(area.width as usize) as u16;
+    write_at(
+        out,
+        area.x + area.width.saturating_sub(len) / 2,
+        area.y + area.height.saturating_sub(1) / 2,
+        len,
+        text,
+        foreground,
+        background,
+        bold,
+    )
+}
+
+fn draw_wrapped(
+    out: &mut impl Write,
+    area: Rect,
+    text: &str,
+    foreground: Color,
+    background: Color,
+) -> io::Result<()> {
+    if area.width == 0 || area.height == 0 {
+        return Ok(());
+    }
+    let mut words = text.split_whitespace().peekable();
+    for row in 0..area.height {
+        let mut line = String::new();
+        while let Some(word) = words.peek().copied() {
+            let separator = usize::from(!line.is_empty());
+            if line.chars().count() + separator + word.chars().count() > area.width as usize {
+                break;
+            }
+            if !line.is_empty() {
+                line.push(' ');
+            }
+            line.push_str(word);
+            words.next();
+        }
+        if line.is_empty() {
+            if let Some(word) = words.next() {
+                line.extend(word.chars().take(area.width as usize));
+            }
+        }
+        write_at(
+            out,
+            area.x,
+            area.y + row,
+            area.width,
+            &line,
+            foreground,
+            background,
+            false,
+        )?;
+        if words.peek().is_none() {
+            break;
+        }
+    }
+    Ok(())
+}
+
+fn tail_chars(text: &str, limit: usize) -> String {
+    let count = text.chars().count();
+    text.chars().skip(count.saturating_sub(limit)).collect()
 }
 
 fn grid_columns(width: u16, button_count: usize) -> usize {
@@ -785,7 +1021,6 @@ fn centered_rect(screen: Rect, width: u16, height: u16) -> Rect {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ratatui::backend::TestBackend;
 
     #[test]
     fn defaults_are_the_four_basic_operations() {
@@ -820,16 +1055,16 @@ mod tests {
     #[test]
     fn rendered_layout_records_mouse_targets() {
         let mut app = App::default();
-        let backend = TestBackend::new(100, 32);
-        let mut terminal = Terminal::new(backend).unwrap();
+        let mut output = Vec::new();
 
-        terminal.draw(|frame| app.draw(frame)).unwrap();
+        app.draw_sized(&mut output, 100, 32).unwrap();
         assert_eq!(app.hit_boxes.buttons.len(), 4);
         assert!(app.hit_boxes.input.width > 0);
         assert!(app.hit_boxes.evaluate.width > 0);
+        assert!(!output.is_empty());
 
         app.open_dropdown();
-        terminal.draw(|frame| app.draw(frame)).unwrap();
+        app.draw_sized(&mut output, 100, 32).unwrap();
         assert!(!app.hit_boxes.dropdown_items.is_empty());
         assert!(app.hit_boxes.dropdown.width > 0);
     }
