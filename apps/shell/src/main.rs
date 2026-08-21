@@ -15,7 +15,7 @@ use trueos::ui4_scene::{
 };
 use trueos::vshell::{
     SHELL2_FRONTEND_DIRECT_HANDOFF, SHELL2_FRONTEND_READ_DROPPED, Shell2Frontend,
-    Shell2FrontendError,
+    Shell2FrontendError, TerminalLease, TerminalParkingTicket, TerminalReentry,
 };
 use trueos::vsys;
 
@@ -43,12 +43,7 @@ struct TerminalMetrics {
 impl TerminalMetrics {
     fn from_zoom_percent(percent: u16) -> Self {
         let percent = percent.clamp(50, 200);
-        let scaled = |value: u32| {
-            value
-                .saturating_mul(u32::from(percent))
-                .saturating_add(50)
-                / 100
-        };
+        let scaled = |value: u32| value.saturating_mul(u32::from(percent)).saturating_add(50) / 100;
         Self {
             zoom_percent: percent,
             font_pixels: DEFAULT_FONT_PIXELS * f32::from(percent) / 100.0,
@@ -75,6 +70,82 @@ const HID_MODIFIER_CONTROL_MASK: u8 = HID_MODIFIER_LEFT_CONTROL | HID_MODIFIER_R
 const MATRIX_STATUS_ROW: usize = 1;
 const MATRIX_CLICK_PREFIX_BYTE: u8 = 0xff;
 const MATRIX_CLICK_SUFFIX_BYTE: u8 = 0x00;
+const RETURN_TO_PARENT_BYTE: u8 = 0x1c;
+const TERMINAL_RESET: &[u8] = b"\x1b[?1049l\x1b[0m\x1b[2J\x1b[H";
+
+enum InvokingTerminal {
+    Unavailable,
+    Active(TerminalLease),
+    Parked(TerminalParkingTicket),
+}
+
+impl InvokingTerminal {
+    fn claim() -> Self {
+        let Ok(lease) = trueos::vshell::terminal_initial_lease() else {
+            return Self::Unavailable;
+        };
+        let _ = trueos::vshell::attached_write(TERMINAL_RESET);
+        let _ = trueos::vshell::attached_write(
+            b"shell: entered UI4 Shell2 session (Ctrl+\\ returns to parent Matrix)\r\n",
+        );
+        if lease.acknowledge_ready().is_err() {
+            let _ = lease.release_to_shell();
+            return Self::Unavailable;
+        }
+        Self::Active(lease)
+    }
+
+    const fn is_active(&self) -> bool {
+        matches!(self, Self::Active(_))
+    }
+
+    fn park(&mut self) {
+        let current = core::mem::replace(self, Self::Unavailable);
+        if let Self::Active(lease) = current {
+            match lease.release_to_shell() {
+                Ok(ticket) => *self = Self::Parked(ticket),
+                Err(error) => logl::log(
+                    level::ERROR,
+                    format_args!("shell: terminal lease release failed: {error}"),
+                ),
+            }
+        } else {
+            *self = current;
+        }
+    }
+
+    fn poll_reentry(&mut self, frontend: &mut Shell2Frontend, terminal: &Terminal) {
+        let current = core::mem::replace(self, Self::Unavailable);
+        let Self::Parked(ticket) = current else {
+            *self = current;
+            return;
+        };
+        match ticket.poll_reentry() {
+            Ok(TerminalReentry::Pending) => *self = Self::Parked(ticket),
+            Ok(TerminalReentry::Ready(lease)) => {
+                let (cols, rows) = terminal.dimensions();
+                if let Err(error) = frontend.resize(cols as u32, rows as u32) {
+                    logl::log(
+                        level::ERROR,
+                        format_args!("shell: terminal reentry repaint failed: {error:?}"),
+                    );
+                    let _ = lease.release_to_shell();
+                    return;
+                }
+                let _ = trueos::vshell::attached_write(TERMINAL_RESET);
+                if lease.acknowledge_ready().is_ok() {
+                    *self = Self::Active(lease);
+                } else {
+                    let _ = lease.release_to_shell();
+                }
+            }
+            Err(error) => logl::log(
+                level::ERROR,
+                format_args!("shell: terminal reentry failed: {error}"),
+            ),
+        }
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct MatrixSlotHover {
@@ -267,6 +338,7 @@ fn main() {
         return;
     }
     let _ = terminal.take_dirty();
+    let mut invoking_terminal = InvokingTerminal::claim();
     logl::log(
         level::INFO,
         format_args!(
@@ -276,6 +348,7 @@ fn main() {
     );
 
     loop {
+        invoking_terminal.poll_reentry(&mut frontend, &terminal);
         let resized = match drain_resize_events(&mut frame, &mut frontend, &mut terminal, metrics) {
             Ok(resized) => resized,
             Err(error) => {
@@ -287,10 +360,20 @@ fn main() {
             }
         };
 
-        if let Err(error) = drain_shell_output(&mut frontend, &mut terminal) {
+        if let Err(error) =
+            drain_shell_output(&mut frontend, &mut terminal, invoking_terminal.is_active())
+        {
             logl::log(
                 level::ERROR,
                 format_args!("shell: local shell2 output failed: {error:?}"),
+            );
+            return;
+        }
+
+        if let Err(error) = drain_invoking_terminal_input(&frontend, &mut invoking_terminal) {
+            logl::log(
+                level::ERROR,
+                format_args!("shell: invoking terminal input failed: {error:?}"),
             );
             return;
         }
@@ -371,13 +454,8 @@ fn drain_resize_events(
         }
         frame.resize(resize.width, resize.height)?;
         let (old_cols, old_rows) = terminal.dimensions();
-        let (old_origin_x, old_origin_y) = centered_terminal_origin(
-            resize.width,
-            resize.height,
-            old_cols,
-            old_rows,
-            metrics,
-        );
+        let (old_origin_x, old_origin_y) =
+            centered_terminal_origin(resize.width, resize.height, old_cols, old_rows, metrics);
         present_terminal_at(frame, terminal, old_origin_x, old_origin_y, metrics, None)?;
         let (cols, rows) = terminal_grid_size(resize.width, resize.height, metrics);
         if terminal.dimensions() != (cols, rows) {
@@ -399,11 +477,7 @@ fn drain_resize_events(
     Ok(resized)
 }
 
-fn terminal_grid_size(
-    width: u32,
-    height: u32,
-    metrics: TerminalMetrics,
-) -> (usize, usize) {
+fn terminal_grid_size(width: u32, height: u32, metrics: TerminalMetrics) -> (usize, usize) {
     let width = width.saturating_sub(FRAME_PADDING_PX * 2);
     let height = height.saturating_sub(FRAME_PADDING_PX * 2);
     (
@@ -481,6 +555,7 @@ fn attach_shell_frontend(cols: usize, rows: usize) -> Result<Shell2Frontend, She
 fn drain_shell_output(
     frontend: &mut Shell2Frontend,
     terminal: &mut Terminal,
+    mirror_to_invoking_terminal: bool,
 ) -> Result<(), Shell2FrontendError> {
     let mut bytes = [0u8; SHELL_OUTPUT_BATCH_CAP];
     for _ in 0..32 {
@@ -489,6 +564,9 @@ fn drain_shell_output(
             terminal.reset();
         }
         if read.len != 0 {
+            if mirror_to_invoking_terminal {
+                let _ = trueos::vshell::attached_write(&bytes[..read.len]);
+            }
             terminal.feed(&bytes[..read.len]);
         }
         let responses = terminal.take_responses();
@@ -496,6 +574,38 @@ fn drain_shell_output(
             submit_input(frontend, responses.as_slice())?;
         }
         if read.len < bytes.len() {
+            break;
+        }
+    }
+    Ok(())
+}
+
+fn drain_invoking_terminal_input(
+    frontend: &Shell2Frontend,
+    invoking_terminal: &mut InvokingTerminal,
+) -> Result<(), Shell2FrontendError> {
+    if !invoking_terminal.is_active() {
+        return Ok(());
+    }
+
+    let mut bytes = [0u8; 1024];
+    for _ in 0..32 {
+        let len = trueos::vshell::attached_read_available(&mut bytes);
+        if len == 0 {
+            break;
+        }
+        if let Some(exit_at) = bytes[..len]
+            .iter()
+            .position(|byte| *byte == RETURN_TO_PARENT_BYTE)
+        {
+            if exit_at != 0 {
+                submit_input(frontend, &bytes[..exit_at])?;
+            }
+            invoking_terminal.park();
+            break;
+        }
+        submit_input(frontend, &bytes[..len])?;
+        if len < bytes.len() {
             break;
         }
     }
@@ -594,12 +704,7 @@ fn drain_pointer_input(
 ) -> Result<bool, InputError> {
     let initial_hover = matrix_slot_hover.clone();
     while let Some(event) = frame.take_pointer_event()? {
-        let (col, row) = pointer_cell(
-            event.local_x,
-            event.local_y,
-            terminal.dimensions(),
-            metrics,
-        );
+        let (col, row) = pointer_cell(event.local_x, event.local_y, terminal.dimensions(), metrics);
 
         let hovered_slot =
             pointer_matrix_cell(event.local_x, event.local_y, terminal.dimensions(), metrics)

@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use sha2::{Digest, Sha256};
+use serde::Deserialize;
 
 use crate::cli::PackageCatalog;
 
@@ -16,6 +17,11 @@ const DEFAULT_APPS_PUBLISH_MOUNT_URI: &str = "smb://t4ce@pdjb/home-share";
 const DEFAULT_APPS_PUBLISH_URI: &str = "smb://t4ce@pdjb/home-share/TRUEOS_SITE/apps";
 const DEFAULT_PROBES_PUBLISH_URI: &str = "smb://t4ce@pdjb/home-share/TRUEOS_SITE/probes";
 const PUBLISHED_APP_HASH_SEPARATOR: &str = "§§";
+
+#[derive(Deserialize)]
+struct BuildinsManifest {
+    buildins: Vec<String>,
+}
 
 pub(crate) fn publish_blueprint_files(
     bp_files: &[PathBuf],
@@ -29,19 +35,37 @@ pub(crate) fn publish_blueprint_files(
         return Ok(());
     }
 
-    let target_uri = publish_uri(package_catalog);
-    let mount_uri = env_string(APPS_PUBLISH_MOUNT_URI_ENV)
-        .unwrap_or_else(|| DEFAULT_APPS_PUBLISH_MOUNT_URI.to_string());
     if bp_files.is_empty() {
         return Err("no .bp files were built for publishing".to_string());
     }
     let published_files = bp_files
         .iter()
+        .filter_map(|path| match is_buildin_app(path, package_catalog) {
+            Ok(true) => {
+                println!(
+                    "trueos-blueprint: skipping build-in app publish: {}",
+                    path.display()
+                );
+                None
+            }
+            Ok(false) => Some(Ok(path)),
+            Err(err) => Some(Err(err)),
+        })
         .map(|path| {
+            let path = path?;
             let published_name = published_blueprint_name(path)?;
             Ok((path.clone(), published_name))
         })
         .collect::<Result<Vec<_>, String>>()?;
+
+    if published_files.is_empty() {
+        println!("trueos-blueprint: no publishable blueprints remain");
+        return Ok(());
+    }
+
+    let target_uri = publish_uri(package_catalog);
+    let mount_uri = env_string(APPS_PUBLISH_MOUNT_URI_ENV)
+        .unwrap_or_else(|| DEFAULT_APPS_PUBLISH_MOUNT_URI.to_string());
 
     println!(
         "trueos-blueprint: publishing {} blueprints",
@@ -84,6 +108,13 @@ pub(crate) fn publish_blueprint_file(
     if !bp_file.is_file() || bp_file.extension().and_then(|value| value.to_str()) != Some("bp") {
         return Err(format!("not a .bp file: {}", bp_file.display()));
     }
+    if is_buildin_app(bp_file, package_catalog)? {
+        println!(
+            "trueos-blueprint: skipping build-in app publish: {}",
+            bp_file.display()
+        );
+        return Ok(());
+    }
 
     let target_uri = publish_uri(package_catalog);
     let mount_uri = env_string(APPS_PUBLISH_MOUNT_URI_ENV)
@@ -113,6 +144,32 @@ pub(crate) fn publish_blueprint_file(
 
     println!("trueos-blueprint: published {}", published_name);
     Ok(())
+}
+
+fn is_buildin_app(bp_file: &Path, package_catalog: PackageCatalog) -> Result<bool, String> {
+    if package_catalog != PackageCatalog::Apps {
+        return Ok(false);
+    }
+
+    let bp_file = fs::canonicalize(bp_file).map_err(io_string)?;
+    let repository_root = bp_file
+        .parent()
+        .and_then(Path::parent)
+        .ok_or_else(|| format!("cannot locate repository root for {}", bp_file.display()))?;
+    let manifest_path = repository_root.join("buildins.json");
+    if !manifest_path.is_file() {
+        return Ok(false);
+    }
+
+    let manifest: BuildinsManifest = serde_json::from_slice(
+        &fs::read(&manifest_path).map_err(io_string)?,
+    )
+    .map_err(|err| format!("invalid {}: {err}", manifest_path.display()))?;
+    let app_name = bp_file
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| format!("bad blueprint file name: {}", bp_file.display()))?;
+    Ok(manifest.buildins.iter().any(|name| name == app_name))
 }
 
 fn publish_uri(package_catalog: PackageCatalog) -> String {
@@ -267,6 +324,16 @@ fn io_string(err: io::Error) -> String {
 mod tests {
     use super::*;
 
+    fn temporary_repository(label: &str) -> PathBuf {
+        let root = env::temp_dir().join(format!(
+            "trueos-publish-{}-{label}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("dist")).unwrap();
+        root
+    }
+
     #[test]
     fn published_name_preserves_single_section_and_uses_double_separator() {
         let path =
@@ -306,5 +373,36 @@ mod tests {
         );
         assert!(DEFAULT_APPS_PUBLISH_URI.ends_with("/TRUEOS_SITE/apps"));
         assert!(DEFAULT_PROBES_PUBLISH_URI.ends_with("/TRUEOS_SITE/probes"));
+    }
+
+    #[test]
+    fn buildins_manifest_excludes_apps_but_not_probes() {
+        let root = temporary_repository("buildins");
+        let bp_file = root.join("dist/commander.bp");
+        fs::write(&bp_file, b"blueprint").unwrap();
+        fs::write(
+            root.join("buildins.json"),
+            br#"{"buildins":["commander"]}"#,
+        )
+        .unwrap();
+
+        assert!(is_buildin_app(&bp_file, PackageCatalog::Apps).unwrap());
+        assert!(!is_buildin_app(&bp_file, PackageCatalog::Probes).unwrap());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn ordinary_apps_remain_publishable() {
+        let root = temporary_repository("ordinary-app");
+        let bp_file = root.join("dist/calculator.bp");
+        fs::write(&bp_file, b"blueprint").unwrap();
+        fs::write(
+            root.join("buildins.json"),
+            br#"{"buildins":["commander"]}"#,
+        )
+        .unwrap();
+
+        assert!(!is_buildin_app(&bp_file, PackageCatalog::Apps).unwrap());
+        fs::remove_dir_all(root).unwrap();
     }
 }
