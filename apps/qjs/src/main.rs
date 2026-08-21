@@ -6,21 +6,19 @@ use std::{
 
 use anyhow::Result;
 use crossterm::{
+    cursor::{Hide, MoveTo, Show},
     event::{
         self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
         KeyModifiers,
     },
-    execute,
-    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
-};
-use ratatui::{
-    Terminal,
-    backend::CrosstermBackend,
-    buffer::Buffer,
-    layout::{Constraint, Direction, Layout, Position, Rect},
-    style::{Color, Modifier, Style},
-    text::{Line, Span, Text},
-    widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap},
+    execute, queue,
+    style::{
+        Attribute, Color, Print, ResetColor, SetAttribute, SetBackgroundColor, SetForegroundColor,
+    },
+    terminal::{
+        self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode,
+        enable_raw_mode,
+    },
 };
 
 const INPUT_POLL_INTERVAL: Duration = Duration::from_millis(50);
@@ -29,14 +27,79 @@ const FRAME_BUFFER_CAPACITY: usize = 128 * 1024;
 const TAB: &str = "  ";
 const HISTORY_CAP: usize = 64;
 
-const ACCENT: Color = Color::Rgb(255, 55, 255);
-const CYAN: Color = Color::Rgb(96, 210, 255);
-const GREEN: Color = Color::Rgb(60, 220, 140);
-const RED: Color = Color::Rgb(255, 105, 120);
-const MUTED: Color = Color::Rgb(130, 145, 165);
-const PANEL: Color = Color::Rgb(45, 52, 65);
+const BACKGROUND: Color = Color::Rgb { r: 8, g: 11, b: 18 };
+const ACCENT: Color = Color::Rgb {
+    r: 255,
+    g: 55,
+    b: 255,
+};
+const CYAN: Color = Color::Rgb {
+    r: 96,
+    g: 210,
+    b: 255,
+};
+const GREEN: Color = Color::Rgb {
+    r: 60,
+    g: 220,
+    b: 140,
+};
+const RED: Color = Color::Rgb {
+    r: 255,
+    g: 105,
+    b: 120,
+};
+const MUTED: Color = Color::Rgb {
+    r: 130,
+    g: 145,
+    b: 165,
+};
+const PANEL: Color = Color::Rgb {
+    r: 45,
+    g: 52,
+    b: 65,
+};
 
-type AppTerminal = Terminal<CrosstermBackend<BufWriter<io::Stdout>>>;
+type AppTerminal = BufWriter<io::Stdout>;
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct Rect {
+    x: u16,
+    y: u16,
+    width: u16,
+    height: u16,
+}
+
+impl Rect {
+    const fn new(x: u16, y: u16, width: u16, height: u16) -> Self {
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+
+    const fn inner(self) -> Self {
+        Self::new(
+            self.x.saturating_add(1),
+            self.y.saturating_add(1),
+            self.width.saturating_sub(2),
+            self.height.saturating_sub(2),
+        )
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct Position {
+    x: u16,
+    y: u16,
+}
+
+impl Position {
+    const fn new(x: u16, y: u16) -> Self {
+        Self { x, y }
+    }
+}
 
 fn main() -> Result<()> {
     let mut app = App::new();
@@ -94,13 +157,14 @@ where
     let mut last_output_poll = Instant::now();
     let mut terminal_ready = false;
     loop {
-        terminal.draw(|frame| {
-            let area = frame.area();
-            let cursor = draw(frame.buffer_mut(), area, app);
-            if let Some(position) = cursor {
-                frame.set_cursor_position(position);
-            }
-        })?;
+        let (width, height) = terminal::size()?;
+        let cursor = draw(terminal, Rect::new(0, 0, width, height), app)?;
+        match cursor {
+            Some(position) => queue!(terminal, MoveTo(position.x, position.y), Show)?,
+            None => queue!(terminal, Hide)?,
+        }
+        queue!(terminal, ResetColor, SetAttribute(Attribute::Reset))?;
+        terminal.flush()?;
         if !terminal_ready {
             acknowledge_ready()?;
             terminal_ready = true;
@@ -133,28 +197,16 @@ struct TerminalGuard {
 
 impl TerminalGuard {
     fn enter() -> Result<Self> {
-        // Constructing the terminal has no terminal-mode side effects. Do it
-        // before raw mode so every subsequent partial setup can be unwound.
-        let output = BufWriter::with_capacity(FRAME_BUFFER_CAPACITY, stdout());
-        let backend = CrosstermBackend::new(output);
-        let mut terminal = Terminal::new(backend)?;
+        let mut terminal = BufWriter::with_capacity(FRAME_BUFFER_CAPACITY, stdout());
         if let Err(error) = enable_raw_mode() {
             let _ = Self::restore_terminal(&mut terminal);
             return Err(error.into());
         }
-        if let Err(error) = execute!(
-            terminal.backend_mut(),
-            EnterAlternateScreen,
-            EnableMouseCapture
-        ) {
+        if let Err(error) = execute!(terminal, EnterAlternateScreen, EnableMouseCapture, Hide) {
             let _ = Self::restore_terminal(&mut terminal);
             return Err(error.into());
         }
-        if let Err(error) = terminal.backend_mut().flush() {
-            let _ = Self::restore_terminal(&mut terminal);
-            return Err(error.into());
-        }
-        if let Err(error) = terminal.clear() {
+        if let Err(error) = execute!(terminal, Clear(ClearType::All)) {
             let _ = Self::restore_terminal(&mut terminal);
             return Err(error.into());
         }
@@ -176,19 +228,16 @@ impl TerminalGuard {
 
     fn restore_terminal(terminal: &mut AppTerminal) -> io::Result<()> {
         let mut first_error = None;
-        if let Err(error) = terminal.show_cursor() {
-            first_error = Some(error);
-        }
         if let Err(error) = execute!(
-            terminal.backend_mut(),
+            terminal,
             DisableMouseCapture,
+            Show,
+            ResetColor,
             LeaveAlternateScreen
         ) {
-            if first_error.is_none() {
-                first_error = Some(error);
-            }
+            first_error = Some(error);
         }
-        if let Err(error) = terminal.backend_mut().flush() {
+        if let Err(error) = terminal.flush() {
             if first_error.is_none() {
                 first_error = Some(error);
             }
@@ -618,134 +667,175 @@ fn split_lines(text: &str) -> Vec<String> {
     lines
 }
 
-fn draw(buffer: &mut Buffer, area: Rect, app: &mut App) -> Option<Position> {
+fn draw(out: &mut impl Write, area: Rect, app: &mut App) -> io::Result<Option<Position>> {
+    queue!(
+        out,
+        SetBackgroundColor(BACKGROUND),
+        Clear(ClearType::All),
+        Hide
+    )?;
     if area.width < 20 || area.height < 8 {
-        Paragraph::new("qjs needs a terminal of at least 20×8")
-            .style(Style::default().fg(RED))
-            .render(area, buffer);
-        return None;
+        write_at(
+            out,
+            area.x,
+            area.y,
+            area.width,
+            "qjs needs a terminal of at least 20×8",
+            RED,
+            BACKGROUND,
+            false,
+        )?;
+        return Ok(None);
     }
 
-    let rows = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Min(3),
-            Constraint::Length(2),
-        ])
-        .split(area);
-    draw_header(buffer, rows[0], app);
+    let header = Rect::new(area.x, area.y, area.width, 3);
+    let footer = Rect::new(area.x, area.y + area.height - 2, area.width, 2);
+    let body = Rect::new(area.x, area.y + 3, area.width, area.height - 5);
+    draw_header(out, header, app)?;
 
-    let body = if rows[1].width >= 96 {
-        Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(58), Constraint::Percentage(42)])
-            .split(rows[1])
+    let (editor, output) = if body.width >= 96 {
+        let editor_width = body.width.saturating_mul(58) / 100;
+        (
+            Rect::new(body.x, body.y, editor_width, body.height),
+            Rect::new(
+                body.x + editor_width,
+                body.y,
+                body.width - editor_width,
+                body.height,
+            ),
+        )
     } else {
-        Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
-            .split(rows[1])
+        let editor_height = body.height.saturating_mul(55) / 100;
+        (
+            Rect::new(body.x, body.y, body.width, editor_height),
+            Rect::new(
+                body.x,
+                body.y + editor_height,
+                body.width,
+                body.height - editor_height,
+            ),
+        )
     };
-    let cursor = draw_editor(buffer, body[0], app);
-    draw_output(buffer, body[1], app);
-    draw_footer(buffer, rows[2], app);
+    let cursor = draw_editor(out, editor, app)?;
+    draw_output(out, output, app)?;
+    draw_footer(out, footer, app)?;
     if app.show_help {
-        draw_help(buffer, area);
-        None
+        draw_help(out, area)?;
+        Ok(None)
     } else {
-        Some(cursor)
+        Ok(Some(cursor))
     }
 }
 
-fn draw_header(buffer: &mut Buffer, area: Rect, app: &App) {
+fn draw_header(out: &mut impl Write, area: Rect, app: &App) -> io::Result<()> {
     let actual = app
         .last_actual_mode
         .map(|mode| mode.label().to_ascii_lowercase())
         .unwrap_or_else(|| "waiting".to_string());
-    let lines = vec![
-        Line::from(vec![
-            Span::styled(
-                " QuickJS scripting workbench ",
-                Style::default()
-                    .fg(Color::Black)
-                    .bg(ACCENT)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw("  "),
-            Span::styled(
-                "persistent VM",
-                Style::default().fg(GREEN).add_modifier(Modifier::BOLD),
-            ),
-            Span::raw("  "),
-            Span::styled(
-                format!(
-                    "requested {} · last {actual}",
-                    app.eval_mode.label().to_ascii_lowercase()
-                ),
-                Style::default().fg(CYAN),
-            ),
-        ]),
-        Line::from(vec![
-            Span::styled(" Runtime ", Style::default().fg(MUTED)),
-            Span::raw("shell profile · timers · workers · fetch   "),
-            Span::styled(" Modules ", Style::default().fg(MUTED)),
-            Span::raw("native import/export · TRUEOS/Node loader"),
-        ]),
-        Line::from(Span::styled(
-            " F1 help · F2 mode · F5/Ctrl-Enter run · Ctrl-R reset · ESC/Ctrl-Q/F10 close TUI",
-            Style::default().fg(MUTED),
-        )),
-    ];
-    Paragraph::new(Text::from(lines)).render(area, buffer);
-}
-
-fn draw_editor(buffer: &mut Buffer, area: Rect, app: &mut App) -> Position {
-    app.ensure_cursor_visible(area);
-    let digits = app.lines.len().max(1).to_string().len();
-    let visible_rows = area.height.saturating_sub(2) as usize;
-    let mut lines = Vec::with_capacity(visible_rows);
-    for row in app.row_offset..cmp::min(app.lines.len(), app.row_offset + visible_rows) {
-        let number = format!("{:>digits$} ", row + 1);
-        let text = app.lines[row]
-            .chars()
-            .skip(app.col_offset)
-            .collect::<String>();
-        let style = if row == app.cursor_row {
-            Style::default().fg(Color::White)
-        } else {
-            Style::default().fg(Color::Gray)
-        };
-        lines.push(Line::from(vec![
-            Span::styled(
-                number,
-                Style::default().fg(if row == app.cursor_row { ACCENT } else { MUTED }),
-            ),
-            Span::styled(text, style),
-        ]));
-    }
-    let block = Block::default()
-        .title(" Editor / REPL ")
-        .title_style(Style::default().fg(ACCENT).add_modifier(Modifier::BOLD))
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(PANEL));
-    Paragraph::new(Text::from(lines))
-        .block(block)
-        .render(area, buffer);
-    Position::new(
-        area.x
-            .saturating_add(1)
-            .saturating_add(digits as u16)
-            .saturating_add(1)
-            .saturating_add(app.cursor_col.saturating_sub(app.col_offset) as u16),
-        area.y
-            .saturating_add(1)
-            .saturating_add(app.cursor_row.saturating_sub(app.row_offset) as u16),
+    fill_rect(out, area, BACKGROUND)?;
+    write_at(
+        out,
+        area.x,
+        area.y,
+        area.width,
+        " QuickJS scripting workbench ",
+        Color::Black,
+        ACCENT,
+        true,
+    )?;
+    write_at(
+        out,
+        area.x + 29,
+        area.y,
+        area.width.saturating_sub(29),
+        &format!(
+            "persistent VM  requested {} · last {actual}",
+            app.eval_mode.label().to_ascii_lowercase()
+        ),
+        GREEN,
+        BACKGROUND,
+        true,
+    )?;
+    write_at(
+        out,
+        area.x,
+        area.y + 1,
+        area.width,
+        " Runtime  shell profile · timers · workers · fetch    Modules  native import/export · TRUEOS/Node loader",
+        MUTED,
+        BACKGROUND,
+        false,
+    )?;
+    write_at(
+        out,
+        area.x,
+        area.y + 2,
+        area.width,
+        " F1 help · F2 mode · F5/Ctrl-Enter run · Ctrl-R reset · ESC/Ctrl-Q/F10 close TUI",
+        MUTED,
+        BACKGROUND,
+        false,
     )
 }
 
-fn draw_output(buffer: &mut Buffer, area: Rect, app: &App) {
-    let mut lines = Vec::new();
+fn draw_editor(out: &mut impl Write, area: Rect, app: &mut App) -> io::Result<Position> {
+    app.ensure_cursor_visible(area);
+    draw_panel(out, area, " Editor / REPL ", ACCENT)?;
+    let inner = area.inner();
+    let digits = app.lines.len().max(1).to_string().len();
+    let visible_rows = inner.height as usize;
+    for (screen_row, row) in
+        (app.row_offset..cmp::min(app.lines.len(), app.row_offset + visible_rows)).enumerate()
+    {
+        let number = format!("{:>digits$} ", row + 1);
+        let number_color = if row == app.cursor_row { ACCENT } else { MUTED };
+        write_at(
+            out,
+            inner.x,
+            inner.y + screen_row as u16,
+            inner.width,
+            &number,
+            number_color,
+            BACKGROUND,
+            false,
+        )?;
+        let text: String = app.lines[row].chars().skip(app.col_offset).collect();
+        write_at(
+            out,
+            inner.x + digits as u16 + 1,
+            inner.y + screen_row as u16,
+            inner.width.saturating_sub(digits as u16 + 1),
+            &text,
+            if row == app.cursor_row {
+                Color::White
+            } else {
+                Color::Grey
+            },
+            BACKGROUND,
+            false,
+        )?;
+    }
+    Ok(Position::new(
+        inner
+            .x
+            .saturating_add(digits as u16)
+            .saturating_add(1)
+            .saturating_add(app.cursor_col.saturating_sub(app.col_offset) as u16),
+        inner
+            .y
+            .saturating_add(app.cursor_row.saturating_sub(app.row_offset) as u16),
+    ))
+}
+
+fn draw_output(out: &mut impl Write, area: Rect, app: &App) -> io::Result<()> {
+    draw_panel(
+        out,
+        area,
+        &format!(" Output · {} entries ", app.output.len()),
+        CYAN,
+    )?;
+    let inner = area.inner();
+    let mut lines: Vec<(String, Color, bool)> = Vec::new();
     for entry in &app.output {
         let (symbol, color) = match entry.kind {
             OutputKind::Source => ("›", CYAN),
@@ -754,103 +844,243 @@ fn draw_output(buffer: &mut Buffer, area: Rect, app: &App) {
             OutputKind::Print => ("·", Color::Yellow),
             OutputKind::System => ("◆", MUTED),
         };
-        lines.push(Line::from(vec![Span::styled(
-            format!("{symbol} {} ", entry.label),
-            Style::default().fg(color).add_modifier(Modifier::BOLD),
-        )]));
+        lines.push((format!("{symbol} {} ", entry.label), color, true));
+        let text_color = if matches!(entry.kind, OutputKind::Error) {
+            RED
+        } else {
+            Color::White
+        };
         for text_line in entry.text.lines() {
-            lines.push(Line::from(Span::styled(
-                format!("  {text_line}"),
-                Style::default().fg(if matches!(entry.kind, OutputKind::Error) {
-                    RED
-                } else {
-                    Color::White
-                }),
-            )));
+            push_wrapped_lines(
+                &mut lines,
+                &format!("  {text_line}"),
+                inner.width as usize,
+                text_color,
+            );
         }
     }
-    let height = area.height.saturating_sub(2) as usize;
-    let scroll = lines.len().saturating_sub(height) as u16;
-    let block = Block::default()
-        .title(format!(" Output · {} entries ", app.output.len()))
-        .title_style(Style::default().fg(CYAN).add_modifier(Modifier::BOLD))
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(PANEL));
-    Paragraph::new(Text::from(lines))
-        .block(block)
-        .scroll((scroll, 0))
-        .wrap(Wrap { trim: false })
-        .render(area, buffer);
+    let start = lines.len().saturating_sub(inner.height as usize);
+    for (row, (text, color, bold)) in lines[start..].iter().enumerate() {
+        write_at(
+            out,
+            inner.x,
+            inner.y + row as u16,
+            inner.width,
+            text,
+            *color,
+            BACKGROUND,
+            *bold,
+        )?;
+    }
+    Ok(())
 }
 
-fn draw_footer(buffer: &mut Buffer, area: Rect, app: &App) {
-    let text = vec![
-        Line::from(vec![
-            Span::styled(
-                " STATUS ",
-                Style::default()
-                    .fg(Color::Black)
-                    .bg(CYAN)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(" "),
-            Span::styled(app.status.as_str(), Style::default().fg(Color::White)),
-        ]),
-        Line::from(Span::styled(
-            " Ctrl-N new · Ctrl-↑/↓ history · Ctrl-L clear · commands :help :reset :clear :quit",
-            Style::default().fg(MUTED),
-        )),
-    ];
-    Paragraph::new(Text::from(text)).render(area, buffer);
+fn draw_footer(out: &mut impl Write, area: Rect, app: &App) -> io::Result<()> {
+    fill_rect(out, area, BACKGROUND)?;
+    write_at(
+        out,
+        area.x,
+        area.y,
+        area.width.min(8),
+        " STATUS ",
+        Color::Black,
+        CYAN,
+        true,
+    )?;
+    write_at(
+        out,
+        area.x + 9,
+        area.y,
+        area.width.saturating_sub(9),
+        &app.status,
+        Color::White,
+        BACKGROUND,
+        false,
+    )?;
+    write_at(
+        out,
+        area.x,
+        area.y + 1,
+        area.width,
+        " Ctrl-N new · Ctrl-↑/↓ history · Ctrl-L clear · commands :help :reset :clear :quit",
+        MUTED,
+        BACKGROUND,
+        false,
+    )
 }
 
-fn draw_help(buffer: &mut Buffer, area: Rect) {
-    let width = area.width.saturating_sub(8).min(84).max(20);
-    let height = area.height.saturating_sub(4).min(21).max(8);
+fn draw_help(out: &mut impl Write, area: Rect) -> io::Result<()> {
+    let width = area.width.saturating_sub(8).min(84).max(20).min(area.width);
+    let height = area
+        .height
+        .saturating_sub(4)
+        .min(21)
+        .max(8)
+        .min(area.height);
     let popup = Rect::new(
         area.x + area.width.saturating_sub(width) / 2,
         area.y + area.height.saturating_sub(height) / 2,
         width,
         height,
     );
-    Clear.render(popup, buffer);
-    let help = Text::from(vec![
-        Line::from(Span::styled(
-            "QuickJS workbench",
-            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
-        )),
-        Line::from(""),
-        Line::from("F5 / Ctrl-Enter   evaluate the complete editor buffer"),
-        Line::from("F2                cycle Auto / Script / Module"),
-        Line::from("Ctrl-R            discard and recreate the persistent VM"),
-        Line::from("Ctrl-N            clear the editor; Ctrl-↑/↓ recalls history"),
-        Line::from("ESC / Ctrl-Q/F10  close TUI; the VM and JS state stay alive"),
-        Line::from(""),
-        Line::from(Span::styled(
-            "Natural modules",
-            Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
-        )),
-        Line::from("import { readFile } from 'fs';"),
-        Line::from("import * as events from 'node:events';"),
-        Line::from("const module = await import('/path/module.mjs');  // Module mode"),
-        Line::from(""),
-        Line::from("Auto selects Module for static import/export; otherwise Script keeps"),
-        Line::from("global declarations between evaluations. F2 overrides detection."),
-        Line::from(""),
-        Line::from(Span::styled(
-            "Press F1 or ? to close help · ESC returns to the VMX shell",
-            Style::default().fg(MUTED),
-        )),
-    ]);
-    Paragraph::new(help)
-        .block(
-            Block::default()
-                .title(" Help ")
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(ACCENT)),
-        )
-        .wrap(Wrap { trim: false })
-        .render(popup, buffer);
+    draw_panel(out, popup, " Help ", ACCENT)?;
+    let help = [
+        "QuickJS workbench",
+        "",
+        "F5 / Ctrl-Enter   evaluate the complete editor buffer",
+        "F2                cycle Auto / Script / Module",
+        "Ctrl-R            discard and recreate the persistent VM",
+        "Ctrl-N            clear the editor; Ctrl-↑/↓ recalls history",
+        "ESC / Ctrl-Q/F10  close TUI; the VM and JS state stay alive",
+        "",
+        "Natural modules",
+        "import { readFile } from 'fs';",
+        "import * as events from 'node:events';",
+        "const module = await import('/path/module.mjs');  // Module mode",
+        "",
+        "Auto selects Module for static import/export; otherwise Script keeps",
+        "global declarations between evaluations. F2 overrides detection.",
+        "",
+        "Press F1 or ? to close help · ESC returns to the VMX shell",
+    ];
+    let inner = popup.inner();
+    for (row, line) in help.iter().take(inner.height as usize).enumerate() {
+        let color = match *line {
+            "QuickJS workbench" => ACCENT,
+            "Natural modules" => CYAN,
+            line if line.starts_with("Press F1") => MUTED,
+            _ => Color::White,
+        };
+        write_at(
+            out,
+            inner.x,
+            inner.y + row as u16,
+            inner.width,
+            line,
+            color,
+            BACKGROUND,
+            matches!(*line, "QuickJS workbench" | "Natural modules"),
+        )?;
+    }
+    Ok(())
+}
+
+fn draw_panel(out: &mut impl Write, area: Rect, title: &str, accent: Color) -> io::Result<()> {
+    draw_box(out, area, PANEL, BACKGROUND)?;
+    if area.width > 4 && area.height > 0 {
+        write_at(
+            out,
+            area.x + 2,
+            area.y,
+            area.width.saturating_sub(4),
+            title,
+            accent,
+            BACKGROUND,
+            true,
+        )?;
+    }
+    Ok(())
+}
+
+fn draw_box(out: &mut impl Write, area: Rect, border: Color, background: Color) -> io::Result<()> {
+    if area.width == 0 || area.height == 0 {
+        return Ok(());
+    }
+    fill_rect(out, area, background)?;
+    if area.width < 2 || area.height < 2 {
+        return Ok(());
+    }
+    let horizontal = "─".repeat(area.width.saturating_sub(2) as usize);
+    queue!(
+        out,
+        SetForegroundColor(border),
+        SetBackgroundColor(background),
+        MoveTo(area.x, area.y),
+        Print("┌"),
+        Print(&horizontal),
+        Print("┐"),
+        MoveTo(area.x, area.y + area.height - 1),
+        Print("└"),
+        Print(&horizontal),
+        Print("┘")
+    )?;
+    for row in area.y + 1..area.y + area.height - 1 {
+        queue!(
+            out,
+            MoveTo(area.x, row),
+            Print("│"),
+            MoveTo(area.x + area.width - 1, row),
+            Print("│")
+        )?;
+    }
+    Ok(())
+}
+
+fn fill_rect(out: &mut impl Write, area: Rect, background: Color) -> io::Result<()> {
+    if area.width == 0 || area.height == 0 {
+        return Ok(());
+    }
+    let blank = " ".repeat(area.width as usize);
+    queue!(out, SetBackgroundColor(background))?;
+    for row in area.y..area.y.saturating_add(area.height) {
+        queue!(out, MoveTo(area.x, row), Print(&blank))?;
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_at(
+    out: &mut impl Write,
+    x: u16,
+    y: u16,
+    width: u16,
+    text: &str,
+    foreground: Color,
+    background: Color,
+    bold: bool,
+) -> io::Result<()> {
+    if width == 0 {
+        return Ok(());
+    }
+    let clipped: String = text.chars().take(width as usize).collect();
+    queue!(
+        out,
+        SetForegroundColor(foreground),
+        SetBackgroundColor(background),
+        SetAttribute(if bold {
+            Attribute::Bold
+        } else {
+            Attribute::NormalIntensity
+        }),
+        MoveTo(x, y),
+        Print(clipped),
+        SetAttribute(Attribute::NormalIntensity)
+    )
+}
+
+fn push_wrapped_lines(
+    lines: &mut Vec<(String, Color, bool)>,
+    text: &str,
+    width: usize,
+    color: Color,
+) {
+    if width == 0 {
+        return;
+    }
+    let mut remaining = text;
+    while !remaining.is_empty() {
+        let take = remaining.chars().count().min(width);
+        let byte = remaining
+            .char_indices()
+            .nth(take)
+            .map(|(index, _)| index)
+            .unwrap_or(remaining.len());
+        lines.push((remaining[..byte].to_string(), color, false));
+        remaining = &remaining[byte..];
+    }
+    if text.is_empty() {
+        lines.push((String::new(), color, false));
+    }
 }
 
 mod bridge {
