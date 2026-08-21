@@ -12,9 +12,7 @@ members = [
     "probes/condvar",
     "probes/cross",
     "apps/file-system",
-    "apps/fileexplorer",
     "probes/framework_stack",
-    "apps/gridp",
     "apps/gridpaper",
     "apps/gboi",
     "apps/hello_world",
@@ -50,7 +48,6 @@ members = [
     "probes/tokio_stack",
     "apps/webdevices",
     "apps/webmail",
-    "apps/weave_hello",
     "probes/wls",
 ]
 exclude = [
