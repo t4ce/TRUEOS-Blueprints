@@ -29,7 +29,6 @@ pub struct Location {
 
 #[derive(Clone, Debug)]
 pub struct CurrentWeather {
-    pub icon: WeatherIcon,
     pub summary: String,
     pub temp_c: i32,
     pub feels_c: i32,
@@ -39,7 +38,6 @@ pub struct CurrentWeather {
 
 #[derive(Clone, Debug)]
 pub struct ForecastDay {
-    pub icon: WeatherIcon,
     pub weekday: &'static str,
     pub summary: String,
     pub temp_day_c: i32,
@@ -52,49 +50,6 @@ pub struct ForecastDay {
     pub wind_kmh: i32,
     pub wind_dir: &'static str,
     pub uvi: i32,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum WeatherIcon {
-    ClearDay,
-    ClearNight,
-    PartlyDay,
-    PartlyNight,
-    Cloud,
-    RainDay,
-    Rain,
-    Thunder,
-    Snow,
-    Fog,
-}
-
-impl WeatherIcon {
-    pub const ALL: [Self; 10] = [
-        Self::ClearDay,
-        Self::ClearNight,
-        Self::PartlyDay,
-        Self::PartlyNight,
-        Self::Cloud,
-        Self::RainDay,
-        Self::Rain,
-        Self::Thunder,
-        Self::Snow,
-        Self::Fog,
-    ];
-
-    pub const fn glyph(self) -> &'static str {
-        match self {
-            Self::ClearDay => "☀",
-            Self::ClearNight => "☾",
-            Self::PartlyDay => "◐",
-            Self::PartlyNight => "◑",
-            Self::Cloud => "☁",
-            Self::RainDay | Self::Rain => "☔",
-            Self::Thunder => "⚡",
-            Self::Snow => "❄",
-            Self::Fog => "≋",
-        }
-    }
 }
 
 pub async fn load_weather_snapshot() -> Result<WeatherSnapshot> {
@@ -197,7 +152,6 @@ fn build_snapshot(
     let current = response.current.as_ref().map(|current| {
         let weather = current.weather.first();
         CurrentWeather {
-            icon: weather_icon_for(weather),
             summary: weather
                 .map(|w| title_case(w.description.as_str()))
                 .unwrap_or_else(|| String::from("Weather")),
@@ -218,7 +172,6 @@ fn build_snapshot(
                 .map(|day| {
                     let weather = day.weather.first();
                     ForecastDay {
-                        icon: weather_icon_for(weather),
                         weekday: weekday_abbrev(day.dt),
                         summary: if day.summary.is_empty() {
                             weather
@@ -249,38 +202,6 @@ fn build_snapshot(
         current,
         days,
         note,
-    }
-}
-
-fn weather_icon_for(weather: Option<&trueos_weather::WetterInfo>) -> WeatherIcon {
-    if let Some(info) = weather {
-        match info.icon.as_str() {
-            "01d" => return WeatherIcon::ClearDay,
-            "01n" => return WeatherIcon::ClearNight,
-            "02d" => return WeatherIcon::PartlyDay,
-            "02n" => return WeatherIcon::PartlyNight,
-            "03d" | "03n" | "04d" | "04n" => return WeatherIcon::Cloud,
-            "09d" | "09n" => return WeatherIcon::Rain,
-            "10d" => return WeatherIcon::RainDay,
-            "10n" => return WeatherIcon::Rain,
-            "11d" | "11n" => return WeatherIcon::Thunder,
-            "13d" | "13n" => return WeatherIcon::Snow,
-            "50d" | "50n" => return WeatherIcon::Fog,
-            _ => {}
-        }
-
-        match info.id {
-            200..=299 => WeatherIcon::Thunder,
-            300..=599 => WeatherIcon::Rain,
-            600..=699 => WeatherIcon::Snow,
-            700..=799 => WeatherIcon::Fog,
-            800 => WeatherIcon::ClearDay,
-            801 => WeatherIcon::PartlyDay,
-            802..=899 => WeatherIcon::Cloud,
-            _ => WeatherIcon::Cloud,
-        }
-    } else {
-        WeatherIcon::Cloud
     }
 }
 

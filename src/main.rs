@@ -164,6 +164,11 @@ const TRUEOS_IMAGE_CODEC_VENDOR_PATCHES: &[(&str, &str)] = &[
     ("zune-jpeg", "zune-jpeg-0.5.15"),
 ];
 
+#[derive(Deserialize)]
+struct BuildinsManifest {
+    buildins: Vec<String>,
+}
+
 fn main() {
     if let Err(err) = run() {
         eprintln!("trueos-blueprint: {err}");
@@ -184,13 +189,34 @@ fn run() -> Result<(), String> {
 
     if package_name(&manifest_path)? == "trueos-blueprint" {
         if requested_apps.is_empty() {
+            let buildins = if package_catalog == PackageCatalog::Apps {
+                buildin_app_names(&app_dir)?
+            } else {
+                BTreeSet::new()
+            };
             let examples = if package_catalog == PackageCatalog::Apps {
                 example_specs(&manifest_path)?
+                    .into_iter()
+                    .filter(|example| !buildins.contains(example.name.as_str()))
+                    .collect()
             } else {
                 Vec::new()
             };
-            let package_apps = package_app_specs(&app_dir, package_catalog)?;
+            let package_apps = package_app_specs(&app_dir, package_catalog)?
+                .into_iter()
+                .filter(|app| !buildins.contains(app.name.as_str()))
+                .collect::<Vec<_>>();
+            if package_catalog == PackageCatalog::Apps && !buildins.is_empty() {
+                println!(
+                    "trueos-blueprint: excluding {} build-in app(s) from bulk app build",
+                    buildins.len()
+                );
+            }
             if examples.is_empty() && package_apps.is_empty() {
+                if package_catalog == PackageCatalog::Apps {
+                    println!("trueos-blueprint: no publishable non-build-in apps to build");
+                    return Ok(());
+                }
                 build_one_target(
                     &app_dir,
                     &manifest_path,
@@ -1229,6 +1255,18 @@ fn blueprint_root(app_dir: &Path) -> Option<PathBuf> {
 fn current_blueprint_root() -> Option<PathBuf> {
     let cwd = env::current_dir().ok()?;
     blueprint_root_from_ancestors(&cwd)
+}
+
+fn buildin_app_names(app_dir: &Path) -> Result<BTreeSet<String>, String> {
+    let manifest_path = app_dir.join("buildins.json");
+    if !manifest_path.is_file() {
+        return Ok(BTreeSet::new());
+    }
+    let manifest: BuildinsManifest = serde_json::from_slice(
+        &fs::read(&manifest_path).map_err(io_string)?,
+    )
+    .map_err(|err| format!("invalid {}: {err}", manifest_path.display()))?;
+    Ok(manifest.buildins.into_iter().collect())
 }
 
 fn blueprint_root_from_ancestors(app_dir: &Path) -> Option<PathBuf> {

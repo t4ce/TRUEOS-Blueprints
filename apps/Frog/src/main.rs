@@ -1,17 +1,13 @@
 // trueos-blueprint: features=["tokio-net-probe"]
 
-mod ui4_visual;
 mod weather;
 
 use anyhow::Result;
 
 fn main() -> Result<()> {
     let runtime = runtime()?;
-    let result = runtime.block_on_weather().and_then(|snapshot| {
+    let result = runtime.block_on_weather().map(|snapshot| {
         print_snapshot(&snapshot);
-        let mut visual = ui4_visual::FrogVisual::open()?;
-        visual.show_snapshot(snapshot)?;
-        visual.wait_for_escape()
     });
     if let Err(error) = result.as_ref() {
         eprintln!("Frog weather error: {error:#}");
@@ -19,7 +15,7 @@ fn main() -> Result<()> {
 
     runtime.shutdown_background();
     shutdown_blueprint(if result.is_ok() {
-        "Frog closed live weather view"
+        "Frog printed live weather report"
     } else {
         "Frog weather request failed"
     });
@@ -49,20 +45,14 @@ fn print_snapshot(snapshot: &weather::WeatherSnapshot) {
     println!("source: {}", snapshot.source);
     if let Some(current) = snapshot.current.as_ref() {
         println!(
-            "now: {} {}C, feels {}C, {}, humidity {}%, wind {} km/h",
-            current.icon.glyph(),
-            current.temp_c,
-            current.feels_c,
-            current.summary,
-            current.humidity,
-            current.wind_kmh
+            "now: {}C, feels {}C, {}, humidity {}%, wind {} km/h",
+            current.temp_c, current.feels_c, current.summary, current.humidity, current.wind_kmh
         );
     }
     for day in &snapshot.days {
         println!(
-            "{}: {} {} — day {}C, feels {}C, range {}..{}C, night {}C, rain {}%, humidity {}%, wind {} km/h {}, UV {}",
+            "{}: {} — day {}C, feels {}C, range {}..{}C, night {}C, rain {}%, humidity {}%, wind {} km/h {}, UV {}",
             day.weekday,
-            day.icon.glyph(),
             day.summary,
             day.temp_day_c,
             day.feels_day_c,
