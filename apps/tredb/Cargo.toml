@@ -1,0 +1,40 @@
+[package]
+name = "tredb"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+description = "A tiny TrueOS redb RAM explorer"
+publish = false
+
+[workspace]
+
+[features]
+default = ["trueos"]
+trueos = ["dep:trueos"]
+
+[dependencies]
+crossterm = { path = "../../vendor/crossterm-0.29.0-trueos", default-features = false, features = ["events"] }
+redb = { version = "=4.2.0", default-features = false, features = ["experimental-api-5"] }
+trueos = { path = "../../api", optional = true }
+
+[patch.crates-io]
+mio = { path = "../../vendor/mio-1.2.0" }
+rustix = { path = "../../vendor/rustix-1.1.4-trueos" }
+signal-hook-mio = { path = "../../vendor/signal-hook-mio-0.2.5-trueos" }
+
+[profile.dev]
+codegen-units = 1
+debug = "full"
+lto = true
+opt-level = 3
+panic = "abort"
+split-debuginfo = "packed"
+strip = "symbols"
+incremental = true
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = "symbols"
