@@ -1,0 +1,20 @@
+[package]
+name = "file-system"
+version = "0.0.2"
+edition = "2024"
+
+[dependencies]
+axum = { version = "0.8.9", default-features = false, features = ["form", "http1", "json", "multipart", "tokio"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+sha2 = "0.10.9"
+tokio = { version = "=1.52.3", default-features = false, features = ["fs", "macros", "net", "rt", "sync", "time"] }
+
+[target.'cfg(any(target_os = "trueos", target_os = "zkvm"))'.dependencies]
+hyper = { version = "=1.9.0", default-features = false, features = ["server", "http1"] }
+tower = { version = "=0.5.3", default-features = false }
+trueos = { path = "../../api", features = ["tokio-net-probe"] }
+v = { path = "../../crates/trueos-v" }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("trueos", "zkvm"))'] }

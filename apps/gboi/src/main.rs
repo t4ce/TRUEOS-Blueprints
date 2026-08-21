@@ -222,7 +222,7 @@ fn list_roms(directory: &str) {
     } else {
         "common://"
     };
-    let listing = match async_fs::block_on(async_fs::list_dir_utf8(directory.as_bytes())) {
+    let listing = match async_fs::block_on(async_fs::list_dir(directory.as_bytes())) {
         Ok(listing) => listing,
         Err(error) => {
             shell_line(format!("gboi: list {label} failed ({error})").as_str());
@@ -230,29 +230,25 @@ fn list_roms(directory: &str) {
         }
     };
 
-    let mut names = listing
-        .lines()
-        .filter(|name| !name.is_empty() && *name != "...")
-        .collect::<Vec<_>>();
-    names.sort_unstable();
+    let mut entries = listing.entries;
+    entries.sort_unstable_by(|left, right| left.name.cmp(&right.name));
 
     shell_line(format!("gboi: ROMs in {label}").as_str());
     let mut found = 0usize;
-    for name in names {
-        if !is_rom_name(name) {
+    for entry in entries {
+        if !matches!(entry.kind, async_fs::NodeKind::File)
+            || !is_rom_name(entry.name.as_str())
+        {
             continue;
         }
         let path = if directory.is_empty() {
-            name.to_string()
+            entry.name
         } else {
-            format!("{directory}/{name}")
+            format!("{directory}/{}", entry.name)
         };
         let Ok(metadata) = async_fs::block_on(async_fs::metadata(path.as_bytes())) else {
             continue;
         };
-        if !metadata.is_file() {
-            continue;
-        }
         found += 1;
         shell_line(format!("  {path} ({} bytes)", metadata.len).as_str());
     }

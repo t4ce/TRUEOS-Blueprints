@@ -1,9 +1,6 @@
 [submodule "apps/helix"]
 	path = apps/helix
 	url = https://github.com/helix-editor/helix
-[submodule "apps/file-system"]
-	path = apps/file-system
-	url = https://github.com/t4ce/TRUEOS-file-system.git
 [submodule "apps/fd"]
 	path = apps/fd
 	url = https://github.com/t4ce/fd.git

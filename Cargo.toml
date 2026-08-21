@@ -50,22 +50,7 @@ members = [
 ]
 exclude = [
     "crates",
-    "crates/*",
-    "apps/Frog",
-    "apps/Player",
-    "apps/rebels-in-the-sky",
-    "apps/aud-player-scope-tui",
-    "vendor",
-    "vendor/*",
-    "vendor/ratatui/**",
-    "vendor/ratatui/ratatui",
-    "vendor/ratatui/ratatui-core",
-    "vendor/ratatui/ratatui-crossterm",
-    "vendor/ratatui/ratatui-macros",
-    "vendor/ratatui/ratatui-termina",
-    "vendor/ratatui/ratatui-termion",
-    "vendor/ratatui/ratatui-termwiz",
-    "vendor/ratatui/ratatui-widgets",
+    "crates/*"
 ]
 default-members = ["."]
 resolver = "3"
