@@ -8,11 +8,9 @@ license = "MIT OR Apache-2.0"
 replicatable = false
 
 [features]
-# The current bare-metal artifact is deliberately one diagnostic rung below
-# the final material shader. Disable default features to restore filtered
-# textureSample after fixed mip-0 sampling retires on the physical ADL-S GPU.
-default = ["texture-bringup-fixed-load"]
-texture-bringup-fixed-load = []
+# The live recovery artifact deliberately has no texture feature: it restores
+# the proven authenticated constant-RGBA scene before material work resumes.
+default = []
 
 [[bin]]
 name = "heliov"

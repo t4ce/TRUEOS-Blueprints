@@ -10,52 +10,30 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
 
-use helio::{
-    FlyCamera, FlyCameraConfig, MaterialAsset, MaterialTextureRef, PerspectiveLens, Scene,
-    TextureSamplerDesc, TextureUpload,
-};
+use helio::{FlyCamera, FlyCameraConfig, PerspectiveLens};
+use trueos::clock;
 use trueos::ui4_scene::{Damage, Error as Ui4Error, Frame};
-#[cfg(feature = "texture-bringup-fixed-load")]
-use trueos::vgpu::SHADER_PACKAGE_CLIP_POSITION3_UV_TEXEL_LOAD_FNV1A64;
-#[cfg(not(feature = "texture-bringup-fixed-load"))]
-use trueos::vgpu::SHADER_PACKAGE_CLIP_POSITION3_UV_TEXTURE_FNV1A64;
 use trueos::vgpu::{
     self, BUFFER_USAGE_COPY_DST, BUFFER_USAGE_COPY_SRC, BUFFER_USAGE_INDEX, BUFFER_USAGE_MAP_READ,
     BUFFER_USAGE_MAP_WRITE, BUFFER_USAGE_STORAGE, BUFFER_USAGE_VERTEX, Capabilities, IndexedDraw,
-    QueueClass,
+    QueueClass, SHADER_PACKAGE_CLIP_POSITION3_RGBA_FNV1A64,
 };
-use trueos::{async_fs, clock, image_source, vmedia};
 use wgpu::custom::*;
 
 use crate::ui4_input::Ui4FlyInput;
 
 const WITNESS: &[u8] = b"HelioV/WGPU/custom/VMX";
 const ERR_INVALID_ARGUMENT: i32 = -22;
-// The authenticated texture-load package addresses a 16 x 16 mip-0 grid.
-// Keep the resident witness exactly that size: it proves the native JPEG
-// decode and SceneDB upload without exhausting the 32 MiB VMX vGPU budget.
-const FIXED_TEXTURE_PROBE_SIDE: u32 = 16;
 // Linear textures are opaque WGPU resources, but Queue::write_texture reaches
 // VMX through the same bounded CPU transfer primitive as Queue::write_buffer.
 // COPY_DST therefore carries the broker-internal MAP_WRITE authority just as
 // `vmx_buffer_usage` does for ordinary WGPU buffers.
 const LINEAR_TEXTURE_BACKING_USAGE: u32 =
     BUFFER_USAGE_STORAGE | BUFFER_USAGE_COPY_SRC | BUFFER_USAGE_COPY_DST | BUFFER_USAGE_MAP_WRITE;
-#[cfg(feature = "texture-bringup-fixed-load")]
-pub const VOXEL_SHADER_WGSL: &str = include_str!("texture_probe_load.wgsl");
-#[cfg(not(feature = "texture-bringup-fixed-load"))]
-pub const VOXEL_SHADER_WGSL: &str = include_str!("voxel_textured.wgsl");
+pub const VOXEL_SHADER_WGSL: &str = "@vertex\nfn vs_main(@location(0) position: vec3<f32>) -> @builtin(position) vec4<f32> {\n    return vec4<f32>(position, 1.0);\n}\n\n@fragment\nfn fs_main() -> @location(0) vec4<f32> {\n    return vec4<f32>(0.18, 0.72, 0.32, 1.0);\n}\n";
 
-#[cfg(feature = "texture-bringup-fixed-load")]
-pub const TEXTURE_BRINGUP_CONTRACT: &str =
-    "fixed-texel-load/mip0/no-filter/no-implicit-derivatives";
-#[cfg(not(feature = "texture-bringup-fixed-load"))]
-pub const TEXTURE_BRINGUP_CONTRACT: &str = "filtered-sample/material-path";
-
-#[cfg(feature = "texture-bringup-fixed-load")]
-const AUTHENTICATED_SHADER_DIGEST: u64 = SHADER_PACKAGE_CLIP_POSITION3_UV_TEXEL_LOAD_FNV1A64;
-#[cfg(not(feature = "texture-bringup-fixed-load"))]
-const AUTHENTICATED_SHADER_DIGEST: u64 = SHADER_PACKAGE_CLIP_POSITION3_UV_TEXTURE_FNV1A64;
+pub const SCENE_BASELINE_CONTRACT: &str = "constant-rgba/indexed-world/no-texture-assets";
+const AUTHENTICATED_SHADER_DIGEST: u64 = SHADER_PACKAGE_CLIP_POSITION3_RGBA_FNV1A64;
 
 pub struct BackendFailure {
     pub stage: &'static str,
@@ -79,7 +57,6 @@ pub struct SurfaceProbe {
     last_input_millis: u64,
     camera_dirty: bool,
     input_live: bool,
-    _scene: Scene,
 }
 
 pub struct ResizePresentation {
@@ -98,18 +75,6 @@ pub struct InputPresentation {
     pub yaw: f32,
     pub pitch: f32,
     pub timeline: u64,
-}
-
-pub struct HelioAssetProof {
-    pub texture_slot: u32,
-    pub texture_residency_slot: u32,
-    pub material_slot: u32,
-    pub binding_epoch: u64,
-    pub texture_width: u32,
-    pub texture_height: u32,
-    pub encoded_bytes: usize,
-    pub decoded_bytes: usize,
-    pub decode_backend: vmedia::DecodeBackend,
 }
 
 pub fn probe_wgpu_buffer_path() -> Result<usize, BackendFailure> {
@@ -213,7 +178,6 @@ pub fn probe_ui4_surface_path(mesh: &helio::MeshUpload) -> Result<SurfaceProbe, 
     let mut frame = Frame::open_streaming(120, 96, 640, 360)
         .map_err(|_| fail("ui4-frame-open", vgpu::ERR_IO))?;
     let (device, queue) = open_device_queue()?;
-    let (mut scene, assets) = build_helio_material_scene(&device, &queue)?;
     let camera = FlyCamera::look_at(
         glam::Vec3::new(65.0, 42.0, 68.0),
         glam::Vec3::new(24.0, 7.0, 24.0),
@@ -229,15 +193,9 @@ pub fn probe_ui4_surface_path(mesh: &helio::MeshUpload) -> Result<SurfaceProbe, 
         near: 0.1,
         far: 180.0,
     };
-    // The fixed-load package remains the authenticated sampling rung, but it
-    // now exercises the actual Helio voxel mesh with its SceneDB-resident
-    // material texture rather than the isolated six-index quad. Filtering is
-    // still deliberately out of scope.
     let graphics = VoxelGraphics::new(
         &device,
         &queue,
-        &scene,
-        assets.texture_residency_slot,
         mesh,
         aspect(frame.width(), frame.height()),
         &camera,
@@ -246,35 +204,12 @@ pub fn probe_ui4_surface_path(mesh: &helio::MeshUpload) -> Result<SurfaceProbe, 
     trueos::logl::log(
         trueos::logl::level::INFO,
         format_args!(
-            "HelioV: fixed-load texture stage submits visibility-compacted Helio voxel world vertices={} source_indices={} submitted_indices={} texture_extent={}x{} material_source=SceneDB-TextureResidency compaction=closed-voxel-backface+frustum",
+            "HelioV: constant-RGBA scene baseline submits complete Helio voxel world vertices={} indices={} shader_package=clip-position3-rgba material_source=constant-fragment-no-assets",
             mesh.vertices.len(),
             mesh.indices.len(),
-            graphics.index_count,
-            assets.texture_width,
-            assets.texture_height,
         ),
     );
     let first = render_voxel_frame(&mut frame, &device, &queue, &graphics)?;
-    scene.flush();
-    if let Some(code) = take_device_error(&device) {
-        return Err(fail("helio-scene-flush", code));
-    }
-    trueos::logl::log(
-        trueos::logl::level::INFO,
-        format_args!(
-            "HelioV: kernel JPEG decoded backend={:?} decoded_bytes={} encoded_bytes={} resident_extent={}x{} then Helio Scene material authority ready texture_entity_slot={} texture_residency_slot={} material={} bound_texture_residency_slot={} texture_binding_epoch={} path=vmedia::decode->RGBA8->fixed-probe-resample->Scene::insert_texture->SceneDB-TextureResidency->canonical-view-sampler-bind-group->Scene::insert_material_asset->Scene::flush",
-            assets.decode_backend,
-            assets.decoded_bytes,
-            assets.encoded_bytes,
-            assets.texture_width,
-            assets.texture_height,
-            assets.texture_slot,
-            assets.texture_residency_slot,
-            assets.material_slot,
-            assets.texture_residency_slot,
-            assets.binding_epoch,
-        ),
-    );
     let presentation_deadline = clock::monotonic_millis().saturating_add(3_000);
     loop {
         match frame.take_first_presentation() {
@@ -304,172 +239,7 @@ pub fn probe_ui4_surface_path(mesh: &helio::MeshUpload) -> Result<SurfaceProbe, 
         last_input_millis: clock::monotonic_millis(),
         camera_dirty: false,
         input_live: false,
-        _scene: scene,
     })
-}
-
-fn build_helio_material_scene(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-) -> Result<(Scene, HelioAssetProof), BackendFailure> {
-    // `kernel:logo` deliberately provides encoded JPEG bytes. The Blueprint
-    // receives no kernel image pointer and must use vmedia to obtain the
-    // bounded RGBA8 payload that SceneDB will make texture-resident.
-    let (source_info, encoded_jpeg) =
-        image_source::read("kernel:logo").map_err(|code| fail("jpeg-source-read", code))?;
-    if source_info.format != image_source::FORMAT_JPEG {
-        return Err(fail("jpeg-source-format", ERR_INVALID_ARGUMENT));
-    }
-    let encoded_bytes = encoded_jpeg.len();
-    let decoded = async_fs::block_on(vmedia::decode(
-        vmedia::ImageFormat::Jpeg,
-        encoded_jpeg.as_slice(),
-    ))
-    .map_err(|code| fail("vmedia-jpeg-decode", code))?;
-    let expected_rgba_bytes = decoded
-        .info
-        .width
-        .checked_mul(decoded.info.height)
-        .and_then(|pixels| pixels.checked_mul(4))
-        .and_then(|bytes| usize::try_from(bytes).ok())
-        .ok_or_else(|| fail("vmedia-jpeg-layout", ERR_INVALID_ARGUMENT))?;
-    if decoded.info.stride_bytes != decoded.info.width.saturating_mul(4)
-        || decoded.rgba.len() != expected_rgba_bytes
-    {
-        return Err(fail("vmedia-jpeg-layout", ERR_INVALID_ARGUMENT));
-    }
-    if decoded.info.width == 0 || decoded.info.height == 0 {
-        return Err(fail("vmedia-jpeg-layout", ERR_INVALID_ARGUMENT));
-    }
-    let decoded_width = decoded.info.width;
-    let decoded_height = decoded.info.height;
-    let decoded_bytes = decoded.rgba.len();
-    let decode_backend = decoded.info.backend;
-    let texture_width = FIXED_TEXTURE_PROBE_SIDE;
-    let texture_height = FIXED_TEXTURE_PROBE_SIDE;
-    let resident_rgba = resample_rgba8_nearest(
-        decoded.rgba.as_slice(),
-        decoded_width,
-        decoded_height,
-        texture_width,
-        texture_height,
-    )?;
-    // This must precede SceneDB texture creation. If the renderer rejects an
-    // allocation, validation still learns which kernel media backend decoded
-    // the source and the exact payload handed toward GPU residency.
-    trueos::logl::log(
-        trueos::logl::level::INFO,
-        format_args!(
-            "HelioV: vmedia JPEG decoded before SceneDB allocation backend={:?} decoded_extent={}x{} decoded_bytes={} encoded_bytes={} resident_extent={}x{} resident_bytes={} policy=fixed-texture-load-witness",
-            decode_backend,
-            decoded_width,
-            decoded_height,
-            decoded_bytes,
-            encoded_bytes,
-            texture_width,
-            texture_height,
-            resident_rgba.len(),
-        ),
-    );
-    let mut scene = Scene::new(Arc::new(device.clone()), Arc::new(queue.clone()));
-    if let Some(code) = take_device_error(device) {
-        return Err(fail("helio-scene-create", code));
-    }
-    let texture = scene
-        .insert_texture(TextureUpload::rgba8(
-            "HelioV vmedia JPEG terrain witness",
-            texture_width,
-            texture_height,
-            true,
-            resident_rgba,
-            TextureSamplerDesc {
-                mag_filter: wgpu::FilterMode::Nearest,
-                min_filter: wgpu::FilterMode::Nearest,
-                mipmap_filter: wgpu::MipmapFilterMode::Nearest,
-                ..TextureSamplerDesc::default()
-            },
-        ))
-        .map_err(|_| fail("helio-texture-insert", ERR_INVALID_ARGUMENT))?;
-    if let Some(code) = take_device_error(device) {
-        return Err(fail("helio-texture-upload", code));
-    }
-    let material = scene
-        .insert_material_asset(MaterialAsset {
-            gpu: libhelio::GpuMaterial {
-                base_color: [1.0, 1.0, 1.0, 1.0],
-                emissive: [0.0; 4],
-                roughness_metallic: [0.88, 0.0, 1.5, 0.0],
-                tex_base_color: libhelio::GpuMaterial::NO_TEXTURE,
-                tex_normal: libhelio::GpuMaterial::NO_TEXTURE,
-                tex_roughness: libhelio::GpuMaterial::NO_TEXTURE,
-                tex_emissive: libhelio::GpuMaterial::NO_TEXTURE,
-                tex_occlusion: libhelio::GpuMaterial::NO_TEXTURE,
-                workflow: 0,
-                flags: 0,
-                material_class: 0,
-                class_params: [0.0; 4],
-            },
-            textures: helio::MaterialTextures {
-                base_color: Some(MaterialTextureRef::new(texture)),
-                ..helio::MaterialTextures::default()
-            },
-        })
-        .map_err(|_| fail("helio-material-insert", ERR_INVALID_ARGUMENT))?;
-    let texture_residency_slot = scene
-        .texture_residency_slot(texture)
-        .ok_or_else(|| fail("helio-texture-residency-slot", ERR_INVALID_ARGUMENT))?;
-    let proof = HelioAssetProof {
-        texture_slot: texture.slot(),
-        texture_residency_slot,
-        material_slot: material.slot(),
-        binding_epoch: scene.texture_binding_version(),
-        texture_width,
-        texture_height,
-        encoded_bytes,
-        decoded_bytes,
-        decode_backend,
-    };
-    Ok((scene, proof))
-}
-
-fn resample_rgba8_nearest(
-    source: &[u8],
-    source_width: u32,
-    source_height: u32,
-    target_width: u32,
-    target_height: u32,
-) -> Result<Vec<u8>, BackendFailure> {
-    if source_width == 0 || source_height == 0 || target_width == 0 || target_height == 0 {
-        return Err(fail("vmedia-jpeg-resample", ERR_INVALID_ARGUMENT));
-    }
-    let target_bytes = target_width
-        .checked_mul(target_height)
-        .and_then(|pixels| pixels.checked_mul(4))
-        .and_then(|bytes| usize::try_from(bytes).ok())
-        .ok_or_else(|| fail("vmedia-jpeg-resample", ERR_INVALID_ARGUMENT))?;
-    let mut target = vec![0; target_bytes];
-    for target_y in 0..target_height {
-        let source_y =
-            (u64::from(target_y) * u64::from(source_height) / u64::from(target_height)) as usize;
-        for target_x in 0..target_width {
-            let source_x =
-                (u64::from(target_x) * u64::from(source_width) / u64::from(target_width)) as usize;
-            let source_offset = (source_y
-                .checked_mul(source_width as usize)
-                .and_then(|row| row.checked_add(source_x))
-                .ok_or_else(|| fail("vmedia-jpeg-resample", ERR_INVALID_ARGUMENT))?)
-            .checked_mul(4)
-            .ok_or_else(|| fail("vmedia-jpeg-resample", ERR_INVALID_ARGUMENT))?;
-            let target_offset = ((target_y as usize * target_width as usize) + target_x as usize)
-                .checked_mul(4)
-                .ok_or_else(|| fail("vmedia-jpeg-resample", ERR_INVALID_ARGUMENT))?;
-            let source_texel = source
-                .get(source_offset..source_offset + 4)
-                .ok_or_else(|| fail("vmedia-jpeg-resample", ERR_INVALID_ARGUMENT))?;
-            target[target_offset..target_offset + 4].copy_from_slice(source_texel);
-        }
-    }
-    Ok(target)
 }
 
 impl SurfaceProbe {
@@ -583,11 +353,8 @@ struct RenderedFrame {
 
 struct VoxelGraphics {
     world_positions: Vec<[f32; 3]>,
-    texture_coordinates: Vec<[f32; 2]>,
-    world_indices: Vec<u32>,
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
-    material_bind_group: wgpu::BindGroup,
     pipeline: wgpu::RenderPipeline,
     index_count: u32,
 }
@@ -596,33 +363,14 @@ impl VoxelGraphics {
     fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        scene: &Scene,
-        texture_slot: u32,
         mesh: &helio::MeshUpload,
         aspect: f32,
         camera: &FlyCamera,
         lens: PerspectiveLens,
     ) -> Result<Self, BackendFailure> {
         let world_positions: Vec<_> = mesh.vertices.iter().map(|vertex| vertex.position).collect();
-        let texture_coordinates: Vec<_> = mesh
-            .vertices
-            .iter()
-            .map(|vertex| vertex.tex_coords0)
-            .collect();
-        let projected = projected_textured_vertices(
-            &world_positions,
-            &texture_coordinates,
-            aspect,
-            camera,
-            lens,
-        );
-        let visible_indices = crate::voxel::visible_voxel_indices(
-            &world_positions,
-            &mesh.indices,
-            aspect,
-            camera,
-            lens,
-        );
+        let projected =
+            crate::voxel::project_clip_positions(&world_positions, aspect, camera, lens);
         let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Helio voxel projected positions"),
             size: byte_len(&projected) as u64,
@@ -636,78 +384,25 @@ impl VoxelGraphics {
             mapped_at_creation: false,
         });
         queue.write_buffer(&vertex_buffer, 0, bytes_of_slice(&projected));
-        if !visible_indices.is_empty() {
-            queue.write_buffer(&index_buffer, 0, bytes_of_slice(&visible_indices));
-        }
+        queue.write_buffer(&index_buffer, 0, bytes_of_slice(&mesh.indices));
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("HelioV authenticated position3-uv-texture shader package"),
+            label: Some("HelioV authenticated position3 constant-RGBA shader package"),
             source: wgpu::ShaderSource::Wgsl(VOXEL_SHADER_WGSL.into()),
-        });
-        let material_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("HelioV canonical base-color material layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
-        });
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("HelioV canonical textured pipeline layout"),
-            bind_group_layouts: &[Some(&material_layout)],
-            immediate_size: 0,
-        });
-        let material_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("HelioV SceneDB texture residency binding"),
-            layout: &material_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(
-                        scene.texture_view_for_slot(texture_slot as usize),
-                    ),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(
-                        scene.texture_sampler_for_slot(texture_slot as usize),
-                    ),
-                },
-            ],
         });
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("HelioV VMX voxel pipeline"),
-            layout: Some(&pipeline_layout),
+            layout: None,
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: Some("vs_main"),
                 buffers: &[Some(wgpu::VertexBufferLayout {
-                    array_stride: core::mem::size_of::<ProjectedTexturedVertex>() as u64,
+                    array_stride: core::mem::size_of::<[f32; 3]>() as u64,
                     step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &[
-                        wgpu::VertexAttribute {
-                            format: wgpu::VertexFormat::Float32x3,
-                            offset: 0,
-                            shader_location: 0,
-                        },
-                        wgpu::VertexAttribute {
-                            format: wgpu::VertexFormat::Float32x2,
-                            offset: 12,
-                            shader_location: 1,
-                        },
-                    ],
+                    attributes: &[wgpu::VertexAttribute {
+                        format: wgpu::VertexFormat::Float32x3,
+                        offset: 0,
+                        shader_location: 0,
+                    }],
                 })],
                 compilation_options: Default::default(),
             },
@@ -736,13 +431,10 @@ impl VoxelGraphics {
         }
         Ok(Self {
             world_positions,
-            texture_coordinates,
-            world_indices: mesh.indices.clone(),
             vertex_buffer,
             index_buffer,
-            material_bind_group,
             pipeline,
-            index_count: u32::try_from(visible_indices.len())
+            index_count: u32::try_from(mesh.indices.len())
                 .map_err(|_| fail("voxel-index-count", ERR_INVALID_ARGUMENT))?,
         })
     }
@@ -754,26 +446,9 @@ impl VoxelGraphics {
         camera: &FlyCamera,
         lens: PerspectiveLens,
     ) -> Result<(), BackendFailure> {
-        let projected = projected_textured_vertices(
-            &self.world_positions,
-            &self.texture_coordinates,
-            aspect,
-            camera,
-            lens,
-        );
-        let visible_indices = crate::voxel::visible_voxel_indices(
-            &self.world_positions,
-            &self.world_indices,
-            aspect,
-            camera,
-            lens,
-        );
+        let projected =
+            crate::voxel::project_clip_positions(&self.world_positions, aspect, camera, lens);
         queue.write_buffer(&self.vertex_buffer, 0, bytes_of_slice(&projected));
-        if !visible_indices.is_empty() {
-            queue.write_buffer(&self.index_buffer, 0, bytes_of_slice(&visible_indices));
-        }
-        self.index_count = u32::try_from(visible_indices.len())
-            .map_err(|_| fail("voxel-index-count", ERR_INVALID_ARGUMENT))?;
         Ok(())
     }
 }
@@ -826,7 +501,6 @@ fn render_voxel_frame(
         });
         if graphics.index_count != 0 {
             pass.set_pipeline(&graphics.pipeline);
-            pass.set_bind_group(0, &graphics.material_bind_group, &[]);
             pass.set_vertex_buffer(0, graphics.vertex_buffer.slice(..));
             pass.set_index_buffer(graphics.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
             pass.draw_indexed(0..graphics.index_count, 0, 0..1);
@@ -852,28 +526,6 @@ fn render_voxel_frame(
         bytes: info.bytes,
         timeline,
     })
-}
-
-#[derive(Clone, Copy)]
-#[repr(C)]
-struct ProjectedTexturedVertex {
-    position: [f32; 3],
-    uv: [f32; 2],
-}
-
-fn projected_textured_vertices(
-    world_positions: &[[f32; 3]],
-    texture_coordinates: &[[f32; 2]],
-    aspect: f32,
-    camera: &FlyCamera,
-    lens: PerspectiveLens,
-) -> Vec<ProjectedTexturedVertex> {
-    let positions = crate::voxel::project_clip_positions(world_positions, aspect, camera, lens);
-    positions
-        .into_iter()
-        .zip(texture_coordinates.iter().copied())
-        .map(|(position, uv)| ProjectedTexturedVertex { position, uv })
-        .collect()
 }
 
 fn byte_len<T>(values: &[T]) -> usize {
@@ -1034,31 +686,8 @@ struct VmxTextureView {
     storage: Arc<VmxTextureStorage>,
 }
 
-#[derive(Clone, Copy, Debug)]
-struct VmxSampler {
-    address_mode_u: wgpu::AddressMode,
-    address_mode_v: wgpu::AddressMode,
-    mag_filter: wgpu::FilterMode,
-    min_filter: wgpu::FilterMode,
-}
-
-#[derive(Clone, Debug)]
-struct VmxBindGroupLayout;
-
-impl BindGroupLayoutInterface for VmxBindGroupLayout {}
-
-#[derive(Clone, Debug)]
-struct VmxPipelineLayout;
-
-impl PipelineLayoutInterface for VmxPipelineLayout {}
-
-#[derive(Clone, Debug)]
-struct VmxBindGroup {
-    texture: Arc<VmxTextureStorage>,
-    sampler: VmxSampler,
-}
-
-impl BindGroupInterface for VmxBindGroup {}
+#[derive(Debug)]
+struct VmxSampler;
 
 #[derive(Debug)]
 struct VmxShaderModule {
@@ -1093,11 +722,8 @@ impl Drop for VmxRenderPipeline {
 }
 
 impl RenderPipelineInterface for VmxRenderPipeline {
-    fn get_bind_group_layout(&self, index: u32) -> DispatchBindGroupLayout {
-        if index != 0 {
-            return unsupported("pipeline bind-group index outside textured package");
-        }
-        DispatchBindGroupLayout::custom(VmxBindGroupLayout)
+    fn get_bind_group_layout(&self, _index: u32) -> DispatchBindGroupLayout {
+        unsupported("constant-RGBA package exposes no bind groups")
     }
 }
 
@@ -1117,7 +743,6 @@ enum VmxCommand {
         first_index: u32,
         index_count: u32,
         clear_rgba8_srgb: u32,
-        material: DispatchBindGroup,
     },
 }
 
@@ -1139,7 +764,6 @@ struct VmxRenderPass {
     pipeline: Option<DispatchRenderPipeline>,
     vertex: Option<(DispatchBuffer, u64)>,
     index: Option<(DispatchBuffer, u64)>,
-    material: Option<DispatchBindGroup>,
     emitted: bool,
 }
 
@@ -1284,81 +908,18 @@ impl DeviceInterface for VmxDevice {
 
     fn create_bind_group_layout(
         &self,
-        desc: &wgpu::BindGroupLayoutDescriptor<'_>,
+        _: &wgpu::BindGroupLayoutDescriptor<'_>,
     ) -> DispatchBindGroupLayout {
-        if desc.entries.len() != 2 {
-            return unsupported("bind group layout outside one sampled texture contract");
-        }
-        let texture = desc.entries.iter().find(|entry| entry.binding == 0);
-        let sampler = desc.entries.iter().find(|entry| entry.binding == 1);
-        let texture_ok = texture.is_some_and(|entry| {
-            entry.visibility == wgpu::ShaderStages::FRAGMENT
-                && entry.count.is_none()
-                && matches!(
-                    entry.ty,
-                    wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    }
-                )
-        });
-        let sampler_ok = sampler.is_some_and(|entry| {
-            entry.visibility == wgpu::ShaderStages::FRAGMENT
-                && entry.count.is_none()
-                && entry.ty == wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering)
-        });
-        if !texture_ok || !sampler_ok {
-            return unsupported("bind group layout outside one sampled texture contract");
-        }
-        DispatchBindGroupLayout::custom(VmxBindGroupLayout)
+        unsupported("constant-RGBA package has no bind group layouts")
     }
-    fn create_bind_group(&self, desc: &wgpu::BindGroupDescriptor<'_>) -> DispatchBindGroup {
-        if desc.layout.as_custom::<VmxBindGroupLayout>().is_none() || desc.entries.len() != 2 {
-            return unsupported("bind group outside sampled texture contract");
-        }
-        let texture = desc.entries.iter().find(|entry| entry.binding == 0);
-        let sampler = desc.entries.iter().find(|entry| entry.binding == 1);
-        let Some(wgpu::BindingResource::TextureView(texture)) =
-            texture.map(|entry| &entry.resource)
-        else {
-            return unsupported("bind group missing sampled texture view");
-        };
-        let Some(wgpu::BindingResource::Sampler(sampler)) = sampler.map(|entry| &entry.resource)
-        else {
-            return unsupported("bind group missing filtering sampler");
-        };
-        let texture = texture
-            .as_custom::<VmxTextureView>()
-            .expect("VMX bind group received a foreign texture view");
-        let sampler = sampler
-            .as_custom::<VmxSampler>()
-            .expect("VMX bind group received a foreign sampler");
-        let VmxTextureBacking::Linear { destroyed, .. } = &texture.storage.backing else {
-            return unsupported("sampled UI4 render target");
-        };
-        if destroyed.load(Ordering::Acquire) {
-            return unsupported("destroyed sampled texture");
-        }
-        DispatchBindGroup::custom(VmxBindGroup {
-            texture: Arc::clone(&texture.storage),
-            sampler: *sampler,
-        })
+    fn create_bind_group(&self, _: &wgpu::BindGroupDescriptor<'_>) -> DispatchBindGroup {
+        unsupported("constant-RGBA package has no bind groups")
     }
     fn create_pipeline_layout(
         &self,
-        desc: &wgpu::PipelineLayoutDescriptor<'_>,
+        _: &wgpu::PipelineLayoutDescriptor<'_>,
     ) -> DispatchPipelineLayout {
-        if desc.immediate_size != 0 || desc.bind_group_layouts.len() != 1 {
-            return unsupported("pipeline layout outside sampled texture contract");
-        }
-        let Some(layout) = desc.bind_group_layouts[0] else {
-            return unsupported("pipeline layout has an empty material group");
-        };
-        if layout.as_custom::<VmxBindGroupLayout>().is_none() {
-            return unsupported("foreign material bind group layout");
-        }
-        DispatchPipelineLayout::custom(VmxPipelineLayout)
+        unsupported("constant-RGBA package uses the implicit empty pipeline layout")
     }
     fn create_render_pipeline(
         &self,
@@ -1377,15 +938,10 @@ impl DeviceInterface for VmxDevice {
             .module
             .as_custom::<VmxShaderModule>()
             .expect("VMX pipeline received a foreign fragment shader");
-        let Some(_layout) = desc
-            .layout
-            .and_then(|layout| layout.as_custom::<VmxPipelineLayout>())
-        else {
-            return unsupported("textured package requires its explicit pipeline layout");
-        };
         let buffers: Vec<_> = desc.vertex.buffers.iter().flatten().collect();
         let targets: Vec<_> = fragment.targets.iter().flatten().collect();
-        if shader.shader != fragment_shader.shader
+        if desc.layout.is_some()
+            || shader.shader != fragment_shader.shader
             || desc.vertex.entry_point != Some("vs_main")
             || fragment.entry_point != Some("fs_main")
             || buffers.len() != 1
@@ -1411,14 +967,13 @@ impl DeviceInterface for VmxDevice {
         }
         let attributes = buffers[0].attributes;
         if buffers[0].step_mode != wgpu::VertexStepMode::Vertex
-            || attributes.len() != 2
+            || buffers[0].array_stride != core::mem::size_of::<[f32; 3]>() as u64
+            || attributes.len() != 1
             || attributes[0].shader_location != 0
             || attributes[0].format != wgpu::VertexFormat::Float32x3
-            || attributes[1].shader_location != 1
-            || attributes[1].format != wgpu::VertexFormat::Float32x2
-            || attributes[1].offset != attributes[0].offset.saturating_add(12)
+            || attributes[0].offset != 0
         {
-            return unsupported("vertex layout outside position3-uv package interface");
+            return unsupported("vertex layout outside position3 package interface");
         }
         let pipeline = self
             .shared
@@ -1545,12 +1100,7 @@ impl DeviceInterface for VmxDevice {
         {
             return unsupported("sampler outside baseline repeat/clamp contract");
         }
-        DispatchSampler::custom(VmxSampler {
-            address_mode_u: desc.address_mode_u,
-            address_mode_v: desc.address_mode_v,
-            mag_filter: desc.mag_filter,
-            min_filter: desc.min_filter,
-        })
+        DispatchSampler::custom(VmxSampler)
     }
     fn create_query_set(&self, _: &wgpu::QuerySetDescriptor<'_>) -> DispatchQuerySet {
         unsupported("query sets")
@@ -1742,7 +1292,6 @@ impl QueueInterface for VmxQueue {
                         first_index,
                         index_count,
                         clear_rgba8_srgb,
-                        material,
                     } => {
                         let target = surface
                             .lock()
@@ -1754,17 +1303,6 @@ impl QueueInterface for VmxQueue {
                             .expect("VMX draw pipeline");
                         let vertex = vertex.as_custom::<VmxBuffer>().expect("VMX vertex buffer");
                         let index = index.as_custom::<VmxBuffer>().expect("VMX index buffer");
-                        let material = material
-                            .as_custom::<VmxBindGroup>()
-                            .expect("VMX material bind group");
-                        let VmxTextureBacking::Linear {
-                            buffer: texture,
-                            info,
-                            ..
-                        } = &material.texture.backing
-                        else {
-                            unreachable!("sampled UI4 targets are rejected at bind-group creation")
-                        };
                         let descriptor = IndexedDraw {
                             vertex_offset,
                             index_offset,
@@ -1772,11 +1310,6 @@ impl QueueInterface for VmxQueue {
                             first_index,
                             base_vertex: 0,
                             clear_rgba8_srgb,
-                            sampled_texture: texture.raw(),
-                            texture_width: info.width,
-                            texture_height: info.height,
-                            texture_pitch: info.bytes_per_row,
-                            sampler_flags: vmx_sampler_flags(material.sampler),
                             ..IndexedDraw::default()
                         };
                         match self.shared.device.submit_ui4_indexed(
@@ -1889,7 +1422,6 @@ impl CommandEncoderInterface for VmxCommandEncoder {
             pipeline: None,
             vertex: None,
             index: None,
-            material: None,
             emitted: false,
         })
     }
@@ -1955,18 +1487,11 @@ impl RenderPassInterface for VmxRenderPass {
     }
     fn set_bind_group(
         &mut self,
-        index: u32,
-        bind_group: Option<&DispatchBindGroup>,
-        dynamic_offsets: &[wgpu::DynamicOffset],
+        _index: u32,
+        _bind_group: Option<&DispatchBindGroup>,
+        _dynamic_offsets: &[wgpu::DynamicOffset],
     ) {
-        if index != 0 || !dynamic_offsets.is_empty() {
-            unsupported::<()>("bind group outside textured package contract");
-        }
-        let bind_group = bind_group.expect("textured draw requires material bind group 0");
-        if bind_group.as_custom::<VmxBindGroup>().is_none() {
-            unsupported::<()>("foreign material bind group");
-        }
-        self.material = Some(bind_group.clone());
+        unsupported::<()>("constant-RGBA package exposes no bind groups");
     }
     fn set_index_buffer(
         &mut self,
@@ -2023,10 +1548,6 @@ impl RenderPassInterface for VmxRenderPass {
             .index
             .take()
             .expect("draw_indexed requires an index buffer");
-        let material = self
-            .material
-            .take()
-            .expect("draw_indexed requires material bind group 0");
         self.commands
             .lock()
             .expect("VMX command encoder mutex")
@@ -2040,7 +1561,6 @@ impl RenderPassInterface for VmxRenderPass {
                 first_index: indices.start,
                 index_count: indices.end - indices.start,
                 clear_rgba8_srgb: self.clear_rgba8_srgb,
-                material,
             });
         self.emitted = true;
     }
@@ -2173,23 +1693,6 @@ fn vmx_buffer_usage(usage: wgpu::BufferUsages) -> u32 {
         out |= BUFFER_USAGE_INDEX;
     }
     out
-}
-
-fn vmx_sampler_flags(sampler: VmxSampler) -> u32 {
-    let mut flags = 0u32;
-    if sampler.address_mode_u == wgpu::AddressMode::Repeat {
-        flags |= vgpu::SAMPLER_ADDRESS_U_REPEAT;
-    }
-    if sampler.address_mode_v == wgpu::AddressMode::Repeat {
-        flags |= vgpu::SAMPLER_ADDRESS_V_REPEAT;
-    }
-    if sampler.mag_filter == wgpu::FilterMode::Linear {
-        flags |= vgpu::SAMPLER_MAG_LINEAR;
-    }
-    if sampler.min_filter == wgpu::FilterMode::Linear {
-        flags |= vgpu::SAMPLER_MIN_LINEAR;
-    }
-    flags
 }
 
 fn fnv1a64(bytes: &[u8]) -> u64 {

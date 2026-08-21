@@ -43,8 +43,8 @@ fn main() {
     logl::log(
         logl::level::INFO,
         format_args!(
-            "HelioV: dedicated Intel texture bring-up stage={} policy=authenticated-WGPU-package/no-alternate-renderer failure-isolates=sampled-surface+sampler-message",
-            wgpu_vmx::TEXTURE_BRINGUP_CONTRACT,
+            "HelioV: scene baseline stage={} policy=authenticated-WGPU-package/no-texture-assets/no-alternate-renderer",
+            wgpu_vmx::SCENE_BASELINE_CONTRACT,
         ),
     );
     match platform::probe_vgpu() {
@@ -104,13 +104,13 @@ fn main() {
             logl::log(
                 logl::level::INFO,
                 format_args!(
-                    "HelioV: Helio textured voxel shader/pipeline indexed draw retired and SURFLIVE confirmed extent={}x{} pitch={} bytes={} timeline={} path=Helio-MeshUpload+SceneDB-TextureResidency->WGPU-texture-bind-group+indexed-draw->VMX-Render->UI4-release->SURFLIVE",
+                    "HelioV: Helio constant-RGBA voxel shader/pipeline indexed draw retired and SURFLIVE confirmed extent={}x{} pitch={} bytes={} timeline={} path=Helio-MeshUpload+SceneDB-world->WGPU-indexed-draw->VMX-Render->UI4-release->SURFLIVE",
                     report.width, report.height, report.pitch, report.bytes, report.timeline,
                 ),
             );
             logl::log(
                 logl::level::INFO,
-                "HelioV: visible textured voxel submission is live; authenticated sampled shader module, graphics pipeline, canonical texture view/sampler bind group, vertex/index bindings, and draw_indexed all executed through the ordinary TRUEOS Render frontier",
+                "HelioV: visible monocolor voxel world is live; authenticated constant-RGBA shader module, graphics pipeline, vertex/index bindings, and draw_indexed all executed through the ordinary TRUEOS Render frontier",
             );
             logl::log(
                 logl::level::INFO,

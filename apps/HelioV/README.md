@@ -46,28 +46,24 @@ authority, so the current TRUEOS backend needs only buffer creation and
 `Queue::write_buffer`; normal Helio remains on GPU-copy growth and no `Once`
 handoff is weakened. An actual UI4 Blueprint back buffer is mapped into the
 caller's isolated VMX GPUVM and exposed as a `wgpu::Texture`. The untextured
-indexed path and UI4 SURFLIVE handoff are proven. The authenticated fixed mip-0
-shader sampler read is now also proven through exact Render0 retirement and
-SURFLIVE on the four-vertex diagnostic rung.
-The current probe no longer synthesizes a checkerboard: it reads the kernel's
-encoded JPEG logo, decodes it through `vmedia`, bounds it to the authenticated
-16x16 mip-0 footprint, inserts it through `Scene::insert_texture`, resolves the
-exact non-compacting SceneDB residency slot, and binds that slot's canonical
-view/sampler pair. This closes asset decode, SceneDB-to-bind-group identity, and
-the first physical sampled presentation.
+indexed path and UI4 SURFLIVE handoff are proven. Texture experiments later
+proved decode, RGBA8 upload, SceneDB residency, bind-group identity, and a fixed
+mip-0 sampled presentation on a four-vertex probe. They did not prove the
+sampled voxel world: full, visibility-compacted, densely reindexed, and finally
+2,048-triangle / 6,144-index versions all reached the graphics submission but
+failed with the same `ui4-indexed-submit rc=-32` before SURFLIVE. That result
+rules out JPEG versus PNG decode and strongly rules out mesh size as the next
+useful variable.
 
-The next physical log proved that VMX accepts and uploads the actual
-41,784-vertex / 62,676-index Helio voxel world and launches its frame. The
-unculled sampled draw then missed Render0's bounded two-second /
-five-million-poll release window, producing `rc=-32` before SURFLIVE. The
-default build therefore retains the complete Helio `MeshUpload` but submits a
-camera-dependent index snapshot: closed-voxel backfaces and triangles wholly
-outside one frustum plane are removed. The initial view measures 31,203
-submitted indices, and camera/resize changes rebuild that snapshot. It keeps
-the ordinary WGPU texture/view/sampler, bind-group, pipeline, indexed-draw and
-UI4 path while still excluding implicit derivatives and filtering. The normal
-`textureSample` package remains intact behind `--no-default-features`. There
-is no CPU paint or alternate renderer fallback.
+The active recovery artifact therefore parks asset work completely. It does
+not read or decode an image, allocate a sampled texture, create a sampler or
+bind group, or expose UVs to the pipeline. It restores the previously proven
+authenticated constant-RGBA package with one `Float32x3` vertex attribute and
+submits the complete 41,784-vertex / 62,676-index Helio `MeshUpload`. SceneDB's
+Helio-object lifecycle, UI4-routed fly camera, transactional resize, ordinary
+WGPU indexed draw, VMX Render path, and SURFLIVE handoff remain unchanged. This
+is a deliberate scene-recovery test, not a replacement renderer or CPU paint
+fallback.
 
 The retained proof already follows UI4's maximize/restore procedure. It stages
 a private replacement generation, imports that exact new lease into VMX,
@@ -89,8 +85,8 @@ compatibility upload for the current position-only shader package and is
 refreshed after both camera and resize changes.
 
 Current result: `cargo bp apps/HelioV` compiles the complete target dependency
-closure and emits `dist/heliov.bp`. Its default artifact is the fixed-texel
-visibility-compacted world retirement rung. See
+closure and emits `dist/heliov.bp`. Its default artifact is the full-world
+constant-RGBA recovery rung with no asset path. See
 [GPU_BOUNDARY.md](GPU_BOUNDARY.md) for the measured boundary, rather than a
 guessed list of platform problems.
 

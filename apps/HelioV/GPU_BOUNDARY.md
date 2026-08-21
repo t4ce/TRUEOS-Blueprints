@@ -4,36 +4,31 @@ This file records the measured boundary after compiling HelioV as a real
 `x86_64-unknown-trueos` Blueprint. It is deliberately not a list of speculative
 porting tasks.
 
-## Texture bring-up status correction
+## Active scene-recovery boundary
 
-Texture allocation, CPU upload, view/sampler objects, bind-group validation,
-fragment sampling, exact Render0 retirement, UI4 release, and SURFLIVE are now
-proven end to end for the authenticated fixed mip-0 package on the four-vertex
-diagnostic rung. Older standalone JPG/PNG/video paths did not close this gap
-because they never sampled an image from a mesh fragment shader.
+The constant-RGBA indexed world and UI4 SURFLIVE path were physically proven
+before texture bring-up. Subsequent texture work proved PNG/JPEG decode to
+RGBA8, SceneDB texture residency, the canonical texture/sampler binding, and
+fixed mip-0 fragment sampling on the four-vertex diagnostic draw.
 
-The supplied physical log advances that boundary: VMX accepted and uploaded
-the real 41,784-vertex / 62,676-index Helio voxel world, acquired the UI4
-target, installed depth and launched the frame. Render0 did not publish its
-exact release cookie inside the bounded two-second / five-million-poll window,
-so the broker reported device loss (`rc=-32`) before SURFLIVE. This is a
-retirement limit, not a mesh-size or descriptor rejection.
+The sampled world did not retire. The complete 41,784-vertex / 62,676-index
+draw, the 31,203-visible-index draw, its 20,807-vertex dense remap, and finally
+the nearest 2,048 triangles / 4,122 vertices / 6,144 indices all reached
+`ui4-indexed-submit` and failed with `rc=-32` before SURFLIVE. Decode and
+sampled mesh size are therefore parked variables, not active prerequisites.
 
-The current default Blueprint keeps that complete `MeshUpload` authoritative
-but compacts the direct-draw index snapshot for the current camera. Closed
-voxel backfaces and triangles wholly outside one frustum plane are omitted;
-the initial 640x360 view measures 31,203 submitted indices instead of 62,676,
-and visibility is rebuilt after camera or aspect changes. This remains the
-same authenticated fixed mip-0 `textureLoad` package, never a fallback
-renderer. Its compacted world retirement still needs physical proof. Building
-HelioV with `--no-default-features` restores the canonical filtered voxel
-material package, which is also not yet physically proven.
+The default Blueprint now restores the known-good scene package exactly:
+constant fragment RGBA, one clip-space `Float32x3` attribute, implicit empty
+pipeline layout, no UV stream, no sampled texture fields, no sampler, and no
+bind group. It submits the complete authoritative Helio mesh. The SceneDB
+Helio-object lifecycle, UI4-routed camera, resize transaction, WGPU indexed
+draw, VMX submission, and SURFLIVE acknowledgment remain in the test.
 
-Its pixels now come from `kernel:logo`: the Blueprint reads encoded JPEG bytes,
-decodes them through `vmedia`, downsamples to the package's bounded 16x16 mip-0
-footprint, inserts the upload through the real Helio `Scene`, and binds the
-view/sampler at `TextureResidency::slot_for`. The public `TextureId` entity slot
-is logged separately and is never treated as a renderer array index.
+This recovery artifact must produce no `texture asset decoded` or
+`SceneDB-TextureResidency` material log. Its success gate is the
+`Helio constant-RGBA ... SURFLIVE confirmed` line followed by the live
+monocolor-world and camera logs. Texture work resumes only after that baseline
+is re-established on the physical machine.
 
 ## Proven now
 
@@ -43,8 +38,8 @@ is logged separately and is never treated as a renderer array index.
 - Hosted-only OpenXR loading is an optional Helio feature and is absent from
   the TRUEOS dependency closure. Hosted Helio keeps it in the default profile.
 - WGPU's public `custom` backend interfaces compile for TRUEOS. HelioV names
-  the contract `wgpu-30-custom/vmx-vgpu-v6-sampled-texture-surflive` so loss of that feature
-  is a build failure rather than a runtime surprise.
+  the active contract `wgpu-30-custom/vmx-vgpu-v6-constant-rgba-recovery` so
+  accidental re-entry into the sampled package is visible in the first log.
 - The Blueprint imports and exercises the generic VMX vGPU device, buffer,
   read/write, render-queue, submission-timeline, and wait operations.
 - A buffer-first WGPU custom `Device`/`Queue` maps WGPU buffer creation and
@@ -58,9 +53,8 @@ is logged separately and is never treated as a renderer array index.
   presence, and generation columns rebuild replacement allocations from their
   complete CPU shadows using `Queue::write_buffer`. Default Helio/SceneDB
   authorities retain GPU-copy growth, `Once` columns are ineligible, and
-  TRUEOS gains no demo-specific kernel path. The high-level `helio::Scene` is
-  now constructed for the bounded texture/material witness; the complete
-  `helio::Renderer` graph remains outside this compatibility rung.
+  TRUEOS gains no demo-specific kernel path. The complete `helio::Renderer`
+  graph remains outside this compatibility rung.
 - The voxel source produces a deterministic face-culled 6x6 chunk world as
   Helio `MeshUpload` data, retaining per-chunk bounds and index ranges. No
   Stratum runtime and no TRUEOS-specific renderer, scene store, or material
@@ -72,15 +66,16 @@ is logged separately and is never treated as a renderer array index.
   lease; device close is rejected while an imported target is live.
 - WGPU command encoding, command-buffer submission, exact Intel retirement,
   and UI4 presentation are proven for render-pass clear and the untextured
-  indexed graphics package. HelioV also creates a real Helio/SceneDB texture
-  and material from a kernel JPEG decoded by `vmedia`, resolves the canonical
-  non-compacting residency slot, and creates the WGPU RGBA8
+  indexed graphics package. An earlier run also created a real Helio/SceneDB
+  texture and material from a kernel JPEG decoded by `vmedia`, resolved the
+  canonical non-compacting residency slot, and created the WGPU RGBA8
   texture/view/sampler, bind group, sampled WGSL module, immutable pipeline and
   indexed draw. The fixed mip-0 sampled submission retires and reaches
   SURFLIVE on the diagnostic quad. The complete world upload and launch are
   also proven, but its unculled single draw exceeded the exact-retirement
-  window; the camera-compacted world submission is the active bring-up
-  frontier.
+  window. Even the 2,048-triangle sampled snapshot failed identically. Those
+  asset/material paths are now parked; the full constant-RGBA world is the
+  active recovery frontier.
 - A separate build-time TRUEOS capture now compiles Helio's unmodified
   G-buffer WGSL to Intel SIMD8 VS/FS ISA with the real 40-byte vertex layout,
   two bind groups, 256-wide texture/sampler arrays, eight color targets, and
@@ -101,16 +96,16 @@ is logged separately and is never treated as a renderer array index.
 
 | Layer | Ownership in the indexed voxel frame |
 | --- | --- |
-| HelioV Blueprint | Builds the deterministic chunked world as an authoritative `helio::MeshUpload`, compacts only its direct-draw index snapshot for the live camera, adapts the focused UI4 input route into shared Helio navigation, and runs the WGPU event/presentation loop. |
+| HelioV Blueprint | Builds the deterministic chunked world as an authoritative `helio::MeshUpload`, projects its complete position stream for the live camera, adapts the focused UI4 input route into shared Helio navigation, and runs the WGPU event/presentation loop. |
 | `helio-controls` | Owns platform-neutral navigation actions, held/delta reduction, fly-camera behavior, and lens/pose handoff; it owns no UI4 or WGPU policy. |
-| WGPU custom backend | Validates the WGSL/package and position+UV pipeline interface, maps Helio texture residency to a generic opaque buffer, retains the texture/view/sampler bind group, and records render-pass bindings plus `draw_indexed`. |
-| VMX vGPU broker | Owns generation-tagged resources, validates every vertex/index/texture byte range and the admitted sampled-package interface, and never receives Helio/voxel concepts. |
-| TRUEOS Render | Copies the bounded position+UV/index/texture snapshot into resident Render0 storage and installs the generic RGBA8 surface and sampler table. Constant-colour and fixed mip-0 diagnostic work mint exact release fences. The 62,676-index world was accepted and launched but missed the bounded retirement window; the compacted-world and filtered packages remain to be retired. |
+| WGPU custom backend | Validates the exact constant-RGBA WGSL package and position-only pipeline interface, rejects bind groups, and records vertex/index bindings plus `draw_indexed`. |
+| VMX vGPU broker | Owns generation-tagged resources, validates the complete vertex/index byte ranges and admitted constant package, and never receives Helio/voxel concepts. |
+| TRUEOS Render | Copies the full position/index snapshot into resident Render0 storage and mints the exact release fence for the known-good constant-colour package. No sampled surface or sampler table participates in this recovery draw. |
 | UI4 | Retains the old front across resize, accepts only a release matching its private write lease, commits/publishes that generation, and reports physical SURFLIVE. |
 
-The current AOT package accepts clip-space `Float32x3` positions, `Float32x2`
-UVs, and one nearest/repeat RGBA8 sampled texture. Camera projection is still performed in the
-Blueprint adapter before `Queue::write_buffer`; the source pose and movement
+The current AOT package accepts only clip-space `Float32x3` positions and emits
+constant fragment RGBA. Camera projection is still performed in the Blueprint
+adapter before `Queue::write_buffer`; the source pose and movement
 now come from the same shared Helio controller used by hosted examples. This is
 the narrow compatibility step that keeps the first voxel frame interactive
 without teaching the kernel about cameras or materials. A camera-uniform shader
@@ -127,9 +122,9 @@ complete high-level `helio::Scene`/`Renderer` and execute its graph:
 | --- | --- | --- |
 | Device, buffers, queue, timeline | Present and probed by HelioV; copy, vertex, and index usages map to opaque buffers. CPU-shadowed SceneDB partners can grow without encoder copies. | Complete public mapping semantics, generic GPU-native copies for `Once`/GPU-only storage and other WGPU clients, callbacks, and asynchronous device-loss rules. |
 | Limits/features/errors | Only coarse capability bits and device info | Publish WebGPU limits, format features, error scopes, and device-loss callbacks. |
-| Textures/views/samplers | One linear RGBA8 D2 allocation/view plus nearest-repeat sampler reaches fixed mip-0 fragment sampling and SURFLIVE; the full world is accepted through frame launch but its unculled draw misses exact retirement | Retire the camera-compacted fixed-load world, then filtered sampling; afterward generalize mip/layer/view ranges, formats, clamp/linear sampler encoding, and GPU-native copy/clear operations. |
+| Textures/views/samplers | The adapter capability and diagnostic sampled proof exist, but the active recovery artifact creates none of these objects. Every tested sampled-world size currently fails before SURFLIVE. | Keep parked until the constant-RGBA world is physically re-proven, then diagnose the structural sampled-package failure independently of decode. |
 | Shader modules | One exact WGSL source is matched to an authenticated AOT package digest and represented by an opaque vGPU object | Generalize the build-produced package catalog and reflect compilation diagnostics/features for the Helio shader set. |
-| Bind groups/layouts | One fragment texture+sampler group is live and validated end-to-end | Generalize typed descriptor tables, arrays, buffers, stage visibility, and dynamic offsets. |
+| Bind groups/layouts | The active constant package has an implicit empty layout and explicitly rejects bind groups. A one-texture diagnostic group was previously proven. | Resume only with the sampled-package investigation; later generalize typed descriptor tables, arrays, buffers, stage visibility, and dynamic offsets. |
 | Render pipelines | Opaque immutable shader-package plus position-layout pipeline objects; one color target/topology is admitted | Add the raster/depth/blend/target variants requested by Helio graphs and package metadata. |
 | Command encoder and passes | Clear, pipeline bind, vertex bind, Uint32 index bind, and one direct indexed draw execute through WGPU | Add generic copy, compute dispatch, bind groups, multiple draws, and indexed-indirect packets. |
 | Presentation | Exact UI4 lease import, resident-Render release, publish, SURFLIVE acknowledgment, transactional maximize/restore, and demand-driven camera redraw all run on the indexed path; frame-begin backpressure retains the dirty camera pose | Add brokered continuous cadence and complete recovery/device-loss rules around a full Helio graph. |
@@ -152,21 +147,20 @@ unsupported and unexposed; this is the explicit staging policy behind
    the current backend through the explicit CPU-shadow rewrite policy. Extract
    the adapter as a reusable crate and add generic GPU-native buffer copies for
    storage that has no reconstructible CPU authority.
-2. The sampled shader/pipeline/position+UV/texture/sampler/bind-group/direct-draw
-   package now retires through SURFLIVE on the six-index diagnostic mesh. The
-   complete world is accepted through resident upload and frame launch, but its
-   unculled draw misses the bounded release window. Retire the camera-compacted
-   fixed-load world and then the filtered-sample package before claiming
-   textured-world visibility. Afterward add a
-   camera-uniform package and the buffer/binding variants needed to stop the
-   remaining CPU projection compatibility upload.
+2. Re-prove the complete constant-RGBA world, camera, resize, and SURFLIVE path
+   with the recovery artifact. Only then resume the sampled-package diagnosis;
+   decoded asset format and triangle-count tuning are already excluded as
+   useful next variables. Afterward add a camera-uniform package and the
+   buffer/binding variants needed to stop the remaining CPU projection upload.
 3. The SceneDB partner-row lifecycle now covers every world chunk plus one
    transform/remove/regrow proof. Extend that identity into mesh residency,
    compaction, visibility, and indexed-indirect drawing.
 4. Run a second Helio graph through the unchanged WGPU/VMX interface.
 5. Texture decode, residency, upload, exact slot binding, and fixed-load sampled
-   presentation now exist. Extend that authority to the descriptor arrays and
-   material buffers consumed by the full G-buffer after the world-draw gate.
+   presentation were proven on the diagnostic draw. They are intentionally
+   absent from the recovery artifact. Reintroduce them behind a separate gate
+   after the scene baseline, then extend that authority to the descriptor
+   arrays and material buffers consumed by the full G-buffer.
 
 Step 2's visible indexed frame establishes the first real graphics territory.
 Passing steps 2–4 in their complete form establishes that the adapter is an
