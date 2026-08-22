@@ -120,7 +120,6 @@ path = "benches/crossbeam.rs"
 
 [dependencies.crossbeam-utils]
 version = "0.8.18"
-path = "../crossbeam-utils-0.8.21"
 default-features = false
 
 [dev-dependencies.num_cpus]
