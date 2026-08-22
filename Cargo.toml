@@ -49,6 +49,7 @@ members = [
     "probes/wls",
 ]
 exclude = [
+    "apps/prismq/crates/prism-q",
     "crates",
     "crates/*"
 ]
@@ -99,7 +100,6 @@ lru = "0.18"
 octocrab = "0.53"
 palette = { version = "0.7.6", default-features = false, features = ["libm"] }
 pretty_assertions = "1"
-prism-q = { version = "=0.20.0", default-features = true }
 rand = "0.10"
 rand_chacha = "0.10"
 rayon = { version = "=1.12.0" }
@@ -219,7 +219,6 @@ hyper-util = { path = "vendor/hyper-util-0.1.20" }
 matchit = { path = "vendor/matchit-0.8.4" }
 mime = { path = "vendor/mime-0.3.17" }
 mio = { path = "vendor/mio-1.2.0" }
-prism-q = { path = "vendor/prism-q-0.20.0" }
 quinn = { path = "vendor/quinn-0.11.9" }
 quinn-proto = { path = "vendor/quinn-proto-0.11.14" }
 quinn-udp = { path = "vendor/quinn-udp-0.5.14" }
@@ -232,7 +231,6 @@ rustix = { path = "vendor/rustix-1.1.4-trueos" }
 rustls-rustcrypto = { path = "vendor/rustls-rustcrypto-0.0.2-alpha" }
 signal-hook-mio = { path = "vendor/signal-hook-mio-0.2.5-trueos" }
 socket2 = { path = "vendor/socket2-0.6.3" }
-spin = { path = "vendor/spin-0.10.0" }
 tokio = { path = "vendor/tokio-1.52.3" }
 tokio-macros = { path = "vendor/tokio-macros-2.7.0" }
 tokio-rustls = { path = "vendor/tokio-rustls-0.26.4" }

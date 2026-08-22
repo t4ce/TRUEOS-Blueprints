@@ -70,6 +70,6 @@ hashbrown = { version = "0.17.0", default-features = false, features = ["default
 libc = "=0.2.186"
 rand = "=0.10.1"
 scoped-tls = "=1.0.1"
-spin = "=0.10.0"
+spin = "=0.10.1"
 v = { path = "../../crates/trueos-v", default-features = false }
 wasm_sync = "=0.1.2"
