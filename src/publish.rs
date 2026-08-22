@@ -4,8 +4,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use sha2::{Digest, Sha256};
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 
 use crate::cli::PackageCatalog;
 
@@ -161,10 +161,9 @@ fn is_buildin_app(bp_file: &Path, package_catalog: PackageCatalog) -> Result<boo
         return Ok(false);
     }
 
-    let manifest: BuildinsManifest = serde_json::from_slice(
-        &fs::read(&manifest_path).map_err(io_string)?,
-    )
-    .map_err(|err| format!("invalid {}: {err}", manifest_path.display()))?;
+    let manifest: BuildinsManifest =
+        serde_json::from_slice(&fs::read(&manifest_path).map_err(io_string)?)
+            .map_err(|err| format!("invalid {}: {err}", manifest_path.display()))?;
     let app_name = bp_file
         .file_stem()
         .and_then(|value| value.to_str())
@@ -325,10 +324,7 @@ mod tests {
     use super::*;
 
     fn temporary_repository(label: &str) -> PathBuf {
-        let root = env::temp_dir().join(format!(
-            "trueos-publish-{}-{label}",
-            std::process::id()
-        ));
+        let root = env::temp_dir().join(format!("trueos-publish-{}-{label}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(root.join("dist")).unwrap();
         root
@@ -380,11 +376,7 @@ mod tests {
         let root = temporary_repository("buildins");
         let bp_file = root.join("dist/commander.bp");
         fs::write(&bp_file, b"blueprint").unwrap();
-        fs::write(
-            root.join("buildins.json"),
-            br#"{"buildins":["commander"]}"#,
-        )
-        .unwrap();
+        fs::write(root.join("buildins.json"), br#"{"buildins":["commander"]}"#).unwrap();
 
         assert!(is_buildin_app(&bp_file, PackageCatalog::Apps).unwrap());
         assert!(!is_buildin_app(&bp_file, PackageCatalog::Probes).unwrap());
@@ -396,11 +388,7 @@ mod tests {
         let root = temporary_repository("ordinary-app");
         let bp_file = root.join("dist/calculator.bp");
         fs::write(&bp_file, b"blueprint").unwrap();
-        fs::write(
-            root.join("buildins.json"),
-            br#"{"buildins":["commander"]}"#,
-        )
-        .unwrap();
+        fs::write(root.join("buildins.json"), br#"{"buildins":["commander"]}"#).unwrap();
 
         assert!(!is_buildin_app(&bp_file, PackageCatalog::Apps).unwrap());
         fs::remove_dir_all(root).unwrap();

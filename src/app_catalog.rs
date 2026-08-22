@@ -418,6 +418,38 @@ pub(crate) fn package_blueprint_replicatable(manifest_path: &Path) -> Result<boo
     Ok(false)
 }
 
+pub(crate) fn package_blueprint_filesystem_independent(
+    manifest_path: &Path,
+) -> Result<bool, String> {
+    let cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
+    let mut in_metadata = false;
+    for line in cargo_toml.lines() {
+        let trimmed = line.split('#').next().unwrap_or("").trim();
+        if trimmed.starts_with('[') {
+            in_metadata = trimmed == "[package.metadata.trueos-blueprint]";
+            continue;
+        }
+        if !in_metadata {
+            continue;
+        }
+        let Some((key, value)) = trimmed.split_once('=') else {
+            continue;
+        };
+        if key.trim() != "filesystem-independent" {
+            continue;
+        }
+        return match value.trim() {
+            "true" => Ok(true),
+            "false" => Ok(false),
+            _ => Err(format!(
+                "bad trueos-blueprint filesystem-independent value in {}",
+                manifest_path.display()
+            )),
+        };
+    }
+    Ok(false)
+}
+
 pub(crate) fn package_blueprint_argv_entry_v1(manifest_path: &Path) -> Result<bool, String> {
     let cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
     let mut in_metadata = false;
@@ -582,6 +614,31 @@ replicatable = true
         .unwrap();
 
         assert!(package_blueprint_replicatable(&path).unwrap());
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn reads_filesystem_independent_blueprint_metadata() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = env::temp_dir().join(format!("trueos-blueprint-fs-capability-{nonce}.toml"));
+        fs::write(
+            &path,
+            r#"
+[package]
+name = "probe"
+version = "0.1.0"
+
+[package.metadata.trueos-blueprint]
+filesystem-independent = true
+"#,
+        )
+        .unwrap();
+
+        assert!(package_blueprint_filesystem_independent(&path).unwrap());
 
         let _ = fs::remove_file(path);
     }

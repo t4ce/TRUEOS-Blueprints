@@ -7,10 +7,12 @@ use alloc::{format, string::String, vec, vec::Vec};
 use core3::io::Cursor;
 use trueos::logl::{self, level};
 use trueos::ui4_scene::{Damage, Error as Ui4Error, Frame, output_dimensions, rgba};
-use trueos::{async_fs, image_source, input, vmedia, vsys};
+use trueos::{async_fs, image_source, input, replication, vmedia, vsys};
 
 const MAX_SOURCE_PIXELS: usize = 64 * 1024 * 1024;
 const MAX_FRAMES: usize = 32;
+const CHECKPOINT_VERSION: u64 = 1;
+const RESUME_FRAME_CADENCE_MS: u64 = 150;
 
 struct Image {
     width: u32,
@@ -31,6 +33,20 @@ struct OpenFrame {
     frame: Frame,
     view: View,
     image: Image,
+    source: String,
+    alignment: Alignment,
+    hit_testable: bool,
+}
+
+/// Everything valuable about an open image, without any old-kernel UI4
+/// capability. Decoded pixels make restore independent of TRUEOSFS and media
+/// decoder readiness.
+struct SuspendedFrame {
+    view: View,
+    image: Image,
+    source: String,
+    alignment: Alignment,
+    hit_testable: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -131,6 +147,10 @@ fn main() {
     let mut command = Vec::new();
 
     loop {
+        if let Some(prepare) = replication::poll_prepare_pause() {
+            prepare_pause(prepare, &mut frames);
+            continue;
+        }
         service_frames(&mut frames);
         if service_terminal(&mut command, &mut frames) {
             break;
@@ -259,65 +279,185 @@ fn run_line(line: &str, frames: &mut Vec<OpenFrame>) {
             return;
         }
     };
+    let source = String::from(path.trim());
+    match open_decoded_image(source, image, alignment, hit_testable, None) {
+        Ok(open) => {
+            logl::log(
+                level::INFO,
+                format_args!(
+                    "img: show source={} size={}x{} viewport={}x{} window={} align={alignment:?} hit={} native=1 frames={}/{}",
+                    open.source,
+                    open.image.width,
+                    open.image.height,
+                    open.view.viewport_width,
+                    open.view.viewport_height,
+                    open.frame.window_id(),
+                    hit_testable as u8,
+                    frames.len() + 1,
+                    MAX_FRAMES,
+                ),
+            );
+            frames.push(open);
+        }
+        Err((_suspended, error)) => logl::log(
+            level::ERROR,
+            format_args!("img: show source={path} error={error}"),
+        ),
+    }
+}
+
+fn open_decoded_image(
+    source: String,
+    image: Image,
+    alignment: Alignment,
+    hit_testable: bool,
+    restored_view: Option<View>,
+) -> Result<OpenFrame, (SuspendedFrame, String)> {
+    let suspended = |view: View, image: Image, error: String| {
+        (
+            SuspendedFrame {
+                view,
+                image,
+                source: source.clone(),
+                alignment,
+                hit_testable,
+            },
+            error,
+        )
+    };
     let (output_width, output_height) = output_dimensions().unwrap_or((2_560, 1_440));
     let viewport_width = image.width.min(output_width).max(1);
     let viewport_height = image.height.min(output_height).max(1);
+    let mut view = restored_view.unwrap_or_else(|| {
+        View::new(
+            viewport_width,
+            viewport_height,
+            image.width,
+            image.height,
+            alignment,
+        )
+    });
+    // A different post-update output mode must not resurrect an invalid
+    // extent, but otherwise preserve the exact pan/resize projection.
+    view.viewport_width = view.viewport_width.min(output_width).max(1);
+    view.viewport_height = view.viewport_height.min(output_height).max(1);
+    view.clamp_offsets();
     let (x, y) = aligned_position(
         output_width,
         output_height,
-        viewport_width,
-        viewport_height,
+        view.viewport_width,
+        view.viewport_height,
         alignment,
     );
-    let mut frame = match Frame::open_immutable(x, y, viewport_width, viewport_height) {
+    let mut frame = match Frame::open_immutable(x, y, view.viewport_width, view.viewport_height) {
         Ok(frame) => frame,
         Err(error) => {
-            logl::log(
-                level::ERROR,
-                format_args!(
-                    "img: viewport rejected source={path} image={}x{} viewport={}x{} error={error:?}",
-                    image.width, image.height, viewport_width, viewport_height
-                ),
-            );
-            return;
+            return Err(suspended(
+                view,
+                image,
+                format!("viewport rejected error={error:?}"),
+            ));
         }
     };
     if let Err(error) = frame.set_hit_testable(hit_testable) {
-        logl::log(
-            level::ERROR,
-            format_args!("img: hit-test source={path} error={error:?}"),
-        );
-        return;
+        return Err(suspended(view, image, format!("hit-test error={error:?}")));
     }
-    let view = View::new(
-        viewport_width,
-        viewport_height,
-        image.width,
-        image.height,
-        alignment,
-    );
     if let Err(error) = present(&mut frame, view, &image) {
-        logl::log(
-            level::ERROR,
-            format_args!("img: present source={path} error={error:?}"),
-        );
-        return;
+        return Err(suspended(view, image, format!("present error={error:?}")));
     }
+    Ok(OpenFrame {
+        frame,
+        view,
+        image,
+        source,
+        alignment,
+        hit_testable,
+    })
+}
+
+fn prepare_pause(prepare: replication::PreparePause, frames: &mut Vec<OpenFrame>) {
+    let suspended: Vec<SuspendedFrame> = frames
+        .drain(..)
+        .map(|open| SuspendedFrame {
+            view: open.view,
+            image: open.image,
+            source: open.source,
+            alignment: open.alignment,
+            hit_testable: open.hit_testable,
+        })
+        .collect();
     logl::log(
         level::INFO,
         format_args!(
-            "img: show source={path} size={}x{} viewport={}x{} window={} align={alignment:?} hit={} native=1 frames={}/{}",
-            image.width,
-            image.height,
-            viewport_width,
-            viewport_height,
-            frame.window_id(),
-            hit_testable as u8,
-            frames.len() + 1,
-            MAX_FRAMES,
+            "img: PreparePause operation={} reason={:?}; released UI4 frames={} decoded-state=retained Ready",
+            prepare.operation(),
+            prepare.reason,
+            suspended.len(),
         ),
     );
-    frames.push(OpenFrame { frame, view, image });
+
+    let resume = replication::ready(prepare, CHECKPOINT_VERSION);
+    match &resume {
+        Ok(identity) => logl::log(
+            level::INFO,
+            format_args!(
+                "img: Resume instance={} lineage={} generation={} clone={}; replaying frames cadence_ms={}",
+                identity.instance_guid(),
+                identity.lineage_guid(),
+                identity.generation,
+                identity.is_clone,
+                RESUME_FRAME_CADENCE_MS,
+            ),
+        ),
+        Err(error) => logl::log(
+            level::WARN,
+            format_args!(
+                "img: Ready rejected error={error:?}; rebuilding released UI4 frames locally"
+            ),
+        ),
+    }
+
+    for (index, mut saved) in suspended.into_iter().enumerate() {
+        let mut attempt = 0_u64;
+        loop {
+            attempt = attempt.saturating_add(1);
+            if index != 0 || attempt != 1 {
+                vsys::sleep_ms(RESUME_FRAME_CADENCE_MS);
+            }
+            let source = saved.source.clone();
+            match open_decoded_image(
+                saved.source,
+                saved.image,
+                saved.alignment,
+                saved.hit_testable,
+                Some(saved.view),
+            ) {
+                Ok(open) => {
+                    logl::log(
+                        level::INFO,
+                        format_args!(
+                            "img: replay source={} window={} viewport={}x{} attempt={attempt}",
+                            open.source,
+                            open.frame.window_id(),
+                            open.view.viewport_width,
+                            open.view.viewport_height,
+                        ),
+                    );
+                    frames.push(open);
+                    break;
+                }
+                Err((returned, error)) => {
+                    saved = returned;
+                    logl::log(
+                        level::WARN,
+                        format_args!(
+                            "img: replay source={source} waiting for UI4 attempt={attempt} error={error}"
+                        ),
+                    );
+                }
+            }
+        }
+    }
 }
 
 fn aligned_position(

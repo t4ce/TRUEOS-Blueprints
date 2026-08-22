@@ -11,6 +11,7 @@ use crate::toolchain;
 const BLUEPRINT_PAYLOAD_7Z: u16 = 2;
 pub(crate) const BLUEPRINT_CAP_REPLICATABLE: u16 = 1 << 8;
 pub(crate) const BLUEPRINT_CAP_ARGV_ENTRY_V1: u16 = 1 << 9;
+pub(crate) const BLUEPRINT_CAP_FILESYSTEM_INDEPENDENT: u16 = 1 << 10;
 const TRUEOS_ASSET_BUNDLE_MAGIC: &[u8; 4] = b"TRAS";
 const TRUEOS_ASSET_BUNDLE_VERSION: u16 = 1;
 const TRUEOS_ASSET_BUNDLE_FLAGS: u16 = 0;
@@ -903,6 +904,14 @@ mod tests {
         assert_eq!(
             blueprint_header_flags(BLUEPRINT_CAP_REPLICATABLE | BLUEPRINT_CAP_ARGV_ENTRY_V1),
             0x0302
+        );
+    }
+
+    #[test]
+    fn filesystem_independent_capability_keeps_the_payload_encoding() {
+        assert_eq!(
+            blueprint_header_flags(BLUEPRINT_CAP_FILESYSTEM_INDEPENDENT),
+            0x0402
         );
     }
 

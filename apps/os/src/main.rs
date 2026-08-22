@@ -1,4 +1,3 @@
-use std::env;
 use std::io::{self, Write};
 
 use crossterm::{
@@ -8,7 +7,7 @@ use crossterm::{
     style::{Attribute, Color, Print, ResetColor, SetAttribute, SetForegroundColor},
     terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use trueos::vshell;
+use trueos::{env, vshell};
 
 const PINK: Color = Color::Rgb {
     r: 255,

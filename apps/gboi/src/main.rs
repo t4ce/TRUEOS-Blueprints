@@ -236,9 +236,7 @@ fn list_roms(directory: &str) {
     shell_line(format!("gboi: ROMs in {label}").as_str());
     let mut found = 0usize;
     for entry in entries {
-        if !matches!(entry.kind, async_fs::NodeKind::File)
-            || !is_rom_name(entry.name.as_str())
-        {
+        if !matches!(entry.kind, async_fs::NodeKind::File) || !is_rom_name(entry.name.as_str()) {
             continue;
         }
         let path = if directory.is_empty() {

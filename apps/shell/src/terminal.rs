@@ -48,7 +48,11 @@ pub(crate) enum ForegroundColor {
     #[default]
     Default,
     Indexed(u8),
-    Rgb { red: u8, green: u8, blue: u8 },
+    Rgb {
+        red: u8,
+        green: u8,
+        blue: u8,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -545,16 +549,17 @@ impl Terminal {
                         index = index.saturating_add(2);
                     }
                     Some(2) => {
-                        let rgb = params
-                            .get(index + 2..index + 5)
-                            .and_then(|values| match values {
-                                [red, green, blue] => Some((
-                                    u8::try_from(*red).ok()?,
-                                    u8::try_from(*green).ok()?,
-                                    u8::try_from(*blue).ok()?,
-                                )),
-                                _ => None,
-                            });
+                        let rgb =
+                            params
+                                .get(index + 2..index + 5)
+                                .and_then(|values| match values {
+                                    [red, green, blue] => Some((
+                                        u8::try_from(*red).ok()?,
+                                        u8::try_from(*green).ok()?,
+                                        u8::try_from(*blue).ok()?,
+                                    )),
+                                    _ => None,
+                                });
                         if let Some((red, green, blue)) = rgb {
                             self.current_style.foreground =
                                 ForegroundColor::Rgb { red, green, blue };
@@ -922,9 +927,7 @@ mod tests {
     #[test]
     fn records_standard_bright_indexed_and_truecolor_foregrounds() {
         let mut terminal = Terminal::new(8, 1);
-        terminal.feed(
-            b"\x1b[30mA\x1b[37mB\x1b[90mC\x1b[97mD\x1b[38;5;202mE\x1b[38;2;1;2;3mF",
-        );
+        terminal.feed(b"\x1b[30mA\x1b[37mB\x1b[90mC\x1b[97mD\x1b[38;5;202mE\x1b[38;2;1;2;3mF");
 
         let cells = terminal.cells();
         assert_eq!(cells[0].style.foreground, ForegroundColor::Indexed(0));
@@ -947,7 +950,10 @@ mod tests {
         let mut terminal = Terminal::new(6, 1);
         terminal.feed(b"\x1b[31mA\x1b[39mB\x1b[32m\x1b[mC\x1b[33m\x1b[0mD");
 
-        assert_eq!(terminal.cells()[0].style.foreground, ForegroundColor::Indexed(1));
+        assert_eq!(
+            terminal.cells()[0].style.foreground,
+            ForegroundColor::Indexed(1)
+        );
         for cell in &terminal.cells()[1..4] {
             assert_eq!(cell.style.foreground, ForegroundColor::Default);
         }
