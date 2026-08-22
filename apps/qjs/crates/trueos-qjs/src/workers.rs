@@ -42,6 +42,7 @@ pub const CORE_KIND_PERF: u8 = 1;
 pub const CORE_KIND_EFF: u8 = 2;
 
 static LOGGED_WORKER_API_USE: AtomicBool = AtomicBool::new(false);
+static CHILD_WORKER_CONTEXT: AtomicBool = AtomicBool::new(false);
 
 // Slot 0 is BSP and slot 1 is the service AP; disposable worker carriers start at AP2.
 const FIRST_DISPOSABLE_SLOT: u32 = 2;
@@ -80,6 +81,11 @@ impl ContextWorkerState {
 static CONTEXT_WORKERS: Mutex<BTreeMap<usize, ContextWorkerState>> = Mutex::new(BTreeMap::new());
 
 struct WorkerState {
+    /// Opaque VMX child-Hull endpoint in the parent Blueprint.  The child
+    /// itself addresses its parent as handle zero and therefore stores none.
+    child_handle: u64,
+    // Retained only for the deprecated in-process task body below while the
+    // kernel bridge is being removed. New workers always use child_handle.
     startup: Option<Vec<u8>>,
     to_worker: VecDeque<Vec<u8>>,
     to_parent: VecDeque<Vec<u8>>,
@@ -89,9 +95,10 @@ struct WorkerState {
 }
 
 impl WorkerState {
-    fn new(startup: Vec<u8>) -> Self {
+    fn new(child_handle: u64) -> Self {
         Self {
-            startup: Some(startup),
+            child_handle,
+            startup: None,
             to_worker: VecDeque::new(),
             to_parent: VecDeque::new(),
             terminated: AtomicBool::new(false),
@@ -160,6 +167,22 @@ pub fn ctx_role(ctx: *mut qjs::JSContext) -> CtxRole {
     CtxRole::Main
 }
 
+/// Mark the hidden child Blueprint's one VM context as a worker context before
+/// module exports are evaluated. This is process-local; QuickJS values never
+/// cross the VMX child boundary.
+pub fn enter_child_context(ctx: *mut qjs::JSContext, worker_id: u32) {
+    if ctx.is_null() { return; }
+    CHILD_WORKER_CONTEXT.store(true, Ordering::Release);
+    CONTEXT_WORKERS.lock().entry(ctx as usize).or_insert_with(ContextWorkerState::new).worker_id = Some(worker_id);
+}
+
+pub fn leave_child_context(ctx: *mut qjs::JSContext) {
+    if !ctx.is_null() {
+        CONTEXT_WORKERS.lock().remove(&(ctx as usize));
+    }
+    CHILD_WORKER_CONTEXT.store(false, Ordering::Release);
+}
+
 fn worker_state_mut<F, R>(worker_id: u32, f: F) -> Option<R>
 where
     F: FnOnce(&mut WorkerState) -> R,
@@ -182,39 +205,30 @@ fn spawn_eval_on_slot_inner(cpu_slot: Option<u32>, code_utf8: &[u8]) -> Result<u
         return Err(-2);
     }
 
+    if cpu_slot.is_some() {
+        // Lane affinity is now a kernel VMX scheduling decision. A Blueprint
+        // must not receive or move an executor Spawner across the Hull wall.
+        return Err(-2);
+    }
     let worker_id = WORKER_SEQ.fetch_add(1, Ordering::Relaxed);
-    WORKERS
-        .lock()
-        .insert(worker_id, WorkerState::new(code_utf8.to_vec()));
+    if WORKERS.lock().len() >= WORKER_TASK_POOL {
+        return Err(-2);
+    }
 
     if !LOGGED_WORKER_API_USE.swap(true, Ordering::AcqRel) {
         log_str("qjs-worker: Worker API path used; worker spawn requested\n");
     }
 
-    let (slot, kind, spawner) = if let Some(slot) = cpu_slot {
-        if slot < FIRST_DISPOSABLE_SLOT {
-            return Err(-2);
-        }
-        let spawner = spawner_for_slot(slot).ok_or(-2)?;
-        let kind = unsafe { trueos_kernel_worker_core_kind_for_slot(slot) };
-        (slot, kind, spawner)
-    } else {
-        unsafe { trueos_kernel_worker_pick_background_spawner_with_slot() }.ok_or(-2)?
-    };
-    log_str(&format!(
-        "qjs-worker: worker#{} created; scheduled slot={} kind={}\n",
-        worker_id,
-        slot,
-        core_kind_name(kind)
-    ));
-    let token = worker_task(worker_id, slot, kind).map_err(|_| -2)?;
-    spawner.spawn(token);
+    let child_handle = v::child_hull::spawn(code_utf8)?;
+    WORKERS.lock().insert(worker_id, WorkerState::new(child_handle));
+    log_str(&format!("qjs-worker: worker#{} child Hull spawned\n", worker_id));
     Ok(worker_id)
 }
 
 pub fn terminate(worker_id: u32) {
     let _ = worker_state_mut(worker_id, |st| {
         st.terminated.store(true, Ordering::Release);
+        let _ = v::child_hull::terminate(st.child_handle);
     });
 }
 
@@ -234,14 +248,20 @@ pub fn terminate_all_for_context(ctx: *mut qjs::JSContext) {
 }
 
 pub fn post_to_worker(worker_id: u32, msg: &[u8]) -> Result<(), i32> {
+    if CHILD_WORKER_CONTEXT.load(Ordering::Acquire) {
+        return Err(-2);
+    }
     worker_state_mut(worker_id, |st| {
-        st.to_worker.push_back(msg.to_vec());
+        v::child_hull::send(st.child_handle, msg)?;
+        Ok(())
     })
-    .ok_or(-2)?;
-    Ok(())
+    .ok_or(-2)?
 }
 
 pub fn post_to_parent(worker_id: u32, msg: &[u8]) -> Result<(), i32> {
+    if CHILD_WORKER_CONTEXT.load(Ordering::Acquire) {
+        return v::child_hull::send(v::child_hull::HANDLE_PARENT, msg).map(|_| ());
+    }
     worker_state_mut(worker_id, |st| {
         st.to_parent.push_back(msg.to_vec());
     })
@@ -250,28 +270,29 @@ pub fn post_to_parent(worker_id: u32, msg: &[u8]) -> Result<(), i32> {
 }
 
 pub fn take_parent_message(worker_id: u32) -> Option<Vec<u8>> {
-    worker_state_mut(worker_id, |st| st.to_parent.pop_front()).flatten()
+    if CHILD_WORKER_CONTEXT.load(Ordering::Acquire) { return None; }
+    let handle = worker_state_mut(worker_id, |st| st.child_handle)?;
+    crate::child_worker::receive_one(handle).ok().flatten()
 }
 
 pub fn worker_exited(worker_id: u32) -> bool {
     let map = WORKERS.lock();
     map.get(&worker_id)
-        .is_some_and(|st| st.exited.load(Ordering::Acquire))
+        .is_some_and(|st| {
+            st.exited.load(Ordering::Acquire)
+                || v::child_hull::status(st.child_handle) >= v::child_hull::STATUS_EXITED
+        })
 }
 
 pub fn has_pending_for_ctx(ctx: *mut qjs::JSContext) -> bool {
     match ctx_role(ctx) {
         CtxRole::Main => {
-            let map = WORKERS.lock();
-            map.values().any(|st| {
-                let exited = st.exited.load(Ordering::Acquire);
-                !st.to_parent.is_empty() || (!exited && !st.to_worker.is_empty())
-            })
+            false
         }
         CtxRole::Worker(id) => {
             let map = WORKERS.lock();
-            map.get(&id)
-                .is_some_and(|st| !st.exited.load(Ordering::Acquire) && !st.to_worker.is_empty())
+            CHILD_WORKER_CONTEXT.load(Ordering::Acquire)
+                || map.get(&id).is_some_and(|st| !st.exited.load(Ordering::Acquire) && !st.to_worker.is_empty())
         }
     }
 }
@@ -300,17 +321,11 @@ pub unsafe fn pump(ctx: *mut qjs::JSContext) -> bool {
 
             // Snapshot which workers have pending messages first to avoid holding the WORKERS lock
             // while calling into JS.
-            let pending_ids: Vec<u32> = {
-                let map = WORKERS.lock();
-                map.iter()
-                    .filter(|(_, st)| !st.to_parent.is_empty())
-                    .map(|(id, _)| *id)
-                    .collect()
-            };
+            let pending_ids: Vec<u32> = WORKERS.lock().keys().copied().collect();
 
             for worker_id in pending_ids {
                 loop {
-                    let msg = worker_state_mut(worker_id, |st| st.to_parent.pop_front()).flatten();
+                    let msg = take_parent_message(worker_id);
                     let Some(msg) = msg else { break };
                     progress = true;
 
@@ -328,7 +343,11 @@ pub unsafe fn pump(ctx: *mut qjs::JSContext) -> bool {
         CtxRole::Worker(worker_id) => {
             let key_ctx = ctx as usize;
             loop {
-                let msg = worker_state_mut(worker_id, |st| st.to_worker.pop_front()).flatten();
+                let msg = if CHILD_WORKER_CONTEXT.load(Ordering::Acquire) {
+                    crate::child_worker::receive_one(0).ok().flatten()
+                } else {
+                    worker_state_mut(worker_id, |st| st.to_worker.pop_front()).flatten()
+                };
                 let Some(msg) = msg else { break };
                 progress = true;
 

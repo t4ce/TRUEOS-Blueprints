@@ -26,6 +26,7 @@ const OUTPUT_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const FRAME_BUFFER_CAPACITY: usize = 128 * 1024;
 const TAB: &str = "  ";
 const HISTORY_CAP: usize = 64;
+const CHILD_WORKER_ARGUMENT: &str = "--trueos-child-worker";
 
 const BACKGROUND: Color = Color::Rgb { r: 8, g: 11, b: 18 };
 const ACCENT: Color = Color::Rgb {
@@ -102,6 +103,13 @@ impl Position {
 }
 
 fn main() -> Result<()> {
+    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+    if trueos::env::args().any(|arg| arg == CHILD_WORKER_ARGUMENT) {
+        // A VMX child runs the same qjs.bp archive but must never acquire the
+        // terminal lease. Its first parent->child frame is the Worker source.
+        return trueos_qjs::child_worker::run().map_err(anyhow::Error::msg);
+    }
+
     let mut app = App::new();
 
     #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
