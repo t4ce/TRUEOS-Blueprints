@@ -3,7 +3,7 @@
 //! The implementation is original HelioV code. It deliberately does not copy
 //! Stratum's chunk streamer, ECS, integration layer, or mesh builder.
 
-use helio::{FlyCamera, MeshUpload, PackedVertex, PerspectiveLens};
+use helio::{FlyCamera, MeshUpload, PackedVertex, PerspectiveLens, SectionedMeshUpload};
 
 pub const CHUNK_SIDE: usize = 8;
 pub const WORLD_CHUNKS: usize = 6;
@@ -23,11 +23,63 @@ pub struct WorldChunk {
 
 pub struct WorldBuild {
     pub mesh: MeshUpload,
+    /// The same topology grouped into Helio's native multi-material sections.
+    /// This is the renderer-facing form; `mesh` remains the chunk-order source
+    /// used by the SceneDB lifecycle and fingerprint witnesses.
+    pub material_mesh: SectionedMeshUpload,
+    pub materials: Vec<WorldMaterial>,
     pub solid_voxels: usize,
     pub water_voxels: usize,
     pub landmark_voxels: usize,
     pub chunks: Vec<WorldChunk>,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WorldMaterial {
+    pub name: &'static str,
+    /// Linear RGBA consumed by the authenticated WGPU immediate-data shader.
+    pub rgba: [f32; 4],
+}
+
+const LIGHT_LEVELS: [(&str, f32); 3] = [("lit", 1.0), ("side", 0.78), ("shade", 0.58)];
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(usize)]
+enum VoxelMaterial {
+    Grass,
+    Dirt,
+    Stone,
+    Water,
+    Landmark,
+}
+
+impl VoxelMaterial {
+    const COUNT: usize = 5;
+
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Grass => "grass",
+            Self::Dirt => "dirt",
+            Self::Stone => "stone",
+            Self::Water => "water",
+            Self::Landmark => "landmark",
+        }
+    }
+
+    const fn color(self) -> [f32; 3] {
+        match self {
+            // The terrestrial values intentionally follow Helio's authored
+            // voxel palette; water is HelioV's additional world material.
+            Self::Grass => [0.30, 0.70, 0.25],
+            Self::Dirt => [0.45, 0.30, 0.15],
+            Self::Stone => [0.50, 0.50, 0.52],
+            Self::Water => [0.10, 0.32, 0.68],
+            Self::Landmark => [0.90, 0.75, 0.20],
+        }
+    }
+}
+
+const MATERIAL_SECTION_COUNT: usize = VoxelMaterial::COUNT * LIGHT_LEVELS.len();
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Block {
@@ -148,6 +200,7 @@ pub fn build_voxel_world() -> WorldBuild {
 
     let mut vertices = Vec::new();
     let mut indices = Vec::new();
+    let mut material_indices = vec![Vec::new(); MATERIAL_SECTION_COUNT];
     let mut chunks = Vec::with_capacity(WORLD_CHUNKS * WORLD_CHUNKS);
     for chunk_x in 0..WORLD_CHUNKS {
         for chunk_z in 0..WORLD_CHUNKS {
@@ -174,7 +227,9 @@ pub fn build_voxel_world() -> WorldBuild {
                             emit_face(
                                 &mut vertices,
                                 &mut indices,
+                                &mut material_indices,
                                 [x as f32, y as f32, z as f32],
+                                world.get(x, y, z),
                                 face,
                             );
                         }
@@ -204,8 +259,48 @@ pub fn build_voxel_world() -> WorldBuild {
         .iter()
         .filter(|block| **block == Block::Water)
         .count();
+    let materials = [
+        VoxelMaterial::Grass,
+        VoxelMaterial::Dirt,
+        VoxelMaterial::Stone,
+        VoxelMaterial::Water,
+        VoxelMaterial::Landmark,
+    ]
+    .into_iter()
+    .flat_map(|material| {
+        LIGHT_LEVELS.into_iter().map(move |(light_name, light)| {
+            let color = material.color();
+            WorldMaterial {
+                name: match (material.name(), light_name) {
+                    ("grass", "lit") => "grass/lit",
+                    ("grass", "side") => "grass/side",
+                    ("grass", _) => "grass/shade",
+                    ("dirt", "lit") => "dirt/lit",
+                    ("dirt", "side") => "dirt/side",
+                    ("dirt", _) => "dirt/shade",
+                    ("stone", "lit") => "stone/lit",
+                    ("stone", "side") => "stone/side",
+                    ("stone", _) => "stone/shade",
+                    ("water", "lit") => "water/lit",
+                    ("water", "side") => "water/side",
+                    ("water", _) => "water/shade",
+                    ("landmark", "lit") => "landmark/lit",
+                    ("landmark", "side") => "landmark/side",
+                    _ => "landmark/shade",
+                },
+                rgba: [color[0] * light, color[1] * light, color[2] * light, 1.0],
+            }
+        })
+    })
+    .collect();
+    let material_mesh = SectionedMeshUpload {
+        vertices: vertices.clone(),
+        sections: material_indices,
+    };
     WorldBuild {
         mesh: MeshUpload { vertices, indices },
+        material_mesh,
+        materials,
         solid_voxels,
         water_voxels,
         landmark_voxels: world.landmark_voxels,
@@ -555,7 +650,9 @@ const FACES: [Face; 6] = [
 fn emit_face(
     vertices: &mut Vec<PackedVertex>,
     indices: &mut Vec<u32>,
+    material_indices: &mut [Vec<u32>],
     origin: [f32; 3],
+    block: Block,
     face: Face,
 ) {
     let base = vertices.len() as u32;
@@ -578,7 +675,25 @@ fn emit_face(
             1.0,
         ));
     }
-    indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+    let face_indices = [base, base + 1, base + 2, base, base + 2, base + 3];
+    indices.extend_from_slice(&face_indices);
+    let material = match block {
+        Block::Terrain if face.normal[1] > 0.5 => VoxelMaterial::Grass,
+        Block::Terrain if face.normal[1] < -0.5 => VoxelMaterial::Stone,
+        Block::Terrain => VoxelMaterial::Dirt,
+        Block::Water => VoxelMaterial::Water,
+        Block::Landmark => VoxelMaterial::Landmark,
+        Block::Air => unreachable!("air never emits voxel faces"),
+    };
+    let light = if face.normal[1] > 0.5 {
+        0
+    } else if face.normal[1] < -0.5 {
+        2
+    } else {
+        1
+    };
+    material_indices[material as usize * LIGHT_LEVELS.len() + light]
+        .extend_from_slice(&face_indices);
 }
 
 #[cfg(test)]
@@ -594,6 +709,18 @@ mod tests {
         assert!(first.landmark_voxels > 500);
         assert!(first.water_voxels > 0);
         assert_eq!(first.mesh.indices.len() % 6, 0);
+        assert_eq!(first.material_mesh.vertices.len(), first.mesh.vertices.len());
+        assert_eq!(first.material_mesh.sections.len(), first.materials.len());
+        assert_eq!(first.materials.len(), MATERIAL_SECTION_COUNT);
+        assert_eq!(
+            first
+                .material_mesh
+                .sections
+                .iter()
+                .map(Vec::len)
+                .sum::<usize>(),
+            first.mesh.indices.len(),
+        );
         assert!(first.mesh.vertices.len() < first.solid_voxels * 24);
         assert_eq!(
             first

@@ -1750,7 +1750,16 @@ fn ensure_rust_src_libc_lock_matches_overlay(
             None => String::from("libc"),
         })
         .arg("--precise")
-        .arg(&overlay_version);
+        .arg(&overlay_version)
+        // Rust's Cargo.lock must resolve to the exact libc source that the
+        // subsequent build-std invocation patches in.  Without this, a fresh
+        // registry index can select a newer libc release despite --precise,
+        // leaving the lockfile and the TRUEOS overlay out of sync.
+        .arg("--config")
+        .arg(format!(
+            "patch.crates-io.libc.path={}",
+            toml_string(&libc_patch.path.to_string_lossy())
+        ));
     run_cargo_command(&mut update, "rust-src libc lock update")?;
 
     let updated = lock_packages(&rust_src_lock)?;
