@@ -557,25 +557,7 @@ cfg_server! {
         ) -> Poll<Option<Result<(Self::PollItem, Self::PollBody), Self::PollError>>> {
             let mut this = self.as_mut();
             let ret = if let Some(ref mut fut) = this.in_flight.as_mut().as_pin_mut() {
-                #[cfg(target_os = "trueos")]
-                eprintln!("[hyper-dispatch-probe] service poll enter");
-                let resp = match fut.as_mut().poll(cx) {
-                    Poll::Ready(Ok(resp)) => {
-                        #[cfg(target_os = "trueos")]
-                        eprintln!("[hyper-dispatch-probe] service poll ready");
-                        resp
-                    }
-                    Poll::Ready(Err(err)) => {
-                        #[cfg(target_os = "trueos")]
-                        eprintln!("[hyper-dispatch-probe] service poll error");
-                        return Poll::Ready(Some(Err(err)));
-                    }
-                    Poll::Pending => {
-                        #[cfg(target_os = "trueos")]
-                        eprintln!("[hyper-dispatch-probe] service poll pending");
-                        return Poll::Pending;
-                    }
-                };
+                let resp = ready!(fut.as_mut().poll(cx)?);
                 let (parts, body) = resp.into_parts();
                 let head = MessageHead {
                     version: parts.version,
@@ -601,8 +583,6 @@ cfg_server! {
             *req.headers_mut() = msg.headers;
             *req.version_mut() = msg.version;
             *req.extensions_mut() = msg.extensions;
-            #[cfg(target_os = "trueos")]
-            eprintln!("[hyper-dispatch-probe] service call {} {}", req.method(), req.uri());
             let fut = self.service.call(req);
             self.in_flight.set(Some(fut));
             Ok(())
