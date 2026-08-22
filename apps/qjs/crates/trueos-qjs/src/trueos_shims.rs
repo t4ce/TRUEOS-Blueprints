@@ -12,8 +12,6 @@ unsafe extern "C" {
 pub use v::qjs_abi::{
     TrueosHidCursorEvent, TrueosHidKeyboardSample, TrueosMouseState, trueos_cabi_alloc,
     trueos_cabi_boot_timestamp_secs, trueos_cabi_calloc, trueos_cabi_free,
-    trueos_cabi_fs_read_file, trueos_cabi_fs_remove, trueos_cabi_fs_write_abort,
-    trueos_cabi_fs_write_begin, trueos_cabi_fs_write_chunk, trueos_cabi_fs_write_finish,
     trueos_cabi_hid_keyboard_read, trueos_cabi_input_cursor_buttons, trueos_cabi_input_cursor_pos,
     trueos_cabi_input_read_cursor_events_since, trueos_cabi_input_write_cursor,
     trueos_cabi_malloc_usable_size, trueos_cabi_mouse_poll, trueos_cabi_net_fetch_bytes_discard,
@@ -23,8 +21,21 @@ pub use v::qjs_abi::{
     trueos_cabi_net_fetch_post_json_start, trueos_cabi_net_fetch_result,
     trueos_cabi_net_fetch_start, trueos_cabi_net_fetch_wait, trueos_cabi_net_prewarm_url_start,
     trueos_cabi_poll_once, trueos_cabi_qjs_mouse_pop, trueos_cabi_realloc,
-    trueos_cabi_trueosfs_json_all, trueos_cabi_trueosfs_primary_html_tree,
 };
+
+// These legacy synchronous file calls remain host C ABI services. Declaring
+// them here prevents the Blueprint runtime from depending on kernel-private
+// `v::vfs` while async FS migration continues independently.
+unsafe extern "C" {
+    pub fn trueos_cabi_fs_read_file(path_ptr: *const u8, path_len: usize, out_ptr: *mut u8, out_cap: usize) -> isize;
+    pub fn trueos_cabi_fs_remove(path_ptr: *const u8, path_len: usize) -> i32;
+    pub fn trueos_cabi_fs_write_begin(path_ptr: *const u8, path_len: usize, total_len: u64, out_handle: *mut u32) -> i32;
+    pub fn trueos_cabi_fs_write_chunk(handle: u32, data_ptr: *const u8, data_len: usize) -> i32;
+    pub fn trueos_cabi_fs_write_finish(handle: u32) -> i32;
+    pub fn trueos_cabi_fs_write_abort(handle: u32) -> i32;
+    pub fn trueos_cabi_trueosfs_json_all(out_ptr: *mut u8, out_cap: usize) -> isize;
+    pub fn trueos_cabi_trueosfs_primary_html_tree(out_ptr: *mut u8, out_cap: usize) -> isize;
+}
 pub use v::vshell::shell2_print_line;
 pub use v::vsys::{log_error, log_info, write_log_stream};
 

@@ -26,7 +26,8 @@ const OUTPUT_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const FRAME_BUFFER_CAPACITY: usize = 128 * 1024;
 const TAB: &str = "  ";
 const HISTORY_CAP: usize = 64;
-const CHILD_WORKER_ARGUMENT: &str = "--trueos-child-worker";
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+const CHILD_WORKER_ARGUMENT: &str = trueos_qjs::child_worker::ARGUMENT;
 
 const BACKGROUND: Color = Color::Rgb { r: 8, g: 11, b: 18 };
 const ACCENT: Color = Color::Rgb {
@@ -308,6 +309,8 @@ struct OutputEntry {
 }
 
 struct App {
+    /// Persistent VM ownership belongs to this Blueprint process, not Shell2.
+    vm: trueos_qjs::workbench::Workbench,
     lines: Vec<String>,
     cursor_row: usize,
     cursor_col: usize,
@@ -326,6 +329,7 @@ struct App {
 impl App {
     fn new() -> Self {
         Self {
+            vm: trueos_qjs::workbench::Workbench::new(),
             lines: vec!["1 + 1".to_string()],
             cursor_row: 0,
             cursor_col: 5,
@@ -428,7 +432,7 @@ impl App {
             text: source.clone(),
         });
 
-        match bridge::eval(source.as_str(), self.eval_mode) {
+        match bridge::eval(&mut self.vm, source.as_str(), self.eval_mode) {
             Ok(result) => {
                 self.last_actual_mode = Some(result.mode);
                 let label = format!(
@@ -487,7 +491,7 @@ impl App {
     }
 
     fn poll_output(&mut self) {
-        match bridge::poll() {
+        match bridge::poll(&mut self.vm) {
             Ok(output) if !output.is_empty() => {
                 for line in output.lines() {
                     self.output.push(OutputEntry {
@@ -504,7 +508,7 @@ impl App {
     }
 
     fn reset_vm(&mut self) {
-        bridge::close();
+        bridge::close(&mut self.vm);
         self.last_actual_mode = None;
         self.output.push(OutputEntry {
             kind: OutputKind::System,
@@ -1093,6 +1097,7 @@ fn push_wrapped_lines(
 
 mod bridge {
     use super::EvalMode;
+    use trueos_qjs::workbench::{EvalMode as RuntimeEvalMode, Workbench};
 
     pub struct EvalResult {
         pub ok: bool,
@@ -1101,48 +1106,36 @@ mod bridge {
         pub text: String,
     }
 
-    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-    pub fn eval(source: &str, mode: EvalMode) -> Result<EvalResult, String> {
-        let native_mode = match mode {
-            EvalMode::Auto => trueos::vshell::QjsWorkbenchMode::Auto,
-            EvalMode::Script => trueos::vshell::QjsWorkbenchMode::Script,
-            EvalMode::Module => trueos::vshell::QjsWorkbenchMode::Module,
-        };
-        let result = trueos::vshell::qjs_workbench_eval(source, native_mode)?;
+    pub fn eval(vm: &mut Workbench, source: &str, mode: EvalMode) -> Result<EvalResult, String> {
+        let result = vm.eval(source, runtime_mode(mode))?;
         Ok(EvalResult {
             ok: result.ok,
-            mode: match result.mode {
-                trueos::vshell::QjsWorkbenchMode::Module => EvalMode::Module,
-                _ => EvalMode::Script,
-            },
+            mode: app_mode(result.mode),
             eval_count: result.eval_count,
             text: result.text,
         })
     }
 
-    #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-    pub fn eval(_source: &str, mode: EvalMode) -> Result<EvalResult, String> {
-        Err(format!(
-            "QuickJS execution is available inside TRUEOS (requested {})",
-            mode.label()
-        ))
+    pub fn poll(vm: &mut Workbench) -> Result<String, String> {
+        Ok(vm.poll())
     }
 
-    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-    pub fn poll() -> Result<String, String> {
-        trueos::vshell::qjs_workbench_poll()
+    pub fn close(vm: &mut Workbench) {
+        vm.close();
     }
 
-    #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-    pub fn poll() -> Result<String, String> {
-        Ok(String::new())
+    fn runtime_mode(mode: EvalMode) -> RuntimeEvalMode {
+        match mode {
+            EvalMode::Auto => RuntimeEvalMode::Auto,
+            EvalMode::Script => RuntimeEvalMode::Script,
+            EvalMode::Module => RuntimeEvalMode::Module,
+        }
     }
 
-    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-    pub fn close() {
-        trueos::vshell::qjs_workbench_close();
+    fn app_mode(mode: RuntimeEvalMode) -> EvalMode {
+        match mode {
+            RuntimeEvalMode::Auto | RuntimeEvalMode::Script => EvalMode::Script,
+            RuntimeEvalMode::Module => EvalMode::Module,
+        }
     }
-
-    #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-    pub fn close() {}
 }

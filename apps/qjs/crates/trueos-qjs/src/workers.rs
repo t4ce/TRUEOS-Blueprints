@@ -2,25 +2,15 @@
 
 extern crate alloc;
 
-use alloc::collections::{BTreeMap, VecDeque};
+use alloc::collections::BTreeMap;
 use alloc::format;
 use alloc::vec::Vec;
 use core::ffi::{CStr, c_char, c_int};
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
-use trueos_executor::{SendSpawner, Spawner};
-use trueos_time::{Duration as EmbassyDuration, Timer};
 use spin::Mutex;
 
 use crate as qjs;
-
-unsafe extern "Rust" {
-    fn trueos_kernel_worker_register_core_spawner(cpu_slot: u32, core_kind: u8, spawner: Spawner);
-    fn trueos_kernel_worker_core_kind_for_slot(cpu_slot: u32) -> u8;
-    fn trueos_kernel_worker_spawner_for_slot(cpu_slot: u32) -> Option<SendSpawner>;
-    fn trueos_kernel_worker_background_worker_slots() -> Vec<u32>;
-    fn trueos_kernel_worker_pick_background_spawner_with_slot() -> Option<(u32, u8, SendSpawner)>;
-}
 
 #[inline]
 fn log_bytes(bytes: &[u8]) {
@@ -37,17 +27,11 @@ fn log_str(s: &str) {
 
 static WORKER_SEQ: AtomicU32 = AtomicU32::new(1);
 
-pub const CORE_KIND_UNKNOWN: u8 = 0;
-pub const CORE_KIND_PERF: u8 = 1;
-pub const CORE_KIND_EFF: u8 = 2;
-
 static LOGGED_WORKER_API_USE: AtomicBool = AtomicBool::new(false);
 static CHILD_WORKER_CONTEXT: AtomicBool = AtomicBool::new(false);
+static CHILD_WARNED_NO_HANDLER: AtomicBool = AtomicBool::new(false);
 
-// Slot 0 is BSP and slot 1 is the service AP; disposable worker carriers start at AP2.
-const FIRST_DISPOSABLE_SLOT: u32 = 2;
 const WORKER_TASK_POOL: usize = 32;
-const WORKER_TEARDOWN_WAIT_MS: u64 = 50;
 
 static WORKERS: Mutex<BTreeMap<u32, WorkerState>> = Mutex::new(BTreeMap::new());
 
@@ -84,66 +68,14 @@ struct WorkerState {
     /// Opaque VMX child-Hull endpoint in the parent Blueprint.  The child
     /// itself addresses its parent as handle zero and therefore stores none.
     child_handle: u64,
-    // Retained only for the deprecated in-process task body below while the
-    // kernel bridge is being removed. New workers always use child_handle.
-    startup: Option<Vec<u8>>,
-    to_worker: VecDeque<Vec<u8>>,
-    to_parent: VecDeque<Vec<u8>>,
-    terminated: AtomicBool,
-    exited: AtomicBool,
-    warned_no_worker_on_message: AtomicBool,
 }
 
 impl WorkerState {
     fn new(child_handle: u64) -> Self {
         Self {
             child_handle,
-            startup: None,
-            to_worker: VecDeque::new(),
-            to_parent: VecDeque::new(),
-            terminated: AtomicBool::new(false),
-            exited: AtomicBool::new(false),
-            warned_no_worker_on_message: AtomicBool::new(false),
         }
     }
-}
-
-pub fn ensure_service_started(spawner: &Spawner) -> bool {
-    // Back-compat: treat this as "register BSP as unknown".
-    register_core_spawner(0, CORE_KIND_UNKNOWN, *spawner);
-    true
-}
-
-/// Register a core's SendSpawner along with a best-effort core-kind hint.
-///
-/// `core_kind` is typically derived from Intel hybrid CPUID leaf 0x1A:
-/// - `CORE_KIND_PERF`: performance core
-/// - `CORE_KIND_EFF`: efficient core
-/// - `CORE_KIND_UNKNOWN`: fallback
-pub fn register_core_spawner(cpu_slot: u32, core_kind: u8, spawner: Spawner) {
-    unsafe { trueos_kernel_worker_register_core_spawner(cpu_slot, core_kind, spawner) };
-}
-
-#[inline]
-fn core_kind_name(kind: u8) -> &'static str {
-    match kind {
-        CORE_KIND_PERF => "perf",
-        CORE_KIND_EFF => "eff",
-        _ => "unknown",
-    }
-}
-
-pub fn pick_background_spawner() -> Option<trueos_executor::SendSpawner> {
-    unsafe { trueos_kernel_worker_pick_background_spawner_with_slot() }
-        .map(|(_, _, spawner)| spawner)
-}
-
-pub fn spawner_for_slot(cpu_slot: u32) -> Option<trueos_executor::SendSpawner> {
-    unsafe { trueos_kernel_worker_spawner_for_slot(cpu_slot) }
-}
-
-pub fn background_worker_slots() -> Vec<u32> {
-    unsafe { trueos_kernel_worker_background_worker_slots() }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -193,26 +125,30 @@ where
 }
 
 pub fn spawn_eval(code_utf8: &[u8]) -> Result<u32, i32> {
-    spawn_eval_on_slot_inner(None, code_utf8)
+    spawn_eval_on_slot_inner(code_utf8)
 }
 
 pub fn spawn_eval_on_slot(cpu_slot: u32, code_utf8: &[u8]) -> Result<u32, i32> {
-    spawn_eval_on_slot_inner(Some(cpu_slot), code_utf8)
+    // VMX lane policy belongs to the kernel. Keep the source-compatible API,
+    // but treat a former executor slot as a scheduling hint only.
+    let _ = cpu_slot;
+    spawn_eval_on_slot_inner(code_utf8)
 }
 
-fn spawn_eval_on_slot_inner(cpu_slot: Option<u32>, code_utf8: &[u8]) -> Result<u32, i32> {
+fn spawn_eval_on_slot_inner(code_utf8: &[u8]) -> Result<u32, i32> {
     if code_utf8.is_empty() {
         return Err(-2);
     }
 
-    if cpu_slot.is_some() {
-        // Lane affinity is now a kernel VMX scheduling decision. A Blueprint
-        // must not receive or move an executor Spawner across the Hull wall.
-        return Err(-2);
-    }
     let worker_id = WORKER_SEQ.fetch_add(1, Ordering::Relaxed);
-    if WORKERS.lock().len() >= WORKER_TASK_POOL {
-        return Err(-2);
+    {
+        let mut workers = WORKERS.lock();
+        workers.retain(|_, state| {
+            v::child_hull::status(state.child_handle) < v::child_hull::STATUS_EXITED
+        });
+        if workers.len() >= WORKER_TASK_POOL {
+            return Err(v::child_hull::ERR_QUEUE_FULL);
+        }
     }
 
     if !LOGGED_WORKER_API_USE.swap(true, Ordering::AcqRel) {
@@ -227,7 +163,6 @@ fn spawn_eval_on_slot_inner(cpu_slot: Option<u32>, code_utf8: &[u8]) -> Result<u
 
 pub fn terminate(worker_id: u32) {
     let _ = worker_state_mut(worker_id, |st| {
-        st.terminated.store(true, Ordering::Release);
         let _ = v::child_hull::terminate(st.child_handle);
     });
 }
@@ -262,11 +197,9 @@ pub fn post_to_parent(worker_id: u32, msg: &[u8]) -> Result<(), i32> {
     if CHILD_WORKER_CONTEXT.load(Ordering::Acquire) {
         return v::child_hull::send(v::child_hull::HANDLE_PARENT, msg).map(|_| ());
     }
-    worker_state_mut(worker_id, |st| {
-        st.to_parent.push_back(msg.to_vec());
-    })
-    .ok_or(-2)?;
-    Ok(())
+    let _ = worker_id;
+    let _ = msg;
+    Err(-2)
 }
 
 pub fn take_parent_message(worker_id: u32) -> Option<Vec<u8>> {
@@ -278,22 +211,13 @@ pub fn take_parent_message(worker_id: u32) -> Option<Vec<u8>> {
 pub fn worker_exited(worker_id: u32) -> bool {
     let map = WORKERS.lock();
     map.get(&worker_id)
-        .is_some_and(|st| {
-            st.exited.load(Ordering::Acquire)
-                || v::child_hull::status(st.child_handle) >= v::child_hull::STATUS_EXITED
-        })
+        .is_some_and(|st| v::child_hull::status(st.child_handle) >= v::child_hull::STATUS_EXITED)
 }
 
 pub fn has_pending_for_ctx(ctx: *mut qjs::JSContext) -> bool {
     match ctx_role(ctx) {
-        CtxRole::Main => {
-            false
-        }
-        CtxRole::Worker(id) => {
-            let map = WORKERS.lock();
-            CHILD_WORKER_CONTEXT.load(Ordering::Acquire)
-                || map.get(&id).is_some_and(|st| !st.exited.load(Ordering::Acquire) && !st.to_worker.is_empty())
-        }
+        CtxRole::Main => false,
+        CtxRole::Worker(_) => CHILD_WORKER_CONTEXT.load(Ordering::Acquire),
     }
 }
 
@@ -321,7 +245,16 @@ pub unsafe fn pump(ctx: *mut qjs::JSContext) -> bool {
 
             // Snapshot which workers have pending messages first to avoid holding the WORKERS lock
             // while calling into JS.
-            let pending_ids: Vec<u32> = WORKERS.lock().keys().copied().collect();
+            let pending_ids: Vec<u32> = {
+                let mut workers = WORKERS.lock();
+                // The policy limit is concurrent children, not a lifetime
+                // counter. Once the kernel reports exit, discard our opaque
+                // endpoint and allow the next `new Worker` to use its slot.
+                workers.retain(|_, state| {
+                    v::child_hull::status(state.child_handle) < v::child_hull::STATUS_EXITED
+                });
+                workers.keys().copied().collect()
+            };
 
             for worker_id in pending_ids {
                 loop {
@@ -344,10 +277,8 @@ pub unsafe fn pump(ctx: *mut qjs::JSContext) -> bool {
             let key_ctx = ctx as usize;
             loop {
                 let msg = if CHILD_WORKER_CONTEXT.load(Ordering::Acquire) {
-                    crate::child_worker::receive_one(0).ok().flatten()
-                } else {
-                    worker_state_mut(worker_id, |st| st.to_worker.pop_front()).flatten()
-                };
+                    crate::child_worker::receive_one(v::child_hull::HANDLE_PARENT).ok().flatten()
+                } else { None };
                 let Some(msg) = msg else { break };
                 progress = true;
 
@@ -359,10 +290,7 @@ pub unsafe fn pump(ctx: *mut qjs::JSContext) -> bool {
                 if let Some(cb) = cb {
                     unsafe { call_on_message(ctx, cb, msg.as_slice()) };
                 } else {
-                    let should_warn = worker_state_mut(worker_id, |st| {
-                        !st.warned_no_worker_on_message.swap(true, Ordering::AcqRel)
-                    })
-                    .unwrap_or(false);
+                    let should_warn = !CHILD_WARNED_NO_HANDLER.swap(true, Ordering::AcqRel);
                     if should_warn {
                         let _ = post_to_parent(
                             worker_id,
@@ -415,156 +343,6 @@ pub unsafe fn drain_all_for_context(ctx: *mut qjs::JSContext) {
             qjs::js_free_value(ctx, v.val);
         }
     }
-}
-
-fn take_startup(worker_id: u32) -> Option<Vec<u8>> {
-    worker_state_mut(worker_id, |st| st.startup.take()).flatten()
-}
-
-fn is_terminated(worker_id: u32) -> bool {
-    let map = WORKERS.lock();
-    map.get(&worker_id)
-        .is_some_and(|st| st.terminated.load(Ordering::Acquire))
-}
-
-fn mark_exited(worker_id: u32) {
-    let _ = worker_state_mut(worker_id, |st| {
-        st.exited.store(true, Ordering::Release);
-        // Drop undeliverable parent->worker messages so dead workers don't keep
-        // the main pump in a perpetual "workers pending" state.
-        st.to_worker.clear();
-    });
-}
-
-#[trueos_executor::task(pool_size = WORKER_TASK_POOL)]
-async fn worker_task(worker_id: u32, scheduled_slot: u32, scheduled_kind: u8) {
-    log_str(&format!(
-        "qjs-worker: worker#{} executor start slot={} kind={}\n",
-        worker_id,
-        scheduled_slot,
-        core_kind_name(scheduled_kind)
-    ));
-    let _ = post_to_parent(worker_id, b"{\"ok\":1,\"dbg\":\"worker-rust-task-start\"}");
-
-    // Each worker owns its own QuickJS VM.
-    let Some(vm) =
-        (unsafe { qjs::vm::QjsVm::new_node_with_profile(qjs::node::RuntimeProfile::Worker) })
-    else {
-        log_str("qjs-worker: failed to create VM\n");
-        let _ = post_to_parent(worker_id, b"{\"ok\":0,\"dbg\":\"worker-vm-create-failed\"}");
-        mark_exited(worker_id);
-        return;
-    };
-    log_str(&format!("qjs-worker: worker#{} vm-created slot={}\n", worker_id, scheduled_slot));
-    let rt = vm.rt_ptr();
-    let ctx = vm.ctx_ptr();
-
-    CONTEXT_WORKERS
-        .lock()
-        .entry(ctx as usize)
-        .or_insert_with(ContextWorkerState::new)
-        .worker_id = Some(worker_id);
-    log_str(&format!(
-        "qjs-worker: worker#{} globals-installed slot={}\n",
-        worker_id, scheduled_slot
-    ));
-    let _ = post_to_parent(worker_id, b"{\"ok\":1,\"dbg\":\"worker-globals-installed\"}");
-
-    // Evaluate the startup code as a module (MVP: eval string only).
-    let startup = take_startup(worker_id).unwrap_or_else(|| b"".to_vec());
-    log_str(&format!(
-        "qjs-worker: worker#{} startup-bytes={} slot={}\n",
-        worker_id,
-        startup.len(),
-        scheduled_slot
-    ));
-    let _ = post_to_parent(worker_id, b"{\"ok\":1,\"dbg\":\"worker-startup-begin\"}");
-    if !startup.is_empty() {
-        let filename = b"<worker>\0";
-        log_str(&format!(
-            "qjs-worker: worker#{} startup-eval-begin slot={}\n",
-            worker_id, scheduled_slot
-        ));
-        let v = unsafe {
-            qjs::js_eval_bytes(
-                ctx,
-                &startup,
-                filename.as_ptr() as *const c_char,
-                qjs::JS_EVAL_TYPE_MODULE,
-            )
-        };
-        if v.is_exception() {
-            log_str("qjs-worker: startup eval exception\n");
-            unsafe { qjs::qjs_diag::dump_last_exception(ctx, "worker-startup-eval") };
-            let _ =
-                post_to_parent(worker_id, b"{\"ok\":0,\"dbg\":\"worker-startup-eval-exception\"}");
-            unsafe { qjs::js_free_value(ctx, v) };
-            let drained =
-                unsafe { qjs::vm::teardown_worker_context(rt, ctx, WORKER_TEARDOWN_WAIT_MS).await };
-            if !drained {
-                log_str("qjs-worker: teardown drain incomplete\n");
-            }
-            drop(vm);
-            mark_exited(worker_id);
-            return;
-        } else {
-            log_str(&format!(
-                "qjs-worker: worker#{} startup-eval-ok slot={}\n",
-                worker_id, scheduled_slot
-            ));
-            let _ = post_to_parent(worker_id, b"{\"ok\":1,\"dbg\":\"worker-startup-eval-ok\"}");
-        }
-        unsafe { qjs::js_free_value(ctx, v) };
-    }
-
-    // Worker loop: pump message inbox + async completions + microtasks.
-    loop {
-        if is_terminated(worker_id) {
-            break;
-        }
-
-        let mut progress = false;
-        progress |= unsafe { pump(ctx) };
-        progress |= unsafe { qjs::async_ops::pump(ctx) };
-        progress |= unsafe { qjs::timers::pump(ctx) };
-
-        // Drain microtasks.
-        loop {
-            let mut job_ctx: *mut qjs::JSContext = core::ptr::null_mut();
-            let rc =
-                unsafe { qjs::JS_ExecutePendingJob(rt, &mut job_ctx as *mut *mut qjs::JSContext) };
-            if rc > 0 {
-                progress = true;
-                continue;
-            }
-            if rc < 0 {
-                let ectx = if !job_ctx.is_null() { job_ctx } else { ctx };
-                log_str("qjs-worker: pending-job exception\n");
-                unsafe { qjs::qjs_diag::dump_last_exception(ectx, "worker-pending-job") };
-            }
-            break;
-        }
-
-        let pending = unsafe { qjs::JS_IsJobPending(rt) > 0 }
-            || unsafe { qjs::async_ops::has_pending(ctx) }
-            || qjs::timers::has_pending(ctx)
-            || qjs::workers::has_pending_for_ctx(ctx);
-        if !progress && !pending {
-            break;
-        }
-
-        if !progress {
-            Timer::after(EmbassyDuration::from_millis(1)).await;
-        }
-    }
-
-    let drained =
-        unsafe { qjs::vm::teardown_worker_context(rt, ctx, WORKER_TEARDOWN_WAIT_MS).await };
-    if !drained {
-        log_str("qjs-worker: teardown drain incomplete\n");
-    }
-    drop(vm);
-    mark_exited(worker_id);
 }
 
 // --- JS bindings for node:worker_threads ---

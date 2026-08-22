@@ -46,17 +46,28 @@ fn trace_usize_dec(v: usize) {
 }
 
 fn read_file_sync(path: &[u8]) -> Result<Vec<u8>, i32> {
-    v::vfs::read_file(path)
+    let len = unsafe { qjs::trueos_shims::trueos_cabi_fs_read_file(path.as_ptr(), path.len(), core::ptr::null_mut(), 0) };
+    if len < 0 { return Err(len as i32); }
+    let mut bytes = Vec::new();
+    bytes.resize(len as usize, 0);
+    let got = unsafe { qjs::trueos_shims::trueos_cabi_fs_read_file(path.as_ptr(), path.len(), bytes.as_mut_ptr(), bytes.len()) };
+    if got < 0 { return Err(got as i32); }
+    bytes.truncate(got as usize);
+    Ok(bytes)
 }
 
 fn write_file_sync(path: &[u8], data: &[u8]) -> Result<(), i32> {
-    let handle = v::vfs::write_begin(path, data.len() as u64)?;
-    if let Err(rc) = v::vfs::write_chunk(handle, data) {
-        let _ = v::vfs::write_abort(handle);
+    let mut handle = 0;
+    let rc = unsafe { qjs::trueos_shims::trueos_cabi_fs_write_begin(path.as_ptr(), path.len(), data.len() as u64, &mut handle) };
+    if rc != 0 { return Err(rc); }
+    let rc = unsafe { qjs::trueos_shims::trueos_cabi_fs_write_chunk(handle, data.as_ptr(), data.len()) };
+    if rc != 0 {
+        let _ = unsafe { qjs::trueos_shims::trueos_cabi_fs_write_abort(handle) };
         return Err(rc);
     }
-    if let Err(rc) = v::vfs::write_finish(handle) {
-        let _ = v::vfs::write_abort(handle);
+    let rc = unsafe { qjs::trueos_shims::trueos_cabi_fs_write_finish(handle) };
+    if rc != 0 {
+        let _ = unsafe { qjs::trueos_shims::trueos_cabi_fs_write_abort(handle) };
         return Err(rc);
     }
     Ok(())

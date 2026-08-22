@@ -477,7 +477,7 @@ unsafe extern "C" fn trueos_fetch_text(
             None
         } else {
             let path = next_fetch_cache_path();
-            let _ = v::vfs::remove(path.as_bytes());
+            let _ = qjs::trueos_shims::trueos_cabi_fs_remove(path.as_ptr(), path.len());
             Some(path)
         };
         let start_res = if is_post {

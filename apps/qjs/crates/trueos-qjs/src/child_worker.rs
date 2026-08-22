@@ -53,6 +53,9 @@ pub fn run() -> Result<(), String> {
     // parent can post a message later. `poll_once` yields the VMX lane between
     // QuickJS pumps without owning an executor or a terminal.
     loop {
+        if v::child_hull::status(PARENT_HANDLE) >= v::child_hull::STATUS_EXITED {
+            break Ok(());
+        }
         let _ = unsafe { qjs::vm::pump_runtime_once(rt, ctx, "qjs-child-worker") };
         unsafe { qjs::trueos_shims::trueos_cabi_poll_once() };
     }
@@ -60,6 +63,9 @@ pub fn run() -> Result<(), String> {
 
 fn receive_required(handle: u64) -> Result<Vec<u8>, String> {
     loop {
+        if v::child_hull::status(handle) >= v::child_hull::STATUS_EXITED {
+            return Err("child worker parent exited before startup frame arrived".into());
+        }
         match receive_one(handle)? {
             Some(frame) => return Ok(frame),
             None => unsafe { qjs::trueos_shims::trueos_cabi_poll_once() },
