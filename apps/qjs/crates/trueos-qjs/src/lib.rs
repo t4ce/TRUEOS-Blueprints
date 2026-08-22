@@ -39,6 +39,10 @@ pub mod workers;
 #[cfg(feature = "trueos")]
 pub mod workbench;
 
+/// Hidden `qjs.bp --trueos-child-worker` entrypoint and VMX child transport.
+#[cfg(feature = "trueos")]
+pub mod child_worker;
+
 #[cfg(feature = "trueos")]
 pub mod qjs_diag;
 
