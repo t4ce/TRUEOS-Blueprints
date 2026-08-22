@@ -5,6 +5,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::thread;
 
 mod abi_guard;
 mod app_catalog;
@@ -65,6 +66,8 @@ impl CratePatch {
 }
 
 const CARGO_CACHE_DIR_ENV: &str = "TRUEOS_BLUEPRINT_CARGO_CACHE_DIR";
+const BULK_FANOUT_ENV: &str = "TRUEOS_BLUEPRINT_FANOUT";
+const DEFAULT_BULK_FANOUT: usize = 4;
 const TARGET_SPEC_ENV: &str = "TRUEOS_BLUEPRINT_TARGET_SPEC";
 const TRUEOS_LIBC_VENDOR_DIR: &str = "libc-0.2.186";
 const RUSTFLAGS_ENCODED_SEPARATOR: char = '\u{1f}';
@@ -169,6 +172,20 @@ struct BuildinsManifest {
     buildins: Vec<String>,
 }
 
+enum BulkBuildTask {
+    Example {
+        name: String,
+        required_features: Vec<String>,
+    },
+    Package(app_catalog::PackageAppSpec),
+}
+
+#[derive(Clone, Copy)]
+struct BuildLane {
+    index: usize,
+    count: usize,
+}
+
 fn main() {
     if let Err(err) = run() {
         eprintln!("trueos-blueprint: {err}");
@@ -227,32 +244,24 @@ fn run() -> Result<(), String> {
                 return Ok(());
             }
 
-            let mut built_blueprints = Vec::with_capacity(examples.len() + package_apps.len());
-            for example in examples {
-                built_blueprints.push(build_one_target(
-                    &app_dir,
-                    &manifest_path,
-                    BuildTarget::Example(example.name),
-                    &example.required_features,
-                    cargo_profile,
-                )?);
-            }
-
-            for package_app in package_apps {
-                println!(
-                    "trueos-blueprint: package {}: {}",
-                    package_catalog.item_label(),
-                    package_app.name
-                );
-                built_blueprints.push(build_one_target_to(
-                    &package_app.dir,
-                    &package_app.manifest_path,
-                    BuildTarget::Package,
-                    &[],
-                    &app_dir.join("dist"),
-                    cargo_profile,
-                )?);
-            }
+            let tasks = examples
+                .into_iter()
+                .map(|example| BulkBuildTask::Example {
+                    name: example.name,
+                    required_features: example.required_features,
+                })
+                .chain(package_apps.into_iter().map(BulkBuildTask::Package))
+                .collect::<Vec<_>>();
+            let built_blueprints = if package_catalog == PackageCatalog::Apps {
+                build_bulk_apps(&app_dir, &manifest_path, tasks, cargo_profile)?
+            } else {
+                tasks
+                    .into_iter()
+                    .map(|task| {
+                        build_bulk_task(&app_dir, &manifest_path, task, cargo_profile, None)
+                    })
+                    .collect::<Result<Vec<_>, _>>()?
+            };
 
             publish_blueprint_files(&built_blueprints, package_catalog)?;
             return Ok(());
@@ -323,6 +332,130 @@ fn run() -> Result<(), String> {
     }
 }
 
+fn build_bulk_apps(
+    app_dir: &Path,
+    manifest_path: &Path,
+    tasks: Vec<BulkBuildTask>,
+    cargo_profile: CargoProfile,
+) -> Result<Vec<PathBuf>, String> {
+    let task_count = tasks.len();
+    let lane_count = bulk_fanout(tasks.len())?;
+    if lane_count == 1 {
+        return tasks
+            .into_iter()
+            .map(|task| build_bulk_task(app_dir, manifest_path, task, cargo_profile, None))
+            .collect();
+    }
+
+    println!(
+        "trueos-blueprint: bulk app build fanout: {lane_count} lanes (set {BULK_FANOUT_ENV}=1 to disable)"
+    );
+    let mut lanes = (0..lane_count).map(|_| Vec::new()).collect::<Vec<_>>();
+    for (task_index, task) in tasks.into_iter().enumerate() {
+        lanes[task_index % lane_count].push((task_index, task));
+    }
+
+    let app_dir = app_dir.to_path_buf();
+    let manifest_path = manifest_path.to_path_buf();
+    let mut handles = Vec::with_capacity(lane_count);
+    for (lane_index, tasks) in lanes.into_iter().enumerate() {
+        let app_dir = app_dir.clone();
+        let manifest_path = manifest_path.clone();
+        let lane = BuildLane {
+            index: lane_index,
+            count: lane_count,
+        };
+        handles.push(
+            thread::Builder::new()
+                .name(format!("trueos-bp-lane-{}", lane_index + 1))
+                .spawn(move || {
+                    tasks
+                        .into_iter()
+                        .map(|(task_index, task)| {
+                            build_bulk_task(
+                                &app_dir,
+                                &manifest_path,
+                                task,
+                                cargo_profile,
+                                Some(lane),
+                            )
+                            .map(|output| (task_index, output))
+                        })
+                        .collect::<Result<Vec<_>, _>>()
+                })
+                .map_err(|err| format!("failed to start bulk build lane: {err}"))?,
+        );
+    }
+
+    let mut ordered = vec![None; task_count];
+    for handle in handles {
+        let lane_outputs = handle
+            .join()
+            .map_err(|_| "bulk build lane panicked".to_string())??;
+        for (task_index, output) in lane_outputs {
+            if task_index >= ordered.len() {
+                return Err("bulk build returned an invalid task index".to_string());
+            }
+            ordered[task_index] = Some(output);
+        }
+    }
+    ordered
+        .into_iter()
+        .map(|output| {
+            output.ok_or_else(|| "bulk build produced an incomplete result set".to_string())
+        })
+        .collect()
+}
+
+fn build_bulk_task(
+    app_dir: &Path,
+    manifest_path: &Path,
+    task: BulkBuildTask,
+    cargo_profile: CargoProfile,
+    lane: Option<BuildLane>,
+) -> Result<PathBuf, String> {
+    match task {
+        BulkBuildTask::Example {
+            name,
+            required_features,
+        } => build_one_target_to_in_lane(
+            app_dir,
+            manifest_path,
+            BuildTarget::Example(name),
+            &required_features,
+            &app_dir.join("dist"),
+            cargo_profile,
+            lane,
+        ),
+        BulkBuildTask::Package(package_app) => {
+            println!("trueos-blueprint: package app: {}", package_app.name);
+            build_one_target_to_in_lane(
+                &package_app.dir,
+                &package_app.manifest_path,
+                BuildTarget::Package,
+                &[],
+                &app_dir.join("dist"),
+                cargo_profile,
+                lane,
+            )
+        }
+    }
+}
+
+fn bulk_fanout(task_count: usize) -> Result<usize, String> {
+    let requested = match env::var(BULK_FANOUT_ENV) {
+        Ok(value) => value
+            .parse::<usize>()
+            .map_err(|_| format!("{BULK_FANOUT_ENV} must be a positive integer, got `{value}`"))?,
+        Err(env::VarError::NotPresent) => DEFAULT_BULK_FANOUT,
+        Err(err) => return Err(format!("failed to read {BULK_FANOUT_ENV}: {err}")),
+    };
+    if requested == 0 {
+        return Err(format!("{BULK_FANOUT_ENV} must be at least 1"));
+    }
+    Ok(requested.min(task_count).max(1))
+}
+
 fn build_one_target(
     app_dir: &Path,
     manifest_path: &Path,
@@ -347,6 +480,26 @@ fn build_one_target_to(
     required_features: &[String],
     output_dir: &Path,
     cargo_profile: CargoProfile,
+) -> Result<PathBuf, String> {
+    build_one_target_to_in_lane(
+        app_dir,
+        manifest_path,
+        build_target,
+        required_features,
+        output_dir,
+        cargo_profile,
+        None,
+    )
+}
+
+fn build_one_target_to_in_lane(
+    app_dir: &Path,
+    manifest_path: &Path,
+    build_target: BuildTarget,
+    required_features: &[String],
+    output_dir: &Path,
+    cargo_profile: CargoProfile,
+    lane: Option<BuildLane>,
 ) -> Result<PathBuf, String> {
     let mut capability_flags = if matches!(build_target, BuildTarget::Package)
         && package_blueprint_replicatable(manifest_path)?
@@ -394,6 +547,12 @@ fn build_one_target_to(
         .ok_or_else(|| format!("bad target spec path: {}", target_spec.display()))?
         .to_string();
     let cargo_cache_root = cargo_cache_root(&app_dir, &packer_target_dir);
+    let cargo_cache_root = match lane {
+        Some(lane) => cargo_cache_root
+            .join("bulk-lanes")
+            .join(format!("lane-{}", lane.index + 1)),
+        None => cargo_cache_root,
+    };
     let cargo_target_dir = cargo_cache_root
         .join(&target_name)
         .join(build_settings.flavor.cache_label());
@@ -455,7 +614,16 @@ fn build_one_target_to(
     }
     push_source_overlay_configs(&mut cargo, &staged_source_overlay);
     push_extra_rustflags(&mut cargo, BLUEPRINT_RUSTFLAGS);
-    if output_name == "pumpkin" && matches!(cargo_profile, CargoProfile::Dev) {
+    if let Some(lane) = lane {
+        // Each lane owns a target-cache shard, so Cargo does not serialize on
+        // its target-directory lock. Divide the host budget across the lanes
+        // to avoid four Cargo instances each scheduling every CPU.
+        let jobs = thread::available_parallelism()
+            .map(|parallelism| parallelism.get().div_ceil(lane.count))
+            .unwrap_or(1)
+            .max(1);
+        cargo.arg("--jobs").arg(jobs.to_string());
+    } else if output_name == "pumpkin" && matches!(cargo_profile, CargoProfile::Dev) {
         // Keep Cargo from oversubscribing the host while rustc parallelizes
         // Pumpkin's unusually large crate frontend.
         cargo.arg("--jobs").arg("2");
@@ -1262,10 +1430,9 @@ fn buildin_app_names(app_dir: &Path) -> Result<BTreeSet<String>, String> {
     if !manifest_path.is_file() {
         return Ok(BTreeSet::new());
     }
-    let manifest: BuildinsManifest = serde_json::from_slice(
-        &fs::read(&manifest_path).map_err(io_string)?,
-    )
-    .map_err(|err| format!("invalid {}: {err}", manifest_path.display()))?;
+    let manifest: BuildinsManifest =
+        serde_json::from_slice(&fs::read(&manifest_path).map_err(io_string)?)
+            .map_err(|err| format!("invalid {}: {err}", manifest_path.display()))?;
     Ok(manifest.buildins.into_iter().collect())
 }
 
