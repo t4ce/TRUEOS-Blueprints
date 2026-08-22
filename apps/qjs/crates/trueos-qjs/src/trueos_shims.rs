@@ -5,6 +5,7 @@ use core::ptr;
 unsafe extern "C" {
     // Implemented in stdio.c. These declarations let the Blueprint resolver
     // retain and address the freestanding glibc-fortify compatibility shims.
+    pub fn abort() -> !;
     pub fn __snprintf_chk();
     pub fn __vsnprintf_chk();
 }
@@ -86,17 +87,6 @@ fn log_i32_dec(v: c_int) {
 // --- Abort/assert shims ---
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn abort() -> ! {
-    log_str("abort()\n");
-
-    core::arch::asm!("cli", options(nomem, nostack));
-
-    loop {
-        core::arch::asm!("hlt", options(nomem, nostack));
-    }
-}
-
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn __assert_fail(
     assertion: *const c_char,
     file: *const c_char,
@@ -112,7 +102,7 @@ pub unsafe extern "C" fn __assert_fail(
     log_str(" function='");
     log_cstr(function);
     log_str("')\n");
-    abort()
+    unsafe { abort() }
 }
 
 // --- Small math shims QuickJS expects from libm/libc ---

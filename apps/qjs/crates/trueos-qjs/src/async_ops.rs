@@ -223,7 +223,7 @@ unsafe fn pump_net_fetch_text(ctx: *mut qjs::JSContext) -> bool {
         match op.kind {
             OpKind::NetFetchTextFile => {
                 // Consume the net op result (also discards the kernel op id), then read the
-                // cache file back directly. Routing this through async_fs_service can stall on
+                // cache file back directly. Routing this through the queued FS pump can stall on
                 // nested sync-over-async readback even though the network request already finished.
                 let _ = async_fs::read_result(op_id, core::ptr::null_mut(), 0);
                 match read_file_via_cabi(op.aux.as_slice()) {

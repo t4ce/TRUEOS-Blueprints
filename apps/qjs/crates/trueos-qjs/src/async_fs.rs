@@ -5,7 +5,7 @@ extern crate alloc;
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::ToString;
 use alloc::{collections::VecDeque, string::String, vec::Vec};
-use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicU32, Ordering};
 
 use trueos_time::{Duration as EmbassyDuration, Instant, Timer};
 use spin::Mutex;
@@ -26,7 +26,6 @@ const ASYNC_FS_MAX_QUEUE: usize = 64;
 const ASYNC_FS_WRITE_CHUNK: usize = 256 * 1024;
 
 static ASYNC_FS_SEQ: AtomicU32 = AtomicU32::new(1);
-static SERVICE_STARTED: AtomicBool = AtomicBool::new(false);
 static ASYNC_FS_DIAG_LOGS: AtomicU32 = AtomicU32::new(0);
 
 #[inline]
@@ -107,6 +106,9 @@ fn push_async_fs_req_wait(req: AsyncFsRequest) {
         if pushed {
             return;
         }
+        // There is no separate kernel QJS service task any more. Drain a
+        // bounded request batch locally so a large write can keep enqueueing.
+        let _ = pump_service();
         unsafe { trueos_cabi_poll_once() };
     }
 }
@@ -301,26 +303,19 @@ fn start_net_post_json_bytes_via_cabi(
     Ok(id)
 }
 
-pub fn claim_service_start() -> bool {
-    SERVICE_STARTED
-        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-        .is_ok()
-}
-
-pub fn clear_service_start_claim() {
-    SERVICE_STARTED.store(false, Ordering::Release);
-}
-
-#[trueos_executor::task]
-pub async fn async_fs_service_task() {
+/// Process at most one bounded queue batch from the VM's owning task.
+///
+/// The underlying legacy CABI calls are synchronous, but this is deliberately
+/// bounded by `ASYNC_FS_MAX_QUEUE`: one VM pump cannot drain an unbounded
+/// producer burst before QuickJS jobs, timers, and worker messages run.
+pub fn pump_service() -> bool {
+    let mut processed = 0usize;
     loop {
-        let mut processed = 0usize;
-        loop {
-            let Some(req) = take_async_fs_req() else {
-                break;
-            };
+        let Some(req) = take_async_fs_req() else {
+            break;
+        };
 
-            match req {
+        match req {
                 AsyncFsRequest::ReadFile { id, path } => {
                     async_fs_diag(
                         alloc::format!(
@@ -441,25 +436,22 @@ pub async fn async_fs_service_task() {
                         }
                     }
                 }
-            }
-
-            processed = processed.saturating_add(1);
-            if processed >= ASYNC_FS_MAX_QUEUE {
-                break;
-            }
         }
 
-        if processed == 0 {
-            Timer::after(EmbassyDuration::from_millis(1)).await;
+        processed = processed.saturating_add(1);
+        if processed >= ASYNC_FS_MAX_QUEUE {
+            break;
         }
     }
+
+    processed != 0
 }
 
 pub fn start_net_fetch_to_file(url: &[u8], path: &[u8]) -> Result<u32, i32> {
     if url.is_empty() || path.is_empty() {
         return Err(FS_ERR_BAD_PARAM);
     }
-    if path.len() > QJS_ASYNC_FS_MAX_PATH {
+    if path.len() > BLUEPRINT_ASYNC_FS_MAX_PATH {
         return Err(FS_ERR_TOO_LARGE);
     }
     let Ok(url_str) = core::str::from_utf8(url) else {
@@ -494,7 +486,7 @@ pub fn start_net_post_json_to_file(
     if url.is_empty() || path.is_empty() || body_json.is_empty() {
         return Err(FS_ERR_BAD_PARAM);
     }
-    if path.len() > QJS_ASYNC_FS_MAX_PATH {
+    if path.len() > BLUEPRINT_ASYNC_FS_MAX_PATH {
         return Err(FS_ERR_TOO_LARGE);
     }
     let Ok(url_str) = core::str::from_utf8(url) else {
@@ -548,7 +540,7 @@ pub fn start_read_file(path: &[u8]) -> Result<u32, i32> {
     if path.is_empty() {
         return Err(FS_ERR_BAD_PARAM);
     }
-    if path.len() > QJS_ASYNC_FS_MAX_PATH {
+    if path.len() > BLUEPRINT_ASYNC_FS_MAX_PATH {
         return Err(FS_ERR_TOO_LARGE);
     }
     let Ok(path_str) = core::str::from_utf8(path) else {
@@ -570,7 +562,7 @@ pub fn start_write_file(path: &[u8], data: &[u8]) -> Result<u32, i32> {
     if path.is_empty() {
         return Err(FS_ERR_BAD_PARAM);
     }
-    if path.len() > QJS_ASYNC_FS_MAX_PATH {
+    if path.len() > BLUEPRINT_ASYNC_FS_MAX_PATH {
         return Err(FS_ERR_TOO_LARGE);
     }
     let Ok(path_str) = core::str::from_utf8(path) else {

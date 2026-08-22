@@ -1,56 +1,59 @@
-# QJS runtime ownership migration
+# QJS Blueprint runtime topology
 
-The `qjs` Blueprint owns the QuickJS runtime source under
-`crates/trueos-qjs`. Solara is outside this migration: it owns and uses its
-separate `vendor/RustQJSDom` runtime.
+The ownership migration is complete. The `qjs` Blueprint owns the QuickJS
+runtime source under `crates/trueos-qjs`; the TRUEOS kernel has no
+`trueos-qjs` dependency or QJS workbench state. Solara remains independent and
+continues to own its separate `vendor/RustQJSDom` runtime.
 
-## Current transition state
+## Runtime ownership
 
-The complete `trueos-qjs` source tree has moved from the TRUEOS kernel
-repository into this application. The kernel temporarily consumes the crate
-through a sibling path dependency so the existing `qjs.bp` workbench keeps its
-runtime, worker behavior, timers, async filesystem operations, and module
-loader unchanged.
+- Shell2's `qjs` command only launches `qjs.bp`.
+- The visible Blueprint owns one persistent
+  `trueos_qjs::workbench::Workbench`. Evaluation, script/module selection,
+  output, timers, async operations, reset, and close happen in that Hull.
+- The runtime uses the Blueprint SDK copy of `v`. Its remaining C ABI adapters
+  are ordinary bounded Blueprint services, not kernel-owned QuickJS state.
+- Async filesystem requests are advanced by the Blueprint VM pump. No QJS
+  executor task is started by the kernel.
 
-`qjs.bp` now creates and owns a persistent `trueos_qjs::workbench::Workbench`
-inside its application process. The terminal UI calls that object directly:
-evaluation, result formatting, console output, module-mode detection, timers,
-async pumping, and VM reset no longer use the qjs-workbench eval/poll/close
-CABI.
+## Worker topology
 
-The runtime is now a direct `qjs.bp` dependency and uses the Blueprint SDK
-copy of `v`. It still has a few transition adapters (notably locale, time, and
-legacy synchronous filesystem CABI), but those no longer put the VM back in
-the kernel.
+`new Worker(source)` starts another instance of the same archive through the
+generic `blueprint_child_{spawn,send,receive,status,terminate}_v1` ABI. The
+kernel schedules that hidden child through the existing `vm_task` pool on a
+reserved AP2+ VMX Hull lane.
 
-## Remaining runtime cut
+The child starts with `--trueos-child-worker`, never acquires a terminal lease,
+receives its source as the first frame on parent handle zero, and exclusively
+owns a separate QuickJS runtime/context. Parent and child exchange bounded byte
+frames only; executor handles, Rust futures, guest pointers, and JavaScript
+values never cross the Hull boundary. The app enforces a 32-concurrent-worker
+limit, while lane placement and VM lifecycle remain generic kernel policy.
 
-1. Split the crate's current `trueos` feature into a Blueprint-safe runtime
-   core and explicit host-service adapters. The runtime core owns QuickJS,
-   evaluation, module loading, timers, diagnostics, and JS-facing Node APIs.
-2. Keep using the explicit `kernel-code-model` feature only for the temporary
-   kernel consumer. Blueprint C objects can now follow the packager's
-   PIC/code-model flags.
-3. Replace direct source includes of `TRUEOS/src/r/cabi_codes.rs` with an ABI
-   definition owned by `trueos-v` or by this application.
-4. Remove `shell2/qjs_workbench.rs` and the qjs-workbench eval/poll/close CABI.
-5. Workers now spawn a child instance of the same archive via the generic
-   `blueprint_child_{spawn,send,receive,status,terminate}_v1` CABI. The kernel
-   selects the VMX lane; the child starts with `--trueos-child-worker`, receives
-   its startup source as its first frame on handle zero, and owns its own
-   QuickJS runtime/context. Parent and child exchange byte frames only—no
-   `Spawner`, Rust future, or JS value crosses the Hull boundary.
-6. Replace remaining legacy synchronous filesystem CABI declarations with the
-   Blueprint async FS service, then remove the temporary TRUEOS dependencies
-   still used by runtime adapters.
-7. Once worker and async services no longer require kernel-owned QuickJS state,
-   remove the temporary TRUEOS dependency on `trueos-qjs`.
+Parent teardown terminates its children. A child also observes parent liveness
+through handle zero and exits when the parent disappears. Final child-to-parent
+messages remain drainable after child exit.
 
-## Verification gates
+## Kernel boundary
 
+The kernel retains only generic services used by other Blueprints as well:
+
+- child Hull spawn, message, status, terminate, and generation checking;
+- `vm_task` pooling and VMX lane leasing;
+- bounded filesystem, network, clock, allocation, and loader ABI services;
+- generic libc/math shims needed by Blueprint loading.
+
+The old `shell2/qjs_workbench.rs`, QJS workbench CABI/VMCalls, QJS async-FS
+startup task, QJS worker-spawner exports, and the `trueos-qjs` Cargo edge have
+been removed.
+
+## Verification
+
+- `cargo fmt --manifest-path apps/qjs/Cargo.toml -- --check`
 - `cargo check --manifest-path apps/qjs/Cargo.toml`
-- `cargo check -p trueos-qjs` from the TRUEOS repository during the bridge phase
-- `cargo check --bin TRUEOS` during the bridge phase
-- package `qjs.bp` after the runtime core becomes a direct app dependency
-- exercise persistent evaluations, ESM imports, timers, filesystem promises,
-  VMX child worker message round-trips, reset, and close
+- `cargo check` in the TRUEOS kernel repository
+- package `qjs.bp`
+
+Source/build checks cover ownership and linkage. Persistent evaluation,
+modules, timers, filesystem promises, worker message round-trips, reset, and
+close still require an on-system VMX smoke test for runtime confirmation.

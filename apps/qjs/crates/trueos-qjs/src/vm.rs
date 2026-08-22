@@ -111,6 +111,10 @@ pub unsafe fn pump_runtime_once(
     label: &str,
 ) -> bool {
     let mut progress = false;
+    // The Blueprint owns filesystem request execution now. Advance it before
+    // resolving JS promises so queued reads/writes cannot depend on a removed
+    // kernel executor task.
+    progress |= qjs::async_fs::pump_service();
     let had_async_pending = qjs::async_ops::has_pending(ctx);
     progress |= qjs::async_ops::pump(ctx);
     progress |= qjs::workers::pump(ctx);

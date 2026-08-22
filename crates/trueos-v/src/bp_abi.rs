@@ -675,6 +675,27 @@ unsafe extern "C" {
         argument_count: usize,
         out_value: *mut f64,
     ) -> i32;
+    pub fn trueos_cabi_boot_timestamp_secs() -> u64;
+    pub fn trueos_cabi_fs_read_file(
+        path_ptr: *const u8,
+        path_len: usize,
+        out_ptr: *mut u8,
+        out_cap: usize,
+    ) -> isize;
+    pub fn trueos_cabi_fs_remove(path_ptr: *const u8, path_len: usize) -> i32;
+    pub fn trueos_cabi_fs_write_begin(
+        path_ptr: *const u8,
+        path_len: usize,
+        total_len: u64,
+        out_handle: *mut u32,
+    ) -> i32;
+    pub fn trueos_cabi_fs_write_chunk(
+        handle: u32,
+        data_ptr: *const u8,
+        data_len: usize,
+    ) -> i32;
+    pub fn trueos_cabi_fs_write_finish(handle: u32) -> i32;
+    pub fn trueos_cabi_fs_write_abort(handle: u32) -> i32;
 
     pub fn trueos_cabi_async_fs_read_start(path_ptr: *const u8, path_len: usize) -> i32;
     pub fn trueos_cabi_async_fs_write_begin(
@@ -1229,15 +1250,6 @@ unsafe extern "C" {
     ) -> isize;
     pub fn trueos_cabi_blueprint_child_status_v1(handle: u64) -> i32;
     pub fn trueos_cabi_blueprint_child_terminate_v1(handle: u64) -> i32;
-    pub fn trueos_cabi_qjs_workbench_eval_v1(
-        source_ptr: *const u8,
-        source_len: usize,
-        mode: u32,
-        out_ptr: *mut u8,
-        out_cap: usize,
-    ) -> isize;
-    pub fn trueos_cabi_qjs_workbench_poll_v1(out_ptr: *mut u8, out_cap: usize) -> isize;
-    pub fn trueos_cabi_qjs_workbench_close_v1() -> i32;
     pub fn trueos_cabi_blueprint_exit_reason(data_ptr: *const u8, data_len: usize) -> i32;
     pub fn trueos_cabi_blueprint_shutdown(data_ptr: *const u8, data_len: usize) -> i32;
     pub fn trueos_cabi_blueprint_return_to_cli() -> i32;

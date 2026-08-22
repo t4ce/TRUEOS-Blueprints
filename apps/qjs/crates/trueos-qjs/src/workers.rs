@@ -142,11 +142,14 @@ fn spawn_eval_on_slot_inner(code_utf8: &[u8]) -> Result<u32, i32> {
 
     let worker_id = WORKER_SEQ.fetch_add(1, Ordering::Relaxed);
     {
-        let mut workers = WORKERS.lock();
-        workers.retain(|_, state| {
-            v::child_hull::status(state.child_handle) < v::child_hull::STATUS_EXITED
-        });
-        if workers.len() >= WORKER_TASK_POOL {
+        let workers = WORKERS.lock();
+        let active = workers
+            .values()
+            .filter(|state| {
+                v::child_hull::status(state.child_handle) < v::child_hull::STATUS_EXITED
+            })
+            .count();
+        if active >= WORKER_TASK_POOL {
             return Err(v::child_hull::ERR_QUEUE_FULL);
         }
     }
@@ -245,16 +248,7 @@ pub unsafe fn pump(ctx: *mut qjs::JSContext) -> bool {
 
             // Snapshot which workers have pending messages first to avoid holding the WORKERS lock
             // while calling into JS.
-            let pending_ids: Vec<u32> = {
-                let mut workers = WORKERS.lock();
-                // The policy limit is concurrent children, not a lifetime
-                // counter. Once the kernel reports exit, discard our opaque
-                // endpoint and allow the next `new Worker` to use its slot.
-                workers.retain(|_, state| {
-                    v::child_hull::status(state.child_handle) < v::child_hull::STATUS_EXITED
-                });
-                workers.keys().copied().collect()
-            };
+            let pending_ids: Vec<u32> = WORKERS.lock().keys().copied().collect();
 
             for worker_id in pending_ids {
                 loop {
@@ -270,6 +264,17 @@ pub unsafe fn pump(ctx: *mut qjs::JSContext) -> bool {
                     if let Some(cb) = cb {
                         unsafe { call_on_message(ctx, cb, msg.as_slice()) };
                     }
+                }
+
+                // The kernel intentionally keeps final child-to-parent frames
+                // after exit. Reap only after the queue above has been drained,
+                // otherwise a fast worker could lose its final message.
+                let exited = worker_state_mut(worker_id, |state| {
+                    v::child_hull::status(state.child_handle) >= v::child_hull::STATUS_EXITED
+                })
+                .unwrap_or(false);
+                if exited {
+                    WORKERS.lock().remove(&worker_id);
                 }
             }
         }
