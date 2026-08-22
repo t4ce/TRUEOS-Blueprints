@@ -477,7 +477,7 @@ unsafe extern "C" fn trueos_fetch_text(
             None
         } else {
             let path = next_fetch_cache_path();
-            let _ = qjs::trueos_shims::trueos_cabi_fs_remove(path.as_ptr(), path.len());
+            let _ = qjs::trueos_shims::remove_file(path.as_bytes());
             Some(path)
         };
         let start_res = if is_post {
@@ -694,14 +694,9 @@ unsafe extern "C" fn trueos_global_log_line(
 }
 
 fn read_fs_len(path: &[u8]) -> isize {
-    unsafe {
-        qjs::trueos_shims::trueos_cabi_fs_read_file(
-            path.as_ptr(),
-            path.len(),
-            core::ptr::null_mut(),
-            0,
-        )
-    }
+    qjs::trueos_shims::file_len(path)
+        .map(|len| len as isize)
+        .unwrap_or_else(|code| code as isize)
 }
 
 unsafe extern "C" fn trueos_prefetch_module(

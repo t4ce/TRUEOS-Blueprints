@@ -11,7 +11,6 @@ use spin::Mutex;
 use crate as qjs;
 
 use crate::async_fs;
-use crate::trueos_shims::{trueos_cabi_fs_read_file, trueos_cabi_fs_remove};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum OpKind {
@@ -160,24 +159,6 @@ unsafe fn resolve_undefined(ctx: *mut qjs::JSContext, op: &PendingOp) {
     let _ = qjs::jsbind::call1(ctx, op.resolve, qjs::JSValue::undefined(), val);
 }
 
-fn read_file_via_cabi(path: &[u8]) -> Result<Vec<u8>, i32> {
-    let len =
-        unsafe { trueos_cabi_fs_read_file(path.as_ptr(), path.len(), core::ptr::null_mut(), 0) };
-    if len < 0 {
-        return Err(len as i32);
-    }
-    let len = len as usize;
-    let mut buf: Vec<u8> = Vec::with_capacity(len);
-    buf.resize(len, 0);
-    let got =
-        unsafe { trueos_cabi_fs_read_file(path.as_ptr(), path.len(), buf.as_mut_ptr(), buf.len()) };
-    if got < 0 {
-        return Err(got as i32);
-    }
-    buf.truncate(got as usize);
-    Ok(buf)
-}
-
 unsafe fn pump_net_fetch_text(ctx: *mut qjs::JSContext) -> bool {
     // Net ops don't show up in async_fs::poll_completed(), so we must poll their result here.
     let mut progress = false;
@@ -226,7 +207,7 @@ unsafe fn pump_net_fetch_text(ctx: *mut qjs::JSContext) -> bool {
                 // cache file back directly. Routing this through the queued FS pump can stall on
                 // nested sync-over-async readback even though the network request already finished.
                 let _ = async_fs::read_result(op_id, core::ptr::null_mut(), 0);
-                match read_file_via_cabi(op.aux.as_slice()) {
+                match crate::trueos_shims::read_file(op.aux.as_slice()) {
                     Ok(buf) => {
                         crate::trueos_shims::log_info(
                             format!(
@@ -289,7 +270,7 @@ unsafe fn pump_net_fetch_text(ctx: *mut qjs::JSContext) -> bool {
             _ => {}
         }
         if !op.aux.is_empty() {
-            let _ = trueos_cabi_fs_remove(op.aux.as_ptr(), op.aux.len());
+            let _ = crate::trueos_shims::remove_file(op.aux.as_slice());
         }
         qjs::js_free_value(ctx, op.resolve);
         qjs::js_free_value(ctx, op.reject);
@@ -501,7 +482,7 @@ pub unsafe fn pump(ctx: *mut qjs::JSContext) -> bool {
                     Err(code) => unsafe { reject_with_code(ctx, &op, code) },
                 }
                 if !op.aux.is_empty() {
-                    let _ = unsafe { trueos_cabi_fs_remove(op.aux.as_ptr(), op.aux.len()) };
+                    let _ = crate::trueos_shims::remove_file(op.aux.as_slice());
                 }
             }
             OpKind::NetFetchTextFile | OpKind::NetPostJsonTextBytes => {

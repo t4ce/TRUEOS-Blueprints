@@ -24,18 +24,24 @@ pub use v::qjs_abi::{
     trueos_cabi_poll_once, trueos_cabi_qjs_mouse_pop, trueos_cabi_realloc,
 };
 
-// These legacy synchronous file calls remain host C ABI services. Declaring
-// them here prevents the Blueprint runtime from depending on kernel-private
-// `v::vfs` while async FS migration continues independently.
-unsafe extern "C" {
-    pub fn trueos_cabi_fs_read_file(path_ptr: *const u8, path_len: usize, out_ptr: *mut u8, out_cap: usize) -> isize;
-    pub fn trueos_cabi_fs_remove(path_ptr: *const u8, path_len: usize) -> i32;
-    pub fn trueos_cabi_fs_write_begin(path_ptr: *const u8, path_len: usize, total_len: u64, out_handle: *mut u32) -> i32;
-    pub fn trueos_cabi_fs_write_chunk(handle: u32, data_ptr: *const u8, data_len: usize) -> i32;
-    pub fn trueos_cabi_fs_write_finish(handle: u32) -> i32;
-    pub fn trueos_cabi_fs_write_abort(handle: u32) -> i32;
-    pub fn trueos_cabi_trueosfs_json_all(out_ptr: *mut u8, out_cap: usize) -> isize;
-    pub fn trueos_cabi_trueosfs_primary_html_tree(out_ptr: *mut u8, out_cap: usize) -> isize;
+pub fn read_file(path: &[u8]) -> Result<alloc::vec::Vec<u8>, i32> {
+    v::vfs_async::block_on(v::vfs_async::read_file(path))
+}
+
+pub fn write_file(path: &[u8], data: &[u8]) -> Result<(), i32> {
+    v::vfs_async::block_on(v::vfs_async::write_file(path, data))
+}
+
+pub fn remove_file(path: &[u8]) -> Result<(), i32> {
+    v::vfs_async::block_on(v::vfs_async::remove(path))
+}
+
+pub fn file_len(path: &[u8]) -> Result<usize, i32> {
+    let metadata = v::vfs_async::block_on(v::vfs_async::metadata(path))?;
+    if !metadata.is_file() {
+        return Err(v::vfs_async::ERR_NOT_FOUND);
+    }
+    usize::try_from(metadata.len).map_err(|_| v::vfs_async::ERR_IO)
 }
 pub use v::vshell::shell2_print_line;
 pub use v::vsys::{log_error, log_info, write_log_stream};

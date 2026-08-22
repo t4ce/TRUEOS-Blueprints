@@ -45,34 +45,6 @@ fn trace_usize_dec(v: usize) {
     super::trace_usize_dec(v);
 }
 
-fn read_file_sync(path: &[u8]) -> Result<Vec<u8>, i32> {
-    let len = unsafe { qjs::trueos_shims::trueos_cabi_fs_read_file(path.as_ptr(), path.len(), core::ptr::null_mut(), 0) };
-    if len < 0 { return Err(len as i32); }
-    let mut bytes = Vec::new();
-    bytes.resize(len as usize, 0);
-    let got = unsafe { qjs::trueos_shims::trueos_cabi_fs_read_file(path.as_ptr(), path.len(), bytes.as_mut_ptr(), bytes.len()) };
-    if got < 0 { return Err(got as i32); }
-    bytes.truncate(got as usize);
-    Ok(bytes)
-}
-
-fn write_file_sync(path: &[u8], data: &[u8]) -> Result<(), i32> {
-    let mut handle = 0;
-    let rc = unsafe { qjs::trueos_shims::trueos_cabi_fs_write_begin(path.as_ptr(), path.len(), data.len() as u64, &mut handle) };
-    if rc != 0 { return Err(rc); }
-    let rc = unsafe { qjs::trueos_shims::trueos_cabi_fs_write_chunk(handle, data.as_ptr(), data.len()) };
-    if rc != 0 {
-        let _ = unsafe { qjs::trueos_shims::trueos_cabi_fs_write_abort(handle) };
-        return Err(rc);
-    }
-    let rc = unsafe { qjs::trueos_shims::trueos_cabi_fs_write_finish(handle) };
-    if rc != 0 {
-        let _ = unsafe { qjs::trueos_shims::trueos_cabi_fs_write_abort(handle) };
-        return Err(rc);
-    }
-    Ok(())
-}
-
 pub(super) fn compiled_cache_path_for_source(source_cache_path: &[u8]) -> Vec<u8> {
     let mut out = source_cache_path.to_vec();
     if out.ends_with(b".mjs") {
@@ -86,7 +58,7 @@ pub(super) unsafe fn try_load_compiled_module(
     ctx: *mut qjs::JSContext,
     compiled_path: &[u8],
 ) -> Result<*mut qjs::JSModuleDef, i32> {
-    let buf = read_file_sync(compiled_path)?;
+    let buf = qjs::trueos_shims::read_file(compiled_path)?;
     if buf.is_empty() {
         return Err(super::FS_ERR_NOT_FOUND);
     }
@@ -121,7 +93,7 @@ pub(super) unsafe fn persist_compiled_module(
     }
 
     let blob = core::slice::from_raw_parts(blob_ptr, blob_len);
-    match write_file_sync(compiled_path, blob) {
+    match qjs::trueos_shims::write_file(compiled_path, blob) {
         Ok(()) => {
             trace_str("qjs: compiled cache write ok path=");
             trace_bytes(compiled_path);
