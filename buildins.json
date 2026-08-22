@@ -3,6 +3,7 @@
     "commander",
     "ssh",
     "img",
+    "os",
     "texplo",
     "edit",
     "shell"
