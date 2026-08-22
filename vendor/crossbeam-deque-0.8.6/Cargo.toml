@@ -59,7 +59,6 @@ path = "tests/steal.rs"
 
 [dependencies.crossbeam-epoch]
 version = "0.9.17"
-path = "../crossbeam-epoch-0.9.18"
 default-features = false
 
 [dependencies.crossbeam-utils]
