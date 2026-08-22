@@ -171,8 +171,13 @@ where
         // benchmarks often use. Perhaps it should be a config option instead.
         for _ in 0..16 {
             let _ = self.poll_read(cx)?;
-            let _ = self.poll_write(cx)?;
-            let _ = self.poll_flush(cx)?;
+            let write_ready = self.poll_write(cx)?.is_ready();
+            let flush_ready = self.poll_flush(cx)?.is_ready();
+
+            // If we can write more body and the connection is ready, we should
+            // write again. Returning here would yield without a guaranteed
+            // wake-up from the write side of the connection.
+            let wants_write_again = self.can_write_again() && (write_ready || flush_ready);
 
             // This could happen if reading paused before blocking on IO,
             // such as getting to the end of a framed message, but then
@@ -182,8 +187,19 @@ where
             //
             // Using this instead of task::current() and notify() inside
             // the Conn is noticeably faster in pipelined benchmarks.
-            if !self.conn.wants_read_again() {
-                //break;
+            let wants_read_again = self.conn.wants_read_again();
+            if !(wants_write_again || wants_read_again) {
+                return Poll::Ready(Ok(()));
+            }
+
+            // Flush can be ready with no buffered data while the response body
+            // is pending. Re-check write progress before looping so that case
+            // still relies on the connection future's wake-up rather than
+            // spinning.
+            if !wants_read_again
+                && wants_write_again
+                && self.poll_write(cx)?.is_pending()
+            {
                 return Poll::Ready(Ok(()));
             }
         }
@@ -434,6 +450,11 @@ where
         self.conn.close_write();
     }
 
+    /// Whether a ready connection could make progress writing a response body.
+    fn can_write_again(&mut self) -> bool {
+        !self.is_closing && self.body_rx.is_some() && self.conn.can_write_body()
+    }
+
     fn is_done(&self) -> bool {
         if self.is_closing {
             return true;
@@ -536,7 +557,25 @@ cfg_server! {
         ) -> Poll<Option<Result<(Self::PollItem, Self::PollBody), Self::PollError>>> {
             let mut this = self.as_mut();
             let ret = if let Some(ref mut fut) = this.in_flight.as_mut().as_pin_mut() {
-                let resp = ready!(fut.as_mut().poll(cx)?);
+                #[cfg(target_os = "trueos")]
+                eprintln!("[hyper-dispatch-probe] service poll enter");
+                let resp = match fut.as_mut().poll(cx) {
+                    Poll::Ready(Ok(resp)) => {
+                        #[cfg(target_os = "trueos")]
+                        eprintln!("[hyper-dispatch-probe] service poll ready");
+                        resp
+                    }
+                    Poll::Ready(Err(err)) => {
+                        #[cfg(target_os = "trueos")]
+                        eprintln!("[hyper-dispatch-probe] service poll error");
+                        return Poll::Ready(Some(Err(err)));
+                    }
+                    Poll::Pending => {
+                        #[cfg(target_os = "trueos")]
+                        eprintln!("[hyper-dispatch-probe] service poll pending");
+                        return Poll::Pending;
+                    }
+                };
                 let (parts, body) = resp.into_parts();
                 let head = MessageHead {
                     version: parts.version,
@@ -562,6 +601,8 @@ cfg_server! {
             *req.headers_mut() = msg.headers;
             *req.version_mut() = msg.version;
             *req.extensions_mut() = msg.extensions;
+            #[cfg(target_os = "trueos")]
+            eprintln!("[hyper-dispatch-probe] service call {} {}", req.method(), req.uri());
             let fut = self.service.call(req);
             self.in_flight.set(Some(fut));
             Ok(())
