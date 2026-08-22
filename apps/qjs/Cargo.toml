@@ -11,6 +11,7 @@ path = "src/main.rs"
 [dependencies]
 anyhow = "1.0"
 crossterm = { path = "../../vendor/crossterm-0.29.0-trueos", default-features = false, features = ["bracketed-paste", "events"] }
+trueos-qjs = { path = "crates/trueos-qjs", features = ["trueos"] }
 
 [target.'cfg(any(target_os = "trueos", target_os = "zkvm"))'.dependencies]
 trueos = { path = "../../api" }

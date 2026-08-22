@@ -31,6 +31,14 @@ pub mod vm;
 #[cfg(feature = "trueos")]
 pub mod workers;
 
+/// Persistent, single-owner QuickJS workbench used by `qjs.bp`.
+///
+/// This deliberately lives with the runtime rather than in the kernel: a
+/// Blueprint process owns one `Workbench` for the lifetime of its terminal
+/// session.  Kernel services remain behind the normal TRUEOS C ABI.
+#[cfg(feature = "trueos")]
+pub mod workbench;
+
 #[cfg(feature = "trueos")]
 pub mod qjs_diag;
 
