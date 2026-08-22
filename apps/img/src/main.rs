@@ -3,12 +3,7 @@
 
 extern crate alloc;
 
-use alloc::{
-    format,
-    string::String,
-    vec,
-    vec::Vec,
-};
+use alloc::{format, string::String, vec, vec::Vec};
 use core3::io::Cursor;
 use trueos::logl::{self, level};
 use trueos::ui4_scene::{Damage, Error as Ui4Error, Frame, output_dimensions, rgba};
@@ -107,47 +102,93 @@ fn clamp_axis(offset: f32, viewport: f32, content: f32) -> f32 {
 
 fn main() {
     let mut frames = Vec::new();
-    logl::log(level::INFO, format_args!("img: vFile launch read begin"));
-    let script = launch_script();
-    logl::log(
-        level::INFO,
-        format_args!(
-            "img: vFile launch read ok bytes={} lines={}",
-            script.len(),
-            script.lines().count()
-        ),
-    );
-    for line in script.lines() {
-        run_line(line, &mut frames);
+    let args: Vec<String> = trueos::env::args().skip(1).collect();
+    if !args.is_empty() {
+        let mut command = String::from("show ");
+        command.push_str(args.join(" ").as_str());
+        run_line(command.as_str(), &mut frames);
     }
+    terminal_enter();
+    terminal_write(b"img: interactive UI4 media viewer (up to 32 frames)\r\n");
+    terminal_write(b"img: `show PATH [center|top-left|top-right|bottom-left|bottom-right] [hit|nohit]`; `list`; `close all`; `exit`\r\nimg> ");
+    let mut command = Vec::new();
 
     loop {
         service_frames(&mut frames);
+        if service_terminal(&mut command, &mut frames) {
+            break;
+        }
         vsys::poll_once();
         vsys::sleep_ms(16);
     }
+    let _ = trueos::vshell::shutdown_current_blueprint("img viewer exited");
 }
 
-fn launch_script() -> String {
-    match async_fs::block_on(async_fs::read_file(b"vFile:launch")) {
-        Ok(bytes) => match String::from_utf8(bytes) {
-            Ok(script) => script,
-            Err(_) => {
-                logl::log(
-                    level::ERROR,
-                    format_args!("img: vFile launch invalid UTF-8"),
-                );
-                String::new()
+fn terminal_enter() {
+    let size = trueos::vshell::konsole_size()
+        .unwrap_or(trueos::vshell::KonsoleSize { cols: 80, rows: 24 });
+    let _ = trueos::vshell::konsole_begin_frame(
+        size.cols,
+        size.rows,
+        trueos::vshell::KONSOLE_FRAME_TERMINAL_HANDOFF,
+    );
+}
+
+fn terminal_write(bytes: &[u8]) {
+    let _ = trueos::vshell::attached_write(bytes);
+}
+
+fn service_terminal(command: &mut Vec<u8>, frames: &mut Vec<OpenFrame>) -> bool {
+    let mut bytes = [0u8; 512];
+    let len = trueos::vshell::attached_read_available(&mut bytes);
+    for byte in &bytes[..len] {
+        match *byte {
+            3 => {
+                terminal_write(b"^C\r\nimg> ");
+                command.clear();
             }
-        },
-        Err(code) => {
-            logl::log(
-                level::ERROR,
-                format_args!("img: vFile launch read code={code}"),
-            );
-            String::new()
+            b'\r' | b'\n' => {
+                terminal_write(b"\r\n");
+                let line = core::mem::take(command);
+                let line = String::from_utf8(line).unwrap_or_default();
+                match line.trim() {
+                    "" => {}
+                    "help" => terminal_write(
+                        b"show PATH [alignment] [hit|nohit], list, close all, exit\r\n",
+                    ),
+                    "list" => terminal_write(
+                        format!("img: {} of {} frames open\r\n", frames.len(), MAX_FRAMES)
+                            .as_bytes(),
+                    ),
+                    "close all" | "clear" => {
+                        frames.clear();
+                        terminal_write(b"img: all frames closed\r\n");
+                    }
+                    "exit" | "quit" => {
+                        terminal_write(b"img: leaving interactive viewer\r\n");
+                        trueos::vshell::leave_terminal_handoff();
+                        return true;
+                    }
+                    line if line.starts_with("show ") => run_line(line, frames),
+                    path => {
+                        let line = format!("show {path}");
+                        run_line(line.as_str(), frames);
+                    }
+                }
+                terminal_write(b"img> ");
+            }
+            8 | 127 if !command.is_empty() => {
+                command.pop();
+                terminal_write(b"\x08 \x08");
+            }
+            byte if byte >= 0x20 => {
+                command.push(byte);
+                terminal_write(&[byte]);
+            }
+            _ => {}
         }
     }
+    false
 }
 
 fn run_line(line: &str, frames: &mut Vec<OpenFrame>) {

@@ -20,7 +20,6 @@ trueos-time = { path = "../../../../../TRUEOS/crates/trueos-executor/embassy-tim
 embassy-sync = { version = "0.8.0", default-features = false, optional = true }
 libm = { version = "0.2", default-features = false, optional = true }
 v = { path = "../../../../../TRUEOS/crates/trueos-v", default-features = false }
-trueos-math = { path = "../../../../../TRUEOS/crates/trueos-math", default-features = false, optional = true }
 trueos-locale = { path = "../../../../../TRUEOS/crates/trueos-locale", default-features = false, optional = true }
 lightningcss = { version = "1.0.0-alpha.70", default-features = false, optional = true }
 
@@ -30,7 +29,10 @@ lightningcss-native = ["dep:lightningcss"]
 kernel-code-model = []
 
 # TRUEOS-only helpers (kernel logging via trueos_cabi_write + Complex-backed module smoke).
-trueos = ["dep:trueos-math", "dep:trueos-locale", "dep:embassy-time-driver", "dep:trueos-executor", "dep:trueos-time", "dep:embassy-sync", "dep:libm"]
+trueos = ["dep:trueos-locale", "dep:embassy-time-driver", "dep:trueos-executor", "dep:trueos-time", "dep:embassy-sync", "dep:libm"]
 
 [patch.crates-io]
 crc32fast = { path = "../../../../../TRUEOS/vendor/crc32fast-1.5.0" }
+
+[workspace]
+resolver = "3"

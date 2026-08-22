@@ -19,5 +19,4 @@ trueos = { path = "../../api" }
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("trueos", "zkvm"))'] }
 
 [workspace]
-members = ["crates/trueos-qjs"]
 resolver = "3"

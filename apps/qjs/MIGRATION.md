@@ -17,6 +17,12 @@ The Blueprint UI still calls the kernel workbench through
 qjs_workbench_close}`. This is the compatibility bridge, not the final owner
 boundary.
 
+The relocated crate remains a nested workspace during this bridge phase. It
+cannot join the `qjs` app workspace until its private TRUEOS `v`, locale, and
+executor dependencies are replaced: Cargo cannot lock those alongside the
+Blueprint SDK packages with the same names and versions but different source
+paths.
+
 ## Remaining runtime cut
 
 1. Split the crate's current `trueos` feature into a Blueprint-safe runtime
@@ -30,11 +36,15 @@ boundary.
 4. Move `shell2/qjs_workbench.rs` state and evaluation into the Blueprint and
    make the UI call it directly. Then remove the qjs-workbench eval/poll/close
    CABI and the kernel module.
-5. Preserve workers through a narrow host boundary while remastering them.
-   The current `extern "Rust"` spawner hooks are kernel-internal and cannot be
-   Blueprint imports. Prefer Blueprint-local tasks when the packaged Tokio
-   runtime can provide the required isolation; otherwise expose only generic
-   CABI scheduling and message-queue operations from the kernel.
+5. Remaster each parallel QJS Worker as a child `qjs` Hull. The kernel already
+   owns a 64-entry `vm_task` pool and leases AP2+ `VmHull` lanes; that is the
+   executable boundary a Blueprint can safely use. Keep worker QuickJS state,
+   startup evaluation, timers, and message callbacks inside the child Hull.
+   Add a generic child-Blueprint spawn/message/terminate CABI so the parent can
+   request a child instance of its own archive without receiving a kernel
+   `Spawner` or passing a Rust future/function pointer across the VM boundary.
+   A Blueprint-local current-thread Tokio task remains useful for cooperative
+   pumps, but it is not a replacement for the existing parallel lane behavior.
 6. Once worker and async services no longer require kernel-owned QuickJS state,
    remove the temporary TRUEOS dependency on `trueos-qjs`.
 

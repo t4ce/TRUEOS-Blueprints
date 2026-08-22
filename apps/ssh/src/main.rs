@@ -58,8 +58,13 @@ struct Options {
 }
 
 impl Options {
-    fn parse() -> Result<Self> {
-        let mut args = process_args().into_iter().skip(1);
+    /// Parse both the initial Blueprint arguments and commands entered after a
+    /// session returns to the resident SSH minishell.
+    fn parse_args<I>(args: I) -> Result<Self>
+    where
+        I: IntoIterator<Item = String>,
+    {
+        let mut args = args.into_iter();
         let mut port = None;
         let mut user = None;
         let mut identity = PathBuf::from(DEFAULT_IDENTITY);
@@ -432,6 +437,12 @@ async fn run_session(options: Options) -> Result<()> {
             () = tokio::time::sleep(INPUT_POLL) => {
                 let input = terminal_read_available();
                 if !input.is_empty() {
+                    // This is deliberately local: Ctrl-C gets us back to the
+                    // resident VM prompt, without asking the VM to eject.
+                    if input.contains(&3) {
+                        terminal_write(b"\r\nssh: interrupted\r\n");
+                        break;
+                    }
                     let mut forwarded = Vec::with_capacity(input.len());
                     if escape.forward(&input, &mut forwarded) {
                         terminal_write(b"\r\nssh: disconnected by local escape\r\n");
@@ -455,6 +466,47 @@ async fn run_session(options: Options) -> Result<()> {
         .disconnect(Disconnect::ByApplication, "terminal closed", "en")
         .await;
     Ok(())
+}
+
+async fn run_minishell(initial: Option<Options>) -> Result<()> {
+    let mut next = initial;
+    loop {
+        let options = match next.take() {
+            Some(options) => options,
+            None => loop {
+                let line = match terminal_read_line("ssh> ", true).await {
+                    Ok(line) => line,
+                    Err(_) => {
+                        terminal_write(b"\r\nssh> ");
+                        continue;
+                    }
+                };
+                let line = line.trim();
+                if line.is_empty() {
+                    continue;
+                }
+                if matches!(line, "exit" | "quit") {
+                    return Ok(());
+                }
+                if matches!(line, "help" | "?") {
+                    terminal_write(b"ssh [options] [user@]host[:port]; Ctrl-C or ~. returns here; exit leaves the VM\r\n");
+                    continue;
+                }
+                let words = line.split_whitespace().map(String::from);
+                match Options::parse_args(words) {
+                    Ok(options) => break options,
+                    Err(error) => {
+                        terminal_write(format!("{error:#}\r\n").as_bytes());
+                        print_usage();
+                    }
+                }
+            },
+        };
+        if let Err(error) = run_session(options).await {
+            terminal_write(format!("\r\nssh: {error:#}\r\n").as_bytes());
+        }
+        terminal_write(b"ssh: session returned; another destination or `exit`\r\n");
+    }
 }
 
 #[derive(Default)]
@@ -580,22 +632,23 @@ fn terminal_size() -> (u32, u32) {
 
 fn main() {
     stage_log("main-enter");
-    let options = match Options::parse() {
-        Ok(options) => options,
-        Err(err) => {
-            terminal_write(format!("{err:#}\r\n").as_bytes());
-            print_usage();
-            return;
+    let initial_args: Vec<String> = process_args().into_iter().skip(1).collect();
+    let options = if initial_args.is_empty() {
+        None
+    } else {
+        match Options::parse_args(initial_args) {
+            Ok(options) => Some(options),
+            Err(err) => {
+                terminal_write(format!("{err:#}\r\n").as_bytes());
+                print_usage();
+                return;
+            }
         }
     };
     stage_log("options-parsed");
     terminal_enter();
     terminal_write(
-        format!(
-            "ssh: connecting to {}:{} as {}\r\n",
-            options.host, options.port, options.user
-        )
-        .as_bytes(),
+        format!("ssh: resident VMX minishell; Ctrl-C or ~. returns after a session\r\n").as_bytes(),
     );
     stage_log("terminal-entered");
 
@@ -610,7 +663,7 @@ fn main() {
         Ok(runtime) => {
             stage_log("runtime-ready");
             let local = tokio::task::LocalSet::new();
-            let result = local.block_on(&runtime, run_session(options));
+            let result = local.block_on(&runtime, run_minishell(options));
             runtime.shutdown_background();
             if let Err(err) = result {
                 terminal_write(format!("\r\nssh: {err:#}\r\n").as_bytes());
@@ -623,9 +676,9 @@ fn main() {
 
     #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
     {
-        stage_log("session-ended");
+        stage_log("minishell-ended");
         trueos::vshell::leave_terminal_handoff();
-        let _ = trueos::vshell::shutdown_current_blueprint("ssh session ended");
+        let _ = trueos::vshell::shutdown_current_blueprint("ssh minishell exited");
     }
 }
 
