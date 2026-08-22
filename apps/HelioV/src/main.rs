@@ -99,18 +99,18 @@ fn main() {
             format_args!("HelioV: SceneDB partner probe failed invariant={failure}"),
         ),
     }
-    match wgpu_vmx::probe_ui4_surface_path(&world.mesh) {
+    match wgpu_vmx::probe_ui4_surface_path(&world) {
         Ok(mut report) => {
             logl::log(
                 logl::level::INFO,
                 format_args!(
-                    "HelioV: Helio constant-RGBA voxel shader/pipeline indexed draw retired and SURFLIVE confirmed extent={}x{} pitch={} bytes={} timeline={} path=Helio-MeshUpload+SceneDB-world->WGPU-indexed-draw->VMX-Render->UI4-release->SURFLIVE",
+                    "HelioV: Helio material-palette shader/pipeline indexed batch retired and SURFLIVE confirmed extent={}x{} pitch={} bytes={} timeline={} path=Helio-SectionedMeshUpload+SceneDB-world->WGPU-immediates->VMX-resident-scene-batch->UI4-release->SURFLIVE",
                     report.width, report.height, report.pitch, report.bytes, report.timeline,
                 ),
             );
             logl::log(
                 logl::level::INFO,
-                "HelioV: visible monocolor voxel world is live; authenticated constant-RGBA shader module, graphics pipeline, vertex/index bindings, and draw_indexed all executed through the ordinary TRUEOS Render frontier",
+                "HelioV: visible material-palette voxel world is live; authenticated immediate-RGBA shader module, graphics pipeline, shared vertex/index bindings, and sectioned draw_indexed batch all executed through the ordinary TRUEOS Render frontier",
             );
             logl::log(
                 logl::level::INFO,

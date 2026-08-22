@@ -55,15 +55,15 @@ failed with the same `ui4-indexed-submit rc=-32` before SURFLIVE. That result
 rules out JPEG versus PNG decode and strongly rules out mesh size as the next
 useful variable.
 
-The active recovery artifact therefore parks asset work completely. It does
-not read or decode an image, allocate a sampled texture, create a sampler or
-bind group, or expose UVs to the pipeline. It restores the previously proven
-authenticated constant-RGBA package with one `Float32x3` vertex attribute and
-submits the complete 41,784-vertex / 62,676-index Helio `MeshUpload`. SceneDB's
-Helio-object lifecycle, UI4-routed fly camera, transactional resize, ordinary
-WGPU indexed draw, VMX Render path, and SURFLIVE handoff remain unchanged. This
-is a deliberate scene-recovery test, not a replacement renderer or CPU paint
-fallback.
+The green recovery frame established that scene submission itself is sound.
+The active artifact still reads no image and creates no sampled texture,
+sampler, bind group, or UV pipeline. Instead it preserves the real first-rung
+Helio voxel semantics: grass, dirt, stone, water, and landmark palette identity
+through Helio's `SectionedMeshUpload`, with three flat face-light levels. One
+authenticated WGPU immediate-RGBA package emits the non-empty palette/face
+sections as a single VMX/resident-scene batch while retaining the complete
+41,784-vertex / 62,676-index topology. This is a material recovery step, not a
+replacement renderer or CPU paint fallback.
 
 The retained proof already follows UI4's maximize/restore procedure. It stages
 a private replacement generation, imports that exact new lease into VMX,
@@ -86,7 +86,7 @@ refreshed after both camera and resize changes.
 
 Current result: `cargo bp apps/HelioV` compiles the complete target dependency
 closure and emits `dist/heliov.bp`. Its default artifact is the full-world
-constant-RGBA recovery rung with no asset path. See
+material-palette/immediate-data rung with no bitmap asset path. See
 [GPU_BOUNDARY.md](GPU_BOUNDARY.md) for the measured boundary, rather than a
 guessed list of platform problems.
 

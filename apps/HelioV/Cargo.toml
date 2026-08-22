@@ -8,8 +8,8 @@ license = "MIT OR Apache-2.0"
 replicatable = false
 
 [features]
-# The live recovery artifact deliberately has no texture feature: it restores
-# the proven authenticated constant-RGBA scene before material work resumes.
+# Image assets remain parked while the default path restores Helio's native
+# voxel material identity through sectioned geometry and immediate RGBA.
 default = []
 
 [[bin]]

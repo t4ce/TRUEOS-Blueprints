@@ -709,7 +709,10 @@ mod tests {
         assert!(first.landmark_voxels > 500);
         assert!(first.water_voxels > 0);
         assert_eq!(first.mesh.indices.len() % 6, 0);
-        assert_eq!(first.material_mesh.vertices.len(), first.mesh.vertices.len());
+        assert_eq!(
+            first.material_mesh.vertices.len(),
+            first.mesh.vertices.len()
+        );
         assert_eq!(first.material_mesh.sections.len(), first.materials.len());
         assert_eq!(first.materials.len(), MATERIAL_SECTION_COUNT);
         assert_eq!(

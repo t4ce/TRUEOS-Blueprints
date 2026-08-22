@@ -15,8 +15,9 @@ use trueos::clock;
 use trueos::ui4_scene::{Damage, Error as Ui4Error, Frame};
 use trueos::vgpu::{
     self, BUFFER_USAGE_COPY_DST, BUFFER_USAGE_COPY_SRC, BUFFER_USAGE_INDEX, BUFFER_USAGE_MAP_READ,
-    BUFFER_USAGE_MAP_WRITE, BUFFER_USAGE_STORAGE, BUFFER_USAGE_VERTEX, Capabilities, IndexedDraw,
-    QueueClass, SHADER_PACKAGE_CLIP_POSITION3_RGBA_FNV1A64,
+    BUFFER_USAGE_MAP_WRITE, BUFFER_USAGE_STORAGE, BUFFER_USAGE_VERTEX, Capabilities,
+    IndexedBatchDraw, IndexedDrawBatch, QueueClass,
+    SHADER_PACKAGE_CLIP_POSITION3_IMMEDIATE_RGBA_FNV1A64,
 };
 use wgpu::custom::*;
 
@@ -30,10 +31,11 @@ const ERR_INVALID_ARGUMENT: i32 = -22;
 // `vmx_buffer_usage` does for ordinary WGPU buffers.
 const LINEAR_TEXTURE_BACKING_USAGE: u32 =
     BUFFER_USAGE_STORAGE | BUFFER_USAGE_COPY_SRC | BUFFER_USAGE_COPY_DST | BUFFER_USAGE_MAP_WRITE;
-pub const VOXEL_SHADER_WGSL: &str = "@vertex\nfn vs_main(@location(0) position: vec3<f32>) -> @builtin(position) vec4<f32> {\n    return vec4<f32>(position, 1.0);\n}\n\n@fragment\nfn fs_main() -> @location(0) vec4<f32> {\n    return vec4<f32>(0.18, 0.72, 0.32, 1.0);\n}\n";
+pub const VOXEL_SHADER_WGSL: &str = "struct MaterialImmediate { rgba: vec4<f32>, }\nvar<immediate> material: MaterialImmediate;\n\n@vertex\nfn vs_main(@location(0) position: vec3<f32>) -> @builtin(position) vec4<f32> {\n    return vec4<f32>(position, 1.0);\n}\n\n@fragment\nfn fs_main() -> @location(0) vec4<f32> {\n    return material.rgba;\n}\n";
 
-pub const SCENE_BASELINE_CONTRACT: &str = "constant-rgba/indexed-world/no-texture-assets";
-const AUTHENTICATED_SHADER_DIGEST: u64 = SHADER_PACKAGE_CLIP_POSITION3_RGBA_FNV1A64;
+pub const SCENE_BASELINE_CONTRACT: &str =
+    "material-palette/indexed-batch/immediate-rgba/no-image-assets";
+const AUTHENTICATED_SHADER_DIGEST: u64 = SHADER_PACKAGE_CLIP_POSITION3_IMMEDIATE_RGBA_FNV1A64;
 
 pub struct BackendFailure {
     pub stage: &'static str,
@@ -174,7 +176,9 @@ pub fn acquire_ui4_texture(
     ))
 }
 
-pub fn probe_ui4_surface_path(mesh: &helio::MeshUpload) -> Result<SurfaceProbe, BackendFailure> {
+pub fn probe_ui4_surface_path(
+    world: &crate::voxel::WorldBuild,
+) -> Result<SurfaceProbe, BackendFailure> {
     let mut frame = Frame::open_streaming(120, 96, 640, 360)
         .map_err(|_| fail("ui4-frame-open", vgpu::ERR_IO))?;
     let (device, queue) = open_device_queue()?;
@@ -196,7 +200,8 @@ pub fn probe_ui4_surface_path(mesh: &helio::MeshUpload) -> Result<SurfaceProbe, 
     let graphics = VoxelGraphics::new(
         &device,
         &queue,
-        mesh,
+        &world.material_mesh,
+        &world.materials,
         aspect(frame.width(), frame.height()),
         &camera,
         lens,
@@ -204,9 +209,15 @@ pub fn probe_ui4_surface_path(mesh: &helio::MeshUpload) -> Result<SurfaceProbe, 
     trueos::logl::log(
         trueos::logl::level::INFO,
         format_args!(
-            "HelioV: constant-RGBA scene baseline submits complete Helio voxel world vertices={} indices={} shader_package=clip-position3-rgba material_source=constant-fragment-no-assets",
-            mesh.vertices.len(),
-            mesh.indices.len(),
+            "HelioV: Helio material-palette scene submits complete voxel world vertices={} indices={} sections={} shader_package=clip-position3-immediate-rgba material_source=Helio-SectionedMeshUpload",
+            world.mesh.vertices.len(),
+            world.mesh.indices.len(),
+            world
+                .material_mesh
+                .sections
+                .iter()
+                .filter(|section| !section.is_empty())
+                .count(),
         ),
     );
     let first = render_voxel_frame(&mut frame, &device, &queue, &graphics)?;
@@ -356,19 +367,74 @@ struct VoxelGraphics {
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     pipeline: wgpu::RenderPipeline,
+    material_draws: Vec<MaterialDraw>,
+}
+
+#[derive(Clone, Copy)]
+struct MaterialDraw {
+    first_index: u32,
     index_count: u32,
+    base_vertex: i32,
+    rgba: [f32; 4],
 }
 
 impl VoxelGraphics {
     fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        mesh: &helio::MeshUpload,
+        mesh: &helio::SectionedMeshUpload,
+        materials: &[crate::voxel::WorldMaterial],
         aspect: f32,
         camera: &FlyCamera,
         lens: PerspectiveLens,
     ) -> Result<Self, BackendFailure> {
-        let world_positions: Vec<_> = mesh.vertices.iter().map(|vertex| vertex.position).collect();
+        if mesh.sections.len() != materials.len() {
+            return Err(fail("voxel-material-section-count", ERR_INVALID_ARGUMENT));
+        }
+        let mut world_positions = Vec::with_capacity(mesh.vertices.len());
+        let mut material_indices = Vec::new();
+        let mut material_draws = Vec::new();
+        for (section, material) in mesh.sections.iter().zip(materials) {
+            if section.is_empty() {
+                continue;
+            }
+            let base_vertex = i32::try_from(world_positions.len())
+                .map_err(|_| fail("voxel-material-base-vertex", ERR_INVALID_ARGUMENT))?;
+            let mut remap = vec![u32::MAX; mesh.vertices.len()];
+            let first_index = u32::try_from(material_indices.len())
+                .map_err(|_| fail("voxel-material-first-index", ERR_INVALID_ARGUMENT))?;
+            for &source_index in section {
+                let source = usize::try_from(source_index)
+                    .map_err(|_| fail("voxel-material-source-index", ERR_INVALID_ARGUMENT))?;
+                let Some(vertex) = mesh.vertices.get(source) else {
+                    return Err(fail("voxel-material-source-index", ERR_INVALID_ARGUMENT));
+                };
+                let local_index = if remap[source] == u32::MAX {
+                    let local = u32::try_from(world_positions.len() - base_vertex as usize)
+                        .map_err(|_| fail("voxel-material-local-index", ERR_INVALID_ARGUMENT))?;
+                    world_positions.push(vertex.position);
+                    remap[source] = local;
+                    local
+                } else {
+                    remap[source]
+                };
+                material_indices.push(local_index);
+            }
+            let index_count = u32::try_from(material_indices.len() - first_index as usize)
+                .map_err(|_| fail("voxel-material-index-count", ERR_INVALID_ARGUMENT))?;
+            material_draws.push(MaterialDraw {
+                first_index,
+                index_count,
+                base_vertex,
+                rgba: material.rgba,
+            });
+        }
+        if world_positions.len() != mesh.vertices.len() {
+            return Err(fail(
+                "voxel-material-vertex-partition",
+                ERR_INVALID_ARGUMENT,
+            ));
+        }
         let projected =
             crate::voxel::project_clip_positions(&world_positions, aspect, camera, lens);
         let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -379,19 +445,24 @@ impl VoxelGraphics {
         });
         let index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Helio voxel indices"),
-            size: byte_len(&mesh.indices) as u64,
+            size: byte_len(&material_indices) as u64,
             usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         queue.write_buffer(&vertex_buffer, 0, bytes_of_slice(&projected));
-        queue.write_buffer(&index_buffer, 0, bytes_of_slice(&mesh.indices));
+        queue.write_buffer(&index_buffer, 0, bytes_of_slice(&material_indices));
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("HelioV authenticated position3 constant-RGBA shader package"),
+            label: Some("HelioV authenticated position3 immediate-RGBA shader package"),
             source: wgpu::ShaderSource::Wgsl(VOXEL_SHADER_WGSL.into()),
+        });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("HelioV material immediate layout"),
+            bind_group_layouts: &[],
+            immediate_size: 16,
         });
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("HelioV VMX voxel pipeline"),
-            layout: None,
+            layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: Some("vs_main"),
@@ -434,8 +505,7 @@ impl VoxelGraphics {
             vertex_buffer,
             index_buffer,
             pipeline,
-            index_count: u32::try_from(mesh.indices.len())
-                .map_err(|_| fail("voxel-index-count", ERR_INVALID_ARGUMENT))?,
+            material_draws,
         })
     }
 
@@ -499,11 +569,18 @@ fn render_voxel_frame(
             occlusion_query_set: None,
             multiview_mask: None,
         });
-        if graphics.index_count != 0 {
+        if !graphics.material_draws.is_empty() {
             pass.set_pipeline(&graphics.pipeline);
             pass.set_vertex_buffer(0, graphics.vertex_buffer.slice(..));
             pass.set_index_buffer(graphics.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-            pass.draw_indexed(0..graphics.index_count, 0, 0..1);
+            for draw in &graphics.material_draws {
+                pass.set_immediates(0, bytes_of_slice(core::slice::from_ref(&draw.rgba)));
+                pass.draw_indexed(
+                    draw.first_index..draw.first_index + draw.index_count,
+                    draw.base_vertex,
+                    0..1,
+                );
+            }
         }
     }
     let _submission = queue.submit([encoder.finish()]);
@@ -695,6 +772,13 @@ struct VmxShaderModule {
     shader: vgpu::ShaderModule,
 }
 
+#[derive(Debug)]
+struct VmxPipelineLayout {
+    immediate_size: u32,
+}
+
+impl PipelineLayoutInterface for VmxPipelineLayout {}
+
 impl Drop for VmxShaderModule {
     fn drop(&mut self) {
         let _ = self.shared.device.destroy_shader_module(self.shader);
@@ -723,7 +807,7 @@ impl Drop for VmxRenderPipeline {
 
 impl RenderPipelineInterface for VmxRenderPipeline {
     fn get_bind_group_layout(&self, _index: u32) -> DispatchBindGroupLayout {
-        unsupported("constant-RGBA package exposes no bind groups")
+        unsupported("immediate-RGBA package exposes no bind groups")
     }
 }
 
@@ -733,15 +817,14 @@ enum VmxCommand {
         surface: Arc<Mutex<Option<vgpu::Ui4Surface>>>,
         rgba8_srgb: u32,
     },
-    Indexed {
+    IndexedBatch {
         surface: Arc<Mutex<Option<vgpu::Ui4Surface>>>,
         pipeline: DispatchRenderPipeline,
         vertex: DispatchBuffer,
         vertex_offset: u64,
         index: DispatchBuffer,
         index_offset: u64,
-        first_index: u32,
-        index_count: u32,
+        draws: Vec<IndexedBatchDraw>,
         clear_rgba8_srgb: u32,
     },
 }
@@ -764,20 +847,35 @@ struct VmxRenderPass {
     pipeline: Option<DispatchRenderPipeline>,
     vertex: Option<(DispatchBuffer, u64)>,
     index: Option<(DispatchBuffer, u64)>,
-    emitted: bool,
+    immediate_rgba8_srgb: Option<u32>,
+    draws: Vec<IndexedBatchDraw>,
 }
 
 impl Drop for VmxRenderPass {
     fn drop(&mut self) {
-        if !self.emitted {
-            self.commands
-                .lock()
-                .expect("VMX command encoder mutex")
-                .push(VmxCommand::Clear {
-                    surface: Arc::clone(&self.surface),
-                    rgba8_srgb: self.clear_rgba8_srgb,
-                });
-        }
+        let command = if self.draws.is_empty() {
+            VmxCommand::Clear {
+                surface: Arc::clone(&self.surface),
+                rgba8_srgb: self.clear_rgba8_srgb,
+            }
+        } else {
+            let (vertex, vertex_offset) = self.vertex.take().expect("indexed batch vertex buffer");
+            let (index, index_offset) = self.index.take().expect("indexed batch index buffer");
+            VmxCommand::IndexedBatch {
+                surface: Arc::clone(&self.surface),
+                pipeline: self.pipeline.take().expect("indexed batch pipeline"),
+                vertex,
+                vertex_offset,
+                index,
+                index_offset,
+                draws: core::mem::take(&mut self.draws),
+                clear_rgba8_srgb: self.clear_rgba8_srgb,
+            }
+        };
+        self.commands
+            .lock()
+            .expect("VMX command encoder mutex")
+            .push(command);
     }
 }
 
@@ -837,11 +935,14 @@ impl SamplerInterface for VmxSampler {}
 
 impl DeviceInterface for VmxDevice {
     fn features(&self) -> wgpu::Features {
-        wgpu::Features::empty()
+        wgpu::Features::IMMEDIATES
     }
 
     fn limits(&self) -> wgpu::Limits {
-        wgpu::Limits::default()
+        wgpu::Limits {
+            max_immediate_size: 16,
+            ..wgpu::Limits::default()
+        }
     }
 
     fn adapter_info(&self) -> wgpu::AdapterInfo {
@@ -910,16 +1011,21 @@ impl DeviceInterface for VmxDevice {
         &self,
         _: &wgpu::BindGroupLayoutDescriptor<'_>,
     ) -> DispatchBindGroupLayout {
-        unsupported("constant-RGBA package has no bind group layouts")
+        unsupported("immediate-RGBA package has no bind group layouts")
     }
     fn create_bind_group(&self, _: &wgpu::BindGroupDescriptor<'_>) -> DispatchBindGroup {
-        unsupported("constant-RGBA package has no bind groups")
+        unsupported("immediate-RGBA package has no bind groups")
     }
     fn create_pipeline_layout(
         &self,
-        _: &wgpu::PipelineLayoutDescriptor<'_>,
+        desc: &wgpu::PipelineLayoutDescriptor<'_>,
     ) -> DispatchPipelineLayout {
-        unsupported("constant-RGBA package uses the implicit empty pipeline layout")
+        if !desc.bind_group_layouts.is_empty() || desc.immediate_size != 16 {
+            return unsupported("pipeline layout outside immediate-RGBA package interface");
+        }
+        DispatchPipelineLayout::custom(VmxPipelineLayout {
+            immediate_size: desc.immediate_size,
+        })
     }
     fn create_render_pipeline(
         &self,
@@ -940,7 +1046,10 @@ impl DeviceInterface for VmxDevice {
             .expect("VMX pipeline received a foreign fragment shader");
         let buffers: Vec<_> = desc.vertex.buffers.iter().flatten().collect();
         let targets: Vec<_> = fragment.targets.iter().flatten().collect();
-        if desc.layout.is_some()
+        let layout = desc
+            .layout
+            .and_then(|layout| layout.as_custom::<VmxPipelineLayout>());
+        if layout.is_none_or(|layout| layout.immediate_size != 16)
             || shader.shader != fragment_shader.shader
             || desc.vertex.entry_point != Some("vs_main")
             || fragment.entry_point != Some("fs_main")
@@ -1282,15 +1391,14 @@ impl QueueInterface for VmxQueue {
                             Err(code) => self.shared.record_error(code),
                         }
                     }
-                    VmxCommand::Indexed {
+                    VmxCommand::IndexedBatch {
                         surface,
                         pipeline,
                         vertex,
                         vertex_offset,
                         index,
                         index_offset,
-                        first_index,
-                        index_count,
+                        draws,
                         clear_rgba8_srgb,
                     } => {
                         let target = surface
@@ -1303,22 +1411,21 @@ impl QueueInterface for VmxQueue {
                             .expect("VMX draw pipeline");
                         let vertex = vertex.as_custom::<VmxBuffer>().expect("VMX vertex buffer");
                         let index = index.as_custom::<VmxBuffer>().expect("VMX index buffer");
-                        let descriptor = IndexedDraw {
+                        let mut batch = IndexedDrawBatch {
                             vertex_offset,
                             index_offset,
-                            index_count,
-                            first_index,
-                            base_vertex: 0,
                             clear_rgba8_srgb,
-                            ..IndexedDraw::default()
+                            draw_count: draws.len() as u32,
+                            ..IndexedDrawBatch::default()
                         };
-                        match self.shared.device.submit_ui4_indexed(
+                        batch.draws[..draws.len()].copy_from_slice(&draws);
+                        match self.shared.device.submit_ui4_indexed_batch(
                             self.queue,
                             target,
                             pipeline.pipeline,
                             vertex.buffer,
                             index.buffer,
-                            descriptor,
+                            batch,
                         ) {
                             Ok(point) => timeline = timeline.max(point.value),
                             Err(code) => self.shared.record_error(code),
@@ -1422,7 +1529,8 @@ impl CommandEncoderInterface for VmxCommandEncoder {
             pipeline: None,
             vertex: None,
             index: None,
-            emitted: false,
+            immediate_rgba8_srgb: None,
+            draws: Vec::new(),
         })
     }
     fn finish(&mut self) -> DispatchCommandBuffer {
@@ -1483,6 +1591,9 @@ impl CommandEncoderInterface for VmxCommandEncoder {
 
 impl RenderPassInterface for VmxRenderPass {
     fn set_pipeline(&mut self, pipeline: &DispatchRenderPipeline) {
+        if !self.draws.is_empty() {
+            unsupported::<()>("pipeline change inside indexed material batch");
+        }
         self.pipeline = Some(pipeline.clone());
     }
     fn set_bind_group(
@@ -1491,7 +1602,7 @@ impl RenderPassInterface for VmxRenderPass {
         _bind_group: Option<&DispatchBindGroup>,
         _dynamic_offsets: &[wgpu::DynamicOffset],
     ) {
-        unsupported::<()>("constant-RGBA package exposes no bind groups");
+        unsupported::<()>("immediate-RGBA package exposes no bind groups");
     }
     fn set_index_buffer(
         &mut self,
@@ -1517,8 +1628,20 @@ impl RenderPassInterface for VmxRenderPass {
         }
         self.vertex = buffer.map(|buffer| (buffer.clone(), offset));
     }
-    fn set_immediates(&mut self, _: u32, _: &[u8]) {
-        unsupported::<()>("immediates")
+    fn set_immediates(&mut self, offset: u32, data: &[u8]) {
+        if offset != 0 || data.len() != 16 {
+            unsupported::<()>("immediate range outside material vec4");
+        }
+        let rgba = [
+            f32::from_ne_bytes(data[0..4].try_into().unwrap()),
+            f32::from_ne_bytes(data[4..8].try_into().unwrap()),
+            f32::from_ne_bytes(data[8..12].try_into().unwrap()),
+            f32::from_ne_bytes(data[12..16].try_into().unwrap()),
+        ];
+        if rgba.iter().any(|component| !component.is_finite()) {
+            unsupported::<()>("non-finite material immediate");
+        }
+        self.immediate_rgba8_srgb = Some(linear_rgba_to_rgba8_srgb(rgba));
     }
     fn set_blend_constant(&mut self, _: wgpu::Color) {}
     fn set_scissor_rect(&mut self, _: u32, _: u32, _: u32, _: u32) {}
@@ -1533,36 +1656,31 @@ impl RenderPassInterface for VmxRenderPass {
         base_vertex: i32,
         instances: core::ops::Range<u32>,
     ) {
-        if self.emitted || indices.is_empty() || base_vertex != 0 || instances != (0..1) {
+        if self.draws.len() >= vgpu::MAX_INDEXED_BATCH_DRAWS
+            || indices.is_empty()
+            || base_vertex < 0
+            || instances != (0..1)
+        {
             unsupported::<()>("indexed draw range outside frontier contract");
         }
-        let pipeline = self
-            .pipeline
-            .take()
+        self.pipeline
+            .as_ref()
             .expect("draw_indexed requires a pipeline");
-        let (vertex, vertex_offset) = self
-            .vertex
-            .take()
+        self.vertex
+            .as_ref()
             .expect("draw_indexed requires vertex buffer 0");
-        let (index, index_offset) = self
-            .index
-            .take()
+        self.index
+            .as_ref()
             .expect("draw_indexed requires an index buffer");
-        self.commands
-            .lock()
-            .expect("VMX command encoder mutex")
-            .push(VmxCommand::Indexed {
-                surface: Arc::clone(&self.surface),
-                pipeline,
-                vertex,
-                vertex_offset,
-                index,
-                index_offset,
-                first_index: indices.start,
-                index_count: indices.end - indices.start,
-                clear_rgba8_srgb: self.clear_rgba8_srgb,
-            });
-        self.emitted = true;
+        let rgba8_srgb = self
+            .immediate_rgba8_srgb
+            .expect("draw_indexed requires material immediates");
+        self.draws.push(IndexedBatchDraw {
+            first_index: indices.start,
+            index_count: indices.end - indices.start,
+            base_vertex,
+            rgba8_srgb,
+        });
     }
     fn draw_mesh_tasks(&mut self, _: u32, _: u32, _: u32) {
         unsupported::<()>("mesh draw")
@@ -1657,6 +1775,24 @@ fn opaque_clear_rgba8_srgb(color: wgpu::Color) -> u32 {
         (srgb * 255.0 + 0.5) as u8
     }
     u32::from_le_bytes([encode(color.r), encode(color.g), encode(color.b), 255])
+}
+
+fn linear_rgba_to_rgba8_srgb(rgba: [f32; 4]) -> u32 {
+    fn encode(channel: f32) -> u8 {
+        let linear = channel.clamp(0.0, 1.0);
+        let srgb = if linear <= 0.003_130_8 {
+            12.92 * linear
+        } else {
+            1.055 * linear.powf(1.0 / 2.4) - 0.055
+        };
+        (srgb * 255.0 + 0.5) as u8
+    }
+    u32::from_le_bytes([
+        encode(rgba[0]),
+        encode(rgba[1]),
+        encode(rgba[2]),
+        (rgba[3].clamp(0.0, 1.0) * 255.0 + 0.5) as u8,
+    ])
 }
 
 fn vmx_buffer_usage(usage: wgpu::BufferUsages) -> u32 {
