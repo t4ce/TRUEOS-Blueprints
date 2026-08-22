@@ -37,10 +37,13 @@ struct OpenFrame {
 struct View {
     viewport_width: u32,
     viewport_height: u32,
+    native_viewport_width: u32,
+    native_viewport_height: u32,
     image_width: u32,
     image_height: u32,
     offset_x: f32,
     offset_y: f32,
+    letterbox: bool,
 }
 
 impl View {
@@ -63,18 +66,32 @@ impl View {
         let mut view = Self {
             viewport_width,
             viewport_height,
+            native_viewport_width: viewport_width,
+            native_viewport_height: viewport_height,
             image_width,
             image_height,
             offset_x,
             offset_y,
+            letterbox: false,
         };
         view.clamp_offsets();
         view
     }
 
     fn pan(&mut self, dx: i32, dy: i32) {
+        if self.letterbox {
+            return;
+        }
         self.offset_x += dx as f32;
         self.offset_y += dy as f32;
+        self.clamp_offsets();
+    }
+
+    fn resize(&mut self, width: u32, height: u32) {
+        self.viewport_width = width;
+        self.viewport_height = height;
+        self.letterbox =
+            width != self.native_viewport_width || height != self.native_viewport_height;
         self.clamp_offsets();
     }
 
@@ -331,28 +348,74 @@ fn present(frame: &mut Frame, view: View, image: &Image) -> Result<(), Ui4Error>
         *alpha = u8::MAX;
     }
 
-    let source_x = (-view.offset_x).max(0.0) as usize;
-    let source_y = (-view.offset_y).max(0.0) as usize;
-    let destination_x = view.offset_x.max(0.0) as usize;
-    let destination_y = view.offset_y.max(0.0) as usize;
-    let copy_width = (image.width as usize)
-        .saturating_sub(source_x)
-        .min(view.viewport_width as usize - destination_x);
-    let copy_height = (image.height as usize)
-        .saturating_sub(source_y)
-        .min(view.viewport_height as usize - destination_y);
-    for row in 0..copy_height {
-        let source_start = ((source_y + row) * image.width as usize + source_x) * 4;
-        let destination_start =
-            ((destination_y + row) * view.viewport_width as usize + destination_x) * 4;
-        let byte_len = copy_width * 4;
-        viewport[destination_start..destination_start + byte_len]
-            .copy_from_slice(&image.rgba[source_start..source_start + byte_len]);
+    if view.letterbox {
+        paint_letterboxed(viewport.as_mut_slice(), view, image);
+    } else {
+        let source_x = (-view.offset_x).max(0.0) as usize;
+        let source_y = (-view.offset_y).max(0.0) as usize;
+        let destination_x = view.offset_x.max(0.0) as usize;
+        let destination_y = view.offset_y.max(0.0) as usize;
+        let copy_width = (image.width as usize)
+            .saturating_sub(source_x)
+            .min(view.viewport_width as usize - destination_x);
+        let copy_height = (image.height as usize)
+            .saturating_sub(source_y)
+            .min(view.viewport_height as usize - destination_y);
+        for row in 0..copy_height {
+            let source_start = ((source_y + row) * image.width as usize + source_x) * 4;
+            let destination_start =
+                ((destination_y + row) * view.viewport_width as usize + destination_x) * 4;
+            let byte_len = copy_width * 4;
+            viewport[destination_start..destination_start + byte_len]
+                .copy_from_slice(&image.rgba[source_start..source_start + byte_len]);
+        }
     }
 
     frame.begin(rgba(0, 0, 0, 255))?;
     frame.write_opaque_rgba8(viewport.as_slice())?;
     frame.publish(Damage::full(frame.width(), frame.height()))
+}
+
+fn paint_letterboxed(viewport: &mut [u8], view: View, image: &Image) {
+    let viewport_width = view.viewport_width as usize;
+    let viewport_height = view.viewport_height as usize;
+    let image_width = image.width as usize;
+    let image_height = image.height as usize;
+    let (draw_width, draw_height) =
+        contained_extent(image_width, image_height, viewport_width, viewport_height);
+    let destination_x = (viewport_width - draw_width) / 2;
+    let destination_y = (viewport_height - draw_height) / 2;
+
+    for draw_y in 0..draw_height {
+        let source_y = draw_y * image_height / draw_height;
+        for draw_x in 0..draw_width {
+            let source_x = draw_x * image_width / draw_width;
+            let source = (source_y * image_width + source_x) * 4;
+            let destination =
+                ((destination_y + draw_y) * viewport_width + destination_x + draw_x) * 4;
+            viewport[destination..destination + 4].copy_from_slice(&image.rgba[source..source + 4]);
+        }
+    }
+}
+
+fn contained_extent(
+    source_width: usize,
+    source_height: usize,
+    viewport_width: usize,
+    viewport_height: usize,
+) -> (usize, usize) {
+    if viewport_width.saturating_mul(source_height) <= viewport_height.saturating_mul(source_width)
+    {
+        (
+            viewport_width,
+            (source_height.saturating_mul(viewport_width) / source_width).max(1),
+        )
+    } else {
+        (
+            (source_width.saturating_mul(viewport_height) / source_height).max(1),
+            viewport_height,
+        )
+    }
 }
 
 fn service_frames(frames: &mut Vec<OpenFrame>) {
@@ -392,12 +455,53 @@ fn service_frames(frames: &mut Vec<OpenFrame>) {
                     }
                 }
             }
-            while open.frame.take_resize_event().ok().flatten().is_some() {}
+            let mut resize = None;
+            loop {
+                match open.frame.take_resize_event() {
+                    Ok(Some(event)) => resize = Some(event),
+                    Ok(None) => break,
+                    Err(error) => {
+                        logl::log(
+                            level::WARN,
+                            format_args!("img: resize event error={error:?}"),
+                        );
+                        break;
+                    }
+                }
+            }
+            if let Some(event) = resize {
+                match open.frame.resize(event.width, event.height) {
+                    Ok(()) => {
+                        open.view.resize(event.width, event.height);
+                        repaint = true;
+                        logl::log(
+                            level::INFO,
+                            format_args!(
+                                "img: resize window={} old={}x{} new={}x{} letterbox={}",
+                                open.frame.window_id(),
+                                event.old_width,
+                                event.old_height,
+                                event.width,
+                                event.height,
+                                open.view.letterbox as u8,
+                            ),
+                        );
+                    }
+                    Err(error) => logl::log(
+                        level::WARN,
+                        format_args!(
+                            "img: resize window={} old={}x{} requested={}x{} error={error:?}",
+                            open.frame.window_id(),
+                            event.old_width,
+                            event.old_height,
+                            event.width,
+                            event.height,
+                        ),
+                    ),
+                }
+            }
             if repaint && let Err(error) = present(&mut open.frame, open.view, &open.image) {
-                logl::log(
-                    level::WARN,
-                    format_args!("img: pan repaint error={error:?}"),
-                );
+                logl::log(level::WARN, format_args!("img: repaint error={error:?}"));
             }
         }
         if close {
