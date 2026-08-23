@@ -6,7 +6,7 @@ TRUEOS terminal-to-VLayer control Blueprint.
 
 Place this directory at:
 
-`TRUEOS-Blueprints/apps/commander`
+`TRUEOS-Blueprints/buildins/commander`
 
 The relative dependency paths in `Cargo.toml` are written for that location.
 

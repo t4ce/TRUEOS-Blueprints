@@ -736,6 +736,14 @@ rustc-payload-dependencies = ["trueos", "itoa"]
                 .unwrap();
             assert_eq!(probe.dir, root.join("probes").join(probe_name));
         }
+
+        for buildin_name in ["commander", "ssh", "img", "os", "texplo", "edit", "shell"] {
+            let buildin = apps
+                .iter()
+                .find(|app| app.name == buildin_name)
+                .unwrap();
+            assert_eq!(buildin.dir, root.join("buildins").join(buildin_name));
+        }
     }
 
     fn temporary_manifest(key: &str, value: &str) -> PathBuf {

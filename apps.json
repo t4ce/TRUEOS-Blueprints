@@ -11,19 +11,31 @@
     "HelioV",
     "hello_world",
     "hello_world_replicatable",
-    "img",
-    "os",
+    {
+      "name": "img",
+      "path": "buildins/img"
+    },
+    {
+      "name": "os",
+      "path": "buildins/os"
+    },
     "image-viewer",
     "lumen",
     "ipp-printer",
-    "texplo",
+    {
+      "name": "texplo",
+      "path": "buildins/texplo"
+    },
     "esp32_stt",
     "flight_controller_sim",
     "prismq",
     "particle",
     "PlotTwist",
     "shadertoy",
-    "shell",
+    {
+      "name": "shell",
+      "path": "buildins/shell"
+    },
     "qjs",
     "monaco",
     "Frog",
@@ -34,13 +46,22 @@
       "optional": true
     },
     "solara",
-    "edit",
+    {
+      "name": "edit",
+      "path": "buildins/edit"
+    },
     "skybox",
-    "ssh",
+    {
+      "name": "ssh",
+      "path": "buildins/ssh"
+    },
     "swarm",
     "superseedr",
     "webmail",
-    "commander",
+    {
+      "name": "commander",
+      "path": "buildins/commander"
+    },
     {
       "name": "rustc-min",
       "path": "../TRUEOS-Rust-Toolchain-nightly-2026-07-10/blueprints/rustc-min",
