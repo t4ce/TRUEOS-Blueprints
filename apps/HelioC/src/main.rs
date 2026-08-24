@@ -76,7 +76,9 @@ fn main() {
     logl::log(
         logl::level::INFO,
         format_args!(
-            "HelioC: retained VMX resource rung ready caps=0x{:016x} volumes={}/{} expected_each={} pair_bytes={} params={}/{} mapped_bytes={} ping_pong=artifact-lifetime",
+            "HelioC: retained VMX cloud graph admitted profile={} graph_raw=0x{:016x} caps=0x{:016x} volumes={}/{} expected_each={} pair_bytes={} params={}/{} mapped_bytes={} ping_pong=artifact-lifetime",
+            trueos::vgpu::CLOUD_PROFILE_HELIO_ENGINE_V1,
+            resources.graph.raw(),
             report.capabilities,
             resources.volume_a.len(),
             resources.volume_b.len(),
@@ -89,6 +91,6 @@ fn main() {
     );
     logl::log(
         logl::level::WARN,
-        "HelioC: presentation remains cold reason=authenticated-native-volume-pass-unavailable required=HELIOA-stages+rgba16f-3d-views+repeat-clamp-repeat-sampler+4x4x4-dispatch+compute-to-fragment-visibility+fullscreen-ui4-draw fallback=none",
+        "HelioC: cloud graph admitted; presentation remains cold reason=sealed-native-package-and-direct-presentation-unavailable required=sealed-native-package+direct-ui4-presentation fallback=none",
     );
 }

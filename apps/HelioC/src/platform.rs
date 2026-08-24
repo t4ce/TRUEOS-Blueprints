@@ -5,8 +5,8 @@
 //! the authenticated image/sampler and pass-schedule lowering remains cold.
 
 use trueos::vgpu::{
-    self, BUFFER_USAGE_COPY_DST, BUFFER_USAGE_COPY_SRC, BUFFER_USAGE_STORAGE, Capabilities, Device,
-    VVideoMem,
+    self, BUFFER_USAGE_COPY_DST, BUFFER_USAGE_COPY_SRC, BUFFER_USAGE_STORAGE, Capabilities,
+    CloudWorkGraph, Device, VVideoMem,
 };
 
 use crate::cloud_contract::{RenderParams, SimParams, VOLUME_BYTES};
@@ -15,10 +15,12 @@ const VOLUME_USAGE: u32 = BUFFER_USAGE_STORAGE | BUFFER_USAGE_COPY_SRC | BUFFER_
 const PARAM_USAGE: u32 = BUFFER_USAGE_STORAGE | BUFFER_USAGE_COPY_DST;
 
 pub struct RetainedCloudResources {
+    device: Device,
     pub volume_a: VVideoMem,
     pub volume_b: VVideoMem,
     pub sim_params: VVideoMem,
     pub render_params: VVideoMem,
+    pub graph: CloudWorkGraph,
 }
 
 pub struct ResidencyReport {
@@ -99,6 +101,9 @@ impl RetainedCloudResources {
             .and_then(|bytes| bytes.checked_add(sim_params.mapped_len()))
             .and_then(|bytes| bytes.checked_add(render_params.mapped_len()))
             .ok_or_else(|| fail("mapped-byte-count", vgpu::ERR_OUT_OF_MEMORY))?;
+        let graph = device
+            .create_cloud_work_graph(&volume_a, &volume_b, &sim_params, &render_params)
+            .map_err(|code| fail("cloud-work-graph", code))?;
         let report = ResidencyReport {
             capabilities: info.capabilities,
             volume_bytes: VOLUME_BYTES,
@@ -109,10 +114,12 @@ impl RetainedCloudResources {
         };
         Ok((
             Self {
+                device,
                 volume_a,
                 volume_b,
                 sim_params,
                 render_params,
+                graph,
             },
             report,
         ))
@@ -142,6 +149,12 @@ impl RetainedCloudResources {
             .flush(0, render_bytes.len())
             .map_err(|code| fail("render-params-flush", code))?;
         Ok(())
+    }
+}
+
+impl Drop for RetainedCloudResources {
+    fn drop(&mut self) {
+        let _ = self.device.destroy_cloud_work_graph(self.graph);
     }
 }
 
