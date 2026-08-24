@@ -80,7 +80,15 @@ impl RetainedCloudResources {
             let allocation_info = device
                 .buffer_info(allocation.buffer())
                 .map_err(|code| fail(stage, code))?;
-            if allocation_info.bytes != expected as u64 || !allocation_info.is_vvideo_mem() {
+            // The handle reports the broker's page-rounded mapping extent;
+            // the VVideoMem wrapper retains the logical byte count requested
+            // by the workload separately.  Validate each against its proper
+            // source so small parameter buffers (112/272 bytes) are admitted
+            // without weakening the mapping-size check.
+            if allocation.len() != expected
+                || allocation_info.bytes != allocation.mapped_len() as u64
+                || !allocation_info.is_vvideo_mem()
+            {
                 return Err(fail(stage, vgpu::ERR_IO));
             }
         }
