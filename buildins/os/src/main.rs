@@ -429,7 +429,8 @@ fn draw_confirm(out: &mut io::Stdout, app: &App, action: Action) -> io::Result<(
                 queue!(
                     out,
                     SetForegroundColor(Color::Yellow),
-                    Print("    Running non-replicatable apps will be discarded at commit:\r\n")
+                    Print("    Any non-replicatable app still running at commit is discarded.\r\n"),
+                    Print("    Currently affected:\r\n")
                 )?;
                 for vm in &app.non_replicatable_vms {
                     queue!(out, Print(format!("      vm{} · {}\r\n", vm.id, vm.label)))?;
