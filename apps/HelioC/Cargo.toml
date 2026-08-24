@@ -1,0 +1,30 @@
+[package]
+name = "HelioC"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[package.metadata.trueos-blueprint]
+replicatable = false
+
+[[bin]]
+name = "helioc"
+path = "src/main.rs"
+
+[dependencies]
+# HelioC is a Helio-authored workload. This dependency must remain real even
+# while the native Intel cloud package is being brought online in stages.
+helio = { path = "../../../Helio", default-features = false }
+glam = { version = "0.33", default-features = false, features = ["libm"] }
+trueos = { path = "../../api", features = ["ui4-scene"] }
+wgpu = { path = "../../../Helio/vendor/wgpu/wgpu", default-features = false, features = ["custom", "std", "wgsl"] }
+
+[workspace]
+members = ["."]
+resolver = "2"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("trueos", "zkvm"))'] }
+
+[patch.crates-io]
+wgpu = { path = "../../../Helio/vendor/wgpu/wgpu" }
