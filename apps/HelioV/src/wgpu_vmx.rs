@@ -59,6 +59,7 @@ pub struct SurfaceProbe {
     last_input_millis: u64,
     camera_dirty: bool,
     input_live: bool,
+    metrics: FrameMetrics,
 }
 
 pub struct ResizePresentation {
@@ -77,6 +78,46 @@ pub struct InputPresentation {
     pub yaw: f32,
     pub pitch: f32,
     pub timeline: u64,
+}
+
+/// Values derived from completed UI4 publications. `cpu_submit_ms` measures
+/// the surface-acquire/submit/publish interval; the current VMX
+/// frontier does not expose GPU timestamp queries or per-EU occupancy.
+pub struct FrameStats {
+    pub fps: u32,
+    pub cpu_submit_ms: u32,
+    pub timeline: u64,
+    pub draw_calls: u32,
+    pub indices: u32,
+}
+
+struct FrameMetrics {
+    sample_started_millis: u64,
+    sample_frames: u32,
+    fps: u32,
+    cpu_submit_ms: u32,
+}
+
+impl FrameMetrics {
+    fn new(now: u64) -> Self {
+        Self {
+            sample_started_millis: now,
+            sample_frames: 0,
+            fps: 0,
+            cpu_submit_ms: 0,
+        }
+    }
+
+    fn record(&mut self, started_millis: u64, finished_millis: u64) {
+        self.cpu_submit_ms = finished_millis.saturating_sub(started_millis) as u32;
+        self.sample_frames = self.sample_frames.saturating_add(1);
+        let elapsed = finished_millis.saturating_sub(self.sample_started_millis);
+        if elapsed >= 1_000 {
+            self.fps = self.sample_frames.saturating_mul(1_000) / elapsed as u32;
+            self.sample_started_millis = finished_millis;
+            self.sample_frames = 0;
+        }
+    }
 }
 
 pub fn probe_wgpu_buffer_path() -> Result<usize, BackendFailure> {
@@ -250,6 +291,7 @@ pub fn probe_ui4_surface_path(
         last_input_millis: clock::monotonic_millis(),
         camera_dirty: false,
         input_live: false,
+        metrics: FrameMetrics::new(clock::monotonic_millis()),
     })
 }
 
@@ -286,8 +328,12 @@ impl SurfaceProbe {
             &self.camera,
             self.lens,
         )?;
-        let rendered =
-            render_voxel_frame(&mut self.frame, &self.device, &self.queue, &self.graphics)?;
+        // Use the replacement extent for the clip-space HUD immediately; the
+        // first resize generation must not carry coordinates from the retired
+        // surface generation.
+        self.width = event.width;
+        self.height = event.height;
+        let rendered = self.render_with_stats()?;
         self.width = rendered.width;
         self.height = rendered.height;
         self.pitch = rendered.pitch;
@@ -306,8 +352,8 @@ impl SurfaceProbe {
         }))
     }
 
-    /// Consume the application-focused UI4 cursor/keyboard route, update the
-    /// shared Helio camera, and publish only when the pose changed. A primary
+    /// Consume the application-focused UI4 cursor/keyboard route and update
+    /// the shared Helio camera. A primary
     /// drag looks; WASD/Space/Shift move; Control boosts.
     pub fn present_pending_input(&mut self) -> Result<Option<InputPresentation>, BackendFailure> {
         let now = clock::monotonic_millis();
@@ -328,17 +374,6 @@ impl SurfaceProbe {
             &self.camera,
             self.lens,
         )?;
-        let rendered =
-            match render_voxel_frame(&mut self.frame, &self.device, &self.queue, &self.graphics) {
-                Ok(rendered) => rendered,
-                Err(failure)
-                    if failure.stage == "ui4-frame-begin" && failure.code == vgpu::ERR_BUSY =>
-                {
-                    return Ok(None);
-                }
-                Err(failure) => return Err(failure),
-            };
-        self.timeline = rendered.timeline;
         self.camera_dirty = false;
 
         if self.input_live {
@@ -349,8 +384,47 @@ impl SurfaceProbe {
             position: self.camera.position().to_array(),
             yaw: self.camera.yaw(),
             pitch: self.camera.pitch(),
-            timeline: rendered.timeline,
+            timeline: self.timeline,
         }))
+    }
+
+    /// Publish one current frame. A busy UI4 lease is normal while the
+    /// compositor consumes the preceding submission and is not reported as a
+    /// rendering failure.
+    pub fn present_stats_frame(&mut self) -> Result<Option<FrameStats>, BackendFailure> {
+        match self.render_with_stats() {
+            Ok(rendered) => Ok(Some(FrameStats {
+                fps: self.metrics.fps,
+                cpu_submit_ms: self.metrics.cpu_submit_ms,
+                timeline: rendered.timeline,
+                draw_calls: self.graphics.draw_count(),
+                indices: self.graphics.draw_index_count(),
+            })),
+            Err(failure)
+                if failure.stage == "ui4-frame-begin" && failure.code == vgpu::ERR_BUSY =>
+            {
+                Ok(None)
+            }
+            Err(failure) => Err(failure),
+        }
+    }
+
+    fn render_with_stats(&mut self) -> Result<RenderedFrame, BackendFailure> {
+        self.graphics.update_hud(
+            &self.queue,
+            self.width,
+            self.height,
+            self.metrics.fps,
+            self.metrics.cpu_submit_ms,
+            self.timeline,
+        )?;
+        let started = clock::monotonic_millis();
+        let rendered =
+            render_voxel_frame(&mut self.frame, &self.device, &self.queue, &self.graphics)?;
+        let finished = clock::monotonic_millis();
+        self.timeline = rendered.timeline;
+        self.metrics.record(started, finished);
+        Ok(rendered)
     }
 }
 
@@ -364,11 +438,16 @@ struct RenderedFrame {
 
 struct VoxelGraphics {
     world_positions: Vec<[f32; 3]>,
+    hud_positions: Vec<[f32; 3]>,
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     pipeline: wgpu::RenderPipeline,
     material_draws: Vec<MaterialDraw>,
+    hud_draw: MaterialDraw,
 }
+
+const HUD_MAX_QUADS: usize = 1_024;
+const HUD_COLOR: [f32; 4] = [0.72, 0.92, 1.0, 1.0];
 
 #[derive(Clone, Copy)]
 struct MaterialDraw {
@@ -435,8 +514,20 @@ impl VoxelGraphics {
                 ERR_INVALID_ARGUMENT,
             ));
         }
-        let projected =
+        let hud_vertex_base = world_positions.len();
+        let mut hud_positions = vec![[-2.0, -2.0, 0.0]; HUD_MAX_QUADS * 4];
+        let mut hud_indices = Vec::with_capacity(HUD_MAX_QUADS * 6);
+        for quad in 0..HUD_MAX_QUADS {
+            let base = u32::try_from(hud_vertex_base + quad * 4)
+                .map_err(|_| fail("hud-vertex-base", ERR_INVALID_ARGUMENT))?;
+            hud_indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+        }
+        let hud_first_index = u32::try_from(material_indices.len())
+            .map_err(|_| fail("hud-first-index", ERR_INVALID_ARGUMENT))?;
+        material_indices.extend_from_slice(&hud_indices);
+        let mut projected =
             crate::voxel::project_clip_positions(&world_positions, aspect, camera, lens);
+        projected.append(&mut hud_positions);
         let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Helio voxel projected positions"),
             size: byte_len(&projected) as u64,
@@ -502,10 +593,17 @@ impl VoxelGraphics {
         }
         Ok(Self {
             world_positions,
+            hud_positions: vec![[-2.0, -2.0, 0.0]; HUD_MAX_QUADS * 4],
             vertex_buffer,
             index_buffer,
             pipeline,
             material_draws,
+            hud_draw: MaterialDraw {
+                first_index: hud_first_index,
+                index_count: 0,
+                base_vertex: 0,
+                rgba: HUD_COLOR,
+            },
         })
     }
 
@@ -516,10 +614,138 @@ impl VoxelGraphics {
         camera: &FlyCamera,
         lens: PerspectiveLens,
     ) -> Result<(), BackendFailure> {
-        let projected =
+        let mut projected =
             crate::voxel::project_clip_positions(&self.world_positions, aspect, camera, lens);
+        projected.extend_from_slice(&self.hud_positions);
         queue.write_buffer(&self.vertex_buffer, 0, bytes_of_slice(&projected));
         Ok(())
+    }
+
+    fn update_hud(
+        &mut self,
+        queue: &wgpu::Queue,
+        width: u32,
+        height: u32,
+        fps: u32,
+        cpu_submit_ms: u32,
+        timeline: u64,
+    ) -> Result<(), BackendFailure> {
+        let lines = [
+            format!("FPS {fps:03} CPU {cpu_submit_ms:03}MS"),
+            format!(
+                "DRAW {:02} IDX {:05}",
+                self.material_draws.len() + 1,
+                self.world_index_count()
+            ),
+            format!("SUB {timeline:06}"),
+            "GPU TIME N/A".to_owned(),
+        ];
+        let quad_count = write_hud_positions(&mut self.hud_positions, width, height, &lines);
+        self.hud_draw.index_count = u32::try_from(quad_count.saturating_mul(6))
+            .map_err(|_| fail("hud-index-count", ERR_INVALID_ARGUMENT))?;
+        // The HUD is written after the world upload. Its own vertices occupy a
+        // fixed tail allocation, so only that tail needs replacing per frame.
+        let hud_offset = (self.world_positions.len() * core::mem::size_of::<[f32; 3]>()) as u64;
+        queue.write_buffer(
+            &self.vertex_buffer,
+            hud_offset,
+            bytes_of_slice(&self.hud_positions),
+        );
+        Ok(())
+    }
+
+    fn world_index_count(&self) -> u32 {
+        self.material_draws
+            .iter()
+            .fold(0u32, |count, draw| count.saturating_add(draw.index_count))
+    }
+
+    fn draw_count(&self) -> u32 {
+        self.material_draws.len() as u32 + u32::from(self.hud_draw.index_count != 0)
+    }
+
+    fn draw_index_count(&self) -> u32 {
+        self.world_index_count()
+            .saturating_add(self.hud_draw.index_count)
+    }
+}
+
+/// Rasterize a compact 3x5 status font directly into the clip-position vertex
+/// tail. The VMX package intentionally has no texture/bind-group path, so the
+/// HUD stays in the same authenticated indexed material batch as the world.
+fn write_hud_positions(
+    positions: &mut [[f32; 3]],
+    width: u32,
+    height: u32,
+    lines: &[String],
+) -> usize {
+    positions.fill([-2.0, -2.0, 0.0]);
+    let width = width.max(1) as f32;
+    let height = height.max(1) as f32;
+    let pixel_x = 2.0 / width;
+    let pixel_y = 2.0 / height;
+    let cell_w = pixel_x * 2.0;
+    let cell_h = pixel_y * 2.0;
+    let margin_x = pixel_x * 8.0;
+    let margin_y = pixel_y * 8.0;
+    let mut quad = 0usize;
+    for (line_index, line) in lines.iter().enumerate() {
+        let baseline = -1.0 + margin_y + (lines.len() - 1 - line_index) as f32 * cell_h * 7.0;
+        for (character_index, character) in line.chars().enumerate() {
+            let glyph_x = -1.0 + margin_x + character_index as f32 * cell_w * 4.0;
+            for (row, bits) in hud_glyph(character).iter().enumerate() {
+                for column in 0..3 {
+                    if bits & (1 << (2 - column)) == 0 || quad >= HUD_MAX_QUADS {
+                        continue;
+                    }
+                    let x0 = glyph_x + column as f32 * cell_w;
+                    let y0 = baseline + (4 - row) as f32 * cell_h;
+                    let base = quad * 4;
+                    positions[base..base + 4].copy_from_slice(&[
+                        [x0, y0, 0.0],
+                        [x0 + cell_w, y0, 0.0],
+                        [x0 + cell_w, y0 + cell_h, 0.0],
+                        [x0, y0 + cell_h, 0.0],
+                    ]);
+                    quad += 1;
+                }
+            }
+        }
+    }
+    quad
+}
+
+const fn hud_glyph(character: char) -> [u8; 5] {
+    match character {
+        '0' => [7, 5, 5, 5, 7],
+        '1' => [2, 6, 2, 2, 7],
+        '2' => [7, 1, 7, 4, 7],
+        '3' => [7, 1, 7, 1, 7],
+        '4' => [5, 5, 7, 1, 1],
+        '5' => [7, 4, 7, 1, 7],
+        '6' => [7, 4, 7, 5, 7],
+        '7' => [7, 1, 2, 2, 2],
+        '8' => [7, 5, 7, 5, 7],
+        '9' => [7, 5, 7, 1, 7],
+        'A' => [2, 5, 7, 5, 5],
+        'C' => [7, 4, 4, 4, 7],
+        'D' => [6, 5, 5, 5, 6],
+        'E' => [7, 4, 6, 4, 7],
+        'F' => [7, 4, 6, 4, 4],
+        'G' => [7, 4, 5, 5, 7],
+        'I' => [7, 2, 2, 2, 7],
+        'M' => [5, 7, 7, 5, 5],
+        'N' => [5, 7, 7, 7, 5],
+        'P' => [6, 5, 6, 4, 4],
+        'R' => [6, 5, 6, 5, 5],
+        'S' => [7, 4, 7, 1, 7],
+        'T' => [7, 2, 2, 2, 2],
+        'U' => [5, 5, 5, 5, 7],
+        'W' => [5, 5, 7, 7, 5],
+        'X' => [5, 5, 2, 5, 5],
+        '/' => [1, 1, 2, 4, 4],
+        '-' => [0, 0, 7, 0, 0],
+        _ => [0, 0, 0, 0, 0],
     }
 }
 
@@ -574,6 +800,15 @@ fn render_voxel_frame(
             pass.set_vertex_buffer(0, graphics.vertex_buffer.slice(..));
             pass.set_index_buffer(graphics.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
             for draw in &graphics.material_draws {
+                pass.set_immediates(0, bytes_of_slice(core::slice::from_ref(&draw.rgba)));
+                pass.draw_indexed(
+                    draw.first_index..draw.first_index + draw.index_count,
+                    draw.base_vertex,
+                    0..1,
+                );
+            }
+            if graphics.hud_draw.index_count != 0 {
+                let draw = graphics.hud_draw;
                 pass.set_immediates(0, bytes_of_slice(core::slice::from_ref(&draw.rgba)));
                 pass.draw_indexed(
                     draw.first_index..draw.first_index + draw.index_count,

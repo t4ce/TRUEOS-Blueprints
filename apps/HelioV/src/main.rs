@@ -173,6 +173,30 @@ fn main() {
                         return;
                     }
                 }
+                match report.present_stats_frame() {
+                    Ok(Some(stats)) if stats.fps != 0 && stats.timeline % 120 == 0 => logl::log(
+                        logl::level::INFO,
+                        format_args!(
+                            "HelioV: frame telemetry fps={} cpu_submit_ms={} draws={} indices={} timeline={} gpu_time=unavailable eu_occupancy=unavailable",
+                            stats.fps,
+                            stats.cpu_submit_ms,
+                            stats.draw_calls,
+                            stats.indices,
+                            stats.timeline,
+                        ),
+                    ),
+                    Ok(_) => {}
+                    Err(failure) => {
+                        logl::log(
+                            logl::level::ERROR,
+                            format_args!(
+                                "HelioV: frame telemetry/presentation failed stage={} rc={}",
+                                failure.stage, failure.code,
+                            ),
+                        );
+                        return;
+                    }
+                }
                 vsys::sleep_ms(16);
             }
         }
