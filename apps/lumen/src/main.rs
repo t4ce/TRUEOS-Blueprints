@@ -18,6 +18,7 @@ use crossterm::{
     terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use trueos::{
+    clock,
     logl::{self, level},
     lumen, platform, replication, vshell,
 };
@@ -31,21 +32,16 @@ const SPINNER_CADENCE_POLLS: usize = 4;
 const SPINNER_MAX_SHIFT_CELLS: usize = 5;
 const SPINNER_FRAMES: &[&str] = &["⢈", "⡈", "⡐", "⡠", "⣀", "⢄", "⢂", "⢁", "⡁"];
 
+/// Prefill the fixed read-only tool schema once so VMX snapshots retain it.
+const SYSTEM_PROMPT_PREFILL_ENABLED: bool = true;
+
 const SYSTEM_PROMPT: &str = concat!(
-    "You are Lilly, a concise helpful assistant. ",
-    "Respond with exactly one tool call. Use text for every ordinary answer, ",
-    "play_emotion only when an emotion should be shown, and move only when movement is requested. ",
-    "The Spirit actions are real. List of tools: ",
-    "[{\"name\":\"text\",\"parameters\":{\"type\":\"object\",",
-    "\"properties\":{\"text\":{\"type\":\"string\"}},\"required\":[\"text\"]}},",
-    "{\"name\":\"play_emotion\",\"parameters\":{\"type\":\"object\",",
-    "\"properties\":{\"idea\":{\"type\":\"string\",\"enum\":[\"anger\",\"disgust\",",
-    "\"fear\",\"joy\",\"sadness\",\"surprise\"]}},\"required\":[\"idea\"],",
-    "\"additionalProperties\":false}},",
-    "{\"name\":\"move\",\"parameters\":{\"type\":\"object\",",
-    "\"properties\":{\"x\":{\"type\":\"number\",\"minimum\":0,\"maximum\":1},",
-    "\"y\":{\"type\":\"number\",\"minimum\":0,\"maximum\":1}},",
-    "\"required\":[\"x\",\"y\"],\"additionalProperties\":false}}]."
+    "You are a concise helpful assistant. You may answer directly with final text. ",
+    "You have exactly one read-only tool: time(). Call it only when current UTC time is useful, ",
+    "with exactly <|tool_call_start|>[time()]<|tool_call_end|>. It accepts no arguments. ",
+    "After a tool result, provide final text and never call another tool. List of tools: ",
+    "[{\"name\":\"time\",\"parameters\":{\"type\":\"object\",",
+    "\"properties\":{},\"additionalProperties\":false}}]."
 );
 
 struct LogicalState {
@@ -284,14 +280,23 @@ fn run_terminal_session(
 }
 
 fn initialize_lumen() -> Result<(), String> {
-    let mut spinner = ProgressSpinner::start("lumen-bp: opening prefilled template");
-    lumen::open_template(SYSTEM_PROMPT)
+    let system_prompt = if SYSTEM_PROMPT_PREFILL_ENABLED {
+        SYSTEM_PROMPT
+    } else {
+        ""
+    };
+    let mut spinner = ProgressSpinner::start(if SYSTEM_PROMPT_PREFILL_ENABLED {
+        "lumen-bp: opening prefilled template"
+    } else {
+        "lumen-bp: opening raw first-turn session"
+    });
+    lumen::open_template(system_prompt)
         .map_err(|error| format!("template open failed: {error:?}"))?;
     let ready = wait_for_phase_with_spinner(lumen::LUMEN_PHASE_READY, &mut spinner)?;
     clear_prompt_for_output().map_err(|error| format!("template status clear failed: {error}"))?;
     vshell::linef(format_args!(
-        "lumen-bp: template ready prefix_tokens={} ownership=blueprint-policy+logical-state/kernel-model+igc+guc",
-        ready.position
+        "lumen-bp: template ready prefix_tokens={} system_prefill={} ownership=blueprint-policy+logical-state/kernel-model+igc+guc",
+        ready.position, SYSTEM_PROMPT_PREFILL_ENABLED as u8,
     ));
     vshell::line(
         "lumen-bp: type a prompt · Esc/F10 returns to Shell2 · vmx_tui resumes this session",
@@ -772,41 +777,42 @@ fn run_prompt(state: &mut LogicalState, prompt: &str) -> Result<(), String> {
     let response_turn = state.turns.saturating_add(1);
     log_raw_reply(response_turn, raw.as_slice());
     let raw = String::from_utf8_lossy(&raw);
-    let adapted = adapt_tool_reply(raw.as_ref());
-    match adapted.tool {
-        ToolDisposition::None => {
-            emit_text_reply(response_turn, adapted.text.as_str());
-        }
-        ToolDisposition::Text(text) => {
-            emit_text_reply(response_turn, text.as_str());
-        }
-        ToolDisposition::Executed => {
-            if adapted.text.is_empty() {
-                vshell::line("lumen-bp: tool objective handed to Spirit");
-            } else {
-                emit_text_reply(response_turn, adapted.text.as_str());
-            }
-        }
-        ToolDisposition::Rejected => {
-            vshell::line("lumen-bp: rejected malformed or unknown tool objective");
-            if adapted.text.is_empty() {
-                emit_text_reply(response_turn, rejected_tool_fallback());
-            } else {
-                emit_text_reply(response_turn, adapted.text.as_str());
-            }
-        }
-        ToolDisposition::Failed => {
-            if adapted.text.is_empty() {
-                emit_text_reply(
-                    response_turn,
-                    "Spirit could not accept that action right now.",
-                );
-            } else {
-                emit_text_reply(response_turn, adapted.text.as_str());
-            }
+    match parse_time_tool_reply(raw.as_ref(), ToolCallAllowance::FirstGeneration) {
+        ToolReply::Direct(text) => emit_text_reply(response_turn, text.as_str()),
+        ToolReply::Time => run_time_continuation(state, response_turn)?,
+        ToolReply::Rejected => {
+            vshell::line("lumen-bp: rejected malformed, unknown, or chained tool call");
+            emit_text_reply(response_turn, rejected_tool_fallback());
         }
     }
     state.turns = response_turn;
+    Ok(())
+}
+
+fn run_time_continuation(state: &mut LogicalState, response_turn: u64) -> Result<(), String> {
+    let result = current_time_tool_result();
+    lumen::submit_tool_result(
+        state.turns,
+        &state.reply_tail[..state.reply_tail_len],
+        result.as_str(),
+    )
+    .map_err(|error| alloc::format!("time tool submit {error:?}"))?;
+    let mut spinner = ProgressSpinner::start("lumen-bp: time continuation");
+    let status = wait_for_phase_with_spinner(lumen::LUMEN_PHASE_REPLY_READY, &mut spinner)?;
+    let tail_len = (status.reply_tail_len as usize).min(state.reply_tail.len());
+    state.reply_tail = status.reply_tail;
+    state.reply_tail_len = tail_len;
+    let raw = lumen::take_reply(status)
+        .map_err(|error| alloc::format!("time continuation read {error:?}"))?;
+    log_raw_reply(response_turn, raw.as_slice());
+    let raw = String::from_utf8_lossy(&raw);
+    match parse_time_tool_reply(raw.as_ref(), ToolCallAllowance::Continuation) {
+        ToolReply::Direct(text) => emit_text_reply(response_turn, text.as_str()),
+        ToolReply::Time | ToolReply::Rejected => {
+            vshell::line("lumen-bp: rejected second or malformed time tool call");
+            emit_text_reply(response_turn, rejected_tool_fallback());
+        }
+    }
     Ok(())
 }
 
@@ -876,247 +882,127 @@ fn wait_for_phase_inner(
     Err(String::from("timeout"))
 }
 
-struct AdaptedReply {
-    text: String,
-    tool: ToolDisposition,
+#[derive(Copy, Clone)]
+enum ToolCallAllowance {
+    FirstGeneration,
+    Continuation,
 }
 
-enum ToolDisposition {
-    None,
-    Text(String),
-    Executed,
+enum ToolReply {
+    Direct(String),
+    Time,
     Rejected,
-    Failed,
 }
 
-fn adapt_tool_reply(raw: &str) -> AdaptedReply {
+fn parse_time_tool_reply(raw: &str, allowance: ToolCallAllowance) -> ToolReply {
     const START: &str = "<|tool_call_start|>";
     const END: &str = "<|tool_call_end|>";
     let Some(start) = raw.find(START) else {
-        return AdaptedReply {
-            text: raw.trim().to_string(),
-            tool: ToolDisposition::None,
-        };
+        if raw.contains(END) {
+            return ToolReply::Rejected;
+        }
+        return ToolReply::Direct(raw.trim().to_string());
     };
     let payload_start = start + START.len();
     let Some(relative_end) = raw[payload_start..].find(END) else {
-        return AdaptedReply {
-            text: remove_span(raw, start, raw.len()),
-            tool: ToolDisposition::Rejected,
-        };
+        return ToolReply::Rejected;
     };
     let payload_end = payload_start + relative_end;
     let span_end = payload_end + END.len();
-    let text = remove_span(raw, start, span_end);
-    AdaptedReply {
-        text,
-        tool: route_tool_call(&raw[payload_start..payload_end]),
+    if !raw[..start].trim().is_empty()
+        || !raw[span_end..].trim().is_empty()
+        || raw[span_end..].contains(START)
+        || !matches!(allowance, ToolCallAllowance::FirstGeneration)
+    {
+        return ToolReply::Rejected;
     }
+    parse_time_call(&raw[payload_start..payload_end])
 }
 
-struct ParsedToolCall<'a> {
-    name: &'a str,
-    arguments: &'a str,
-}
-
-fn route_tool_call(payload: &str) -> ToolDisposition {
-    let Some(call) = parse_tool_call(payload) else {
-        return ToolDisposition::Rejected;
-    };
-    match call.name {
-        "text" => route_text(call.arguments),
-        "play_emotion" => route_play_emotion(call.arguments),
-        "move" => route_move(call.arguments),
-        _ => ToolDisposition::Rejected,
-    }
-}
-
-fn route_text(arguments: &str) -> ToolDisposition {
-    let Some(text) = parse_string_argument(arguments, "text") else {
-        return ToolDisposition::Rejected;
-    };
-    if text.trim().is_empty() {
-        return ToolDisposition::Rejected;
-    }
-    ToolDisposition::Text(text)
-}
-
-fn route_play_emotion(arguments: &str) -> ToolDisposition {
-    let Some(idea) = parse_emotion_idea(arguments) else {
-        return ToolDisposition::Rejected;
-    };
-    let accepted = lumen::play_emotion(idea).is_ok();
-    vshell::linef(format_args!(
-        "lumen-bp: Spirit emotion idea={} accepted={}",
-        idea, accepted as u8
-    ));
-    if accepted {
-        ToolDisposition::Executed
-    } else {
-        ToolDisposition::Failed
-    }
-}
-
-fn route_move(arguments: &str) -> ToolDisposition {
-    let Some((x, y)) = parse_move_arguments(arguments) else {
-        return ToolDisposition::Rejected;
-    };
-    let accepted = lumen::move_spirit(x, y).is_ok();
-    vshell::linef(format_args!(
-        "lumen-bp: Spirit move x={:.3} y={:.3} accepted={}",
-        x, y, accepted as u8
-    ));
-    if accepted {
-        ToolDisposition::Executed
-    } else {
-        ToolDisposition::Failed
-    }
-}
-
-fn parse_tool_call(payload: &str) -> Option<ParsedToolCall<'_>> {
+fn parse_time_call(payload: &str) -> ToolReply {
     let payload = payload.trim();
-    let payload = payload
-        .strip_prefix('[')
-        .and_then(|value| value.strip_suffix(']'))
-        .unwrap_or(payload)
-        .trim();
-    let open = payload.find('(')?;
-    let name = payload.get(..open)?.trim();
-    if name.is_empty() {
-        return None;
-    }
-    let arguments = payload.get(open + 1..)?.strip_suffix(')')?.trim();
-    Some(ParsedToolCall { name, arguments })
-}
-
-fn parse_emotion_idea(arguments: &str) -> Option<&'static str> {
-    let value = arguments
-        .strip_prefix("idea")?
-        .trim()
-        .strip_prefix('=')?
-        .trim();
-    let quote = value.as_bytes().first().copied()?;
-    if !matches!(quote, b'\'' | b'"') || value.as_bytes().last().copied() != Some(quote) {
-        return None;
-    }
-    match value.get(1..value.len().checked_sub(1)?)? {
-        "anger" => Some("anger"),
-        "disgust" => Some("disgust"),
-        "fear" => Some("fear"),
-        "joy" => Some("joy"),
-        "sadness" => Some("sadness"),
-        "surprise" => Some("surprise"),
-        _ => None,
+    if payload == "[time()]" {
+        ToolReply::Time
+    } else {
+        ToolReply::Rejected
     }
 }
 
-fn parse_string_argument(arguments: &str, name: &str) -> Option<String> {
-    let value = arguments
-        .strip_prefix(name)?
-        .trim()
-        .strip_prefix('=')?
-        .trim();
-    let quote = value.as_bytes().first().copied()?;
-    if !matches!(quote, b'\'' | b'"') || value.as_bytes().last().copied() != Some(quote) {
-        return None;
-    }
-    let inner = value.get(1..value.len().checked_sub(1)?)?;
-    let mut output = String::with_capacity(inner.len());
-    let mut chars = inner.chars();
-    while let Some(ch) = chars.next() {
-        if ch != '\\' {
-            output.push(ch);
-            continue;
-        }
-        match chars.next()? {
-            '\\' => output.push('\\'),
-            '"' => output.push('"'),
-            '\'' => output.push('\''),
-            'n' => output.push('\n'),
-            'r' => output.push('\r'),
-            't' => output.push('\t'),
-            _ => return None,
-        }
-    }
-    Some(output)
+fn current_time_tool_result() -> String {
+    format_time_tool_result(clock::unix_seconds())
 }
 
-fn parse_move_arguments(arguments: &str) -> Option<(f32, f32)> {
-    let mut x = None;
-    let mut y = None;
-    for argument in arguments.split(',') {
-        let (name, value) = argument.split_once('=')?;
-        let value = value.trim().parse::<f32>().ok()?;
-        if !value.is_finite() || !(0.0..=1.0).contains(&value) {
-            return None;
-        }
-        match name.trim() {
-            "x" if x.is_none() => x = Some(value),
-            "y" if y.is_none() => y = Some(value),
-            _ => return None,
-        }
+fn format_time_tool_result(unix_seconds: Option<u64>) -> String {
+    match unix_seconds {
+        Some(unix_seconds) => alloc::format!(
+            "{{\"utc\":\"{}\",\"unix_seconds\":{},\"source\":\"trueos-clock\",\"status\":\"available\"}}",
+            clock::UtcDateTime::from_unix_seconds(unix_seconds),
+            unix_seconds,
+        ),
+        None => String::from(
+            "{\"utc\":null,\"unix_seconds\":null,\"source\":\"trueos-clock\",\"status\":\"unavailable\"}",
+        ),
     }
-    Some((x?, y?))
 }
 
 fn rejected_tool_fallback() -> &'static str {
-    "I could not form a valid tool call or text reply for that turn; please try once more."
-}
-
-fn remove_span(raw: &str, start: usize, end: usize) -> String {
-    let before = raw.get(..start).unwrap_or_default().trim_end();
-    let after = raw.get(end..).unwrap_or_default().trim_start();
-    let mut text = String::with_capacity(before.len() + after.len() + 1);
-    text.push_str(before);
-    if !before.is_empty() && !after.is_empty() {
-        text.push(' ');
-    }
-    text.push_str(after);
-    text
-}
-
-fn trim_ascii(mut bytes: &[u8]) -> &[u8] {
-    while bytes.first().is_some_and(u8::is_ascii_whitespace) {
-        bytes = &bytes[1..];
-    }
-    while bytes.last().is_some_and(u8::is_ascii_whitespace) {
-        bytes = &bytes[..bytes.len() - 1];
-    }
-    bytes
+    "I could not complete that bounded time-tool turn; please try again."
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_emotion_idea, parse_move_arguments, parse_string_argument, parse_tool_call};
+    use super::{ToolCallAllowance, ToolReply, format_time_tool_result, parse_time_tool_reply};
 
     #[test]
-    fn structured_tool_call_routes_by_registered_name() {
-        let call = parse_tool_call("[play_emotion(idea='joy')]").unwrap();
-        assert_eq!(call.name, "play_emotion");
-        assert_eq!(parse_emotion_idea(call.arguments), Some("joy"));
+    fn time_tool_schema_accepts_exactly_one_no_argument_call() {
+        assert!(matches!(
+            parse_time_tool_reply(
+                "<|tool_call_start|>[time()]<|tool_call_end|>",
+                ToolCallAllowance::FirstGeneration,
+            ),
+            ToolReply::Time
+        ));
+        for malformed in [
+            "<|tool_call_start|>[time(x=1)]<|tool_call_end|>",
+            "<|tool_call_start|>[clock()]<|tool_call_end|>",
+            "<|tool_call_start|>[time()]<|tool_call_end|> extra",
+            "<|tool_call_start|>[time()]<|tool_call_end|><|tool_call_start|>[time()]<|tool_call_end|>",
+            "<|tool_call_start|>[time()]",
+            "<|tool_call_end|>",
+        ] {
+            assert!(matches!(
+                parse_time_tool_reply(malformed, ToolCallAllowance::FirstGeneration),
+                ToolReply::Rejected
+            ));
+        }
     }
 
     #[test]
-    fn malformed_or_out_of_schema_emotion_is_rejected() {
-        assert!(parse_tool_call("play_emotion idea='joy'").is_none());
-        assert_eq!(parse_emotion_idea("idea='calm'"), None);
-        assert_eq!(parse_emotion_idea("idea=joy"), None);
+    fn continuation_is_bounded_to_final_text() {
+        assert!(matches!(
+            parse_time_tool_reply(
+                "<|tool_call_start|>[time()]<|tool_call_end|>",
+                ToolCallAllowance::Continuation,
+            ),
+            ToolReply::Rejected
+        ));
+        assert!(matches!(
+            parse_time_tool_reply("The current time is available.", ToolCallAllowance::Continuation),
+            ToolReply::Direct(text) if text == "The current time is available."
+        ));
     }
 
     #[test]
-    fn text_argument_unescapes_model_function_syntax() {
+    fn unavailable_clock_has_a_bounded_deterministic_result() {
         assert_eq!(
-            parse_string_argument(r#"text=\"Hello, \\\"Lilly\\\"!\""#, "text").as_deref(),
-            Some("Hello, \"Lilly\"!")
+            format_time_tool_result(None),
+            "{\"utc\":null,\"unix_seconds\":null,\"source\":\"trueos-clock\",\"status\":\"unavailable\"}"
         );
-        assert!(parse_string_argument("text=hello", "text").is_none());
-    }
-
-    #[test]
-    fn move_arguments_are_named_bounded_and_order_independent() {
-        assert_eq!(parse_move_arguments("x=0.25, y=1"), Some((0.25, 1.0)));
-        assert_eq!(parse_move_arguments("y=0.75,x=0"), Some((0.0, 0.75)));
-        assert!(parse_move_arguments("x=-0.1,y=0.5").is_none());
-        assert!(parse_move_arguments("x=0.5,x=0.6,y=0.5").is_none());
+        let available = format_time_tool_result(Some(0));
+        assert_eq!(
+            available,
+            "{\"utc\":\"1970-01-01 00:00:00 UTC\",\"unix_seconds\":0,\"source\":\"trueos-clock\",\"status\":\"available\"}"
+        );
+        assert!(available.len() < 256);
     }
 }

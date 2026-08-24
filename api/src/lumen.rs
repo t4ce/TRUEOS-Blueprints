@@ -38,6 +38,21 @@ pub fn submit_prompt(turn: u64, reply_tail: &[u32], prompt: &str) -> Result<(), 
     })
 }
 
+/// Continue the current assistant response with a real `tool` role result.
+/// `reply_tail` is the unconsumed terminator tail returned by the preceding
+/// assistant generation; it is not a user-message prefix.
+pub fn submit_tool_result(turn: u64, reply_tail: &[u32], result_text: &str) -> Result<(), Error> {
+    result(unsafe {
+        v::bp_abi::trueos_cabi_lumen_tool_result_submit(
+            turn,
+            reply_tail.as_ptr(),
+            reply_tail.len(),
+            result_text.as_ptr(),
+            result_text.len(),
+        )
+    })
+}
+
 pub fn status() -> Result<TrueosLumenStatus, Error> {
     let mut status = TrueosLumenStatus::default();
     result(unsafe { v::bp_abi::trueos_cabi_lumen_status(&mut status) })?;
