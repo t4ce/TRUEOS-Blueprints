@@ -27,6 +27,10 @@
       "name": "texplo",
       "path": "buildins/texplo"
     },
+    {
+      "name": "trueos-picasso-example",
+      "path": "../TRUEOS-Picasso-Example"
+    },
     "esp32_stt",
     "flight_controller_sim",
     "prismq",
