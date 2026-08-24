@@ -20,7 +20,6 @@ members = [
     "buildins/img",
     "apps/image-viewer",
     "apps/lumen",
-    "apps/trueos-picasso-example",
     "apps/ipp-printer",
     "apps/esp32_stt",
     "apps/flight_controller_sim",

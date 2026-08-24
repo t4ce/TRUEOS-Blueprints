@@ -132,7 +132,7 @@ pub(crate) fn package_app_spec(
     let app_name = package_app_lookup_name(app_name);
     let Some(app) = registered_app_specs(app_dir, package_catalog)?
         .into_iter()
-        .find(|app| app.name == app_name)
+        .find(|app| app.name.eq_ignore_ascii_case(app_name))
     else {
         return Ok(None);
     };
@@ -569,6 +569,11 @@ mod tests {
     }
 
     #[test]
+    fn package_lookup_is_case_insensitive() {
+        assert!("trueos-picasso-example".eq_ignore_ascii_case("TRUEOS-Picasso-Example"));
+    }
+
+    #[test]
     fn manifest_has_dependency_sees_target_dependencies() {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -738,10 +743,7 @@ rustc-payload-dependencies = ["trueos", "itoa"]
         }
 
         for buildin_name in ["commander", "ssh", "img", "os", "texplo", "edit", "shell"] {
-            let buildin = apps
-                .iter()
-                .find(|app| app.name == buildin_name)
-                .unwrap();
+            let buildin = apps.iter().find(|app| app.name == buildin_name).unwrap();
             assert_eq!(buildin.dir, root.join("buildins").join(buildin_name));
         }
     }
