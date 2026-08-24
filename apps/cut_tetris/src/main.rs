@@ -139,7 +139,6 @@ fn main() {
                             let _ = game.cut();
                         }
                     }
-                    input::KEYBOARD_KEY_ESCAPE => break 'running,
                     _ => {}
                 }
             } else if event.kind == input::KEYBOARD_OUTPUT_KIND_TEXT {

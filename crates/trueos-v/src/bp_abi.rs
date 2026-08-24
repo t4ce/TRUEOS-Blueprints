@@ -80,6 +80,11 @@ pub const DOBBY_UI4_KEY_END: u32 = 12;
 pub const DOBBY_UI4_KEY_PAGE_UP: u32 = 13;
 pub const DOBBY_UI4_KEY_PAGE_DOWN: u32 = 14;
 
+/// Default UI4 behaviour: close the selected frame (and stop its Blueprint
+/// VM). `DELIVER_TO_APPLICATION` reserves Escape for this frame only.
+pub const UI4_FRAME_ESCAPE_KEY_ACTION_CLOSE: u32 = 0;
+pub const UI4_FRAME_ESCAPE_KEY_ACTION_DELIVER_TO_APPLICATION: u32 = 1;
+
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 pub struct TrueosLumenStatus {
@@ -520,7 +525,7 @@ unsafe extern "C" {
     pub fn trueos_cabi_vmedia_image_decode_discard(id: u32) -> i32;
     pub fn trueos_cabi_ui4_solara_frame_begin(window_id: u32, clear_rgba: u32) -> i32;
     pub fn trueos_cabi_ui4_scene_pan_event_take(window_id: u32, out: *mut TrueosUi4PanEvent)
-    -> i32;
+        -> i32;
     pub fn trueos_cabi_ui4_scene_resize_event_take(
         window_id: u32,
         out: *mut TrueosUi4ResizeEvent,
@@ -581,6 +586,7 @@ unsafe extern "C" {
     pub fn trueos_cabi_ui4_solara_frame_close_requested(window_id: u32, flags: u32) -> i32;
     pub fn trueos_cabi_ui4_scene_frame_set_position(window_id: u32, x: i32, y: i32) -> i32;
     pub fn trueos_cabi_ui4_scene_frame_set_hit_testable(window_id: u32, enabled: u32) -> i32;
+    pub fn trueos_cabi_ui4_scene_frame_set_escape_key_action(window_id: u32, action: u32) -> i32;
     pub fn trueos_cabi_ui4_scene_set_custom_cursor(window_id: u32, enabled: u32) -> i32;
     pub fn trueos_cabi_ui4_scene_set_cursor_icon(
         window_id: u32,
@@ -844,7 +850,7 @@ unsafe extern "C" {
     pub fn trueos_cabi_socket_tcp_set_nonblocking(socket_id: u32, nonblocking: u32) -> i32;
     pub fn trueos_cabi_socket_tcp_bind_v4(socket_id: u32, addr_be: u32, port_be: u16) -> i32;
     pub fn trueos_cabi_socket_tcp_bind_v6(socket_id: u32, addr_ptr: *const u8, port_be: u16)
-    -> i32;
+        -> i32;
     pub fn trueos_cabi_socket_tcp_connect_v4(
         socket_id: u32,
         addr_be: u32,
@@ -953,7 +959,7 @@ unsafe extern "C" {
     pub fn trueos_cabi_vgpu_open(requested_caps: u64, out_device: *mut u64) -> i32;
     pub fn trueos_cabi_vgpu_close(device: u64) -> i32;
     pub fn trueos_cabi_vgpu_device_info(device: u64, out_info: *mut crate::vgpu::DeviceInfo)
-    -> i32;
+        -> i32;
     pub fn trueos_cabi_vgpu_device_diagnostics(
         device: u64,
         out: *mut crate::vgpu::DeviceDiagnostics,
@@ -1041,9 +1047,18 @@ unsafe extern "C" {
         submit: *const crate::vgpu::RetainedFrameSubmit,
         out_point: *mut crate::vgpu::TimelinePoint,
     ) -> i32;
-    pub fn trueos_cabi_vgpu_cloud_work_graph_create(device: u64, descriptor: *const crate::vgpu::CloudWorkGraphDescriptor, out_graph: *mut u64) -> i32;
+    pub fn trueos_cabi_vgpu_cloud_work_graph_create(
+        device: u64,
+        descriptor: *const crate::vgpu::CloudWorkGraphDescriptor,
+        out_graph: *mut u64,
+    ) -> i32;
     pub fn trueos_cabi_vgpu_cloud_work_graph_destroy(device: u64, graph: u64) -> i32;
-    pub fn trueos_cabi_vgpu_cloud_frame_submit(device: u64, queue: u64, submit: *const crate::vgpu::CloudFrameSubmit, out_telemetry: *mut crate::vgpu::CloudFrameTelemetry) -> i32;
+    pub fn trueos_cabi_vgpu_cloud_frame_submit(
+        device: u64,
+        queue: u64,
+        submit: *const crate::vgpu::CloudFrameSubmit,
+        out_telemetry: *mut crate::vgpu::CloudFrameTelemetry,
+    ) -> i32;
     pub fn trueos_cabi_vgpu_vvideo_create(
         device: u64,
         guest_va: u64,
@@ -1210,7 +1225,7 @@ unsafe extern "C" {
     ) -> u32;
     pub fn trueos_cabi_hid_hut_read_mice(out: *mut TrueosHidHutMouseState, out_cap: u32) -> u32;
     pub fn trueos_cabi_hid_hut_read_tablets(out: *mut TrueosHidHutTabletState, out_cap: u32)
-    -> u32;
+        -> u32;
     pub fn trueos_cabi_hid_hut_read_keyboards(
         out: *mut TrueosHidHutKeyboardState,
         out_cap: u32,

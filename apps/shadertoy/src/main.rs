@@ -1,7 +1,7 @@
 #![no_std]
 
 use trueos::input::{
-    KEYBOARD_KEY_ARROW_LEFT, KEYBOARD_KEY_ARROW_RIGHT, KEYBOARD_KEY_ESCAPE, KEYBOARD_KEY_F1,
+    KEYBOARD_KEY_ARROW_LEFT, KEYBOARD_KEY_ARROW_RIGHT, KEYBOARD_KEY_F1,
     KEYBOARD_KEY_F2, KEYBOARD_KEY_F3, KEYBOARD_OUTPUT_FLAG_PRESS, KEYBOARD_OUTPUT_KIND_KEY,
 };
 use trueos::ui4_scene::{
@@ -121,7 +121,6 @@ fn main() {
                 continue;
             }
             let next = match event.key_code {
-                KEYBOARD_KEY_ESCAPE => break 'running,
                 KEYBOARD_KEY_ARROW_LEFT => Some((shader_index + SHADERS.len() - 1) % SHADERS.len()),
                 KEYBOARD_KEY_ARROW_RIGHT => Some((shader_index + 1) % SHADERS.len()),
                 KEYBOARD_KEY_F1 => Some(0),

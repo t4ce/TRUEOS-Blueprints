@@ -16,7 +16,6 @@ use zune_jpeg::zune_core::{bytestream::ZCursor, colorspace::ColorSpace, options:
 const BUILTIN_LOGO: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/builtin-logo.jpg"));
 const DEFAULT_SOURCE: &str = "builtin:logo";
 const SPRITE_ID: u32 = 1;
-const KEY_ESCAPE: u8 = 0x29;
 const INPUT_POLL_MS: u64 = 8;
 const NETWORK_TIMEOUT_MS: u64 = 30_000;
 const MAX_ENCODED_BYTES: usize = 64 * 1024 * 1024;
@@ -209,16 +208,6 @@ fn main() {
 
     let mut shell = ShellInput::new();
     loop {
-        if frame
-            .keyboard_state()
-            .ok()
-            .flatten()
-            .is_some_and(|keyboard| keyboard.is_down(KEY_ESCAPE))
-        {
-            let _ = frame.close(CloseRequest::default());
-            return;
-        }
-
         let mut changed = false;
         loop {
             match frame.take_pan_event() {

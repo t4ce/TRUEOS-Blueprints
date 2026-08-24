@@ -32,7 +32,6 @@ const KEY_W: u8 = 0x1A;
 const KEY_X: u8 = 0x1B;
 const KEY_Z: u8 = 0x1D;
 const KEY_ENTER: u8 = 0x28;
-const KEY_ESCAPE: u8 = 0x29;
 const KEY_SPACE: u8 = 0x2C;
 const KEY_ARROW_RIGHT: u8 = 0x4F;
 const KEY_ARROW_LEFT: u8 = 0x50;
@@ -72,7 +71,7 @@ fn main() {
     logl::log(
         level::INFO,
         format_args!(
-            "gboi: UI4 frame={}x{} buffers=2; click for keyboard focus; Esc exits",
+            "gboi: UI4 frame={}x{} buffers=2; click for keyboard focus",
             FRAME_WIDTH, FRAME_HEIGHT
         ),
     );
@@ -112,9 +111,6 @@ fn main() {
                 break;
             }
         };
-        if key_is_down(keyboard.as_ref(), KEY_ESCAPE) {
-            break;
-        }
         sync_buttons(&mut emulator, keyboard.as_ref());
 
         emulator.tick();

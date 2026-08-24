@@ -23,6 +23,15 @@ pub enum Font {
     Inconsolata = 3,
 }
 
+/// Per-frame Escape policy. Frames close by default; choose
+/// `DeliverToApplication` only when this frame handles Escape itself.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[repr(u32)]
+pub enum FrameEscapeKeyAction {
+    Close = v::bp_abi::UI4_FRAME_ESCAPE_KEY_ACTION_CLOSE,
+    DeliverToApplication = v::bp_abi::UI4_FRAME_ESCAPE_KEY_ACTION_DELIVER_TO_APPLICATION,
+}
+
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct TextRow<'a> {
     pub text: &'a str,
@@ -782,6 +791,16 @@ impl Frame {
     pub fn set_hit_testable(&mut self, enabled: bool) -> Result<(), Error> {
         status(unsafe {
             v::bp_abi::trueos_cabi_ui4_scene_frame_set_hit_testable(self.window_id, enabled as u32)
+        })
+    }
+
+    /// Set this frame's Escape policy without affecting any sibling window.
+    pub fn set_escape_key_action(&mut self, action: FrameEscapeKeyAction) -> Result<(), Error> {
+        status(unsafe {
+            v::bp_abi::trueos_cabi_ui4_scene_frame_set_escape_key_action(
+                self.window_id,
+                action as u32,
+            )
         })
     }
 
