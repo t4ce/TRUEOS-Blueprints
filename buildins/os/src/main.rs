@@ -25,6 +25,12 @@ struct Disk {
     label: String,
 }
 
+#[derive(Clone)]
+struct NonReplicatableVm {
+    id: u8,
+    label: String,
+}
+
 #[derive(Clone, Copy)]
 enum InstallSource {
     Local,
@@ -46,14 +52,16 @@ enum Screen {
 
 struct App {
     disks: Vec<Disk>,
+    non_replicatable_vms: Vec<NonReplicatableVm>,
     screen: Screen,
     selected: usize,
 }
 
 impl App {
-    fn new(disks: Vec<Disk>) -> Self {
+    fn new(disks: Vec<Disk>, non_replicatable_vms: Vec<NonReplicatableVm>) -> Self {
         Self {
             disks,
+            non_replicatable_vms,
             screen: Screen::Home,
             selected: 0,
         }
@@ -169,7 +177,12 @@ impl App {
 }
 
 fn main() {
-    let disks = env::args().skip(1).filter_map(parse_disk).collect();
+    let arguments = env::args().skip(1).collect::<Vec<_>>();
+    let disks = arguments.iter().cloned().filter_map(parse_disk).collect();
+    let non_replicatable_vms = arguments
+        .into_iter()
+        .filter_map(parse_non_replicatable_vm)
+        .collect();
     let lease = match vshell::terminal_initial_lease() {
         Ok(lease) => lease,
         Err(_) => {
@@ -178,7 +191,7 @@ fn main() {
         }
     };
 
-    let result = run(&lease, disks);
+    let result = run(&lease, disks, non_replicatable_vms);
     let reason = result.unwrap_or_else(|_| String::from("os:cancel"));
     let _ = vshell::report_exit_reason(reason.as_str());
     let _ = lease.release_to_shell();
@@ -205,9 +218,21 @@ fn parse_disk(arg: String) -> Option<Disk> {
     })
 }
 
-fn run(lease: &vshell::TerminalLease, disks: Vec<Disk>) -> io::Result<String> {
+fn parse_non_replicatable_vm(arg: String) -> Option<NonReplicatableVm> {
+    let (id, label) = arg.strip_prefix("nonrep=")?.split_once('|')?;
+    Some(NonReplicatableVm {
+        id: id.parse().ok()?,
+        label: String::from(label),
+    })
+}
+
+fn run(
+    lease: &vshell::TerminalLease,
+    disks: Vec<Disk>,
+    non_replicatable_vms: Vec<NonReplicatableVm>,
+) -> io::Result<String> {
     let _terminal = TerminalGuard::enter()?;
-    let mut app = App::new(disks);
+    let mut app = App::new(disks, non_replicatable_vms);
     draw(&app)?;
     lease
         .acknowledge_ready()
@@ -392,11 +417,26 @@ fn draw_sources(out: &mut io::Stdout, app: &App, disk: usize) -> io::Result<()> 
 fn draw_confirm(out: &mut io::Stdout, app: &App, action: Action) -> io::Result<()> {
     heading(out, "CONFIRM")?;
     match action {
-        Action::LiveUpdate => queue!(
-            out,
-            Print("    Fetch the current release and replace the running kernel.\r\n"),
-            Print("    No disk installation will be performed.\r\n\r\n")
-        )?,
+        Action::LiveUpdate => {
+            queue!(
+                out,
+                Print("    Fetch the current release and replace the running kernel.\r\n"),
+                Print("    No disk installation will be performed.\r\n")
+            )?;
+            if app.non_replicatable_vms.is_empty() {
+                queue!(out, Print("\r\n"))?;
+            } else {
+                queue!(
+                    out,
+                    SetForegroundColor(Color::Yellow),
+                    Print("    Running non-replicatable apps will be discarded at commit:\r\n")
+                )?;
+                for vm in &app.non_replicatable_vms {
+                    queue!(out, Print(format!("      vm{} · {}\r\n", vm.id, vm.label)))?;
+                }
+                queue!(out, ResetColor, Print("\r\n"))?;
+            }
+        }
         Action::Install { disk, source } => {
             let disk = app.disks.get(disk);
             let source = match source {
@@ -417,5 +457,13 @@ fn draw_confirm(out: &mut io::Stdout, app: &App, action: Action) -> io::Result<(
         }
     }
     row(out, app.selected == 0, "Cancel")?;
-    row(out, app.selected == 1, "Proceed")
+    row(
+        out,
+        app.selected == 1,
+        if matches!(action, Action::LiveUpdate) && !app.non_replicatable_vms.is_empty() {
+            "Discard apps and proceed"
+        } else {
+            "Proceed"
+        },
+    )
 }
