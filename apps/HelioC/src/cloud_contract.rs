@@ -157,7 +157,7 @@ pub const PASS_SCHEDULE: [Command; 7] = [
 pub fn reference_camera() -> FlyCamera {
     FlyCamera::new(
         glam::Vec3::new(-1.1756307, 1.5082186, -6.268016),
-        0.0,
+        core::f32::consts::PI,
         0.084796175,
         FlyCameraConfig::default(),
     )

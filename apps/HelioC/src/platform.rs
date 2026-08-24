@@ -5,17 +5,18 @@
 //! the authenticated image/sampler and pass-schedule lowering remains cold.
 
 use trueos::vgpu::{
-    self, BUFFER_USAGE_COPY_DST, BUFFER_USAGE_COPY_SRC, BUFFER_USAGE_STORAGE, Capabilities,
-    CloudWorkGraph, Device, VVideoMem,
+    self, BUFFER_USAGE_COPY_DST, BUFFER_USAGE_COPY_SRC, BUFFER_USAGE_MAP_WRITE,
+    BUFFER_USAGE_STORAGE, Capabilities, CloudWorkGraph, Device, Queue, QueueClass, VVideoMem,
 };
 
 use crate::cloud_contract::{RenderParams, SimParams, VOLUME_BYTES};
 
 const VOLUME_USAGE: u32 = BUFFER_USAGE_STORAGE | BUFFER_USAGE_COPY_SRC | BUFFER_USAGE_COPY_DST;
-const PARAM_USAGE: u32 = BUFFER_USAGE_STORAGE | BUFFER_USAGE_COPY_DST;
+const PARAM_USAGE: u32 = BUFFER_USAGE_MAP_WRITE | BUFFER_USAGE_STORAGE | BUFFER_USAGE_COPY_DST;
 
 pub struct RetainedCloudResources {
-    device: Device,
+    pub(crate) device: Device,
+    pub(crate) queue: Queue,
     pub volume_a: VVideoMem,
     pub volume_b: VVideoMem,
     pub sim_params: VVideoMem,
@@ -52,6 +53,9 @@ impl RetainedCloudResources {
 
     fn allocate_on(device: Device) -> Result<(Self, ResidencyReport), Failure> {
         let info = device.info().map_err(|code| fail("device-info", code))?;
+        let queue = device
+            .create_queue(QueueClass::Render)
+            .map_err(|code| fail("render-queue", code))?;
         let volume_a = device
             .allocate_vvideo_mem(VOLUME_BYTES, VOLUME_USAGE)
             .map_err(|code| fail("volume-a", code))?;
@@ -115,6 +119,7 @@ impl RetainedCloudResources {
         Ok((
             Self {
                 device,
+                queue,
                 volume_a,
                 volume_b,
                 sim_params,
@@ -125,7 +130,11 @@ impl RetainedCloudResources {
         ))
     }
 
-    pub fn upload_params(&mut self, sim: &SimParams, render: &RenderParams) -> Result<(), Failure> {
+    pub(crate) fn update_params(
+        &mut self,
+        sim: &SimParams,
+        render: &RenderParams,
+    ) -> Result<(), Failure> {
         let sim_bytes = unsafe {
             core::slice::from_raw_parts(
                 core::ptr::from_ref(sim).cast::<u8>(),
@@ -154,6 +163,7 @@ impl RetainedCloudResources {
 
 impl Drop for RetainedCloudResources {
     fn drop(&mut self) {
+        let _ = self.device.destroy_queue(self.queue);
         let _ = self.device.destroy_cloud_work_graph(self.graph);
     }
 }

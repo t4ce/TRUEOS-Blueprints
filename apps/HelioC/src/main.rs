@@ -5,6 +5,8 @@
 
 mod cloud_contract;
 mod platform;
+mod ui4_cloud;
+mod ui4_input;
 
 use trueos::logl;
 
@@ -46,7 +48,7 @@ fn main() {
         ),
     );
 
-    let (mut resources, report) = match platform::RetainedCloudResources::allocate() {
+    let (resources, report) = match platform::RetainedCloudResources::allocate() {
         Ok(result) => result,
         Err(failure) => {
             logl::log(
@@ -59,20 +61,6 @@ fn main() {
             return;
         }
     };
-    if let Err(failure) = resources.upload_params(
-        &cloud_contract::SimParams::default(),
-        &cloud_contract::RenderParams::default(),
-    ) {
-        logl::log(
-            logl::level::ERROR,
-            format_args!(
-                "HelioC: parameter upload failed stage={} rc={}; native path remains cold",
-                failure.stage, failure.code,
-            ),
-        );
-        return;
-    }
-
     logl::log(
         logl::level::INFO,
         format_args!(
@@ -89,8 +77,5 @@ fn main() {
             report.mapped_bytes,
         ),
     );
-    logl::log(
-        logl::level::WARN,
-        "HelioC: cloud graph admitted; presentation remains cold reason=sealed-native-package-and-direct-presentation-unavailable required=sealed-native-package+direct-ui4-presentation fallback=none",
-    );
+    ui4_cloud::run(resources);
 }
