@@ -317,13 +317,21 @@ pub fn log_once_with_area_purpose<D: GlobalLogDispatch, const N: usize>(
             area,
             LogLevel::Warn,
             Some(purpose_for_level(LogLevel::Warn)),
-            format_args!("ONCE site activated twice site=0x{:X} original={}", site.get(), args),
+            format_args!(
+                "ONCE site activated twice site=0x{:X} original={}",
+                site.get(),
+                args
+            ),
         ),
         LogOnceObservation::RegistryFull => dispatch.emit(
             area,
             LogLevel::Warn,
             Some(purpose_for_level(LogLevel::Warn)),
-            format_args!("ONCE registry full site=0x{:X} original={}", site.get(), args),
+            format_args!(
+                "ONCE registry full site=0x{:X} original={}",
+                site.get(),
+                args
+            ),
         ),
         LogOnceObservation::Repeated => {}
     }
@@ -413,7 +421,10 @@ mod tests {
         );
         assert_eq!(LEFT.count.load(Ordering::Relaxed), 1);
         assert_eq!(RIGHT.count.load(Ordering::Relaxed), 1);
-        assert_eq!(LEFT.last_level.load(Ordering::Relaxed), LogLevel::Once as u8 + 1);
+        assert_eq!(
+            LEFT.last_level.load(Ordering::Relaxed),
+            LogLevel::Once as u8 + 1
+        );
 
         assert_eq!(
             log_once_with_area_purpose(
@@ -428,7 +439,10 @@ mod tests {
         );
         assert_eq!(LEFT.count.load(Ordering::Relaxed), 2);
         assert_eq!(RIGHT.count.load(Ordering::Relaxed), 2);
-        assert_eq!(LEFT.last_level.load(Ordering::Relaxed), LogLevel::Warn as u8 + 1);
+        assert_eq!(
+            LEFT.last_level.load(Ordering::Relaxed),
+            LogLevel::Warn as u8 + 1
+        );
 
         assert_eq!(state.observe(site), LogOnceObservation::Repeated);
         assert_eq!(LEFT.count.load(Ordering::Relaxed), 2);
@@ -438,8 +452,14 @@ mod tests {
     #[test]
     fn full_registry_is_reported() {
         let state = LogOnceState::<1>::new();
-        assert_eq!(state.observe(LogSiteId::new(1).unwrap()), LogOnceObservation::First);
-        assert_eq!(state.observe(LogSiteId::new(2).unwrap()), LogOnceObservation::RegistryFull);
+        assert_eq!(
+            state.observe(LogSiteId::new(1).unwrap()),
+            LogOnceObservation::First
+        );
+        assert_eq!(
+            state.observe(LogSiteId::new(2).unwrap()),
+            LogOnceObservation::RegistryFull
+        );
     }
 
     #[test]
@@ -494,6 +514,9 @@ mod tests {
             LogOnceObservation::RegistryFull
         );
         assert_eq!(SINK.count.load(Ordering::Relaxed), 1);
-        assert_eq!(SINK.last_level.load(Ordering::Relaxed), LogLevel::Warn as u8 + 1);
+        assert_eq!(
+            SINK.last_level.load(Ordering::Relaxed),
+            LogLevel::Warn as u8 + 1
+        );
     }
 }

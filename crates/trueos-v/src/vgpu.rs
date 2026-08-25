@@ -368,7 +368,11 @@ pub struct Queue {
     device: Device,
     handle: u64,
 }
-impl CloudWorkGraph { pub const fn raw(self) -> u64 { self.0 } }
+impl CloudWorkGraph {
+    pub const fn raw(self) -> u64 {
+        self.0
+    }
+}
 
 /// Page-granular VM memory that is simultaneously CPU mapped through VMX and
 /// GPU mapped through the owning device's PPGTT. The GPU address remains
@@ -584,16 +588,69 @@ impl Device {
         })?;
         Ok(point)
     }
-    pub fn create_cloud_work_graph(self, volume_a:&VVideoMem, volume_b:&VVideoMem, sim_params:&VVideoMem, render_params:&VVideoMem) -> Result<CloudWorkGraph, i32> {
-        if volume_a.device != self || volume_b.device != self || sim_params.device != self || render_params.device != self { return Err(ERR_BAD_HANDLE); }
-        let d = CloudWorkGraphDescriptor { volume_a:volume_a.buffer.0, volume_b:volume_b.buffer.0, sim_params:sim_params.buffer.0, render_params:render_params.buffer.0, profile:CLOUD_PROFILE_HELIO_ENGINE_V1, flags:0, reserved:[0;2] };
-        let mut graph=0; rc_result(unsafe { vcabi::trueos_cabi_vgpu_cloud_work_graph_create(self.0, &d, &mut graph) })?; Ok(CloudWorkGraph(graph))
+    pub fn create_cloud_work_graph(
+        self,
+        volume_a: &VVideoMem,
+        volume_b: &VVideoMem,
+        sim_params: &VVideoMem,
+        render_params: &VVideoMem,
+    ) -> Result<CloudWorkGraph, i32> {
+        if volume_a.device != self
+            || volume_b.device != self
+            || sim_params.device != self
+            || render_params.device != self
+        {
+            return Err(ERR_BAD_HANDLE);
+        }
+        let d = CloudWorkGraphDescriptor {
+            volume_a: volume_a.buffer.0,
+            volume_b: volume_b.buffer.0,
+            sim_params: sim_params.buffer.0,
+            render_params: render_params.buffer.0,
+            profile: CLOUD_PROFILE_HELIO_ENGINE_V1,
+            flags: 0,
+            reserved: [0; 2],
+        };
+        let mut graph = 0;
+        rc_result(unsafe {
+            vcabi::trueos_cabi_vgpu_cloud_work_graph_create(self.0, &d, &mut graph)
+        })?;
+        Ok(CloudWorkGraph(graph))
     }
-    pub fn destroy_cloud_work_graph(self, graph:CloudWorkGraph) -> Result<(), i32> { if graph.0==0 { return Err(ERR_BAD_HANDLE); } rc_result(unsafe { vcabi::trueos_cabi_vgpu_cloud_work_graph_destroy(self.0, graph.0) }) }
-    pub fn submit_cloud_frame(self, queue:Queue, surface:Ui4Surface, graph:CloudWorkGraph, simulation_steps:u32) -> Result<CloudFrameTelemetry, i32> {
-        if queue.device != self || surface.device != self || graph.0==0 || simulation_steps > CLOUD_FRAME_MAX_SIMULATION_STEPS { return Err(ERR_BAD_HANDLE); }
-        let mut surface=surface; let s=CloudFrameSubmit { graph:graph.0, surface:surface.surface.0, simulation_steps, flags:0, reserved:[0;2] }; let mut t=CloudFrameTelemetry::default();
-        rc_result(unsafe { vcabi::trueos_cabi_vgpu_cloud_frame_submit(self.0, queue.handle, &s, &mut t) })?; surface.live=false; Ok(t)
+    pub fn destroy_cloud_work_graph(self, graph: CloudWorkGraph) -> Result<(), i32> {
+        if graph.0 == 0 {
+            return Err(ERR_BAD_HANDLE);
+        }
+        rc_result(unsafe { vcabi::trueos_cabi_vgpu_cloud_work_graph_destroy(self.0, graph.0) })
+    }
+    pub fn submit_cloud_frame(
+        self,
+        queue: Queue,
+        surface: Ui4Surface,
+        graph: CloudWorkGraph,
+        simulation_steps: u32,
+    ) -> Result<CloudFrameTelemetry, i32> {
+        if queue.device != self
+            || surface.device != self
+            || graph.0 == 0
+            || simulation_steps > CLOUD_FRAME_MAX_SIMULATION_STEPS
+        {
+            return Err(ERR_BAD_HANDLE);
+        }
+        let mut surface = surface;
+        let s = CloudFrameSubmit {
+            graph: graph.0,
+            surface: surface.surface.0,
+            simulation_steps,
+            flags: 0,
+            reserved: [0; 2],
+        };
+        let mut t = CloudFrameTelemetry::default();
+        rc_result(unsafe {
+            vcabi::trueos_cabi_vgpu_cloud_frame_submit(self.0, queue.handle, &s, &mut t)
+        })?;
+        surface.live = false;
+        Ok(t)
     }
 
     /// Submit one complete WebGPU render-pass clear to an imported UI4
@@ -756,12 +813,7 @@ impl Device {
         submit.static_index_buffer = static_index_buffer.0;
         let mut point = TimelinePoint::default();
         rc_result(unsafe {
-            vcabi::trueos_cabi_vgpu_retained_frame_submit(
-                self.0,
-                queue.handle,
-                &submit,
-                &mut point,
-            )
+            vcabi::trueos_cabi_vgpu_retained_frame_submit(self.0, queue.handle, &submit, &mut point)
         })?;
         surface.live = false;
         Ok(point)
@@ -999,20 +1051,41 @@ mod tests {
     fn cloud_abi_field_offsets_are_stable() {
         assert_eq!(core::mem::offset_of!(CloudWorkGraphDescriptor, volume_a), 0);
         assert_eq!(core::mem::offset_of!(CloudWorkGraphDescriptor, volume_b), 8);
-        assert_eq!(core::mem::offset_of!(CloudWorkGraphDescriptor, sim_params), 16);
-        assert_eq!(core::mem::offset_of!(CloudWorkGraphDescriptor, render_params), 24);
+        assert_eq!(
+            core::mem::offset_of!(CloudWorkGraphDescriptor, sim_params),
+            16
+        );
+        assert_eq!(
+            core::mem::offset_of!(CloudWorkGraphDescriptor, render_params),
+            24
+        );
         assert_eq!(core::mem::offset_of!(CloudWorkGraphDescriptor, profile), 32);
         assert_eq!(core::mem::offset_of!(CloudWorkGraphDescriptor, flags), 36);
-        assert_eq!(core::mem::offset_of!(CloudWorkGraphDescriptor, reserved), 40);
+        assert_eq!(
+            core::mem::offset_of!(CloudWorkGraphDescriptor, reserved),
+            40
+        );
         assert_eq!(core::mem::offset_of!(CloudFrameSubmit, graph), 0);
         assert_eq!(core::mem::offset_of!(CloudFrameSubmit, surface), 8);
-        assert_eq!(core::mem::offset_of!(CloudFrameSubmit, simulation_steps), 16);
+        assert_eq!(
+            core::mem::offset_of!(CloudFrameSubmit, simulation_steps),
+            16
+        );
         assert_eq!(core::mem::offset_of!(CloudFrameSubmit, flags), 20);
         assert_eq!(core::mem::offset_of!(CloudFrameSubmit, reserved), 24);
         assert_eq!(core::mem::offset_of!(CloudFrameTelemetry, point), 0);
-        assert_eq!(core::mem::offset_of!(CloudFrameTelemetry, gpu_active_ns), 16);
-        assert_eq!(core::mem::offset_of!(CloudFrameTelemetry, budget_window_ns), 24);
-        assert_eq!(core::mem::offset_of!(CloudFrameTelemetry, simulation_steps), 32);
+        assert_eq!(
+            core::mem::offset_of!(CloudFrameTelemetry, gpu_active_ns),
+            16
+        );
+        assert_eq!(
+            core::mem::offset_of!(CloudFrameTelemetry, budget_window_ns),
+            24
+        );
+        assert_eq!(
+            core::mem::offset_of!(CloudFrameTelemetry, simulation_steps),
+            32
+        );
         assert_eq!(core::mem::offset_of!(CloudFrameTelemetry, simd_width), 36);
         assert_eq!(core::mem::offset_of!(CloudFrameTelemetry, flags), 40);
         assert_eq!(core::mem::offset_of!(CloudFrameTelemetry, reserved), 44);
