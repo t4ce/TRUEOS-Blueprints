@@ -36,12 +36,11 @@ const SPINNER_FRAMES: &[&str] = &["⢈", "⡈", "⡐", "⡠", "⣀", "⢄", "⢂
 const SYSTEM_PROMPT_PREFILL_ENABLED: bool = true;
 
 const SYSTEM_PROMPT: &str = concat!(
-    "You are a concise helpful assistant. You may answer directly with final text. ",
-    "You have exactly one read-only tool: time(). Call it only when current UTC time is useful, ",
-    "with exactly <|tool_call_start|>[time()]<|tool_call_end|>. It accepts no arguments. ",
-    "After a tool result, provide final text and never call another tool. List of tools: ",
-    "[{\"name\":\"time\",\"parameters\":{\"type\":\"object\",",
-    "\"properties\":{},\"additionalProperties\":false}}]."
+    "You are a concise helpful assistant. Answer directly unless the user explicitly asks for ",
+    "the current date or time. Only then you may call the read-only time tool by outputting exactly ",
+    "<|tool_call_start|>[time()]<|tool_call_end|>. Never add arguments or other text. ",
+    "Its result is [\"HH:MM\",\"UTC\",day,\"weekday\",\"Mon\",year], or null when unavailable. ",
+    "After a tool result, answer directly and never call a tool again."
 );
 
 struct LogicalState {
@@ -934,15 +933,44 @@ fn current_time_tool_result() -> String {
 
 fn format_time_tool_result(unix_seconds: Option<u64>) -> String {
     match unix_seconds {
-        Some(unix_seconds) => alloc::format!(
-            "{{\"utc\":\"{}\",\"unix_seconds\":{},\"source\":\"trueos-clock\",\"status\":\"available\"}}",
-            clock::UtcDateTime::from_unix_seconds(unix_seconds),
-            unix_seconds,
-        ),
-        None => String::from(
-            "{\"utc\":null,\"unix_seconds\":null,\"source\":\"trueos-clock\",\"status\":\"unavailable\"}",
-        ),
+        Some(unix_seconds) => {
+            let utc = clock::UtcDateTime::from_unix_seconds(unix_seconds);
+            alloc::format!(
+                "[\"{:02}:{:02}\",\"UTC\",{},\"{}\",\"{}\",{}]",
+                utc.hour,
+                utc.minute,
+                utc.day,
+                utc_weekday(unix_seconds),
+                utc_month(utc.month),
+                utc.year,
+            )
+        }
+        None => String::from("null"),
     }
+}
+
+fn utc_weekday(unix_seconds: u64) -> &'static str {
+    const NAMES: [&str; 7] = [
+        "Sunday",
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+        "Thursday",
+        "Friday",
+        "Saturday",
+    ];
+    let days = unix_seconds / 86_400;
+    NAMES[((days + 4) % 7) as usize]
+}
+
+fn utc_month(month: u8) -> &'static str {
+    const NAMES: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    month
+        .checked_sub(1)
+        .and_then(|index| NAMES.get(index as usize).copied())
+        .unwrap_or("?")
 }
 
 fn rejected_tool_fallback() -> &'static str {
@@ -994,15 +1022,13 @@ mod tests {
 
     #[test]
     fn unavailable_clock_has_a_bounded_deterministic_result() {
-        assert_eq!(
-            format_time_tool_result(None),
-            "{\"utc\":null,\"unix_seconds\":null,\"source\":\"trueos-clock\",\"status\":\"unavailable\"}"
-        );
+        assert_eq!(format_time_tool_result(None), "null");
         let available = format_time_tool_result(Some(0));
+        assert_eq!(available, "[\"00:00\",\"UTC\",1,\"Thursday\",\"Jan\",1970]");
+        assert!(available.len() < 64);
         assert_eq!(
-            available,
-            "{\"utc\":\"1970-01-01 00:00:00 UTC\",\"unix_seconds\":0,\"source\":\"trueos-clock\",\"status\":\"available\"}"
+            format_time_tool_result(Some(1_787_668_327)),
+            "[\"14:32\",\"UTC\",25,\"Tuesday\",\"Aug\",2026]"
         );
-        assert!(available.len() < 256);
     }
 }

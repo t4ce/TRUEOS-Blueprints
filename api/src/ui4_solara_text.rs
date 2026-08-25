@@ -32,13 +32,6 @@ pub enum FrameEscapeKeyAction {
     DeliverToApplication = v::bp_abi::UI4_FRAME_ESCAPE_KEY_ACTION_DELIVER_TO_APPLICATION,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub struct TextRow<'a> {
-    pub text: &'a str,
-    pub x: f32,
-    pub y: f32,
-}
-
 /// One Solara paint record in fixed viewport coordinates.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct SceneTextRow<'a> {
@@ -1072,37 +1065,6 @@ impl Frame {
             date_seconds: params.date_seconds,
         };
         status(unsafe { v::bp_abi::trueos_cabi_ui4_scene_shadertoy_render(self.window_id, &raw) })
-    }
-
-    pub fn draw_text_rows(
-        &mut self,
-        font: Font,
-        native_scale: u32,
-        destination: (i32, i32),
-        color_rgba: u32,
-        rows: &[TextRow<'_>],
-    ) -> Result<(), Error> {
-        let raw: Vec<_> = rows
-            .iter()
-            .map(|row| v::bp_abi::TrueosUi4SolaraTextRow {
-                text_ptr: row.text.as_ptr(),
-                text_len: row.text.len(),
-                x: row.x,
-                y: row.y,
-            })
-            .collect();
-        status(unsafe {
-            v::bp_abi::trueos_cabi_ui4_solara_text_rows(
-                self.window_id,
-                font as u32,
-                native_scale,
-                destination.0,
-                destination.1,
-                color_rgba,
-                raw.as_ptr(),
-                raw.len(),
-            )
-        })
     }
 
     /// Retain paint records without fitting their collective bounds to a stamp.

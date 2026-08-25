@@ -1015,76 +1015,57 @@ fn present_terminal_at(
     let viewport = (frame.width(), frame.height());
 
     let (cols, rows) = terminal.dimensions();
+    // `retain_text_scene` identifies a retained layer by its ordinal within a
+    // frame. Keep that ordering fixed at the terminal-cell granularity rather
+    // than emitting style runs: adding a blank cell or changing one cell's
+    // colour must not move every following cell onto a different retained
+    // layer. This is deliberately a bounded visible-grid cache. It has no
+    // scrollback, offscreen canvas, or framebuffer state; UI4 owns only these
+    // `cols * rows * 2` resident coverage layers while this frame is alive.
     for row in 0..rows {
         let cells = &terminal.cells()[row * cols..(row + 1) * cols];
-        let Some(last_col) = cells.iter().rposition(|cell| cell.glyph != ' ') else {
-            continue;
-        };
+        for (col, cell) in cells.iter().enumerate() {
+            let x = origin_x as f32
+                + FRAME_PADDING_PX as f32
+                + col as f32 * metrics.glyph_advance_px as f32;
+            let y = origin_y as f32
+                + FRAME_PADDING_PX as f32
+                + row as f32 * metrics.row_height_px as f32;
 
-        let mut start_col = 0;
-        while start_col <= last_col {
-            let style = cells[start_col].style;
-            let mut end_col = start_col + 1;
-            while end_col <= last_col && cells[end_col].style == style {
-                end_col += 1;
-            }
-
-            let mut text = String::with_capacity(end_col - start_col);
-            for cell in &cells[start_col..end_col] {
-                text.push(cell.glyph);
-            }
-            if text.chars().any(|glyph| glyph != ' ') {
-                let scene = [SceneTextRow {
-                    text: text.as_str(),
-                    x: origin_x as f32
-                        + FRAME_PADDING_PX as f32
-                        + start_col as f32 * metrics.glyph_advance_px as f32,
-                    y: origin_y as f32
-                        + FRAME_PADDING_PX as f32
-                        + row as f32 * metrics.row_height_px as f32,
-                    font_pixels: metrics.font_pixels,
-                }];
-                retry_busy(|| {
-                    frame.retain_text_scene(
-                        Font::Inconsolata,
-                        viewport,
-                        foreground_rgba(style.foreground),
-                        &scene,
-                    )
-                })?;
-            }
-            if style.underline {
-                let mut underline = String::with_capacity(end_col - start_col);
-                for _ in start_col..end_col {
-                    underline.push('_');
-                }
-                let scene = [SceneTextRow {
-                    text: underline.as_str(),
-                    x: origin_x as f32
-                        + FRAME_PADDING_PX as f32
-                        + start_col as f32 * metrics.glyph_advance_px as f32,
-                    y: origin_y as f32
-                        + FRAME_PADDING_PX as f32
-                        + row as f32 * metrics.row_height_px as f32,
-                    font_pixels: metrics.font_pixels,
-                }];
-                retry_busy(|| {
-                    frame.retain_text_scene(
-                        Font::Inconsolata,
-                        viewport,
-                        foreground_rgba(style.foreground),
-                        &scene,
-                    )
-                })?;
-            }
-            start_col = end_col;
+            retain_terminal_slot(
+                frame,
+                viewport,
+                cell.glyph,
+                x,
+                y,
+                metrics.font_pixels,
+                foreground_rgba(cell.style.foreground),
+            )?;
+            // Keep an underline layer for every cell. An invisible layer keeps
+            // its glyph mask warm, so toggling underline changes only colour.
+            retain_terminal_slot(
+                frame,
+                viewport,
+                '_',
+                x,
+                y,
+                metrics.font_pixels,
+                if cell.style.underline {
+                    foreground_rgba(cell.style.foreground)
+                } else {
+                    transparent_rgba(foreground_rgba(cell.style.foreground))
+                },
+            )?;
         }
     }
 
-    if let Some(hover) = matrix_slot_hover.filter(|hover| {
+    // Reserve exactly one hover layer. Its contents may change, but that
+    // change cannot perturb any terminal-cell or cursor layer indices.
+    let hover = matrix_slot_hover.filter(|hover| {
         matrix_slot_at(terminal, hover.start_col, MATRIX_STATUS_ROW)
             .is_some_and(|current| current == **hover)
-    }) {
+    });
+    if let Some(hover) = hover {
         let mut underline = String::with_capacity(hover.end_col - hover.start_col);
         for _ in hover.start_col..hover.end_col {
             underline.push('_');
@@ -1111,6 +1092,18 @@ fn present_terminal_at(
                 &scene,
             )
         })?;
+    } else {
+        retain_terminal_slot(
+            frame,
+            viewport,
+            '_',
+            origin_x as f32 + FRAME_PADDING_PX as f32,
+            origin_y as f32
+                + FRAME_PADDING_PX as f32
+                + MATRIX_STATUS_ROW as f32 * metrics.row_height_px as f32,
+            metrics.font_pixels,
+            transparent_rgba(FOREGROUND),
+        )?;
     }
 
     // Inconsolata's advance is one half-em. Keeping the cursor as a single
@@ -1140,6 +1133,30 @@ fn present_terminal_at(
     })?;
 
     retry_busy(|| frame.publish(Damage::full(viewport.0, viewport.1)))
+}
+
+fn retain_terminal_slot(
+    frame: &mut Frame,
+    viewport: (u32, u32),
+    glyph: char,
+    x: f32,
+    y: f32,
+    font_pixels: f32,
+    color_rgba: u32,
+) -> Result<(), UiError> {
+    let mut text = [0; 4];
+    let scene = [SceneTextRow {
+        text: glyph.encode_utf8(&mut text),
+        x,
+        y,
+        font_pixels,
+    }];
+    retry_busy(|| frame.retain_text_scene(Font::Inconsolata, viewport, color_rgba, &scene))
+}
+
+const fn transparent_rgba(color_rgba: u32) -> u32 {
+    let [red, green, blue, _] = color_rgba.to_le_bytes();
+    rgba(red, green, blue, 0)
 }
 
 fn retry_busy(mut operation: impl FnMut() -> Result<(), UiError>) -> Result<(), UiError> {

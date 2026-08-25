@@ -11,6 +11,6 @@ pub use crate::ui4_solara_text::{
     PARTICLE_CRAFT_WIDTH, POINTER_BUTTON_MIDDLE, POINTER_BUTTON_PRIMARY, POINTER_BUTTON_SECONDARY,
     PanEvent, PanPhase, ParticleCraftParamsV1, PointerEvent, ResizeEvent, SHADERTOY_CUBE_FIELD,
     SHADERTOY_MANDELBROT, SHADERTOY_NGUYEN, SHADERTOY_PARAMS_VERSION, SceneTextRow,
-    ShadertoyParamsV1, SkyboxRenderParams, SpriteCorner, SpriteQuad, TextRow,
-    UI4_VISUAL_SOFT_CAP_HZ, font_sizes, output_dimensions, rgba, worker_slot,
+    ShadertoyParamsV1, SkyboxRenderParams, SpriteCorner, SpriteQuad, UI4_VISUAL_SOFT_CAP_HZ,
+    font_sizes, output_dimensions, rgba, worker_slot,
 };
