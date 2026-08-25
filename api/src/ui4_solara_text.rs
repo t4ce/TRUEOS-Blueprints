@@ -9,7 +9,7 @@ const FONT_ID_STAMP_ONCE: u32 = 1 << 31;
 const FONT_ID_TEXT_BACKBUFFER: u32 = 1 << 30;
 const TEXT_BACKBUFFER_SPRITE_ID: u32 = u32::MAX;
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct FontSize {
     pub native_scale: u32,
     pub target_pixels: u32,
@@ -21,6 +21,36 @@ pub enum Font {
     Default = 1,
     NotoSansSc = 2,
     Inconsolata = 3,
+}
+
+/// One Shell2-owned request for a GPU-resident, fully coloured glyph sprite.
+/// The request does not expose glyph pixels to the Blueprint VM.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct FontSpriteRequest {
+    pub font: Font,
+    pub scalar: char,
+    pub font_pixels: f32,
+    pub color_rgba: u32,
+}
+
+/// Opaque per-window handle returned by [`Frame::request_font_sprite`].
+/// Cache keys, fallback policy, and eviction remain the Blueprint app's job.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct FontSpriteTicket(pub u64);
+
+/// Nonblocking producer state for a requested glyph sprite.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum FontSpriteStatus {
+    Pending,
+    Ready {
+        sprite_id: u32,
+        width: u32,
+        height: u32,
+        /// Tight tile origin relative to Shell2's logical terminal cell.
+        origin_x: i32,
+        origin_y: i32,
+    },
+    Failed,
 }
 
 /// Per-frame Escape policy. Frames close by default; choose
@@ -886,6 +916,68 @@ impl Frame {
                 rgba.len(),
             )
         })
+    }
+
+    /// Request production of one fully coloured GPU glyph sprite. This only
+    /// submits work: it never waits, reads pixels back, or installs an
+    /// app-independent font cache. The returned ticket is scoped to this UI4
+    /// window; the caller owns its `(font, scalar, size, colour)` lookup.
+    pub fn request_font_sprite(
+        &mut self,
+        request: FontSpriteRequest,
+    ) -> Result<FontSpriteTicket, Error> {
+        if !request.font_pixels.is_finite() || request.font_pixels <= 0.0 {
+            return Err(Error::Invalid);
+        }
+        let mut ticket = 0_u64;
+        status(unsafe {
+            v::bp_abi::trueos_cabi_ui4_scene_font_sprite_request_v1(
+                self.window_id,
+                request.font as u32,
+                request.scalar as u32,
+                request.font_pixels,
+                request.color_rgba,
+                &mut ticket,
+            )
+        })?;
+        if ticket == 0 {
+            return Err(Error::Invalid);
+        }
+        Ok(FontSpriteTicket(ticket))
+    }
+
+    /// Observe an asynchronous glyph request without waiting. A `Ready`
+    /// sprite id may be submitted directly through [`Frame::draw_sprite_quads`]
+    /// for this same window.
+    pub fn font_sprite_status(
+        &mut self,
+        ticket: FontSpriteTicket,
+    ) -> Result<FontSpriteStatus, Error> {
+        if ticket.0 == 0 {
+            return Err(Error::Invalid);
+        }
+        let mut raw = v::bp_abi::TrueosUi4FontSpriteStatusV1::default();
+        status(unsafe {
+            v::bp_abi::trueos_cabi_ui4_scene_font_sprite_status_v1(
+                self.window_id,
+                ticket.0,
+                &mut raw,
+            )
+        })?;
+        match raw.state {
+            1 => Ok(FontSpriteStatus::Pending),
+            2 if raw.sprite_id != 0 && raw.width != 0 && raw.height != 0 => {
+                Ok(FontSpriteStatus::Ready {
+                    sprite_id: raw.sprite_id,
+                    width: raw.width,
+                    height: raw.height,
+                    origin_x: raw.origin_x,
+                    origin_y: raw.origin_y,
+                })
+            }
+            3 => Ok(FontSpriteStatus::Failed),
+            _ => Err(Error::Invalid),
+        }
     }
 
     /// Acquire a back buffer whose opaque clear is performed by the first GPU

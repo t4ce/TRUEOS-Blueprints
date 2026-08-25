@@ -4,14 +4,19 @@ extern crate alloc;
 
 mod terminal;
 
-use alloc::{string::String, vec::Vec};
+use alloc::{
+    collections::{BTreeMap, BTreeSet},
+    string::String,
+    vec::Vec,
+};
 
 use terminal::{ForegroundColor, MouseButton, Terminal};
 use trueos::input::{self, TrueosKeyboardOutputEvent};
 use trueos::logl::{self, level};
 use trueos::ui4_scene::{
-    Damage, Error as UiError, Font, Frame, POINTER_BUTTON_MIDDLE, POINTER_BUTTON_PRIMARY,
-    POINTER_BUTTON_SECONDARY, PointerEvent, SceneTextRow, rgba,
+    Damage, Error as UiError, Font, FontSpriteRequest, FontSpriteStatus, FontSpriteTicket, Frame,
+    POINTER_BUTTON_MIDDLE, POINTER_BUTTON_PRIMARY, POINTER_BUTTON_SECONDARY, PointerEvent,
+    SpriteCorner, SpriteQuad, rgba,
 };
 use trueos::vshell::{
     SHELL2_FRONTEND_DIRECT_HANDOFF, SHELL2_FRONTEND_READ_DROPPED, Shell2Frontend,
@@ -61,6 +66,10 @@ impl Default for TerminalMetrics {
 
 const BACKGROUND: u32 = rgba(0, 0, 0, 191);
 const FOREGROUND: u32 = rgba(255, 255, 255, 255);
+/// A deliberately harmless placeholder while an asynchronously requested
+/// glyph is still being produced. This is requested at startup and stays warm
+/// for the lifetime of this Shell2 Blueprint VM.
+const FONT_MISS_PLACEHOLDER: char = '🞄';
 const POLL_INTERVAL_MS: u64 = 5;
 const SHELL_OUTPUT_BATCH_CAP: usize = 8 * 1024;
 const SHELL_ATTACH_RETRIES: usize = 1_000;
@@ -72,6 +81,239 @@ const MATRIX_CLICK_PREFIX_BYTE: u8 = 0xff;
 const MATRIX_CLICK_SUFFIX_BYTE: u8 = 0x00;
 const RETURN_TO_PARENT_BYTE: u8 = 0x1c;
 const TERMINAL_RESET: &[u8] = b"\x1b[?1049l\x1b[0m\x1b[2J\x1b[H";
+
+/// Shell2's complete font-cache identity.  This table is deliberately owned by
+/// the Blueprint VM: UI4 only knows the resulting per-window sprite ids and
+/// the Font Rush worker is only an asynchronous producer.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct FontSpriteKey {
+    /// ABI font identity. Shell2 currently fixes this to Inconsolata, but it
+    /// remains part of the cache key so a later face selector cannot alias
+    /// sprites across fonts.
+    font_id: u32,
+    glyph: char,
+    font_pixels_bits: u32,
+    color_rgba: u32,
+}
+
+impl FontSpriteKey {
+    const fn new(glyph: char, font_pixels: f32, color_rgba: u32) -> Self {
+        Self {
+            font_id: Font::Inconsolata as u32,
+            glyph,
+            font_pixels_bits: font_pixels.to_bits(),
+            color_rgba,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ReadyFontSprite {
+    sprite_id: u32,
+    width: u32,
+    height: u32,
+    origin_x: i32,
+    origin_y: i32,
+}
+
+/// `Missing` is intentionally retryable: admission may be temporarily busy,
+/// but a terminal presentation must never wait for a glyph.
+#[derive(Clone, Copy, Debug)]
+enum FontSpriteState {
+    Missing,
+    Pending(FontSpriteTicket),
+    Ready(ReadyFontSprite),
+    Failed,
+}
+
+/// The sole glyph-cache policy for this Shell2 VM. It coalesces all same-key
+/// requests across a line, paste, and the entire visible terminal. The kernel
+/// holds only opaque, per-window GPU resources addressed by `sprite_id`; it
+/// owns no glyph-to-sprite lookup table.
+struct ShellFontCache {
+    entries: BTreeMap<FontSpriteKey, FontSpriteState>,
+    /// Pending keys remember the visible slots that asked for them. A completed
+    /// key marks those slots dirty, causing the next immediate frame to replace
+    /// the fallback quad without changing terminal state.
+    waiting_slots: BTreeMap<FontSpriteKey, Vec<usize>>,
+    dirty_slots: Vec<bool>,
+    requested_this_pass: BTreeSet<FontSpriteKey>,
+    warned_non_default_sizes: BTreeSet<u32>,
+    placeholder: FontSpriteKey,
+}
+
+impl ShellFontCache {
+    fn new(metrics: TerminalMetrics) -> Self {
+        Self {
+            entries: BTreeMap::new(),
+            waiting_slots: BTreeMap::new(),
+            dirty_slots: Vec::new(),
+            requested_this_pass: BTreeSet::new(),
+            warned_non_default_sizes: BTreeSet::new(),
+            placeholder: FontSpriteKey::new(FONT_MISS_PLACEHOLDER, metrics.font_pixels, FOREGROUND),
+        }
+    }
+
+    /// Runtime zoom belongs to every key. Existing sprites remain owned by
+    /// this VM but become unreachable after a size switch; no global cache or
+    /// hidden text surface participates in invalidation.
+    fn set_metrics(&mut self, metrics: TerminalMetrics) {
+        self.placeholder.font_pixels_bits = metrics.font_pixels.to_bits();
+        self.waiting_slots.clear();
+        self.dirty_slots.clear();
+        self.requested_this_pass.clear();
+    }
+
+    fn prepare_visible_slots(&mut self, slot_count: usize) {
+        self.waiting_slots.clear();
+        self.dirty_slots.clear();
+        self.requested_this_pass.clear();
+        self.dirty_slots.resize(slot_count, false);
+    }
+
+    /// Starts the permanent default-white placeholder request. Failure or
+    /// temporary admission pressure merely leaves it Missing for a later poll;
+    /// the renderer draws nothing until it becomes Ready.
+    fn warm_placeholder(&mut self, frame: &mut Frame) {
+        self.ensure_requested(frame, self.placeholder);
+    }
+
+    /// Advance producer completions without waiting. Returns true exactly when
+    /// one or more currently visible slots became drawable.
+    fn poll(&mut self, frame: &mut Frame) -> bool {
+        self.requested_this_pass.clear();
+        let keys = self.entries.keys().copied().collect::<Vec<_>>();
+        let mut changed = false;
+        for key in keys {
+            let state = self.entries.get(&key).copied();
+            match state {
+                Some(FontSpriteState::Missing) => self.ensure_requested(frame, key),
+                Some(FontSpriteState::Pending(ticket)) => match frame.font_sprite_status(ticket) {
+                    Ok(FontSpriteStatus::Pending) => {}
+                    Ok(FontSpriteStatus::Ready {
+                        sprite_id,
+                        width,
+                        height,
+                        origin_x,
+                        origin_y,
+                    }) => {
+                        self.entries.insert(
+                            key,
+                            FontSpriteState::Ready(ReadyFontSprite {
+                                sprite_id,
+                                width,
+                                height,
+                                origin_x,
+                                origin_y,
+                            }),
+                        );
+                        if let Some(slots) = self.waiting_slots.remove(&key) {
+                            for slot in slots {
+                                if let Some(dirty) = self.dirty_slots.get_mut(slot) {
+                                    *dirty = true;
+                                }
+                            }
+                            changed = true;
+                        }
+                        // The warm dot is global fallback state rather than a
+                        // normal cell request. Its first completion deserves a
+                        // repaint even if it was requested before any visible
+                        // slot had joined its waiter list.
+                        changed |= key == self.placeholder;
+                    }
+                    Ok(FontSpriteStatus::Failed) => {
+                        self.entries.insert(key, FontSpriteState::Failed);
+                    }
+                    // Status is observational; an unavailable producer must
+                    // never turn into a guest-side wait.
+                    Err(_) => {}
+                },
+                Some(FontSpriteState::Ready(_) | FontSpriteState::Failed) | None => {}
+            }
+        }
+        changed
+    }
+
+    /// Resolve one visible terminal cell. The exact colored glyph is preferred,
+    /// then its default-white variant, then the permanently warm white dot.
+    /// Missing work is queued only once and contributes no blocking call.
+    fn resolve_for_slot(
+        &mut self,
+        frame: &mut Frame,
+        key: FontSpriteKey,
+        slot: usize,
+    ) -> Option<(ReadyFontSprite, bool)> {
+        self.ensure_requested(frame, key);
+        if let Some(sprite) = self.ready_or_waiting(key, slot) {
+            return Some((sprite, false));
+        }
+
+        let mut white = key;
+        white.color_rgba = FOREGROUND;
+        self.ensure_requested(frame, white);
+        if let Some(sprite) = self.ready_or_waiting(white, slot) {
+            return Some((sprite, false));
+        }
+
+        self.ensure_requested(frame, self.placeholder);
+        self.ready_or_waiting(self.placeholder, slot)
+            .map(|sprite| (sprite, true))
+    }
+
+    fn ready_or_waiting(&mut self, key: FontSpriteKey, slot: usize) -> Option<ReadyFontSprite> {
+        match self.entries.get(&key).copied() {
+            Some(FontSpriteState::Ready(sprite)) => Some(sprite),
+            Some(FontSpriteState::Pending(_)) => {
+                self.waiting_slots.entry(key).or_default().push(slot);
+                None
+            }
+            Some(FontSpriteState::Missing | FontSpriteState::Failed) | None => None,
+        }
+    }
+
+    fn ensure_requested(&mut self, frame: &mut Frame, key: FontSpriteKey) {
+        if !self.requested_this_pass.insert(key) {
+            return;
+        }
+        if key.font_pixels_bits != DEFAULT_FONT_PIXELS.to_bits()
+            && self.warned_non_default_sizes.insert(key.font_pixels_bits)
+        {
+            let _ = logl::log_record(
+                level::IMPORTANT,
+                "shell2/font-cache",
+                format_args!(
+                    "hey you just disrispected the noob 1size font cache system, and that is not build to \"scale\"! requested_font_pixels={}",
+                    f32::from_bits(key.font_pixels_bits),
+                ),
+            );
+        }
+        let state = self.entries.entry(key).or_insert(FontSpriteState::Missing);
+        if !matches!(state, FontSpriteState::Missing) {
+            return;
+        }
+        let font = match key.font_id {
+            id if id == Font::Default as u32 => Font::Default,
+            id if id == Font::NotoSansSc as u32 => Font::NotoSansSc,
+            id if id == Font::Inconsolata as u32 => Font::Inconsolata,
+            _ => {
+                *state = FontSpriteState::Failed;
+                return;
+            }
+        };
+        match frame.request_font_sprite(FontSpriteRequest {
+            font,
+            scalar: key.glyph,
+            font_pixels: f32::from_bits(key.font_pixels_bits),
+            color_rgba: key.color_rgba,
+        }) {
+            Ok(ticket) => *state = FontSpriteState::Pending(ticket),
+            // Busy is a normal asynchronous admission result. Keep `Missing`
+            // so a future event-loop pass can enqueue it without stalling.
+            Err(UiError::Busy) => {}
+            Err(_) => *state = FontSpriteState::Failed,
+        }
+    }
+}
 
 enum InvokingTerminal {
     Unavailable,
@@ -329,8 +571,10 @@ fn main() {
     let mut terminal = Terminal::new(cols, rows);
     let mut keyboard_input = KeyboardInputState::default();
     let mut matrix_slot_hover = None;
+    let mut font_cache = ShellFontCache::new(metrics);
+    font_cache.warm_placeholder(&mut frame);
 
-    if let Err(error) = present_terminal(&mut frame, &terminal, metrics, None) {
+    if let Err(error) = present_terminal(&mut frame, &terminal, metrics, None, &mut font_cache) {
         logl::log(
             level::ERROR,
             format_args!("shell: first UI4 terminal frame failed: {error:?}"),
@@ -349,7 +593,13 @@ fn main() {
 
     loop {
         invoking_terminal.poll_reentry(&mut frontend, &terminal);
-        let resized = match drain_resize_events(&mut frame, &mut frontend, &mut terminal, metrics) {
+        let _resized = match drain_resize_events(
+            &mut frame,
+            &mut frontend,
+            &mut terminal,
+            metrics,
+            &mut font_cache,
+        ) {
             Ok(resized) => resized,
             Err(error) => {
                 logl::log(
@@ -378,20 +628,31 @@ fn main() {
             return;
         }
 
-        if let Some(zoom_percent) = terminal.take_zoom_percent()
-            && let Err(error) = apply_terminal_zoom(
+        let mut zoomed = false;
+        if let Some(zoom_percent) = terminal.take_zoom_percent() {
+            zoomed = match apply_terminal_zoom(
                 &mut frame,
                 &mut frontend,
                 &mut terminal,
                 &mut metrics,
                 zoom_percent,
-            )
-        {
-            logl::log(
-                level::ERROR,
-                format_args!("shell: terminal zoom failed: {error:?}"),
-            );
-            return;
+            ) {
+                Ok(changed) => changed,
+                Err(error) => {
+                    logl::log(
+                        level::ERROR,
+                        format_args!("shell: terminal zoom failed: {error:?}"),
+                    );
+                    return;
+                }
+            };
+            if zoomed {
+                // Size changes form part of every cache key. Switch the active
+                // warm placeholder immediately; stale per-VM GPU sprites are
+                // no longer referenced by the visible slot batch.
+                font_cache.set_metrics(metrics);
+                font_cache.warm_placeholder(&mut frame);
+            }
         }
 
         if let Err(error) = drain_keyboard_input(&mut frame, &mut keyboard_input, &frontend) {
@@ -425,9 +686,15 @@ fn main() {
             hover_changed = true;
         }
 
-        if (terminal.take_dirty() || hover_changed)
-            && let Err(error) =
-                present_terminal(&mut frame, &terminal, metrics, matrix_slot_hover.as_ref())
+        let fonts_completed = font_cache.poll(&mut frame);
+        if (terminal.take_dirty() || hover_changed || fonts_completed || zoomed)
+            && let Err(error) = present_terminal(
+                &mut frame,
+                &terminal,
+                metrics,
+                matrix_slot_hover.as_ref(),
+                &mut font_cache,
+            )
         {
             logl::log(
                 level::ERROR,
@@ -446,6 +713,7 @@ fn drain_resize_events(
     frontend: &mut Shell2Frontend,
     terminal: &mut Terminal,
     metrics: TerminalMetrics,
+    font_cache: &mut ShellFontCache,
 ) -> Result<bool, InputError> {
     let mut resized = false;
     while let Some(resize) = frame.take_resize_event()? {
@@ -456,7 +724,15 @@ fn drain_resize_events(
         let (old_cols, old_rows) = terminal.dimensions();
         let (old_origin_x, old_origin_y) =
             centered_terminal_origin(resize.width, resize.height, old_cols, old_rows, metrics);
-        present_terminal_at(frame, terminal, old_origin_x, old_origin_y, metrics, None)?;
+        present_terminal_at(
+            frame,
+            terminal,
+            old_origin_x,
+            old_origin_y,
+            metrics,
+            None,
+            font_cache,
+        )?;
         let (cols, rows) = terminal_grid_size(resize.width, resize.height, metrics);
         if terminal.dimensions() != (cols, rows) {
             terminal.resize(cols, rows);
@@ -998,8 +1274,17 @@ fn present_terminal(
     terminal: &Terminal,
     metrics: TerminalMetrics,
     matrix_slot_hover: Option<&MatrixSlotHover>,
+    font_cache: &mut ShellFontCache,
 ) -> Result<(), UiError> {
-    present_terminal_at(frame, terminal, 0, 0, metrics, matrix_slot_hover)
+    present_terminal_at(
+        frame,
+        terminal,
+        0,
+        0,
+        metrics,
+        matrix_slot_hover,
+        font_cache,
+    )
 }
 
 fn present_terminal_at(
@@ -1009,154 +1294,167 @@ fn present_terminal_at(
     origin_y: u32,
     metrics: TerminalMetrics,
     matrix_slot_hover: Option<&MatrixSlotHover>,
+    font_cache: &mut ShellFontCache,
 ) -> Result<(), UiError> {
-    retry_busy(|| frame.begin(BACKGROUND))?;
-
-    let viewport = (frame.width(), frame.height());
-
+    // This is a visible, fixed terminal slot grid. It is not a text canvas:
+    // every quad directly references an RGBA glyph sprite chosen by the
+    // Blueprint-owned `ShellFontCache`; there is no scrollback or offscreen
+    // glyph surface to slide around.
+    font_cache.prepare_visible_slots(terminal.cells().len().saturating_mul(2).saturating_add(2));
+    font_cache.warm_placeholder(frame);
     let (cols, rows) = terminal.dimensions();
-    // `retain_text_scene` identifies a retained layer by its ordinal within a
-    // frame. Keep that ordering fixed at the terminal-cell granularity rather
-    // than emitting style runs: adding a blank cell or changing one cell's
-    // colour must not move every following cell onto a different retained
-    // layer. This is deliberately a bounded visible-grid cache. It has no
-    // scrollback, offscreen canvas, or framebuffer state; UI4 owns only these
-    // `cols * rows * 2` resident coverage layers while this frame is alive.
+    let mut quads = Vec::with_capacity(terminal.cells().len().saturating_mul(2).saturating_add(2));
     for row in 0..rows {
         let cells = &terminal.cells()[row * cols..(row + 1) * cols];
         for (col, cell) in cells.iter().enumerate() {
-            let x = origin_x as f32
-                + FRAME_PADDING_PX as f32
-                + col as f32 * metrics.glyph_advance_px as f32;
-            let y = origin_y as f32
-                + FRAME_PADDING_PX as f32
-                + row as f32 * metrics.row_height_px as f32;
-
-            retain_terminal_slot(
+            let slot = row * cols + col;
+            let x = origin_x
+                .saturating_add(FRAME_PADDING_PX)
+                .saturating_add((col as u32).saturating_mul(metrics.glyph_advance_px));
+            let y = origin_y
+                .saturating_add(FRAME_PADDING_PX)
+                .saturating_add((row as u32).saturating_mul(metrics.row_height_px));
+            let color = foreground_rgba(cell.style.foreground);
+            push_terminal_glyph_quad(
+                &mut quads,
+                font_cache,
                 frame,
-                viewport,
-                cell.glyph,
+                FontSpriteKey::new(cell.glyph, metrics.font_pixels, color),
+                slot,
                 x,
                 y,
-                metrics.font_pixels,
-                foreground_rgba(cell.style.foreground),
-            )?;
-            // Keep an underline layer for every cell. An invisible layer keeps
-            // its glyph mask warm, so toggling underline changes only colour.
-            retain_terminal_slot(
-                frame,
-                viewport,
-                '_',
-                x,
-                y,
-                metrics.font_pixels,
-                if cell.style.underline {
-                    foreground_rgba(cell.style.foreground)
-                } else {
-                    transparent_rgba(foreground_rgba(cell.style.foreground))
-                },
-            )?;
+                metrics,
+            );
+            if cell.style.underline {
+                push_terminal_glyph_quad(
+                    &mut quads,
+                    font_cache,
+                    frame,
+                    FontSpriteKey::new('_', metrics.font_pixels, color),
+                    terminal.cells().len().saturating_add(slot),
+                    x,
+                    y,
+                    metrics,
+                );
+            }
         }
     }
 
-    // Reserve exactly one hover layer. Its contents may change, but that
-    // change cannot perturb any terminal-cell or cursor layer indices.
     let hover = matrix_slot_hover.filter(|hover| {
         matrix_slot_at(terminal, hover.start_col, MATRIX_STATUS_ROW)
             .is_some_and(|current| current == **hover)
     });
     if let Some(hover) = hover {
-        let mut underline = String::with_capacity(hover.end_col - hover.start_col);
-        for _ in hover.start_col..hover.end_col {
-            underline.push('_');
-        }
-        let scene = [SceneTextRow {
-            text: underline.as_str(),
-            x: origin_x as f32
-                + FRAME_PADDING_PX as f32
-                + hover.start_col as f32 * metrics.glyph_advance_px as f32,
-            y: origin_y as f32
-                + FRAME_PADDING_PX as f32
-                + MATRIX_STATUS_ROW as f32 * metrics.row_height_px as f32,
-            font_pixels: metrics.font_pixels,
-        }];
-        let (cols, _) = terminal.dimensions();
         let foreground = terminal.cells()[MATRIX_STATUS_ROW * cols + hover.start_col]
             .style
             .foreground;
-        retry_busy(|| {
-            frame.retain_text_scene(
-                Font::Inconsolata,
-                viewport,
-                foreground_rgba(foreground),
-                &scene,
-            )
-        })?;
-    } else {
-        retain_terminal_slot(
-            frame,
-            viewport,
-            '_',
-            origin_x as f32 + FRAME_PADDING_PX as f32,
-            origin_y as f32
-                + FRAME_PADDING_PX as f32
-                + MATRIX_STATUS_ROW as f32 * metrics.row_height_px as f32,
-            metrics.font_pixels,
-            transparent_rgba(FOREGROUND),
-        )?;
+        for col in hover.start_col..hover.end_col {
+            let x = origin_x
+                .saturating_add(FRAME_PADDING_PX)
+                .saturating_add((col as u32).saturating_mul(metrics.glyph_advance_px));
+            let y = origin_y
+                .saturating_add(FRAME_PADDING_PX)
+                .saturating_add((MATRIX_STATUS_ROW as u32).saturating_mul(metrics.row_height_px));
+            push_terminal_glyph_quad(
+                &mut quads,
+                font_cache,
+                frame,
+                FontSpriteKey::new('_', metrics.font_pixels, foreground_rgba(foreground)),
+                terminal.cells().len().saturating_mul(2).saturating_add(1),
+                x,
+                y,
+                metrics,
+            );
+        }
     }
 
-    // Inconsolata's advance is one half-em. Keeping the cursor as a single
-    // retained glyph lets UI4 reuse its mask as it translates between cells.
     let cursor = terminal.cursor();
-    let cursor_scene = [SceneTextRow {
-        text: "_",
-        x: origin_x as f32
-            + FRAME_PADDING_PX as f32
-            + cursor.col as f32 * metrics.glyph_advance_px as f32,
-        y: origin_y as f32
-            + FRAME_PADDING_PX as f32
-            + cursor.row as f32 * metrics.row_height_px as f32,
-        font_pixels: metrics.font_pixels,
-    }];
-    retry_busy(|| {
-        frame.retain_text_scene(
-            Font::Inconsolata,
-            viewport,
-            if cursor.visible {
-                FOREGROUND
-            } else {
-                BACKGROUND
-            },
-            &cursor_scene,
-        )
-    })?;
+    if cursor.visible {
+        let x = origin_x
+            .saturating_add(FRAME_PADDING_PX)
+            .saturating_add((cursor.col as u32).saturating_mul(metrics.glyph_advance_px));
+        let y = origin_y
+            .saturating_add(FRAME_PADDING_PX)
+            .saturating_add((cursor.row as u32).saturating_mul(metrics.row_height_px));
+        push_terminal_glyph_quad(
+            &mut quads,
+            font_cache,
+            frame,
+            FontSpriteKey::new('_', metrics.font_pixels, FOREGROUND),
+            terminal.cells().len().saturating_mul(2),
+            x,
+            y,
+            metrics,
+        );
+    }
 
-    retry_busy(|| frame.publish(Damage::full(viewport.0, viewport.1)))
+    retry_busy(|| frame.begin_sprite_frame(BACKGROUND))?;
+    frame.draw_sprite_quads(&quads)?;
+    retry_busy(|| frame.publish(Damage::full(frame.width(), frame.height())))
 }
 
-fn retain_terminal_slot(
+fn push_terminal_glyph_quad(
+    quads: &mut Vec<SpriteQuad>,
+    font_cache: &mut ShellFontCache,
     frame: &mut Frame,
-    viewport: (u32, u32),
-    glyph: char,
-    x: f32,
-    y: f32,
-    font_pixels: f32,
-    color_rgba: u32,
-) -> Result<(), UiError> {
-    let mut text = [0; 4];
-    let scene = [SceneTextRow {
-        text: glyph.encode_utf8(&mut text),
-        x,
-        y,
-        font_pixels,
-    }];
-    retry_busy(|| frame.retain_text_scene(Font::Inconsolata, viewport, color_rgba, &scene))
-}
-
-const fn transparent_rgba(color_rgba: u32) -> u32 {
-    let [red, green, blue, _] = color_rgba.to_le_bytes();
-    rgba(red, green, blue, 0)
+    key: FontSpriteKey,
+    slot: usize,
+    x: u32,
+    y: u32,
+    metrics: TerminalMetrics,
+) {
+    // Spaces have no visible sprite and must not produce cache traffic.
+    if key.glyph == ' ' {
+        return;
+    }
+    let Some((sprite, is_placeholder)) = font_cache.resolve_for_slot(frame, key, slot) else {
+        return;
+    };
+    let width = sprite.width.max(1);
+    let height = sprite.height.max(1);
+    // Glyph tiles carry their own tight bearings. Do not crop them to the
+    // logical cell: overhang is part of the font result, while the terminal
+    // still advances on its fixed X×Y slot geometry.
+    let left = if is_placeholder {
+        x.saturating_add(metrics.glyph_advance_px.saturating_sub(width) / 2) as f32
+    } else {
+        x as f32 + sprite.origin_x as f32
+    };
+    let top = if is_placeholder {
+        y.saturating_add(metrics.row_height_px.saturating_sub(height) / 2) as f32
+    } else {
+        y as f32 + sprite.origin_y as f32
+    };
+    let right = left + width as f32;
+    let bottom = top + height as f32;
+    quads.push(SpriteQuad {
+        sprite_id: sprite.sprite_id,
+        c0: SpriteCorner {
+            x: left,
+            y: top,
+            ..SpriteCorner::default()
+        },
+        c1: SpriteCorner {
+            x: right,
+            y: top,
+            u: 1.0,
+            ..SpriteCorner::default()
+        },
+        c2: SpriteCorner {
+            x: right,
+            y: bottom,
+            u: 1.0,
+            v: 1.0,
+        },
+        c3: SpriteCorner {
+            x: left,
+            y: bottom,
+            v: 1.0,
+            ..SpriteCorner::default()
+        },
+        color_rgba: FOREGROUND,
+        source_over: true,
+    });
 }
 
 fn retry_busy(mut operation: impl FnMut() -> Result<(), UiError>) -> Result<(), UiError> {
@@ -1194,6 +1492,26 @@ mod tests {
                 blue: 3,
             }),
             rgba(1, 2, 3, 255)
+        );
+    }
+
+    #[test]
+    fn font_sprite_keys_keep_color_size_and_face_separate() {
+        let white_24 = FontSpriteKey::new('P', 24.0, FOREGROUND);
+        let pink_24 = FontSpriteKey::new('P', 24.0, rgba(255, 0, 255, 255));
+        let white_25 = FontSpriteKey::new('P', 25.0, FOREGROUND);
+        let mut another_face = white_24;
+        another_face.font_id = Font::Default as u32;
+        assert_ne!(white_24, pink_24);
+        assert_ne!(white_24, white_25);
+        assert_ne!(white_24, another_face);
+    }
+
+    #[test]
+    fn font_pixel_key_preserves_fractional_zoom_sizes() {
+        assert_ne!(
+            FontSpriteKey::new('P', 21.6, FOREGROUND),
+            FontSpriteKey::new('P', 22.0, FOREGROUND),
         );
     }
 }

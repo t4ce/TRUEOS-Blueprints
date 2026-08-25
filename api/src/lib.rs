@@ -204,6 +204,7 @@ pub mod logl {
         pub const INFO: u8 = 3;
         pub const DEBUG: u8 = 4;
         pub const TRACE: u8 = 5;
+        pub const IMPORTANT: u8 = 6;
     }
 
     #[inline]
