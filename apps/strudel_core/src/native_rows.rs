@@ -1,39 +1,45 @@
-//! Integer-only VM schema for `NativeRenderCommandV2`.
+//! Integer-only VM schema for `NativeRenderCommandV3`.
 //!
 //! The installed adapter currently returns its legacy eight-column event rows:
 //! `[start,end,age,duration,midi,velocity,waveform,pan]`. They are converted to
 //! oscillator commands. Once the JS adapter is switched it may emit the native
-//! 23-column V1 schema, or the native V2 30-column schema directly:
+//! 23-column V1 schema, native V2 30-column schema, or V3's 31 columns:
 //! `[start,end,age,duration,source_id,voice_id,kind,waveform,midi,gain,pan,
 //!   playback_rate,sample_begin,sample_end,lpf,lpq,room,delay,phaser,shape,
 //!   fm_depth,fm_rate,flags,attack,decay,release,filter_attack,filter_decay,
-//!   sustain,filter_env_octaves_q8]`.
+//!   sustain,filter_env_octaves_q8,filter_type]`.
 
 extern crate alloc;
 
 use alloc::vec::Vec;
 
-use trueos::audio::NativeRenderCommandV2;
+use trueos::audio::{NativeRenderCommandV2, NativeRenderCommandV3};
 
 use crate::json_rows::parse_integer_rows;
 
 const LEGACY_COLUMNS: usize = 8;
 const NATIVE_COLUMNS: usize = 23;
 const NATIVE_V2_COLUMNS: usize = 30;
+const NATIVE_V3_COLUMNS: usize = 31;
 
-pub fn parse_native_command_rows(source: &str) -> Result<Vec<NativeRenderCommandV2>, &'static str> {
+pub fn parse_native_command_rows(source: &str) -> Result<Vec<NativeRenderCommandV3>, &'static str> {
     let rows = parse_integer_rows(source)?;
     let mut commands = Vec::with_capacity(rows.len());
     for row in rows {
         let command = match row.len() {
-            LEGACY_COLUMNS => legacy_command(&row)?,
-            NATIVE_COLUMNS => native_command(&row)?,
-            NATIVE_V2_COLUMNS => native_command_v2(&row)?,
+            LEGACY_COLUMNS => into_v3(legacy_command(&row)?),
+            NATIVE_COLUMNS => into_v3(native_command(&row)?),
+            NATIVE_V2_COLUMNS => into_v3(native_command_v2(&row)?),
+            NATIVE_V3_COLUMNS => native_command_v3(&row)?,
             _ => return Err("wrong native command column count"),
         };
         commands.push(command);
     }
     Ok(commands)
+}
+
+fn into_v3(base: NativeRenderCommandV2) -> NativeRenderCommandV3 {
+    NativeRenderCommandV3 { base, filter_type: NativeRenderCommandV3::FILTER_12DB, reserved3: [0; 3], reserved4: 0 }
 }
 
 /// Stable source identity used for generated oscillator voices.
@@ -157,6 +163,17 @@ fn native_command_v2(row: &[i64]) -> Result<NativeRenderCommandV2, &'static str>
     Ok(command)
 }
 
+fn native_command_v3(row: &[i64]) -> Result<NativeRenderCommandV3, &'static str> {
+    let command = NativeRenderCommandV3 {
+        base: native_command_v2(&row[..NATIVE_V2_COLUMNS])?,
+        filter_type: u8_value(row[30], "filter_type")?,
+        reserved3: [0; 3],
+        reserved4: 0,
+    };
+    command.validate(u32::MAX).map_err(|_| "invalid native v3 command")?;
+    Ok(command)
+}
+
 fn waveform_name(waveform: u8) -> &'static str {
     match waveform {
         1 => "square",
@@ -232,5 +249,13 @@ mod tests {
         assert_eq!(command.release_frames, 2400);
         assert_eq!(command.sustain_q15, 16_384);
         assert_eq!(command.filter_env_octaves_q8, -1024);
+    }
+
+    #[test]
+    fn accepts_v3_filter_type_column() {
+        let commands = parse_native_command_rows(
+            "[[0,64,0,48,1,2,1,2,60,30000,0,65536,0,0,1200,2048,0,0,0,0,0,0,0,480,960,2400,120,360,16384,-1024,2]]",
+        ).unwrap();
+        assert_eq!(commands[0].filter_type, 2);
     }
 }

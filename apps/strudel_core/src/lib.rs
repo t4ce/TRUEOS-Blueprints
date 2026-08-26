@@ -15,7 +15,7 @@ use alloc::{format, string::String, vec::Vec};
 
 use audio_output::AudioOutput;
 use strudel_vm::StrudelVm;
-use trueos::audio::NativeBlockHeaderV2;
+use trueos::audio::NativeBlockHeaderV3;
 
 pub use performance_input::{PerformanceInputSource, PerformanceInputV1};
 
@@ -202,7 +202,7 @@ impl StrudelCore {
                 SAMPLE_RATE_HZ,
             )?;
             let header =
-                NativeBlockHeaderV2::new(BLOCK_FRAMES as u32, self.absolute_frame, self.revision);
+                NativeBlockHeaderV3::new(BLOCK_FRAMES as u32, self.absolute_frame, self.revision);
             let frames = self.audio.render_native(&header, &commands)?;
             if frames != BLOCK_FRAMES {
                 return Err(format!(

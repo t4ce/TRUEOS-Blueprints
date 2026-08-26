@@ -41,13 +41,21 @@ The temporal bundle is paired with a small native-audio compatibility layer:
 `attack`, `decay`, `sustain`, `release`, `lpf`, `lpq`, `lpenv`, `lpd`, `lpa`, `ftype`, `rarely`, `room`,
 `shape`, `postgain`, `superimpose`, `delay`, `bpf`, `gain`, `mask`, and `bank`.
 Control Patterns are sampled at the event onset and converted to the fixed
-30-column `NativeRenderCommandV2` row. The V2 tail is integer-only:
+31-column `NativeRenderCommandV3` row. The V2 tail is integer-only and V3
+appends `filter_type` (`0=12db`, `1=ladder`, `2=24db`):
 `attack_frames`, `decay_frames`, `release_frames`, `filter_attack_frames`,
 `filter_decay_frames`, `sustain_q15`, and signed `filter_env_octaves_q8`.
 `release` extends the submitted render span while gate duration remains
 separate. `lpf/lpq`, `room`, `delay`, `shape`, and oscillator selection map
 directly; `bpf` uses its center as the available low-pass cutoff. `clip`,
-`ftype`, `mask`, `bank`, and `rarely` remain deterministic metadata/no-ops.
+`ftype`, and bank selection remain limited native metadata/control behavior.
+`mask` filters events at their whole-event onset. Numeric mini masks support
+`<0@4 1@16>` as four off steps followed by sixteen on steps, and Pattern-like
+numeric controls are sampled at that same onset. `rarely(transform)`
+deterministically selects roughly one in eight events per committed revision;
+it is stable across lookahead blocks and has no global random stream. It
+supports value-preserving transforms such as `add(note(12))`; transforms that
+create, remove, or retime events are not yet equivalent to upstream.
 
 `s("sawtooth")` selects the native saw oscillator. `bd`, `hh`, `sd`, `rim`,
 and `rd` select deterministic synthesized percussion presets. They are not

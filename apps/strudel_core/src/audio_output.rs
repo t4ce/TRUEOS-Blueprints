@@ -4,7 +4,7 @@ use alloc::{format, string::String, vec::Vec};
 
 use trueos::{
     audio::{
-        ERR_BUSY, NativeBlockHeaderV2, NativeEngine, NativeRenderCommandV2, PlaybackParams, Stream,
+        ERR_BUSY, NativeBlockHeaderV3, NativeEngine, NativeRenderCommandV3, PlaybackParams, Stream,
     },
     vsys,
 };
@@ -51,15 +51,15 @@ impl AudioOutput {
         self.stream.buffer_frames()
     }
 
-    /// Submit a fully validated block to the V2 native scheduler. `write_all`
+    /// Submit a fully validated block to the V3 native scheduler. `write_all`
     /// below deliberately remains for the existing PCM fallback path.
     pub fn render_native(
         &self,
-        header: &NativeBlockHeaderV2,
-        commands: &[NativeRenderCommandV2],
+        header: &NativeBlockHeaderV3,
+        commands: &[NativeRenderCommandV3],
     ) -> Result<usize, String> {
         self.native
-            .render_v2(header, commands)
+            .render_v3(header, commands)
             .map_err(|error| format!("native audio render failed: {error:?}"))
     }
 

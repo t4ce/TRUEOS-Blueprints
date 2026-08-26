@@ -86,6 +86,9 @@
   const PatternProto = core.Pattern && core.Pattern.prototype;
   if (!PatternProto) throw new Error("Strudel core has no Pattern prototype");
   const isPattern = (value) => Boolean(value && typeof value.queryArc === "function");
+  // Keep the temporal vendor deliberately small, but do not silently discard
+  // temporal operators supplied by a fuller upstream build.
+  const upstreamMask = typeof PatternProto.mask === "function" ? PatternProto.mask : null;
   const mapValue = (source, fn) => source.withValue(fn);
   const copyValue = (value) => {
     if (value && typeof value === "object" && !Array.isArray(value) && !isPattern(value)) {
@@ -127,22 +130,87 @@
       });
     };
   }
+  function temporalPattern(source, select) {
+    // withHaps is the public upstream constructor hook. Constructing Pattern
+    // directly works in the fallback but bypasses upstream's query State.
+    if (typeof source.withHaps === "function") return source.withHaps((haps) => haps.filter(select));
+    return new core.Pattern((begin, end) => source.queryArc(begin, end).filter(select));
+  }
+  function mapHaps(source, map) {
+    if (typeof source.withHaps === "function") return source.withHaps(map);
+    return new core.Pattern((begin, end) => map(source.queryArc(begin, end)));
+  }
+  function deterministicUnit(hap) {
+    // A stable integer hash, deliberately independent of query ordering and
+    // global RNG. Revision makes a newly committed pattern a new variation,
+    // while a lookahead/block split cannot change an existing event's choice.
+    const whole = hap.whole || hap.part;
+    let hash = (revision ^ 0x9e3779b9) >>> 0;
+    const begin = Math.round(finiteNumber(whole && whole.begin) * 1048576) >>> 0;
+    const end = Math.round(finiteNumber(whole && whole.end) * 1048576) >>> 0;
+    hash = Math.imul(hash ^ begin, 0x85ebca6b) >>> 0;
+    hash = Math.imul(hash ^ end, 0xc2b2ae35) >>> 0;
+    hash ^= hash >>> 16;
+    return (hash >>> 0) / 4294967296;
+  }
   PatternProto.rarely = function trueosRarely(transform) {
-    // The stochastic scheduler is intentionally absent: use an explicit,
-    // deterministic no-op rather than making native playback depend on random
-    // state. The transform remains visible in source and is documented below.
-    void transform;
-    return this;
+    if (typeof transform !== "function") throw new TypeError("rarely expects a function");
+    const source = this;
+    return mapHaps(source, (haps) => haps.map((hap) => {
+      // Strudel's `rarely` is a low-probability variation. One in eight is
+      // intentionally conservative and avoids an audible global RNG stream.
+      if (deterministicUnit(hap) >= 0.125) return hap;
+      // Restrict this native compatibility implementation to transforms that
+      // preserve one event's timing (add(note(12)) is the important case).
+      try {
+        const changed = transform(core.sequence(hap.value));
+        if (!isPattern(changed)) throw new TypeError("rarely transform must return a Strudel Pattern");
+        const replacement = changed.queryArc(0, 1)[0];
+      return replacement ? hap.withValue(() => replacement.value) : hap;
+      } catch (_) {
+        // A native control Pattern can lack arithmetic methods from a complete
+        // WebAudio build; leave this event intact instead of rejecting audio.
+        return hap;
+      }
+    }));
   };
   PatternProto.superimpose = function trueosSuperimpose(transform) {
     if (typeof transform !== "function") throw new TypeError("superimpose expects a function");
     return core.stack(this, transform(this));
   };
-  PatternProto.mask = function trueosMask(_mask) {
-    // Mask syntax belongs to the temporal layer.  The slim upstream mini
-    // bundle does not carry its Euclidean helper; retain an explicit no-op
-    // rather than rejecting an otherwise valid native pattern.
-    return this;
+  function numericMaskMini(source) {
+    const text = String(source).trim().replace(/[<>\[\]()]/g, " ");
+    const values = [];
+    for (const match of text.matchAll(/(?:^|\s)(-?(?:\d+\.?\d*|\.\d+))(?:@(\d+))?(?=\s|$)/g)) {
+      const value = Number(match[1]);
+      const count = Math.max(1, Number(match[2] || 1));
+      for (let index = 0; index < count; index += 1) values.push(value);
+    }
+    return values.length ? core.sequence(...values) : null;
+  }
+  function truthAt(controlPattern, cycle, repeatEachCycle) {
+    // The renderer asks a little before frame zero for release tails. The
+    // upstream Fraction query rejects some negative decimal inputs; numeric
+    // mini masks are cycle-periodic, so normalize those safely.
+    if (repeatEachCycle) cycle -= Math.floor(cycle);
+    const epsilon = 1 / 65536;
+    const haps = controlPattern.queryArc(cycle, cycle + epsilon);
+    return haps.length && finiteNumber(haps[0].value) !== 0;
+  }
+  PatternProto.mask = function trueosMask(mask) {
+    // `<0@4 1@16>` is common live-code shorthand: `@N` means N successive
+    // mask steps here. The minimal vendor mini parses it as a duration, so
+    // normalize numeric mask strings before handing temporal work to Pattern.
+    const numericMini = typeof mask === "string" ? numericMaskMini(mask) : null;
+    const controlPattern = isPattern(mask) ? mask : numericMini;
+    if (controlPattern) {
+      return temporalPattern(this, (hap) => {
+        const whole = hap.whole || hap.part;
+        return Boolean(whole && truthAt(controlPattern, finiteNumber(whole.begin), Boolean(numericMini)));
+      });
+    }
+    if (upstreamMask) return upstreamMask.call(this, mask);
+    throw new TypeError("mask expects a numeric mini string or Pattern-like control");
   };
 
   function signal(fn) {
@@ -288,6 +356,16 @@
     }
   }
 
+  function filterTypeCode(value) {
+    if (typeof value === "number") return clampInteger(value, 0, 2);
+    switch (String(value || "12db").toLowerCase()) {
+      case "ladder": return 1;
+      case "24db": return 2;
+      case "12db":
+      default: return 0;
+    }
+  }
+
   function sampleSourceId(bank, sound) {
     let hash = 0xcbf29ce484222325n;
     for (const byte of `${bank}:${sound}`) {
@@ -336,6 +414,8 @@
     let filterAttack = 0;
     let filterDecay = 0;
     let filterEnvOctaves = 0;
+    let filterType = 0;
+    let clip = 1;
 
     if (typeof value === "number" || typeof value === "string") {
       note = noteNameToMidi(value);
@@ -416,6 +496,8 @@
       if (value.lpa !== undefined) filterAttack = Number(valueAt(value.lpa, cycle));
       if (value.lpd !== undefined) filterDecay = Number(valueAt(value.lpd, cycle));
       if (value.lpenv !== undefined) filterEnvOctaves = Number(valueAt(value.lpenv, cycle));
+      if (value.ftype !== undefined) filterType = filterTypeCode(valueAt(value.ftype, cycle));
+      if (value.clip !== undefined) clip = Number(valueAt(value.clip, cycle));
       if (value.add !== undefined) {
         const additive = valueAt(value.add, cycle);
         const addition = additive && typeof additive === "object" ? additive.note : additive;
@@ -457,6 +539,8 @@
       // Kernel V2 validates a bounded ±8 octave sweep; constrain before the
       // VM boundary so valid editor code never turns into a host-side EINVAL.
       filterEnvOctavesQ8: clampInteger(clamp(filterEnvOctaves, -8, 8) * 256, -2048, 2048),
+      filterType,
+      clip: Number.isFinite(clip) ? clip : 1,
     };
   }
 
@@ -615,9 +699,10 @@
     const absoluteEndFrame = absoluteStartFrame + blockFrames;
     const cycleBegin = (absoluteStartFrame / sampleRate) * cps;
     const cycleEnd = (absoluteEndFrame / sampleRate) * cps;
-    // Pattern queries normally stop returning an event at its gate edge. Query
-    // enough history to carry V2 release tails into later render blocks.
-    const releaseLookbackCycles = (releaseLookbackFrames / sampleRate) * cps;
+    // Pattern queries normally stop returning an event at its gate edge. A
+    // positive `.clip()` can extend that edge, so retain the bounded maximum
+    // native gate extension as well as the V3 release tail.
+    const releaseLookbackCycles = (Math.max(releaseLookbackFrames, sampleRate * 10) / sampleRate) * cps;
     const haps = pattern.queryArc(cycleBegin - releaseLookbackCycles, cycleEnd);
     const rows = [];
 
@@ -634,7 +719,11 @@
       if (!voice || voice.velocity === 0) continue;
 
       const onsetFrame = Math.round((wholeBegin / cps) * sampleRate);
-      const releaseFrame = Math.round((wholeEnd / cps) * sampleRate);
+      // Upstream clip scales an event's gate; samples are cut at that gate and
+      // the native release begins there, rather than at the unmodified span.
+      if (!(voice.clip > 0)) continue;
+      const gateFrames = Math.max(1, Math.round(((wholeEnd - wholeBegin) / cps) * sampleRate * voice.clip));
+      const releaseFrame = onsetFrame + gateFrames;
       const clippedStart = Math.max(absoluteStartFrame, onsetFrame);
       // Gate duration deliberately excludes the release tail. V2's end span
       // includes it, allowing native ADSR to drain without a browser reset.
@@ -655,7 +744,7 @@
         clippedStart - absoluteStartFrame,
         clippedEnd - absoluteStartFrame,
         Math.max(0, clippedStart - onsetFrame),
-        Math.max(1, releaseFrame - onsetFrame),
+        gateFrames,
         voice.sourceId,
         voiceId,
         voice.kind,
@@ -682,6 +771,7 @@
         voice.filterDecayFrames,
         voice.sustainQ15,
         voice.filterEnvOctavesQ8,
+        voice.filterType,
       ]);
     }
 

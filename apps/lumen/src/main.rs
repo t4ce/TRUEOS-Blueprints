@@ -33,14 +33,16 @@ const SPINNER_MAX_SHIFT_CELLS: usize = 5;
 const SPINNER_FRAMES: &[&str] = &["⢈", "⡈", "⡐", "⡠", "⣀", "⢄", "⢂", "⢁", "⡁"];
 
 /// Prefill the fixed read-only tool schema once so VMX snapshots retain it.
-const SYSTEM_PROMPT_PREFILL_ENABLED: bool = false;
+const SYSTEM_PROMPT_PREFILL_ENABLED: bool = true;
 
 const SYSTEM_PROMPT: &str = concat!(
-    "You are a concise helpful assistant. Answer directly unless the user explicitly asks for ",
-    "the current date or time. Only then you may call the read-only time tool by outputting exactly ",
-    "<|tool_call_start|>[time()]<|tool_call_end|>. Never add arguments or other text. ",
-    "Its result is [\"HH:MM\",\"UTC\",day,\"weekday\",\"Mon\",year], or null when unavailable. ",
-    "After a tool result, answer directly and never call a tool again."
+    "You are a concise helpful assistant. Answer directly unless the user asks for the current ",
+    "date or time; use the provided read-only tool when it is needed. After a tool result, answer ",
+    "directly and never call a tool again.\n",
+    "List of tools: [{\"type\":\"function\",\"function\":{\"name\":\"time\",",
+    "\"description\":\"Return the current UTC date and time.\",\"parameters\":{",
+    "\"type\":\"object\",\"properties\":{},\"required\":[],",
+    "\"additionalProperties\":false}}}]"
 );
 
 struct LogicalState {
@@ -760,10 +762,11 @@ fn prepare_pause(prepare: replication::PreparePause, state: &mut LogicalState) -
 }
 
 fn run_prompt(state: &mut LogicalState, prompt: &str) -> Result<(), String> {
-    lumen::submit_prompt(
+    lumen::submit_prompt_with_no_argument_tool(
         state.turns,
         &state.reply_tail[..state.reply_tail_len],
         prompt,
+        "time",
     )
     .map_err(|error| alloc::format!("submit {error:?}"))?;
     let mut spinner = ProgressSpinner::start("lumen-bp: reasoning");
@@ -979,7 +982,16 @@ fn rejected_tool_fallback() -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{ToolCallAllowance, ToolReply, format_time_tool_result, parse_time_tool_reply};
+    use super::{
+        SYSTEM_PROMPT, ToolCallAllowance, ToolReply, format_time_tool_result, parse_time_tool_reply,
+    };
+
+    #[test]
+    fn resident_prompt_uses_the_pinned_native_tool_list_envelope() {
+        assert!(SYSTEM_PROMPT.contains("List of tools: ["));
+        assert!(SYSTEM_PROMPT.contains("\"name\":\"time\""));
+        assert!(SYSTEM_PROMPT.contains("\"additionalProperties\":false"));
+    }
 
     #[test]
     fn time_tool_schema_accepts_exactly_one_no_argument_call() {

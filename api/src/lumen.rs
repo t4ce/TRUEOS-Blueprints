@@ -38,6 +38,30 @@ pub fn submit_prompt(turn: u64, reply_tail: &[u32], prompt: &str) -> Result<(), 
     })
 }
 
+/// Submit a prompt while permitting one named no-argument tool call.
+///
+/// The model still chooses between a direct response and the tool. Once it
+/// emits the native tool-call start token, the kernel constrains the remainder
+/// to the exact call envelope for `tool_name`.
+pub fn submit_prompt_with_no_argument_tool(
+    turn: u64,
+    reply_tail: &[u32],
+    prompt: &str,
+    tool_name: &str,
+) -> Result<(), Error> {
+    result(unsafe {
+        v::bp_abi::trueos_cabi_lumen_prompt_submit_with_no_argument_tool_v1(
+            turn,
+            reply_tail.as_ptr(),
+            reply_tail.len(),
+            prompt.as_ptr(),
+            prompt.len(),
+            tool_name.as_ptr(),
+            tool_name.len(),
+        )
+    })
+}
+
 /// Continue the current assistant response with a real `tool` role result.
 /// `reply_tail` is the unconsumed terminator tail returned by the preceding
 /// assistant generation; it is not a user-message prefix.

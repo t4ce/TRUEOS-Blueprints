@@ -34,6 +34,13 @@ globalThis.__TRUEOS_STRUDEL.commitExpression("setcps(1); s('bd*2').bank('trueos'
 const registered = globalThis.__TRUEOS_STRUDEL.queryFrames(0, 48000, 48000);
 if (!registered.some((row) => row[6] === 2)) throw new Error(`trueos bank did not emit sample rows: ${JSON.stringify(registered)}`);
 
+globalThis.__TRUEOS_STRUDEL.commitExpression("setcps(1); note('c4').s('sine').release(.25)");
+globalThis.__TRUEOS_STRUDEL.queryFrames(0, 4800, 48000);
+const releaseTail = globalThis.__TRUEOS_STRUDEL.queryFrames(48000, 4800, 48000);
+if (!releaseTail.some((row) => row[2] >= 48000 && row[25] === 12000)) {
+  throw new Error(`release tail did not cross native blocks: ${JSON.stringify(releaseTail)}`);
+}
+
 const before = globalThis.__TRUEOS_STRUDEL.status();
 const committed = globalThis.__TRUEOS_STRUDEL.commitExpression(source);
 if (committed.cpsNumerator !== 1 || committed.cpsDenominator !== 1) {
@@ -44,7 +51,7 @@ if (!Array.isArray(rows) || rows.length < 3) throw new Error("shorthand program 
 let saw = false;
 let percussion = false;
 for (const row of rows) {
-  if (!Array.isArray(row) || row.length !== 30) throw new Error(`not a native v2 row: ${JSON.stringify(row)}`);
+  if (!Array.isArray(row) || row.length !== 31) throw new Error(`not a native v3 row: ${JSON.stringify(row)}`);
   if (row.some((value) => !Number.isInteger(value))) throw new Error(`native row is not integral: ${JSON.stringify(row)}`);
   if (row[0] < 0 || row[1] <= row[0] || row[1] > 48000 || row[8] < 0 || row[8] > 127 || row[9] < 0 || row[9] > 32767) {
     throw new Error(`native row out of bounds: ${JSON.stringify(row)}`);
@@ -54,15 +61,27 @@ for (const row of rows) {
 }
 if (!saw || !percussion) throw new Error(`expected oscillator and synthesized percussion: ${JSON.stringify(rows)}`);
 const voiced = rows.find((row) => row[7] === 2);
-if (!voiced || voiced[23] !== 240 || voiced[25] !== 4800 || voiced[26] !== 960 || voiced[27] !== 9600 || voiced[28] !== 32767) {
-  throw new Error(`V2 envelope controls were not encoded: ${JSON.stringify(voiced)}`);
+if (!voiced || voiced[23] !== 240 || voiced[25] !== 4800 || voiced[26] !== 960 || voiced[27] !== 9600 || voiced[28] !== 32767 || voiced[30] !== 2) {
+  throw new Error(`V3 envelope/filter controls were not encoded: ${JSON.stringify(voiced)}`);
+}
+
+globalThis.__TRUEOS_STRUDEL.commitExpression("setcps(1); note('c4').clip(.25).release(.1)");
+const clipped = globalThis.__TRUEOS_STRUDEL.queryFrames(0, 48000, 48000).find((row) => row[2] === 0);
+if (!clipped || clipped[3] !== 12000 || clipped[1] !== 16800) {
+  throw new Error(`clip did not shorten gate before release: ${JSON.stringify(clipped)}`);
+}
+globalThis.__TRUEOS_STRUDEL.commitExpression("setcps(1); note('c4').clip(2).release(.1)");
+const extendedTail = globalThis.__TRUEOS_STRUDEL.queryFrames(48000, 48000, 48000).find((row) => row[2] === 48000);
+if (!extendedTail || extendedTail[3] !== 96000 || extendedTail[1] !== 48000) {
+  throw new Error(`clip extension did not survive a split query: ${JSON.stringify(extendedTail)}`);
 }
 
 let rejected = false;
+const stateBeforeRejected = globalThis.__TRUEOS_STRUDEL.status();
 try { globalThis.__TRUEOS_STRUDEL.commitExpression("setcps(.125); ({ nope: true })"); } catch (_) { rejected = true; }
 if (!rejected) throw new Error("invalid shorthand transaction was accepted");
 const after = globalThis.__TRUEOS_STRUDEL.status();
-if (after.revision !== committed.revision || after.cpsNumerator !== 1 || before.revision >= after.revision) {
+if (after.revision !== stateBeforeRejected.revision || after.cpsNumerator !== 1 || before.revision >= after.revision) {
   throw new Error(`failed transaction changed active state: ${JSON.stringify(after)}`);
 }
 
