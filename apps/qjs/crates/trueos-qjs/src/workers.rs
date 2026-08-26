@@ -72,7 +72,9 @@ struct WorkerState {
 
 impl WorkerState {
     fn new(child_handle: u64) -> Self {
-        Self { child_handle }
+        Self {
+            child_handle,
+        }
     }
 }
 
@@ -101,15 +103,9 @@ pub fn ctx_role(ctx: *mut qjs::JSContext) -> CtxRole {
 /// module exports are evaluated. This is process-local; QuickJS values never
 /// cross the VMX child boundary.
 pub fn enter_child_context(ctx: *mut qjs::JSContext, worker_id: u32) {
-    if ctx.is_null() {
-        return;
-    }
+    if ctx.is_null() { return; }
     CHILD_WORKER_CONTEXT.store(true, Ordering::Release);
-    CONTEXT_WORKERS
-        .lock()
-        .entry(ctx as usize)
-        .or_insert_with(ContextWorkerState::new)
-        .worker_id = Some(worker_id);
+    CONTEXT_WORKERS.lock().entry(ctx as usize).or_insert_with(ContextWorkerState::new).worker_id = Some(worker_id);
 }
 
 pub fn leave_child_context(ctx: *mut qjs::JSContext) {
@@ -163,13 +159,8 @@ fn spawn_eval_on_slot_inner(code_utf8: &[u8]) -> Result<u32, i32> {
     }
 
     let child_handle = v::child_hull::spawn(code_utf8)?;
-    WORKERS
-        .lock()
-        .insert(worker_id, WorkerState::new(child_handle));
-    log_str(&format!(
-        "qjs-worker: worker#{} child Hull spawned\n",
-        worker_id
-    ));
+    WORKERS.lock().insert(worker_id, WorkerState::new(child_handle));
+    log_str(&format!("qjs-worker: worker#{} child Hull spawned\n", worker_id));
     Ok(worker_id)
 }
 
@@ -215,9 +206,7 @@ pub fn post_to_parent(worker_id: u32, msg: &[u8]) -> Result<(), i32> {
 }
 
 pub fn take_parent_message(worker_id: u32) -> Option<Vec<u8>> {
-    if CHILD_WORKER_CONTEXT.load(Ordering::Acquire) {
-        return None;
-    }
+    if CHILD_WORKER_CONTEXT.load(Ordering::Acquire) { return None; }
     let handle = worker_state_mut(worker_id, |st| st.child_handle)?;
     crate::child_worker::receive_one(handle).ok().flatten()
 }
@@ -293,12 +282,8 @@ pub unsafe fn pump(ctx: *mut qjs::JSContext) -> bool {
             let key_ctx = ctx as usize;
             loop {
                 let msg = if CHILD_WORKER_CONTEXT.load(Ordering::Acquire) {
-                    crate::child_worker::receive_one(v::child_hull::HANDLE_PARENT)
-                        .ok()
-                        .flatten()
-                } else {
-                    None
-                };
+                    crate::child_worker::receive_one(v::child_hull::HANDLE_PARENT).ok().flatten()
+                } else { None };
                 let Some(msg) = msg else { break };
                 progress = true;
 

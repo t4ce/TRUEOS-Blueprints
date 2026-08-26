@@ -116,12 +116,7 @@ pub unsafe fn install_fn_kind(
     kind: i32,
     func: Option<qjs::JSCFunction>,
 ) -> bool {
-    set_prop(
-        ctx,
-        obj,
-        name,
-        new_c_function_kind(ctx, name, argc, kind, func),
-    )
+    set_prop(ctx, obj, name, new_c_function_kind(ctx, name, argc, kind, func))
 }
 
 #[inline]

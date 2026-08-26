@@ -39,12 +39,7 @@ pub fn parse_native_command_rows(source: &str) -> Result<Vec<NativeRenderCommand
 }
 
 fn into_v3(base: NativeRenderCommandV2) -> NativeRenderCommandV3 {
-    NativeRenderCommandV3 {
-        base,
-        filter_type: NativeRenderCommandV3::FILTER_12DB,
-        reserved3: [0; 3],
-        reserved4: 0,
-    }
+    NativeRenderCommandV3 { base, filter_type: NativeRenderCommandV3::FILTER_12DB, reserved3: [0; 3], reserved4: 0 }
 }
 
 /// Stable source identity used for generated oscillator voices.
@@ -175,9 +170,7 @@ fn native_command_v3(row: &[i64]) -> Result<NativeRenderCommandV3, &'static str>
         reserved3: [0; 3],
         reserved4: 0,
     };
-    command
-        .validate(u32::MAX)
-        .map_err(|_| "invalid native v3 command")?;
+    command.validate(u32::MAX).map_err(|_| "invalid native v3 command")?;
     Ok(command)
 }
 

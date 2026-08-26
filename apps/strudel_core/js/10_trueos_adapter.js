@@ -703,7 +703,12 @@
     // positive `.clip()` can extend that edge, so retain the bounded maximum
     // native gate extension as well as the V3 release tail.
     const releaseLookbackCycles = (Math.max(releaseLookbackFrames, sampleRate * 10) / sampleRate) * cps;
-    const haps = pattern.queryArc(cycleBegin - releaseLookbackCycles, cycleEnd);
+    // The native timeline has no audio before frame zero. Clamping the release
+    // lookback there is both semantically correct and avoids asking upstream's
+    // Fraction-backed query engine to enumerate negative cycles during the
+    // first block (a disproportionately deep path in embedded QuickJS).
+    const queryBegin = Math.max(0, cycleBegin - releaseLookbackCycles);
+    const haps = pattern.queryArc(queryBegin, cycleEnd);
     const rows = [];
 
     for (const hap of haps) {

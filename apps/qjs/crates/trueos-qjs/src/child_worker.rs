@@ -41,17 +41,13 @@ pub fn run() -> Result<(), String> {
     };
     if value.is_exception() {
         unsafe { qjs::qjs_diag::dump_last_exception(ctx, "worker-startup-eval") };
-        let _ = qjs::workers::post_to_parent(
-            CONTEXT_ID,
-            b"{\"ok\":0,\"dbg\":\"worker-startup-eval-exception\"}",
-        );
+        let _ = qjs::workers::post_to_parent(CONTEXT_ID, b"{\"ok\":0,\"dbg\":\"worker-startup-eval-exception\"}");
         unsafe { qjs::js_free_value(ctx, value) };
         qjs::workers::leave_child_context(ctx);
         return Err("child worker startup evaluation failed".into());
     }
     unsafe { qjs::js_free_value(ctx, value) };
-    let _ =
-        qjs::workers::post_to_parent(CONTEXT_ID, b"{\"ok\":1,\"dbg\":\"worker-startup-eval-ok\"}");
+    let _ = qjs::workers::post_to_parent(CONTEXT_ID, b"{\"ok\":1,\"dbg\":\"worker-startup-eval-ok\"}");
 
     // A child remains alive even when it has no currently pending jobs: the
     // parent can post a message later. `poll_once` yields the VMX lane between
@@ -81,9 +77,7 @@ fn receive_required(handle: u64) -> Result<Vec<u8>, String> {
 /// when called with a null or too-small buffer. The kernel retains that frame
 /// until this second, sized receive succeeds.
 pub(crate) fn receive_one(handle: u64) -> Result<Option<Vec<u8>>, String> {
-    let Some(len) = v::child_hull::receive_len(handle)
-        .map_err(|rc| alloc::format!("child receive probe failed: {rc}"))?
-    else {
+    let Some(len) = v::child_hull::receive_len(handle).map_err(|rc| alloc::format!("child receive probe failed: {rc}"))? else {
         return Ok(None);
     };
     let mut frame = Vec::new();
@@ -91,9 +85,7 @@ pub(crate) fn receive_one(handle: u64) -> Result<Option<Vec<u8>>, String> {
     let got = v::child_hull::receive_into(handle, frame.as_mut_slice())
         .map_err(|rc| alloc::format!("child receive failed: {rc}"))?
         .ok_or_else(|| String::from("child frame disappeared while retained"))?;
-    if got > frame.len() {
-        return Err("child receive overflow".into());
-    }
+    if got > frame.len() { return Err("child receive overflow".into()); }
     frame.truncate(got);
     Ok(Some(frame))
 }

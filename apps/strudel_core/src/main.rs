@@ -32,7 +32,9 @@ fn main() {
     local.block_on(&runtime, async {
         if let Err(error) = server::run().await {
             logl::log(
-                level::ERROR,
+                // Blueprint stderr is not currently mirrored into the text
+                // console, so startup failures must use the visible stream.
+                level::INFO,
                 format_args!("strudel-core-http: fatal integration error: {error}"),
             );
         }

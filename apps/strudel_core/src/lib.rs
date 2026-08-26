@@ -154,8 +154,26 @@ impl StrudelCore {
     /// Pump QuickJS jobs and refill the host-owned PCM lane to the configured
     /// lookahead. This method never waits on the browser or HTTP server.
     pub fn pump(&mut self) -> Result<PumpReport, String> {
+        let first_pump = self.absolute_frame == 0;
+        if first_pump {
+            logl::log(level::INFO, "strudel_core: first-pump stage=qjs-poll-begin");
+        }
         let mut diagnostics = self.vm.poll();
+        if first_pump {
+            logl::log(level::INFO, "strudel_core: first-pump stage=qjs-poll-ready");
+            logl::log(level::INFO, "strudel_core: first-pump stage=midi-read-begin");
+        }
         let (midi_events, next_seq, dropped) = trueos::hid::midi_read_v1(self.midi_read_seq, 64);
+        if first_pump {
+            logl::log(
+                level::INFO,
+                format_args!(
+                    "strudel_core: first-pump stage=midi-read-ready events={} dropped={}",
+                    midi_events.len(),
+                    dropped,
+                ),
+            );
+        }
         self.midi_read_seq = next_seq;
         if dropped != 0 {
             diagnostics.push_str("; MIDI input ring dropped events");
@@ -169,8 +187,21 @@ impl StrudelCore {
                 0,
             ));
         }
+        if first_pump {
+            logl::log(level::INFO, "strudel_core: first-pump stage=keyboard-read-begin");
+        }
+        let keyboards = trueos::hid::hid_hut_keyboards();
+        if first_pump {
+            logl::log(
+                level::INFO,
+                format_args!(
+                    "strudel_core: first-pump stage=keyboard-read-ready devices={}",
+                    keyboards.len(),
+                ),
+            );
+        }
         let mut next_keyboard_held = Vec::new();
-        for keyboard in trueos::hid::hid_hut_keyboards() {
+        for keyboard in keyboards {
             let device = keyboard
                 .controller_id
                 .wrapping_mul(0x9E37_79B9)
@@ -207,7 +238,21 @@ impl StrudelCore {
         }
         self.keyboard_held = next_keyboard_held;
 
-        if let Some(mouse) = trueos::hid::mouse_poll() {
+        if first_pump {
+            logl::log(level::INFO, "strudel_core: first-pump stage=mouse-read-begin");
+        }
+        let mouse = trueos::hid::mouse_poll();
+        if first_pump {
+            logl::log(
+                level::INFO,
+                format_args!(
+                    "strudel_core: first-pump stage=mouse-read-ready present={}",
+                    u8::from(mouse.is_some()),
+                ),
+            );
+            logl::log(level::INFO, "strudel_core: first-pump stage=queue-read-begin");
+        }
+        if let Some(mouse) = mouse {
             if mouse.seq != self.mouse_seq {
                 self.mouse_seq = mouse.seq;
                 let gate = mouse.buttons & 1 != 0;
@@ -229,22 +274,62 @@ impl StrudelCore {
             .audio
             .queued_frames()
             .map_err(|code| format!("audio queued-frames failed rc={code}"))?;
+        if first_pump {
+            logl::log(
+                level::INFO,
+                format_args!("strudel_core: first-pump stage=queue-read-ready frames={queued}"),
+            );
+        }
 
         while queued < self.target_queue_frames {
+            let trace_block = first_pump && self.absolute_frame == 0;
             let input_batch = self
                 .performance_inputs
                 .take_through(self.absolute_frame.saturating_add(BLOCK_FRAMES as u64));
             if !input_batch.is_empty() {
+                if trace_block {
+                    logl::log(
+                        level::INFO,
+                        format_args!(
+                            "strudel_core: first-pump stage=input-apply-begin events={}",
+                            input_batch.len(),
+                        ),
+                    );
+                }
                 self.vm.apply_performance_inputs(&input_batch)?;
+                if trace_block {
+                    logl::log(level::INFO, "strudel_core: first-pump stage=input-apply-ready");
+                }
+            }
+            if trace_block {
+                logl::log(level::INFO, "strudel_core: first-pump stage=pattern-query-begin");
             }
             let commands = self.vm.query_native_commands(
                 self.absolute_frame,
                 BLOCK_FRAMES as u32,
                 SAMPLE_RATE_HZ,
             )?;
+            if trace_block {
+                logl::log(
+                    level::INFO,
+                    format_args!(
+                        "strudel_core: first-pump stage=pattern-query-ready commands={}",
+                        commands.len(),
+                    ),
+                );
+                logl::log(level::INFO, "strudel_core: first-pump stage=native-render-begin");
+            }
             let header =
                 NativeBlockHeaderV3::new(BLOCK_FRAMES as u32, self.absolute_frame, self.revision);
             let frames = self.audio.render_native(&header, &commands)?;
+            if trace_block {
+                logl::log(
+                    level::INFO,
+                    format_args!(
+                        "strudel_core: first-pump stage=native-render-ready frames={frames}"
+                    ),
+                );
+            }
             if frames != BLOCK_FRAMES {
                 return Err(format!(
                     "short completed audio block: wrote {frames}, expected {BLOCK_FRAMES}"

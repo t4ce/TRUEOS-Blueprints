@@ -10,8 +10,8 @@ use alloc::{
     vec,
     vec::Vec,
 };
-use core::net::{IpAddr, Ipv4Addr, SocketAddr};
 use core::sync::atomic::{AtomicU16, Ordering};
+use core::net::{IpAddr, SocketAddr, Ipv4Addr};
 
 use axum::{
     Json, Router,
