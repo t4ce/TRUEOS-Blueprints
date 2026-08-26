@@ -1,0 +1,11 @@
+{
+  "output": "tests/reference-demo-2s.wav",
+  "sampleRate": 48000,
+  "channels": 2,
+  "frames": 96000,
+  "seconds": 2,
+  "peak": 20246,
+  "rms": 9906.386133287802,
+  "nonZeroSamples": 191991,
+  "sha256": "96df96c82189dcb419869daa9a9f249d4a00373014c4a2923874b2cba0b51dd6"
+}

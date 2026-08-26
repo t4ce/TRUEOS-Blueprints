@@ -46,6 +46,7 @@
       "path": "buildins/shell"
     },
     "qjs",
+    "strudel_core",
     "monaco",
     "Frog",
     "Player",

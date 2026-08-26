@@ -1,0 +1,24 @@
+{
+  "pattern": "sequence(\"a\", [\"b\", \"c\"])",
+  "arc": [
+    0,
+    1
+  ],
+  "events": [
+    {
+      "value": "a",
+      "begin": 0,
+      "end": 0.5
+    },
+    {
+      "value": "b",
+      "begin": 0.5,
+      "end": 0.75
+    },
+    {
+      "value": "c",
+      "begin": 0.75,
+      "end": 1.0
+    }
+  ]
+}

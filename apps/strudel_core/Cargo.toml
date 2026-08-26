@@ -1,0 +1,21 @@
+[package]
+name = "strudel_core"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[[bin]]
+name = "strudel_core"
+path = "src/main.rs"
+
+[dependencies]
+trueos-qjs = { path = "../qjs/crates/trueos-qjs", features = ["trueos"] }
+
+[target.'cfg(any(target_os = "trueos", target_os = "zkvm"))'.dependencies]
+trueos = { path = "../../api" }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("trueos", "zkvm"))'] }
+
+[workspace]
+resolver = "3"
