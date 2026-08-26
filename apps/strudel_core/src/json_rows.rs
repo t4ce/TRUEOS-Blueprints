@@ -15,6 +15,20 @@ const EVENT_COLUMNS: usize = 8;
 /// experiment. It deliberately rejects strings, floats, objects and trailing
 /// garbage.
 pub fn parse_event_rows(source: &str) -> Result<Vec<RenderEvent>, &'static str> {
+    let rows = parse_integer_rows(source)?;
+    let mut events = Vec::with_capacity(rows.len());
+    for row in rows {
+        let columns: [i64; EVENT_COLUMNS] =
+            row.try_into().map_err(|_| "wrong event column count")?;
+        events.push(row_to_event(columns)?);
+    }
+    Ok(events)
+}
+
+/// Parse an integer-only JSON matrix. This is shared by the legacy event
+/// boundary and the v1 native command boundary; strings, floats, objects and
+/// trailing data are deliberately rejected before they reach audio code.
+pub fn parse_integer_rows(source: &str) -> Result<Vec<Vec<i64>>, &'static str> {
     let mut parser = Parser::new(source.as_bytes());
     parser.space();
     parser.byte(b'[')?;
@@ -29,20 +43,20 @@ pub fn parse_event_rows(source: &str) -> Result<Vec<RenderEvent>, &'static str> 
     loop {
         parser.space();
         parser.byte(b'[')?;
-        let mut columns = [0i64; EVENT_COLUMNS];
-
-        for (index, column) in columns.iter_mut().enumerate() {
+        let mut columns = Vec::new();
+        loop {
             parser.space();
-            *column = parser.integer()?;
+            columns.push(parser.integer()?);
             parser.space();
-            if index + 1 < EVENT_COLUMNS {
-                parser.byte(b',')?;
+            if parser.take(b',') {
+                continue;
             }
+            break;
         }
 
         parser.space();
         parser.byte(b']')?;
-        events.push(row_to_event(columns)?);
+        events.push(columns);
         parser.space();
 
         if parser.take(b',') {

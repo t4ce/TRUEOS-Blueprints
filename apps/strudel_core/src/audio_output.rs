@@ -3,12 +3,15 @@ extern crate alloc;
 use alloc::{format, string::String};
 
 use trueos::{
-    audio::{PlaybackParams, Stream, ERR_BUSY},
+    audio::{
+        NativeBlockHeaderV1, NativeEngine, NativeRenderCommandV1, PlaybackParams, Stream, ERR_BUSY,
+    },
     vsys,
 };
 
 pub struct AudioOutput {
     stream: Stream,
+    native: NativeEngine,
 }
 
 impl AudioOutput {
@@ -18,7 +21,10 @@ impl AudioOutput {
         stream
             .start()
             .map_err(|code| format!("audio start failed rc={code}"))?;
-        Ok(Self { stream })
+        Ok(Self {
+            native: NativeEngine::from_stream(stream),
+            stream,
+        })
     }
 
     pub fn queued_frames(&self) -> Result<usize, i32> {
@@ -27,6 +33,18 @@ impl AudioOutput {
 
     pub fn buffer_frames(&self) -> Result<usize, i32> {
         self.stream.buffer_frames()
+    }
+
+    /// Submit a fully validated block to the v1 native scheduler. `write_all`
+    /// below deliberately remains for the existing PCM fallback path.
+    pub fn render_native(
+        &self,
+        header: &NativeBlockHeaderV1,
+        commands: &[NativeRenderCommandV1],
+    ) -> Result<usize, String> {
+        self.native
+            .render(header, commands)
+            .map_err(|error| format!("native audio render failed: {error:?}"))
     }
 
     /// Write a complete interleaved stereo block, retrying the bounded queue on
@@ -40,10 +58,7 @@ impl AudioOutput {
         let mut sample_offset = 0usize;
         let mut frame_total = 0usize;
         while sample_offset < samples.len() {
-            match self
-                .stream
-                .write_interleaved_i16(&samples[sample_offset..])
-            {
+            match self.stream.write_interleaved_i16(&samples[sample_offset..]) {
                 Ok(0) => {
                     vsys::poll_once();
                     vsys::sleep_ms(1);

@@ -72,6 +72,8 @@ two-second decoded PCM regions with SHA-256
 no buffer-sized silent gap, and a peak of -4.18 dBFS. See
 `docs/TARGET_PROOF.md`.
 
-`js/vendor/strudel-core.bundle.js` remains the optional upstream bundle slot.
-Until it is generated, the independently written fallback provides the proven
-small temporal surface.
+`js/vendor/strudel-core.bundle.js` is a checked-in upstream Strudel 1.2.6
+QuickJS IIFE covering temporal/core, mini notation, tonal transforms, and
+voicing exports. It deliberately excludes WebAudio/SuperDough/browser audio;
+the fallback remains available if the upstream bundle cannot load. Rebuild and
+license/provenance details are in `js/vendor/`.

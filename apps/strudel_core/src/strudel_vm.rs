@@ -5,7 +5,8 @@ use core::fmt::Write as _;
 
 use trueos_qjs::workbench::{EvalMode, Workbench};
 
-use crate::{event::RenderEvent, json_rows::parse_event_rows};
+use crate::native_rows::parse_native_command_rows;
+use trueos::audio::NativeRenderCommandV1;
 
 const UPSTREAM_BUNDLE: &str = include_str!("../js/vendor/strudel-core.bundle.js");
 const FALLBACK_CORE: &str = include_str!("../js/00_fallback_core.js");
@@ -59,19 +60,29 @@ impl StrudelVm {
         )
     }
 
-    pub fn query_frames(
+    /// Query typed ABI commands from the VM boundary. The current adapter's
+    /// legacy eight-column output is accepted by `native_rows`; a future adapter
+    /// can emit the documented 23-column native schema directly.
+    pub fn query_native_commands(
         &mut self,
         absolute_start_frame: u64,
         block_frames: u32,
         sample_rate_hz: u32,
-        cps_numerator: u32,
-        cps_denominator: u32,
-    ) -> Result<Vec<RenderEvent>, String> {
+    ) -> Result<Vec<NativeRenderCommandV1>, String> {
         let source = format!(
-            "globalThis.__TRUEOS_STRUDEL.queryFrames({absolute_start_frame},{block_frames},{sample_rate_hz},{cps_numerator},{cps_denominator})"
+            "globalThis.__TRUEOS_STRUDEL.queryFrames({absolute_start_frame},{block_frames},{sample_rate_hz})"
         );
         let text = self.eval(&source, "pattern query")?;
-        parse_event_rows(&text).map_err(|error| format!("event-row parse failed: {error}; text={text}"))
+        parse_native_command_rows(&text)
+            .map_err(|error| format!("native-command parse failed: {error}; text={text}"))
+    }
+
+    pub fn cps(&mut self) -> Result<(u32, u32), String> {
+        let text = self.eval(
+            "JSON.stringify([globalThis.__TRUEOS_STRUDEL.status().cpsNumerator,globalThis.__TRUEOS_STRUDEL.status().cpsDenominator])",
+            "runtime CPS status",
+        )?;
+        parse_cps(&text)
     }
 
     pub fn poll(&mut self) -> String {
@@ -93,6 +104,17 @@ impl StrudelVm {
             return Err(format!("{label}: {}", result.text));
         }
         Ok(result.text)
+    }
+}
+
+fn parse_cps(text: &str) -> Result<(u32, u32), String> {
+    let trimmed = text.trim().trim_matches('[').trim_matches(']');
+    let mut parts = trimmed.split(',');
+    let numerator = parts.next().and_then(|v| v.trim().parse().ok());
+    let denominator = parts.next().and_then(|v| v.trim().parse().ok());
+    match (numerator, denominator) {
+        (Some(n), Some(d)) if n > 0 && d > 0 => Ok((n, d)),
+        _ => Err(format!("invalid runtime CPS status: {text}")),
     }
 }
 
@@ -128,7 +150,7 @@ fn js_string_literal(source: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::js_string_literal;
+    use super::{js_string_literal, parse_cps};
 
     #[test]
     fn quotes_live_editor_source_for_javascript() {
@@ -137,5 +159,11 @@ mod tests {
             "\"sequence(\\\"c4\\\", `g4`)\\n// x\\\\y\""
         );
         assert_eq!(js_string_literal("\u{2028}\u{2029}"), "\"\\u2028\\u2029\"");
+    }
+
+    #[test]
+    fn parses_runtime_cps_status() {
+        assert_eq!(parse_cps("[3,4]"), Ok((3, 4)));
+        assert!(parse_cps("[0,2]").is_err());
     }
 }

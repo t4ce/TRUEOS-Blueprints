@@ -5,6 +5,7 @@ extern crate alloc;
 mod audio_output;
 mod event;
 mod json_rows;
+mod native_rows;
 mod renderer;
 mod strudel_vm;
 mod tables;
@@ -12,8 +13,8 @@ mod tables;
 use alloc::{format, string::String};
 
 use audio_output::AudioOutput;
-use renderer::render_block;
 use strudel_vm::StrudelVm;
+use trueos::audio::NativeBlockHeaderV1;
 
 pub const SAMPLE_RATE_HZ: u32 = 48_000;
 pub const BLOCK_FRAMES: usize = 2_400; // 50 ms
@@ -34,6 +35,8 @@ pub struct CoreSnapshot {
     pub queued_frames: usize,
     pub target_queue_frames: usize,
     pub buffer_frames: usize,
+    pub cps_numerator: u32,
+    pub cps_denominator: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -61,6 +64,8 @@ pub struct StrudelCore {
     last_queued_frames: usize,
     target_queue_frames: usize,
     buffer_frames: usize,
+    cps_numerator: u32,
+    cps_denominator: u32,
 }
 
 impl StrudelCore {
@@ -89,6 +94,8 @@ impl StrudelCore {
             last_queued_frames,
             target_queue_frames,
             buffer_frames,
+            cps_numerator: CPS_NUMERATOR,
+            cps_denominator: CPS_DENOMINATOR,
         })
     }
 
@@ -102,15 +109,14 @@ impl StrudelCore {
             .map_err(|code| format!("audio queued-frames failed rc={code}"))?;
 
         while queued < self.target_queue_frames {
-            let events = self.vm.query_frames(
+            let commands = self.vm.query_native_commands(
                 self.absolute_frame,
                 BLOCK_FRAMES as u32,
                 SAMPLE_RATE_HZ,
-                CPS_NUMERATOR,
-                CPS_DENOMINATOR,
             )?;
-            let samples = render_block(BLOCK_FRAMES, &events);
-            let frames = self.audio.write_all(&samples)?;
+            let header =
+                NativeBlockHeaderV1::new(BLOCK_FRAMES as u32, self.absolute_frame, self.revision);
+            let frames = self.audio.render_native(&header, &commands)?;
             if frames != BLOCK_FRAMES {
                 return Err(format!(
                     "short completed audio block: wrote {frames}, expected {BLOCK_FRAMES}"
@@ -143,10 +149,13 @@ impl StrudelCore {
         }
 
         let runtime_status_json = self.vm.commit_expression(source)?;
+        let (cps_numerator, cps_denominator) = self.vm.cps()?;
         self.active_source.clear();
         self.active_source.push_str(source);
         self.runtime_status_json = runtime_status_json.clone();
         self.revision = self.revision.saturating_add(1);
+        self.cps_numerator = cps_numerator;
+        self.cps_denominator = cps_denominator;
 
         Ok(CommitReport {
             revision: self.revision,
@@ -166,6 +175,8 @@ impl StrudelCore {
                 .unwrap_or(self.last_queued_frames),
             target_queue_frames: self.target_queue_frames,
             buffer_frames: self.buffer_frames,
+            cps_numerator: self.cps_numerator,
+            cps_denominator: self.cps_denominator,
         }
     }
 }

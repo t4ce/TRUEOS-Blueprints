@@ -27,6 +27,9 @@
   let pattern = core.silence;
   let revision = 0;
   let committing = false;
+  let cpsNumerator = 1;
+  let cpsDenominator = 2;
+  let pendingCps = null;
 
   // The browser sends one plain JavaScript expression. Install the available
   // pattern-engine exports globally so that expression can use sequence(),
@@ -38,6 +41,30 @@
     installedCoreGlobals.push(name);
   }
   installedCoreGlobals.sort();
+
+  function cpsFraction(value) {
+    value = finiteNumber(value);
+    if (!(value > 0) || !Number.isFinite(value)) throw new RangeError("setcps expects a finite positive number");
+    // Keep a stable, bounded rational across the JS/Rust boundary.
+    const denominator = 1000000;
+    let numerator = Math.round(value * denominator);
+    if (numerator <= 0) throw new RangeError("setcps expects a finite positive number");
+    let a = numerator;
+    let b = denominator;
+    while (b) {
+      const t = a % b;
+      a = b;
+      b = t;
+    }
+    return [numerator / a, denominator / a];
+  }
+
+  function setcps(value) {
+    if (!committing) throw new Error("setcps is only valid inside a pattern commit");
+    pendingCps = cpsFraction(value);
+    return core.silence;
+  }
+  G.setcps = setcps;
 
   function finiteNumber(value) {
     if (typeof value === "number") return Number.isFinite(value) ? value : NaN;
@@ -139,6 +166,8 @@
       version: runtimeVersion,
       origin: runtimeOrigin,
       revision,
+      cpsNumerator,
+      cpsDenominator,
       exports: installedCoreGlobals.length,
     };
   }
@@ -148,6 +177,11 @@
       throw new TypeError("commitExpression expects a Strudel Pattern");
     }
     pattern = nextPattern;
+    if (pendingCps) {
+      cpsNumerator = pendingCps[0];
+      cpsDenominator = pendingCps[1];
+    }
+    pendingCps = null;
     revision += 1;
     return status();
   }
@@ -167,6 +201,7 @@
     }
 
     committing = true;
+    pendingCps = [cpsNumerator, cpsDenominator];
     try {
       let candidate;
       try {
@@ -183,6 +218,7 @@ ${source}
       // Validation occurs before assignment, so failure preserves playback.
       return acceptPattern(candidate);
     } finally {
+      pendingCps = null;
       committing = false;
     }
   }
@@ -191,13 +227,11 @@ ${source}
     absoluteStartFrame,
     blockFrames,
     sampleRate,
-    cpsNumerator,
-    cpsDenominator,
   ) {
     absoluteStartFrame = Math.trunc(Number(absoluteStartFrame));
     blockFrames = Math.trunc(Number(blockFrames));
     sampleRate = Math.trunc(Number(sampleRate));
-    const cps = Number(cpsNumerator) / Number(cpsDenominator);
+    const cps = cpsNumerator / cpsDenominator;
     if (
       absoluteStartFrame < 0 ||
       blockFrames <= 0 ||

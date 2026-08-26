@@ -106,6 +106,8 @@ impl From<CoreSnapshot> for PublicState {
             queued_frames,
             target_queue_frames,
             buffer_frames,
+            cps_numerator,
+            cps_denominator,
         } = snapshot;
         let runtime = serde_json::from_str::<Value>(runtime_status_json.as_str())
             .unwrap_or_else(|_| serde_json::json!({ "raw": runtime_status_json }));
@@ -119,8 +121,8 @@ impl From<CoreSnapshot> for PublicState {
             buffer_frames,
             sample_rate_hz: SAMPLE_RATE_HZ,
             block_frames: BLOCK_FRAMES,
-            cps_numerator: CPS_NUMERATOR,
-            cps_denominator: CPS_DENOMINATOR,
+            cps_numerator,
+            cps_denominator,
         }
     }
 }

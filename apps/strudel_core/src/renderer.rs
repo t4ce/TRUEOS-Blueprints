@@ -31,9 +31,7 @@ pub fn render_block(frame_count: usize, events: &[RenderEvent]) -> Vec<i16> {
 
         let increment = MIDI_PHASE_INC_Q32[event.midi_note as usize];
         let mut phase = u32::try_from(
-            u64::from(increment)
-                .wrapping_mul(event.age_frames)
-                & u64::from(u32::MAX),
+            u64::from(increment).wrapping_mul(event.age_frames) & u64::from(u32::MAX),
         )
         .unwrap_or(0);
 
@@ -83,8 +81,7 @@ fn envelope_q15(age: u64, duration: u64) -> i64 {
     let release = if remaining >= RELEASE_FRAMES {
         Q15_ONE
     } else {
-        i64::try_from(remaining.saturating_mul(Q15_ONE as u64) / RELEASE_FRAMES)
-            .unwrap_or(Q15_ONE)
+        i64::try_from(remaining.saturating_mul(Q15_ONE as u64) / RELEASE_FRAMES).unwrap_or(Q15_ONE)
     };
 
     attack.min(release)

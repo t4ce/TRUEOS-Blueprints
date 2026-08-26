@@ -58,4 +58,26 @@ if (JSON.stringify(bridge.queryFrames(0, 2400, 48000, 1, 2)) !== beforeFailure) 
 }
 if (bridge.status().revision !== 2) throw new Error("nested commit changed the revision");
 
+// CPS is part of the same transaction as the Pattern. It also changes the
+// temporal mapping for later absolute-frame queries.
+const beforeCpsFrame = 48000;
+const cpsCommit = bridge.commitExpression('setcps(0.75), sequence("c4")');
+if (cpsCommit.cpsNumerator !== 3 || cpsCommit.cpsDenominator !== 4) {
+  throw new Error(`setcps was not committed: ${JSON.stringify(cpsCommit)}`);
+}
+const cpsRows = JSON.stringify(bridge.queryFrames(beforeCpsFrame, 2400, 48000));
+let cpsFailed = false;
+try {
+  bridge.commitExpression('setcps(0.25), ({ not: "a pattern" })');
+} catch (error) {
+  cpsFailed = /expects a Strudel Pattern/.test(String(error));
+}
+if (!cpsFailed) throw new Error("invalid CPS commit did not fail");
+if (bridge.status().cpsNumerator !== 3 || bridge.status().cpsDenominator !== 4) {
+  throw new Error("failed commit changed CPS");
+}
+if (JSON.stringify(bridge.queryFrames(beforeCpsFrame, 2400, 48000)) !== cpsRows) {
+  throw new Error("failed commit changed absolute-frame query state");
+}
+
 console.log("strudel_core live expression smoke passed");

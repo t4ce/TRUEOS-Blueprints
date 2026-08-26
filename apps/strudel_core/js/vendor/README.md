@@ -1,8 +1,10 @@
 # Generated vendor area
 
-`strudel-core.bundle.js` is a placeholder in this archive.
+`strudel-core.bundle.js` is the checked-in upstream Strudel 1.2.6 temporal,
+mini, tonal, and voicing bundle. It is an IIFE so QuickJS can evaluate it
+without module loading.
 
-Run `tools/vendor-strudel-core.mjs` to replace it with a pinned, self-contained
-IIFE built from `@strudel/core/pattern.mjs`. The tool also writes
-`vendor-lock.json` and copies available upstream license files under
-`licenses/`.
+Rebuild it with `node tools/vendor-strudel-core.mjs`. The reproducible npm
+inputs are in `tools/strudel-upstream/package.json` and `package-lock.json`.
+The build fails if browser audio symbols enter the output. See `PROVENANCE.md`
+for upstream versions and licensing.
