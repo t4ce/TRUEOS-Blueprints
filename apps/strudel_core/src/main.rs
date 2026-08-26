@@ -4,9 +4,7 @@ mod server;
 
 use trueos::{
     logl::{self, level},
-    platform,
-    runtime,
-    tokio,
+    platform, runtime, tokio,
 };
 
 fn main() {
@@ -21,8 +19,16 @@ fn main() {
             return;
         }
     };
+    logl::log(
+        level::INFO,
+        "strudel-core-http: startup stage=runtime-ready",
+    );
 
     let local = tokio::task::LocalSet::new();
+    logl::log(
+        level::INFO,
+        "strudel-core-http: startup stage=local-runtime-enter",
+    );
     local.block_on(&runtime, async {
         if let Err(error) = server::run().await {
             logl::log(

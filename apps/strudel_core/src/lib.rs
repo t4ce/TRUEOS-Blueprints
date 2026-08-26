@@ -15,7 +15,10 @@ use alloc::{format, string::String, vec::Vec};
 
 use audio_output::AudioOutput;
 use strudel_vm::StrudelVm;
-use trueos::audio::NativeBlockHeaderV3;
+use trueos::{
+    audio::NativeBlockHeaderV3,
+    logl::{self, level},
+};
 
 pub use performance_input::{PerformanceInputSource, PerformanceInputV1};
 
@@ -77,10 +80,48 @@ pub struct StrudelCore {
 
 impl StrudelCore {
     pub fn boot() -> Result<Self, String> {
+        logl::log(level::INFO, "strudel_core: startup stage=qjs-create-begin");
         let mut vm = StrudelVm::new();
+        logl::log(level::INFO, "strudel_core: startup stage=qjs-install-begin");
         let install = vm.install()?;
+        logl::log(level::INFO, "strudel_core: startup stage=qjs-install-ready");
 
+        match trueos::audio::endpoint_capabilities_v1() {
+            Ok(caps) if caps.ready != 0 => logl::log(
+                level::INFO,
+                format_args!(
+                    "strudel_core: hda endpoint v{} ready={} active={}Hz/{}ch/{}bit frame_bytes={} dma_frames={} lane_frames={} oss={} addr64={} paths={} selected_path={} dac_pcm_rates={:#010X} dac_stream_formats={:#010X}",
+                    caps.version,
+                    caps.ready,
+                    caps.sample_rate_hz,
+                    caps.active_channels,
+                    caps.active_sample_bits,
+                    caps.active_frame_bytes,
+                    caps.dma_buffer_frames,
+                    caps.queued_pcm_lane_frames,
+                    caps.controller_output_streams,
+                    caps.controller_addr64,
+                    caps.output_path_count,
+                    caps.selected_output_path_index,
+                    caps.selected_dac_pcm_rates,
+                    caps.selected_dac_stream_formats,
+                ),
+            ),
+            Ok(caps) => logl::log(
+                level::WARN,
+                format_args!(
+                    "strudel_core: hda endpoint v{} unavailable ready={} (audio open will report its own error)",
+                    caps.version, caps.ready
+                ),
+            ),
+            Err(error) => logl::log(
+                level::WARN,
+                format_args!("strudel_core: hda endpoint capability query failed rc={error}"),
+            ),
+        }
+        logl::log(level::INFO, "strudel_core: startup stage=audio-open-begin");
         let audio = AudioOutput::open()?;
+        logl::log(level::INFO, "strudel_core: startup stage=audio-open-ready");
         let buffer_frames = audio
             .buffer_frames()
             .unwrap_or(DEFAULT_TARGET_QUEUE_FRAMES * 4);

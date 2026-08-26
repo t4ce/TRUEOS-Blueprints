@@ -12,6 +12,93 @@ pub const ERR_INVALID: i32 = -22;
 pub const ERR_NO_DEVICE: i32 = -19;
 const INVALID_CURSOR: u64 = u64::MAX;
 
+/// Versioned read-only host HDA playback endpoint snapshot.
+///
+/// `ready == 0` is a successful unavailable result. The active stream stays
+/// fixed; advertised masks describe the selected DAC rather than requesting a
+/// format switch.
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct AudioEndpointCapabilitiesV1 {
+    pub version: u16,
+    pub size: u16,
+    pub sample_rate_hz: u32,
+    pub dma_buffer_frames: u32,
+    pub queued_pcm_lane_frames: u32,
+    pub selected_dac_pcm_rates: u32,
+    pub selected_dac_stream_formats: u32,
+    pub controller_output_streams: u8,
+    pub active_channels: u8,
+    pub active_sample_bits: u8,
+    pub active_frame_bytes: u8,
+    pub ready: u8,
+    pub controller_addr64: u8,
+    pub output_path_count: u8,
+    pub selected_output_path_index: u8,
+    pub reserved1: u64,
+    pub reserved2: u64,
+}
+
+impl AudioEndpointCapabilitiesV1 {
+    pub const VERSION: u16 = 1;
+    pub const SIZE: u16 = core::mem::size_of::<Self>() as u16;
+
+    pub const fn unavailable() -> Self {
+        Self {
+            version: Self::VERSION,
+            size: Self::SIZE,
+            sample_rate_hz: 0,
+            dma_buffer_frames: 0,
+            queued_pcm_lane_frames: 0,
+            selected_dac_pcm_rates: 0,
+            selected_dac_stream_formats: 0,
+            controller_output_streams: 0,
+            active_channels: 0,
+            active_sample_bits: 0,
+            active_frame_bytes: 0,
+            ready: 0,
+            controller_addr64: 0,
+            output_path_count: 0,
+            selected_output_path_index: 0,
+            reserved1: 0,
+            reserved2: 0,
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), AudioEndpointCapabilitiesValidationError> {
+        if self.version != Self::VERSION || self.size != Self::SIZE {
+            return Err(AudioEndpointCapabilitiesValidationError::BadVersionOrSize);
+        }
+        if self.reserved1 != 0 || self.reserved2 != 0 {
+            return Err(AudioEndpointCapabilitiesValidationError::ReservedNonZero);
+        }
+        if self.ready > 1 {
+            return Err(AudioEndpointCapabilitiesValidationError::BadReady);
+        }
+        if self.ready == 0 && *self != Self::unavailable() {
+            return Err(AudioEndpointCapabilitiesValidationError::UnavailableNotZeroed);
+        }
+        Ok(())
+    }
+}
+
+impl Default for AudioEndpointCapabilitiesV1 {
+    fn default() -> Self {
+        Self::unavailable()
+    }
+}
+
+const _: [(); 48] = [(); core::mem::size_of::<AudioEndpointCapabilitiesV1>()];
+const _: [(); 8] = [(); core::mem::align_of::<AudioEndpointCapabilitiesV1>()];
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum AudioEndpointCapabilitiesValidationError {
+    BadVersionOrSize,
+    ReservedNonZero,
+    BadReady,
+    UnavailableNotZeroed,
+}
+
 pub const NATIVE_AUDIO_MAGIC_V1: u32 = 0x314E_5254;
 pub const NATIVE_AUDIO_VERSION_V1: u16 = 1;
 pub const NATIVE_COMMAND_SIZE_V1: u16 = 80;
@@ -114,21 +201,40 @@ impl NativeBlockHeaderV2 {
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct NativeBlockHeaderV3 {
-    pub magic: u32, pub version: u16, pub command_size: u16, pub block_frames: u32,
-    pub sample_rate_hz: u32, pub absolute_frame: u64, pub revision: u64,
-    pub flags: u32, pub reserved: u32,
+    pub magic: u32,
+    pub version: u16,
+    pub command_size: u16,
+    pub block_frames: u32,
+    pub sample_rate_hz: u32,
+    pub absolute_frame: u64,
+    pub revision: u64,
+    pub flags: u32,
+    pub reserved: u32,
 }
 
 impl NativeBlockHeaderV3 {
     pub const fn new(block_frames: u32, absolute_frame: u64, revision: u64) -> Self {
-        Self { magic: NATIVE_AUDIO_MAGIC_V1, version: NATIVE_AUDIO_VERSION_V3,
-            command_size: NATIVE_COMMAND_SIZE_V3, block_frames, sample_rate_hz: DEFAULT_RATE_HZ,
-            absolute_frame, revision, flags: 0, reserved: 0 }
+        Self {
+            magic: NATIVE_AUDIO_MAGIC_V1,
+            version: NATIVE_AUDIO_VERSION_V3,
+            command_size: NATIVE_COMMAND_SIZE_V3,
+            block_frames,
+            sample_rate_hz: DEFAULT_RATE_HZ,
+            absolute_frame,
+            revision,
+            flags: 0,
+            reserved: 0,
+        }
     }
     pub fn validate(&self) -> Result<(), NativeValidationError> {
-        if self.magic != NATIVE_AUDIO_MAGIC_V1 || self.version != NATIVE_AUDIO_VERSION_V3
-            || self.command_size != NATIVE_COMMAND_SIZE_V3 || self.block_frames == 0
-            || self.sample_rate_hz == 0 || self.flags != 0 || self.reserved != 0 {
+        if self.magic != NATIVE_AUDIO_MAGIC_V1
+            || self.version != NATIVE_AUDIO_VERSION_V3
+            || self.command_size != NATIVE_COMMAND_SIZE_V3
+            || self.block_frames == 0
+            || self.sample_rate_hz == 0
+            || self.flags != 0
+            || self.reserved != 0
+        {
             return Err(NativeValidationError::BadHeader);
         }
         Ok(())
@@ -171,16 +277,39 @@ pub struct NativeRenderCommandV1 {
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct NativeRenderCommandV2 {
-    pub start_frame: u32, pub end_frame: u32, pub age_frames: u32, pub duration_frames: u32,
-    pub source_id: u64, pub voice_id: u32, pub kind: u16, pub waveform: u8, pub midi_note: u8,
-    pub gain_q15: u16, pub pan_q15: i16, pub playback_rate_q16: i32,
-    pub sample_begin_q16: u32, pub sample_end_q16: u32,
-    pub lpf_hz: u16, pub lpq_q8: u16, pub room_q15: u16, pub delay_q15: u16,
-    pub phaser_q15: u16, pub shape_q15: u16, pub fm_depth_q8: u16, pub fm_rate_q8: u16,
-    pub flags: u32, pub reserved0: u32, pub reserved1: u32, pub reserved2: u32,
-    pub attack_frames: u32, pub decay_frames: u32, pub release_frames: u32,
-    pub filter_attack_frames: u32, pub filter_decay_frames: u32,
-    pub sustain_q15: u16, pub filter_env_octaves_q8: i16,
+    pub start_frame: u32,
+    pub end_frame: u32,
+    pub age_frames: u32,
+    pub duration_frames: u32,
+    pub source_id: u64,
+    pub voice_id: u32,
+    pub kind: u16,
+    pub waveform: u8,
+    pub midi_note: u8,
+    pub gain_q15: u16,
+    pub pan_q15: i16,
+    pub playback_rate_q16: i32,
+    pub sample_begin_q16: u32,
+    pub sample_end_q16: u32,
+    pub lpf_hz: u16,
+    pub lpq_q8: u16,
+    pub room_q15: u16,
+    pub delay_q15: u16,
+    pub phaser_q15: u16,
+    pub shape_q15: u16,
+    pub fm_depth_q8: u16,
+    pub fm_rate_q8: u16,
+    pub flags: u32,
+    pub reserved0: u32,
+    pub reserved1: u32,
+    pub reserved2: u32,
+    pub attack_frames: u32,
+    pub decay_frames: u32,
+    pub release_frames: u32,
+    pub filter_attack_frames: u32,
+    pub filter_decay_frames: u32,
+    pub sustain_q15: u16,
+    pub filter_env_octaves_q8: i16,
 }
 
 impl NativeRenderCommandV2 {
@@ -468,7 +597,9 @@ impl NativeEngine {
         header: &NativeBlockHeaderV2,
         commands: &[NativeRenderCommandV2],
     ) -> Result<usize, NativeValidationErrorOrCode> {
-        header.validate().map_err(NativeValidationErrorOrCode::Validation)?;
+        header
+            .validate()
+            .map_err(NativeValidationErrorOrCode::Validation)?;
         for command in commands {
             command
                 .validate(header.block_frames)
@@ -494,14 +625,27 @@ impl NativeEngine {
         header: &NativeBlockHeaderV3,
         commands: &[NativeRenderCommandV3],
     ) -> Result<usize, NativeValidationErrorOrCode> {
-        header.validate().map_err(NativeValidationErrorOrCode::Validation)?;
+        header
+            .validate()
+            .map_err(NativeValidationErrorOrCode::Validation)?;
         for command in commands {
-            command.validate(header.block_frames).map_err(NativeValidationErrorOrCode::Validation)?;
+            command
+                .validate(header.block_frames)
+                .map_err(NativeValidationErrorOrCode::Validation)?;
         }
         let result = unsafe {
-            vcabi::trueos_cabi_audio_native_render_v3(self.stream.handle, header, commands.as_ptr(), commands.len())
+            vcabi::trueos_cabi_audio_native_render_v3(
+                self.stream.handle,
+                header,
+                commands.as_ptr(),
+                commands.len(),
+            )
         };
-        if result < 0 { Err(NativeValidationErrorOrCode::Code(result as i32)) } else { Ok(result as usize) }
+        if result < 0 {
+            Err(NativeValidationErrorOrCode::Code(result as i32))
+        } else {
+            Ok(result as usize)
+        }
     }
 
     pub fn register_sample(
@@ -556,6 +700,24 @@ pub fn play_i16_stereo_48k(samples: &[i16]) -> Result<usize, i32> {
     frames_result(frames)
 }
 
+/// Read the host-owned HDA endpoint snapshot. This does not open, start, or
+/// reconfigure playback; `Ok(caps)` with `caps.ready == 0` is the truthful
+/// no-hardware/not-ready result.
+pub fn endpoint_capabilities_v1() -> Result<AudioEndpointCapabilitiesV1, i32> {
+    let mut caps = AudioEndpointCapabilitiesV1::unavailable();
+    let rc = unsafe {
+        vcabi::trueos_cabi_audio_endpoint_caps_v1(
+            &mut caps,
+            core::mem::size_of::<AudioEndpointCapabilitiesV1>(),
+        )
+    };
+    if rc != 0 {
+        return Err(rc);
+    }
+    caps.validate().map_err(|_| ERR_INVALID)?;
+    Ok(caps)
+}
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct Monitor {
     cursor: u64,
@@ -592,11 +754,7 @@ impl Monitor {
 }
 
 fn rc_unit(rc: i32) -> Result<(), i32> {
-    if rc == 0 {
-        Ok(())
-    } else {
-        Err(rc)
-    }
+    if rc == 0 { Ok(()) } else { Err(rc) }
 }
 
 fn frames_result(frames: isize) -> Result<usize, i32> {
@@ -625,6 +783,34 @@ fn bool_result(value: i32) -> Result<bool, i32> {
         1 => Ok(true),
         err if err < 0 => Err(err),
         other => Err(other),
+    }
+}
+
+#[cfg(test)]
+mod endpoint_capability_tests {
+    use super::*;
+
+    #[test]
+    fn endpoint_capability_layout_is_stable() {
+        assert_eq!(size_of::<AudioEndpointCapabilitiesV1>(), 48);
+        assert_eq!(align_of::<AudioEndpointCapabilitiesV1>(), 8);
+    }
+
+    #[test]
+    fn unavailable_endpoint_is_a_valid_successful_snapshot() {
+        let caps = AudioEndpointCapabilitiesV1::unavailable();
+        assert_eq!(caps.ready, 0);
+        assert_eq!(caps.validate(), Ok(()));
+    }
+
+    #[test]
+    fn nonzero_reserved_endpoint_fields_are_rejected() {
+        let mut caps = AudioEndpointCapabilitiesV1::unavailable();
+        caps.reserved1 = 1;
+        assert_eq!(
+            caps.validate(),
+            Err(AudioEndpointCapabilitiesValidationError::ReservedNonZero)
+        );
     }
 }
 

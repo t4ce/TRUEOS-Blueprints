@@ -26,14 +26,17 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use strudel_core::{
-    BLOCK_FRAMES, CPS_DENOMINATOR, CPS_NUMERATOR, CoreSnapshot, MAX_SOURCE_BYTES,
-    SAMPLE_RATE_HZ, StrudelCore,
+    BLOCK_FRAMES, CPS_DENOMINATOR, CPS_NUMERATOR, CoreSnapshot, MAX_SOURCE_BYTES, SAMPLE_RATE_HZ,
+    StrudelCore,
 };
 use trueos::{
     clock, logl,
     logl::level,
     platform::io,
-    tokio::{self, sync::{mpsc, oneshot}},
+    tokio::{
+        self,
+        sync::{mpsc, oneshot},
+    },
 };
 
 mod monaco_assets {
@@ -70,10 +73,7 @@ enum EngineCommand {
 
 enum SubmitOutcome {
     Committed(CoreSnapshot),
-    Rejected {
-        error: String,
-        state: CoreSnapshot,
-    },
+    Rejected { error: String, state: CoreSnapshot },
 }
 
 #[derive(Debug, Deserialize)]
@@ -129,8 +129,24 @@ impl From<CoreSnapshot> for PublicState {
 }
 
 pub async fn run() -> Result<(), String> {
+    logl::log(
+        level::INFO,
+        "strudel-core-http: startup stage=core-boot-begin",
+    );
     let mut core = StrudelCore::boot()?;
+    logl::log(
+        level::INFO,
+        "strudel-core-http: startup stage=core-boot-ready",
+    );
+    logl::log(
+        level::INFO,
+        "strudel-core-http: startup stage=initial-pump-begin",
+    );
     let initial_pump = core.pump()?;
+    logl::log(
+        level::INFO,
+        "strudel-core-http: startup stage=initial-pump-ready",
+    );
     if !initial_pump.diagnostics.is_empty() {
         logl::log(
             level::DEBUG,
@@ -155,6 +171,10 @@ pub async fn run() -> Result<(), String> {
 
     let (engine, commands) = mpsc::channel(ENGINE_CHANNEL_CAPACITY);
     let _engine = tokio::task::spawn_local(engine_loop(core, commands));
+    logl::log(
+        level::INFO,
+        "strudel-core-http: startup stage=http-bind-begin",
+    );
     http_runtime(AppState { engine })
         .await
         .map_err(|error| format!("strudel HTTP runtime failed: {error:?}"))

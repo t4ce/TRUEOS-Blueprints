@@ -370,8 +370,11 @@ unsafe fn pump_net_fetch_module(ctx: *mut qjs::JSContext) -> bool {
         }
 
         let _ = async_fs::read_result(op_id, core::ptr::null_mut(), 0);
-        let spec =
-            qjs::JS_NewStringLen(ctx, op.aux.as_ptr() as *const core::ffi::c_char, op.aux.len());
+        let spec = qjs::JS_NewStringLen(
+            ctx,
+            op.aux.as_ptr() as *const core::ffi::c_char,
+            op.aux.len(),
+        );
         resolve_with_value(ctx, &op, spec);
         qjs::js_free_value(ctx, op.resolve);
         qjs::js_free_value(ctx, op.reject);

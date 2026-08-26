@@ -187,11 +187,7 @@ impl VCursor {
             return Err(-3);
         }
         let rc = unsafe { vcabi::trueos_cabi_mouse_motion_submit(self.info.handle, &command) };
-        if rc == 0 {
-            Ok(())
-        } else {
-            Err(rc)
-        }
+        if rc == 0 { Ok(()) } else { Err(rc) }
     }
 
     pub fn submit_json(&self, json: &str) -> Result<(), i32> {
@@ -201,11 +197,7 @@ impl VCursor {
         let rc = unsafe {
             vcabi::trueos_cabi_mouse_motion_submit_json(self.info.handle, json.as_ptr(), json.len())
         };
-        if rc < 0 {
-            Err(rc)
-        } else {
-            Ok(())
-        }
+        if rc < 0 { Err(rc) } else { Ok(()) }
     }
 
     pub fn teleport(&self, x: i32, y: i32) -> Result<(), i32> {
@@ -292,11 +284,7 @@ impl VKeyboard {
             return Err(-3);
         }
         let rc = unsafe { vcabi::trueos_cabi_keyboard_control_submit(self.info.handle, &command) };
-        if rc == 0 {
-            Ok(())
-        } else {
-            Err(rc)
-        }
+        if rc == 0 { Ok(()) } else { Err(rc) }
     }
 
     pub fn type_text(&self, text: &str, interval_ms: u32, clear_queue: bool) -> Result<usize, i32> {
@@ -312,11 +300,7 @@ impl VKeyboard {
                 u32::from(clear_queue),
             )
         };
-        if rc < 0 {
-            Err(rc)
-        } else {
-            Ok(rc as usize)
-        }
+        if rc < 0 { Err(rc) } else { Ok(rc as usize) }
     }
 
     pub fn submit_json(&self, json: &str) -> Result<usize, i32> {
@@ -330,11 +314,7 @@ impl VKeyboard {
                 json.len(),
             )
         };
-        if rc < 0 {
-            Err(rc)
-        } else {
-            Ok(rc as usize)
-        }
+        if rc < 0 { Err(rc) } else { Ok(rc as usize) }
     }
 
     pub fn idle(&self) -> Result<bool, i32> {
@@ -411,11 +391,7 @@ impl VGamepad {
             return Err(-3);
         }
         let rc = unsafe { vcabi::trueos_cabi_gamepad_control_submit(self.info.handle, &command) };
-        if rc == 0 {
-            Ok(())
-        } else {
-            Err(rc)
-        }
+        if rc == 0 { Ok(()) } else { Err(rc) }
     }
 
     pub fn submit_json(&self, json: &str) -> Result<usize, i32> {
@@ -429,11 +405,7 @@ impl VGamepad {
                 json.len(),
             )
         };
-        if rc < 0 {
-            Err(rc)
-        } else {
-            Ok(rc as usize)
-        }
+        if rc < 0 { Err(rc) } else { Ok(rc as usize) }
     }
 
     pub fn idle(&self) -> Result<bool, i32> {
@@ -454,11 +426,7 @@ impl VGamepad {
         let mut snapshot = GamepadControlSnapshot::default();
         let rc =
             unsafe { vcabi::trueos_cabi_gamepad_control_snapshot(self.info.handle, &mut snapshot) };
-        if rc == 0 {
-            Ok(snapshot)
-        } else {
-            Err(rc)
-        }
+        if rc == 0 { Ok(snapshot) } else { Err(rc) }
     }
 
     pub fn close(mut self) -> Result<(), i32> {
@@ -521,11 +489,7 @@ impl InputCombo {
                 &mut info,
             )
         };
-        if rc == 0 {
-            Ok(Self { info })
-        } else {
-            Err(rc)
-        }
+        if rc == 0 { Ok(Self { info }) } else { Err(rc) }
     }
 
     pub const fn id(&self) -> u32 {
@@ -626,11 +590,7 @@ impl InputCombo {
 
 #[inline]
 fn combo_bind_result(rc: i32) -> Result<(), i32> {
-    if rc == 0 {
-        Ok(())
-    } else {
-        Err(rc)
-    }
+    if rc == 0 { Ok(()) } else { Err(rc) }
 }
 
 pub fn input_combos() -> Vec<TrueosInputCombo> {
@@ -647,22 +607,14 @@ pub fn input_combos() -> Vec<TrueosInputCombo> {
 pub fn mouse_poll() -> Option<TrueosMouseState> {
     let mut out = TrueosMouseState::default();
     let rc = unsafe { vcabi::trueos_cabi_mouse_poll(&mut out) };
-    if rc == 0 {
-        Some(out)
-    } else {
-        None
-    }
+    if rc == 0 { Some(out) } else { None }
 }
 
 #[inline]
 pub fn qjs_mouse_pop() -> Option<TrueosMouseState> {
     let mut out = TrueosMouseState::default();
     let rc = unsafe { vcabi::trueos_cabi_qjs_mouse_pop(&mut out) };
-    if rc == 0 {
-        Some(out)
-    } else {
-        None
-    }
+    if rc == 0 { Some(out) } else { None }
 }
 
 pub fn midi_read_v1(read_seq: u64, out_cap: u32) -> (Vec<TrueosMidiInputEventV1>, u64, u32) {

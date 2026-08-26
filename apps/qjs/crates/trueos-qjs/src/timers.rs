@@ -7,8 +7,8 @@ use alloc::vec::Vec;
 use core::ffi::c_int;
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use trueos_time::{Duration as EmbassyDuration, Instant};
 use spin::Mutex;
+use trueos_time::{Duration as EmbassyDuration, Instant};
 
 use crate as qjs;
 
