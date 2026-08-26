@@ -14,14 +14,14 @@ const els = {
 
 const starter = `stack(
   sequence(
-    instrument("piano", { note: "c4", velocity: 104, pan: -0.18 }),
-    [instrument("guitar", { note: "g4" }), instrument("sax", { note: "bb4", pan: 0.28 })],
+    instrument("🎹", { note: "c4", velocity: 104, pan: -0.18 }),
+    [instrument("🎸", { note: "g4" }), instrument("🎷", { note: "bb4", pan: 0.28 })],
   ),
   sequence(
-    instrument("drums", { note: 36, velocity: 112 }),
+    instrument("🥁", { note: 36, velocity: 112 }),
     null,
-    instrument("bass", { note: "ab1", velocity: 106 }),
-    instrument("conga", { note: 48, velocity: 106 }),
+    instrument("🎚️", { note: "ab1", velocity: 106 }),
+    instrument("🪘", { note: 48, velocity: 106 }),
   ),
 )`;
 

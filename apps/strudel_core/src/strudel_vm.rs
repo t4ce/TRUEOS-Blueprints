@@ -109,7 +109,7 @@ impl StrudelVm {
 
     pub fn cps(&mut self) -> Result<(u32, u32), String> {
         let text = self.eval(
-            "JSON.stringify([globalThis.__TRUEOS_STRUDEL.status().cpsNumerator,globalThis.__TRUEOS_STRUDEL.status().cpsDenominator])",
+            "[globalThis.__TRUEOS_STRUDEL.status().cpsNumerator,globalThis.__TRUEOS_STRUDEL.status().cpsDenominator]",
             "runtime CPS status",
         )?;
         parse_cps(&text)
@@ -138,7 +138,13 @@ impl StrudelVm {
 }
 
 fn parse_cps(text: &str) -> Result<(u32, u32), String> {
-    let trimmed = text.trim().trim_matches('[').trim_matches(']');
+    let trimmed = text
+        .trim()
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+        .unwrap_or_else(|| text.trim())
+        .trim_matches('[')
+        .trim_matches(']');
     let mut parts = trimmed.split(',');
     let numerator = parts.next().and_then(|v| v.trim().parse().ok());
     let denominator = parts.next().and_then(|v| v.trim().parse().ok());
@@ -194,6 +200,7 @@ mod tests {
     #[test]
     fn parses_runtime_cps_status() {
         assert_eq!(parse_cps("[3,4]"), Ok((3, 4)));
+        assert_eq!(parse_cps("\"[1,2]\""), Ok((1, 2)));
         assert!(parse_cps("[0,2]").is_err());
     }
 }
