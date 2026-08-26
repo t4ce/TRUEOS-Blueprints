@@ -1,31 +1,34 @@
-//! Integer-only VM schema for `NativeRenderCommandV1`.
+//! Integer-only VM schema for `NativeRenderCommandV2`.
 //!
 //! The installed adapter currently returns its legacy eight-column event rows:
 //! `[start,end,age,duration,midi,velocity,waveform,pan]`. They are converted to
 //! oscillator commands. Once the JS adapter is switched it may emit the native
-//! 23-column schema directly:
+//! 23-column V1 schema, or the native V2 30-column schema directly:
 //! `[start,end,age,duration,source_id,voice_id,kind,waveform,midi,gain,pan,
 //!   playback_rate,sample_begin,sample_end,lpf,lpq,room,delay,phaser,shape,
-//!   fm_depth,fm_rate,flags]`.
+//!   fm_depth,fm_rate,flags,attack,decay,release,filter_attack,filter_decay,
+//!   sustain,filter_env_octaves_q8]`.
 
 extern crate alloc;
 
 use alloc::vec::Vec;
 
-use trueos::audio::NativeRenderCommandV1;
+use trueos::audio::NativeRenderCommandV2;
 
 use crate::json_rows::parse_integer_rows;
 
 const LEGACY_COLUMNS: usize = 8;
 const NATIVE_COLUMNS: usize = 23;
+const NATIVE_V2_COLUMNS: usize = 30;
 
-pub fn parse_native_command_rows(source: &str) -> Result<Vec<NativeRenderCommandV1>, &'static str> {
+pub fn parse_native_command_rows(source: &str) -> Result<Vec<NativeRenderCommandV2>, &'static str> {
     let rows = parse_integer_rows(source)?;
     let mut commands = Vec::with_capacity(rows.len());
     for row in rows {
         let command = match row.len() {
             LEGACY_COLUMNS => legacy_command(&row)?,
             NATIVE_COLUMNS => native_command(&row)?,
+            NATIVE_V2_COLUMNS => native_command_v2(&row)?,
             _ => return Err("wrong native command column count"),
         };
         commands.push(command);
@@ -47,7 +50,7 @@ pub fn source_id(bank: &str, sound: &str) -> u64 {
     hash
 }
 
-fn legacy_command(row: &[i64]) -> Result<NativeRenderCommandV1, &'static str> {
+fn legacy_command(row: &[i64]) -> Result<NativeRenderCommandV2, &'static str> {
     let waveform = u8_value(row[6], "waveform")?;
     if waveform > 4 {
         return Err("invalid waveform");
@@ -56,14 +59,14 @@ fn legacy_command(row: &[i64]) -> Result<NativeRenderCommandV1, &'static str> {
         .checked_mul(32_767)
         .ok_or("gain overflow")?
         / 127;
-    let command = NativeRenderCommandV1 {
+    let command = NativeRenderCommandV2 {
         start_frame: u32_value(row[0], "start")?,
         end_frame: u32_value(row[1], "end")?,
         age_frames: u32_value(row[2], "age")?,
         duration_frames: u32_value(row[3], "duration")?,
         source_id: source_id("osc", waveform_name(waveform)),
         voice_id: 0,
-        kind: NativeRenderCommandV1::KIND_OSCILLATOR,
+        kind: NativeRenderCommandV2::KIND_OSCILLATOR,
         waveform,
         midi_note: midi_value(row[4])?,
         gain_q15: gain,
@@ -83,6 +86,13 @@ fn legacy_command(row: &[i64]) -> Result<NativeRenderCommandV1, &'static str> {
         reserved0: 0,
         reserved1: 0,
         reserved2: 0,
+        attack_frames: 240,
+        decay_frames: 0,
+        release_frames: 960,
+        filter_attack_frames: 0,
+        filter_decay_frames: 0,
+        sustain_q15: 32_767,
+        filter_env_octaves_q8: 0,
     };
     command
         .validate(u32::MAX)
@@ -90,8 +100,8 @@ fn legacy_command(row: &[i64]) -> Result<NativeRenderCommandV1, &'static str> {
     Ok(command)
 }
 
-fn native_command(row: &[i64]) -> Result<NativeRenderCommandV1, &'static str> {
-    let command = NativeRenderCommandV1 {
+fn native_command(row: &[i64]) -> Result<NativeRenderCommandV2, &'static str> {
+    let command = NativeRenderCommandV2 {
         start_frame: u32_value(row[0], "start")?,
         end_frame: u32_value(row[1], "end")?,
         age_frames: u32_value(row[2], "age")?,
@@ -118,10 +128,32 @@ fn native_command(row: &[i64]) -> Result<NativeRenderCommandV1, &'static str> {
         reserved0: 0,
         reserved1: 0,
         reserved2: 0,
+        attack_frames: 240,
+        decay_frames: 0,
+        release_frames: 960,
+        filter_attack_frames: 0,
+        filter_decay_frames: 0,
+        sustain_q15: 32_767,
+        filter_env_octaves_q8: 0,
     };
     command
         .validate(u32::MAX)
         .map_err(|_| "invalid native command")?;
+    Ok(command)
+}
+
+fn native_command_v2(row: &[i64]) -> Result<NativeRenderCommandV2, &'static str> {
+    let mut command = native_command(&row[..NATIVE_COLUMNS])?;
+    command.attack_frames = u32_value(row[23], "attack")?;
+    command.decay_frames = u32_value(row[24], "decay")?;
+    command.release_frames = u32_value(row[25], "release")?;
+    command.filter_attack_frames = u32_value(row[26], "filter_attack")?;
+    command.filter_decay_frames = u32_value(row[27], "filter_decay")?;
+    command.sustain_q15 = u16_value(row[28], "sustain")?;
+    command.filter_env_octaves_q8 = i16_value(row[29], "filter_env_octaves_q8")?;
+    command
+        .validate(u32::MAX)
+        .map_err(|_| "invalid native v2 command")?;
     Ok(command)
 }
 
@@ -186,5 +218,19 @@ mod tests {
         .unwrap();
         assert_eq!(commands[0].source_id, 42);
         assert_eq!(commands[0].voice_id, 7);
+    }
+
+    #[test]
+    fn accepts_v2_envelope_columns_without_float_coercion() {
+        let commands = parse_native_command_rows(
+            "[[0,64,0,48,1,2,1,2,60,30000,0,65536,0,0,1200,2048,0,0,0,0,0,0,0,480,960,2400,120,360,16384,-1024]]",
+        )
+        .unwrap();
+        let command = commands[0];
+        assert_eq!(command.attack_frames, 480);
+        assert_eq!(command.decay_frames, 960);
+        assert_eq!(command.release_frames, 2400);
+        assert_eq!(command.sustain_q15, 16_384);
+        assert_eq!(command.filter_env_octaves_q8, -1024);
     }
 }

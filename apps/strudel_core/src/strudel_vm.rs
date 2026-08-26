@@ -7,7 +7,7 @@ use trueos_qjs::workbench::{EvalMode, Workbench};
 
 use crate::native_rows::parse_native_command_rows;
 use crate::PerformanceInputV1;
-use trueos::audio::NativeRenderCommandV1;
+use trueos::audio::NativeRenderCommandV2;
 
 const UPSTREAM_BUNDLE: &str = include_str!("../js/vendor/strudel-core.bundle.js");
 const FALLBACK_CORE: &str = include_str!("../js/00_fallback_core.js");
@@ -64,14 +64,14 @@ impl StrudelVm {
     }
 
     /// Query typed ABI commands from the VM boundary. The current adapter's
-    /// legacy eight-column output is accepted by `native_rows`; a future adapter
-    /// can emit the documented 23-column native schema directly.
+    /// Legacy and V1 rows are accepted by `native_rows`; the adapter emits the
+    /// documented fixed-width V2 schema for native envelope semantics.
     pub fn query_native_commands(
         &mut self,
         absolute_start_frame: u64,
         block_frames: u32,
         sample_rate_hz: u32,
-    ) -> Result<Vec<NativeRenderCommandV1>, String> {
+    ) -> Result<Vec<NativeRenderCommandV2>, String> {
         let source = format!(
             "globalThis.__TRUEOS_STRUDEL.queryFrames({absolute_start_frame},{block_frames},{sample_rate_hz})"
         );

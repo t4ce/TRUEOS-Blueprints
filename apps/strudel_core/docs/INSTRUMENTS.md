@@ -23,8 +23,11 @@ The adapter consumes `note`/`midinote`/`midi`/`n`, `velocity` (or
 `vel`/`gain`), `wave`/`waveform`, and `pan`. `instrument(name, options)` applies
 the catalog's oscillator defaults before explicit options override them, so
 the names are audible native presets rather than comments. They are not sample
-banks: recorded sample playback still requires registered PCM and an explicit
-native sample command.
+banks. The native host registers a small deterministic PCM set (`bd`, `hh`,
+`sd`) under the explicit `trueos` bank; use `s("bd*2").bank("trueos")` to
+select it. Other bank names, including `RolandTR909`, deliberately retain
+oscillator/synth fallback until actual PCM is supplied through a registration
+path.
 
 The initial catalog vocabulary is:
 
@@ -42,9 +45,8 @@ composition use the real Pattern operations: `.palindrome()`, `.every()`,
 `m("c4 <e4 g4>")`; `m("...").scale("C:major")` and tonal transforms are also
 audio-free and run in QuickJS.
 
-The following common Strudel examples remain outside this bundle until the
-corresponding native features land: `samples(...)`, `.bank(...)`, `.s(...)`,
-`.room()`, `.delay()`, `.phaser()`, `.fm()`, `.lpf()`, `.clip()`, and live
-`rand`/`perlin` signal controls.  They can be represented as metadata for the
-readonly editor/catalog, but should not be advertised as executable audio
-syntax yet.
+The following common Strudel example remains outside this bundle until a
+network/sample-loader path lands: `samples(...)`. `.bank(...)` and `.s(...)`
+are executable for the deterministic `trueos` PCM set; other bank names are
+metadata plus oscillator fallback. The remaining native controls are
+documented in the adapter and are intentionally deterministic.

@@ -106,7 +106,7 @@
     });
   };
   const controlMethods = {
-    clip: "clip", release: "release", lpf: "lpf", lpq: "lpq", lpenv: "lpenv",
+    clip: "clip", attack: "attack", decay: "decay", sustain: "sustain", release: "release", lpf: "lpf", lpq: "lpq", lpenv: "lpenv",
     lpd: "lpd", lpa: "lpa", ftype: "ftype", room: "room", shape: "shape",
     postgain: "postgain", delay: "delay", bpf: "bpf", gain: "gain", bank: "bank",
     s: "s",
@@ -287,6 +287,15 @@
     }
   }
 
+  function sampleSourceId(bank, sound) {
+    let hash = 0xcbf29ce484222325n;
+    for (const byte of `${bank}:${sound}`) {
+      hash ^= BigInt(byte.charCodeAt(0));
+      hash = BigInt.asUintN(64, hash * 0x100000001b3n);
+    }
+    return Number(hash & 0x1fffffffffffffn);
+  }
+
   function valueAt(value, cycle) {
     if (!isPattern(value)) return value;
     const haps = value.queryArc(cycle, cycle + 1 / 65536);
@@ -301,7 +310,7 @@
     return null;
   }
 
-  function voiceFromValue(value, cycle) {
+  function voiceFromValue(value, cycle, sampleRate) {
     let note = null;
     let velocity = 96;
     let waveform = 0;
@@ -315,6 +324,17 @@
     let shape = 0;
     let fm = 0;
     let fmRate = 1;
+    let kind = 1;
+    let sampleBegin = 0;
+    let sampleEnd = 0;
+    let flags = 0;
+    let attack = 0.005;
+    let decay = 0;
+    let sustain = 1;
+    let release = 0.02;
+    let filterAttack = 0;
+    let filterDecay = 0;
+    let filterEnvOctaves = 0;
 
     if (typeof value === "number" || typeof value === "string") {
       note = noteNameToMidi(value);
@@ -361,6 +381,12 @@
           sourceId = 100 + namedWave;
         }
       }
+      const bank = valueAt(value.bank, cycle);
+      const sampleName = percussion && String(sound).toLowerCase().split(":")[0];
+      if (String(bank || "").toLowerCase() === "trueos" && sampleName && ["bd", "hh", "sd"].includes(sampleName)) {
+        kind = 2;
+        sourceId = sampleSourceId("trueos", sampleName);
+      }
 
       if (value.velocity !== undefined) velocity = valueAt(value.velocity, cycle);
       else if (value.vel !== undefined) velocity = valueAt(value.vel, cycle);
@@ -382,6 +408,13 @@
       if (value.shape !== undefined) shape = Number(valueAt(value.shape, cycle));
       if (value.fm !== undefined) fm = Number(valueAt(value.fm, cycle));
       if (value.fmRate !== undefined) fmRate = Number(valueAt(value.fmRate, cycle));
+      if (value.attack !== undefined) attack = Number(valueAt(value.attack, cycle));
+      if (value.decay !== undefined) decay = Number(valueAt(value.decay, cycle));
+      if (value.sustain !== undefined) sustain = Number(valueAt(value.sustain, cycle));
+      if (value.release !== undefined) release = Number(valueAt(value.release, cycle));
+      if (value.lpa !== undefined) filterAttack = Number(valueAt(value.lpa, cycle));
+      if (value.lpd !== undefined) filterDecay = Number(valueAt(value.lpd, cycle));
+      if (value.lpenv !== undefined) filterEnvOctaves = Number(valueAt(value.lpenv, cycle));
       if (value.add !== undefined) {
         const additive = valueAt(value.add, cycle);
         const addition = additive && typeof additive === "object" ? additive.note : additive;
@@ -405,7 +438,28 @@
       shapeQ15: clampInteger(clamp(shape, 0, 1) * 32767, 0, 32767),
       fmDepthQ8: clampInteger(Math.max(0, fm) * 256, 0, 65535),
       fmRateQ8: clampInteger(Math.max(0, fmRate) * 256, 0, 65535),
+      kind,
+      sampleBegin,
+      sampleEnd,
+      flags,
+      attackFrames: secondsToFrames(attack, sampleRate),
+      decayFrames: secondsToFrames(decay, sampleRate),
+      sustainQ15: clampInteger(clamp(sustain, 0, 1) * 32767, 0, 32767),
+      releaseFrames: secondsToFrames(release, sampleRate),
+      filterAttackFrames: secondsToFrames(filterAttack, sampleRate),
+      filterDecayFrames: secondsToFrames(filterDecay, sampleRate),
+      // Kernel V2 validates a bounded ±8 octave sweep; constrain before the
+      // VM boundary so valid editor code never turns into a host-side EINVAL.
+      filterEnvOctavesQ8: clampInteger(clamp(filterEnvOctaves, -8, 8) * 256, -2048, 2048),
     };
+  }
+
+  function secondsToFrames(value, sampleRate) {
+    value = Number(value);
+    if (!Number.isFinite(value) || value <= 0) return 0;
+    // A bounded integer frame field prevents a malformed editor program from
+    // creating a practically immortal native voice.
+    return clampInteger(value * sampleRate, 0, sampleRate * 600);
   }
 
   function clamp(value, minimum, maximum) {
@@ -567,13 +621,16 @@
         continue;
       }
 
-      const voice = voiceFromValue(hap.value, wholeBegin);
+      const voice = voiceFromValue(hap.value, wholeBegin, sampleRate);
       if (!voice || voice.velocity === 0) continue;
 
       const onsetFrame = Math.round((wholeBegin / cps) * sampleRate);
       const releaseFrame = Math.round((wholeEnd / cps) * sampleRate);
       const clippedStart = Math.max(absoluteStartFrame, onsetFrame);
-      const clippedEnd = Math.min(absoluteEndFrame, releaseFrame);
+      // Gate duration deliberately excludes the release tail. V2's end span
+      // includes it, allowing native ADSR to drain without a browser reset.
+      const tailEndFrame = releaseFrame + voice.releaseFrames;
+      const clippedEnd = Math.min(absoluteEndFrame, tailEndFrame);
       if (clippedEnd <= clippedStart) continue;
 
       const gainQ15 = clampInteger((voice.velocity / 127) * 32767, 0, 32767);
@@ -584,14 +641,14 @@
         Math.max(1, releaseFrame - onsetFrame),
         voice.sourceId,
         0,
-        1,
+        voice.kind,
         voice.waveform,
         voice.note,
         gainQ15,
         voice.panQ15,
         65536,
-        0,
-        0,
+        voice.sampleBegin,
+        voice.sampleEnd,
         voice.lpf,
         voice.lpqQ8,
         voice.roomQ15,
@@ -600,7 +657,14 @@
         voice.shapeQ15,
         voice.fmDepthQ8,
         voice.fmRateQ8,
-        0,
+        voice.flags,
+        voice.attackFrames,
+        voice.decayFrames,
+        voice.releaseFrames,
+        voice.filterAttackFrames,
+        voice.filterDecayFrames,
+        voice.sustainQ15,
+        voice.filterEnvOctavesQ8,
       ]);
     }
 

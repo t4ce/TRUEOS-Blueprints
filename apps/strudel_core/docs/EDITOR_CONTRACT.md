@@ -38,14 +38,16 @@ failure the server returns HTTP 422 with the error and unchanged active state.
 
 The temporal bundle is paired with a small native-audio compatibility layer:
 `note`, `s`, `add`, `perlin`, `sine`, `cosine`, and `saw`, plus `clip`,
-`release`, `lpf`, `lpq`, `lpenv`, `lpd`, `lpa`, `ftype`, `rarely`, `room`,
+`attack`, `decay`, `sustain`, `release`, `lpf`, `lpq`, `lpenv`, `lpd`, `lpa`, `ftype`, `rarely`, `room`,
 `shape`, `postgain`, `superimpose`, `delay`, `bpf`, `gain`, `mask`, and `bank`.
 Control Patterns are sampled at the event onset and converted to the fixed
-23-column `NativeRenderCommandV1` row. `lpf/lpq`, `room`, `delay`, `shape`,
-and oscillator selection map directly. `bpf` uses its center as the available
-low-pass cutoff. `clip`, `release`, `lpenv`, `lpd`, `lpa`, `ftype`, `mask`,
-`bank`, and `rarely` are retained as deterministic metadata/no-ops because the
-native v1 renderer has no corresponding field or random scheduler.
+30-column `NativeRenderCommandV2` row. The V2 tail is integer-only:
+`attack_frames`, `decay_frames`, `release_frames`, `filter_attack_frames`,
+`filter_decay_frames`, `sustain_q15`, and signed `filter_env_octaves_q8`.
+`release` extends the submitted render span while gate duration remains
+separate. `lpf/lpq`, `room`, `delay`, `shape`, and oscillator selection map
+directly; `bpf` uses its center as the available low-pass cutoff. `clip`,
+`ftype`, `mask`, `bank`, and `rarely` remain deterministic metadata/no-ops.
 
 `s("sawtooth")` selects the native saw oscillator. `bd`, `hh`, `sd`, `rim`,
 and `rd` select deterministic synthesized percussion presets. They are not
