@@ -6,6 +6,7 @@ mod audio_output;
 mod event;
 mod json_rows;
 mod native_rows;
+mod performance_input;
 mod renderer;
 mod strudel_vm;
 mod tables;
@@ -15,6 +16,8 @@ use alloc::{format, string::String};
 use audio_output::AudioOutput;
 use strudel_vm::StrudelVm;
 use trueos::audio::NativeBlockHeaderV1;
+
+pub use performance_input::{PerformanceInputSource, PerformanceInputV1};
 
 pub const SAMPLE_RATE_HZ: u32 = 48_000;
 pub const BLOCK_FRAMES: usize = 2_400; // 50 ms
@@ -66,6 +69,7 @@ pub struct StrudelCore {
     buffer_frames: usize,
     cps_numerator: u32,
     cps_denominator: u32,
+    performance_inputs: performance_input::PerformanceInputQueue,
 }
 
 impl StrudelCore {
@@ -96,6 +100,7 @@ impl StrudelCore {
             buffer_frames,
             cps_numerator: CPS_NUMERATOR,
             cps_denominator: CPS_DENOMINATOR,
+            performance_inputs: performance_input::PerformanceInputQueue::default(),
         })
     }
 
@@ -109,6 +114,12 @@ impl StrudelCore {
             .map_err(|code| format!("audio queued-frames failed rc={code}"))?;
 
         while queued < self.target_queue_frames {
+            let input_batch = self
+                .performance_inputs
+                .take_through(self.absolute_frame.saturating_add(BLOCK_FRAMES as u64));
+            if !input_batch.is_empty() {
+                self.vm.apply_performance_inputs(&input_batch)?;
+            }
             let commands = self.vm.query_native_commands(
                 self.absolute_frame,
                 BLOCK_FRAMES as u32,
@@ -132,6 +143,16 @@ impl StrudelCore {
             diagnostics,
             queued_frames: queued,
         })
+    }
+
+    /// Queue an edge from a local input producer. It is applied in QuickJS
+    /// before the first audio block whose frame range contains the event.
+    pub fn submit_performance_input(&mut self, input: PerformanceInputV1) {
+        self.performance_inputs.push(input, self.absolute_frame);
+    }
+
+    pub fn pending_performance_inputs(&self) -> usize {
+        self.performance_inputs.len()
     }
 
     /// Commit one JavaScript expression that yields a Pattern. The currently

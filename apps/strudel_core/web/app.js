@@ -2,7 +2,8 @@ const API = "/api/strudel";
 
 const els = {
   detail: document.getElementById("detail"),
-  editor: document.getElementById("editor"),
+  instrumentEditor: document.getElementById("instrument-editor"),
+  patternEditor: document.getElementById("pattern-editor"),
   position: document.getElementById("position"),
   revision: document.getElementById("revision"),
   runtime: document.getElementById("runtime"),
@@ -25,7 +26,9 @@ const starter = `stack(
 )`;
 
 let monacoEditor = null;
+let monacoInstrumentEditor = null;
 let plainEditor = null;
+let plainInstrumentEditor = null;
 let lastCommittedSource = "";
 let submitting = false;
 
@@ -130,11 +133,42 @@ function createPlainEditor() {
   plainEditor.spellcheck = false;
   plainEditor.value = starter;
   plainEditor.setAttribute("aria-label", "JavaScript pattern expression");
-  els.editor.appendChild(plainEditor);
+  els.patternEditor.appendChild(plainEditor);
   plainEditor.addEventListener("input", noteEdited);
   plainEditor.addEventListener("keyup", updatePosition);
   plainEditor.addEventListener("click", updatePosition);
   updatePosition();
+}
+
+function instrumentCatalogText() {
+  const catalog = Array.isArray(window.__TRUEOS_STRUDEL_INSTRUMENTS)
+    ? window.__TRUEOS_STRUDEL_INSTRUMENTS
+    : [];
+  if (!catalog.length) {
+    return `// TRUEOS instruments\n// Catalog unavailable; patterns still run normally.\n`;
+  }
+  const lines = [
+    "// TRUEOS instrument palette",
+    "// Copy a preset into the Pattern editor, then shape its notes.",
+    "// Physical MIDI, keyboard and pointer producers use the same names.",
+    "",
+  ];
+  for (const entry of catalog) {
+    lines.push(`// ${entry.icon || "♪"} ${entry.name} — ${entry.label || entry.name}`);
+    lines.push(String(entry.example || entry.notation || ""));
+    lines.push("");
+  }
+  return lines.join("\n");
+}
+
+function createPlainInstrumentEditor() {
+  plainInstrumentEditor = document.createElement("textarea");
+  plainInstrumentEditor.className = "plain-editor instrument-source";
+  plainInstrumentEditor.spellcheck = false;
+  plainInstrumentEditor.readOnly = true;
+  plainInstrumentEditor.value = instrumentCatalogText();
+  plainInstrumentEditor.setAttribute("aria-label", "Read-only TRUEOS instrument notation");
+  els.instrumentEditor.appendChild(plainInstrumentEditor);
 }
 
 async function readJson(response) {
@@ -194,7 +228,7 @@ async function submitPattern() {
 }
 
 function upgradeToMonaco() {
-  monacoEditor = monaco.editor.create(els.editor, {
+  monacoEditor = monaco.editor.create(els.patternEditor, {
     value: plainEditor.value,
     language: "javascript",
     automaticLayout: true,
@@ -216,6 +250,25 @@ function upgradeToMonaco() {
     keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter],
     run: submitPattern,
   });
+  monacoInstrumentEditor = monaco.editor.create(els.instrumentEditor, {
+    value: plainInstrumentEditor.value,
+    language: "javascript",
+    readOnly: true,
+    domReadOnly: true,
+    automaticLayout: true,
+    fontFamily: "JetBrains Mono, Menlo, Consolas, monospace",
+    fontSize: 13,
+    lineHeight: 21,
+    minimap: { enabled: false },
+    folding: true,
+    glyphMargin: false,
+    lineNumbersMinChars: 3,
+    renderWhitespace: "none",
+    scrollBeyondLastLine: false,
+    theme: "vs-dark",
+    wordWrap: "on",
+  });
+  plainInstrumentEditor.hidden = true;
   updatePosition();
 }
 
@@ -233,13 +286,17 @@ function bootMonaco() {
         upgradeToMonaco();
       } catch (error) {
         monacoEditor = null;
+        monacoInstrumentEditor = null;
         plainEditor.hidden = false;
+        plainInstrumentEditor.hidden = false;
         setStatus("error", "Monaco failed; plain editor active", error.message || String(error));
       }
     },
     (error) => {
       monacoEditor = null;
+      monacoInstrumentEditor = null;
       plainEditor.hidden = false;
+      plainInstrumentEditor.hidden = false;
       setStatus("error", "Monaco failed; plain editor active", error.message || String(error));
     },
   );
@@ -254,6 +311,7 @@ window.addEventListener("keydown", (event) => {
 });
 
 createPlainEditor();
+createPlainInstrumentEditor();
 loadState()
   .catch((error) => {
     setCurrentValue(starter);

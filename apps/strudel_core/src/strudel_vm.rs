@@ -6,10 +6,12 @@ use core::fmt::Write as _;
 use trueos_qjs::workbench::{EvalMode, Workbench};
 
 use crate::native_rows::parse_native_command_rows;
+use crate::PerformanceInputV1;
 use trueos::audio::NativeRenderCommandV1;
 
 const UPSTREAM_BUNDLE: &str = include_str!("../js/vendor/strudel-core.bundle.js");
 const FALLBACK_CORE: &str = include_str!("../js/00_fallback_core.js");
+const INSTRUMENT_CATALOG: &str = include_str!("../js/instrument_catalog.js");
 const TRUEOS_ADAPTER: &str = include_str!("../js/10_trueos_adapter.js");
 const DEMO_PATTERN: &str = include_str!("../js/20_demo_pattern.js");
 
@@ -32,6 +34,7 @@ impl StrudelVm {
     pub fn install(&mut self) -> Result<InstallReport, String> {
         self.eval_unit(UPSTREAM_BUNDLE, "upstream bundle")?;
         self.eval_unit(FALLBACK_CORE, "fallback temporal kernel")?;
+        self.eval_unit(INSTRUMENT_CATALOG, "TRUEOS instrument catalog")?;
         self.eval_unit(TRUEOS_ADAPTER, "TRUEOS pattern adapter")?;
 
         let smoke = self.eval(
@@ -75,6 +78,33 @@ impl StrudelVm {
         let text = self.eval(&source, "pattern query")?;
         parse_native_command_rows(&text)
             .map_err(|error| format!("native-command parse failed: {error}; text={text}"))
+    }
+
+    /// Install input edges into the persistent VM before querying patterns.
+    /// The integer matrix is deliberately independent of QuickJS object ABI.
+    pub fn apply_performance_inputs(
+        &mut self,
+        inputs: &[PerformanceInputV1],
+    ) -> Result<(), String> {
+        let mut source = String::from("globalThis.__TRUEOS_STRUDEL.applyInputs([");
+        for (index, input) in inputs.iter().enumerate() {
+            if index != 0 {
+                source.push(',');
+            }
+            let gate = if input.gate { 1 } else { 0 };
+            let _ = write!(
+                source,
+                "[{},{},{},{},{},{}]",
+                input.source.code(),
+                input.device,
+                input.control,
+                input.value,
+                gate,
+                input.frame
+            );
+        }
+        source.push_str("])");
+        self.eval(&source, "performance input batch").map(|_| ())
     }
 
     pub fn cps(&mut self) -> Result<(u32, u32), String> {

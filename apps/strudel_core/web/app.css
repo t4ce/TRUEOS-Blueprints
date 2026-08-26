@@ -143,11 +143,56 @@ kbd {
   font-weight: 500;
 }
 
-#editor {
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: #0d111a;
+}
+
+.editor-pane {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   position: relative;
   min-width: 0;
   min-height: 0;
   background: #0d111a;
+}
+
+.instrument-pane {
+  border-left: 1px solid #354158;
+  background: #0a0f18;
+}
+
+.pane-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  min-height: 34px;
+  padding: 0 0.75rem;
+  border-bottom: 1px solid #273043;
+  background: #111827;
+  color: #d9e5f5;
+  font-size: 0.74rem;
+}
+
+.pane-head span {
+  overflow: hidden;
+  color: #77859c;
+  font-family: "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 0.64rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-host {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .plain-editor {
@@ -237,5 +282,15 @@ kbd {
 
   .result {
     min-height: 74px;
+  }
+
+  .workspace {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 3fr) minmax(0, 2fr);
+  }
+
+  .instrument-pane {
+    border-top: 1px solid #354158;
+    border-left: 0;
   }
 }

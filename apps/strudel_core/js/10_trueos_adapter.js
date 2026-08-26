@@ -30,6 +30,16 @@
   let cpsNumerator = 1;
   let cpsDenominator = 2;
   let pendingCps = null;
+  const heldInputs = new Map();
+  const pointerInputs = new Map();
+
+  const INPUT_MIDI = 1;
+  const INPUT_KEYBOARD = 2;
+  const INPUT_POINTER = 3;
+  const KEYBOARD_CHROMATIC = Object.freeze({
+    29: 48, 22: 49, 27: 50, 7: 51, 6: 52, 25: 53, 10: 54, 5: 55,
+    11: 56, 17: 57, 13: 58, 16: 59, 54: 60, 15: 61, 55: 62, 51: 63, 56: 64,
+  });
 
   // The browser sends one plain JavaScript expression. Install the available
   // pattern-engine exports globally so that expression can use sequence(),
@@ -41,6 +51,31 @@
     installedCoreGlobals.push(name);
   }
   installedCoreGlobals.sort();
+
+  const instrumentCatalog = G.__TRUEOS_INSTRUMENT_CATALOG;
+  if (!instrumentCatalog) throw new Error("TRUEOS instrument catalog is not installed");
+
+  // Instrument notation is intentionally plain data. It composes with every
+  // Strudel constructor: sequence(instrument("piano"), instrument("flute"))
+  // and an explicit object field can both reach the native renderer.
+  function instrument(name, options) {
+    const id = String(name || "").toLowerCase();
+    const preset = instrumentCatalog.byId[id];
+    if (!preset) throw new RangeError(`unknown TRUEOS instrument: ${name}`);
+    const result = {};
+    for (const key of Object.keys(preset)) {
+      if (key !== "id" && key !== "label" && key !== "icon" && key !== "family" && key !== "snippet") {
+        result[key] = preset[key];
+      }
+    }
+    result.instrument = id;
+    if (options && typeof options === "object") {
+      for (const key of Object.keys(options)) result[key] = options[key];
+    }
+    return result;
+  }
+  G.instrument = instrument;
+  G.instruments = function instruments() { return instrumentCatalog.entries; };
 
   function cpsFraction(value) {
     value = finiteNumber(value);
@@ -133,6 +168,12 @@
     if (typeof value === "number" || typeof value === "string") {
       note = noteNameToMidi(value);
     } else if (value && typeof value === "object") {
+      const preset = value.instrument && instrumentCatalog.byId[String(value.instrument).toLowerCase()];
+      if (preset) {
+        waveform = waveformCode(preset.wave);
+        velocity = Number(preset.gain) * 127;
+        pan = Number(preset.pan) || 0;
+      }
       const rawNote =
         value.midinote !== undefined
           ? value.midinote
@@ -147,8 +188,10 @@
       else if (value.vel !== undefined) velocity = value.vel;
       else if (value.gain !== undefined) velocity = Number(value.gain) * 127;
 
-      waveform = waveformCode(value.wave !== undefined ? value.wave : value.waveform);
-      pan = value.pan !== undefined ? Number(value.pan) : 0;
+      if (value.wave !== undefined || value.waveform !== undefined) {
+        waveform = waveformCode(value.wave !== undefined ? value.wave : value.waveform);
+      }
+      if (value.pan !== undefined) pan = Number(value.pan);
     }
 
     if (note === null) return null;
@@ -160,6 +203,68 @@
     };
   }
 
+  function clamp(value, minimum, maximum) {
+    return Math.max(minimum, Math.min(maximum, value));
+  }
+
+  function inputKey(source, device, control) {
+    return `${source}:${device}:${control}`;
+  }
+
+  function applyInputs(rows) {
+    if (!Array.isArray(rows)) throw new TypeError("applyInputs expects an integer input matrix");
+    for (const row of rows) {
+      if (!Array.isArray(row) || row.length !== 6) throw new TypeError("invalid performance input row");
+      const source = clampInteger(row[0], INPUT_MIDI, INPUT_POINTER);
+      const device = clampInteger(row[1], 0, 0xffffffff);
+      const control = clampInteger(row[2], 0, 0xffffffff);
+      const value = clampInteger(row[3], -0x80000000, 0x7fffffff);
+      const gate = Boolean(row[4]);
+      const frame = Math.max(0, Math.trunc(Number(row[5])) || 0);
+
+      if (source === INPUT_MIDI) {
+        if (control > 127) continue;
+        const key = inputKey(source, device, control);
+        if (gate && value > 0) {
+          heldInputs.set(key, { source, device, control, note: control, velocity: clampInteger(value, 1, 127), frame });
+        } else {
+          heldInputs.delete(key);
+        }
+      } else if (source === INPUT_KEYBOARD) {
+        const note = KEYBOARD_CHROMATIC[control];
+        if (note === undefined) continue;
+        const key = inputKey(source, device, control);
+        if (gate) {
+          heldInputs.set(key, { source, device, control, note, velocity: clampInteger(value || 100, 1, 127), frame });
+        } else {
+          heldInputs.delete(key);
+        }
+      } else {
+        const key = `${source}:${device}`;
+        const pointer = pointerInputs.get(key) || { note: 60, velocity: 96, gate: false, frame };
+        if (control === 0) pointer.note = clamp(pointer.note + value / 12, 36, 96);
+        else if (control === 1) pointer.velocity = clamp(pointer.velocity - value / 8, 8, 127);
+        else continue;
+        pointer.gate = gate;
+        pointer.frame = frame;
+        pointerInputs.set(key, pointer);
+      }
+    }
+    return status();
+  }
+
+  function liveRows(blockFrames) {
+    const rows = [];
+    for (const voice of heldInputs.values()) {
+      rows.push([0, blockFrames, 0, blockFrames, Math.round(voice.note), voice.velocity, 0, 0]);
+    }
+    for (const voice of pointerInputs.values()) {
+      if (!voice.gate) continue;
+      rows.push([0, blockFrames, 0, blockFrames, Math.round(voice.note), Math.round(voice.velocity), 3, 0]);
+    }
+    return rows;
+  }
+
   function status() {
     return {
       source: runtimeSource,
@@ -169,6 +274,8 @@
       cpsNumerator,
       cpsDenominator,
       exports: installedCoreGlobals.length,
+      heldInputs: heldInputs.size,
+      pointerInputs: pointerInputs.size,
     };
   }
 
@@ -278,6 +385,10 @@ ${source}
       ]);
     }
 
+    // Live input is additive: temporal patterns retain their independent
+    // query clock, while MIDI/keyboard/pointer voices are rendered per block.
+    rows.push(...liveRows(blockFrames));
+
     rows.sort((a, b) => a[0] - b[0] || a[4] - b[4] || a[1] - b[1]);
     return rows;
   }
@@ -298,12 +409,14 @@ ${source}
   const bridge = Object.freeze({
     core,
     commitExpression,
+    applyInputs,
     queryFrames,
     selfTest,
     status,
     source: runtimeSource,
     version: runtimeVersion,
     origin: runtimeOrigin,
+    instrumentCatalog: instrumentCatalog.entries,
   });
   Object.defineProperty(G, "__TRUEOS_STRUDEL", {
     value: bridge,
