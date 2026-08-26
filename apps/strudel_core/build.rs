@@ -4,20 +4,12 @@ use std::path::{Path, PathBuf};
 
 fn main() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
-    let asset_root = manifest_dir
-        .join("..")
-        .join("monaco")
-        .join("static")
-        .join("monaco")
-        .join("vs");
-    println!("cargo:rerun-if-changed={}", asset_root.display());
-
-    if !asset_root.is_dir() {
+    let asset_root = monaco_asset_root(&manifest_dir).unwrap_or_else(|| {
         panic!(
-            "missing shared Monaco assets at {}; build apps/monaco assets first",
-            asset_root.display()
-        );
-    }
+            "missing shared Monaco assets; expected apps/monaco/static/monaco/vs relative to the Blueprint workspace"
+        )
+    });
+    println!("cargo:rerun-if-changed={}", asset_root.display());
 
     let mut files = Vec::new();
     collect_files(&asset_root, &asset_root, &mut files);
@@ -29,15 +21,35 @@ fn main() {
     for rel in files {
         let rel_slash = rel.to_string_lossy().replace('\\', "/");
         let mime = mime_for(&rel_slash);
+        let asset_path = asset_root.join(&rel);
+        println!("cargo:rerun-if-changed={}", asset_path.display());
         generated.push_str(&format!(
-            "    StaticAsset {{ path: {:?}, mime: {:?}, bytes: include_bytes!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/../monaco/static/monaco/vs/{}\")) }},\n",
-            rel_slash, mime, rel_slash
+            "    StaticAsset {{ path: {:?}, mime: {:?}, bytes: include_bytes!({:?}) }},\n",
+            rel_slash, mime, asset_path
         ));
     }
     generated.push_str("];\n");
 
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     fs::write(out_dir.join("strudel_monaco_assets.rs"), generated).unwrap();
+}
+
+fn monaco_asset_root(manifest_dir: &Path) -> Option<PathBuf> {
+    let sibling = manifest_dir.join("..").join("monaco/static/monaco/vs");
+    if sibling.is_dir() {
+        return sibling.canonicalize().ok();
+    }
+
+    // `trueos-blueprint` stages this app in a source overlay. Walk upwards to
+    // its real workspace instead of assuming the staged directory has an
+    // `apps/monaco` sibling.
+    for ancestor in manifest_dir.ancestors() {
+        let candidate = ancestor.join("apps/monaco/static/monaco/vs");
+        if candidate.is_dir() {
+            return candidate.canonicalize().ok();
+        }
+    }
+    None
 }
 
 fn collect_files(root: &Path, dir: &Path, out: &mut Vec<PathBuf>) {
