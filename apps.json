@@ -9,6 +9,10 @@
     "gboi",
     "tredb",
     "HelioV",
+    {
+      "name": "ripgrep",
+      "path": "buildins/ripgrep"
+    },
     "HelioC",
     "hello_world",
     "hello_world_replicatable",

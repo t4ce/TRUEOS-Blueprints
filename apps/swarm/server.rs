@@ -11,7 +11,7 @@ use alloc::{
     vec::Vec,
 };
 use core::sync::atomic::{AtomicU16, Ordering};
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use core::net::{IpAddr, SocketAddr, Ipv4Addr};
 
 use axum::{
     Json, Router,

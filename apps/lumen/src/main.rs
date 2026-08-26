@@ -33,7 +33,7 @@ const SPINNER_MAX_SHIFT_CELLS: usize = 5;
 const SPINNER_FRAMES: &[&str] = &["⢈", "⡈", "⡐", "⡠", "⣀", "⢄", "⢂", "⢁", "⡁"];
 
 /// Prefill the fixed read-only tool schema once so VMX snapshots retain it.
-const SYSTEM_PROMPT_PREFILL_ENABLED: bool = true;
+const SYSTEM_PROMPT_PREFILL_ENABLED: bool = false;
 
 const SYSTEM_PROMPT: &str = concat!(
     "You are a concise helpful assistant. Answer directly unless the user explicitly asks for ",
