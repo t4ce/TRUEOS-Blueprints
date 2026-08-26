@@ -4,14 +4,40 @@
  * Output is intentionally an integer matrix. That keeps the no_std Rust parser
  * tiny and avoids leaking Fraction.js/QuickJS object representation across the
  * VM boundary.
+ *
+ * The adapter also owns the transactional live-expression commit used by the
+ * HTTP editor. A failed parse, evaluation, or Pattern check leaves the active
+ * pattern and revision untouched.
  */
 (function installTrueosAdapter(G) {
   "use strict";
 
   const core = G.StrudelCore || G.StrudelCoreFallback;
   if (!core) throw new Error("no Strudel core or fallback temporal kernel installed");
+  const globalEval = G.eval;
+
+  const runtimeSource = G.StrudelCore ? "upstream" : "fallback";
+  const runtimeVersion = G.StrudelCore
+    ? String(G.__TRUEOS_UPSTREAM_STRUDEL_VERSION || "unknown")
+    : "compat-1";
+  const runtimeOrigin = G.StrudelCore
+    ? String(G.__TRUEOS_UPSTREAM_STRUDEL_ORIGIN || "embedded")
+    : "embedded-fallback";
 
   let pattern = core.silence;
+  let revision = 0;
+  let committing = false;
+
+  // The browser sends one plain JavaScript expression. Install the available
+  // pattern-engine exports globally so that expression can use sequence(),
+  // stack(), fastcat(), and upstream additions without a namespace wrapper.
+  const installedCoreGlobals = [];
+  for (const name of Object.keys(core)) {
+    if (name === "default" || name === "__esModule") continue;
+    G[name] = core[name];
+    installedCoreGlobals.push(name);
+  }
+  installedCoreGlobals.sort();
 
   function finiteNumber(value) {
     if (typeof value === "number") return Number.isFinite(value) ? value : NaN;
@@ -107,12 +133,58 @@
     };
   }
 
-  function setPattern(nextPattern) {
+  function status() {
+    return {
+      source: runtimeSource,
+      version: runtimeVersion,
+      origin: runtimeOrigin,
+      revision,
+      exports: installedCoreGlobals.length,
+    };
+  }
+
+  function acceptPattern(nextPattern) {
     if (!nextPattern || typeof nextPattern.queryArc !== "function") {
-      throw new TypeError("setPattern expects a Strudel Pattern");
+      throw new TypeError("commitExpression expects a Strudel Pattern");
     }
     pattern = nextPattern;
-    return pattern;
+    revision += 1;
+    return status();
+  }
+
+  function describeError(error) {
+    if (error && error.stack) return String(error.stack);
+    if (error && error.message) return String(error.message);
+    return String(error);
+  }
+
+  function commitExpression(source) {
+    if (typeof source !== "string" || source.trim().length === 0) {
+      throw new TypeError("commitExpression expects a non-empty JavaScript expression");
+    }
+    if (committing) {
+      throw new Error("nested pattern commits are not allowed");
+    }
+
+    committing = true;
+    try {
+      let candidate;
+      try {
+        // Indirect eval executes in global scope, where pattern-engine exports are
+        // installed. Parentheses make the contract explicit: one expression whose
+        // value is Pattern-like.
+        candidate = globalEval(`(
+${source}
+)`);
+      } catch (error) {
+        throw new Error(`pattern expression failed: ${describeError(error)}`);
+      }
+
+      // Validation occurs before assignment, so failure preserves playback.
+      return acceptPattern(candidate);
+    } finally {
+      committing = false;
+    }
   }
 
   function queryFrames(
@@ -189,11 +261,20 @@
       .join("|");
   }
 
-  G.__TRUEOS_STRUDEL = Object.freeze({
+  const bridge = Object.freeze({
     core,
-    setPattern,
+    commitExpression,
     queryFrames,
     selfTest,
-    source: G.StrudelCore ? "upstream" : "fallback",
+    status,
+    source: runtimeSource,
+    version: runtimeVersion,
+    origin: runtimeOrigin,
+  });
+  Object.defineProperty(G, "__TRUEOS_STRUDEL", {
+    value: bridge,
+    writable: false,
+    configurable: false,
+    enumerable: false,
   });
 })(globalThis);
