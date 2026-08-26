@@ -12,6 +12,9 @@ const { StrudelCore: core, __TRUEOS_STRUDEL: bridge } = globalThis;
 if (!core || bridge.status().source !== 'upstream') throw new Error('upstream runtime missing');
 
 const catalog = ['drums', 'piano', 'guitar', 'bass', 'sax', 'trumpet', 'violin', 'flute', 'banjo', 'accordion', 'maracas', 'conga', 'voice'];
+if (globalThis.instrument('🎚️', { note: 'c2' }).instrument !== 'bass') {
+  throw new Error('instrument icon alias did not resolve');
+}
 const pattern = core.stack(
   core.sequence(...catalog.map((instrument, index) => ({ instrument, note: 48 + index, velocity: 80 }))),
   core.m('0 2 4').scale('C:major'),

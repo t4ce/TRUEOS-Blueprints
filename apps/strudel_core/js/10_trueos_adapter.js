@@ -68,7 +68,7 @@
         result[key] = preset[key];
       }
     }
-    result.instrument = id;
+    result.instrument = preset.id;
     if (options && typeof options === "object") {
       for (const key of Object.keys(options)) result[key] = options[key];
     }

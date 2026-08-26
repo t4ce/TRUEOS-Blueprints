@@ -147,15 +147,9 @@ function instrumentCatalogText() {
     return `// TRUEOS instruments\n// Catalog unavailable; patterns still run normally.\n`;
   }
   const lines = [
-    "// TRUEOS instrument palette",
-    "// Copy a preset into the Pattern editor, then shape its notes.",
-    "// Physical MIDI, keyboard and pointer producers use the same names.",
-    "",
   ];
   for (const entry of catalog) {
-    lines.push(`// ${entry.icon || "♪"} ${entry.label || entry.id} · ${entry.family}`);
     lines.push(String(entry.snippet || ""));
-    lines.push("");
   }
   return lines.join("\n");
 }

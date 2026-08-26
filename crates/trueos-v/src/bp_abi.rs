@@ -545,7 +545,7 @@ unsafe extern "C" {
     pub fn trueos_cabi_vmedia_image_decode_discard(id: u32) -> i32;
     pub fn trueos_cabi_ui4_solara_frame_begin(window_id: u32, clear_rgba: u32) -> i32;
     pub fn trueos_cabi_ui4_scene_pan_event_take(window_id: u32, out: *mut TrueosUi4PanEvent)
-    -> i32;
+        -> i32;
     pub fn trueos_cabi_ui4_scene_resize_event_take(
         window_id: u32,
         out: *mut TrueosUi4ResizeEvent,
@@ -883,7 +883,7 @@ unsafe extern "C" {
     pub fn trueos_cabi_socket_tcp_set_nonblocking(socket_id: u32, nonblocking: u32) -> i32;
     pub fn trueos_cabi_socket_tcp_bind_v4(socket_id: u32, addr_be: u32, port_be: u16) -> i32;
     pub fn trueos_cabi_socket_tcp_bind_v6(socket_id: u32, addr_ptr: *const u8, port_be: u16)
-    -> i32;
+        -> i32;
     pub fn trueos_cabi_socket_tcp_connect_v4(
         socket_id: u32,
         addr_be: u32,
@@ -1007,7 +1007,7 @@ unsafe extern "C" {
     pub fn trueos_cabi_vgpu_open(requested_caps: u64, out_device: *mut u64) -> i32;
     pub fn trueos_cabi_vgpu_close(device: u64) -> i32;
     pub fn trueos_cabi_vgpu_device_info(device: u64, out_info: *mut crate::vgpu::DeviceInfo)
-    -> i32;
+        -> i32;
     pub fn trueos_cabi_vgpu_device_diagnostics(
         device: u64,
         out: *mut crate::vgpu::DeviceDiagnostics,
@@ -1273,7 +1273,7 @@ unsafe extern "C" {
     ) -> u32;
     pub fn trueos_cabi_hid_hut_read_mice(out: *mut TrueosHidHutMouseState, out_cap: u32) -> u32;
     pub fn trueos_cabi_hid_hut_read_tablets(out: *mut TrueosHidHutTabletState, out_cap: u32)
-    -> u32;
+        -> u32;
     pub fn trueos_cabi_hid_hut_read_keyboards(
         out: *mut TrueosHidHutKeyboardState,
         out_cap: u32,

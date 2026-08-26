@@ -11,7 +11,7 @@ mod renderer;
 mod strudel_vm;
 mod tables;
 
-use alloc::{format, string::String};
+use alloc::{format, string::String, vec::Vec};
 
 use audio_output::AudioOutput;
 use strudel_vm::StrudelVm;
@@ -71,6 +71,8 @@ pub struct StrudelCore {
     cps_denominator: u32,
     performance_inputs: performance_input::PerformanceInputQueue,
     midi_read_seq: u64,
+    keyboard_held: Vec<(u32, u8)>,
+    mouse_seq: u32,
 }
 
 impl StrudelCore {
@@ -103,6 +105,8 @@ impl StrudelCore {
             cps_denominator: CPS_DENOMINATOR,
             performance_inputs: performance_input::PerformanceInputQueue::default(),
             midi_read_seq: 0,
+            keyboard_held: Vec::new(),
+            mouse_seq: 0,
         })
     }
 
@@ -110,7 +114,7 @@ impl StrudelCore {
     /// lookahead. This method never waits on the browser or HTTP server.
     pub fn pump(&mut self) -> Result<PumpReport, String> {
         let mut diagnostics = self.vm.poll();
-        let (midi_events, next_seq, dropped) = trueos::vinput::midi_read_v1(self.midi_read_seq, 64);
+        let (midi_events, next_seq, dropped) = trueos::hid::midi_read_v1(self.midi_read_seq, 64);
         self.midi_read_seq = next_seq;
         if dropped != 0 {
             diagnostics.push_str("; MIDI input ring dropped events");
@@ -123,6 +127,62 @@ impl StrudelCore {
                 event.gate != 0,
                 0,
             ));
+        }
+        let mut next_keyboard_held = Vec::new();
+        for keyboard in trueos::hid::hid_hut_keyboards() {
+            let device = keyboard
+                .controller_id
+                .wrapping_mul(0x9E37_79B9)
+                .wrapping_add(keyboard.slot_id);
+            for usage in keyboard.keys.into_iter().filter(|usage| *usage != 0) {
+                next_keyboard_held.push((device, usage));
+                if !self.keyboard_held.contains(&(device, usage)) {
+                    self.submit_performance_input(PerformanceInputV1 {
+                        source: PerformanceInputSource::Keyboard,
+                        device,
+                        control: usage as u32,
+                        value: 100,
+                        gate: true,
+                        frame: 0,
+                    });
+                }
+            }
+        }
+        let released = self
+            .keyboard_held
+            .iter()
+            .copied()
+            .filter(|key| !next_keyboard_held.contains(key))
+            .collect::<Vec<_>>();
+        for (device, usage) in released {
+            self.submit_performance_input(PerformanceInputV1 {
+                source: PerformanceInputSource::Keyboard,
+                device,
+                control: usage as u32,
+                value: 0,
+                gate: false,
+                frame: 0,
+            });
+        }
+        self.keyboard_held = next_keyboard_held;
+
+        if let Some(mouse) = trueos::hid::mouse_poll() {
+            if mouse.seq != self.mouse_seq {
+                self.mouse_seq = mouse.seq;
+                let gate = mouse.buttons & 1 != 0;
+                for (control, value) in [(0, mouse.dx), (1, mouse.dy)] {
+                    if value != 0 {
+                        self.submit_performance_input(PerformanceInputV1 {
+                            source: PerformanceInputSource::Pointer,
+                            device: mouse.slot_id,
+                            control,
+                            value,
+                            gate,
+                            frame: 0,
+                        });
+                    }
+                }
+            }
         }
         let mut queued = self
             .audio

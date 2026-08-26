@@ -11,23 +11,27 @@
   "use strict";
 
   const entries = [
-    { id: "drums", label: "Drums", icon: "🥁", family: "percussion", wave: "noise", gain: 0.9, pan: 0, lpf: 2400, room: 0.08, shape: 0.15, snippet: 'instrument("drums", { note: 36 })' },
-    { id: "piano", label: "Piano", icon: "🎹", family: "keys", wave: "triangle", gain: 0.78, pan: 0, lpf: 5200, room: 0.12, delay: 0.08, shape: 0.12, snippet: 'instrument("piano", { note: "c4" })' },
-    { id: "guitar", label: "Guitar", icon: "🎸", family: "strings", wave: "triangle", gain: 0.72, pan: 0, lpf: 3200, room: 0.16, delay: 0.1, shape: 0.25, snippet: 'instrument("guitar", { note: "e3" })' },
-    { id: "sax", label: "Saxophone", icon: "🎷", family: "winds", wave: "saw", gain: 0.7, pan: 0, lpf: 1800, room: 0.2, shape: 0.28, fm: 0.08, snippet: 'instrument("sax", { note: "bb3" })' },
-    { id: "trumpet", label: "Trumpet", icon: "🎺", family: "brass", wave: "saw", gain: 0.68, pan: 0, lpf: 2300, room: 0.14, shape: 0.34, fm: 0.05, snippet: 'instrument("trumpet", { note: "c4" })' },
-    { id: "violin", label: "Violin", icon: "🎻", family: "strings", wave: "saw", gain: 0.64, pan: 0, lpf: 3400, room: 0.22, shape: 0.2, fm: 0.12, snippet: 'instrument("violin", { note: "g4" })' },
-    { id: "maracas", label: "Maracas", icon: "🪇", family: "percussion", wave: "noise", gain: 0.58, pan: 0, lpf: 6500, room: 0.1, shape: 0.5, snippet: 'instrument("maracas", { note: 78 })' },
-    { id: "flute", label: "Flute", icon: "🪈", family: "winds", wave: "sine", gain: 0.62, pan: 0, lpf: 3600, room: 0.18, shape: 0.08, fm: 0.04, snippet: 'instrument("flute", { note: "c5" })' },
-    { id: "banjo", label: "Banjo", icon: "🪕", family: "strings", wave: "triangle", gain: 0.7, pan: 0, lpf: 4300, room: 0.1, delay: 0.06, shape: 0.32, snippet: 'instrument("banjo", { note: "d4" })' },
-    { id: "accordion", label: "Accordion", icon: "🪗", family: "keys", wave: "square", gain: 0.62, pan: 0, lpf: 2100, room: 0.16, shape: 0.18, fm: 0.1, snippet: 'instrument("accordion", { note: "f3" })' },
-    { id: "conga", label: "Conga", icon: "🪘", family: "percussion", wave: "sine", gain: 0.82, pan: 0, lpf: 900, room: 0.12, shape: 0.34, snippet: 'instrument("conga", { note: 48 })' },
-    { id: "voice", label: "Voice", icon: "🎤", family: "voice", wave: "saw", gain: 0.62, pan: 0, lpf: 1900, room: 0.2, shape: 0.16, fm: 0.06, snippet: 'instrument("voice", { note: "a3" })' },
-    { id: "bass", label: "Bass", icon: "🎚️", family: "low", wave: "square", gain: 0.8, pan: 0, lpf: 700, room: 0.08, shape: 0.2, snippet: 'instrument("bass", { note: "c2" })' },
+    { id: "drums", label: "Drums", icon: "🥁", family: "percussion", wave: "noise", gain: 0.9, pan: 0, lpf: 2400, room: 0.08, shape: 0.15, snippet: 'instrument("🥁", { note: 36 })' },
+    { id: "piano", label: "Piano", icon: "🎹", family: "keys", wave: "triangle", gain: 0.78, pan: 0, lpf: 5200, room: 0.12, delay: 0.08, shape: 0.12, snippet: 'instrument("🎹", { note: "c4" })' },
+    { id: "guitar", label: "Guitar", icon: "🎸", family: "strings", wave: "triangle", gain: 0.72, pan: 0, lpf: 3200, room: 0.16, delay: 0.1, shape: 0.25, snippet: 'instrument("🎸", { note: "e3" })' },
+    { id: "sax", label: "Saxophone", icon: "🎷", family: "winds", wave: "saw", gain: 0.7, pan: 0, lpf: 1800, room: 0.2, shape: 0.28, fm: 0.08, snippet: 'instrument("🎷", { note: "bb3" })' },
+    { id: "trumpet", label: "Trumpet", icon: "🎺", family: "brass", wave: "saw", gain: 0.68, pan: 0, lpf: 2300, room: 0.14, shape: 0.34, fm: 0.05, snippet: 'instrument("🎺", { note: "c4" })' },
+    { id: "violin", label: "Violin", icon: "🎻", family: "strings", wave: "saw", gain: 0.64, pan: 0, lpf: 3400, room: 0.22, shape: 0.2, fm: 0.12, snippet: 'instrument("🎻", { note: "g4" })' },
+    { id: "maracas", label: "Maracas", icon: "🪇", family: "percussion", wave: "noise", gain: 0.58, pan: 0, lpf: 6500, room: 0.1, shape: 0.5, snippet: 'instrument("🪇", { note: 78 })' },
+    { id: "flute", label: "Flute", icon: "🪈", family: "winds", wave: "sine", gain: 0.62, pan: 0, lpf: 3600, room: 0.18, shape: 0.08, fm: 0.04, snippet: 'instrument("🪈", { note: "c5" })' },
+    { id: "banjo", label: "Banjo", icon: "🪕", family: "strings", wave: "triangle", gain: 0.7, pan: 0, lpf: 4300, room: 0.1, delay: 0.06, shape: 0.32, snippet: 'instrument("🪕", { note: "d4" })' },
+    { id: "accordion", label: "Accordion", icon: "🪗", family: "keys", wave: "square", gain: 0.62, pan: 0, lpf: 2100, room: 0.16, shape: 0.18, fm: 0.1, snippet: 'instrument("🪗", { note: "f3" })' },
+    { id: "conga", label: "Conga", icon: "🪘", family: "percussion", wave: "sine", gain: 0.82, pan: 0, lpf: 900, room: 0.12, shape: 0.34, snippet: 'instrument("🪘", { note: 48 })' },
+    { id: "voice", label: "Voice", icon: "🎤", family: "voice", wave: "saw", gain: 0.62, pan: 0, lpf: 1900, room: 0.2, shape: 0.16, fm: 0.06, snippet: 'instrument("🎤", { note: "a3" })' },
+    { id: "bass", label: "Bass", icon: "🎚️", family: "low", wave: "square", gain: 0.8, pan: 0, lpf: 700, room: 0.08, shape: 0.2, snippet: 'instrument("🎚️", { note: "c2" })' },
   ];
 
   const byId = Object.create(null);
-  for (const entry of entries) byId[entry.id] = Object.freeze(entry);
+  for (const entry of entries) {
+    const frozen = Object.freeze(entry);
+    byId[entry.id] = frozen;
+    byId[entry.icon] = frozen;
+  }
   const catalog = Object.freeze({ entries: Object.freeze(entries.map((entry) => byId[entry.id])), byId: Object.freeze(byId) });
 
   Object.defineProperty(G, "__TRUEOS_INSTRUMENT_CATALOG", {
