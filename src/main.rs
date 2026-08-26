@@ -23,13 +23,15 @@ use app_catalog::{
     RustcTier, example_required_features, example_specs, manifest_declared_features,
     manifest_has_dependency, package_app_spec, package_app_specs, package_bin_name,
     package_blueprint_argv_entry_v1, package_blueprint_filesystem_independent,
+    package_blueprint_trueosfs_scope,
     package_blueprint_profile, package_blueprint_replicatable,
     package_blueprint_rustc_payload_dependencies, package_blueprint_rustc_tier, package_name,
     push_app_or_trueos_feature,
 };
 use artifact::{
     AssetBundleEntry, BLUEPRINT_CAP_ARGV_ENTRY_V1, BLUEPRINT_CAP_FILESYSTEM_INDEPENDENT,
-    BLUEPRINT_CAP_REPLICATABLE, attach_trueos_asset_bundle, cargo_artifact_stem,
+    BLUEPRINT_CAP_REPLICATABLE, BLUEPRINT_CAP_TRUEOSFS_SCOPE, attach_trueos_asset_bundle,
+    cargo_artifact_stem,
     collect_rlibs_for_rlink, entry_hint_hex, entry_symbol_name, latest_cargo_root_artifacts,
     tool_command, verify_abort_panic_runtime, write_blueprint,
 };
@@ -504,6 +506,11 @@ fn build_one_target_to_in_lane(
         && package_blueprint_filesystem_independent(manifest_path)?
     {
         capability_flags |= BLUEPRINT_CAP_FILESYSTEM_INDEPENDENT;
+    }
+    if matches!(build_target, BuildTarget::Package)
+        && package_blueprint_trueosfs_scope(manifest_path)?
+    {
+        capability_flags |= BLUEPRINT_CAP_TRUEOSFS_SCOPE;
     }
     let cargo_profile = if matches!(build_target, BuildTarget::Package) {
         package_blueprint_profile(manifest_path)?.unwrap_or(cargo_profile)
