@@ -19,12 +19,12 @@ sequence(
 )
 ```
 
-The adapter presently consumes `note`/`midinote`/`midi`/`n`, `velocity` (or
-`vel`/`gain`), `wave`/`waveform`, and `pan`.  Unknown fields are intentionally
-preserved by the Pattern value but ignored by the current row encoder.  Thus
-`instrument: "piano"` is descriptive today; it does not yet select a sample
-bank.  Sample playback requires a registered PCM asset and an explicit native
-sample command.
+The adapter consumes `note`/`midinote`/`midi`/`n`, `velocity` (or
+`vel`/`gain`), `wave`/`waveform`, and `pan`. `instrument(name, options)` applies
+the catalog's oscillator defaults before explicit options override them, so
+the names are audible native presets rather than comments. They are not sample
+banks: recorded sample playback still requires registered PCM and an explicit
+native sample command.
 
 The initial catalog vocabulary is:
 

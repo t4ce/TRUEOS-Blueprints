@@ -164,15 +164,33 @@
     let velocity = 96;
     let waveform = 0;
     let pan = 0;
+    let sourceId = 1;
+    let lpf = 0;
+    let lpq = 0;
+    let room = 0;
+    let delay = 0;
+    let phaser = 0;
+    let shape = 0;
+    let fm = 0;
+    let fmRate = 1;
 
     if (typeof value === "number" || typeof value === "string") {
       note = noteNameToMidi(value);
     } else if (value && typeof value === "object") {
       const preset = value.instrument && instrumentCatalog.byId[String(value.instrument).toLowerCase()];
       if (preset) {
+        sourceId = instrumentCatalog.entries.indexOf(preset) + 1;
         waveform = waveformCode(preset.wave);
         velocity = Number(preset.gain) * 127;
         pan = Number(preset.pan) || 0;
+        lpf = Number(preset.lpf) || 0;
+        lpq = Number(preset.lpq) || 0;
+        room = Number(preset.room) || 0;
+        delay = Number(preset.delay) || 0;
+        phaser = Number(preset.phaser) || 0;
+        shape = Number(preset.shape) || 0;
+        fm = Number(preset.fm) || 0;
+        fmRate = Number(preset.fmRate) || 1;
       }
       const rawNote =
         value.midinote !== undefined
@@ -192,6 +210,14 @@
         waveform = waveformCode(value.wave !== undefined ? value.wave : value.waveform);
       }
       if (value.pan !== undefined) pan = Number(value.pan);
+      if (value.lpf !== undefined) lpf = Number(value.lpf);
+      if (value.lpq !== undefined) lpq = Number(value.lpq);
+      if (value.room !== undefined) room = Number(value.room);
+      if (value.delay !== undefined) delay = Number(value.delay);
+      if (value.phaser !== undefined) phaser = Number(value.phaser);
+      if (value.shape !== undefined) shape = Number(value.shape);
+      if (value.fm !== undefined) fm = Number(value.fm);
+      if (value.fmRate !== undefined) fmRate = Number(value.fmRate);
     }
 
     if (note === null) return null;
@@ -200,6 +226,15 @@
       velocity: clampInteger(velocity, 0, 127),
       waveform,
       panQ15: clampInteger(Math.max(-1, Math.min(1, pan)) * 32767, -32768, 32767),
+      sourceId,
+      lpf: clampInteger(lpf, 0, 24000),
+      lpqQ8: clampInteger(lpq * 256, 0, 65535),
+      roomQ15: clampInteger(clamp(room, 0, 1) * 32767, 0, 32767),
+      delayQ15: clampInteger(clamp(delay, 0, 1) * 32767, 0, 32767),
+      phaserQ15: clampInteger(clamp(phaser / 8, 0, 1) * 32767, 0, 32767),
+      shapeQ15: clampInteger(clamp(shape, 0, 1) * 32767, 0, 32767),
+      fmDepthQ8: clampInteger(Math.max(0, fm) * 256, 0, 65535),
+      fmRateQ8: clampInteger(Math.max(0, fmRate) * 256, 0, 65535),
     };
   }
 
@@ -373,15 +408,31 @@ ${source}
       const clippedEnd = Math.min(absoluteEndFrame, releaseFrame);
       if (clippedEnd <= clippedStart) continue;
 
+      const gainQ15 = clampInteger((voice.velocity / 127) * 32767, 0, 32767);
       rows.push([
         clippedStart - absoluteStartFrame,
         clippedEnd - absoluteStartFrame,
         Math.max(0, clippedStart - onsetFrame),
         Math.max(1, releaseFrame - onsetFrame),
-        voice.note,
-        voice.velocity,
+        voice.sourceId,
+        0,
+        1,
         voice.waveform,
+        voice.note,
+        gainQ15,
         voice.panQ15,
+        65536,
+        0,
+        0,
+        voice.lpf,
+        voice.lpqQ8,
+        voice.roomQ15,
+        voice.delayQ15,
+        voice.phaserQ15,
+        voice.shapeQ15,
+        voice.fmDepthQ8,
+        voice.fmRateQ8,
+        0,
       ]);
     }
 

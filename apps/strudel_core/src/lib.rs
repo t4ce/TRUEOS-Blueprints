@@ -70,6 +70,7 @@ pub struct StrudelCore {
     cps_numerator: u32,
     cps_denominator: u32,
     performance_inputs: performance_input::PerformanceInputQueue,
+    midi_read_seq: u64,
 }
 
 impl StrudelCore {
@@ -101,13 +102,28 @@ impl StrudelCore {
             cps_numerator: CPS_NUMERATOR,
             cps_denominator: CPS_DENOMINATOR,
             performance_inputs: performance_input::PerformanceInputQueue::default(),
+            midi_read_seq: 0,
         })
     }
 
     /// Pump QuickJS jobs and refill the host-owned PCM lane to the configured
     /// lookahead. This method never waits on the browser or HTTP server.
     pub fn pump(&mut self) -> Result<PumpReport, String> {
-        let diagnostics = self.vm.poll();
+        let mut diagnostics = self.vm.poll();
+        let (midi_events, next_seq, dropped) = trueos::vinput::midi_read_v1(self.midi_read_seq, 64);
+        self.midi_read_seq = next_seq;
+        if dropped != 0 {
+            diagnostics.push_str("; MIDI input ring dropped events");
+        }
+        for event in midi_events {
+            self.submit_performance_input(PerformanceInputV1::midi(
+                event.controller_id,
+                event.note,
+                event.velocity,
+                event.gate != 0,
+                0,
+            ));
+        }
         let mut queued = self
             .audio
             .queued_frames()

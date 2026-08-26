@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const app = join(dirname(fileURLToPath(import.meta.url)), '..');
-for (const file of ['js/vendor/strudel-core.bundle.js', 'js/00_fallback_core.js', 'js/10_trueos_adapter.js']) {
+for (const file of ['js/vendor/strudel-core.bundle.js', 'js/00_fallback_core.js', 'js/instrument_catalog.js', 'js/10_trueos_adapter.js']) {
   vm.runInThisContext(await readFile(join(app, file), 'utf8'), { filename: file });
 }
 

@@ -14,14 +14,14 @@ const els = {
 
 const starter = `stack(
   sequence(
-    { note: "c4", velocity: 104, wave: "triangle", pan: -0.18 },
-    [{ note: "g4", wave: "sine" }, { note: "bb4", pan: 0.28 }],
+    instrument("piano", { note: "c4", velocity: 104, pan: -0.18 }),
+    [instrument("guitar", { note: "g4" }), instrument("sax", { note: "bb4", pan: 0.28 })],
   ),
   sequence(
-    { note: "c2", velocity: 112, wave: "square" },
+    instrument("drums", { note: 36, velocity: 112 }),
     null,
-    { note: "ab1", velocity: 106, wave: "square" },
-    { note: "bb1", velocity: 106, wave: "square" },
+    instrument("bass", { note: "ab1", velocity: 106 }),
+    instrument("conga", { note: 48, velocity: 106 }),
   ),
 )`;
 
@@ -141,9 +141,8 @@ function createPlainEditor() {
 }
 
 function instrumentCatalogText() {
-  const catalog = Array.isArray(window.__TRUEOS_STRUDEL_INSTRUMENTS)
-    ? window.__TRUEOS_STRUDEL_INSTRUMENTS
-    : [];
+  const catalogRoot = window.__TRUEOS_INSTRUMENT_CATALOG;
+  const catalog = catalogRoot && Array.isArray(catalogRoot.entries) ? catalogRoot.entries : [];
   if (!catalog.length) {
     return `// TRUEOS instruments\n// Catalog unavailable; patterns still run normally.\n`;
   }
@@ -154,8 +153,8 @@ function instrumentCatalogText() {
     "",
   ];
   for (const entry of catalog) {
-    lines.push(`// ${entry.icon || "♪"} ${entry.name} — ${entry.label || entry.name}`);
-    lines.push(String(entry.example || entry.notation || ""));
+    lines.push(`// ${entry.icon || "♪"} ${entry.label || entry.id} · ${entry.family}`);
+    lines.push(String(entry.snippet || ""));
     lines.push("");
   }
   return lines.join("\n");

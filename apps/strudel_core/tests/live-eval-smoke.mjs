@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 const testDir = dirname(fileURLToPath(import.meta.url));
 const jsDir = join(testDir, "..", "js");
 
-for (const file of ["00_fallback_core.js", "10_trueos_adapter.js"]) {
+for (const file of ["00_fallback_core.js", "instrument_catalog.js", "10_trueos_adapter.js"]) {
   vm.runInThisContext(await readFile(join(jsDir, file), "utf8"), { filename: file });
 }
 

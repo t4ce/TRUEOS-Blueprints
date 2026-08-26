@@ -49,6 +49,7 @@ const ENGINE_REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 const INDEX_HTML: &str = include_str!("../web/index.html");
 const APP_JS: &str = include_str!("../web/app.js");
 const APP_CSS: &str = include_str!("../web/app.css");
+const INSTRUMENT_CATALOG_JS: &str = include_str!("../js/instrument_catalog.js");
 
 static STRUDEL_HTTP_PORT: AtomicU16 = AtomicU16::new(0);
 
@@ -250,6 +251,7 @@ fn router(state: AppState) -> Router {
         .route("/index.html", get(handle_index))
         .route("/app.js", get(handle_app_js))
         .route("/app.css", get(handle_app_css))
+        .route("/instrument-catalog.js", get(handle_instrument_catalog_js))
         .route("/monaco/vs/{*asset}", get(handle_monaco_asset))
         .route("/healthz", get(handle_health))
         .route("/api/healthz", get(handle_health))
@@ -268,6 +270,14 @@ async fn handle_app_js() -> Response {
 
 async fn handle_app_css() -> Response {
     text_response(200, "text/css; charset=utf-8", APP_CSS)
+}
+
+async fn handle_instrument_catalog_js() -> Response {
+    text_response(
+        200,
+        "application/javascript; charset=utf-8",
+        INSTRUMENT_CATALOG_JS,
+    )
 }
 
 async fn handle_monaco_asset(uri: Uri) -> Response {
