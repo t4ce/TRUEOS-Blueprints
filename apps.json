@@ -28,8 +28,8 @@
     "lumen",
     "ipp-printer",
     {
-      "name": "texplo",
-      "path": "buildins/texplo"
+      "name": "termdir",
+      "path": "buildins/termdir"
     },
     {
       "name": "trueos-picasso-example",

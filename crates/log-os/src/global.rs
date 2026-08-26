@@ -157,6 +157,80 @@ impl<const N: usize> Default for LogOnceState<N> {
     }
 }
 
+/// Per-callsite counter for sampled log records.
+///
+/// Unlike [`LogOnceState`], this deliberately keeps reporting an ongoing
+/// failure. It emits the first `first` observations and then every `every`
+/// observations, so a flood stays visible without obscuring its cause.
+pub struct LogRateLimitState {
+    occurrences: AtomicU64,
+}
+
+impl LogRateLimitState {
+    pub const fn new() -> Self {
+        Self {
+            occurrences: AtomicU64::new(0),
+        }
+    }
+
+    /// Records one occurrence and returns its sampling decision.
+    ///
+    /// `every == 0` is treated as one, which keeps an invalid configuration
+    /// observable instead of silently suppressing all diagnostics.
+    pub fn observe(&self, first: u64, every: u64) -> LogRateLimitObservation {
+        let occurrence = self
+            .occurrences
+            .fetch_add(1, Ordering::Relaxed)
+            .saturating_add(1);
+        let every = every.max(1);
+        let emitted = occurrence <= first || occurrence % every == 0;
+        let suppressed_since_last = if emitted && occurrence > first {
+            let previous_emission = if occurrence.saturating_sub(every) <= first {
+                first
+            } else {
+                occurrence.saturating_sub(every)
+            };
+            occurrence
+                .saturating_sub(previous_emission)
+                .saturating_sub(1)
+        } else {
+            0
+        };
+        LogRateLimitObservation {
+            occurrence,
+            suppressed_since_last,
+            emitted,
+        }
+    }
+}
+
+impl Default for LogRateLimitState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LogRateLimitObservation {
+    occurrence: u64,
+    suppressed_since_last: u64,
+    emitted: bool,
+}
+
+impl LogRateLimitObservation {
+    pub const fn occurrence(self) -> u64 {
+        self.occurrence
+    }
+
+    pub const fn suppressed_since_last(self) -> u64 {
+        self.suppressed_since_last
+    }
+
+    pub const fn should_emit(self) -> bool {
+        self.emitted
+    }
+}
+
 pub trait GlobalLogSink: Sync {
     fn spec(&self) -> GlobalLogSinkSpec;
 

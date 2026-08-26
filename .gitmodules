@@ -16,6 +16,6 @@
 [submodule "apps/edit"]
 	path = buildins/edit
 	url = https://github.com/t4ce/edit.git
-[submodule "apps/texplo"]
-	path = buildins/texplo
+[submodule "apps/termdir"]
+	path = buildins/termdir
 	url = https://github.com/t4ce/texplo.git
