@@ -4,7 +4,7 @@ use alloc::{format, string::String, vec::Vec};
 
 use trueos::{
     audio::{
-        NativeBlockHeaderV2, NativeEngine, NativeRenderCommandV2, PlaybackParams, Stream, ERR_BUSY,
+        ERR_BUSY, NativeBlockHeaderV2, NativeEngine, NativeRenderCommandV2, PlaybackParams, Stream,
     },
     vsys,
 };
@@ -102,7 +102,11 @@ impl AudioOutput {
 
 fn source_id(bank: &str, sound: &str) -> u64 {
     let mut hash = 0xcbf2_9ce4_8422_2325u64;
-    for byte in bank.bytes().chain(core::iter::once(b':')).chain(sound.bytes()) {
+    for byte in bank
+        .bytes()
+        .chain(core::iter::once(b':'))
+        .chain(sound.bytes())
+    {
         hash ^= u64::from(byte);
         hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
     }
@@ -113,22 +117,26 @@ fn builtin_sample(kind: u8) -> Vec<i16> {
     const FRAMES: usize = 4_800;
     let mut out = Vec::with_capacity(FRAMES);
     for frame in 0..FRAMES {
-        let decay = (FRAMES - frame) as i32;
+        let decay = (FRAMES - frame) as i64;
         let value = match kind {
             0 => {
                 let phase = (frame * 11) % 436;
-                let triangle = if phase < 218 { phase as i32 } else { (436 - phase) as i32 };
-                (triangle * 24_000 * decay) / (218 * FRAMES as i32)
+                let triangle = if phase < 218 {
+                    phase as i64
+                } else {
+                    (436 - phase) as i64
+                };
+                (triangle * 24_000 * decay) / (218 * FRAMES as i64)
             }
             1 => {
                 let n = frame as u32;
                 let noise = n.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-                (i32::from((noise >> 16) as i16) * decay * 55) / (100 * FRAMES as i32)
+                (i64::from((noise >> 16) as i16) * decay * 55) / (100 * FRAMES as i64)
             }
             _ => {
                 let n = frame as u32;
                 let noise = n.wrapping_mul(22_695_477).wrapping_add(1);
-                (i32::from((noise >> 16) as i16) * decay * 80) / (100 * FRAMES as i32)
+                (i64::from((noise >> 16) as i16) * decay * 80) / (100 * FRAMES as i64)
             }
         };
         out.push(value.clamp(-32_767, 32_767) as i16);

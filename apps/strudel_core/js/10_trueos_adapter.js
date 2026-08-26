@@ -30,6 +30,7 @@
   let cpsNumerator = 1;
   let cpsDenominator = 2;
   let pendingCps = null;
+  let releaseLookbackFrames = 960;
   const heldInputs = new Map();
   const pointerInputs = new Map();
 
@@ -424,6 +425,11 @@
     }
 
     if (note === null) return null;
+    const releaseFrames = Math.min(
+      secondsToFrames(release, sampleRate),
+      sampleRate * 10,
+    );
+    releaseLookbackFrames = Math.max(releaseLookbackFrames, releaseFrames);
     return {
       note,
       velocity: clampInteger(velocity, 0, 127),
@@ -445,7 +451,7 @@
       attackFrames: secondsToFrames(attack, sampleRate),
       decayFrames: secondsToFrames(decay, sampleRate),
       sustainQ15: clampInteger(clamp(sustain, 0, 1) * 32767, 0, 32767),
-      releaseFrames: secondsToFrames(release, sampleRate),
+      releaseFrames,
       filterAttackFrames: secondsToFrames(filterAttack, sampleRate),
       filterDecayFrames: secondsToFrames(filterDecay, sampleRate),
       // Kernel V2 validates a bounded ±8 octave sweep; constrain before the
@@ -609,7 +615,10 @@
     const absoluteEndFrame = absoluteStartFrame + blockFrames;
     const cycleBegin = (absoluteStartFrame / sampleRate) * cps;
     const cycleEnd = (absoluteEndFrame / sampleRate) * cps;
-    const haps = pattern.queryArc(cycleBegin, cycleEnd);
+    // Pattern queries normally stop returning an event at its gate edge. Query
+    // enough history to carry V2 release tails into later render blocks.
+    const releaseLookbackCycles = (releaseLookbackFrames / sampleRate) * cps;
+    const haps = pattern.queryArc(cycleBegin - releaseLookbackCycles, cycleEnd);
     const rows = [];
 
     for (const hap of haps) {
@@ -634,13 +643,21 @@
       if (clippedEnd <= clippedStart) continue;
 
       const gainQ15 = clampInteger((voice.velocity / 127) * 32767, 0, 32767);
+      // Stable across lookahead blocks, distinct for overlapping notes that
+      // share one oscillator/sample source. The host uses this identity to
+      // retain per-voice filter state without joining separate notes.
+      const voiceId = (
+        (onsetFrame >>> 0)
+        ^ ((voice.note & 127) << 24)
+        ^ (Math.trunc(voice.sourceId) >>> 0)
+      ) >>> 0;
       rows.push([
         clippedStart - absoluteStartFrame,
         clippedEnd - absoluteStartFrame,
         Math.max(0, clippedStart - onsetFrame),
         Math.max(1, releaseFrame - onsetFrame),
         voice.sourceId,
-        0,
+        voiceId,
         voice.kind,
         voice.waveform,
         voice.note,
