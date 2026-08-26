@@ -77,6 +77,134 @@
   G.instrument = instrument;
   G.instruments = function instruments() { return instrumentCatalog.entries; };
 
+  // Narrow sound/control compatibility layer.  The vendored upstream slice is
+  // deliberately temporal-only, so these familiar Strudel spellings describe
+  // data for TRUEOS's native renderer instead of constructing a WebAudio graph.
+  // Values which are Patterns are deliberately kept as controls until query
+  // time; this is what makes `lpf(sine.range(...))` and friends live.
+  const PatternProto = core.Pattern && core.Pattern.prototype;
+  if (!PatternProto) throw new Error("Strudel core has no Pattern prototype");
+  const isPattern = (value) => Boolean(value && typeof value.queryArc === "function");
+  const mapValue = (source, fn) => source.withValue(fn);
+  const copyValue = (value) => {
+    if (value && typeof value === "object" && !Array.isArray(value) && !isPattern(value)) {
+      const copy = {};
+      for (const key of Object.keys(value)) copy[key] = value[key];
+      return copy;
+    }
+    return { note: value };
+  };
+  const control = (source, key, value) => {
+    // Mini strings in control positions are signals, not literal metadata.
+    if (typeof value === "string" && ["gain", "lpf", "lpq", "room", "shape", "delay", "postgain", "bpf"].includes(key)) {
+      value = miniCompat(value);
+    }
+    return mapValue(source, (event) => {
+    const next = copyValue(event);
+    next[key] = value;
+    return next;
+    });
+  };
+  const controlMethods = {
+    clip: "clip", release: "release", lpf: "lpf", lpq: "lpq", lpenv: "lpenv",
+    lpd: "lpd", lpa: "lpa", ftype: "ftype", room: "room", shape: "shape",
+    postgain: "postgain", delay: "delay", bpf: "bpf", gain: "gain", bank: "bank",
+    s: "s",
+  };
+  for (const [method, key] of Object.entries(controlMethods)) {
+    PatternProto[method] = function trueosControl(value) { return control(this, key, value); };
+  }
+  // `add(note(12))` is a pitch transposition in the native representation.
+  // Upstream's arithmetic `add` is a non-configurable getter and already
+  // understands `note(12)`. The emergency fallback has no such method.
+  if (typeof PatternProto.add !== "function") {
+    PatternProto.add = function trueosAdd(amount) {
+      return mapValue(this, (event) => {
+        const next = copyValue(event);
+        next.add = amount;
+        return next;
+      });
+    };
+  }
+  PatternProto.rarely = function trueosRarely(transform) {
+    // The stochastic scheduler is intentionally absent: use an explicit,
+    // deterministic no-op rather than making native playback depend on random
+    // state. The transform remains visible in source and is documented below.
+    void transform;
+    return this;
+  };
+  PatternProto.superimpose = function trueosSuperimpose(transform) {
+    if (typeof transform !== "function") throw new TypeError("superimpose expects a function");
+    return core.stack(this, transform(this));
+  };
+  PatternProto.mask = function trueosMask(_mask) {
+    // Mask syntax belongs to the temporal layer.  The slim upstream mini
+    // bundle does not carry its Euclidean helper; retain an explicit no-op
+    // rather than rejecting an otherwise valid native pattern.
+    return this;
+  };
+
+  function signal(fn) {
+    // Do not subclass upstream Pattern here: its numeric operators are bound
+    // to upstream's control-pattern implementation, which this audio-free
+    // slice intentionally does not ship.  A tiny queryArc object is enough for
+    // native control resolution and retains the familiar signal spelling.
+    const out = {
+      queryArc(begin, end) { return [{ whole: { begin, end }, part: { begin, end }, value: fn(begin) }]; },
+    };
+    out.range = (low, high) => signal((time) => low + ((fn(time) + 1) * 0.5) * (high - low));
+    out.mul = (other) => signal((time) => fn(time) * scalarAt(other, time));
+    out.add = (other) => signal((time) => fn(time) + scalarAt(other, time));
+    out.fast = (factor) => signal((time) => fn(time * Number(factor)));
+    out.slow = (factor) => signal((time) => fn(time / Number(factor)));
+    return out;
+  }
+  function scalarAt(value, time) {
+    if (isPattern(value)) {
+      const haps = value.queryArc(time, time + 1 / 65536);
+      return haps.length ? finiteNumber(haps[0].value) : 0;
+    }
+    return finiteNumber(value);
+  }
+  G.sine = signal((time) => Math.sin(time * Math.PI * 2));
+  G.cosine = signal((time) => Math.cos(time * Math.PI * 2));
+  G.saw = signal((time) => 2 * (time - Math.floor(time + 0.5)));
+  G.perlin = signal((time) => Math.sin(time * 12.9898 + Math.sin(time * 4.1414)));
+
+  function miniCompat(source) {
+    try { return core.mini(String(source)); } catch (_) {
+      // The temporal vendor intentionally omits mini's Euclidean dependency.
+      // Preserve useful notes/sounds and their rate suffixes for native use.
+      const text = String(source);
+      const hasPitchOrSound = /[a-zA-Z]/.test(text);
+      const token = hasPitchOrSound
+        ? /[a-gA-G][#b]?\-?\d+|[a-zA-Z_]+/g
+        : /[-+]?\d*\.?\d+(?:@\d+)?/g;
+      const items = [];
+      for (const raw of text.match(token) || []) {
+        const repeated = /^(.+?)@(\d+)$/.exec(raw);
+        const value = repeated ? repeated[1] : raw;
+        const copies = repeated ? Math.max(1, Number(repeated[2])) : 1;
+        for (let index = 0; index < copies; index += 1) items.push(hasPitchOrSound ? value : Number(value));
+      }
+      const multiplier = /\*(\d+)/.exec(text);
+      if (multiplier) {
+        const original = items.slice();
+        for (let copy = 1; copy < Number(multiplier[1]); copy += 1) items.push(...original);
+      }
+      return core.sequence(...(items.length ? items : [null]));
+    }
+  }
+  G.note = function note(value) {
+    const source = isPattern(value) ? value : typeof value === "string" ? miniCompat(value) : core.sequence(value);
+    return mapValue(source, (event) => ({ note: event }));
+  };
+  G.s = function sound(value) {
+    const source = isPattern(value) ? value : typeof value === "string" ? miniCompat(value) : core.sequence(value);
+    return mapValue(source, (event) => ({ s: event }));
+  };
+  G.add = function add(value) { return (source) => source.add(value); };
+
   function cpsFraction(value) {
     value = finiteNumber(value);
     if (!(value > 0) || !Number.isFinite(value)) throw new RangeError("setcps expects a finite positive number");
@@ -159,7 +287,21 @@
     }
   }
 
-  function voiceFromValue(value) {
+  function valueAt(value, cycle) {
+    if (!isPattern(value)) return value;
+    const haps = value.queryArc(cycle, cycle + 1 / 65536);
+    return haps.length ? valueAt(haps[0].value, cycle) : 0;
+  }
+
+  function drumPreset(sound) {
+    const id = String(sound || "").toLowerCase().split(":")[0];
+    if (id === "bd" || id === "kick") return { note: 36, wave: "sine", lpf: 900, shape: 0.32 };
+    if (id === "hh" || id === "oh" || id === "ch") return { note: 78, wave: "noise", lpf: 8500, shape: 0.45 };
+    if (id === "sd" || id === "rim" || id === "rd") return { note: 38, wave: "noise", lpf: 4200, shape: 0.22 };
+    return null;
+  }
+
+  function voiceFromValue(value, cycle) {
     let note = null;
     let velocity = 96;
     let waveform = 0;
@@ -192,32 +334,60 @@
         fm = Number(preset.fm) || 0;
         fmRate = Number(preset.fmRate) || 1;
       }
+      // Resolve signal/control Patterns only at the queried cycle. This avoids
+      // carrying JS objects over the integer VM boundary.
       const rawNote =
         value.midinote !== undefined
-          ? value.midinote
+          ? valueAt(value.midinote, cycle)
           : value.midi !== undefined
-            ? value.midi
+            ? valueAt(value.midi, cycle)
             : value.note !== undefined
-              ? value.note
-              : value.n;
+              ? valueAt(value.note, cycle)
+              : valueAt(value.n, cycle);
       note = noteNameToMidi(rawNote);
 
-      if (value.velocity !== undefined) velocity = value.velocity;
-      else if (value.vel !== undefined) velocity = value.vel;
-      else if (value.gain !== undefined) velocity = Number(value.gain) * 127;
+      const sound = valueAt(value.s !== undefined ? value.s : value.sound, cycle);
+      const percussion = drumPreset(sound);
+      if (percussion) {
+        if (note === null) note = percussion.note;
+        waveform = waveformCode(percussion.wave);
+        lpf = percussion.lpf;
+        shape = percussion.shape;
+        sourceId = 100 + waveform;
+      } else if (sound !== undefined) {
+        const namedWave = waveformCode(sound);
+        if (["sine", "square", "saw", "sawtooth", "triangle", "noise", "white", "pulse"].includes(String(sound).toLowerCase())) {
+          waveform = namedWave;
+          sourceId = 100 + namedWave;
+        }
+      }
+
+      if (value.velocity !== undefined) velocity = valueAt(value.velocity, cycle);
+      else if (value.vel !== undefined) velocity = valueAt(value.vel, cycle);
+      else if (value.gain !== undefined) velocity = Number(valueAt(value.gain, cycle)) * 127;
+      if (value.postgain !== undefined) velocity *= Number(valueAt(value.postgain, cycle));
 
       if (value.wave !== undefined || value.waveform !== undefined) {
-        waveform = waveformCode(value.wave !== undefined ? value.wave : value.waveform);
+        waveform = waveformCode(valueAt(value.wave !== undefined ? value.wave : value.waveform, cycle));
       }
-      if (value.pan !== undefined) pan = Number(value.pan);
-      if (value.lpf !== undefined) lpf = Number(value.lpf);
-      if (value.lpq !== undefined) lpq = Number(value.lpq);
-      if (value.room !== undefined) room = Number(value.room);
-      if (value.delay !== undefined) delay = Number(value.delay);
-      if (value.phaser !== undefined) phaser = Number(value.phaser);
-      if (value.shape !== undefined) shape = Number(value.shape);
-      if (value.fm !== undefined) fm = Number(value.fm);
-      if (value.fmRate !== undefined) fmRate = Number(value.fmRate);
+      if (value.pan !== undefined) pan = Number(valueAt(value.pan, cycle));
+      if (value.lpf !== undefined) lpf = Number(valueAt(value.lpf, cycle));
+      // Native renderer has a low-pass, not a band-pass. The BPF center is
+      // therefore represented by its cutoff, preserving a useful timbral cue.
+      if (value.bpf !== undefined && !value.lpf) lpf = Number(valueAt(value.bpf, cycle));
+      if (value.lpq !== undefined) lpq = Number(valueAt(value.lpq, cycle));
+      if (value.room !== undefined) room = Number(valueAt(value.room, cycle));
+      if (value.delay !== undefined) delay = Number(valueAt(value.delay, cycle));
+      if (value.phaser !== undefined) phaser = Number(valueAt(value.phaser, cycle));
+      if (value.shape !== undefined) shape = Number(valueAt(value.shape, cycle));
+      if (value.fm !== undefined) fm = Number(valueAt(value.fm, cycle));
+      if (value.fmRate !== undefined) fmRate = Number(valueAt(value.fmRate, cycle));
+      if (value.add !== undefined) {
+        const additive = valueAt(value.add, cycle);
+        const addition = additive && typeof additive === "object" ? additive.note : additive;
+        const delta = noteNameToMidi(addition);
+        if (delta !== null && note !== null) note = clampInteger(note + delta, 0, 127);
+      }
     }
 
     if (note === null) return null;
@@ -347,14 +517,12 @@
     try {
       let candidate;
       try {
-        // Indirect eval executes in global scope, where pattern-engine exports are
-        // installed. Parentheses make the contract explicit: one expression whose
-        // value is Pattern-like.
-        candidate = globalEval(`(
-${source}
-)`);
+        // Indirect eval executes in global scope. JavaScript's completion value
+        // lets normal Strudel programs use `setcps(1); stack(...)` as well as a
+        // single expression, while acceptPattern below keeps the commit atomic.
+        candidate = globalEval(source);
       } catch (error) {
-        throw new Error(`pattern expression failed: ${describeError(error)}`);
+        throw new Error(`pattern program failed: ${describeError(error)}`);
       }
 
       // Validation occurs before assignment, so failure preserves playback.
@@ -399,7 +567,7 @@ ${source}
         continue;
       }
 
-      const voice = voiceFromValue(hap.value);
+      const voice = voiceFromValue(hap.value, wholeBegin);
       if (!voice || voice.velocity === 0) continue;
 
       const onsetFrame = Math.round((wholeBegin / cps) * sampleRate);

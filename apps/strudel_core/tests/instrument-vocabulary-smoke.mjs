@@ -25,8 +25,11 @@ if (values.length < catalog.length) throw new Error('instrument metadata did not
 if (!values.some((value) => value && value.instrument === 'piano')) throw new Error('piano metadata missing');
 if (!values.some((value) => value === 'C3' || value === 'E3' || value === 'G3')) throw new Error('tonal Pattern transform missing');
 
-for (const name of ['s', 'n', 'note', 'samples', 'sound']) {
-  if (typeof globalThis[name] === 'function') throw new Error(`${name} unexpectedly claims native audio support`);
+for (const name of ['s', 'note', 'add']) {
+  if (typeof globalThis[name] !== 'function') throw new Error(`${name} shorthand is missing`);
+}
+for (const name of ['samples', 'sound']) {
+  if (typeof globalThis[name] === 'function') throw new Error(`${name} unexpectedly claims sample support`);
 }
 
 console.log('instrument vocabulary smoke passed');
