@@ -5,8 +5,8 @@ use core::fmt::Write as _;
 
 use trueos_qjs::workbench::{EvalMode, Workbench};
 
-use crate::native_rows::parse_native_command_rows;
 use crate::PerformanceInputV1;
+use crate::native_rows::parse_native_command_rows;
 use trueos::audio::NativeRenderCommandV3;
 
 const UPSTREAM_BUNDLE: &str = include_str!("../js/vendor/strudel-core.bundle.js");

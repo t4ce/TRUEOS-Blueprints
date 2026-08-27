@@ -26,6 +26,7 @@ pub const SAMPLE_RATE_HZ: u32 = 48_000;
 pub const BLOCK_FRAMES: usize = 2_400; // 50 ms
 pub const DEFAULT_TARGET_QUEUE_FRAMES: usize = BLOCK_FRAMES * 6; // 300 ms lookahead
 pub const MAX_SOURCE_BYTES: usize = 256 * 1024;
+const TRACE_BLOCKS_AFTER_COMMIT: u8 = 40;
 
 // In Strudel/Tidal terms 0.5 cycles per second corresponds to a conventional
 // 120 BPM four-beat cycle.
@@ -67,6 +68,7 @@ pub struct StrudelCore {
     runtime_status_json: String,
     revision: u64,
     absolute_frame: u64,
+    pattern_origin_frame: u64,
     last_queued_frames: usize,
     target_queue_frames: usize,
     buffer_frames: usize,
@@ -76,6 +78,7 @@ pub struct StrudelCore {
     midi_read_seq: u64,
     keyboard_held: Vec<(u32, u8)>,
     mouse_seq: u32,
+    trace_blocks_remaining: u8,
 }
 
 impl StrudelCore {
@@ -139,6 +142,7 @@ impl StrudelCore {
             runtime_status_json: install.core_status_json,
             revision: 1,
             absolute_frame: 0,
+            pattern_origin_frame: 0,
             last_queued_frames,
             target_queue_frames,
             buffer_frames,
@@ -148,6 +152,7 @@ impl StrudelCore {
             midi_read_seq: 0,
             keyboard_held: Vec::new(),
             mouse_seq: 0,
+            trace_blocks_remaining: 0,
         })
     }
 
@@ -161,7 +166,10 @@ impl StrudelCore {
         let mut diagnostics = self.vm.poll();
         if first_pump {
             logl::log(level::INFO, "strudel_core: first-pump stage=qjs-poll-ready");
-            logl::log(level::INFO, "strudel_core: first-pump stage=midi-read-begin");
+            logl::log(
+                level::INFO,
+                "strudel_core: first-pump stage=midi-read-begin",
+            );
         }
         let (midi_events, next_seq, dropped) = trueos::hid::midi_read_v1(self.midi_read_seq, 64);
         if first_pump {
@@ -188,7 +196,10 @@ impl StrudelCore {
             ));
         }
         if first_pump {
-            logl::log(level::INFO, "strudel_core: first-pump stage=keyboard-read-begin");
+            logl::log(
+                level::INFO,
+                "strudel_core: first-pump stage=keyboard-read-begin",
+            );
         }
         let keyboards = trueos::hid::hid_hut_keyboards();
         if first_pump {
@@ -239,7 +250,10 @@ impl StrudelCore {
         self.keyboard_held = next_keyboard_held;
 
         if first_pump {
-            logl::log(level::INFO, "strudel_core: first-pump stage=mouse-read-begin");
+            logl::log(
+                level::INFO,
+                "strudel_core: first-pump stage=mouse-read-begin",
+            );
         }
         let mouse = trueos::hid::mouse_poll();
         if first_pump {
@@ -250,7 +264,10 @@ impl StrudelCore {
                     u8::from(mouse.is_some()),
                 ),
             );
-            logl::log(level::INFO, "strudel_core: first-pump stage=queue-read-begin");
+            logl::log(
+                level::INFO,
+                "strudel_core: first-pump stage=queue-read-begin",
+            );
         }
         if let Some(mouse) = mouse {
             if mouse.seq != self.mouse_seq {
@@ -298,7 +315,10 @@ impl StrudelCore {
                 }
                 self.vm.apply_performance_inputs(&input_batch)?;
                 if trace_block {
-                    logl::log(level::INFO, "strudel_core: first-pump stage=input-apply-ready");
+                    logl::log(
+                        level::INFO,
+                        "strudel_core: first-pump stage=input-apply-ready",
+                    );
                 }
             }
             if trace_block {
@@ -310,11 +330,31 @@ impl StrudelCore {
                     ),
                 );
             }
+            let pattern_frame = self
+                .absolute_frame
+                .saturating_sub(self.pattern_origin_frame);
             let commands = self.vm.query_native_commands(
-                self.absolute_frame,
+                pattern_frame,
                 BLOCK_FRAMES as u32,
                 SAMPLE_RATE_HZ,
             )?;
+            if self.trace_blocks_remaining != 0 {
+                let active = commands
+                    .iter()
+                    .map(|command| {
+                        let base = &command.base;
+                        (base.midi_note, base.age_frames, base.duration_frames)
+                    })
+                    .collect::<Vec<_>>();
+                logl::log(
+                    level::INFO,
+                    format_args!(
+                        "strudel_core: pattern-trace revision={} absolute_frame={} pattern_frame={} active={active:?}",
+                        self.revision, self.absolute_frame, pattern_frame,
+                    ),
+                );
+                self.trace_blocks_remaining -= 1;
+            }
             if trace_block {
                 logl::log(
                     level::INFO,
@@ -323,7 +363,10 @@ impl StrudelCore {
                         commands.len(),
                     ),
                 );
-                logl::log(level::INFO, "strudel_core: first-pump stage=native-render-begin");
+                logl::log(
+                    level::INFO,
+                    "strudel_core: first-pump stage=native-render-begin",
+                );
             }
             let header =
                 NativeBlockHeaderV3::new(BLOCK_FRAMES as u32, self.absolute_frame, self.revision);
@@ -383,8 +426,13 @@ impl StrudelCore {
         self.active_source.push_str(source);
         self.runtime_status_json = runtime_status_json.clone();
         self.revision = self.revision.saturating_add(1);
+        // Keep the host/HDA timeline monotonic while giving each accepted
+        // program its own cycle-zero. Already queued PCM drains first; the new
+        // revision begins at the next block produced after this transaction.
+        self.pattern_origin_frame = self.absolute_frame;
         self.cps_numerator = cps_numerator;
         self.cps_denominator = cps_denominator;
+        self.trace_blocks_remaining = TRACE_BLOCKS_AFTER_COMMIT;
 
         Ok(CommitReport {
             revision: self.revision,
