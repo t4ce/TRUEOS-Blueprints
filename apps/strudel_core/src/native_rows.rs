@@ -258,4 +258,14 @@ mod tests {
         ).unwrap();
         assert_eq!(commands[0].filter_type, 2);
     }
+
+    #[test]
+    fn accepts_v3_release_tail_at_the_gate_boundary() {
+        let commands = parse_native_command_rows(
+            "[[0,960,96000,96000,2,1006632962,1,3,60,23737,-9175,65536,0,0,5200,0,3932,2621,0,3932,0,256,0,240,0,960,0,0,32767,0,0]]",
+        )
+        .unwrap();
+        assert_eq!(commands[0].base.age_frames, 96_000);
+        assert_eq!(commands[0].base.release_frames, 960);
+    }
 }

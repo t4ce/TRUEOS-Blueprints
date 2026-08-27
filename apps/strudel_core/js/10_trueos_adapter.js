@@ -711,7 +711,28 @@
     // Fraction-backed query engine to enumerate negative cycles during the
     // first block (a disproportionately deep path in embedded QuickJS).
     const queryBegin = Math.max(0, cycleBegin - releaseLookbackCycles);
-    const haps = pattern.queryArc(queryBegin, cycleEnd);
+    // Keep the current arc aligned to the native block boundary. Asking the
+    // embedded upstream engine for one arc which straddles a nested sequence
+    // boundary (notably cycle 1/8 in the demo) takes its pathological Fraction
+    // traversal. Past haps are queried separately and retained only after
+    // their natural edge, where clip/release extension actually needs them.
+    // Some nested upstream patterns recurse pathologically when an arc begins
+    // exactly on their rational branch edge (the demo reaches this at 1/8).
+    // Probe half a PCM frame inside nonzero blocks. Event `whole` times remain
+    // exact and are rounded back onto the native frame grid below, so this
+    // cannot shift an audible onset or omit a representable event.
+    const halfFrameCycles = cps / (sampleRate * 2);
+    const currentQueryBegin = absoluteStartFrame === 0
+      ? cycleBegin
+      : Math.min(cycleEnd, cycleBegin + halfFrameCycles);
+    const currentHaps = pattern.queryArc(currentQueryBegin, cycleEnd);
+    const pastHaps = queryBegin < cycleBegin
+      ? pattern.queryArc(queryBegin, cycleBegin).filter((hap) => {
+          const whole = hap.whole || hap.part;
+          return whole && finiteNumber(whole.end) <= cycleBegin;
+        })
+      : [];
+    const haps = pastHaps.concat(currentHaps);
     const rows = [];
 
     for (const hap of haps) {

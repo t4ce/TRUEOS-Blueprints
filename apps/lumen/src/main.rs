@@ -20,7 +20,7 @@ use crossterm::{
 use trueos::{
     clock,
     logl::{self, level},
-    lumen, platform, replication, vshell,
+    lumen, platform, replication, spirit, vshell,
 };
 
 const LOG_TARGET: &str = "lumen";
@@ -36,7 +36,13 @@ const SPINNER_FRAMES: &[&str] = &["⢈", "⡈", "⡐", "⡠", "⣀", "⢄", "⢂
 const SYSTEM_PROMPT_PREFILL_ENABLED: bool = true;
 
 const SYSTEM_PROMPT: &str = concat!(
-    "You are Spirit, a helpful assistant.\n"
+    "You are Spirit, a concise helpful assistant. Answer directly unless an available tool is needed. ",
+    "For the current date or time, use time(). To move Spirit, use move(x,y); 0,0 is screen centre. ",
+    "Only call tools using exactly <|tool_call_start|>[name(arguments)]<|tool_call_end|>, with no surrounding text. ",
+    "List of tools: [",
+    "{\"type\":\"function\",\"function\":{\"name\":\"time\",\"description\":\"Return the current UTC date and time.\",\"strict\":true,\"parameters\":{\"type\":\"object\",\"properties\":{},\"required\":[],\"additionalProperties\":false}}},",
+    "{\"type\":\"function\",\"function\":{\"name\":\"move\",\"description\":\"Move Spirit; 0,0 is screen centre.\",\"strict\":true,\"parameters\":{\"type\":\"object\",\"properties\":{\"x\":{\"type\":\"number\",\"minimum\":-0.5,\"maximum\":0.5},\"y\":{\"type\":\"number\",\"minimum\":-0.5,\"maximum\":0.5}},\"required\":[\"x\",\"y\"],\"additionalProperties\":false}}}",
+    "]\n",
 );
 
 struct LogicalState {
@@ -756,11 +762,13 @@ fn prepare_pause(prepare: replication::PreparePause, state: &mut LogicalState) -
 }
 
 fn run_prompt(state: &mut LogicalState, prompt: &str) -> Result<(), String> {
-    lumen::submit_prompt_with_no_argument_tool(
+    // The current decoder exposes only one argmax token, so it cannot mask a
+    // multi-tool choice while leaving numeric move arguments model-selected.
+    // Keep both calls model-authored and strictly validate them below.
+    lumen::submit_prompt(
         state.turns,
         &state.reply_tail[..state.reply_tail_len],
         prompt,
-        "time",
     )
     .map_err(|error| alloc::format!("submit {error:?}"))?;
     let mut spinner = ProgressSpinner::start("lumen-bp: reasoning");
@@ -773,9 +781,10 @@ fn run_prompt(state: &mut LogicalState, prompt: &str) -> Result<(), String> {
     let response_turn = state.turns.saturating_add(1);
     log_raw_reply(response_turn, raw.as_slice());
     let raw = String::from_utf8_lossy(&raw);
-    match parse_time_tool_reply(raw.as_ref(), ToolCallAllowance::FirstGeneration) {
+    match parse_tool_reply(raw.as_ref(), ToolCallAllowance::FirstGeneration) {
         ToolReply::Direct(text) => emit_text_reply(response_turn, text.as_str()),
         ToolReply::Time => run_time_continuation(state, response_turn)?,
+        ToolReply::Move { x, y } => run_move(x, y),
         ToolReply::Rejected => {
             vshell::line("lumen-bp: rejected malformed, unknown, or chained tool call");
             emit_text_reply(response_turn, rejected_tool_fallback());
@@ -804,14 +813,27 @@ fn run_time_continuation(state: &mut LogicalState, response_turn: u64) -> Result
         .map_err(|error| alloc::format!("time continuation read {error:?}"))?;
     log_raw_reply(response_turn, raw.as_slice());
     let raw = String::from_utf8_lossy(&raw);
-    match parse_time_tool_reply(raw.as_ref(), ToolCallAllowance::Continuation) {
+    match parse_tool_reply(raw.as_ref(), ToolCallAllowance::Continuation) {
         ToolReply::Direct(text) => emit_text_reply(response_turn, text.as_str()),
-        ToolReply::Time | ToolReply::Rejected => {
+        ToolReply::Time | ToolReply::Move { .. } | ToolReply::Rejected => {
             vshell::line("lumen-bp: rejected second or malformed time tool call");
             emit_text_reply(response_turn, rejected_tool_fallback());
         }
     }
     Ok(())
+}
+
+/// A validated movement is Spirit-owned and terminal: there is no tool result,
+/// continuation decode, or textual acknowledgement on the success path.
+fn run_move(x: f32, y: f32) {
+    let (x_normalized, y_normalized) = centered_spirit_position(x, y)
+        .expect("move coordinates were validated before Spirit dispatch");
+    if let Err(error) = spirit::move_to(x_normalized, y_normalized) {
+        diag(
+            level::ERROR,
+            format_args!("Spirit move ingress unexpectedly failed error={error:?}"),
+        );
+    }
 }
 
 fn log_raw_reply(turn: u64, raw: &[u8]) {
@@ -889,10 +911,11 @@ enum ToolCallAllowance {
 enum ToolReply {
     Direct(String),
     Time,
+    Move { x: f32, y: f32 },
     Rejected,
 }
 
-fn parse_time_tool_reply(raw: &str, allowance: ToolCallAllowance) -> ToolReply {
+fn parse_tool_reply(raw: &str, allowance: ToolCallAllowance) -> ToolReply {
     const START: &str = "<|tool_call_start|>";
     const END: &str = "<|tool_call_end|>";
     let Some(start) = raw.find(START) else {
@@ -914,16 +937,39 @@ fn parse_time_tool_reply(raw: &str, allowance: ToolCallAllowance) -> ToolReply {
     {
         return ToolReply::Rejected;
     }
-    parse_time_call(&raw[payload_start..payload_end])
+    parse_tool_call(&raw[payload_start..payload_end])
 }
 
-fn parse_time_call(payload: &str) -> ToolReply {
-    let payload = payload.trim();
+fn parse_tool_call(payload: &str) -> ToolReply {
     if payload == "[time()]" {
-        ToolReply::Time
-    } else {
-        ToolReply::Rejected
+        return ToolReply::Time;
     }
+    parse_move_call(payload)
+        .map(|(x, y)| ToolReply::Move { x, y })
+        .unwrap_or(ToolReply::Rejected)
+}
+
+/// Strict local wire contract for the two finite centre-relative coordinates.
+/// The order is intentionally fixed, so no JSON/parser surface is exposed to
+/// the Blueprint. `move(x,y)` remains model-authored; it is never completed by
+/// the decoder.
+fn parse_move_call(payload: &str) -> Option<(f32, f32)> {
+    let coordinates = payload.strip_prefix("[move(x=")?.strip_suffix(")]")?;
+    let (x, y) = coordinates.split_once(",y=")?;
+    if y.contains(",y=") {
+        return None;
+    }
+    let x = x.parse::<f32>().ok()?;
+    let y = y.parse::<f32>().ok()?;
+    centered_spirit_position(x, y).map(|_| (x, y))
+}
+
+fn centered_spirit_position(x: f32, y: f32) -> Option<(f32, f32)> {
+    if !x.is_finite() || !y.is_finite() || !(-0.5..=0.5).contains(&x) || !(-0.5..=0.5).contains(&y)
+    {
+        return None;
+    }
+    Some((x + 0.5, y + 0.5))
 }
 
 fn current_time_tool_result() -> String {
@@ -973,26 +1019,29 @@ fn utc_month(month: u8) -> &'static str {
 }
 
 fn rejected_tool_fallback() -> &'static str {
-    "I could not complete that bounded time-tool turn; please try again."
+    "I could not complete that bounded tool turn; please try again."
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        SYSTEM_PROMPT, ToolCallAllowance, ToolReply, format_time_tool_result, parse_time_tool_reply,
+        SYSTEM_PROMPT, ToolCallAllowance, ToolReply, centered_spirit_position,
+        format_time_tool_result, parse_tool_reply,
     };
 
     #[test]
     fn resident_prompt_uses_the_pinned_native_tool_list_envelope() {
         assert!(SYSTEM_PROMPT.contains("List of tools: ["));
         assert!(SYSTEM_PROMPT.contains("\"name\":\"time\""));
+        assert!(SYSTEM_PROMPT.contains("\"name\":\"move\""));
+        assert!(SYSTEM_PROMPT.contains("\"minimum\":-0.5"));
         assert!(SYSTEM_PROMPT.contains("\"additionalProperties\":false"));
     }
 
     #[test]
     fn time_tool_schema_accepts_exactly_one_no_argument_call() {
         assert!(matches!(
-            parse_time_tool_reply(
+            parse_tool_reply(
                 "<|tool_call_start|>[time()]<|tool_call_end|>",
                 ToolCallAllowance::FirstGeneration,
             ),
@@ -1003,11 +1052,12 @@ mod tests {
             "<|tool_call_start|>[clock()]<|tool_call_end|>",
             "<|tool_call_start|>[time()]<|tool_call_end|> extra",
             "<|tool_call_start|>[time()]<|tool_call_end|><|tool_call_start|>[time()]<|tool_call_end|>",
+            "<|tool_call_start|> [time()]<|tool_call_end|>",
             "<|tool_call_start|>[time()]",
             "<|tool_call_end|>",
         ] {
             assert!(matches!(
-                parse_time_tool_reply(malformed, ToolCallAllowance::FirstGeneration),
+                parse_tool_reply(malformed, ToolCallAllowance::FirstGeneration),
                 ToolReply::Rejected
             ));
         }
@@ -1016,16 +1066,40 @@ mod tests {
     #[test]
     fn continuation_is_bounded_to_final_text() {
         assert!(matches!(
-            parse_time_tool_reply(
+            parse_tool_reply(
                 "<|tool_call_start|>[time()]<|tool_call_end|>",
                 ToolCallAllowance::Continuation,
             ),
             ToolReply::Rejected
         ));
         assert!(matches!(
-            parse_time_tool_reply("The current time is available.", ToolCallAllowance::Continuation),
+            parse_tool_reply("The current time is available.", ToolCallAllowance::Continuation),
             ToolReply::Direct(text) if text == "The current time is available."
         ));
+    }
+
+    #[test]
+    fn move_tool_accepts_only_finite_bounded_centre_relative_coordinates() {
+        assert!(matches!(
+            parse_tool_reply(
+                "<|tool_call_start|>[move(x=0.25,y=-0.5)]<|tool_call_end|>",
+                ToolCallAllowance::FirstGeneration,
+            ),
+            ToolReply::Move { x, y } if x == 0.25 && y == -0.5
+        ));
+        assert_eq!(centered_spirit_position(0.25, -0.5), Some((0.75, 0.0)));
+        for malformed in [
+            "<|tool_call_start|>[move(x=0.51,y=0)]<|tool_call_end|>",
+            "<|tool_call_start|>[move(x=NaN,y=0)]<|tool_call_end|>",
+            "<|tool_call_start|>[move(y=0,x=0)]<|tool_call_end|>",
+            "<|tool_call_start|>[move(x=0,y=0,extra=1)]<|tool_call_end|>",
+            "<|tool_call_start|>[move(x=0, y=0)]<|tool_call_end|>",
+        ] {
+            assert!(matches!(
+                parse_tool_reply(malformed, ToolCallAllowance::FirstGeneration),
+                ToolReply::Rejected
+            ));
+        }
     }
 
     #[test]

@@ -320,7 +320,13 @@ impl NativeRenderCommandV2 {
         if self.start_frame >= self.end_frame || self.end_frame > block_frames {
             return Err(NativeValidationError::BadSpan);
         }
-        if self.duration_frames == 0 || self.age_frames >= self.duration_frames {
+        // V2/V3 carry an explicit release stage. A command whose age has
+        // reached the gate duration is therefore valid until that release
+        // tail ends. This is what lets a voice continue across PCM blocks.
+        let envelope_frames = self
+            .duration_frames
+            .saturating_add(self.release_frames);
+        if self.duration_frames == 0 || self.age_frames >= envelope_frames {
             return Err(NativeValidationError::BadDuration);
         }
         if self.kind != Self::KIND_OSCILLATOR && self.kind != Self::KIND_SAMPLE {

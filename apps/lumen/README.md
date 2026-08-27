@@ -2,18 +2,23 @@
 
 This is the first replicatable Lumen template Blueprint.
 
-The Blueprint owns the fixed `time()` tool schema, conversation turn and reply
-tail, strict tool-call adapter, and a portable checkpoint containing
+The Blueprint owns the fixed `time()` and `move(x,y)` tool schemas, conversation
+turn and reply tail, strict tool-call adapter, and a portable checkpoint containing
 short-convolution and attention KV state. TRUEOS retains the immutable LFM2.5
 model, tokenizer artifact, packed C++/IGC program, and GuC/RCS execution lane.
 
-On initial launch it prefills the pinned model's native JSON tool-list entry for
-its fixed read-only `time()` schema once. A user turn may finish directly or
-select one no-argument `time()` call. After the model selects the native
-tool-call start token, the inference capability constrains the remaining tokens
-to that exact call; its bounded UTC
-tool result is appended as an actual `tool` role message and followed by one
-final continuation. The required Liquid chat framing remains intact. At
+On initial launch it prefills the pinned model's native JSON tool-list entries
+once. A user turn may finish directly, call read-only `time()`, or call
+`move(x,y)` with finite centre-relative coordinates in `-0.5..=0.5`. `time()`
+receives a bounded UTC tool result as an actual `tool` role message and one
+final continuation. A valid `move()` is dispatched to Spirit at `(x + 0.5,
+y + 0.5)` and is terminal: it has no tool result, continuation decode, or
+textual acknowledgement.
+
+The current LFM decoder exposes argmax only. It cannot mask a branching tool
+grammar while preserving model-selected numeric arguments, so tool-call mode,
+tool name, and move coordinates are model-authored then strictly parsed and
+validated by the Blueprint. The required Liquid chat framing remains intact. At
 `PreparePause` it asks the kernel Lumen capability to export mutable inference
 state into Blueprint memory, releases the live inference session, and reports
 `Ready`. After same-instance or clone `Resume`, it uploads that state into a

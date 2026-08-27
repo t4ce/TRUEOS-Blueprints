@@ -1,26 +1,13 @@
+/*
+ * Boot-safe upstream Pattern.
+ *
+ * Keep startup free of nested temporal branches: the HTTP editor installs the
+ * full upstream runtime immediately afterward and can commit richer programs.
+ * Three one-event sequences still exercise stack, Pattern querying, the TRUEOS
+ * instrument vocabulary, native mixing, stereo pan, and HDA playback.
+ */
 stack(
-  sequence(
-    instrument("🎹", { note: "c4", velocity: 104, pan: -0.18 }),
-    [
-      instrument("🎸", { note: "g4", velocity: 88, pan: 0.12 }),
-      instrument("🎷", { note: "bb4", velocity: 82, pan: 0.28 }),
-    ],
-    instrument("🎻", { note: "c5", velocity: 96, pan: 0.08 }),
-    [
-      instrument("🪈", { note: "eb5", velocity: 74, pan: -0.1 }),
-      instrument("🎺", { note: "g4", velocity: 82, pan: -0.24 }),
-    ],
-  ),
-  sequence(
-    instrument("🥁", { note: 36, velocity: 112 }),
-    instrument("🪘", { note: 48, velocity: 92 }),
-    instrument("🎚️", { note: "ab1", velocity: 106 }),
-    instrument("🥁", { note: 38, velocity: 106 }),
-  ),
-  sequence(
-    [instrument("🪇", { note: 78, velocity: 36, pan: 0.55 }), null],
-    [null, instrument("🪕", { note: "g5", velocity: 30, pan: -0.5 })],
-    [instrument("🪗", { note: "eb6", velocity: 34, pan: 0.4 }), null],
-    [null, instrument("🎤", { note: "bb5", velocity: 30, pan: -0.35 })],
-  ),
+  sequence(instrument("🎹", { note: "c4", velocity: 92, pan: -0.28 })),
+  sequence(instrument("🎚️", { note: "c2", velocity: 104, pan: 0 })),
+  sequence(instrument("🪈", { note: "g4", velocity: 62, pan: 0.3 })),
 )
