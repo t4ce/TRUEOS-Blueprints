@@ -52,7 +52,8 @@ const SYSTEM_PROMPT: &str = concat!(
     "and a little mischievous. You inhabit the screen and may act spontaneously. ",
     "On every ordinary turn call between one and eight supplied tools. Ordered tool calls are ",
     "executed serially. Use text for one very short remark (prefer under 18 words), play_emotion ",
-    "for a visible feeling, or move for a normalized whole-screen position. Vary actions and ",
+    "for a visible feeling, or move for a centre-relative whole-screen position: 0,0 is centre ",
+    "and each axis runs from -0.5 to 0.5. Vary actions and ",
     "avoid repetition. UI4 tools let you inspect and operate visible apps when the user asks: ",
     "list windows, focus an opaque window id, observe the focused window, then point or type. ",
     "An observation is a PNG marked with a 0..1000 window-local grid; ui4_pointer uses exactly ",
@@ -569,13 +570,13 @@ fn tool_definitions() -> Value {
             "type": "function",
             "function": {
                 "name": "move",
-                "description": "Move the TRUEOS screen spirit to an absolute normalized point.",
+                "description": "Move Spirit; 0,0 is screen centre.",
                 "strict": true,
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "x": { "type": "number", "minimum": 0, "maximum": 1 },
-                        "y": { "type": "number", "minimum": 0, "maximum": 1 }
+                        "x": { "type": "number", "minimum": -0.5, "maximum": 0.5 },
+                        "y": { "type": "number", "minimum": -0.5, "maximum": 0.5 }
                     },
                     "required": ["x", "y"],
                     "additionalProperties": false
@@ -683,6 +684,12 @@ fn tool_definitions() -> Value {
             }
         }
     ])
+}
+
+/// Convert Dobby's centre-relative tool coordinates to Spirit's ABI coordinates.
+fn centered_spirit_position(x: f64, y: f64) -> Option<(f32, f32)> {
+    (x.is_finite() && y.is_finite() && (-0.5..=0.5).contains(&x) && (-0.5..=0.5).contains(&y))
+        .then_some(((x + 0.5) as f32, (y + 0.5) as f32))
 }
 
 fn normal_request_for_messages(config: &RuntimeConfig, messages: &[Value]) -> Value {
@@ -1044,14 +1051,10 @@ fn validate_tool_call(call: &ToolCall) -> Result<(), String> {
                 .get("y")
                 .and_then(Value::as_f64)
                 .ok_or_else(|| "y is missing".to_string())?;
-            if x.is_finite()
-                && y.is_finite()
-                && (0.0..=1.0).contains(&x)
-                && (0.0..=1.0).contains(&y)
-            {
+            if centered_spirit_position(x, y).is_some() {
                 Ok(())
             } else {
-                Err("coordinates must be in 0..=1".to_string())
+                Err("coordinates must be in -0.5..=0.5".to_string())
             }
         }
         "ui4_windows" | "ui4_observe" => {
@@ -1197,14 +1200,10 @@ fn execute_spirit_tool(state: &mut AppState, call: &ToolCall) -> String {
             let Some(y) = arguments.get("y").and_then(Value::as_f64) else {
                 return "rejected: y is missing".to_string();
             };
-            if !x.is_finite()
-                || !y.is_finite()
-                || !(0.0..=1.0).contains(&x)
-                || !(0.0..=1.0).contains(&y)
-            {
-                return "rejected: coordinates must be in 0..=1".to_string();
-            }
-            match spirit::move_to(x as f32, y as f32) {
+            let Some((x_normalized, y_normalized)) = centered_spirit_position(x, y) else {
+                return "rejected: coordinates must be in -0.5..=0.5".to_string();
+            };
+            match spirit::move_to(x_normalized, y_normalized) {
                 Ok(()) => {
                     vshell::linef(format_args!("dobby: move x={x:.3} y={y:.3}"));
                     "ok: movement queued".to_string()
@@ -2372,6 +2371,28 @@ mod tests {
             NORMAL_MAX_COMPLETION_TOKENS
         );
         assert_eq!(messages.len(), 2);
+    }
+
+    #[test]
+    fn move_tool_uses_centre_relative_coordinates() {
+        let tools = tool_definitions();
+        let move_tool = tools
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|tool| tool["function"]["name"] == "move")
+            .unwrap();
+        assert_eq!(
+            move_tool["function"]["parameters"]["properties"]["x"]["minimum"],
+            -0.5
+        );
+        assert_eq!(
+            move_tool["function"]["parameters"]["properties"]["x"]["maximum"],
+            0.5
+        );
+        assert_eq!(centered_spirit_position(0.0, 0.0), Some((0.5, 0.5)));
+        assert_eq!(centered_spirit_position(-0.5, 0.5), Some((0.0, 1.0)));
+        assert_eq!(centered_spirit_position(0.500_001, 0.0), None);
     }
 
     #[test]

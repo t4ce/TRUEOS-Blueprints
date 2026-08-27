@@ -31,6 +31,7 @@
   let cpsDenominator = 2;
   let pendingCps = null;
   let releaseLookbackFrames = 960;
+  let gateLookbackFrames = 0;
   const heldInputs = new Map();
   const pointerInputs = new Map();
 
@@ -702,7 +703,9 @@
     // Pattern queries normally stop returning an event at its gate edge. A
     // positive `.clip()` can extend that edge, so retain the bounded maximum
     // native gate extension as well as the V3 release tail.
-    const releaseLookbackCycles = (Math.max(releaseLookbackFrames, sampleRate * 10) / sampleRate) * cps;
+    const releaseLookbackCycles = (
+      Math.max(releaseLookbackFrames, gateLookbackFrames) / sampleRate
+    ) * cps;
     // The native timeline has no audio before frame zero. Clamping the release
     // lookback there is both semantically correct and avoids asking upstream's
     // Fraction-backed query engine to enumerate negative cycles during the
@@ -727,7 +730,19 @@
       // Upstream clip scales an event's gate; samples are cut at that gate and
       // the native release begins there, rather than at the unmodified span.
       if (!(voice.clip > 0)) continue;
-      const gateFrames = Math.max(1, Math.round(((wholeEnd - wholeBegin) / cps) * sampleRate * voice.clip));
+      const naturalGateFrames = Math.max(
+        1,
+        Math.round(((wholeEnd - wholeBegin) / cps) * sampleRate),
+      );
+      const gateFrames = Math.max(1, Math.round(naturalGateFrames * voice.clip));
+      // A later block must look behind the Pattern's natural event edge when
+      // `.clip()` extends that event. Learn the required extension from events
+      // as they first enter the normal query arc, capped to the renderer's
+      // existing ten-second native tail bound.
+      gateLookbackFrames = Math.max(
+        gateLookbackFrames,
+        Math.min(sampleRate * 10, Math.max(0, gateFrames - naturalGateFrames)),
+      );
       const releaseFrame = onsetFrame + gateFrames;
       const clippedStart = Math.max(absoluteStartFrame, onsetFrame);
       // Gate duration deliberately excludes the release tail. V2's end span

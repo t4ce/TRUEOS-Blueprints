@@ -282,7 +282,7 @@ impl StrudelCore {
         }
 
         while queued < self.target_queue_frames {
-            let trace_block = first_pump && self.absolute_frame == 0;
+            let trace_block = first_pump;
             let input_batch = self
                 .performance_inputs
                 .take_through(self.absolute_frame.saturating_add(BLOCK_FRAMES as u64));
@@ -302,7 +302,13 @@ impl StrudelCore {
                 }
             }
             if trace_block {
-                logl::log(level::INFO, "strudel_core: first-pump stage=pattern-query-begin");
+                logl::log(
+                    level::INFO,
+                    format_args!(
+                        "strudel_core: first-pump stage=pattern-query-begin absolute_frame={}",
+                        self.absolute_frame,
+                    ),
+                );
             }
             let commands = self.vm.query_native_commands(
                 self.absolute_frame,

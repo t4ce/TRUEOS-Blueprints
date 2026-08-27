@@ -17,6 +17,10 @@ a light `0..1000` grid; pointer coordinates use that same window-local scale.
 PNG bytes exist only in the active request and are replaced by compact text in
 conversation memory.
 
+Spirit `move` coordinates are centre-relative: `(0, 0)` is the screen centre;
+each axis is inclusive `-0.5..=0.5`. This is converted inside Dobby to the
+kernel's existing `0..=1` scanout API.
+
 One logical turn may use at most four remote rounds and sixteen ordered tool
 calls (at most eight in one response). Busy Lilly cursor/keyboard programs are
 retried serially for a bounded interval, so a returned `pointer -> type -> key`

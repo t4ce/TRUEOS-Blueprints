@@ -36,13 +36,7 @@ const SPINNER_FRAMES: &[&str] = &["⢈", "⡈", "⡐", "⡠", "⣀", "⢄", "⢂
 const SYSTEM_PROMPT_PREFILL_ENABLED: bool = true;
 
 const SYSTEM_PROMPT: &str = concat!(
-    "You are a concise helpful assistant. Answer directly unless the user asks for the current ",
-    "date or time; use the provided read-only tool when it is needed. After a tool result, answer ",
-    "directly and never call a tool again.\n",
-    "List of tools: [{\"type\":\"function\",\"function\":{\"name\":\"time\",",
-    "\"description\":\"Return the current UTC date and time.\",\"parameters\":{",
-    "\"type\":\"object\",\"properties\":{},\"required\":[],",
-    "\"additionalProperties\":false}}}]"
+    "You are Spirit, a helpful assistant.\n"
 );
 
 struct LogicalState {
@@ -801,6 +795,8 @@ fn run_time_continuation(state: &mut LogicalState, response_turn: u64) -> Result
     .map_err(|error| alloc::format!("time tool submit {error:?}"))?;
     let mut spinner = ProgressSpinner::start("lumen-bp: time continuation");
     let status = wait_for_phase_with_spinner(lumen::LUMEN_PHASE_REPLY_READY, &mut spinner)?;
+    clear_prompt_for_output()
+        .map_err(|error| format!("time continuation status clear failed: {error}"))?;
     let tail_len = (status.reply_tail_len as usize).min(state.reply_tail.len());
     state.reply_tail = status.reply_tail;
     state.reply_tail_len = tail_len;
@@ -939,7 +935,7 @@ fn format_time_tool_result(unix_seconds: Option<u64>) -> String {
         Some(unix_seconds) => {
             let utc = clock::UtcDateTime::from_unix_seconds(unix_seconds);
             alloc::format!(
-                "[\"{:02}:{:02}\",\"UTC\",{},\"{}\",\"{}\",{}]",
+                "{{\"time\":\"{:02}:{:02}\",\"timezone\":\"UTC\",\"day\":{},\"weekday\":\"{}\",\"month\":\"{}\",\"year\":{}}}",
                 utc.hour,
                 utc.minute,
                 utc.day,
@@ -1036,11 +1032,14 @@ mod tests {
     fn unavailable_clock_has_a_bounded_deterministic_result() {
         assert_eq!(format_time_tool_result(None), "null");
         let available = format_time_tool_result(Some(0));
-        assert_eq!(available, "[\"00:00\",\"UTC\",1,\"Thursday\",\"Jan\",1970]");
-        assert!(available.len() < 64);
+        assert_eq!(
+            available,
+            "{\"time\":\"00:00\",\"timezone\":\"UTC\",\"day\":1,\"weekday\":\"Thursday\",\"month\":\"Jan\",\"year\":1970}"
+        );
+        assert!(available.len() < 256);
         assert_eq!(
             format_time_tool_result(Some(1_787_668_327)),
-            "[\"14:32\",\"UTC\",25,\"Tuesday\",\"Aug\",2026]"
+            "{\"time\":\"14:32\",\"timezone\":\"UTC\",\"day\":25,\"weekday\":\"Tuesday\",\"month\":\"Aug\",\"year\":2026}"
         );
     }
 }
