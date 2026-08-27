@@ -181,30 +181,42 @@ pub async fn run() -> Result<(), String> {
 }
 
 async fn engine_loop(mut core: StrudelCore, mut commands: mpsc::Receiver<EngineCommand>) {
+    let mut pump_enabled = true;
     loop {
         for _ in 0..ENGINE_COMMAND_BURST {
             match commands.try_recv() {
-                Ok(command) => handle_engine_command(&mut core, command),
+                Ok(command) => {
+                    if handle_engine_command(&mut core, command) {
+                        pump_enabled = true;
+                    }
+                }
                 Err(mpsc::error::TryRecvError::Empty) => break,
                 Err(mpsc::error::TryRecvError::Disconnected) => return,
             }
         }
 
-        match core.pump() {
-            Ok(report) => {
-                if !report.diagnostics.is_empty() {
-                    logl::log(
-                        level::DEBUG,
-                        format_args!("strudel_core/qjs: {}", report.diagnostics),
-                    );
+        if pump_enabled {
+            match core.pump() {
+                Ok(report) => {
+                    if !report.diagnostics.is_empty() {
+                        logl::log(
+                            level::DEBUG,
+                            format_args!("strudel_core/qjs: {}", report.diagnostics),
+                        );
+                    }
                 }
-            }
-            Err(error) => {
-                logl::log(
-                    level::ERROR,
-                    format_args!("strudel_core: audio engine stopped: {error}"),
-                );
-                return;
+                Err(error) => {
+                    logl::log(
+                        level::ERROR,
+                        format_args!(
+                            "strudel_core: audio engine paused until next valid submission: {error}"
+                        ),
+                    );
+                    // Keep HTTP and the VM alive. A later successful commit
+                    // rearms pumping, so one invalid native block can never
+                    // terminate the Blueprint.
+                    pump_enabled = false;
+                }
             }
         }
 
@@ -213,13 +225,16 @@ async fn engine_loop(mut core: StrudelCore, mut commands: mpsc::Receiver<EngineC
     }
 }
 
-fn handle_engine_command(core: &mut StrudelCore, command: EngineCommand) {
+/// Returns true only when a new pattern was committed and should rearm a
+/// previously paused audio pump.
+fn handle_engine_command(core: &mut StrudelCore, command: EngineCommand) -> bool {
     match command {
         EngineCommand::Snapshot { reply } => {
             let _ = reply.send(core.snapshot());
+            false
         }
         EngineCommand::Submit { source, reply } => {
-            let outcome = match core.commit_expression(source.as_str()) {
+            let (outcome, committed) = match core.commit_expression(source.as_str()) {
                 Ok(report) => {
                     logl::log(
                         level::INFO,
@@ -230,20 +245,24 @@ fn handle_engine_command(core: &mut StrudelCore, command: EngineCommand) {
                             report.runtime_status_json,
                         ),
                     );
-                    SubmitOutcome::Committed(core.snapshot())
+                    (SubmitOutcome::Committed(core.snapshot()), true)
                 }
                 Err(error) => {
                     logl::log(
                         level::WARN,
                         format_args!("strudel_core: rejected browser pattern: {error}"),
                     );
-                    SubmitOutcome::Rejected {
-                        error,
-                        state: core.snapshot(),
-                    }
+                    (
+                        SubmitOutcome::Rejected {
+                            error,
+                            state: core.snapshot(),
+                        },
+                        false,
+                    )
                 }
             };
             let _ = reply.send(outcome);
+            committed
         }
     }
 }

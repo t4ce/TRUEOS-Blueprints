@@ -72,4 +72,12 @@ if (![57, 58, 61, 59, 60].some((note) => jazzNotes.has(note))) {
   throw new Error(`jazz sample-number selection was not rendered: ${JSON.stringify([...jazzNotes])}`);
 }
 
+runtime.commitExpression('setcps(.5); note("c e g b")');
+const barePitchClasses = runtime.queryFrames(0, 96_000, 48_000)
+  .filter((row) => row[2] === 0)
+  .map((row) => row[8]);
+if (JSON.stringify(barePitchClasses) !== JSON.stringify([48, 52, 55, 59])) {
+  throw new Error(`bare pitch classes did not default to octave 3: ${JSON.stringify(barePitchClasses)}`);
+}
+
 console.log("strudel_core first-sounds workshop smoke passed");

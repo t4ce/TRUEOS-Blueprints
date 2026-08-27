@@ -28,7 +28,7 @@ pub fn parse_native_command_rows(source: &str) -> Result<Vec<NativeRenderCommand
     for row in rows {
         let command = match row.len() {
             LEGACY_COLUMNS => into_v3(legacy_command(&row)?),
-            NATIVE_COLUMNS => into_v3(native_command(&row)?),
+            NATIVE_COLUMNS => into_v3(native_command(&row, true)?),
             NATIVE_V2_COLUMNS => into_v3(native_command_v2(&row)?),
             NATIVE_V3_COLUMNS => native_command_v3(&row)?,
             _ => return Err("wrong native command column count"),
@@ -39,7 +39,12 @@ pub fn parse_native_command_rows(source: &str) -> Result<Vec<NativeRenderCommand
 }
 
 fn into_v3(base: NativeRenderCommandV2) -> NativeRenderCommandV3 {
-    NativeRenderCommandV3 { base, filter_type: NativeRenderCommandV3::FILTER_12DB, reserved3: [0; 3], reserved4: 0 }
+    NativeRenderCommandV3 {
+        base,
+        filter_type: NativeRenderCommandV3::FILTER_12DB,
+        reserved3: [0; 3],
+        reserved4: 0,
+    }
 }
 
 /// Stable source identity used for generated oscillator voices.
@@ -106,7 +111,10 @@ fn legacy_command(row: &[i64]) -> Result<NativeRenderCommandV2, &'static str> {
     Ok(command)
 }
 
-fn native_command(row: &[i64]) -> Result<NativeRenderCommandV2, &'static str> {
+fn native_command(
+    row: &[i64],
+    validate_with_default_envelope: bool,
+) -> Result<NativeRenderCommandV2, &'static str> {
     let command = NativeRenderCommandV2 {
         start_frame: u32_value(row[0], "start")?,
         end_frame: u32_value(row[1], "end")?,
@@ -142,14 +150,19 @@ fn native_command(row: &[i64]) -> Result<NativeRenderCommandV2, &'static str> {
         sustain_q15: 32_767,
         filter_env_octaves_q8: 0,
     };
-    command
-        .validate(u32::MAX)
-        .map_err(|_| "invalid native command")?;
+    if validate_with_default_envelope {
+        command
+            .validate(u32::MAX)
+            .map_err(|_| "invalid native command")?;
+    }
     Ok(command)
 }
 
 fn native_command_v2(row: &[i64]) -> Result<NativeRenderCommandV2, &'static str> {
-    let mut command = native_command(&row[..NATIVE_COLUMNS])?;
+    // The 23-column prefix has only the legacy 20ms release default. Do not
+    // validate a V2/V3 tail against that temporary value before installing
+    // the row's actual envelope columns below.
+    let mut command = native_command(&row[..NATIVE_COLUMNS], false)?;
     command.attack_frames = u32_value(row[23], "attack")?;
     command.decay_frames = u32_value(row[24], "decay")?;
     command.release_frames = u32_value(row[25], "release")?;
@@ -170,7 +183,9 @@ fn native_command_v3(row: &[i64]) -> Result<NativeRenderCommandV3, &'static str>
         reserved3: [0; 3],
         reserved4: 0,
     };
-    command.validate(u32::MAX).map_err(|_| "invalid native v3 command")?;
+    command
+        .validate(u32::MAX)
+        .map_err(|_| "invalid native v3 command")?;
     Ok(command)
 }
 
@@ -267,5 +282,16 @@ mod tests {
         .unwrap();
         assert_eq!(commands[0].base.age_frames, 96_000);
         assert_eq!(commands[0].base.release_frames, 960);
+    }
+
+    #[test]
+    fn accepts_v3_release_tail_beyond_the_legacy_default() {
+        let commands = parse_native_command_rows(
+            "[[0,2400,26400,24000,102,1020265062,1,2,60,6450,0,65536,0,0,2000,1536,6553,0,0,0,0,256,0,240,0,5760,0,0,32767,0,0]]",
+        )
+        .unwrap();
+        assert_eq!(commands[0].base.age_frames, 26_400);
+        assert_eq!(commands[0].base.duration_frames, 24_000);
+        assert_eq!(commands[0].base.release_frames, 5_760);
     }
 }
