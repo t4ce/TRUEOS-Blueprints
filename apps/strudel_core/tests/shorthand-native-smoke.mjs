@@ -34,6 +34,12 @@ globalThis.__TRUEOS_STRUDEL.commitExpression("setcps(1); s('bd*2').bank('trueos'
 const registered = globalThis.__TRUEOS_STRUDEL.queryFrames(0, 48000, 48000);
 if (!registered.some((row) => row[6] === 2)) throw new Error(`trueos bank did not emit sample rows: ${JSON.stringify(registered)}`);
 
+globalThis.__TRUEOS_STRUDEL.commitExpression("setcps(1); stack(s('bd*2'), s('hh*8')).bank('RolandTR909')");
+const roland = globalThis.__TRUEOS_STRUDEL.queryFrames(0, 48000, 48000);
+if (!roland.length || roland.some((row) => row[6] !== 2)) {
+  throw new Error(`RolandTR909 fallback did not emit registered PCM rows: ${JSON.stringify(roland)}`);
+}
+
 globalThis.__TRUEOS_STRUDEL.commitExpression("setcps(1); note('c4').s('sine').release(.25)");
 globalThis.__TRUEOS_STRUDEL.queryFrames(0, 4800, 48000);
 const releaseTail = globalThis.__TRUEOS_STRUDEL.queryFrames(48000, 4800, 48000);
@@ -46,7 +52,9 @@ const committed = globalThis.__TRUEOS_STRUDEL.commitExpression(source);
 if (committed.cpsNumerator !== 1 || committed.cpsDenominator !== 1) {
   throw new Error(`top-level setcps was not committed: ${JSON.stringify(committed)}`);
 }
-const rows = globalThis.__TRUEOS_STRUDEL.queryFrames(0, 48000, 48000);
+// Both upstream duration masks are active in cycle 8: `<0@4 1@16>` has
+// entered its sixteen-cycle one span and `<0@8 1@16>` begins there.
+const rows = globalThis.__TRUEOS_STRUDEL.queryFrames(8 * 48000, 48000, 48000);
 if (!Array.isArray(rows) || rows.length < 3) throw new Error("shorthand program emitted too few voices");
 let saw = false;
 let percussion = false;

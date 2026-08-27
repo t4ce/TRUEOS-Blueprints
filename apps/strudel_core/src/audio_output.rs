@@ -114,32 +114,60 @@ fn source_id(bank: &str, sound: &str) -> u64 {
 }
 
 fn builtin_sample(kind: u8) -> Vec<i16> {
-    const FRAMES: usize = 4_800;
-    let mut out = Vec::with_capacity(FRAMES);
-    for frame in 0..FRAMES {
-        let decay = (FRAMES - frame) as i64;
+    let frames = match kind {
+        0 => 24_000, // kick: 500 ms pitch/body decay
+        1 => 6_000,  // closed hat: 125 ms metallic noise
+        _ => 12_000, // snare/rim fallback: 250 ms noise + body
+    };
+    let mut phase = 0u32;
+    let mut noise = 0x6d2b_79f5u32 ^ u32::from(kind);
+    let mut previous_noise = 0i64;
+    let mut out = Vec::with_capacity(frames);
+    for frame in 0..frames {
+        let remaining = (frames - frame) as u64;
+        let envelope_q15 = (remaining * remaining * 32_767 / (frames * frames) as u64) as i64;
+        noise = noise.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        let noise_sample = i64::from((noise >> 16) as i16);
         let value = match kind {
             0 => {
-                let phase = (frame * 11) % 436;
-                let triangle = if phase < 218 {
-                    phase as i64
+                // A short downward pitch sweep supplies the 909-like kick
+                // transient without turning the drum's MIDI note into a held
+                // oscillator. Frequency falls from roughly 150 Hz to 48 Hz.
+                let sweep = 102u64 * remaining * remaining / (frames * frames) as u64;
+                let frequency_hz = 48 + sweep;
+                phase = phase.wrapping_add(((frequency_hz << 32) / 48_000) as u32);
+                let body = triangle_q15(phase) * envelope_q15 / 32_767;
+                let click = if frame < 144 {
+                    noise_sample * (144 - frame) as i64 / 576
                 } else {
-                    (436 - phase) as i64
+                    0
                 };
-                (triangle * 24_000 * decay) / (218 * FRAMES as i64)
+                body * 28_000 / 32_767 + click
             }
             1 => {
-                let n = frame as u32;
-                let noise = n.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-                (i64::from((noise >> 16) as i16) * decay * 55) / (100 * FRAMES as i64)
+                // Differentiate white noise to remove the low body which made
+                // the fallback hat sound pitched.
+                let high = noise_sample - previous_noise;
+                previous_noise = noise_sample;
+                high * envelope_q15 * 18_000 / (32_767 * 32_767)
             }
             _ => {
-                let n = frame as u32;
-                let noise = n.wrapping_mul(22_695_477).wrapping_add(1);
-                (i64::from((noise >> 16) as i16) * decay * 80) / (100 * FRAMES as i64)
+                phase = phase.wrapping_add(((180u64 << 32) / 48_000) as u32);
+                let body = triangle_q15(phase) * envelope_q15 / 32_767;
+                let noise_body = noise_sample * envelope_q15 / 32_767;
+                body * 7 / 20 + noise_body * 13 / 20
             }
         };
         out.push(value.clamp(-32_767, 32_767) as i16);
     }
     out
+}
+
+fn triangle_q15(phase: u32) -> i64 {
+    let position = i64::from(phase >> 16);
+    if position < 32_768 {
+        position * 2 - 32_767
+    } else {
+        98_303 - position * 2
+    }
 }

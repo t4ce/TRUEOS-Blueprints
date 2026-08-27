@@ -114,7 +114,7 @@
     clip: "clip", attack: "attack", decay: "decay", sustain: "sustain", release: "release", lpf: "lpf", lpq: "lpq", lpenv: "lpenv",
     lpd: "lpd", lpa: "lpa", ftype: "ftype", room: "room", shape: "shape",
     postgain: "postgain", delay: "delay", bpf: "bpf", gain: "gain", bank: "bank",
-    s: "s",
+    s: "s", sound: "s",
   };
   for (const [method, key] of Object.entries(controlMethods)) {
     PatternProto[method] = function trueosControl(value) { return control(this, key, value); };
@@ -180,6 +180,15 @@
     return core.stack(this, transform(this));
   };
   function numericMaskMini(source) {
+    // Preserve upstream mini semantics first. In particular, angle brackets
+    // are slow alternation (`<1 0>` spans two cycles) and `@N` lengthens a
+    // step; flattening either form into sequence() changes the rhythm.
+    try {
+      return core.mini(String(source));
+    } catch (_) {
+      // Keep the small numeric fallback for builds which intentionally omit
+      // the upstream mini parser.
+    }
     const text = String(source).trim().replace(/[<>\[\]()]/g, " ");
     const values = [];
     for (const match of text.matchAll(/(?:^|\s)(-?(?:\d+\.?\d*|\.\d+))(?:@(\d+))?(?=\s|$)/g)) {
@@ -199,15 +208,12 @@
     return haps.length && finiteNumber(haps[0].value) !== 0;
   }
   PatternProto.mask = function trueosMask(mask) {
-    // `<0@4 1@16>` is common live-code shorthand: `@N` means N successive
-    // mask steps here. The minimal vendor mini parses it as a duration, so
-    // normalize numeric mask strings before handing temporal work to Pattern.
     const numericMini = typeof mask === "string" ? numericMaskMini(mask) : null;
     const controlPattern = isPattern(mask) ? mask : numericMini;
     if (controlPattern) {
       return temporalPattern(this, (hap) => {
         const whole = hap.whole || hap.part;
-        return Boolean(whole && truthAt(controlPattern, finiteNumber(whole.begin), Boolean(numericMini)));
+        return Boolean(whole && truthAt(controlPattern, finiteNumber(whole.begin), false));
       });
     }
     if (upstreamMask) return upstreamMask.call(this, mask);
@@ -269,9 +275,20 @@
     const source = isPattern(value) ? value : typeof value === "string" ? miniCompat(value) : core.sequence(value);
     return mapValue(source, (event) => ({ note: event }));
   };
-  G.s = function sound(value) {
+  function sound(value) {
     const source = isPattern(value) ? value : typeof value === "string" ? miniCompat(value) : core.sequence(value);
-    return mapValue(source, (event) => ({ s: event }));
+    return mapValue(source, (event) => {
+      // Upstream mini represents `casio:1` as the pair ["casio", 1]. The
+      // browser setup normally converts that pair into sound + sample number.
+      if (Array.isArray(event) && event.length >= 2) return { s: event[0], n: event[1] };
+      return { s: event };
+    });
+  }
+  G.s = sound;
+  G.sound = sound;
+  G.n = function sampleNumber(value) {
+    const source = isPattern(value) ? value : typeof value === "string" ? miniCompat(value) : core.sequence(value);
+    return mapValue(source, (event) => ({ n: event }));
   };
   G.add = function add(value) { return (source) => source.add(value); };
 
@@ -298,6 +315,7 @@
     return core.silence;
   }
   G.setcps = setcps;
+  G.setcpm = function setcpm(value) { return setcps(finiteNumber(value) / 60); };
 
   function finiteNumber(value) {
     if (typeof value === "number") return Number.isFinite(value) ? value : NaN;
@@ -384,10 +402,46 @@
 
   function drumPreset(sound) {
     const id = String(sound || "").toLowerCase().split(":")[0];
-    if (id === "bd" || id === "kick") return { note: 36, wave: "sine", lpf: 900, shape: 0.32 };
-    if (id === "hh" || id === "oh" || id === "ch") return { note: 78, wave: "noise", lpf: 8500, shape: 0.45 };
-    if (id === "sd" || id === "rim" || id === "rd") return { note: 38, wave: "noise", lpf: 4200, shape: 0.22 };
+    if (id === "bd" || id === "kick") return { sample: "bd", note: 36, wave: "sine", lpf: 900, shape: 0.32 };
+    if (["hh", "oh", "ch", "rd", "cr"].includes(id)) return { sample: "hh", note: 78, wave: "noise", lpf: 8500, shape: 0.45 };
+    if (["sd", "rim", "cp"].includes(id)) return { sample: "sd", note: 38, wave: "noise", lpf: 4200, shape: 0.22 };
+    if (["lt", "mt", "ht", "perc"].includes(id)) {
+      const note = id === "lt" ? 43 : id === "mt" ? 47 : id === "ht" ? 50 : 55;
+      return { sample: "sd", note, wave: "triangle", lpf: 2400, shape: 0.18 };
+    }
     return null;
+  }
+
+  function usesLocalDrumSamples(bank) {
+    const id = String(bank || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    // `RolandTR909` is an upstream recorded bank. TRUEOS cannot silently fetch
+    // browser samples in the audio callback, so resolve its core drum names to
+    // the deterministic PCM set registered by AudioOutput.
+    return [
+      "trueos", "rolandtr909", "rolandtr808", "rolandtr707", "rolandtr505",
+      "akailinn", "rhythmace", "viscospacedrum", "rolandcompurhythm1000",
+    ].includes(id);
+  }
+
+  function namedSoundPreset(sound) {
+    const text = String(sound || "").toLowerCase();
+    const parts = text.split(":");
+    const id = parts[0];
+    const inlineVariant = Number(parts[1] || 0);
+    const presets = {
+      casio: { note: 60, wave: "square", lpf: 6200, shape: 0.12, room: 0.08 },
+      metal: { note: 48, wave: "sawtooth", lpf: 7200, shape: 0.48, fm: 2.5 },
+      insect: { note: 84, wave: "square", lpf: 9000, shape: 0.28, fm: 1.5 },
+      wind: { note: 65, wave: "noise", lpf: 2600, shape: 0.08, room: 0.3 },
+      jazz: { note: 57, wave: "triangle", lpf: 5400, shape: 0.16, room: 0.18 },
+      east: { note: 67, wave: "sawtooth", lpf: 4800, shape: 0.22, room: 0.12 },
+      crow: { note: 55, wave: "square", lpf: 3600, shape: 0.2, fm: 0.8 },
+      space: { note: 72, wave: "sine", lpf: 7000, shape: 0.1, room: 0.45, delay: 0.25 },
+      numbers: { note: 64, wave: "pulse", lpf: 5800, shape: 0.2 },
+    };
+    const preset = presets[id];
+    if (!preset) return null;
+    return { ...preset, inlineVariant: Number.isFinite(inlineVariant) ? inlineVariant : 0 };
   }
 
   function voiceFromValue(value, cycle, sampleRate) {
@@ -396,7 +450,10 @@
     let waveform = 0;
     let pan = 0;
     let sourceId = 1;
-    let lpf = 0;
+    // The currently deployed native renderer interprets cutoff zero as a
+    // zero-Hz filter. Use Nyquist as the explicit no-filter value so ordinary
+    // `.s("sawtooth")` programs remain audible across kernel revisions.
+    let lpf = 24000;
     let lpq = 0;
     let room = 0;
     let delay = 0;
@@ -445,27 +502,44 @@
             ? valueAt(value.midi, cycle)
             : value.note !== undefined
               ? valueAt(value.note, cycle)
-              : valueAt(value.n, cycle);
+              : undefined;
       note = noteNameToMidi(rawNote);
 
       const sound = valueAt(value.s !== undefined ? value.s : value.sound, cycle);
       const percussion = drumPreset(sound);
+      const namedSound = percussion ? null : namedSoundPreset(sound);
       if (percussion) {
         if (note === null) note = percussion.note;
         waveform = waveformCode(percussion.wave);
         lpf = percussion.lpf;
         shape = percussion.shape;
         sourceId = 100 + waveform;
+      } else if (namedSound) {
+        const selectedVariant = value.n !== undefined
+          ? Number(valueAt(value.n, cycle))
+          : namedSound.inlineVariant;
+        if (note === null) {
+          const variant = Number.isFinite(selectedVariant) ? Math.trunc(selectedVariant) : 0;
+          note = clampInteger(namedSound.note + variant, 0, 127);
+        }
+        waveform = waveformCode(namedSound.wave);
+        lpf = namedSound.lpf;
+        shape = namedSound.shape;
+        room = namedSound.room || 0;
+        delay = namedSound.delay || 0;
+        fm = namedSound.fm || 0;
+        sourceId = 100 + waveform;
       } else if (sound !== undefined) {
         const namedWave = waveformCode(sound);
         if (["sine", "square", "saw", "sawtooth", "triangle", "noise", "white", "pulse"].includes(String(sound).toLowerCase())) {
+          if (note === null && value.n !== undefined) note = noteNameToMidi(valueAt(value.n, cycle));
           waveform = namedWave;
           sourceId = 100 + namedWave;
         }
       }
       const bank = valueAt(value.bank, cycle);
-      const sampleName = percussion && String(sound).toLowerCase().split(":")[0];
-      if (String(bank || "").toLowerCase() === "trueos" && sampleName && ["bd", "hh", "sd"].includes(sampleName)) {
+      const sampleName = percussion && percussion.sample;
+      if (usesLocalDrumSamples(bank) && sampleName) {
         kind = 2;
         sourceId = sampleSourceId("trueos", sampleName);
       }
