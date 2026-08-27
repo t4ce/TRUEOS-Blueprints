@@ -954,14 +954,28 @@ fn parse_tool_call(payload: &str) -> ToolReply {
 /// the Blueprint. `move(x,y)` remains model-authored; it is never completed by
 /// the decoder.
 fn parse_move_call(payload: &str) -> Option<(f32, f32)> {
-    let coordinates = payload.strip_prefix("[move(x=")?.strip_suffix(")]")?;
-    let (x, y) = coordinates.split_once(",y=")?;
-    if y.contains(",y=") {
+    let coordinates = payload.strip_prefix("[move(")?.strip_suffix(")]")?;
+    let (x, y) = coordinates.split_once(',')?;
+    if y.contains(',') {
         return None;
     }
-    let x = x.parse::<f32>().ok()?;
-    let y = y.parse::<f32>().ok()?;
+    let x = parse_move_coordinate(x, "x")?;
+    let y = parse_move_coordinate(y, "y")?;
     centered_spirit_position(x, y).map(|_| (x, y))
+}
+
+/// Permit only ASCII whitespace around the two ordered assignment fields. This
+/// accepts the model's ordinary `move(x=0, y=0)` spelling without accepting
+/// renamed, repeated, or additional arguments.
+fn parse_move_coordinate(field: &str, name: &str) -> Option<f32> {
+    let field = field.trim_matches(|character: char| character.is_ascii_whitespace());
+    let value = field.strip_prefix(name)?;
+    let value = value.trim_start_matches(|character: char| character.is_ascii_whitespace());
+    let value = value.strip_prefix('=')?;
+    let value = value.trim_matches(|character: char| character.is_ascii_whitespace());
+    (!value.is_empty())
+        .then(|| value.parse::<f32>().ok())
+        .flatten()
 }
 
 fn centered_spirit_position(x: f32, y: f32) -> Option<(f32, f32)> {
@@ -1082,7 +1096,7 @@ mod tests {
     fn move_tool_accepts_only_finite_bounded_centre_relative_coordinates() {
         assert!(matches!(
             parse_tool_reply(
-                "<|tool_call_start|>[move(x=0.25,y=-0.5)]<|tool_call_end|>",
+                "<|tool_call_start|>[move(x = 0.25, y = -0.5)]<|tool_call_end|>",
                 ToolCallAllowance::FirstGeneration,
             ),
             ToolReply::Move { x, y } if x == 0.25 && y == -0.5
@@ -1093,7 +1107,7 @@ mod tests {
             "<|tool_call_start|>[move(x=NaN,y=0)]<|tool_call_end|>",
             "<|tool_call_start|>[move(y=0,x=0)]<|tool_call_end|>",
             "<|tool_call_start|>[move(x=0,y=0,extra=1)]<|tool_call_end|>",
-            "<|tool_call_start|>[move(x=0, y=0)]<|tool_call_end|>",
+            "<|tool_call_start|>[move(x=0 y=0)]<|tool_call_end|>",
         ] {
             assert!(matches!(
                 parse_tool_reply(malformed, ToolCallAllowance::FirstGeneration),

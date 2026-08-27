@@ -256,6 +256,24 @@ pub struct TrueosVmediaImageInfo {
 
 const _: () = assert!(core::mem::size_of::<TrueosVmediaImageInfo>() == 32);
 
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+pub struct TrueosVmediaRetainedTextureInfo {
+    pub texture_id: u64,
+    pub width: u32,
+    pub height: u32,
+    pub stride_bytes: u32,
+    pub byte_len: u32,
+    pub source_format: u32,
+    pub pixel_format: u32,
+    pub backend: u32,
+    pub revision: u32,
+    pub residency: u32,
+    pub reserved: u32,
+}
+
+const _: () = assert!(core::mem::size_of::<TrueosVmediaRetainedTextureInfo>() == 48);
+
 pub const UI4_INPUT_ROUTE_SELECTED_FOR_WINDOW: u32 = 1 << 0;
 pub const UI4_INPUT_ROUTE_APP_FOCUS: u32 = 1 << 1;
 pub const UI4_INPUT_ROUTE_VCURSOR: u32 = 1 << 2;
@@ -552,6 +570,16 @@ unsafe extern "C" {
         out_cap: usize,
     ) -> isize;
     pub fn trueos_cabi_vmedia_image_decode_discard(id: u32) -> i32;
+    pub fn trueos_cabi_vmedia_texture_decode_begin(
+        device: u64,
+        format: u32,
+        total_len: usize,
+    ) -> i32;
+    pub fn trueos_cabi_vmedia_texture_decode_info(
+        id: u32,
+        out: *mut TrueosVmediaRetainedTextureInfo,
+    ) -> i32;
+    pub fn trueos_cabi_vmedia_texture_release(device: u64, texture_id: u64) -> i32;
     pub fn trueos_cabi_ui4_solara_frame_begin(window_id: u32, clear_rgba: u32) -> i32;
     pub fn trueos_cabi_ui4_scene_pan_event_take(window_id: u32, out: *mut TrueosUi4PanEvent)
     -> i32;
