@@ -2,8 +2,8 @@
 
 extern crate alloc;
 
-use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::boxed::Box;
+use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::ToString;
 use alloc::{collections::VecDeque, string::String, vec::Vec};
 use core::future::Future;
@@ -11,8 +11,8 @@ use core::pin::Pin;
 use core::sync::atomic::{AtomicU32, Ordering};
 use core::task::{Context, Poll, Waker};
 
-use trueos_time::{Duration as EmbassyDuration, Instant, Timer};
 use spin::Mutex;
+use trueos_time::{Duration as EmbassyDuration, Instant, Timer};
 
 use crate::trueos_shims::{
     trueos_cabi_net_fetch_bytes_discard, trueos_cabi_net_fetch_bytes_read,
@@ -154,8 +154,9 @@ pub fn has_completion_result(op_id: u32) -> bool {
 fn remove_queued_reqs(id: u32) {
     let mut q = ASYNC_FS_REQS.lock();
     q.retain(|req| match req {
-        AsyncFsRequest::ReadFile { id: rid, .. }
-        | AsyncFsRequest::WriteFile { id: rid, .. } => *rid != id,
+        AsyncFsRequest::ReadFile { id: rid, .. } | AsyncFsRequest::WriteFile { id: rid, .. } => {
+            *rid != id
+        }
     });
 }
 
@@ -404,7 +405,12 @@ pub fn start_read_file(path: &[u8]) -> Result<u32, i32> {
     };
     push_async_fs_req(req)?;
     async_fs_diag(
-        alloc::format!("qjs-async-fs: read queued id={} path_len={}\n", id, path.len()).as_str(),
+        alloc::format!(
+            "qjs-async-fs: read queued id={} path_len={}\n",
+            id,
+            path.len()
+        )
+        .as_str(),
     );
     Ok(id)
 }

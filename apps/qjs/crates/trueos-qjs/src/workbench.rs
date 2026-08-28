@@ -13,7 +13,11 @@ use alloc::{
     format,
     string::{String, ToString},
 };
-use core::{ffi::{c_char, c_void}, marker::PhantomData, ptr};
+use core::{
+    ffi::{c_char, c_void},
+    marker::PhantomData,
+    ptr,
+};
 
 use crate as qjs;
 
@@ -123,14 +127,24 @@ impl Workbench {
         let text = unsafe { value_to_display_string(vm.ctx, value) }
             .unwrap_or_else(|| "undefined".to_string());
         unsafe { qjs::js_free_value(vm.ctx, value) };
-        Ok(EvalResult { ok: true, mode, eval_count: vm.eval_count, text })
+        Ok(EvalResult {
+            ok: true,
+            mode,
+            eval_count: vm.eval_count,
+            text,
+        })
     }
 
     /// Pump worker messages, async operations, timers, and QuickJS jobs once.
     pub fn poll(&mut self) -> String {
-        let Some(vm) = self.vm.as_mut() else { return String::new() };
+        let Some(vm) = self.vm.as_mut() else {
+            return String::new();
+        };
         if !unsafe { qjs::vm::pump_runtime_once(vm.rt, vm.ctx, "qjs-workbench") } {
-            push_output(vm.output.as_mut(), "runtime fault; reset the workbench VM".to_string());
+            push_output(
+                vm.output.as_mut(),
+                "runtime fault; reset the workbench VM".to_string(),
+            );
         }
         take_output(vm.output.as_mut())
     }
@@ -149,12 +163,16 @@ impl Workbench {
 }
 
 impl Default for Workbench {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 fn create_vm() -> Result<Vm, String> {
     let rt = unsafe { qjs::JS_NewRuntime() };
-    if rt.is_null() { return Err("failed to create QuickJS runtime".to_string()); }
+    if rt.is_null() {
+        return Err("failed to create QuickJS runtime".to_string());
+    }
     unsafe {
         qjs::qjs_diag::install_runtime(rt);
         qjs::node::install(rt);
@@ -168,30 +186,48 @@ fn create_vm() -> Result<Vm, String> {
         qjs::qjs_diag::install_context(ctx);
         qjs::node::install_globals_with_profile(ctx, qjs::node::RuntimeProfile::Shell);
     }
-    let mut output = Box::new(ContextOutput { lines: VecDeque::new(), bytes: 0 });
+    let mut output = Box::new(ContextOutput {
+        lines: VecDeque::new(),
+        bytes: 0,
+    });
     unsafe {
         qjs::JS_SetContextOpaque(ctx, output.as_mut() as *mut ContextOutput as *mut c_void);
         install_workbench_globals(ctx);
     }
-    Ok(Vm { rt, ctx, output, eval_count: 0 })
+    Ok(Vm {
+        rt,
+        ctx,
+        output,
+        eval_count: 0,
+    })
 }
 
 unsafe fn read_js_string(ctx: *mut qjs::JSContext, value: qjs::JSValueConst) -> Option<String> {
     let mut len = 0usize;
     let cstr = qjs::JS_ToCStringLen2(ctx, &mut len, value, 0);
-    if cstr.is_null() { return None; }
+    if cstr.is_null() {
+        return None;
+    }
     let text = core::str::from_utf8(core::slice::from_raw_parts(cstr as *const u8, len))
-        .ok().map(ToString::to_string);
+        .ok()
+        .map(ToString::to_string);
     qjs::JS_FreeCString(ctx, cstr);
     text
 }
 
-unsafe fn value_to_display_string(ctx: *mut qjs::JSContext, value: qjs::JSValueConst) -> Option<String> {
+unsafe fn value_to_display_string(
+    ctx: *mut qjs::JSContext,
+    value: qjs::JSValueConst,
+) -> Option<String> {
     let global = qjs::JS_GetGlobalObject(ctx);
-    if global.is_exception() { return read_js_string(ctx, value); }
+    if global.is_exception() {
+        return read_js_string(ctx, value);
+    }
     let json = qjs::JS_GetPropertyStr(ctx, global, b"JSON\0".as_ptr() as *const c_char);
     qjs::js_free_value(ctx, global);
-    if json.is_exception() { return read_js_string(ctx, value); }
+    if json.is_exception() {
+        return read_js_string(ctx, value);
+    }
     let stringify = qjs::JS_GetPropertyStr(ctx, json, b"stringify\0".as_ptr() as *const c_char);
     if stringify.is_exception() {
         qjs::js_free_value(ctx, json);
@@ -221,8 +257,11 @@ unsafe fn exception_to_string(ctx: *mut qjs::JSContext) -> String {
     let stack = qjs::JS_GetPropertyStr(ctx, exception, b"stack\0".as_ptr() as *const c_char);
     let message = if !stack.is_exception() && stack.tag != qjs::JS_TAG_UNDEFINED {
         read_js_string(ctx, stack)
-    } else { None }.or_else(|| read_js_string(ctx, exception))
-        .unwrap_or_else(|| "<exception>".to_string());
+    } else {
+        None
+    }
+    .or_else(|| read_js_string(ctx, exception))
+    .unwrap_or_else(|| "<exception>".to_string());
     qjs::js_free_value(ctx, stack);
     qjs::js_free_value(ctx, exception);
     message
@@ -230,8 +269,12 @@ unsafe fn exception_to_string(ctx: *mut qjs::JSContext) -> String {
 
 fn push_output(output: &mut ContextOutput, line: String) {
     let line_bytes = line.len();
-    while output.lines.len() >= OUTPUT_LINE_CAP || output.bytes.saturating_add(line_bytes) > OUTPUT_BYTES_CAP {
-        let Some(discarded) = output.lines.pop_front() else { break };
+    while output.lines.len() >= OUTPUT_LINE_CAP
+        || output.bytes.saturating_add(line_bytes) > OUTPUT_BYTES_CAP
+    {
+        let Some(discarded) = output.lines.pop_front() else {
+            break;
+        };
         output.bytes = output.bytes.saturating_sub(discarded.len());
     }
     if line_bytes <= OUTPUT_BYTES_CAP {
@@ -244,22 +287,35 @@ fn take_output(output: &mut ContextOutput) -> String {
     let mut text = String::new();
     while let Some(line) = output.lines.pop_front() {
         output.bytes = output.bytes.saturating_sub(line.len());
-        if !text.is_empty() { text.push('\n'); }
+        if !text.is_empty() {
+            text.push('\n');
+        }
         text.push_str(&line);
     }
     text
 }
 
-unsafe extern "C" fn workbench_print(ctx: *mut qjs::JSContext, _this: qjs::JSValueConst, argc: i32, argv: *const qjs::JSValueConst) -> qjs::JSValue {
+unsafe extern "C" fn workbench_print(
+    ctx: *mut qjs::JSContext,
+    _this: qjs::JSValueConst,
+    argc: i32,
+    argv: *const qjs::JSValueConst,
+) -> qjs::JSValue {
     let output = qjs::JS_GetContextOpaque(ctx) as *mut ContextOutput;
-    if output.is_null() { return qjs::JS_NewFloat64(ctx, 0.0); }
+    if output.is_null() {
+        return qjs::JS_NewFloat64(ctx, 0.0);
+    }
     let mut line = String::new();
     if argc > 0 && !argv.is_null() {
         for value in core::slice::from_raw_parts(argv, argc as usize) {
-            if !line.is_empty() { line.push(' '); }
-            line.push_str(&value_to_display_string(ctx, *value)
-                .or_else(|| read_js_string(ctx, *value))
-                .unwrap_or_else(|| "<value>".to_string()));
+            if !line.is_empty() {
+                line.push(' ');
+            }
+            line.push_str(
+                &value_to_display_string(ctx, *value)
+                    .or_else(|| read_js_string(ctx, *value))
+                    .unwrap_or_else(|| "<value>".to_string()),
+            );
         }
     }
     let len = line.len();
@@ -269,12 +325,31 @@ unsafe extern "C" fn workbench_print(ctx: *mut qjs::JSContext, _this: qjs::JSVal
 
 unsafe fn install_workbench_globals(ctx: *mut qjs::JSContext) {
     let global = qjs::JS_GetGlobalObject(ctx);
-    let print = qjs::JS_NewCFunction2(ctx, Some(workbench_print), b"print\0".as_ptr() as *const c_char, 1, qjs::JS_CFUNC_GENERIC, 0);
+    let print = qjs::JS_NewCFunction2(
+        ctx,
+        Some(workbench_print),
+        b"print\0".as_ptr() as *const c_char,
+        1,
+        qjs::JS_CFUNC_GENERIC,
+        0,
+    );
     let _ = qjs::JS_SetPropertyStr(ctx, global, b"print\0".as_ptr() as *const c_char, print);
     let console = qjs::JS_GetPropertyStr(ctx, global, b"console\0".as_ptr() as *const c_char);
     if !console.is_exception() {
-        for name in [b"log\0".as_slice(), b"info\0".as_slice(), b"warn\0".as_slice(), b"error\0".as_slice()] {
-            let logger = qjs::JS_NewCFunction2(ctx, Some(workbench_print), name.as_ptr() as *const c_char, 1, qjs::JS_CFUNC_GENERIC, 0);
+        for name in [
+            b"log\0".as_slice(),
+            b"info\0".as_slice(),
+            b"warn\0".as_slice(),
+            b"error\0".as_slice(),
+        ] {
+            let logger = qjs::JS_NewCFunction2(
+                ctx,
+                Some(workbench_print),
+                name.as_ptr() as *const c_char,
+                1,
+                qjs::JS_CFUNC_GENERIC,
+                0,
+            );
             let _ = qjs::JS_SetPropertyStr(ctx, console, name.as_ptr() as *const c_char, logger);
         }
     }
@@ -283,7 +358,14 @@ unsafe fn install_workbench_globals(ctx: *mut qjs::JSContext) {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum ScanMode { Normal, SingleQuote, DoubleQuote, Backtick, LineComment, BlockComment }
+enum ScanMode {
+    Normal,
+    SingleQuote,
+    DoubleQuote,
+    Backtick,
+    LineComment,
+    BlockComment,
+}
 
 /// Detect static module syntax without being fooled by strings or comments.
 pub fn source_uses_module_syntax(source: &str) -> bool {
@@ -295,8 +377,16 @@ pub fn source_uses_module_syntax(source: &str) -> bool {
         let byte = bytes[index];
         match mode {
             ScanMode::Normal => {
-                if byte == b'/' && bytes.get(index + 1) == Some(&b'/') { mode = ScanMode::LineComment; index += 2; continue; }
-                if byte == b'/' && bytes.get(index + 1) == Some(&b'*') { mode = ScanMode::BlockComment; index += 2; continue; }
+                if byte == b'/' && bytes.get(index + 1) == Some(&b'/') {
+                    mode = ScanMode::LineComment;
+                    index += 2;
+                    continue;
+                }
+                if byte == b'/' && bytes.get(index + 1) == Some(&b'*') {
+                    mode = ScanMode::BlockComment;
+                    index += 2;
+                    continue;
+                }
                 match byte {
                     b'\'' => mode = ScanMode::SingleQuote,
                     b'"' => mode = ScanMode::DoubleQuote,
@@ -304,13 +394,24 @@ pub fn source_uses_module_syntax(source: &str) -> bool {
                     b'_' | b'$' | b'a'..=b'z' | b'A'..=b'Z' => {
                         let start = index;
                         index += 1;
-                        while bytes.get(index).is_some_and(|b| *b == b'_' || *b == b'$' || b.is_ascii_alphanumeric()) { index += 1; }
+                        while bytes
+                            .get(index)
+                            .is_some_and(|b| *b == b'_' || *b == b'$' || b.is_ascii_alphanumeric())
+                        {
+                            index += 1;
+                        }
                         let token = &source[start..index];
-                        if token == "export" { return true; }
+                        if token == "export" {
+                            return true;
+                        }
                         if token == "import" {
                             let mut next = index;
-                            while bytes.get(next).is_some_and(u8::is_ascii_whitespace) { next += 1; }
-                            if bytes.get(next) != Some(&b'(') { return true; }
+                            while bytes.get(next).is_some_and(u8::is_ascii_whitespace) {
+                                next += 1;
+                            }
+                            if bytes.get(next) != Some(&b'(') {
+                                return true;
+                            }
                         }
                         continue;
                     }
@@ -318,12 +419,25 @@ pub fn source_uses_module_syntax(source: &str) -> bool {
                 }
             }
             ScanMode::SingleQuote | ScanMode::DoubleQuote | ScanMode::Backtick => {
-                if escaped { escaped = false; }
-                else if byte == b'\\' { escaped = true; }
-                else if matches!((mode, byte), (ScanMode::SingleQuote, b'\'') | (ScanMode::DoubleQuote, b'"') | (ScanMode::Backtick, b'`')) { mode = ScanMode::Normal; }
+                if escaped {
+                    escaped = false;
+                } else if byte == b'\\' {
+                    escaped = true;
+                } else if matches!(
+                    (mode, byte),
+                    (ScanMode::SingleQuote, b'\'')
+                        | (ScanMode::DoubleQuote, b'"')
+                        | (ScanMode::Backtick, b'`')
+                ) {
+                    mode = ScanMode::Normal;
+                }
             }
             ScanMode::LineComment if byte == b'\n' => mode = ScanMode::Normal,
-            ScanMode::BlockComment if byte == b'*' && bytes.get(index + 1) == Some(&b'/') => { mode = ScanMode::Normal; index += 2; continue; }
+            ScanMode::BlockComment if byte == b'*' && bytes.get(index + 1) == Some(&b'/') => {
+                mode = ScanMode::Normal;
+                index += 2;
+                continue;
+            }
             _ => {}
         }
         index += 1;
