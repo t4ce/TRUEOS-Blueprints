@@ -35,6 +35,14 @@
       "name": "trueos-picasso-example",
       "path": "../TRUEOS-Picasso-Example"
     },
+    {
+      "name": "window-decorations",
+      "path": "../WindowDecorations"
+    },
+    {
+      "name": "potato-stamps",
+      "path": "../PotatoStamps"
+    },
     "esp32_stt",
     "flight_controller_sim",
     "prismq",
