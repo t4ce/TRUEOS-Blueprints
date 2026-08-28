@@ -810,6 +810,13 @@ impl Frame {
         status(unsafe { v::bp_abi::trueos_cabi_ui4_scene_frame_set_position(self.window_id, x, y) })
     }
 
+    /// Set the opacity applied to every composited pixel of this frame.
+    pub fn set_opacity(&mut self, opacity: u8) -> Result<(), Error> {
+        status(unsafe {
+            v::bp_abi::trueos_cabi_ui4_scene_frame_set_opacity(self.window_id, opacity as u32)
+        })
+    }
+
     /// Exclude this frame from UI4 cursor selection and pointer hit testing.
     pub fn set_hit_testable(&mut self, enabled: bool) -> Result<(), Error> {
         status(unsafe {
