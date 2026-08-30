@@ -3,6 +3,15 @@
 HelioV is the native TRUEOS Blueprint bring-up target for **actual Helio and
 SceneDB code**. It is not another Shell2 demo and it is not a port of Stratum.
 
+## Upstream attribution
+
+Helio is third-party software by Tristan Poland (`Trident_For_U`), copyright
+2026, licensed under the MIT License. The canonical upstream repository is
+[Far-Beyond-Pulsar/Helio](https://github.com/Far-Beyond-Pulsar/Helio). This
+Blueprint keeps its real Helio dependencies and the HelioV name; it is not
+Picasso-owned code. See the shared
+[renderer ownership boundary](../../docs/renderer-ownership.md).
+
 The deprecated Stratum `voxel_world` example is used only to choose a useful
 product-shaped target: streamed procedural chunks, player/camera movement,
 dynamic insertion/removal, coloured materials, indirect rendering, and later

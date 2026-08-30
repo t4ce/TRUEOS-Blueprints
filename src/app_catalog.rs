@@ -786,6 +786,26 @@ rustc-payload-dependencies = ["trueos", "itoa"]
             let buildin = apps.iter().find(|app| app.name == buildin_name).unwrap();
             assert_eq!(buildin.dir, root.join("buildins").join(buildin_name));
         }
+
+        let picasso_example =
+            package_app_spec(root, "TRUEOS-PICASSO-EXAMPLE", PackageCatalog::Apps)
+            .unwrap()
+            .unwrap();
+        assert_eq!(picasso_example.name, "trueos-picasso-example");
+        assert_eq!(
+            picasso_example.dir,
+            root.join("../TRUEOS-Picasso-Example")
+        );
+        assert!(
+            package_app_spec(root, "picasso", PackageCatalog::Apps)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            package_app_spec(root, "helio-example", PackageCatalog::Apps)
+                .unwrap()
+                .is_none()
+        );
     }
 
     fn temporary_manifest(key: &str, value: &str) -> PathBuf {

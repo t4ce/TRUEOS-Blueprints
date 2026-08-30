@@ -2,6 +2,15 @@
 
 HelioC is the TRUEOS Cloud Engine sidekick to `apps/HelioV`.
 
+## Upstream attribution
+
+Helio is third-party software by Tristan Poland (`Trident_For_U`), copyright
+2026, licensed under the MIT License. The canonical upstream repository is
+[Far-Beyond-Pulsar/Helio](https://github.com/Far-Beyond-Pulsar/Helio). This
+Blueprint keeps its real Helio dependency and the HelioC name; it is not
+Picasso-owned code. See the shared
+[renderer ownership boundary](../../docs/renderer-ownership.md).
+
 It is not the hosted `heliov_flycam` example and it does not rename the Linux
 Cloud Engine. The hosted `Helio-Examples/cloud_engine.rs` and its original WGSL
 remain the workload source and visual oracle. This Blueprint owns the TRUEOS
