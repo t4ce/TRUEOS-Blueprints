@@ -37,6 +37,14 @@
       "path": "../TRUEOS-Picasso-Example"
     },
     {
+      "name": "helio_churn_trueos",
+      "path": "../helio-examples/helio_churn_trueos"
+    },
+    {
+      "name": "helio_portal_trueos",
+      "path": "../helio-examples/helio_portal_trueos"
+    },
+    {
       "name": "window-decorations",
       "path": "../WindowDecorations"
     },
