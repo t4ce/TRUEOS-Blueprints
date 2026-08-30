@@ -39,12 +39,12 @@ enum ParserState {
     OscEscape,
 }
 
-/// A terminal foreground color suitable for direct renderer consumption.
+/// A terminal color suitable for direct renderer consumption.
 ///
 /// Indexed values use the conventional 256-color terminal palette. Values
 /// `0..=7` are standard ANSI colors and `8..=15` are their bright variants.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(crate) enum ForegroundColor {
+pub(crate) enum TerminalColor {
     #[default]
     Default,
     Indexed(u8),
@@ -57,7 +57,8 @@ pub(crate) enum ForegroundColor {
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct CellStyle {
-    pub(crate) foreground: ForegroundColor,
+    pub(crate) foreground: TerminalColor,
+    pub(crate) background: TerminalColor,
     pub(crate) underline: bool,
 }
 
@@ -72,7 +73,8 @@ impl Cell {
         Self {
             glyph: ' ',
             style: CellStyle {
-                foreground: ForegroundColor::Default,
+                foreground: TerminalColor::Default,
+                background: TerminalColor::Default,
                 underline: false,
             },
         }
@@ -81,8 +83,9 @@ impl Cell {
 
 /// A compact, fixed-cell terminal screen for the UI4 shell frontend.
 ///
-/// Every Unicode scalar occupies exactly one cell. Foreground SGR state is
-/// captured on each written cell; unsupported styling remains ignored.
+/// Every Unicode scalar occupies exactly one cell. Foreground, background,
+/// and underline SGR state is captured on each written cell; unsupported
+/// styling remains ignored.
 pub(crate) struct Terminal {
     cols: usize,
     rows: usize,
@@ -531,20 +534,34 @@ impl Terminal {
                 24 => self.current_style.underline = false,
                 30..=37 => {
                     self.current_style.foreground =
-                        ForegroundColor::Indexed((params[index] - 30) as u8);
+                        TerminalColor::Indexed((params[index] - 30) as u8);
                 }
-                39 => self.current_style.foreground = ForegroundColor::Default,
+                39 => self.current_style.foreground = TerminalColor::Default,
+                40..=47 => {
+                    self.current_style.background =
+                        TerminalColor::Indexed((params[index] - 40) as u8);
+                }
+                49 => self.current_style.background = TerminalColor::Default,
                 90..=97 => {
                     self.current_style.foreground =
-                        ForegroundColor::Indexed((params[index] - 90 + 8) as u8);
+                        TerminalColor::Indexed((params[index] - 90 + 8) as u8);
                 }
-                38 => match params.get(index + 1).copied() {
+                100..=107 => {
+                    self.current_style.background =
+                        TerminalColor::Indexed((params[index] - 100 + 8) as u8);
+                }
+                38 | 48 => match params.get(index + 1).copied() {
                     Some(5) => {
                         if let Some(color) = params
                             .get(index + 2)
                             .and_then(|value| u8::try_from(*value).ok())
                         {
-                            self.current_style.foreground = ForegroundColor::Indexed(color);
+                            let color = TerminalColor::Indexed(color);
+                            if params[index] == 38 {
+                                self.current_style.foreground = color;
+                            } else {
+                                self.current_style.background = color;
+                            }
                         }
                         index = index.saturating_add(2);
                     }
@@ -561,8 +578,12 @@ impl Terminal {
                                     _ => None,
                                 });
                         if let Some((red, green, blue)) = rgb {
-                            self.current_style.foreground =
-                                ForegroundColor::Rgb { red, green, blue };
+                            let color = TerminalColor::Rgb { red, green, blue };
+                            if params[index] == 38 {
+                                self.current_style.foreground = color;
+                            } else {
+                                self.current_style.background = color;
+                            }
                         }
                         index = index.saturating_add(4);
                     }
@@ -745,7 +766,8 @@ impl Terminal {
     }
 
     fn clear_all(&mut self) {
-        self.cells.fill(Cell::blank());
+        let blank = self.erase_blank();
+        self.cells.fill(blank);
         self.dirty = true;
     }
 
@@ -759,8 +781,20 @@ impl Terminal {
             return;
         }
         let line_start = row * self.cols;
-        self.cells[line_start + start..line_start + end].fill(Cell::blank());
+        let blank = self.erase_blank();
+        self.cells[line_start + start..line_start + end].fill(blank);
         self.dirty = true;
+    }
+
+    fn erase_blank(&self) -> Cell {
+        Cell {
+            glyph: ' ',
+            style: CellStyle {
+                foreground: TerminalColor::Default,
+                background: self.current_style.background,
+                underline: false,
+            },
+        }
     }
 
     fn insert_lines(&mut self, count: usize) {
@@ -930,14 +964,14 @@ mod tests {
         terminal.feed(b"\x1b[30mA\x1b[37mB\x1b[90mC\x1b[97mD\x1b[38;5;202mE\x1b[38;2;1;2;3mF");
 
         let cells = terminal.cells();
-        assert_eq!(cells[0].style.foreground, ForegroundColor::Indexed(0));
-        assert_eq!(cells[1].style.foreground, ForegroundColor::Indexed(7));
-        assert_eq!(cells[2].style.foreground, ForegroundColor::Indexed(8));
-        assert_eq!(cells[3].style.foreground, ForegroundColor::Indexed(15));
-        assert_eq!(cells[4].style.foreground, ForegroundColor::Indexed(202));
+        assert_eq!(cells[0].style.foreground, TerminalColor::Indexed(0));
+        assert_eq!(cells[1].style.foreground, TerminalColor::Indexed(7));
+        assert_eq!(cells[2].style.foreground, TerminalColor::Indexed(8));
+        assert_eq!(cells[3].style.foreground, TerminalColor::Indexed(15));
+        assert_eq!(cells[4].style.foreground, TerminalColor::Indexed(202));
         assert_eq!(
             cells[5].style.foreground,
-            ForegroundColor::Rgb {
+            TerminalColor::Rgb {
                 red: 1,
                 green: 2,
                 blue: 3
@@ -952,10 +986,62 @@ mod tests {
 
         assert_eq!(
             terminal.cells()[0].style.foreground,
-            ForegroundColor::Indexed(1)
+            TerminalColor::Indexed(1)
         );
         for cell in &terminal.cells()[1..4] {
-            assert_eq!(cell.style.foreground, ForegroundColor::Default);
+            assert_eq!(cell.style.foreground, TerminalColor::Default);
+        }
+    }
+
+    #[test]
+    fn records_standard_bright_indexed_and_truecolor_backgrounds() {
+        let mut terminal = Terminal::new(8, 1);
+        terminal.feed(b"\x1b[40mA\x1b[47mB\x1b[100mC\x1b[107mD\x1b[48;5;202mE\x1b[48;2;1;2;3mF");
+
+        let cells = terminal.cells();
+        assert_eq!(cells[0].style.background, TerminalColor::Indexed(0));
+        assert_eq!(cells[1].style.background, TerminalColor::Indexed(7));
+        assert_eq!(cells[2].style.background, TerminalColor::Indexed(8));
+        assert_eq!(cells[3].style.background, TerminalColor::Indexed(15));
+        assert_eq!(cells[4].style.background, TerminalColor::Indexed(202));
+        assert_eq!(
+            cells[5].style.background,
+            TerminalColor::Rgb {
+                red: 1,
+                green: 2,
+                blue: 3
+            }
+        );
+    }
+
+    #[test]
+    fn resets_background_with_default_empty_and_full_reset_sgr() {
+        let mut terminal = Terminal::new(6, 1);
+        terminal.feed(b"\x1b[44mA\x1b[49mB\x1b[45m\x1b[mC\x1b[46m\x1b[0mD");
+
+        assert_eq!(
+            terminal.cells()[0].style.background,
+            TerminalColor::Indexed(4)
+        );
+        for cell in &terminal.cells()[1..4] {
+            assert_eq!(cell.style.background, TerminalColor::Default);
+        }
+    }
+
+    #[test]
+    fn erased_cells_keep_the_current_background() {
+        let mut terminal = Terminal::new(6, 1);
+        terminal.feed(b"abcdef\x1b[1G\x1b[48;2;9;8;7m\x1b[2K");
+
+        for cell in terminal.cells() {
+            assert_eq!(
+                cell.style.background,
+                TerminalColor::Rgb {
+                    red: 9,
+                    green: 8,
+                    blue: 7
+                }
+            );
         }
     }
 
