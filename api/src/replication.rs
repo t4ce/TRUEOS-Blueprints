@@ -104,6 +104,44 @@ pub fn ready(prepare: PreparePause, checkpoint_version: u64) -> Result<Resume, E
     current_identity().ok_or(Error::IdentityUnavailable)
 }
 
+/// Declare the app quiescent and attach a compact, application-defined
+/// checkpoint for fresh-Hull replication. Same-Hull pause/resume still returns
+/// from this exact call; a live kernel replacement launches a fresh Blueprint
+/// which retrieves the payload with [`restore_checkpoint`].
+pub fn ready_with_checkpoint(
+    prepare: PreparePause,
+    checkpoint_version: u64,
+    checkpoint: &[u8],
+) -> Result<Resume, Error> {
+    let status = unsafe {
+        v::bp_abi::trueos_cabi_lifecycle_ready_with_checkpoint(
+            prepare.operation,
+            checkpoint_version,
+            checkpoint.as_ptr(),
+            checkpoint.len(),
+        )
+    };
+    if status != 0 {
+        return Err(Error::StaleOperation);
+    }
+    current_identity().ok_or(Error::IdentityUnavailable)
+}
+
+/// Consume the application checkpoint supplied to a fresh replicated launch.
+/// Returns its application-defined version and exact byte length. A normal
+/// launch has no payload and returns `None`.
+pub fn restore_checkpoint(out: &mut [u8]) -> Option<(u64, usize)> {
+    let mut version = 0u64;
+    let len = unsafe {
+        v::bp_abi::trueos_cabi_lifecycle_checkpoint_restore(
+            out.as_mut_ptr(),
+            out.len(),
+            &mut version as *mut _,
+        )
+    };
+    (len > 0).then_some((version, len as usize))
+}
+
 #[must_use]
 pub fn current_identity() -> Option<Identity> {
     let mut raw = TrueosLifecycleIdentity::default();

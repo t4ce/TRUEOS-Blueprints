@@ -78,7 +78,37 @@ fn main() {
     };
     let mut page = GridPaper::new(config);
     page.set_scale_percent(scale_percent);
-    initialize_unicode_demo(&mut page, start_ms);
+    let mut restored_page = [0u8; gridpaper::PAGE_BYTES];
+    match replication::restore_checkpoint(&mut restored_page) {
+        Some((CHECKPOINT_VERSION, len)) if len == restored_page.len() => {
+            let mut edit = page.edit(start_ms);
+            edit.raw_mut().copy_from_slice(&restored_page);
+            let _ = edit.finish();
+            let _ = page.publish(start_ms);
+            logl::log(
+                level::INFO,
+                format_args!(
+                    "gridpaper: replication checkpoint restored version={} bytes={} launch=fresh-hull",
+                    CHECKPOINT_VERSION,
+                    len
+                ),
+            );
+        }
+        Some((version, len)) => {
+            logl::log(
+                level::WARN,
+                format_args!(
+                    "gridpaper: replication checkpoint rejected version={} bytes={} expected_version={} expected_bytes={}; using seed",
+                    version,
+                    len,
+                    CHECKPOINT_VERSION,
+                    restored_page.len()
+                ),
+            );
+            initialize_unicode_demo(&mut page, start_ms);
+        }
+        None => initialize_unicode_demo(&mut page, start_ms),
+    }
     submit_to_kernel(&page, grid_size);
 
     let mut input = [0_u8; 64];
@@ -182,7 +212,11 @@ fn prepare_pause(
         ),
     );
 
-    let resume = replication::ready(prepare, CHECKPOINT_VERSION);
+    let resume = replication::ready_with_checkpoint(
+        prepare,
+        CHECKPOINT_VERSION,
+        page.snapshot().raw(),
+    );
 
     // Checkpoint/release already succeeded even if Ready became stale, so
     // always rebuild the disposable projection before returning to the loop.
