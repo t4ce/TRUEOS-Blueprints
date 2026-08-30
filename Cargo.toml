@@ -22,6 +22,7 @@ members = [
     "apps/lumen",
     "apps/ipp-printer",
     "apps/esp32_stt",
+    "apps/ferris-says-nix",
     "apps/flight_controller_sim",
     "apps/monaco",
     "apps/strudel_core",

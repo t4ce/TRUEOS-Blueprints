@@ -1,0 +1,14 @@
+[package]
+name = "ferris-says-nix"
+version = "0.1.0"
+edition = "2024"
+description = "Pinned GitHub package smoke test for the Nix-to-TRUEOS Blueprint path"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+ferris-says = { git = "https://github.com/rust-lang/ferris-says.git", rev = "ef3de61852f2710a54fbe3d8ddc28a18ba61bbd8" }
+
+[package.metadata.trueos-blueprint.upstream]
+repository = "https://github.com/rust-lang/ferris-says"
+revision = "ef3de61852f2710a54fbe3d8ddc28a18ba61bbd8"
+license = "MIT OR Apache-2.0"

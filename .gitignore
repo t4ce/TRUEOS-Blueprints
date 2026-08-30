@@ -1,5 +1,7 @@
 target/
 dist/
+!apps/ferris-says-nix/dist/
+!apps/ferris-says-nix/dist/ferris-says-nix.bp
 Cargo.lock
 package.json
 package-lock.json

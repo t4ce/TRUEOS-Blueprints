@@ -796,6 +796,9 @@ fn compress_blueprint_payload(stripped: &Path) -> Result<Vec<u8>, String> {
         .arg("-mx=9")
         .arg("-m0=LZMA2")
         .arg("-ms=off")
+        .arg("-mtc=off")
+        .arg("-mtm=off")
+        .arg("-mta=off")
         .arg("-bd")
         .arg(&archive)
         .arg(file_name);
@@ -1023,6 +1026,27 @@ mod tests {
             .arg(&output);
         crate::run_command(&mut objcopy, "objcopy dump TRUEOS assets").unwrap();
         assert_eq!(extract_asset_bundle(&dumped_archive), bundle);
+
+        fs::remove_dir_all(temp).unwrap();
+    }
+
+    #[test]
+    fn blueprint_7z_is_deterministic() {
+        let temp = test_directory("blueprint-7z");
+        let stripped = temp.join("module.stripped.o");
+        fs::write(&stripped, b"stable TRUEOS Blueprint payload").unwrap();
+
+        let archive_a = compress_blueprint_payload(&stripped).unwrap();
+        fs::remove_file(stripped.with_extension("7z")).unwrap();
+
+        let file = fs::File::options().write(true).open(&stripped).unwrap();
+        file.set_times(fs::FileTimes::new().set_modified(
+            std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_234_567),
+        ))
+        .unwrap();
+
+        let archive_b = compress_blueprint_payload(&stripped).unwrap();
+        assert_eq!(archive_a, archive_b);
 
         fs::remove_dir_all(temp).unwrap();
     }

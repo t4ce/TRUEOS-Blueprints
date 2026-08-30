@@ -51,6 +51,7 @@
       "path": "../PotatoStamps"
     },
     "esp32_stt",
+    "ferris-says-nix",
     "flight_controller_sim",
     "prismq",
     "particle",
