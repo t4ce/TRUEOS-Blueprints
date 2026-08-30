@@ -377,6 +377,16 @@ pub fn direction_for(key: char) -> Option<Direction> {
     }
 }
 
+/// Return the Pi character for a segment indexed from the snake's head.
+///
+/// Positions are stored head-first, whereas the visible number reads from tail
+/// to head: a right-moving six-cell snake is therefore `3.1415`.
+pub fn snake_glyph(head_index: usize, snake_length: usize) -> char {
+    PI.chars()
+        .nth(snake_length.saturating_sub(head_index.saturating_add(1)))
+        .unwrap_or('π')
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -408,5 +418,14 @@ mod tests {
         game.input(0, '3', 0);
         game.turn(0, Direction::Left);
         assert_eq!(game.players[0].direction, Direction::Right);
+    }
+
+    #[test]
+    fn snake_segments_read_as_pi_from_tail_to_head() {
+        let displayed: String = (0..6)
+            .rev()
+            .map(|head_index| snake_glyph(head_index, 6))
+            .collect();
+        assert_eq!(displayed, "3.1415");
     }
 }

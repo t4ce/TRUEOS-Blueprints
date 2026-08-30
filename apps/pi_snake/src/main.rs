@@ -2,7 +2,8 @@
 mod trueos_app {
     use std::{fmt::Write as _, net::Ipv4Addr, sync::Arc};
 
-    use pi_snake::{Cell, Game, PORT};
+    use crossterm::terminal;
+    use pi_snake::{Cell, Game, PORT, snake_glyph};
     use trueos::{
         logl,
         logl::level,
@@ -22,6 +23,22 @@ mod trueos_app {
     const INPUT_CAP: usize = 512;
 
     type SharedGame = Arc<Mutex<Game>>;
+
+    /// Keeps the terminal handoff contract intact on every return path.
+    struct RawMode;
+
+    impl RawMode {
+        fn enable() -> std::io::Result<Self> {
+            terminal::enable_raw_mode()?;
+            Ok(Self)
+        }
+    }
+
+    impl Drop for RawMode {
+        fn drop(&mut self) {
+            let _ = terminal::disable_raw_mode();
+        }
+    }
 
     pub fn main() {
         let runtime = match runtime::current_thread_net().build() {
@@ -55,6 +72,7 @@ mod trueos_app {
 
         // Do this only after the terminal lease is held. It is a direct cell
         // renderer: no compositor window and no retained UI surface.
+        let _raw_mode = RawMode::enable().map_err(|_| "could not enable raw Shell2 input")?;
         vshell::attached_write(b"\x1b[?1049h\x1b[?25l\x1b[2J\x1b[H");
         lease
             .acknowledge_ready()
@@ -285,12 +303,13 @@ mod trueos_app {
             put(&mut cells, game.width, *apple, '@');
         }
         for (id, player) in game.players.iter().enumerate() {
+            let snake_length = player.snake.len();
             for (index, cell) in player.snake.iter().enumerate() {
                 put(
                     &mut cells,
                     game.width,
                     *cell,
-                    if index == 0 { '3' } else { 'o' },
+                    snake_glyph(index, snake_length),
                 );
             }
             if player.pi_chart {
@@ -321,10 +340,13 @@ mod trueos_app {
                 let cell = cells[y as usize * game.width as usize + x as usize];
                 match cell {
                     '@' => out.push_str("\x1b[31m@\x1b[0m"),
-                    '3' => out.push_str("\x1b[32m3\x1b[0m"),
-                    'o' => out.push_str("\x1b[37mo\x1b[0m"),
                     'π' => out.push_str("\x1b[35mπ\x1b[0m"),
-                    _ => out.push(' '),
+                    ' ' => out.push(' '),
+                    digit => {
+                        out.push_str("\x1b[32m");
+                        out.push(digit);
+                        out.push_str("\x1b[0m");
+                    }
                 }
             }
             out.push_str("|\r\n");

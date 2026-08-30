@@ -1,5 +1,6 @@
 const board = document.querySelector('#board');
 const status = document.querySelector('#status');
+const PI = '3.14159265358979323846264338327950288419716939937510';
 async function post(path, data = '') {
   await fetch(path, { method: 'POST', headers: {'Content-Type':'application/x-www-form-urlencoded'}, body: data });
 }
@@ -8,7 +9,10 @@ async function draw() {
     const game = await (await fetch('/api/state', {cache:'no-store'})).json();
     board.style.gridTemplateColumns = `repeat(${game.width}, 14px)`;
     const marks = new Map(game.apples.map(([x,y]) => [`${x},${y}`, ['@','apple']]));
-    game.players.forEach((player, playerIndex) => player.snake.forEach(([x,y], index) => marks.set(`${x},${y}`, [index ? 'o' : '3', index ? 'body' : `p${playerIndex + 1}`])));
+    game.players.forEach((player, playerIndex) => player.snake.forEach(([x,y], index) => {
+      const digit = PI[player.snake.length - index - 1] || 'π';
+      marks.set(`${x},${y}`, [digit, `p${playerIndex + 1}`]);
+    }));
     board.replaceChildren(...Array.from({length: game.width * game.height}, (_, index) => {
       const x = index % game.width, y = Math.floor(index / game.width), mark = marks.get(`${x},${y}`) || ['',''];
       const cell = document.createElement('span'); cell.className = `cell ${mark[1]}`; cell.textContent = mark[0]; return cell;

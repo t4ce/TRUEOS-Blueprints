@@ -17,7 +17,9 @@ use rustix::{
     termios::{Termios, Winsize},
 };
 
-use std::{fs::File, io, process};
+#[cfg(not(target_os = "trueos"))]
+use std::fs::File;
+use std::{io, process};
 #[cfg(feature = "libc")]
 use std::{
     mem,

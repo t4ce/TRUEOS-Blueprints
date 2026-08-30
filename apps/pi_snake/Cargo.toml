@@ -18,6 +18,7 @@ test = false
 bench = false
 
 [dependencies]
+crossterm = { path = "../../vendor/crossterm-0.29.0-trueos", default-features = false }
 trueos = { path = "../../api", features = ["tokio-net-probe"] }
 
 [patch.crates-io]
