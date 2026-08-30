@@ -819,6 +819,13 @@ rustc-payload-dependencies = ["trueos", "itoa"]
                 .unwrap()
                 .is_none()
         );
+        for retired in ["HelioV", "HelioC"] {
+            assert!(
+                package_app_spec(root, retired, PackageCatalog::Apps)
+                    .unwrap()
+                    .is_none()
+            );
+        }
     }
 
     fn temporary_manifest(key: &str, value: &str) -> PathBuf {
