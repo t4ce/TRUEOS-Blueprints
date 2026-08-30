@@ -147,17 +147,33 @@ presentation, while its kernel-owned page, resident 3D scene, GPU allocations,
 and last front buffer remain retained. Resume re-arms the same VM owner and
 creates a new UI4 presentation session over that retained scene.
 
-Snapshot format v3 preserves the live VMCS RIP/RSP, guest GPRs and RFLAGS, and
+Gridpaper also supplies a compact application checkpoint with `Ready`: the
+27,885-byte character page and an application-defined format version. During a
+live kernel replacement TRUEOS persists that payload together with the
+Blueprint relaunch contract, but not VM registers, page tables, guest heap, or
+Hull memory. The candidate kernel launches a fresh Gridpaper Hull, restores the
+page before its first UI4 submission, and reconstructs the disposable scene and
+presentation. A running instance returns running; an instance that was already
+pause-latched is relaunched long enough to consume the payload and is then
+cooperatively paused again.
+
+Snapshot format v5 preserves the live VMCS RIP/RSP, guest GPRs and RFLAGS, and
 the restored stack is retained through relaunch. A same-slot F2 resume therefore
 continues after the exact pause boundary instead of entering the Blueprint at
-its default seed again. Formats v1 and v2 remain readable with their historical
-checkpoint-and-restart semantics.
+its default seed again. This exact-continuation path is for same-Hull
+`pause`/`snapshot`/`load`; it is deliberately not the Gridpaper live-update
+path, because a changed Hull cannot safely execute an old RIP or reuse
+pointer-bearing writable memory.
 
 The lifecycle ABI now exposes operation-scoped `PreparePause`, an exact `Ready`
 VMCALL checkpoint boundary, and post-resume identity. A successful Ready call
 does not return to Blueprint code before the checkpoint; it returns after
 Resume, when the app can rebuild resources. Requests expire after the host
 deadline and leave the VM running when the app does not acknowledge.
+`ready_with_checkpoint` attaches a bounded application payload to that same
+boundary, and `restore_checkpoint` consumes it once during a fresh replicated
+launch. Apps that do not provide a payload remain valid for same-Hull pause but
+fail live-update replication safely before commit.
 
 `hello_world_replicatable` is the end-to-end implementation: its accept loop
 polls the lifecycle request, drops the listener before Ready, and reacquires a
