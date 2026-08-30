@@ -1,0 +1,17 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pi Snake P2</title>
+<style>
+  :root { color-scheme: dark; font-family: ui-monospace, monospace; background:#071018; color:#dcebf4; }
+  body { max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
+  #board { display:grid; gap:1px; background:#30424f; padding:5px; width:max-content; max-width:100%; overflow:auto; }
+  .cell { width:14px; height:14px; background:#0d1c27; font-size:12px; line-height:14px; text-align:center; }
+  .apple { color:#ff4f57; } .p1 { color:#61e294; } .p2 { color:#65a9ff; } .body { color:#becbd4; }
+  button { font:inherit; margin:.15rem; min-width:3rem; } #status { min-height:2em; color:#a9c5d4; }
+</style>
+<h1>Pi Snake — player 2</h1>
+<p>Connected to the Shell2 game on TCP 45329. Start with <kbd>3</kbd>; after each red <b>@</b>, type the next Pi character. The dot is mandatory.</p>
+<p><button id="join">Join P2</button><button data-key="3">3</button><button data-key="w">↑</button><button data-key="a">←</button><button data-key="s">↓</button><button data-key="d">→</button></p>
+<div id="status">Connecting…</div><div id="board" aria-label="Pi Snake board"></div>
+<script src="/app.js"></script>

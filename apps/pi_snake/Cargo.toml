@@ -1,0 +1,42 @@
+[package]
+name = "pi_snake"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+description = "Immediate Shell2 Pi Snake with a two-player browser endpoint"
+publish = false
+
+[workspace]
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "pi_snake"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+trueos = { path = "../../api", features = ["tokio-net-probe"] }
+
+[patch.crates-io]
+mio = { path = "../../vendor/mio-1.2.0" }
+rustix = { path = "../../vendor/rustix-1.1.4-trueos" }
+socket2 = { path = "../../vendor/socket2-0.6.3" }
+tokio = { path = "../../vendor/tokio-1.52.3" }
+
+[profile.dev]
+codegen-units = 1
+debug = "full"
+lto = true
+opt-level = 3
+panic = "abort"
+incremental = true
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = "symbols"
