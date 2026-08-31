@@ -23,19 +23,25 @@ use trueos::vsys;
 const CHARACTERS_PER_ROW_SOFT_CAP: usize = 120;
 const DEFAULT_ROW_HEIGHT_PX: u32 = 26;
 const DEFAULT_FONT_PIXELS: u32 = 24;
-const DEFAULT_MONO_GLYPH_ADVANCE_PX: u32 = 12;
+/// JuliaMono's fixed advance is 600 font units per 1000-unit em. Keep the
+/// ratio fractional at every scale step: rounding it per cell makes long
+/// words drift over the whitespace which follows them.
+const MONO_GLYPH_ADVANCE_NUMERATOR: u32 = 3;
+const MONO_GLYPH_ADVANCE_DENOMINATOR: u32 = 5;
 
 const FRAME_X: i32 = 0;
 const FRAME_Y: i32 = 0;
 const FRAME_WIDTH: u32 =
-    CHARACTERS_PER_ROW_SOFT_CAP as u32 * DEFAULT_MONO_GLYPH_ADVANCE_PX + FRAME_PADDING_PX * 2;
+    CHARACTERS_PER_ROW_SOFT_CAP as u32 * DEFAULT_FONT_PIXELS * MONO_GLYPH_ADVANCE_NUMERATOR
+        / MONO_GLYPH_ADVANCE_DENOMINATOR
+        + FRAME_PADDING_PX * 2;
 const FRAME_HEIGHT: u32 = 576;
 const FRAME_PADDING_PX: u32 = 12;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct TerminalMetrics {
     font_pixels: f32,
-    glyph_advance_px: u32,
+    glyph_advance_px: f32,
     row_height_px: u32,
 }
 
@@ -50,7 +56,8 @@ impl TerminalMetrics {
         };
         Self {
             font_pixels: pixels as f32,
-            glyph_advance_px: scaled(DEFAULT_MONO_GLYPH_ADVANCE_PX).max(1),
+            glyph_advance_px: pixels as f32 * MONO_GLYPH_ADVANCE_NUMERATOR as f32
+                / MONO_GLYPH_ADVANCE_DENOMINATOR as f32,
             row_height_px: scaled(DEFAULT_ROW_HEIGHT_PX).max(1),
         }
     }
@@ -601,7 +608,7 @@ fn terminal_grid_size(width: u32, height: u32, metrics: TerminalMetrics) -> (usi
     let width = width.saturating_sub(FRAME_PADDING_PX * 2);
     let height = height.saturating_sub(FRAME_PADDING_PX * 2);
     (
-        (width / metrics.glyph_advance_px).max(1) as usize,
+        ((width as f32 / metrics.glyph_advance_px) as usize).max(1),
         (height / metrics.row_height_px).max(1) as usize,
     )
 }
@@ -613,16 +620,13 @@ fn centered_terminal_origin(
     rows: usize,
     metrics: TerminalMetrics,
 ) -> (u32, u32) {
-    let content_width = u32::try_from(cols)
-        .unwrap_or(u32::MAX)
-        .saturating_mul(metrics.glyph_advance_px)
-        .saturating_add(FRAME_PADDING_PX * 2);
+    let content_width = cols as f32 * metrics.glyph_advance_px + (FRAME_PADDING_PX * 2) as f32;
     let content_height = u32::try_from(rows)
         .unwrap_or(u32::MAX)
         .saturating_mul(metrics.row_height_px)
         .saturating_add(FRAME_PADDING_PX * 2);
     (
-        width.saturating_sub(content_width) / 2,
+        ((width as f32 - content_width).max(0.0) / 2.0) as u32,
         height.saturating_sub(content_height) / 2,
     )
 }
@@ -646,7 +650,7 @@ fn apply_terminal_font_step(
     logl::log(
         level::INFO,
         format_args!(
-            "shell: font step effective_px={} native_tier_px={} residual_milli={} cell={}x{} grid={}x{}",
+            "shell: font step effective_px={} native_tier_px={} residual_milli={} cell={:.2}x{} grid={}x{}",
             step.effective_pixels,
             step.native_tier_pixels,
             step.residual_milli,
@@ -887,9 +891,9 @@ fn pointer_matrix_cell(
     if x < 0 || y < 0 {
         return None;
     }
-    let col = x as u32 / metrics.glyph_advance_px;
+    let col = (x as f32 / metrics.glyph_advance_px) as usize;
     let row = y as u32 / metrics.row_height_px;
-    (col < dimensions.0 as u32 && row < dimensions.1 as u32).then_some((col as usize, row as usize))
+    (col < dimensions.0 && row < dimensions.1 as u32).then_some((col, row as usize))
 }
 
 fn matrix_slot_at(terminal: &Terminal, col: usize, row: usize) -> Option<MatrixSlotHover> {
@@ -937,7 +941,7 @@ fn pointer_cell(
 ) -> (usize, usize) {
     let x = local_x.saturating_sub(FRAME_PADDING_PX as i32).max(0) as u32;
     let y = local_y.saturating_sub(FRAME_PADDING_PX as i32).max(0) as u32;
-    let col = ((x / metrics.glyph_advance_px) as usize).min(dimensions.0 - 1);
+    let col = ((x as f32 / metrics.glyph_advance_px) as usize).min(dimensions.0 - 1);
     let row = ((y / metrics.row_height_px) as usize).min(dimensions.1 - 1);
     (col, row)
 }
@@ -1413,7 +1417,7 @@ fn push_direct_text(
     text: String,
     x: f32,
     y: f32,
-    glyph_advance_px: u32,
+    glyph_advance_px: f32,
 ) {
     let mut chunk = String::new();
     let mut chunk_chars = 0usize;
@@ -1423,7 +1427,7 @@ fn push_direct_text(
             runs.push(DirectTextRun {
                 color_rgba,
                 text: core::mem::take(&mut chunk),
-                x: x + chunk_start as f32 * glyph_advance_px as f32,
+                x: x + chunk_start as f32 * glyph_advance_px,
                 y,
             });
             chunk_start = chunk_start.saturating_add(chunk_chars);
@@ -1436,16 +1440,14 @@ fn push_direct_text(
         runs.push(DirectTextRun {
             color_rgba,
             text: chunk,
-            x: x + chunk_start as f32 * glyph_advance_px as f32,
+            x: x + chunk_start as f32 * glyph_advance_px,
             y,
         });
     }
 }
 
 fn terminal_cell_x(origin_x: u32, col: usize, metrics: TerminalMetrics) -> f32 {
-    origin_x
-        .saturating_add(FRAME_PADDING_PX)
-        .saturating_add((col as u32).saturating_mul(metrics.glyph_advance_px)) as f32
+    origin_x as f32 + FRAME_PADDING_PX as f32 + col as f32 * metrics.glyph_advance_px
 }
 
 fn terminal_cell_y(origin_y: u32, row: usize, metrics: TerminalMetrics) -> f32 {
