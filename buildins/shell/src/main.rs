@@ -371,7 +371,7 @@ fn main() {
     logl::log(
         level::INFO,
         format_args!(
-            "shell: local shell2 session online cols={} rows={} font=Inconsolata",
+            "shell: local shell2 session online cols={} rows={} font=JuliaMono fallback=Inconsolata",
             cols, rows
         ),
     );
@@ -1421,7 +1421,7 @@ fn stamp_direct_runs(
             if rows.len() == DIRECT_STAMP_MAX_RUNS_PER_LAYER {
                 retry_busy(|| {
                     frame.stamp_text_scene(
-                        Font::Inconsolata,
+                        Font::JuliaMono,
                         (frame.width(), frame.height()),
                         color_rgba,
                         &rows,
@@ -1433,7 +1433,7 @@ fn stamp_direct_runs(
         if !rows.is_empty() {
             retry_busy(|| {
                 frame.stamp_text_scene(
-                    Font::Inconsolata,
+                    Font::JuliaMono,
                     (frame.width(), frame.height()),
                     color_rgba,
                     &rows,
@@ -1475,7 +1475,7 @@ fn stamp_runs_one_colour(
             .collect::<Vec<_>>();
         retry_busy(|| {
             frame.stamp_text_scene(
-                Font::Inconsolata,
+                Font::JuliaMono,
                 (frame.width(), frame.height()),
                 color_rgba,
                 &rows,

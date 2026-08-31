@@ -21,6 +21,9 @@ pub enum Font {
     Default = 1,
     NotoSansSc = 2,
     Inconsolata = 3,
+    /// Optional user-installed terminal face. TRUEOS resolves this to the
+    /// embedded Inconsolata face when JuliaMono is not present on TrueOSFS.
+    JuliaMono = 4,
 }
 
 /// One Shell2-owned request for a GPU-resident, fully coloured glyph sprite.
