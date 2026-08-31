@@ -67,6 +67,7 @@ impl CratePatch {
 }
 
 const CARGO_CACHE_DIR_ENV: &str = "TRUEOS_BLUEPRINT_CARGO_CACHE_DIR";
+const BLUEPRINT_CATALOG_ROOT_ENV: &str = "TRUEOS_BLUEPRINT_CATALOG_ROOT";
 const BULK_FANOUT_ENV: &str = "TRUEOS_BLUEPRINT_FANOUT";
 const DEFAULT_BULK_FANOUT: usize = 1;
 // `rustc-min` packages an archived Rust compiler. Keep it available as an
@@ -640,6 +641,12 @@ fn build_one_target_to_in_lane(
     push_trueos_cc_flags(&mut cargo);
     cargo.env("RUSTC_BOOTSTRAP_SYNTHETIC_TARGET", "1");
     cargo.env("CARGO_TARGET_DIR", &cargo_target_dir);
+    if let Some(root) = blueprint_root(app_dir) {
+        // Source-overlay builds compile from a staged app directory. Preserve
+        // the canonical catalog root for Blueprint sources intentionally
+        // embedded with `include_str!`, such as rustc-min's runtime demo.
+        cargo.env(BLUEPRINT_CATALOG_ROOT_ENV, root);
+    }
     if rustc_tier.is_some() {
         toolchain::configure_rustc_bootstrap_env(&mut cargo, &target_name)?;
     }
