@@ -9,6 +9,11 @@ use core::ptr::null_mut;
 #[cfg(feature = "tokio-runtime")]
 pub use tokio;
 pub use v::calculator_base;
+/// Durable TRUEOSFS content identities and their canonical registry metadata.
+/// This is metadata-only; callers must not infer identity from names or bytes.
+pub mod content_identity {
+    pub use v::vfs_async::{content_type_info, ContentTypeId, ContentTypeInfo};
+}
 pub use v::collections;
 pub use v::env;
 pub use v::varchive as archive;
