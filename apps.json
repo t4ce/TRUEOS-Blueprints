@@ -10,10 +10,6 @@
     "pi_snake",
     "gboi",
     "tredb",
-    {
-      "name": "ripgrep",
-      "path": "buildins/ripgrep"
-    },
     "hello_world",
     "hello_world_replicatable",
     {

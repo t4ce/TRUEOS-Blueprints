@@ -77,9 +77,9 @@ for backtraces.
 Pack from this repository:
 
 ```text
-TRUEOS_RUST_TOOLCHAIN_ROOT=/home/t4ce/REPOS/TRUEOS-Rust-Toolchain-nightly-2026-07-10 \
+TRUEOS_RUST_TOOLCHAIN_ROOT=/home/t4ce/Repos/TRUEOS-Rust-Toolchain-nightly-2026-07-10 \
 TRUEOS_BLUEPRINT_SKIP_APPS_PUBLISH=1 \
-cargo bp /home/t4ce/REPOS/TRUEOS-Rust-Toolchain-nightly-2026-07-10/blueprints/rustc-min
+cargo bp /home/t4ce/Repos/TRUEOS-Rust-Toolchain-nightly-2026-07-10/blueprints/rustc-min
 ```
 
 The resulting file is `dist/rustc-min.bp`.
@@ -111,7 +111,7 @@ conventional hosted OS:
 Set `TRUEOS_RUST_TOOLCHAIN_ROOT` to use an unpacked, exact toolchain archive:
 
 ```text
-TRUEOS_RUST_TOOLCHAIN_ROOT=/home/t4ce/REPOS/TRUEOS-Rust-Toolchain-nightly-2026-07-10
+TRUEOS_RUST_TOOLCHAIN_ROOT=/home/t4ce/Repos/TRUEOS-Rust-Toolchain-nightly-2026-07-10
 ```
 
 The builder then invokes `bin/cargo` and `bin/rustc` from that root directly;

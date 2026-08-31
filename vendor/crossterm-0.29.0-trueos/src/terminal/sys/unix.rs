@@ -226,7 +226,15 @@ fn query_keyboard_enhancement_flags_nonraw() -> io::Result<Option<KeyboardEnhanc
     flags
 }
 
-#[cfg(feature = "events")]
+#[cfg(all(feature = "events", target_os = "trueos"))]
+fn query_keyboard_enhancement_flags_raw() -> io::Result<Option<KeyboardEnhancementFlags>> {
+    // TRUEOS terminals are not `/dev/tty` devices and do not expose the
+    // keyboard-enhancement query/response protocol. Treat that as unsupported
+    // rather than attempting the host-only fallback or reporting a timeout.
+    Ok(None)
+}
+
+#[cfg(all(feature = "events", not(target_os = "trueos")))]
 fn query_keyboard_enhancement_flags_raw() -> io::Result<Option<KeyboardEnhancementFlags>> {
     use crate::event::{
         filter::{KeyboardEnhancementFlagsFilter, PrimaryDeviceAttributesFilter},

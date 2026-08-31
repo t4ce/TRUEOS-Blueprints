@@ -68,7 +68,10 @@ impl CratePatch {
 
 const CARGO_CACHE_DIR_ENV: &str = "TRUEOS_BLUEPRINT_CARGO_CACHE_DIR";
 const BULK_FANOUT_ENV: &str = "TRUEOS_BLUEPRINT_FANOUT";
-const DEFAULT_BULK_FANOUT: usize = 4;
+const DEFAULT_BULK_FANOUT: usize = 1;
+// `rustc-min` packages an archived Rust compiler. Keep it available as an
+// explicit named build, but never bootstrap it as part of ordinary `cargo bp`.
+const BULK_EXCLUDED_APP_NAMES: &[&str] = &["rustc-min"];
 const TARGET_SPEC_ENV: &str = "TRUEOS_BLUEPRINT_TARGET_SPEC";
 const TRUEOS_LIBC_VENDOR_DIR: &str = "libc-0.2.186";
 const RUSTFLAGS_ENCODED_SEPARATOR: char = '\u{1f}';
@@ -206,11 +209,21 @@ fn run() -> Result<(), String> {
             let package_apps = package_app_specs(&app_dir, package_catalog)?
                 .into_iter()
                 .filter(|app| !buildins.contains(app.name.as_str()))
+                .filter(|app| {
+                    package_catalog != PackageCatalog::Apps
+                        || !BULK_EXCLUDED_APP_NAMES.contains(&app.name.as_str())
+                })
                 .collect::<Vec<_>>();
             if package_catalog == PackageCatalog::Apps && !buildins.is_empty() {
                 println!(
                     "trueos-blueprint: excluding {} build-in app(s) from bulk app build",
                     buildins.len()
+                );
+            }
+            if package_catalog == PackageCatalog::Apps {
+                println!(
+                    "trueos-blueprint: excluding compiler app(s) {} from bulk app build; build them by name",
+                    BULK_EXCLUDED_APP_NAMES.join(", ")
                 );
             }
             if examples.is_empty() && package_apps.is_empty() {
