@@ -19,6 +19,7 @@ members = [
     "apps/hello_world_replicatable",
     "buildins/img",
     "apps/image-viewer",
+    "apps/japan",
     "apps/lumen",
     "apps/ipp-printer",
     "apps/esp32_stt",
