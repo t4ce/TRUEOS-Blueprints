@@ -15,6 +15,19 @@ pub struct FontSize {
     pub target_pixels: u32,
 }
 
+/// One user-visible Shell font size and the warmed native source tier which
+/// backs it. Intermediate entries deliberately retain their residual scale so
+/// applications can move one smooth step at a time without inventing sizes.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct Shell2FontScaleStep {
+    pub effective_pixels: u32,
+    pub native_tier_pixels: u32,
+    pub residual_milli: u32,
+    pub columns_at_1280: u32,
+    pub rows_at_720: u32,
+    pub cache_eligible: bool,
+}
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u32)]
 pub enum Font {
@@ -1565,6 +1578,41 @@ pub fn font_sizes() -> Result<Vec<FontSize>, Error> {
         .map(|size| FontSize {
             native_scale: size.native_scale,
             target_pixels: size.target_pixels,
+        })
+        .collect())
+}
+
+/// Return UI4's ordered Shell font-size ladder.
+///
+/// The order is the interaction contract: moving by one entry includes the
+/// residual-scaled sizes between native cache tiers.
+pub fn shell2_font_scale_steps() -> Result<Vec<Shell2FontScaleStep>, Error> {
+    let count =
+        unsafe { v::bp_abi::trueos_cabi_ui4_shell2_font_scale_steps_v1(core::ptr::null_mut(), 0) };
+    if count < 0 {
+        return Err(error_from_status(count as i32));
+    }
+    let mut raw = Vec::with_capacity(count as usize);
+    raw.resize(
+        count as usize,
+        v::bp_abi::TrueosUi4Shell2FontScaleStep::default(),
+    );
+    let written = unsafe {
+        v::bp_abi::trueos_cabi_ui4_shell2_font_scale_steps_v1(raw.as_mut_ptr(), raw.len())
+    };
+    if written < 0 {
+        return Err(error_from_status(written as i32));
+    }
+    raw.truncate((written as usize).min(raw.len()));
+    Ok(raw
+        .into_iter()
+        .map(|step| Shell2FontScaleStep {
+            effective_pixels: step.effective_pixels,
+            native_tier_pixels: step.native_tier_pixels,
+            residual_milli: step.residual_milli,
+            columns_at_1280: step.columns_at_1280,
+            rows_at_720: step.rows_at_720,
+            cache_eligible: step.cache_eligible != 0,
         })
         .collect())
 }

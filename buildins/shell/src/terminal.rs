@@ -108,7 +108,6 @@ pub(crate) struct Terminal {
     utf8_len: usize,
     utf8_expected: usize,
     responses: Vec<u8>,
-    zoom_percent: Option<u16>,
     mouse_normal_tracking: bool,
     mouse_button_tracking: bool,
     mouse_any_tracking: bool,
@@ -143,7 +142,6 @@ impl Terminal {
             utf8_len: 0,
             utf8_expected: 0,
             responses: Vec::new(),
-            zoom_percent: None,
             mouse_normal_tracking: false,
             mouse_button_tracking: false,
             mouse_any_tracking: false,
@@ -183,10 +181,6 @@ impl Terminal {
     /// handoff owner through the same channel as keyboard input.
     pub(crate) fn take_responses(&mut self) -> Vec<u8> {
         core::mem::take(&mut self.responses)
-    }
-
-    pub(crate) fn take_zoom_percent(&mut self) -> Option<u16> {
-        self.zoom_percent.take()
     }
 
     pub(crate) fn mouse_button(
@@ -444,14 +438,6 @@ impl Terminal {
     }
 
     fn finish_osc(&mut self) {
-        if !self.osc_overflow
-            && let Ok(command) = core::str::from_utf8(self.osc_buf.as_slice())
-            && let Some(percent) = command.strip_prefix("777;terminal_zoom=")
-            && let Ok(percent) = percent.parse::<u16>()
-            && (50..=200).contains(&percent)
-        {
-            self.zoom_percent = Some(percent);
-        }
         self.osc_buf.clear();
         self.osc_overflow = false;
     }
@@ -1063,17 +1049,6 @@ mod tests {
         terminal.feed(b"\\C");
 
         assert_eq!(rows(&terminal), ["ABC     "]);
-    }
-
-    #[test]
-    fn accepts_bounded_trueos_terminal_zoom_osc() {
-        let mut terminal = Terminal::new(8, 1);
-        terminal.feed(b"\x1b]777;terminal_zoom=125\x07");
-        assert_eq!(terminal.take_zoom_percent(), Some(125));
-        assert_eq!(terminal.take_zoom_percent(), None);
-
-        terminal.feed(b"\x1b]777;terminal_zoom=999\x07");
-        assert_eq!(terminal.take_zoom_percent(), None);
     }
 
     #[test]

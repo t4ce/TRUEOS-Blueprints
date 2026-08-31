@@ -10,8 +10,9 @@ use terminal::{MouseButton, Terminal, TerminalColor};
 use trueos::input::{self, TrueosKeyboardOutputEvent};
 use trueos::logl::{self, level};
 use trueos::ui4_scene::{
-    Damage, Error as UiError, Font, Frame, POINTER_BUTTON_MIDDLE, POINTER_BUTTON_PRIMARY,
-    POINTER_BUTTON_SECONDARY, PointerEvent, SceneTextRow, SpriteCorner, SpriteQuad, rgba,
+    Damage, Error as UiError, Font, Frame, MenuEntry, POINTER_BUTTON_MIDDLE,
+    POINTER_BUTTON_PRIMARY, POINTER_BUTTON_SECONDARY, PointerEvent, SceneTextRow,
+    Shell2FontScaleStep, SpriteCorner, SpriteQuad, rgba, shell2_font_scale_steps,
 };
 use trueos::vshell::{
     SHELL2_FRONTEND_DIRECT_HANDOFF, SHELL2_FRONTEND_READ_DROPPED, Shell2Frontend,
@@ -21,9 +22,8 @@ use trueos::vsys;
 
 const CHARACTERS_PER_ROW_SOFT_CAP: usize = 120;
 const DEFAULT_ROW_HEIGHT_PX: u32 = 26;
-const DEFAULT_FONT_PIXELS: f32 = 24.0;
+const DEFAULT_FONT_PIXELS: u32 = 24;
 const DEFAULT_MONO_GLYPH_ADVANCE_PX: u32 = 12;
-const DEFAULT_ZOOM_PERCENT: u16 = 100;
 
 const FRAME_X: i32 = 0;
 const FRAME_Y: i32 = 0;
@@ -34,29 +34,85 @@ const FRAME_PADDING_PX: u32 = 12;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct TerminalMetrics {
-    zoom_percent: u16,
     font_pixels: f32,
     glyph_advance_px: u32,
     row_height_px: u32,
 }
 
 impl TerminalMetrics {
-    fn from_zoom_percent(percent: u16) -> Self {
-        let percent = percent.clamp(50, 200);
-        let scaled = |value: u32| value.saturating_mul(u32::from(percent)).saturating_add(50) / 100;
+    fn from_font_step(step: Shell2FontScaleStep) -> Self {
+        let pixels = step.effective_pixels.max(1);
+        let scaled = |value: u32| {
+            value
+                .saturating_mul(pixels)
+                .saturating_add(DEFAULT_FONT_PIXELS / 2)
+                / DEFAULT_FONT_PIXELS
+        };
         Self {
-            zoom_percent: percent,
-            font_pixels: DEFAULT_FONT_PIXELS * f32::from(percent) / 100.0,
+            font_pixels: pixels as f32,
             glyph_advance_px: scaled(DEFAULT_MONO_GLYPH_ADVANCE_PX).max(1),
             row_height_px: scaled(DEFAULT_ROW_HEIGHT_PX).max(1),
         }
     }
 }
 
-impl Default for TerminalMetrics {
-    fn default() -> Self {
-        Self::from_zoom_percent(DEFAULT_ZOOM_PERCENT)
+struct FontScaleState {
+    steps: Vec<Shell2FontScaleStep>,
+    selected: usize,
+    applied: usize,
+}
+
+impl FontScaleState {
+    fn load() -> Result<Self, UiError> {
+        let steps = shell2_font_scale_steps()?;
+        if steps.is_empty()
+            || !steps
+                .windows(2)
+                .all(|pair| pair[0].effective_pixels < pair[1].effective_pixels)
+        {
+            return Err(UiError::Invalid);
+        }
+        let selected = steps
+            .iter()
+            .position(|step| step.effective_pixels == DEFAULT_FONT_PIXELS)
+            .ok_or(UiError::Invalid)?;
+        Ok(Self {
+            steps,
+            selected,
+            applied: selected,
+        })
     }
+
+    fn current(&self) -> Shell2FontScaleStep {
+        self.steps[self.selected]
+    }
+
+    fn pending(&self) -> Option<Shell2FontScaleStep> {
+        (self.selected != self.applied).then(|| self.current())
+    }
+
+    fn mark_applied(&mut self) {
+        self.applied = self.selected;
+    }
+
+    fn larger(&mut self) {
+        self.selected = self
+            .selected
+            .saturating_add(1)
+            .min(self.steps.len().saturating_sub(1));
+    }
+
+    fn smaller(&mut self) {
+        self.selected = self.selected.saturating_sub(1);
+    }
+}
+
+fn font_step_larger(state: &mut FontScaleState) {
+    state.larger();
+}
+
+fn font_step_smaller(state: &mut FontScaleState) {
+    state.smaller();
 }
 
 const BACKGROUND: u32 = rgba(0, 0, 0, 191);
@@ -343,7 +399,29 @@ fn main() {
         return;
     };
 
-    let mut metrics = TerminalMetrics::default();
+    let mut font_scale = match FontScaleState::load() {
+        Ok(scale) => scale,
+        Err(error) => {
+            logl::log(
+                level::ERROR,
+                format_args!("shell: UI4 font scale ladder unavailable: {error:?}"),
+            );
+            return;
+        }
+    };
+    let font_menu = [
+        MenuEntry::new("Font +1", font_step_larger),
+        MenuEntry::new("Font -1", font_step_smaller),
+    ];
+    if let Err(error) = frame.register_context_menu(&font_menu) {
+        logl::log(
+            level::ERROR,
+            format_args!("shell: UI4 font context menu registration failed: {error:?}"),
+        );
+        return;
+    }
+
+    let mut metrics = TerminalMetrics::from_font_step(font_scale.current());
     let (cols, rows) = terminal_grid_size(frame.width(), frame.height(), metrics);
     let mut frontend = match attach_shell_frontend(cols, rows) {
         Ok(frontend) => frontend,
@@ -408,24 +486,32 @@ fn main() {
             return;
         }
 
-        let mut zoomed = false;
-        if let Some(zoom_percent) = terminal.take_zoom_percent() {
-            zoomed = match apply_terminal_zoom(
+        if let Err(error) = frame.pump_context_menu(&font_menu, &mut font_scale) {
+            logl::log(
+                level::ERROR,
+                format_args!("shell: UI4 font context menu failed: {error:?}"),
+            );
+            return;
+        }
+        let mut font_scaled = false;
+        if let Some(step) = font_scale.pending() {
+            font_scaled = match apply_terminal_font_step(
                 &mut frame,
                 &mut frontend,
                 &mut terminal,
                 &mut metrics,
-                zoom_percent,
+                step,
             ) {
                 Ok(changed) => changed,
                 Err(error) => {
                     logl::log(
                         level::ERROR,
-                        format_args!("shell: terminal zoom failed: {error:?}"),
+                        format_args!("shell: terminal font scale failed: {error:?}"),
                     );
                     return;
                 }
             };
+            font_scale.mark_applied();
         }
 
         if let Err(error) = drain_keyboard_input(&mut frame, &mut keyboard_input, &frontend) {
@@ -459,7 +545,7 @@ fn main() {
             hover_changed = true;
         }
 
-        if (terminal.take_dirty() || hover_changed || zoomed)
+        if (terminal.take_dirty() || hover_changed || font_scaled)
             && let Err(error) =
                 present_terminal(&mut frame, &terminal, metrics, matrix_slot_hover.as_ref())
         {
@@ -541,14 +627,14 @@ fn centered_terminal_origin(
     )
 }
 
-fn apply_terminal_zoom(
+fn apply_terminal_font_step(
     frame: &mut Frame,
     frontend: &mut Shell2Frontend,
     terminal: &mut Terminal,
     metrics: &mut TerminalMetrics,
-    zoom_percent: u16,
+    step: Shell2FontScaleStep,
 ) -> Result<bool, InputError> {
-    let next = TerminalMetrics::from_zoom_percent(zoom_percent);
+    let next = TerminalMetrics::from_font_step(step);
     if *metrics == next {
         return Ok(false);
     }
@@ -560,9 +646,10 @@ fn apply_terminal_zoom(
     logl::log(
         level::INFO,
         format_args!(
-            "shell: terminal zoom={} font_pixels={} cell={}x{} grid={}x{}",
-            next.zoom_percent,
-            next.font_pixels,
+            "shell: font step effective_px={} native_tier_px={} residual_milli={} cell={}x{} grid={}x{}",
+            step.effective_pixels,
+            step.native_tier_pixels,
+            step.residual_milli,
             next.glyph_advance_px,
             next.row_height_px,
             cols,
@@ -1227,10 +1314,10 @@ fn push_underline_quad(
     origin_y: u32,
     metrics: TerminalMetrics,
 ) {
-    let thickness = u32::from(metrics.zoom_percent)
+    let thickness = (metrics.font_pixels as u32)
         .saturating_mul(3)
-        .saturating_add(50)
-        / 100;
+        .saturating_add(DEFAULT_FONT_PIXELS / 2)
+        / DEFAULT_FONT_PIXELS;
     let top = (metrics.font_pixels as u32).saturating_sub(1);
     push_cell_quad(
         quads,

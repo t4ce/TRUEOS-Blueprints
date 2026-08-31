@@ -106,6 +106,17 @@ pub struct TrueosUi4SolaraFontSize {
 }
 
 #[repr(C)]
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+pub struct TrueosUi4Shell2FontScaleStep {
+    pub effective_pixels: u32,
+    pub native_tier_pixels: u32,
+    pub residual_milli: u32,
+    pub columns_at_1280: u32,
+    pub rows_at_720: u32,
+    pub cache_eligible: u32,
+}
+
+#[repr(C)]
 #[derive(Copy, Clone, Debug)]
 pub struct TrueosUi4SolaraTextRow {
     pub text_ptr: *const u8,
@@ -519,6 +530,10 @@ unsafe extern "C" {
 
     pub fn trueos_cabi_ui4_solara_font_sizes(
         out: *mut TrueosUi4SolaraFontSize,
+        out_cap: usize,
+    ) -> isize;
+    pub fn trueos_cabi_ui4_shell2_font_scale_steps_v1(
+        out: *mut TrueosUi4Shell2FontScaleStep,
         out_cap: usize,
     ) -> isize;
     pub fn trueos_cabi_ui4_solara_frame_open(x: i32, y: i32, width: u32, height: u32) -> u32;
