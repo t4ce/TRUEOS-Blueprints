@@ -7,9 +7,9 @@ mod terminal;
 use alloc::{collections::VecDeque, string::String, vec::Vec};
 
 use terminal::{MouseButton, Terminal, TerminalColor};
+use trueos::clock;
 use trueos::input::{self, TrueosKeyboardOutputEvent};
 use trueos::logl::{self, level};
-use trueos::clock;
 use trueos::ui4_scene::{
     Damage, Error as UiError, Font, Frame, MenuEntry, POINTER_BUTTON_MIDDLE,
     POINTER_BUTTON_PRIMARY, POINTER_BUTTON_SECONDARY, PointerEvent, SceneTextRow,
@@ -235,7 +235,7 @@ impl ShellRenderTracer {
         Some(PendingInputTrace {
             sample,
             scalar,
-            hid_t_ms: event.t_ms,
+            hid_t_ms: u64::from(event.t_ms),
             received_ns: clock::monotonic_nanos(),
             submit_done_ns: 0,
             submit_us: 0,
@@ -309,7 +309,11 @@ impl ShellRenderTracer {
                 trace.uniform_scalar as u8,
                 nanos_to_micros(trace.first_received_ns.saturating_sub(hid_ns)),
                 trace.submit_us,
-                nanos_to_micros(trace.output_seen_ns.saturating_sub(trace.last_submit_done_ns)),
+                nanos_to_micros(
+                    trace
+                        .output_seen_ns
+                        .saturating_sub(trace.last_submit_done_ns)
+                ),
                 trace.output_bytes,
                 trace.terminal_feed_us,
                 nanos_to_micros(timing.started_ns.saturating_sub(trace.output_seen_ns)),
@@ -662,8 +666,7 @@ fn main() {
             &mut terminal,
             invoking_terminal.is_active(),
             &mut render_tracer,
-        )
-        {
+        ) {
             logl::log(
                 level::ERROR,
                 format_args!("shell: local shell2 output failed: {error:?}"),
@@ -1436,9 +1439,9 @@ fn present_terminal_at(
         let cells = &terminal.cells()[row * cols..(row + 1) * cols];
         collect_glyph_runs(&mut text_runs, cells, row, origin_x, origin_y, metrics);
     }
-    let glyphs = text_runs
-        .iter()
-        .fold(0usize, |total, run| total.saturating_add(run.text.chars().count()));
+    let glyphs = text_runs.iter().fold(0usize, |total, run| {
+        total.saturating_add(run.text.chars().count())
+    });
     let text_build_us = nanos_to_micros(clock::monotonic_nanos().saturating_sub(phase_started_ns));
 
     let mut stamp_budget = DirectStampBudget {
@@ -1852,9 +1855,7 @@ fn retry_busy(mut operation: impl FnMut() -> Result<(), UiError>) -> Result<(), 
     retry_busy_observed(&mut operation).map(|_| ())
 }
 
-fn retry_busy_observed(
-    mut operation: impl FnMut() -> Result<(), UiError>,
-) -> Result<u64, UiError> {
+fn retry_busy_observed(mut operation: impl FnMut() -> Result<(), UiError>) -> Result<u64, UiError> {
     let mut busy_polls = 0u64;
     loop {
         match operation() {

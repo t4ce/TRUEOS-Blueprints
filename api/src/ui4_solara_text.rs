@@ -207,7 +207,7 @@ pub fn output_dimensions() -> Result<(u32, u32), Error> {
     }
 }
 
-/// Kernel-provided slot-4 cursor sprites for a UI4 frame.
+/// Kernel-provided slot-4 cursor presentations for a UI4 frame.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 #[repr(u32)]
 pub enum CursorIcon {
@@ -219,6 +219,23 @@ pub enum CursorIcon {
     ResizeDiagonal = 4,
     /// The selected frame paints its own cursor pixels.
     AppOwned = 5,
+    /// The slot-4 cursor plane outlines one configured application cell.
+    CellOutline = 6,
+}
+
+/// Static frame-local geometry for a [`CursorIcon::CellOutline`]. The kernel
+/// retains this small description and moves the outline on its own software
+/// cursor plane, using the active cursor route's color.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct CursorCellOutline {
+    pub origin_x: u32,
+    pub origin_y: u32,
+    /// Horizontal cell advance in 1/1024-pixel units.
+    pub cell_width_subpx: u32,
+    pub cell_height: u32,
+    pub columns: u32,
+    pub rows: u32,
+    pub stroke: u32,
 }
 
 /// One selected-frame pointer event after UI4 hit testing and capture.
@@ -883,6 +900,24 @@ impl Frame {
         };
         status(unsafe {
             v::bp_abi::trueos_cabi_ui4_scene_set_cursor_icon(self.window_id, &source, icon as u32)
+        })
+    }
+
+    /// Make this frame's fallback cursor a kernel-rendered outline around the
+    /// pointer's current grid cell. Reconfigure it only when the grid layout
+    /// changes; pointer motion never requires an application repaint.
+    pub fn set_cursor_cell_outline(&mut self, outline: CursorCellOutline) -> Result<(), Error> {
+        let outline = v::bp_abi::TrueosUi4CursorCellOutline {
+            origin_x: outline.origin_x,
+            origin_y: outline.origin_y,
+            cell_width_subpx: outline.cell_width_subpx,
+            cell_height: outline.cell_height,
+            columns: outline.columns,
+            rows: outline.rows,
+            stroke: outline.stroke,
+        };
+        status(unsafe {
+            v::bp_abi::trueos_cabi_ui4_scene_set_cursor_cell_outline(self.window_id, &outline)
         })
     }
 

@@ -4,8 +4,9 @@
 //! this name describes the general frame boundary used by shaded scenes.
 
 pub use crate::ui4_solara_text::{
-    CloseRequest, CursorIcon, CursorSource, Damage, Error, Font, FontCanvasRow, FontSize,
-    FontSpriteRequest, FontSpriteStatus, FontSpriteTicket, Frame, InputRoute, KeyboardState,
+    CloseRequest, CursorCellOutline, CursorIcon, CursorSource, Damage, Error, Font,
+    FontCanvasRow, FontSize, FontSpriteRequest, FontSpriteStatus, FontSpriteTicket, Frame,
+    InputRoute, KeyboardState,
     MAX_MENU_ENTRIES, MAX_MENU_LABEL_BYTES, MenuCloseReason, MenuEntry,
     PARTICLE_CRAFT_FLAG_ATTRACTOR, PARTICLE_CRAFT_FLAG_ORBIT, PARTICLE_CRAFT_FLAG_RESET,
     PARTICLE_CRAFT_HEIGHT, PARTICLE_CRAFT_MAX_PARTICLES, PARTICLE_CRAFT_PARAMS_VERSION,
