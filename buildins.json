@@ -6,6 +6,7 @@
     "os",
     "termdir",
     "edit",
-    "shell"
+    "shell",
+    "solara"
   ]
 }
