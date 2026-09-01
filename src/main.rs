@@ -745,10 +745,13 @@ fn build_one_target_to_in_lane(
     if !deps_dir.is_dir() {
         return Err(format!("missing deps dir: {}", deps_dir.display()));
     }
-    let rustc_payload = if rustc_tier.is_some() {
+    let (rustc_payload, rustc_sysroot_metadata) = if rustc_tier.is_some() {
         let requested = package_blueprint_rustc_payload_dependencies(&cargo_manifest_path)?;
         if requested.is_empty() {
-            RustcPayloadSelection::default()
+            (
+                RustcPayloadSelection::default(),
+                cargo_artifacts.sysroot_metadata.clone(),
+            )
         } else {
             let metadata = cargo_metadata_for_rustc_payload(
                 &cargo_manifest_path,
@@ -757,10 +760,34 @@ fn build_one_target_to_in_lane(
                 no_default_features,
                 &extra_features,
             )?;
-            select_rustc_payload(&metadata, &requested, &cargo_artifacts.target_metadata)?
+            let isolated = build_isolated_rustc_payload(
+                &metadata,
+                &requested,
+                &work_dir,
+                &cargo_target_dir,
+                &target_spec,
+                &target_name,
+                cargo_profile,
+                &staged_source_overlay,
+            )?;
+            let isolated_metadata = cargo_metadata_for_rustc_payload(
+                &isolated.manifest_path,
+                &target_spec,
+                &staged_source_overlay,
+                false,
+                &[],
+            )?;
+            (
+                select_rustc_payload(
+                    &isolated_metadata,
+                    &requested,
+                    &isolated.artifacts.target_metadata,
+                )?,
+                isolated.artifacts.sysroot_metadata,
+            )
         }
     } else {
-        RustcPayloadSelection::default()
+        (RustcPayloadSelection::default(), Vec::new())
     };
 
     let root_artifacts = match &build_target {
@@ -813,10 +840,18 @@ fn build_one_target_to_in_lane(
 
     let mut ld = tool_command(&["ld.lld", "rust-lld", "ld"])?;
     ld.arg("-r").arg("--gc-sections");
-    if output_name == "pumpkin" && matches!(cargo_profile, CargoProfile::Dev) {
+    if rustc_tier.is_some()
+        || (output_name == "pumpkin" && matches!(cargo_profile, CargoProfile::Dev))
+    {
         let linker_script = work_dir.join("rel-coalesce.ld");
         fs::write(&linker_script, REL_COALESCE_LINKER_SCRIPT).map_err(io_string)?;
         ld.arg("-T").arg(&linker_script);
+    }
+    if rustc_tier.is_some() {
+        // Rustc emits hundreds of thousands of local section and symbol names.
+        // They are neither Blueprint imports nor entrypoints, and retaining
+        // them makes the outer archive substantially less compressible.
+        ld.arg("--discard-all");
     }
     ld.arg("-o").arg(&linked);
     if let Some(symbol) = &entry_symbol {
@@ -851,7 +886,7 @@ fn build_one_target_to_in_lane(
                 tier,
                 &target_spec,
                 &target_name,
-                &cargo_artifacts.sysroot_metadata,
+                &rustc_sysroot_metadata,
                 &rustc_payload,
             )?;
             println!(
@@ -885,14 +920,6 @@ fn rustc_sysroot_asset_entries(
     payload: &RustcPayloadSelection,
 ) -> Result<Vec<AssetBundleEntry>, String> {
     let selected_metadata = match tier {
-        // A compiler payload is built in the same Cargo target graph as the
-        // rustc Blueprint. Cargo feature unification can therefore make an
-        // otherwise no_std payload artifact depend on target `std` metadata
-        // (for example through serde_core). Cargo metadata does not expose
-        // the injected -Zbuild-std nodes, so retain the authenticated
-        // current-invocation sysroot closure whenever a min Blueprint carries
-        // compiler payloads.
-        RustcTier::Min if !payload.artifacts.is_empty() => metadata.iter().collect(),
         RustcTier::Min => {
             let mut selected = Vec::with_capacity(3);
             for crate_name in ["core", "compiler_builtins", "alloc"] {
@@ -4096,6 +4123,8 @@ struct MetadataPackage {
     name: String,
     version: String,
     dependencies: Vec<MetadataDependency>,
+    #[serde(default)]
+    features: BTreeMap<String, Vec<String>>,
 }
 
 #[derive(Deserialize)]
@@ -4103,6 +4132,8 @@ struct MetadataDependency {
     name: String,
     rename: Option<String>,
     req: String,
+    #[serde(default)]
+    path: Option<PathBuf>,
 }
 
 #[derive(Deserialize)]
@@ -4115,6 +4146,8 @@ struct MetadataResolve {
 struct MetadataNode {
     id: String,
     deps: Vec<MetadataNodeDep>,
+    #[serde(default)]
+    features: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -4141,6 +4174,19 @@ struct RustcPayloadDirectExtern {
     alias: String,
     crate_name: String,
     path: PathBuf,
+}
+
+struct IsolatedRustcPayloadBuild {
+    manifest_path: PathBuf,
+    artifacts: cargo_output::CargoBuildArtifacts,
+}
+
+struct RustcPayloadDependency {
+    alias: String,
+    package_name: String,
+    version: String,
+    path: Option<PathBuf>,
+    features: Vec<String>,
 }
 
 struct VersionAlignmentTarget {
@@ -4417,6 +4463,212 @@ fn cargo_metadata_for_rustc_payload(
     }
     serde_json::from_slice(&output.stdout)
         .map_err(|err| format!("failed to parse rustc payload cargo metadata JSON: {err}"))
+}
+
+fn build_isolated_rustc_payload(
+    metadata: &CargoMetadata,
+    requested_roots: &[String],
+    work_dir: &Path,
+    cargo_target_dir: &Path,
+    target_spec: &Path,
+    target_name: &str,
+    cargo_profile: CargoProfile,
+    source_overlay: &[CratePatch],
+) -> Result<IsolatedRustcPayloadBuild, String> {
+    let dependencies = rustc_payload_dependencies(metadata, requested_roots)?;
+    let payload_dir = work_dir.join("rustc-payload-min");
+    fs::create_dir_all(&payload_dir).map_err(io_string)?;
+    let manifest_path = payload_dir.join("Cargo.toml");
+    let source_path = payload_dir.join("lib.rs");
+
+    let mut manifest = String::from(
+        "[package]\n\
+         name = \"trueos-rustc-payload-min\"\n\
+         version = \"0.0.0\"\n\
+         edition = \"2024\"\n\n\
+         [lib]\n\
+         path = \"lib.rs\"\n\n\
+         [workspace]\n\n\
+         [dependencies]\n",
+    );
+    for dependency in &dependencies {
+        manifest.push_str(&toml_string(&dependency.alias));
+        manifest.push_str(" = { package = ");
+        manifest.push_str(&toml_string(&dependency.package_name));
+        manifest.push_str(", version = ");
+        manifest.push_str(&toml_string(&format!("={}", dependency.version)));
+        if let Some(path) = &dependency.path {
+            manifest.push_str(", path = ");
+            manifest.push_str(&toml_string(path.to_string_lossy().as_ref()));
+        }
+        manifest.push_str(", default-features = false");
+        if !dependency.features.is_empty() {
+            manifest.push_str(", features = [");
+            for (index, feature) in dependency.features.iter().enumerate() {
+                if index > 0 {
+                    manifest.push_str(", ");
+                }
+                manifest.push_str(&toml_string(feature));
+            }
+            manifest.push(']');
+        }
+        manifest.push_str(" }\n");
+    }
+    fs::write(&manifest_path, manifest).map_err(io_string)?;
+    fs::write(
+        &source_path,
+        "#![no_std]\n\n// Dependency-only crate used to authenticate the compiler payload graph.\n",
+    )
+    .map_err(io_string)?;
+
+    let payload_target_dir = cargo_target_dir.join("rustc-payload-min");
+    fs::create_dir_all(&payload_target_dir).map_err(io_string)?;
+    let deps_dir = payload_target_dir
+        .join(target_name)
+        .join(cargo_profile.target_subdir())
+        .join("deps");
+    let mut cargo = toolchain::cargo_command();
+    cargo
+        .current_dir(&payload_dir)
+        .arg("rustc")
+        .arg("--message-format=json-render-diagnostics")
+        .arg("-Z")
+        .arg("build-std=core,compiler_builtins,alloc")
+        .arg("-Z")
+        .arg("json-target-spec")
+        .arg("--target")
+        .arg(target_spec)
+        .arg("--manifest-path")
+        .arg(&manifest_path)
+        .arg("--lib");
+    push_source_overlay_configs(&mut cargo, source_overlay);
+    push_extra_rustflags(&mut cargo, BLUEPRINT_RUSTFLAGS);
+    push_bindgen_clang_args(&mut cargo);
+    push_trueos_cc_flags(&mut cargo);
+    cargo.env("RUSTC_BOOTSTRAP_SYNTHETIC_TARGET", "1");
+    cargo.env("CARGO_TARGET_DIR", &payload_target_dir);
+    toolchain::configure_rustc_bootstrap_env(&mut cargo, target_name)?;
+    if matches!(cargo_profile, CargoProfile::Release) {
+        cargo.arg("--release");
+    }
+    cargo.arg("--").arg("-Zno-link").arg("--emit=metadata");
+
+    println!(
+        "trueos-blueprint: isolated rustc payload roots={} build-std=core,compiler_builtins,alloc",
+        requested_roots.join(",")
+    );
+    println!(
+        "trueos-blueprint: isolated rustc payload cache: {}",
+        payload_target_dir.display()
+    );
+    let artifacts =
+        run_cargo_rustc_command(&mut cargo, "isolated rustc payload cargo rustc", &deps_dir)?;
+    if !deps_dir.is_dir() {
+        return Err(format!(
+            "missing isolated rustc payload deps dir: {}",
+            deps_dir.display()
+        ));
+    }
+
+    Ok(IsolatedRustcPayloadBuild {
+        manifest_path,
+        artifacts,
+    })
+}
+
+fn rustc_payload_dependencies(
+    metadata: &CargoMetadata,
+    requested_roots: &[String],
+) -> Result<Vec<RustcPayloadDependency>, String> {
+    let resolve = metadata
+        .resolve
+        .as_ref()
+        .ok_or_else(|| "cargo metadata returned no resolve graph for rustc payload".to_owned())?;
+    let root_id = resolve
+        .root
+        .as_deref()
+        .ok_or_else(|| "cargo metadata returned no root package for rustc payload".to_owned())?;
+    let root_node = resolve
+        .nodes
+        .iter()
+        .find(|node| node.id == root_id)
+        .ok_or_else(|| format!("cargo metadata omitted root node {root_id}"))?;
+    let root_package = metadata
+        .packages
+        .iter()
+        .find(|package| package.id == root_id)
+        .ok_or_else(|| format!("cargo metadata omitted root package {root_id}"))?;
+
+    let mut dependencies = Vec::with_capacity(requested_roots.len());
+    for requested in requested_roots {
+        let alias = cargo_extern_name(requested);
+        let mut resolved_matches = root_node.deps.iter().filter(|dependency| {
+            metadata_dependency_is_normal(dependency)
+                && cargo_extern_name(&dependency.name) == alias
+        });
+        let Some(resolved) = resolved_matches.next() else {
+            return Err(format!(
+                "rustc payload dependency `{requested}` is not an active normal dependency \
+                 of Cargo root {root_id}"
+            ));
+        };
+        if resolved_matches.any(|candidate| candidate.pkg != resolved.pkg) {
+            return Err(format!(
+                "rustc payload dependency alias `{requested}` resolves ambiguously from \
+                 Cargo root {root_id}"
+            ));
+        }
+        let declaration = root_package
+            .dependencies
+            .iter()
+            .find(|dependency| {
+                cargo_extern_name(dependency_display_name(dependency))
+                    == cargo_extern_name(&resolved.name)
+            })
+            .ok_or_else(|| {
+                format!(
+                    "cargo metadata omitted the declaration for rustc payload dependency \
+                     `{requested}` on root package {root_id}"
+                )
+            })?;
+        let package = metadata
+            .packages
+            .iter()
+            .find(|package| package.id == resolved.pkg)
+            .ok_or_else(|| {
+                format!(
+                    "cargo metadata omitted resolved rustc payload package {}",
+                    resolved.pkg
+                )
+            })?;
+        let node = resolve
+            .nodes
+            .iter()
+            .find(|node| node.id == resolved.pkg)
+            .ok_or_else(|| {
+                format!(
+                    "cargo metadata omitted resolved rustc payload node {}",
+                    resolved.pkg
+                )
+            })?;
+        let mut features = node
+            .features
+            .iter()
+            .filter(|feature| package.features.contains_key(feature.as_str()))
+            .cloned()
+            .collect::<Vec<_>>();
+        features.sort();
+        features.dedup();
+        dependencies.push(RustcPayloadDependency {
+            alias: requested.clone(),
+            package_name: package.name.clone(),
+            version: package.version.clone(),
+            path: declaration.path.clone(),
+            features,
+        });
+    }
+    dependencies.sort_by(|left, right| left.alias.cmp(&right.alias));
+    Ok(dependencies)
 }
 
 fn metadata_dependency_is_normal(dependency: &MetadataNodeDep) -> bool {

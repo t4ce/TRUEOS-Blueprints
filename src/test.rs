@@ -161,6 +161,7 @@ mod rustc_payload_tests {
                 nodes: vec![
                     MetadataNode {
                         id: "root".to_owned(),
+                        features: Vec::new(),
                         deps: vec![
                             dependency("payload-alias", "payload", None),
                             dependency("host-tool", "host", Some("build")),
@@ -168,6 +169,7 @@ mod rustc_payload_tests {
                     },
                     MetadataNode {
                         id: "payload".to_owned(),
+                        features: Vec::new(),
                         deps: vec![
                             dependency("same_v1", "same-1", None),
                             dependency("same_v2", "same-2", None),
@@ -176,10 +178,12 @@ mod rustc_payload_tests {
                     },
                     MetadataNode {
                         id: "same-1".to_owned(),
+                        features: Vec::new(),
                         deps: Vec::new(),
                     },
                     MetadataNode {
                         id: "same-2".to_owned(),
+                        features: Vec::new(),
                         deps: Vec::new(),
                     },
                 ],
@@ -218,14 +222,17 @@ mod rustc_payload_tests {
                 nodes: vec![
                     MetadataNode {
                         id: "root".to_owned(),
+                        features: Vec::new(),
                         deps: vec![dependency("same", "payload", None)],
                     },
                     MetadataNode {
                         id: "payload".to_owned(),
+                        features: Vec::new(),
                         deps: vec![dependency("transitive", "transitive", None)],
                     },
                     MetadataNode {
                         id: "transitive".to_owned(),
+                        features: Vec::new(),
                         deps: Vec::new(),
                     },
                 ],
@@ -240,6 +247,67 @@ mod rustc_payload_tests {
 
         assert!(error.contains("collides"));
     }
+
+    #[test]
+    fn isolated_payload_dependency_keeps_only_resolved_api_features() {
+        let metadata = CargoMetadata {
+            packages: vec![
+                MetadataPackage {
+                    id: "root".to_owned(),
+                    name: "compiler".to_owned(),
+                    version: "0.1.0".to_owned(),
+                    dependencies: vec![MetadataDependency {
+                        name: "trueos".to_owned(),
+                        rename: None,
+                        req: "*".to_owned(),
+                        path: Some(PathBuf::from("/sdk/api")),
+                    }],
+                    features: BTreeMap::new(),
+                },
+                MetadataPackage {
+                    id: "trueos".to_owned(),
+                    name: "trueos".to_owned(),
+                    version: "0.1.0".to_owned(),
+                    dependencies: Vec::new(),
+                    features: BTreeMap::from([
+                        ("default-global-allocator".to_owned(), Vec::new()),
+                        ("tokio-runtime".to_owned(), Vec::new()),
+                    ]),
+                },
+            ],
+            resolve: Some(MetadataResolve {
+                root: Some("root".to_owned()),
+                nodes: vec![
+                    MetadataNode {
+                        id: "root".to_owned(),
+                        features: vec!["host-compiler".to_owned()],
+                        deps: vec![dependency("trueos", "trueos", None)],
+                    },
+                    MetadataNode {
+                        id: "trueos".to_owned(),
+                        features: vec![
+                            "default-global-allocator".to_owned(),
+                            "dep:internal-detail".to_owned(),
+                        ],
+                        deps: Vec::new(),
+                    },
+                ],
+            }),
+        };
+
+        let dependencies =
+            rustc_payload_dependencies(&metadata, &["trueos".to_owned()]).unwrap();
+
+        assert_eq!(dependencies.len(), 1);
+        assert_eq!(dependencies[0].alias, "trueos");
+        assert_eq!(dependencies[0].package_name, "trueos");
+        assert_eq!(dependencies[0].version, "0.1.0");
+        assert_eq!(dependencies[0].path.as_deref(), Some(Path::new("/sdk/api")));
+        assert_eq!(
+            dependencies[0].features,
+            vec!["default-global-allocator"]
+        );
+    }
 }
 
 #[cfg(test)]
@@ -251,6 +319,7 @@ mod version_alignment_tests {
             name: name.to_string(),
             rename: rename.map(str::to_string),
             req: req.to_string(),
+            path: None,
         }
     }
 
