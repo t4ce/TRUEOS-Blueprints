@@ -206,22 +206,16 @@ pub struct TrueosUi4CursorSource {
     pub hid_kind: u32,
 }
 
-/// Frame-local geometry for a kernel-rendered, cell-snapped cursor outline.
-/// `cell_width_subpx` uses 1/1024-pixel units so fractional monospace cell
-/// advances retain their alignment across a terminal row.
+/// Frame-local cell spacing for an `AppOwned` UI4 cursor. Advances use 1/1024
+/// pixel units so fractional glyph widths stay aligned.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default)]
-pub struct TrueosUi4CursorCellOutline {
+pub struct TrueosUi4CursorStep {
     pub origin_x: u32,
     pub origin_y: u32,
     pub cell_width_subpx: u32,
-    pub cell_height: u32,
-    pub columns: u32,
-    pub rows: u32,
-    pub stroke: u32,
+    pub cell_height_subpx: u32,
 }
-
-const _: () = assert!(core::mem::size_of::<TrueosUi4CursorCellOutline>() == 7 * 4);
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default)]
@@ -683,9 +677,9 @@ unsafe extern "C" {
         source: *const TrueosUi4CursorSource,
         icon: u32,
     ) -> i32;
-    pub fn trueos_cabi_ui4_scene_set_cursor_cell_outline(
+    pub fn trueos_cabi_ui4_scene_set_cursor_step(
         window_id: u32,
-        outline: *const TrueosUi4CursorCellOutline,
+        step: *const TrueosUi4CursorStep,
     ) -> i32;
     pub fn trueos_cabi_ui4_scene_pointer_event_take(
         window_id: u32,

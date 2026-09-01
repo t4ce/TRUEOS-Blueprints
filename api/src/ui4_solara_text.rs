@@ -219,23 +219,17 @@ pub enum CursorIcon {
     ResizeDiagonal = 4,
     /// The selected frame paints its own cursor pixels.
     AppOwned = 5,
-    /// The slot-4 cursor plane outlines one configured application cell.
-    CellOutline = 6,
 }
 
-/// Static frame-local geometry for a [`CursorIcon::CellOutline`]. The kernel
-/// retains this small description and moves the outline on its own software
-/// cursor plane, using the active cursor route's color.
+/// Frame-local cell spacing for an [`CursorIcon::AppOwned`] cursor. The
+/// advances use 1/1024-pixel units so a fixed fractional glyph width can stay
+/// aligned with the frame's text grid.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub struct CursorCellOutline {
+pub struct CursorStep {
     pub origin_x: u32,
     pub origin_y: u32,
-    /// Horizontal cell advance in 1/1024-pixel units.
     pub cell_width_subpx: u32,
-    pub cell_height: u32,
-    pub columns: u32,
-    pub rows: u32,
-    pub stroke: u32,
+    pub cell_height_subpx: u32,
 }
 
 /// One selected-frame pointer event after UI4 hit testing and capture.
@@ -874,6 +868,26 @@ impl Frame {
         })
     }
 
+    /// Snap pointer delivery to this frame's fixed cell grid while its
+    /// fallback cursor resolves to [`CursorIcon::AppOwned`]. Passing `None`
+    /// clears the policy. Physical cursor movement, keyboard input, selection,
+    /// and UI4 hit testing remain unchanged.
+    pub fn set_cursor_step(&mut self, step: Option<CursorStep>) -> Result<(), Error> {
+        let raw = step.map(|step| v::bp_abi::TrueosUi4CursorStep {
+            origin_x: step.origin_x,
+            origin_y: step.origin_y,
+            cell_width_subpx: step.cell_width_subpx,
+            cell_height_subpx: step.cell_height_subpx,
+        });
+        status(unsafe {
+            v::bp_abi::trueos_cabi_ui4_scene_set_cursor_step(
+                self.window_id,
+                raw.as_ref()
+                    .map_or(core::ptr::null(), |step| step as *const _),
+            )
+        })
+    }
+
     /// Set the selected frame's fallback cursor for every source which does
     /// not have its own override.
     pub fn set_cursor_icon(&mut self, icon: CursorIcon) -> Result<(), Error> {
@@ -900,24 +914,6 @@ impl Frame {
         };
         status(unsafe {
             v::bp_abi::trueos_cabi_ui4_scene_set_cursor_icon(self.window_id, &source, icon as u32)
-        })
-    }
-
-    /// Make this frame's fallback cursor a kernel-rendered outline around the
-    /// pointer's current grid cell. Reconfigure it only when the grid layout
-    /// changes; pointer motion never requires an application repaint.
-    pub fn set_cursor_cell_outline(&mut self, outline: CursorCellOutline) -> Result<(), Error> {
-        let outline = v::bp_abi::TrueosUi4CursorCellOutline {
-            origin_x: outline.origin_x,
-            origin_y: outline.origin_y,
-            cell_width_subpx: outline.cell_width_subpx,
-            cell_height: outline.cell_height,
-            columns: outline.columns,
-            rows: outline.rows,
-            stroke: outline.stroke,
-        };
-        status(unsafe {
-            v::bp_abi::trueos_cabi_ui4_scene_set_cursor_cell_outline(self.window_id, &outline)
         })
     }
 
