@@ -4,11 +4,12 @@ extern crate alloc;
 
 mod terminal;
 
-use alloc::{string::String, vec::Vec};
+use alloc::{collections::VecDeque, string::String, vec::Vec};
 
 use terminal::{MouseButton, Terminal, TerminalColor};
 use trueos::input::{self, TrueosKeyboardOutputEvent};
 use trueos::logl::{self, level};
+use trueos::clock;
 use trueos::ui4_scene::{
     Damage, Error as UiError, Font, Frame, MenuEntry, POINTER_BUTTON_MIDDLE,
     POINTER_BUTTON_PRIMARY, POINTER_BUTTON_SECONDARY, PointerEvent, SceneTextRow,
@@ -134,6 +135,9 @@ const DIRECT_SOLID_MAX_QUADS: usize = 8_192;
 const POLL_INTERVAL_MS: u64 = 5;
 const SHELL_OUTPUT_BATCH_CAP: usize = 8 * 1024;
 const SHELL_ATTACH_RETRIES: usize = 1_000;
+const SHELL_RENDER_TRACE_FIRST: u64 = 16;
+const SHELL_RENDER_TRACE_EVERY: u64 = 128;
+const SHELL_RENDER_TRACE_PENDING_CAP: usize = 32;
 const HID_MODIFIER_LEFT_CONTROL: u8 = 1 << 0;
 const HID_MODIFIER_RIGHT_CONTROL: u8 = 1 << 4;
 const HID_MODIFIER_CONTROL_MASK: u8 = HID_MODIFIER_LEFT_CONTROL | HID_MODIFIER_RIGHT_CONTROL;
@@ -155,6 +159,183 @@ struct DirectTextRun {
 
 struct DirectStampBudget {
     remaining_layers: usize,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct RenderTiming {
+    started_ns: u64,
+    total_us: u64,
+    begin_us: u64,
+    solid_build_us: u64,
+    solid_submit_us: u64,
+    text_build_us: u64,
+    stamp_submit_us: u64,
+    publish_wait_us: u64,
+    busy_polls: u64,
+    cells: usize,
+    solid_quads: usize,
+    text_runs: usize,
+    glyphs: usize,
+    stamp_layers: usize,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PendingInputTrace {
+    sample: u64,
+    scalar: u32,
+    hid_t_ms: u64,
+    received_ns: u64,
+    submit_done_ns: u64,
+    submit_us: u64,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PendingRenderTrace {
+    first_sample: u64,
+    last_sample: u64,
+    input_count: usize,
+    first_scalar: u32,
+    uniform_scalar: bool,
+    first_hid_t_ms: u64,
+    first_received_ns: u64,
+    last_submit_done_ns: u64,
+    submit_us: u64,
+    output_seen_ns: u64,
+    output_bytes: usize,
+    terminal_feed_us: u64,
+}
+
+#[derive(Debug, Default)]
+struct ShellRenderTracer {
+    inputs_seen: u64,
+    pending: VecDeque<PendingInputTrace>,
+    ready: Option<PendingRenderTrace>,
+    dropped_pending: u64,
+}
+
+impl ShellRenderTracer {
+    fn begin_input(
+        &mut self,
+        event: TrueosKeyboardOutputEvent,
+        bytes: &[u8],
+    ) -> Option<PendingInputTrace> {
+        self.inputs_seen = self.inputs_seen.saturating_add(1);
+        let sample = self.inputs_seen;
+        if sample > SHELL_RENDER_TRACE_FIRST && !sample.is_multiple_of(SHELL_RENDER_TRACE_EVERY) {
+            return None;
+        }
+        let scalar = core::str::from_utf8(bytes)
+            .ok()
+            .and_then(|text| {
+                let mut chars = text.chars();
+                let scalar = chars.next()?;
+                chars.next().is_none().then_some(scalar as u32)
+            })
+            .unwrap_or(0);
+        Some(PendingInputTrace {
+            sample,
+            scalar,
+            hid_t_ms: event.t_ms,
+            received_ns: clock::monotonic_nanos(),
+            submit_done_ns: 0,
+            submit_us: 0,
+        })
+    }
+
+    fn finish_input(&mut self, mut trace: PendingInputTrace, submit_done_ns: u64) {
+        trace.submit_done_ns = submit_done_ns;
+        trace.submit_us = nanos_to_micros(submit_done_ns.saturating_sub(trace.received_ns));
+        if self.pending.len() >= SHELL_RENDER_TRACE_PENDING_CAP {
+            let _ = self.pending.pop_front();
+            self.dropped_pending = self.dropped_pending.saturating_add(1);
+        }
+        self.pending.push_back(trace);
+    }
+
+    fn note_shell_output(&mut self, output_seen_ns: u64, output_bytes: usize, feed_us: u64) {
+        let Some(first) = self.pending.pop_front() else {
+            return;
+        };
+        let batch = self.ready.get_or_insert(PendingRenderTrace {
+            first_sample: first.sample,
+            last_sample: first.sample,
+            input_count: 0,
+            first_scalar: first.scalar,
+            uniform_scalar: true,
+            first_hid_t_ms: first.hid_t_ms,
+            first_received_ns: first.received_ns,
+            last_submit_done_ns: first.submit_done_ns,
+            submit_us: 0,
+            output_seen_ns,
+            output_bytes: 0,
+            terminal_feed_us: 0,
+        });
+        Self::merge_input(batch, first);
+        while let Some(trace) = self.pending.pop_front() {
+            Self::merge_input(batch, trace);
+        }
+        batch.output_bytes = batch.output_bytes.saturating_add(output_bytes);
+        batch.terminal_feed_us = batch.terminal_feed_us.saturating_add(feed_us);
+    }
+
+    fn merge_input(batch: &mut PendingRenderTrace, trace: PendingInputTrace) {
+        batch.last_sample = trace.sample;
+        batch.input_count = batch.input_count.saturating_add(1);
+        batch.uniform_scalar &= trace.scalar == batch.first_scalar;
+        batch.last_submit_done_ns = batch.last_submit_done_ns.max(trace.submit_done_ns);
+        batch.submit_us = batch.submit_us.saturating_add(trace.submit_us);
+    }
+
+    fn finish_present(&mut self, timing: RenderTiming) {
+        let Some(trace) = self.ready.take() else {
+            return;
+        };
+        let visible_ns = clock::monotonic_nanos();
+        let hid_ns = trace.first_hid_t_ms.saturating_mul(1_000_000);
+        let scalar = if trace.uniform_scalar {
+            trace.first_scalar
+        } else {
+            0
+        };
+        let _ = logl::log_record(
+            level::TRACE,
+            "shell2-render-trace",
+            format_args!(
+                "samples={}..{} inputs={} scalar=U+{:04X} uniform={} hid_to_app_us={} submit_us={} submit_to_output_us={} output_bytes={} terminal_feed_us={} output_to_present_us={} begin_us={} solid_build_us={} solid_submit_us={} text_build_us={} stamp_submit_us={} publish_wait_us={} present_us={} input_to_visible_us={} busy_polls={} cells={} solid_quads={} text_runs={} glyphs={} stamp_layers={} dropped_pending={}",
+                trace.first_sample,
+                trace.last_sample,
+                trace.input_count,
+                scalar,
+                trace.uniform_scalar as u8,
+                nanos_to_micros(trace.first_received_ns.saturating_sub(hid_ns)),
+                trace.submit_us,
+                nanos_to_micros(trace.output_seen_ns.saturating_sub(trace.last_submit_done_ns)),
+                trace.output_bytes,
+                trace.terminal_feed_us,
+                nanos_to_micros(timing.started_ns.saturating_sub(trace.output_seen_ns)),
+                timing.begin_us,
+                timing.solid_build_us,
+                timing.solid_submit_us,
+                timing.text_build_us,
+                timing.stamp_submit_us,
+                timing.publish_wait_us,
+                timing.total_us,
+                nanos_to_micros(visible_ns.saturating_sub(trace.first_received_ns)),
+                timing.busy_polls,
+                timing.cells,
+                timing.solid_quads,
+                timing.text_runs,
+                timing.glyphs,
+                timing.stamp_layers,
+                self.dropped_pending,
+            ),
+        );
+    }
+}
+
+#[inline]
+fn nanos_to_micros(nanos: u64) -> u64 {
+    nanos / 1_000
 }
 
 enum InvokingTerminal {
@@ -442,6 +623,7 @@ fn main() {
     };
     let mut terminal = Terminal::new(cols, rows);
     let mut keyboard_input = KeyboardInputState::default();
+    let mut render_tracer = ShellRenderTracer::default();
     let mut matrix_slot_hover = None;
 
     if let Err(error) = present_terminal(&mut frame, &terminal, metrics, None) {
@@ -475,8 +657,12 @@ fn main() {
             }
         };
 
-        if let Err(error) =
-            drain_shell_output(&mut frontend, &mut terminal, invoking_terminal.is_active())
+        if let Err(error) = drain_shell_output(
+            &mut frontend,
+            &mut terminal,
+            invoking_terminal.is_active(),
+            &mut render_tracer,
+        )
         {
             logl::log(
                 level::ERROR,
@@ -521,7 +707,12 @@ fn main() {
             font_scale.mark_applied();
         }
 
-        if let Err(error) = drain_keyboard_input(&mut frame, &mut keyboard_input, &frontend) {
+        if let Err(error) = drain_keyboard_input(
+            &mut frame,
+            &mut keyboard_input,
+            &frontend,
+            &mut render_tracer,
+        ) {
             logl::log(
                 level::ERROR,
                 format_args!("shell: routed keyboard input failed: {error:?}"),
@@ -552,15 +743,17 @@ fn main() {
             hover_changed = true;
         }
 
-        if (terminal.take_dirty() || hover_changed || font_scaled)
-            && let Err(error) =
-                present_terminal(&mut frame, &terminal, metrics, matrix_slot_hover.as_ref())
-        {
-            logl::log(
-                level::ERROR,
-                format_args!("shell: UI4 terminal frame failed: {error:?}"),
-            );
-            return;
+        if terminal.take_dirty() || hover_changed || font_scaled {
+            match present_terminal(&mut frame, &terminal, metrics, matrix_slot_hover.as_ref()) {
+                Ok(timing) => render_tracer.finish_present(timing),
+                Err(error) => {
+                    logl::log(
+                        level::ERROR,
+                        format_args!("shell: UI4 terminal frame failed: {error:?}"),
+                    );
+                    return;
+                }
+            }
         }
 
         vsys::poll_once();
@@ -681,6 +874,7 @@ fn drain_shell_output(
     frontend: &mut Shell2Frontend,
     terminal: &mut Terminal,
     mirror_to_invoking_terminal: bool,
+    render_tracer: &mut ShellRenderTracer,
 ) -> Result<(), Shell2FrontendError> {
     let mut bytes = [0u8; SHELL_OUTPUT_BATCH_CAP];
     for _ in 0..32 {
@@ -689,10 +883,16 @@ fn drain_shell_output(
             terminal.reset();
         }
         if read.len != 0 {
+            let output_seen_ns = clock::monotonic_nanos();
             if mirror_to_invoking_terminal {
                 let _ = trueos::vshell::attached_write(&bytes[..read.len]);
             }
             terminal.feed(&bytes[..read.len]);
+            render_tracer.note_shell_output(
+                output_seen_ns,
+                read.len,
+                nanos_to_micros(clock::monotonic_nanos().saturating_sub(output_seen_ns)),
+            );
         }
         let responses = terminal.take_responses();
         if read.flags & SHELL2_FRONTEND_DIRECT_HANDOFF != 0 && !responses.is_empty() {
@@ -741,9 +941,10 @@ fn drain_keyboard_input(
     frame: &mut Frame,
     state: &mut KeyboardInputState,
     frontend: &Shell2Frontend,
+    render_tracer: &mut ShellRenderTracer,
 ) -> Result<(), InputError> {
     while let Some(event) = frame.take_keyboard_event()? {
-        handle_keyboard_event(state, frontend, event)?;
+        handle_keyboard_event(state, frontend, event, render_tracer)?;
     }
     Ok(())
 }
@@ -752,6 +953,7 @@ fn handle_keyboard_event(
     state: &mut KeyboardInputState,
     frontend: &Shell2Frontend,
     event: TrueosKeyboardOutputEvent,
+    render_tracer: &mut ShellRenderTracer,
 ) -> Result<(), InputError> {
     let burst_member = event.flags & input::KEYBOARD_OUTPUT_FLAG_TEXT_BURST != 0;
     let burst_start = event.flags & input::KEYBOARD_OUTPUT_FLAG_TEXT_BURST_START != 0;
@@ -799,16 +1001,21 @@ fn handle_keyboard_event(
                 return Ok(());
             };
             if let Some(control) = control_ascii(event, text) {
-                submit_input(frontend, core::slice::from_ref(&control))?;
+                submit_traced_input(
+                    render_tracer,
+                    frontend,
+                    event,
+                    core::slice::from_ref(&control),
+                )?;
             } else {
                 // An ordinary key transition stays one glyph-sized operation.
-                submit_input(frontend, text)?;
+                submit_traced_input(render_tracer, frontend, event, text)?;
             }
         }
         input::KEYBOARD_OUTPUT_KIND_KEY => {
             state.suppressed_text = None;
             if let Some(sequence) = named_key_sequence(event.key_code) {
-                submit_input(frontend, sequence)?;
+                submit_traced_input(render_tracer, frontend, event, sequence)?;
                 // Some physical reports carry both the named key and its text
                 // scalar. This state crosses polling calls so a ring snapshot
                 // boundary cannot duplicate Enter/Tab/Space.
@@ -1084,6 +1291,20 @@ fn submit_input(frontend: &Shell2Frontend, bytes: &[u8]) -> Result<(), Shell2Fro
     }
 }
 
+fn submit_traced_input(
+    render_tracer: &mut ShellRenderTracer,
+    frontend: &Shell2Frontend,
+    event: TrueosKeyboardOutputEvent,
+    bytes: &[u8],
+) -> Result<(), Shell2FrontendError> {
+    let trace = render_tracer.begin_input(event, bytes);
+    submit_input(frontend, bytes)?;
+    if let Some(trace) = trace {
+        render_tracer.finish_input(trace, clock::monotonic_nanos());
+    }
+    Ok(())
+}
+
 fn named_key_sequence(key_code: u16) -> Option<&'static [u8]> {
     match key_code {
         input::KEYBOARD_KEY_BACKSPACE => Some(b"\x08"),
@@ -1123,7 +1344,7 @@ fn present_terminal(
     terminal: &Terminal,
     metrics: TerminalMetrics,
     matrix_slot_hover: Option<&MatrixSlotHover>,
-) -> Result<(), UiError> {
+) -> Result<RenderTiming, UiError> {
     present_terminal_at(frame, terminal, 0, 0, metrics, matrix_slot_hover)
 }
 
@@ -1134,11 +1355,19 @@ fn present_terminal_at(
     origin_y: u32,
     metrics: TerminalMetrics,
     matrix_slot_hover: Option<&MatrixSlotHover>,
-) -> Result<(), UiError> {
+) -> Result<RenderTiming, UiError> {
+    let started_ns = clock::monotonic_nanos();
+    let mut busy_polls = 0u64;
     // Paint transient cell rectangles, then stamp the current glyphs into the
     // same leased frame. Sprite id zero is UI4's frame-owned white pixel, so
     // this owns no uploaded sprite, glyph ticket, or retained cache.
-    retry_busy(|| frame.begin_sprite_frame(BACKGROUND))?;
+    let phase_started_ns = clock::monotonic_nanos();
+    busy_polls = busy_polls.saturating_add(retry_busy_observed(|| {
+        frame.begin_sprite_frame(BACKGROUND)
+    })?);
+    let begin_us = nanos_to_micros(clock::monotonic_nanos().saturating_sub(phase_started_ns));
+
+    let phase_started_ns = clock::monotonic_nanos();
     let (cols, rows) = terminal.dimensions();
     let mut solid_quads = Vec::with_capacity(terminal.cells().len().min(DIRECT_SOLID_MAX_QUADS));
     for row in 0..rows {
@@ -1192,19 +1421,60 @@ fn present_terminal_at(
             ),
         );
     }
-    retry_busy(|| frame.draw_sprite_quads(&solid_quads))?;
+    let solid_build_us = nanos_to_micros(clock::monotonic_nanos().saturating_sub(phase_started_ns));
 
+    let phase_started_ns = clock::monotonic_nanos();
+    busy_polls = busy_polls.saturating_add(retry_busy_observed(|| {
+        frame.draw_sprite_quads(&solid_quads)
+    })?);
+    let solid_submit_us =
+        nanos_to_micros(clock::monotonic_nanos().saturating_sub(phase_started_ns));
+
+    let phase_started_ns = clock::monotonic_nanos();
     let mut text_runs = Vec::with_capacity(terminal.cells().len());
     for row in 0..rows {
         let cells = &terminal.cells()[row * cols..(row + 1) * cols];
         collect_glyph_runs(&mut text_runs, cells, row, origin_x, origin_y, metrics);
     }
+    let glyphs = text_runs
+        .iter()
+        .fold(0usize, |total, run| total.saturating_add(run.text.chars().count()));
+    let text_build_us = nanos_to_micros(clock::monotonic_nanos().saturating_sub(phase_started_ns));
+
     let mut stamp_budget = DirectStampBudget {
         remaining_layers: DIRECT_STAMP_MAX_LAYERS,
     };
-    stamp_direct_runs(frame, &text_runs, metrics.font_pixels, &mut stamp_budget)?;
+    let phase_started_ns = clock::monotonic_nanos();
+    busy_polls = busy_polls.saturating_add(stamp_direct_runs(
+        frame,
+        &text_runs,
+        metrics.font_pixels,
+        &mut stamp_budget,
+    )?);
+    let stamp_submit_us =
+        nanos_to_micros(clock::monotonic_nanos().saturating_sub(phase_started_ns));
 
-    retry_busy(|| frame.publish(Damage::full(frame.width(), frame.height())))
+    let phase_started_ns = clock::monotonic_nanos();
+    busy_polls = busy_polls.saturating_add(retry_busy_observed(|| {
+        frame.publish(Damage::full(frame.width(), frame.height()))
+    })?);
+    let finished_ns = clock::monotonic_nanos();
+    Ok(RenderTiming {
+        started_ns,
+        total_us: nanos_to_micros(finished_ns.saturating_sub(started_ns)),
+        begin_us,
+        solid_build_us,
+        solid_submit_us,
+        text_build_us,
+        stamp_submit_us,
+        publish_wait_us: nanos_to_micros(finished_ns.saturating_sub(phase_started_ns)),
+        busy_polls,
+        cells: terminal.cells().len(),
+        solid_quads: solid_quads.len(),
+        text_runs: text_runs.len(),
+        glyphs,
+        stamp_layers: DIRECT_STAMP_MAX_LAYERS.saturating_sub(stamp_budget.remaining_layers),
+    })
 }
 
 fn collect_glyph_runs(
@@ -1461,10 +1731,12 @@ fn stamp_direct_runs(
     runs: &[DirectTextRun],
     font_pixels: f32,
     budget: &mut DirectStampBudget,
-) -> Result<(), UiError> {
+) -> Result<u64, UiError> {
     if runs.is_empty() {
-        return Ok(());
+        return Ok(0);
     }
+
+    let mut busy_polls = 0u64;
 
     let mut colors = Vec::<(u32, usize)>::new();
     for run in runs {
@@ -1508,30 +1780,30 @@ fn stamp_direct_runs(
                 font_pixels,
             });
             if rows.len() == DIRECT_STAMP_MAX_RUNS_PER_LAYER {
-                retry_busy(|| {
+                busy_polls = busy_polls.saturating_add(retry_busy_observed(|| {
                     frame.stamp_text_scene(
                         Font::JuliaMono,
                         (frame.width(), frame.height()),
                         color_rgba,
                         &rows,
                     )
-                })?;
+                })?);
                 rows.clear();
             }
         }
         if !rows.is_empty() {
-            retry_busy(|| {
+            busy_polls = busy_polls.saturating_add(retry_busy_observed(|| {
                 frame.stamp_text_scene(
                     Font::JuliaMono,
                     (frame.width(), frame.height()),
                     color_rgba,
                     &rows,
                 )
-            })?;
+            })?);
         }
     }
     budget.remaining_layers = budget.remaining_layers.saturating_sub(layer_count);
-    Ok(())
+    Ok(busy_polls)
 }
 
 fn stamp_runs_one_colour(
@@ -1540,7 +1812,7 @@ fn stamp_runs_one_colour(
     font_pixels: f32,
     color_rgba: u32,
     budget: &mut DirectStampBudget,
-) -> Result<(), UiError> {
+) -> Result<u64, UiError> {
     let layer_count = runs.len().div_ceil(DIRECT_STAMP_MAX_RUNS_PER_LAYER);
     if layer_count > budget.remaining_layers {
         logl::log(
@@ -1550,8 +1822,9 @@ fn stamp_runs_one_colour(
                 runs.len(),
             ),
         );
-        return Ok(());
+        return Ok(0);
     }
+    let mut busy_polls = 0u64;
     for chunk in runs.chunks(DIRECT_STAMP_MAX_RUNS_PER_LAYER) {
         let rows = chunk
             .iter()
@@ -1562,24 +1835,32 @@ fn stamp_runs_one_colour(
                 font_pixels,
             })
             .collect::<Vec<_>>();
-        retry_busy(|| {
+        busy_polls = busy_polls.saturating_add(retry_busy_observed(|| {
             frame.stamp_text_scene(
                 Font::JuliaMono,
                 (frame.width(), frame.height()),
                 color_rgba,
                 &rows,
             )
-        })?;
+        })?);
     }
     budget.remaining_layers = budget.remaining_layers.saturating_sub(layer_count);
-    Ok(())
+    Ok(busy_polls)
 }
 
 fn retry_busy(mut operation: impl FnMut() -> Result<(), UiError>) -> Result<(), UiError> {
+    retry_busy_observed(&mut operation).map(|_| ())
+}
+
+fn retry_busy_observed(
+    mut operation: impl FnMut() -> Result<(), UiError>,
+) -> Result<u64, UiError> {
+    let mut busy_polls = 0u64;
     loop {
         match operation() {
-            Ok(()) => return Ok(()),
+            Ok(()) => return Ok(busy_polls),
             Err(UiError::Busy) => {
+                busy_polls = busy_polls.saturating_add(1);
                 vsys::poll_once();
                 vsys::sleep_ms(1);
             }
