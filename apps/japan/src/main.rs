@@ -12,7 +12,7 @@ const CADENCE: tokio::time::Duration = tokio::time::Duration::from_secs(1);
 const HEALTH_CADENCE: tokio::time::Duration = tokio::time::Duration::from_secs(10);
 
 #[derive(Clone, Copy)]
-enum Worker {
+enum TokioSpawnedTaskKind {
     Rng,
     Time,
     Env,
@@ -26,11 +26,11 @@ struct Health {
 }
 
 impl Health {
-    fn record(&mut self, worker: Worker) {
-        let counter = match worker {
-            Worker::Rng => &mut self.rng,
-            Worker::Time => &mut self.time,
-            Worker::Env => &mut self.env,
+    fn record(&mut self, tokio_spawned_task_kind: TokioSpawnedTaskKind) {
+        let counter = match tokio_spawned_task_kind {
+            TokioSpawnedTaskKind::Rng => &mut self.rng,
+            TokioSpawnedTaskKind::Time => &mut self.time,
+            TokioSpawnedTaskKind::Env => &mut self.env,
         };
         *counter = counter.saturating_add(1);
     }
@@ -45,28 +45,35 @@ impl Health {
 }
 
 fn main() {
-    let mut builder = tokio::runtime::Builder::new_multi_thread();
-    builder.worker_threads(3).enable_time();
+    // The current-thread Tokio scheduler drives all three Tokio spawned tasks
+    // from the existing TRUEOS application fore. It does not launch Tokio
+    // workers through `pthread_create` and the TRUEOS service lanes.
+    let mut builder = tokio::runtime::Builder::new_current_thread();
+    builder.enable_time();
     let runtime = match builder.build() {
         Ok(runtime) => runtime,
         Err(error) => {
             logl::log(
                 level::ERROR,
-                format_args!("japan: three-worker Tokio runtime failed: {error}"),
+                format_args!("japan: current-thread Tokio scheduler failed: {error}"),
             );
             return;
         }
     };
 
+    logl::log(
+        level::INFO,
+        format_args!("japan: Tokio scheduler=current-thread Tokio spawned tasks=3"),
+    );
     runtime.block_on(run());
 }
 
 async fn run() {
     let (health_tx, mut health_rx) = tokio::sync::mpsc::channel(12);
 
-    tokio::spawn(rng_worker(health_tx.clone()));
-    tokio::spawn(time_worker(health_tx.clone()));
-    tokio::spawn(env_worker(health_tx));
+    tokio::spawn(rng_tokio_spawned_task(health_tx.clone()));
+    tokio::spawn(time_tokio_spawned_task(health_tx.clone()));
+    tokio::spawn(env_tokio_spawned_task(health_tx));
 
     let mut health = Health::default();
     let mut health_tick = tokio::time::interval(HEALTH_CADENCE);
@@ -74,13 +81,15 @@ async fn run() {
 
     loop {
         tokio::select! {
-            Some(worker) = health_rx.recv() => health.record(worker),
+            Some(tokio_spawned_task_kind) = health_rx.recv() => {
+                health.record(tokio_spawned_task_kind);
+            }
             _ = health_tick.tick() => {
                 if health.all_passed() {
                     logl::log(
                         level::INFO,
                         format_args!(
-                            "japan: workers passed rng={} time={} env={}",
+                            "japan: Tokio spawned tasks passed rng={} time={} env={}",
                             health.rng, health.time, health.env,
                         ),
                     );
@@ -88,7 +97,7 @@ async fn run() {
                     logl::log(
                         level::WARN,
                         format_args!(
-                            "japan: worker heartbeat missing rng={} time={} env={}",
+                            "japan: Tokio spawned task heartbeat missing rng={} time={} env={}",
                             health.rng, health.time, health.env,
                         ),
                     );
@@ -99,20 +108,20 @@ async fn run() {
     }
 }
 
-async fn rng_worker(health: tokio::sync::mpsc::Sender<Worker>) {
+async fn rng_tokio_spawned_task(health: tokio::sync::mpsc::Sender<TokioSpawnedTaskKind>) {
     loop {
         tokio::time::sleep(CADENCE).await;
         shell_line(
             format_args!("rng  | {}", rng::u64()),
             vshell::Rgb::new(244, 114, 182),
         );
-        if health.send(Worker::Rng).await.is_err() {
+        if health.send(TokioSpawnedTaskKind::Rng).await.is_err() {
             return;
         }
     }
 }
 
-async fn time_worker(health: tokio::sync::mpsc::Sender<Worker>) {
+async fn time_tokio_spawned_task(health: tokio::sync::mpsc::Sender<TokioSpawnedTaskKind>) {
     loop {
         tokio::time::sleep(CADENCE).await;
         match clock::utc_date_time() {
@@ -122,13 +131,13 @@ async fn time_worker(health: tokio::sync::mpsc::Sender<Worker>) {
                 vshell::Rgb::new(96, 165, 250),
             ),
         };
-        if health.send(Worker::Time).await.is_err() {
+        if health.send(TokioSpawnedTaskKind::Time).await.is_err() {
             return;
         }
     }
 }
 
-async fn env_worker(health: tokio::sync::mpsc::Sender<Worker>) {
+async fn env_tokio_spawned_task(health: tokio::sync::mpsc::Sender<TokioSpawnedTaskKind>) {
     loop {
         tokio::time::sleep(CADENCE).await;
         match env::var("TRUEOS_APP_ARCHIVE") {
@@ -141,7 +150,7 @@ async fn env_worker(health: tokio::sync::mpsc::Sender<Worker>) {
                 vshell::Rgb::new(245, 158, 11),
             ),
         };
-        if health.send(Worker::Env).await.is_err() {
+        if health.send(TokioSpawnedTaskKind::Env).await.is_err() {
             return;
         }
     }
