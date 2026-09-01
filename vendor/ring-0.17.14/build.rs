@@ -591,8 +591,13 @@ fn configure_cc(c: &mut cc::Build, target: &Target, c_root_dir: &Path, include_d
         }
     }
 
-    // Allow cross-compiling without a target sysroot for these targets.
+    // TRUEOS has no hosted libc/sysroot.  In particular, do not let clang
+    // combine the custom TRUEOS target triple with the host glibc headers:
+    // glibc's float128 declarations are not valid for that target.  The
+    // TRUEOS target uses the same freestanding-header contract as the other
+    // no-sysroot builds below.
     if (target.arch == WASM32)
+        || target.os == "trueos"
         || (target.os == "linux" && target.env == "musl" && target.arch != X86_64)
     {
         // TODO: Expand this to non-clang compilers in 0.17.0 if practical.
