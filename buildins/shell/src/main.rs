@@ -36,7 +36,9 @@ const FRAME_WIDTH: u32 =
     CHARACTERS_PER_ROW_SOFT_CAP as u32 * DEFAULT_FONT_PIXELS * MONO_GLYPH_ADVANCE_NUMERATOR
         / MONO_GLYPH_ADVANCE_DENOMINATOR
         + FRAME_PADDING_PX * 2;
-const FRAME_HEIGHT: u32 = 576;
+// Leave the slot-4 cell outline its full bottom stroke without changing the
+// terminal grid or the already-correct horizontal frame extent.
+const FRAME_HEIGHT: u32 = 579;
 const FRAME_PADDING_PX: u32 = 12;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
