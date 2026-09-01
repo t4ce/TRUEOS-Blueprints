@@ -219,11 +219,13 @@ pub enum CursorIcon {
     ResizeDiagonal = 4,
     /// The selected frame paints its own cursor pixels.
     AppOwned = 5,
+    /// UI4 outlines the stepped cell on its software-cursor plane.
+    CellOutline = 6,
 }
 
-/// Frame-local cell spacing for an [`CursorIcon::AppOwned`] cursor. The
-/// advances use 1/1024-pixel units so a fixed fractional glyph width can stay
-/// aligned with the frame's text grid.
+/// Frame-local presentation spacing for a software cursor. The advances use
+/// 1/1024-pixel units so a fixed fractional glyph width stays aligned with the
+/// frame's text grid while pointer input remains continuous.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct CursorStep {
     pub origin_x: u32,
@@ -868,10 +870,10 @@ impl Frame {
         })
     }
 
-    /// Snap pointer delivery to this frame's fixed cell grid while its
-    /// fallback cursor resolves to [`CursorIcon::AppOwned`]. Passing `None`
-    /// clears the policy. Physical cursor movement, keyboard input, selection,
-    /// and UI4 hit testing remain unchanged.
+    /// Snap only this frame's software-cursor presentation to a fixed cell
+    /// grid. Passing `None` clears the policy. Pointer delivery, physical
+    /// cursor movement, keyboard input, selection, and hit testing remain
+    /// unchanged.
     pub fn set_cursor_step(&mut self, step: Option<CursorStep>) -> Result<(), Error> {
         let raw = step.map(|step| v::bp_abi::TrueosUi4CursorStep {
             origin_x: step.origin_x,

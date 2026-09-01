@@ -11,9 +11,9 @@ use trueos::clock;
 use trueos::input::{self, TrueosKeyboardOutputEvent};
 use trueos::logl::{self, level};
 use trueos::ui4_scene::{
-    CursorStep, Damage, Error as UiError, Font, Frame, MenuEntry, POINTER_BUTTON_MIDDLE,
-    POINTER_BUTTON_PRIMARY, POINTER_BUTTON_SECONDARY, PointerEvent, SceneTextRow,
-    Shell2FontScaleStep, SpriteCorner, SpriteQuad, rgba, shell2_font_scale_steps,
+    CursorIcon, CursorStep, Damage, Error as UiError, Font, Frame, MenuEntry,
+    POINTER_BUTTON_MIDDLE, POINTER_BUTTON_PRIMARY, POINTER_BUTTON_SECONDARY, PointerEvent,
+    SceneTextRow, Shell2FontScaleStep, SpriteCorner, SpriteQuad, rgba, shell2_font_scale_steps,
 };
 use trueos::vshell::{
     SHELL2_FRONTEND_DIRECT_HANDOFF, SHELL2_FRONTEND_READ_DROPPED, Shell2Frontend,
@@ -146,12 +146,10 @@ const DIRECT_SOLID_MAX_QUADS: usize = 8_192;
 const POLL_INTERVAL_MS: u64 = 5;
 const SHELL_OUTPUT_BATCH_CAP: usize = 8 * 1024;
 const SHELL_ATTACH_RETRIES: usize = 1_000;
-const APP_CURSOR_OUTLINE_STROKE_PX: u32 = 3;
-const APP_CURSOR_CELL_WIDTH_SUBPX: u32 =
-    (DEFAULT_FONT_PIXELS * MONO_GLYPH_ADVANCE_NUMERATOR * 1_024
-        + MONO_GLYPH_ADVANCE_DENOMINATOR / 2)
-        / MONO_GLYPH_ADVANCE_DENOMINATOR;
-const APP_CURSOR_CELL_HEIGHT_SUBPX: u32 = DEFAULT_ROW_HEIGHT_PX * 1_024;
+const CURSOR_CELL_WIDTH_SUBPX: u32 = (DEFAULT_FONT_PIXELS * MONO_GLYPH_ADVANCE_NUMERATOR * 1_024
+    + MONO_GLYPH_ADVANCE_DENOMINATOR / 2)
+    / MONO_GLYPH_ADVANCE_DENOMINATOR;
+const CURSOR_CELL_HEIGHT_SUBPX: u32 = DEFAULT_ROW_HEIGHT_PX * 1_024;
 const SHELL_RENDER_TRACE_FIRST: u64 = 16;
 const SHELL_RENDER_TRACE_EVERY: u64 = 128;
 const SHELL_RENDER_TRACE_PENDING_CAP: usize = 32;
@@ -440,15 +438,6 @@ struct MatrixSlotHover {
     command: String,
 }
 
-/// Cursor state belongs to this frame's pixels. It deliberately uses the
-/// initial Shell2 cell geometry: resize and font-scale support can reconfigure
-/// it in a later patch without changing the AppOwned cursor contract.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct AppCursorCell {
-    col: usize,
-    row: usize,
-}
-
 fn foreground_rgba(foreground: TerminalColor) -> u32 {
     match foreground {
         TerminalColor::Default => FOREGROUND,
@@ -616,22 +605,22 @@ fn main() {
         );
         return;
     };
-    if let Err(error) = frame.set_custom_cursor(true) {
-        logl::log(
-            level::ERROR,
-            format_args!("shell: UI4 AppOwned cursor setup failed: {error:?}"),
-        );
-        return;
-    }
     if let Err(error) = frame.set_cursor_step(Some(CursorStep {
         origin_x: FRAME_PADDING_PX,
         origin_y: FRAME_PADDING_PX,
-        cell_width_subpx: APP_CURSOR_CELL_WIDTH_SUBPX,
-        cell_height_subpx: APP_CURSOR_CELL_HEIGHT_SUBPX,
+        cell_width_subpx: CURSOR_CELL_WIDTH_SUBPX,
+        cell_height_subpx: CURSOR_CELL_HEIGHT_SUBPX,
     })) {
         logl::log(
             level::ERROR,
-            format_args!("shell: UI4 AppOwned cursor step setup failed: {error:?}"),
+            format_args!("shell: UI4 cursor step setup failed: {error:?}"),
+        );
+        return;
+    }
+    if let Err(error) = frame.set_cursor_icon(CursorIcon::CellOutline) {
+        logl::log(
+            level::ERROR,
+            format_args!("shell: UI4 cell cursor setup failed: {error:?}"),
         );
         return;
     }
@@ -674,9 +663,8 @@ fn main() {
     let mut keyboard_input = KeyboardInputState::default();
     let mut render_tracer = ShellRenderTracer::default();
     let mut matrix_slot_hover = None;
-    let mut app_cursor = None;
 
-    if let Err(error) = present_terminal(&mut frame, &terminal, metrics, None, app_cursor) {
+    if let Err(error) = present_terminal(&mut frame, &terminal, metrics, None) {
         logl::log(
             level::ERROR,
             format_args!("shell: first UI4 terminal frame failed: {error:?}"),
@@ -688,20 +676,15 @@ fn main() {
     logl::log(
         level::INFO,
         format_args!(
-            "shell: local shell2 session online cols={} rows={} font=JuliaMono fallback=Inconsolata cursor=app-cell-outline",
+            "shell: local shell2 session online cols={} rows={} font=JuliaMono fallback=Inconsolata cursor=ui4-cell-outline",
             cols, rows
         ),
     );
 
     loop {
         invoking_terminal.poll_reentry(&mut frontend, &terminal);
-        let _resized = match drain_resize_events(
-            &mut frame,
-            &mut frontend,
-            &mut terminal,
-            metrics,
-            app_cursor,
-        ) {
+        let _resized = match drain_resize_events(&mut frame, &mut frontend, &mut terminal, metrics)
+        {
             Ok(resized) => resized,
             Err(error) => {
                 logl::log(
@@ -774,13 +757,12 @@ fn main() {
             return;
         }
 
-        let pointer_changed = match drain_pointer_input(
+        let mut hover_changed = match drain_pointer_input(
             &mut frame,
             &terminal,
             &frontend,
             metrics,
             &mut matrix_slot_hover,
-            &mut app_cursor,
         ) {
             Ok(changed) => changed,
             Err(error) => {
@@ -792,21 +774,14 @@ fn main() {
             }
         };
 
-        let mut hover_changed = pointer_changed.hover;
         if terminal.mouse_tracking_enabled() && matrix_slot_hover.take().is_some() {
             // A direct terminal owner gets unmodified pointer semantics.
             // Shell2's status strip is not live during that handoff.
             hover_changed = true;
         }
 
-        if terminal.take_dirty() || hover_changed || pointer_changed.cursor || font_scaled {
-            match present_terminal(
-                &mut frame,
-                &terminal,
-                metrics,
-                matrix_slot_hover.as_ref(),
-                app_cursor,
-            ) {
+        if terminal.take_dirty() || hover_changed || font_scaled {
+            match present_terminal(&mut frame, &terminal, metrics, matrix_slot_hover.as_ref()) {
                 Ok(timing) => render_tracer.finish_present(timing),
                 Err(error) => {
                     logl::log(
@@ -828,7 +803,6 @@ fn drain_resize_events(
     frontend: &mut Shell2Frontend,
     terminal: &mut Terminal,
     metrics: TerminalMetrics,
-    app_cursor: Option<AppCursorCell>,
 ) -> Result<bool, InputError> {
     let mut resized = false;
     while let Some(resize) = frame.take_resize_event()? {
@@ -839,15 +813,7 @@ fn drain_resize_events(
         let (old_cols, old_rows) = terminal.dimensions();
         let (old_origin_x, old_origin_y) =
             centered_terminal_origin(resize.width, resize.height, old_cols, old_rows, metrics);
-        present_terminal_at(
-            frame,
-            terminal,
-            old_origin_x,
-            old_origin_y,
-            metrics,
-            None,
-            app_cursor,
-        )?;
+        present_terminal_at(frame, terminal, old_origin_x, old_origin_y, metrics, None)?;
         let (cols, rows) = terminal_grid_size(resize.width, resize.height, metrics);
         if terminal.dimensions() != (cols, rows) {
             terminal.resize(cols, rows);
@@ -1098,29 +1064,15 @@ fn handle_keyboard_event(
     Ok(())
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-struct PointerChanges {
-    hover: bool,
-    cursor: bool,
-}
-
 fn drain_pointer_input(
     frame: &mut Frame,
     terminal: &Terminal,
     frontend: &Shell2Frontend,
     metrics: TerminalMetrics,
     matrix_slot_hover: &mut Option<MatrixSlotHover>,
-    app_cursor: &mut Option<AppCursorCell>,
-) -> Result<PointerChanges, InputError> {
+) -> Result<bool, InputError> {
     let initial_hover = matrix_slot_hover.clone();
-    let initial_cursor = *app_cursor;
     while let Some(event) = frame.take_pointer_event()? {
-        // The AppOwned outline is deliberately just a software-mouse motion
-        // affordance. Clicks, wheels, selections, and keyboard input do not
-        // create or move it.
-        if pointer_event_is_motion(event) {
-            *app_cursor = Some(app_cursor_cell(event.local_x, event.local_y));
-        }
         let (col, row) = pointer_cell(event.local_x, event.local_y, terminal.dimensions(), metrics);
 
         let hovered_slot =
@@ -1169,20 +1121,7 @@ fn drain_pointer_input(
             submit_input(frontend, sequence.as_slice())?;
         }
     }
-    Ok(PointerChanges {
-        hover: *matrix_slot_hover != initial_hover,
-        cursor: *app_cursor != initial_cursor,
-    })
-}
-
-fn app_cursor_cell(local_x: i32, local_y: i32) -> AppCursorCell {
-    let metrics = TerminalMetrics::default();
-    let x = local_x.saturating_sub(FRAME_PADDING_PX as i32).max(0) as u32;
-    let y = local_y.saturating_sub(FRAME_PADDING_PX as i32).max(0) as u32;
-    AppCursorCell {
-        col: (x as f32 / metrics.glyph_advance_px) as usize,
-        row: (y / metrics.row_height_px) as usize,
-    }
+    Ok(*matrix_slot_hover != initial_hover)
 }
 
 fn pointer_matrix_cell(
@@ -1442,17 +1381,8 @@ fn present_terminal(
     terminal: &Terminal,
     metrics: TerminalMetrics,
     matrix_slot_hover: Option<&MatrixSlotHover>,
-    app_cursor: Option<AppCursorCell>,
 ) -> Result<RenderTiming, UiError> {
-    present_terminal_at(
-        frame,
-        terminal,
-        0,
-        0,
-        metrics,
-        matrix_slot_hover,
-        app_cursor,
-    )
+    present_terminal_at(frame, terminal, 0, 0, metrics, matrix_slot_hover)
 }
 
 fn present_terminal_at(
@@ -1462,7 +1392,6 @@ fn present_terminal_at(
     origin_y: u32,
     metrics: TerminalMetrics,
     matrix_slot_hover: Option<&MatrixSlotHover>,
-    app_cursor: Option<AppCursorCell>,
 ) -> Result<RenderTiming, UiError> {
     let started_ns = clock::monotonic_nanos();
     let mut busy_polls = 0u64;
@@ -1519,9 +1448,6 @@ fn present_terminal_at(
             origin_y,
             metrics,
         );
-    }
-    if let Some(cursor) = app_cursor {
-        push_app_cursor_outline(&mut solid_quads, cursor);
     }
     if solid_quads.len() == DIRECT_SOLID_MAX_QUADS {
         logl::log(
@@ -1709,37 +1635,6 @@ fn push_underline_quad(
     let top = metrics.row_height_px.saturating_sub(thickness);
     push_cell_quad(
         quads, color_rgba, row, start_col, end_col, origin_x, origin_y, metrics, top, thickness,
-    );
-}
-
-fn push_app_cursor_outline(quads: &mut Vec<SpriteQuad>, cursor: AppCursorCell) {
-    if quads.len() > DIRECT_SOLID_MAX_QUADS.saturating_sub(4) {
-        return;
-    }
-    let metrics = TerminalMetrics::default();
-    let left = terminal_cell_x(0, cursor.col, metrics);
-    let right = terminal_cell_x(0, cursor.col.saturating_add(1), metrics);
-    let top = terminal_cell_y(0, cursor.row, metrics);
-    let bottom = top + metrics.row_height_px as f32;
-    let stroke = APP_CURSOR_OUTLINE_STROKE_PX as f32;
-
-    push_solid_quad(quads, FOREGROUND, left, top, right, top + stroke);
-    push_solid_quad(quads, FOREGROUND, left, bottom - stroke, right, bottom);
-    push_solid_quad(
-        quads,
-        FOREGROUND,
-        left,
-        top + stroke,
-        left + stroke,
-        bottom - stroke,
-    );
-    push_solid_quad(
-        quads,
-        FOREGROUND,
-        right - stroke,
-        top + stroke,
-        right,
-        bottom - stroke,
     );
 }
 
@@ -2106,36 +2001,5 @@ mod tests {
             cell_top + metrics.row_height_px as f32 - thickness
         );
         assert_eq!(quads[0].c3.y, cell_top + metrics.row_height_px as f32);
-    }
-
-    #[test]
-    fn app_cursor_snaps_pointer_events_to_the_initial_default_grid() {
-        assert_eq!(
-            app_cursor_cell(FRAME_PADDING_PX as i32 + 14, FRAME_PADDING_PX as i32 + 25),
-            AppCursorCell { col: 0, row: 0 }
-        );
-        assert_eq!(
-            app_cursor_cell(FRAME_PADDING_PX as i32 + 15, FRAME_PADDING_PX as i32 + 26),
-            AppCursorCell { col: 1, row: 1 }
-        );
-    }
-
-    #[test]
-    fn app_cursor_draws_a_three_pixel_cell_outline() {
-        let cursor = AppCursorCell { col: 2, row: 1 };
-        let metrics = TerminalMetrics::default();
-        let mut quads = Vec::new();
-        push_app_cursor_outline(&mut quads, cursor);
-
-        assert_eq!(quads.len(), 4);
-        assert_eq!(quads[0].c0.x, terminal_cell_x(0, cursor.col, metrics));
-        assert_eq!(quads[0].c0.y, terminal_cell_y(0, cursor.row, metrics));
-        assert_eq!(quads[0].c3.y - quads[0].c0.y, 3.0);
-        assert_eq!(
-            quads[1].c3.y,
-            terminal_cell_y(0, cursor.row, metrics) + metrics.row_height_px as f32
-        );
-        assert_eq!(quads[2].c1.x - quads[2].c0.x, 3.0);
-        assert_eq!(quads[3].c1.x - quads[3].c0.x, 3.0);
     }
 }
