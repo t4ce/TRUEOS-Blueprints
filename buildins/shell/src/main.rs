@@ -4,7 +4,7 @@ extern crate alloc;
 
 mod terminal;
 
-use alloc::{collections::VecDeque, string::String, vec::Vec};
+use alloc::{collections::VecDeque, string::String, vec, vec::Vec};
 
 use terminal::{MouseButton, Terminal, TerminalColor};
 use trueos::clock;
@@ -148,10 +148,8 @@ const DIRECT_SOLID_MAX_QUADS: usize = 8_192;
 const POLL_INTERVAL_MS: u64 = 5;
 const SHELL_OUTPUT_BATCH_CAP: usize = 8 * 1024;
 const SHELL_ATTACH_RETRIES: usize = 1_000;
-const CURSOR_CELL_WIDTH_SUBPX: u32 = (DEFAULT_FONT_PIXELS * MONO_GLYPH_ADVANCE_NUMERATOR * 1_024
-    + MONO_GLYPH_ADVANCE_DENOMINATOR / 2)
-    / MONO_GLYPH_ADVANCE_DENOMINATOR;
-const CURSOR_CELL_HEIGHT_SUBPX: u32 = DEFAULT_ROW_HEIGHT_PX * 1_024;
+const SHELL_CURSOR_SPRITE_ID: u32 = 0x4000_0001;
+const CURSOR_BORDER_PX: u32 = 3;
 const SHELL_RENDER_TRACE_FIRST: u64 = 16;
 const SHELL_RENDER_TRACE_EVERY: u64 = 128;
 const SHELL_RENDER_TRACE_PENDING_CAP: usize = 32;
@@ -607,19 +605,7 @@ fn main() {
         );
         return;
     };
-    if let Err(error) = frame.set_cursor_step(Some(CursorStep {
-        origin_x: FRAME_PADDING_PX,
-        origin_y: FRAME_PADDING_PX,
-        cell_width_subpx: CURSOR_CELL_WIDTH_SUBPX,
-        cell_height_subpx: CURSOR_CELL_HEIGHT_SUBPX,
-    })) {
-        logl::log(
-            level::ERROR,
-            format_args!("shell: UI4 cursor step setup failed: {error:?}"),
-        );
-        return;
-    }
-    if let Err(error) = frame.set_cursor_icon(CursorIcon::CellOutline) {
+    if let Err(error) = frame.set_cursor_icon(CursorIcon::AppOwned) {
         logl::log(
             level::ERROR,
             format_args!("shell: UI4 cell cursor setup failed: {error:?}"),
@@ -650,6 +636,13 @@ fn main() {
     }
 
     let mut metrics = TerminalMetrics::from_font_step(font_scale.current());
+    if let Err(error) = update_cursor_presentation(&mut frame, metrics) {
+        logl::log(
+            level::ERROR,
+            format_args!("shell: initial cursor presentation setup failed: {error:?}"),
+        );
+        return;
+    }
     let (cols, rows) = terminal_grid_size(frame.width(), frame.height(), metrics);
     let mut frontend = match attach_shell_frontend(cols, rows) {
         Ok(frontend) => frontend,
@@ -875,6 +868,7 @@ fn apply_terminal_font_step(
         return Ok(false);
     }
 
+    update_cursor_presentation(frame, next)?;
     *metrics = next;
     let (cols, rows) = terminal_grid_size(frame.width(), frame.height(), next);
     terminal.resize(cols, rows);
@@ -893,6 +887,37 @@ fn apply_terminal_font_step(
         ),
     );
     Ok(true)
+}
+
+fn update_cursor_presentation(frame: &mut Frame, metrics: TerminalMetrics) -> Result<(), UiError> {
+    let font_pixels = metrics.font_pixels as u32;
+    frame.set_cursor_step(Some(CursorStep {
+        origin_x: FRAME_PADDING_PX,
+        origin_y: FRAME_PADDING_PX,
+        cell_width_subpx: (font_pixels
+            .saturating_mul(MONO_GLYPH_ADVANCE_NUMERATOR)
+            .saturating_mul(1_024)
+            .saturating_add(MONO_GLYPH_ADVANCE_DENOMINATOR / 2))
+            / MONO_GLYPH_ADVANCE_DENOMINATOR,
+        cell_height_subpx: metrics.row_height_px.saturating_mul(1_024),
+    }))?;
+    let width = (font_pixels
+        .saturating_mul(MONO_GLYPH_ADVANCE_NUMERATOR)
+        .saturating_add(MONO_GLYPH_ADVANCE_DENOMINATOR - 1))
+        / MONO_GLYPH_ADVANCE_DENOMINATOR;
+    let width = width.max(1);
+    let height = metrics.row_height_px.max(1);
+    let border = CURSOR_BORDER_PX.min(width).min(height);
+    let mut rgba = vec![0u8; width as usize * height as usize * 4];
+    for y in 0..height {
+        for x in 0..width {
+            if x < border || x >= width - border || y < border || y >= height - border {
+                let offset = (y as usize * width as usize + x as usize) * 4;
+                rgba[offset..offset + 4].copy_from_slice(&[255, 255, 255, 255]);
+            }
+        }
+    }
+    retry_busy(|| frame.upload_sprite_rgba8(SHELL_CURSOR_SPRITE_ID, width, height, &rgba))
 }
 
 fn attach_shell_frontend(cols: usize, rows: usize) -> Result<Shell2Frontend, Shell2FrontendError> {
@@ -1440,12 +1465,10 @@ fn present_terminal_at(
 
     let cursor = terminal.cursor();
     if cursor.visible {
-        push_underline_quad(
+        push_cursor_quad(
             &mut solid_quads,
-            FOREGROUND,
             cursor.row,
             cursor.col,
-            cursor.col.saturating_add(1),
             origin_x,
             origin_y,
             metrics,
@@ -1514,6 +1537,56 @@ fn present_terminal_at(
         glyphs,
         stamp_layers: DIRECT_STAMP_MAX_LAYERS.saturating_sub(stamp_budget.remaining_layers),
     })
+}
+
+fn push_cursor_quad(
+    quads: &mut Vec<SpriteQuad>,
+    row: usize,
+    col: usize,
+    origin_x: u32,
+    origin_y: u32,
+    metrics: TerminalMetrics,
+) {
+    if quads.len() >= DIRECT_SOLID_MAX_QUADS {
+        return;
+    }
+    let width = ((metrics.font_pixels as u32)
+        .saturating_mul(MONO_GLYPH_ADVANCE_NUMERATOR)
+        .saturating_add(MONO_GLYPH_ADVANCE_DENOMINATOR - 1)
+        / MONO_GLYPH_ADVANCE_DENOMINATOR)
+        .max(1) as f32;
+    let height = metrics.row_height_px.max(1) as f32;
+    let left = terminal_cell_x(origin_x, col, metrics);
+    let top = terminal_cell_y(origin_y, row, metrics);
+    quads.push(SpriteQuad {
+        sprite_id: SHELL_CURSOR_SPRITE_ID,
+        c0: SpriteCorner {
+            x: left,
+            y: top,
+            u: 0.0,
+            v: 0.0,
+        },
+        c1: SpriteCorner {
+            x: left + width,
+            y: top,
+            u: 1.0,
+            v: 0.0,
+        },
+        c2: SpriteCorner {
+            x: left + width,
+            y: top + height,
+            u: 1.0,
+            v: 1.0,
+        },
+        c3: SpriteCorner {
+            x: left,
+            y: top + height,
+            u: 0.0,
+            v: 1.0,
+        },
+        color_rgba: FOREGROUND,
+        source_over: true,
+    });
 }
 
 fn collect_glyph_runs(
