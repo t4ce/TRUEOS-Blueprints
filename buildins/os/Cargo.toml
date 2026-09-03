@@ -14,7 +14,7 @@ bench = false
 
 [dependencies]
 crossterm = { path = "../../vendor/crossterm-0.29.0-trueos", default-features = false, features = ["events"] }
-trueos = { path = "../../api" }
+trueos = { path = "../../api", features = ["tokio-runtime"] }
 
 [patch.crates-io]
 mio = { path = "../../vendor/mio-1.2.0" }
