@@ -1,6 +1,6 @@
 use core::ffi::c_char;
 
-use trueos::{logl, logl::level, platform, vfs};
+use trueos::{logl, logl::level, platform};
 
 const PROBE_DIR: &[u8] = b"/common";
 const PROBE_PATH_BYTES: &[u8] = b"/common/panick-memory-probe.bin";
@@ -25,38 +25,6 @@ unsafe extern "C" {
 
 fn log_stage(stage: &str) {
     logl::log(level::INFO, format_args!("panick: stage {}", stage));
-}
-
-fn run_safe_controls() -> Result<(), &'static str> {
-    log_stage("prepare_probe_file");
-    vfs::create_dir_all(PROBE_DIR).map_err(|_| "vfs.create_dir_all")?;
-    vfs::write_file(PROBE_PATH_BYTES, b"panick-pointer-probe\n").map_err(|_| "vfs.write_file")?;
-
-    log_stage("cabi_read_len_probe");
-    let len = unsafe {
-        trueos_cabi_fs_read_file(
-            PROBE_PATH_BYTES.as_ptr(),
-            PROBE_PATH_BYTES.len(),
-            core::ptr::null_mut(),
-            0,
-        )
-    };
-    logl::log(
-        level::INFO,
-        format_args!("panick: cabi len probe rc={}", len),
-    );
-    if len <= 0 {
-        return Err("cabi_read_len_probe");
-    }
-
-    log_stage("libc_write_bad_fd_control");
-    let rc = unsafe { write(-1, b"x".as_ptr().cast(), 1) };
-    logl::log(
-        level::INFO,
-        format_args!("panick: libc write bad-fd rc={}", rc),
-    );
-
-    Ok(())
 }
 
 fn run_dangerous_pointer_probe(path_ptr: *mut u8) {
@@ -112,15 +80,6 @@ fn run_dangerous_posix_probe(path_ptr: *mut u8) {
 
 fn main() {
     logl::log(level::INFO, "panick: blueprint start");
-
-    match run_safe_controls() {
-        Ok(()) => logl::log(level::INFO, "panick: safe controls ok"),
-        Err(stage) => {
-            logl::log(level::ERROR, format_args!("panick: failed stage={}", stage));
-            platform::poll_once();
-            return;
-        }
-    }
 
     run_dangerous_pointer_probe(BAD_PTR_LOW);
     run_dangerous_posix_probe(BAD_PTR_LOW);

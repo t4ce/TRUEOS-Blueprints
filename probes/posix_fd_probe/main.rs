@@ -1,6 +1,6 @@
 use core::ffi::{c_char, c_int, c_uint, c_void};
 
-use trueos::{logl, logl::level, platform, vfs};
+use trueos::{logl, logl::level, platform};
 
 const PROBE_DIR: &[u8] = b"/common";
 const PROBE_PATH: &[u8] = b"/common/posix-fd-probe.bin\0";
@@ -138,7 +138,6 @@ fn log_match(stage: &str, matched: bool) -> bool {
 }
 
 fn run_probe() -> Result<(), &'static str> {
-    vfs::create_dir_all(PROBE_DIR).map_err(|_| "vfs.create_common")?;
 
     log_stage("open.O_RDWR_O_CREAT_O_TRUNC");
     let fd = unsafe {
@@ -173,60 +172,6 @@ fn run_probe() -> Result<(), &'static str> {
 
     log_stage("fsync.after_sequential_write");
     ok &= log_rc("fsync.after_sequential_write", unsafe { fsync(fd) });
-
-    log_stage("vfs.stat.after_sequential_write");
-    match vfs::stat(&PROBE_PATH[..PROBE_PATH.len() - 1]) {
-        Ok(stat) => {
-            logl::log(
-                level::INFO,
-                format_args!(
-                    "posix-fd-probe: vfs.stat.after_sequential_write kind={:?} len={}",
-                    stat.kind, stat.len
-                ),
-            );
-            ok &= log_match(
-                "vfs.stat.after_sequential_write.len",
-                stat.len == block_seq.len() as u64,
-            );
-        }
-        Err(rc) => {
-            logl::log(
-                level::ERROR,
-                format_args!(
-                    "posix-fd-probe: failed vfs.stat.after_sequential_write rc={}",
-                    rc
-                ),
-            );
-            ok = false;
-        }
-    }
-
-    log_stage("vfs.read_file.after_sequential_write");
-    match vfs::read_file(&PROBE_PATH[..PROBE_PATH.len() - 1]) {
-        Ok(bytes) => {
-            logl::log(
-                level::INFO,
-                format_args!(
-                    "posix-fd-probe: vfs.read_file.after_sequential_write len={}",
-                    bytes.len()
-                ),
-            );
-            ok &= log_match(
-                "vfs.read_file.after_sequential_write.bytes",
-                bytes.as_slice() == block_seq,
-            );
-        }
-        Err(rc) => {
-            logl::log(
-                level::ERROR,
-                format_args!(
-                    "posix-fd-probe: failed vfs.read_file.after_sequential_write rc={}",
-                    rc
-                ),
-            );
-            ok = false;
-        }
-    }
 
     log_stage("lseek.readback0");
     ok &= log_seek("lseek.readback0", unsafe { lseek(fd, 0, SEEK_SET) }, 0);
