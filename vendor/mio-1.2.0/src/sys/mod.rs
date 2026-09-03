@@ -51,7 +51,7 @@ cfg_os_poll! {
 }
 
 #[cfg(any(
-    all(unix, not(target_os = "trueos")),
+    unix,
     target_os = "hermit",
     all(target_os = "wasi", not(target_env = "p1"))
 ))]
@@ -59,16 +59,6 @@ cfg_os_poll! {
     mod unix;
     #[allow(unused_imports)]
     pub use self::unix::*;
-}
-
-// TRUEOS has a native readiness registry. Keep the Unix socket construction
-// helpers (the public network types still wrap std sockets), but do not route
-// its reactor through the Unix poll(2) fallback.
-#[cfg(target_os = "trueos")]
-cfg_os_poll! {
-    mod unix;
-    mod trueos;
-    pub use self::trueos::*;
 }
 
 #[cfg(windows)]
