@@ -7,7 +7,6 @@ edition = "2024"
 members = [
     ".",
     "api",
-    "apps/bios",
     "apps/cut_tetris",
     "apps/dobby",
     "probes/condvar",
