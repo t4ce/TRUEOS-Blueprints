@@ -8,74 +8,88 @@
   <link rel="stylesheet" href="/app.css">
 </head>
 <body>
-  <div id="app" class="app-shell" aria-busy="true">
-    <header class="topbar">
-      <div class="brand">
-        <div class="brand-mark" aria-hidden="true">T</div>
+  <div id="app" class="bios-shell" aria-busy="true">
+    <header class="bios-header">
+      <div class="brand-block">
+        <div class="brand-emblem" aria-hidden="true">T</div>
         <div>
-          <div class="brand-title">TRUEOS BIOS</div>
-          <div class="brand-subtitle">Firmware schema explorer</div>
+          <div class="brand-name">TRUEOS BIOS</div>
+          <div class="brand-caption">Firmware setup explorer</div>
         </div>
       </div>
-      <div class="top-status">
-        <span id="api-chip" class="chip">loading schema</span>
-        <span class="chip chip-safe">READ ONLY</span>
-        <span class="chip chip-safe">WRITE PATH: NONE</span>
+      <div class="header-state">
+        <span id="capture-state" class="status-pill">CONNECTING</span>
+        <span class="status-pill safe">READ ONLY</span>
+        <button id="details-button" class="header-button" type="button" aria-expanded="false">Details</button>
       </div>
     </header>
 
-    <div class="workspace">
-      <aside class="sidebar">
-        <label class="search-box">
-          <span class="search-icon" aria-hidden="true">⌕</span>
-          <input id="search" type="search" placeholder="Find firmware questions…" autocomplete="off">
+    <nav id="top-tabs" class="top-tabs" aria-label="Firmware categories"></nav>
+
+    <div class="bios-workspace">
+      <aside class="page-rail">
+        <label class="firmware-search">
+          <span aria-hidden="true">⌕</span>
+          <input id="search" type="search" placeholder="Search firmware" autocomplete="off">
         </label>
         <div id="search-results" class="search-results" hidden></div>
 
-        <div class="sidebar-heading">
-          <span>Form sets</span>
-          <span id="formset-count" class="muted"></span>
-        </div>
-        <nav id="formset-nav" class="formset-nav" aria-label="BIOS form sets"></nav>
+        <div id="group-heading" class="rail-heading"></div>
+        <nav id="form-nav" class="form-nav" aria-label="Firmware pages"></nav>
 
-        <div class="sidebar-foot">
-          <div class="safety-dot"></div>
+        <div class="rail-safety">
+          <span class="safe-dot"></span>
           <div>
-            <strong>Firmware values are redacted</strong>
-            <span>No save, submit, callback or variable-write route exists.</span>
+            <strong>No firmware write path</strong>
+            <span>Values remain captured and redacted.</span>
           </div>
         </div>
       </aside>
 
-      <main class="content">
-        <div class="content-head">
+      <main class="firmware-page">
+        <header class="page-header">
           <div>
             <div id="breadcrumbs" class="breadcrumbs"></div>
-            <h1 id="form-title">Loading BIOS schema…</h1>
-            <p id="form-help" class="form-help"></p>
+            <h1 id="form-title">Loading firmware…</h1>
+            <p id="form-help" class="page-help"></p>
           </div>
-          <div id="form-meta" class="form-meta"></div>
-        </div>
+          <div id="page-flags" class="page-flags"></div>
+        </header>
 
-        <div id="notice" class="notice" hidden></div>
-        <section id="form-content" class="form-content" aria-live="polite"></section>
+        <section id="form-content" class="settings-sheet" aria-live="polite"></section>
       </main>
 
-      <aside id="inspector" class="inspector">
-        <div class="inspector-head">
-          <span>Inspector</span>
-          <span class="chip chip-safe">LOCKED</span>
-        </div>
-        <div id="inspector-body" class="inspector-body">
-          <p class="muted">Select a firmware item to inspect its question, storage and policy metadata.</p>
+      <aside class="help-rail">
+        <div class="help-kicker">GENERAL HELP</div>
+        <h2 id="help-title">Firmware explorer</h2>
+        <p id="help-text">Select a firmware item to see the help text supplied by the firmware.</p>
+        <div id="help-meta" class="help-meta"></div>
+        <div class="help-spacer"></div>
+        <div class="key-help">
+          <div><kbd>↑</kbd><kbd>↓</kbd><span>Select item</span></div>
+          <div><kbd>Enter</kbd><span>Open page / inspect</span></div>
+          <div><kbd>/</kbd><span>Search</span></div>
+          <div><kbd>F10</kbd><span>Save unavailable</span></div>
         </div>
       </aside>
     </div>
 
-    <footer class="footer">
-      <span id="footer-state">Connecting to the kernel BIOS snapshot…</span>
-      <span>F10 and Ctrl+S are intentionally blocked by the UI. The kernel ABI is read-only underneath.</span>
+    <footer class="bios-footer">
+      <span id="footer-state">Waiting for BIOS schema…</span>
+      <span class="footer-lock">active_write_path=none</span>
     </footer>
+
+    <div id="drawer-backdrop" class="drawer-backdrop" hidden></div>
+    <aside id="details-drawer" class="details-drawer" aria-hidden="true">
+      <div class="drawer-head">
+        <div>
+          <div class="drawer-kicker">ENGINEERING DETAILS</div>
+          <h2 id="drawer-title">Firmware metadata</h2>
+        </div>
+        <button id="drawer-close" class="drawer-close" type="button" aria-label="Close details">×</button>
+      </div>
+      <div id="drawer-body" class="drawer-body"></div>
+    </aside>
 
     <div id="toast" class="toast" role="status" hidden></div>
   </div>
