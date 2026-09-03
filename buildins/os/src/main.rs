@@ -1,4 +1,7 @@
-use std::io::{self, Write};
+use std::{
+    io::{self, Write},
+    time::Duration,
+};
 
 use crossterm::{
     cursor::{Hide, MoveTo, Show},
@@ -7,7 +10,7 @@ use crossterm::{
     style::{Attribute, Color, Print, ResetColor, SetAttribute, SetForegroundColor},
     terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use trueos::{env, vshell};
+use trueos::{env, platform, runtime, task, vshell};
 
 const PINK: Color = Color::Rgb {
     r: 255,
@@ -183,6 +186,14 @@ fn main() {
         .into_iter()
         .filter_map(parse_non_replicatable_vm)
         .collect();
+
+    let runtime = match runtime::current_thread().build() {
+        Ok(runtime) => runtime,
+        Err(_) => {
+            let _ = vshell::shutdown_current_blueprint("os runtime unavailable");
+            return;
+        }
+    };
     let lease = match vshell::terminal_initial_lease() {
         Ok(lease) => lease,
         Err(_) => {
@@ -191,7 +202,23 @@ fn main() {
         }
     };
 
-    let result = run(&lease, disks, non_replicatable_vms);
+    let session = runtime.block_on(async move {
+        task::spawn(async move {
+            let result = run(&lease, disks, non_replicatable_vms).await;
+            (lease, result)
+        })
+        .await
+    });
+    drop(runtime);
+
+    let (lease, result) = match session {
+        Ok(session) => session,
+        Err(_) => {
+            let _ = vshell::report_exit_reason("os:cancel");
+            let _ = vshell::shutdown_current_blueprint("os:cancel");
+            return;
+        }
+    };
     let reason = result.unwrap_or_else(|_| String::from("os:cancel"));
     let _ = vshell::report_exit_reason(reason.as_str());
     let _ = lease.release_to_shell();
@@ -226,7 +253,7 @@ fn parse_non_replicatable_vm(arg: String) -> Option<NonReplicatableVm> {
     })
 }
 
-fn run(
+async fn run(
     lease: &vshell::TerminalLease,
     disks: Vec<Disk>,
     non_replicatable_vms: Vec<NonReplicatableVm>,
@@ -239,16 +266,28 @@ fn run(
         .map_err(|error| io::Error::new(io::ErrorKind::Other, error.to_string()))?;
 
     loop {
-        match event::read()? {
-            Event::Resize(_, _) => draw(&app)?,
-            Event::Key(key) if matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) => {
-                if let Some(reason) = handle_key(&mut app, key) {
-                    return Ok(reason);
+        if event::poll(Duration::ZERO)? {
+            match event::read()? {
+                Event::Resize(_, _) => draw(&app)?,
+                Event::Key(key)
+                    if matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) =>
+                {
+                    if let Some(reason) = handle_key(&mut app, key) {
+                        return Ok(reason);
+                    }
+                    draw(&app)?;
                 }
-                draw(&app)?;
+                _ => {}
             }
-            _ => {}
+            continue;
         }
+
+        // Keep terminal readiness cooperative in userspace. A zero-timeout
+        // Crossterm probe never enters TRUEOS's blocking poll path; yielding
+        // both the guest and the Tokio task lets other work run without
+        // parking this Hull on the terminal vthread wait primitive.
+        platform::poll_once();
+        task::yield_now().await;
     }
 }
 
