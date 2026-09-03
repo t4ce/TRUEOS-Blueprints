@@ -15,7 +15,6 @@ macro_rules! syscall {
 }
 
 cfg_os_poll! {
-    #[cfg(not(target_os = "trueos"))]
     #[cfg_attr(all(
         not(mio_unsupported_force_poll_poll),
         any(
@@ -55,10 +54,8 @@ cfg_os_poll! {
         target_os = "wasi",
     ), path = "selector/poll.rs")]
     mod selector;
-    #[cfg(not(target_os = "trueos"))]
     pub(crate) use self::selector::*;
 
-    #[cfg(not(target_os = "trueos"))]
     #[cfg_attr(all(
         not(mio_unsupported_force_waker_pipe),
         any(
