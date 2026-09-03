@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Mechanical read-only guard for the localhost BIOS Blueprint."""
+"""Mechanical read-only guard for the BIOS Blueprint."""
 
 from pathlib import Path
 

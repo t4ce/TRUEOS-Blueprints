@@ -71,7 +71,7 @@ async fn health() -> Response {
     response(
         "application/json; charset=utf-8",
         alloc::format!(
-            "{{\"ok\":true,\"service\":\"bios\",\"listen\":\"loopback\",\"port\":{port},\"readOnly\":true,\"activeWritePath\":\"none\"}}"
+            "{{\"ok\":true,\"service\":\"bios\",\"listen\":\"0.0.0.0\",\"port\":{port},\"readOnly\":true,\"activeWritePath\":\"none\"}}"
         )
         .into_bytes(),
         true,
@@ -90,12 +90,12 @@ fn router() -> Router {
 }
 
 async fn serve() -> Result<(), trueos::platform::io::Error> {
-    let addr = SocketAddr::from(([127, 0, 0, 1], PORT));
+    let addr = SocketAddr::from(([0, 0, 0, 0], PORT));
     let listener = trueos::lifecycle_axum_listener!("bios", addr, &PUBLISHED_PORT).await;
     logl::log(
         level::INFO,
-        alloc::format!(
-            "bios: http://127.0.0.1:{}/ (read-only)",
+        format_args!(
+            "bios: http://0.0.0.0:{}/ (read-only)",
             PUBLISHED_PORT.load(Ordering::Acquire)
         ),
     );
@@ -106,14 +106,14 @@ fn main() {
     let runtime = match runtime::current_thread_net().build() {
         Ok(runtime) => runtime,
         Err(err) => {
-            logl::log(level::ERROR, alloc::format!("bios: runtime build failed {err}"));
+            logl::log(level::ERROR, format_args!("bios: runtime build failed {err}"));
             return;
         }
     };
     let local = tokio::task::LocalSet::new();
     local.block_on(&runtime, async {
         if let Err(err) = serve().await {
-            logl::log(level::ERROR, alloc::format!("bios: server failed {err:?}"));
+            logl::log(level::ERROR, format_args!("bios: server failed {err:?}"));
         }
     });
     platform::poll_once();

@@ -12,6 +12,8 @@ Then apply `integration.patch` from the repository root. It only:
 
 1. adds `apps/bios` to the workspace members;
 2. exports `pub mod vbios;` from `crates/trueos-v/src/lib.rs`.
+3. registers `"bios"` in `apps.json` so it can be packed from the app catalog.
+4. changes `apps/bios/server.rs` bind address to `0.0.0.0` (all interfaces).
 
 Validation:
 
@@ -21,6 +23,6 @@ python3 tools/check-bios-blueprint-boundary.py
 cargo +nightly-2026-07-10 check -p bios
 ```
 
-Runtime URL: `http://127.0.0.1:1012/`
+Runtime URL: `http://0.0.0.0:1012/`
 
 The server is GET-only and consumes the existing immutable `trueos_vlayer_bios_schema_snapshot_read` ABI.

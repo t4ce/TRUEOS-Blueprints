@@ -20,3 +20,47 @@ diff --git a/crates/trueos-v/src/lib.rs b/crates/trueos-v/src/lib.rs
  pub mod vcabi;
  pub mod vclock;
  pub mod vfetch;
+diff --git a/apps.json b/apps.json
+--- a/apps.json
++++ b/apps.json
+@@
+    "badc",
+    "calculator",
++    "bios",
+    "cut_tetris",
+diff --git a/apps/bios/server.rs b/apps/bios/server.rs
+--- a/apps/bios/server.rs
++++ b/apps/bios/server.rs
+@@
+-    let addr = SocketAddr::from(([127, 0, 0, 1], PORT));
++    let addr = SocketAddr::from(([0, 0, 0, 0], PORT));
+     let listener = trueos::lifecycle_axum_listener!("bios", addr, &PUBLISHED_PORT).await;
+     logl::log(
+         level::INFO,
+-        alloc::format!(
+-            "bios: http://127.0.0.1:{}/ (read-only)",
++        format_args!(
++            "bios: http://0.0.0.0:{}/ (read-only)",
+             PUBLISHED_PORT.load(Ordering::Acquire)
+         ),
+     );
+     axum::serve(listener, router()).await
+@@
+-            "{\"ok\":true,\"service\":\"bios\",\"listen\":\"loopback\",\"port\":{port},\"readOnly\":true,\"activeWritePath\":\"none\"}}"
++            "{\"ok\":true,\"service\":\"bios\",\"listen\":\"0.0.0.0\",\"port\":{port},\"readOnly\":true,\"activeWritePath\":\"none\"}}"
+         )
+         .into_bytes(),
+         true,
+     )
+@@
+-            logl::log(level::ERROR, alloc::format!("bios: runtime build failed {err}"));
++            logl::log(level::ERROR, format_args!("bios: runtime build failed {err}"));
+             return;
+         }
+     };
+@@
+         if let Err(err) = serve().await {
+-            logl::log(level::ERROR, alloc::format!("bios: server failed {err:?}"));
++            logl::log(level::ERROR, format_args!("bios: server failed {err:?}"));
+         }
+     });
