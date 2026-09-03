@@ -16,7 +16,7 @@ use axum::{
 };
 use trueos::{logl, logl::level, platform, runtime, tokio};
 
-const PORT: u16 = 1012;
+const PORT: u16 = 8338;
 const INDEX: &str = include_str!("index.html");
 const JS: &str = include_str!("app.js");
 const CSS: &str = include_str!("app.css");
