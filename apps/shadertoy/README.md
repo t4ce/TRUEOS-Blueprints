@@ -8,8 +8,9 @@ Package it with:
 
 The app opens a UI4 visual-mode frame at 30 Hz. The kernel brokers admission,
 triple buffering, compute completion, and publication, and rejects visual rates
-above the current 60 Hz policy ceiling. Use Left/Right or F1-F3 to select the
-three reviewed shaders; Escape closes the app.
+above the current 60 Hz policy ceiling. Use Left/Right or F1-F4 to select the
+five reviewed shaders (including Cosmic Strands and Palette Grid); use F1-F5 or
+Left/Right to switch; Escape closes the app.
 
 This first ABI is intentionally narrow pending the security analysis. The
 Blueprint sends only a catalog id plus pointer-free ShaderToy uniforms. It

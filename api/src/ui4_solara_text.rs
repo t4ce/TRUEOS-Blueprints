@@ -355,6 +355,8 @@ pub const SHADERTOY_PARAMS_VERSION: u32 = 1;
 pub const SHADERTOY_MANDELBROT: u32 = 1;
 pub const SHADERTOY_CUBE_FIELD: u32 = 2;
 pub const SHADERTOY_NGUYEN: u32 = 3;
+pub const SHADERTOY_PALETTE_GRID: u32 = 4;
+pub const SHADERTOY_COSMIC_STRANDS: u32 = 5;
 
 /// Pointer-free controls for a kernel-reviewed ShaderToy catalog entry.
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -1190,7 +1192,11 @@ impl Frame {
     ) -> Result<(), Error> {
         if !matches!(
             params.shader_id,
-            SHADERTOY_MANDELBROT | SHADERTOY_CUBE_FIELD | SHADERTOY_NGUYEN
+            SHADERTOY_MANDELBROT
+                | SHADERTOY_CUBE_FIELD
+                | SHADERTOY_NGUYEN
+                | SHADERTOY_PALETTE_GRID
+                | SHADERTOY_COSMIC_STRANDS
         ) {
             return Err(Error::Invalid);
         }

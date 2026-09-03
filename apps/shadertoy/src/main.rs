@@ -2,10 +2,12 @@
 
 use trueos::input::{
     KEYBOARD_KEY_ARROW_LEFT, KEYBOARD_KEY_ARROW_RIGHT, KEYBOARD_KEY_F1, KEYBOARD_KEY_F2,
-    KEYBOARD_KEY_F3, KEYBOARD_OUTPUT_FLAG_PRESS, KEYBOARD_OUTPUT_KIND_KEY,
+    KEYBOARD_KEY_F3, KEYBOARD_KEY_F4, KEYBOARD_KEY_F5, KEYBOARD_OUTPUT_FLAG_PRESS,
+    KEYBOARD_OUTPUT_KIND_KEY,
 };
 use trueos::ui4_scene::{
-    Error, Frame, SHADERTOY_CUBE_FIELD, SHADERTOY_MANDELBROT, SHADERTOY_NGUYEN, ShadertoyParamsV1,
+    Error, Frame, SHADERTOY_CUBE_FIELD, SHADERTOY_MANDELBROT, SHADERTOY_NGUYEN,
+    SHADERTOY_COSMIC_STRANDS, SHADERTOY_PALETTE_GRID, ShadertoyParamsV1,
 };
 use trueos::{clock, logl, vsys};
 
@@ -26,7 +28,7 @@ struct Shader {
 // The app ships this admitted catalog. Executable bytes remain kernel-owned,
 // so the Blueprint cannot inject a pointer, SPIR-V module, or unreviewed Zebin
 // through the provisional visual ABI.
-const SHADERS: [Shader; 3] = [
+const SHADERS: [Shader; 5] = [
     Shader {
         id: SHADERTOY_MANDELBROT,
         name: "Mandelbrot zoom",
@@ -41,6 +43,16 @@ const SHADERS: [Shader; 3] = [
         id: SHADERTOY_NGUYEN,
         name: "Nguyen compact visual",
         artifact_sha256: "1dbc80b468dd896073dd17c3963a5c7cccf814365e21f040e05a3522fea4cd9c",
+    },
+    Shader {
+        id: SHADERTOY_PALETTE_GRID,
+        name: "Palette grid glow",
+        artifact_sha256: "98a5a39154a9021e2e09407c5188644ac744eedae4031efdf395f6619b32fd40",
+    },
+    Shader {
+        id: SHADERTOY_COSMIC_STRANDS,
+        name: "Cosmic Strands",
+        artifact_sha256: "9a275f036deac274541a34256c09140ecd3f98e392c4963a27e6ac1db5b82500",
     },
 ];
 
@@ -126,6 +138,8 @@ fn main() {
                 KEYBOARD_KEY_F1 => Some(0),
                 KEYBOARD_KEY_F2 => Some(1),
                 KEYBOARD_KEY_F3 => Some(2),
+                KEYBOARD_KEY_F4 => Some(3),
+                KEYBOARD_KEY_F5 => Some(4),
                 _ => None,
             };
             if let Some(next) = next
@@ -179,7 +193,7 @@ fn log_shader(shader: Shader) {
     logl::log(
         logl::level::INFO,
         format_args!(
-            "shadertoy: selected '{}' id={} artifact_sha256={} controls=Left/Right,F1-F3,Esc",
+            "shadertoy: selected '{}' id={} artifact_sha256={} controls=Left/Right,F1-F5,Esc",
             shader.name, shader.id, shader.artifact_sha256
         ),
     );
