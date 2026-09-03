@@ -13,8 +13,9 @@ use axum::{
     http::header::{CACHE_CONTROL, CONTENT_LENGTH, CONTENT_TYPE},
     response::Response,
     routing::get,
+    serve::ListenerExt,
 };
-use trueos::{logl, logl::level, platform, runtime, tokio};
+use trueos::{clock, logl, logl::level, platform, runtime, tokio};
 
 const PORT: u16 = 8338;
 const INDEX: &str = include_str!("index.html");
@@ -40,34 +41,79 @@ fn static_text(content_type: &'static str, text: &'static str) -> Response {
     response(content_type, text.as_bytes().to_vec(), false)
 }
 
+fn elapsed_us(start_ns: u64) -> u64 {
+    clock::monotonic_nanos().saturating_sub(start_ns) / 1_000
+}
+
 async fn index() -> Response {
-    static_text("text/html; charset=utf-8", INDEX)
+    logl::log(level::INFO, "bios-http: route=/ begin");
+    let reply = static_text("text/html; charset=utf-8", INDEX);
+    logl::log(level::INFO, format_args!("bios-http: route=/ end bytes={}", INDEX.len()));
+    reply
 }
 
 async fn app_js() -> Response {
+    logl::log(level::INFO, "bios-http: route=/app.js");
     static_text("application/javascript; charset=utf-8", JS)
 }
 
 async fn app_css() -> Response {
+    logl::log(level::INFO, "bios-http: route=/app.css");
     static_text("text/css; charset=utf-8", CSS)
 }
 
 async fn schema() -> Response {
+    let start_ns = clock::monotonic_nanos();
+    logl::log(level::INFO, "bios-http: route=/api/bios/schema begin");
     match v::vbios::snapshot_bytes() {
-        Ok(bytes) => response("application/json; charset=utf-8", bytes, true),
-        Err(code) => response(
-            "application/json; charset=utf-8",
-            alloc::format!(
-                "{{\"ok\":false,\"readOnly\":true,\"activeWritePath\":\"none\",\"errorCode\":{code}}}"
+        Ok(bytes) => {
+            logl::log(
+                level::INFO,
+                format_args!(
+                    "bios-http: route=/api/bios/schema end status=200 bytes={} elapsed_us={}",
+                    bytes.len(),
+                    elapsed_us(start_ns)
+                ),
+            );
+            response("application/json; charset=utf-8", bytes, true)
+        }
+        Err(code) => {
+            logl::log(
+                level::ERROR,
+                format_args!(
+                    "bios-http: route=/api/bios/schema end status=error code={} elapsed_us={}",
+                    code,
+                    elapsed_us(start_ns)
+                ),
+            );
+            response(
+                "application/json; charset=utf-8",
+                alloc::format!(
+                    "{{\"ok\":false,\"readOnly\":true,\"activeWritePath\":\"none\",\"errorCode\":{code}}}"
+                )
+                .into_bytes(),
+                true,
             )
-            .into_bytes(),
-            true,
-        ),
+        }
     }
+}
+
+async fn ping() -> Response {
+    logl::log(level::INFO, "bios-http: route=/api/bios/ping");
+    response(
+        "application/json; charset=utf-8",
+        b"{\"ok\":true,\"service\":\"bios\",\"path\":\"ping\",\"readOnly\":true,\"activeWritePath\":\"none\"}"
+            .to_vec(),
+        true,
+    )
 }
 
 async fn health() -> Response {
     let port = PUBLISHED_PORT.load(Ordering::Acquire);
+    logl::log(
+        level::INFO,
+        format_args!("bios-http: route=/healthz port={port}"),
+    );
     response(
         "application/json; charset=utf-8",
         alloc::format!(
@@ -86,12 +132,14 @@ fn router() -> Router {
         .route("/app.css", get(app_css))
         .route("/healthz", get(health))
         .route("/api/healthz", get(health))
+        .route("/api/bios/ping", get(ping))
         .route("/api/bios/schema", get(schema))
 }
 
 async fn serve() -> Result<(), trueos::platform::io::Error> {
     let addr = SocketAddr::from(([0, 0, 0, 0], PORT));
     let listener = trueos::lifecycle_axum_listener!("bios", addr, &PUBLISHED_PORT).await;
+    let listener = listener.tap_io(|_| logl::log(level::INFO, "bios-http: tcp accepted"));
     logl::log(
         level::INFO,
         format_args!(
