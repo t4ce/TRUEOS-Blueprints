@@ -1,0 +1,22 @@
+diff --git a/Cargo.toml b/Cargo.toml
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -7,6 +7,7 @@ edition = "2024"
+ members = [
+     ".",
+     "api",
++    "apps/bios",
+     "apps/cut_tetris",
+     "apps/dobby",
+     "probes/condvar",
+diff --git a/crates/trueos-v/src/lib.rs b/crates/trueos-v/src/lib.rs
+--- a/crates/trueos-v/src/lib.rs
++++ b/crates/trueos-v/src/lib.rs
+@@ -38,6 +38,7 @@ pub mod qjs_abi;
+ pub mod sync;
+ pub mod varchive;
+ pub mod vaudio;
++pub mod vbios;
+ pub mod vcabi;
+ pub mod vclock;
+ pub mod vfetch;

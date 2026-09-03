@@ -1,0 +1,8 @@
+d004ff7d7f918ee230b0647a350e53d80c6636a6  apps/bios/Cargo.toml
+02b4f2c6a060f94da44695bd437a8cea97449b81  apps/bios/README.md
+6a91663fcacb15436a3cc5526aa99913fd7772a8  apps/bios/app.css
+65534d8bd1c7da075a7acbc2267a0c6e3a10ad6f  apps/bios/app.js
+b87c86cc10af58325f2994e9d5796c726c1c736a  apps/bios/index.html
+538f6f58e9032e758dd7d59238d8bce910206e9b  apps/bios/server.rs
+b3f7601c1b843ecfd08412d3f4d63828cdd1564a  crates/trueos-v/src/vbios.rs
+10c5f57f943c409fc264634eb5d671453f12653a  tools/check-bios-blueprint-boundary.py

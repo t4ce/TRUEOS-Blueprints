@@ -1,0 +1,4 @@
+TRUEOS-Blueprints BIOS app bundle
+source commit: c0f04cf0518ea92e3770fbad69bcce00da91989d
+original PR: https://github.com/t4ce/TRUEOS-Blueprints/pull/1
+bundle contains the exact source blobs from that commit for apps/bios, vbios.rs, and the boundary checker.
