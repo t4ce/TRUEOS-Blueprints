@@ -2,7 +2,7 @@
   "use strict";
 
   const $ = (id) => document.getElementById(id);
-  const S = { schema:null, groups:[], group:0, fs:0, form:null, selected:null, drawer:false };
+  const S = { schema:null, groups:[], group:0, fs:null, form:null, selected:null, drawer:false };
   const E = Object.fromEntries([
     "app","capture-state","top-tabs","search","search-results","group-heading","form-nav",
     "breadcrumbs","form-title","form-help","page-flags","form-content","help-title","help-text",
@@ -50,7 +50,7 @@
   }
 
   function buildGroups() {
-    const out=[], byMac=new Map(), used=new Set();
+    const out=[{key:"main",title:"Main",sub:"Platform",icon:"◆",main:true,sets:[]}], byMac=new Map(), used=new Set();
     formsets().forEach((fs,i)=>{
       const t=String(fs.title??"");
       if(!/family controller/i.test(t)) return;
@@ -82,15 +82,21 @@
   function init() {
     S.groups=buildGroups();
     if(!S.groups.length) return;
-    const fs=S.groups[0].sets[0];
     S.group=0;
-    S.fs=fsIndex(fs,0);
-    S.form=forms(fs)[0]?formId(forms(fs)[0]):null;
+    S.fs=null;
+    S.form=null;
   }
 
   function chooseGroup(i) {
     S.group=i;
     const g=group();
+    if(g?.main){
+      S.fs=null;
+      S.form=null;
+      S.selected=null;
+      render();
+      return;
+    }
     if(!contains(g,S.fs)){
       const fs=g.sets[0];
       S.fs=fsIndex(fs,0);
@@ -133,6 +139,19 @@
     E.form_nav.innerHTML="";
     E.group_heading.textContent=g?`${g.title} pages`:"Firmware pages";
     if(!g)return;
+    if(g.main){
+      const sec=document.createElement("section");
+      sec.className="form-section";
+      sec.innerHTML='<div class="form-section-title">Platform</div>';
+      const b=document.createElement("button");
+      b.type="button";
+      b.className="form-button active";
+      b.textContent="System Overview";
+      b.onclick=()=>chooseGroup(S.group);
+      sec.appendChild(b);
+      E.form_nav.appendChild(sec);
+      return;
+    }
     g.sets.forEach((fs,i)=>{
       const fi=fsIndex(fs,i),sec=document.createElement("section");
       sec.className="form-section";
@@ -249,6 +268,36 @@
     return d;
   }
 
+  function infoRow(label,value,detail=""){
+    const row=document.createElement("div");
+    row.className="setting-row info-row";
+    row.innerHTML=`<div class="setting-main"><div class="setting-title">${esc(label)}</div>${detail?`<div class="setting-desc">${esc(detail)}</div>`:""}</div><div class="setting-value"><span class="value-primary">${esc(value??"Unavailable")}</span></div>`;
+    return row;
+  }
+
+  function appendInfoSection(title,rows){
+    const heading=document.createElement("h2");
+    heading.className="section-title";
+    heading.textContent=title;
+    E.form_content.appendChild(heading);
+    rows.forEach(([label,value,detail])=>E.form_content.appendChild(infoRow(label,value,detail)));
+  }
+
+  function renderMainPage(){
+    const s=S.schema||{},p=s.platform||{},fw=p.firmware||{},board=p.board||{},runtime=s.runtime||{},stats=s.stats||{},current=s.current||{};
+    E.form_content.innerHTML="";
+    E.breadcrumbs.textContent="Main / Platform";
+    E.form_title.textContent="System Overview";
+    E.form_help.textContent="Read-only platform identity collected from SMBIOS, the UEFI System Table, and PCI discovery.";
+    E.page_flags.innerHTML='<span class="page-flag safe">read only</span>';
+    appendInfoSection("BIOS Information",[["Vendor",fw.vendor],["Version",fw.version],["Build Date",fw.date],["UEFI",runtime.uefiRevision,runtime.state==="ready"?"System Table":"Unavailable"]]);
+    appendInfoSection("System Information",[["Board",[board.vendor,board.product].filter(Boolean).join(" ")||null],["Board Revision",board.version]]);
+    const controllers=Array.isArray(p.controllers)?p.controllers:[];
+    if(controllers.length)appendInfoSection("Platform Controllers",controllers.map(c=>[c.role,c.name,`${c.address||"?"} · ${c.vendorId||"?"}:${c.deviceId||"?"}`]));
+    appendInfoSection("Firmware State",[["HII formsets",stats.formsets??formsets().length,"Captured preboot"],["Current values",current.state==="ready"?"Captured preboot":"Unavailable"],["Firmware writes","Locked","No firmware write path"]]);
+    renderHelp();
+  }
+
   function appendQuestion(q){
     if(visibilityFor(q)==="suppressed") return false;
     E.form_content.appendChild(questionRow(q));
@@ -257,6 +306,10 @@
 
   function renderPage(){
     const fs=activeFs(),form=activeForm();
+    if(group()?.main){
+      renderMainPage();
+      return;
+    }
     E.form_content.innerHTML="";
     if(!fs||!form){
       E.form_title.textContent="No captured firmware page";
@@ -312,6 +365,12 @@
       E.help_text.textContent=q.help||"No help text supplied by firmware.";
       metaRows([["Question",h16(pick(q,"questionId","question_id"))],["Kind",q.kind||"unknown"],["Current",shown],["Visibility",c?.visibility??"not evaluated"]]);
     }else{
+      if(group()?.main){
+        E.help_title.textContent="Platform information";
+        E.help_text.textContent="Read-only facts are separate from captured firmware configuration questions.";
+        metaRows([["Platform",S.schema?.platform?.sources?.smbios||"unavailable"],["Runtime",S.schema?.runtime?.handoffPhase||"unavailable"],["Write path",S.schema?.activeWritePath||"none"]]);
+        return;
+      }
       E.help_title.textContent=pageTitle(fs,form)||"Firmware explorer";
       E.help_text.textContent=form?.help||fs?.help||"Select a firmware item to see help supplied by the firmware.";
       metaRows([["Form",form?h16(S.form):"—"],["Presentation",formNodes(S.fs,S.form).length?"source ordered":"schema v1"],["Current values",S.schema?.current?.state==="ready"?"captured preboot":"unavailable"]]);

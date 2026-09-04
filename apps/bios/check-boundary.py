@@ -16,6 +16,9 @@ for forbidden in ("routing::post", ".post(", ".put(", ".patch(", ".delete(", "se
         raise SystemExit(f"write-capable BIOS server surface detected: {forbidden}")
 
 for token in (
+    'key:"main"',
+    's.platform||{}',
+    's.runtime||{}',
     'presentation?.nodes',
     'name==="subtitle"',
     'name==="text"',

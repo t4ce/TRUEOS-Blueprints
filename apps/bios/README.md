@@ -10,6 +10,7 @@ The application is intentionally a normal Axum service. It has no browser depend
 
 The renderer understands both generations:
 
+- `trueos-bios-schema/v3`: read-only platform/runtime facts alongside the v2 HII and presentation data.
 - `trueos-bios-schema/v2`: semantic form/question records plus source-ordered `presentation.nodes`.
 - `trueos-bios-schema/v1`: fallback rendering of validated questions when presentation nodes are unavailable.
 
@@ -28,7 +29,7 @@ The primary interface follows firmware-setup navigation rather than a schema deb
 - engineering IDs, varstores and policy metadata live in the optional Details drawer;
 - current values are explicitly `Not exposed`, never confused with defaults.
 
-The application does not invent Main/Advanced/Chipset/Boot tabs when those formsets are absent from the captured HII database.
+`Main` is a read-only platform page. It composes SMBIOS firmware/board identity, UEFI handoff state and discovered PCI controllers without promoting any of them into firmware settings. All other categories remain derived from captured formsets; the application does not invent Advanced/Chipset/Boot tabs when those formsets are absent from the captured HII database.
 
 ## Read-only boundary
 
