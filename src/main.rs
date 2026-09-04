@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::env;
 use std::fs;
@@ -561,9 +562,17 @@ fn build_one_target_to_in_lane(
             .join(format!("lane-{}", lane.index + 1)),
         None => cargo_cache_root,
     };
+    let cache_label = match build_settings.flavor {
+        BuildFlavor::TokioStd => format!(
+            "{}-{}",
+            build_settings.flavor.cache_label(),
+            trueos_std_cache_revision()?,
+        ),
+        BuildFlavor::ThinNoStd => build_settings.flavor.cache_label().to_string(),
+    };
     let cargo_target_dir = cargo_cache_root
         .join(&target_name)
-        .join(build_settings.flavor.cache_label());
+        .join(cache_label);
     fs::create_dir_all(&cargo_target_dir).map_err(io_string)?;
     let target_dir = cargo_target_dir
         .join(&target_name)
@@ -1602,6 +1611,12 @@ fn pinned_rust_src_path(relative: &str) -> Result<PathBuf, String> {
         .join(relative))
 }
 
+fn trueos_std_cache_revision() -> Result<String, String> {
+    let source = fs::read(pinned_rust_src_path("std/src/sys/thread/unix.rs")?).map_err(io_string)?;
+    let digest = Sha256::digest(&source);
+    Ok(format!("{:x}", digest)[..12].to_string())
+}
+
 const TRUEOS_STD_RANDOM_BACKEND: &str = r#"//! TRUEOS kernel random source.
 
 unsafe extern "C" {
@@ -1931,6 +1946,36 @@ fn ensure_rust_std_trueos_thread_cleanup() -> Result<(), String> {
         if !source.contains(needle) {
             return Err(format!(
                 "failed to patch {}; missing std unix Thread::drop marker",
+                unix_thread.display()
+            ));
+        }
+        source = source.replacen(needle, replacement, 1);
+    }
+
+    if !source.contains("TRUEOS has no POSIX thread join lifecycle") {
+        let needle = r#"    pub fn join(self) {
+        let id = self.into_id();
+        let ret = unsafe { libc::pthread_join(id, ptr::null_mut()) };
+        assert!(ret == 0, "failed to join thread: {}", io::Error::from_raw_os_error(ret));
+    }"#;
+        let replacement = r#"    pub fn join(self) {
+        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+        {
+            // TRUEOS has no POSIX thread join lifecycle.
+            let _ = self;
+        }
+
+        #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+        {
+            let id = self.into_id();
+            let ret = unsafe { libc::pthread_join(id, ptr::null_mut()) };
+            assert!(ret == 0, "failed to join thread: {}", io::Error::from_raw_os_error(ret));
+        }
+    }"#;
+
+        if !source.contains(needle) {
+            return Err(format!(
+                "failed to patch {}; missing std unix Thread::join marker",
                 unix_thread.display()
             ));
         }
