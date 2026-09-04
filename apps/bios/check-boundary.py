@@ -19,6 +19,11 @@ for token in (
     'key:"main"',
     's.platform||{}',
     's.runtime||{}',
+    'p.processor||{}',
+    'p.memory||{}',
+    'setupEvidence',
+    'record==="device-path"',
+    'not a setting',
     'presentation?.nodes',
     'name==="subtitle"',
     'name==="text"',
@@ -28,7 +33,7 @@ for token in (
     'visibilityFor(q)==="suppressed"',
     'Captured preboot',
     'e.key==="F10"',
-    'question_match=none',
+    'firmware_match=none',
     's.activeWritePath!=="none"',
 ):
     if token not in js:

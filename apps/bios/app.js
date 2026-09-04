@@ -26,6 +26,53 @@
     Number(pick(n,"formsetIndex","formset_index"))===Number(fi) &&
     Number(pick(n,"formId","form_id"))===Number(id)
   ).sort((a,b)=>Number(pick(a,"sourceOffset","source_offset")||0)-Number(pick(b,"sourceOffset","source_offset")||0));
+  const setupEvidence = () => Array.isArray(S.schema?.platform?.setupEvidence) ? S.schema.platform.setupEvidence : [];
+
+  function browserChrome() {
+    return nodes().find(node =>
+      node?.record==="firmware-resource" &&
+      (node?.resource_kind==="browser-chrome" || node?.resourceKind==="browser-chrome")
+    )?.details || {};
+  }
+
+  function devicePathIdentity(list) {
+    const path=nodes().find(node=>node?.record==="device-path" && Number(node?.list)===Number(list));
+    if(!path || !Array.isArray(path.nodes)) return null;
+    const macNode=path.nodes.find(node=>node?.details?.kind==="mac");
+    const pciNodes=path.nodes.filter(node=>node?.details?.kind==="pci");
+    return {
+      mac:macNode?.details?.address??null,
+      pci:pciNodes.map(node=>`${Number(node.details.device).toString(16).toUpperCase().padStart(2,"0")}.${node.details.function}`)
+    };
+  }
+
+  function formsetDeviceIdentity(fs) {
+    const list=pick(fs,"packageList","package_list");
+    return Number.isFinite(Number(list)) ? devicePathIdentity(Number(list)) : null;
+  }
+
+  function formatBytes(value) {
+    if(value===null||value===undefined||value==="") return "Unavailable";
+    const bytes=Number(value);
+    if(!Number.isFinite(bytes) || bytes<0) return "Unavailable";
+    const units=[["TiB",2**40],["GiB",2**30],["MiB",2**20],["KiB",2**10]];
+    for(const [label,size] of units){
+      if(bytes>=size){
+        const n=bytes/size;
+        return `${Number.isInteger(n)?n:n.toFixed(1)} ${label}`;
+      }
+    }
+    return `${bytes} B`;
+  }
+
+  function speedRange(memory) {
+    const loRaw=memory?.speedMinMtS,hiRaw=memory?.speedMaxMtS;
+    const lo=loRaw===null||loRaw===undefined?Number.NaN:Number(loRaw);
+    const hi=hiRaw===null||hiRaw===undefined?Number.NaN:Number(hiRaw);
+    if(!Number.isFinite(lo) && !Number.isFinite(hi)) return null;
+    if(Number.isFinite(lo) && Number.isFinite(hi) && lo!==hi) return `${lo}–${hi} MT/s`;
+    return `${Number.isFinite(hi)?hi:lo} MT/s`;
+  }
 
   function mac(text) {
     const m=String(text??"").match(/MAC\s*[:=]?\s*([0-9A-Fa-f:-]{12,20})/);
@@ -54,7 +101,7 @@
     formsets().forEach((fs,i)=>{
       const t=String(fs.title??"");
       if(!/family controller/i.test(t)) return;
-      const m=mac(t);
+      const m=formsetDeviceIdentity(fs)?.mac??mac(t);
       if(!m) return;
       const ix=fsIndex(fs,i);
       const g={key:`nic:${m}`,title:/2\.5/i.test(t)?"2.5GbE":"GbE",sub:m,icon:"↔",sets:[fs]};
@@ -63,7 +110,7 @@
     formsets().forEach((fs,i)=>{
       const ix=fsIndex(fs,i);
       if(used.has(ix)) return;
-      const t=String(fs.title??""), m=mac(t);
+      const t=String(fs.title??""), m=formsetDeviceIdentity(fs)?.mac??mac(t);
       if(m&&byMac.has(m)){byMac.get(m).sets.push(fs);used.add(ix);return;}
       let g;
       if(/acoustic/i.test(t)) g={key:`fs:${ix}`,title:"Acoustic",sub:"Drive policy",icon:"◉",sets:[fs]};
@@ -284,17 +331,65 @@
   }
 
   function renderMainPage(){
-    const s=S.schema||{},p=s.platform||{},fw=p.firmware||{},board=p.board||{},runtime=s.runtime||{},stats=s.stats||{},current=s.current||{};
+    const s=S.schema||{},p=s.platform||{},fw=p.firmware||{},board=p.board||{},cpu=p.processor||{},memory=p.memory||{},runtime=s.runtime||{},stats=s.stats||{},current=s.current||{},chrome=browserChrome();
     E.form_content.innerHTML="";
     E.breadcrumbs.textContent="Main / Platform";
     E.form_title.textContent="System Overview";
     E.form_help.textContent="Read-only platform identity collected from SMBIOS, the UEFI System Table, and PCI discovery.";
     E.page_flags.innerHTML='<span class="page-flag safe">read only</span>';
-    appendInfoSection("BIOS Information",[["Vendor",fw.vendor],["Version",fw.version],["Build Date",fw.date],["UEFI",runtime.uefiRevision,runtime.state==="ready"?"System Table":"Unavailable"]]);
+    appendInfoSection("BIOS Information",[
+      ["Vendor",fw.vendor],
+      ["Version",fw.version],
+      ["Build Date",fw.date],
+      ["UEFI",runtime.uefiRevision,runtime.state==="ready"?"System Table":"Unavailable"],
+      ["UEFI Vendor",runtime.systemTableVendor],
+      ["Setup Browser",chrome.setup_title??chrome.setupTitle,chrome.setup_version??chrome.setupVersion]
+    ]);
     appendInfoSection("System Information",[["Board",[board.vendor,board.product].filter(Boolean).join(" ")||null],["Board Revision",board.version]]);
+
+    if(cpu && Object.keys(cpu).length){
+      const topology=[cpu.cores?`${cpu.cores} cores`:null,cpu.threads?`${cpu.threads} threads`:null].filter(Boolean).join(" / ");
+      appendInfoSection("Processor Information",[
+        ["Processor",cpu.model],
+        ["Manufacturer",cpu.manufacturer],
+        ["Topology",topology||null],
+        ["Current Speed",cpu.currentSpeedMHz?`${cpu.currentSpeedMHz} MHz`:null],
+        ["Maximum Speed",cpu.maxSpeedMHz?`${cpu.maxSpeedMHz} MHz`:null],
+        ["Socket",cpu.socket]
+      ]);
+    }
+
+    if(memory && Object.keys(memory).length){
+      appendInfoSection("Memory Information",[
+        ["Installed",formatBytes(memory.installedBytes),memory.capacityComplete===false?"At least this much; one or more module capacities are unknown":""],
+        ["Modules",Number.isFinite(Number(memory.installedDevices))&&Number.isFinite(Number(memory.slots))?`${memory.installedDevices} / ${memory.slots}`:null],
+        ["Configured Speed",speedRange(memory)]
+      ]);
+      const modules=Array.isArray(memory.devices)?memory.devices:[];
+      if(modules.length)appendInfoSection("Memory Devices",modules.map(module=>{
+        const label=module.locator||module.bankLocator||module.handle||"Memory device";
+        const value=module.sizeState==="installed"?formatBytes(module.sizeBytes):module.sizeState==="empty"?"Empty":"Unknown";
+        const detail=[module.partNumber,module.manufacturer,module.configuredSpeedMtS?`${module.configuredSpeedMtS} MT/s`:module.speedMtS?`${module.speedMtS} MT/s`:null].filter(Boolean).join(" · ");
+        return [label,value,detail];
+      }));
+    }
+
     const controllers=Array.isArray(p.controllers)?p.controllers:[];
     if(controllers.length)appendInfoSection("Platform Controllers",controllers.map(c=>[c.role,c.name,`${c.address||"?"} · ${c.vendorId||"?"}:${c.deviceId||"?"}`]));
-    appendInfoSection("Firmware State",[["HII formsets",stats.formsets??formsets().length,"Captured preboot"],["Current values",current.state==="ready"?"Captured preboot":"Unavailable"],["Firmware writes","Locked","No firmware write path"]]);
+    const evidence=setupEvidence();
+    if(evidence.length)appendInfoSection("Firmware Evidence",evidence.map(item=>[
+      item.keyword||"Firmware",
+      item.text,
+      "SMBIOS/OEM evidence · not a setting"
+    ]));
+    appendInfoSection("Firmware State",[
+      ["HII formsets",stats.formsets??formsets().length,"Captured preboot"],
+      ["Current values",current.state==="ready"?"Captured preboot":"Unavailable"],
+      ["Handoff",runtime.handoffPhase],
+      ["Runtime Services",runtime.runtimeServices===true?"Present":runtime.runtimeServices===false?"Absent":"Unavailable"],
+      ["Boot Services",runtime.bootServices===true?"Present":runtime.bootServices===false?"Exited":"Unavailable"],
+      ["Firmware writes","Locked","No firmware write path"]
+    ]);
     renderHelp();
   }
 
@@ -431,8 +526,25 @@
     if(open)renderDrawer();
   }
 
+  function platformEntries(){
+    const p=S.schema?.platform||{},fw=p.firmware||{},board=p.board||{},cpu=p.processor||{},memory=p.memory||{},out=[];
+    const add=(label,value,type="platform fact")=>{
+      if(value===null||value===undefined||value==="")return;
+      out.push({gi:0,fi:null,id:null,label:`${label}: ${value}`,ctx:"Main / Platform",type});
+    };
+    add("BIOS vendor",fw.vendor);
+    add("BIOS version",fw.version);
+    add("BIOS date",fw.date);
+    add("Board",[board.vendor,board.product].filter(Boolean).join(" "));
+    add("Processor",cpu.model);
+    if(memory?.installedBytes)add("Memory",formatBytes(memory.installedBytes));
+    (Array.isArray(p.controllers)?p.controllers:[]).forEach(c=>add(c.role,`${c.name||""} ${c.address||""}`.trim()));
+    setupEvidence().forEach(item=>add(item.keyword,item.text,"firmware evidence · not a setting"));
+    return out;
+  }
+
   function entries(){
-    const out=[];
+    const out=platformEntries();
     S.groups.forEach((g,gi)=>g.sets.forEach((fs,i)=>{
       const fi=fsIndex(fs,i);
       forms(fs).forEach(f=>{
@@ -460,7 +572,7 @@
     const rs=entries().filter(x=>`${x.label} ${x.ctx} ${x.type}`.toLowerCase().includes(q)).slice(0,32);
     E.search_results.innerHTML="";
     E.search_results.hidden=false;
-    if(!rs.length){E.search_results.innerHTML='<div class="search-none">question_match=none</div>';return;}
+    if(!rs.length){E.search_results.innerHTML='<div class="search-none">firmware_match=none</div>';return;}
     rs.forEach(x=>{
       const b=document.createElement("button");
       b.type="button";
