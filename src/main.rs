@@ -1877,20 +1877,17 @@ fn ensure_rust_src_libc_lock_matches_overlay(
 
 fn ensure_rust_std_trueos_thread_cleanup() -> Result<(), String> {
     let unix_thread = pinned_rust_src_path("std/src/sys/thread/unix.rs")?;
-    let source = fs::read_to_string(&unix_thread).map_err(|err| {
+    let mut source = fs::read_to_string(&unix_thread).map_err(|err| {
         format!(
             "failed to read Rust std thread source {}; install rust-src or check permissions: {err}",
             unix_thread.display()
         )
     })?;
-    if source.contains("TRUEOS service-lane pthread shim has no native TLS destructor") {
-        return Ok(());
-    }
-
-    let needle = r#"                rust_start();
+    if !source.contains("TRUEOS service-lane pthread shim has no native TLS destructor") {
+        let needle = r#"                rust_start();
             }
             ptr::null_mut()"#;
-    let replacement = r#"                rust_start();
+        let replacement = r#"                rust_start();
 
                 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
                 {
@@ -1899,21 +1896,55 @@ fn ensure_rust_std_trueos_thread_cleanup() -> Result<(), String> {
                 }
             }
             ptr::null_mut()"#;
-    if !source.contains(needle) {
-        return Err(format!(
-            "failed to patch {}; missing std unix thread_start cleanup marker",
-            unix_thread.display()
-        ));
+
+        if !source.contains(needle) {
+            return Err(format!(
+                "failed to patch {}; missing std unix thread_start cleanup marker",
+                unix_thread.display()
+            ));
+        }
+        source = source.replacen(needle, replacement, 1);
     }
-    let patched = source.replace(needle, replacement);
-    fs::write(&unix_thread, patched).map_err(|err| {
+
+    if !source.contains("TRUEOS has no POSIX thread detach lifecycle") {
+        let needle = r#"impl Drop for Thread {
+    fn drop(&mut self) {
+        let ret = unsafe { libc::pthread_detach(self.id) };
+        debug_assert_eq!(ret, 0);
+    }
+}"#;
+        let replacement = r#"impl Drop for Thread {
+    fn drop(&mut self) {
+        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+        {
+            // TRUEOS has no POSIX thread detach lifecycle.
+        }
+
+        #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+        {
+            let ret = unsafe { libc::pthread_detach(self.id) };
+            debug_assert_eq!(ret, 0);
+        }
+    }
+}"#;
+
+        if !source.contains(needle) {
+            return Err(format!(
+                "failed to patch {}; missing std unix Thread::drop marker",
+                unix_thread.display()
+            ));
+        }
+        source = source.replacen(needle, replacement, 1);
+    }
+
+    fs::write(&unix_thread, source).map_err(|err| {
         format!(
             "failed to patch Rust std thread source {}: {err}",
             unix_thread.display()
         )
     })?;
     println!(
-        "trueos-blueprint: patched rust-src std unix thread cleanup for trueos: {}",
+        "trueos-blueprint: patched rust-src std unix thread lifecycle for trueos: {}",
         unix_thread.display()
     );
     Ok(())
