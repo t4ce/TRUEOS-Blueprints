@@ -1,340 +1,106 @@
 (() => {
   "use strict";
-
   const $ = (id) => document.getElementById(id);
-  const state = { schema: null, formsetIndex: 0, formId: null, selectedQuestionKey: null };
-  const els = {
-    app: $("app"), apiChip: $("api-chip"), search: $("search"), searchResults: $("search-results"),
-    formsetCount: $("formset-count"), formsetNav: $("formset-nav"), breadcrumbs: $("breadcrumbs"),
-    formTitle: $("form-title"), formHelp: $("form-help"), formMeta: $("form-meta"), notice: $("notice"),
-    formContent: $("form-content"), inspectorBody: $("inspector-body"), footerState: $("footer-state"), toast: $("toast"),
-  };
+  const S = { schema:null, groups:[], group:0, fs:0, form:null, selected:null, drawer:false };
+  const E = Object.fromEntries([
+    "app","capture-state","top-tabs","search","search-results","group-heading","form-nav",
+    "breadcrumbs","form-title","form-help","page-flags","form-content","help-title","help-text",
+    "help-meta","footer-state","details-button","details-drawer","drawer-backdrop","drawer-close",
+    "drawer-title","drawer-body","toast"
+  ].map(id => [id.replaceAll("-","_"), $(id)]));
+  const qops = new Set(["one-of","checkbox","numeric","string","password","action"]);
+  const esc = (v) => String(v ?? "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#039;");
+  const pick = (o,a,b) => o ? (o[a] ?? o[b]) : undefined;
+  const h16 = (v) => Number.isFinite(Number(v)) ? `0x${Number(v).toString(16).toUpperCase().padStart(4,"0")}` : "—";
+  const hoff = (v) => Number.isFinite(Number(v)) ? `0x${Number(v).toString(16).toUpperCase()}` : "—";
+  const formsets = () => Array.isArray(S.schema?.formsets) ? S.schema.formsets : [];
+  const fsIndex = (fs,i=0) => Number.isFinite(Number(pick(fs,"index","formset_index"))) ? Number(pick(fs,"index","formset_index")) : i;
+  const forms = (fs) => Array.isArray(fs?.forms) ? fs.forms : [];
+  const formId = (f) => Number(pick(f,"formId","form_id"));
+  const questions = (f) => Array.isArray(f?.questions) ? f.questions : [];
+  const nodes = () => Array.isArray(S.schema?.presentation?.nodes) ? S.schema.presentation.nodes : [];
+  const formNodes = (fi,id) => nodes().filter(n => Number(pick(n,"formsetIndex","formset_index"))===Number(fi) && Number(pick(n,"formId","form_id"))===Number(id)).sort((a,b)=>Number(pick(a,"sourceOffset","source_offset")||0)-Number(pick(b,"sourceOffset","source_offset")||0));
 
-  function escapeHtml(value) {
-    return String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;")
-      .replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
+  function mac(text) {
+    const m=String(text??"").match(/MAC\s*[:=]?\s*([0-9A-Fa-f:-]{12,20})/); if(!m) return null;
+    const x=m[1].replace(/[^0-9A-Fa-f]/g,"").slice(0,12).toUpperCase();
+    return x.length===12 ? x.match(/.{2}/g).join(":") : null;
   }
-
-  function hex16(value) {
-    const n = Number(value);
-    return Number.isFinite(n) ? `0x${n.toString(16).toUpperCase().padStart(4, "0")}` : "—";
+  function section(fs) {
+    const t=String(fs?.title??"");
+    if(/IPv4/i.test(t)) return "IPv4"; if(/IPv6/i.test(t)) return "IPv6";
+    if(/family controller/i.test(t)) return "Controller"; if(/tls/i.test(t)) return "TLS";
+    if(/acoustic/i.test(t)) return "Acoustic"; return t||"Firmware";
   }
-
-  function maybe(obj, camel, snake) { return obj ? (obj[camel] ?? obj[snake]) : undefined; }
-  function formsets() { return Array.isArray(state.schema?.formsets) ? state.schema.formsets : []; }
-  function formsetIndexOf(fs, fallback) {
-    const value = maybe(fs, "index", "formset_index");
-    return Number.isFinite(Number(value)) ? Number(value) : fallback;
+  function pageTitle(fs,f) {
+    const t=String(f?.title??"").trim(); return (!t||/^Form 0x/i.test(t)) ? `${section(fs)} Configuration` : t;
   }
-  function formsFor(fs) { return Array.isArray(fs?.forms) ? fs.forms : []; }
-  function formIdOf(form) { return Number(maybe(form, "formId", "form_id")); }
-  function findFormset(index) { return formsets().find((fs, i) => formsetIndexOf(fs, i) === Number(index)) ?? null; }
-  function findForm(fs, id) { return formsFor(fs).find((form) => formIdOf(form) === Number(id)) ?? null; }
-  function currentFormset() { return findFormset(state.formsetIndex) ?? formsets()[0] ?? null; }
-  function currentForm() {
-    const fs = currentFormset();
-    return fs ? (findForm(fs, state.formId) ?? formsFor(fs)[0] ?? null) : null;
-  }
-
-  function presentationNodes() {
-    const nodes = state.schema?.presentation?.nodes ?? state.schema?.presentationNodes ??
-      state.schema?.orderedIfrNodes ?? state.schema?.ifrNodes;
-    return Array.isArray(nodes) ? nodes : [];
-  }
-
-  function nodesForForm(fsIndex, formId) {
-    return presentationNodes().filter((node) =>
-      Number(maybe(node, "formsetIndex", "formset_index")) === Number(fsIndex) &&
-      Number(maybe(node, "formId", "form_id")) === Number(formId)
-    ).sort((a, b) => Number(maybe(a, "sourceOffset", "source_offset") ?? 0) - Number(maybe(b, "sourceOffset", "source_offset") ?? 0));
-  }
-
-  function showToast(message) {
-    els.toast.textContent = message;
-    els.toast.hidden = false;
-    clearTimeout(showToast.timer);
-    showToast.timer = setTimeout(() => { els.toast.hidden = true; }, 2800);
-  }
-
-  function selectForm(fsIndex, formId) {
-    state.formsetIndex = Number(fsIndex);
-    state.formId = Number(formId);
-    state.selectedQuestionKey = null;
-    render();
-  }
-
-  function selectFirstForm() {
-    const fs = currentFormset();
-    const forms = formsFor(fs);
-    state.formId = forms.length ? formIdOf(forms[0]) : null;
-  }
-
-  function renderSidebar() {
-    const sets = formsets();
-    els.formsetCount.textContent = String(sets.length);
-    els.formsetNav.innerHTML = "";
-    sets.forEach((fs, i) => {
-      const index = formsetIndexOf(fs, i);
-      const group = document.createElement("div");
-      group.className = `formset-group${index === state.formsetIndex ? " active" : ""}`;
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "formset-button";
-      button.innerHTML = `<strong>${escapeHtml(fs.title || `Form set ${index}`)}</strong><span>${formsFor(fs).length}</span>`;
-      button.addEventListener("click", () => {
-        state.formsetIndex = index;
-        const first = formsFor(fs)[0];
-        state.formId = first ? formIdOf(first) : null;
-        state.selectedQuestionKey = null;
-        render();
-      });
-      const list = document.createElement("div");
-      list.className = "form-list";
-      formsFor(fs).forEach((form) => {
-        const id = formIdOf(form);
-        const formButton = document.createElement("button");
-        formButton.type = "button";
-        formButton.className = `form-button${index === state.formsetIndex && id === state.formId ? " active" : ""}`;
-        formButton.textContent = form.title || `Form ${hex16(id)}`;
-        formButton.addEventListener("click", () => selectForm(index, id));
-        list.appendChild(formButton);
-      });
-      group.append(button, list);
-      els.formsetNav.appendChild(group);
+  function buildGroups() {
+    const out=[], byMac=new Map(), used=new Set();
+    formsets().forEach((fs,i)=>{
+      const t=String(fs.title??""); if(!/family controller/i.test(t)) return;
+      const m=mac(t); if(!m) return; const ix=fsIndex(fs,i);
+      const g={key:`nic:${m}`,title:/2\.5/i.test(t)?"2.5GbE":"GbE",sub:m,icon:"↔",sets:[fs]};
+      out.push(g); byMac.set(m,g); used.add(ix);
     });
-  }
-
-  function formQuestions(form) { return Array.isArray(form?.questions) ? form.questions : []; }
-  function questionKey(question) {
-    return question?.recordKey ?? question?.key ??
-      `${state.formsetIndex}:${state.formId}:${maybe(question, "questionId", "question_id")}:${maybe(question, "sourceOffset", "source_offset")}`;
-  }
-
-  function findCanonicalQuestion(form, node) {
-    const d = node?.details || {};
-    const qid = Number(maybe(d, "questionId", "question_id"));
-    const offset = Number(maybe(node, "sourceOffset", "source_offset"));
-    const questions = formQuestions(form);
-    return questions.find((q) => Number(maybe(q, "sourceOffset", "source_offset")) === offset && Number(maybe(q, "questionId", "question_id")) === qid) ??
-      questions.find((q) => Number(maybe(q, "questionId", "question_id")) === qid) ?? null;
-  }
-
-  function pseudoQuestion(node) {
-    const d = node?.details || {};
-    return {
-      prompt: d.prompt, help: d.help, questionId: maybe(d, "questionId", "question_id"),
-      sourceOffset: maybe(node, "sourceOffset", "source_offset"), kind: maybe(node, "opcodeName", "opcode_name"),
-      options: [], defaults: [], storage: { backend: "presentation-only", validated: false },
-      policy: { trueosWrite: "locked", callback: false, requiresReset: false, firmwareReadOnly: false },
-      currentValue: "captured-redacted-not-decoded-in-this-cycle",
-    };
-  }
-
-  function kindOf(question) { return String(question?.kind ?? "unknown"); }
-
-  function renderControl(question) {
-    const kind = kindOf(question);
-    const options = Array.isArray(question?.options) ? question.options : [];
-    const numeric = question?.numericRange ?? question?.numeric ?? null;
-    const stringLimits = question?.stringLimits ?? question?.string_limits ?? null;
-    if (kind === "one-of") {
-      const labels = options.map((o) => o.text).filter(Boolean);
-      return `<div class="locked-value"><span>Current value redacted</span><span class="chip">${labels.length} options</span></div>`;
-    }
-    if (kind === "checkbox") {
-      return `<div class="locked-value"><span>Current value redacted</span><span class="unknown-toggle" aria-label="unknown current value"></span></div>`;
-    }
-    if (kind === "numeric") {
-      const range = numeric ? `${numeric.minimum ?? "?"} – ${numeric.maximum ?? "?"}${numeric.step ? ` / step ${numeric.step}` : ""}` : "numeric value";
-      return `<input class="locked-input" disabled placeholder="${escapeHtml(range)}">`;
-    }
-    if (kind === "string") {
-      const hint = stringLimits?.maximumChars ?? stringLimits?.maximum_chars;
-      return `<input class="locked-input" disabled placeholder="Value redacted${hint ? ` · max ${escapeHtml(hint)} chars` : ""}">`;
-    }
-    if (kind === "password") return `<input class="locked-input" type="password" disabled placeholder="Firmware secret not exposed">`;
-    if (kind === "action") return `<button class="locked-button" type="button" disabled>Action locked</button>`;
-    return `<div class="locked-value"><span>Read-only metadata</span><span class="chip">${escapeHtml(kind)}</span></div>`;
-  }
-
-  function renderQuestion(question) {
-    const key = questionKey(question);
-    const qid = maybe(question, "questionId", "question_id");
-    const row = document.createElement("article");
-    row.className = `question-row${key === state.selectedQuestionKey ? " selected" : ""}`;
-    row.tabIndex = 0;
-    row.innerHTML = `<div><div class="question-title"><strong>${escapeHtml(question.prompt || `(unnamed ${kindOf(question)} question)`)}</strong><span class="chip">${escapeHtml(kindOf(question))}</span>${question?.policy?.requiresReset ? `<span class="chip chip-warn">RESET</span>` : ""}</div><div class="question-help">${escapeHtml(question.help || "No help text supplied by firmware.")}</div><div class="question-id">${escapeHtml(hex16(qid))} · source ${escapeHtml(maybe(question, "sourceOffset", "source_offset") ?? "—")}</div></div><div class="control-shell">${renderControl(question)}</div>`;
-    const select = () => {
-      state.selectedQuestionKey = key;
-      renderInspector(question);
-      document.querySelectorAll(".question-row.selected").forEach((el) => el.classList.remove("selected"));
-      row.classList.add("selected");
-    };
-    row.addEventListener("click", select);
-    row.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" || event.key === " ") { event.preventDefault(); select(); }
+    formsets().forEach((fs,i)=>{
+      const ix=fsIndex(fs,i); if(used.has(ix)) return; const t=String(fs.title??""), m=mac(t);
+      if(m&&byMac.has(m)){byMac.get(m).sets.push(fs);used.add(ix);return;}
+      let g;
+      if(/acoustic/i.test(t)) g={key:`fs:${ix}`,title:"Acoustic",sub:"Drive policy",icon:"◉",sets:[fs]};
+      else if(/tls|auth/i.test(t)) g={key:`fs:${ix}`,title:"TLS",sub:"Authentication",icon:"⬡",sets:[fs]};
+      else g={key:`fs:${ix}`,title:t.replace(/configuration/ig,"").trim()||`Form set ${ix}`,sub:"Firmware",icon:"◆",sets:[fs]};
+      out.push(g); used.add(ix);
     });
-    return row;
+    return out;
   }
+  const group = () => S.groups[S.group]??null;
+  const activeFs = () => formsets().find((f,i)=>fsIndex(f,i)===Number(S.fs))??null;
+  const activeForm = () => forms(activeFs()).find(f=>formId(f)===Number(S.form))??null;
+  const contains = (g,ix) => g?.sets?.some((fs,i)=>fsIndex(fs,i)===Number(ix));
 
-  function renderReference(node, fs) {
-    const d = node.details || {};
-    const targetForm = Number(maybe(d, "targetFormId", "target_form_id"));
-    const targetGuid = maybe(d, "targetFormsetGuid", "target_formset_guid");
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "nav-row";
-    button.innerHTML = `<div><strong>${escapeHtml(d.prompt || "Open firmware form")}</strong><span>${escapeHtml(d.help || `Navigate to form ${hex16(targetForm)}`)}</span></div><div class="nav-arrow" aria-hidden="true">→</div>`;
-    button.addEventListener("click", () => {
-      let targetFs = fs;
-      if (targetGuid) targetFs = formsets().find((candidate) => candidate.guid === targetGuid) ?? fs;
-      const targetFsIndex = formsetIndexOf(targetFs, state.formsetIndex);
-      if (findForm(targetFs, targetForm)) selectForm(targetFsIndex, targetForm);
-      else showToast(`Firmware reference target ${hex16(targetForm)} is not present in this capture.`);
-    });
-    return button;
+  function init() {
+    S.groups=buildGroups(); if(!S.groups.length) return;
+    const fs=S.groups[0].sets[0]; S.group=0; S.fs=fsIndex(fs,0); S.form=forms(fs)[0]?formId(forms(fs)[0]):null;
   }
-
-  function renderInfoNode(node) {
-    const d = node.details || {};
-    const item = document.createElement("div");
-    item.className = "info-row";
-    const one = d.prompt || "";
-    const two = d.text_two ?? d.textTwo ?? "";
-    const help = d.help || "";
-    item.innerHTML = `${one ? `<strong>${escapeHtml(one)}</strong>` : ""}${two ? `<span>${escapeHtml(two)}</span>` : ""}${help && help !== two ? `<span>${escapeHtml(help)}</span>` : ""}`;
-    return item;
+  function chooseGroup(i) {
+    S.group=i; const g=group(); if(!contains(g,S.fs)){const fs=g.sets[0];S.fs=fsIndex(fs,0);S.form=forms(fs)[0]?formId(forms(fs)[0]):null;} S.selected=null; render();
   }
+  function chooseForm(fi,id) { S.fs=Number(fi);S.form=Number(id);const gi=S.groups.findIndex(g=>contains(g,fi));if(gi>=0)S.group=gi;S.selected=null;render(); }
+  function toast(msg){E.toast.textContent=msg;E.toast.hidden=false;clearTimeout(toast.t);toast.t=setTimeout(()=>E.toast.hidden=true,2400);}
 
-  function emptyForm(title, detail) {
-    const div = document.createElement("div");
-    div.className = "empty-form";
-    div.innerHTML = `<strong>${escapeHtml(title)}</strong><span>${escapeHtml(detail)}</span>`;
-    return div;
-  }
+  function renderTabs(){E.top_tabs.innerHTML="";S.groups.forEach((g,i)=>{const b=document.createElement("button");b.type="button";b.className=`top-tab${i===S.group?" active":""}`;b.innerHTML=`<span class="tab-icon">${esc(g.icon)}</span><span><span class="tab-label">${esc(g.title)}</span><span class="tab-sub">${esc(g.sub)}</span></span>`;b.onclick=()=>chooseGroup(i);E.top_tabs.appendChild(b);});}
+  function renderNav(){const g=group();E.form_nav.innerHTML="";E.group_heading.textContent=g?`${g.title} pages`:"Firmware pages";if(!g)return;g.sets.forEach((fs,i)=>{const fi=fsIndex(fs,i),sec=document.createElement("section");sec.className="form-section";sec.innerHTML=`<div class="form-section-title">${esc(section(fs))}</div>`;const counts={};forms(fs).forEach(f=>counts[pageTitle(fs,f)]=(counts[pageTitle(fs,f)]||0)+1);forms(fs).forEach(f=>{const id=formId(f),label=pageTitle(fs,f),b=document.createElement("button");b.type="button";b.className=`form-button${fi===S.fs&&id===S.form?" active":""}`;b.innerHTML=`${esc(label)}${counts[label]>1?` <span class="form-id">${h16(id)}</span>`:""}`;b.onclick=()=>chooseForm(fi,id);sec.appendChild(b);});E.form_nav.appendChild(sec);});}
 
-  function renderOrderedForm(fs, form, nodes) {
-    const fragment = document.createDocumentFragment();
-    let visible = 0;
-    nodes.forEach((node) => {
-      const name = String(maybe(node, "opcodeName", "opcode_name") ?? "");
-      if (name === "subtitle") {
-        const prompt = node.details?.prompt;
-        if (prompt) { const h = document.createElement("h2"); h.className = "section-title"; h.textContent = prompt; fragment.appendChild(h); visible++; }
-        return;
-      }
-      if (name === "text") { fragment.appendChild(renderInfoNode(node)); visible++; return; }
-      if (name === "ref") { fragment.appendChild(renderReference(node, fs)); visible++; return; }
-      if (["one-of", "checkbox", "numeric", "string", "password", "action"].includes(name)) {
-        fragment.appendChild(renderQuestion(findCanonicalQuestion(form, node) ?? pseudoQuestion(node))); visible++; return;
-      }
-      if (name === "guid-extension" && (node.details?.extend_name ?? node.details?.extendName) === "label") {
-        const anchor = document.createElement("span"); anchor.hidden = true; anchor.id = `ifr-label-${node.details?.value ?? "unknown"}`; fragment.appendChild(anchor);
-      }
-    });
-    if (!visible) fragment.appendChild(emptyForm("No visible statements in this captured form", "The form contains only structural labels or metadata. Nothing is invented from loose strings."));
-    els.formContent.appendChild(fragment);
-  }
+  function canonical(form,node){const d=node?.details||{},qid=Number(pick(d,"questionId","question_id")),off=Number(pick(node,"sourceOffset","source_offset"));return questions(form).find(q=>Number(pick(q,"sourceOffset","source_offset"))===off&&Number(pick(q,"questionId","question_id"))===qid)||questions(form).find(q=>Number(pick(q,"questionId","question_id"))===qid)||null;}
+  const qkey = q => q?.recordKey??`${S.fs}:${S.form}:${pick(q,"questionId","question_id")}:${pick(q,"sourceOffset","source_offset")}`;
+  function pseudo(n){const d=n?.details||{};return {prompt:d.prompt,help:d.help,questionId:pick(d,"questionId","question_id"),sourceOffset:pick(n,"sourceOffset","source_offset"),kind:pick(n,"opcodeName","opcode_name"),options:[],defaults:[],storage:{backend:"presentation-only",validated:false},policy:{trueosWrite:"locked"},currentValue:"captured-redacted-not-decoded-in-this-cycle"};}
+  function value(q){const k=String(q.kind??"unknown"),o=Array.isArray(q.options)?q.options:[],num=q.numericRange??q.numeric,lim=q.stringLimits??q.string_limits;if(k==="action")return ["Unavailable","Firmware callback/action is not invoked"];if(k==="one-of")return ["Not exposed",`${o.length} allowed option${o.length===1?"":"s"}`];if(k==="checkbox")return ["Not exposed","Boolean firmware value"];if(k==="numeric")return ["Not exposed",num?`Range ${num.minimum??"?"}–${num.maximum??"?"}${num.step?` · step ${num.step}`:""}`:"Numeric firmware value"];if(k==="string"||k==="password")return ["Not exposed",lim?.maximumChars?`Maximum ${lim.maximumChars} characters`:k==="password"?"Firmware secret is not exposed":"String firmware value"];return ["Read only",k];}
+  function select(item){S.selected=item;renderHelp();renderDrawer();document.querySelectorAll(".setting-row.selected").forEach(x=>x.classList.remove("selected"));if(item?.key){const row=[...document.querySelectorAll("[data-key]")].find(x=>x.dataset.key===item.key);row?.classList.add("selected");}}
+  function questionRow(q){const row=document.createElement("article"),key=qkey(q),[v,s]=value(q),kind=String(q.kind??"unknown"),action=kind==="action";row.className=`setting-row selectable${S.selected?.key===key?" selected":""}`;row.dataset.key=key;row.tabIndex=0;row.innerHTML=`<div class="setting-main"><div class="setting-title">${esc(q.prompt||`Unnamed ${kind}`)} <span class="badge${action?" warn":""}">${esc(kind)}</span></div>${q.help?`<div class="setting-desc">${esc(q.help)}</div>`:""}</div><div class="setting-value"><span class="value-primary ${action?"action-state":"redacted"}">${esc(v)}</span><span class="value-secondary">${esc(s)}</span></div>`;const item={type:"question",key,question:q};row.onclick=()=>select(item);row.onkeydown=e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();select(item);}};return row;}
+  function textRow(n){const d=n.details||{},row=document.createElement("div");row.className="text-row";row.innerHTML=`${d.prompt?`<strong>${esc(d.prompt)}</strong>`:""}${(d.text_two??d.textTwo)?`<span>${esc(d.text_two??d.textTwo)}</span>`:""}${d.help&&d.help!==(d.text_two??d.textTwo)?`<span>${esc(d.help)}</span>`:""}`;return row;}
+  function refRow(n,fs){const d=n.details||{},target=Number(pick(d,"targetFormId","target_form_id")),guid=pick(d,"targetFormsetGuid","target_formset_guid"),b=document.createElement("button");b.type="button";b.className="ref-row";b.innerHTML=`<span><strong>${esc(d.prompt||"Open firmware page")}</strong><span>${esc(d.help||`Navigate to ${h16(target)}`)}</span></span><span class="ref-arrow">→</span>`;b.onclick=()=>{let tfs=fs;if(guid)tfs=formsets().find(x=>x.guid===guid)||fs;const fi=fsIndex(tfs,S.fs);if(forms(tfs).some(f=>formId(f)===target))chooseForm(fi,target);else toast(`Reference target ${h16(target)} is not present in this capture.`);};return b;}
+  function empty(title,detail){const d=document.createElement("div");d.className="empty-form";d.innerHTML=`<strong>${esc(title)}</strong>${esc(detail)}`;return d;}
 
-  function renderFallbackForm(form) {
-    const questions = formQuestions(form);
-    if (questions.length) { questions.forEach((q) => els.formContent.appendChild(renderQuestion(q))); return; }
-    els.formContent.appendChild(emptyForm("Presentation-only form", "The live v1 Blueprint snapshot exposes validated questions but not source-order REF/TEXT/SUBTITLE nodes. This UI will render them automatically when the ordered presentation snapshot is exported."));
-  }
+  function renderPage(){const fs=activeFs(),form=activeForm();E.form_content.innerHTML="";if(!fs||!form){E.form_title.textContent="No captured firmware page";E.form_help.textContent="";E.breadcrumbs.textContent="";E.form_content.appendChild(empty("No form available","The captured HII does not expose a form here."));return;}const g=group(),ns=formNodes(S.fs,S.form);E.breadcrumbs.textContent=`${g?.title||"Firmware"} / ${section(fs)} / ${h16(S.form)}`;E.form_title.textContent=pageTitle(fs,form);E.form_help.textContent=form.help||fs.help||"";E.page_flags.innerHTML=`<span class="page-flag${ns.length?" safe":""}">${ns.length?`${ns.length} IFR nodes`:"schema v1"}</span><span class="page-flag">${questions(form).length} questions</span>`;let visible=0;if(ns.length){ns.forEach(n=>{const name=String(pick(n,"opcodeName","opcode_name")||"");if(name==="subtitle"&&n.details?.prompt){const h=document.createElement("h2");h.className="section-title";h.textContent=n.details.prompt;E.form_content.appendChild(h);visible++;}else if(name==="text"){E.form_content.appendChild(textRow(n));visible++;}else if(name==="ref"){E.form_content.appendChild(refRow(n,fs));visible++;}else if(qops.has(name)){E.form_content.appendChild(questionRow(canonical(form,n)||pseudo(n)));visible++;}});}else{questions(form).forEach(q=>{E.form_content.appendChild(questionRow(q));visible++;});}if(!visible)E.form_content.appendChild(empty(ns.length?"No visible statements":"Presentation stream unavailable",ns.length?"This form contains only structural/condition metadata. Nothing is invented from loose strings.":"The v1 snapshot exposes semantic questions only; presentation v2 will preserve TEXT, REF and SUBTITLE ordering."));renderHelp();}
 
-  function renderInspector(question) {
-    const storage = question?.storage || {};
-    const policy = question?.policy || {};
-    const options = Array.isArray(question?.options) ? question.options : [];
-    const defaults = Array.isArray(question?.defaults) ? question.defaults : [];
-    const visibility = question?.visibility ?? question?.conditions ?? [];
-    const optionText = options.length ? options.map((o) => `${o.text ?? "?"} = ${o.value?.display ?? o.value?.unsigned ?? "?"}`).join(" · ") : "none";
-    const defaultText = defaults.length ? defaults.map((d) => `${d.label ?? d.defaultId ?? "default"}: ${d.value?.display ?? d.value?.unsigned ?? "?"}`).join(" · ") : "none";
-    els.inspectorBody.innerHTML = `<h2 class="inspect-title">${escapeHtml(question.prompt || "Firmware question")}</h2><p class="inspect-help">${escapeHtml(question.help || "No firmware help text.")}</p><div class="inspect-section"><h3>Question</h3><dl class="kv"><dt>ID</dt><dd class="code">${escapeHtml(hex16(maybe(question, "questionId", "question_id")))}</dd><dt>Kind</dt><dd>${escapeHtml(kindOf(question))}</dd><dt>Current</dt><dd>redacted / not decoded</dd><dt>Conditions</dt><dd>${escapeHtml(Array.isArray(visibility) ? visibility.length : 0)}</dd></dl></div><div class="inspect-section"><h3>Storage</h3><dl class="kv"><dt>Backend</dt><dd>${escapeHtml(storage.backend ?? "none")}</dd><dt>Variable</dt><dd class="code">${escapeHtml(storage.variable ?? "—")}</dd><dt>Varstore</dt><dd class="code">${escapeHtml(hex16(storage.varstoreId ?? storage.varstore_id))}</dd><dt>Offset</dt><dd class="code">${escapeHtml(storage.offset ?? "—")}</dd><dt>Width</dt><dd>${escapeHtml(storage.width ?? "—")}</dd><dt>Validated</dt><dd>${storage.validated === true ? "yes" : storage.validated === false ? "no" : "—"}</dd></dl></div><div class="inspect-section"><h3>Policy</h3><dl class="kv"><dt>TRUEOS write</dt><dd>${escapeHtml(policy.trueosWrite ?? policy.trueos_write ?? "locked")}</dd><dt>Firmware RO</dt><dd>${policy.firmwareReadOnly ?? policy.firmware_ro ? "yes" : "no"}</dd><dt>Callback</dt><dd>${policy.callback ? "yes (not invoked)" : "no"}</dd><dt>Reset</dt><dd>${policy.requiresReset ?? policy.requires_reset ? "required by firmware" : "no"}</dd></dl></div><div class="inspect-section"><h3>Options</h3><p class="muted">${escapeHtml(optionText)}</p></div><div class="inspect-section"><h3>Defaults</h3><p class="muted">${escapeHtml(defaultText)}</p></div>`;
-  }
+  function metaRows(rows){E.help_meta.innerHTML="";rows.forEach(([a,b])=>{const d=document.createElement("div");d.className="help-meta-row";d.innerHTML=`<span>${esc(a)}</span><span>${esc(b)}</span>`;E.help_meta.appendChild(d);});}
+  function renderHelp(){const fs=activeFs(),form=activeForm(),sel=S.selected;if(sel?.type==="question"){const q=sel.question;E.help_title.textContent=q.prompt||"Firmware question";E.help_text.textContent=q.help||"No help text supplied by firmware.";metaRows([["Question",h16(pick(q,"questionId","question_id"))],["Kind",q.kind||"unknown"],["Current","not exposed"]]);}else{E.help_title.textContent=pageTitle(fs,form)||"Firmware explorer";E.help_text.textContent=form?.help||fs?.help||"Select a firmware item to see help supplied by the firmware.";metaRows([["Form",form?h16(S.form):"—"],["Presentation",formNodes(S.fs,S.form).length?"source ordered":"schema v1"]]);}}
+  function renderStatus(){const st=S.schema?.stats||{},ps=S.schema?.presentation?.stats||{};E.capture_state.textContent=(S.schema?.state||"unknown").toUpperCase();E.footer_state.textContent=`${st.formsets??formsets().length} formsets · ${st.forms??"?"} forms · ${st.questions??"?"} questions · ${ps.nodes??nodes().length} IFR nodes · ${ps.semanticallyUnresolvedOpcodes??"?"} unresolved`;}
 
-  function renderForm() {
-    const fs = currentFormset(); const form = currentForm();
-    els.formContent.innerHTML = ""; els.notice.hidden = true;
-    if (!fs || !form) {
-      els.formTitle.textContent = "No captured BIOS form"; els.formHelp.textContent = ""; els.breadcrumbs.textContent = ""; els.formMeta.innerHTML = "";
-      els.formContent.appendChild(emptyForm("No forms available", "The kernel snapshot did not expose a form for this form set.")); return;
-    }
-    els.breadcrumbs.textContent = `${fs.title || "Firmware"}  /  Form ${hex16(formIdOf(form))}`;
-    els.formTitle.textContent = form.title || fs.title || `Form ${hex16(formIdOf(form))}`;
-    els.formHelp.textContent = form.help || fs.help || "";
-    const fsIndex = formsetIndexOf(fs, state.formsetIndex); const nodes = nodesForForm(fsIndex, formIdOf(form));
-    els.formMeta.innerHTML = `<span class="chip">${escapeHtml(fs.guid || "no-guid")}</span><span class="chip">${formQuestions(form).length} questions</span><span class="chip">${nodes.length ? `${nodes.length} IFR nodes` : "schema v1"}</span>`;
-    if (nodes.length) renderOrderedForm(fs, form, nodes); else renderFallbackForm(form);
-  }
+  function drows(rows){return `<dl class="detail-grid">${rows.map(([a,b,c])=>`<dt>${esc(a)}</dt><dd${c?' class="code"':""}>${esc(b)}</dd>`).join("")}</dl>`;}
+  function renderDrawer(){if(!S.drawer)return;E.drawer_body.innerHTML="";const fs=activeFs(),form=activeForm(),sel=S.selected,s=S.schema||{};const sum=document.createElement("section");sum.className="detail-section";sum.innerHTML=`<h3>Page</h3>${drows([["API",s.api||"—",true],["Formset",fs?.guid||"—",true],["Form",form?h16(S.form):"—",true],["Write path",s.activeWritePath||"none",true]])}`;E.drawer_body.appendChild(sum);if(sel?.type==="question"){const q=sel.question,st=q.storage||{},p=q.policy||{};E.drawer_title.textContent=q.prompt||"Firmware question";const a=document.createElement("section");a.className="detail-section";a.innerHTML=`<h3>Question</h3>${drows([["ID",h16(pick(q,"questionId","question_id")),true],["Kind",q.kind||"unknown"],["Source",hoff(pick(q,"sourceOffset","source_offset")),true],["Current","captured / redacted"],["Callback",p.callback?"yes, not invoked":"no"],["Reset",(p.requiresReset??p.requires_reset)?"required":"no"]])}`;E.drawer_body.appendChild(a);const b=document.createElement("section");b.className="detail-section";b.innerHTML=`<h3>Storage</h3>${drows([["Backend",st.backend||"none"],["Variable",st.variable||"—",true],["Varstore",h16(st.varstoreId??st.varstore_id),true],["Offset",st.offset??"—",true],["Width",st.width??"—"],["Validated",st.validated===true?"yes":st.validated===false?"no":"—"]])}`;E.drawer_body.appendChild(b);}else{E.drawer_title.textContent="Firmware metadata";const p=s.presentation||{},ps=p.stats||{},a=document.createElement("section");a.className="detail-section";a.innerHTML=`<h3>Capture</h3>${drows([["Presentation",p.api||"not available",true],["Ordered",p.ordered?"yes":"no"],["Captured HII",p.completeForCapturedHii?"complete":"not claimed"],["Motherboard setup",p.completeMotherboardSetupSurface||"not claimed"],["IFR nodes",ps.nodes??nodes().length],["Unresolved",ps.semanticallyUnresolvedOpcodes??"—"],["Raw bytes",p.rawBytes||"hidden"]])}`;E.drawer_body.appendChild(a);}}
+  function drawer(open){S.drawer=open;E.details_drawer.classList.toggle("open",open);E.details_drawer.setAttribute("aria-hidden",open?"false":"true");E.details_button.setAttribute("aria-expanded",open?"true":"false");E.drawer_backdrop.hidden=!open;if(open)renderDrawer();}
 
-  function searchEntries() {
-    const entries = [];
-    formsets().forEach((fs, i) => {
-      const fsIndex = formsetIndexOf(fs, i);
-      formsFor(fs).forEach((form) => {
-        const formId = formIdOf(form); const base = { fsIndex, formId, context: `${fs.title || "Firmware"} / ${form.title || hex16(formId)}` };
-        if (form.title) entries.push({ ...base, label: form.title, type: "form" });
-        formQuestions(form).forEach((question) => { const label = question.prompt || question.help; if (label) entries.push({ ...base, label, type: kindOf(question), question }); });
-        nodesForForm(fsIndex, formId).forEach((node) => {
-          const name = String(maybe(node, "opcodeName", "opcode_name") ?? "");
-          if (!["subtitle", "text", "ref"].includes(name)) return;
-          const d = node.details || {}; const label = d.prompt || d.text_two || d.textTwo || d.help;
-          if (label) entries.push({ ...base, label, type: name });
-        });
-      });
-    });
-    const seen = new Set();
-    return entries.filter((entry) => { const key = `${entry.fsIndex}:${entry.formId}:${entry.type}:${entry.label}`; if (seen.has(key)) return false; seen.add(key); return true; });
-  }
+  function entries(){const out=[];S.groups.forEach((g,gi)=>g.sets.forEach((fs,i)=>{const fi=fsIndex(fs,i);forms(fs).forEach(f=>{const id=formId(f),ctx=`${g.title} / ${section(fs)} / ${pageTitle(fs,f)}`;out.push({gi,fi,id,label:pageTitle(fs,f),ctx,type:"page"});questions(f).forEach(q=>{const label=q.prompt||q.help;if(label)out.push({gi,fi,id,label,ctx,type:q.kind||"question",q});});formNodes(fi,id).forEach(n=>{const name=String(pick(n,"opcodeName","opcode_name")||"");if(!["subtitle","text","ref"].includes(name))return;const d=n.details||{},label=d.prompt||d.text_two||d.textTwo||d.help;if(label)out.push({gi,fi,id,label,ctx,type:name});});});}));return out;}
+  function search(){const q=E.search.value.trim().toLowerCase();if(!q){E.search_results.hidden=true;E.search_results.innerHTML="";return;}const rs=entries().filter(x=>`${x.label} ${x.ctx} ${x.type}`.toLowerCase().includes(q)).slice(0,32);E.search_results.innerHTML="";E.search_results.hidden=false;if(!rs.length){E.search_results.innerHTML='<div class="search-none">question_match=none</div>';return;}rs.forEach(x=>{const b=document.createElement("button");b.type="button";b.className="search-result";b.innerHTML=`<strong>${esc(x.label)}</strong><span>${esc(x.type)} · ${esc(x.ctx)}</span>`;b.onclick=()=>{E.search.value="";E.search_results.hidden=true;S.group=x.gi;S.fs=x.fi;S.form=x.id;S.selected=x.q?{type:"question",key:qkey(x.q),question:x.q}:null;render();if(S.selected)select(S.selected);};E.search_results.appendChild(b);});}
+  function render(){renderTabs();renderNav();renderPage();renderStatus();renderDrawer();}
 
-  function renderSearch() {
-    const query = els.search.value.trim().toLocaleLowerCase();
-    if (!query) { els.searchResults.hidden = true; els.searchResults.innerHTML = ""; return; }
-    const results = searchEntries().filter((entry) => `${entry.label} ${entry.context} ${entry.type}`.toLocaleLowerCase().includes(query)).slice(0, 40);
-    els.searchResults.innerHTML = ""; els.searchResults.hidden = false;
-    if (!results.length) { const none = document.createElement("div"); none.className = "search-none"; none.textContent = "question_match=none"; els.searchResults.appendChild(none); return; }
-    results.forEach((entry) => {
-      const button = document.createElement("button"); button.type = "button"; button.className = "search-result";
-      button.innerHTML = `<strong>${escapeHtml(entry.label)}</strong><span>${escapeHtml(entry.type)} · ${escapeHtml(entry.context)}</span>`;
-      button.addEventListener("click", () => { els.search.value = ""; els.searchResults.hidden = true; selectForm(entry.fsIndex, entry.formId); if (entry.question) { state.selectedQuestionKey = questionKey(entry.question); renderInspector(entry.question); } });
-      els.searchResults.appendChild(button);
-    });
-  }
+  async function load(){try{const r=await fetch("/api/bios/schema",{method:"GET",headers:{Accept:"application/json"},cache:"no-store"});if(!r.ok)throw new Error(`HTTP ${r.status}`);const s=await r.json();if(s.readOnly!==true||s.activeWritePath!=="none")throw new Error("kernel BIOS snapshot did not advertise the locked read-only boundary");S.schema=s;init();E.app.setAttribute("aria-busy","false");render();}catch(e){E.capture_state.textContent="UNAVAILABLE";E.form_title.textContent="BIOS schema unavailable";E.form_help.textContent=String(e);E.footer_state.textContent="Axum is running, but the kernel BIOS snapshot could not be read.";E.form_content.innerHTML="";E.form_content.appendChild(empty("No firmware data","The UI remains read-only. Retry when the TRUEOS BIOS snapshot ABI is available."));E.app.setAttribute("aria-busy","false");}}
 
-  function renderStatus() {
-    const schema = state.schema || {};
-    els.apiChip.textContent = schema.api || "BIOS schema";
-    const forms = formsets().reduce((n, fs) => n + formsFor(fs).length, 0);
-    els.footerState.textContent = `${schema.state || "unknown"} · ${schema.stats?.formsets ?? formsets().length} formsets · ${schema.stats?.forms ?? forms} forms · ${schema.stats?.questions ?? "?"} questions · active_write_path=none`;
-  }
-
-  function render() { if (state.formId == null) selectFirstForm(); renderSidebar(); renderForm(); renderStatus(); }
-
-  async function loadSchema() {
-    try {
-      const response = await fetch("/api/bios/schema", { method: "GET", headers: { Accept: "application/json" }, cache: "no-store" });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const schema = await response.json();
-      if (schema.readOnly !== true || schema.activeWritePath !== "none") throw new Error("kernel snapshot did not advertise the locked read-only boundary");
-      state.schema = schema;
-      const first = formsets()[0]; state.formsetIndex = first ? formsetIndexOf(first, 0) : 0; state.formId = formsFor(first)[0] ? formIdOf(formsFor(first)[0]) : null;
-      els.app.setAttribute("aria-busy", "false"); render();
-    } catch (error) {
-      els.apiChip.textContent = "schema unavailable"; els.formTitle.textContent = "BIOS schema unavailable"; els.formHelp.textContent = String(error);
-      els.footerState.textContent = "The localhost server is running, but the kernel BIOS snapshot could not be read.";
-      els.formContent.innerHTML = ""; els.formContent.appendChild(emptyForm("No firmware data", "The browser UI remains read-only; retry after the TRUEOS BIOS snapshot ABI is available."));
-      els.app.setAttribute("aria-busy", "false");
-    }
-  }
-
-  els.search.addEventListener("input", renderSearch);
-  els.search.addEventListener("keydown", (event) => { if (event.key === "Escape") { els.search.value = ""; renderSearch(); } });
-  document.addEventListener("click", (event) => { if (!els.searchResults.hidden && !event.target.closest(".search-box") && !event.target.closest(".search-results")) els.searchResults.hidden = true; });
-  window.addEventListener("keydown", (event) => {
-    const saveKey = event.key === "F10" || ((event.ctrlKey || event.metaKey) && event.key.toLocaleLowerCase() === "s");
-    if (saveKey) { event.preventDefault(); event.stopPropagation(); showToast("Save is intentionally unavailable. TRUEOS exposes no BIOS write path."); }
-  }, { capture: true });
-
-  loadSchema();
+  E.search.addEventListener("input",search);E.search.addEventListener("keydown",e=>{if(e.key==="Escape"){E.search.value="";search();}});
+  document.addEventListener("click",e=>{if(!E.search_results.hidden&&!e.target.closest(".firmware-search")&&!e.target.closest(".search-results"))E.search_results.hidden=true;});
+  E.details_button.onclick=()=>drawer(!S.drawer);E.drawer_close.onclick=()=>drawer(false);E.drawer_backdrop.onclick=()=>drawer(false);
+  window.addEventListener("keydown",e=>{if(e.key==="/"&&!/input|textarea/i.test(document.activeElement?.tagName||"")){e.preventDefault();E.search.focus();return;}if(e.key==="Escape"&&S.drawer){drawer(false);return;}const save=e.key==="F10"||((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="s");if(save){e.preventDefault();e.stopPropagation();toast("Save is unavailable. TRUEOS exposes no BIOS write path.");}}, {capture:true});
+  load();
 })();
