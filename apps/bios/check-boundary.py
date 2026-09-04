@@ -15,7 +15,19 @@ for forbidden in ("routing::post", ".post(", ".put(", ".patch(", ".delete(", "se
     if forbidden.casefold() in server.casefold():
         raise SystemExit(f"write-capable BIOS server surface detected: {forbidden}")
 
-for token in ('presentation?.nodes', 'name==="subtitle"', 'name==="text"', 'name==="ref"', 'e.key==="F10"', 'question_match=none', 's.activeWritePath!=="none"'):
+for token in (
+    'presentation?.nodes',
+    'name==="subtitle"',
+    'name==="text"',
+    'name==="ref"',
+    'S.schema?.current?.questions',
+    'c?.status==="decoded"',
+    'visibilityFor(q)==="suppressed"',
+    'Captured preboot',
+    'e.key==="F10"',
+    'question_match=none',
+    's.activeWritePath!=="none"',
+):
     if token not in js:
         raise SystemExit(f"missing ordered/read-only UI contract: {token}")
 
@@ -23,4 +35,4 @@ for token in ("top-tabs", "help-rail", "details-drawer"):
     if token not in html:
         raise SystemExit(f"missing firmware UI surface: {token}")
 
-print("bios-ui-boundary: GET-only ordered firmware renderer verified")
+print("bios-ui-boundary: GET-only ordered firmware renderer with captured current state verified")
