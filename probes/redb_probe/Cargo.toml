@@ -1,0 +1,12 @@
+[package]
+name = "redb_probe"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "redb_probe"
+path = "main.rs"
+
+[dependencies]
+trueos-redb.workspace = true
+trueos.workspace = true

@@ -1,0 +1,12 @@
+[package]
+name = "redb_multirt"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "redb_multirt"
+path = "main.rs"
+
+[dependencies]
+trueos-redb.workspace = true
+trueos.workspace = true
