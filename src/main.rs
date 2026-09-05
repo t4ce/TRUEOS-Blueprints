@@ -15,6 +15,7 @@ mod build_plan;
 mod cargo_output;
 mod cli;
 mod publish;
+mod std_backend;
 mod toolchain;
 
 #[cfg(test)]
@@ -533,9 +534,8 @@ fn build_one_target_to_in_lane(
     let build_settings = resolve_build_settings(&app_dir, &manifest_path, &build_target)?;
     if matches!(build_settings.flavor, BuildFlavor::TokioStd) {
         ensure_rust_std_trueos_cfg_hooks()?;
-        ensure_rust_std_trueos_thread_set_name()?;
-        ensure_rust_std_trueos_thread_cleanup()?;
-        ensure_rust_std_trueos_thread_current_rebind()?;
+        let sdk = blueprint_root(&app_dir).ok_or("cannot locate Blueprint SDK for TRUEOS std backend")?;
+        std_backend::install(&sdk)?;
         ensure_rust_std_trueos_hash_random()?;
         ensure_rust_std_trueos_no_threads_tls()?;
         ensure_rust_std_trueos_no_backtrace()?;
@@ -566,7 +566,7 @@ fn build_one_target_to_in_lane(
         BuildFlavor::TokioStd => format!(
             "{}-{}",
             build_settings.flavor.cache_label(),
-            trueos_std_cache_revision()?,
+            std_backend::cache_revision()?,
         ),
         BuildFlavor::ThinNoStd => build_settings.flavor.cache_label().to_string(),
     };
@@ -1539,82 +1539,10 @@ fn env_path(name: &str) -> Option<PathBuf> {
     }
 }
 
-fn ensure_rust_std_trueos_thread_set_name() -> Result<(), String> {
-    let unix_thread =
-        toolchain::rust_sysroot()?.join("lib/rustlib/src/rust/library/std/src/sys/thread/unix.rs");
-    let source = fs::read_to_string(&unix_thread).map_err(|err| {
-        format!(
-            "failed to read Rust std thread source {}; install rust-src or check permissions: {err}",
-            unix_thread.display()
-        )
-    })?;
-    if source.contains("target_os = \"trueos\"") {
-        if source.contains("pub fn set_name(_name: &core::ffi::CStr)") {
-            return Ok(());
-        }
-        if source.contains("pub fn set_name(_name: &CStr)") {
-            let patched = source.replace(
-                "pub fn set_name(_name: &CStr)",
-                "pub fn set_name(_name: &core::ffi::CStr)",
-            );
-            fs::write(&unix_thread, patched).map_err(|err| {
-                format!(
-                    "failed to patch Rust std thread source {}: {err}",
-                    unix_thread.display()
-                )
-            })?;
-            println!(
-                "trueos-blueprint: patched rust-src std unix thread set_name CStr path: {}",
-                unix_thread.display()
-            );
-            return Ok(());
-        }
-    }
-    if source.contains("target_os = \"trueos\"")
-        && source.contains("pub fn set_name(_name: &core::ffi::CStr)")
-    {
-        return Ok(());
-    }
-
-    let marker = "\n#[cfg(not(target_os = \"espidf\"))]\npub fn sleep";
-    let Some(marker_idx) = source.find(marker) else {
-        return Err(format!(
-            "failed to patch {}; missing std unix thread sleep marker",
-            unix_thread.display()
-        ));
-    };
-    let patch = r#"
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-pub fn set_name(_name: &core::ffi::CStr) {}
-"#;
-    let mut patched = String::with_capacity(source.len() + patch.len());
-    patched.push_str(&source[..marker_idx]);
-    patched.push_str(patch);
-    patched.push_str(&source[marker_idx..]);
-    fs::write(&unix_thread, patched).map_err(|err| {
-        format!(
-            "failed to patch Rust std thread source {}: {err}",
-            unix_thread.display()
-        )
-    })?;
-    println!(
-        "trueos-blueprint: patched rust-src std unix thread set_name for trueos: {}",
-        unix_thread.display()
-    );
-    Ok(())
-}
-
 fn pinned_rust_src_path(relative: &str) -> Result<PathBuf, String> {
     Ok(toolchain::rust_sysroot()?
         .join("lib/rustlib/src/rust/library")
         .join(relative))
-}
-
-fn trueos_std_cache_revision() -> Result<String, String> {
-    let source = fs::read(pinned_rust_src_path("std/src/sys/thread/unix.rs")?).map_err(io_string)?;
-    let digest = Sha256::digest(&source);
-    Ok(format!("{:x}", digest)[..12].to_string())
 }
 
 const TRUEOS_STD_RANDOM_BACKEND: &str = r#"//! TRUEOS kernel random source.
@@ -1886,197 +1814,6 @@ fn ensure_rust_src_libc_lock_matches_overlay(
     println!(
         "trueos-blueprint: invalidated TRUEOS build-std cache after libc repin: {}",
         cargo_target_dir.display()
-    );
-    Ok(())
-}
-
-fn ensure_rust_std_trueos_thread_cleanup() -> Result<(), String> {
-    let unix_thread = pinned_rust_src_path("std/src/sys/thread/unix.rs")?;
-    let mut source = fs::read_to_string(&unix_thread).map_err(|err| {
-        format!(
-            "failed to read Rust std thread source {}; install rust-src or check permissions: {err}",
-            unix_thread.display()
-        )
-    })?;
-    if !source.contains("TRUEOS service-lane pthread shim has no native TLS destructor") {
-        let needle = r#"                rust_start();
-            }
-            ptr::null_mut()"#;
-        let replacement = r#"                rust_start();
-
-                #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-                {
-                    // TRUEOS service-lane pthread shim has no native TLS destructor.
-                    crate::rt::thread_cleanup();
-                }
-            }
-            ptr::null_mut()"#;
-
-        if !source.contains(needle) {
-            return Err(format!(
-                "failed to patch {}; missing std unix thread_start cleanup marker",
-                unix_thread.display()
-            ));
-        }
-        source = source.replacen(needle, replacement, 1);
-    }
-
-    if !source.contains("TRUEOS has no POSIX thread detach lifecycle") {
-        let needle = r#"impl Drop for Thread {
-    fn drop(&mut self) {
-        let ret = unsafe { libc::pthread_detach(self.id) };
-        debug_assert_eq!(ret, 0);
-    }
-}"#;
-        let replacement = r#"impl Drop for Thread {
-    fn drop(&mut self) {
-        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-        {
-            // TRUEOS has no POSIX thread detach lifecycle.
-        }
-
-        #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-        {
-            let ret = unsafe { libc::pthread_detach(self.id) };
-            debug_assert_eq!(ret, 0);
-        }
-    }
-}"#;
-
-        if !source.contains(needle) {
-            return Err(format!(
-                "failed to patch {}; missing std unix Thread::drop marker",
-                unix_thread.display()
-            ));
-        }
-        source = source.replacen(needle, replacement, 1);
-    }
-
-    if !source.contains("TRUEOS has no POSIX thread join lifecycle") {
-        let needle = r#"    pub fn join(self) {
-        let id = self.into_id();
-        let ret = unsafe { libc::pthread_join(id, ptr::null_mut()) };
-        assert!(ret == 0, "failed to join thread: {}", io::Error::from_raw_os_error(ret));
-    }"#;
-        let replacement = r#"    pub fn join(self) {
-        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-        {
-            // TRUEOS has no POSIX thread join lifecycle.
-            let _ = self;
-        }
-
-        #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-        {
-            let id = self.into_id();
-            let ret = unsafe { libc::pthread_join(id, ptr::null_mut()) };
-            assert!(ret == 0, "failed to join thread: {}", io::Error::from_raw_os_error(ret));
-        }
-    }"#;
-
-        if !source.contains(needle) {
-            return Err(format!(
-                "failed to patch {}; missing std unix Thread::join marker",
-                unix_thread.display()
-            ));
-        }
-        source = source.replacen(needle, replacement, 1);
-    }
-
-    fs::write(&unix_thread, source).map_err(|err| {
-        format!(
-            "failed to patch Rust std thread source {}: {err}",
-            unix_thread.display()
-        )
-    })?;
-    println!(
-        "trueos-blueprint: patched rust-src std unix thread lifecycle for trueos: {}",
-        unix_thread.display()
-    );
-    Ok(())
-}
-
-fn ensure_rust_std_trueos_thread_current_rebind() -> Result<(), String> {
-    let current_rs = pinned_rust_src_path("std/src/thread/current.rs")?;
-    let source = fs::read_to_string(&current_rs).map_err(|err| {
-        format!(
-            "failed to read Rust std current thread source {}; install rust-src or check permissions: {err}",
-            current_rs.display()
-        )
-    })?;
-    if source.contains("TRUEOS carrier lanes may host multiple logical std threads") {
-        return Ok(());
-    }
-
-    let needle = r#"pub(super) fn set_current(thread: Thread) -> Result<(), Thread> {
-    if CURRENT.get() != NONE {
-        return Err(thread);
-    }
-
-    match id::get() {
-        Some(id) if id == thread.id() => {}
-        None => id::set(thread.id()),
-        _ => return Err(thread),
-    }
-
-    // Make sure that `crate::rt::thread_cleanup` will be run, which will
-    // call `drop_current`.
-    crate::sys::thread_local::guard::enable();
-    CURRENT.set(thread.into_raw().cast_mut());
-    Ok(())
-}"#;
-    let replacement = r#"pub(super) fn set_current(thread: Thread) -> Result<(), Thread> {
-    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-    {
-        // TRUEOS carrier lanes may host multiple logical std threads over time.
-        // Rebind the per-lane std thread handle/id instead of treating a prior
-        // logical thread as a fatal TLS collision.
-        let current = CURRENT.get();
-        if current > DESTROYED {
-            unsafe {
-                drop(Thread::from_raw(current));
-            }
-        }
-        id::set(thread.id());
-        crate::sys::thread_local::guard::enable();
-        CURRENT.set(thread.into_raw().cast_mut());
-        return Ok(());
-    }
-
-    #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-    {
-        if CURRENT.get() != NONE {
-            return Err(thread);
-        }
-
-        match id::get() {
-            Some(id) if id == thread.id() => {}
-            None => id::set(thread.id()),
-            _ => return Err(thread),
-        }
-
-        // Make sure that `crate::rt::thread_cleanup` will be run, which will
-        // call `drop_current`.
-        crate::sys::thread_local::guard::enable();
-        CURRENT.set(thread.into_raw().cast_mut());
-        Ok(())
-    }
-}"#;
-    if !source.contains(needle) {
-        return Err(format!(
-            "failed to patch {}; missing std current thread set_current marker",
-            current_rs.display()
-        ));
-    }
-    let patched = source.replace(needle, replacement);
-    fs::write(&current_rs, patched).map_err(|err| {
-        format!(
-            "failed to patch Rust std current thread source {}: {err}",
-            current_rs.display()
-        )
-    })?;
-    println!(
-        "trueos-blueprint: patched rust-src std current thread rebind for trueos: {}",
-        current_rs.display()
     );
     Ok(())
 }

@@ -3,6 +3,7 @@
 extern crate alloc;
 
 use alloc::sync::Arc;
+use alloc::vec::Vec;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use crossbeam::{
     atomic::AtomicCell,
@@ -20,9 +21,8 @@ const QUEUE_ROUNDS: u32 = 512;
 const ARRAY_QUEUE_CAP: usize = 32;
 const FIB_COUNT: usize = 20;
 const TOKIO_LANE_TASKS: usize = 4;
-const PRESSURE_BLOCKERS: usize = TOKIO_LANE_TASKS;
-const PRESSURE_SENTINELS: usize = TOKIO_LANE_TASKS;
-const PRESSURE_START_WAIT_MS: usize = 16;
+const PRESSURE_BLOCKERS: usize = 2;
+const PRESSURE_START_WAIT_MS: usize = 2_000;
 const PRESSURE_WORK_ROUNDS: u64 = 8192;
 
 fn main() {
@@ -151,253 +151,68 @@ async fn probe_tokio_lane_state() {
         ),
     );
 
-    logl::log(
-        level::INFO,
-        format_args!(
-            "cross: tokio lane probe spawn-blocking start tid={} mono_ns={}",
-            vsys::thread_current_id(),
-            clock::monotonic_nanos()
-        ),
-    );
-
-    let mut blocking_set = t::task::JoinSet::new();
-    for index in 0..TOKIO_LANE_TASKS {
-        blocking_set.spawn_blocking(move || {
-            let tid = vsys::thread_current_id();
-            let start = clock::monotonic_nanos();
-            let mut acc = 0u64;
-            for step in 0..1024u64 {
-                acc = acc.wrapping_add(step ^ index as u64);
-                core::hint::spin_loop();
-            }
-            let end = clock::monotonic_nanos();
-            (index, tid, end.saturating_sub(start), acc)
-        });
-    }
-
-    let mut blocking_sum = 0usize;
-    let mut blocking_tid_min = usize::MAX;
-    let mut blocking_tid_max = 0usize;
-    let mut blocking_elapsed_ns = 0u64;
-    for _ in 0..TOKIO_LANE_TASKS {
-        match blocking_set.join_next().await {
-            Some(Ok((index, tid, elapsed_ns, acc))) => {
-                blocking_sum = blocking_sum.wrapping_add(index);
-                blocking_tid_min = blocking_tid_min.min(tid);
-                blocking_tid_max = blocking_tid_max.max(tid);
-                blocking_elapsed_ns = blocking_elapsed_ns.wrapping_add(elapsed_ns);
-                logl::log(
-                    level::INFO,
-                    format_args!(
-                        "cross: tokio blocking task index={} tid={} elapsed_ns={} acc={}",
-                        index, tid, elapsed_ns, acc
-                    ),
-                );
-            }
-            Some(Err(_)) => {
-                logl::log(
-                    level::WARN,
-                    format_args!("cross: tokio blocking task join error"),
-                );
-            }
-            None => {
-                logl::log(
-                    level::WARN,
-                    format_args!("cross: tokio blocking task join missing"),
-                );
-            }
-        }
-    }
-    logl::log(
-        level::INFO,
-        format_args!(
-            "cross: tokio lane probe spawn-blocking done tasks={} sum={} tid_min={} tid_max={} elapsed_ns={}",
-            TOKIO_LANE_TASKS, blocking_sum, blocking_tid_min, blocking_tid_max, blocking_elapsed_ns
-        ),
-    );
 }
 
 async fn probe_tokio_worker_pressure() {
-    logl::log(
-        level::INFO,
-        format_args!(
-            "cross: tokio pressure start blockers={} sentinels={} tid={} mono_ns={}",
-            PRESSURE_BLOCKERS,
-            PRESSURE_SENTINELS,
-            vsys::thread_current_id(),
-            clock::monotonic_nanos()
-        ),
-    );
-
-    let started = Arc::new(AtomicUsize::new(0));
+    if t::worker::capacity() < PRESSURE_BLOCKERS {
+        logl::log(level::ERROR, format_args!("cross: native FAIL insufficient-capacity"));
+        return;
+    }
+    let ready = Arc::new(AtomicUsize::new(0));
     let release = Arc::new(AtomicUsize::new(0));
-    let sentinel_started = Arc::new(AtomicUsize::new(0));
-    let mut pressure_set = t::task::JoinSet::new();
-
+    let mut jobs = Vec::new();
+    let mut failed = false;
     for index in 0..PRESSURE_BLOCKERS {
-        let started = Arc::clone(&started);
-        let release = Arc::clone(&release);
-        pressure_set.spawn_blocking(move || {
-            let tid = vsys::thread_current_id();
-            let start_ns = clock::monotonic_nanos();
-            let ordinal = started.fetch_add(1, Ordering::AcqRel).saturating_add(1);
-            logl::log(
-                level::INFO,
-                format_args!(
-                    "cross: pressure blocker start index={} ordinal={} tid={} mono_ns={}",
-                    index, ordinal, tid, start_ns
-                ),
-            );
-
-            let mut spins = 0u64;
-            while release.load(Ordering::Acquire) == 0 {
-                spins = spins.wrapping_add(1);
-                core::hint::spin_loop();
-            }
-
-            let mut acc = spins;
-            for step in 0..PRESSURE_WORK_ROUNDS {
-                acc = acc.wrapping_add(step ^ index as u64);
-                core::hint::spin_loop();
-            }
-            let end_ns = clock::monotonic_nanos();
-            (
-                0u8,
-                index,
-                tid,
-                start_ns,
-                end_ns.saturating_sub(start_ns),
-                0usize,
-                acc,
-            )
-        });
-    }
-
-    let mut wait_ms = 0usize;
-    while started.load(Ordering::Acquire) < PRESSURE_BLOCKERS && wait_ms < PRESSURE_START_WAIT_MS {
-        wait_ms = wait_ms.saturating_add(1);
-        t::time::sleep(t::time::Duration::from_millis(1)).await;
-    }
-
-    let started_before_sentinels = started.load(Ordering::Acquire);
-    logl::log(
-        level::INFO,
-        format_args!(
-            "cross: tokio pressure queue sentinels blockers_started={} wait_ms={} mono_ns={}",
-            started_before_sentinels,
-            wait_ms,
-            clock::monotonic_nanos()
-        ),
-    );
-
-    for index in 0..PRESSURE_SENTINELS {
-        let sentinel_started = Arc::clone(&sentinel_started);
-        pressure_set.spawn_blocking(move || {
-            let tid = vsys::thread_current_id();
-            let start_ns = clock::monotonic_nanos();
-            let ordinal = sentinel_started
-                .fetch_add(1, Ordering::AcqRel)
-                .saturating_add(1);
-            let mut acc = 0u64;
-            for step in 0..1024u64 {
-                acc = acc.wrapping_add(step ^ index as u64);
-                core::hint::spin_loop();
-            }
-            let end_ns = clock::monotonic_nanos();
-            (
-                1u8,
-                index,
-                tid,
-                start_ns,
-                end_ns.saturating_sub(start_ns),
-                ordinal,
-                acc,
-            )
-        });
-    }
-
-    let release_ns = clock::monotonic_nanos();
-    let started_before_release = started.load(Ordering::Acquire);
-    release.store(1, Ordering::Release);
-    logl::log(
-        level::INFO,
-        format_args!(
-            "cross: tokio pressure release blockers_started={} mono_ns={}",
-            started_before_release, release_ns
-        ),
-    );
-
-    let mut blocker_count = 0usize;
-    let mut sentinel_count = 0usize;
-    let mut sentinel_order_min = usize::MAX;
-    let mut sentinel_order_max = 0usize;
-    let mut sentinel_tid_min = usize::MAX;
-    let mut sentinel_tid_max = 0usize;
-    let mut blocker_elapsed_total = 0u64;
-    let mut checksum = 0u64;
-
-    for _ in 0..PRESSURE_BLOCKERS.saturating_add(PRESSURE_SENTINELS) {
-        match pressure_set.join_next().await {
-            Some(Ok((kind, index, tid, start_ns, elapsed_ns, ordinal, acc))) => {
-                checksum = checksum.wrapping_add(acc);
-                if kind == 0 {
-                    blocker_count = blocker_count.saturating_add(1);
-                    blocker_elapsed_total = blocker_elapsed_total.wrapping_add(elapsed_ns);
-                    logl::log(
-                        level::INFO,
-                        format_args!(
-                            "cross: pressure blocker done index={} tid={} start_ns={} elapsed_ns={} acc={}",
-                            index, tid, start_ns, elapsed_ns, acc
-                        ),
-                    );
-                } else {
-                    sentinel_count = sentinel_count.saturating_add(1);
-                    sentinel_order_min = sentinel_order_min.min(ordinal);
-                    sentinel_order_max = sentinel_order_max.max(ordinal);
-                    sentinel_tid_min = sentinel_tid_min.min(tid);
-                    sentinel_tid_max = sentinel_tid_max.max(tid);
-                    logl::log(
-                        level::INFO,
-                        format_args!(
-                            "cross: pressure sentinel done index={} ordinal={} tid={} start_ns={} elapsed_ns={} acc={}",
-                            index, ordinal, tid, start_ns, elapsed_ns, acc
-                        ),
-                    );
+        let ready = ready.clone();
+        let release = release.clone();
+        match t::worker::spawn(move || {
+            let slot = t::worker::local_slot();
+            let runtime = t::runtime::current_thread().build().map_err(|_| "runtime")?;
+            let result = runtime.block_on(async {
+                ready.fetch_add(1, Ordering::AcqRel);
+                t::time::timeout(t::time::Duration::from_millis(PRESSURE_START_WAIT_MS as u64), async {
+                    while release.load(Ordering::Acquire) == 0 {
+                        t::time::sleep(t::time::Duration::from_millis(1)).await;
+                    }
+                }).await.map_err(|_| "release.timeout")?;
+                let mut checksum = 0u64;
+                for step in 0..PRESSURE_WORK_ROUNDS {
+                    checksum = checksum.wrapping_add(step ^ index as u64);
+                    if step % 256 == 0 { t::task::yield_now().await; }
                 }
-            }
-            Some(Err(_)) => {
-                logl::log(level::WARN, format_args!("cross: pressure task join error"));
-            }
-            None => {
-                logl::log(
-                    level::WARN,
-                    format_args!("cross: pressure task join missing"),
-                );
-            }
+                Ok::<_, &'static str>((slot, checksum))
+            });
+            drop(runtime);
+            result
+        }) {
+            Ok(job) => jobs.push(job),
+            Err(_) => { failed = true; break; }
         }
     }
-
-    if sentinel_count == 0 {
-        sentinel_order_min = 0;
+    if !failed && t::time::timeout(t::time::Duration::from_millis(PRESSURE_START_WAIT_MS as u64), async {
+        while ready.load(Ordering::Acquire) != PRESSURE_BLOCKERS {
+            t::time::sleep(t::time::Duration::from_millis(1)).await;
+        }
+    }).await.is_err() { failed = true; }
+    release.store(1, Ordering::Release);
+    let mut slots = Vec::new();
+    for mut job in jobs {
+        let joined = match t::time::timeout(t::time::Duration::from_secs(5), &mut job).await {
+            Ok(result) => result,
+            Err(_) => { failed = true; job.await }
+        };
+        match joined {
+            Ok(Ok((slot, checksum))) => {
+                let expected = PRESSURE_WORK_ROUNDS * (PRESSURE_WORK_ROUNDS - 1) / 2;
+                failed |= checksum != expected;
+                slots.push(slot);
+            }
+            _ => failed = true,
+        }
     }
-    logl::log(
-        level::INFO,
-        format_args!(
-            "cross: tokio pressure done blockers={}/{} sentinels={}/{} started_before_sentinels={} started_before_release={} sentinel_tid_min={} sentinel_tid_max={} sentinel_order_min={} sentinel_order_max={} blocker_elapsed_ns={} checksum={}",
-            blocker_count,
-            PRESSURE_BLOCKERS,
-            sentinel_count,
-            PRESSURE_SENTINELS,
-            started_before_sentinels,
-            started_before_release,
-            sentinel_tid_min,
-            sentinel_tid_max,
-            sentinel_order_min,
-            sentinel_order_max,
-            blocker_elapsed_total,
-            checksum
-        ),
-    );
+    failed |= slots.len() != PRESSURE_BLOCKERS || slots[0] == slots[1];
+    logl::log(if failed { level::ERROR } else { level::INFO },
+        format_args!("cross: native {} lanes={} rounds={PRESSURE_WORK_ROUNDS}", if failed { "FAIL" } else { "PASS" }, slots.len()));
 }
 
 fn run_proof(name: &'static str, proof: fn() -> Result<(), &'static str>) {

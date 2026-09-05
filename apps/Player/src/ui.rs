@@ -144,8 +144,20 @@ fn tokio_worker_probe() {
     };
 
     runtime.block_on(async {
-        let join = trueos::tokio::task::spawn_blocking(|| 0xA11D_10u32);
-        let _ = join.await;
+        let join = match trueos::worker::spawn(|| 0xA11D_10u32) {
+            Ok(join) => join,
+            Err(error) => {
+                trueos::logl::log(trueos::logl::level::WARN,
+                    format_args!("player: native worker startup probe submit: {error}"));
+                return;
+            }
+        };
+        match join.await {
+            Ok(0xA11D_10) => trueos::logl::log(trueos::logl::level::INFO,
+                format_args!("player: native worker startup probe passed")),
+            result => trueos::logl::log(trueos::logl::level::WARN,
+                format_args!("player: native worker startup probe completion: {result:?}")),
+        }
     });
 }
 

@@ -174,7 +174,7 @@ pub mod platform {
     where
         F: FnOnce() + Send + 'static,
     {
-        tokio::task::spawn_blocking(f);
+        drop(crate::worker::spawn(f).map_err(|_| ())?);
         Ok(())
     }
 
@@ -279,6 +279,9 @@ pub mod logl {
         }
     }
 }
+
+#[cfg(feature = "tokio-runtime")]
+pub mod worker;
 
 #[cfg(feature = "tokio-runtime")]
 pub mod runtime {
@@ -426,6 +429,22 @@ pub mod net {
 
     #[cfg(feature = "tokio-net-probe")]
     pub use tokio::net::{TcpListener, TcpStream, ToSocketAddrs, UdpSocket, lookup_host};
+
+    /// Resolve hostnames on explicit native capacity. Tokio's generic
+    /// `lookup_host` still uses its unsupported std-thread blocking pool.
+    #[cfg(feature = "tokio-net-probe")]
+    pub async fn resolve_host(host: &str, port: u16) -> std::io::Result<alloc::vec::Vec<std::net::SocketAddr>> {
+        use alloc::string::ToString;
+        use std::net::ToSocketAddrs as _;
+        // Numeric addresses never need a native worker, including IPv6.
+        if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+            return Ok(alloc::vec![std::net::SocketAddr::new(ip, port)]);
+        }
+        let host = host.to_string();
+        crate::worker::spawn(move || (host.as_str(), port).to_socket_addrs().map(|addresses| addresses.collect()))
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::WouldBlock, error))?
+            .await.map_err(std::io::Error::other)?
+    }
 
     #[cfg(feature = "tokio-net-probe")]
     pub mod mio {
@@ -932,6 +951,7 @@ pub mod t {
     pub use crate::task;
     pub use crate::time;
     pub use crate::tokio;
+    pub use crate::worker;
 }
 
 pub struct TrueosAllocator;
@@ -1030,5 +1050,5 @@ pub mod prelude {
     #[cfg(feature = "tokio-runtime")]
     pub use crate::t;
     #[cfg(feature = "tokio-runtime")]
-    pub use crate::{fs, io, runtime, sync, task, time, tokio};
+    pub use crate::{fs, io, runtime, sync, task, time, tokio, worker};
 }

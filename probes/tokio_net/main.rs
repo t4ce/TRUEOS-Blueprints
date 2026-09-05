@@ -253,12 +253,12 @@ async fn run_probe() -> Result<(), &'static str> {
 async fn probe_lookup_host() -> Result<SocketAddr, &'static str> {
     let mut addresses = t::time::timeout(
         t::time::Duration::from_millis(DNS_WAIT_BUDGET_MS),
-        t::net::lookup_host((REMOTE_HTTP_HOST, 443)),
+        t::net::resolve_host(REMOTE_HTTP_HOST, 443),
     )
     .await
     .map_err(|_| "net.lookup_host.timeout")?
     .map_err(|_| "net.lookup_host.resolve")?;
-    let address = addresses.next().ok_or("net.lookup_host.empty")?;
+    let address = addresses.into_iter().next().ok_or("net.lookup_host.empty")?;
     logl::log(
         level::INFO,
         format_args!(

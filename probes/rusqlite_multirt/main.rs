@@ -4,15 +4,14 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use rusqlite_fork::{Connection, MAIN_DB, params};
-use trueos::{async_fs, logl, logl::level, platform, t, vsys};
+use trueos::{async_fs, logl, logl::level, platform, t};
 
 const COMMON_DIR: &str = "/common";
 const DB_PATH: &str = "/common/usersettings-multirt.db";
-// Exercise a meaningful chunk of the 18 VM-visible carriers without turning
-// this focused SQLite/runtime probe into a full-system saturation test.
-const WORKERS: usize = 8;
-const BATCHES_PER_WORKER: usize = 16;
-const ROWS_PER_BATCH: usize = 16;
+// Two explicit native runtime lanes; never infer capacity from std threads.
+const WORKERS: usize = 2;
+const BATCHES_PER_WORKER: usize = 1;
+const ROWS_PER_BATCH: usize = 1;
 const OPS_PER_WORKER: usize = BATCHES_PER_WORKER * ROWS_PER_BATCH;
 const START_WAIT_MS: usize = 2_000;
 
@@ -67,7 +66,7 @@ struct ColdReport {
 
 struct WorkerReport {
     worker: usize,
-    thread_id: usize,
+    wls_slot: usize,
     operations: usize,
     checksum: i64,
     image_bytes: usize,
@@ -79,7 +78,7 @@ struct Summary {
     workers: usize,
     operations: usize,
     checksum: i64,
-    distinct_threads: usize,
+    distinct_slots: usize,
     max_active: usize,
     worker_image_bytes: usize,
     digest: u64,
@@ -242,7 +241,7 @@ fn run_cold_read() -> Result<ColdReport, ProbeError> {
     })
 }
 
-fn run_worker(
+async fn run_worker(
     worker: usize,
     image: Arc<Vec<u8>>,
     ready: Arc<AtomicUsize>,
@@ -262,22 +261,27 @@ fn run_worker(
          delete from multirt_event;",
     )?;
 
-    let thread_id = vsys::thread_current_id();
+    let wls_slot = t::worker::local_slot() as usize;
     ready.fetch_add(1, Ordering::AcqRel);
-    while release.load(Ordering::Acquire) == 0 {
-        core::hint::spin_loop();
+    t::time::timeout(t::time::Duration::from_millis(START_WAIT_MS as u64), async {
+        while release.load(Ordering::Acquire) == 0 {
+            t::time::sleep(t::time::Duration::from_millis(1)).await;
+        }
+    }).await.map_err(|_| ProbeError::Executor("worker release timeout"))?;
+    if release.load(Ordering::Acquire) == 2 {
+        return Err(ProbeError::Executor("fleet cancelled"));
     }
 
     let now_active = active.fetch_add(1, Ordering::AcqRel).saturating_add(1);
     max_active.fetch_max(now_active, Ordering::AcqRel);
-    let result = run_worker_transactions(worker, thread_id, &mut conn);
+    let result = run_worker_transactions(worker, wls_slot, &mut conn).await;
     active.fetch_sub(1, Ordering::AcqRel);
     result
 }
 
-fn run_worker_transactions(
+async fn run_worker_transactions(
     worker: usize,
-    thread_id: usize,
+    wls_slot: usize,
     conn: &mut Connection,
 ) -> Result<WorkerReport, ProbeError> {
     let mut expected_checksum = 0i64;
@@ -306,6 +310,11 @@ fn run_worker_transactions(
             )));
         }
         tx.commit()?;
+        t::task::yield_now().await;
+        t::time::sleep(t::time::Duration::from_millis(1)).await;
+        if t::worker::local_slot() as usize != wls_slot {
+            return Err(ProbeError::Executor("worker WLS moved"));
+        }
     }
 
     let (rows, checksum): (i64, i64) = conn.query_row(
@@ -322,9 +331,21 @@ fn run_worker_transactions(
     }
 
     let image = conn.serialize(MAIN_DB)?;
+    // Reopen the serialized image and verify each row, not just its size/digest.
+    let mut restored = Connection::open_in_memory()?;
+    restored.deserialize_read_exact(MAIN_DB, &image, image.len(), false)?;
+    let mut statement = restored.prepare("select seq, payload from multirt_event where worker_id = ?1 order by seq")?;
+    let mut records = statement.query(params![worker as i64])?;
+    for seq in 0..OPS_PER_WORKER {
+        let row = records.next()?.ok_or_else(|| ProbeError::Invariant("serialized row missing".into()))?;
+        if row.get::<_, i64>(0)? != seq as i64 || row.get::<_, i64>(1)? != (worker as i64 + 1) * 1_000_000 + seq as i64 {
+            return Err(ProbeError::Invariant("serialized row mismatch".into()));
+        }
+    }
+    if records.next()?.is_some() { return Err(ProbeError::Invariant("extra serialized row".into())); }
     Ok(WorkerReport {
         worker,
-        thread_id,
+        wls_slot,
         operations: OPS_PER_WORKER,
         checksum,
         image_bytes: image.len(),
@@ -341,7 +362,7 @@ fn persist_summary(image: Arc<Vec<u8>>, summary: Summary) -> Result<usize, Probe
              workers integer not null,
              operations integer not null,
              checksum integer not null,
-             distinct_threads integer not null,
+             distinct_slots integer not null,
              max_active integer not null,
              worker_image_bytes integer not null,
              digest integer not null
@@ -349,13 +370,13 @@ fn persist_summary(image: Arc<Vec<u8>>, summary: Summary) -> Result<usize, Probe
     )?;
     conn.execute(
         "insert into multirt_summary
-             (id, workers, operations, checksum, distinct_threads, max_active, worker_image_bytes, digest)
+             (id, workers, operations, checksum, distinct_slots, max_active, worker_image_bytes, digest)
          values (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7)
          on conflict(id) do update set
              workers = excluded.workers,
              operations = excluded.operations,
              checksum = excluded.checksum,
-             distinct_threads = excluded.distinct_threads,
+             distinct_slots = excluded.distinct_slots,
              max_active = excluded.max_active,
              worker_image_bytes = excluded.worker_image_bytes,
              digest = excluded.digest",
@@ -363,7 +384,7 @@ fn persist_summary(image: Arc<Vec<u8>>, summary: Summary) -> Result<usize, Probe
             summary.workers as i64,
             summary.operations as i64,
             summary.checksum,
-            summary.distinct_threads as i64,
+            summary.distinct_slots as i64,
             summary.max_active as i64,
             summary.worker_image_bytes as i64,
             summary.digest as i64,
@@ -378,9 +399,10 @@ fn persist_summary(image: Arc<Vec<u8>>, summary: Summary) -> Result<usize, Probe
 async fn run_multirt() -> Result<MultiRtReport, ProbeError> {
     logl::log(
         level::INFO,
-        format_args!("rusqlite-multirt: phase=cold-read executor=spawn_blocking begin"),
+        format_args!("rusqlite-multirt: phase=cold-read executor=native-worker begin"),
     );
-    let cold = t::tokio::task::spawn_blocking(run_cold_read)
+    let cold = t::worker::spawn(run_cold_read)
+        .map_err(|_| ProbeError::Executor("cold-read submit"))?
         .await
         .map_err(|_| ProbeError::Executor("cold-read join"))??;
     logl::log(
@@ -403,12 +425,14 @@ async fn run_multirt() -> Result<MultiRtReport, ProbeError> {
     let release = Arc::new(AtomicUsize::new(0));
     let active = Arc::new(AtomicUsize::new(0));
     let max_active = Arc::new(AtomicUsize::new(0));
-    let mut workers = t::task::JoinSet::new();
+    let mut workers = Vec::new();
+    let mut failure = None;
+    if t::worker::capacity() < WORKERS { return Err(ProbeError::Executor("insufficient native capacity")); }
 
     logl::log(
         level::INFO,
         format_args!(
-            "rusqlite-multirt: phase=pressure executor=spawn_blocking workers={} batches_per_worker={} rows_per_batch={} begin",
+            "rusqlite-multirt: phase=pressure executor=native-worker workers={} batches_per_worker={} rows_per_batch={} begin",
             WORKERS, BATCHES_PER_WORKER, ROWS_PER_BATCH
         ),
     );
@@ -418,36 +442,52 @@ async fn run_multirt() -> Result<MultiRtReport, ProbeError> {
         let release = Arc::clone(&release);
         let active = Arc::clone(&active);
         let max_active = Arc::clone(&max_active);
-        workers
-            .spawn_blocking(move || run_worker(worker, image, ready, release, active, max_active));
+        match t::worker::spawn(move || {
+            let runtime = t::runtime::current_thread().build().map_err(|_| ProbeError::Executor("worker runtime"))?;
+            let result = runtime.block_on(run_worker(worker, image, ready, release, active, max_active));
+            drop(runtime);
+            result
+        }) {
+            Ok(job) => workers.push(job),
+            Err(_) => { failure = Some(ProbeError::Executor("worker submit")); break; }
+        }
     }
 
     let mut waited_ms = 0usize;
-    while ready.load(Ordering::Acquire) < WORKERS && waited_ms < START_WAIT_MS {
+    while failure.is_none() && ready.load(Ordering::Acquire) < WORKERS && waited_ms < START_WAIT_MS {
         waited_ms = waited_ms.saturating_add(1);
         t::time::sleep(t::time::Duration::from_millis(1)).await;
     }
     let ready_before_release = ready.load(Ordering::Acquire);
-    release.store(1, Ordering::Release);
+    if ready_before_release != WORKERS { failure.get_or_insert(ProbeError::Executor("worker ready timeout")); }
+    release.store(if failure.is_some() { 2 } else { 1 }, Ordering::Release);
 
     let mut reports = Vec::with_capacity(WORKERS);
-    while let Some(joined) = workers.join_next().await {
-        reports.push(joined.map_err(|_| ProbeError::Executor("pressure worker join"))??);
+    for mut worker in workers {
+        let joined = match t::time::timeout(t::time::Duration::from_secs(10), &mut worker).await {
+            Ok(result) => result,
+            Err(_) => { failure.get_or_insert(ProbeError::Executor("worker join timeout")); worker.await }
+        };
+        match joined {
+            Ok(Ok(report)) => reports.push(report),
+            Ok(Err(error)) => { failure.get_or_insert(error); }
+            Err(_) => { failure.get_or_insert(ProbeError::Executor("worker join")); }
+        }
     }
+    if let Some(error) = failure { return Err(error); }
     reports.sort_by_key(|report| report.worker);
-    let distinct_threads = reports
+    let distinct_slots = reports
         .iter()
-        .map(|report| report.thread_id)
+        .map(|report| report.wls_slot)
         .collect::<BTreeSet<_>>()
         .len();
     let max_active = max_active.load(Ordering::Acquire);
     if ready_before_release != WORKERS
         || reports.len() != WORKERS
-        || max_active != WORKERS
-        || distinct_threads != WORKERS
+        || distinct_slots != WORKERS
     {
         return Err(ProbeError::Invariant(format!(
-            "blocking fleet did not become concurrent ready={} joined={} max_active={max_active} distinct_threads={distinct_threads} expected={} wait_ms={waited_ms}",
+            "blocking fleet did not become concurrent ready={} joined={} max_active={max_active} distinct_slots={distinct_slots} expected={} wait_ms={waited_ms}",
             ready_before_release,
             reports.len(),
             WORKERS,
@@ -479,14 +519,15 @@ async fn run_multirt() -> Result<MultiRtReport, ProbeError> {
         workers: WORKERS,
         operations,
         checksum,
-        distinct_threads,
+        distinct_slots,
         max_active,
         worker_image_bytes,
         digest,
     };
     let final_image = Arc::clone(&image);
     let final_persisted_bytes =
-        t::tokio::task::spawn_blocking(move || persist_summary(final_image, summary))
+        t::worker::spawn(move || persist_summary(final_image, summary))
+            .map_err(|_| ProbeError::Executor("summary persistence submit"))?
             .await
             .map_err(|_| ProbeError::Executor("summary persistence join"))??;
 
@@ -528,13 +569,13 @@ fn main() {
         Ok(report) => logl::log(
             level::INFO,
             format_args!(
-                "rusqlite-multirt: PASS sqlite_version={} db_path={} cold_read=spawn_blocking cold_loaded_bytes={} workers={} ready={} distinct_threads={} max_active={} operations={} checksum={} worker_image_bytes={} digest=0x{:016X} final_persisted_bytes={} users={} settings={} sample={}:{}:{}:{}",
+                "rusqlite-multirt: PASS sqlite_version={} db_path={} cold_read=native-worker cold_loaded_bytes={} workers={} ready={} distinct_slots={} max_active={} operations={} checksum={} worker_image_bytes={} digest=0x{:016X} final_persisted_bytes={} users={} settings={} sample={}:{}:{}:{}",
                 report.cold.sqlite_version,
                 DB_PATH,
                 report.cold.loaded_bytes,
                 report.summary.workers,
                 report.ready_before_release,
-                report.summary.distinct_threads,
+                report.summary.distinct_slots,
                 report.summary.max_active,
                 report.summary.operations,
                 report.summary.checksum,

@@ -133,7 +133,7 @@ fn guard_disabled() -> bool {
         .is_some_and(|value| matches!(value.trim(), "0" | "false" | "off" | "no"))
 }
 
-fn locate_kernel_repo(blueprint_root: &Path) -> Result<Option<PathBuf>, String> {
+pub(crate) fn locate_kernel_repo(blueprint_root: &Path) -> Result<Option<PathBuf>, String> {
     if let Some(configured) = env::var_os(KERNEL_REPO_ENV)
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)

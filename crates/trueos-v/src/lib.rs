@@ -30,6 +30,8 @@ pub mod vled {
 
 pub mod borrow;
 pub mod bp_abi;
+#[doc(hidden)]
+pub mod worker_abi;
 pub mod calculator_base;
 pub mod child_hull;
 pub mod env;

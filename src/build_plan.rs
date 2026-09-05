@@ -23,7 +23,7 @@ impl BuildFlavor {
             // Cargo does not reliably invalidate cached build-std artifacts
             // after the pinned external rust-src tree is patched. Bump this
             // revision whenever the TRUEOS std hooks change.
-            BuildFlavor::TokioStd => "tokio-platform-v5-canonical",
+            BuildFlavor::TokioStd => "tokio-platform-v6-native-workers",
             BuildFlavor::ThinNoStd => "thin-nostd",
         }
     }
