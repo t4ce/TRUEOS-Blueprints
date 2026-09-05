@@ -139,8 +139,13 @@ fn vmx_shell_prompt() {
 
 #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
 fn tokio_worker_probe() {
-    let Ok(runtime) = trueos::runtime::current_thread().build() else {
-        return;
+    let runtime = match trueos::runtime::current_thread().build() {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            trueos::logl::log(trueos::logl::level::WARN,
+                format_args!("player: native worker startup probe runtime: {error}"));
+            return;
+        }
     };
 
     runtime.block_on(async {
@@ -152,11 +157,15 @@ fn tokio_worker_probe() {
                 return;
             }
         };
-        match join.await {
-            Ok(0xA11D_10) => trueos::logl::log(trueos::logl::level::INFO,
+        // This is a startup diagnostic. A timed-out handle detaches its finite
+        // sentinel job; the UI can open while kernel lifetime tracking retains it.
+        match trueos::time::timeout(trueos::time::Duration::from_secs(5), join).await {
+            Ok(Ok(0xA11D_10)) => trueos::logl::log(trueos::logl::level::INFO,
                 format_args!("player: native worker startup probe passed")),
-            result => trueos::logl::log(trueos::logl::level::WARN,
+            Ok(result) => trueos::logl::log(trueos::logl::level::WARN,
                 format_args!("player: native worker startup probe completion: {result:?}")),
+            Err(_) => trueos::logl::log(trueos::logl::level::WARN,
+                format_args!("player: native worker startup probe timed out; job detached, continuing UI")),
         }
     });
 }
