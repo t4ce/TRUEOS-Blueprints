@@ -1,0 +1,12 @@
+[package]
+name = "trueos-redb"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[features]
+default = []
+std = ["redb/std"]
+
+[dependencies]
+redb = { version = "=4.2.0", default-features = false, features = ["experimental-api-5"] }

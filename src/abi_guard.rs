@@ -21,6 +21,10 @@ pub(crate) fn verify_before_pack(
     blueprint_root: Option<&Path>,
     linked_object: &Path,
 ) -> Result<(), String> {
+    // Loader compatibility is required even when CABI signature comparison is
+    // deliberately disabled or no kernel checkout can be discovered.
+    let imports = undefined_imports(linked_object)?;
+    verify_launchable_imports(&imports)?;
     if guard_disabled() {
         println!("trueos-blueprint: WARNING: CABI pack guard disabled by {ABI_GUARD_ENV}");
         return Ok(());
@@ -41,7 +45,9 @@ pub(crate) fn verify_before_pack(
     };
     let kernel_abi = kernel_root.join(ABI_DECLARATIONS_RELATIVE);
 
-    let imports = undefined_cabi_imports(linked_object)?;
+    let imports = imports.into_iter()
+        .filter(|symbol| symbol.starts_with("trueos_cabi_"))
+        .collect::<BTreeSet<_>>();
     if imports.is_empty() {
         println!("trueos-blueprint: CABI pack guard: no trueos_cabi imports");
         return Ok(());
@@ -196,7 +202,7 @@ fn is_trueos_directory_name(path: &Path) -> bool {
         .is_some_and(|name| name.eq_ignore_ascii_case("trueos"))
 }
 
-fn undefined_cabi_imports(object: &Path) -> Result<BTreeSet<String>, String> {
+fn undefined_imports(object: &Path) -> Result<BTreeSet<String>, String> {
     let mut readelf = tool_command(&["llvm-readelf", "readelf"])?;
     let output = readelf
         .arg("-Ws")
@@ -212,29 +218,50 @@ fn undefined_cabi_imports(object: &Path) -> Result<BTreeSet<String>, String> {
     }
     let stdout = String::from_utf8(output.stdout)
         .map_err(|err| format!("CABI pack guard readelf output was not UTF-8: {err}"))?;
+    Ok(parse_undefined_imports(&stdout))
+}
+
+fn parse_undefined_imports(stdout: &str) -> BTreeSet<String> {
     let mut imports = BTreeSet::new();
     for line in stdout.lines() {
         let columns = line.split_whitespace().collect::<Vec<_>>();
         if columns.len() < 8 || columns[6] != "UND" {
             continue;
         }
-        let symbol = columns
-            .last()
-            .copied()
-            .unwrap_or_default()
+        // GNU readelf may append a version index, e.g. `name@VER (2)`.
+        // The name is column eight, not necessarily the final column.
+        let symbol = columns[7]
             .split('@')
             .next()
             .unwrap_or_default();
-        if matches!(symbol, "pthread_create" | "pthread_join" | "pthread_detach" | "pthread_kill") {
-            return Err(format!(
-                "Blueprint still imports unsupported pthread lifecycle symbol {symbol}; rebuild with the TRUEOS std backend and migrate active work to trueos::worker"
-            ));
-        }
-        if symbol.starts_with("trueos_cabi_") {
-            imports.insert(symbol.to_string());
+        imports.insert(symbol.to_string());
+    }
+    imports
+}
+
+fn verify_launchable_imports(imports: &BTreeSet<String>) -> Result<(), String> {
+    let mut failures = Vec::new();
+    for symbol in imports {
+        let reason = match symbol.as_str() {
+            "pthread_create" | "pthread_join" | "pthread_detach" | "pthread_kill" =>
+                Some("POSIX thread lifecycle is unavailable; rebuild with the TRUEOS std backend and use trueos::worker"),
+            "opendir" | "fdopendir" | "readdir" | "readdir_r" | "closedir" | "dirfd" =>
+                Some("POSIX directory streams are unavailable; use trueos::async_fs::list_dir"),
+            "trueos_tokio_tls_current_slot" =>
+                Some("legacy TLS import; rebuild against the WLS SDK"),
+            name if name.starts_with("trueos_cabi_fs_") || name.starts_with("trueos_cabi_trueosfs_") =>
+                Some("synchronous filesystem ABI removed; use trueos::async_fs"),
+            _ => None,
+        };
+        if let Some(reason) = reason {
+            failures.push(format!("  {symbol}: {reason}"));
         }
     }
-    Ok(imports)
+    if failures.is_empty() { return Ok(()); }
+    Err(format!(
+        "Blueprint has loader-blocked imports; no new .bp was produced:\n{}\nAny existing dist or published package is from an earlier successful build.",
+        failures.join("\n"),
+    ))
 }
 
 fn parse_contract_file(path: &Path) -> Result<BTreeMap<String, FunctionContract>, String> {
@@ -388,6 +415,31 @@ fn digest_hex(digest: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn versioned_undefined_symbols_keep_the_name_before_the_version_index() {
+        let imports = parse_undefined_imports(
+            "  1: 0000000000000000 0 FUNC GLOBAL DEFAULT UND pthread_detach@GLIBC_2.34 (2)\n\
+               2: 0000000000000100 0 FUNC GLOBAL DEFAULT 1 pthread_join\n\
+               3: 0000000000000000 0 NOTYPE GLOBAL DEFAULT UND trueos_cabi_poll_once\n"
+        );
+        assert_eq!(imports, BTreeSet::from(["pthread_detach".into(), "trueos_cabi_poll_once".into()]));
+        assert!(verify_launchable_imports(&imports).unwrap_err().contains("pthread_detach"));
+    }
+
+    #[test]
+    fn loader_gate_rejects_all_removed_surfaces_together() {
+        let imports = BTreeSet::from([
+            "pthread_kill".into(), "trueos_cabi_fs_read_file".into(),
+            "opendir".into(), "trueos_tokio_tls_current_slot".into(),
+        ]);
+        let error = verify_launchable_imports(&imports).unwrap_err();
+        for symbol in imports { assert!(error.contains(&symbol)); }
+        assert!(verify_launchable_imports(&BTreeSet::from([
+            "pthread_mutex_lock".into(), "trueos_cabi_async_fs_read_start".into(),
+            "trueos_service_lane_submit_job".into(), "raise".into(),
+        ])).is_ok());
+    }
 
     #[test]
     fn signatures_ignore_names_and_whitespace() {

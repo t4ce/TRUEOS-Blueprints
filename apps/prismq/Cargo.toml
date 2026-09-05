@@ -11,7 +11,7 @@ path = "main.rs"
 axum.workspace = true
 prism-q = { path = "crates/prism-q", default-features = true }
 rayon.workspace = true
-rusqlite_fork = { package = "rusqlite", git = "https://github.com/t4ce/rusqlite", rev = "c5a9ada73515cd860f490f8bdd59f83acf5d8e3f", default-features = false, features = ["bundled", "serialize"] }
+trueos-redb.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

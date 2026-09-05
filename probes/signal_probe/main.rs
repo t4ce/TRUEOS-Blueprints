@@ -10,8 +10,7 @@ const SIGTERM: c_int = 15;
 
 unsafe extern "C" {
     fn __errno_location() -> *mut c_int;
-    fn pthread_kill(thread: usize, signal: c_int) -> c_int;
-    fn pthread_self() -> usize;
+    fn raise(signal: c_int) -> c_int;
 }
 
 fn errno() -> c_int {
@@ -49,23 +48,22 @@ async fn deliver_and_receive(
     signal_number: c_int,
     stream: &mut Signal,
 ) -> Result<(), &'static str> {
-    let thread = unsafe { pthread_self() };
     logl::log(
         level::INFO,
         format_args!(
-            "signal-probe: stage pthread_kill.{name} thread={thread} signal={signal_number}"
+            "signal-probe: stage raise.{name} owner=current-blueprint signal={signal_number}"
         ),
     );
-    let rc = unsafe { pthread_kill(thread, signal_number) };
+    let rc = unsafe { raise(signal_number) };
     if rc != 0 {
         logl::log(
             level::ERROR,
             format_args!(
-                "signal-probe: failed pthread_kill.{name} rc={rc} errno={}",
+                "signal-probe: failed raise.{name} rc={rc} errno={}",
                 errno()
             ),
         );
-        return Err("pthread_kill");
+        return Err("raise");
     }
 
     match timeout(Duration::from_secs(2), stream.recv()).await {

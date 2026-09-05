@@ -138,6 +138,7 @@ tracing = "=0.1.44"
 tracing-appender = "0.2"
 tracing-subscriber = "=0.3.23"
 trueos = { path = "api" }
+trueos-redb = { path = "crates/trueos-redb" }
 trueos-gboi = { path = "../TRUEOS/crates/trueos-gboi" }
 trueos-chat = { path = "apps/chatserver/trueos-chat" }
 trybuild = "1.0.19"

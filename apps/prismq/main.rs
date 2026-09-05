@@ -15,7 +15,8 @@ use axum::{
     routing::{get, post},
 };
 use prism_q::{Instruction, SvgOptions, TextOptions, bitstring, circuit::openqasm, simulate};
-use rusqlite_fork::{Connection, MAIN_DB, OptionalExtension, params};
+mod storage;
+use storage::{CircuitDatabase, persist_circuit_database};
 use serde::{Deserialize, Serialize};
 
 const MAX_SIM_QUBITS: usize = 26;
@@ -27,7 +28,7 @@ const DESIGNER_HTML: &str = include_str!("designer.html");
 const MAX_WEB_SHOTS: usize = 100_000;
 const MAX_WEB_OUTCOMES: usize = 256;
 // App filesystem paths are relative to TRUEOS's dedicated `apps/prismq` root.
-const CIRCUIT_DB_PATH: &str = "prismq.sqlite3";
+const CIRCUIT_DB_PATH: &str = "prismq.redb";
 const LEGACY_CIRCUIT_INDEX_PATH: &str = "circuits/index.json";
 
 #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
@@ -276,333 +277,6 @@ impl IntoResponse for ApiError {
     }
 }
 
-struct CircuitDatabase {
-    conn: Connection,
-    existed_before_open: bool,
-    loaded_bytes: usize,
-}
-
-impl CircuitDatabase {
-    async fn open() -> Result<Self, ApiError> {
-        let exists = app_fs::try_exists(CIRCUIT_DB_PATH)
-            .await
-            .map_err(|err| ApiError::internal(format!("inspect circuit database failed: {err}")))?;
-        println!("prismq: circuit database open path={CIRCUIT_DB_PATH} exists={exists}");
-        let (database_image, loaded_bytes) = if exists {
-            let bytes = app_fs::read(CIRCUIT_DB_PATH).await.map_err(|err| {
-                ApiError::internal(format!("read circuit database failed: {err}"))
-            })?;
-            let loaded_bytes = bytes.len();
-            (Some(bytes), loaded_bytes)
-        } else {
-            (None, 0)
-        };
-        let mut conn = Connection::open_in_memory()
-            .map_err(|err| sqlite_error("open in-memory circuit database", err))?;
-        println!("prismq: circuit database SQLite connection ready");
-        if let Some(bytes) = database_image {
-            if !bytes.is_empty() {
-                let len = bytes.len();
-                conn.deserialize_read_exact(MAIN_DB, bytes.as_slice(), len, false)
-                    .map_err(|err| sqlite_error("deserialize circuit database", err))?;
-            }
-        }
-        conn.execute_batch(
-            "pragma foreign_keys = on;
-             create table if not exists circuits (
-                 name text primary key not null,
-                 qubits integer not null,
-                 document blob not null
-             );
-             create table if not exists circuit_revisions (
-                 circuit_name text not null,
-                 revision integer not null check (revision > 0),
-                 qubits integer not null,
-                 document blob not null,
-                 primary key (circuit_name, revision),
-                 foreign key (circuit_name) references circuits(name) on delete cascade
-             );
-             pragma user_version = 1;",
-        )
-        .map_err(|err| sqlite_error("migrate circuit database", err))?;
-        let existing_count: i64 = conn
-            .query_row("select count(*) from circuits", [], |row| row.get(0))
-            .map_err(|err| sqlite_error("inspect circuit database contents", err))?;
-        let migrated = if existing_count == 0 {
-            migrate_legacy_circuits(&mut conn).await?
-        } else {
-            0
-        };
-        let database = Self {
-            conn,
-            existed_before_open: exists,
-            loaded_bytes,
-        };
-        if migrated > 0 {
-            let image = database.serialize()?;
-            drop(database);
-            let loaded_bytes = image.len();
-            persist_circuit_database(image.as_slice().to_vec()).await?;
-            println!("prismq: imported {migrated} legacy JSON circuits into SQLite");
-            let mut conn = Connection::open_in_memory()
-                .map_err(|err| sqlite_error("reopen imported circuit database", err))?;
-            conn.deserialize_read_exact(MAIN_DB, image.as_slice(), loaded_bytes, false)
-                .map_err(|err| sqlite_error("reload imported circuit database", err))?;
-            return Ok(Self {
-                conn,
-                existed_before_open: true,
-                loaded_bytes,
-            });
-        }
-        Ok(database)
-    }
-
-    fn serialize(&self) -> Result<Vec<u8>, ApiError> {
-        Ok(self
-            .conn
-            .serialize(MAIN_DB)
-            .map_err(|err| sqlite_error("serialize circuit database", err))?
-            .to_vec())
-    }
-
-    fn sqlite_version(&self) -> Result<String, ApiError> {
-        self.conn
-            .query_row("select sqlite_version()", [], |row| row.get(0))
-            .map_err(|err| sqlite_error("query sqlite version", err))
-    }
-
-    fn persisted_image(&self) -> Result<Vec<u8>, ApiError> {
-        self.serialize()
-    }
-
-    fn revision_count(&self) -> Result<usize, ApiError> {
-        self.conn
-            .query_row("select count(*) from circuit_revisions", [], |row| {
-                row.get::<_, i64>(0)
-            })
-            .map(|count| count.max(0) as usize)
-            .map_err(|err| sqlite_error("count circuit revisions", err))
-    }
-}
-
-async fn persist_circuit_database(bytes: Vec<u8>) -> Result<usize, ApiError> {
-    let len = bytes.len();
-    app_fs::write(CIRCUIT_DB_PATH, bytes.as_slice())
-        .await
-        .map_err(|err| ApiError::internal(format!("persist circuit database failed: {err}")))?;
-    println!("prismq: SQLite image persisted path={CIRCUIT_DB_PATH} bytes={len}");
-    Ok(len)
-}
-
-impl CircuitDatabase {
-    fn list(&self) -> Result<Vec<serde_json::Value>, ApiError> {
-        let mut statement = self
-            .conn
-            .prepare("select name, qubits from circuits order by lower(name), name")
-            .map_err(|err| sqlite_error("prepare circuit list", err))?;
-        let rows = statement
-            .query_map([], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-            })
-            .map_err(|err| sqlite_error("query circuit list", err))?;
-        let mut circuits = Vec::new();
-        for row in rows {
-            let (name, qubits) = row.map_err(|err| sqlite_error("read circuit list", err))?;
-            let mut revisions_statement = self
-                .conn
-                .prepare(
-                    "select revision from circuit_revisions
-                     where circuit_name = ?1 order by revision",
-                )
-                .map_err(|err| sqlite_error("prepare revision list", err))?;
-            let revision_rows = revisions_statement
-                .query_map(params![name.as_str()], |row| row.get::<_, i64>(0))
-                .map_err(|err| sqlite_error("query revision list", err))?;
-            let mut revisions = Vec::new();
-            for revision in revision_rows {
-                revisions.push(
-                    revision.map_err(|err| sqlite_error("read revision list", err))? as usize,
-                );
-            }
-            circuits.push(serde_json::json!({
-                "name": name,
-                "qubits": qubits,
-                "revisions": revisions,
-            }));
-        }
-        Ok(circuits)
-    }
-
-    fn load(&self, name: &str, revision: Option<usize>) -> Result<Option<JsonCircuit>, ApiError> {
-        let bytes = match revision {
-            Some(revision) => self
-                .conn
-                .query_row(
-                    "select document from circuit_revisions
-                     where circuit_name = ?1 and revision = ?2",
-                    params![name, revision as i64],
-                    |row| row.get::<_, Vec<u8>>(0),
-                )
-                .optional(),
-            None => self
-                .conn
-                .query_row(
-                    "select document from circuits where name = ?1",
-                    params![name],
-                    |row| row.get::<_, Vec<u8>>(0),
-                )
-                .optional(),
-        }
-        .map_err(|err| sqlite_error("load circuit", err))?;
-        bytes
-            .map(|bytes| {
-                serde_json::from_slice(&bytes)
-                    .map_err(|err| ApiError::internal(format!("stored circuit is invalid: {err}")))
-            })
-            .transpose()
-    }
-
-    fn save(&mut self, name: &str, circuit: &JsonCircuit) -> Result<Option<usize>, ApiError> {
-        let bytes = serde_json::to_vec_pretty(circuit)
-            .map_err(|err| ApiError::internal(format!("circuit serialization failed: {err}")))?;
-        let transaction = self
-            .conn
-            .transaction()
-            .map_err(|err| sqlite_error("begin circuit save", err))?;
-        let previous = transaction
-            .query_row(
-                "select qubits, document from circuits where name = ?1",
-                params![name],
-                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?)),
-            )
-            .optional()
-            .map_err(|err| sqlite_error("read current circuit", err))?;
-        let archived_revision = if let Some((previous_qubits, previous_document)) = previous {
-            let revision: i64 = transaction
-                .query_row(
-                    "select coalesce(max(revision), 0) + 1
-                     from circuit_revisions where circuit_name = ?1",
-                    params![name],
-                    |row| row.get(0),
-                )
-                .map_err(|err| sqlite_error("allocate circuit revision", err))?;
-            transaction
-                .execute(
-                    "insert into circuit_revisions
-                     (circuit_name, revision, qubits, document)
-                     values (?1, ?2, ?3, ?4)",
-                    params![name, revision, previous_qubits, previous_document],
-                )
-                .map_err(|err| sqlite_error("archive circuit revision", err))?;
-            Some(revision as usize)
-        } else {
-            None
-        };
-        transaction
-            .execute(
-                "insert into circuits (name, qubits, document) values (?1, ?2, ?3)
-                 on conflict(name) do update set
-                     qubits = excluded.qubits,
-                     document = excluded.document",
-                params![name, circuit.qubits as i64, bytes],
-            )
-            .map_err(|err| sqlite_error("write current circuit", err))?;
-        transaction
-            .commit()
-            .map_err(|err| sqlite_error("commit circuit save", err))?;
-        Ok(archived_revision)
-    }
-
-    fn delete(&mut self, name: &str) -> Result<bool, ApiError> {
-        let transaction = self
-            .conn
-            .transaction()
-            .map_err(|err| sqlite_error("begin circuit delete", err))?;
-        let deleted = transaction
-            .execute("delete from circuits where name = ?1", params![name])
-            .map_err(|err| sqlite_error("delete circuit", err))?
-            > 0;
-        transaction
-            .commit()
-            .map_err(|err| sqlite_error("commit circuit delete", err))?;
-        Ok(deleted)
-    }
-}
-
-async fn migrate_legacy_circuits(conn: &mut Connection) -> Result<usize, ApiError> {
-    let index_bytes = match app_fs::read(LEGACY_CIRCUIT_INDEX_PATH).await {
-        Ok(bytes) => bytes,
-        Err(_) => return Ok(0),
-    };
-    let names = serde_json::from_slice::<Vec<String>>(&index_bytes)
-        .map_err(|err| ApiError::internal(format!("legacy circuit index is invalid: {err}")))?;
-    let mut imported = Vec::new();
-    for raw_name in names {
-        let name = match normalize_circuit_name(&raw_name) {
-            Ok(name) => name,
-            Err(_) => continue,
-        };
-        let latest_path = format!("circuits/{name}");
-        let Ok(latest_bytes) = app_fs::read(latest_path.as_str()).await else {
-            continue;
-        };
-        let Ok(latest) = serde_json::from_slice::<JsonCircuit>(&latest_bytes) else {
-            continue;
-        };
-        let mut revisions = Vec::new();
-        for revision in 1..=usize::MAX {
-            let path = format!("circuits/{name}_rev{revision}");
-            let Ok(bytes) = app_fs::read(path.as_str()).await else {
-                break;
-            };
-            let Ok(circuit) = serde_json::from_slice::<JsonCircuit>(&bytes) else {
-                break;
-            };
-            revisions.push((revision, circuit));
-        }
-        imported.push((name, latest, revisions));
-    }
-
-    if imported.is_empty() {
-        return Ok(0);
-    }
-    let transaction = conn
-        .transaction()
-        .map_err(|err| sqlite_error("begin legacy circuit import", err))?;
-    for (name, latest, revisions) in &imported {
-        let latest_bytes = serde_json::to_vec_pretty(latest).map_err(|err| {
-            ApiError::internal(format!("legacy circuit serialization failed: {err}"))
-        })?;
-        transaction
-            .execute(
-                "insert into circuits (name, qubits, document) values (?1, ?2, ?3)",
-                params![name, latest.qubits as i64, latest_bytes],
-            )
-            .map_err(|err| sqlite_error("import current circuit", err))?;
-        for (revision, circuit) in revisions {
-            let bytes = serde_json::to_vec_pretty(circuit).map_err(|err| {
-                ApiError::internal(format!("legacy revision serialization failed: {err}"))
-            })?;
-            transaction
-                .execute(
-                    "insert into circuit_revisions
-                     (circuit_name, revision, qubits, document)
-                     values (?1, ?2, ?3, ?4)",
-                    params![name, *revision as i64, circuit.qubits as i64, bytes],
-                )
-                .map_err(|err| sqlite_error("import circuit revision", err))?;
-        }
-    }
-    transaction
-        .commit()
-        .map_err(|err| sqlite_error("commit legacy circuit import", err))?;
-    Ok(imported.len())
-}
-
-fn sqlite_error(context: &str, error: rusqlite_fork::Error) -> ApiError {
-    ApiError::internal(format!("{context} failed: {error}"))
-}
-
 async fn handle_index() -> Html<&'static str> {
     println!("prismq: HTTP GET /");
     Html(DESIGNER_HTML)
@@ -642,15 +316,17 @@ async fn handle_storage_health() -> Result<impl IntoResponse, ApiError> {
     let database = CircuitDatabase::open().await?;
     let circuits = database.list()?;
     let revisions = database.revision_count()?;
-    let serialized_bytes = database.serialize()?.len();
+    let existed_before_open = database.existed_before_open;
+    let loaded_bytes = database.loaded_bytes;
+    let serialized_bytes = database.persisted_image()?.len();
     Ok(Json(serde_json::json!({
         "schema": "prismq.storage.v1",
         "ok": true,
-        "backend": "sqlite",
+        "backend": "redb",
         "path": CIRCUIT_DB_PATH,
-        "sqliteVersion": database.sqlite_version()?,
-        "existedBeforeOpen": database.existed_before_open,
-        "loadedBytes": database.loaded_bytes,
+        "redbVersion": "4.2.0",
+        "existedBeforeOpen": existed_before_open,
+        "loadedBytes": loaded_bytes,
         "serializedBytes": serialized_bytes,
         "circuits": circuits.len(),
         "revisions": revisions,
@@ -707,11 +383,10 @@ async fn handle_circuit_save(
     let mut database = CircuitDatabase::open().await?;
     let archived_revision = database.save(&name, &circuit)?;
     let database_image = database.persisted_image()?;
-    drop(database);
     let database_bytes = persist_circuit_database(database_image).await?;
 
     println!(
-        "prismq: saved circuit `{name}` to SQLite bytes={database_bytes}{}",
+        "prismq: saved circuit `{name}` to redb bytes={database_bytes}{}",
         archived_revision
             .as_ref()
             .map(|revision| format!(" (archived revision {revision})"))
@@ -738,7 +413,6 @@ async fn handle_circuit_delete(
         )));
     }
     let database_image = database.persisted_image()?;
-    drop(database);
     persist_circuit_database(database_image).await?;
     Ok(Json(serde_json::json!({
         "schema": "prismq.saved-circuit.v1",
