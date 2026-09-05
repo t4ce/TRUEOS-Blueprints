@@ -1,59 +1,68 @@
 # Tokio stack materialization
 
-`tokio_stack` is the integrated Blueprint witness for the Tokio ecosystem
-layout used by TRUEOS. It exercises a generated unary gRPC service and client
-over a loopback TCP connection, with a Tower service, direct Bytes operations,
-Tokio tasks and spans, and the TRUEOS Tracing subscriber.
+`tokio_stack` exercises Bytes, Tower, Tracing and a generated Tonic unary gRPC
+service/client over loopback TCP. It is a runtime acceptance probe, not proof
+that every API in these crates works on TRUEOS.
 
-## Pinned surface
+## Current boundaries
 
-| Surface | Pin | Materialization boundary |
-| --- | ---: | --- |
-| Rust `core` / `alloc` / `std` | TRUEOS nightly 2026-07-10 | Language and app-specific code is linked and garbage-collected. Allocation, clocks, thread identity, WLS, I/O, and abort behavior terminate at kernel imports. Symbolic panic backtraces are excluded for TRUEOS/zkvm. |
-| Mio | 1.2.0 | Selector, wake, and TCP operations terminate at `trueos_mio_*`. |
-| Tokio runtime | 1.52.3 | Polling, clocks, wakeups, task scheduling, WLS, and networking use the TRUEOS Tokio/Mio platform adapters. |
-| Bytes | 1.11.1 | App-owned buffer shape and referenced operations remain local; storage uses the kernel allocator ABI. This avoids exporting Rust object layout across CABI. |
-| Hyper | 1.9.0 | HTTP state remains application code; Tokio I/O, time, DNS, and TCP terminate at the kernel-backed adapters. |
-| Tower | 0.5.3 | The selected service/layer combinators remain local and are section-GC'd; their runtime work uses Tokio's adapter. |
-| Axum | 0.8.9 | Routes and handlers remain application policy. Axum materializes through Tower and Hyper; existing Axum applications retain this path. Tonic's server router also traverses it. |
-| Tonic | 0.14.6 | Generated Prost messages and gRPC/HTTP2 state remain application code. Channel, timeout, server, and socket paths materialize through Hyper, Tower, Tokio, and Mio. |
-| Tracing | 0.1.44 | Static callsites remain local. The reusable `trueos::trace::KernelSubscriber` sends span creation and structured events directly to the kernel log ABI; `tracing-subscriber` is not required. |
+| Surface | Pin | Execution boundary |
+| --- | --- | --- |
+| Rust core/alloc/std | nightly-2026-07-10 | TRUEOS std thread lifecycle is unsupported; atomics, synchronization, WLS, clocks and I/O remain enabled. |
+| Mio | 1.2.0 | Registrations/selectors remain in userspace. Unix poll/readiness and wake operations terminate at TRUEOS. |
+| Tokio | 1.52.3 | Each native lane owns a current-thread runtime. Async tasks stay in that runtime; explicit `trueos::worker` supplies additional native lanes. |
+| Bytes | 1.11.1 | Application buffers and operations; storage uses the platform allocator. |
+| Hyper / Tower / Axum / Tonic | 1.9.0 / 0.5.3 / 0.8.9 / 0.14.6 | Protocol and application state remain in the Blueprint; transport uses Tokio/Mio. |
+| Tracing | 0.1.44 | `trueos::trace::with_default` installs the kernel subscriber on each executing lane. |
 
-All listed versions are exact Cargo constraints or canonical vendored paths,
-and the generated lockfile pins their transitive graph.
+The earlier adapter-based size/import measurements do not validate this source
+layout. Do not expect the old `trueos_mio_selector_*` import family: selector
+registration is intentionally userspace-owned.
 
-## Evidence
+## Native work contract
 
-Build and publish the integrated witness with:
+Use `trueos::worker::spawn` for finite owned work and await the returned handle.
+Construct and drop any current-thread runtime inside that closure. Capacity is
+advisory; partial fleet admission must release barriers and join every accepted
+job. A dropped handle detaches a job. Kernel teardown retains its code/resources
+until it finishes; an unresponsive native job needs external diagnosis.
 
-```sh
-cargo run -p trueos-blueprint -- --probes tokio_stack
-```
+Concurrent native workers have distinct stable WLS slots. Sequential jobs may
+reuse slots and TLS values. Build/drop/rebuild a runtime on the same worker to
+check that Tokio enter guards and runtime context are released correctly.
 
-The packer must report `compatible=1`. The resulting module must retain the
-expected `trueos_cabi_*`, `trueos_tokio_platform_*`, and `trueos_mio_*`
-undefined imports, with no `backtrace_rs`, `gimli`, `addr2line`,
-`rustc_demangle`, or `miniz_oxide` symbols.
+The builder checks native source declarations/exports and installs the canonical
+std backend from the selected TRUEOS checkout. A stale pthread lifecycle import
+is rejected before packing. Changes to installed backend, selectors and WLS
+sources change the build-std cache fingerprint.
 
-The 2026-07-30 v3 evidence was:
+## Supported probes and remaining boundaries
 
-| Witness | Raw relocatable | Packed Blueprint | Kernel ABI imports |
-| --- | ---: | ---: | ---: |
-| `tokio_stack` | 4,228,720 bytes | 581,864 bytes | 10 |
-| `tokio_rt` | 879,936 bytes | 113,276 bytes | 9 |
-| `framework_stack` | 657,104 bytes | 102,735 bytes | 8 |
+`tokio_rt`, `tokio_fs`, `tokio_net`, and `framework_stack` retain focused
+current-thread coverage. `tokio_mrt`, `wls`, `condvar`, `cross`, and
+`rusqlite_multirt` use explicit native worker admission and completion.
 
-For comparison, the preceding std layout packed `tokio_stack` at 719,667
-bytes, `tokio_rt` at 224,547 bytes, and `framework_stack` at 207,076 bytes.
+Use `trueos::net::resolve_host` for asynchronous hostname lookup. Generic Tokio
+hostname lookup still uses its unsupported std-thread blocking pool; Hyper's
+TRUEOS GAI path is synchronous unless the application supplies a native async
+resolver. Superseedr's TRUEOS tracker client supplies that resolver.
 
-Runtime success is the terminal log record:
+Actual Tokio asynchronous stdin/stdout/stderr I/O still uses the blocking pool.
+Constructing those handles in `tokio_rt` is not an I/O acceptance test. The custom
+TRUEOS Tokio filesystem implementation uses asynchronous CABI operations.
 
-```text
-tokio_stack: done runtime=mio,tokio bytes=direct hyper=tcp tower=service tracing=kernel-log tonic=grpc
-```
+Player's TRUEOS startup probe uses native work and reports errors without
+preventing the UI from opening. Superseedr's TRUEOS shell/trackers are aligned;
+the desktop engine's blocking calls are behind a different feature path. This
+series does not establish full peer-to-peer operation.
 
-This contract deliberately does not claim that application schemas, route
-policy, or Rust buffer object layouts are kernel ABI. It claims that the full
-stack is accepted, laid out, garbage-collected, ABI-guarded, and packaged by
-the Blueprint system, and that reusable runtime/transport/logging mechanisms
-terminate at the TRUEOS kernel surface.
+Compilation, packing, symbol inspection and runtime acceptance are subsequent
+validation. Syntax/static checks alone must not be reported as a passing rig run.
+
+
+The light-stress follow-up gives `tokio_stack` two native lane-owned runtimes,
+each with four clients sending eight gRPC requests to an isolated ephemeral
+loopback server. Successful output includes `tokio_stack: PASS`, two lanes,
+64 total verified replies and joined server shutdown. Each lane installs its own
+Tracing subscriber. This expected output is acceptance criteria, not a recorded
+runtime result.

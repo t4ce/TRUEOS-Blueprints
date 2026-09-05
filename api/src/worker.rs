@@ -146,7 +146,7 @@ mod tests {
         let drops = Arc::new(AtomicUsize::new(0));
         let capture = CountDrop(drops.clone());
         let result = spawn_with(
-            move || {
+            move || -> () {
                 drop(capture);
                 panic!("rejected work ran");
             },

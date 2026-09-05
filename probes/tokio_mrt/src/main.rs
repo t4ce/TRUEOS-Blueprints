@@ -9,9 +9,9 @@ use trueos::{
 };
 
 const LANES: usize = 2;
-const WAVES: usize = 1;
-const TASKS: usize = 1;
-const ROUNDS: usize = 1;
+const WAVES: usize = 2;
+const TASKS: usize = 16;
+const ROUNDS: usize = 32;
 const DEADLINE: Duration = Duration::from_secs(10);
 
 enum Event {

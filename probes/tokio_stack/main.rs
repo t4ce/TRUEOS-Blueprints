@@ -2,6 +2,8 @@ use bytes::{Buf, BufMut, Bytes, BytesMut};
 use tokio_stream::wrappers::TcpListenerStream;
 use tonic::{Request, Response, Status};
 use tracing::Instrument;
+use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+use std::time::Duration;
 use trueos::{
     logl::{self, level},
     runtime, trace,
@@ -16,6 +18,10 @@ use stack::stack_witness_server::{StackWitness, StackWitnessServer};
 use stack::{StackReply, StackRequest};
 
 const GENERATION: u32 = 0x5453_0001;
+const LANES: usize = 2;
+const CLIENTS: usize = 4;
+const REQUESTS: usize = 8;
+const DEADLINE: Duration = Duration::from_secs(20);
 const REQUEST_PREFIX: &[u8] = b"trueos/";
 const REQUEST_BODY: &[u8] = b"tokio-stack";
 const RESPONSE_PREFIX: &[u8] = b"materialized:";
@@ -35,7 +41,7 @@ impl StackWitness for Witness {
             "tonic server request"
         );
 
-        if request.generation != GENERATION {
+        if request.generation >> 16 != GENERATION >> 16 {
             return Err(Status::failed_precondition("generation mismatch"));
         }
         if request.payload.as_slice() != b"trueos/tokio-stack" {
@@ -70,7 +76,7 @@ fn main() {
 
     let emitted_before = trace::emitted_events();
     let result = trace::with_default(|| {
-        runtime.block_on(run_probe().instrument(tracing::info_span!(
+        runtime.block_on(run_fleet().instrument(tracing::info_span!(
             "tokio_stack.materialization",
             generation = GENERATION
         )))
@@ -80,7 +86,7 @@ fn main() {
         Ok(()) if trace::emitted_events() > emitted_before => logl::log(
             level::INFO,
             format_args!(
-                "tokio_stack: done runtime=mio,tokio bytes=direct hyper=tcp tower=service tracing=kernel-log tonic=grpc trace_events={}",
+                "tokio_stack: PASS runtime=mio,tokio bytes=direct hyper=tcp tower=service tracing=kernel-log tonic=grpc lanes=2 clients_per_lane=4 requests_per_client=8 trace_events={}",
                 trace::emitted_events() - emitted_before
             ),
         ),
@@ -93,6 +99,73 @@ fn main() {
             format_args!("tokio_stack: failed stage={stage}"),
         ),
     }
+}
+
+async fn run_fleet() -> Result<(), &'static str> {
+    if trueos::worker::capacity() < LANES { return Err("insufficient-native-capacity"); }
+    let main_slot = trueos::worker::local_slot();
+    let (ready_tx, mut ready_rx) = tokio::sync::mpsc::channel(LANES);
+    let release = Arc::new(AtomicBool::new(false));
+    let cancel = Arc::new(AtomicBool::new(false));
+    let mut jobs = Vec::new();
+    let mut error = None;
+    for lane in 0..LANES {
+        let ready_tx = ready_tx.clone();
+        let release = release.clone();
+        let cancel = cancel.clone();
+        match trueos::worker::spawn(move || {
+            // A scoped main-lane subscriber does not propagate to a worker.
+            trace::with_default(|| {
+                let runtime = runtime::current_thread_net().build().map_err(|_| "worker.runtime")?;
+                let result = runtime.block_on(async {
+                    let slot = trueos::worker::local_slot();
+                    ready_tx.send((lane, slot)).await.map_err(|_| "worker.ready.send")?;
+                    tokio::time::timeout(DEADLINE, async {
+                        while !release.load(Ordering::Acquire) {
+                            tokio::time::sleep(Duration::from_millis(1)).await;
+                        }
+                    }).await.map_err(|_| "worker.release.timeout")?;
+                    if cancel.load(Ordering::Acquire) { return Err("worker.cancelled"); }
+                    tokio::time::timeout(DEADLINE, run_probe().instrument(tracing::info_span!("native.runtime", lane)))
+                        .await.map_err(|_| "worker.probe.timeout")??;
+                    if trueos::worker::local_slot() != slot { return Err("worker.slot.moved"); }
+                    Ok(slot)
+                });
+                drop(runtime);
+                result
+            })
+        }) {
+            Ok(job) => jobs.push(job),
+            Err(_) => { error = Some("worker.submit"); break; }
+        }
+    }
+    drop(ready_tx);
+    let mut slots = [None; LANES];
+    if error.is_none() {
+        for _ in 0..LANES {
+            match tokio::time::timeout(DEADLINE, ready_rx.recv()).await {
+                Ok(Some((lane, slot))) if lane < LANES && slots[lane].is_none() => slots[lane] = Some(slot),
+                _ => { error = Some("worker.ready.timeout-or-protocol"); break; }
+            }
+        }
+    }
+    cancel.store(error.is_some(), Ordering::Release);
+    release.store(true, Ordering::Release);
+    for (lane, mut job) in jobs.into_iter().enumerate() {
+        let joined = match tokio::time::timeout(DEADLINE, &mut job).await {
+            Ok(result) => result,
+            Err(_) => { error.get_or_insert("worker.join.timeout"); cancel.store(true, Ordering::Release); job.await }
+        };
+        match joined {
+            Ok(Ok(slot)) if slots[lane] == Some(slot) => {}
+            Ok(Err(stage)) => { error.get_or_insert(stage); }
+            _ => { error.get_or_insert("worker.join.result"); }
+        }
+    }
+    if slots[0].is_none() || slots[1].is_none() || slots[0] == slots[1] || slots.contains(&Some(main_slot)) {
+        error.get_or_insert("distinct-worker-slots");
+    }
+    error.map_or(Ok(()), Err)
 }
 
 async fn run_probe() -> Result<(), &'static str> {
@@ -191,48 +264,56 @@ async fn probe_tonic_loopback(payload: Bytes) -> Result<(), &'static str> {
 
     tokio::task::yield_now().await;
 
-    let endpoint = tonic::transport::Endpoint::from_shared(format!("http://{address}"))
-        .map_err(|_| "tonic.client.endpoint")?
-        .connect_timeout(core::time::Duration::from_secs(2))
-        .timeout(core::time::Duration::from_secs(2));
-    let channel = endpoint
-        .connect()
-        .await
-        .map_err(|_| "tonic.client.connect")?;
-    let mut client = StackWitnessClient::new(channel);
-    let reply = client
-        .materialize(StackRequest {
-            payload: payload.to_vec(),
-            generation: GENERATION,
-        })
-        .instrument(tracing::info_span!("tonic.client.materialize"))
-        .await
-        .map_err(|_| "tonic.client.materialize")?
-        .into_inner();
-
-    let mut expected = BytesMut::with_capacity(RESPONSE_PREFIX.len() + payload.len());
-    expected.put_slice(RESPONSE_PREFIX);
-    expected.put_slice(&payload);
-    if reply.payload.as_slice() != expected.as_ref()
-        || reply.generation != GENERATION
-        || reply.runtime != "trueos-blueprint-hypervisor"
-    {
-        return Err("tonic.client.reply");
+    let mut clients = tokio::task::JoinSet::new();
+    for client_index in 0..CLIENTS {
+        let payload = payload.clone();
+        clients.spawn(async move {
+            let endpoint = tonic::transport::Endpoint::from_shared(format!("http://{address}"))
+                .map_err(|_| "tonic.client.endpoint")?
+                .connect_timeout(Duration::from_secs(2))
+                .timeout(Duration::from_secs(2));
+            let channel = endpoint.connect().await.map_err(|_| "tonic.client.connect")?;
+            let mut client = StackWitnessClient::new(channel);
+            let mut expected = BytesMut::with_capacity(RESPONSE_PREFIX.len() + payload.len());
+            expected.put_slice(RESPONSE_PREFIX);
+            expected.put_slice(&payload);
+            for request_index in 0..REQUESTS {
+                let generation = GENERATION + (client_index * REQUESTS + request_index) as u32;
+                let reply = client.materialize(StackRequest { payload: payload.to_vec(), generation })
+                    .instrument(tracing::info_span!("tonic.client.materialize", client_index, request_index))
+                    .await.map_err(|_| "tonic.client.materialize")?.into_inner();
+                if reply.payload.as_slice() != expected.as_ref()
+                    || reply.generation != generation
+                    || reply.runtime != "trueos-blueprint-hypervisor"
+                { return Err("tonic.client.reply"); }
+                tokio::task::yield_now().await;
+            }
+            Ok::<_, &'static str>(REQUESTS)
+        });
     }
+    let mut error = None;
+    let mut replies = 0;
+    while let Some(joined) = clients.join_next().await {
+        match joined {
+            Ok(Ok(count)) => replies += count,
+            Ok(Err(stage)) => { error.get_or_insert(stage); }
+            Err(_) => { error.get_or_insert("tonic.client.join"); }
+        }
+    }
+    let _ = shutdown_tx.send(()); // success or failure, request server shutdown
+    let mut server = server;
+    match tokio::time::timeout(Duration::from_secs(3), &mut server).await {
+        Ok(Ok(Ok(()))) => {}
+        Ok(_) => { error.get_or_insert("tonic.server.result"); }
+        Err(_) => {
+            error.get_or_insert("tonic.server.shutdown.timeout");
+            server.abort();
+            let _ = server.await;
+        }
+    }
+    if replies != CLIENTS * REQUESTS { error.get_or_insert("tonic.client.reply.count"); }
+    if let Some(stage) = error { return Err(stage); }
+    logl::log(level::INFO, format_args!("tokio_stack: success tonic.grpc.loopback addr={address} clients={CLIENTS} requests={REQUESTS} replies={replies} shutdown=joined"));
 
-    let _ = shutdown_tx.send(());
-    server
-        .await
-        .map_err(|_| "tonic.server.join")?
-        .map_err(|_| "tonic.server.result")?;
-
-    logl::log(
-        level::INFO,
-        format_args!(
-            "tokio_stack: success tonic.grpc.loopback addr={} reply_bytes={}",
-            address,
-            reply.payload.len()
-        ),
-    );
     Ok(())
 }

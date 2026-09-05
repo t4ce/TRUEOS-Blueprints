@@ -10,8 +10,8 @@ const COMMON_DIR: &str = "/common";
 const DB_PATH: &str = "/common/usersettings-multirt.db";
 // Two explicit native runtime lanes; never infer capacity from std threads.
 const WORKERS: usize = 2;
-const BATCHES_PER_WORKER: usize = 1;
-const ROWS_PER_BATCH: usize = 1;
+const BATCHES_PER_WORKER: usize = 16;
+const ROWS_PER_BATCH: usize = 16;
 const OPS_PER_WORKER: usize = BATCHES_PER_WORKER * ROWS_PER_BATCH;
 const START_WAIT_MS: usize = 2_000;
 
