@@ -225,6 +225,11 @@ fn undefined_cabi_imports(object: &Path) -> Result<BTreeSet<String>, String> {
             .split('@')
             .next()
             .unwrap_or_default();
+        if matches!(symbol, "pthread_create" | "pthread_join" | "pthread_detach" | "pthread_kill") {
+            return Err(format!(
+                "Blueprint still imports unsupported pthread lifecycle symbol {symbol}; rebuild with the TRUEOS std backend and migrate active work to trueos::worker"
+            ));
+        }
         if symbol.starts_with("trueos_cabi_") {
             imports.insert(symbol.to_string());
         }

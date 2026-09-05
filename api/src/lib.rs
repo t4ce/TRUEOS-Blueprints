@@ -442,7 +442,14 @@ pub mod net {
         }
         let host = host.to_string();
         crate::worker::spawn(move || (host.as_str(), port).to_socket_addrs().map(|addresses| addresses.collect()))
-            .map_err(|error| std::io::Error::new(std::io::ErrorKind::WouldBlock, error))?
+            .map_err(|error| {
+                let kind = match error {
+                    crate::worker::SpawnError::Unavailable => std::io::ErrorKind::WouldBlock,
+                    crate::worker::SpawnError::InvalidJob => std::io::ErrorKind::InvalidInput,
+                    _ => std::io::ErrorKind::Other,
+                };
+                std::io::Error::new(kind, error)
+            })?
             .await.map_err(std::io::Error::other)?
     }
 

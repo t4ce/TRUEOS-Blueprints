@@ -251,7 +251,7 @@ async fn run_probe() -> Result<(), &'static str> {
 }
 
 async fn probe_lookup_host() -> Result<SocketAddr, &'static str> {
-    let mut addresses = t::time::timeout(
+    let addresses = t::time::timeout(
         t::time::Duration::from_millis(DNS_WAIT_BUDGET_MS),
         t::net::resolve_host(REMOTE_HTTP_HOST, 443),
     )
