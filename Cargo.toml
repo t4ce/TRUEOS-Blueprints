@@ -205,6 +205,7 @@ axum-core = { path = "vendor/axum-core-0.5.6" }
 base64 = { path = "vendor/base64-0.22.1" }
 bytes = { path = "vendor/bytes-1.11.1" }
 crossbeam-deque = { path = "vendor/crossbeam-deque-0.8.6" }
+crossbeam-utils = { path = "vendor/crossbeam-utils-0.8.21" }
 crossterm = { path = "vendor/crossterm-0.29.0-trueos" }
 getrandom = { path = "vendor/getrandom-0.2.17" }
 getrandom_03 = { package = "getrandom", path = "vendor/getrandom-0.3.4" }

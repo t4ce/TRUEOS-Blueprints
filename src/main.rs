@@ -103,6 +103,7 @@ const BLUEPRINT_VENDOR_PATCHES: &[(&str, &str)] = &[
     ("base64", "base64-0.22.1"),
     ("bytes", "bytes-1.11.1"),
     ("crc32fast", "crc32fast-1.5.0"),
+    ("crossbeam-utils", "crossbeam-utils-0.8.21"),
     ("crossterm", "crossterm-0.29.0-trueos"),
     ("futures-core", "futures-core-0.3.32"),
     ("futures-task", "futures-task-0.3.32"),
