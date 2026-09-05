@@ -461,12 +461,13 @@ pub struct RetainedDrawRange {
     pub first_index: u32,
     pub index_count: u32,
 }
-
 /// PBR scene with up to 512 buffer-backed TRS seeds and four index ranges.
 /// Inline frame seeds/count must be zero. The seed buffer contains tightly
 /// packed 64-byte RetainedTransformSeed rows and requires MAP_READ usage.
 /// Each seed's draw_group selects a range; flags[31:16] selects its contiguous
 /// group-local slot. Remaining range entries and reserved must be zero.
+/// Floats must be finite, scale/radius nonnegative, and the quaternion must
+/// have finite squared length greater than 1e-12 (the GPU normalizes it).
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
 #[repr(C)]
 pub struct RetainedFrameSubmitV3 {
@@ -478,8 +479,6 @@ pub struct RetainedFrameSubmitV3 {
     pub draws: [RetainedDrawRange; MAX_RETAINED_SCENE_DRAWS],
     pub reserved: [u32; 2],
 }
-
-
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 #[repr(C)]
 pub struct TimelinePoint {
