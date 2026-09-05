@@ -40,7 +40,7 @@ sources change the build-std cache fingerprint.
 
 `tokio_rt`, `tokio_fs`, `tokio_net`, and `framework_stack` retain focused
 current-thread coverage. `tokio_mrt`, `wls`, `condvar`, `cross`, and
-`rusqlite_multirt` use explicit native worker admission and completion.
+`redb_multirt` use explicit native worker admission and completion.
 
 Use `trueos::net::resolve_host` for asynchronous hostname lookup. Generic Tokio
 hostname lookup still uses its unsupported std-thread blocking pool; Hyper's

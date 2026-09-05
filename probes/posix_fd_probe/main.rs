@@ -184,7 +184,7 @@ fn run_probe() -> Result<(), &'static str> {
         block_seq.len(),
     );
 
-    let block_zero = b"TRUEOS sqlite unix-vfs fd probe block zero\n";
+    let block_zero = b"TRUEOS unix-vfs fd probe block zero\n";
     log_stage("pwrite.offset0");
     ok &= log_io(
         "pwrite.offset0",

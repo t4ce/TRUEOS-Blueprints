@@ -4,12 +4,17 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
 extern crate alloc;
-use alloc::{string::{String, ToString}, sync::Arc, vec, vec::Vec};
+use alloc::{
+    string::{String, ToString},
+    sync::Arc,
+    vec,
+    vec::Vec,
+};
 use core::sync::atomic::{AtomicBool, Ordering};
 pub use redb;
-use redb::{backends::InMemoryBackend, Database, StorageBackend};
 #[cfg(not(feature = "std"))]
 use redb::io::Error;
+use redb::{Database, StorageBackend, backends::InMemoryBackend};
 #[cfg(feature = "std")]
 use std::io::Error;
 
@@ -20,12 +25,18 @@ struct SharedBackend {
 }
 
 impl StorageBackend for SharedBackend {
-    fn len(&self) -> Result<u64, Error> { self.memory.len() }
+    fn len(&self) -> Result<u64, Error> {
+        self.memory.len()
+    }
     fn read(&self, offset: u64, out: &mut [u8]) -> Result<(), Error> {
         StorageBackend::read(&*self.memory, offset, out)
     }
-    fn set_len(&self, len: u64) -> Result<(), Error> { self.memory.set_len(len) }
-    fn sync_data(&self) -> Result<(), Error> { self.memory.sync_data() }
+    fn set_len(&self, len: u64) -> Result<(), Error> {
+        self.memory.set_len(len)
+    }
+    fn sync_data(&self) -> Result<(), Error> {
+        self.memory.sync_data()
+    }
     fn write(&self, offset: u64, data: &[u8]) -> Result<(), Error> {
         StorageBackend::write(&*self.memory, offset, data)
     }
@@ -49,14 +60,19 @@ impl ImageDatabase {
             memory: Arc::new(InMemoryBackend::new()),
             closed: Arc::new(AtomicBool::new(false)),
         };
-        backend.set_len(image.len() as u64).map_err(|error| error.to_string())?;
+        backend
+            .set_len(image.len() as u64)
+            .map_err(|error| error.to_string())?;
         backend.write(0, image).map_err(|error| error.to_string())?;
-        let database = Database::builder().create_with_backend(backend.clone())
+        let database = Database::builder()
+            .create_with_backend(backend.clone())
             .map_err(|error| error.to_string())?;
         Ok(Self { database, backend })
     }
 
-    pub fn database(&self) -> &Database { &self.database }
+    pub fn database(&self) -> &Database {
+        &self.database
+    }
 
     /// Close redb before exposing bytes, including its final header writes.
     /// A live write transaction can delay close; never publish that image.
@@ -69,7 +85,9 @@ impl ImageDatabase {
         let len = usize::try_from(backend.len().map_err(|error| error.to_string())?)
             .map_err(|_| "redb image exceeds address space")?;
         let mut image = vec![0; len];
-        backend.read(0, &mut image).map_err(|error| error.to_string())?;
+        backend
+            .read(0, &mut image)
+            .map_err(|error| error.to_string())?;
         Ok(image)
     }
 }
@@ -84,30 +102,64 @@ mod tests {
     fn committed_values_survive_image_close_and_reopen() {
         let store = ImageDatabase::open(&[]).unwrap();
         let write = store.database().begin_write().unwrap();
-        { write.open_table(VALUES).unwrap().insert(7, 13).unwrap(); }
+        {
+            write.open_table(VALUES).unwrap().insert(7, 13).unwrap();
+        }
         write.commit().unwrap();
         let image = store.into_image().unwrap();
         let restored = ImageDatabase::open(&image).unwrap();
-        assert_eq!(restored.database().begin_read().unwrap().open_table(VALUES)
-            .unwrap().get(7).unwrap().unwrap().value(), 13);
+        assert_eq!(
+            restored
+                .database()
+                .begin_read()
+                .unwrap()
+                .open_table(VALUES)
+                .unwrap()
+                .get(7)
+                .unwrap()
+                .unwrap()
+                .value(),
+            13
+        );
     }
 
     #[test]
     fn aborted_transaction_does_not_enter_persisted_image() {
         let store = ImageDatabase::open(&[]).unwrap();
         let write = store.database().begin_write().unwrap();
-        { write.open_table(VALUES).unwrap(); }
+        {
+            write.open_table(VALUES).unwrap();
+        }
         write.commit().unwrap();
         let write = store.database().begin_write().unwrap();
-        { write.open_table(VALUES).unwrap().insert(7, 13).unwrap(); }
+        {
+            write.open_table(VALUES).unwrap().insert(7, 13).unwrap();
+        }
         write.abort().unwrap();
         let restored = ImageDatabase::open(&store.into_image().unwrap()).unwrap();
-        assert!(restored.database().begin_read().unwrap().open_table(VALUES)
-            .unwrap().get(7).unwrap().is_none());
+        assert!(
+            restored
+                .database()
+                .begin_read()
+                .unwrap()
+                .open_table(VALUES)
+                .unwrap()
+                .get(7)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
     fn corrupt_image_is_not_replaced_with_an_empty_database() {
         assert!(ImageDatabase::open(b"invalid nonempty database image").is_err());
+    }
+
+    #[test]
+    fn live_write_transaction_prevents_image_publication() {
+        let store = ImageDatabase::open(&[]).unwrap();
+        let write = store.database().begin_write().unwrap();
+        assert!(store.into_image().is_err());
+        write.abort().unwrap();
     }
 }

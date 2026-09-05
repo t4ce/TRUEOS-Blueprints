@@ -29,7 +29,6 @@ const MAX_WEB_SHOTS: usize = 100_000;
 const MAX_WEB_OUTCOMES: usize = 256;
 // App filesystem paths are relative to TRUEOS's dedicated `apps/prismq` root.
 const CIRCUIT_DB_PATH: &str = "prismq.redb";
-const LEGACY_CIRCUIT_INDEX_PATH: &str = "circuits/index.json";
 
 #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
 use tokio::fs as app_fs;

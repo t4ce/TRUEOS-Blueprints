@@ -2,12 +2,12 @@
 
 Baseline integration uses two native lanes, each constructing and dropping its
 own current-thread runtime. `tokio_mrt` initially uses one wave, one task and one
-round per lane; SQLite initially uses one transaction with one row per lane.
+round per lane; redb initially uses one transaction with one row per lane.
 Apply the separate follow-up patch to increase this bounded workload.
 
 Run focused baselines (`tokio_rt`, `tokio_fs`, `tokio_net`, `framework_stack`)
 before the native probes. `condvar`, `wls`, `cross`, `tokio_mrt`, and
-`rusqlite_multirt` must report their positive native result; merely starting the
+`redb_multirt` must report their positive native result; merely starting the
 Blueprint is not acceptance. Insufficient native capacity is a failure to run
 the multi-lane witness, not a sequential fallback or a pass.
 
@@ -39,8 +39,8 @@ pinned toolchain; the patches do not claim a successful build or rig run.
   16 tasks per lane and 32 rounds. Bounded cross-runtime channels carry exactly
   1,024 steps per wave. Expected checksums are 524,800 and 1,573,376. Lane slots
   must stay distinct; each runtime is dropped before the next wave.
-- `rusqlite_multirt`: two runtime lanes, 16 transaction batches with 16 rows each
-  (512 operations total). Each lane owns its SQLite connection and image. Verify
+- `redb_multirt`: two runtime lanes, 16 transaction batches with 16 rows each
+  (512 operations total). Each lane owns its redb connection and image. Verify
   every serialized row, aggregate checksum, and the final persisted summary.
   Readiness confirms overlap; `max_active` is diagnostic rather than a
   scheduling-dependent pass condition.
@@ -50,7 +50,7 @@ pinned toolchain; the patches do not claim a successful build or rig run.
   join. Tracing is installed separately on each native lane.
 
 Deadlines are ten seconds for the runtime coordination stage, five seconds for
-WLS/condvar completion, and twenty seconds for each framework lane. SQL readiness
+WLS/condvar completion, and twenty seconds for each framework lane. Database readiness
 has a two-second bound and native completion has a ten-second diagnostic timeout.
 On timeout probes release/cancel cooperative work and continue draining accepted
 native jobs; the external watchdog remains necessary for a completely stuck lane.
