@@ -48,9 +48,15 @@ fn main() {
 }
 
 async fn run_wave(wave: usize) -> Result<(), &'static str> {
-    if t::worker::capacity() < LANES {
-        return Err("insufficient-native-capacity");
-    }
+    // Completion can arrive just before the host releases its physical lease.
+    // Wait a bounded interval before the next wave, without serial fallback.
+    t::time::timeout(DEADLINE, async {
+        while t::worker::capacity() < LANES {
+            t::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .map_err(|_| "insufficient-native-capacity")?;
     let main_slot = t::worker::local_slot();
     let (tx, mut rx) = t::sync::mpsc::channel(16);
     let release = Arc::new(AtomicBool::new(false));
@@ -166,6 +172,12 @@ async fn run_wave(wave: usize) -> Result<(), &'static str> {
             Ok(result) => result,
             Err(_) => {
                 error.get_or_insert("join.timeout");
+                logl::log(
+                    level::ERROR,
+                    format_args!(
+                        "tokio_mrt: FAIL wave={wave} lane={lane} stage=join.timeout action=draining"
+                    ),
+                );
                 cancel.store(true, Ordering::Release);
                 job.await
             }

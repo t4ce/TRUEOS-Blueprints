@@ -114,6 +114,10 @@ async fn run_probe() -> Result<(), &'static str> {
             Ok(result) => result,
             Err(_) => {
                 error.get_or_insert("worker.join.timeout");
+                logl::log(
+                    level::ERROR,
+                    format_args!("wls: FAIL stage=worker.join.timeout action=draining"),
+                );
                 job.await
             }
         };

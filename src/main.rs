@@ -678,7 +678,10 @@ fn build_one_target_to_in_lane(
             has_trueos_dependency,
         );
     }
-    if source_tree_mentions(app_dir, "trueos::platform::spawn_blocking")? {
+    if source_tree_mentions(app_dir, "trueos::platform::spawn_blocking")?
+        || source_tree_mentions(app_dir, "trueos::worker")?
+        || source_tree_mentions(app_dir, "t::worker")?
+    {
         push_app_or_trueos_feature(
             &mut extra_features,
             "tokio-runtime",

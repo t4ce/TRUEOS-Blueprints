@@ -263,11 +263,16 @@ async fn run_worker(
 
     let wls_slot = t::worker::local_slot() as usize;
     ready.fetch_add(1, Ordering::AcqRel);
-    t::time::timeout(t::time::Duration::from_millis(START_WAIT_MS as u64), async {
-        while release.load(Ordering::Acquire) == 0 {
-            t::time::sleep(t::time::Duration::from_millis(1)).await;
-        }
-    }).await.map_err(|_| ProbeError::Executor("worker release timeout"))?;
+    t::time::timeout(
+        t::time::Duration::from_millis(START_WAIT_MS as u64),
+        async {
+            while release.load(Ordering::Acquire) == 0 {
+                t::time::sleep(t::time::Duration::from_millis(1)).await;
+            }
+        },
+    )
+    .await
+    .map_err(|_| ProbeError::Executor("worker release timeout"))?;
     if release.load(Ordering::Acquire) == 2 {
         return Err(ProbeError::Executor("fleet cancelled"));
     }
@@ -334,15 +339,22 @@ async fn run_worker_transactions(
     // Reopen the serialized image and verify each row, not just its size/digest.
     let mut restored = Connection::open_in_memory()?;
     restored.deserialize_read_exact(MAIN_DB, &image, image.len(), false)?;
-    let mut statement = restored.prepare("select seq, payload from multirt_event where worker_id = ?1 order by seq")?;
+    let mut statement = restored
+        .prepare("select seq, payload from multirt_event where worker_id = ?1 order by seq")?;
     let mut records = statement.query(params![worker as i64])?;
     for seq in 0..OPS_PER_WORKER {
-        let row = records.next()?.ok_or_else(|| ProbeError::Invariant("serialized row missing".into()))?;
-        if row.get::<_, i64>(0)? != seq as i64 || row.get::<_, i64>(1)? != (worker as i64 + 1) * 1_000_000 + seq as i64 {
+        let row = records
+            .next()?
+            .ok_or_else(|| ProbeError::Invariant("serialized row missing".into()))?;
+        if row.get::<_, i64>(0)? != seq as i64
+            || row.get::<_, i64>(1)? != (worker as i64 + 1) * 1_000_000 + seq as i64
+        {
             return Err(ProbeError::Invariant("serialized row mismatch".into()));
         }
     }
-    if records.next()?.is_some() { return Err(ProbeError::Invariant("extra serialized row".into())); }
+    if records.next()?.is_some() {
+        return Err(ProbeError::Invariant("extra serialized row".into()));
+    }
     Ok(WorkerReport {
         worker,
         wls_slot,
@@ -396,15 +408,33 @@ fn persist_summary(image: Arc<Vec<u8>>, summary: Summary) -> Result<usize, Probe
     Ok(bytes)
 }
 
+async fn join_native<T>(
+    mut job: t::worker::JoinHandle<Result<T, ProbeError>>,
+    stage: &'static str,
+) -> Result<T, ProbeError> {
+    match t::time::timeout(t::time::Duration::from_secs(10), &mut job).await {
+        Ok(result) => result.map_err(|_| ProbeError::Executor(stage))?,
+        Err(_) => {
+            logl::log(
+                level::ERROR,
+                format_args!("rusqlite-multirt: FAIL stage={stage} timeout=true action=draining"),
+            );
+            let _ = job.await;
+            Err(ProbeError::Executor(stage))
+        }
+    }
+}
+
 async fn run_multirt() -> Result<MultiRtReport, ProbeError> {
     logl::log(
         level::INFO,
         format_args!("rusqlite-multirt: phase=cold-read executor=native-worker begin"),
     );
-    let cold = t::worker::spawn(run_cold_read)
-        .map_err(|_| ProbeError::Executor("cold-read submit"))?
-        .await
-        .map_err(|_| ProbeError::Executor("cold-read join"))??;
+    let cold = join_native(
+        t::worker::spawn(run_cold_read).map_err(|_| ProbeError::Executor("cold-read submit"))?,
+        "cold-read join",
+    )
+    .await?;
     logl::log(
         level::INFO,
         format_args!(
@@ -427,7 +457,16 @@ async fn run_multirt() -> Result<MultiRtReport, ProbeError> {
     let max_active = Arc::new(AtomicUsize::new(0));
     let mut workers = Vec::new();
     let mut failure = None;
-    if t::worker::capacity() < WORKERS { return Err(ProbeError::Executor("insufficient native capacity")); }
+    t::time::timeout(
+        t::time::Duration::from_millis(START_WAIT_MS as u64),
+        async {
+            while t::worker::capacity() < WORKERS {
+                t::time::sleep(t::time::Duration::from_millis(1)).await;
+            }
+        },
+    )
+    .await
+    .map_err(|_| ProbeError::Executor("insufficient native capacity"))?;
 
     logl::log(
         level::INFO,
@@ -443,38 +482,47 @@ async fn run_multirt() -> Result<MultiRtReport, ProbeError> {
         let active = Arc::clone(&active);
         let max_active = Arc::clone(&max_active);
         match t::worker::spawn(move || {
-            let runtime = t::runtime::current_thread().build().map_err(|_| ProbeError::Executor("worker runtime"))?;
-            let result = runtime.block_on(run_worker(worker, image, ready, release, active, max_active));
+            let runtime = t::runtime::current_thread()
+                .build()
+                .map_err(|_| ProbeError::Executor("worker runtime"))?;
+            let result = runtime.block_on(run_worker(
+                worker, image, ready, release, active, max_active,
+            ));
             drop(runtime);
             result
         }) {
             Ok(job) => workers.push(job),
-            Err(_) => { failure = Some(ProbeError::Executor("worker submit")); break; }
+            Err(_) => {
+                failure = Some(ProbeError::Executor("worker submit"));
+                break;
+            }
         }
     }
 
     let mut waited_ms = 0usize;
-    while failure.is_none() && ready.load(Ordering::Acquire) < WORKERS && waited_ms < START_WAIT_MS {
+    while failure.is_none() && ready.load(Ordering::Acquire) < WORKERS && waited_ms < START_WAIT_MS
+    {
         waited_ms = waited_ms.saturating_add(1);
         t::time::sleep(t::time::Duration::from_millis(1)).await;
     }
     let ready_before_release = ready.load(Ordering::Acquire);
-    if ready_before_release != WORKERS { failure.get_or_insert(ProbeError::Executor("worker ready timeout")); }
+    if ready_before_release != WORKERS {
+        failure.get_or_insert(ProbeError::Executor("worker ready timeout"));
+    }
     release.store(if failure.is_some() { 2 } else { 1 }, Ordering::Release);
 
     let mut reports = Vec::with_capacity(WORKERS);
-    for mut worker in workers {
-        let joined = match t::time::timeout(t::time::Duration::from_secs(10), &mut worker).await {
-            Ok(result) => result,
-            Err(_) => { failure.get_or_insert(ProbeError::Executor("worker join timeout")); worker.await }
-        };
-        match joined {
-            Ok(Ok(report)) => reports.push(report),
-            Ok(Err(error)) => { failure.get_or_insert(error); }
-            Err(_) => { failure.get_or_insert(ProbeError::Executor("worker join")); }
+    for worker in workers {
+        match join_native(worker, "worker join").await {
+            Ok(report) => reports.push(report),
+            Err(error) => {
+                failure.get_or_insert(error);
+            }
         }
     }
-    if let Some(error) = failure { return Err(error); }
+    if let Some(error) = failure {
+        return Err(error);
+    }
     reports.sort_by_key(|report| report.worker);
     let distinct_slots = reports
         .iter()
@@ -482,12 +530,9 @@ async fn run_multirt() -> Result<MultiRtReport, ProbeError> {
         .collect::<BTreeSet<_>>()
         .len();
     let max_active = max_active.load(Ordering::Acquire);
-    if ready_before_release != WORKERS
-        || reports.len() != WORKERS
-        || distinct_slots != WORKERS
-    {
+    if ready_before_release != WORKERS || reports.len() != WORKERS || distinct_slots != WORKERS {
         return Err(ProbeError::Invariant(format!(
-            "blocking fleet did not become concurrent ready={} joined={} max_active={max_active} distinct_slots={distinct_slots} expected={} wait_ms={waited_ms}",
+            "native fleet did not become concurrent ready={} joined={} max_active={max_active} distinct_slots={distinct_slots} expected={} wait_ms={waited_ms}",
             ready_before_release,
             reports.len(),
             WORKERS,
@@ -525,11 +570,12 @@ async fn run_multirt() -> Result<MultiRtReport, ProbeError> {
         digest,
     };
     let final_image = Arc::clone(&image);
-    let final_persisted_bytes =
+    let final_persisted_bytes = join_native(
         t::worker::spawn(move || persist_summary(final_image, summary))
-            .map_err(|_| ProbeError::Executor("summary persistence submit"))?
-            .await
-            .map_err(|_| ProbeError::Executor("summary persistence join"))??;
+            .map_err(|_| ProbeError::Executor("summary persistence submit"))?,
+        "summary persistence join",
+    )
+    .await?;
 
     Ok(MultiRtReport {
         cold,
@@ -549,7 +595,7 @@ fn main() {
     logl::log(
         level::INFO,
         format_args!(
-            "rusqlite-multirt: blueprint start workers={} executor=current-thread+spawn-blocking",
+            "rusqlite-multirt: blueprint start workers={} executor=native-worker+current-thread",
             WORKERS
         ),
     );

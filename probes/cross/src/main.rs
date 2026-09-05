@@ -50,7 +50,7 @@ fn main() {
         ),
     );
 
-    let _ = t::runtime::current_thread().build().map(|runtime| {
+    let runtime_result = t::runtime::current_thread().build().map(|runtime| {
         runtime.block_on(async {
             logl::log(
                 level::INFO,
@@ -74,6 +74,12 @@ fn main() {
             t::fs::write("/cross_smoke.txt", b"ok").await
         })
     });
+
+    match runtime_result {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => logl::log(level::ERROR, format_args!("cross: filesystem FAIL {error}")),
+        Err(error) => logl::log(level::ERROR, format_args!("cross: runtime FAIL {error}")),
+    }
 
     let mut shell_input = [0u8; 64];
     loop {
@@ -199,7 +205,11 @@ async fn probe_tokio_worker_pressure() {
     for mut job in jobs {
         let joined = match t::time::timeout(t::time::Duration::from_secs(5), &mut job).await {
             Ok(result) => result,
-            Err(_) => { failed = true; job.await }
+            Err(_) => {
+                failed = true;
+                logl::log(level::ERROR, format_args!("cross: FAIL stage=native.join.timeout action=draining"));
+                job.await
+            }
         };
         match joined {
             Ok(Ok((slot, checksum))) => {

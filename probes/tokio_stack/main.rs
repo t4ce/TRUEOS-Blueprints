@@ -1,9 +1,12 @@
 use bytes::{Buf, BufMut, Bytes, BytesMut};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
+use std::time::Duration;
 use tokio_stream::wrappers::TcpListenerStream;
 use tonic::{Request, Response, Status};
 use tracing::Instrument;
-use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
-use std::time::Duration;
 use trueos::{
     logl::{self, level},
     runtime, trace,
@@ -102,7 +105,9 @@ fn main() {
 }
 
 async fn run_fleet() -> Result<(), &'static str> {
-    if trueos::worker::capacity() < LANES { return Err("insufficient-native-capacity"); }
+    if trueos::worker::capacity() < LANES {
+        return Err("insufficient-native-capacity");
+    }
     let main_slot = trueos::worker::local_slot();
     let (ready_tx, mut ready_rx) = tokio::sync::mpsc::channel(LANES);
     let release = Arc::new(AtomicBool::new(false));
@@ -116,19 +121,34 @@ async fn run_fleet() -> Result<(), &'static str> {
         match trueos::worker::spawn(move || {
             // A scoped main-lane subscriber does not propagate to a worker.
             trace::with_default(|| {
-                let runtime = runtime::current_thread_net().build().map_err(|_| "worker.runtime")?;
+                let runtime = runtime::current_thread_net()
+                    .build()
+                    .map_err(|_| "worker.runtime")?;
                 let result = runtime.block_on(async {
                     let slot = trueos::worker::local_slot();
-                    ready_tx.send((lane, slot)).await.map_err(|_| "worker.ready.send")?;
+                    ready_tx
+                        .send((lane, slot))
+                        .await
+                        .map_err(|_| "worker.ready.send")?;
                     tokio::time::timeout(DEADLINE, async {
                         while !release.load(Ordering::Acquire) {
                             tokio::time::sleep(Duration::from_millis(1)).await;
                         }
-                    }).await.map_err(|_| "worker.release.timeout")?;
-                    if cancel.load(Ordering::Acquire) { return Err("worker.cancelled"); }
-                    tokio::time::timeout(DEADLINE, run_probe().instrument(tracing::info_span!("native.runtime", lane)))
-                        .await.map_err(|_| "worker.probe.timeout")??;
-                    if trueos::worker::local_slot() != slot { return Err("worker.slot.moved"); }
+                    })
+                    .await
+                    .map_err(|_| "worker.release.timeout")?;
+                    if cancel.load(Ordering::Acquire) {
+                        return Err("worker.cancelled");
+                    }
+                    tokio::time::timeout(
+                        DEADLINE,
+                        run_probe().instrument(tracing::info_span!("native.runtime", lane)),
+                    )
+                    .await
+                    .map_err(|_| "worker.probe.timeout")??;
+                    if trueos::worker::local_slot() != slot {
+                        return Err("worker.slot.moved");
+                    }
                     Ok(slot)
                 });
                 drop(runtime);
@@ -136,7 +156,10 @@ async fn run_fleet() -> Result<(), &'static str> {
             })
         }) {
             Ok(job) => jobs.push(job),
-            Err(_) => { error = Some("worker.submit"); break; }
+            Err(_) => {
+                error = Some("worker.submit");
+                break;
+            }
         }
     }
     drop(ready_tx);
@@ -144,8 +167,13 @@ async fn run_fleet() -> Result<(), &'static str> {
     if error.is_none() {
         for _ in 0..LANES {
             match tokio::time::timeout(DEADLINE, ready_rx.recv()).await {
-                Ok(Some((lane, slot))) if lane < LANES && slots[lane].is_none() => slots[lane] = Some(slot),
-                _ => { error = Some("worker.ready.timeout-or-protocol"); break; }
+                Ok(Some((lane, slot))) if lane < LANES && slots[lane].is_none() => {
+                    slots[lane] = Some(slot)
+                }
+                _ => {
+                    error = Some("worker.ready.timeout-or-protocol");
+                    break;
+                }
             }
         }
     }
@@ -154,15 +182,33 @@ async fn run_fleet() -> Result<(), &'static str> {
     for (lane, mut job) in jobs.into_iter().enumerate() {
         let joined = match tokio::time::timeout(DEADLINE, &mut job).await {
             Ok(result) => result,
-            Err(_) => { error.get_or_insert("worker.join.timeout"); cancel.store(true, Ordering::Release); job.await }
+            Err(_) => {
+                error.get_or_insert("worker.join.timeout");
+                logl::log(
+                    level::ERROR,
+                    format_args!(
+                        "tokio_stack: FAIL lane={lane} stage=worker.join.timeout action=draining"
+                    ),
+                );
+                cancel.store(true, Ordering::Release);
+                job.await
+            }
         };
         match joined {
             Ok(Ok(slot)) if slots[lane] == Some(slot) => {}
-            Ok(Err(stage)) => { error.get_or_insert(stage); }
-            _ => { error.get_or_insert("worker.join.result"); }
+            Ok(Err(stage)) => {
+                error.get_or_insert(stage);
+            }
+            _ => {
+                error.get_or_insert("worker.join.result");
+            }
         }
     }
-    if slots[0].is_none() || slots[1].is_none() || slots[0] == slots[1] || slots.contains(&Some(main_slot)) {
+    if slots[0].is_none()
+        || slots[1].is_none()
+        || slots[0] == slots[1]
+        || slots.contains(&Some(main_slot))
+    {
         error.get_or_insert("distinct-worker-slots");
     }
     error.map_or(Ok(()), Err)
@@ -272,20 +318,35 @@ async fn probe_tonic_loopback(payload: Bytes) -> Result<(), &'static str> {
                 .map_err(|_| "tonic.client.endpoint")?
                 .connect_timeout(Duration::from_secs(2))
                 .timeout(Duration::from_secs(2));
-            let channel = endpoint.connect().await.map_err(|_| "tonic.client.connect")?;
+            let channel = endpoint
+                .connect()
+                .await
+                .map_err(|_| "tonic.client.connect")?;
             let mut client = StackWitnessClient::new(channel);
             let mut expected = BytesMut::with_capacity(RESPONSE_PREFIX.len() + payload.len());
             expected.put_slice(RESPONSE_PREFIX);
             expected.put_slice(&payload);
             for request_index in 0..REQUESTS {
                 let generation = GENERATION + (client_index * REQUESTS + request_index) as u32;
-                let reply = client.materialize(StackRequest { payload: payload.to_vec(), generation })
-                    .instrument(tracing::info_span!("tonic.client.materialize", client_index, request_index))
-                    .await.map_err(|_| "tonic.client.materialize")?.into_inner();
+                let reply = client
+                    .materialize(StackRequest {
+                        payload: payload.to_vec(),
+                        generation,
+                    })
+                    .instrument(tracing::info_span!(
+                        "tonic.client.materialize",
+                        client_index,
+                        request_index
+                    ))
+                    .await
+                    .map_err(|_| "tonic.client.materialize")?
+                    .into_inner();
                 if reply.payload.as_slice() != expected.as_ref()
                     || reply.generation != generation
                     || reply.runtime != "trueos-blueprint-hypervisor"
-                { return Err("tonic.client.reply"); }
+                {
+                    return Err("tonic.client.reply");
+                }
                 tokio::task::yield_now().await;
             }
             Ok::<_, &'static str>(REQUESTS)
@@ -296,24 +357,39 @@ async fn probe_tonic_loopback(payload: Bytes) -> Result<(), &'static str> {
     while let Some(joined) = clients.join_next().await {
         match joined {
             Ok(Ok(count)) => replies += count,
-            Ok(Err(stage)) => { error.get_or_insert(stage); }
-            Err(_) => { error.get_or_insert("tonic.client.join"); }
+            Ok(Err(stage)) => {
+                error.get_or_insert(stage);
+            }
+            Err(_) => {
+                error.get_or_insert("tonic.client.join");
+            }
         }
     }
     let _ = shutdown_tx.send(()); // success or failure, request server shutdown
     let mut server = server;
     match tokio::time::timeout(Duration::from_secs(3), &mut server).await {
         Ok(Ok(Ok(()))) => {}
-        Ok(_) => { error.get_or_insert("tonic.server.result"); }
+        Ok(_) => {
+            error.get_or_insert("tonic.server.result");
+        }
         Err(_) => {
             error.get_or_insert("tonic.server.shutdown.timeout");
             server.abort();
             let _ = server.await;
         }
     }
-    if replies != CLIENTS * REQUESTS { error.get_or_insert("tonic.client.reply.count"); }
-    if let Some(stage) = error { return Err(stage); }
-    logl::log(level::INFO, format_args!("tokio_stack: success tonic.grpc.loopback addr={address} clients={CLIENTS} requests={REQUESTS} replies={replies} shutdown=joined"));
+    if replies != CLIENTS * REQUESTS {
+        error.get_or_insert("tonic.client.reply.count");
+    }
+    if let Some(stage) = error {
+        return Err(stage);
+    }
+    logl::log(
+        level::INFO,
+        format_args!(
+            "tokio_stack: success tonic.grpc.loopback addr={address} clients={CLIENTS} requests={REQUESTS} replies={replies} shutdown=joined"
+        ),
+    );
 
     Ok(())
 }

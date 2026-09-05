@@ -47,18 +47,36 @@ async fn run_probe() -> Result<(), &'static str> {
     }
     let shared = Arc::new(Shared::default());
     let worker_shared = shared.clone();
-    let job = t::worker::spawn(move || {
+    let mut job = t::worker::spawn(move || {
         notify(&worker_shared, 1, false);
         0x51A1u32
     })
     .map_err(|_| "signal.submit")?;
     let observed = wait(&shared, 1);
-    let joined = job.await.map_err(|_| "signal.join")?;
+    let joined = match t::time::timeout(DEADLINE, &mut job).await {
+        Ok(result) => result.map_err(|_| "signal.join")?,
+        Err(_) => {
+            logl::log(
+                level::ERROR,
+                format_args!("condvar: FAIL stage=signal.join.timeout action=draining"),
+            );
+            let _ = job.await;
+            return Err("signal.join.timeout");
+        }
+    };
     if observed? != 1 || joined != 0x51A1 {
         return Err("signal.value");
     }
 
     // Both workers wait on the same predicate; notify-before-wait must work too.
+    // Completion delivery can precede release of the physical worker lease.
+    t::time::timeout(DEADLINE, async {
+        while t::worker::capacity() < 2 {
+            t::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .map_err(|_| "broadcast.capacity.timeout")?;
     let mut jobs = Vec::new();
     let mut error = None;
     for index in 0..2u32 {
@@ -80,6 +98,10 @@ async fn run_probe() -> Result<(), &'static str> {
             Ok(result) => result,
             Err(_) => {
                 error.get_or_insert("broadcast.join.timeout");
+                logl::log(
+                    level::ERROR,
+                    format_args!("condvar: FAIL stage=broadcast.join.timeout action=draining"),
+                );
                 job.await
             }
         };
