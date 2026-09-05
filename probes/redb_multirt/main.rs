@@ -9,7 +9,7 @@ use std::{
 use trueos::{logl, logl::level, platform, t};
 use trueos_redb::{
     ImageDatabase,
-    redb::{ReadableDatabase, ReadableTable, TableDefinition},
+    redb::{ReadableDatabase, ReadableTable, ReadableTableMetadata, TableDefinition},
 };
 
 const DB_PATH: &str = "/common/usersettings-multirt.redb";

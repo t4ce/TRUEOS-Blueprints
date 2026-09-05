@@ -1,7 +1,7 @@
 use trueos::async_fs;
 use trueos_redb::{
     ImageDatabase,
-    redb::{ReadableDatabase, ReadableTable, TableDefinition},
+    redb::{ReadableDatabase, ReadableTable, ReadableTableMetadata, TableDefinition},
 };
 
 pub const USERS: TableDefinition<u64, &str> = TableDefinition::new("users");

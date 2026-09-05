@@ -1,7 +1,7 @@
 use super::*;
 use trueos_redb::{
     ImageDatabase,
-    redb::{ReadableDatabase, ReadableTable, TableDefinition},
+    redb::{ReadableDatabase, ReadableTable, ReadableTableMetadata, TableDefinition},
 };
 
 const CIRCUITS: TableDefinition<&str, &[u8]> = TableDefinition::new("circuits");
