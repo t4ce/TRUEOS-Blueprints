@@ -8,5 +8,6 @@ name = "redb_multirt"
 path = "main.rs"
 
 [dependencies]
+redb_probe = { path = "../redb_probe" }
 trueos-redb.workspace = true
 trueos.workspace = true

@@ -187,12 +187,13 @@ impl CircuitDatabase {
         write.commit().map_err(db_error)?;
         Ok(deleted)
     }
-
 }
 
 pub(super) async fn persist_circuit_database(bytes: Vec<u8>) -> Result<usize, ApiError> {
     let len = bytes.len();
-    app_fs::write(CIRCUIT_DB_PATH, &bytes).await.map_err(db_error)?;
+    app_fs::write(CIRCUIT_DB_PATH, &bytes)
+        .await
+        .map_err(db_error)?;
     println!("prismq: redb image persisted path={CIRCUIT_DB_PATH} bytes={len}");
     Ok(len)
 }
@@ -230,4 +231,16 @@ mod tests {
         assert_eq!(database.save("Bell", &circuit(4)).unwrap(), Some(1));
     }
 
+    #[test]
+    fn circuit_names_and_revision_keys_are_independent() {
+        let mut database = CircuitDatabase::from_image(&[], false).unwrap();
+        let name = normalize_circuit_name("Bell_rev1").unwrap();
+        database.save(&name, &circuit(10)).unwrap();
+        database.save("Bell", &circuit(1)).unwrap();
+        database.save("Bell", &circuit(2)).unwrap();
+        assert_eq!(database.load("Bell", Some(1)).unwrap().unwrap().seed, 1);
+        assert_eq!(database.load(&name, None).unwrap().unwrap().seed, 10);
+        database.delete("Bell").unwrap();
+        assert_eq!(database.load(&name, None).unwrap().unwrap().seed, 10);
+    }
 }

@@ -3,6 +3,9 @@ name = "redb_probe"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+path = "store.rs"
+
 [[bin]]
 name = "redb_probe"
 path = "main.rs"

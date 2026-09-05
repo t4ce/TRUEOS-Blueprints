@@ -1,9 +1,9 @@
 # Native runtime probe acceptance
 
-Baseline integration uses two native lanes, each constructing and dropping its
-own current-thread runtime. `tokio_mrt` initially uses one wave, one task and one
-round per lane; redb initially uses one transaction with one row per lane.
-Apply the separate follow-up patch to increase this bounded workload.
+Native integration uses two native lanes, each constructing and dropping its
+own current-thread runtime. The current source includes the bounded light-stress
+workloads described below. `redb_probe` provides the focused database baseline;
+`redb_multirt` adds two native runtime lanes.
 
 Run focused baselines (`tokio_rt`, `tokio_fs`, `tokio_net`, `framework_stack`)
 before the native probes. `condvar`, `wls`, `cross`, `tokio_mrt`, and
@@ -40,7 +40,7 @@ pinned toolchain; the patches do not claim a successful build or rig run.
   1,024 steps per wave. Expected checksums are 524,800 and 1,573,376. Lane slots
   must stay distinct; each runtime is dropped before the next wave.
 - `redb_multirt`: two runtime lanes, 16 transaction batches with 16 rows each
-  (512 operations total). Each lane owns its redb connection and image. Verify
+  (512 operations total). Each lane owns its redb database and image. Verify
   every serialized row, aggregate checksum, and the final persisted summary.
   Readiness confirms overlap; `max_active` is diagnostic rather than a
   scheduling-dependent pass condition.

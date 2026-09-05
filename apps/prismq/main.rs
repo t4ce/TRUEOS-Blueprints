@@ -423,18 +423,14 @@ async fn handle_circuit_delete(
 
 fn normalize_circuit_name(raw: &str) -> Result<String, ApiError> {
     let name = raw.trim();
-    let lower = name.to_ascii_lowercase();
-    let reserved_revision = lower.rsplit_once("_rev").is_some_and(|(_, suffix)| {
-        !suffix.is_empty() && suffix.chars().all(|ch| ch.is_ascii_digit())
-    });
     let valid = !name.is_empty()
         && name.len() <= 64
         && name
             .chars()
             .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, ' ' | '-' | '_'));
-    if !valid || name.eq_ignore_ascii_case("index.json") || reserved_revision {
+    if !valid {
         return Err(ApiError::bad_request(
-            "circuit name must be 1-64 letters, numbers, spaces, dashes, or underscores; `_revN` is reserved for history",
+            "circuit name must be 1-64 letters, numbers, spaces, dashes, or underscores",
         ));
     }
     Ok(name.to_string())

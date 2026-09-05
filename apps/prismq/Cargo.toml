@@ -11,13 +11,16 @@ path = "main.rs"
 axum.workspace = true
 prism-q = { path = "crates/prism-q", default-features = true }
 rayon.workspace = true
-trueos-redb.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 
 [target.'cfg(any(target_os = "trueos", target_os = "zkvm"))'.dependencies]
 trueos.workspace = true
+trueos-redb.workspace = true
+
+[target.'cfg(not(any(target_os = "trueos", target_os = "zkvm")))'.dependencies]
+trueos-redb = { path = "../../crates/trueos-redb", features = ["std"] }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("trueos", "zkvm"))'] }

@@ -1,4 +1,4 @@
-mod store;
+use redb_probe as store;
 use trueos::{
     logl::{self, level},
     platform,

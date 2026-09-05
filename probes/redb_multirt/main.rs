@@ -1,3 +1,4 @@
+use redb_probe as store;
 use std::{
     collections::BTreeSet,
     sync::{
@@ -10,8 +11,6 @@ use trueos_redb::{
     ImageDatabase,
     redb::{ReadableDatabase, ReadableTable, TableDefinition},
 };
-#[path = "../redb_probe/store.rs"]
-mod store;
 
 const DB_PATH: &str = "/common/usersettings-multirt.redb";
 const WORKERS: usize = 2;
