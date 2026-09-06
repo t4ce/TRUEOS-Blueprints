@@ -175,6 +175,7 @@ fn main() {
     let mut height = INITIAL_HEIGHT;
     let mut mouse = [0.0f32; 4];
     let mut primary_down = false;
+    let mut brush_pending = false;
     let mut stats_started_ns = shader_started_ns;
     let mut stats_frames = 0u64;
     let mut stats_render_ns = 0u64;
@@ -214,6 +215,14 @@ fn main() {
                     mouse[0] = (event.local_x as f32).clamp(0.0, width as f32);
                     mouse[1] = (height as f32 - event.local_y as f32).clamp(0.0, height as f32);
                     primary_down = event.buttons_down & POINTER_BUTTON_PRIMARY != 0;
+                    // Preserve a short click even if press and release are both
+                    // drained before the next render.
+                    if SHADERS[shader_index].id == SHADERTOY_HIGH_WISPS
+                        && (event.buttons_down | event.buttons_pressed) & POINTER_BUTTON_PRIMARY
+                            != 0
+                    {
+                        brush_pending = true;
+                    }
                     if event.buttons_pressed & POINTER_BUTTON_PRIMARY != 0 {
                         mouse[2] = mouse[0];
                         mouse[3] = mouse[1];
@@ -282,6 +291,7 @@ fn main() {
                 && next != shader_index
             {
                 shader_index = next;
+                brush_pending = false;
                 shader_started_ns = clock::monotonic_nanos();
                 previous_ns = shader_started_ns;
                 frame_number = 0;
@@ -304,7 +314,9 @@ fn main() {
             shader_id: SHADERS[shader_index].id,
             flags: if native_resolution && SHADERS[shader_index].id == SHADERTOY_PROTEAN_CLOUDS {
                 SHADERTOY_FLAG_NATIVE_RESOLUTION
-            } else if primary_down && SHADERS[shader_index].id == SHADERTOY_HIGH_WISPS {
+            } else if (primary_down || brush_pending)
+                && SHADERS[shader_index].id == SHADERTOY_HIGH_WISPS
+            {
                 SHADERTOY_FLAG_PRIMARY_DOWN
             } else {
                 0
@@ -342,6 +354,7 @@ fn main() {
             fail("render/compute publish", error);
             return;
         }
+        brush_pending = false;
         let rendered_ns = clock::monotonic_nanos();
         let render_ns = rendered_ns.saturating_sub(render_started_ns);
         stats_frames += 1;
