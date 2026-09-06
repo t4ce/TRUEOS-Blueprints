@@ -183,99 +183,91 @@ inline T st_faceforward(T normal, T incident, T reference) {
     return dot(reference, incident) < 0.0f ? normal : -normal;
 }
 
-// Source references:
-// https://www.shadertoy.com/view/tssSDN
-// https://qiita.com/ukeyshima/items/221b0384d39f521cad8f
-// Validated with tools/shadertoy-cpp-offline.
-
-#define MAX_DIST 1000.f
-#define SURF_DIST .0001f
-#define EPS .0001f
-#define PI 3.141592f
-#define PI2 PI*2.f
+// Cube-field scene from https://www.shadertoy.com/view/tssSDN
+// Reference: https://qiita.com/ukeyshima/items/221b0384d39f521cad8f
+// TRUEOS: analytic sphere + bounded grid traversal of the same animated boxes.
+#define REP .04f
+#define FAR 1000.f
+#define PI2 (3.141592f * 2.f)
 
 float rand(float2 co, __global const ShaderToyUniforms *st) {
     (void)st;
     return st_fract(sin(dot(co, st_vec2(12.9898f, 78.233f))) * 43758.5453f);
 }
 
-float sdSphere(float3 p, float s, __global const ShaderToyUniforms *st) {
+float columnTop(float2 cell, float3 sphere, __global const ShaderToyUniforms *st) {
     (void)st;
-    return length(p) - s;
-}
-
-float sdBox(float3 p, float3 b, __global const ShaderToyUniforms *st) {
-    (void)st;
-    float3 q = st_abs(p) - b;
-    return length(st_max(q, 0.f)) + st_min(st_max(q.x, st_max(q.y, q.z)), 0.f);
-}
-
-float2 minMat(float2 d1, float2 d2, __global const ShaderToyUniforms *st) {
-    (void)st;
-    return (d1.x < d2.x) ? d1 : d2;
-}
-
-#define rep  ( .04f)
-
-
-float2 scene(float3 p, __global const ShaderToyUniforms *st) {
-    (void)st;
-    float2 d = st_vec2(100000.f, 0.f);
-    float mat = 0.f;
-    float t = (st->resolution_time.w);
-    float2 m = (st->mouse).xy / (st->resolution_time.xyz).xy;
-    float3 q = p;
-    float3 spo = st_vec3(sin(t * 1.8f) * .25f, .32f, cos(t * 2.2f) * .3f);
-    float3 sp = q - spo;
-    d.x = sdSphere(sp, .075f, st);
-    float2 id = floor(q.xz / rep);
-    float hash = rand(id * .001f, st);
-    q.xz = st_mod(q.xz, rep) - rep * .5f;
-    float3 bcp = st_vec3(0);
-    bcp.xz = id * rep + rep * .5f;
-    float bsDist = length(spo.xz - bcp.xz);
+    float hash = rand(cell * .001f, st);
+    float2 center = cell * REP + REP * .5f;
+    float bsDist = length(sphere.xz - center);
     float s = st_smoothstep(0.f, .5f, bsDist);
-    q -= st_vec3(
-        0.f,
-        .125f - (sin(hash * PI2 + t * (2.f + bsDist * .015f)) * .05f)
-            * (1.f - st_pow(s, .9f)),
-        0.f
-    );
-    d = minMat(d, st_vec2(sdBox(q, st_vec3(rep * .5f, .1f, rep * .5f), st), 1.f), st);
-    return d;
+    // Same center height and .1 box half-height as the source scene.
+    return .125f - sin(hash * PI2 + (st->resolution_time.w) * (2.f + bsDist * .015f))
+        * .05f * (1.f - st_pow(s, .9f)) + .1f;
 }
 
-float3 getNormal(float3 p, __global const ShaderToyUniforms *st) {
+float sphereHit(float3 ro, float3 rd, float3 center, __global const ShaderToyUniforms *st) {
     (void)st;
-    float2 e = st_vec2(EPS, 0);
-    return normalize(st_vec3(
-        scene(p + e.xyy, st).x - scene(p - e.xyy, st).x,
-        scene(p + e.yxy, st).x - scene(p - e.yxy, st).x,
-        scene(p + e.yyx, st).x - scene(p - e.yyx, st).x
-    ));
+    float3 oc = ro - center;
+    float b = dot(oc, rd);
+    float c = dot(oc, oc) - .075f * .075f;
+    float h = b * b - c;
+    if (h < 0.f) return FAR;
+    float t = -b - sqrt(h);
+    return t >= 0.f ? t : FAR;
 }
 
-float2 raymarch(float3 ro, float3 rd, float side, __global const ShaderToyUniforms *st) {
+float columnHit(float3 ro, float3 rd, float3 sphere, float limit,  float3 & normal, __global const ShaderToyUniforms *st) {
     (void)st;
-    float accDist = 0.f;
-    float mat = 0.f;
-    for (int i = 0; i < 128; i++) {
-        float3 p = ro + rd * accDist;
-        float2 result = scene(p, st);
-        float dist = result.x * side;
-        float3 rdi = 1.f / rd;
-        mat = result.y;
-        if (st_abs(dist) < SURF_DIST || accDist > MAX_DIST)
-            break;
-        accDist += st_min(
-            st_min(
-                (st_step(0.f, rd.x) - st_mod(p.x, rep)) * rdi.x,
-                (st_step(0.f, rd.z) - st_mod(p.z, rep)) * rdi.z
-            ) + .0001f,
-            dist
-        );
+    normal = st_vec3(0.f, 1.f, 0.f);
+    // The fixed camera looks down onto boxes whose tops lie in [.175, .275].
+    if (rd.y >= -1e-6f) return FAR;
+    // Outside the sphere's .5-radius influence the touching boxes form one
+    // exact flat plane. Intersect it directly and visit only affected cells.
+    float plane = (.225f - ro.y) / rd.y;
+    float2 planeCell = floor((ro + rd * plane).xz / REP) * REP + REP * .5f;
+    float flatHit = length(planeCell - sphere.xz) >= .5f ? plane : FAR;
+    float2 direction = st_mix(st_vec2(-1.f), st_vec2(1.f), st_step(st_vec2(0.f), rd.xz));
+    float2 invAbs = 1.f / st_max(st_abs(rd.xz), st_vec2(1e-8f));
+    float2 nearBox = (sphere.xz - st_vec2(.521f) - ro.xz) * direction * invAbs;
+    float2 farBox = (sphere.xz + st_vec2(.521f) - ro.xz) * direction * invAbs;
+    float2 nearSlab = st_min(nearBox, farBox);
+    float2 farSlab = st_max(nearBox, farBox);
+    float begin = st_max(st_max(0.f, (.275f - ro.y) / rd.y), st_max(nearSlab.x, nearSlab.y));
+    float end = st_min(st_min((.175f - ro.y) / rd.y, st_min(limit, flatHit)), st_min(farSlab.x, farSlab.y));
+    if (begin > end) return flatHit;
+    float3 start = ro + rd * (begin + 1e-6f);
+    float2 cell = floor(start.xz / REP);
+    float2 boundary = (cell + st_step(st_vec2(0.f), rd.xz)) * REP;
+    float2 next = (boundary - ro.xz) * direction * invAbs;
+    float2 delta = REP * invAbs;
+    float entry = begin;
+    float3 entryNormal = st_vec3(0.f, 1.f, 0.f);
+    // Bound work by cell crossings inside the height slab, not empty air.
+    int cells = int(ceil((end - begin) * (st_abs(rd.x) + st_abs(rd.z)) / REP)) + 3;
+    cells = st_min(cells, 128);
+    for (int i = 0; i < cells; i++) {
+        float exit = st_min(st_min(next.x, next.y), end);
+        float top = (columnTop(cell, sphere, st) - ro.y) / rd.y;
+        float hit = st_max(entry, top);
+        if (hit <= exit) {
+            normal = top >= entry ? st_vec3(0.f, 1.f, 0.f) : entryNormal;
+            return hit;
+        }
+        if (exit >= end) break;
+        if (next.x < next.y) {
+            entry = next.x;
+            next.x += delta.x;
+            cell.x += direction.x;
+            entryNormal = st_vec3(-direction.x, 0.f, 0.f);
+        } else {
+            entry = next.y;
+            next.y += delta.y;
+            cell.y += direction.y;
+            entryNormal = st_vec3(0.f, 0.f, -direction.y);
+        }
     }
-    return st_vec2(accDist, mat);
+    return flatHit;
 }
 
 float3 getRayDir(float2 uv, float3 p, float3 l, float z, __global const ShaderToyUniforms *st) {
@@ -286,48 +278,32 @@ float3 getRayDir(float2 uv, float3 p, float3 l, float z, __global const ShaderTo
     return normalize(right * uv.x + up * uv.y + forward * z);
 }
 
-mat3 camera(float3 ro, float3 ta, float cr, __global const ShaderToyUniforms *st) {
-    (void)st;
-    float3 cw = normalize(ta - ro);
-    float3 cp = st_vec3(sin(cr), cos(cr), 0.f);
-    float3 cu = normalize(cross(cw, cp));
-    float3 cv = normalize(cross(cu, cw));
-    return mat3(cu, cv, cw);
-}
-
 void mainImage( float4 & fragColor,  float2 fragCoord, __global const ShaderToyUniforms *st) {
     (void)st;
-    float t = (st->resolution_time.w);
     float2 uv = (fragCoord.xy * 2.f - (st->resolution_time.xyz).xy)
         / st_min((st->resolution_time.xyz).x, (st->resolution_time.xyz).y);
-    float2 m = ((st->mouse).xy * 2.f - (st->resolution_time.xyz).xy)
-        / st_min((st->resolution_time.xyz).x, (st->resolution_time.xyz).y);
-    float3 ro = st_vec3(m.x * 0.f + 1.f, m.y * 0.f + 1.f, 1.2f);
-    float3 ta = st_vec3(0.f, .2f, 0.f);
-    float3 rd = getRayDir(uv, ro, ta, 3.5f, st);
-    float2 result = raymarch(ro, rd, 1.f, st);
-    float dist = result.x;
-    float mat = result.y;
+    float3 ro = st_vec3(1.f, 1.f, 1.2f);
+    float3 rd = getRayDir(uv, ro, st_vec3(0.f, .2f, 0.f), 3.5f, st);
+    float3 sphere = st_vec3(sin((st->resolution_time.w) * 1.8f) * .25f, .32f, cos((st->resolution_time.w) * 2.2f) * .3f);
+    float ball = sphereHit(ro, rd, sphere, st);
+    float3 n;
+    float boxes = columnHit(ro, rd, sphere, ball, n, st);
+    float dist = st_min(ball, boxes);
     float3 col = st_vec3(0.f);
-    if (dist < MAX_DIST) {
-        float3 p = ro + rd * dist;
+    if (dist < FAR) {
+        if (ball < boxes) n = normalize(ro + rd * ball - sphere);
         float3 l = normalize(st_vec3(1.f, 1.f, -1.f));
-        float3 n = getNormal(p, st);
-        float3 r = st_reflect(rd, n);
         float diffuse = dot(l, n) * .5f + .5f;
-        float3 diffuseColor = st_vec3(diffuse);
-        if (mat < .5f) {
-            diffuseColor *= st_vec3(1.f, 0.f, 0.f);
+        col = st_vec3(diffuse);
+        if (ball < boxes) {
+            col *= st_vec3(1.f, 0.f, 0.f);
         } else {
-            diffuseColor *= st_vec3(1.f, 1.f, 1.f);
-            if (n.x > .5f) diffuseColor = diffuse * st_vec3(1.f, 0.f, 0.f);
-            if (n.y > .5f) diffuseColor = diffuse * st_vec3(1.f, .9f, .9f);
-            if (n.z > .5f) diffuseColor = diffuse * st_vec3(.6f, 0.f, 0.f);
+            if (n.x > .5f) col = diffuse * st_vec3(1.f, 0.f, 0.f);
+            if (n.y > .5f) col = diffuse * st_vec3(1.f, .9f, .9f);
+            if (n.z > .5f) col = diffuse * st_vec3(.6f, 0.f, 0.f);
         }
-        col = diffuseColor;
     }
-    col = st_pow(col, st_vec3(.4545f));
-    fragColor = st_vec4(col, 1.f);
+    fragColor = st_vec4(st_pow(col, st_vec3(.4545f)), 1.f);
 }
 
 

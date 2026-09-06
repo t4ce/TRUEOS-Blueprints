@@ -26,6 +26,9 @@ struct Shader {
     package: &'static [u8],
 }
 
+// Pending sources are in assets/candidates/hex_array_pulse/input.glsl (scratch)
+// and assets/candidates/aiekick_sphere/input.glsl (texture/cubemap channel ABI).
+// They have no executable catalog ID until those requirements are supported.
 // Packages contain the executable, SPIR-V, raw GLSL, generated C++ and bake
 // provenance. Kernel-owned hashes/contracts remain the authority for admission.
 const SHADERS: [Shader; 6] = [
@@ -38,8 +41,8 @@ const SHADERS: [Shader; 6] = [
     Shader {
         id: SHADERTOY_CUBE_FIELD,
         package: include_bytes!("../assets/cube_field.stpkg"),
-        name: "Raymarched cube field",
-        artifact_sha256: "0d48ef4d170eafe0cec5ae3952abdc6e57e865b195dbc3fc137ca7eb1b25d736",
+        name: "Animated cube field",
+        artifact_sha256: "04f940ae84746975d6c11033ce7899ccc8307badcaf3091f53a654ca10256f10",
     },
     Shader {
         id: SHADERTOY_NGUYEN,

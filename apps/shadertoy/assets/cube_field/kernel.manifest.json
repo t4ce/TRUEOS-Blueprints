@@ -5,10 +5,10 @@
       "class": 64,
       "endianness": "little",
       "machine": 205,
-      "sha256": "0d48ef4d170eafe0cec5ae3952abdc6e57e865b195dbc3fc137ca7eb1b25d736",
-      "size_bytes": 818920,
+      "sha256": "04f940ae84746975d6c11033ce7899ccc8307badcaf3091f53a654ca10256f10",
+      "size_bytes": 64488,
       "type": "relocatable",
-      "ze_info_section_offset": 814952,
+      "ze_info_section_offset": 60520,
       "ze_info_section_size": 3137
     },
     "kernels": [
@@ -177,13 +177,13 @@
         ],
         "text": {
           "entry_offset": 64,
-          "entry_size": 792128,
+          "entry_size": 36760,
           "section_alignment": 0,
           "section_name": ".text.shadertoy_cube_field",
           "section_offset": 64,
-          "section_size": 792256,
-          "sha256": "610126e341da2445ae6540f506f0ed6e3a6cca913a7be050512f6e1078afe01b",
-          "symbol_size": 792128,
+          "section_size": 36928,
+          "sha256": "12cab8684791d6d88137cdaf74a2532dd1ccca2982ffe295f7ad5db1cb9101af",
+          "symbol_size": 36760,
           "symbol_value": 0
         },
         "user_attributes": {
@@ -199,10 +199,10 @@
       }
     ],
     "spirv": {
-      "embedded_section_offset": 792392,
-      "embedded_section_size": 22484,
-      "sha256": "a80bbe201e6a5515dfc92e06306e96c15cdb9b6f6cbf51e3ed247769b801d491",
-      "size_bytes": 22484
+      "embedded_section_offset": 37064,
+      "embedded_section_size": 23380,
+      "sha256": "5041f13b86f7f8480aed9e1c696640e25a9be880c0fc7bd86c849e0a5fba794a",
+      "size_bytes": 23380
     }
   },
   "provenance": {
@@ -402,8 +402,8 @@
     "inputs": [
       {
         "path": "bld/shadertoy-blueprint-bake/sources/cube_field/kernel.clcpp",
-        "sha256": "a9080b9d83fc62545abc5a26dd6b4808136747592f3bd0771ad339441908eea6",
-        "size_bytes": 15089
+        "sha256": "c87ed8bce2e6fcd5e50849b8afe96119312b97b8b66f0832d5e5ad5f07c123b8",
+        "size_bytes": 15486
       }
     ],
     "language": "C++ for OpenCL",
