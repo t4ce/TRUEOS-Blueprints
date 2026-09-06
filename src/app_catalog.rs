@@ -796,19 +796,6 @@ rustc-payload-dependencies = ["trueos", "itoa"]
             picasso_example.dir,
             root.join("../TRUEOS-Picasso-Example")
         );
-        let churn = package_app_spec(root, "HELIO_CHURN_TRUEOS", PackageCatalog::Apps)
-            .unwrap()
-            .unwrap();
-        assert_eq!(churn.name, "helio_churn_trueos");
-        assert_eq!(churn.dir, root.join("../helio-examples/helio_churn_trueos"));
-        let portal = package_app_spec(root, "HELIO_PORTAL_TRUEOS", PackageCatalog::Apps)
-            .unwrap()
-            .unwrap();
-        assert_eq!(portal.name, "helio_portal_trueos");
-        assert_eq!(
-            portal.dir,
-            root.join("../helio-examples/helio_portal_trueos")
-        );
         assert!(
             package_app_spec(root, "picasso", PackageCatalog::Apps)
                 .unwrap()
@@ -819,7 +806,12 @@ rustc-payload-dependencies = ["trueos", "itoa"]
                 .unwrap()
                 .is_none()
         );
-        for retired in ["HelioV", "HelioC"] {
+        for retired in [
+            "HelioV",
+            "HelioC",
+            "HELIO_CHURN_TRUEOS",
+            "HELIO_PORTAL_TRUEOS",
+        ] {
             assert!(
                 package_app_spec(root, retired, PackageCatalog::Apps)
                     .unwrap()
