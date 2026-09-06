@@ -234,6 +234,10 @@ float2 map(float3 p, __global const ShaderToyUniforms *st) {
     return st_vec2(d+cl*.2f+0.25f,cl);
 }
 
+// Retain every density/fog sample; interpolate only the two expensive lighting
+// probes between anchors. Four steps is the measured ~1.6x quality/speed setting.
+const int LIGHTING_STRIDE = 4;
+
 float4 render( float3 ro,  float3 rd, float time, __global const ShaderToyUniforms *st) {
     (void)st;
     float4 rez = st_vec4(0);
@@ -241,6 +245,14 @@ float4 render( float3 ro,  float3 rd, float time, __global const ShaderToyUnifor
     float3 lpos = st_vec3(disp(time+ldst, st)*0.5f,time+ldst);
     float t = 1.5f;
     float fogT = 0.f;
+    // Lighting is linear in dif and does not affect opacity. Accumulate its
+    // transmittance-weighted coefficient and distance moment, then resolve
+    // the interval when its next anchor is known (no per-step storage).
+    float lightT = 0.f;
+    float lightValue = 0.f;
+    bool lightValid = false;
+    float3 lightWeight = st_vec3(0.f);
+    float3 lightMoment = st_vec3(0.f);
     for (int i=0; i<130; i++) {
         if (rez.a > 0.99f) break;
         float3 pos = ro+t*rd;
@@ -248,20 +260,46 @@ float4 render( float3 ro,  float3 rd, float time, __global const ShaderToyUnifor
         float den = st_clamp(mpv.x-0.3f,0.f,1.f)*1.12f;
         float dn = st_clamp(mpv.x+2.f,0.f,3.f);
         float4 col = st_vec4(0);
+        float3 lightCoefficient = st_vec3(0.f);
         if (mpv.x > 0.6f) {
             col = st_vec4(sin(st_vec3(5.f,0.4f,0.2f)+mpv.y*0.1f+sin(pos.z*0.4f)*0.5f+1.8f)*0.5f+0.5f,0.08f);
             col *= den*den*den;
             col.rgb = col.rgb * ( linstep(4.f,-2.5f,mpv.x, st)*2.3f);
-            float dif = st_clamp((den-map(pos+.8f, st).x)/9.f,0.001f,1.f);
-            dif += st_clamp((den-map(pos+.35f, st).x)/2.5f,0.001f,1.f);
-            col.xyz = col.xyz * ( den*(st_vec3(0.005f,.045f,.075f)+1.5f*st_vec3(0.033f,0.07f,0.03f)*dif));
+            if (i % LIGHTING_STRIDE == 0 || !lightValid) {
+                float nextLight = st_clamp((den-map(pos+.8f, st).x)/9.f,0.001f,1.f);
+                nextLight += st_clamp((den-map(pos+.35f, st).x)/2.5f,0.001f,1.f);
+                if (lightValid) {
+                    rez.rgb += lightWeight*lightValue
+                        + lightMoment*((nextLight-lightValue)/st_max(t-lightT,1e-6f));
+                }
+                lightWeight = st_vec3(0.f);
+                lightMoment = st_vec3(0.f);
+                lightT = t;
+                lightValue = nextLight;
+                lightValid = true;
+            }
+            lightCoefficient = col.rgb*den*(1.5f*st_vec3(0.033f,0.07f,0.03f));
+            col.rgb = col.rgb * ( den*st_vec3(0.005f,.045f,.075f));
         }
+        // Do not interpolate across empty space; hold the last anchor at a
+        // cloud boundary. The first occupied sample starts a fresh interval.
+        if (mpv.x <= 0.6f && lightValid) {
+            rez.rgb += lightWeight*lightValue;
+            lightWeight = st_vec3(0.f);
+            lightMoment = st_vec3(0.f);
+            lightValid = false;
+        }
+        float3 weight = lightCoefficient*(1.f-rez.a);
+        lightWeight += weight;
+        lightMoment += weight*(t-lightT);
         float fogC = exp(t*0.2f-2.2f);
         col.rgba += st_vec4(0.06f,0.11f,0.11f,0.1f)*st_clamp(fogC-fogT,0.f,1.f);
         fogT = fogC;
         rez = rez+col*(1.f-rez.a);
         t += st_clamp(0.5f-dn*dn*.05f,0.09f,0.3f);
     }
+    // Opacity exit / march limit: resolve the remaining partial interval.
+    rez.rgb += lightWeight*lightValue;
     return st_clamp(rez,0.0f,1.0f);
 }
 

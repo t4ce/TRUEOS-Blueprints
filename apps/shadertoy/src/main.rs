@@ -66,7 +66,7 @@ const SHADERS: [Shader; 6] = [
         id: SHADERTOY_PROTEAN_CLOUDS,
         package: include_bytes!("../assets/protean_clouds.stpkg"),
         name: "Protean Clouds",
-        artifact_sha256: "42708149dff28c43df0cc2bdd4147169aec93ecabbc003122c1e76a5b00b7cbc",
+        artifact_sha256: "438031ad8a14ec646a38ff4bcc5353f395954cfc0a715c36c9dee49254d8b704",
     },
 ];
 

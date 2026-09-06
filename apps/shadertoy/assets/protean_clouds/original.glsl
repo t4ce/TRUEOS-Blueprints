@@ -34,24 +34,12 @@ vec2 map(vec3 p) {
     return vec2(d+cl*.2+0.25,cl);
 }
 
-// Retain every density/fog sample; interpolate only the two expensive lighting
-// probes between anchors. Four steps is the measured ~1.6x quality/speed setting.
-const int LIGHTING_STRIDE = 4;
-
 vec4 render(in vec3 ro, in vec3 rd, float time) {
     vec4 rez = vec4(0);
     const float ldst = 8.;
     vec3 lpos = vec3(disp(time+ldst)*0.5,time+ldst);
     float t = 1.5;
     float fogT = 0.;
-    // Lighting is linear in dif and does not affect opacity. Accumulate its
-    // transmittance-weighted coefficient and distance moment, then resolve
-    // the interval when its next anchor is known (no per-step storage).
-    float lightT = 0.;
-    float lightValue = 0.;
-    bool lightValid = false;
-    vec3 lightWeight = vec3(0.);
-    vec3 lightMoment = vec3(0.);
     for (int i=0; i<130; i++) {
         if (rez.a > 0.99) break;
         vec3 pos = ro+t*rd;
@@ -59,46 +47,20 @@ vec4 render(in vec3 ro, in vec3 rd, float time) {
         float den = clamp(mpv.x-0.3,0.,1.)*1.12;
         float dn = clamp(mpv.x+2.,0.,3.);
         vec4 col = vec4(0);
-        vec3 lightCoefficient = vec3(0.);
         if (mpv.x > 0.6) {
             col = vec4(sin(vec3(5.,0.4,0.2)+mpv.y*0.1+sin(pos.z*0.4)*0.5+1.8)*0.5+0.5,0.08);
             col *= den*den*den;
             col.rgb *= linstep(4.,-2.5,mpv.x)*2.3;
-            if (i % LIGHTING_STRIDE == 0 || !lightValid) {
-                float nextLight = clamp((den-map(pos+.8).x)/9.,0.001,1.);
-                nextLight += clamp((den-map(pos+.35).x)/2.5,0.001,1.);
-                if (lightValid) {
-                    rez.rgb += lightWeight*lightValue
-                        + lightMoment*((nextLight-lightValue)/max(t-lightT,1e-6));
-                }
-                lightWeight = vec3(0.);
-                lightMoment = vec3(0.);
-                lightT = t;
-                lightValue = nextLight;
-                lightValid = true;
-            }
-            lightCoefficient = col.rgb*den*(1.5*vec3(0.033,0.07,0.03));
-            col.rgb *= den*vec3(0.005,.045,.075);
+            float dif = clamp((den-map(pos+.8).x)/9.,0.001,1.);
+            dif += clamp((den-map(pos+.35).x)/2.5,0.001,1.);
+            col.xyz *= den*(vec3(0.005,.045,.075)+1.5*vec3(0.033,0.07,0.03)*dif);
         }
-        // Do not interpolate across empty space; hold the last anchor at a
-        // cloud boundary. The first occupied sample starts a fresh interval.
-        if (mpv.x <= 0.6 && lightValid) {
-            rez.rgb += lightWeight*lightValue;
-            lightWeight = vec3(0.);
-            lightMoment = vec3(0.);
-            lightValid = false;
-        }
-        vec3 weight = lightCoefficient*(1.-rez.a);
-        lightWeight += weight;
-        lightMoment += weight*(t-lightT);
         float fogC = exp(t*0.2-2.2);
         col.rgba += vec4(0.06,0.11,0.11,0.1)*clamp(fogC-fogT,0.,1.);
         fogT = fogC;
         rez = rez+col*(1.-rez.a);
         t += clamp(0.5-dn*dn*.05,0.09,0.3);
     }
-    // Opacity exit / march limit: resolve the remaining partial interval.
-    rez.rgb += lightWeight*lightValue;
     return clamp(rez,0.0,1.0);
 }
 

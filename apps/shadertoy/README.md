@@ -45,8 +45,14 @@ following review. A new candidate still needs explicit catalog admission.
 ## New candidates and cube-field update
 
 F6 selects **Protean Clouds** (`assets/protean_clouds/input.glsl`), now admitted
-with its reproducibly baked, zero-scratch contract. It has host preview proof;
-its new Blueprint dispatch still needs bare-metal visual confirmation.
+with its reproducibly baked, zero-scratch contract. Its lighting probes now use
+four-step interpolation, retaining the original density, ray steps, fog and
+resolution. Host measurements show about 1.6× faster rendering with small
+lighting differences; this update still needs a bare-metal performance check.
+`assets/protean_clouds/original.glsl` preserves the previous source. See
+TRUEOS's `tools/shadertoy-cpp-offline/PROTEAN_CLOUDS_PERFORMANCE.md` for timings,
+quality comparisons and the benchmark. Rebuild the kernel and Blueprint together
+to install the updated shader package and its trusted hashes.
 
 The other two sources are retained in `assets/candidates/`:
 
