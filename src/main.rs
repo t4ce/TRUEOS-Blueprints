@@ -117,7 +117,7 @@ const BLUEPRINT_VENDOR_PATCHES: &[(&str, &str)] = &[
     ("http-body", "http-body-1.0.1"),
     ("http-body-util", "http-body-util-0.1.3"),
     ("httpdate", "httpdate-1.0.3"),
-    ("hyper", "hyper-1.9.0"),
+    ("hyper", "hyper-1.10.0"),
     ("hyper-rustls", "hyper-rustls-0.27.9"),
     ("hyper-util", "hyper-util-0.1.20"),
     ("log", "log-0.4.32"),
@@ -5565,7 +5565,7 @@ fn materialized_workspace_dependency(
                     source_overlay,
                     work_dir,
                     "hyper",
-                    &blueprint_root.join("vendor/hyper-1.9.0"),
+                    &blueprint_root.join("vendor/hyper-1.10.0"),
                 )
                 .display()
                 .to_string(),

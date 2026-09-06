@@ -193,8 +193,12 @@ pub struct IndexedDraw {
     pub texture_height: u32,
     pub texture_pitch: u32,
     pub sampler_flags: u32,
+    /// INDEXED_DRAW_* flags. Zero keeps the original clear + depth-tested draw.
     pub texture_reserved: u32,
 }
+
+/// Continue an existing UI4 frame in painter order, without clearing or depth.
+pub const INDEXED_DRAW_LOAD_COLOR: u32 = 1;
 
 pub const MAX_INDEXED_BATCH_DRAWS: usize = 16;
 /// The mixed-topology V2 batch maps directly to the resident renderer's
@@ -884,7 +888,6 @@ impl Device {
         draw.pipeline = pipeline.0;
         draw.vertex_buffer = vertex_buffer.0;
         draw.index_buffer = index_buffer.0;
-        draw.texture_reserved = 0;
         let mut point = TimelinePoint::default();
         rc_result(unsafe {
             vcabi::trueos_cabi_vgpu_ui4_indexed_submit(self.0, queue.handle, &draw, &mut point)

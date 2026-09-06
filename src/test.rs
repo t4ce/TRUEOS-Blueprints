@@ -437,14 +437,14 @@ mod workspace_dependency_tests {
 
     #[test]
     fn vendored_workspace_dependency_keeps_the_overlay_canonical_path() {
-        let canonical = PathBuf::from("/sdk/vendor/hyper-1.9.0");
+        let canonical = PathBuf::from("/sdk/vendor/hyper-1.10.0");
         let patches = [CratePatch::new("hyper", canonical.clone())];
 
         let resolved = workspace_dependency_vendor_path(
             &patches,
             Path::new("/staging/work/package"),
             "hyper",
-            Path::new("/fallback/vendor/hyper-1.9.0"),
+            Path::new("/fallback/vendor/hyper-1.10.0"),
         );
 
         assert_eq!(resolved, canonical);

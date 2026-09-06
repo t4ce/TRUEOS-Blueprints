@@ -12,7 +12,7 @@ that every API in these crates works on TRUEOS.
 | Mio | 1.2.0 | Registrations/selectors remain in userspace. Unix poll/readiness and wake operations terminate at TRUEOS. |
 | Tokio | 1.52.3 | Each native lane owns a current-thread runtime. Async tasks stay in that runtime; explicit `trueos::worker` supplies additional native lanes. |
 | Bytes | 1.11.1 | Application buffers and operations; storage uses the platform allocator. |
-| Hyper / Tower / Axum / Tonic | 1.9.0 / 0.5.3 / 0.8.9 / 0.14.6 | Protocol and application state remain in the Blueprint; transport uses Tokio/Mio. |
+| Hyper / Tower / Axum / Tonic | 1.10.0 / 0.5.3 / 0.8.9 / 0.14.6 | Protocol and application state remain in the Blueprint; transport uses Tokio/Mio. |
 | Tracing | 0.1.44 | `trueos::trace::with_default` installs the kernel subscriber on each executing lane. |
 
 The earlier adapter-based size/import measurements do not validate this source
