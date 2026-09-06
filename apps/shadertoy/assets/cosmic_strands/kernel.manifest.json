@@ -390,13 +390,13 @@
   "source": {
     "inputs": [
       {
-        "path": "/home/t4ce/Repos/TRUEOS-Blueprints/apps/shadertoy/assets/cosmic_strands/kernel.clcpp",
+        "path": "bld/shadertoy-blueprint-bake/sources/cosmic_strands/kernel.clcpp",
         "sha256": "39072b4b30a7c2cd4fcb1c80bdf38f2dd2b0d1740765d094a9ed2f73cb10dbc1",
         "size_bytes": 11415
       }
     ],
     "language": "C++ for OpenCL",
-    "path": "/home/t4ce/Repos/TRUEOS-Blueprints/apps/shadertoy/assets/cosmic_strands/kernel.clcpp"
+    "path": "bld/shadertoy-blueprint-bake/sources/cosmic_strands/kernel.clcpp"
   },
   "target": {
     "label": "adls",

@@ -390,13 +390,13 @@
   "source": {
     "inputs": [
       {
-        "path": "/home/t4ce/Repos/TRUEOS-Blueprints/apps/shadertoy/assets/palette_grid/kernel.clcpp",
+        "path": "bld/shadertoy-blueprint-bake/sources/palette_grid/kernel.clcpp",
         "sha256": "84d6b105eb830ec8f73c375a9ae47ee84a5aa75f8d16721c9a0725e8683e7d38",
         "size_bytes": 11530
       }
     ],
     "language": "C++ for OpenCL",
-    "path": "/home/t4ce/Repos/TRUEOS-Blueprints/apps/shadertoy/assets/palette_grid/kernel.clcpp"
+    "path": "bld/shadertoy-blueprint-bake/sources/palette_grid/kernel.clcpp"
   },
   "target": {
     "label": "adls",
