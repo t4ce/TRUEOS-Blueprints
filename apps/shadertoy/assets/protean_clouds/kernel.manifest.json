@@ -5,10 +5,10 @@
       "class": 64,
       "endianness": "little",
       "machine": 205,
-      "sha256": "438031ad8a14ec646a38ff4bcc5353f395954cfc0a715c36c9dee49254d8b704",
-      "size_bytes": 255944,
+      "sha256": "19119f60ffe6a9207bd24d40aecde2b672a27aa253e228f048f36a9c81782696",
+      "size_bytes": 51504,
       "type": "relocatable",
-      "ze_info_section_offset": 251960,
+      "ze_info_section_offset": 47440,
       "ze_info_section_size": 3145
     },
     "kernels": [
@@ -177,13 +177,13 @@
         ],
         "text": {
           "entry_offset": 64,
-          "entry_size": 221528,
+          "entry_size": 17008,
           "section_alignment": 0,
           "section_name": ".text.shadertoy_protean_clouds",
           "section_offset": 64,
-          "section_size": 221696,
-          "sha256": "fd14f599c9ae9e76252c838af8fa238faf2c55a0ef87ab25d8ce43651d1d6e38",
-          "symbol_size": 221528,
+          "section_size": 17152,
+          "sha256": "d179ebd4310b5aaeb20ae5b03c433a7e3b5d721c4bd63211e05821d800c2f3d7",
+          "symbol_size": 17008,
           "symbol_value": 0
         },
         "user_attributes": {
@@ -199,7 +199,7 @@
       }
     ],
     "spirv": {
-      "embedded_section_offset": 221832,
+      "embedded_section_offset": 17288,
       "embedded_section_size": 30056,
       "sha256": "3c76cccfe72dadc31fbeff6589bd7598801595ae5760729c8ba59d7ca3418917",
       "size_bytes": 30056
@@ -256,7 +256,9 @@
         "-out_dir",
         "$OUT_DIR",
         "-output_no_suffix",
-        "-gen_file"
+        "-gen_file",
+        "-options",
+        "-cl-fast-relaxed-math"
       ],
       [
         "$OCLOC",
@@ -269,8 +271,8 @@
       "description": "Clang C++ for OpenCL -> LLVM bitcode -> llvm-spirv"
     },
     "profile": {
-      "path": "tools/intel-gpu-bakery/profiles/adls-4680-r0c-cpp.json",
-      "sha256": "66835e5d4fd37f63d767e7e11314ae0cd728eeb7a18abac6fbc90851346816b6"
+      "path": "tools/intel-gpu-bakery/profiles/adls-4680-r0c-shadertoy.json",
+      "sha256": "548db118bee677b46a45d43fe57bb574bfc724f789b2fb58b79c5ba94fe37b57"
     },
     "publication_policy": {
       "expected_kernels": [
@@ -331,7 +333,7 @@
         }
       ],
       "frontend": "clang-clcpp",
-      "profile_sha256": "66835e5d4fd37f63d767e7e11314ae0cd728eeb7a18abac6fbc90851346816b6",
+      "profile_sha256": "548db118bee677b46a45d43fe57bb574bfc724f789b2fb58b79c5ba94fe37b57",
       "schema_version": 1,
       "tools": {
         "clang": {
@@ -390,8 +392,8 @@
       }
     },
     "toolchain_lock": {
-      "path": "tools/intel-gpu-bakery/toolchains/adls-shadertoy-cpp-proof.lock.json",
-      "sha256": "8f97a4c0d3272d0b702440b2f8012b9b669742a68e680c7275df061df6a40c0e"
+      "path": "tools/intel-gpu-bakery/toolchains/adls-shadertoy-relaxed.lock.json",
+      "sha256": "1daad1d7672838dbeff853fcee5230db9fd0227a4295d3330fd210cebca2ea3c"
     }
   },
   "rust_symbols": {

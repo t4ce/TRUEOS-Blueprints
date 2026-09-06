@@ -48,25 +48,25 @@ const SHADERS: [Shader; 6] = [
         id: SHADERTOY_NGUYEN,
         package: include_bytes!("../assets/nguyen.stpkg"),
         name: "Nguyen compact visual",
-        artifact_sha256: "1dbc80b468dd896073dd17c3963a5c7cccf814365e21f040e05a3522fea4cd9c",
+        artifact_sha256: "7140703571a20d5640876caddbe5948aa84f8828ff1d621b6eae1ef7d67af54d",
     },
     Shader {
         id: SHADERTOY_PALETTE_GRID,
         package: include_bytes!("../assets/palette_grid.stpkg"),
         name: "Palette grid glow",
-        artifact_sha256: "98a5a39154a9021e2e09407c5188644ac744eedae4031efdf395f6619b32fd40",
+        artifact_sha256: "2174c3002ff5e0c489de3ea4aff8da5b922b995e6075967a326eeb656e280124",
     },
     Shader {
         id: SHADERTOY_COSMIC_STRANDS,
         package: include_bytes!("../assets/cosmic_strands.stpkg"),
         name: "Cosmic Strands",
-        artifact_sha256: "9a275f036deac274541a34256c09140ecd3f98e392c4963a27e6ac1db5b82500",
+        artifact_sha256: "bf7e5b8a590526a36fa9684a4055d9dd255e36cba8b5ab75813ca3b59b4569d4",
     },
     Shader {
         id: SHADERTOY_PROTEAN_CLOUDS,
         package: include_bytes!("../assets/protean_clouds.stpkg"),
         name: "Protean Clouds",
-        artifact_sha256: "438031ad8a14ec646a38ff4bcc5353f395954cfc0a715c36c9dee49254d8b704",
+        artifact_sha256: "19119f60ffe6a9207bd24d40aecde2b672a27aa253e228f048f36a9c81782696",
     },
 ];
 
@@ -97,6 +97,10 @@ fn main() {
     let mut width = INITIAL_WIDTH;
     let mut height = INITIAL_HEIGHT;
     let mut mouse = [0.0f32; 4];
+    let mut stats_started_ns = shader_started_ns;
+    let mut stats_frames = 0u64;
+    let mut stats_render_ns = 0u64;
+    let mut stats_max_render_ns = 0u64;
     log_shader(SHADERS[shader_index]);
 
     'running: loop {
@@ -112,6 +116,10 @@ fn main() {
                         }
                         width = event.width;
                         height = event.height;
+                        stats_started_ns = clock::monotonic_nanos();
+                        stats_frames = 0;
+                        stats_render_ns = 0;
+                        stats_max_render_ns = 0;
                     }
                 }
                 Ok(None) => break,
@@ -172,6 +180,10 @@ fn main() {
                 shader_started_ns = clock::monotonic_nanos();
                 previous_ns = shader_started_ns;
                 frame_number = 0;
+                stats_started_ns = shader_started_ns;
+                stats_frames = 0;
+                stats_render_ns = 0;
+                stats_max_render_ns = 0;
                 log_shader(SHADERS[shader_index]);
             }
         }
@@ -203,9 +215,34 @@ fn main() {
                     + u32::from(value.second)) as f32
             }),
         };
+        let render_started_ns = clock::monotonic_nanos();
         if let Err(error) = frame.render_shadertoy(&params) {
+            logl::log(logl::level::ERROR, format_args!(
+                "shadertoy: failed frame shader={} extent={}x{} render_publish_ms={}",
+                params.shader_id, width, height,
+                clock::monotonic_nanos().saturating_sub(render_started_ns) / 1_000_000,
+            ));
             fail("render/compute publish", error);
             return;
+        }
+        let rendered_ns = clock::monotonic_nanos();
+        let render_ns = rendered_ns.saturating_sub(render_started_ns);
+        stats_frames += 1;
+        stats_render_ns = stats_render_ns.saturating_add(render_ns);
+        stats_max_render_ns = stats_max_render_ns.max(render_ns);
+        let stats_elapsed_ns = rendered_ns.saturating_sub(stats_started_ns);
+        if stats_elapsed_ns >= 5_000_000_000 {
+            logl::log(logl::level::INFO, format_args!(
+                "shadertoy: perf shader={} extent={}x{} frames={} fps_x100={} render_publish_us_avg={} render_publish_us_max={}",
+                params.shader_id, width, height, stats_frames,
+                stats_frames.saturating_mul(100_000_000_000) / stats_elapsed_ns,
+                stats_render_ns / stats_frames / 1_000,
+                stats_max_render_ns / 1_000,
+            ));
+            stats_started_ns = rendered_ns;
+            stats_frames = 0;
+            stats_render_ns = 0;
+            stats_max_render_ns = 0;
         }
         previous_ns = now_ns;
         frame_number = frame_number.wrapping_add(1);
