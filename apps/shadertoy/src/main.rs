@@ -23,34 +23,39 @@ struct Shader {
     id: u32,
     name: &'static str,
     artifact_sha256: &'static str,
+    package: &'static [u8],
 }
 
-// The app ships this admitted catalog. Executable bytes remain kernel-owned,
-// so the Blueprint cannot inject a pointer, SPIR-V module, or unreviewed Zebin
-// through the provisional visual ABI.
+// Packages contain the executable, SPIR-V, raw GLSL, generated C++ and bake
+// provenance. Kernel-owned hashes/contracts remain the authority for admission.
 const SHADERS: [Shader; 5] = [
     Shader {
         id: SHADERTOY_MANDELBROT,
+        package: include_bytes!("../assets/mandelbrot.stpkg"),
         name: "Mandelbrot zoom",
         artifact_sha256: "79e566ad2db01a1a2467e0289bd97e9c77c67be7bd4a59d957dadd84e0ec32d1",
     },
     Shader {
         id: SHADERTOY_CUBE_FIELD,
+        package: include_bytes!("../assets/cube_field.stpkg"),
         name: "Raymarched cube field",
         artifact_sha256: "0d48ef4d170eafe0cec5ae3952abdc6e57e865b195dbc3fc137ca7eb1b25d736",
     },
     Shader {
         id: SHADERTOY_NGUYEN,
+        package: include_bytes!("../assets/nguyen.stpkg"),
         name: "Nguyen compact visual",
         artifact_sha256: "1dbc80b468dd896073dd17c3963a5c7cccf814365e21f040e05a3522fea4cd9c",
     },
     Shader {
         id: SHADERTOY_PALETTE_GRID,
+        package: include_bytes!("../assets/palette_grid.stpkg"),
         name: "Palette grid glow",
         artifact_sha256: "98a5a39154a9021e2e09407c5188644ac744eedae4031efdf395f6619b32fd40",
     },
     Shader {
         id: SHADERTOY_COSMIC_STRANDS,
+        package: include_bytes!("../assets/cosmic_strands.stpkg"),
         name: "Cosmic Strands",
         artifact_sha256: "9a275f036deac274541a34256c09140ecd3f98e392c4963a27e6ac1db5b82500",
     },
@@ -67,6 +72,14 @@ fn main() {
         logl::log(logl::level::ERROR, "shadertoy: visual frame open failed");
         return;
     };
+
+    for shader in SHADERS {
+        if let Err(error) = frame.register_shadertoy(shader.id, shader.package) {
+            log_shader(shader);
+            fail("package registration", error);
+            return;
+        }
+    }
 
     let mut shader_index = 0usize;
     let mut shader_started_ns = clock::monotonic_nanos();

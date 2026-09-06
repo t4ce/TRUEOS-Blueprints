@@ -1175,6 +1175,24 @@ impl Frame {
         })
     }
 
+    /// Register a Blueprint-owned shader package before its first render.
+    /// The kernel authenticates the complete package, executable, SPIR-V and ABI
+    /// against its own trust catalog. Source files travel with the package.
+    pub fn register_shadertoy(&mut self, shader_id: u32, package: &[u8]) -> Result<(), Error> {
+        if package.is_empty() || package.len() > u32::MAX as usize {
+            return Err(Error::Invalid);
+        }
+        for (index, chunk) in package.chunks(2048).enumerate() {
+            status(unsafe {
+                v::bp_abi::trueos_cabi_ui4_scene_shadertoy_upload_v1(
+                    self.window_id, shader_id, (index * 2048) as u32, package.len() as u32,
+                    chunk.as_ptr(), chunk.len(),
+                )
+            })?;
+        }
+        Ok(())
+    }
+
     /// Render and publish one immutable, offline-validated ShaderToy catalog
     /// artifact. ShaderToy always overwrites its complete visual-frame surface,
     /// so the completed compute lease is published with full-frame damage.
