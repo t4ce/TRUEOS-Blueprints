@@ -11,3 +11,7 @@ does. Preserve `ErrorKind::Unsupported` and raw OS errors; substituting
 The default spawner still uses `std::thread`; TRUEOS native worker admission
 and shutdown need an explicit adapter. Restoring this API alone does not
 enable parallel style traversal.
+
+`either` accepts compatible 1.x releases starting at 1.16.0. An exact 1.16.0
+pin prevents the overlay from resolving against apps already locked to 1.18.0;
+this dependency does not carry a TRUEOS platform backend.

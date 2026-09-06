@@ -51,7 +51,10 @@ mod external_path_overlay_tests {
     #[test]
     fn git_patch_requires_an_immutable_revision() {
         let rev = "3786da941f0042c923fb5981a0edda86b8d38dba";
-        assert_eq!(pinned_git_patch_revision("stylo", &format!("{{ rev = \"{rev}\" }}")).unwrap(), rev);
+        assert_eq!(
+            pinned_git_patch_revision("stylo", &format!("{{ rev = \"{rev}\" }}")).unwrap(),
+            rev
+        );
         for value in [
             "{ branch = \"main\" }".to_owned(),
             "{ rev = \"3786da9\" }".to_owned(),
@@ -75,10 +78,25 @@ mod external_path_overlay_tests {
                   "manifest_path": "/checkout/style/Cargo.toml", "dependencies": [] }
             ],
             "resolve": null
-        })).unwrap();
-        assert_eq!(pinned_git_patch_path(&metadata, "stylo", git, rev).unwrap(), PathBuf::from("/checkout/style"));
-        assert!(pinned_git_patch_path(&metadata, "stylo", "https://github.com/servo/stylo", rev).is_err());
-        assert!(pinned_git_patch_path(&metadata, "stylo", git, "0000000000000000000000000000000000000000").is_err());
+        }))
+        .unwrap();
+        assert_eq!(
+            pinned_git_patch_path(&metadata, "stylo", git, rev).unwrap(),
+            PathBuf::from("/checkout/style")
+        );
+        assert!(
+            pinned_git_patch_path(&metadata, "stylo", "https://github.com/servo/stylo", rev)
+                .is_err()
+        );
+        assert!(
+            pinned_git_patch_path(
+                &metadata,
+                "stylo",
+                git,
+                "0000000000000000000000000000000000000000"
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -86,10 +104,21 @@ mod external_path_overlay_tests {
         let root = test_dir("workspace-version");
         let member = root.join("style");
         fs::create_dir_all(&member).unwrap();
-        fs::write(root.join("Cargo.toml"), "[workspace]\nmembers = [\"style\"]\n[workspace.package]\nversion = \"0.20.0\"\n").unwrap();
+        fs::write(
+            root.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"style\"]\n[workspace.package]\nversion = \"0.20.0\"\n",
+        )
+        .unwrap();
         let manifest = member.join("Cargo.toml");
-        fs::write(&manifest, "[package]\nname = \"stylo\"\nversion.workspace = true\n").unwrap();
-        assert_eq!(package_version(&manifest).unwrap().as_deref(), Some("0.20.0"));
+        fs::write(
+            &manifest,
+            "[package]\nname = \"stylo\"\nversion.workspace = true\n",
+        )
+        .unwrap();
+        assert_eq!(
+            package_version(&manifest).unwrap().as_deref(),
+            Some("0.20.0")
+        );
         fs::remove_file(root.join("Cargo.toml")).unwrap();
         assert!(package_version(&manifest).is_err());
         fs::remove_dir_all(root).unwrap();

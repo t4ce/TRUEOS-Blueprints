@@ -2637,11 +2637,15 @@ fn pinned_git_patch_path(
         format!("Git patch `{package}` is absent from the locked graph at {expected}")
     })?;
     if matches.next().is_some() {
-        return Err(format!("Git patch `{package}` has multiple packages at {expected}"));
+        return Err(format!(
+            "Git patch `{package}` has multiple packages at {expected}"
+        ));
     }
-    candidate.manifest_path.parent().map(Path::to_path_buf).ok_or_else(|| {
-        format!("Git patch `{package}` has no checkout directory in cargo metadata")
-    })
+    candidate
+        .manifest_path
+        .parent()
+        .map(Path::to_path_buf)
+        .ok_or_else(|| format!("Git patch `{package}` has no checkout directory in cargo metadata"))
 }
 
 fn add_blueprint_vendor_patches(app_dir: &Path, patches: &mut Vec<CratePatch>) {
@@ -5074,7 +5078,10 @@ fn package_version(manifest_path: &Path) -> Result<Option<String>, String> {
         let directory = manifest_path.parent().unwrap_or(manifest_path);
         let candidates = match workspace {
             Some(path) => vec![directory.join(path).join("Cargo.toml")],
-            None => directory.ancestors().map(|dir| dir.join("Cargo.toml")).collect(),
+            None => directory
+                .ancestors()
+                .map(|dir| dir.join("Cargo.toml"))
+                .collect(),
         };
         for candidate in candidates {
             if !candidate.is_file() {
@@ -5095,7 +5102,10 @@ fn package_version(manifest_path: &Path) -> Result<Option<String>, String> {
                 }
             }
         }
-        return Err(format!("cannot resolve inherited package version in {}", manifest_path.display()));
+        return Err(format!(
+            "cannot resolve inherited package version in {}",
+            manifest_path.display()
+        ));
     }
     Ok(None)
 }
