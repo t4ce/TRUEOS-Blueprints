@@ -1,5 +1,8 @@
 # ShaderToy visual Blueprint
 
+See [compiler settings](COMPILER_FLAGS.md) for the backend flag that produced the
+large math-performance win and the precision tradeoffs we checked.
+
 The Blueprint owns the six runtime shaders in `assets/`. Each shader directory
 contains the raw GLSL (`input.glsl`), generated C++ (`kernel.clcpp`), Zebin,
 SPIR-V, bake manifest, and ABI contract. The corresponding `.stpkg` includes
@@ -15,9 +18,27 @@ public-key shader signing/update channel. Source and provenance now receive
 package hash coverage too.
 
 The app opens a UI4 visual frame at 30 Hz. Use Left/Right or F1–F6 to switch
-shaders; Escape closes the app. Per-frame calls still carry the existing 64-byte
-uniform block. Registering an incomplete, modified or unknown package cannot
+shaders; Escape closes the app. For F6, **Space** toggles radial sampling and
+native resolution. Per-frame calls still carry the existing 64-byte request. Registering an incomplete, modified or unknown package cannot
 make a new shader executable. There is no embedded/filesystem shader fallback.
+
+Every five seconds the app logs actual throughput (`fps_x100`, where 3000 means
+30 FPS) and average/maximum render-and-publish wall time in microseconds. Resize
+and shader changes reset the interval. These timings exclude the frame-begin
+cadence wait, so slow rendering can be distinguished from the requested 30 Hz.
+
+F6 uses a smaller render target with smoothly concentrated samples around the
+tunnel focus. At 1440p it evaluates 1280×720 cloud samples and reconstructs the
+full image on the GPU; small windows remain native. See [radial sampling](FOVEATED_RENDERING.md)
+for the math, quality tradeoff, local measurements and Picasso reuse boundary.
+
+Nguyen, Palette Grid, Cosmic Strands and Protean now use a separately pinned
+relaxed-math backend profile; Mandelbrot and cube-field executables are unchanged.
+The kernel renders bounded row batches and publishes only the completed image.
+This preserves resolution and mouse coordinates while avoiding one enormous
+fullscreen dispatch. Native-intrinsic comparisons, 1440p measurements and
+long-running precision tradeoffs are recorded in TRUEOS's
+`tools/shadertoy-cpp-offline/RUNTIME_PERFORMANCE.md`.
 
 For a local package build from TRUEOS-Blueprints:
 
@@ -47,8 +68,10 @@ following review. A new candidate still needs explicit catalog admission.
 F6 selects **Protean Clouds** (`assets/protean_clouds/input.glsl`), now admitted
 with its reproducibly baked, zero-scratch contract. Its lighting probes now use
 four-step interpolation, retaining the original density, ray steps, fog and
-resolution. Host measurements show about 1.6× faster rendering with small
-lighting differences; this update still needs a bare-metal performance check.
+full-resolution shading function. That lighting change measured about 1.6× faster rendering. The newer
+backend-math and row-dispatch update measures another 4.48× at 1440p locally
+(972 to 217 ms); it still needs a bare-metal performance check. Relaxed math
+has tiny differences in the short tests and pattern drift at large time values.
 `assets/protean_clouds/original.glsl` preserves the previous source. See
 TRUEOS's `tools/shadertoy-cpp-offline/PROTEAN_CLOUDS_PERFORMANCE.md` for timings,
 quality comparisons and the benchmark. Rebuild the kernel and Blueprint together

@@ -17,6 +17,8 @@ struct ShaderToyUniforms {
     float4 mouse;
     float4 date;
     float4 timing;
+    uint4 render_control;
+    float4 focus_control;
 };
 
 inline constexpr float2 st_vec2(float v) { return (float2)(v); }
@@ -364,19 +366,77 @@ static inline uint st_pack_rgba8(float4 color)
     return 0xFF000000u | (b << 16) | (g << 8) | r;
 }
 
+
+// Output pixels -> sample-space pixels. The mapping and its first derivative
+// meet identity at the focus disk's boundary; center magnification is boost.
+inline float2 st_focus_to_sample(float2 p, float4 focus) {
+    float2 d = p - focus.xy;
+    float radius = length(d);
+    float t = clamp(1.0f - radius / focus.z, 0.0f, 1.0f);
+    return focus.xy + d * (1.0f + (focus.w - 1.0f) * t * t);
+}
+// Invert the monotone radius map only for the expensive samples. The cheap
+// full-resolution resolve uses the direct polynomial above, not this solve.
+inline float2 st_focus_to_output(float2 p, float4 focus) {
+    float2 d = p - focus.xy;
+    float radius = length(d);
+    if (radius >= focus.z || radius < 1e-5f) return p;
+    float y = radius / focus.z;
+    float a = focus.w - 1.0f;
+    float x = y / focus.w;
+    for (int i=0; i<5; ++i) {
+        float u = 1.0f - x;
+        float f = x * (1.0f + a*u*u) - y;
+        float derivative = 1.0f + a*u*(1.0f - 3.0f*x);
+        x = clamp(x - f / derivative, 0.0f, 1.0f);
+    }
+    return focus.xy + d * (x / y);
+}
+// Bilinear RGBA8 reconstruction; coordinate helpers are prepended by adapter.py.
+inline float4 st_focus_unpack(uint c) {
+    return convert_float4((uint4)(c&255u, (c>>8)&255u, (c>>16)&255u, 255u)) * (1.0f/255.0f);
+}
+inline float4 st_focus_bilinear(__global const uint *source, float2 p, uint4 controls) {
+    p = clamp(p, (float2)(0.0f), convert_float2(controls.yz)-(float2)(1.0f));
+    uint2 lo = convert_uint2(p);
+    uint2 hi = min(lo + (uint2)(1u), controls.yz - (uint2)(1u));
+    float2 w = p - convert_float2(lo);
+    uint pitch = controls.w / 4u;
+    float4 a = st_focus_unpack(source[(size_t)lo.y*pitch+lo.x]);
+    float4 b = st_focus_unpack(source[(size_t)lo.y*pitch+hi.x]);
+    float4 c = st_focus_unpack(source[(size_t)hi.y*pitch+lo.x]);
+    float4 d = st_focus_unpack(source[(size_t)hi.y*pitch+hi.x]);
+    return mix(mix(a,b,w.x),mix(c,d,w.x),w.y);
+}
+
 kernel TRUEOS_REQD_SUB_GROUP_SIZE_16 void shadertoy_protean_clouds(
     __global uint *output,
     __global const ShaderToyUniforms *uniforms,
     uint width,
     uint height,
-    uint pitch_bytes)
+    uint pitch_bytes,
+    __global const uint *source)
 {
     uint x = get_global_id(0);
     uint y = get_global_id(1);
     if (x >= width || y >= height) {
         return;
     }
-    float2 frag_coord = (float2)((float)x + 0.5f, (float)(height - y) - 0.5f);
+
+    float2 output_pixel = convert_float2((uint2)(x,y)) + (float2)(0.5f);
+    if (uniforms->render_control.x == 2u) {
+        float2 sample_pixel = st_focus_to_sample(output_pixel, uniforms->focus_control);
+        sample_pixel *= convert_float2(uniforms->render_control.yz) / uniforms->resolution_time.xy;
+        float4 color = st_focus_bilinear(source, sample_pixel - (float2)(0.5f), uniforms->render_control);
+        output[(size_t)y * (pitch_bytes/4u) + x] = st_pack_rgba8(color);
+        return;
+    }
+    if (uniforms->render_control.x == 1u) {
+        output_pixel *= uniforms->resolution_time.xy / convert_float2((uint2)(width,height));
+        output_pixel = st_focus_to_output(output_pixel, uniforms->focus_control);
+    }
+    float2 frag_coord = (float2)(output_pixel.x, uniforms->resolution_time.y-output_pixel.y);
+
     float4 frag_color = (float4)(0.0f, 0.0f, 0.0f, 1.0f);
     ShaderToyInvocation invocation = {};
     invocation.mainImage(frag_color, frag_coord, uniforms);

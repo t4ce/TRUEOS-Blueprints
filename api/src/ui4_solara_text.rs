@@ -358,11 +358,14 @@ pub const SHADERTOY_NGUYEN: u32 = 3;
 pub const SHADERTOY_PALETTE_GRID: u32 = 4;
 pub const SHADERTOY_COSMIC_STRANDS: u32 = 5;
 pub const SHADERTOY_PROTEAN_CLOUDS: u32 = 6;
+/// F6 only: bypass automatic radial sampling for a full-resolution comparison.
+pub const SHADERTOY_FLAG_NATIVE_RESOLUTION: u32 = 1;
 
 /// Pointer-free controls for a kernel-reviewed ShaderToy catalog entry.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct ShadertoyParamsV1 {
     pub shader_id: u32,
+    pub flags: u32,
     pub frame: u32,
     pub time_seconds: f32,
     pub delta_seconds: f32,
@@ -1228,7 +1231,7 @@ impl Frame {
             version: SHADERTOY_PARAMS_VERSION,
             shader_id: params.shader_id,
             frame: params.frame,
-            flags: 0,
+            flags: params.flags,
             time_seconds: params.time_seconds,
             delta_seconds: params.delta_seconds,
             frame_rate: params.frame_rate,
