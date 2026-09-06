@@ -2,12 +2,15 @@
 
 use trueos::input::{
     KEYBOARD_KEY_ARROW_LEFT, KEYBOARD_KEY_ARROW_RIGHT, KEYBOARD_KEY_F1, KEYBOARD_KEY_F2,
-    KEYBOARD_KEY_SPACE, KEYBOARD_KEY_F3, KEYBOARD_KEY_F4, KEYBOARD_KEY_F5, KEYBOARD_KEY_F6, KEYBOARD_OUTPUT_FLAG_PRESS,
-    KEYBOARD_OUTPUT_KIND_KEY,
+    KEYBOARD_KEY_F3, KEYBOARD_KEY_F4, KEYBOARD_KEY_F5, KEYBOARD_KEY_F6, KEYBOARD_KEY_F7,
+    KEYBOARD_KEY_F8, KEYBOARD_KEY_F9, KEYBOARD_KEY_F10, KEYBOARD_KEY_F11, KEYBOARD_KEY_F12,
+    KEYBOARD_KEY_SPACE, KEYBOARD_OUTPUT_FLAG_PRESS, KEYBOARD_OUTPUT_KIND_KEY,
 };
 use trueos::ui4_scene::{
-    Error, Frame, SHADERTOY_FLAG_NATIVE_RESOLUTION, SHADERTOY_CUBE_FIELD, SHADERTOY_MANDELBROT, SHADERTOY_NGUYEN,
-    SHADERTOY_COSMIC_STRANDS, SHADERTOY_PROTEAN_CLOUDS, SHADERTOY_PALETTE_GRID, ShadertoyParamsV1,
+    Error, Frame, POINTER_BUTTON_PRIMARY, SHADERTOY_COSMIC_STRANDS, SHADERTOY_CUBE_FIELD,
+    SHADERTOY_FLAG_NATIVE_RESOLUTION, SHADERTOY_FLAG_PRIMARY_DOWN, SHADERTOY_HIGH_WISPS,
+    SHADERTOY_MANDELBROT, SHADERTOY_NGUYEN, SHADERTOY_PALETTE_GRID, SHADERTOY_PROTEAN_CLOUDS,
+    ShadertoyParamsV1,
 };
 use trueos::{clock, logl, vsys};
 
@@ -16,11 +19,12 @@ const FRAME_Y: i32 = 96;
 const INITIAL_WIDTH: u32 = 640;
 const INITIAL_HEIGHT: u32 = 360;
 const TARGET_HZ: u32 = 30;
-const SAMPLE_RATE: f32 = 44_100.0;
+const SAMPLE_RATE: f32 = 48_000.0;
 
 #[derive(Copy, Clone)]
 struct Shader {
     id: u32,
+    program_id: u32,
     name: &'static str,
     artifact_sha256: &'static str,
     package: &'static [u8],
@@ -31,42 +35,111 @@ struct Shader {
 // They have no executable catalog ID until those requirements are supported.
 // Packages contain the executable, SPIR-V, raw GLSL, generated C++ and bake
 // provenance. Kernel-owned hashes/contracts remain the authority for admission.
-const SHADERS: [Shader; 6] = [
+const SHADERS: [Shader; 15] = [
     Shader {
         id: SHADERTOY_MANDELBROT,
+        program_id: 1,
         package: include_bytes!("../assets/mandelbrot.stpkg"),
         name: "Mandelbrot zoom",
         artifact_sha256: "79e566ad2db01a1a2467e0289bd97e9c77c67be7bd4a59d957dadd84e0ec32d1",
     },
     Shader {
         id: SHADERTOY_CUBE_FIELD,
+        program_id: 2,
         package: include_bytes!("../assets/cube_field.stpkg"),
         name: "Animated cube field",
         artifact_sha256: "04f940ae84746975d6c11033ce7899ccc8307badcaf3091f53a654ca10256f10",
     },
     Shader {
         id: SHADERTOY_NGUYEN,
+        program_id: 3,
         package: include_bytes!("../assets/nguyen.stpkg"),
         name: "Nguyen compact visual",
         artifact_sha256: "7140703571a20d5640876caddbe5948aa84f8828ff1d621b6eae1ef7d67af54d",
     },
     Shader {
         id: SHADERTOY_PALETTE_GRID,
+        program_id: 4,
         package: include_bytes!("../assets/palette_grid.stpkg"),
         name: "Palette grid glow",
         artifact_sha256: "2174c3002ff5e0c489de3ea4aff8da5b922b995e6075967a326eeb656e280124",
     },
     Shader {
         id: SHADERTOY_COSMIC_STRANDS,
+        program_id: 5,
         package: include_bytes!("../assets/cosmic_strands.stpkg"),
         name: "Cosmic Strands",
         artifact_sha256: "bf7e5b8a590526a36fa9684a4055d9dd255e36cba8b5ab75813ca3b59b4569d4",
     },
     Shader {
         id: SHADERTOY_PROTEAN_CLOUDS,
+        program_id: 6,
         package: include_bytes!("../assets/protean_clouds.stpkg"),
         name: "Protean Clouds",
         artifact_sha256: "aad75d1acb31ae065420ee907d5c2bcbe9bb73b71f29c27943a0ec1504956e56",
+    },
+    Shader {
+        id: 7,
+        program_id: 7,
+        name: "Live audio visualizer",
+        package: include_bytes!("../assets/audio_visualizer.stpkg"),
+        artifact_sha256: "86cfdb6afdb08538d3d636130e8d4b9020adc499da28d0084efcb4854867ad9c",
+    },
+    Shader {
+        id: 8,
+        program_id: 8,
+        name: "Four-panel gallery",
+        package: include_bytes!("../assets/cpp_gallery.stpkg"),
+        artifact_sha256: "6dd432e9666035c5d68b6c9fe71abaec72a4e09dfdf7f2c0e9e07043da4e7ab5",
+    },
+    Shader {
+        id: 9,
+        program_id: 8,
+        name: "Aurora",
+        package: include_bytes!("../assets/cpp_gallery.stpkg"),
+        artifact_sha256: "6dd432e9666035c5d68b6c9fe71abaec72a4e09dfdf7f2c0e9e07043da4e7ab5",
+    },
+    Shader {
+        id: 10,
+        program_id: 8,
+        name: "Julia",
+        package: include_bytes!("../assets/cpp_gallery.stpkg"),
+        artifact_sha256: "6dd432e9666035c5d68b6c9fe71abaec72a4e09dfdf7f2c0e9e07043da4e7ab5",
+    },
+    Shader {
+        id: 11,
+        program_id: 8,
+        name: "SDF",
+        package: include_bytes!("../assets/cpp_gallery.stpkg"),
+        artifact_sha256: "6dd432e9666035c5d68b6c9fe71abaec72a4e09dfdf7f2c0e9e07043da4e7ab5",
+    },
+    Shader {
+        id: 12,
+        program_id: 8,
+        name: "Voronoi",
+        package: include_bytes!("../assets/cpp_gallery.stpkg"),
+        artifact_sha256: "6dd432e9666035c5d68b6c9fe71abaec72a4e09dfdf7f2c0e9e07043da4e7ab5",
+    },
+    Shader {
+        id: 13,
+        program_id: 8,
+        name: "Retro Sun",
+        package: include_bytes!("../assets/cpp_gallery.stpkg"),
+        artifact_sha256: "6dd432e9666035c5d68b6c9fe71abaec72a4e09dfdf7f2c0e9e07043da4e7ab5",
+    },
+    Shader {
+        id: 14,
+        program_id: 8,
+        name: "High Wisps",
+        package: include_bytes!("../assets/cpp_gallery.stpkg"),
+        artifact_sha256: "6dd432e9666035c5d68b6c9fe71abaec72a4e09dfdf7f2c0e9e07043da4e7ab5",
+    },
+    Shader {
+        id: 15,
+        program_id: 15,
+        name: "ParticleCraft",
+        package: include_bytes!("../assets/particle_craft.stpkg"),
+        artifact_sha256: "8b3d026f2129593c9344c01c5f6cd89ecf213dcaa5adf8cd3c843d990783e113",
     },
 ];
 
@@ -83,7 +156,10 @@ fn main() {
     };
 
     for shader in SHADERS {
-        if let Err(error) = frame.register_shadertoy(shader.id, shader.package) {
+        if shader.id != shader.program_id {
+            continue;
+        }
+        if let Err(error) = frame.register_shadertoy(shader.program_id, shader.package) {
             log_shader(shader);
             fail("package registration", error);
             return;
@@ -98,6 +174,7 @@ fn main() {
     let mut width = INITIAL_WIDTH;
     let mut height = INITIAL_HEIGHT;
     let mut mouse = [0.0f32; 4];
+    let mut primary_down = false;
     let mut stats_started_ns = shader_started_ns;
     let mut stats_frames = 0u64;
     let mut stats_render_ns = 0u64;
@@ -136,7 +213,8 @@ fn main() {
                 Ok(Some(event)) => {
                     mouse[0] = (event.local_x as f32).clamp(0.0, width as f32);
                     mouse[1] = (height as f32 - event.local_y as f32).clamp(0.0, height as f32);
-                    if event.buttons_pressed != 0 {
+                    primary_down = event.buttons_down & POINTER_BUTTON_PRIMARY != 0;
+                    if event.buttons_pressed & POINTER_BUTTON_PRIMARY != 0 {
                         mouse[2] = mouse[0];
                         mouse[3] = mouse[1];
                     }
@@ -163,10 +241,21 @@ fn main() {
             {
                 continue;
             }
-            if event.key_code == KEYBOARD_KEY_SPACE && SHADERS[shader_index].id == SHADERTOY_PROTEAN_CLOUDS {
+            if event.key_code == KEYBOARD_KEY_SPACE
+                && SHADERS[shader_index].id == SHADERTOY_PROTEAN_CLOUDS
+            {
                 native_resolution = !native_resolution;
-                logl::log(logl::level::INFO, format_args!("shadertoy: clouds sampling={}",
-                    if native_resolution { "native" } else { "radial-auto" }));
+                logl::log(
+                    logl::level::INFO,
+                    format_args!(
+                        "shadertoy: clouds sampling={}",
+                        if native_resolution {
+                            "native"
+                        } else {
+                            "radial-auto"
+                        }
+                    ),
+                );
                 stats_started_ns = clock::monotonic_nanos();
                 stats_frames = 0;
                 stats_render_ns = 0;
@@ -181,6 +270,12 @@ fn main() {
                 KEYBOARD_KEY_F4 => Some(3),
                 KEYBOARD_KEY_F5 => Some(4),
                 KEYBOARD_KEY_F6 => Some(5),
+                KEYBOARD_KEY_F7 => Some(6),
+                KEYBOARD_KEY_F8 => Some(7),
+                KEYBOARD_KEY_F9 => Some(8),
+                KEYBOARD_KEY_F10 => Some(9),
+                KEYBOARD_KEY_F11 => Some(10),
+                KEYBOARD_KEY_F12 => Some(11),
                 _ => None,
             };
             if let Some(next) = next
@@ -209,7 +304,11 @@ fn main() {
             shader_id: SHADERS[shader_index].id,
             flags: if native_resolution && SHADERS[shader_index].id == SHADERTOY_PROTEAN_CLOUDS {
                 SHADERTOY_FLAG_NATIVE_RESOLUTION
-            } else { 0 },
+            } else if primary_down && SHADERS[shader_index].id == SHADERTOY_HIGH_WISPS {
+                SHADERTOY_FLAG_PRIMARY_DOWN
+            } else {
+                0
+            },
             frame: frame_number,
             time_seconds: now_ns.saturating_sub(shader_started_ns) as f32 / 1_000_000_000.0,
             delta_seconds: now_ns.saturating_sub(previous_ns) as f32 / 1_000_000_000.0,
@@ -230,11 +329,16 @@ fn main() {
         };
         let render_started_ns = clock::monotonic_nanos();
         if let Err(error) = frame.render_shadertoy(&params) {
-            logl::log(logl::level::ERROR, format_args!(
-                "shadertoy: failed frame shader={} extent={}x{} render_publish_ms={}",
-                params.shader_id, width, height,
-                clock::monotonic_nanos().saturating_sub(render_started_ns) / 1_000_000,
-            ));
+            logl::log(
+                logl::level::ERROR,
+                format_args!(
+                    "shadertoy: failed frame shader={} extent={}x{} render_publish_ms={}",
+                    params.shader_id,
+                    width,
+                    height,
+                    clock::monotonic_nanos().saturating_sub(render_started_ns) / 1_000_000,
+                ),
+            );
             fail("render/compute publish", error);
             return;
         }
@@ -245,15 +349,24 @@ fn main() {
         stats_max_render_ns = stats_max_render_ns.max(render_ns);
         let stats_elapsed_ns = rendered_ns.saturating_sub(stats_started_ns);
         if stats_elapsed_ns >= 5_000_000_000 {
-            logl::log(logl::level::INFO, format_args!(
-                "shadertoy: perf shader={} extent={}x{} sampling={} frames={} fps_x100={} render_publish_us_avg={} render_publish_us_max={}",
-                params.shader_id, width, height,
-                if params.shader_id == SHADERTOY_PROTEAN_CLOUDS && !native_resolution { "radial-auto" } else { "native" },
-                stats_frames,
-                stats_frames.saturating_mul(100_000_000_000) / stats_elapsed_ns,
-                stats_render_ns / stats_frames / 1_000,
-                stats_max_render_ns / 1_000,
-            ));
+            logl::log(
+                logl::level::INFO,
+                format_args!(
+                    "shadertoy: perf shader={} extent={}x{} sampling={} frames={} fps_x100={} render_publish_us_avg={} render_publish_us_max={}",
+                    params.shader_id,
+                    width,
+                    height,
+                    if params.shader_id == SHADERTOY_PROTEAN_CLOUDS && !native_resolution {
+                        "radial-auto"
+                    } else {
+                        "native"
+                    },
+                    stats_frames,
+                    stats_frames.saturating_mul(100_000_000_000) / stats_elapsed_ns,
+                    stats_render_ns / stats_frames / 1_000,
+                    stats_max_render_ns / 1_000,
+                ),
+            );
             stats_started_ns = rendered_ns;
             stats_frames = 0;
             stats_render_ns = 0;
@@ -268,7 +381,7 @@ fn log_shader(shader: Shader) {
     logl::log(
         logl::level::INFO,
         format_args!(
-            "shadertoy: selected '{}' id={} artifact_sha256={} controls=Left/Right,F1-F6,Space(clouds-focus/native),Esc",
+            "shadertoy: selected '{}' id={} artifact_sha256={} controls=Left/Right(15),F1-F12,Space(clouds-focus/native),Esc",
             shader.name, shader.id, shader.artifact_sha256
         ),
     );

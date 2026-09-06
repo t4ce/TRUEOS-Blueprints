@@ -358,6 +358,17 @@ pub const SHADERTOY_NGUYEN: u32 = 3;
 pub const SHADERTOY_PALETTE_GRID: u32 = 4;
 pub const SHADERTOY_COSMIC_STRANDS: u32 = 5;
 pub const SHADERTOY_PROTEAN_CLOUDS: u32 = 6;
+pub const SHADERTOY_AUDIO_VISUALIZER: u32 = 7;
+pub const SHADERTOY_CPP_GALLERY: u32 = 8;
+pub const SHADERTOY_AURORA: u32 = 9;
+pub const SHADERTOY_JULIA: u32 = 10;
+pub const SHADERTOY_SDF: u32 = 11;
+pub const SHADERTOY_VORONOI: u32 = 12;
+pub const SHADERTOY_RETRO_SUN: u32 = 13;
+pub const SHADERTOY_HIGH_WISPS: u32 = 14;
+pub const SHADERTOY_PARTICLE_CRAFT: u32 = 15;
+/// Primary pointer held; accepted only by High Wisps.
+pub const SHADERTOY_FLAG_PRIMARY_DOWN: u32 = 2;
 /// F6 only: bypass automatic radial sampling for a full-resolution comparison.
 pub const SHADERTOY_FLAG_NATIVE_RESOLUTION: u32 = 1;
 
@@ -1216,15 +1227,7 @@ impl Frame {
         &mut self,
         params: &ShadertoyParamsV1,
     ) -> Result<(), Error> {
-        if !matches!(
-            params.shader_id,
-            SHADERTOY_MANDELBROT
-                | SHADERTOY_CUBE_FIELD
-                | SHADERTOY_NGUYEN
-                | SHADERTOY_PALETTE_GRID
-                | SHADERTOY_COSMIC_STRANDS
-                | SHADERTOY_PROTEAN_CLOUDS
-        ) {
+        if !(1..=15).contains(&params.shader_id) {
             return Err(Error::Invalid);
         }
         let raw = v::bp_abi::TrueosUi4ShadertoyParamsV1 {

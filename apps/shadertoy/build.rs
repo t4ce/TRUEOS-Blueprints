@@ -17,9 +17,14 @@ fn main() {
         for file in [
             "kernel.bin",
             "kernel.spv",
-            if matches!(shader, "audio_visualizer" | "cpp_gallery" | "particle_craft") {
+            if matches!(
+                shader,
+                "audio_visualizer" | "cpp_gallery" | "particle_craft"
+            ) {
                 "input.sources.json"
-            } else { "input.glsl" },
+            } else {
+                "input.glsl"
+            },
             "kernel.clcpp",
             "kernel.manifest.json",
             "kernel.contract.rs",
