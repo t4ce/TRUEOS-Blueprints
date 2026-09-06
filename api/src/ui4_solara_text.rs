@@ -852,6 +852,12 @@ impl Frame {
         Ok(raw.into_iter().map(input_route_from_raw).collect())
     }
 
+    /// Let a primary click both select this frame and reach its pointer queue.
+    /// Useful for compact restore buttons; secondary dragging keeps its normal policy.
+    pub fn set_primary_activation(&mut self, enabled: bool) -> Result<(), Error> {
+        status(unsafe { v::bp_abi::trueos_cabi_ui4_scene_frame_primary_activation(self.window_id, enabled as u32) })
+    }
+
     /// Read the broker's current position, including desktop drags.
     pub fn position(&self) -> Result<(i32, i32), Error> {
         let mut xy = [0i32; 2];
