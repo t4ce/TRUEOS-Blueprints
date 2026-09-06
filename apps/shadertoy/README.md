@@ -3,9 +3,11 @@
 See [compiler settings](COMPILER_FLAGS.md) for the backend flag that produced the
 large math-performance win and the precision tradeoffs we checked.
 
-The Blueprint owns the six runtime shaders in `assets/`. Each shader directory
-contains the raw GLSL (`input.glsl`), generated C++ (`kernel.clcpp`), Zebin,
-SPIR-V, bake manifest, and ABI contract. The corresponding `.stpkg` includes
+The Blueprint owns nine authenticated programs with **15 selectable views** in `assets/`.
+The six GLSL ports contain raw GLSL (`input.glsl`), generated C++ (`kernel.clcpp`),
+Zebin, SPIR-V, bake manifest, and ABI contract. The three native imports instead
+contain `input.sources.json`: the original C++ and every included header, keyed
+by its baked source path. `kernel.clcpp` also keeps the original entry source. The corresponding `.stpkg` includes
 all six files and is embedded in the Blueprint. `build.rs` rejects stale packages.
 
 The app registers these packages through bounded, window-owned transfers before
@@ -17,8 +19,7 @@ kernel-owned. The existing trust scheme is an exact-byte hash allowlist, not a
 public-key shader signing/update channel. Source and provenance now receive
 package hash coverage too.
 
-The app opens a UI4 visual frame at 30 Hz. Use Left/Right or F1–F6 to switch
-shaders; Escape closes the app. For F6, **Space** toggles radial sampling and
+The app opens a UI4 visual frame at 30 Hz. Use Left/Right to cycle all 15 views, or F1–F12 for the first twelve; Escape closes the app. For F6, **Space** toggles radial sampling and
 native resolution. Per-frame calls still carry the existing 64-byte request. Registering an incomplete, modified or unknown package cannot
 make a new shader executable. There is no embedded/filesystem shader fallback.
 
@@ -46,8 +47,8 @@ For a local package build from TRUEOS-Blueprints:
 TRUEOS_BLUEPRINT_SKIP_APPS_PUBLISH=1 cargo bp shadertoy
 ```
 
-Rebuild the kernel and Blueprint together for this transport change. An older
-Blueprint does not register packages and cannot render on the new kernel.
+Rebuild the kernel and Blueprint together for the expanded catalog. An older
+kernel cannot admit the three newly packaged programs.
 
 From TRUEOS, regenerate and reproducibly bake the six shaders with the existing
 locked compiler toolchain:
@@ -62,6 +63,65 @@ script writes payloads into these assets and keeps only contracts and package
 hash/length metadata in TRUEOS. `package_blueprint.py --check` verifies packages
 without modifying them; `--update-trust` refreshes the kernel package hashes
 following review. A new candidate still needs explicit catalog admission.
+
+## Gallery and live audio
+
+The artistic views formerly reached through Shell2 `cpp` are now here. Shell2
+`cpp` is retired; **`win`** opens only the 30 retained UI4 windows. `win status`
+and `win stop` inspect and close that window demo; focused Escape also closes it.
+
+| Selection | View | Registered program |
+| --- | --- | ---: |
+| F1–F6 | Existing six GLSL ports | 1–6 |
+| F7 | Live audio visualizer | 7 |
+| F8 | Four-panel gallery | 8 |
+| F9 | Aurora | 8 |
+| F10 | Julia | 8 |
+| F11 | SDF | 8 |
+| F12 | Voronoi | 8 |
+| 13, arrows | Retro Sun | 8 |
+| 14, arrows | High Wisps | 8 |
+| 15, arrows | ParticleCraft | 15 |
+
+The four panels occupy quadrants of one dispatch. The six standalone gallery
+views share that same program and its original mode uniforms. High Wisps keeps
+primary-button painting with an interpolated 32-point brush history per window;
+leaving the view clears its strokes. Secondary-button window movement stays UI4-owned.
+
+F7 reads the existing **48 kHz stereo output mix**, including its waveform,
+64-band spectrum and beat features. Play audio through TRUEOS to drive it.
+This uses the existing output tap and FFT analyzer, with a scoped subscription
+per audio view. Switching away or closing a view releases its subscription;
+other audio views continue to receive samples. Snapshot upload and dispatch
+share a lock through retirement so windows cannot overwrite each other's input.
+This native input ABI is retained; generic GLSL `iChannel0` audio-texture binding
+has not been added by this migration.
+
+ParticleCraft retains its three GPU stages and per-window particle state. It
+reuses the shader's existing 1/2/4-pixel block output to keep the former gallery's
+sample count at each window size, including 1280×720 samples at 1440p. This keeps
+the shared ShaderToy surface full-sized with no extra upscale pass. Switching
+away releases the particle allocation; re-entering starts a new simulation.
+
+The three native binaries are imported unchanged. The kernel's existing internal
+renderers also retain their artifact copies for diagnostic consumers. ShaderToy
+still requires explicit registration of its own authenticated packages per window;
+other consumers loading the same artifact do not grant it permission to render.
+
+After rebaking a native program with its existing bakery target, update its
+Blueprint copy from the TRUEOS checkout:
+
+```sh
+python3 tools/shadertoy-cpp-offline/import_native.py
+python3 tools/shadertoy-cpp-offline/package_blueprint.py --update-trust
+python3 tools/shadertoy-cpp-offline/test_blueprint_packages.py
+python3 tools/test_shadertoy_catalog.py
+python3 tools/test_win_command.py
+```
+
+The importer checks every source/header against the bake manifest. Review the
+new artifacts before refreshing the kernel trust hashes. No compiler flags or
+shader algorithms were changed by this gallery migration.
 
 ## New candidates and cube-field update
 

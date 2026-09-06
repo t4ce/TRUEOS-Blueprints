@@ -30,3 +30,8 @@ At 1440p on the local UHD 770/OpenCL path, the compiler and row-dispatch update
 reduced Protean from about 972 to 217 ms. This is not a measurement of the
 bare-metal machine's clocks or frame rate. Detailed evidence is in TRUEOS's
 `tools/shadertoy-cpp-offline/RUNTIME_PERFORMANCE.md`.
+
+The imported native gallery, audio and ParticleCraft programs retain their
+existing bake profiles and explicit `native_*` math. Their import is byte-for-byte;
+the ShaderToy relaxed-math profile is not retroactively applied to them. Each
+`assets/<program>/kernel.manifest.json` records the actual compiler options.
