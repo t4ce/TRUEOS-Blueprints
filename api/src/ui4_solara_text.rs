@@ -852,6 +852,13 @@ impl Frame {
         Ok(raw.into_iter().map(input_route_from_raw).collect())
     }
 
+    /// Read the broker's current position, including desktop drags.
+    pub fn position(&self) -> Result<(i32, i32), Error> {
+        let mut xy = [0i32; 2];
+        status(unsafe { v::bp_abi::trueos_cabi_ui4_scene_frame_get_position(self.window_id, xy.as_mut_ptr()) })?;
+        Ok((xy[0], xy[1]))
+    }
+
     pub fn set_position(&mut self, x: i32, y: i32) -> Result<(), Error> {
         status(unsafe { v::bp_abi::trueos_cabi_ui4_scene_frame_set_position(self.window_id, x, y) })
     }
