@@ -789,13 +789,10 @@ rustc-payload-dependencies = ["trueos", "itoa"]
 
         let picasso_example =
             package_app_spec(root, "TRUEOS-PICASSO-EXAMPLE", PackageCatalog::Apps)
-            .unwrap()
-            .unwrap();
+                .unwrap()
+                .unwrap();
         assert_eq!(picasso_example.name, "trueos-picasso-example");
-        assert_eq!(
-            picasso_example.dir,
-            root.join("../TRUEOS-Picasso-Example")
-        );
+        assert_eq!(picasso_example.dir, root.join("../TRUEOS-Picasso-Example"));
         assert!(
             package_app_spec(root, "picasso", PackageCatalog::Apps)
                 .unwrap()
