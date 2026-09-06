@@ -64,7 +64,7 @@ use core::error::Error;
 use core::fmt;
 use core::marker::PhantomData;
 use core::str::FromStr;
-use core3::io;
+use std::io;
 #[cfg(not(target_os = "trueos"))]
 use std::env;
 use std::thread;
@@ -148,36 +148,6 @@ enum ErrorKind {
     GlobalPoolAlreadyInitialized,
     CurrentThreadAlreadyInPool,
     IOError(io::Error),
-}
-
-type StdIoError = std::io::Error;
-type StdIoErrorKind = std::io::ErrorKind;
-
-fn io_error_from_std(error: StdIoError) -> io::Error {
-    let kind = match error.kind() {
-        StdIoErrorKind::NotFound => io::ErrorKind::NotFound,
-        StdIoErrorKind::PermissionDenied => io::ErrorKind::PermissionDenied,
-        StdIoErrorKind::ConnectionRefused => io::ErrorKind::ConnectionRefused,
-        StdIoErrorKind::ConnectionReset => io::ErrorKind::ConnectionReset,
-        StdIoErrorKind::ConnectionAborted => io::ErrorKind::ConnectionAborted,
-        StdIoErrorKind::NotConnected => io::ErrorKind::NotConnected,
-        StdIoErrorKind::AddrInUse => io::ErrorKind::AddrInUse,
-        StdIoErrorKind::AddrNotAvailable => io::ErrorKind::AddrNotAvailable,
-        StdIoErrorKind::BrokenPipe => io::ErrorKind::BrokenPipe,
-        StdIoErrorKind::AlreadyExists => io::ErrorKind::AlreadyExists,
-        StdIoErrorKind::WouldBlock => io::ErrorKind::WouldBlock,
-        StdIoErrorKind::InvalidInput => io::ErrorKind::InvalidInput,
-        StdIoErrorKind::InvalidData => io::ErrorKind::InvalidData,
-        StdIoErrorKind::TimedOut => io::ErrorKind::TimedOut,
-        StdIoErrorKind::WriteZero => io::ErrorKind::WriteZero,
-        StdIoErrorKind::Interrupted => io::ErrorKind::Interrupted,
-        StdIoErrorKind::Other => io::ErrorKind::Other,
-        StdIoErrorKind::UnexpectedEof => io::ErrorKind::UnexpectedEof,
-        StdIoErrorKind::Unsupported => io::ErrorKind::Uncategorized,
-        _ => io::ErrorKind::Uncategorized,
-    };
-
-    io::Error::from(kind)
 }
 
 /// Used to create a new [`ThreadPool`] or to configure the global rayon thread pool.
@@ -365,9 +335,7 @@ impl ThreadPoolBuilder {
                     if let Some(size) = thread.stack_size() {
                         builder = builder.stack_size(size);
                     }
-                    builder
-                        .spawn_scoped(scope, || wrapper(thread))
-                        .map_err(io_error_from_std)?;
+                    builder.spawn_scoped(scope, || wrapper(thread))?;
                     Ok(())
                 })
                 .build()?;
@@ -776,7 +744,7 @@ impl ThreadPoolBuildError {
     }
 
     fn is_unsupported(&self) -> bool {
-        matches!(&self.kind, ErrorKind::IOError(e) if e.kind() == io::ErrorKind::Uncategorized)
+        matches!(&self.kind, ErrorKind::IOError(e) if e.kind() == io::ErrorKind::Unsupported)
     }
 }
 

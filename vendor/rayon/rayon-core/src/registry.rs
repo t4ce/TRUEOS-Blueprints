@@ -14,7 +14,7 @@ use core::hash::Hasher;
 use core::mem;
 use core::ptr;
 use core::sync::atomic::{AtomicUsize, Ordering};
-use core3::io;
+use std::io;
 use crossbeam_deque::{Injector, Steal, Stealer, Worker};
 use std::hash::DefaultHasher;
 use std::thread;
@@ -91,7 +91,7 @@ impl ThreadSpawn for DefaultSpawn {
         if let Some(stack_size) = thread.stack_size() {
             b = b.stack_size(stack_size);
         }
-        b.spawn(|| thread.run()).map_err(crate::io_error_from_std)?;
+        b.spawn(|| thread.run())?;
         Ok(())
     }
 }
