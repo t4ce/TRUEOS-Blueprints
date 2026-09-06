@@ -9,12 +9,17 @@ fn main() {
         "palette_grid",
         "cosmic_strands",
         "protean_clouds",
+        "audio_visualizer",
+        "cpp_gallery",
+        "particle_craft",
     ] {
         let mut parts = Vec::new();
         for file in [
             "kernel.bin",
             "kernel.spv",
-            "input.glsl",
+            if matches!(shader, "audio_visualizer" | "cpp_gallery" | "particle_craft") {
+                "input.sources.json"
+            } else { "input.glsl" },
             "kernel.clcpp",
             "kernel.manifest.json",
             "kernel.contract.rs",
