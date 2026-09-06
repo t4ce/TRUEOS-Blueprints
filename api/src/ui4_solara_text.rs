@@ -1185,8 +1185,12 @@ impl Frame {
         for (index, chunk) in package.chunks(2048).enumerate() {
             status(unsafe {
                 v::bp_abi::trueos_cabi_ui4_scene_shadertoy_upload_v1(
-                    self.window_id, shader_id, (index * 2048) as u32, package.len() as u32,
-                    chunk.as_ptr(), chunk.len(),
+                    self.window_id,
+                    shader_id,
+                    (index * 2048) as u32,
+                    package.len() as u32,
+                    chunk.as_ptr(),
+                    chunk.len(),
                 )
             })?;
         }
