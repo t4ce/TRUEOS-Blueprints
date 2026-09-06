@@ -9,20 +9,37 @@ fn spawn_handler_preserves_std_io_error_and_os_code() {
     fn reject(_: crate::ThreadBuilder) -> std::io::Result<()> {
         Err(std::io::Error::from_raw_os_error(13))
     }
-    let error = ThreadPoolBuilder::new().num_threads(1).spawn_handler(reject).build().unwrap_err();
+    let error = ThreadPoolBuilder::new()
+        .num_threads(1)
+        .spawn_handler(reject)
+        .build()
+        .unwrap_err();
     let source = std::error::Error::source(&error).unwrap();
-    assert_eq!(source.downcast_ref::<std::io::Error>().unwrap().raw_os_error(), Some(13));
+    assert_eq!(
+        source
+            .downcast_ref::<std::io::Error>()
+            .unwrap()
+            .raw_os_error(),
+        Some(13)
+    );
 }
 
 #[test]
 fn only_unsupported_spawn_errors_allow_the_global_fallback() {
-    for kind in [std::io::ErrorKind::Unsupported, std::io::ErrorKind::PermissionDenied, std::io::ErrorKind::Other] {
+    for kind in [
+        std::io::ErrorKind::Unsupported,
+        std::io::ErrorKind::PermissionDenied,
+        std::io::ErrorKind::Other,
+    ] {
         let error = ThreadPoolBuilder::new()
             .num_threads(1)
             .spawn_handler(move |_| Err(std::io::Error::from(kind)))
             .build()
             .unwrap_err();
-        assert_eq!(error.is_unsupported(), kind == std::io::ErrorKind::Unsupported);
+        assert_eq!(
+            error.is_unsupported(),
+            kind == std::io::ErrorKind::Unsupported
+        );
     }
 }
 

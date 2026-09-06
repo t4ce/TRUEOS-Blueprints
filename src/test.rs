@@ -39,12 +39,59 @@ mod external_path_overlay_tests {
         .unwrap();
 
         let mut patches = Vec::new();
-        add_manifest_path_patches(&manifest, &mut patches).unwrap();
+        add_manifest_source_patches(&manifest, &mut patches).unwrap();
 
         assert_eq!(patches.len(), 1);
         assert_eq!(patches[0].key, "wgpu");
         assert_eq!(patches[0].name, "wgpu");
         assert_eq!(patches[0].path, fs::canonicalize(&engine).unwrap());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn git_patch_requires_an_immutable_revision() {
+        let rev = "3786da941f0042c923fb5981a0edda86b8d38dba";
+        assert_eq!(pinned_git_patch_revision("stylo", &format!("{{ rev = \"{rev}\" }}")).unwrap(), rev);
+        for value in [
+            "{ branch = \"main\" }".to_owned(),
+            "{ rev = \"3786da9\" }".to_owned(),
+            format!("{{ rev = \"{rev}\", tag = \"v0.20.0\" }}"),
+        ] {
+            assert!(pinned_git_patch_revision("stylo", &value).is_err());
+        }
+    }
+
+    #[test]
+    fn git_patch_selects_only_the_locked_fork_commit() {
+        let git = "https://github.com/t4ce/stylo";
+        let rev = "3786da941f0042c923fb5981a0edda86b8d38dba";
+        let metadata: CargoMetadata = serde_json::from_value(serde_json::json!({
+            "packages": [
+                { "id": "registry-stylo", "name": "stylo", "version": "0.20.0",
+                  "source": "registry+https://github.com/rust-lang/crates.io-index",
+                  "manifest_path": "/registry/stylo/Cargo.toml", "dependencies": [] },
+                { "id": "fork-stylo", "name": "stylo", "version": "0.20.0",
+                  "source": format!("git+{git}?rev={rev}#{rev}"),
+                  "manifest_path": "/checkout/style/Cargo.toml", "dependencies": [] }
+            ],
+            "resolve": null
+        })).unwrap();
+        assert_eq!(pinned_git_patch_path(&metadata, "stylo", git, rev).unwrap(), PathBuf::from("/checkout/style"));
+        assert!(pinned_git_patch_path(&metadata, "stylo", "https://github.com/servo/stylo", rev).is_err());
+        assert!(pinned_git_patch_path(&metadata, "stylo", git, "0000000000000000000000000000000000000000").is_err());
+    }
+
+    #[test]
+    fn overlay_version_audit_reads_workspace_inheritance() {
+        let root = test_dir("workspace-version");
+        let member = root.join("style");
+        fs::create_dir_all(&member).unwrap();
+        fs::write(root.join("Cargo.toml"), "[workspace]\nmembers = [\"style\"]\n[workspace.package]\nversion = \"0.20.0\"\n").unwrap();
+        let manifest = member.join("Cargo.toml");
+        fs::write(&manifest, "[package]\nname = \"stylo\"\nversion.workspace = true\n").unwrap();
+        assert_eq!(package_version(&manifest).unwrap().as_deref(), Some("0.20.0"));
+        fs::remove_file(root.join("Cargo.toml")).unwrap();
+        assert!(package_version(&manifest).is_err());
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -256,6 +303,8 @@ mod rustc_payload_tests {
                     id: "root".to_owned(),
                     name: "compiler".to_owned(),
                     version: "0.1.0".to_owned(),
+                    source: None,
+                    manifest_path: PathBuf::new(),
                     dependencies: vec![MetadataDependency {
                         name: "trueos".to_owned(),
                         rename: None,
@@ -268,6 +317,8 @@ mod rustc_payload_tests {
                     id: "trueos".to_owned(),
                     name: "trueos".to_owned(),
                     version: "0.1.0".to_owned(),
+                    source: None,
+                    manifest_path: PathBuf::new(),
                     dependencies: Vec::new(),
                     features: BTreeMap::from([
                         ("default-global-allocator".to_owned(), Vec::new()),

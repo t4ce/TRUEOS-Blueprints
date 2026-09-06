@@ -2539,28 +2539,29 @@ fn source_overlay_patches(
         ));
     }
 
-    add_manifest_path_patches(manifest_path, &mut out)?;
+    add_manifest_source_patches(manifest_path, &mut out)?;
 
     out.sort_by(|a, b| a.key.cmp(&b.key));
     Ok(out)
 }
 
-/// Preserve explicit local source patches while still routing them through
+/// Preserve explicit source patches while still routing them through
 /// the Blueprint packer's audited `--config patch.crates-io` mechanism.
 ///
 /// Staged manifests deliberately have their patch section stripped. Without
 /// materializing path patches here, an external engine workspace can compile
 /// against one patched crate while a transitive dependency resolves a second,
 /// nominally equal crates.io copy. Rust then treats their public types as
-/// unrelated. Only local path patches are admitted; git/registry replacement
-/// policy remains owned by the packer.
-fn add_manifest_path_patches(
+/// unrelated. Pinned Git patches are resolved from the original locked graph
+/// and materialized as paths to Cargo's checkout of that exact commit.
+fn add_manifest_source_patches(
     manifest_path: &Path,
     patches: &mut Vec<CratePatch>,
 ) -> Result<(), String> {
     let manifest_dir = manifest_path.parent().unwrap_or(manifest_path);
     let cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
     let mut in_patch = false;
+    let mut metadata = None;
     for line in cargo_toml.lines() {
         let trimmed = line.split('#').next().unwrap_or("").trim();
         if trimmed.starts_with('[') {
@@ -2570,18 +2571,30 @@ fn add_manifest_path_patches(
         if !in_patch || trimmed.is_empty() {
             continue;
         }
-        let Some((key, dependency_path)) = inline_dependency_name_and_path(line) else {
+        let Some((key, value)) = trimmed.split_once('=') else {
             continue;
         };
-        let dependency_path = PathBuf::from(dependency_path);
-        let resolved = if dependency_path.is_absolute() {
-            dependency_path
+        let key = key.trim().trim_matches('"');
+        let resolved = if let Some(dependency_path) = inline_table_path(value) {
+            let dependency_path = PathBuf::from(dependency_path);
+            if dependency_path.is_absolute() {
+                dependency_path
+            } else {
+                manifest_dir.join(dependency_path)
+            }
+        } else if let Some(git) = inline_table_string(value, "git") {
+            let rev = pinned_git_patch_revision(key, value)?;
+            if metadata.is_none() {
+                metadata = Some(cargo_metadata(manifest_dir, manifest_path)?);
+            }
+            let package = inline_table_string(value, "package").unwrap_or_else(|| key.to_owned());
+            pinned_git_patch_path(metadata.as_ref().unwrap(), &package, &git, &rev)?
         } else {
-            manifest_dir.join(dependency_path)
+            continue;
         };
         let canonical = fs::canonicalize(&resolved).map_err(|error| {
             format!(
-                "failed to resolve path patch `{key}` at {}: {error}",
+                "failed to resolve source patch `{key}` at {}: {error}",
                 resolved.display()
             )
         })?;
@@ -2594,6 +2607,41 @@ fn add_manifest_path_patches(
         });
     }
     Ok(())
+}
+
+fn pinned_git_patch_revision(key: &str, value: &str) -> Result<String, String> {
+    let rev = inline_table_string(value, "rev").unwrap_or_default();
+    if rev.len() != 40
+        || !rev.bytes().all(|byte| byte.is_ascii_hexdigit())
+        || inline_table_string(value, "branch").is_some()
+        || inline_table_string(value, "tag").is_some()
+    {
+        return Err(format!(
+            "Git patch `{key}` must use a full 40-digit commit rev, without branch or tag"
+        ));
+    }
+    Ok(rev.to_ascii_lowercase())
+}
+
+fn pinned_git_patch_path(
+    metadata: &CargoMetadata,
+    package: &str,
+    git: &str,
+    rev: &str,
+) -> Result<PathBuf, String> {
+    let expected = format!("git+{git}?rev={rev}#{rev}");
+    let mut matches = metadata.packages.iter().filter(|candidate| {
+        candidate.name == package && candidate.source.as_deref() == Some(expected.as_str())
+    });
+    let candidate = matches.next().ok_or_else(|| {
+        format!("Git patch `{package}` is absent from the locked graph at {expected}")
+    })?;
+    if matches.next().is_some() {
+        return Err(format!("Git patch `{package}` has multiple packages at {expected}"));
+    }
+    candidate.manifest_path.parent().map(Path::to_path_buf).ok_or_else(|| {
+        format!("Git patch `{package}` has no checkout directory in cargo metadata")
+    })
 }
 
 fn add_blueprint_vendor_patches(app_dir: &Path, patches: &mut Vec<CratePatch>) {
@@ -3939,6 +3987,10 @@ struct MetadataPackage {
     id: String,
     name: String,
     version: String,
+    #[serde(default)]
+    source: Option<String>,
+    #[serde(default)]
+    manifest_path: PathBuf,
     dependencies: Vec<MetadataDependency>,
     #[serde(default)]
     features: BTreeMap<String, Vec<String>>,
@@ -4998,6 +5050,8 @@ fn lock_dependency_name(line: &str) -> Option<String> {
 fn package_version(manifest_path: &Path) -> Result<Option<String>, String> {
     let cargo_toml = fs::read_to_string(manifest_path).map_err(io_string)?;
     let mut in_package = false;
+    let mut inherited = false;
+    let mut workspace = None;
     for line in cargo_toml.lines() {
         let trimmed = line.split('#').next().unwrap_or("").trim();
         if trimmed.starts_with('[') {
@@ -5007,11 +5061,41 @@ fn package_version(manifest_path: &Path) -> Result<Option<String>, String> {
         if !in_package {
             continue;
         }
-        if let Some((key, value)) = trimmed.split_once('=')
-            && key.trim() == "version"
-        {
-            return Ok(toml_string_value(value.trim()));
+        if let Some((key, value)) = trimmed.split_once('=') {
+            match key.trim() {
+                "version" => return Ok(toml_string_value(value.trim())),
+                "version.workspace" => inherited = value.trim() == "true",
+                "workspace" => workspace = toml_string_value(value.trim()),
+                _ => {}
+            }
         }
+    }
+    if inherited {
+        let directory = manifest_path.parent().unwrap_or(manifest_path);
+        let candidates = match workspace {
+            Some(path) => vec![directory.join(path).join("Cargo.toml")],
+            None => directory.ancestors().map(|dir| dir.join("Cargo.toml")).collect(),
+        };
+        for candidate in candidates {
+            if !candidate.is_file() {
+                continue;
+            }
+            let source = fs::read_to_string(&candidate).map_err(io_string)?;
+            let mut in_workspace_package = false;
+            for line in source.lines() {
+                let trimmed = line.split('#').next().unwrap_or("").trim();
+                if trimmed.starts_with('[') {
+                    in_workspace_package = trimmed == "[workspace.package]";
+                } else if in_workspace_package
+                    && let Some((key, value)) = trimmed.split_once('=')
+                    && key.trim() == "version"
+                    && let Some(version) = toml_string_value(value)
+                {
+                    return Ok(Some(version));
+                }
+            }
+        }
+        return Err(format!("cannot resolve inherited package version in {}", manifest_path.display()));
     }
     Ok(None)
 }
@@ -5897,13 +5981,17 @@ fn host_multiarch_include_dir() -> Option<PathBuf> {
 }
 
 fn inline_table_path(value: &str) -> Option<String> {
+    inline_table_string(value, "path")
+}
+
+fn inline_table_string(value: &str, field: &str) -> Option<String> {
     let table = value
         .trim()
         .strip_prefix('{')
         .and_then(|value| value.strip_suffix('}'))?;
     for item in table.split(',') {
         let (key, value) = item.split_once('=')?;
-        if key.trim() == "path" {
+        if key.trim() == field {
             return toml_string_value(value.trim());
         }
     }
