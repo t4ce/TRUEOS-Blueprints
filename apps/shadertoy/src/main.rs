@@ -2,12 +2,12 @@
 
 use trueos::input::{
     KEYBOARD_KEY_ARROW_LEFT, KEYBOARD_KEY_ARROW_RIGHT, KEYBOARD_KEY_F1, KEYBOARD_KEY_F2,
-    KEYBOARD_KEY_F3, KEYBOARD_KEY_F4, KEYBOARD_KEY_F5, KEYBOARD_OUTPUT_FLAG_PRESS,
+    KEYBOARD_KEY_F3, KEYBOARD_KEY_F4, KEYBOARD_KEY_F5, KEYBOARD_KEY_F6, KEYBOARD_OUTPUT_FLAG_PRESS,
     KEYBOARD_OUTPUT_KIND_KEY,
 };
 use trueos::ui4_scene::{
     Error, Frame, SHADERTOY_CUBE_FIELD, SHADERTOY_MANDELBROT, SHADERTOY_NGUYEN,
-    SHADERTOY_COSMIC_STRANDS, SHADERTOY_PALETTE_GRID, ShadertoyParamsV1,
+    SHADERTOY_COSMIC_STRANDS, SHADERTOY_PROTEAN_CLOUDS, SHADERTOY_PALETTE_GRID, ShadertoyParamsV1,
 };
 use trueos::{clock, logl, vsys};
 
@@ -28,7 +28,7 @@ struct Shader {
 
 // Packages contain the executable, SPIR-V, raw GLSL, generated C++ and bake
 // provenance. Kernel-owned hashes/contracts remain the authority for admission.
-const SHADERS: [Shader; 5] = [
+const SHADERS: [Shader; 6] = [
     Shader {
         id: SHADERTOY_MANDELBROT,
         package: include_bytes!("../assets/mandelbrot.stpkg"),
@@ -58,6 +58,12 @@ const SHADERS: [Shader; 5] = [
         package: include_bytes!("../assets/cosmic_strands.stpkg"),
         name: "Cosmic Strands",
         artifact_sha256: "9a275f036deac274541a34256c09140ecd3f98e392c4963a27e6ac1db5b82500",
+    },
+    Shader {
+        id: SHADERTOY_PROTEAN_CLOUDS,
+        package: include_bytes!("../assets/protean_clouds.stpkg"),
+        name: "Protean Clouds",
+        artifact_sha256: "42708149dff28c43df0cc2bdd4147169aec93ecabbc003122c1e76a5b00b7cbc",
     },
 ];
 
@@ -153,6 +159,7 @@ fn main() {
                 KEYBOARD_KEY_F3 => Some(2),
                 KEYBOARD_KEY_F4 => Some(3),
                 KEYBOARD_KEY_F5 => Some(4),
+                KEYBOARD_KEY_F6 => Some(5),
                 _ => None,
             };
             if let Some(next) = next
@@ -206,7 +213,7 @@ fn log_shader(shader: Shader) {
     logl::log(
         logl::level::INFO,
         format_args!(
-            "shadertoy: selected '{}' id={} artifact_sha256={} controls=Left/Right,F1-F5,Esc",
+            "shadertoy: selected '{}' id={} artifact_sha256={} controls=Left/Right,F1-F6,Esc",
             shader.name, shader.id, shader.artifact_sha256
         ),
     );

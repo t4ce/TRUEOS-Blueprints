@@ -8,6 +8,7 @@ fn main() {
         "nguyen",
         "palette_grid",
         "cosmic_strands",
+        "protean_clouds",
     ] {
         let mut parts = Vec::new();
         for file in [
