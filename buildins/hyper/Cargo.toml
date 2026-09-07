@@ -14,12 +14,5 @@ name = "hyper"
 path = "src/main.rs"
 
 [dependencies]
-anyhow = "1.0"
 reqwest = { version = "=0.13.3", default-features = false, features = ["rustls"] }
-tokio = { version = "=1.52.3", default-features = false, features = ["full"] }
-
-[target.'cfg(any(target_os = "trueos", target_os = "zkvm"))'.dependencies]
 trueos = { path = "../../api", features = ["tokio-net-probe"] }
-
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("trueos", "zkvm"))'] }

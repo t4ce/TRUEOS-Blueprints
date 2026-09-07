@@ -1,37 +1,29 @@
-use std::fs;
-use std::io::{self, Write};
-use std::path::{Path, PathBuf};
-use std::time::Duration;
+#![no_std]
 
-use anyhow::{Context, Result, anyhow, bail};
+extern crate alloc;
+
+use alloc::{format, string::String, vec::Vec};
+use trueos::{async_fs as trueosfs, clock::Duration, env, runtime, task::LocalSet, time, vshell};
+
+type Result<T> = core::result::Result<T, String>;
 
 const DOWNLOAD_DIR: &str = "common/dl";
 const FETCH_TIMEOUT: Duration = Duration::from_secs(90);
 const INPUT_POLL: Duration = Duration::from_millis(5);
 
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-fn process_args() -> Vec<String> {
-    trueos::env::args().collect()
-}
-
-#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-fn process_args() -> Vec<String> {
-    std::env::args().collect()
-}
-
 fn normalize_url(input: &str) -> Result<reqwest::Url> {
     let input = input.trim();
     if input.is_empty() {
-        bail!("empty URL");
+        return Err(String::from("empty URL"));
     }
     let normalized = if input.starts_with("http://") || input.starts_with("https://") {
-        input.to_owned()
+        String::from(input)
     } else {
         format!("https://{input}")
     };
-    let url = reqwest::Url::parse(&normalized).context("invalid URL")?;
+    let url = reqwest::Url::parse(&normalized).map_err(|error| format!("invalid URL: {error}"))?;
     if !matches!(url.scheme(), "http" | "https") {
-        bail!("only HTTP and HTTPS URLs are supported");
+        return Err(String::from("only HTTP and HTTPS URLs are supported"));
     }
     Ok(url)
 }
@@ -66,34 +58,41 @@ async fn download(
     client: &reqwest::Client,
     input: &str,
     requested_name: Option<&str>,
-) -> Result<(PathBuf, usize)> {
+) -> Result<(String, usize)> {
     let url = normalize_url(input)?;
     let name = requested_name
         .map(safe_name)
         .unwrap_or_else(|| download_name(&url));
-    let destination = Path::new(DOWNLOAD_DIR).join(name);
-    terminal_write(format!("hyper: download {url} -> {}\r\n", destination.display()).as_bytes());
+    let destination = format!("{DOWNLOAD_DIR}/{name}");
+    terminal_write(format!("hyper: download {url} -> {destination}\r\n").as_bytes());
 
     let response = client
         .get(url.clone())
         .send()
         .await
-        .with_context(|| format!("request {url}"))?;
+        .map_err(|error| format!("request {url}: {error}"))?;
     let status = response.status();
     if !status.is_success() {
-        bail!("HTTP {}", status.as_u16());
+        return Err(format!("HTTP {}", status.as_u16()));
     }
-    let bytes = response.bytes().await.context("read response body")?;
-    fs::create_dir_all(DOWNLOAD_DIR).context("create common/dl")?;
-    fs::write(&destination, &bytes).with_context(|| format!("write {}", destination.display()))?;
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|error| format!("read response body: {error}"))?;
+    trueosfs::create_dir_all(DOWNLOAD_DIR.as_bytes())
+        .await
+        .map_err(|code| format!("create {DOWNLOAD_DIR}: TRUEOSFS error {code}"))?;
+    trueosfs::write_file(destination.as_bytes(), bytes.as_ref())
+        .await
+        .map_err(|code| format!("write {destination}: TRUEOSFS error {code}"))?;
     Ok((destination, bytes.len()))
 }
 
 async fn run_minishell(initial_url: Option<String>) -> Result<()> {
     let client = reqwest::Client::builder()
-        .timeout(FETCH_TIMEOUT)
+        .timeout(FETCH_TIMEOUT.as_core_duration())
         .build()
-        .context("build HTTP client")?;
+        .map_err(|error| format!("build HTTP client: {error}"))?;
     let mut pending = initial_url;
     loop {
         let input = match pending.take() {
@@ -119,7 +118,7 @@ async fn run_minishell(initial_url: Option<String>) -> Result<()> {
                 }
                 match download(&client, url, requested_name).await {
                     Ok((path, bytes)) => terminal_write(
-                        format!("hyper: saved {bytes} bytes -> {}\r\n", path.display()).as_bytes(),
+                        format!("hyper: saved {bytes} bytes -> {path}\r\n").as_bytes(),
                     ),
                     Err(error) => {
                         terminal_write(format!("hyper: download failed: {error:#}\r\n").as_bytes())
@@ -138,9 +137,9 @@ async fn terminal_read_line(prompt: &str) -> Result<String> {
             match byte {
                 b'\r' | b'\n' => {
                     terminal_write(b"\r\n");
-                    return String::from_utf8(bytes).map_err(|_| anyhow!("URL is not UTF-8"));
+                    return String::from_utf8(bytes).map_err(|_| String::from("URL is not UTF-8"));
                 }
-                3 => bail!("cancelled"),
+                3 => return Err(String::from("cancelled")),
                 8 | 127 if !bytes.is_empty() => {
                     bytes.pop();
                     terminal_write(b"\x08 \x08");
@@ -152,50 +151,28 @@ async fn terminal_read_line(prompt: &str) -> Result<String> {
                 _ => {}
             }
         }
-        tokio::time::sleep(INPUT_POLL).await;
+        time::sleep(INPUT_POLL.as_core_duration()).await;
     }
 }
 
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
 fn terminal_enter() {
-    let size = trueos::vshell::konsole_size()
-        .unwrap_or(trueos::vshell::KonsoleSize { cols: 80, rows: 24 });
-    let _ = trueos::vshell::konsole_begin_frame(
-        size.cols,
-        size.rows,
-        trueos::vshell::KONSOLE_FRAME_TERMINAL_HANDOFF,
-    );
+    let size = vshell::konsole_size().unwrap_or(vshell::KonsoleSize { cols: 80, rows: 24 });
+    let _ =
+        vshell::konsole_begin_frame(size.cols, size.rows, vshell::KONSOLE_FRAME_TERMINAL_HANDOFF);
 }
 
-#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-fn terminal_enter() {}
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
 fn terminal_write(bytes: &[u8]) {
-    let _ = trueos::vshell::attached_write(bytes);
+    let _ = vshell::attached_write(bytes);
 }
 
-#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-fn terminal_write(bytes: &[u8]) {
-    let mut output = io::stdout().lock();
-    let _ = output.write_all(bytes);
-    let _ = output.flush();
-}
-
-#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
 fn terminal_read_available() -> Vec<u8> {
     let mut buffer = [0_u8; 4096];
-    let read = trueos::vshell::attached_read_available(&mut buffer);
-    buffer[..read].to_vec()
-}
-
-#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-fn terminal_read_available() -> Vec<u8> {
-    Vec::new()
+    let read = vshell::attached_read_available(&mut buffer);
+    Vec::from(&buffer[..read])
 }
 
 fn main() {
-    let args = process_args().into_iter().skip(1).collect::<Vec<_>>();
+    let args = env::args().skip(1).collect::<Vec<_>>();
     let initial_url = match args.as_slice() {
         [] => None,
         [url] => Some(url.clone()),
@@ -208,16 +185,11 @@ fn main() {
     terminal_enter();
     terminal_write(b"hyper: HTTP/HTTPS downloader; destination common/dl\r\n");
 
-    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-    let runtime = trueos::runtime::current_thread_net().build();
-    #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build();
+    let runtime = runtime::current_thread_net().build();
 
     match runtime {
         Ok(runtime) => {
-            let local = tokio::task::LocalSet::new();
+            let local = LocalSet::new();
             if let Err(error) = local.block_on(&runtime, run_minishell(initial_url)) {
                 terminal_write(format!("hyper: {error:#}\r\n").as_bytes());
             }
@@ -228,31 +200,6 @@ fn main() {
         }
     }
 
-    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-    {
-        trueos::vshell::leave_terminal_handoff();
-        let _ = trueos::vshell::shutdown_current_blueprint("hyper downloader exited");
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn derives_safe_names_from_urls() {
-        let url = normalize_url("example.com/releases/a file.bin?token=secret").unwrap();
-        assert_eq!(download_name(&url), "a_20file.bin");
-        assert_eq!(
-            download_name(&normalize_url("https://example.com/").unwrap()),
-            "download.bin"
-        );
-        assert_eq!(safe_name("../named file.html"), ".._named_file.html");
-    }
-
-    #[test]
-    fn accepts_only_http_transports() {
-        assert_eq!(normalize_url("example.com/file").unwrap().scheme(), "https");
-        assert!(normalize_url("ftp://example.com/file").is_err());
-    }
+    vshell::leave_terminal_handoff();
+    let _ = vshell::shutdown_current_blueprint("hyper downloader exited");
 }
