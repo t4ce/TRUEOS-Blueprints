@@ -38,6 +38,10 @@
       "path": "../TRUEOS-Picasso-Example"
     },
     {
+      "name": "boat",
+      "path": "../boat"
+    },
+    {
       "name": "cubes",
       "path": "../Cubes"
     },
