@@ -18,6 +18,10 @@
       "path": "buildins/img"
     },
     {
+      "name": "hyper",
+      "path": "buildins/hyper"
+    },
+    {
       "name": "os",
       "path": "buildins/os"
     },
