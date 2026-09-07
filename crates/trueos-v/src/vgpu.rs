@@ -206,6 +206,16 @@ pub const MAX_INDEXED_BATCH_DRAWS: usize = 16;
 /// The mixed-topology V2 batch maps directly to the resident renderer's
 /// 600-draw scene capacity. V1 remains at 16 for ABI compatibility.
 pub const MAX_INDEXED_BATCH_V2_DRAWS: usize = 600;
+/// Largest integer point width accepted through `IndexedBatchDrawV2::reserved`.
+/// Zero selects the renderer default; nonzero values are valid only for
+/// `PRIMITIVE_TOPOLOGY_POINT_LIST`.
+pub const MAX_INDEXED_DRAW_POINT_WIDTH_PX: u32 = 255;
+
+/// Encode an explicit integer point width without changing the stable V2 wire
+/// layout. The broker validates that this is used only with POINT_LIST draws.
+pub const fn indexed_draw_point_width_px(width_px: u8) -> u32 {
+    width_px as u32
+}
 pub const PRIMITIVE_TOPOLOGY_POINT_LIST: u32 = 1;
 pub const PRIMITIVE_TOPOLOGY_LINE_LIST: u32 = 2;
 pub const PRIMITIVE_TOPOLOGY_LINE_STRIP: u32 = 3;
@@ -234,8 +244,9 @@ pub const PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP_ADJ: u32 = 0x0c;
 /// vertices specify one screen-aligned rectangle; hardware derives its fourth
 /// corner.
 pub const PRIMITIVE_TOPOLOGY_RECT_LIST: u32 = 0x0f;
-/// Intel `3DPRIM_LINELOOP` value 0x10. The retained renderer closes its
-/// immutable line-strip draw plan before the mesh is first presented.
+/// TRUEOS V2 `LINE_LOOP` geometry type. Gen12 has no corresponding VF
+/// assembly value, so submission materializes the final-to-first edge and
+/// emits the immutable result as a hardware line strip.
 pub const PRIMITIVE_TOPOLOGY_LINE_LOOP: u32 = 0x10;
 
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
@@ -271,6 +282,9 @@ pub struct IndexedBatchDrawV2 {
     pub base_vertex: i32,
     pub rgba8_srgb: u32,
     pub topology: u32,
+    /// POINT_LIST-only integer point width in pixels. Zero selects the
+    /// renderer default. This occupies the original reserved word so the V2
+    /// C ABI layout remains unchanged; all other topologies require zero.
     pub reserved: u32,
 }
 
