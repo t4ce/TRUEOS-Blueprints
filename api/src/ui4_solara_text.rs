@@ -920,6 +920,19 @@ impl Frame {
         })
     }
 
+    /// Keep every physical N-Mouse route which selects this frame centered and
+    /// deliver its raw relative movement through [`PointerEvent::dx`] and
+    /// [`PointerEvent::dy`]. Other cursor routes remain independent. Disable
+    /// this when leaving a first-person/pointer-look mode.
+    pub fn set_center_snapped_mouse(&mut self, enabled: bool) -> Result<(), Error> {
+        status(unsafe {
+            v::bp_abi::trueos_cabi_ui4_scene_set_center_snapped_mouse(
+                self.window_id,
+                u32::from(enabled),
+            )
+        })
+    }
+
     /// Set the selected frame's fallback cursor for every source which does
     /// not have its own override.
     pub fn set_cursor_icon(&mut self, icon: CursorIcon) -> Result<(), Error> {
