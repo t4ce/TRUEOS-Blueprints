@@ -920,10 +920,10 @@ impl Frame {
         })
     }
 
-    /// Keep every physical N-Mouse route which selects this frame centered and
-    /// deliver its raw relative movement through [`PointerEvent::dx`] and
-    /// [`PointerEvent::dy`]. Other cursor routes remain independent. Disable
-    /// this when leaving a first-person/pointer-look mode.
+    /// Keep every independent cursor route which selects this frame centered.
+    /// Relative sources retain raw report movement; absolute sources derive
+    /// [`PointerEvent::dx`] and [`PointerEvent::dy`] from consecutive raw
+    /// positions. Disable this when leaving a first-person/pointer-look mode.
     pub fn set_center_snapped_mouse(&mut self, enabled: bool) -> Result<(), Error> {
         status(unsafe {
             v::bp_abi::trueos_cabi_ui4_scene_set_center_snapped_mouse(
