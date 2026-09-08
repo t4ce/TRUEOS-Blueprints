@@ -139,18 +139,40 @@ fn clamp_axis(offset: f32, viewport: f32, content: f32) -> f32 {
 
 fn main() {
     let mut frames = Vec::new();
-    let args: Vec<String> = trueos::env::args().skip(1).collect();
-    if !args.is_empty() {
-        let mut command = String::from("show ");
-        command.push_str(args.join(" ").as_str());
-        run_line(command.as_str(), &mut frames);
+    let args: Vec<String> = trueos::env::args()
+        .skip(1)
+        .filter(|argument| argument != "--vmx-minishell")
+        .collect();
+
+    // Runscripts remain a distinct, one-shot input surface.  They are applied
+    // before argv so startup.json can still arrange several kernel images.
+    if let Ok(bytes) = async_fs::block_on(async_fs::read_file(b"vFile:launch"))
+        && let Ok(script) = String::from_utf8(bytes)
+    {
+        for line in script.lines() {
+            run_line(line, &mut frames);
+        }
     }
-    terminal_enter();
-    terminal_write(b"img: interactive UI4 media viewer (up to 32 frames)\r\n");
-    terminal_write(b"img: `show PATH_OR_FOLDER [center|top-left|top-right|bottom-left|bottom-right] [hit|nohit]`; arrows browse folder; `list`; `close all`; `shell`; `exit`\r\nimg> ");
+
+    if !args.is_empty() {
+        if args.len() > 1 && args[1..].iter().all(|argument| is_show_option(argument)) {
+            let mut command = String::from("show ");
+            command.push_str(args.join(" ").as_str());
+            run_line(command.as_str(), &mut frames);
+        } else {
+            // Each argv item is an independent source.  This is the contract
+            // used by termdir's multi-file Show action.
+            for path in args {
+                show_source(path.as_str(), Alignment::Center, true, &mut frames);
+            }
+        }
+    }
+
+    if frames.is_empty() {
+        open_default_frame(&mut frames);
+    }
+
     let mut command = Vec::new();
-    let mut escape = 0u8;
-    let mut parked: Option<trueos::vshell::TerminalParkingTicket> = None;
 
     loop {
         if let Some(prepare) = replication::poll_prepare_pause() {
@@ -158,26 +180,7 @@ fn main() {
             continue;
         }
         service_frames(&mut frames);
-        if let Some(ticket) = &parked {
-            match ticket.poll_reentry() {
-                Ok(trueos::vshell::TerminalReentry::Ready(lease)) => {
-                    parked = None;
-                    terminal_enter();
-                    terminal_write(
-                        b"img: resumed; arrows browse folder; `shell` returns to Shell2\r\nimg> ",
-                    );
-                    let _ = lease.acknowledge_ready();
-                }
-                Ok(trueos::vshell::TerminalReentry::Pending) => {}
-                Err(error) => {
-                    logl::log(
-                        level::WARN,
-                        format_args!("img: terminal re-entry error={error:?}"),
-                    );
-                    parked = None;
-                }
-            }
-        } else if service_terminal(&mut command, &mut escape, &mut frames, &mut parked) {
+        if service_command_channel(&mut command, &mut frames) {
             break;
         }
         vsys::poll_once();
@@ -186,98 +189,43 @@ fn main() {
     let _ = trueos::vshell::shutdown_current_blueprint("img viewer exited");
 }
 
-fn terminal_enter() {
-    let size = trueos::vshell::konsole_size()
-        .unwrap_or(trueos::vshell::KonsoleSize { cols: 80, rows: 24 });
-    let _ = trueos::vshell::konsole_begin_frame(
-        size.cols,
-        size.rows,
-        trueos::vshell::KONSOLE_FRAME_TERMINAL_HANDOFF,
-    );
+fn terminal_line(text: &str) {
+    let _ = trueos::vshell::line(text);
 }
 
-fn terminal_write(bytes: &[u8]) {
-    let _ = trueos::vshell::attached_write(bytes);
-}
-
-fn service_terminal(
-    command: &mut Vec<u8>,
-    escape: &mut u8,
-    frames: &mut Vec<OpenFrame>,
-    parked: &mut Option<trueos::vshell::TerminalParkingTicket>,
-) -> bool {
+fn service_command_channel(command: &mut Vec<u8>, frames: &mut Vec<OpenFrame>) -> bool {
     let mut bytes = [0u8; 512];
     let len = trueos::vshell::attached_read_available(&mut bytes);
     for byte in &bytes[..len] {
-        if *escape != 0 {
-            if *escape == 1 && matches!(*byte, b'[' | b'O') {
-                *escape = 2;
-                continue;
-            }
-            if *escape == 2 && matches!(*byte, b'A' | b'B' | b'C' | b'D') {
-                if let Some(open) = frames.iter_mut().rev().find(|open| open.gallery.is_some()) {
-                    navigate(open, matches!(*byte, b'B' | b'C'));
-                }
-            }
-            *escape = 0;
-            continue;
-        }
         match *byte {
-            27 => *escape = 1,
             3 => {
-                terminal_write(b"^C\r\nimg> ");
                 command.clear();
             }
             b'\r' | b'\n' => {
-                terminal_write(b"\r\n");
                 let line = core::mem::take(command);
                 let line = String::from_utf8(line).unwrap_or_default();
                 match line.trim() {
                     "" => {}
-                    "help" => terminal_write(
-                        b"show PATH [alignment] [hit|nohit], list, close all, shell, exit\r\n",
+                    "help" => terminal_line(
+                        "img: list | show PATH [alignment] [hit|nohit] | close all | exit",
                     ),
-                    "list" => terminal_write(
-                        format!("img: {} of {} frames open\r\n", frames.len(), MAX_FRAMES)
-                            .as_bytes(),
-                    ),
+                    "list" => list_frames(frames),
                     "close all" | "clear" => {
                         frames.clear();
-                        terminal_write(b"img: all frames closed\r\n");
-                    }
-                    "shell" | "vmx_leave" => {
-                        match trueos::vshell::terminal_initial_lease()
-                            .and_then(|lease| lease.release_to_shell())
-                        {
-                            Ok(ticket) => {
-                                *parked = Some(ticket);
-                                return false;
-                            }
-                            Err(error) => terminal_write(
-                                format!("img: shell handoff failed: {error:?}\r\n").as_bytes(),
-                            ),
-                        }
+                        terminal_line("img: all frames closed");
                     }
                     "exit" | "quit" => {
-                        terminal_write(b"img: leaving interactive viewer\r\n");
-                        trueos::vshell::leave_terminal_handoff();
                         return true;
                     }
                     line if line.starts_with("show ") => run_line(line, frames),
-                    path => {
-                        let line = format!("show {path}");
-                        run_line(line.as_str(), frames);
-                    }
+                    _ => terminal_line("img: unknown command; use `help`"),
                 }
-                terminal_write(b"img> ");
             }
             8 | 127 if !command.is_empty() => {
                 command.pop();
-                terminal_write(b"\x08 \x08");
             }
             byte if byte >= 0x20 => {
                 command.push(byte);
-                terminal_write(&[byte]);
             }
             _ => {}
         }
@@ -285,9 +233,39 @@ fn service_terminal(
     false
 }
 
+fn list_frames(frames: &[OpenFrame]) {
+    terminal_line(format!("img: {} of {} frames", frames.len(), MAX_FRAMES).as_str());
+    for (index, open) in frames.iter().enumerate() {
+        let mode = if let Some(gallery) = &open.gallery {
+            format!("gallery {}/{}", gallery.index + 1, gallery.paths.len())
+        } else {
+            String::from("fixed")
+        };
+        terminal_line(
+            format!(
+                "  {}: window={} {} {}x{} {}",
+                index + 1,
+                open.frame.window_id(),
+                open.source,
+                open.image.width,
+                open.image.height,
+                mode,
+            )
+            .as_str(),
+        );
+    }
+}
+
+fn is_show_option(value: &str) -> bool {
+    matches!(
+        value,
+        "center" | "top-left" | "top-right" | "bottom-left" | "bottom-right" | "hit" | "nohit"
+    )
+}
+
 fn run_line(line: &str, frames: &mut Vec<OpenFrame>) {
     let line = line.trim();
-    if line.is_empty() || line.starts_with('#') {
+    if line.is_empty() || line.starts_with('#') || line == "fs-scope trueosfs" {
         return;
     }
     let Some(command) = line.strip_prefix("show ") else {
@@ -319,6 +297,10 @@ fn run_line(line: &str, frames: &mut Vec<OpenFrame>) {
             }
         }
     }
+    show_source(path, alignment, hit_testable, frames);
+}
+
+fn show_source(path: &str, alignment: Alignment, hit_testable: bool, frames: &mut Vec<OpenFrame>) {
     if frames.len() >= MAX_FRAMES {
         logl::log(
             level::WARN,
@@ -333,7 +315,7 @@ fn run_line(line: &str, frames: &mut Vec<OpenFrame>) {
         match list_gallery(path) {
             Ok(gallery) => Some(gallery),
             Err(error) => {
-                terminal_write(format!("img: {error}\r\n").as_bytes());
+                terminal_line(format!("img: {error}").as_str());
                 return;
             }
         }
@@ -346,7 +328,7 @@ fn run_line(line: &str, frames: &mut Vec<OpenFrame>) {
     let image = match load_image(source_path) {
         Ok(image) => image,
         Err(error) => {
-            terminal_write(format!("img: {path}: {error}\r\n").as_bytes());
+            terminal_line(format!("img: {path}: {error}").as_str());
             logl::log(
                 level::ERROR,
                 format_args!("img: show source={path} error={error}"),
@@ -365,13 +347,13 @@ fn run_line(line: &str, frames: &mut Vec<OpenFrame>) {
     ) {
         Ok(mut open) => {
             open.gallery = gallery;
-            terminal_write(
+            terminal_line(
                 format!(
-                    "img: {} load_to_publish_ms={}\r\n",
+                    "img: {} load_to_publish_ms={}",
                     open.source,
                     trueos::clock::monotonic_millis().saturating_sub(started)
                 )
-                .as_bytes(),
+                .as_str(),
             );
             logl::log(
                 level::INFO,
@@ -394,6 +376,56 @@ fn run_line(line: &str, frames: &mut Vec<OpenFrame>) {
             level::ERROR,
             format_args!("img: show source={path} error={error}"),
         ),
+    }
+}
+
+fn open_default_frame(frames: &mut Vec<OpenFrame>) {
+    const DEFAULT_GALLERY: &str = "apps/common/images";
+    const WIDTH: u32 = 640;
+    const HEIGHT: u32 = 480;
+    let image = Image {
+        width: WIDTH,
+        height: HEIGHT,
+        rgba: vec![0x78; WIDTH as usize * HEIGHT as usize * 4],
+    };
+    // The placeholder is deliberately opaque neutral gray.
+    let mut image = image;
+    for alpha in image.rgba.iter_mut().skip(3).step_by(4) {
+        *alpha = u8::MAX;
+    }
+    if let Ok(open) = open_decoded_image(
+        String::from("<empty>"),
+        image,
+        Alignment::Center,
+        true,
+        None,
+        false,
+    ) {
+        frames.push(open);
+    }
+
+    let (Some(open), Ok(gallery)) = (frames.first_mut(), list_gallery(DEFAULT_GALLERY)) else {
+        return;
+    };
+    let Some(source) = gallery.paths.first().cloned() else {
+        return;
+    };
+    let Ok(image) = load_image(source.as_str()) else {
+        return;
+    };
+    let mut view = View::new(
+        open.frame.width(),
+        open.frame.height(),
+        image.width,
+        image.height,
+        Alignment::Center,
+    );
+    view.letterbox = true;
+    if present(&mut open.frame, view, &image).is_ok() {
+        open.view = view;
+        open.image = image;
+        open.source = source;
+        open.gallery = Some(gallery);
     }
 }
 
@@ -895,7 +927,7 @@ fn checked_rgba_len(width: u32, height: u32) -> Option<usize> {
 }
 
 fn list_gallery(path: &str) -> Result<Gallery, String> {
-    let listing = async_fs::block_on(async_fs::list_dir(path.as_bytes()))
+    let listing = async_fs::block_on(async_fs::list_dir_typed(path.as_bytes()))
         .map_err(|code| format!("folder read code={code}"))?;
     if listing.truncated {
         return Err(String::from("folder listing truncated"));
@@ -906,15 +938,15 @@ fn list_gallery(path: &str) -> Result<Gallery, String> {
         .filter(|entry| {
             entry.kind == async_fs::NodeKind::File
                 && matches!(
-                    vmedia::ImageFormat::from_asset_name(&entry.name),
-                    Some(vmedia::ImageFormat::Jpeg | vmedia::ImageFormat::Png)
+                    entry.content_type,
+                    async_fs::ContentTypeId::JPEG | async_fs::ContentTypeId::PNG
                 )
         })
         .map(|entry| format!("{}/{}", path.trim_end_matches('/'), entry.name))
         .collect();
     paths.sort();
     if paths.is_empty() {
-        return Err(String::from("folder contains no PNG/JPEG images"));
+        return Err(String::from("folder contains no inferred PNG/JPEG images"));
     }
     Ok(Gallery { paths, index: 0 })
 }
@@ -932,7 +964,7 @@ fn navigate(open: &mut OpenFrame, forward: bool) {
     let image = match load_image(&source) {
         Ok(image) => image,
         Err(error) => {
-            terminal_write(format!("img: {source}: {error}\r\n").as_bytes());
+            terminal_line(format!("img: {source}: {error}").as_str());
             return;
         }
     };
@@ -945,7 +977,7 @@ fn navigate(open: &mut OpenFrame, forward: bool) {
     );
     view.letterbox = true;
     if let Err(error) = present(&mut open.frame, view, &image) {
-        terminal_write(format!("img: present failed: {error:?}\r\n").as_bytes());
+        terminal_line(format!("img: present failed: {error:?}").as_str());
         return;
     }
     open.view = view;
@@ -953,15 +985,15 @@ fn navigate(open: &mut OpenFrame, forward: bool) {
     open.source = source;
     open.gallery.as_mut().unwrap().index = next;
     let elapsed = trueos::clock::monotonic_millis().saturating_sub(started);
-    terminal_write(
+    terminal_line(
         format!(
-            "img: [{}/{}] {} load_to_publish_ms={}\r\n",
+            "img: [{}/{}] {} load_to_publish_ms={}",
             next + 1,
             count,
             open.source,
             elapsed
         )
-        .as_bytes(),
+        .as_str(),
     );
     logl::log(
         level::INFO,
