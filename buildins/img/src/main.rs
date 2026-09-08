@@ -3,8 +3,10 @@
 
 extern crate alloc;
 
+mod gallery;
+use gallery::{Gallery, next_index};
+
 use alloc::{format, string::String, vec, vec::Vec};
-use core3::io::Cursor;
 use trueos::logl::{self, level};
 use trueos::ui4_scene::{Damage, Error as Ui4Error, Frame, output_dimensions, rgba};
 use trueos::{async_fs, image_source, input, replication, vmedia, vsys};
@@ -36,6 +38,7 @@ struct OpenFrame {
     source: String,
     alignment: Alignment,
     hit_testable: bool,
+    gallery: Option<Gallery>,
 }
 
 /// Everything valuable about an open image, without any old-kernel UI4
@@ -47,6 +50,7 @@ struct SuspendedFrame {
     source: String,
     alignment: Alignment,
     hit_testable: bool,
+    gallery: Option<Gallery>,
 }
 
 #[derive(Clone, Copy)]
@@ -143,8 +147,10 @@ fn main() {
     }
     terminal_enter();
     terminal_write(b"img: interactive UI4 media viewer (up to 32 frames)\r\n");
-    terminal_write(b"img: `show PATH [center|top-left|top-right|bottom-left|bottom-right] [hit|nohit]`; `list`; `close all`; `exit`\r\nimg> ");
+    terminal_write(b"img: `show PATH_OR_FOLDER [center|top-left|top-right|bottom-left|bottom-right] [hit|nohit]`; arrows browse folder; `list`; `close all`; `shell`; `exit`\r\nimg> ");
     let mut command = Vec::new();
+    let mut escape = 0u8;
+    let mut parked: Option<trueos::vshell::TerminalParkingTicket> = None;
 
     loop {
         if let Some(prepare) = replication::poll_prepare_pause() {
@@ -152,7 +158,26 @@ fn main() {
             continue;
         }
         service_frames(&mut frames);
-        if service_terminal(&mut command, &mut frames) {
+        if let Some(ticket) = &parked {
+            match ticket.poll_reentry() {
+                Ok(trueos::vshell::TerminalReentry::Ready(lease)) => {
+                    parked = None;
+                    terminal_enter();
+                    terminal_write(
+                        b"img: resumed; arrows browse folder; `shell` returns to Shell2\r\nimg> ",
+                    );
+                    let _ = lease.acknowledge_ready();
+                }
+                Ok(trueos::vshell::TerminalReentry::Pending) => {}
+                Err(error) => {
+                    logl::log(
+                        level::WARN,
+                        format_args!("img: terminal re-entry error={error:?}"),
+                    );
+                    parked = None;
+                }
+            }
+        } else if service_terminal(&mut command, &mut escape, &mut frames, &mut parked) {
             break;
         }
         vsys::poll_once();
@@ -175,11 +200,30 @@ fn terminal_write(bytes: &[u8]) {
     let _ = trueos::vshell::attached_write(bytes);
 }
 
-fn service_terminal(command: &mut Vec<u8>, frames: &mut Vec<OpenFrame>) -> bool {
+fn service_terminal(
+    command: &mut Vec<u8>,
+    escape: &mut u8,
+    frames: &mut Vec<OpenFrame>,
+    parked: &mut Option<trueos::vshell::TerminalParkingTicket>,
+) -> bool {
     let mut bytes = [0u8; 512];
     let len = trueos::vshell::attached_read_available(&mut bytes);
     for byte in &bytes[..len] {
+        if *escape != 0 {
+            if *escape == 1 && matches!(*byte, b'[' | b'O') {
+                *escape = 2;
+                continue;
+            }
+            if *escape == 2 && matches!(*byte, b'A' | b'B' | b'C' | b'D') {
+                if let Some(open) = frames.iter_mut().rev().find(|open| open.gallery.is_some()) {
+                    navigate(open, matches!(*byte, b'B' | b'C'));
+                }
+            }
+            *escape = 0;
+            continue;
+        }
         match *byte {
+            27 => *escape = 1,
             3 => {
                 terminal_write(b"^C\r\nimg> ");
                 command.clear();
@@ -191,7 +235,7 @@ fn service_terminal(command: &mut Vec<u8>, frames: &mut Vec<OpenFrame>) -> bool 
                 match line.trim() {
                     "" => {}
                     "help" => terminal_write(
-                        b"show PATH [alignment] [hit|nohit], list, close all, exit\r\n",
+                        b"show PATH [alignment] [hit|nohit], list, close all, shell, exit\r\n",
                     ),
                     "list" => terminal_write(
                         format!("img: {} of {} frames open\r\n", frames.len(), MAX_FRAMES)
@@ -200,6 +244,19 @@ fn service_terminal(command: &mut Vec<u8>, frames: &mut Vec<OpenFrame>) -> bool 
                     "close all" | "clear" => {
                         frames.clear();
                         terminal_write(b"img: all frames closed\r\n");
+                    }
+                    "shell" | "vmx_leave" => {
+                        match trueos::vshell::terminal_initial_lease()
+                            .and_then(|lease| lease.release_to_shell())
+                        {
+                            Ok(ticket) => {
+                                *parked = Some(ticket);
+                                return false;
+                            }
+                            Err(error) => terminal_write(
+                                format!("img: shell handoff failed: {error:?}\r\n").as_bytes(),
+                            ),
+                        }
                     }
                     "exit" | "quit" => {
                         terminal_write(b"img: leaving interactive viewer\r\n");
@@ -269,9 +326,27 @@ fn run_line(line: &str, frames: &mut Vec<OpenFrame>) {
         );
         return;
     }
-    let image = match load_image(path.trim()) {
+    let started = trueos::clock::monotonic_millis();
+    let gallery = if !path.starts_with("kernel:")
+        && async_fs::block_on(async_fs::metadata(path.as_bytes())).is_ok_and(|meta| meta.is_dir())
+    {
+        match list_gallery(path) {
+            Ok(gallery) => Some(gallery),
+            Err(error) => {
+                terminal_write(format!("img: {error}\r\n").as_bytes());
+                return;
+            }
+        }
+    } else {
+        None
+    };
+    let source_path = gallery
+        .as_ref()
+        .map_or(path, |gallery| gallery.paths[0].as_str());
+    let image = match load_image(source_path) {
         Ok(image) => image,
         Err(error) => {
+            terminal_write(format!("img: {path}: {error}\r\n").as_bytes());
             logl::log(
                 level::ERROR,
                 format_args!("img: show source={path} error={error}"),
@@ -279,9 +354,25 @@ fn run_line(line: &str, frames: &mut Vec<OpenFrame>) {
             return;
         }
     };
-    let source = String::from(path.trim());
-    match open_decoded_image(source, image, alignment, hit_testable, None) {
-        Ok(open) => {
+    let source = String::from(source_path);
+    match open_decoded_image(
+        source,
+        image,
+        alignment,
+        hit_testable,
+        None,
+        gallery.is_some(),
+    ) {
+        Ok(mut open) => {
+            open.gallery = gallery;
+            terminal_write(
+                format!(
+                    "img: {} load_to_publish_ms={}\r\n",
+                    open.source,
+                    trueos::clock::monotonic_millis().saturating_sub(started)
+                )
+                .as_bytes(),
+            );
             logl::log(
                 level::INFO,
                 format_args!(
@@ -312,6 +403,7 @@ fn open_decoded_image(
     alignment: Alignment,
     hit_testable: bool,
     restored_view: Option<View>,
+    fit: bool,
 ) -> Result<OpenFrame, (SuspendedFrame, String)> {
     let suspended = |view: View, image: Image, error: String| {
         (
@@ -321,6 +413,7 @@ fn open_decoded_image(
                 source: source.clone(),
                 alignment,
                 hit_testable,
+                gallery: None,
             },
             error,
         )
@@ -337,6 +430,9 @@ fn open_decoded_image(
             alignment,
         )
     });
+    if fit {
+        view.letterbox = true;
+    }
     // A different post-update output mode must not resurrect an invalid
     // extent, but otherwise preserve the exact pan/resize projection.
     view.viewport_width = view.viewport_width.min(output_width).max(1);
@@ -372,6 +468,7 @@ fn open_decoded_image(
         source,
         alignment,
         hit_testable,
+        gallery: None,
     })
 }
 
@@ -384,6 +481,7 @@ fn prepare_pause(prepare: replication::PreparePause, frames: &mut Vec<OpenFrame>
             source: open.source,
             alignment: open.alignment,
             hit_testable: open.hit_testable,
+            gallery: open.gallery,
         })
         .collect();
     logl::log(
@@ -425,14 +523,17 @@ fn prepare_pause(prepare: replication::PreparePause, frames: &mut Vec<OpenFrame>
                 vsys::sleep_ms(RESUME_FRAME_CADENCE_MS);
             }
             let source = saved.source.clone();
+            let gallery = saved.gallery.clone();
             match open_decoded_image(
                 saved.source,
                 saved.image,
                 saved.alignment,
                 saved.hit_testable,
                 Some(saved.view),
+                false,
             ) {
-                Ok(open) => {
+                Ok(mut open) => {
+                    open.gallery = gallery;
                     logl::log(
                         level::INFO,
                         format_args!(
@@ -448,6 +549,7 @@ fn prepare_pause(prepare: replication::PreparePause, frames: &mut Vec<OpenFrame>
                 }
                 Err((returned, error)) => {
                     saved = returned;
+                    saved.gallery = gallery;
                     logl::log(
                         level::WARN,
                         format_args!(
@@ -483,6 +585,14 @@ fn aligned_position(
 }
 
 fn present(frame: &mut Frame, view: View, image: &Image) -> Result<(), Ui4Error> {
+    if view.viewport_width == image.width
+        && view.viewport_height == image.height
+        && image.rgba.chunks_exact(4).all(|pixel| pixel[3] == 255)
+    {
+        frame.begin(rgba(0, 0, 0, 255))?;
+        frame.write_opaque_rgba8(&image.rgba)?;
+        return frame.publish(Damage::full(frame.width(), frame.height()));
+    }
     let mut viewport = vec![0u8; view.viewport_width as usize * view.viewport_height as usize * 4];
     for alpha in viewport.iter_mut().skip(3).step_by(4) {
         *alpha = u8::MAX;
@@ -511,6 +621,16 @@ fn present(frame: &mut Frame, view: View, image: &Image) -> Result<(), Ui4Error>
         }
     }
 
+    // PNG pixels are straight-alpha; the opaque viewer composites onto black.
+    for pixel in viewport.chunks_exact_mut(4) {
+        if pixel[3] != 255 {
+            let alpha = pixel[3] as u16;
+            for channel in &mut pixel[..3] {
+                *channel = ((*channel as u16 * alpha + 127) / 255) as u8;
+            }
+            pixel[3] = 255;
+        }
+    }
     frame.begin(rgba(0, 0, 0, 255))?;
     frame.write_opaque_rgba8(viewport.as_slice())?;
     frame.publish(Damage::full(frame.width(), frame.height()))
@@ -574,6 +694,25 @@ fn service_frames(frames: &mut Vec<OpenFrame>) {
                     {
                         close = true;
                     }
+                    Ok(Some(event))
+                        if event.kind == input::KEYBOARD_OUTPUT_KIND_KEY
+                            && event.flags & input::KEYBOARD_OUTPUT_FLAG_PRESS != 0
+                            && matches!(
+                                event.key_code,
+                                input::KEYBOARD_KEY_ARROW_LEFT
+                                    | input::KEYBOARD_KEY_ARROW_RIGHT
+                                    | input::KEYBOARD_KEY_ARROW_UP
+                                    | input::KEYBOARD_KEY_ARROW_DOWN
+                            ) =>
+                    {
+                        navigate(
+                            open,
+                            matches!(
+                                event.key_code,
+                                input::KEYBOARD_KEY_ARROW_RIGHT | input::KEYBOARD_KEY_ARROW_DOWN
+                            ),
+                        );
+                    }
                     Ok(Some(_)) => {}
                     Ok(None) => break,
                     Err(error) => {
@@ -613,6 +752,9 @@ fn service_frames(frames: &mut Vec<OpenFrame>) {
                 match open.frame.resize(event.width, event.height) {
                     Ok(()) => {
                         open.view.resize(event.width, event.height);
+                        if open.gallery.is_some() {
+                            open.view.letterbox = true;
+                        }
                         repaint = true;
                         logl::log(
                             level::INFO,
@@ -671,82 +813,60 @@ fn load_image(source: &str) -> Result<Image, String> {
             _ => Err(String::from("unsupported kernel image format")),
         };
     }
+    let started = trueos::clock::monotonic_millis();
     let bytes = async_fs::block_on(async_fs::read_file(source.as_bytes()))
         .map_err(|code| format!("trueosfs read code={code}"))?;
-    decode_jpeg(bytes.as_slice())
+    logl::log(
+        level::INFO,
+        format_args!(
+            "img: read source={source} bytes={} read_ms={}",
+            bytes.len(),
+            trueos::clock::monotonic_millis().saturating_sub(started)
+        ),
+    );
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        decode_png(&bytes)
+    } else if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
+        decode_jpeg(&bytes)
+    } else {
+        Err(String::from(
+            "unsupported image signature (expected PNG or JPEG)",
+        ))
+    }
 }
 
 fn decode_jpeg(bytes: &[u8]) -> Result<Image, String> {
-    let decoded = async_fs::block_on(vmedia::decode(vmedia::ImageFormat::Jpeg, bytes))
-        .map_err(|code| format!("kernel JPEG decode code={code}"))?;
+    decode_media(vmedia::ImageFormat::Jpeg, bytes)
+}
+
+fn decode_png(bytes: &[u8]) -> Result<Image, String> {
+    decode_media(vmedia::ImageFormat::Png, bytes)
+}
+
+fn decode_media(format: vmedia::ImageFormat, bytes: &[u8]) -> Result<Image, String> {
+    let started = trueos::clock::monotonic_millis();
+    let decoded = async_fs::block_on(vmedia::decode(format, bytes))
+        .map_err(|code| format!("kernel {format:?} decode code={code}"))?;
     let expected = checked_rgba_len(decoded.info.width, decoded.info.height)
-        .ok_or_else(|| String::from("JPEG dimensions rejected"))?;
+        .ok_or_else(|| String::from("image dimensions rejected"))?;
     if decoded.rgba.len() != expected {
-        return Err(String::from("kernel JPEG decoded size mismatch"));
+        return Err(String::from("kernel decoded size mismatch"));
     }
+    logl::log(
+        level::INFO,
+        format_args!(
+            "img: decode format={format:?} bytes={} size={}x{} decode_ms={} backend={:?}",
+            bytes.len(),
+            decoded.info.width,
+            decoded.info.height,
+            trueos::clock::monotonic_millis().saturating_sub(started),
+            decoded.info.backend,
+        ),
+    );
     Ok(Image {
         width: decoded.info.width,
         height: decoded.info.height,
         rgba: decoded.rgba,
-    })
-}
-
-fn decode_png(bytes: &[u8]) -> Result<Image, String> {
-    let mut decoder = png::Decoder::new(Cursor::new(bytes));
-    decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
-    let mut reader = decoder
-        .read_info()
-        .map_err(|_| String::from("invalid PNG"))?;
-    let width = reader.info().width;
-    let height = reader.info().height;
-    let expected =
-        checked_rgba_len(width, height).ok_or_else(|| String::from("PNG dimensions rejected"))?;
-    let output_len = reader
-        .output_buffer_size()
-        .ok_or_else(|| String::from("PNG output too large"))?;
-    if output_len > expected {
-        return Err(String::from("PNG output layout rejected"));
-    }
-    let mut decoded = vec![0u8; output_len];
-    let info = reader
-        .next_frame(&mut decoded)
-        .map_err(|_| String::from("PNG decode failed"))?;
-    decoded.truncate(info.buffer_size());
-    let pixels = expected / 4;
-    let rgba = match info.color_type {
-        png::ColorType::Rgba if decoded.len() == expected => decoded,
-        png::ColorType::Rgb if decoded.len() == pixels * 3 => {
-            let mut rgba = Vec::with_capacity(expected);
-            for rgb in decoded.chunks_exact(3) {
-                rgba.extend_from_slice(&[rgb[0], rgb[1], rgb[2], u8::MAX]);
-            }
-            rgba
-        }
-        png::ColorType::Grayscale if decoded.len() == pixels => {
-            let mut rgba = Vec::with_capacity(expected);
-            for gray in decoded {
-                rgba.extend_from_slice(&[gray, gray, gray, u8::MAX]);
-            }
-            rgba
-        }
-        png::ColorType::GrayscaleAlpha if decoded.len() == pixels * 2 => {
-            let mut rgba = Vec::with_capacity(expected);
-            for gray_alpha in decoded.chunks_exact(2) {
-                rgba.extend_from_slice(&[
-                    gray_alpha[0],
-                    gray_alpha[0],
-                    gray_alpha[0],
-                    gray_alpha[1],
-                ]);
-            }
-            rgba
-        }
-        _ => return Err(String::from("unsupported PNG output layout")),
-    };
-    Ok(Image {
-        width,
-        height,
-        rgba,
     })
 }
 
@@ -772,4 +892,84 @@ fn checked_rgba_len(width: u32, height: u32) -> Option<usize> {
         return None;
     }
     pixels.checked_mul(4)
+}
+
+fn list_gallery(path: &str) -> Result<Gallery, String> {
+    let listing = async_fs::block_on(async_fs::list_dir(path.as_bytes()))
+        .map_err(|code| format!("folder read code={code}"))?;
+    if listing.truncated {
+        return Err(String::from("folder listing truncated"));
+    }
+    let mut paths: Vec<String> = listing
+        .entries
+        .into_iter()
+        .filter(|entry| {
+            entry.kind == async_fs::NodeKind::File
+                && matches!(
+                    vmedia::ImageFormat::from_asset_name(&entry.name),
+                    Some(vmedia::ImageFormat::Jpeg | vmedia::ImageFormat::Png)
+                )
+        })
+        .map(|entry| format!("{}/{}", path.trim_end_matches('/'), entry.name))
+        .collect();
+    paths.sort();
+    if paths.is_empty() {
+        return Err(String::from("folder contains no PNG/JPEG images"));
+    }
+    Ok(Gallery { paths, index: 0 })
+}
+
+fn navigate(open: &mut OpenFrame, forward: bool) {
+    let Some(gallery) = open.gallery.as_ref() else {
+        return;
+    };
+    let count = gallery.paths.len();
+    let Some(next) = next_index(gallery.index, count, forward) else {
+        return;
+    };
+    let source = gallery.paths[next].clone();
+    let started = trueos::clock::monotonic_millis();
+    let image = match load_image(&source) {
+        Ok(image) => image,
+        Err(error) => {
+            terminal_write(format!("img: {source}: {error}\r\n").as_bytes());
+            return;
+        }
+    };
+    let mut view = View::new(
+        open.frame.width(),
+        open.frame.height(),
+        image.width,
+        image.height,
+        open.alignment,
+    );
+    view.letterbox = true;
+    if let Err(error) = present(&mut open.frame, view, &image) {
+        terminal_write(format!("img: present failed: {error:?}\r\n").as_bytes());
+        return;
+    }
+    open.view = view;
+    open.image = image;
+    open.source = source;
+    open.gallery.as_mut().unwrap().index = next;
+    let elapsed = trueos::clock::monotonic_millis().saturating_sub(started);
+    terminal_write(
+        format!(
+            "img: [{}/{}] {} load_to_publish_ms={}\r\n",
+            next + 1,
+            count,
+            open.source,
+            elapsed
+        )
+        .as_bytes(),
+    );
+    logl::log(
+        level::INFO,
+        format_args!(
+            "img: navigate index={}/{} source={} load_to_publish_ms={elapsed}",
+            next + 1,
+            count,
+            open.source
+        ),
+    );
 }
