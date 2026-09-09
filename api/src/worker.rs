@@ -78,9 +78,13 @@ pub fn capacity() -> usize {
 /// storage still referenced by hardware. Host jobs return false here.
 pub fn cancellation_requested() -> bool {
     #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
-    { unsafe { v::worker_abi::trueos_service_lane_cancellation_requested() } }
+    {
+        unsafe { v::worker_abi::trueos_service_lane_cancellation_requested() }
+    }
     #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
-    { false }
+    {
+        false
+    }
 }
 
 /// Stable worker-local identity while a native closure runs. The coordinating
