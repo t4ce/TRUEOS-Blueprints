@@ -4,7 +4,9 @@
 extern crate alloc;
 
 mod gallery;
+mod view;
 use gallery::{Gallery, next_index};
+use view::{Alignment, View, contained_extent};
 
 use alloc::{format, string::String, vec, vec::Vec};
 use trueos::logl::{self, level};
@@ -20,15 +22,6 @@ struct Image {
     width: u32,
     height: u32,
     rgba: Vec<u8>,
-}
-
-#[derive(Clone, Copy, Debug)]
-enum Alignment {
-    Center,
-    TopLeft,
-    TopRight,
-    BottomLeft,
-    BottomRight,
 }
 
 struct OpenFrame {
@@ -51,90 +44,6 @@ struct SuspendedFrame {
     alignment: Alignment,
     hit_testable: bool,
     gallery: Option<Gallery>,
-}
-
-#[derive(Clone, Copy)]
-struct View {
-    viewport_width: u32,
-    viewport_height: u32,
-    native_viewport_width: u32,
-    native_viewport_height: u32,
-    image_width: u32,
-    image_height: u32,
-    offset_x: f32,
-    offset_y: f32,
-    letterbox: bool,
-}
-
-impl View {
-    fn new(
-        viewport_width: u32,
-        viewport_height: u32,
-        image_width: u32,
-        image_height: u32,
-        alignment: Alignment,
-    ) -> Self {
-        let overflow_x = image_width.saturating_sub(viewport_width) as f32;
-        let overflow_y = image_height.saturating_sub(viewport_height) as f32;
-        let (offset_x, offset_y) = match alignment {
-            Alignment::Center => (-overflow_x * 0.5, -overflow_y * 0.5),
-            Alignment::TopLeft => (0.0, 0.0),
-            Alignment::TopRight => (-overflow_x, 0.0),
-            Alignment::BottomLeft => (0.0, -overflow_y),
-            Alignment::BottomRight => (-overflow_x, -overflow_y),
-        };
-        let mut view = Self {
-            viewport_width,
-            viewport_height,
-            native_viewport_width: viewport_width,
-            native_viewport_height: viewport_height,
-            image_width,
-            image_height,
-            offset_x,
-            offset_y,
-            letterbox: false,
-        };
-        view.clamp_offsets();
-        view
-    }
-
-    fn pan(&mut self, dx: i32, dy: i32) {
-        if self.letterbox {
-            return;
-        }
-        self.offset_x += dx as f32;
-        self.offset_y += dy as f32;
-        self.clamp_offsets();
-    }
-
-    fn resize(&mut self, width: u32, height: u32) {
-        self.viewport_width = width;
-        self.viewport_height = height;
-        self.letterbox =
-            width != self.native_viewport_width || height != self.native_viewport_height;
-        self.clamp_offsets();
-    }
-
-    fn clamp_offsets(&mut self) {
-        self.offset_x = clamp_axis(
-            self.offset_x,
-            self.viewport_width as f32,
-            self.image_width as f32,
-        );
-        self.offset_y = clamp_axis(
-            self.offset_y,
-            self.viewport_height as f32,
-            self.image_height as f32,
-        );
-    }
-}
-
-fn clamp_axis(offset: f32, viewport: f32, content: f32) -> f32 {
-    if content <= viewport {
-        (viewport - content) * 0.5
-    } else {
-        offset.clamp(viewport - content, 0.0)
-    }
 }
 
 fn main() {
@@ -462,7 +371,7 @@ fn open_decoded_image(
             alignment,
         )
     });
-    if fit {
+    if fit && !view.zoomed {
         view.letterbox = true;
     }
     // A different post-update output mode must not resurrect an invalid
@@ -619,6 +528,9 @@ fn aligned_position(
 fn present(frame: &mut Frame, view: View, image: &Image) -> Result<(), Ui4Error> {
     if view.viewport_width == image.width
         && view.viewport_height == image.height
+        && view.scale == 1.0
+        && view.offset_x == 0.0
+        && view.offset_y == 0.0
         && image.rgba.chunks_exact(4).all(|pixel| pixel[3] == 255)
     {
         frame.begin(rgba(0, 0, 0, 255))?;
@@ -632,6 +544,17 @@ fn present(frame: &mut Frame, view: View, image: &Image) -> Result<(), Ui4Error>
 
     if view.letterbox {
         paint_letterboxed(viewport.as_mut_slice(), view, image);
+    } else if view.scale != 1.0 {
+        for y in 0..view.viewport_height as usize {
+            for x in 0..view.viewport_width as usize {
+                if let Some((source_x, source_y)) = view.source_at(x, y) {
+                    let source = (source_y * image.width as usize + source_x) * 4;
+                    let destination = (y * view.viewport_width as usize + x) * 4;
+                    viewport[destination..destination + 4]
+                        .copy_from_slice(&image.rgba[source..source + 4]);
+                }
+            }
+        }
     } else {
         let source_x = (-view.offset_x).max(0.0) as usize;
         let source_y = (-view.offset_y).max(0.0) as usize;
@@ -687,26 +610,6 @@ fn paint_letterboxed(viewport: &mut [u8], view: View, image: &Image) {
                 ((destination_y + draw_y) * viewport_width + destination_x + draw_x) * 4;
             viewport[destination..destination + 4].copy_from_slice(&image.rgba[source..source + 4]);
         }
-    }
-}
-
-fn contained_extent(
-    source_width: usize,
-    source_height: usize,
-    viewport_width: usize,
-    viewport_height: usize,
-) -> (usize, usize) {
-    if viewport_width.saturating_mul(source_height) <= viewport_height.saturating_mul(source_width)
-    {
-        (
-            viewport_width,
-            (source_height.saturating_mul(viewport_width) / source_width).max(1),
-        )
-    } else {
-        (
-            (source_width.saturating_mul(viewport_height) / source_height).max(1),
-            viewport_height,
-        )
     }
 }
 
@@ -766,6 +669,21 @@ fn service_frames(frames: &mut Vec<OpenFrame>) {
                     }
                 }
             }
+            loop {
+                match open.frame.take_pointer_event() {
+                    Ok(Some(event)) => {
+                        repaint |= open.view.zoom_at(event.wheel, event.local_x, event.local_y);
+                    }
+                    Ok(None) => break,
+                    Err(error) => {
+                        logl::log(
+                            level::WARN,
+                            format_args!("img: pointer event error={error:?}"),
+                        );
+                        break;
+                    }
+                }
+            }
             let mut resize = None;
             loop {
                 match open.frame.take_resize_event() {
@@ -784,7 +702,7 @@ fn service_frames(frames: &mut Vec<OpenFrame>) {
                 match open.frame.resize(event.width, event.height) {
                     Ok(()) => {
                         open.view.resize(event.width, event.height);
-                        if open.gallery.is_some() {
+                        if open.gallery.is_some() && !open.view.zoomed {
                             open.view.letterbox = true;
                         }
                         repaint = true;
