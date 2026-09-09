@@ -555,6 +555,26 @@ impl Frame {
         }
     }
 
+    /// Open one input window with independent foreground and background
+    /// producers. Foreground is streaming/triple; background is visual/double.
+    /// Hardware layer allocation is broker-owned and keeps the pair together.
+    pub fn open_layered(x: i32, y: i32, width: u32, height: u32, background_hz: u32) -> Result<Self, Error> {
+        let window_id = unsafe { v::bp_abi::trueos_cabi_ui4_scene_frame_open_layered_v1(x, y, width, height, background_hz) };
+        if window_id == 0 { return Err(Error::Ui4); }
+        Ok(Self { window_id, width, height })
+    }
+
+    /// Borrow the background producer without creating another window. The
+    /// returned target has its own write lease, cadence and completion fence.
+    pub fn background(&self) -> Result<BackgroundLayer<'_>, Error> {
+        let target = unsafe { v::bp_abi::trueos_cabi_ui4_scene_frame_layer_v1(self.window_id, 1) };
+        if target == 0 { return Err(Error::Ui4); }
+        Ok(BackgroundLayer {
+            surface: core::mem::ManuallyDrop::new(Self { window_id: target, width: self.width, height: self.height }),
+            owner: core::marker::PhantomData,
+        })
+    }
+
     /// Open a GPU-only dirty/double visual frame with kernel-brokered cadence.
     /// Requests above 60 Hz are rejected at both API and kernel boundaries.
     pub fn open_visual(
@@ -1611,6 +1631,32 @@ impl Frame {
         }
         result
     }
+}
+
+/// A borrowed producer target. It cannot move, resize or close independently
+/// of its owning Frame and does not own an input route.
+pub struct BackgroundLayer<'a> {
+    surface: core::mem::ManuallyDrop<Frame>,
+    owner: core::marker::PhantomData<&'a Frame>,
+}
+
+impl BackgroundLayer<'_> {
+    /// Pass this capability to `Device::acquire_ui4_surface` after begin.
+    /// It is a render target, never a window ID for input APIs.
+    pub fn render_target(&self) -> u32 { self.surface.window_id }
+    pub fn begin_gpu_frame(&mut self) -> Result<(), Error> { self.surface.begin_gpu_frame() }
+    pub fn begin_visual_gpu_frame(&mut self) -> Result<(), Error> { self.surface.begin_visual_gpu_frame() }
+    pub fn register_shadertoy(&mut self, shader_id: u32, package: &[u8]) -> Result<(), Error> {
+        self.surface.register_shadertoy(shader_id, package)
+    }
+    pub fn render_shadertoy_unpublished(&mut self, params: &ShadertoyParamsV1) -> Result<(), Error> {
+        self.surface.render_shadertoy_unpublished(params)
+    }
+    pub fn render_shadertoy(&mut self, params: &ShadertoyParamsV1) -> Result<(), Error> {
+        self.surface.render_shadertoy(params)
+    }
+    pub fn publish_compute(&mut self, damage: Damage) -> Result<(), Error> { self.surface.publish_compute(damage) }
+    pub fn publish(&mut self, damage: Damage) -> Result<(), Error> { self.surface.publish(damage) }
 }
 
 fn input_route_from_raw(raw: v::bp_abi::TrueosUi4InputRouteState) -> InputRoute {
