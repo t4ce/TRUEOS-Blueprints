@@ -1666,6 +1666,11 @@ pub struct BackgroundLayer {
 }
 
 impl BackgroundLayer {
+    /// Set this layer's opacity (0 transparent, 255 opaque). The parent window
+    /// opacity multiplies this factor; the foreground is unaffected.
+    pub fn set_opacity(&mut self, opacity: u8) -> Result<(), Error> {
+        self.surface.set_opacity(opacity)
+    }
     /// Pass this capability to `Device::acquire_ui4_surface` after begin.
     /// It is a render target, never a window ID for input APIs.
     pub fn render_target(&self) -> u32 {
