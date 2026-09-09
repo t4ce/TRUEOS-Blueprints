@@ -156,12 +156,14 @@ async fn probe_tokio_lane_state() {
             TOKIO_LANE_TASKS, async_sum, async_tid_min, async_tid_max, async_changed
         ),
     );
-
 }
 
 async fn probe_tokio_worker_pressure() {
     if t::worker::capacity() < PRESSURE_BLOCKERS {
-        logl::log(level::ERROR, format_args!("cross: native FAIL insufficient-capacity"));
+        logl::log(
+            level::ERROR,
+            format_args!("cross: native FAIL insufficient-capacity"),
+        );
         return;
     }
     let ready = Arc::new(AtomicUsize::new(0));
@@ -173,18 +175,27 @@ async fn probe_tokio_worker_pressure() {
         let release = release.clone();
         match t::worker::spawn(move || {
             let slot = t::worker::local_slot();
-            let runtime = t::runtime::current_thread().build().map_err(|_| "runtime")?;
+            let runtime = t::runtime::current_thread()
+                .build()
+                .map_err(|_| "runtime")?;
             let result = runtime.block_on(async {
                 ready.fetch_add(1, Ordering::AcqRel);
-                t::time::timeout(t::time::Duration::from_millis(PRESSURE_START_WAIT_MS as u64), async {
-                    while release.load(Ordering::Acquire) == 0 {
-                        t::time::sleep(t::time::Duration::from_millis(1)).await;
-                    }
-                }).await.map_err(|_| "release.timeout")?;
+                t::time::timeout(
+                    t::time::Duration::from_millis(PRESSURE_START_WAIT_MS as u64),
+                    async {
+                        while release.load(Ordering::Acquire) == 0 {
+                            t::time::sleep(t::time::Duration::from_millis(1)).await;
+                        }
+                    },
+                )
+                .await
+                .map_err(|_| "release.timeout")?;
                 let mut checksum = 0u64;
                 for step in 0..PRESSURE_WORK_ROUNDS {
                     checksum = checksum.wrapping_add(step ^ index as u64);
-                    if step % 256 == 0 { t::task::yield_now().await; }
+                    if step % 256 == 0 {
+                        t::task::yield_now().await;
+                    }
                 }
                 Ok::<_, &'static str>((slot, checksum))
             });
@@ -192,14 +203,26 @@ async fn probe_tokio_worker_pressure() {
             result
         }) {
             Ok(job) => jobs.push(job),
-            Err(_) => { failed = true; break; }
+            Err(_) => {
+                failed = true;
+                break;
+            }
         }
     }
-    if !failed && t::time::timeout(t::time::Duration::from_millis(PRESSURE_START_WAIT_MS as u64), async {
-        while ready.load(Ordering::Acquire) != PRESSURE_BLOCKERS {
-            t::time::sleep(t::time::Duration::from_millis(1)).await;
-        }
-    }).await.is_err() { failed = true; }
+    if !failed
+        && t::time::timeout(
+            t::time::Duration::from_millis(PRESSURE_START_WAIT_MS as u64),
+            async {
+                while ready.load(Ordering::Acquire) != PRESSURE_BLOCKERS {
+                    t::time::sleep(t::time::Duration::from_millis(1)).await;
+                }
+            },
+        )
+        .await
+        .is_err()
+    {
+        failed = true;
+    }
     release.store(1, Ordering::Release);
     let mut slots = Vec::new();
     for mut job in jobs {
@@ -207,7 +230,10 @@ async fn probe_tokio_worker_pressure() {
             Ok(result) => result,
             Err(_) => {
                 failed = true;
-                logl::log(level::ERROR, format_args!("cross: FAIL stage=native.join.timeout action=draining"));
+                logl::log(
+                    level::ERROR,
+                    format_args!("cross: FAIL stage=native.join.timeout action=draining"),
+                );
                 job.await
             }
         };
@@ -221,8 +247,14 @@ async fn probe_tokio_worker_pressure() {
         }
     }
     failed |= slots.len() != PRESSURE_BLOCKERS || slots[0] == slots[1];
-    logl::log(if failed { level::ERROR } else { level::INFO },
-        format_args!("cross: native {} lanes={} rounds={PRESSURE_WORK_ROUNDS}", if failed { "FAIL" } else { "PASS" }, slots.len()));
+    logl::log(
+        if failed { level::ERROR } else { level::INFO },
+        format_args!(
+            "cross: native {} lanes={} rounds={PRESSURE_WORK_ROUNDS}",
+            if failed { "FAIL" } else { "PASS" },
+            slots.len()
+        ),
+    );
 }
 
 fn run_proof(name: &'static str, proof: fn() -> Result<(), &'static str>) {

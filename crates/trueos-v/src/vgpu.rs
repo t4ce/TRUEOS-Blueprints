@@ -1337,11 +1337,17 @@ mod tests {
         assert_eq!(core::mem::offset_of!(RetainedFrameSubmit, camera), 120);
         assert_eq!(core::mem::offset_of!(RetainedFrameSubmit, seeds), 488);
         assert_eq!(core::mem::size_of::<RetainedMaterialParameters>(), 64);
-        assert_eq!(core::mem::offset_of!(RetainedMaterialParameters, normal_scale), 28);
+        assert_eq!(
+            core::mem::offset_of!(RetainedMaterialParameters, normal_scale),
+            28
+        );
         assert_eq!(core::mem::offset_of!(RetainedMaterialParameters, flags), 48);
         assert_eq!(core::mem::size_of::<RetainedFrameSubmitV2>(), 880);
         assert_eq!(core::mem::offset_of!(RetainedFrameSubmitV2, frame), 0);
-        assert_eq!(core::mem::offset_of!(RetainedFrameSubmitV2, material_parameters), 816);
+        assert_eq!(
+            core::mem::offset_of!(RetainedFrameSubmitV2, material_parameters),
+            816
+        );
         assert_eq!(core::mem::size_of::<TimelinePoint>(), 16);
         assert_eq!(core::mem::size_of::<TimelineStatus>(), 32);
         assert_eq!(core::mem::size_of::<CloudWorkGraphDescriptor>(), 56);

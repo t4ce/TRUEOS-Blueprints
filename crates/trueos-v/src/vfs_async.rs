@@ -8,7 +8,7 @@ use core::task::{Context, Poll, Waker};
 
 use crate::vcabi;
 
-pub use infer::{content_type_info, ContentTypeId, ContentTypeInfo};
+pub use infer::{ContentTypeId, ContentTypeInfo, content_type_info};
 
 pub const ERR_BAD_UTF8: i32 = -1;
 pub const ERR_IO: i32 = -2;
@@ -241,15 +241,28 @@ pub async fn list_dir_typed(path: &[u8]) -> Result<TypedDirListing, i32> {
     })?;
     operation.ready().await?;
     let len = unsafe { vcabi::trueos_cabi_async_fs_result_len(operation.id) };
-    if len < 0 { return Err(len as i32); }
+    if len < 0 {
+        return Err(len as i32);
+    }
     let len = len as usize;
     let mut bytes = vec![0u8; len];
     let mut offset = 0usize;
     while offset < len {
         let end = core::cmp::min(offset.saturating_add(READ_CHUNK_BYTES), len);
-        let got = unsafe { vcabi::trueos_cabi_async_fs_result_read(operation.id, offset, bytes[offset..end].as_mut_ptr(), end - offset) };
-        if got < 0 { return Err(got as i32); }
-        if got == 0 { return Err(ERR_IO); }
+        let got = unsafe {
+            vcabi::trueos_cabi_async_fs_result_read(
+                operation.id,
+                offset,
+                bytes[offset..end].as_mut_ptr(),
+                end - offset,
+            )
+        };
+        if got < 0 {
+            return Err(got as i32);
+        }
+        if got == 0 {
+            return Err(ERR_IO);
+        }
         offset += got as usize;
     }
     operation.discard();
@@ -309,29 +322,59 @@ fn decode_dir_listing(bytes: &[u8]) -> Result<DirListing, i32> {
 }
 
 fn decode_typed_dir_listing(bytes: &[u8]) -> Result<TypedDirListing, i32> {
-    if bytes.len() < 12 || bytes[..4] != *b"TDL2" || bytes[5] != 0 || bytes[6..8].iter().any(|b| *b != 0) {
+    if bytes.len() < 12
+        || bytes[..4] != *b"TDL2"
+        || bytes[5] != 0
+        || bytes[6..8].iter().any(|b| *b != 0)
+    {
         return Err(ERR_IO);
     }
     let flags = bytes[4];
-    if flags & !1 != 0 { return Err(ERR_IO); }
+    if flags & !1 != 0 {
+        return Err(ERR_IO);
+    }
     let count = u32::from_le_bytes(bytes[8..12].try_into().map_err(|_| ERR_IO)?) as usize;
     let mut entries = Vec::new();
     entries.try_reserve_exact(count).map_err(|_| ERR_IO)?;
     let mut offset = 12usize;
     for _ in 0..count {
-        if bytes.len().saturating_sub(offset) < 8 { return Err(ERR_IO); }
-        let kind = match bytes[offset] { 1 => NodeKind::File, 2 => NodeKind::Directory, _ => return Err(ERR_IO) };
-        if bytes[offset + 1] != 0 { return Err(ERR_IO); }
+        if bytes.len().saturating_sub(offset) < 8 {
+            return Err(ERR_IO);
+        }
+        let kind = match bytes[offset] {
+            1 => NodeKind::File,
+            2 => NodeKind::Directory,
+            _ => return Err(ERR_IO),
+        };
+        if bytes[offset + 1] != 0 {
+            return Err(ERR_IO);
+        }
         let name_len = u16::from_le_bytes([bytes[offset + 2], bytes[offset + 3]]) as usize;
-        let raw = u32::from_le_bytes(bytes[offset + 4..offset + 8].try_into().map_err(|_| ERR_IO)?);
+        let raw = u32::from_le_bytes(
+            bytes[offset + 4..offset + 8]
+                .try_into()
+                .map_err(|_| ERR_IO)?,
+        );
         offset += 8;
-        if name_len == 0 || bytes.len().saturating_sub(offset) < name_len { return Err(ERR_IO); }
-        let name = String::from_utf8(bytes[offset..offset + name_len].to_vec()).map_err(|_| ERR_BAD_UTF8)?;
+        if name_len == 0 || bytes.len().saturating_sub(offset) < name_len {
+            return Err(ERR_IO);
+        }
+        let name = String::from_utf8(bytes[offset..offset + name_len].to_vec())
+            .map_err(|_| ERR_BAD_UTF8)?;
         offset += name_len;
-        entries.push(TypedDirEntry { name, kind, content_type: ContentTypeId::from_raw(raw) });
+        entries.push(TypedDirEntry {
+            name,
+            kind,
+            content_type: ContentTypeId::from_raw(raw),
+        });
     }
-    if offset != bytes.len() { return Err(ERR_IO); }
-    Ok(TypedDirListing { entries, truncated: flags & 1 != 0 })
+    if offset != bytes.len() {
+        return Err(ERR_IO);
+    }
+    Ok(TypedDirListing {
+        entries,
+        truncated: flags & 1 != 0,
+    })
 }
 
 /// Enumerate host-granted TRUEOSFS root mounts.
@@ -528,16 +571,32 @@ pub async fn typed_metadata(path: &[u8]) -> Result<TypedMetadata, i32> {
     })?;
     operation.ready().await?;
     let len = unsafe { vcabi::trueos_cabi_async_fs_result_len(operation.id) };
-    if len < 0 { return Err(len as i32); }
-    if len != 16 { return Err(ERR_IO); }
+    if len < 0 {
+        return Err(len as i32);
+    }
+    if len != 16 {
+        return Err(ERR_IO);
+    }
     let mut result = [0u8; 16];
-    let got = unsafe { vcabi::trueos_cabi_async_fs_result_read(operation.id, 0, result.as_mut_ptr(), result.len()) };
-    if got != 16 { return Err(if got < 0 { got as i32 } else { ERR_IO }); }
+    let got = unsafe {
+        vcabi::trueos_cabi_async_fs_result_read(operation.id, 0, result.as_mut_ptr(), result.len())
+    };
+    if got != 16 {
+        return Err(if got < 0 { got as i32 } else { ERR_IO });
+    }
     operation.discard();
     let kind = match u32::from_le_bytes(result[..4].try_into().map_err(|_| ERR_IO)?) {
-        1 => NodeKind::File, 2 => NodeKind::Directory, _ => return Err(ERR_IO),
+        1 => NodeKind::File,
+        2 => NodeKind::Directory,
+        _ => return Err(ERR_IO),
     };
-    Ok(TypedMetadata { kind, len: u64::from_le_bytes(result[4..12].try_into().map_err(|_| ERR_IO)?), content_type: ContentTypeId::from_raw(u32::from_le_bytes(result[12..].try_into().map_err(|_| ERR_IO)?)) })
+    Ok(TypedMetadata {
+        kind,
+        len: u64::from_le_bytes(result[4..12].try_into().map_err(|_| ERR_IO)?),
+        content_type: ContentTypeId::from_raw(u32::from_le_bytes(
+            result[12..].try_into().map_err(|_| ERR_IO)?,
+        )),
+    })
 }
 
 /// Read the access key persisted in a TRUEOSFS file's on-disk record header.

@@ -138,7 +138,6 @@ fn log_match(stage: &str, matched: bool) -> bool {
 }
 
 fn run_probe() -> Result<(), &'static str> {
-
     log_stage("open.O_RDWR_O_CREAT_O_TRUNC");
     let fd = unsafe {
         open(

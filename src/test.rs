@@ -375,18 +375,14 @@ mod rustc_payload_tests {
             }),
         };
 
-        let dependencies =
-            rustc_payload_dependencies(&metadata, &["trueos".to_owned()]).unwrap();
+        let dependencies = rustc_payload_dependencies(&metadata, &["trueos".to_owned()]).unwrap();
 
         assert_eq!(dependencies.len(), 1);
         assert_eq!(dependencies[0].alias, "trueos");
         assert_eq!(dependencies[0].package_name, "trueos");
         assert_eq!(dependencies[0].version, "0.1.0");
         assert_eq!(dependencies[0].path.as_deref(), Some(Path::new("/sdk/api")));
-        assert_eq!(
-            dependencies[0].features,
-            vec!["default-global-allocator"]
-        );
+        assert_eq!(dependencies[0].features, vec!["default-global-allocator"]);
     }
 }
 

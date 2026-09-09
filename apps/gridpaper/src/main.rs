@@ -89,8 +89,7 @@ fn main() {
                 level::INFO,
                 format_args!(
                     "gridpaper: replication checkpoint restored version={} bytes={} launch=fresh-hull",
-                    CHECKPOINT_VERSION,
-                    len
+                    CHECKPOINT_VERSION, len
                 ),
             );
         }
@@ -212,11 +211,8 @@ fn prepare_pause(
         ),
     );
 
-    let resume = replication::ready_with_checkpoint(
-        prepare,
-        CHECKPOINT_VERSION,
-        page.snapshot().raw(),
-    );
+    let resume =
+        replication::ready_with_checkpoint(prepare, CHECKPOINT_VERSION, page.snapshot().raw());
 
     // Checkpoint/release already succeeded even if Ready became stale, so
     // always rebuild the disposable projection before returning to the loop.

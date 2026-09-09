@@ -16,8 +16,8 @@ use axum::{
 };
 use prism_q::{Instruction, SvgOptions, TextOptions, bitstring, circuit::openqasm, simulate};
 mod storage;
-use storage::{CircuitDatabase, persist_circuit_database};
 use serde::{Deserialize, Serialize};
+use storage::{CircuitDatabase, persist_circuit_database};
 
 const MAX_SIM_QUBITS: usize = 26;
 const DEFAULT_SEED: u64 = 0;

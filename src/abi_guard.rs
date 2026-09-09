@@ -45,7 +45,8 @@ pub(crate) fn verify_before_pack(
     };
     let kernel_abi = kernel_root.join(ABI_DECLARATIONS_RELATIVE);
 
-    let imports = imports.into_iter()
+    let imports = imports
+        .into_iter()
         .filter(|symbol| symbol.starts_with("trueos_cabi_"))
         .collect::<BTreeSet<_>>();
     if imports.is_empty() {
@@ -230,10 +231,7 @@ fn parse_undefined_imports(stdout: &str) -> BTreeSet<String> {
         }
         // GNU readelf may append a version index, e.g. `name@VER (2)`.
         // The name is column eight, not necessarily the final column.
-        let symbol = columns[7]
-            .split('@')
-            .next()
-            .unwrap_or_default();
+        let symbol = columns[7].split('@').next().unwrap_or_default();
         imports.insert(symbol.to_string());
     }
     imports
@@ -243,21 +241,29 @@ fn verify_launchable_imports(imports: &BTreeSet<String>) -> Result<(), String> {
     let mut failures = Vec::new();
     for symbol in imports {
         let reason = match symbol.as_str() {
-            "pthread_create" | "pthread_join" | "pthread_detach" | "pthread_kill" =>
-                Some("POSIX thread lifecycle is unavailable; rebuild with the TRUEOS std backend and use trueos::worker"),
-            "opendir" | "fdopendir" | "readdir" | "readdir_r" | "closedir" | "dirfd" =>
-                Some("POSIX directory streams are unavailable; use trueos::async_fs::list_dir"),
-            "trueos_tokio_tls_current_slot" =>
-                Some("legacy TLS import; rebuild against the WLS SDK"),
-            name if name.starts_with("trueos_cabi_fs_") || name.starts_with("trueos_cabi_trueosfs_") =>
-                Some("synchronous filesystem ABI removed; use trueos::async_fs"),
+            "pthread_create" | "pthread_join" | "pthread_detach" | "pthread_kill" => Some(
+                "POSIX thread lifecycle is unavailable; rebuild with the TRUEOS std backend and use trueos::worker",
+            ),
+            "opendir" | "fdopendir" | "readdir" | "readdir_r" | "closedir" | "dirfd" => {
+                Some("POSIX directory streams are unavailable; use trueos::async_fs::list_dir")
+            }
+            "trueos_tokio_tls_current_slot" => {
+                Some("legacy TLS import; rebuild against the WLS SDK")
+            }
+            name if name.starts_with("trueos_cabi_fs_")
+                || name.starts_with("trueos_cabi_trueosfs_") =>
+            {
+                Some("synchronous filesystem ABI removed; use trueos::async_fs")
+            }
             _ => None,
         };
         if let Some(reason) = reason {
             failures.push(format!("  {symbol}: {reason}"));
         }
     }
-    if failures.is_empty() { return Ok(()); }
+    if failures.is_empty() {
+        return Ok(());
+    }
     Err(format!(
         "Blueprint has loader-blocked imports; no new .bp was produced:\n{}\nAny existing dist or published package is from an earlier successful build.",
         failures.join("\n"),
@@ -421,24 +427,40 @@ mod tests {
         let imports = parse_undefined_imports(
             "  1: 0000000000000000 0 FUNC GLOBAL DEFAULT UND pthread_detach@GLIBC_2.34 (2)\n\
                2: 0000000000000100 0 FUNC GLOBAL DEFAULT 1 pthread_join\n\
-               3: 0000000000000000 0 NOTYPE GLOBAL DEFAULT UND trueos_cabi_poll_once\n"
+               3: 0000000000000000 0 NOTYPE GLOBAL DEFAULT UND trueos_cabi_poll_once\n",
         );
-        assert_eq!(imports, BTreeSet::from(["pthread_detach".into(), "trueos_cabi_poll_once".into()]));
-        assert!(verify_launchable_imports(&imports).unwrap_err().contains("pthread_detach"));
+        assert_eq!(
+            imports,
+            BTreeSet::from(["pthread_detach".into(), "trueos_cabi_poll_once".into()])
+        );
+        assert!(
+            verify_launchable_imports(&imports)
+                .unwrap_err()
+                .contains("pthread_detach")
+        );
     }
 
     #[test]
     fn loader_gate_rejects_all_removed_surfaces_together() {
         let imports = BTreeSet::from([
-            "pthread_kill".into(), "trueos_cabi_fs_read_file".into(),
-            "opendir".into(), "trueos_tokio_tls_current_slot".into(),
+            "pthread_kill".into(),
+            "trueos_cabi_fs_read_file".into(),
+            "opendir".into(),
+            "trueos_tokio_tls_current_slot".into(),
         ]);
         let error = verify_launchable_imports(&imports).unwrap_err();
-        for symbol in imports { assert!(error.contains(&symbol)); }
-        assert!(verify_launchable_imports(&BTreeSet::from([
-            "pthread_mutex_lock".into(), "trueos_cabi_async_fs_read_start".into(),
-            "trueos_service_lane_submit_job".into(), "raise".into(),
-        ])).is_ok());
+        for symbol in imports {
+            assert!(error.contains(&symbol));
+        }
+        assert!(
+            verify_launchable_imports(&BTreeSet::from([
+                "pthread_mutex_lock".into(),
+                "trueos_cabi_async_fs_read_start".into(),
+                "trueos_service_lane_submit_job".into(),
+                "raise".into(),
+            ]))
+            .is_ok()
+        );
     }
 
     #[test]

@@ -365,12 +365,17 @@ fn open_decoded_image(
     let logo = source == "kernel:logo";
     let (viewport_width, viewport_height) = if logo {
         let (width, height) = contained_extent(
-            image.width as usize, image.height as usize,
-            output_width.max(1) as usize, output_height.max(1) as usize,
+            image.width as usize,
+            image.height as usize,
+            output_width.max(1) as usize,
+            output_height.max(1) as usize,
         );
         (width as u32, height as u32)
     } else {
-        (image.width.min(output_width).max(1), image.height.min(output_height).max(1))
+        (
+            image.width.min(output_width).max(1),
+            image.height.min(output_height).max(1),
+        )
     };
     let mut view = restored_view.unwrap_or_else(|| {
         View::new(

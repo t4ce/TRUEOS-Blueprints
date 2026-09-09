@@ -535,7 +535,8 @@ fn build_one_target_to_in_lane(
     let build_settings = resolve_build_settings(&app_dir, &manifest_path, &build_target)?;
     if matches!(build_settings.flavor, BuildFlavor::TokioStd) {
         ensure_rust_std_trueos_cfg_hooks()?;
-        let sdk = blueprint_root(&app_dir).ok_or("cannot locate Blueprint SDK for TRUEOS std backend")?;
+        let sdk =
+            blueprint_root(&app_dir).ok_or("cannot locate Blueprint SDK for TRUEOS std backend")?;
         std_backend::install(&sdk)?;
         ensure_rust_std_trueos_hash_random()?;
         ensure_rust_std_trueos_no_threads_tls()?;
@@ -571,9 +572,7 @@ fn build_one_target_to_in_lane(
         ),
         BuildFlavor::ThinNoStd => build_settings.flavor.cache_label().to_string(),
     };
-    let cargo_target_dir = cargo_cache_root
-        .join(&target_name)
-        .join(cache_label);
+    let cargo_target_dir = cargo_cache_root.join(&target_name).join(cache_label);
     fs::create_dir_all(&cargo_target_dir).map_err(io_string)?;
     let target_dir = cargo_target_dir
         .join(&target_name)

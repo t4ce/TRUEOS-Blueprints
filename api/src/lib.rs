@@ -12,7 +12,7 @@ pub use v::calculator_base;
 /// Durable TRUEOSFS content identities and their canonical registry metadata.
 /// This is metadata-only; callers must not infer identity from names or bytes.
 pub mod content_identity {
-    pub use v::vfs_async::{content_type_info, ContentTypeId, ContentTypeInfo};
+    pub use v::vfs_async::{ContentTypeId, ContentTypeInfo, content_type_info};
 }
 pub use v::collections;
 pub use v::env;
@@ -433,7 +433,10 @@ pub mod net {
     /// Resolve hostnames on explicit native capacity. Tokio's generic
     /// `lookup_host` still uses its unsupported std-thread blocking pool.
     #[cfg(feature = "tokio-net-probe")]
-    pub async fn resolve_host(host: &str, port: u16) -> std::io::Result<alloc::vec::Vec<std::net::SocketAddr>> {
+    pub async fn resolve_host(
+        host: &str,
+        port: u16,
+    ) -> std::io::Result<alloc::vec::Vec<std::net::SocketAddr>> {
         use alloc::string::ToString;
         use std::net::ToSocketAddrs as _;
         // Numeric addresses never need a native worker, including IPv6.
@@ -441,16 +444,21 @@ pub mod net {
             return Ok(alloc::vec![std::net::SocketAddr::new(ip, port)]);
         }
         let host = host.to_string();
-        crate::worker::spawn(move || (host.as_str(), port).to_socket_addrs().map(|addresses| addresses.collect()))
-            .map_err(|error| {
-                let kind = match error {
-                    crate::worker::SpawnError::Unavailable => std::io::ErrorKind::WouldBlock,
-                    crate::worker::SpawnError::InvalidJob => std::io::ErrorKind::InvalidInput,
-                    _ => std::io::ErrorKind::Other,
-                };
-                std::io::Error::new(kind, error)
-            })?
-            .await.map_err(std::io::Error::other)?
+        crate::worker::spawn(move || {
+            (host.as_str(), port)
+                .to_socket_addrs()
+                .map(|addresses| addresses.collect())
+        })
+        .map_err(|error| {
+            let kind = match error {
+                crate::worker::SpawnError::Unavailable => std::io::ErrorKind::WouldBlock,
+                crate::worker::SpawnError::InvalidJob => std::io::ErrorKind::InvalidInput,
+                _ => std::io::ErrorKind::Other,
+            };
+            std::io::Error::new(kind, error)
+        })?
+        .await
+        .map_err(std::io::Error::other)?
     }
 
     #[cfg(feature = "tokio-net-probe")]

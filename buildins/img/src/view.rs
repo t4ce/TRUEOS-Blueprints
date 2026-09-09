@@ -71,8 +71,9 @@ impl View {
         self.viewport_width = width;
         self.viewport_height = height;
         if !self.zoomed {
-            self.letterbox =
-                self.fit_on_open || width != self.native_viewport_width || height != self.native_viewport_height;
+            self.letterbox = self.fit_on_open
+                || width != self.native_viewport_width
+                || height != self.native_viewport_height;
         }
         self.clamp_offsets();
     }

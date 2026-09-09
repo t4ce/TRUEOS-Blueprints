@@ -30,8 +30,6 @@ pub mod vled {
 
 pub mod borrow;
 pub mod bp_abi;
-#[doc(hidden)]
-pub mod worker_abi;
 pub mod calculator_base;
 pub mod child_hull;
 pub mod env;
@@ -61,6 +59,8 @@ pub mod vsys;
 pub mod vsystem_services;
 pub mod vthermal;
 pub mod vusb;
+#[doc(hidden)]
+pub mod worker_abi;
 
 #[macro_export]
 macro_rules! shell_line {

@@ -94,7 +94,10 @@ pub async fn pack(source: &[u8], archive: &[u8]) -> Result<Report, i32> {
 /// `sources` must be non-empty UTF-8 paths without NUL bytes. The kernel
 /// performs all source reads before it commits the destination archive.
 pub async fn pack_many(sources: &[&[u8]], archive: &[u8]) -> Result<Report, i32> {
-    if sources.is_empty() || sources.iter().any(|source| source.is_empty() || source.contains(&0))
+    if sources.is_empty()
+        || sources
+            .iter()
+            .any(|source| source.is_empty() || source.contains(&0))
     {
         return Err(ERR_BAD_PARAM);
     }
@@ -107,7 +110,9 @@ pub async fn pack_many(sources: &[&[u8]], archive: &[u8]) -> Result<Report, i32>
                 .and_then(|total| total.checked_add(source.len()))
                 .ok_or(ERR_TOO_LARGE)
         })?;
-    let total = source_bytes.checked_add(archive.len()).ok_or(ERR_TOO_LARGE)?;
+    let total = source_bytes
+        .checked_add(archive.len())
+        .ok_or(ERR_TOO_LARGE)?;
     let mut encoded = alloc::vec::Vec::new();
     encoded.try_reserve_exact(total).map_err(|_| ERR_NO_SPACE)?;
     for (index, source) in sources.iter().enumerate() {

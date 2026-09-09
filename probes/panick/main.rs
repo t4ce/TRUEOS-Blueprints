@@ -38,7 +38,9 @@ fn prepare_read() -> Result<ReadResult, &'static str> {
     let id = unsafe {
         trueos_cabi_async_fs_read_start(PROBE_PATH_BYTES.as_ptr(), PROBE_PATH_BYTES.len())
     };
-    if id <= 0 { return Err("async.read.start"); }
+    if id <= 0 {
+        return Err("async.read.start");
+    }
     let operation = ReadResult(id as u32);
     let started = clock::monotonic_millis();
     loop {
@@ -78,14 +80,7 @@ fn run_dangerous_pointer_probe(path_ptr: *mut u8) {
             path_ptr as usize
         ),
     );
-    let rc = unsafe {
-        trueos_cabi_async_fs_result_read(
-            operation.0,
-            0,
-            path_ptr,
-            16,
-        )
-    };
+    let rc = unsafe { trueos_cabi_async_fs_result_read(operation.0, 0, path_ptr, 16) };
     logl::log(
         level::WARN,
         format_args!("panick: dangerous probe returned rc={}", rc),

@@ -258,7 +258,10 @@ async fn probe_lookup_host() -> Result<SocketAddr, &'static str> {
     .await
     .map_err(|_| "net.lookup_host.timeout")?
     .map_err(|_| "net.lookup_host.resolve")?;
-    let address = addresses.into_iter().next().ok_or("net.lookup_host.empty")?;
+    let address = addresses
+        .into_iter()
+        .next()
+        .ok_or("net.lookup_host.empty")?;
     logl::log(
         level::INFO,
         format_args!(
