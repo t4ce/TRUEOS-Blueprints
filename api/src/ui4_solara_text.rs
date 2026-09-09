@@ -564,14 +564,13 @@ impl Frame {
         Ok(Self { window_id, width, height })
     }
 
-    /// Borrow the background producer without creating another window. The
+    /// Obtain the background producer without creating another window. The
     /// returned target has its own write lease, cadence and completion fence.
-    pub fn background(&self) -> Result<BackgroundLayer<'_>, Error> {
+    pub fn background(&self) -> Result<BackgroundLayer, Error> {
         let target = unsafe { v::bp_abi::trueos_cabi_ui4_scene_frame_layer_v1(self.window_id, 1) };
         if target == 0 { return Err(Error::Ui4); }
         Ok(BackgroundLayer {
             surface: core::mem::ManuallyDrop::new(Self { window_id: target, width: self.width, height: self.height }),
-            owner: core::marker::PhantomData,
         })
     }
 
@@ -1273,7 +1272,7 @@ impl Frame {
         &mut self,
         params: &ShadertoyParamsV1,
     ) -> Result<(), Error> {
-        if !(1..=15).contains(&params.shader_id) {
+        if !(1..=16).contains(&params.shader_id) {
             return Err(Error::Invalid);
         }
         let raw = v::bp_abi::TrueosUi4ShadertoyParamsV1 {
@@ -1633,14 +1632,14 @@ impl Frame {
     }
 }
 
-/// A borrowed producer target. It cannot move, resize or close independently
-/// of its owning Frame and does not own an input route.
-pub struct BackgroundLayer<'a> {
+/// An independently schedulable producer capability. It cannot move, resize
+/// or close the window. Closing the owning Frame revokes this target in the
+/// kernel; later calls return an error. It owns no input route or window.
+pub struct BackgroundLayer {
     surface: core::mem::ManuallyDrop<Frame>,
-    owner: core::marker::PhantomData<&'a Frame>,
 }
 
-impl BackgroundLayer<'_> {
+impl BackgroundLayer {
     /// Pass this capability to `Device::acquire_ui4_surface` after begin.
     /// It is a render target, never a window ID for input APIs.
     pub fn render_target(&self) -> u32 { self.surface.window_id }
