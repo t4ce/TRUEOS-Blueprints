@@ -921,6 +921,18 @@ impl Frame {
         })
     }
 
+    /// Set the primary display's opaque hardware backdrop, beneath all planes.
+    /// This is shared display state (currently Pipe A), not this frame's fill.
+    /// The last writer wins, including UI4's color picker, and closing this
+    /// frame does not restore the previous color. No render pass is submitted.
+    /// Only uncovered or transparent portions of the plane stack reveal it.
+    pub fn set_display_bottom_color(&mut self, rgb: [u8; 3]) -> Result<(), Error> {
+        let packed = (u32::from(rgb[0]) << 16) | (u32::from(rgb[1]) << 8) | u32::from(rgb[2]);
+        status(unsafe {
+            v::bp_abi::trueos_cabi_ui4_scene_set_display_bottom_color(self.window_id, packed)
+        })
+    }
+
     /// Exclude this frame from UI4 cursor selection and pointer hit testing.
     pub fn set_hit_testable(&mut self, enabled: bool) -> Result<(), Error> {
         status(unsafe {
