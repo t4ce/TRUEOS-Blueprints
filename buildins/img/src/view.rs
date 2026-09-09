@@ -18,6 +18,7 @@ pub(super) struct View {
     pub(super) offset_x: f32,
     pub(super) offset_y: f32,
     pub(super) letterbox: bool,
+    pub(super) fit_on_open: bool,
     pub(super) scale: f32,
     pub(super) zoomed: bool,
 }
@@ -49,6 +50,7 @@ impl View {
             offset_x,
             offset_y,
             letterbox: false,
+            fit_on_open: false,
             scale: 1.0,
             zoomed: false,
         };
@@ -70,7 +72,7 @@ impl View {
         self.viewport_height = height;
         if !self.zoomed {
             self.letterbox =
-                width != self.native_viewport_width || height != self.native_viewport_height;
+                self.fit_on_open || width != self.native_viewport_width || height != self.native_viewport_height;
         }
         self.clamp_offsets();
     }
@@ -170,6 +172,23 @@ pub(super) fn contained_extent(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fitted_logo_uses_limiting_axis_and_survives_restore_size() {
+        assert_eq!(contained_extent(1024, 1024, 1920, 1080), (1080, 1080));
+        assert_eq!(contained_extent(3840, 2160, 800, 600), (800, 450));
+        assert_eq!(contained_extent(320, 200, 1920, 1080), (1728, 1080));
+        let mut v = View::new(1080, 1080, 1024, 1024, Alignment::Center);
+        v.fit_on_open = true;
+        v.letterbox = true;
+        v.resize(500, 400);
+        assert!(v.letterbox);
+        v.resize(1080, 1080);
+        assert!(v.letterbox);
+        v.zoom_at(1, 540, 540);
+        v.resize(500, 400);
+        assert!(!v.letterbox);
+    }
 
     #[test]
     fn wheel_clamps_and_zero_is_noop() {

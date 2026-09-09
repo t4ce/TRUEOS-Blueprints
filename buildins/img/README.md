@@ -33,3 +33,8 @@ printf '#[path = "%s/buildins/img/src/view.rs"] mod view;\n' "$PWD" > /tmp/img-v
 rustc --edition 2024 --test /tmp/img-view-tests.rs -o /tmp/img-view-tests
 /tmp/img-view-tests
 ```
+
+`img kernel:logo` fits the complete embedded logo to the output, scaling up or
+down proportionally. Its centered UI4 frame hugs the image so the unused
+screen area exposes the display background color. It stays in fit mode after
+resizing unless manually zoomed. This uses the regular viewer and frame lifecycle.

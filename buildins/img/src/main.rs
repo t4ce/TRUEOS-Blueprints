@@ -360,8 +360,18 @@ fn open_decoded_image(
         )
     };
     let (output_width, output_height) = output_dimensions().unwrap_or((2_560, 1_440));
-    let viewport_width = image.width.min(output_width).max(1);
-    let viewport_height = image.height.min(output_height).max(1);
+    // The embedded desktop image uses the ordinary viewer, with a snug fitted
+    // frame. Space outside that frame belongs to the display bottom color.
+    let logo = source == "kernel:logo";
+    let (viewport_width, viewport_height) = if logo {
+        let (width, height) = contained_extent(
+            image.width as usize, image.height as usize,
+            output_width.max(1) as usize, output_height.max(1) as usize,
+        );
+        (width as u32, height as u32)
+    } else {
+        (image.width.min(output_width).max(1), image.height.min(output_height).max(1))
+    };
     let mut view = restored_view.unwrap_or_else(|| {
         View::new(
             viewport_width,
@@ -371,7 +381,8 @@ fn open_decoded_image(
             alignment,
         )
     });
-    if fit && !view.zoomed {
+    if (fit || logo) && !view.zoomed {
+        view.fit_on_open = true;
         view.letterbox = true;
     }
     // A different post-update output mode must not resurrect an invalid
