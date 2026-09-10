@@ -21,7 +21,10 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
     float linesY = sin(gridUV.y * 20.0 - iTime * 2.0);
     float gridPattern = abs(linesX * linesY);
 
-    float dist = abs(sin(length(gridUV) * 7.0 + iTime * 0.5) / 8.0);
+    // Square face with straight 20% corner bevels, matching the cube silhouette.
+    vec2 face = abs(gridUV);
+    float bevelRadius = max(max(face.x, face.y), (face.x + face.y) / 1.8);
+    float dist = abs(sin(bevelRadius * 7.0 + iTime * 0.5) / 8.0);
     float glow = pow(0.015 / (dist + 0.001), 1.1);
     vec3 col = palette(length(uv0) + iTime * 0.15 + gridPattern * 0.2);
     vec3 finalColor = col * glow * (gridPattern * 1.5 + 0.2);

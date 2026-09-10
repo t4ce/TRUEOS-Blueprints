@@ -5,10 +5,10 @@
       "class": 64,
       "endianness": "little",
       "machine": 205,
-      "sha256": "2174c3002ff5e0c489de3ea4aff8da5b922b995e6075967a326eeb656e280124",
-      "size_bytes": 16800,
+      "sha256": "0ed45660c5a24a236867beb8db334c045012ae484654709c0a04bc9852e225d0",
+      "size_bytes": 16920,
       "type": "relocatable",
-      "ze_info_section_offset": 12984,
+      "ze_info_section_offset": 13104,
       "ze_info_section_size": 2909
     },
     "kernels": [
@@ -167,13 +167,13 @@
         ],
         "text": {
           "entry_offset": 64,
-          "entry_size": 2336,
+          "entry_size": 2144,
           "section_alignment": 0,
           "section_name": ".text.shadertoy_palette_grid",
           "section_offset": 64,
-          "section_size": 2496,
-          "sha256": "b67d1b259a3caa2059c1893e7c6f91956e0f8909384dafd7e278092b2775e13e",
-          "symbol_size": 2336,
+          "section_size": 2304,
+          "sha256": "8f5901ab9ecf3d09b5baf2b7155e1ed41f85c6231e94eba6b38c7c24b86e95c0",
+          "symbol_size": 2144,
           "symbol_value": 0
         },
         "user_attributes": {
@@ -189,10 +189,10 @@
       }
     ],
     "spirv": {
-      "embedded_section_offset": 2632,
-      "embedded_section_size": 10252,
-      "sha256": "f6fdb548eab633d5ac5d136e6df6e7213a56c7936a795489374eb24653faf197",
-      "size_bytes": 10252
+      "embedded_section_offset": 2440,
+      "embedded_section_size": 10568,
+      "sha256": "597444e6e0a8e7b21e2133eb4775d184a73bfe95be7c28f5d35c992e23e50d07",
+      "size_bytes": 10568
     }
   },
   "provenance": {
@@ -393,13 +393,13 @@
   "source": {
     "inputs": [
       {
-        "path": "bld/shadertoy-blueprint-bake/sources/palette_grid/kernel.clcpp",
-        "sha256": "84d6b105eb830ec8f73c375a9ae47ee84a5aa75f8d16721c9a0725e8683e7d38",
-        "size_bytes": 11530
+        "path": "/home/t4ce/Repos/TRUEOS-Blueprints/apps/shadertoy/assets/palette_grid/kernel.clcpp",
+        "sha256": "a8ea0b14484a0f9eaf355c05b5d5292259f4614fe801cd7913b2fda211f35d79",
+        "size_bytes": 11725
       }
     ],
     "language": "C++ for OpenCL",
-    "path": "bld/shadertoy-blueprint-bake/sources/palette_grid/kernel.clcpp"
+    "path": "/home/t4ce/Repos/TRUEOS-Blueprints/apps/shadertoy/assets/palette_grid/kernel.clcpp"
   },
   "target": {
     "label": "adls",

@@ -208,7 +208,10 @@ void mainImage( float4 & fragColor,  float2 fragCoord, __global const ShaderToyU
     float linesY = sin(gridUV.y * 20.0f - (st->resolution_time.w) * 2.0f);
     float gridPattern = st_abs(linesX * linesY);
 
-    float dist = st_abs(sin(length(gridUV) * 7.0f + (st->resolution_time.w) * 0.5f) / 8.0f);
+    // Square face with straight 20% corner bevels, matching the cube silhouette.
+    float2 face = st_abs(gridUV);
+    float bevelRadius = st_max(st_max(face.x, face.y), (face.x + face.y) / 1.8f);
+    float dist = st_abs(sin(bevelRadius * 7.0f + (st->resolution_time.w) * 0.5f) / 8.0f);
     float glow = st_pow(0.015f / (dist + 0.001f), 1.1f);
     float3 col = palette(length(uv0) + (st->resolution_time.w) * 0.15f + gridPattern * 0.2f, st);
     float3 finalColor = col * glow * (gridPattern * 1.5f + 0.2f);

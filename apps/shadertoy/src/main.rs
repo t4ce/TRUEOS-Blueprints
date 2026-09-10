@@ -62,7 +62,7 @@ const SHADERS: [Shader; 15] = [
         program_id: 4,
         package: include_bytes!("../assets/palette_grid.stpkg"),
         name: "Palette grid glow",
-        artifact_sha256: "2174c3002ff5e0c489de3ea4aff8da5b922b995e6075967a326eeb656e280124",
+        artifact_sha256: "0ed45660c5a24a236867beb8db334c045012ae484654709c0a04bc9852e225d0",
     },
     Shader {
         id: SHADERTOY_COSMIC_STRANDS,
