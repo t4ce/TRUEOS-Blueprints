@@ -89,6 +89,7 @@
       "path": "buildins/ssh"
     },
     "swarm",
+    "cubesrv",
     "superseedr",
     "webmail",
     {

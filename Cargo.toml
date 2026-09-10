@@ -43,6 +43,7 @@ members = [
     "apps/skybox",
     "buildins/ssh",
     "apps/swarm",
+    "apps/cubesrv",
     "probes/test_some_crates",
     "probes/tokio_fs",
     "probes/tokio_mrt",

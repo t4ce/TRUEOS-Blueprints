@@ -1,0 +1,15 @@
+[package]
+name = "cubesrv"
+version = "0.1.0"
+edition = "2024"
+
+[package.metadata.trueos-blueprint]
+replicatable = true
+
+[[bin]]
+name = "cubesrv"
+path = "server.rs"
+
+[dependencies]
+axum.workspace = true
+trueos = { workspace = true, features = ["lifecycle-net"] }
