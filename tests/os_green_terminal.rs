@@ -34,3 +34,21 @@ fn os_terminal_loop_stays_cooperative() {
         "do not smuggle a timer-backed blocking wait into the cooperative terminal loop"
     );
 }
+
+#[test]
+fn os_power_actions_require_an_explicit_confirmation() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let source = read(root, "buildins/os/src/main.rs");
+
+    assert!(
+        source.contains("Action::Shutdown")
+            && source.contains("Action::Reboot")
+            && source.contains("os:shutdown")
+            && source.contains("os:reboot"),
+        "the OS administration TUI must expose both explicit power actions"
+    );
+    assert!(
+        source.contains("row(out, app.selected == 0, \"Return\")"),
+        "power-action confirmation must default to Return"
+    );
+}

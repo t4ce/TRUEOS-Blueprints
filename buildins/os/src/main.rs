@@ -44,6 +44,8 @@ enum InstallSource {
 enum Action {
     Install { disk: usize, source: InstallSource },
     LiveUpdate,
+    Shutdown,
+    Reboot,
 }
 
 enum Screen {
@@ -72,7 +74,7 @@ impl App {
 
     fn item_count(&self) -> usize {
         match self.screen {
-            Screen::Home => 3,
+            Screen::Home => 5,
             Screen::Disks => self.disks.len().max(1),
             Screen::Source { .. } => 2,
             Screen::Confirm(_) => 2,
@@ -115,6 +117,11 @@ impl App {
                 self.selected = 0;
                 false
             }
+            Screen::Confirm(Action::Shutdown | Action::Reboot) => {
+                self.screen = Screen::Home;
+                self.selected = 0;
+                false
+            }
         }
     }
 
@@ -128,6 +135,16 @@ impl App {
                 }
                 1 => {
                     self.screen = Screen::Confirm(Action::LiveUpdate);
+                    self.selected = 0;
+                    None
+                }
+                2 => {
+                    self.screen = Screen::Confirm(Action::Shutdown);
+                    self.selected = 0;
+                    None
+                }
+                3 => {
+                    self.screen = Screen::Confirm(Action::Reboot);
                     self.selected = 0;
                     None
                 }
@@ -156,13 +173,17 @@ impl App {
                 if self.selected == 0 {
                     match action {
                         Action::Install { disk, .. } => self.screen = Screen::Source { disk },
-                        Action::LiveUpdate => self.screen = Screen::Home,
+                        Action::LiveUpdate | Action::Shutdown | Action::Reboot => {
+                            self.screen = Screen::Home
+                        }
                     }
                     self.selected = 0;
                     return None;
                 }
                 Some(match action {
                     Action::LiveUpdate => String::from("os:update:live"),
+                    Action::Shutdown => String::from("os:shutdown"),
+                    Action::Reboot => String::from("os:reboot"),
                     Action::Install { disk, source } => {
                         let Some(disk) = self.disks.get(disk) else {
                             return Some(String::from("os:cancel"));
@@ -409,7 +430,9 @@ fn draw_home(out: &mut io::Stdout, selected: usize) -> io::Result<()> {
     heading(out, "OS")?;
     row(out, selected == 0, "Install TRUEOS to disk")?;
     row(out, selected == 1, "Live update running TRUEOS")?;
-    row(out, selected == 2, "Quit")?;
+    row(out, selected == 2, "Shutdown TRUEOS")?;
+    row(out, selected == 3, "Reboot TRUEOS")?;
+    row(out, selected == 4, "Return")?;
     queue!(out, Print("\r\n    Choose one operation.\r\n"))
 }
 
@@ -495,8 +518,26 @@ fn draw_confirm(out: &mut io::Stdout, app: &App, action: Action) -> io::Result<(
                 ResetColor
             )?;
         }
+        Action::Shutdown => {
+            queue!(
+                out,
+                Print("    Shut down TRUEOS now.\r\n"),
+                SetForegroundColor(Color::Yellow),
+                Print("    Running work will stop.\r\n\r\n"),
+                ResetColor
+            )?;
+        }
+        Action::Reboot => {
+            queue!(
+                out,
+                Print("    Reboot TRUEOS now.\r\n"),
+                SetForegroundColor(Color::Yellow),
+                Print("    Running work will stop.\r\n\r\n"),
+                ResetColor
+            )?;
+        }
     }
-    row(out, app.selected == 0, "Cancel")?;
+    row(out, app.selected == 0, "Return")?;
     row(
         out,
         app.selected == 1,
