@@ -14,3 +14,6 @@ bench = false
 
 [dependencies]
 trueos = { workspace = true, features = ["ui4-scene"] }
+miniz_oxide = { version = "0.9.1", default-features = false, features = ["with-alloc"] }
+crc32fast = { version = "1.5.0", default-features = false }
+jpeg-encoder = { version = "=0.7.1", default-features = false }

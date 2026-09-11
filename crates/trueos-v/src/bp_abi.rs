@@ -823,6 +823,12 @@ unsafe extern "C" {
     pub fn trueos_cabi_fs_write_abort(handle: u32) -> i32;
 
     pub fn trueos_cabi_async_fs_read_start(path_ptr: *const u8, path_len: usize) -> i32;
+    pub fn trueos_cabi_async_fs_typed_write_begin(
+        path_ptr: *const u8,
+        path_len: usize,
+        total_len: usize,
+        content_type: u32,
+    ) -> i32;
     pub fn trueos_cabi_async_fs_write_begin(
         path_ptr: *const u8,
         path_len: usize,

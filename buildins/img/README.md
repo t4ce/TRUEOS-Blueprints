@@ -20,7 +20,7 @@ Launching without a source opens the first inferred image in
 reports file-read time, the complete media-service decode/readback call, and
 time through UI4 publish. Publish is submission, not proof of display scanout.
 
-`list`, `show`, `close all`, and `exit` are VMX-minishell commands entered on
+`list`, `show`, `convert`, `close all`, and `exit` are VMX-minishell commands entered on
 the persistent Shell2 prompt row. UI4 Escape closes the selected image frame.
 
 The gallery retains only its current decoded image; navigation reads and
@@ -38,3 +38,19 @@ rustc --edition 2024 --test /tmp/img-view-tests.rs -o /tmp/img-view-tests
 down proportionally. Its centered UI4 frame hugs the image so the unused
 screen area exposes the display background color. It stays in fit mode after
 resizing unless manually zoomed. This uses the regular viewer and frame lifecycle.
+
+`convert` saves the selected UI4 frame's full decoded image beside its source:
+`photo.png` becomes `photo.jpg`, and `photo.jpg` / `photo.jpeg` becomes
+`photo.png`. The decoded format determines the conversion, and the write sets
+TRUEOSFS's native JPEG/PNG content identity so inferred gallery listings recognize
+it immediately. JPEG uses quality 90 and composites transparency onto black.
+The source and displayed frame stay unchanged; an existing destination is replaced.
+
+With one open frame, selection is optional. With multiple frames, exactly one
+must be selected in UI4. No frames, no selection, ambiguous selections, the gray
+placeholder, and kernel images do nothing. A mislabeled source whose output path
+would equal its input is also left untouched. Gallery conversion uses the current
+image; reopen the folder to include newly saved siblings in its listing.
+
+Run conversion codec roundtrip and selection tests with
+`python3 tools/test_img_convert.py` from the Blueprint repository.

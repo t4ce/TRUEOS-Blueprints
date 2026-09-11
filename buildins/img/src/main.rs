@@ -3,6 +3,7 @@
 
 extern crate alloc;
 
+mod convert;
 mod gallery;
 mod view;
 use gallery::{Gallery, next_index};
@@ -19,6 +20,7 @@ const CHECKPOINT_VERSION: u64 = 1;
 const RESUME_FRAME_CADENCE_MS: u64 = 150;
 
 struct Image {
+    format: Option<convert::Format>,
     width: u32,
     height: u32,
     rgba: Vec<u8>,
@@ -116,9 +118,10 @@ fn service_command_channel(command: &mut Vec<u8>, frames: &mut Vec<OpenFrame>) -
                 match line.trim() {
                     "" => {}
                     "help" => terminal_line(
-                        "img: list | show PATH [alignment] [hit|nohit] | close all | exit",
+                        "img: list | show PATH [alignment] [hit|nohit] | convert | close all | exit",
                     ),
                     "list" => list_frames(frames),
+                    "convert" => convert_frame(frames),
                     "close all" | "clear" => {
                         frames.clear();
                         terminal_line("img: all frames closed");
@@ -140,6 +143,55 @@ fn service_command_channel(command: &mut Vec<u8>, frames: &mut Vec<OpenFrame>) -
         }
     }
     false
+}
+
+fn convert_frame(frames: &[OpenFrame]) {
+    let selection: Result<Vec<bool>, Ui4Error> = frames
+        .iter()
+        .map(|open| {
+            open.frame
+                .input_routes()
+                .map(|routes| routes.iter().any(|route| route.selected_for_window))
+        })
+        .collect();
+    let Ok(selection) = selection else {
+        return;
+    };
+    let Some(index) = convert::selected_index(selection.into_iter()) else {
+        return;
+    };
+    let open = &frames[index];
+    let Some((path, format)) = convert::target(&open.source, open.image.format) else {
+        return;
+    };
+    let started = trueos::clock::monotonic_millis();
+    let result = convert::encode(
+        format,
+        open.image.width,
+        open.image.height,
+        &open.image.rgba,
+    )
+    .and_then(|bytes| {
+        let content_type = match format {
+            convert::Format::Png => async_fs::ContentTypeId::PNG,
+            convert::Format::Jpeg => async_fs::ContentTypeId::JPEG,
+        };
+        async_fs::block_on(async_fs::write_file_typed(
+            path.as_bytes(),
+            &bytes,
+            content_type,
+        ))
+        .map_err(|code| format!("trueosfs write code={code}"))?;
+        Ok(bytes.len())
+    });
+    match result {
+        Ok(bytes) => terminal_line(format!(
+            "img: convert source={} output={path} format={format:?} bytes={bytes} size={}x{} convert_ms={}",
+            open.source, open.image.width, open.image.height,
+            trueos::clock::monotonic_millis().saturating_sub(started),
+        ).as_str()),
+        Err(error) => terminal_line(format!("img: convert {path}: {error}").as_str()),
+    }
 }
 
 fn list_frames(frames: &[OpenFrame]) {
@@ -293,6 +345,7 @@ fn open_default_frame(frames: &mut Vec<OpenFrame>) {
     const WIDTH: u32 = 640;
     const HEIGHT: u32 = 480;
     let image = Image {
+        format: None,
         width: WIDTH,
         height: HEIGHT,
         rgba: vec![0x78; WIDTH as usize * HEIGHT as usize * 4],
@@ -830,6 +883,11 @@ fn decode_media(format: vmedia::ImageFormat, bytes: &[u8]) -> Result<Image, Stri
         ),
     );
     Ok(Image {
+        format: match format {
+            vmedia::ImageFormat::Png => Some(convert::Format::Png),
+            vmedia::ImageFormat::Jpeg => Some(convert::Format::Jpeg),
+            _ => None,
+        },
         width: decoded.info.width,
         height: decoded.info.height,
         rgba: decoded.rgba,
@@ -846,6 +904,7 @@ fn image_from_rgba(width: u32, height: u32, mut rgba: Vec<u8>) -> Result<Image, 
         *alpha = u8::MAX;
     }
     Ok(Image {
+        format: None,
         width,
         height,
         rgba,

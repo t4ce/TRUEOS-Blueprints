@@ -105,6 +105,51 @@ struct Operation {
     id: u32,
 }
 
+/// An admitted typed upload. Dropping it before `commit` aborts the operation.
+pub struct TypedWrite {
+    operation: Operation,
+    total_len: usize,
+    next_offset: usize,
+}
+
+impl TypedWrite {
+    /// Append the next contiguous chunk to the upload buffer.
+    pub fn write_chunk(&mut self, bytes: &[u8]) -> Result<(), i32> {
+        let end = self
+            .next_offset
+            .checked_add(bytes.len())
+            .filter(|end| *end <= self.total_len)
+            .ok_or(ERR_BAD_PARAM)?;
+        let status = unsafe {
+            vcabi::trueos_cabi_async_fs_write_chunk(
+                self.operation.id,
+                self.next_offset,
+                bytes.as_ptr(),
+                bytes.len(),
+            )
+        };
+        if status != 0 {
+            return Err(status);
+        }
+        self.next_offset = end;
+        Ok(())
+    }
+
+    /// Commit only after the declared byte count has been supplied exactly.
+    pub async fn commit(mut self) -> Result<(), i32> {
+        if self.next_offset != self.total_len {
+            return Err(ERR_BAD_PARAM);
+        }
+        let status = unsafe { vcabi::trueos_cabi_async_fs_write_commit(self.operation.id) };
+        if status != 0 {
+            return Err(status);
+        }
+        self.operation.ready().await?;
+        self.operation.discard();
+        Ok(())
+    }
+}
+
 impl Operation {
     fn from_start(value: i32) -> Result<Self, i32> {
         if value <= 0 {
@@ -519,6 +564,40 @@ pub async fn write_file(path: &[u8], bytes: &[u8]) -> Result<(), i32> {
     operation.ready().await?;
     operation.discard();
     Ok(())
+}
+
+/// Replace a file while declaring its native content identity.
+pub async fn write_file_typed(
+    path: &[u8],
+    bytes: &[u8],
+    content_type: ContentTypeId,
+) -> Result<(), i32> {
+    let mut write = write_file_begin_typed(path, bytes.len(), content_type)?;
+    for chunk in bytes.chunks(WRITE_CHUNK_BYTES) {
+        write.write_chunk(chunk)?;
+    }
+    write.commit().await
+}
+
+/// Admit a streamed typed write before accepting any body chunks.
+pub fn write_file_begin_typed(
+    path: &[u8],
+    total_len: usize,
+    content_type: ContentTypeId,
+) -> Result<TypedWrite, i32> {
+    let operation = Operation::from_start(unsafe {
+        vcabi::trueos_cabi_async_fs_typed_write_begin(
+            path.as_ptr(),
+            path.len(),
+            total_len,
+            content_type.raw(),
+        )
+    })?;
+    Ok(TypedWrite {
+        operation,
+        total_len,
+        next_offset: 0,
+    })
 }
 
 /// Materialize a directory and every missing parent directory.
