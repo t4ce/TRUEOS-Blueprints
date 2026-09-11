@@ -32,6 +32,7 @@ pub struct Telemetry {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ClientPacket {
     Hello { world_id: u8 },
+    SlideRequest { revision: u32, chunk: u16 },
     Telemetry(Telemetry),
     WorldRequest { chunk: u16 },
     AssetRequest { asset_id: u8, chunk: u16 },
@@ -100,6 +101,10 @@ pub fn decode(bytes: &[u8]) -> Result<ClientPacket, DecodeError> {
             position: read_vec3(payload, 5)?,
             orientation: read_vec3(payload, 17)?,
         })),
+        5 if payload.len() == 6 => Ok(ClientPacket::SlideRequest {
+            revision: read_u32(payload, 0),
+            chunk: read_u16(payload, 4),
+        }),
         WORLD_REQUEST if payload.len() == 2 => Ok(ClientPacket::WorldRequest {
             chunk: read_u16(payload, 0),
         }),
@@ -242,4 +247,25 @@ mod tests {
         assert_eq!(last.len(), HEADER + 5 + 1);
         assert!(blob_chunk(BlobKind::World, 1, 3, &blob).is_none());
     }
+}
+
+/// The revision pins a transfer even when the ten-second clock advances.
+/// Every manifest carries the connect spawn; clients apply it once per session.
+pub fn slide_info(player: u32, revision: u32) -> Vec<u8> {
+    let mut body = player.to_le_bytes().to_vec();
+    body.extend_from_slice(&revision.to_le_bytes());
+    for component in [0.0f32; 3] {
+        body.extend_from_slice(&component.to_le_bytes());
+    }
+    packet(0x85, &body)
+}
+pub fn slide_chunk(revision: u32, chunk: u16, bytes: &[u8]) -> Option<Vec<u8>> {
+    let start = chunk as usize * BLOB_CHUNK_BYTES;
+    if start >= bytes.len() {
+        return None;
+    }
+    let mut body = revision.to_le_bytes().to_vec();
+    body.extend_from_slice(&chunk.to_le_bytes());
+    body.extend_from_slice(&bytes[start..(start + BLOB_CHUNK_BYTES).min(bytes.len())]);
+    Some(packet(0x86, &body))
 }

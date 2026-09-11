@@ -1,3 +1,5 @@
+> Implementation update: the current server runs the image slideshow described in [README.md](README.md). The world-catalog design below is retained as historical planning; world requests are no longer served.
+
 # cubesrv design
 
 `cubesrv` is a small, authoritative, memory-only multiplayer service for

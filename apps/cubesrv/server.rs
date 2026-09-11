@@ -1,5 +1,5 @@
 // trueos-blueprint: features=["lifecycle-net"]
-//! Minimal cubesrv: stock Axum health routes plus world-aware UDP telemetry.
+//! Cubes image slideshow: health routes, live UDP manifests and pinned RGB chunks.
 
 extern crate alloc;
 
@@ -38,10 +38,12 @@ struct Player {
     id: u32,
     world_id: u8,
     telemetry: Option<Telemetry>,
+    last_seen: time::Instant,
 }
 
 struct ServerState {
     next_player_id: u32,
+    revision: u32,
     players: BTreeMap<SocketAddr, Player>,
 }
 
@@ -49,13 +51,17 @@ impl ServerState {
     fn new() -> Self {
         Self {
             next_player_id: 1,
+            revision: 0,
             players: BTreeMap::new(),
         }
     }
 
     fn join(&mut self, peer: SocketAddr, world_id: u8) -> Option<u32> {
+        self.players
+            .retain(|_, player| player.last_seen.elapsed() < Duration::from_secs(30));
         if let Some(player) = self.players.get_mut(&peer) {
             player.world_id = world_id;
+            player.last_seen = time::Instant::now();
             player.telemetry = None;
             return Some(player.id);
         }
@@ -70,6 +76,7 @@ impl ServerState {
                 id,
                 world_id,
                 telemetry: None,
+                last_seen: time::Instant::now(),
             },
         );
         Some(id)
@@ -95,6 +102,7 @@ impl ServerState {
         }
         player.world_id = telemetry.world_id;
         player.telemetry = Some(telemetry);
+        player.last_seen = time::Instant::now();
         let id = player.id;
         let recipients = self
             .players
@@ -122,29 +130,16 @@ fn blob(catalog: &'static [Blob], id: u8) -> Option<&'static Blob> {
         .and_then(|index| catalog.get(index as usize))
 }
 
-fn chunk_count(bytes: &[u8]) -> u16 {
-    bytes
-        .len()
-        .div_ceil(protocol::BLOB_CHUNK_BYTES)
-        .try_into()
-        .unwrap()
-}
-
-async fn send_welcome(socket: &UdpSocket, peer: SocketAddr, player_id: u32, world_id: u8) {
-    let world = &WORLDS[world_id as usize - 1];
-    let packet = protocol::welcome(
-        player_id,
-        world_id,
-        world.bytes.len(),
-        chunk_count(world.bytes),
-        ASSETS.len() as u8,
-    );
-    if let Err(error) = socket.send_to(&packet, peer).await {
-        logl::log(
-            level::WARN,
-            format_args!("cubesrv: welcome to {peer} failed: {error}"),
-        );
-    }
+async fn send_welcome(
+    socket: &UdpSocket,
+    state: &RwLock<ServerState>,
+    peer: SocketAddr,
+    player_id: u32,
+) {
+    let revision = state.read().await.revision;
+    let _ = socket
+        .send_to(&protocol::slide_info(player_id, revision), peer)
+        .await;
 }
 
 async fn handle_packet(
@@ -158,23 +153,24 @@ async fn handle_packet(
         Err(_) => return,
     };
     match packet {
-        ClientPacket::Hello { world_id } => {
+        ClientPacket::Hello { .. } => {
+            let world_id = 27;
             let player_id = state.write().await.join(peer, world_id);
             match player_id {
-                Some(player_id) => send_welcome(socket, peer, player_id, world_id).await,
+                Some(player_id) => send_welcome(socket, state, peer, player_id).await,
                 None => {
                     let _ = socket.send_to(&protocol::error(1), peer).await;
                 }
             }
         }
-        ClientPacket::Telemetry(telemetry) => {
+        ClientPacket::Telemetry(mut telemetry) => {
+            telemetry.world_id = 27;
             let accepted = state.write().await.telemetry(peer, telemetry);
             let Some((player_id, send_info, recipients)) = accepted else {
                 return;
             };
-            if send_info {
-                send_welcome(socket, peer, player_id, telemetry.world_id).await;
-            }
+            let _ = send_info;
+            send_welcome(socket, state, peer, player_id).await;
             let packet = protocol::player_state(player_id, telemetry);
             for recipient in recipients {
                 if let Err(error) = socket.send_to(&packet, recipient).await {
@@ -185,26 +181,21 @@ async fn handle_packet(
                 }
             }
         }
-        ClientPacket::WorldRequest { chunk } => {
-            let Some(world_id) = state
-                .read()
-                .await
-                .players
-                .get(&peer)
-                .map(|player| player.world_id)
-            else {
-                let _ = socket.send_to(&protocol::error(4), peer).await;
-                return;
-            };
-            let Some(world) = blob(WORLDS, world_id) else {
-                return;
-            };
-            let Some(packet) = protocol::blob_chunk(BlobKind::World, world_id, chunk, world.bytes)
-            else {
-                let _ = socket.send_to(&protocol::error(2), peer).await;
-                return;
-            };
-            let _ = socket.send_to(&packet, peer).await;
+        ClientPacket::SlideRequest { revision, chunk } => {
+            {
+                let mut state = state.write().await;
+                let Some(player) = state.players.get_mut(&peer) else {
+                    return;
+                };
+                player.last_seen = time::Instant::now();
+            }
+            let slide = &SLIDES[revision as usize % SLIDES.len()];
+            if let Some(packet) = protocol::slide_chunk(revision, chunk, slide.bytes) {
+                let _ = socket.send_to(&packet, peer).await;
+            }
+        }
+        ClientPacket::WorldRequest { .. } => {
+            let _ = socket.send_to(&protocol::error(5), peer).await;
         }
         ClientPacket::AssetRequest { asset_id, chunk } => {
             let Some(asset) = blob(ASSETS, asset_id) else {
@@ -240,13 +231,44 @@ async fn udp_loop(state: Arc<RwLock<ServerState>>) {
             format_args!("cubesrv: udp listening on {addr}"),
         );
 
+        let mut next_slide = time::Instant::now() + Duration::from_secs(10);
         let mut buffer = [0_u8; protocol::MAX_DATAGRAM];
         loop {
-            match socket.recv_from(&mut buffer).await {
-                Ok((length, peer)) => {
+            let now = time::Instant::now();
+            if now >= next_slide {
+                let (revision, players) = {
+                    let mut state = state.write().await;
+                    state
+                        .players
+                        .retain(|_, player| player.last_seen.elapsed() < Duration::from_secs(30));
+                    state.revision = state.revision.wrapping_add(1);
+                    (
+                        state.revision,
+                        state
+                            .players
+                            .iter()
+                            .map(|(peer, p)| (*peer, p.id))
+                            .collect::<Vec<_>>(),
+                    )
+                };
+                next_slide += Duration::from_secs(10);
+                for (peer, id) in players {
+                    let _ = socket
+                        .send_to(&protocol::slide_info(id, revision), peer)
+                        .await;
+                }
+            }
+            match time::timeout(
+                next_slide.saturating_duration_since(time::Instant::now()),
+                socket.recv_from(&mut buffer),
+            )
+            .await
+            {
+                Err(_) => continue,
+                Ok(Ok((length, peer))) => {
                     handle_packet(&socket, &state, peer, &buffer[..length]).await;
                 }
-                Err(error) => {
+                Ok(Err(error)) => {
                     logl::log(
                         level::WARN,
                         format_args!("cubesrv: udp receive failed: {error}; rebinding"),

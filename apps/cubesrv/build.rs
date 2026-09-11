@@ -35,13 +35,18 @@ fn catalog(directory: &str, constant: &str, expected: usize) -> String {
 }
 
 fn main() {
-    println!("cargo:rerun-if-changed=worlds");
     println!("cargo:rerun-if-changed=assets");
-    let source = format!(
-        "{}{}",
-        catalog("worlds", "WORLDS", 27),
-        catalog("assets", "ASSETS", 49)
-    );
+    println!("cargo:rerun-if-changed=slides");
+    let mut source = catalog("assets", "ASSETS", 49);
+    source.push_str("const SLIDES: &[Blob] = &[\n");
+    for id in 1..=10 {
+        let path = fs::canonicalize(format!("slides/{id:02}.rgb")).expect("prepared slide");
+        assert_eq!(fs::metadata(&path).unwrap().len(), 512 * 512 * 3);
+        source.push_str(&format!(
+            "Blob {{ name: \"slide-{id:02}\", bytes: include_bytes!({path:?}) }},\n"
+        ));
+    }
+    source.push_str("];\n");
     fs::write(
         Path::new(&env::var_os("OUT_DIR").unwrap()).join("catalog.rs"),
         source,
