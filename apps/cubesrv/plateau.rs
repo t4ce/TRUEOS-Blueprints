@@ -59,7 +59,7 @@ pub fn valid_placements(cubes: &[PlacedCube]) -> bool {
         c.scale.is_finite() && c.scale > 0.0 && c.scale <= 1.2
             && c.center.iter().all(|v| v.is_finite() && v.abs() + c.scale <= half + 0.0001)
             // Ordinary RGB555 or the existing six-material cube flag.
-            && (c.flags & !0xffff == 0 || (c.flags & !0x3f == 0))
+            && ((c.flags & 0x8000 != 0 && c.flags <= 0xffff) || (c.flags & !7 == 0x6000 && c.flags & 7 < 6))
     })
 }
 /// Same minimum roll (16), c4 lattice, corner cuts and two layers as moduleVoxels.
