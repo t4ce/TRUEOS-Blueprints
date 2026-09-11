@@ -51,7 +51,7 @@ fn main() {
         })
         .collect::<Vec<_>>();
     slides.sort();
-    assert_eq!(slides.len(), 10, "expected ten PNG/JPEG slides");
+    assert!(!slides.is_empty(), "expected at least one PNG/JPEG slide");
     for path in slides {
         let path = fs::canonicalize(path).expect("prepared slide");
         let size = fs::metadata(&path).unwrap().len();

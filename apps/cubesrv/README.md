@@ -1,26 +1,36 @@
 # Cubes slideshow demo
 
-The server embeds ten prepared images from `TRUEOS/tools`, announces a new image
-every ten seconds, and wraps after image ten. It retains the health routes and
+The server embeds the prepared images in `slides/`, announces a new image
+every ten seconds, and wraps after the last image. It retains the health routes and
 asset catalog; the 27 static worlds are no longer embedded or served.
 
 Build both cubesrv and Cubes with these changes. Key 8 connects to the local
 server (UDP 30018), or reconnects if already connected. The server's manifest
 sets the player's initial position to `[0, 0, 0]`; the client faces -Z. Subsequent
 slides replace the image without resetting the camera. Existing mouse look,
-flight, surface walking and placement remain available. Selecting another
+flight and surface walking remain available. Asset placement and the companion
+cube belong to the local-world modes, outside this dedicated image pass. Selecting another
 numbered mode disconnects the slideshow. Disconnected peers expire after 30s.
 
 The prepared image is 512×512. The server embeds and streams ordinary compressed
-PNG/JPEG bytes. Cubes decodes each completed transfer at runtime with
-`trueos::vmedia::decode` in its background worker; the UI does not run a decoder. **The current display is a 60×60
-mosaic (3,600 cubes), not one cube per source pixel.** Each sample averages its
-source region and uses c12, the largest authored tier (2.4 renderer units per
-side before the existing gap). The wall is centered at `[0, 0, -240]`, framed
-by the usual walker FOV at the default landscape viewport. The normal render
-sliders remain effective. At the default budget the complete mosaic uses full
-cubes rather than distant markers. 262,144 simultaneous cubes would require a
-separate rendering expansion beyond the current 8,192-seed/3,840-detail limits.
+PNG/JPEG bytes. Cubes uses `trueos::vmedia::decode_retained` in its background
+worker to decode directly into the device's Picasso texture residency. No RGB
+readback or custom image format is involved. The old texture remains visible
+until the next image is completely transferred, decoded and resident.
+
+The image wall is now **one four-vertex, two-triangle PBR panel**, centered at
+`[0, 0, -240]` with a 144×144 world-unit extent. It uses the same tangent-space
+normal/material shader as Picasso-Example. The incoming image supplies color;
+two fixed client-side maps supply bevel normals and edge occlusion aligned to
+512×512 cells. These maps are reused across images and reconnects (32 MiB decoded
+total). Lighting and highlights respond to the live camera; relief fades when
+cells become subpixel because the current native sampler uses only mip level 0.
+
+This is a flat surface with simulated cell relief, not extruded cube geometry:
+it has no per-cell silhouette or parallax. It bypasses the dynamic-cube renderer,
+its seed budgets and its LOD preparation entirely. The existing walker uses a
+separate coarse collision grid built only on connection. Camera position is
+preserved between slides. See Cubes `tools/SLIDESHOW.md` for client details.
 
 ## Image preparation
 
@@ -33,7 +43,7 @@ downscaled and center-cropped. Smaller images are fitted without upscaling and
 centered on their average color. Transparency is composited over that color.
 `slides/sources.json` records the source paths. Only the prepared standard image
 files are embedded; there are no raw RGB sidecars or custom image file formats.
-The catalog accepts PNG, JPG and JPEG (ten files, sorted by filename). Prepared
+The catalog accepts PNG, JPG and JPEG (any nonempty set, sorted by filename). Prepared
 images must be 512×512 and at most 4 MiB each. Runtime decoding uses the TRUEOS
 media API rather than adding a decoder library to Cubes or cubesrv.
 
@@ -46,7 +56,7 @@ header. Telemetry still carries world 27 as the single session identifier.
 - `0x05`: client image chunk request: u32 revision, u16 chunk index.
 - `0x86`: server image chunk: u32 revision, u16 chunk index, up to 1,024 original PNG/JPEG file bytes.
 
-Revision modulo ten selects the immutable embedded image. Transfers use 32-chunk
+Revision modulo the catalog size selects the immutable embedded image. Transfers use 32-chunk
 windows with bounded retries. The client rejects stale-revision, malformed and
 duplicate chunks, and only publishes complete, successfully decoded images. Regular telemetry obtains
 a fresh manifest if an announcement is lost. An incomplete image leaves the
@@ -56,10 +66,11 @@ previous scene visible. Old world requests receive error 5.
 
 - `python3 tools/test_prepare_slides.py`
 - In Cubes: `python3 tools/test_slideshow_network.py`
+- In Cubes: `python3 -B tools/test_slideshow_material.py`
 - In Cubes: `python3 tools/test_walker_camera.py`
 - In Cubes: `cargo check --offline`
 
 The host tests cover preparation, packet compatibility, reordering, duplicates,
-revision isolation, image orientation, initial camera pose and geometry budget. Native decoder
-execution requires TRUEOS; host tests check its stride/dimension conversion.
-Live rendering and sustained multi-player throughput still need rig validation.
+revision isolation, two-triangle geometry, material bindings, tangent alignment,
+normal/occlusion maps and camera collision. Native decoding, texture residency
+and rendered appearance still need TRUEOS rig validation.
