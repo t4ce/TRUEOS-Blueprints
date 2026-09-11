@@ -4,7 +4,7 @@
 extern crate alloc;
 
 mod protocol;
-mod plateau;
+use cubes_protocol as plateau;
 mod profiles;
 
 use alloc::{collections::BTreeMap, string::String, sync::Arc, vec::Vec};

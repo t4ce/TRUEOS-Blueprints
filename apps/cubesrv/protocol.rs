@@ -79,7 +79,7 @@ fn read_vec3(bytes: &[u8], offset: usize) -> Result<[f32; 3], DecodeError> {
         .ok_or(DecodeError::Float)
 }
 
-pub fn decode(bytes: &[u8]) -> Result<ClientPacket, DecodeError> {
+pub fn decode(bytes: &[u8]) -> Result<ClientPacket<'_>, DecodeError> {
     if bytes.len() < HEADER || &bytes[..4] != MAGIC {
         return Err(DecodeError::Header);
     }
@@ -230,6 +230,16 @@ mod tests {
             decode(&client(TELEMETRY, &payload)),
             Err(DecodeError::Float)
         );
+    }
+
+    #[test]
+    fn hello_requires_a_bounded_username() {
+        assert_eq!(decode(&client(HELLO, b"\x1bt4ce")), Ok(ClientPacket::Hello { world_id: 27, username: "t4ce" }));
+        assert!(decode(&client(HELLO, &[27])).is_err());
+        for name in ["../t4ce", "a/b", "a b", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"] {
+            let mut b = alloc::vec![27]; b.extend_from_slice(name.as_bytes());
+            assert!(decode(&client(HELLO, &b)).is_err());
+        }
     }
 
     #[test]
