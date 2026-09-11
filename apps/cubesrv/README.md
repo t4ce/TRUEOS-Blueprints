@@ -34,16 +34,23 @@ preserved between slides. See Cubes `tools/SLIDESHOW.md` for client details.
 
 ## Image preparation
 
-Run `python3 tools/prepare_slides.py` from this directory (Pillow required).
-The defaults read the sibling TRUEOS repository; `--source-root` overrides it.
-You can supply exactly ten PNG/JPG/JPEG paths relative to that root.
+After adding images to `slides/`, run `python3 -B tools/prepare_slides.py --in-place`
+from this directory (Pillow required). It normalizes all current images to RGB
+512×512, preserves filenames and PNG/JPEG encoding, and leaves already-normalized
+files byte-for-byte unchanged. `--output DIRECTORY --in-place` targets another
+slide directory. `.jgp` is accepted as a JPEG filename alias, alongside `.jpg`,
+`.jpeg` and `.png`; extensions are case-insensitive. The client identifies the
+actual format by its PNG/JPEG signature, not the filename.
+
+Without `--in-place`, the tool imports the original ten demo sources from the
+sibling TRUEOS repository; `--source-root` overrides that source root.
 
 EXIF orientation is applied. Images at least 512 pixels on both axes are
 downscaled and center-cropped. Smaller images are fitted without upscaling and
 centered on their average color. Transparency is composited over that color.
 `slides/sources.json` records the source paths. Only the prepared standard image
 files are embedded; there are no raw RGB sidecars or custom image file formats.
-The catalog accepts PNG, JPG and JPEG (any nonempty set, sorted by filename). Prepared
+The catalog accepts PNG, JPG, JPEG and the JGP alias (any nonempty set, sorted by filename). Prepared
 images must be 512×512 and at most 4 MiB each. Runtime decoding uses the TRUEOS
 media API rather than adding a decoder library to Cubes or cubesrv.
 

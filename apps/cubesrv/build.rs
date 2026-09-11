@@ -43,11 +43,16 @@ fn main() {
         .expect("slides directory")
         .map(|entry| entry.unwrap().path())
         .filter(|path| {
-            path.extension()
-                .and_then(|v| v.to_str())
-                .is_some_and(|ext| {
-                    matches!(ext.to_ascii_lowercase().as_str(), "png" | "jpg" | "jpeg")
-                })
+            path.is_file()
+                && path
+                    .extension()
+                    .and_then(|v| v.to_str())
+                    .is_some_and(|ext| {
+                        matches!(
+                            ext.to_ascii_lowercase().as_str(),
+                            "png" | "jpg" | "jpeg" | "jgp"
+                        )
+                    })
         })
         .collect::<Vec<_>>();
     slides.sort();
