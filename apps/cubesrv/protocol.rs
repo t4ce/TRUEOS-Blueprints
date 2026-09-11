@@ -30,8 +30,8 @@ pub struct Telemetry {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum ClientPacket {
-    Hello { world_id: u8 },
+pub enum ClientPacket<'a> {
+    Hello { world_id: u8, username: &'a str },
     SlideRequest { revision: u32, chunk: u16 },
     Telemetry(Telemetry),
     WorldRequest { chunk: u16 },
@@ -92,9 +92,11 @@ pub fn decode(bytes: &[u8]) -> Result<ClientPacket, DecodeError> {
     }
     let payload = &bytes[HEADER..];
     match bytes[5] {
-        HELLO if payload.len() == 1 => Ok(ClientPacket::Hello {
-            world_id: valid_world(payload[0])?,
-        }),
+        HELLO if payload.len() >= 2 => {
+            let username = core::str::from_utf8(&payload[1..]).map_err(|_| DecodeError::Length)?;
+            if !crate::plateau::valid_username(username) { return Err(DecodeError::Length); }
+            Ok(ClientPacket::Hello { world_id: valid_world(payload[0])?, username })
+        }
         TELEMETRY if payload.len() == 29 => Ok(ClientPacket::Telemetry(Telemetry {
             sequence: read_u32(payload, 0),
             world_id: valid_world(payload[4])?,
@@ -219,7 +221,7 @@ mod tests {
 
     #[test]
     fn rejects_bad_world_and_non_finite_float() {
-        assert_eq!(decode(&client(HELLO, &[0])), Err(DecodeError::World));
+        assert_eq!(decode(&client(HELLO, b"\0t4ce")), Err(DecodeError::World));
         let mut payload = 1_u32.to_le_bytes().to_vec();
         payload.push(1);
         payload.extend_from_slice(&f32::NAN.to_le_bytes());

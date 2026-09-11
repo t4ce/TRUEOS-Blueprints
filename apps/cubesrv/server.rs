@@ -4,8 +4,10 @@
 extern crate alloc;
 
 mod protocol;
+mod plateau;
+mod profiles;
 
-use alloc::{collections::BTreeMap, sync::Arc, vec::Vec};
+use alloc::{collections::BTreeMap, string::String, sync::Arc, vec::Vec};
 use core::net::SocketAddr;
 use core::sync::atomic::{AtomicU16, Ordering};
 
@@ -33,8 +35,9 @@ struct Blob {
 
 include!(concat!(env!("OUT_DIR"), "/catalog.rs"));
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct Player {
+    username: String,
     id: u32,
     world_id: u8,
     telemetry: Option<Telemetry>,
@@ -56,13 +59,13 @@ impl ServerState {
         }
     }
 
-    fn join(&mut self, peer: SocketAddr, world_id: u8) -> Option<u32> {
+    fn join(&mut self, peer: SocketAddr, world_id: u8, username: &str) -> Option<u32> {
         self.players
             .retain(|_, player| player.last_seen.elapsed() < Duration::from_secs(30));
         if let Some(player) = self.players.get_mut(&peer) {
+            if player.username != username { return None; }
             player.world_id = world_id;
             player.last_seen = time::Instant::now();
-            player.telemetry = None;
             return Some(player.id);
         }
         if self.players.len() >= MAX_PLAYERS {
@@ -73,6 +76,7 @@ impl ServerState {
         self.players.insert(
             peer,
             Player {
+                username: username.into(),
                 id,
                 world_id,
                 telemetry: None,
@@ -87,10 +91,8 @@ impl ServerState {
         peer: SocketAddr,
         telemetry: Telemetry,
     ) -> Option<(u32, bool, Vec<SocketAddr>)> {
-        let mut joined = false;
         if !self.players.contains_key(&peer) {
-            self.join(peer, telemetry.world_id)?;
-            joined = true;
+            return None;
         }
         let player = self.players.get_mut(&peer).unwrap();
         let changed_world = player.world_id != telemetry.world_id;
@@ -111,7 +113,7 @@ impl ServerState {
                 (*address != peer && other.world_id == telemetry.world_id).then_some(*address)
             })
             .collect();
-        Some((id, joined || changed_world, recipients))
+        Some((id, changed_world, recipients))
     }
 }
 
@@ -123,6 +125,7 @@ fn router() -> Router {
     Router::new()
         .route("/", get(hello))
         .route("/healthz", get(hello))
+        .merge(profiles::router(Arc::new(profiles::Store::new("common/cubesrv/cubeusers.db"))))
 }
 
 fn blob(catalog: &'static [Blob], id: u8) -> Option<&'static Blob> {
@@ -160,9 +163,9 @@ async fn handle_packet(
         Err(_) => return,
     };
     match packet {
-        ClientPacket::Hello { .. } => {
+        ClientPacket::Hello { username, .. } => {
             let world_id = 27;
-            let player_id = state.write().await.join(peer, world_id);
+            let player_id = state.write().await.join(peer, world_id, username);
             match player_id {
                 Some(player_id) => send_welcome(socket, state, peer, player_id).await,
                 None => {
