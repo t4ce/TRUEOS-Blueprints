@@ -48,7 +48,6 @@ def main():
         image = prepare(path)
         name = f'{index:02}'
         image.save(args.output / f'{name}.png')
-        (args.output / f'{name}.rgb').write_bytes(image.tobytes())
         manifest.append({'slide': index, 'source': relative, 'width': SIZE, 'height': SIZE})
     (args.output / 'sources.json').write_text(json.dumps(manifest, indent=2) + '\n')
 

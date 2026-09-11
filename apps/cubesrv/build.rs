@@ -39,11 +39,26 @@ fn main() {
     println!("cargo:rerun-if-changed=slides");
     let mut source = catalog("assets", "ASSETS", 49);
     source.push_str("const SLIDES: &[Blob] = &[\n");
-    for id in 1..=10 {
-        let path = fs::canonicalize(format!("slides/{id:02}.rgb")).expect("prepared slide");
-        assert_eq!(fs::metadata(&path).unwrap().len(), 512 * 512 * 3);
+    let mut slides = fs::read_dir("slides")
+        .expect("slides directory")
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| {
+            path.extension()
+                .and_then(|v| v.to_str())
+                .is_some_and(|ext| {
+                    matches!(ext.to_ascii_lowercase().as_str(), "png" | "jpg" | "jpeg")
+                })
+        })
+        .collect::<Vec<_>>();
+    slides.sort();
+    assert_eq!(slides.len(), 10, "expected ten PNG/JPEG slides");
+    for path in slides {
+        let path = fs::canonicalize(path).expect("prepared slide");
+        let size = fs::metadata(&path).unwrap().len();
+        assert!(size > 0 && size <= 4 * 1024 * 1024, "slide transfer size");
+        let name = path.file_name().unwrap().to_str().unwrap();
         source.push_str(&format!(
-            "Blob {{ name: \"slide-{id:02}\", bytes: include_bytes!({path:?}) }},\n"
+            "Blob {{ name: {name:?}, bytes: include_bytes!({path:?}) }},\n"
         ));
     }
     source.push_str("];\n");

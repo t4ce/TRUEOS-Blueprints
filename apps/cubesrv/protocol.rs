@@ -251,12 +251,13 @@ mod tests {
 
 /// The revision pins a transfer even when the ten-second clock advances.
 /// Every manifest carries the connect spawn; clients apply it once per session.
-pub fn slide_info(player: u32, revision: u32) -> Vec<u8> {
+pub fn slide_info(player: u32, revision: u32, encoded_len: usize) -> Vec<u8> {
     let mut body = player.to_le_bytes().to_vec();
     body.extend_from_slice(&revision.to_le_bytes());
     for component in [0.0f32; 3] {
         body.extend_from_slice(&component.to_le_bytes());
     }
+    body.extend_from_slice(&(encoded_len as u32).to_le_bytes());
     packet(0x85, &body)
 }
 pub fn slide_chunk(revision: u32, chunk: u16, bytes: &[u8]) -> Option<Vec<u8>> {

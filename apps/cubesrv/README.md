@@ -11,7 +11,9 @@ slides replace the image without resetting the camera. Existing mouse look,
 flight, surface walking and placement remain available. Selecting another
 numbered mode disconnects the slideshow. Disconnected peers expire after 30s.
 
-The prepared/streamed image is RGB 512×512. **The current display is a 60×60
+The prepared image is 512×512. The server embeds and streams ordinary compressed
+PNG/JPEG bytes. Cubes decodes each completed transfer at runtime with
+`trueos::vmedia::decode` in its background worker; the UI does not run a decoder. **The current display is a 60×60
 mosaic (3,600 cubes), not one cube per source pixel.** Each sample averages its
 source region and uses c12, the largest authored tier (2.4 renderer units per
 side before the existing gap). The wall is centered at `[0, 0, -240]`, framed
@@ -29,21 +31,24 @@ You can supply exactly ten PNG/JPG/JPEG paths relative to that root.
 EXIF orientation is applied. Images at least 512 pixels on both axes are
 downscaled and center-cropped. Smaller images are fitted without upscaling and
 centered on their average color. Transparency is composited over that color.
-`slides/sources.json` records the source paths; each prepared PNG has a matching
-raw RGB payload embedded at build time. Runtime decoding needs no image library.
+`slides/sources.json` records the source paths. Only the prepared standard image
+files are embedded; there are no raw RGB sidecars or custom image file formats.
+The catalog accepts PNG, JPG and JPEG (ten files, sorted by filename). Prepared
+images must be 512×512 and at most 4 MiB each. Runtime decoding uses the TRUEOS
+media API rather than adding a decoder library to Cubes or cubesrv.
 
 ## UDP additions
 
 All packets retain the `CUB1`, version 1, kind and little-endian u16 payload-length
 header. Telemetry still carries world 27 as the single session identifier.
 
-- `0x85`: server image/connect event: u32 player ID, u32 revision, three f32 spawn coordinates.
+- `0x85`: server image/connect event: u32 player ID, u32 revision, three f32 spawn coordinates, u32 encoded file length.
 - `0x05`: client image chunk request: u32 revision, u16 chunk index.
-- `0x86`: server image chunk: u32 revision, u16 chunk index, 1,024 RGB bytes.
+- `0x86`: server image chunk: u32 revision, u16 chunk index, up to 1,024 original PNG/JPEG file bytes.
 
 Revision modulo ten selects the immutable embedded image. Transfers use 32-chunk
 windows with bounded retries. The client rejects stale-revision, malformed and
-duplicate chunks, and only publishes complete images. Regular telemetry obtains
+duplicate chunks, and only publishes complete, successfully decoded images. Regular telemetry obtains
 a fresh manifest if an announcement is lost. An incomplete image leaves the
 previous scene visible. Old world requests receive error 5.
 
@@ -55,5 +60,6 @@ previous scene visible. Old world requests receive error 5.
 - In Cubes: `cargo check --offline`
 
 The host tests cover preparation, packet compatibility, reordering, duplicates,
-revision isolation, image orientation, initial camera pose and geometry budget.
+revision isolation, image orientation, initial camera pose and geometry budget. Native decoder
+execution requires TRUEOS; host tests check its stride/dimension conversion.
 Live rendering and sustained multi-player throughput still need rig validation.

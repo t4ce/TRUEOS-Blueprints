@@ -138,7 +138,14 @@ async fn send_welcome(
 ) {
     let revision = state.read().await.revision;
     let _ = socket
-        .send_to(&protocol::slide_info(player_id, revision), peer)
+        .send_to(
+            &protocol::slide_info(
+                player_id,
+                revision,
+                SLIDES[revision as usize % SLIDES.len()].bytes.len(),
+            ),
+            peer,
+        )
         .await;
 }
 
@@ -254,7 +261,14 @@ async fn udp_loop(state: Arc<RwLock<ServerState>>) {
                 next_slide += Duration::from_secs(10);
                 for (peer, id) in players {
                     let _ = socket
-                        .send_to(&protocol::slide_info(id, revision), peer)
+                        .send_to(
+                            &protocol::slide_info(
+                                id,
+                                revision,
+                                SLIDES[revision as usize % SLIDES.len()].bytes.len(),
+                            ),
+                            peer,
+                        )
                         .await;
                 }
             }

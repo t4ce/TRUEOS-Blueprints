@@ -23,12 +23,14 @@ class PreparationTests(unittest.TestCase):
             image.paste((0, 255, 0), (256, 0, 768, 512))
             image.save(path)
             self.assertEqual(prepare(path).getextrema(), ((0, 0), (255, 255), (0, 0)))
-    def test_checked_in_slides_match_rgb_payloads(self):
+    def test_checked_in_slides_are_standard_images(self):
         slides = Path(__file__).resolve().parents[1] / 'slides'
         self.assertEqual(len(list(slides.glob('*.png'))), 10)
+        self.assertEqual(list(slides.glob('*.rgb')), [])
         for path in slides.glob('*.png'):
             with Image.open(path) as image:
                 self.assertEqual(image.size, (512, 512))
-                self.assertEqual(image.tobytes(), path.with_suffix('.rgb').read_bytes())
+                self.assertEqual(image.mode, 'RGB')
+                image.load()
 
 if __name__ == '__main__': unittest.main()
