@@ -134,6 +134,29 @@ pub struct MenuEntry<'a, S> {
     on_click: fn(&mut S),
 }
 
+fn menu_wire_entries<S>(
+    entries: &[MenuEntry<'_, S>],
+) -> Result<Vec<v::bp_abi::TrueosUi4ContextMenuEntry>, Error> {
+    if entries.is_empty() || entries.len() > MAX_MENU_ENTRIES {
+        return Err(Error::Invalid);
+    }
+    let mut raw = Vec::with_capacity(entries.len());
+    for (index, entry) in entries.iter().enumerate() {
+        if entry.label.is_empty() || entry.label.len() > MAX_MENU_LABEL_BYTES {
+            return Err(Error::Invalid);
+        }
+        raw.push(v::bp_abi::TrueosUi4ContextMenuEntry {
+            label_ptr: entry.label.as_ptr(),
+            label_len: entry.label.len(),
+            // Slice position is the wire identity, so a handler is found
+            // again without the caller ever naming an id.
+            action_id: index as u32 + 1,
+            enabled: u32::from(entry.enabled),
+        });
+    }
+    Ok(raw)
+}
+
 fn menu_noop<S>(_: &mut S) {}
 
 impl<'a, S> MenuEntry<'a, S> {
@@ -161,6 +184,32 @@ impl<'a, S> MenuEntry<'a, S> {
 
     pub const fn is_enabled(&self) -> bool {
         self.enabled
+    }
+}
+
+/// One kernel-owned dynamic menu invocation. Preserve the entries and app
+/// context by serial until completion; pointer movement must not retarget it.
+#[derive(Copy, Clone, Debug)]
+pub struct DynamicMenuEvent {
+    pub serial: u64,
+    pub local_x: i32,
+    pub local_y: i32,
+    /// None requests preparation; Some completes the invocation.
+    pub closed: Option<MenuCloseReason>,
+    action_id: Option<u32>,
+}
+
+impl DynamicMenuEvent {
+    /// Dispatch against the exact entry snapshot supplied for this serial.
+    pub fn dispatch<S>(&self, entries: &[MenuEntry<'_, S>], state: &mut S) {
+        if let Some(entry) = self
+            .action_id
+            .and_then(|id| id.checked_sub(1))
+            .and_then(|i| entries.get(i as usize))
+            && entry.enabled
+        {
+            (entry.on_click)(state);
+        }
     }
 }
 
@@ -653,23 +702,7 @@ impl Frame {
     /// Poll [`Frame::pump_context_menu`] with the same slice to run handlers.
     /// See [`Frame::clear_context_menu`] to give the gesture back.
     pub fn register_context_menu<S>(&mut self, entries: &[MenuEntry<'_, S>]) -> Result<(), Error> {
-        if entries.is_empty() || entries.len() > MAX_MENU_ENTRIES {
-            return Err(Error::Invalid);
-        }
-        let mut raw = Vec::with_capacity(entries.len());
-        for (index, entry) in entries.iter().enumerate() {
-            if entry.label.is_empty() || entry.label.len() > MAX_MENU_LABEL_BYTES {
-                return Err(Error::Invalid);
-            }
-            raw.push(v::bp_abi::TrueosUi4ContextMenuEntry {
-                label_ptr: entry.label.as_ptr(),
-                label_len: entry.label.len(),
-                // Slice position is the wire identity, so a handler is found
-                // again without the caller ever naming an id.
-                action_id: index as u32 + 1,
-                enabled: u32::from(entry.enabled),
-            });
-        }
+        let raw = menu_wire_entries(entries)?;
         status(unsafe {
             v::bp_abi::trueos_cabi_ui4_context_menu_register(
                 self.window_id,
@@ -677,6 +710,68 @@ impl Frame {
                 raw.len(),
             )
         })
+    }
+
+    /// Register a dynamic menu. UI4 detects the secondary-click gesture and
+    /// returns a preparation event with a frozen local point and serial.
+    /// Poll `take_dynamic_context_menu_event`, then answer with
+    /// `resolve_context_menu`. Fixed registrations remain available unchanged.
+    pub fn register_dynamic_context_menu(&mut self) -> Result<(), Error> {
+        status(unsafe {
+            v::bp_abi::trueos_cabi_ui4_context_menu_dynamic_v2(
+                self.window_id,
+                0,
+                core::ptr::null(),
+                0,
+            )
+        })
+    }
+
+    /// Supply a complete menu for one preparation event. False means the
+    /// invocation was already dismissed/replaced; it must not be reopened.
+    pub fn resolve_context_menu<S>(
+        &mut self,
+        serial: u64,
+        entries: &[MenuEntry<'_, S>],
+    ) -> Result<bool, Error> {
+        if serial == 0 {
+            return Err(Error::Invalid);
+        }
+        let raw = menu_wire_entries(entries)?;
+        let result = unsafe {
+            v::bp_abi::trueos_cabi_ui4_context_menu_dynamic_v2(
+                self.window_id,
+                serial,
+                raw.as_ptr(),
+                raw.len(),
+            )
+        };
+        if result == -3 {
+            return Ok(false);
+        }
+        status(result)?;
+        Ok(true)
+    }
+
+    pub fn take_dynamic_context_menu_event(&mut self) -> Result<Option<DynamicMenuEvent>, Error> {
+        let mut raw = v::bp_abi::TrueosUi4ContextMenuEventV2::default();
+        let result = unsafe {
+            v::bp_abi::trueos_cabi_ui4_context_menu_event_take_v2(self.window_id, &mut raw)
+        };
+        if result == 1 {
+            return Ok(None);
+        }
+        status(result)?;
+        if raw.reason > 5 || raw.serial == 0 {
+            return Err(Error::Invalid);
+        }
+        Ok(Some(DynamicMenuEvent {
+            serial: raw.serial,
+            local_x: raw.local_x,
+            local_y: raw.local_y,
+            closed: (raw.reason != 5).then(|| MenuCloseReason::from_raw(raw.reason)),
+            action_id: (raw.reason == 0 && raw.selected != 0).then_some(raw.action_id),
+        }))
     }
 
     /// Drop this frame's standing menu. Secondary clicks over this window fall
