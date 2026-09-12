@@ -1,12 +1,12 @@
 {
-  "manifest_sha256": "c5f4b2ceb63b2c90559a002f7a288dc7e7cf31eea1407d7292cdd9f5899ff3e1",
-  "package_sha256": "d61cfd6d4fd4711120ab91ce88377baefecfc51286a61d3ef3f1309a2954e9ec",
+  "manifest_sha256": "accc495a44b8b5879ae8dd4e5341642b42179586c6660a44109c72a1150d1f61",
+  "package_sha256": "9b69b3c4b355ebb49532828527b8ab21827e4aea92fb0dcd5622d07d8030c637",
   "faces": [
-    1,
-    2,
-    3,
-    4,
-    5,
-    6
+    11,
+    12,
+    13,
+    14,
+    15,
+    16
   ]
 }

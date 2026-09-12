@@ -56,7 +56,7 @@ def load_manifest(path, faces=None):
         if Path(entry['source']).suffix.lower() not in EXTENSIONS:
             raise ValueError('source must be a PNG/JPEG filename')
     by_id = {entry['slide']: entry for entry in entries}
-    selected = faces if faces is not None else sorted(by_id)[:6]
+    selected = faces if faces is not None else [entry['slide'] for entry in entries[:6]]
     if len(set(selected)) != 6 or any(i not in by_id for i in selected):
         raise ValueError('select six different existing slide IDs')
     return [by_id[i] for i in selected]
@@ -96,13 +96,13 @@ def atomic_write(path, data):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--manifest', type=Path, default=SLIDES/'sources.json')
-    parser.add_argument('--source-root', type=Path, default=Path(__file__).resolve().parents[4]/'TRUEOS/tools')
+    parser.add_argument('--source-root', type=Path, help='default: manifest directory')
     parser.add_argument('--output', type=Path, default=SLIDES)
-    parser.add_argument('--faces', type=int, nargs=6, metavar='SLIDE', help='-Z +X +Z -X -Y +Y slide IDs; default: first six IDs')
+    parser.add_argument('--faces', type=int, nargs=6, metavar='SLIDE', help='-Z +X +Z -X -Y +Y slide IDs; default: first six manifest entries')
     args = parser.parse_args()
     try:
         entries = load_manifest(args.manifest, args.faces)
-        package = bake(entries, args.source_root)
+        package = bake(entries, args.source_root or args.manifest.parent)
         receipt = {'manifest_sha256': hashlib.sha256(args.manifest.read_bytes()).hexdigest(),
                    'package_sha256': hashlib.sha256(package).hexdigest(),
                    'faces': [e['slide'] for e in entries]}
