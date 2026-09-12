@@ -119,7 +119,6 @@ In TRUEOS: `python3 -B tools/test_picasso_pbr_state.py` and
 `check_host.py` checks the actual server and build script with upstream host
 dependencies, avoiding the workspace's TRUEOS-specific vendor patches.
 Native appearance, upload residency, timing and peak memory require a live
-TRUEOS run. Host validation currently also exposes two pre-existing walker
-portal-fixture failures (`every_real_world_starts_in_front_of_its_portal_and_can_move`
-and `walking_back_into_each_real_connector_enters_its_portal`); both reproduce
-with the previous walker implementation. Gallery collision tests pass.
+TRUEOS run. The host network/geometry suite passes all 13 tests, and the
+walker suite passes all 90 tests, including six-face collision, pose-preserving
+gallery replacement and the authored portal fixtures.
