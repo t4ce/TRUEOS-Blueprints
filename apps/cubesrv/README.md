@@ -19,14 +19,14 @@ cube stay in the local-world renderer.
 | tier1 | 64×64 | 1×8×8 | 8 | 64 |
 | tier2 | 128×128 | 1×10×10 | 21 | 100 |
 | tier3 | 256×256 | 1×14×14 | 31 | 196 |
-| tier4 | 512×512 | 1×16×16 | 320 | 256 |
+| tier4 | 512×512 | 1×28×28 | 31 | 784 |
 
 The projected pixel count applies across the **whole assembly**, matching
 `CubeImage.html`, not independently to every block. The nominal settings use
 its bevel-aligned sampling: tier1 shows 8 cells without cropping; tier2 shows
 20 cells with a 20/21 centered source crop; tier3 shows 28 cells with a 28/31
-centered source crop; tier4 shows 320 cells without cropping. This removes
-about 2.38% per edge for tier2 and 4.84% for tier3.
+centered source crop; tier4 also shows 28 cells with a 28/31 centered source
+crop. This removes about 2.38% per edge for tier2 and 4.84% for tier3 and tier4.
 
 The first six manifest entries fill **-Z, +X, +Z, -X, -Y, +Y**, in that order.
 Additional entries remain available for selection. Paths resolve relative to
@@ -72,9 +72,9 @@ volumes plus block bounds for the walker, without allocating a dense empty
 world grid. Decorative bevel recesses are treated as solid for navigation.
 
 The atlas uses a 3×2 layout with a duplicated one-texel border per image.
-At tier4 maximum it is 966×644 RGBA when resident: about 2.37 MiB. There is
+At tier4 maximum it is 90×60 RGBA when resident: about 21.1 KiB. There is
 one base-color texture and no 32 MiB pair of simulated-relief maps. Mesh
-vertex/index data is about 6.3 MiB at six tier4 slabs (56,064 triangles),
+vertex/index data is about 19.3 MiB at six tier4 slabs (170,688 triangles),
 excluding GPU/carrier copies and allocator overhead. Upload borrows the CPU
 geometry directly instead of making a second serialized copy. These are
 storage counts, not measured frame-rate or peak-memory claims.
@@ -95,10 +95,10 @@ UDP remains on port 30018 with the existing `CUB1` v1 envelope:
 - `0x86`: u32 revision, u16 chunk index, up to 1024 package bytes.
 
 The package is a 16-byte header followed by one ordinary RGB PNG: `CGA1`,
-version byte 2, face count byte 6, six tier bytes (1–4), four reserved zero bytes.
+version byte 3, face count byte 6, six tier bytes (1–4), four reserved zero bytes.
 The atlas size is derived from the aligned grids. Maximum encoded size is 4 MiB.
-Version 2 identifies these revised tiers and crop rules; rebuild CubeSrv and
-Cubes together. Version 1 packages are rejected instead of misinterpreted.
+Version 3 identifies these revised tiers and crop rules; rebuild CubeSrv and
+Cubes together. Earlier package versions are rejected instead of misinterpreted.
 The client validates the header and PNG dimensions before native decoding.
 
 The gallery is static, not a timed slideshow. Its revision comes from the

@@ -11,8 +11,8 @@ from prepare_slides import SLIDES, TIERS, prepare, texture, bake, load_manifest,
 
 class PreparationTests(unittest.TestCase):
     def test_exact_tiers_crop_nearest_and_alpha(self):
-        self.assertEqual(list(TIERS.values()), [(64,8,8),(128,10,21),(256,14,31),(512,16,320)])
-        self.assertEqual([aligned_grid(tier) for tier in TIERS], [8,20,28,320])
+        self.assertEqual(list(TIERS.values()), [(64,8,8),(128,10,21),(256,14,31),(512,28,31)])
+        self.assertEqual([aligned_grid(tier) for tier in TIERS], [8,20,28,28])
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder)/'source.png'
             image = Image.new('RGBA',(200,100),(255,0,0,255))
@@ -62,10 +62,10 @@ class PreparationTests(unittest.TestCase):
                 Image.new('RGB',(TIERS[tier][0],)*2,color).save(root/f'{i}.png')
                 entries.append({'slide':i+1,'source':f'{i}.png','Size':tier})
             data=bake(entries,root)
-            self.assertEqual(data[:16],b'CGA1'+bytes([2,6,1,2,3,4,3,4])+bytes(4))
-            atlas=Image.open(io.BytesIO(data[16:]));self.assertEqual(atlas.size,(966,644))
+            self.assertEqual(data[:16],b'CGA1'+bytes([3,6,1,2,3,4,3,4])+bytes(4))
+            atlas=Image.open(io.BytesIO(data[16:]));self.assertEqual(atlas.size,(90,60))
             for i,(entry,color) in enumerate(zip(entries,colors)):
-                n=aligned_grid(entry['Size']);x,y=i%3*322,i//3*322
+                n=aligned_grid(entry['Size']);x,y=i%3*30,i//3*30
                 for dx,dy in ((0,0),(1,1),(n,n),(n+1,n+1)):
                     self.assertEqual(atlas.getpixel((x+dx,y+dy)),color)
             self.assertEqual(data,bake(entries,root))

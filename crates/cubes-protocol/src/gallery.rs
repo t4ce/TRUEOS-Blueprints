@@ -1,4 +1,4 @@
-//! Image gallery v2: six inward-facing slabs and a standard PNG atlas.
+//! Image gallery v3: six inward-facing slabs and a standard PNG atlas.
 //! Tier IDs are the only geometry settings accepted over the wire.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Tier { pub source: u32, pub blocks: u32, pub pixels: u32 }
@@ -6,7 +6,7 @@ pub const TIERS: [Tier; 4] = [
     Tier { source: 64, blocks: 8, pixels: 8 },
     Tier { source: 128, blocks: 10, pixels: 21 },
     Tier { source: 256, blocks: 14, pixels: 31 },
-    Tier { source: 512, blocks: 16, pixels: 320 },
+    Tier { source: 512, blocks: 28, pixels: 31 },
 ];
 impl Tier {
     /// CubeImage's largest bevel-aligned grid within the nominal pixel setting.
@@ -17,7 +17,7 @@ impl Tier {
             (base % q == 0 || q % base == 0) && q * 10 >= self.pixels * 9).unwrap()
     }
 }
-pub const VERSION: u8 = 2;
+pub const VERSION: u8 = 3;
 pub const FACES: usize = 6;
 pub const HEADER: usize = 16;
 pub const MAX_BYTES: usize = 4 * 1024 * 1024;
