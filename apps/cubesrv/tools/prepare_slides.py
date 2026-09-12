@@ -47,8 +47,8 @@ def load_manifest(path, faces=None):
     for entry in entries:
         if not isinstance(entry, dict) or set(entry) != {'slide', 'source', 'Size'}:
             raise ValueError('each source requires exactly slide, source and Size')
-        if type(entry['slide']) is not int or entry['slide'] < 1 or entry['slide'] in ids:
-            raise ValueError('slide IDs must be unique positive integers')
+        if type(entry['slide']) is not int or entry['slide'] < 0 or entry['slide'] in ids:
+            raise ValueError('slide IDs must be unique non-negative integers')
         ids.add(entry['slide'])
         if not isinstance(entry['Size'], str) or entry['Size'] not in TIERS or not isinstance(entry['source'], str):
             raise ValueError('Size must be tier1, tier2 or tier3')
@@ -56,9 +56,26 @@ def load_manifest(path, faces=None):
             raise ValueError('source must be a PNG/JPEG filename')
     by_id = {entry['slide']: entry for entry in entries}
     selected = faces if faces is not None else [entry['slide'] for entry in entries[:6]]
+    if not isinstance(selected, list) or len(selected) != 6 or any(type(i) is not int for i in selected):
+        raise ValueError('faces must contain six integer slide IDs')
     if len(set(selected)) != 6 or any(i not in by_id for i in selected):
         raise ValueError('select six different existing slide IDs')
     return [by_id[i] for i in selected]
+
+
+def load_faces(path):
+    """Gallery faces are editable; digest fields are generated bookkeeping."""
+    if not path.exists():
+        return None
+    gallery = json.loads(path.read_text())
+    if not isinstance(gallery, dict) or 'faces' not in gallery:
+        raise ValueError('gallery.json requires a faces array')
+    faces = gallery['faces']
+    if not isinstance(faces, list) or len(faces) != 6 or any(type(i) is not int or i < 0 for i in faces):
+        raise ValueError('faces must contain six non-negative integer slide IDs')
+    if len(set(faces)) != 6:
+        raise ValueError('faces must select six different slide IDs')
+    return faces
 
 
 def bake(entries, source_root):
@@ -78,7 +95,7 @@ def bake(entries, source_root):
         atlas.paste(padded, (face%3*tile, face//3*tile))
     png = io.BytesIO()
     atlas.save(png, format='PNG', optimize=True)
-    package = b'CGA1' + bytes([4, 6] + [int(e['Size'][-1]) for e in entries]) + bytes(4) + png.getvalue()
+    package = b'CGA1' + bytes([5, 6] + [int(e['Size'][-1]) for e in entries]) + bytes([1, 1, 0, 4]) + png.getvalue()
     if len(package) > 4*1024*1024: raise ValueError('gallery exceeds transfer budget')
     return package
 
@@ -95,12 +112,14 @@ def atomic_write(path, data):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--manifest', type=Path, default=SLIDES/'sources.json')
+    parser.add_argument('--gallery', type=Path, help='face selection; default: gallery.json beside the manifest')
     parser.add_argument('--source-root', type=Path, help='default: manifest directory')
     parser.add_argument('--output', type=Path, default=SLIDES)
-    parser.add_argument('--faces', type=int, nargs=6, metavar='SLIDE', help='-Z +X +Z -X -Y +Y slide IDs; default: first six manifest entries')
+    parser.add_argument('--faces', type=int, nargs=6, metavar='SLIDE', help='-Z +X +Z -X -Y +Y slide IDs; default: gallery.json faces, or first six manifest entries for a new gallery')
     args = parser.parse_args()
     try:
-        entries = load_manifest(args.manifest, args.faces)
+        faces = args.faces if args.faces is not None else load_faces(args.gallery or args.manifest.parent/'gallery.json')
+        entries = load_manifest(args.manifest, faces)
         package = bake(entries, args.source_root or args.manifest.parent)
         receipt = {'manifest_sha256': hashlib.sha256(args.manifest.read_bytes()).hexdigest(),
                    'package_sha256': hashlib.sha256(package).hexdigest(),

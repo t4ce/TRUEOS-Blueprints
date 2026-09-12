@@ -1,72 +1,62 @@
 [
   {
-    "slide": 11,
+    "slide": 0,
     "source": "testboard/checker_bw_48x48.png",
     "Size": "tier1"
   },
   {
-    "slide": 12,
+    "slide": 1,
     "source": "testboard/checker_bw_128x128.png",
     "Size": "tier2"
   },
   {
-    "slide": 13,
+    "slide": 2,
     "source": "testboard/checker_bw_256x256.png",
     "Size": "tier3"
   },
   {
-    "slide": 19,
+    "slide": 3,
     "source": "testboard/checker_rgb_48x48.png",
     "Size": "tier1"
   },
   {
-    "slide": 17,
+    "slide": 4,
     "source": "testboard/checker_rgb_128x128.png",
     "Size": "tier2"
   },
   {
-    "slide": 15,
+    "slide": 5,
     "source": "testboard/checker_rgb_256x256.png",
     "Size": "tier3"
   },
   {
-    "slide": 14,
-    "source": "testboard/checker_bw_512x512.png",
-    "Size": "tier3"
-  },
-  {
-    "slide": 16,
-    "source": "testboard/checker_rgb_512x512.png",
-    "Size": "tier3"
-  },
-  {
-    "slide": 18,
-    "source": "testboard/checker_rgb_512x512.png",
-    "Size": "tier3"
-  },
-  {
-    "slide": 20,
+    "slide": 10,
     "source": "testboard/01.png",
     "Size": "tier3"
   },
   {
-    "slide": 21,
+    "slide": 11,
     "source": "testboard/07.png",
     "Size": "tier3"
   },
   {
-    "slide": 22,
+    "slide": 12,
     "source": "testboard/Castle.png",
     "Size": "tier3"
   },
   {
-    "slide": 23,
+    "slide": 13,
     "source": "testboard/tee.png",
     "Size": "tier3"
   },
   {
-    "slide": 24,
+    "slide": 14,
     "source": "testboard/tee2.png",
     "Size": "tier3"
+  },
+  {
+    "slide": 15,
+    "source": "testboard/01.png",
+    "Size": "tier2"
   }
 ]

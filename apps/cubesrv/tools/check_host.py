@@ -11,7 +11,7 @@ APP = Path(__file__).resolve().parents[1]
 BLUEPRINTS = APP.parents[1]
 with tempfile.TemporaryDirectory(prefix='cubesrv-host-') as directory:
     root = Path(directory)
-    for name in ('slides','assets'): (root/name).symlink_to(APP/name, target_is_directory=True)
+    for name in ('slides','assets','tools'): (root/name).symlink_to(APP/name, target_is_directory=True)
     (root/'Cargo.toml').write_text(f'''[package]
 name = "cubesrv-host-check"
 version = "0.0.0"

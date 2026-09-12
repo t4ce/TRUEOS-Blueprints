@@ -5,10 +5,12 @@ import io
 import json
 import math
 import tempfile
+import subprocess
+import sys
 import unittest
 from pathlib import Path
 from PIL import Image
-from prepare_slides import SLIDES, TIERS, prepare, texture, bake, load_manifest
+from prepare_slides import SLIDES, TIERS, prepare, texture, bake, load_manifest, load_faces
 
 class PreparationTests(unittest.TestCase):
     def test_exact_tiers_and_crop_pad_without_scaling(self):
@@ -56,6 +58,38 @@ class PreparationTests(unittest.TestCase):
                 bad=[dict(e) for e in entries];bad[0][key]=value;path.write_text(json.dumps(bad))
                 with self.assertRaises(ValueError):load_manifest(path)
 
+    def test_zero_based_ids_and_invalid_selection(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/'sources.json'
+            entries=[{'slide':i,'source':f'{i}.png','Size':'tier1'} for i in range(6)]
+            path.write_text(json.dumps(entries))
+            self.assertEqual(load_manifest(path),entries)
+            for invalid in (-1,True,1):
+                bad=[dict(e) for e in entries];bad[0]['slide']=invalid
+                path.write_text(json.dumps(bad))
+                with self.assertRaises(ValueError):load_manifest(path)
+            for invalid in (None,{},[0,1,2,3,4,True],[0,1,2,3,4,-1],[0,1,2,3,4,4]):
+                path.write_text(json.dumps({'faces':invalid}))
+                with self.assertRaises(ValueError):load_faces(path)
+
+    def test_cli_preserves_edited_gallery_selection_and_ignores_stale_hashes(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);output=root/'built';manifest=root/'sources.json'
+            Image.new('RGB',(48,48),(255,0,0)).save(root/'image.png')
+            entries=[{'slide':i,'source':'image.png','Size':'tier1'} for i in range(7)]
+            manifest.write_text(json.dumps(entries))
+            gallery=root/'gallery.json'
+            for selection in ([6,5,4,3,2,0],[0,1,2,3,4,5]):
+                config={'faces':selection,'manifest_sha256':'stale','package_sha256':'stale'}
+                gallery.write_text(json.dumps(config))
+                subprocess.run([sys.executable,'-B',str(Path(__file__).with_name('prepare_slides.py')),
+                                '--manifest',str(manifest),'--output',str(output)],check=True,capture_output=True)
+                receipt=json.loads((output/'gallery.json').read_text())
+                self.assertEqual(receipt['faces'],selection)
+                self.assertEqual(json.loads(gallery.read_text()),config)
+                self.assertEqual((output/'gallery.cga').read_bytes(),bake(load_manifest(manifest,selection),root))
+                self.assertEqual(receipt['manifest_sha256'],hashlib.sha256(manifest.read_bytes()).hexdigest())
+
     def test_mixed_atlas_order_border_and_version(self):
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder);entries=[]
@@ -64,7 +98,7 @@ class PreparationTests(unittest.TestCase):
                 Image.new('RGB',(TIERS[tier][0],)*2,color).save(root/f'{i}.png')
                 entries.append({'slide':i+1,'source':f'{i}.png','Size':tier})
             data=bake(entries,root)
-            self.assertEqual(data[:16],b'CGA1'+bytes([4,6,1,2,3,1,2,3])+bytes(4))
+            self.assertEqual(data[:16],b'CGA1'+bytes([5,6,1,2,3,1,2,3,1,1,0,4]))
             atlas=Image.open(io.BytesIO(data[16:]));self.assertEqual(atlas.size,(102,68))
             for i,(entry,color) in enumerate(zip(entries,colors)):
                 n=TIERS[entry['Size']][2];x,y=i%3*34,i//3*34

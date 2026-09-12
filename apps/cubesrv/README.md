@@ -27,9 +27,10 @@ and 3 have two per side. There is no additional alignment crop.
 { "slide": 11, "source": "testboard/checker_bw_48x48.png", "Size": "tier1" }
 ```
 
-The first six entries fill **-Z, +X, +Z, -X, -Y, +Y**. The current examples
-show black/white tier1–3, followed by RGB tier1–3. Additional catalog entries
-remain available for selection. Legacy tier4 entries have moved to tier3.
+Slide IDs are unique non-negative integers; `0` is valid. Edit the `faces`
+array in `slides/gallery.json` to select six IDs in **-Z, +X, +Z, -X, -Y, +Y**
+order. The current selection is 10–15. A new catalog without gallery.json uses
+the first six sources. Additional catalog entries remain available for selection.
 Paths resolve relative to the manifest directory.
 
 Both the importer and `tools/CubeImage.html` create only 48×48, 128×128 or
@@ -46,7 +47,12 @@ geometry/grid/exposure controls, placement modes, orbit and experimental render
 modes are removed. Quantization stays fixed at 16 channel levels and exposure
 1.05. Native lighting uses PBR rather than the HTML's simple preview light.
 
-After changing the catalog or its images, run:
+`cargo bp cubesrv` automatically prepares the selected images in Cargo's build
+output directory and embeds the resulting package. Python 3 and Pillow are
+required on the build host. Source/config edits and image changes trigger a
+rebake; the build does not rewrite files under `slides/`.
+
+To also refresh the checked-in package and generated hashes, run:
 
 ```sh
 python3 -B tools/prepare_slides.py
@@ -55,14 +61,15 @@ python3 -B tools/prepare_slides.py
 To select six catalog IDs explicitly in face order:
 
 ```sh
-python3 -B tools/prepare_slides.py --faces 11 12 13 19 17 15
+python3 -B tools/prepare_slides.py --faces 10 11 12 13 14 15
 ```
 
-`--manifest`, `--source-root` and `--output` override their respective paths.
-The importer accepts PNG/JPG/JPEG/JGP and needs Pillow only at preparation time.
-It outputs `slides/gallery.cga` and the generated receipt `slides/gallery.json`.
-The build checks manifest/package hashes and the package header, then embeds
-that gallery and the existing 49-asset catalog. Original image files are kept.
+`--manifest`, `--gallery`, `--source-root` and `--output` override their respective
+paths. `--faces` overrides the saved selection; otherwise the importer preserves
+`gallery.json`'s faces. The importer accepts PNG/JPG/JPEG/JGP. The hash fields in
+`gallery.json` are generated bookkeeping; they never need hand editing. The build
+validates the freshly generated package before embedding it alongside the existing
+49-asset catalog. Original image files are kept.
 
 ## Rendering and transport
 
@@ -72,10 +79,14 @@ projection spans fronts and bevels; normals change lighting only. All six slabs
 share one indexed retained PBR mesh and one nearest-filtered PNG atlas. There
 are no per-image-pixel cube seeds or simulated normal/occlusion maps.
 
-The 2048-c1 world is 409.6 renderer units across. Slab centers are at ±204.8 on
-their corresponding axes. Each slab spans 144×144 units and is one block thick.
-Collision uses six analytic volumes and block bounds, without a dense empty
-world allocation. Small bevel recesses are solid for navigation.
+Every constituent cube is **c1**, with a side of 0.2 renderer units. The presets
+therefore occupy 6×6, 8×8 and 16×16 c1 (1.2×1.2, 1.6×1.6 and 3.2×3.2 renderer
+units), all one c1 thick. They stay centered on the six outer world faces.
+The 2048-c1 world is 409.6 renderer units across; each slab's depth cell sits
+just inside the boundary, with its center at ±1023.5 c1 (±204.7 renderer units).
+All cube minima lie on the integer c1 lattice. Like other c1 detail in Cubes,
+these cubes have no walking collision or Space-snap target. Flight still starts
+at the origin, so the images are small in the distance until approached.
 
 The largest atlas is 102×68, including duplicated edge texels: about 27.1 KiB
 when resident as RGBA. Six tier3 slabs have 56,064 triangles and about 6.3 MiB
@@ -90,7 +101,13 @@ UDP port 30018 retains the `CUB1` v1 envelope:
 - `0x86`: u32 revision, u16 chunk index, up to 1024 package bytes.
 
 The package has a 16-byte header followed by a standard RGB PNG: `CGA1`,
-version byte **4**, face count 6, six tier bytes (1–3), four reserved zero bytes.
+version byte **5**, face count 6, six tier bytes (1–3), cube side byte 1,
+coordinate-unit byte 1 (c1), and u16 little-endian world half-size 1024.
+Each face/tier is a compact regular grid descriptor for N² c1 cubes plus its
+atlas tile; the client expands exact integer cube positions through the shared
+`Layout::cube_min` contract. Rows run bottom to top and columns image-right to
+image-left. This sends cube placement without repeating per-cube coordinates
+or transmitting a mesh. Side, unit and world extent are validated on receipt.
 Older package versions and tier4 are rejected. The atlas dimensions are derived
 from the tiers and checked before decoding. Encoded size is bounded to 4 MiB.
 The revision comes from the package hash. Revision-mismatched chunks cannot mix
@@ -102,7 +119,7 @@ keep the current gallery visible. Matching layouts reuse the mesh; layout
 changes build the replacement before releasing the old one. Telemetry and
 periodic announcements continue; peers expire after 30 seconds disconnected.
 
-**Rebuild CubeSrv and Cubes together** for the final three-tier contract.
+**Rebuild CubeSrv and Cubes together** for the v5 c1 placement contract.
 TRUEOS must already support `RETAINED_MATERIAL_FLAG_NEAREST`; older kernels
 reject that material option. No new shader or kernel change is needed here.
 
