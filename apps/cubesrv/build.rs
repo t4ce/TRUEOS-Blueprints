@@ -40,10 +40,32 @@ fn catalog(directory: &str, constant: &str, expected: usize) -> String {
     source
 }
 
+// Packaging copies this app below its target directory. Resolve the shared
+// authored world from the enclosing Blueprint workspace, not a staging depth.
+fn world1_source() -> std::path::PathBuf {
+    if let Some(path) = env::var_os("CUBES_WORLD1_SOURCE") {
+        return fs::canonicalize(&path).unwrap_or_else(|error|
+            panic!("CUBES_WORLD1_SOURCE {path:?}: {error}"));
+    }
+    let manifest = std::path::PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
+    // The packager also stages a workspace mirror; use the outer source workspace.
+    let workspace = manifest.ancestors().filter(|root|
+        root.join("crates/cubes-protocol/Cargo.toml").is_file()
+        && root.join("api/Cargo.toml").is_file()).last()
+        .expect("cannot locate Blueprint workspace; set CUBES_WORLD1_SOURCE");
+    let path = workspace.parent().unwrap().join("Cubes/Cube/lvl27/world_01_sky.cubes");
+    fs::canonicalize(&path).unwrap_or_else(|error|
+        panic!("world1 source {}: {error}; set CUBES_WORLD1_SOURCE if Cubes is elsewhere", path.display()))
+}
+
 fn main() {
     println!("cargo:rerun-if-changed=assets");
     println!("cargo:rerun-if-changed=slides");
     let mut source = catalog("assets", "ASSETS", 49);
+    println!("cargo:rerun-if-env-changed=CUBES_WORLD1_SOURCE");
+    let world = world1_source();
+    println!("cargo:rerun-if-changed={}", world.display());
+    source.push_str(&format!("const WORLD1: &[u8] = include_bytes!({world:?});\n"));
     println!("cargo:rerun-if-changed=tools/prepare_slides.py");
     let out = std::path::PathBuf::from(env::var_os("OUT_DIR").unwrap());
     // Gallery sources, face selection and Holy frames are authored inputs; bake

@@ -169,3 +169,20 @@ and `python3 -B tools/test_walker_camera.py`. The host suites check all three
 presets, crop/padding, Holy alpha sparsity/order, source orientation, geometry, winding, collision, packet
 validation and native material descriptors. A live TRUEOS run is still needed
 to verify appearance, frame timing and actual GPU residency.
+
+## Key8 world1 terrain
+
+CubeSrv embeds `Cubes/Cube/lvl27/world_01_sky.cubes` at build time alongside the
+gallery and Holy packages. The normal CUB1 welcome (`0x81`) announces world ID 1
+and its byte/chunk counts; world requests (`0x03`) receive world chunks (`0x83`).
+The client downloads a complete world once per connection with bounded retries
+and validates it through the normal `.cubes` level decoder before entering.
+World1 is fixed for that server build; rebuilding the world requires reconnecting.
+
+Key8 uses that terrain's normal walker collision and nearest-first visibility
+selection, with the six images, center 3×3×3 c4 landmark and Holy VFX rendered
+in the same depth-tested frame. Spawn stays on top of the landmark. Portals and
+local editing remain disabled in this server-owned scene. Terrain submission
+reserves room for the landmark and all 48×48 possible Holy pixels within the
+existing 8192-instance limit; collision retains the full terrain.
+Rebuild both CubeSrv and Cubes for this addition.

@@ -5,6 +5,7 @@ The workspace patches target TRUEOS; several vendored dependencies do not build
 on Linux. This temporary manifest checks the same server without those patches.
 """
 from pathlib import Path
+import os
 import subprocess
 import tempfile
 APP = Path(__file__).resolve().parents[1]
@@ -32,4 +33,5 @@ serde_json = "=1.0.150"
 sha2 = "0.10"
 ''')
     subprocess.run(['cargo','check','--offline','--manifest-path',str(root/'Cargo.toml'),
-                    '--target-dir',str(APP/'target/host-check')],cwd=root,check=True)
+                    '--target-dir',str(APP/'target/host-check')],cwd=root,check=True,
+                    env={**os.environ, 'CUBES_WORLD1_SOURCE': str(BLUEPRINTS.parent/'Cubes/Cube/lvl27/world_01_sky.cubes')})

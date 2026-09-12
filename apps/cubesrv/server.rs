@@ -141,6 +141,8 @@ async fn send_welcome(
     peer: SocketAddr,
     player_id: u32,
 ) {
+    let _ = socket.send_to(&protocol::welcome(player_id, 1, WORLD1.len(),
+        WORLD1.len().div_ceil(protocol::BLOB_CHUNK_BYTES) as u16, ASSETS.len() as u8), peer).await;
     let (revision, holy_frame) = {
         let state = state.read().await;
         (state.revision, state.holy_frame)
@@ -174,7 +176,7 @@ async fn handle_packet(
     };
     match packet {
         ClientPacket::Hello { username, .. } => {
-            let world_id = 27;
+            let world_id = 1;
             let player_id = state.write().await.join(peer, world_id, username);
             match player_id {
                 Some(player_id) => send_welcome(socket, state, peer, player_id).await,
@@ -184,7 +186,7 @@ async fn handle_packet(
             }
         }
         ClientPacket::Telemetry(mut telemetry) => {
-            telemetry.world_id = 27;
+            telemetry.world_id = 1;
             let accepted = state.write().await.telemetry(peer, telemetry);
             let Some((player_id, send_info, recipients)) = accepted else {
                 return;
@@ -227,8 +229,15 @@ async fn handle_packet(
                 let _ = socket.send_to(&packet, peer).await;
             }
         }
-        ClientPacket::WorldRequest { .. } => {
-            let _ = socket.send_to(&protocol::error(5), peer).await;
+        ClientPacket::WorldRequest { chunk } => {
+            {
+                let mut state = state.write().await;
+                let Some(player) = state.players.get_mut(&peer) else { return; };
+                player.last_seen = time::Instant::now();
+            }
+            if let Some(packet) = protocol::blob_chunk(BlobKind::World, 1, chunk, WORLD1) {
+                let _ = socket.send_to(&packet, peer).await;
+            }
         }
         ClientPacket::AssetRequest { asset_id, chunk } => {
             let Some(asset) = blob(ASSETS, asset_id) else {
@@ -261,7 +270,8 @@ async fn udp_loop(state: Arc<RwLock<ServerState>>) {
         };
         logl::log(
             level::INFO,
-            format_args!("cubesrv: udp listening on {addr}"),
+            format_args!("cubesrv: udp listening on {addr} world=1 world_bytes={} world_chunks={} welcome=0x81",
+                WORLD1.len(), WORLD1.len().div_ceil(protocol::BLOB_CHUNK_BYTES)),
         );
 
         let mut next_slide = time::Instant::now() + Duration::from_secs(10);
