@@ -14,7 +14,7 @@ from prepare_slides import SLIDES, TIERS, prepare, texture, bake, load_manifest,
 
 class PreparationTests(unittest.TestCase):
     def test_exact_tiers_and_crop_pad_without_scaling(self):
-        self.assertEqual(list(TIERS.values()),[(48,6,6),(128,8,16),(256,16,32)])
+        self.assertEqual(list(TIERS.values()),[(48,6,6),(128,8,16),(256,16,128)])
         with tempfile.TemporaryDirectory() as folder:
             path=Path(folder)/'source.png'
             for tier,(side,_,_) in TIERS.items():
@@ -98,10 +98,10 @@ class PreparationTests(unittest.TestCase):
                 Image.new('RGB',(TIERS[tier][0],)*2,color).save(root/f'{i}.png')
                 entries.append({'slide':i+1,'source':f'{i}.png','Size':tier})
             data=bake(entries,root)
-            self.assertEqual(data[:16],b'CGA1'+bytes([5,6,1,2,3,1,2,3,1,1,0,4]))
-            atlas=Image.open(io.BytesIO(data[16:]));self.assertEqual(atlas.size,(102,68))
+            self.assertEqual(data[:16],b'CGA1'+bytes([6,6,1,2,3,1,2,3,1,1,0,4]))
+            atlas=Image.open(io.BytesIO(data[16:]));self.assertEqual(atlas.size,(390,260))
             for i,(entry,color) in enumerate(zip(entries,colors)):
-                n=TIERS[entry['Size']][2];x,y=i%3*34,i//3*34
+                n=TIERS[entry['Size']][2];x,y=i%3*130,i//3*130
                 for dx,dy in ((0,0),(1,1),(n,n),(n+1,n+1)):
                     self.assertEqual(atlas.getpixel((x+dx,y+dy)),color)
             self.assertEqual(data,bake(entries,root))

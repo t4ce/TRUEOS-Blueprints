@@ -11,13 +11,12 @@ The gallery is static. Another numbered mode disconnects; Key 8 reconnects.
 |---|---|---|---|---|
 | tier1 | 48×48 | 1×6×6 | 6 | 36 |
 | tier2 | 128×128 | 1×8×8 | 16 | 64 |
-| tier3 | 256×256 | 1×16×16 | 32 | 256 |
+| tier3 | 256×256 | 1×16×16 | 128 | 256 |
 
 These are the only supported presets in the importer, client and HTML preview.
 The last column of the requested texture configuration means pixels across the
 whole slab face; the world still has six image slabs. Each preset aligns exactly
-with the reference cube bevels. Tier1 has one texture cell per block; tiers 2
-and 3 have two per side. There is no additional alignment crop.
+with the reference cube bevels. Tier1 has one texture cell per block side; tier2 has two and tier3 has eight. There is no additional alignment crop.
 
 ## Source import and preview
 
@@ -88,7 +87,7 @@ All cube minima lie on the integer c1 lattice. Like other c1 detail in Cubes,
 these cubes have no walking collision or Space-snap target. Flight still starts
 at the origin, so the images are small in the distance until approached.
 
-The largest atlas is 102×68, including duplicated edge texels: about 27.1 KiB
+The largest atlas is 390×260, including duplicated edge texels: about 396.1 KiB
 when resident as RGBA. Six tier3 slabs have 56,064 triangles and about 6.3 MiB
 of vertex/index data, excluding carrier copies and allocator overhead. These
 are storage counts, not measured native frame-time or peak-memory claims.
@@ -101,7 +100,7 @@ UDP port 30018 retains the `CUB1` v1 envelope:
 - `0x86`: u32 revision, u16 chunk index, up to 1024 package bytes.
 
 The package has a 16-byte header followed by a standard RGB PNG: `CGA1`,
-version byte **5**, face count 6, six tier bytes (1–3), cube side byte 1,
+version byte **6**, face count 6, six tier bytes (1–3), cube side byte 1,
 coordinate-unit byte 1 (c1), and u16 little-endian world half-size 1024.
 Each face/tier is a compact regular grid descriptor for N² c1 cubes plus its
 atlas tile; the client expands exact integer cube positions through the shared
@@ -119,7 +118,7 @@ keep the current gallery visible. Matching layouts reuse the mesh; layout
 changes build the replacement before releasing the old one. Telemetry and
 periodic announcements continue; peers expire after 30 seconds disconnected.
 
-**Rebuild CubeSrv and Cubes together** for the v5 c1 placement contract.
+**Rebuild CubeSrv and Cubes together** for the v6 c1 placement contract.
 TRUEOS must already support `RETAINED_MATERIAL_FLAG_NEAREST`; older kernels
 reject that material option. No new shader or kernel change is needed here.
 

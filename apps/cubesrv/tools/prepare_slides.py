@@ -12,7 +12,7 @@ from PIL import Image, ImageOps
 
 SLIDES = Path(__file__).resolve().parents[1] / 'slides'
 # source resolution, 1 x N x N assembly, projected texture pixels per slab face.
-TIERS = {'tier1': (48, 6, 6), 'tier2': (128, 8, 16), 'tier3': (256, 16, 32)}
+TIERS = {'tier1': (48, 6, 6), 'tier2': (128, 8, 16), 'tier3': (256, 16, 128)}
 EXTENSIONS = ('.png', '.jpg', '.jpeg', '.jgp')
 
 
@@ -95,7 +95,7 @@ def bake(entries, source_root):
         atlas.paste(padded, (face%3*tile, face//3*tile))
     png = io.BytesIO()
     atlas.save(png, format='PNG', optimize=True)
-    package = b'CGA1' + bytes([5, 6] + [int(e['Size'][-1]) for e in entries]) + bytes([1, 1, 0, 4]) + png.getvalue()
+    package = b'CGA1' + bytes([6, 6] + [int(e['Size'][-1]) for e in entries]) + bytes([1, 1, 0, 4]) + png.getvalue()
     if len(package) > 4*1024*1024: raise ValueError('gallery exceeds transfer budget')
     return package
 

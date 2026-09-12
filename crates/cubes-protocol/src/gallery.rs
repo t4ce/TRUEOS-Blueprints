@@ -1,17 +1,17 @@
-//! Image gallery v5: six inward-facing c1 cube grids and a standard PNG atlas.
+//! Image gallery v6: six inward-facing c1 cube grids and a standard PNG atlas.
 //! Tier IDs encode regular grids of unit cubes; positions use the c1 lattice.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Tier { pub source: u32, pub blocks: u32, pub pixels: u32 }
 pub const TIERS: [Tier; 3] = [
     Tier { source: 48, blocks: 6, pixels: 6 },
     Tier { source: 128, blocks: 8, pixels: 16 },
-    Tier { source: 256, blocks: 16, pixels: 32 },
+    Tier { source: 256, blocks: 16, pixels: 128 },
 ];
 impl Tier {
     /// These three presets align exactly; no extra texture crop is necessary.
     pub const fn grid(self) -> u32 { self.pixels }
 }
-pub const VERSION: u8 = 5;
+pub const VERSION: u8 = 6;
 pub const C1: f32 = 0.2;
 pub const CUBE_SIDE: i32 = 1;
 pub const WORLD_HALF_C1: i32 = 1024;
