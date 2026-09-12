@@ -1,13 +1,23 @@
-//! Image gallery v1: six inward-facing slabs and a standard PNG atlas.
+//! Image gallery v2: six inward-facing slabs and a standard PNG atlas.
 //! Tier IDs are the only geometry settings accepted over the wire.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Tier { pub source: u32, pub blocks: u32, pub pixels: u32 }
 pub const TIERS: [Tier; 4] = [
-    Tier { source: 64, blocks: 12, pixels: 60 },
-    Tier { source: 128, blocks: 18, pixels: 90 },
-    Tier { source: 256, blocks: 24, pixels: 120 },
-    Tier { source: 512, blocks: 32, pixels: 320 },
+    Tier { source: 64, blocks: 8, pixels: 8 },
+    Tier { source: 128, blocks: 10, pixels: 21 },
+    Tier { source: 256, blocks: 14, pixels: 31 },
+    Tier { source: 512, blocks: 16, pixels: 320 },
 ];
+impl Tier {
+    /// CubeImage's largest bevel-aligned grid within the nominal pixel setting.
+    /// The source crop is grid / pixels (at most 5% removed at either edge).
+    pub fn grid(self) -> u32 {
+        let base = self.blocks * 10;
+        (1..=self.pixels).rev().find(|&q|
+            (base % q == 0 || q % base == 0) && q * 10 >= self.pixels * 9).unwrap()
+    }
+}
+pub const VERSION: u8 = 2;
 pub const FACES: usize = 6;
 pub const HEADER: usize = 16;
 pub const MAX_BYTES: usize = 4 * 1024 * 1024;
@@ -16,19 +26,19 @@ pub const MAX_BYTES: usize = 4 * 1024 * 1024;
 pub struct Layout { pub tiers: [u8; FACES] }
 impl Layout {
     pub fn tier(self, face: usize) -> Tier { TIERS[(self.tiers[face] - 1) as usize] }
-    pub fn tile(self) -> u32 { self.tiers.iter().map(|t| TIERS[(*t-1) as usize].pixels).max().unwrap() + 2 }
+    pub fn tile(self) -> u32 { self.tiers.iter().map(|t| TIERS[(*t-1) as usize].grid()).max().unwrap() + 2 }
     pub fn extent(self) -> [u32; 2] { [self.tile()*3, self.tile()*2] }
     /// One duplicated edge texel prevents neighboring pictures bleeding at borders.
     pub fn uv(self, face: usize, uv: [f32; 2]) -> [f32; 2] {
         let tile = self.tile();
-        let pixels = self.tier(face).pixels as f32;
+        let pixels = self.tier(face).grid() as f32;
         let [w,h] = self.extent().map(|v| v as f32);
         [(face as u32 % 3 * tile + 1) as f32 / w + uv[0]*pixels/w,
          (face as u32 / 3 * tile + 1) as f32 / h + uv[1]*pixels/h]
     }
     pub fn parse(bytes: &[u8]) -> Option<(Self, &[u8])> {
         if bytes.len() <= HEADER || bytes.len() > MAX_BYTES || &bytes[..4] != b"CGA1"
-            || bytes[4] != 1 || bytes[5] != 6 || bytes[12..16] != [0;4] { return None; }
+            || bytes[4] != VERSION || bytes[5] != 6 || bytes[12..16] != [0;4] { return None; }
         let tiers: [u8;6] = bytes[6..12].try_into().ok()?;
         if tiers.iter().any(|t| !(1..=4).contains(t)) { return None; }
         let layout = Self { tiers };

@@ -16,14 +16,17 @@ cube stay in the local-world renderer.
 
 | Size | Normalized source | Cube assembly | Texture pixels across a slab face | Blocks |
 |---|---|---|---|---|
-| tier1 | 64×64 | 1×12×12 | 60 | 144 |
-| tier2 | 128×128 | 1×18×18 | 90 | 324 |
-| tier3 | 256×256 | 1×24×24 | 120 | 576 |
-| tier4 | 512×512 | 1×32×32 | 320 | 1,024 |
+| tier1 | 64×64 | 1×8×8 | 8 | 64 |
+| tier2 | 128×128 | 1×10×10 | 21 | 100 |
+| tier3 | 256×256 | 1×14×14 | 31 | 196 |
+| tier4 | 512×512 | 1×16×16 | 320 | 256 |
 
 The projected pixel count applies across the **whole assembly**, matching
-`CubeImage.html`, not independently to every block. All four presets align
-with the reference cube's 10% bevel and need no additional edge crop.
+`CubeImage.html`, not independently to every block. The nominal settings use
+its bevel-aligned sampling: tier1 shows 8 cells without cropping; tier2 shows
+20 cells with a 20/21 centered source crop; tier3 shows 28 cells with a 28/31
+centered source crop; tier4 shows 320 cells without cropping. This removes
+about 2.38% per edge for tier2 and 4.84% for tier3.
 
 The first six manifest entries fill **-Z, +X, +Z, -X, -Y, +Y**, in that order.
 Additional entries remain available for selection. Paths resolve relative to
@@ -71,7 +74,7 @@ world grid. Decorative bevel recesses are treated as solid for navigation.
 The atlas uses a 3×2 layout with a duplicated one-texel border per image.
 At tier4 maximum it is 966×644 RGBA when resident: about 2.37 MiB. There is
 one base-color texture and no 32 MiB pair of simulated-relief maps. Mesh
-vertex/index data is about 25.2 MiB at six tier4 slabs (222,720 triangles),
+vertex/index data is about 6.3 MiB at six tier4 slabs (56,064 triangles),
 excluding GPU/carrier copies and allocator overhead. Upload borrows the CPU
 geometry directly instead of making a second serialized copy. These are
 storage counts, not measured frame-rate or peak-memory claims.
@@ -92,8 +95,10 @@ UDP remains on port 30018 with the existing `CUB1` v1 envelope:
 - `0x86`: u32 revision, u16 chunk index, up to 1024 package bytes.
 
 The package is a 16-byte header followed by one ordinary RGB PNG: `CGA1`,
-version byte 1, face count byte 6, six tier bytes (1–4), four reserved zero bytes.
-The atlas size is derived from the tiers. Maximum encoded size is 4 MiB.
+version byte 2, face count byte 6, six tier bytes (1–4), four reserved zero bytes.
+The atlas size is derived from the aligned grids. Maximum encoded size is 4 MiB.
+Version 2 identifies these revised tiers and crop rules; rebuild CubeSrv and
+Cubes together. Version 1 packages are rejected instead of misinterpreted.
 The client validates the header and PNG dimensions before native decoding.
 
 The gallery is static, not a timed slideshow. Its revision comes from the
@@ -120,5 +125,5 @@ In TRUEOS: `python3 -B tools/test_picasso_pbr_state.py` and
 dependencies, avoiding the workspace's TRUEOS-specific vendor patches.
 Native appearance, upload residency, timing and peak memory require a live
 TRUEOS run. The host network/geometry suite passes all 13 tests, and the
-walker suite passes all 90 tests, including six-face collision, pose-preserving
+walker suite passes all 92 tests, including six-face collision, pose-preserving
 gallery replacement and the authored portal fixtures.

@@ -12,8 +12,8 @@ from PIL import Image, ImageOps
 
 SLIDES = Path(__file__).resolve().parents[1] / 'slides'
 # source resolution, 1 x N x N assembly, projected texture pixels per slab face.
-TIERS = {'tier1': (64, 12, 60), 'tier2': (128, 18, 90),
-         'tier3': (256, 24, 120), 'tier4': (512, 32, 320)}
+TIERS = {'tier1': (64, 8, 8), 'tier2': (128, 10, 21),
+         'tier3': (256, 14, 31), 'tier4': (512, 16, 320)}
 EXTENSIONS = ('.png', '.jpg', '.jpeg', '.jgp')
 
 
@@ -29,14 +29,23 @@ def prepare(source, size='tier4'):
         return image.crop((x, y, x+crop, y+crop)).resize((side, side), Image.Resampling.NEAREST)
 
 
+def aligned_grid(size):
+    """Match CubeImage's least-crop bevel-aligned candidate for this setting."""
+    _, blocks, pixels = TIERS[size]
+    base = blocks * 10
+    return max(q for q in range(1, pixels+1)
+               if (base % q == 0 or q % base == 0) and q*10 >= pixels*9)
+
+
 def texture(image, size):
     """Bake floor(uv*grid)+.5 sampling and HTML's exposure 1.05 / palette 16."""
     pixels = TIERS[size][2]
-    sampled = Image.new('RGB', (pixels, pixels))
+    grid = aligned_grid(size)
+    sampled = Image.new('RGB', (grid, grid))
     # Explicit center sampling avoids resampler-dependent half-pixel rounding.
-    sampled.putdata([image.getpixel((min(image.width-1, int((x+.5)*image.width/pixels)),
-                                    min(image.height-1, int((y+.5)*image.height/pixels))))
-                     for y in range(pixels) for x in range(pixels)])
+    sampled.putdata([image.getpixel((min(image.width-1, int((.5+(x+.5-grid/2)/pixels)*image.width)),
+                                    min(image.height-1, int((.5+(y+.5-grid/2)/pixels)*image.height))))
+                     for y in range(grid) for x in range(grid)])
     return sampled.point([math.floor(min(1, v/255*1.05)*15+.5)*17 for v in range(256)]*3)
 
 
@@ -63,7 +72,7 @@ def load_manifest(path, faces=None):
 
 
 def bake(entries, source_root):
-    tile = max(TIERS[e['Size']][2] for e in entries)+2
+    tile = max(aligned_grid(e['Size']) for e in entries)+2
     atlas = Image.new('RGB', (tile*3, tile*2))
     for face, entry in enumerate(entries):
         image = texture(prepare(source_root / entry['source'], entry['Size']), entry['Size'])
@@ -79,7 +88,7 @@ def bake(entries, source_root):
         atlas.paste(padded, (face%3*tile, face//3*tile))
     png = io.BytesIO()
     atlas.save(png, format='PNG', optimize=True)
-    package = b'CGA1' + bytes([1, 6] + [int(e['Size'][-1]) for e in entries]) + bytes(4) + png.getvalue()
+    package = b'CGA1' + bytes([2, 6] + [int(e['Size'][-1]) for e in entries]) + bytes(4) + png.getvalue()
     if len(package) > 4*1024*1024: raise ValueError('gallery exceeds transfer budget')
     return package
 

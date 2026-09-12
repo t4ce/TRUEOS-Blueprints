@@ -7,33 +7,37 @@ import tempfile
 import unittest
 from pathlib import Path
 from PIL import Image
-from prepare_slides import SLIDES, TIERS, prepare, texture, bake, load_manifest
+from prepare_slides import SLIDES, TIERS, prepare, texture, bake, load_manifest, aligned_grid
 
 class PreparationTests(unittest.TestCase):
     def test_exact_tiers_crop_nearest_and_alpha(self):
-        self.assertEqual(list(TIERS.values()), [(64,12,60),(128,18,90),(256,24,120),(512,32,320)])
+        self.assertEqual(list(TIERS.values()), [(64,8,8),(128,10,21),(256,14,31),(512,16,320)])
+        self.assertEqual([aligned_grid(tier) for tier in TIERS], [8,20,28,320])
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder)/'source.png'
             image = Image.new('RGBA',(200,100),(255,0,0,255))
             image.paste((0,255,0,255),(50,0,150,100))
             image.save(path)
-            for tier,(side,_,grid) in TIERS.items():
+            for tier,(side,_,pixels) in TIERS.items():
                 result = prepare(path,tier)
                 self.assertEqual(result.size,(side,side))
                 self.assertEqual(result.getextrema(),((0,0),(255,255),(0,0)))
-                self.assertEqual(texture(result,tier).size,(grid,grid))
+                self.assertEqual(texture(result,tier).size,(aligned_grid(tier),)*2)
             Image.new('RGBA',(10,20),(255,0,0,0)).save(path)
             self.assertEqual(prepare(path,'tier1').getextrema(),((0,0),)*3)
 
     def test_center_sampling_matches_html_at_every_grid_cell(self):
-        for tier,(side,_,grid) in TIERS.items():
+        for tier,(side,_,pixels) in TIERS.items():
+            grid = aligned_grid(tier)
             image=Image.new('RGB',(side,side))
             image.putdata([(x%256,y%256,(x+y)%256) for y in range(side) for x in range(side)])
             result=texture(image,tier)
-            for x,y in ((0,0),(grid//2,grid//2),(grid-1,grid-1)):
-                import math
-                rgb=image.getpixel((int((x+.5)*side/grid),int((y+.5)*side/grid)))
-                self.assertEqual(result.getpixel((x,y)),tuple(math.floor(min(1,v/255*1.05)*15+.5)*17 for v in rgb))
+            for y in range(grid):
+                for x in range(grid):
+                    import math
+                    crop=grid/pixels
+                    rgb=image.getpixel((int((.5+((x+.5)/grid-.5)*crop)*side),int((.5+((y+.5)/grid-.5)*crop)*side)))
+                    self.assertEqual(result.getpixel((x,y)),tuple(math.floor(min(1,v/255*1.05)*15+.5)*17 for v in rgb))
 
     def test_manifest_rejects_unknown_sizes_dimensions_duplicates_and_face_ids(self):
         entries=[{'slide':i+1,'source':f'{i}.png','Size':'tier1'} for i in range(6)]
@@ -58,10 +62,10 @@ class PreparationTests(unittest.TestCase):
                 Image.new('RGB',(TIERS[tier][0],)*2,color).save(root/f'{i}.png')
                 entries.append({'slide':i+1,'source':f'{i}.png','Size':tier})
             data=bake(entries,root)
-            self.assertEqual(data[:16],b'CGA1'+bytes([1,6,1,2,3,4,3,4])+bytes(4))
+            self.assertEqual(data[:16],b'CGA1'+bytes([2,6,1,2,3,4,3,4])+bytes(4))
             atlas=Image.open(io.BytesIO(data[16:]));self.assertEqual(atlas.size,(966,644))
             for i,(entry,color) in enumerate(zip(entries,colors)):
-                n=TIERS[entry['Size']][2];x,y=i%3*322,i//3*322
+                n=aligned_grid(entry['Size']);x,y=i%3*322,i//3*322
                 for dx,dy in ((0,0),(1,1),(n,n),(n+1,n+1)):
                     self.assertEqual(atlas.getpixel((x+dx,y+dy)),color)
             self.assertEqual(data,bake(entries,root))
