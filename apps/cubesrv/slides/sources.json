@@ -1,92 +1,72 @@
 [
   {
     "slide": 11,
-    "source": "testboard/ChatGPT Image 12. Sept. 2026, 09_55_32 (1).png",
+    "source": "testboard/checker_bw_64x64.png",
     "Size": "tier1"
   },
   {
     "slide": 12,
-    "source": "testboard/ChatGPT Image 12. Sept. 2026, 09_55_33 (2).png",
+    "source": "testboard/checker_bw_128x128.png",
     "Size": "tier2"
   },
   {
     "slide": 13,
-    "source": "testboard/ChatGPT Image 12. Sept. 2026, 09_55_33 (3).png",
+    "source": "testboard/checker_bw_256x256.png",
     "Size": "tier3"
   },
   {
     "slide": 14,
-    "source": "testboard/ChatGPT Image 12. Sept. 2026, 09_55_33 (4).png",
+    "source": "testboard/checker_bw_512x512.png",
     "Size": "tier4"
   },
   {
     "slide": 15,
-    "source": "testboard/ChatGPT Image 12. Sept. 2026, 09_55_33 (5).png",
+    "source": "testboard/checker_rgb_256x256.png",
     "Size": "tier3"
   },
   {
     "slide": 16,
-    "source": "testboard/ChatGPT Image 12. Sept. 2026, 09_55_34 (6).png",
+    "source": "testboard/checker_rgb_512x512.png",
     "Size": "tier4"
   },
   {
     "slide": 17,
-    "source": "testboard/ChatGPT Image 12. Sept. 2026, 09_55_34 (7).png",
+    "source": "testboard/checker_rgb_128x128.png",
     "Size": "tier2"
   },
   {
     "slide": 18,
-    "source": "testboard/ChatGPT Image 12. Sept. 2026, 09_55_34 (8).png",
+    "source": "testboard/checker_rgb_512x512.png",
     "Size": "tier4"
   },
   {
-    "slide": 1,
-    "source": "../../../../TRUEOS/tools/d4c1829a-4abb-4247-a4a1-3e0171482de7.png",
+    "slide": 19,
+    "source": "testboard/checker_rgb_64x64.png",
+    "Size": "tier1"
+  },
+  {
+    "slide": 20,
+    "source": "testboard/01.png",
     "Size": "tier4"
   },
   {
-    "slide": 2,
-    "source": "../../../../TRUEOS/tools/HorizonServer.png",
+    "slide": 21,
+    "source": "testboard/07.png",
     "Size": "tier4"
   },
   {
-    "slide": 3,
-    "source": "../../../../TRUEOS/tools/updlive/noway.png",
+    "slide": 22,
+    "source": "testboard/Castle.png",
+    "Size": "tier3"
+  },
+  {
+    "slide": 23,
+    "source": "testboard/tee.png",
     "Size": "tier4"
   },
   {
-    "slide": 4,
-    "source": "../../../../TRUEOS/tools/updlive/nway.png",
-    "Size": "tier4"
-  },
-  {
-    "slide": 5,
-    "source": "../../../../TRUEOS/tools/updlive/0way.png",
-    "Size": "tier4"
-  },
-  {
-    "slide": 6,
-    "source": "../../../../TRUEOS/tools/vid/demo_yelly_first_frame.png",
-    "Size": "tier4"
-  },
-  {
-    "slide": 7,
-    "source": "../../../../TRUEOS/tools/vid/Buro4K.jpeg",
-    "Size": "tier4"
-  },
-  {
-    "slide": 8,
-    "source": "../../../../TRUEOS/tools/vid/YellyFHD.jpg",
-    "Size": "tier4"
-  },
-  {
-    "slide": 9,
-    "source": "../../../../TRUEOS/tools/vid/Photo from 2026-04-26 02-00-42.935475.jpeg",
-    "Size": "tier4"
-  },
-  {
-    "slide": 10,
-    "source": "../../../../TRUEOS/tools/vid/IMG_20260426_020424.jpg",
+    "slide": 24,
+    "source": "testboard/tee2.png",
     "Size": "tier4"
   }
 ]
