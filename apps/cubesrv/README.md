@@ -1,129 +1,121 @@
-# Six-face CubeImage gallery
+# Three-tier CubeImage gallery
 
-Key 8 opens the empty cube world with one centered image slab on each of its
-six faces. The slabs face inward. The initial camera is at `[0, 0, 0]`, looking
-along -Z. Mouse look, flight, surface walking, Space and Home remain available.
-Another numbered mode disconnects; Key 8 reconnects. Placement and the companion
-cube stay in the local-world renderer.
+Key 8 connects Cubes to CubeSrv and downloads its embedded gallery. Six image
+slabs sit at the centers of the six outer faces of the whole 4×4×4-chunk world,
+facing inward. The player starts in flight at `[0, 0, 0]`, looking along -Z.
+The gallery is static. Another numbered mode disconnects; Key 8 reconnects.
 
-## Source contract
+## Final asset presets
 
-`slides/sources.json` is a catalog of records with exactly these fields:
+| Size | Source canvas | Cube build | Texture pixels across a face | Blocks |
+|---|---|---|---|---|
+| tier1 | 48×48 | 1×6×6 | 6 | 36 |
+| tier2 | 128×128 | 1×8×8 | 16 | 64 |
+| tier3 | 256×256 | 1×16×16 | 32 | 256 |
+
+These are the only supported presets in the importer, client and HTML preview.
+The last column of the requested texture configuration means pixels across the
+whole slab face; the world still has six image slabs. Each preset aligns exactly
+with the reference cube bevels. Tier1 has one texture cell per block; tiers 2
+and 3 have two per side. There is no additional alignment crop.
+
+## Source import and preview
+
+`slides/sources.json` contains records with exactly these fields:
 
 ```json
-{ "slide": 11, "source": "testboard/checker_bw_64x64.png", "Size": "tier1" }
+{ "slide": 11, "source": "testboard/checker_bw_48x48.png", "Size": "tier1" }
 ```
 
-| Size | Normalized source | Cube assembly | Texture pixels across a slab face | Blocks |
-|---|---|---|---|---|
-| tier1 | 64×64 | 1×8×8 | 8 | 64 |
-| tier2 | 128×128 | 1×10×10 | 21 | 100 |
-| tier3 | 256×256 | 1×14×14 | 31 | 196 |
-| tier4 | 512×512 | 1×28×28 | 31 | 784 |
+The first six entries fill **-Z, +X, +Z, -X, -Y, +Y**. The current examples
+show black/white tier1–3, followed by RGB tier1–3. Additional catalog entries
+remain available for selection. Legacy tier4 entries have moved to tier3.
+Paths resolve relative to the manifest directory.
 
-The projected pixel count applies across the **whole assembly**, matching
-`CubeImage.html`, not independently to every block. The nominal settings use
-its bevel-aligned sampling: tier1 shows 8 cells without cropping; tier2 shows
-20 cells with a 20/21 centered source crop; tier3 shows 28 cells with a 28/31
-centered source crop; tier4 also shows 28 cells with a 28/31 centered source
-crop. This removes about 2.38% per edge for tier2 and 4.84% for tier3 and tier4.
+Both the importer and `tools/CubeImage.html` create only 48×48, 128×128 or
+256×256 source canvases. The selected preset determines the destination size:
+large axes are center-cropped; small axes are centered on black. Pixels are
+never rescaled. An image that is wide but short is cropped horizontally and
+padded vertically. Odd spare pixels go on the right/bottom. Transparency is
+composited over black; JPEG orientation is honored.
 
-The first six manifest entries fill **-Z, +X, +Z, -X, -Y, +Y**, in that order.
-Additional entries remain available for selection. Paths resolve relative to
-the manifest directory. Prepare after editing sources or replacing images:
+The HTML has one size selector that sets source size, cube count and texture
+pixel count together. Its fixed opposite-side view matches the source preview.
+Wheel zoom, image loading, image reset and PNG capture remain. The old free-form
+geometry/grid/exposure controls, placement modes, orbit and experimental render
+modes are removed. Quantization stays fixed at 16 channel levels and exposure
+1.05. Native lighting uses PBR rather than the HTML's simple preview light.
+
+After changing the catalog or its images, run:
 
 ```sh
 python3 -B tools/prepare_slides.py
 ```
 
-To select six other catalog IDs in that same face order:
+To select six catalog IDs explicitly in face order:
 
 ```sh
-python3 -B tools/prepare_slides.py --faces 11 12 13 14 15 16
+python3 -B tools/prepare_slides.py --faces 11 12 13 19 17 15
 ```
 
 `--manifest`, `--source-root` and `--output` override their respective paths.
-The importer accepts PNG/JPG/JPEG/JGP, applies EXIF orientation, composites
-transparency over black, center-crops to square, and resizes with nearest
-sampling. It then bakes the HTML's grid-center sampling, exposure 1.05 and
-16 channel levels. Sources are preserved. Pillow is required only for the
-importer, not for a server build or runtime.
+The importer accepts PNG/JPG/JPEG/JGP and needs Pillow only at preparation time.
+It outputs `slides/gallery.cga` and the generated receipt `slides/gallery.json`.
+The build checks manifest/package hashes and the package header, then embeds
+that gallery and the existing 49-asset catalog. Original image files are kept.
 
-The outputs are `slides/gallery.cga` and the bake receipt `slides/gallery.json`.
-The latter is generated metadata; edit `sources.json` to configure the gallery.
-The build checks manifest/package hashes and validates the package header.
-It embeds only the encoded gallery and the existing 49-asset catalog.
+## Rendering and transport
 
-## Geometry and rendering
+The client uses the reference 44-triangle beveled cube, removes touching flat
+interior faces, and keeps the bevels, backs and outer edges. A continuous image
+projection spans fronts and bevels; normals change lighting only. All six slabs
+share one indexed retained PBR mesh and one nearest-filtered PNG atlas. There
+are no per-image-pixel cube seeds or simulated normal/occlusion maps.
 
-The client uses the same 44-triangle beveled cube as the HTML (the embedded GLB
-is identical to `Cubes/Cube/cube.glb`). Cube count follows the tier, independently
-of source pixels. Only touching interior flat faces are omitted; bevels, backs
-and outer edges remain real geometry. Box-projected UVs preserve the HTML's
-axis selection and bevel tie rules. The six slabs share one atlas and one
-indexed retained PBR mesh, submitted as one draw. Geometry is retained across
-image replacements when tiers match. There are no image-pixel cube seeds,
-normal/occlusion maps, or per-frame image geometry generation.
+The 2048-c1 world is 409.6 renderer units across. Slab centers are at ±204.8 on
+their corresponding axes. Each slab spans 144×144 units and is one block thick.
+Collision uses six analytic volumes and block bounds, without a dense empty
+world allocation. Small bevel recesses are solid for navigation.
 
-The world is 2048 c1 units across (409.6 renderer units); slab centers lie at
-±204.8 on their corresponding axes. Every slab spans 144×144 renderer units,
-with thickness `144 / blocks_per_side`. Collision uses six analytic slab
-volumes plus block bounds for the walker, without allocating a dense empty
-world grid. Decorative bevel recesses are treated as solid for navigation.
+The largest atlas is 102×68, including duplicated edge texels: about 27.1 KiB
+when resident as RGBA. Six tier3 slabs have 56,064 triangles and about 6.3 MiB
+of vertex/index data, excluding carrier copies and allocator overhead. These
+are storage counts, not measured native frame-time or peak-memory claims.
 
-The atlas uses a 3×2 layout with a duplicated one-texel border per image.
-At tier4 maximum it is 90×60 RGBA when resident: about 21.1 KiB. There is
-one base-color texture and no 32 MiB pair of simulated-relief maps. Mesh
-vertex/index data is about 19.3 MiB at six tier4 slabs (170,688 triangles),
-excluding GPU/carrier copies and allocator overhead. Upload borrows the CPU
-geometry directly instead of making a second serialized copy. These are
-storage counts, not measured frame-rate or peak-memory claims.
-
-Nearest min/mag sampling uses `RETAINED_MATERIAL_FLAG_NEAREST`, a new retained
-PBR material option. Other PBR materials keep their existing linear filtering.
-**Rebuild TRUEOS as well as CubeSrv and Cubes**; older kernels reject the new
-material flag. No shader rebake is needed. Lighting uses the native PBR material
-and live camera; the HTML's simple preview lighting is not reproduced exactly.
-
-## Transfer contract
-
-UDP remains on port 30018 with the existing `CUB1` v1 envelope:
+UDP port 30018 retains the `CUB1` v1 envelope:
 
 - `0x85`: u32 player ID, u32 content revision, three f32 spawn coordinates,
   u32 package length.
 - `0x05`: u32 revision, u16 requested chunk index.
 - `0x86`: u32 revision, u16 chunk index, up to 1024 package bytes.
 
-The package is a 16-byte header followed by one ordinary RGB PNG: `CGA1`,
-version byte 3, face count byte 6, six tier bytes (1–4), four reserved zero bytes.
-The atlas size is derived from the aligned grids. Maximum encoded size is 4 MiB.
-Version 3 identifies these revised tiers and crop rules; rebuild CubeSrv and
-Cubes together. Earlier package versions are rejected instead of misinterpreted.
-The client validates the header and PNG dimensions before native decoding.
+The package has a 16-byte header followed by a standard RGB PNG: `CGA1`,
+version byte **4**, face count 6, six tier bytes (1–3), four reserved zero bytes.
+Older package versions and tier4 are rejected. The atlas dimensions are derived
+from the tiers and checked before decoding. Encoded size is bounded to 4 MiB.
+The revision comes from the package hash. Revision-mismatched chunks cannot mix
+images. Bounded chunk windows, retries and duplicate rejection remain in use.
 
-The gallery is static, not a timed slideshow. Its revision comes from the
-package hash. A request for another revision is rejected. Telemetry and
-periodic announcements continue; disconnected peers expire after 30 seconds.
-Transfers retain bounded 32-chunk windows, retries and duplicate/stale rejection.
-Cubes decodes through `vmedia::decode_retained` in its worker. Only a complete,
-resident atlas replaces the scene between completed frames. Failed transfers
-or replacements leave the old scene visible. There is no CPU image readback.
+Cubes decodes the atlas in its networking worker through `vmedia::decode_retained`.
+Only a complete resident texture replaces the displayed scene. Failed transfers
+keep the current gallery visible. Matching layouts reuse the mesh; layout
+changes build the replacement before releasing the old one. Telemetry and
+periodic announcements continue; peers expire after 30 seconds disconnected.
+
+**Rebuild CubeSrv and Cubes together** for the final three-tier contract.
+TRUEOS must already support `RETAINED_MATERIAL_FLAG_NEAREST`; older kernels
+reject that material option. No new shader or kernel change is needed here.
 
 ## Validation
 
 ```sh
 python3 -B tools/test_prepare_slides.py
+python3 -B tools/test_cube_image.py
 python3 -B tools/check_host.py
 ```
 
-In Cubes: `cargo check --offline`, `python3 -B tools/prepare_image_cube.py --check`,
-`python3 -B tools/test_slideshow_network.py` and `python3 -B tools/test_walker_camera.py`.
-In TRUEOS: `python3 -B tools/test_picasso_pbr_state.py` and
-`python3 -B tools/test_retained_material.py`.
-
-`check_host.py` checks the actual server and build script with upstream host
-dependencies, avoiding the workspace's TRUEOS-specific vendor patches.
-Native appearance, upload residency, timing and peak memory require a live
-TRUEOS run. The host network/geometry suite passes all 13 tests, and the
-walker suite passes all 92 tests, including six-face collision, pose-preserving
-gallery replacement and the authored portal fixtures.
+In Cubes: `cargo check --offline`, `python3 -B tools/test_slideshow_network.py`
+and `python3 -B tools/test_walker_camera.py`. The host suites check all three
+presets, crop/padding, source orientation, geometry, winding, collision, packet
+validation and native material descriptors. A live TRUEOS run is still needed
+to verify appearance, frame timing and actual GPU residency.
