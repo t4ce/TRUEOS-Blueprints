@@ -1,9 +1,10 @@
 # Three-tier CubeImage gallery
 
 Key 8 connects Cubes to CubeSrv and downloads its embedded gallery. Six image
-slabs sit at the centers of the six outer faces of the whole 4×4×4-chunk world,
-facing inward. The player starts in flight at `[0, 0, 0]`, looking along -Z.
-The gallery is static. Another numbered mode disconnects; Key 8 reconnects.
+slabs surround the center at 10% of the standard 4×4×4-chunk world radius and
+face inward. A white 3×3×3 c4 landmark sits at the origin. The player starts
+standing on its top face, looking along -Z. The gallery is static. Another
+numbered mode disconnects; Key 8 reconnects.
 
 ## Final asset presets
 
@@ -78,16 +79,23 @@ projection spans fronts and bevels; normals change lighting only. All six slabs
 share one indexed retained PBR mesh and one nearest-filtered PNG atlas. There
 are no per-image-pixel cube seeds or simulated normal/occlusion maps.
 
-Every constituent cube is **c1**, with a side of 0.2 renderer units. The presets
+Every image constituent cube is **c1**, with a side of 0.2 renderer units. The presets
 therefore occupy 6×6, 8×8 and 16×16 c1 (1.2×1.2, 1.6×1.6 and 3.2×3.2 renderer
-units), all one c1 thick. They stay centered on the six outer world faces.
-The 2048-c1 world is 409.6 renderer units across; each slab's depth cell sits
-just inside the boundary, with its center at ±1023.5 c1 (±204.7 renderer units).
-All cube minima lie on the integer c1 lattice. Like other c1 detail in Cubes,
-these cubes have no walking collision or Space-snap target. Flight still starts
-at the origin, so the images are small in the distance until approached.
+units), all one c1 thick. Their centers are at ±102.5 c1 (±20.5 renderer units),
+the nearest half-cell to 10% of the 1024-c1 world radius. The 2048-c1 world still
+spans 409.6 renderer units and keeps its normal movement boundary. All image cube
+minima lie on the integer c1 lattice and have no walking collision or Space-snap
+target.
 
-The largest atlas is 390×260, including duplicated edge texels: about 396.1 KiB
+The center landmark contains 27 white c4 cubes, using the same 8-c1/1.6-renderer-
+unit cube size as platforms and pathways. It spans 24 c1 (4.8 renderer units) on
+each axis and has ordinary walking collision. Its white texel occupies one extra
+atlas row, so the landmark and all six images remain one mesh, one texture and
+one retained draw. The connecting player is attached to the top surface rather
+than entering in flight mode.
+
+The largest atlas is 390×261, including duplicated edge texels and the white row:
+about 397.5 KiB
 when resident as RGBA. Six tier3 slabs have 56,064 triangles and about 6.3 MiB
 of vertex/index data, excluding carrier copies and allocator overhead. These
 are storage counts, not measured native frame-time or peak-memory claims.
@@ -100,12 +108,13 @@ UDP port 30018 retains the `CUB1` v1 envelope:
 - `0x86`: u32 revision, u16 chunk index, up to 1024 package bytes.
 
 The package has a 16-byte header followed by a standard RGB PNG: `CGA1`,
-version byte **6**, face count 6, six tier bytes (1–3), cube side byte 1,
+version byte **7**, face count 6, six tier bytes (1–3), cube side byte 1,
 coordinate-unit byte 1 (c1), and u16 little-endian world half-size 1024.
 Each face/tier is a compact regular grid descriptor for N² c1 cubes plus its
 atlas tile; the client expands exact integer cube positions through the shared
 `Layout::cube_min` contract. Rows run bottom to top and columns image-right to
-image-left. This sends cube placement without repeating per-cube coordinates
+image-left. The v7 placement rule fixes the gallery at 10% radius and reserves
+the atlas's final row for the center landmark. This sends cube placement without repeating per-cube coordinates
 or transmitting a mesh. Side, unit and world extent are validated on receipt.
 Older package versions and tier4 are rejected. The atlas dimensions are derived
 from the tiers and checked before decoding. Encoded size is bounded to 4 MiB.
@@ -118,7 +127,7 @@ keep the current gallery visible. Matching layouts reuse the mesh; layout
 changes build the replacement before releasing the old one. Telemetry and
 periodic announcements continue; peers expire after 30 seconds disconnected.
 
-**Rebuild CubeSrv and Cubes together** for the v6 c1 placement contract.
+**Rebuild CubeSrv and Cubes together** for the v7 placement contract.
 TRUEOS must already support `RETAINED_MATERIAL_FLAG_NEAREST`; older kernels
 reject that material option. No new shader or kernel change is needed here.
 

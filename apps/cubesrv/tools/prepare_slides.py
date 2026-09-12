@@ -80,7 +80,11 @@ def load_faces(path):
 
 def bake(entries, source_root):
     tile = max(TIERS[e['Size']][2] for e in entries)+2
-    atlas = Image.new('RGB', (tile*3, tile*2))
+    # The final white row supplies one constant texel for the client's central
+    # c4 landmark while preserving one atlas and one retained draw.
+    atlas = Image.new('RGB', (tile*3, tile*2+1))
+    for x in range(atlas.width):
+        atlas.putpixel((x, atlas.height-1), (255, 255, 255))
     for face, entry in enumerate(entries):
         image = texture(prepare(source_root / entry['source'], entry['Size']), entry['Size'])
         n = image.width
@@ -95,7 +99,7 @@ def bake(entries, source_root):
         atlas.paste(padded, (face%3*tile, face//3*tile))
     png = io.BytesIO()
     atlas.save(png, format='PNG', optimize=True)
-    package = b'CGA1' + bytes([6, 6] + [int(e['Size'][-1]) for e in entries]) + bytes([1, 1, 0, 4]) + png.getvalue()
+    package = b'CGA1' + bytes([7, 6] + [int(e['Size'][-1]) for e in entries]) + bytes([1, 1, 0, 4]) + png.getvalue()
     if len(package) > 4*1024*1024: raise ValueError('gallery exceeds transfer budget')
     return package
 

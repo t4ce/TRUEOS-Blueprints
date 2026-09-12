@@ -98,12 +98,13 @@ class PreparationTests(unittest.TestCase):
                 Image.new('RGB',(TIERS[tier][0],)*2,color).save(root/f'{i}.png')
                 entries.append({'slide':i+1,'source':f'{i}.png','Size':tier})
             data=bake(entries,root)
-            self.assertEqual(data[:16],b'CGA1'+bytes([6,6,1,2,3,1,2,3,1,1,0,4]))
-            atlas=Image.open(io.BytesIO(data[16:]));self.assertEqual(atlas.size,(390,260))
+            self.assertEqual(data[:16],b'CGA1'+bytes([7,6,1,2,3,1,2,3,1,1,0,4]))
+            atlas=Image.open(io.BytesIO(data[16:]));self.assertEqual(atlas.size,(390,261))
             for i,(entry,color) in enumerate(zip(entries,colors)):
                 n=TIERS[entry['Size']][2];x,y=i%3*130,i//3*130
                 for dx,dy in ((0,0),(1,1),(n,n),(n+1,n+1)):
                     self.assertEqual(atlas.getpixel((x+dx,y+dy)),color)
+            self.assertEqual(atlas.crop((0,260,390,261)).getextrema(),((255,255),)*3)
             self.assertEqual(data,bake(entries,root))
 
     def test_package_matches_manifest_and_current_sources(self):

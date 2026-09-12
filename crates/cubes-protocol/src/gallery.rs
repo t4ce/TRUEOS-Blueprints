@@ -1,4 +1,4 @@
-//! Image gallery v6: six inward-facing c1 cube grids and a standard PNG atlas.
+//! Image gallery v7: six inward-facing c1 cube grids and a standard PNG atlas.
 //! Tier IDs encode regular grids of unit cubes; positions use the c1 lattice.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Tier { pub source: u32, pub blocks: u32, pub pixels: u32 }
@@ -11,10 +11,15 @@ impl Tier {
     /// These three presets align exactly; no extra texture crop is necessary.
     pub const fn grid(self) -> u32 { self.pixels }
 }
-pub const VERSION: u8 = 6;
+pub const VERSION: u8 = 7;
 pub const C1: f32 = 0.2;
 pub const CUBE_SIDE: i32 = 1;
 pub const WORLD_HALF_C1: i32 = 1024;
+/// Gallery centers sit at the nearest c1 half-cell to 10% of the world radius.
+pub const GALLERY_DISTANCE_TWICE_C1: i32 = 205;
+/// The center landmark uses the same c4 cubes as platforms and pathways.
+pub const CENTER_CUBE_SIDE_C1: i32 = 8;
+pub const CENTER_CUBES_PER_AXIS: i32 = 3;
 /// Right, up, inward, in integer c1 axes. Right × up = inward.
 pub const BASES: [[[i32; 3]; 3]; 6] = [
     [[1,0,0],[0,1,0],[0,0,1]],
@@ -40,13 +45,18 @@ impl Layout {
         assert!(row < count as u32 && column < count as u32);
         let [u,v,n] = BASES[face];
         core::array::from_fn(|a| {
-            let twice_center = -n[a]*(2*WORLD_HALF_C1-1)
+            let twice_center = -n[a]*GALLERY_DISTANCE_TWICE_C1
                 + u[a]*(count-1-2*column as i32) + v[a]*(2*row as i32+1-count);
             (twice_center-1)/2
         })
     }
     pub fn tile(self) -> u32 { self.tiers.iter().map(|t| TIERS[(*t-1) as usize].grid()).max().unwrap() + 2 }
-    pub fn extent(self) -> [u32; 2] { [self.tile()*3, self.tile()*2] }
+    /// The final row contains the white texel used by the center landmark.
+    pub fn extent(self) -> [u32; 2] { [self.tile()*3, self.tile()*2+1] }
+    pub fn white_uv(self) -> [f32; 2] {
+        let [w,h] = self.extent().map(|v| v as f32);
+        [0.5/w, (self.tile() as f32*2.+0.5)/h]
+    }
     /// One duplicated edge texel prevents neighboring pictures bleeding at borders.
     pub fn uv(self, face: usize, uv: [f32; 2]) -> [f32; 2] {
         let tile = self.tile();
