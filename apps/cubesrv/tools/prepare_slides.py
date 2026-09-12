@@ -51,7 +51,7 @@ def load_manifest(path, faces=None):
         if type(entry['slide']) is not int or entry['slide'] < 1 or entry['slide'] in ids:
             raise ValueError('slide IDs must be unique positive integers')
         ids.add(entry['slide'])
-        if entry['Size'] not in TIERS or not isinstance(entry['source'], str):
+        if not isinstance(entry['Size'], str) or entry['Size'] not in TIERS or not isinstance(entry['source'], str):
             raise ValueError('Size must be tier1, tier2, tier3 or tier4')
         if Path(entry['source']).suffix.lower() not in EXTENSIONS:
             raise ValueError('source must be a PNG/JPEG filename')

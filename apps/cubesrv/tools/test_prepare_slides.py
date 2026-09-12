@@ -1,81 +1,77 @@
 #!/usr/bin/env python3
+"""Exercise the tier importer, source contract and six-face encoded atlas."""
+import hashlib
+import io
+import json
 import tempfile
 import unittest
 from pathlib import Path
 from PIL import Image
-from prepare_slides import prepare, normalize, slide_paths
+from prepare_slides import SLIDES, TIERS, prepare, texture, bake, load_manifest
 
 class PreparationTests(unittest.TestCase):
-    def test_small_image_is_padded_without_upscaling(self):
+    def test_exact_tiers_crop_nearest_and_alpha(self):
+        self.assertEqual(list(TIERS.values()), [(64,12,60),(128,18,90),(256,24,120),(512,32,320)])
         with tempfile.TemporaryDirectory() as folder:
-            path = Path(folder) / 'small.png'
-            image = Image.new('RGB', (10, 20), (40, 80, 120))
-            image.putpixel((0, 0), (240, 80, 120))
+            path = Path(folder)/'source.png'
+            image = Image.new('RGBA',(200,100),(255,0,0,255))
+            image.paste((0,255,0,255),(50,0,150,100))
             image.save(path)
-            output = prepare(path)
-            self.assertEqual(output.size, (512, 512))
-            self.assertEqual(output.getpixel((0, 0)), (41, 80, 120))
-            self.assertEqual(output.getpixel((251, 246)), (240, 80, 120))
-    def test_large_landscape_is_center_cropped(self):
-        with tempfile.TemporaryDirectory() as folder:
-            path = Path(folder) / 'wide.png'
-            image = Image.new('RGB', (1024, 512), (255, 0, 0))
-            image.paste((0, 255, 0), (256, 0, 768, 512))
-            image.save(path)
-            self.assertEqual(prepare(path).getextrema(), ((0, 0), (255, 255), (0, 0)))
-    def test_checked_in_slides_are_standard_images(self):
-        slides = Path(__file__).resolve().parents[1] / 'slides'
-        self.assertGreater(len(slide_paths(slides)), 0)
-        self.assertEqual(list(slides.glob('*.rgb')), [])
-        for path in slide_paths(slides):
-            with Image.open(path) as image:
-                self.assertEqual(image.size, (512, 512))
-                self.assertEqual(image.mode, 'RGB')
-                self.assertIn(image.format, ('PNG', 'JPEG'))
-                self.assertEqual(image.getexif().get(274, 1), 1)
-                self.assertLessEqual(path.stat().st_size, 4*1024*1024)
-                image.load()
+            for tier,(side,_,grid) in TIERS.items():
+                result = prepare(path,tier)
+                self.assertEqual(result.size,(side,side))
+                self.assertEqual(result.getextrema(),((0,0),(255,255),(0,0)))
+                self.assertEqual(texture(result,tier).size,(grid,grid))
+            Image.new('RGBA',(10,20),(255,0,0,0)).save(path)
+            self.assertEqual(prepare(path,'tier1').getextrema(),((0,0),)*3)
 
-    def test_all_filename_variants_normalize_and_are_idempotent(self):
-        with tempfile.TemporaryDirectory() as folder:
-            root = Path(folder)
-            for suffix in ('.png', '.PNG', '.jpg', '.jpeg', '.jgp', '.JGP'):
-                path = root / f'image{suffix}'
-                fmt = 'PNG' if suffix.lower() == '.png' else 'JPEG'
-                Image.new('RGB', (396, 697), (60, 90, 120)).save(path, format=fmt)
-                self.assertTrue(normalize(path))
-                with Image.open(path) as result:
-                    self.assertEqual(result.size, (512, 512))
-                    self.assertEqual(result.format, fmt)
-                    self.assertEqual(result.mode, 'RGB')
-                before = path.read_bytes()
-                self.assertFalse(normalize(path))
-                self.assertEqual(path.read_bytes(), before)
-            (root/'not-an-image.jpg').mkdir()
-            self.assertEqual(len(slide_paths(root)), 6)
+    def test_center_sampling_matches_html_at_every_grid_cell(self):
+        for tier,(side,_,grid) in TIERS.items():
+            image=Image.new('RGB',(side,side))
+            image.putdata([(x%256,y%256,(x+y)%256) for y in range(side) for x in range(side)])
+            result=texture(image,tier)
+            for x,y in ((0,0),(grid//2,grid//2),(grid-1,grid-1)):
+                import math
+                rgb=image.getpixel((int((x+.5)*side/grid),int((y+.5)*side/grid)))
+                self.assertEqual(result.getpixel((x,y)),tuple(math.floor(min(1,v/255*1.05)*15+.5)*17 for v in rgb))
 
-    def test_exif_orientation_is_applied_before_padding(self):
+    def test_manifest_rejects_unknown_sizes_dimensions_duplicates_and_face_ids(self):
+        entries=[{'slide':i+1,'source':f'{i}.png','Size':'tier1'} for i in range(6)]
         with tempfile.TemporaryDirectory() as folder:
-            path = Path(folder) / 'rotated.jpg'
-            exif = Image.Exif()
-            exif[274] = 6
-            image = Image.new('RGB', (800, 400), (255, 0, 0))
-            image.paste((0, 0, 255), (400, 0, 800, 400))
-            image.save(path, exif=exif)
-            self.assertTrue(normalize(path))
-            with Image.open(path) as result:
-                self.assertEqual(result.size, (512, 512))
-                self.assertEqual(result.getexif().get(274, 1), 1)
-                self.assertGreater(result.getpixel((256, 100))[0], 240)
-                self.assertGreater(result.getpixel((256, 400))[2], 240)
+            path=Path(folder)/'sources.json'
+            path.write_text(json.dumps(entries))
+            self.assertEqual(load_manifest(path),entries)
+            self.assertEqual(load_manifest(path,[6,5,4,3,2,1]),list(reversed(entries)))
+            for face_ids in ([1]*6,[1,2,3,4,5,99]):
+                with self.assertRaises(ValueError): load_manifest(path,face_ids)
+            for key,value in [('Size','tier5'),('width',512),('slide',2)]:
+                bad=[dict(e) for e in entries];bad[0][key]=value
+                path.write_text(json.dumps(bad))
+                with self.assertRaises(ValueError): load_manifest(path)
 
-    def test_fully_transparent_png_has_a_defined_background(self):
+    def test_mixed_tier_atlas_order_padding_and_package(self):
         with tempfile.TemporaryDirectory() as folder:
-            path = Path(folder) / 'transparent.png'
-            Image.new('RGBA', (30, 20), (255, 0, 0, 0)).save(path)
-            self.assertTrue(normalize(path))
-            with Image.open(path) as result:
-                self.assertEqual(result.mode, 'RGB')
-                self.assertEqual(result.getextrema(), ((0,0), (0,0), (0,0)))
+            root=Path(folder)
+            entries=[]
+            colors=[(255,0,0),(0,255,0),(0,0,255),(255,255,0),(0,255,255),(255,0,255)]
+            for i,(tier,color) in enumerate(zip(['tier1','tier2','tier3','tier4','tier3','tier4'],colors)):
+                Image.new('RGB',(TIERS[tier][0],)*2,color).save(root/f'{i}.png')
+                entries.append({'slide':i+1,'source':f'{i}.png','Size':tier})
+            data=bake(entries,root)
+            self.assertEqual(data[:16],b'CGA1'+bytes([1,6,1,2,3,4,3,4])+bytes(4))
+            atlas=Image.open(io.BytesIO(data[16:]));self.assertEqual(atlas.size,(966,644))
+            for i,(entry,color) in enumerate(zip(entries,colors)):
+                n=TIERS[entry['Size']][2];x,y=i%3*322,i//3*322
+                for dx,dy in ((0,0),(1,1),(n,n),(n+1,n+1)):
+                    self.assertEqual(atlas.getpixel((x+dx,y+dy)),color)
+            self.assertEqual(data,bake(entries,root))
+
+    def test_checked_in_package_matches_manifest_receipt_and_sources(self):
+        manifest=SLIDES/'sources.json';receipt=json.loads((SLIDES/'gallery.json').read_text())
+        data=(SLIDES/'gallery.cga').read_bytes()
+        self.assertEqual(hashlib.sha256(manifest.read_bytes()).hexdigest(),receipt['manifest_sha256'])
+        self.assertEqual(hashlib.sha256(data).hexdigest(),receipt['package_sha256'])
+        self.assertEqual(data,bake(load_manifest(manifest,receipt['faces']),SLIDES))
+        self.assertLessEqual(len(data),4*1024*1024)
 
 if __name__ == '__main__': unittest.main()

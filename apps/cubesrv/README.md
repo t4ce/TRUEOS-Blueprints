@@ -1,83 +1,125 @@
-# Cubes slideshow demo
+# Six-face CubeImage gallery
 
-The server embeds the prepared images in `slides/`, announces a new image
-every ten seconds, and wraps after the last image. It retains the health routes and
-asset catalog; the 27 static worlds are no longer embedded or served.
+Key 8 opens the empty cube world with one centered image slab on each of its
+six faces. The slabs face inward. The initial camera is at `[0, 0, 0]`, looking
+along -Z. Mouse look, flight, surface walking, Space and Home remain available.
+Another numbered mode disconnects; Key 8 reconnects. Placement and the companion
+cube stay in the local-world renderer.
 
-Build both cubesrv and Cubes with these changes. Key 8 connects to the local
-server (UDP 30018), or reconnects if already connected. The server's manifest
-sets the player's initial position to `[0, 0, 0]`; the client faces -Z. Subsequent
-slides replace the image without resetting the camera. Existing mouse look,
-flight and surface walking remain available. Asset placement and the companion
-cube belong to the local-world modes, outside this dedicated image pass. Selecting another
-numbered mode disconnects the slideshow. Disconnected peers expire after 30s.
+## Source contract
 
-The prepared image is 512×512. The server embeds and streams ordinary compressed
-PNG/JPEG bytes. Cubes uses `trueos::vmedia::decode_retained` in its background
-worker to decode directly into the device's Picasso texture residency. No RGB
-readback or custom image format is involved. The old texture remains visible
-until the next image is completely transferred, decoded and resident.
+`slides/sources.json` is a catalog of records with exactly these fields:
 
-The image wall is now **one four-vertex, two-triangle PBR panel**, centered at
-`[0, 0, -240]` with a 144×144 world-unit extent. It uses the same tangent-space
-normal/material shader as Picasso-Example. The incoming image supplies color;
-two fixed client-side maps supply bevel normals and edge occlusion aligned to
-512×512 cells. These maps are reused across images and reconnects (32 MiB decoded
-total). Lighting and highlights respond to the live camera; relief fades when
-cells become subpixel because the current native sampler uses only mip level 0.
+```json
+{ "slide": 11, "source": "testboard/checker_bw_64x64.png", "Size": "tier1" }
+```
 
-This is a flat surface with simulated cell relief, not extruded cube geometry:
-it has no per-cell silhouette or parallax. It bypasses the dynamic-cube renderer,
-its seed budgets and its LOD preparation entirely. The existing walker uses a
-separate coarse collision grid built only on connection. Camera position is
-preserved between slides. See Cubes `tools/SLIDESHOW.md` for client details.
+| Size | Normalized source | Cube assembly | Texture pixels across a slab face | Blocks |
+|---|---|---|---|---|
+| tier1 | 64×64 | 1×12×12 | 60 | 144 |
+| tier2 | 128×128 | 1×18×18 | 90 | 324 |
+| tier3 | 256×256 | 1×24×24 | 120 | 576 |
+| tier4 | 512×512 | 1×32×32 | 320 | 1,024 |
 
-## Image preparation
+The projected pixel count applies across the **whole assembly**, matching
+`CubeImage.html`, not independently to every block. All four presets align
+with the reference cube's 10% bevel and need no additional edge crop.
 
-After adding images to `slides/`, run `python3 -B tools/prepare_slides.py --in-place`
-from this directory (Pillow required). It normalizes all current images to RGB
-512×512, preserves filenames and PNG/JPEG encoding, and leaves already-normalized
-files byte-for-byte unchanged. `--output DIRECTORY --in-place` targets another
-slide directory. `.jgp` is accepted as a JPEG filename alias, alongside `.jpg`,
-`.jpeg` and `.png`; extensions are case-insensitive. The client identifies the
-actual format by its PNG/JPEG signature, not the filename.
+The first six manifest entries fill **-Z, +X, +Z, -X, -Y, +Y**, in that order.
+Additional entries remain available for selection. Paths resolve relative to
+the manifest directory. Prepare after editing sources or replacing images:
 
-Without `--in-place`, the tool imports the original ten demo sources from the
-sibling TRUEOS repository; `--source-root` overrides that source root.
+```sh
+python3 -B tools/prepare_slides.py
+```
 
-EXIF orientation is applied. Images at least 512 pixels on both axes are
-downscaled and center-cropped. Smaller images are fitted without upscaling and
-centered on their average color. Transparency is composited over that color.
-`slides/sources.json` records the source paths. Only the prepared standard image
-files are embedded; there are no raw RGB sidecars or custom image file formats.
-The catalog accepts PNG, JPG, JPEG and the JGP alias (any nonempty set, sorted by filename). Prepared
-images must be 512×512 and at most 4 MiB each. Runtime decoding uses the TRUEOS
-media API rather than adding a decoder library to Cubes or cubesrv.
+To select six other catalog IDs in that same face order:
 
-## UDP additions
+```sh
+python3 -B tools/prepare_slides.py --faces 11 12 13 14 15 16
+```
 
-All packets retain the `CUB1`, version 1, kind and little-endian u16 payload-length
-header. Telemetry still carries world 27 as the single session identifier.
+`--manifest`, `--source-root` and `--output` override their respective paths.
+The importer accepts PNG/JPG/JPEG/JGP, applies EXIF orientation, composites
+transparency over black, center-crops to square, and resizes with nearest
+sampling. It then bakes the HTML's grid-center sampling, exposure 1.05 and
+16 channel levels. Sources are preserved. Pillow is required only for the
+importer, not for a server build or runtime.
 
-- `0x85`: server image/connect event: u32 player ID, u32 revision, three f32 spawn coordinates, u32 encoded file length.
-- `0x05`: client image chunk request: u32 revision, u16 chunk index.
-- `0x86`: server image chunk: u32 revision, u16 chunk index, up to 1,024 original PNG/JPEG file bytes.
+The outputs are `slides/gallery.cga` and the bake receipt `slides/gallery.json`.
+The latter is generated metadata; edit `sources.json` to configure the gallery.
+The build checks manifest/package hashes and validates the package header.
+It embeds only the encoded gallery and the existing 49-asset catalog.
 
-Revision modulo the catalog size selects the immutable embedded image. Transfers use 32-chunk
-windows with bounded retries. The client rejects stale-revision, malformed and
-duplicate chunks, and only publishes complete, successfully decoded images. Regular telemetry obtains
-a fresh manifest if an announcement is lost. An incomplete image leaves the
-previous scene visible. Old world requests receive error 5.
+## Geometry and rendering
+
+The client uses the same 44-triangle beveled cube as the HTML (the embedded GLB
+is identical to `Cubes/Cube/cube.glb`). Cube count follows the tier, independently
+of source pixels. Only touching interior flat faces are omitted; bevels, backs
+and outer edges remain real geometry. Box-projected UVs preserve the HTML's
+axis selection and bevel tie rules. The six slabs share one atlas and one
+indexed retained PBR mesh, submitted as one draw. Geometry is retained across
+image replacements when tiers match. There are no image-pixel cube seeds,
+normal/occlusion maps, or per-frame image geometry generation.
+
+The world is 2048 c1 units across (409.6 renderer units); slab centers lie at
+±204.8 on their corresponding axes. Every slab spans 144×144 renderer units,
+with thickness `144 / blocks_per_side`. Collision uses six analytic slab
+volumes plus block bounds for the walker, without allocating a dense empty
+world grid. Decorative bevel recesses are treated as solid for navigation.
+
+The atlas uses a 3×2 layout with a duplicated one-texel border per image.
+At tier4 maximum it is 966×644 RGBA when resident: about 2.37 MiB. There is
+one base-color texture and no 32 MiB pair of simulated-relief maps. Mesh
+vertex/index data is about 25.2 MiB at six tier4 slabs (222,720 triangles),
+excluding GPU/carrier copies and allocator overhead. Upload borrows the CPU
+geometry directly instead of making a second serialized copy. These are
+storage counts, not measured frame-rate or peak-memory claims.
+
+Nearest min/mag sampling uses `RETAINED_MATERIAL_FLAG_NEAREST`, a new retained
+PBR material option. Other PBR materials keep their existing linear filtering.
+**Rebuild TRUEOS as well as CubeSrv and Cubes**; older kernels reject the new
+material flag. No shader rebake is needed. Lighting uses the native PBR material
+and live camera; the HTML's simple preview lighting is not reproduced exactly.
+
+## Transfer contract
+
+UDP remains on port 30018 with the existing `CUB1` v1 envelope:
+
+- `0x85`: u32 player ID, u32 content revision, three f32 spawn coordinates,
+  u32 package length.
+- `0x05`: u32 revision, u16 requested chunk index.
+- `0x86`: u32 revision, u16 chunk index, up to 1024 package bytes.
+
+The package is a 16-byte header followed by one ordinary RGB PNG: `CGA1`,
+version byte 1, face count byte 6, six tier bytes (1–4), four reserved zero bytes.
+The atlas size is derived from the tiers. Maximum encoded size is 4 MiB.
+The client validates the header and PNG dimensions before native decoding.
+
+The gallery is static, not a timed slideshow. Its revision comes from the
+package hash. A request for another revision is rejected. Telemetry and
+periodic announcements continue; disconnected peers expire after 30 seconds.
+Transfers retain bounded 32-chunk windows, retries and duplicate/stale rejection.
+Cubes decodes through `vmedia::decode_retained` in its worker. Only a complete,
+resident atlas replaces the scene between completed frames. Failed transfers
+or replacements leave the old scene visible. There is no CPU image readback.
 
 ## Validation
 
-- `python3 tools/test_prepare_slides.py`
-- In Cubes: `python3 tools/test_slideshow_network.py`
-- In Cubes: `python3 -B tools/test_slideshow_material.py`
-- In Cubes: `python3 tools/test_walker_camera.py`
-- In Cubes: `cargo check --offline`
+```sh
+python3 -B tools/test_prepare_slides.py
+python3 -B tools/check_host.py
+```
 
-The host tests cover preparation, packet compatibility, reordering, duplicates,
-revision isolation, two-triangle geometry, material bindings, tangent alignment,
-normal/occlusion maps and camera collision. Native decoding, texture residency
-and rendered appearance still need TRUEOS rig validation.
+In Cubes: `cargo check --offline`, `python3 -B tools/prepare_image_cube.py --check`,
+`python3 -B tools/test_slideshow_network.py` and `python3 -B tools/test_walker_camera.py`.
+In TRUEOS: `python3 -B tools/test_picasso_pbr_state.py` and
+`python3 -B tools/test_retained_material.py`.
+
+`check_host.py` checks the actual server and build script with upstream host
+dependencies, avoiding the workspace's TRUEOS-specific vendor patches.
+Native appearance, upload residency, timing and peak memory require a live
+TRUEOS run. Host validation currently also exposes two pre-existing walker
+portal-fixture failures (`every_real_world_starts_in_front_of_its_portal_and_can_move`
+and `walking_back_into_each_real_connector_enters_its_portal`); both reproduce
+with the previous walker implementation. Gallery collision tests pass.
