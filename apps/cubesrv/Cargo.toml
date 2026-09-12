@@ -22,3 +22,7 @@ trueos-redb.workspace = true
 
 [target.'cfg(not(any(target_os = "trueos", target_os = "zkvm")))'.dependencies]
 trueos-redb = { path = "../../crates/trueos-redb", features = ["std"] }
+
+[build-dependencies]
+serde_json = "=1.0.150"
+sha2 = "0.10"

@@ -261,7 +261,7 @@ mod tests {
     }
 }
 
-/// The revision pins a transfer even when the ten-second clock advances.
+/// The content revision pins a complete six-face gallery transfer.
 /// Every manifest carries the connect spawn; clients apply it once per session.
 pub fn slide_info(player: u32, revision: u32, encoded_len: usize) -> Vec<u8> {
     let mut body = player.to_le_bytes().to_vec();

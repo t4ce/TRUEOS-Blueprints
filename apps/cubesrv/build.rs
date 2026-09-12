@@ -1,3 +1,6 @@
+#[path = "../../crates/cubes-protocol/src/gallery.rs"]
+#[allow(dead_code)]
+mod gallery;
 use std::{env, fs, path::Path};
 
 fn catalog(directory: &str, constant: &str, expected: usize) -> String {
@@ -38,35 +41,20 @@ fn main() {
     println!("cargo:rerun-if-changed=assets");
     println!("cargo:rerun-if-changed=slides");
     let mut source = catalog("assets", "ASSETS", 49);
-    source.push_str("const SLIDES: &[Blob] = &[\n");
-    let mut slides = fs::read_dir("slides")
-        .expect("slides directory")
-        .map(|entry| entry.unwrap().path())
-        .filter(|path| {
-            path.is_file()
-                && path
-                    .extension()
-                    .and_then(|v| v.to_str())
-                    .is_some_and(|ext| {
-                        matches!(
-                            ext.to_ascii_lowercase().as_str(),
-                            "png" | "jpg" | "jpeg" | "jgp"
-                        )
-                    })
-        })
-        .collect::<Vec<_>>();
-    slides.sort();
-    assert!(!slides.is_empty(), "expected at least one PNG/JPEG slide");
-    for path in slides {
-        let path = fs::canonicalize(path).expect("prepared slide");
-        let size = fs::metadata(&path).unwrap().len();
-        assert!(size > 0 && size <= 4 * 1024 * 1024, "slide transfer size");
-        let name = path.file_name().unwrap().to_str().unwrap();
-        source.push_str(&format!(
-            "Blob {{ name: {name:?}, bytes: include_bytes!({path:?}) }},\n"
-        ));
-    }
-    source.push_str("];\n");
+    let manifest = fs::read("slides/sources.json").expect("gallery manifest");
+    let bytes = fs::read("slides/gallery.cga").expect("run tools/prepare_slides.py");
+    let receipt: serde_json::Value = serde_json::from_slice(
+        &fs::read("slides/gallery.json").expect("gallery bake receipt")).unwrap();
+    use sha2::{Digest, Sha256};
+    assert_eq!(receipt["manifest_sha256"].as_str().unwrap(), format!("{:x}", Sha256::digest(&manifest)),
+        "sources.json changed; run tools/prepare_slides.py");
+    assert_eq!(receipt["package_sha256"].as_str().unwrap(), format!("{:x}", Sha256::digest(&bytes)),
+        "gallery package changed; run tools/prepare_slides.py");
+    assert!(gallery::Layout::parse(&bytes).is_some(), "invalid gallery package");
+    let digest = Sha256::digest(&bytes);
+    let revision = u32::from_le_bytes(digest[..4].try_into().unwrap());
+    let path = fs::canonicalize("slides/gallery.cga").unwrap();
+    source.push_str(&format!("const GALLERY: &[u8] = include_bytes!({path:?});\nconst GALLERY_REVISION: u32 = {revision};\n"));
     fs::write(
         Path::new(&env::var_os("OUT_DIR").unwrap()).join("catalog.rs"),
         source,

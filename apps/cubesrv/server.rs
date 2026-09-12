@@ -1,5 +1,5 @@
 // trueos-blueprint: features=["lifecycle-net"]
-//! Cubes image slideshow: health routes, live UDP manifests and pinned RGB chunks.
+//! Six-face image gallery: health routes, telemetry and revision-pinned PNG atlas chunks.
 
 extern crate alloc;
 
@@ -54,7 +54,7 @@ impl ServerState {
     fn new() -> Self {
         Self {
             next_player_id: 1,
-            revision: 0,
+            revision: GALLERY_REVISION,
             players: BTreeMap::new(),
         }
     }
@@ -145,7 +145,7 @@ async fn send_welcome(
             &protocol::slide_info(
                 player_id,
                 revision,
-                SLIDES[revision as usize % SLIDES.len()].bytes.len(),
+                GALLERY.len(),
             ),
             peer,
         )
@@ -199,8 +199,8 @@ async fn handle_packet(
                 };
                 player.last_seen = time::Instant::now();
             }
-            let slide = &SLIDES[revision as usize % SLIDES.len()];
-            if let Some(packet) = protocol::slide_chunk(revision, chunk, slide.bytes) {
+            if revision != GALLERY_REVISION { return; }
+            if let Some(packet) = protocol::slide_chunk(revision, chunk, GALLERY) {
                 let _ = socket.send_to(&packet, peer).await;
             }
         }
@@ -251,7 +251,7 @@ async fn udp_loop(state: Arc<RwLock<ServerState>>) {
                     state
                         .players
                         .retain(|_, player| player.last_seen.elapsed() < Duration::from_secs(30));
-                    state.revision = state.revision.wrapping_add(1);
+                    // Static gallery identity changes only when its encoded content changes.
                     (
                         state.revision,
                         state
@@ -268,7 +268,7 @@ async fn udp_loop(state: Arc<RwLock<ServerState>>) {
                             &protocol::slide_info(
                                 id,
                                 revision,
-                                SLIDES[revision as usize % SLIDES.len()].bytes.len(),
+                                GALLERY.len(),
                             ),
                             peer,
                         )

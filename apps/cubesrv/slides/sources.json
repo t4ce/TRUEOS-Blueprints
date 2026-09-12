@@ -2,61 +2,51 @@
   {
     "slide": 1,
     "source": "d4c1829a-4abb-4247-a4a1-3e0171482de7.png",
-    "width": 512,
-    "height": 512
+    "Size": "tier4"
   },
   {
     "slide": 2,
     "source": "HorizonServer.png",
-    "width": 512,
-    "height": 512
+    "Size": "tier4"
   },
   {
     "slide": 3,
     "source": "updlive/noway.png",
-    "width": 512,
-    "height": 512
+    "Size": "tier4"
   },
   {
     "slide": 4,
     "source": "updlive/nway.png",
-    "width": 512,
-    "height": 512
+    "Size": "tier4"
   },
   {
     "slide": 5,
     "source": "updlive/0way.png",
-    "width": 512,
-    "height": 512
+    "Size": "tier4"
   },
   {
     "slide": 6,
     "source": "vid/demo_yelly_first_frame.png",
-    "width": 512,
-    "height": 512
+    "Size": "tier4"
   },
   {
     "slide": 7,
     "source": "vid/Buro4K.jpeg",
-    "width": 512,
-    "height": 512
+    "Size": "tier4"
   },
   {
     "slide": 8,
     "source": "vid/YellyFHD.jpg",
-    "width": 512,
-    "height": 512
+    "Size": "tier4"
   },
   {
     "slide": 9,
     "source": "vid/Photo from 2026-04-26 02-00-42.935475.jpeg",
-    "width": 512,
-    "height": 512
+    "Size": "tier4"
   },
   {
     "slide": 10,
     "source": "vid/IMG_20260426_020424.jpg",
-    "width": 512,
-    "height": 512
+    "Size": "tier4"
   }
 ]
