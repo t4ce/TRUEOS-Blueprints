@@ -1,9 +1,9 @@
 {
   "manifest_sha256": "ba7cf8d15754e287a4038d4c217d43b4004071f4dde20f2a516aa1faacf3c0f3",
   "package_sha256": "15bccea4c5f2045bcde488f6ff7ec3edee364957ad010b90ef8da1803a5f2e29",
-  "holy_sha256": "4d7e88334de82aac90449964f32ed714bb2a215210fa0c896d9ab256bac08a6f",
+  "holy_sha256": "1094a5755d83fa6aab179585d4cdb43bcf3d22e31cfd876051e76fa8cdcd5ddb",
   "holy_frames": 16,
-  "holy_period_ms": 250,
+  "holy_period_ms": 100,
   "holy_visible_pixels": [
     140,
     860,

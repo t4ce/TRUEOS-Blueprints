@@ -16,7 +16,7 @@ SLIDES = Path(__file__).resolve().parents[1] / 'slides'
 TIERS = {'tier1': (48, 6, 6), 'tier2': (128, 8, 16), 'tier3': (256, 16, 128)}
 EXTENSIONS = ('.png', '.jpg', '.jpeg', '.jgp')
 HOLY_SIDE = 48
-HOLY_PERIOD_MS = 250
+HOLY_PERIOD_MS = 100
 
 
 def prepare(source, size='tier3'):
