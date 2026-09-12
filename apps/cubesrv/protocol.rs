@@ -33,6 +33,7 @@ pub struct Telemetry {
 pub enum ClientPacket<'a> {
     Hello { world_id: u8, username: &'a str },
     SlideRequest { revision: u32, chunk: u16 },
+    HolyRequest { revision: u32, frame: u8, chunk: u16 },
     Telemetry(Telemetry),
     WorldRequest { chunk: u16 },
     AssetRequest { asset_id: u8, chunk: u16 },
@@ -106,6 +107,11 @@ pub fn decode(bytes: &[u8]) -> Result<ClientPacket<'_>, DecodeError> {
         5 if payload.len() == 6 => Ok(ClientPacket::SlideRequest {
             revision: read_u32(payload, 0),
             chunk: read_u16(payload, 4),
+        }),
+        6 if payload.len() == 7 => Ok(ClientPacket::HolyRequest {
+            revision: read_u32(payload, 0),
+            frame: payload[4],
+            chunk: read_u16(payload, 5),
         }),
         WORLD_REQUEST if payload.len() == 2 => Ok(ClientPacket::WorldRequest {
             chunk: read_u16(payload, 0),
@@ -251,6 +257,16 @@ mod tests {
     }
 
     #[test]
+    fn holy_request_identifies_revision_frame_and_chunk() {
+        let mut payload = 12u32.to_le_bytes().to_vec();
+        payload.push(3);
+        payload.extend_from_slice(&2u16.to_le_bytes());
+        assert_eq!(decode(&client(6, &payload)), Ok(ClientPacket::HolyRequest {
+            revision: 12, frame: 3, chunk: 2,
+        }));
+    }
+
+    #[test]
     fn chunks_stay_below_datagram_limit() {
         let blob = [42_u8; BLOB_CHUNK_BYTES * 2 + 1];
         let first = blob_chunk(BlobKind::World, 1, 0, &blob).unwrap();
@@ -281,4 +297,32 @@ pub fn slide_chunk(revision: u32, chunk: u16, bytes: &[u8]) -> Option<Vec<u8>> {
     body.extend_from_slice(&chunk.to_le_bytes());
     body.extend_from_slice(&bytes[start..(start + BLOB_CHUNK_BYTES).min(bytes.len())]);
     Some(packet(0x86, &body))
+}
+
+/// Announces one sparse frame of the dynamic Holy cube asset.
+pub fn holy_info(
+    player: u32,
+    gallery_revision: u32,
+    revision: u32,
+    frame: u8,
+    encoded_len: usize,
+) -> Vec<u8> {
+    let mut body = Vec::with_capacity(15);
+    body.extend_from_slice(&player.to_le_bytes());
+    body.extend_from_slice(&gallery_revision.to_le_bytes());
+    body.extend_from_slice(&revision.to_le_bytes());
+    body.push(frame);
+    body.extend_from_slice(&(encoded_len as u16).to_le_bytes());
+    packet(0x87, &body)
+}
+
+pub fn holy_chunk(revision: u32, frame: u8, chunk: u16, bytes: &[u8]) -> Option<Vec<u8>> {
+    let start = chunk as usize * BLOB_CHUNK_BYTES;
+    if start >= bytes.len() { return None; }
+    let mut body = Vec::with_capacity(7 + BLOB_CHUNK_BYTES);
+    body.extend_from_slice(&revision.to_le_bytes());
+    body.push(frame);
+    body.extend_from_slice(&chunk.to_le_bytes());
+    body.extend_from_slice(&bytes[start..(start + BLOB_CHUNK_BYTES).min(bytes.len())]);
+    Some(packet(0x88, &body))
 }

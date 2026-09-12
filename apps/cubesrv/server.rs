@@ -1,5 +1,5 @@
 // trueos-blueprint: features=["lifecycle-net"]
-//! Six-face image gallery: health routes, telemetry and revision-pinned PNG atlas chunks.
+//! Six-face gallery plus a revision-pinned, sparse 250 ms cube-frame asset.
 
 extern crate alloc;
 
@@ -47,6 +47,7 @@ struct Player {
 struct ServerState {
     next_player_id: u32,
     revision: u32,
+    holy_frame: u8,
     players: BTreeMap<SocketAddr, Player>,
 }
 
@@ -55,6 +56,7 @@ impl ServerState {
         Self {
             next_player_id: 1,
             revision: GALLERY_REVISION,
+            holy_frame: 0,
             players: BTreeMap::new(),
         }
     }
@@ -139,7 +141,10 @@ async fn send_welcome(
     peer: SocketAddr,
     player_id: u32,
 ) {
-    let revision = state.read().await.revision;
+    let (revision, holy_frame) = {
+        let state = state.read().await;
+        (state.revision, state.holy_frame)
+    };
     let _ = socket
         .send_to(
             &protocol::slide_info(
@@ -150,6 +155,11 @@ async fn send_welcome(
             peer,
         )
         .await;
+    let sequence = cubes_protocol::holy::Sequence::parse(HOLY).unwrap();
+    let frame = sequence.frame(holy_frame).unwrap();
+    let _ = socket.send_to(
+        &protocol::holy_info(player_id, revision, HOLY_REVISION, holy_frame, frame.len()), peer,
+    ).await;
 }
 
 async fn handle_packet(
@@ -204,6 +214,19 @@ async fn handle_packet(
                 let _ = socket.send_to(&packet, peer).await;
             }
         }
+        ClientPacket::HolyRequest { revision, frame, chunk } => {
+            {
+                let mut state = state.write().await;
+                let Some(player) = state.players.get_mut(&peer) else { return; };
+                player.last_seen = time::Instant::now();
+            }
+            if revision != HOLY_REVISION { return; }
+            let sequence = cubes_protocol::holy::Sequence::parse(HOLY).unwrap();
+            let Some(bytes) = sequence.frame(frame) else { return; };
+            if let Some(packet) = protocol::holy_chunk(revision, frame, chunk, bytes) {
+                let _ = socket.send_to(&packet, peer).await;
+            }
+        }
         ClientPacket::WorldRequest { .. } => {
             let _ = socket.send_to(&protocol::error(5), peer).await;
         }
@@ -242,6 +265,9 @@ async fn udp_loop(state: Arc<RwLock<ServerState>>) {
         );
 
         let mut next_slide = time::Instant::now() + Duration::from_secs(10);
+        let mut next_holy = time::Instant::now() + Duration::from_millis(
+            cubes_protocol::holy::PERIOD_MS as u64,
+        );
         let mut buffer = [0_u8; protocol::MAX_DATAGRAM];
         loop {
             let now = time::Instant::now();
@@ -275,8 +301,24 @@ async fn udp_loop(state: Arc<RwLock<ServerState>>) {
                         .await;
                 }
             }
+            if now >= next_holy {
+                let sequence = cubes_protocol::holy::Sequence::parse(HOLY).unwrap();
+                let (frame, players) = {
+                    let mut state = state.write().await;
+                    state.holy_frame = (state.holy_frame + 1) % sequence.frame_count();
+                    (state.holy_frame, state.players.iter().map(|(peer, p)| (*peer, p.id)).collect::<Vec<_>>())
+                };
+                next_holy += Duration::from_millis(cubes_protocol::holy::PERIOD_MS as u64);
+                let encoded = sequence.frame(frame).unwrap();
+                for (peer, id) in players {
+                    let _ = socket.send_to(
+                        &protocol::holy_info(id, GALLERY_REVISION, HOLY_REVISION, frame, encoded.len()), peer,
+                    ).await;
+                }
+            }
+            let next_event = if next_slide < next_holy { next_slide } else { next_holy };
             match time::timeout(
-                next_slide.saturating_duration_since(time::Instant::now()),
+                next_event.saturating_duration_since(time::Instant::now()),
                 socket.recv_from(&mut buffer),
             )
             .await

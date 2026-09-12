@@ -2,9 +2,10 @@
 
 Key 8 connects Cubes to CubeSrv and downloads its embedded gallery. Six image
 slabs surround the center at 10% of the standard 4×4×4-chunk world radius and
-face inward. A white 3×3×3 c4 landmark sits at the origin. The player starts
-standing on its top face, looking along -Z. The gallery is static. Another
-numbered mode disconnects; Key 8 reconnects.
+face inward. A white 3×3×3 c4 landmark sits at the origin. Above it, the
+numbered PNGs in `slides/holy/` play as a sparse 48×48 c1 cube asset at 250 ms
+per frame. The player starts on the +Z part of the landmark's top face, looking
+along -Z toward that asset. Another numbered mode disconnects; Key 8 reconnects.
 
 ## Final asset presets
 
@@ -48,7 +49,10 @@ modes are removed. Quantization stays fixed at 16 channel levels and exposure
 1.05. Native lighting uses PBR rather than the HTML's simple preview light.
 
 `cargo bp cubesrv` automatically prepares the selected images in Cargo's build
-output directory and embeds the resulting package. Python 3 and Pillow are
+output directory, reads the numbered `slides/holy/*.png` frames, and embeds both
+resulting packages. Holy filenames need a trailing frame number and are sorted
+numerically. Every frame must be 48×48; alpha-zero pixels are omitted, while
+every nonzero-alpha pixel becomes one colored c1 cube. Python 3 and Pillow are
 required on the build host. Source/config edits and image changes trigger a
 rebake; the build does not rewrite files under `slides/`.
 
@@ -64,12 +68,13 @@ To select six catalog IDs explicitly in face order:
 python3 -B tools/prepare_slides.py --faces 10 11 12 13 14 15
 ```
 
-`--manifest`, `--gallery`, `--source-root` and `--output` override their respective
+`--manifest`, `--gallery`, `--source-root`, `--holy` and `--output` override their respective
 paths. `--faces` overrides the saved selection; otherwise the importer preserves
 `gallery.json`'s faces. The importer accepts PNG/JPG/JPEG/JGP. The hash fields in
 `gallery.json` are generated bookkeeping; they never need hand editing. The build
-validates the freshly generated package before embedding it alongside the existing
-49-asset catalog. Original image files are kept.
+validates the freshly generated packages before embedding them alongside the existing
+49-asset catalog. Original image files are kept. `holy.hfx` is the generated
+sparse sequence used by the server.
 
 ## Rendering and transport
 
@@ -90,9 +95,11 @@ target.
 The center landmark contains 27 white c4 cubes, using the same 8-c1/1.6-renderer-
 unit cube size as platforms and pathways. It spans 24 c1 (4.8 renderer units) on
 each axis and has ordinary walking collision. Its white texel occupies one extra
-atlas row, so the landmark and all six images remain one mesh, one texture and
-one retained draw. The connecting player is attached to the top surface rather
-than entering in flight mode.
+atlas row; Holy's five source colors follow it in that row. The active Holy frame
+is an upright 48×48 c1 grid with its bottom edge resting on the landmark's top.
+Only visible pixels have cube geometry. Cubes rebuilds this dynamic static asset
+when a complete frame arrives, while the scene remains one mesh, one texture and
+one retained draw. The player is attached to the +Z part of the top surface.
 
 The largest atlas is 390×261, including duplicated edge texels and the white row:
 about 397.5 KiB
@@ -106,20 +113,31 @@ UDP port 30018 retains the `CUB1` v1 envelope:
   u32 package length.
 - `0x05`: u32 revision, u16 requested chunk index.
 - `0x86`: u32 revision, u16 chunk index, up to 1024 package bytes.
+- `0x87`: u32 player ID, u32 gallery revision, u32 Holy revision, u8 frame,
+  u16 sparse-frame length.
+- `0x06`: u32 Holy revision, u8 frame, u16 requested chunk index.
+- `0x88`: u32 Holy revision, u8 frame, u16 chunk index, up to 1024 frame bytes.
 
 The package has a 16-byte header followed by a standard RGB PNG: `CGA1`,
-version byte **7**, face count 6, six tier bytes (1–3), cube side byte 1,
+version byte **8**, face count 6, six tier bytes (1–3), cube side byte 1,
 coordinate-unit byte 1 (c1), and u16 little-endian world half-size 1024.
 Each face/tier is a compact regular grid descriptor for N² c1 cubes plus its
 atlas tile; the client expands exact integer cube positions through the shared
 `Layout::cube_min` contract. Rows run bottom to top and columns image-right to
-image-left. The v7 placement rule fixes the gallery at 10% radius and reserves
-the atlas's final row for the center landmark. This sends cube placement without repeating per-cube coordinates
+image-left. The v8 placement rule fixes the gallery at 10% radius and reserves
+the atlas's final row for the landmark and Holy palette. This sends cube placement without repeating per-cube coordinates
 or transmitting a mesh. Side, unit and world extent are validated on receipt.
 Older package versions and tier4 are rejected. The atlas dimensions are derived
 from the tiers and checked before decoding. Encoded size is bounded to 4 MiB.
 The revision comes from the package hash. Revision-mismatched chunks cannot mix
 images. Bounded chunk windows, retries and duplicate rejection remain in use.
+
+`holy.hfx` contains the 48×48 dimensions, 250 ms period, shared RGB palette,
+frame offsets and three-byte `(x, y, palette)` records. CubeSrv advances one
+global frame every 250 ms and announces it to connected players. Requests and
+responses are pinned to both the Holy revision and frame index, so late UDP
+chunks cannot mix frames. The included 16-frame sequence contains 3,601 visible
+cubes in total; its final transparent PNG intentionally produces a zero-cube frame.
 
 Cubes decodes the atlas in its networking worker through `vmedia::decode_retained`.
 Only a complete resident texture replaces the displayed scene. Failed transfers
@@ -127,7 +145,7 @@ keep the current gallery visible. Matching layouts reuse the mesh; layout
 changes build the replacement before releasing the old one. Telemetry and
 periodic announcements continue; peers expire after 30 seconds disconnected.
 
-**Rebuild CubeSrv and Cubes together** for the v7 placement contract.
+**Rebuild CubeSrv and Cubes together** for the v8 gallery and Holy-frame contract.
 TRUEOS must already support `RETAINED_MATERIAL_FLAG_NEAREST`; older kernels
 reject that material option. No new shader or kernel change is needed here.
 
@@ -141,6 +159,6 @@ python3 -B tools/check_host.py
 
 In Cubes: `cargo check --offline`, `python3 -B tools/test_slideshow_network.py`
 and `python3 -B tools/test_walker_camera.py`. The host suites check all three
-presets, crop/padding, source orientation, geometry, winding, collision, packet
+presets, crop/padding, Holy alpha sparsity/order, source orientation, geometry, winding, collision, packet
 validation and native material descriptors. A live TRUEOS run is still needed
 to verify appearance, frame timing and actual GPU residency.

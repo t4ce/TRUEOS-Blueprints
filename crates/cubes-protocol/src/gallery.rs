@@ -1,4 +1,4 @@
-//! Image gallery v7: six inward-facing c1 cube grids and a standard PNG atlas.
+//! Image gallery v8: six inward-facing c1 grids plus a sparse-frame palette.
 //! Tier IDs encode regular grids of unit cubes; positions use the c1 lattice.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Tier { pub source: u32, pub blocks: u32, pub pixels: u32 }
@@ -11,7 +11,7 @@ impl Tier {
     /// These three presets align exactly; no extra texture crop is necessary.
     pub const fn grid(self) -> u32 { self.pixels }
 }
-pub const VERSION: u8 = 7;
+pub const VERSION: u8 = 8;
 pub const C1: f32 = 0.2;
 pub const CUBE_SIDE: i32 = 1;
 pub const WORLD_HALF_C1: i32 = 1024;
@@ -56,6 +56,11 @@ impl Layout {
     pub fn white_uv(self) -> [f32; 2] {
         let [w,h] = self.extent().map(|v| v as f32);
         [0.5/w, (self.tile() as f32*2.+0.5)/h]
+    }
+    /// Palette texels for the sparse Holy asset follow the landmark's white texel.
+    pub fn holy_uv(self, palette: u8) -> [f32; 2] {
+        let [w,h] = self.extent().map(|v| v as f32);
+        [(palette as f32+1.5)/w, (self.tile() as f32*2.+0.5)/h]
     }
     /// One duplicated edge texel prevents neighboring pictures bleeding at borders.
     pub fn uv(self, face: usize, uv: [f32; 2]) -> [f32; 2] {

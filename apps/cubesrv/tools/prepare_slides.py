@@ -6,6 +6,7 @@ import io
 import json
 import math
 import os
+import re
 import tempfile
 from pathlib import Path
 from PIL import Image, ImageOps
@@ -14,6 +15,8 @@ SLIDES = Path(__file__).resolve().parents[1] / 'slides'
 # source resolution, 1 x N x N assembly, projected texture pixels per slab face.
 TIERS = {'tier1': (48, 6, 6), 'tier2': (128, 8, 16), 'tier3': (256, 16, 128)}
 EXTENSIONS = ('.png', '.jpg', '.jpeg', '.jgp')
+HOLY_SIDE = 48
+HOLY_PERIOD_MS = 250
 
 
 def prepare(source, size='tier3'):
@@ -78,13 +81,62 @@ def load_faces(path):
     return faces
 
 
-def bake(entries, source_root):
+def load_holy(directory):
+    """Read numbered 48px PNG frames and return sparse indexed pixels."""
+    def frame_number(path):
+        match = re.search(r'(\d+)$', path.stem)
+        if not match:
+            raise ValueError(f'holy frame needs a trailing number: {path.name}')
+        return int(match.group(1))
+    paths = sorted(directory.glob('*.png'), key=frame_number)
+    if not paths or len(paths) > 255:
+        raise ValueError('holy requires 1..255 PNG frames')
+    numbers = [frame_number(path) for path in paths]
+    if len(set(numbers)) != len(numbers):
+        raise ValueError('holy frame numbers must be unique')
+    rgba_frames = []
+    colors = set()
+    for path in paths:
+        with Image.open(path) as source:
+            image = ImageOps.exif_transpose(source).convert('RGBA')
+            if image.size != (HOLY_SIDE, HOLY_SIDE):
+                raise ValueError(f'{path.name} must be {HOLY_SIDE}x{HOLY_SIDE}')
+            rgba = list(image.get_flattened_data())
+        rgba_frames.append(rgba)
+        colors.update((r,g,b) for r,g,b,a in rgba if a != 0)
+    palette = sorted(colors)
+    if not palette or len(palette) > 255:
+        raise ValueError('holy requires 1..255 visible RGB colors')
+    indices = {color: index for index, color in enumerate(palette)}
+    frames = []
+    for rgba in rgba_frames:
+        frames.append([(x, y, indices[(r,g,b)])
+                       for y in range(HOLY_SIDE) for x in range(HOLY_SIDE)
+                       for r,g,b,a in [rgba[y*HOLY_SIDE+x]] if a != 0])
+    return paths, palette, frames
+
+
+def bake_holy(palette, frames):
+    records = [bytes(value for pixel in frame for value in pixel) for frame in frames]
+    offsets = [0]
+    for frame in records: offsets.append(offsets[-1] + len(frame))
+    header = b'HFX1' + bytes([1, HOLY_SIDE, HOLY_SIDE, len(frames)]) \
+        + HOLY_PERIOD_MS.to_bytes(2, 'little') + bytes([len(palette), 0])
+    return header + bytes(value for color in palette for value in color) \
+        + b''.join(offset.to_bytes(4, 'little') for offset in offsets) + b''.join(records)
+
+
+def bake(entries, source_root, holy_palette=()):
     tile = max(TIERS[e['Size']][2] for e in entries)+2
     # The final white row supplies one constant texel for the client's central
     # c4 landmark while preserving one atlas and one retained draw.
     atlas = Image.new('RGB', (tile*3, tile*2+1))
     for x in range(atlas.width):
         atlas.putpixel((x, atlas.height-1), (255, 255, 255))
+    if len(holy_palette) + 1 > atlas.width:
+        raise ValueError('holy palette exceeds the gallery atlas row')
+    for index, color in enumerate(holy_palette):
+        atlas.putpixel((index + 1, atlas.height - 1), color)
     for face, entry in enumerate(entries):
         image = texture(prepare(source_root / entry['source'], entry['Size']), entry['Size'])
         n = image.width
@@ -99,7 +151,7 @@ def bake(entries, source_root):
         atlas.paste(padded, (face%3*tile, face//3*tile))
     png = io.BytesIO()
     atlas.save(png, format='PNG', optimize=True)
-    package = b'CGA1' + bytes([7, 6] + [int(e['Size'][-1]) for e in entries]) + bytes([1, 1, 0, 4]) + png.getvalue()
+    package = b'CGA1' + bytes([8, 6] + [int(e['Size'][-1]) for e in entries]) + bytes([1, 1, 0, 4]) + png.getvalue()
     if len(package) > 4*1024*1024: raise ValueError('gallery exceeds transfer budget')
     return package
 
@@ -119,20 +171,28 @@ def main():
     parser.add_argument('--gallery', type=Path, help='face selection; default: gallery.json beside the manifest')
     parser.add_argument('--source-root', type=Path, help='default: manifest directory')
     parser.add_argument('--output', type=Path, default=SLIDES)
+    parser.add_argument('--holy', type=Path, help='numbered 48x48 RGBA PNG folder; default: holy beside the manifest')
     parser.add_argument('--faces', type=int, nargs=6, metavar='SLIDE', help='-Z +X +Z -X -Y +Y slide IDs; default: gallery.json faces, or first six manifest entries for a new gallery')
     args = parser.parse_args()
     try:
         faces = args.faces if args.faces is not None else load_faces(args.gallery or args.manifest.parent/'gallery.json')
         entries = load_manifest(args.manifest, faces)
-        package = bake(entries, args.source_root or args.manifest.parent)
+        _holy_paths, holy_palette, holy_frames = load_holy(args.holy or args.manifest.parent/'holy')
+        package = bake(entries, args.source_root or args.manifest.parent, holy_palette)
+        holy = bake_holy(holy_palette, holy_frames)
         receipt = {'manifest_sha256': hashlib.sha256(args.manifest.read_bytes()).hexdigest(),
                    'package_sha256': hashlib.sha256(package).hexdigest(),
+                   'holy_sha256': hashlib.sha256(holy).hexdigest(),
+                   'holy_frames': len(holy_frames), 'holy_period_ms': HOLY_PERIOD_MS,
+                   'holy_visible_pixels': [len(frame) for frame in holy_frames],
                    'faces': [e['slide'] for e in entries]}
         args.output.mkdir(parents=True, exist_ok=True)
         atomic_write(args.output/'gallery.cga', package)
+        atomic_write(args.output/'holy.hfx', holy)
         atomic_write(args.output/'gallery.json', (json.dumps(receipt, indent=2)+'\n').encode())
     except (ValueError, OSError) as error:
         parser.error(str(error))
-    print(f'six faces: {receipt["faces"]}; {len(package):,} encoded bytes; tiers: {[e["Size"] for e in entries]}')
+    print(f'six faces: {receipt["faces"]}; {len(package):,} encoded bytes; tiers: {[e["Size"] for e in entries]}; '
+          f'holy: {len(holy_frames)} frames / {sum(map(len, holy_frames)):,} visible pixels / {len(holy):,} bytes')
 
 if __name__ == '__main__': main()

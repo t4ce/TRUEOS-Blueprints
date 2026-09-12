@@ -1,6 +1,9 @@
 #[path = "../../crates/cubes-protocol/src/gallery.rs"]
 #[allow(dead_code)]
 mod gallery;
+#[path = "../../crates/cubes-protocol/src/holy.rs"]
+#[allow(dead_code)]
+mod holy;
 use std::{env, fs, path::Path, process::Command};
 
 fn catalog(directory: &str, constant: &str, expected: usize) -> String {
@@ -43,8 +46,9 @@ fn main() {
     let mut source = catalog("assets", "ASSETS", 49);
     println!("cargo:rerun-if-changed=tools/prepare_slides.py");
     let out = std::path::PathBuf::from(env::var_os("OUT_DIR").unwrap());
-    // Sources and face selection are authored inputs; bake the embedded package
-    // into Cargo's output directory so ordinary builds never rewrite the catalog.
+    // Gallery sources, face selection and Holy frames are authored inputs; bake
+    // both embedded packages into Cargo's output directory so ordinary builds
+    // never rewrite the catalog.
     let prepared = Command::new("python3")
         .args(["-B", "tools/prepare_slides.py", "--manifest", "slides/sources.json",
                "--gallery", "slides/gallery.json", "--output"])
@@ -53,6 +57,7 @@ fn main() {
         String::from_utf8_lossy(&prepared.stdout), String::from_utf8_lossy(&prepared.stderr));
     let manifest = fs::read("slides/sources.json").expect("gallery manifest");
     let bytes = fs::read(out.join("gallery.cga")).expect("run tools/prepare_slides.py");
+    let holy_bytes = fs::read(out.join("holy.hfx")).expect("bake holy frames");
     let receipt: serde_json::Value = serde_json::from_slice(
         &fs::read(out.join("gallery.json")).expect("gallery bake receipt")).unwrap();
     use sha2::{Digest, Sha256};
@@ -60,11 +65,17 @@ fn main() {
         "sources.json changed; run tools/prepare_slides.py");
     assert_eq!(receipt["package_sha256"].as_str().unwrap(), format!("{:x}", Sha256::digest(&bytes)),
         "gallery package changed; run tools/prepare_slides.py");
+    assert_eq!(receipt["holy_sha256"].as_str().unwrap(), format!("{:x}", Sha256::digest(&holy_bytes)),
+        "holy package changed; run tools/prepare_slides.py");
     assert!(gallery::Layout::parse(&bytes).is_some(), "invalid gallery package");
+    assert!(holy::Sequence::parse(&holy_bytes).is_some(), "invalid holy package");
     let digest = Sha256::digest(&bytes);
     let revision = u32::from_le_bytes(digest[..4].try_into().unwrap());
     let path = fs::canonicalize(out.join("gallery.cga")).unwrap();
-    source.push_str(&format!("const GALLERY: &[u8] = include_bytes!({path:?});\nconst GALLERY_REVISION: u32 = {revision};\n"));
+    let holy_digest = Sha256::digest(&holy_bytes);
+    let holy_revision = u32::from_le_bytes(holy_digest[..4].try_into().unwrap());
+    let holy_path = fs::canonicalize(out.join("holy.hfx")).unwrap();
+    source.push_str(&format!("const GALLERY: &[u8] = include_bytes!({path:?});\nconst GALLERY_REVISION: u32 = {revision};\nconst HOLY: &[u8] = include_bytes!({holy_path:?});\nconst HOLY_REVISION: u32 = {holy_revision};\n"));
     fs::write(
         Path::new(&env::var_os("OUT_DIR").unwrap()).join("catalog.rs"),
         source,

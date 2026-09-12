@@ -10,7 +10,8 @@ import sys
 import unittest
 from pathlib import Path
 from PIL import Image
-from prepare_slides import SLIDES, TIERS, prepare, texture, bake, load_manifest, load_faces
+from prepare_slides import (SLIDES, TIERS, HOLY_PERIOD_MS, prepare, texture, bake,
+                            bake_holy, load_manifest, load_faces, load_holy)
 
 class PreparationTests(unittest.TestCase):
     def test_exact_tiers_and_crop_pad_without_scaling(self):
@@ -76,6 +77,8 @@ class PreparationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder);output=root/'built';manifest=root/'sources.json'
             Image.new('RGB',(48,48),(255,0,0)).save(root/'image.png')
+            (root/'holy').mkdir()
+            holy=Image.new('RGBA',(48,48),(0,0,0,0));holy.putpixel((4,5),(9,8,7,255));holy.save(root/'holy'/'frame 1.png')
             entries=[{'slide':i,'source':'image.png','Size':'tier1'} for i in range(7)]
             manifest.write_text(json.dumps(entries))
             gallery=root/'gallery.json'
@@ -87,7 +90,9 @@ class PreparationTests(unittest.TestCase):
                 receipt=json.loads((output/'gallery.json').read_text())
                 self.assertEqual(receipt['faces'],selection)
                 self.assertEqual(json.loads(gallery.read_text()),config)
-                self.assertEqual((output/'gallery.cga').read_bytes(),bake(load_manifest(manifest,selection),root))
+                _,palette,frames=load_holy(root/'holy')
+                self.assertEqual((output/'gallery.cga').read_bytes(),bake(load_manifest(manifest,selection),root,palette))
+                self.assertEqual((output/'holy.hfx').read_bytes(),bake_holy(palette,frames))
                 self.assertEqual(receipt['manifest_sha256'],hashlib.sha256(manifest.read_bytes()).hexdigest())
 
     def test_mixed_atlas_order_border_and_version(self):
@@ -97,22 +102,43 @@ class PreparationTests(unittest.TestCase):
             for i,(tier,color) in enumerate(zip(['tier1','tier2','tier3']*2,colors)):
                 Image.new('RGB',(TIERS[tier][0],)*2,color).save(root/f'{i}.png')
                 entries.append({'slide':i+1,'source':f'{i}.png','Size':tier})
-            data=bake(entries,root)
-            self.assertEqual(data[:16],b'CGA1'+bytes([7,6,1,2,3,1,2,3,1,1,0,4]))
+            palette=[(9,8,7),(255,255,255)]
+            data=bake(entries,root,palette)
+            self.assertEqual(data[:16],b'CGA1'+bytes([8,6,1,2,3,1,2,3,1,1,0,4]))
             atlas=Image.open(io.BytesIO(data[16:]));self.assertEqual(atlas.size,(390,261))
             for i,(entry,color) in enumerate(zip(entries,colors)):
                 n=TIERS[entry['Size']][2];x,y=i%3*130,i//3*130
                 for dx,dy in ((0,0),(1,1),(n,n),(n+1,n+1)):
                     self.assertEqual(atlas.getpixel((x+dx,y+dy)),color)
-            self.assertEqual(atlas.crop((0,260,390,261)).getextrema(),((255,255),)*3)
-            self.assertEqual(data,bake(entries,root))
+            self.assertEqual(atlas.getpixel((0,260)),(255,255,255))
+            self.assertEqual(atlas.getpixel((1,260)),palette[0])
+            self.assertEqual(atlas.getpixel((2,260)),palette[1])
+            self.assertEqual(data,bake(entries,root,palette))
+
+    def test_holy_frames_are_naturally_sorted_sparse_and_palette_indexed(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)
+            for number,color,point in [(10,(30,20,10,255),(47,47)),(2,(3,2,1,255),(4,5))]:
+                image=Image.new('RGBA',(48,48),(0,0,0,0));image.putpixel(point,color)
+                image.save(root/f'Holy {number}.png')
+            paths,palette,frames=load_holy(root)
+            self.assertEqual([path.name for path in paths],['Holy 2.png','Holy 10.png'])
+            self.assertEqual(palette,[(3,2,1),(30,20,10)])
+            self.assertEqual(frames,[[(4,5,0)],[(47,47,1)]])
+            encoded=bake_holy(palette,frames)
+            self.assertEqual(encoded[:12],b'HFX1'+bytes([1,48,48,2])+HOLY_PERIOD_MS.to_bytes(2,'little')+bytes([2,0]))
 
     def test_package_matches_manifest_and_current_sources(self):
         manifest=SLIDES/'sources.json';receipt=json.loads((SLIDES/'gallery.json').read_text())
         data=(SLIDES/'gallery.cga').read_bytes()
+        holy=(SLIDES/'holy.hfx').read_bytes()
+        _,palette,frames=load_holy(SLIDES/'holy')
         self.assertEqual(hashlib.sha256(manifest.read_bytes()).hexdigest(),receipt['manifest_sha256'])
         self.assertEqual(hashlib.sha256(data).hexdigest(),receipt['package_sha256'])
-        self.assertEqual(data,bake(load_manifest(manifest,receipt['faces']),SLIDES))
+        self.assertEqual(data,bake(load_manifest(manifest,receipt['faces']),SLIDES,palette))
+        self.assertEqual(holy,bake_holy(palette,frames))
+        self.assertEqual(hashlib.sha256(holy).hexdigest(),receipt['holy_sha256'])
+        self.assertEqual(receipt['holy_visible_pixels'],list(map(len,frames)))
         self.assertLessEqual(len(data),4*1024*1024)
 
 if __name__=='__main__':unittest.main()

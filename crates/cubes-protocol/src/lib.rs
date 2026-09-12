@@ -3,6 +3,7 @@
 #![no_std]
 extern crate alloc;
 pub mod gallery;
+pub mod holy;
 use alloc::vec::Vec;
 
 pub const USERNAME: &str = "t4ce";
