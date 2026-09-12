@@ -31,12 +31,27 @@ pub struct Telemetry {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ClientPacket<'a> {
-    Hello { world_id: u8, username: &'a str },
-    SlideRequest { revision: u32, chunk: u16 },
-    HolyRequest { revision: u32, frame: u8, chunk: u16 },
+    Hello {
+        world_id: u8,
+        username: &'a str,
+    },
+    SlideRequest {
+        revision: u32,
+        chunk: u16,
+    },
+    HolyRequest {
+        revision: u32,
+        frame: u8,
+        chunk: u16,
+    },
     Telemetry(Telemetry),
-    WorldRequest { chunk: u16 },
-    AssetRequest { asset_id: u8, chunk: u16 },
+    WorldRequest {
+        chunk: u16,
+    },
+    AssetRequest {
+        asset_id: u8,
+        chunk: u16,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -95,8 +110,13 @@ pub fn decode(bytes: &[u8]) -> Result<ClientPacket<'_>, DecodeError> {
     match bytes[5] {
         HELLO if payload.len() >= 2 => {
             let username = core::str::from_utf8(&payload[1..]).map_err(|_| DecodeError::Length)?;
-            if !crate::plateau::valid_username(username) { return Err(DecodeError::Length); }
-            Ok(ClientPacket::Hello { world_id: valid_world(payload[0])?, username })
+            if !crate::plateau::valid_username(username) {
+                return Err(DecodeError::Length);
+            }
+            Ok(ClientPacket::Hello {
+                world_id: valid_world(payload[0])?,
+                username,
+            })
         }
         TELEMETRY if payload.len() == 29 => Ok(ClientPacket::Telemetry(Telemetry {
             sequence: read_u32(payload, 0),
@@ -240,10 +260,17 @@ mod tests {
 
     #[test]
     fn hello_requires_a_bounded_username() {
-        assert_eq!(decode(&client(HELLO, b"\x1bt4ce")), Ok(ClientPacket::Hello { world_id: 27, username: "t4ce" }));
+        assert_eq!(
+            decode(&client(HELLO, b"\x1bt4ce")),
+            Ok(ClientPacket::Hello {
+                world_id: 27,
+                username: "t4ce"
+            })
+        );
         assert!(decode(&client(HELLO, &[27])).is_err());
         for name in ["../t4ce", "a/b", "a b", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"] {
-            let mut b = alloc::vec![27]; b.extend_from_slice(name.as_bytes());
+            let mut b = alloc::vec![27];
+            b.extend_from_slice(name.as_bytes());
             assert!(decode(&client(HELLO, &b)).is_err());
         }
     }
@@ -261,9 +288,14 @@ mod tests {
         let mut payload = 12u32.to_le_bytes().to_vec();
         payload.push(3);
         payload.extend_from_slice(&2u16.to_le_bytes());
-        assert_eq!(decode(&client(6, &payload)), Ok(ClientPacket::HolyRequest {
-            revision: 12, frame: 3, chunk: 2,
-        }));
+        assert_eq!(
+            decode(&client(6, &payload)),
+            Ok(ClientPacket::HolyRequest {
+                revision: 12,
+                frame: 3,
+                chunk: 2,
+            })
+        );
     }
 
     #[test]
@@ -318,7 +350,9 @@ pub fn holy_info(
 
 pub fn holy_chunk(revision: u32, frame: u8, chunk: u16, bytes: &[u8]) -> Option<Vec<u8>> {
     let start = chunk as usize * BLOB_CHUNK_BYTES;
-    if start >= bytes.len() { return None; }
+    if start >= bytes.len() {
+        return None;
+    }
     let mut body = Vec::with_capacity(7 + BLOB_CHUNK_BYTES);
     body.extend_from_slice(&revision.to_le_bytes());
     body.push(frame);

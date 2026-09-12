@@ -94,12 +94,17 @@ target.
 
 The center landmark contains 27 white c4 cubes, using the same 8-c1/1.6-renderer-
 unit cube size as platforms and pathways. It spans 24 c1 (4.8 renderer units) on
-each axis and has ordinary walking collision. Its white texel occupies one extra
-atlas row; Holy's five source colors follow it in that row. The active Holy frame
+each axis and has ordinary walking collision. Holy's source palette remains in
+the atlas's final row. The client reads it once per gallery revision and converts
+it to the same RGB555 colors used by placed assets. The active Holy frame
 is an upright 48×48 c1 grid with its bottom edge resting on the landmark's top.
-Only visible pixels have cube geometry. Cubes rebuilds this dynamic static asset
-when a complete frame arrives, while the scene remains one mesh, one texture and
-one retained draw. The player is attached to the +Z part of the top surface.
+Only visible pixels have cube instances. The 27 center cubes and the current Holy
+frame use the placed-asset hull/tessellation/domain shader fastpath: one immutable
+44-patch cube mesh, with compact position, scale and color seeds. A complete frame
+replaces only those seeds; an empty frame leaves the center cubes. The textured
+gallery mesh stays resident. V4 submits both meshes with independent transform
+buffers and shared depth, one clear and one completion fence. The player is
+attached to the +Z part of the top surface.
 
 The largest atlas is 390×261, including duplicated edge texels and the white row:
 about 397.5 KiB
@@ -146,8 +151,10 @@ changes build the replacement before releasing the old one. Telemetry and
 periodic announcements continue; peers expire after 30 seconds disconnected.
 
 **Rebuild CubeSrv and Cubes together** for the v8 gallery and Holy-frame contract.
-TRUEOS must already support `RETAINED_MATERIAL_FLAG_NEAREST`; older kernels
-reject that material option. No new shader or kernel change is needed here.
+The hull fastpath integration also requires rebuilding TRUEOS with
+`RetainedFrameSubmitV4` / `trueos_cabi_vgpu_retained_frame_submit_v4`. This is an
+additive kernel/SDK interface; older retained submissions keep their contracts.
+The CubeSrv asset and network contracts are unchanged by this rendering change.
 
 ## Validation
 
