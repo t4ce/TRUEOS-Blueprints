@@ -113,6 +113,21 @@ impl Scene {
 mod tests {
     use super::*;
     #[test]
+    fn size_selector_accepts_existing_tiers_without_changing_asset_identity() {
+        let slot=Slot {revision:7,bytes:100,anchor:[40,8,0],frames:2,period_ms:150,pixel_side_c1:1};
+        let mut scene=Scene {gallery_revision:1,event:1,age_ms:0,slots:[slot;INSTANCES]};
+        for size in PIXEL_SIDES_C1 {
+            scene.slots[0].pixel_side_c1=size;
+            assert_eq!(Scene::parse(&scene.encode()),Some(scene));
+            assert_eq!(scene.slots[0].revision,7);
+        }
+        for size in [0,5,7,9,255] {
+            scene.slots[0].pixel_side_c1=size;
+            assert!(Scene::parse(&scene.encode()).is_none());
+        }
+        assert!(Scene::parse(&[0;112]).is_none());
+    }
+    #[test]
     fn six_independent_bases_expire_with_their_own_loop() {
         let slot=Slot {revision:7,bytes:100,anchor:[40,8,0],frames:2,period_ms:150,pixel_side_c1:1};
         let mut scene=Scene {gallery_revision:1,event:1,age_ms:0,slots:[slot;INSTANCES]};
