@@ -140,7 +140,7 @@ class PreparationTests(unittest.TestCase):
             self.assertEqual(name,entry['name'])
             encoded=bundle[entry['offset']:entry['offset']+entry['length']]
             self.assertEqual(encoded,bake_vfx(palette,effect_frames))
-            self.assertEqual(int.from_bytes(encoded[8:10],'little'),500)
+            self.assertEqual(int.from_bytes(encoded[8:10],'little'),400)
             self.assertEqual(hashlib.sha256(encoded).hexdigest(),entry['sha256'])
             runs=[encoded[i:i+5] for i in range(12+3*len(palette),len(encoded),5)]
             for frame_index,expected in enumerate(effect_frames):

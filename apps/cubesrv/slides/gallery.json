@@ -6,7 +6,7 @@
       "name": "Ambient/Aurora",
       "offset": 0,
       "length": 11903,
-      "sha256": "45afe69dbf11a8fdf74f1cc7134d94e6f674446b79cbe95892bf63e980e83146",
+      "sha256": "b92d2ce645b66a265eb1ee459e689e358225053d8340447ff80d995ebc788af2",
       "frames": 24,
       "runs": 2272,
       "full_frame_bytes": 22668
@@ -15,7 +15,7 @@
       "name": "Ambient/Bubbles",
       "offset": 11903,
       "length": 6798,
-      "sha256": "4538e2ba207d6b5b297d72b31222ad007ddc1f605ec8f1070cdb99fdbfe7c1b5",
+      "sha256": "1f1774dc00acba6dddf55ba50d1cece5b4eb2f70161d854d0da4f557af467d0b",
       "frames": 23,
       "runs": 1251,
       "full_frame_bytes": 5730
@@ -24,7 +24,7 @@
       "name": "Ambient/Dust Motes",
       "offset": 18701,
       "length": 1793,
-      "sha256": "03126aa733f57931c19a2fcf27add3f6b5cbfb98ad7b61afc833c539da869d39",
+      "sha256": "8a1b3444559ba4514d030bc53abc2790cc2592c39f72ab8796aa7d2a44b6297e",
       "frames": 23,
       "runs": 250,
       "full_frame_bytes": 1434
@@ -33,7 +33,7 @@
       "name": "Ambient/Embers Ambient",
       "offset": 20494,
       "length": 3878,
-      "sha256": "293b3ae50960436931affbc208c1fc60aa4ca26e3801df7eb9d3812990f9e35a",
+      "sha256": "f9842907465d5ae29806732e321f2e7e7e2c3a9b272596a130e670a4fceee4be",
       "frames": 23,
       "runs": 667,
       "full_frame_bytes": 2334
@@ -42,7 +42,7 @@
       "name": "Ambient/Falling Leaves",
       "offset": 24372,
       "length": 15103,
-      "sha256": "8608dba53c126938ba356a3c4b9e728a5622a5e0ee4528f14699efcad34f208a",
+      "sha256": "ab5240dc9f2794453f6ac728a878cd2b10c2c65104403fcb27bb16699255b334",
       "frames": 23,
       "runs": 2912,
       "full_frame_bytes": 14916
@@ -51,7 +51,7 @@
       "name": "Ambient/Fireflies",
       "offset": 39475,
       "length": 5398,
-      "sha256": "799ed25a48ef5eac4156fc4289f962faee7324a8eeba9572cf8706ad7d114ad8",
+      "sha256": "abe7d9c6792c418d0cae0569a0a2376ff6ec8760bf8541441b531dcd802544b1",
       "frames": 23,
       "runs": 971,
       "full_frame_bytes": 5604
@@ -60,7 +60,7 @@
       "name": "Ambient/Lava Bubble",
       "offset": 44873,
       "length": 4838,
-      "sha256": "6336ba8ddcec49022c15b7f270db9afc4b706bdb9a3824db0a469c68bde9e1e5",
+      "sha256": "7a6ef92f10febdc9d229fc4232860f6b6f789edf8afcbd4339c6a5a26d361c61",
       "frames": 24,
       "runs": 859,
       "full_frame_bytes": 3756
@@ -69,7 +69,7 @@
       "name": "Ambient/Puddle Splash",
       "offset": 49711,
       "length": 2158,
-      "sha256": "37c65e458064cfa9fc64d0f218925ecd827260c35ad603c4e835cd1aa2e588cb",
+      "sha256": "7e9473df1a0d882d58187805a1c74fabbd3d52c8ecd0001cfd1b0ac4c9e5ce13",
       "frames": 5,
       "runs": 323,
       "full_frame_bytes": 1317
@@ -78,7 +78,7 @@
       "name": "Ambient/Rain",
       "offset": 51869,
       "length": 2148,
-      "sha256": "da0350552fed72015d20ab297bcb3b16b760f76f3e0da88e6389f108b187746d",
+      "sha256": "17a9bd37558307381052ecab45361749950480f76f828b71fd7dd80d29402548",
       "frames": 23,
       "runs": 321,
       "full_frame_bytes": 1023
@@ -87,7 +87,7 @@
       "name": "Ambient/Snow",
       "offset": 54017,
       "length": 4353,
-      "sha256": "2450da503531edc4e69debf7e6c18a4b630bd59590b85679acd52443d9020a8f",
+      "sha256": "a7034e513cec1908922944f0f587e4822fb5b78f508b222a3b14536e98bfebb5",
       "frames": 23,
       "runs": 762,
       "full_frame_bytes": 2358
@@ -96,7 +96,7 @@
       "name": "Ambient/Sparkles Ambient",
       "offset": 58370,
       "length": 3443,
-      "sha256": "1e96049a06ca1f3df942430c841a7b4b57d9622df493142d86ff41d0d6a9d6f5",
+      "sha256": "d9b4709676182d92bb7f684fa1374e68b9e921a3f1ac5996e17d37c58b4fbfa0",
       "frames": 23,
       "runs": 580,
       "full_frame_bytes": 3597
@@ -105,7 +105,7 @@
       "name": "Ambient/Stars Twinkle",
       "offset": 61813,
       "length": 2328,
-      "sha256": "3d18d0f89c693a88a25d15657706429644978199e17124679bdc1a874829cc5d",
+      "sha256": "dfde5caded71745ad2c8111d1824928f0c5a3c712b1a0271216e2572f26a6362",
       "frames": 24,
       "runs": 357,
       "full_frame_bytes": 4560
@@ -114,7 +114,7 @@
       "name": "Ambient/Water Drip",
       "offset": 64141,
       "length": 6678,
-      "sha256": "66b052ccfe215ab12f5b67de56c87b75a72879fb97745482a92def2616fd0f76",
+      "sha256": "7dd7f5993b87b3ae48bb5c30327573d0bb5435ade1687b14ed3996bc4576757f",
       "frames": 24,
       "runs": 1227,
       "full_frame_bytes": 4455
@@ -123,7 +123,7 @@
       "name": "Ambient/Waterfall Mist",
       "offset": 70819,
       "length": 5188,
-      "sha256": "a3ca942d952821de9eef5b6bb02f909c3ef13de0337f1b4ee2ce2c935cc45901",
+      "sha256": "2ae0eae2e572fc35e03756df093ba7fb7bd9922e3f40033d9f848e8d1e3be751",
       "frames": 24,
       "runs": 929,
       "full_frame_bytes": 17169
@@ -132,7 +132,7 @@
       "name": "Ambient/Wind Lines",
       "offset": 76007,
       "length": 6418,
-      "sha256": "8e2d98e5b624faa0cd09fbe931e205eaaf5ea85fb53b9556e4bb519bc0f559f2",
+      "sha256": "a0ca9af615f32457ec69cb4f4184048730ba302f9e932b4b402bb1b0b5bba036",
       "frames": 19,
       "runs": 1175,
       "full_frame_bytes": 5334
@@ -141,7 +141,7 @@
       "name": "Explosions/Barrel Blast",
       "offset": 82425,
       "length": 15363,
-      "sha256": "504034aa4ef6084b7e48cfe43f8d44e4fb40cfe0b3fefcf650d41068832f860a",
+      "sha256": "51ff3c9f7b1934faba901a19e130a052572af6f33e88d252ca82e05010058c51",
       "frames": 10,
       "runs": 2964,
       "full_frame_bytes": 12921
@@ -150,7 +150,7 @@
       "name": "Explosions/Big Boom",
       "offset": 97788,
       "length": 16293,
-      "sha256": "62ebc0a8d94a609f71ad3adc54d369646dda20cf2e8fb569924398a1583ced19",
+      "sha256": "fc6804eb80fb3c5b2fff18bd7a7b7cb1c1de34253048faa90d5ef350ee084a39",
       "frames": 10,
       "runs": 3150,
       "full_frame_bytes": 12951
@@ -159,7 +159,7 @@
       "name": "Explosions/Blast",
       "offset": 114081,
       "length": 15223,
-      "sha256": "82f768343070f941add6daacb4166bf28f6eae48b954a810b1c9e62c9e55fd35",
+      "sha256": "e3e7736f7dbe9df75afd3ad1c396ad4ce47f32860f955394c0d3df0074a49f4f",
       "frames": 10,
       "runs": 2936,
       "full_frame_bytes": 12942
@@ -168,7 +168,7 @@
       "name": "Explosions/Bomb",
       "offset": 129304,
       "length": 11758,
-      "sha256": "96a508a6e06601a0e0c4d0341735532499e35475dea5bf503e2c85cb98f20400",
+      "sha256": "36964c827412de72ed677db436dd2fddcf46f2c4a7453ab657f2d56ff24cf7ac",
       "frames": 10,
       "runs": 2243,
       "full_frame_bytes": 9978
@@ -177,7 +177,7 @@
       "name": "Explosions/Chain Blast",
       "offset": 141062,
       "length": 9158,
-      "sha256": "1b924991a2fcb5d17337f5195c632f922cc630d5cbab4b9c5f774dc6ffdb9171",
+      "sha256": "a58e56f0164cec2a782a8ff956411157a2f697c3389678c2f1252ba772ad2b89",
       "frames": 12,
       "runs": 1723,
       "full_frame_bytes": 7575
@@ -186,7 +186,7 @@
       "name": "Explosions/Fireball Burst",
       "offset": 150220,
       "length": 7053,
-      "sha256": "1f6ee812369d1a8a323e135b03d7fbd0ee36c973fb2ae03bef25e26b225be5e7",
+      "sha256": "0a41db16d55675c7d4bc4e5d7d1aac3589a4d6f4aaeca1790826c805d7b0fd42",
       "frames": 6,
       "runs": 1302,
       "full_frame_bytes": 5469
@@ -195,7 +195,7 @@
       "name": "Explosions/Ice Shatter",
       "offset": 157273,
       "length": 5333,
-      "sha256": "6030db8d56046a967fdc01960c849514e00f1a6f5bf8fa54264b936b20a6dd85",
+      "sha256": "431a3a3a61f39db3fb110d6daf668c533ea85d99b243b4bb7987112ace222446",
       "frames": 6,
       "runs": 958,
       "full_frame_bytes": 3438
@@ -204,7 +204,7 @@
       "name": "Explosions/Mine Pop",
       "offset": 162606,
       "length": 7783,
-      "sha256": "2a1c31ea340cbcdb1de5efb0aa5a126b86a61e89bd1dc4681e1e4da7d3a7ce05",
+      "sha256": "9162ea2b1a5d6a75aef7cb809baebcccc6a4c3089cf28e99b7b23acb58c8cbf8",
       "frames": 12,
       "runs": 1448,
       "full_frame_bytes": 7362
@@ -213,7 +213,7 @@
       "name": "Explosions/Nuke Mini",
       "offset": 170389,
       "length": 6003,
-      "sha256": "1c0a342d165e1da0e354abdad5f800be8cbe6f8983f4b56cbbd968f1749ad500",
+      "sha256": "59527e4cacc72134211e9185e3c6d1d5b0cba28a403446c095dca4f8434a95ac",
       "frames": 9,
       "runs": 1092,
       "full_frame_bytes": 4992
@@ -222,7 +222,7 @@
       "name": "Explosions/Plasma Blast",
       "offset": 176392,
       "length": 15898,
-      "sha256": "f5a93f428a935244f7c64333ea32ab6cae02769e117901ef0bd5832731f9da74",
+      "sha256": "f0486cb1855e800da0fba17e6a29b3b79c79384bf5ec2c9d434add6a15f7e299",
       "frames": 10,
       "runs": 3071,
       "full_frame_bytes": 12903
@@ -231,7 +231,7 @@
       "name": "Explosions/Rock Burst",
       "offset": 192290,
       "length": 9828,
-      "sha256": "e7223d8f5d7020635a309e679e2e2de81f3017de314c88b473ef5ec7bf5daad7",
+      "sha256": "548d4bb713358a43d6aeca0b096a1ad2d173cd2117d16251d20c6a0f7d88fb29",
       "frames": 10,
       "runs": 1857,
       "full_frame_bytes": 8280
@@ -240,7 +240,7 @@
       "name": "Explosions/Sci-Fi Blast",
       "offset": 202118,
       "length": 8178,
-      "sha256": "078818c463ff4841fdc4385714929cde86747ccb24190b706e4fc8681418819d",
+      "sha256": "b568a9a6ef67b64473665f477f1eba9a8209e0e47e85944d5395938a107a049c",
       "frames": 6,
       "runs": 1527,
       "full_frame_bytes": 5910
@@ -249,7 +249,7 @@
       "name": "Explosions/Shockwave",
       "offset": 210296,
       "length": 6418,
-      "sha256": "2a30e89d6f930628e02f4d58ed11eff643f841f9c88cfa2f07c77591252eed96",
+      "sha256": "6e988d2a8a4ea4c689590b459d1519c0c34967b0439e27cb5bf68d3797f93346",
       "frames": 6,
       "runs": 1175,
       "full_frame_bytes": 3681
@@ -258,7 +258,7 @@
       "name": "Explosions/Small Pop",
       "offset": 216714,
       "length": 3918,
-      "sha256": "145fc9db3951bdb7210053480f2e4fa0b45a888a57077023d860359744605ec9",
+      "sha256": "767cfc7e695b714edfda361a192d1db442c8676d2eb8bb393c8db6f8cf36bb74",
       "frames": 6,
       "runs": 675,
       "full_frame_bytes": 3012
@@ -267,7 +267,7 @@
       "name": "Explosions/Smoke Burst",
       "offset": 220632,
       "length": 6378,
-      "sha256": "883085b5155179de7d85652eb19a281e63201c7e858fc92c2ea381b799333e7e",
+      "sha256": "58b747b78ed07566e85362771e287fa49ef689ec358e5d6bf98780f732586a5d",
       "frames": 10,
       "runs": 1167,
       "full_frame_bytes": 10512
@@ -276,7 +276,7 @@
       "name": "Fire/Blue Flame",
       "offset": 227010,
       "length": 4043,
-      "sha256": "48ec04b031cf572d0b268e279ed8d186e79da0721340df35a12b14947f9b0443",
+      "sha256": "407d0ca82851aab033f5c800d861c431aa3b1a60f82b5e7c4bdc7b1caa620846",
       "frames": 16,
       "runs": 700,
       "full_frame_bytes": 9780
@@ -285,7 +285,7 @@
       "name": "Fire/Burning Ground",
       "offset": 231053,
       "length": 6613,
-      "sha256": "5d3be9f6874f20e8888cfd6fb7131b956a0311c5bed2ce4f62e6f8f4e98e0757",
+      "sha256": "e0d50e361289829b63087f3c5807f30df29b972fc879cf24a01257d3950da6d0",
       "frames": 16,
       "runs": 1214,
       "full_frame_bytes": 16101
@@ -294,7 +294,7 @@
       "name": "Fire/Campfire",
       "offset": 237666,
       "length": 5533,
-      "sha256": "10d75bf0c27e52c65a7e4d6fdbfe545f09d624610158d4bcc80a32e6a9f0eff7",
+      "sha256": "226a079d66d919befeab3fcb51e3e77da92039b919ed65384bb45d0a71f634dc",
       "frames": 16,
       "runs": 998,
       "full_frame_bytes": 11817
@@ -303,7 +303,7 @@
       "name": "Fire/Candle",
       "offset": 243199,
       "length": 2153,
-      "sha256": "aee10ca4bab3c7837cde7f3e1afbaaa4caec5cb525565d5e4b31fdfc638afed5",
+      "sha256": "97d95500c80a6964a2cddb148ca181e55aa8d9453383e7558925c5a02be01f98",
       "frames": 16,
       "runs": 322,
       "full_frame_bytes": 3900
@@ -312,7 +312,7 @@
       "name": "Fire/Ember Rise",
       "offset": 245352,
       "length": 3003,
-      "sha256": "c1e3b9e4bbeb9bf8cf30aa0baab979033a2d470c24fc97e883c0ffd30271f608",
+      "sha256": "f398525feafc96a1787a684be5663eb73641e03df1e6392b90fd88e8596af560",
       "frames": 23,
       "runs": 492,
       "full_frame_bytes": 1590
@@ -321,7 +321,7 @@
       "name": "Fire/Fire Orb",
       "offset": 248355,
       "length": 6768,
-      "sha256": "703c187761d1ac42eb69aeb5d594193c0f706aab64f45ec67a7b28a379674691",
+      "sha256": "c690f6ee6a935d7c999482055cde5782261898392511d5e95ea2263dde9e5c96",
       "frames": 16,
       "runs": 1245,
       "full_frame_bytes": 10281
@@ -330,7 +330,7 @@
       "name": "Fire/Fire Puff",
       "offset": 255123,
       "length": 5183,
-      "sha256": "f8bc2a9b1ace840c506c4b32c355c920f55eae0999a929e27299e78e2f964c34",
+      "sha256": "32d96934352d2059b3988e834f94fbedc5cd48d5284f30ea4c378e891fb45eb0",
       "frames": 6,
       "runs": 928,
       "full_frame_bytes": 3918
@@ -339,7 +339,7 @@
       "name": "Fire/Fire Ring",
       "offset": 260306,
       "length": 9438,
-      "sha256": "c4e350fc5bdb8a00074f40c58da17053c6f7bc0bcd4e13fe54bdc658c7d2e0cd",
+      "sha256": "36e09dba1442e5ec2f1e0565b5a0f2e1f828d4f5609b59e53534d79a91e3cadf",
       "frames": 16,
       "runs": 1779,
       "full_frame_bytes": 13494
@@ -348,7 +348,7 @@
       "name": "Fire/Fire Shield",
       "offset": 269744,
       "length": 13883,
-      "sha256": "2734b409a3813c6d9d17fffc6a82c150d0c85f45077018a5ea841c5cbf4dd5c9",
+      "sha256": "dadef73cf12e4965cea63bf2d4e02b8fb05cc19c3113f1c5846fd6078520af8a",
       "frames": 16,
       "runs": 2668,
       "full_frame_bytes": 20028
@@ -357,7 +357,7 @@
       "name": "Fire/Fire Trail",
       "offset": 283627,
       "length": 4508,
-      "sha256": "bb160554685e70758b23283f2dc3d10c2a9a331f1d2eaa915e2b873bc1872b9c",
+      "sha256": "61bbcc57232b9c4453ad4f21940398ae4ebd0a3bd8d385d29d28cfc75a907bea",
       "frames": 16,
       "runs": 793,
       "full_frame_bytes": 9912
@@ -366,7 +366,7 @@
       "name": "Fire/Flame Loop",
       "offset": 288135,
       "length": 4558,
-      "sha256": "8486d6e974c2a925963f628ffe3c4ade0d9b4971f41ca5b0d0ba0d3af771bb30",
+      "sha256": "aead1bed66123791962a5ff7003a0b0ece2157fcd9b2b0c261558d3c32e1a7ab",
       "frames": 16,
       "runs": 803,
       "full_frame_bytes": 9720
@@ -375,7 +375,7 @@
       "name": "Fire/Flamethrower",
       "offset": 292693,
       "length": 10183,
-      "sha256": "ccb0ccf2c934c73871363d3918773963ef87e635a8d4cd02583050c2ba21c505",
+      "sha256": "ca597178536b4ab6b27be56c58c5e149360f27eb66572cd7d043225dd38e88ca",
       "frames": 16,
       "runs": 1928,
       "full_frame_bytes": 12069
@@ -384,7 +384,7 @@
       "name": "Fire/Ignite",
       "offset": 302876,
       "length": 3648,
-      "sha256": "271e41da94b793d3b057218f8acc9fe869e205f288154ad70c2e881719cf2b50",
+      "sha256": "c378c473a44bac6ea1653996306b5ec5736bb66aa088d26965da10665b6ef27c",
       "frames": 8,
       "runs": 621,
       "full_frame_bytes": 3219
@@ -393,7 +393,7 @@
       "name": "Fire/Phoenix Flare",
       "offset": 306524,
       "length": 8353,
-      "sha256": "11067ac10c8b8cf77ec1b1c4f31ad6069056f31c95545a97d79ad0a87012286d",
+      "sha256": "f4f436d382b6d4d7849f80e5096eaa2c2d83025ea42db8e59e69bb6a2ba5dc37",
       "frames": 7,
       "runs": 1562,
       "full_frame_bytes": 6603
@@ -402,7 +402,7 @@
       "name": "Fire/Torch",
       "offset": 314877,
       "length": 2848,
-      "sha256": "bac4e76881544cafc8cbb6054f52b680332f1fc2a00a330c8e142db9a4923c7e",
+      "sha256": "87d14b4cdf9f34ef6c32d40ab288bc9cc8a8f60ab79ea6d1a2b1e229f6884602",
       "frames": 16,
       "runs": 461,
       "full_frame_bytes": 5430
@@ -411,7 +411,7 @@
       "name": "Hit Sparks/Block Spark",
       "offset": 317725,
       "length": 1763,
-      "sha256": "9b25be03027355042b06972038adefb06625e2b8390dae71155f81db3283944c",
+      "sha256": "72bd32f463932715f07a69676d0e01c43cc81459697a25f5bd53b3d60db55fa8",
       "frames": 5,
       "runs": 244,
       "full_frame_bytes": 1149
@@ -420,7 +420,7 @@
       "name": "Hit Sparks/Blunt Thud",
       "offset": 319488,
       "length": 5513,
-      "sha256": "c26b5c9eb885b989158f9c7400821b80c99945648710f9cf2098bf40ed673332",
+      "sha256": "503270b05ae928a4fd996ad8f14e3fa9914b50ffd8323a158fceb84b5692afcd",
       "frames": 9,
       "runs": 994,
       "full_frame_bytes": 4854
@@ -429,7 +429,7 @@
       "name": "Hit Sparks/Critical Star",
       "offset": 325001,
       "length": 5523,
-      "sha256": "244d943a1bfc1031cb640d4583ac8247e83070ddc796c92beed06f4989e9656c",
+      "sha256": "53408626b8e519016e08255cd1b55bcdc3b81a5850a0498972d10359d55b8701",
       "frames": 6,
       "runs": 996,
       "full_frame_bytes": 3402
@@ -438,7 +438,7 @@
       "name": "Hit Sparks/Fire Hit",
       "offset": 330524,
       "length": 5118,
-      "sha256": "0446f71cfca18fd05bbda9bc899a80e53d617e3f028eae3242283792794da519",
+      "sha256": "c74e33032fe7499c50c5a119657235c4ce85d3b545e075f81c1b6b33deee42fd",
       "frames": 11,
       "runs": 915,
       "full_frame_bytes": 4671
@@ -447,7 +447,7 @@
       "name": "Hit Sparks/Heavy Hit",
       "offset": 335642,
       "length": 6433,
-      "sha256": "525d96a919c855acedc186085982a6fb09344e33831d5fcfcfe7fe34800c31aa",
+      "sha256": "1b4296247b9fbe45674aa5ececf9cdddc901e3f8b0e307856575ecda21d7e666",
       "frames": 6,
       "runs": 1178,
       "full_frame_bytes": 3978
@@ -456,7 +456,7 @@
       "name": "Hit Sparks/Hit Spark",
       "offset": 342075,
       "length": 3548,
-      "sha256": "9357cf5f6e4cef1cb1b528136a965db472768238d6d1e997f0be85e397f4fb79",
+      "sha256": "eaabef0934ffe947086db780ceba4ab43d682e19ac83ccf9fb36f2cb12e141fc",
       "frames": 5,
       "runs": 601,
       "full_frame_bytes": 2328
@@ -465,7 +465,7 @@
       "name": "Hit Sparks/Ice Hit",
       "offset": 345623,
       "length": 3288,
-      "sha256": "9251994c525dccc9b62cd630e2c034b94ab3c22ed5b5a7fe41fe3bc5a049081f",
+      "sha256": "310c7d794f60ea376ee6b7841a760f0f91f3d859b6bd7811b306f4e72778d68c",
       "frames": 6,
       "runs": 549,
       "full_frame_bytes": 1905
@@ -474,7 +474,7 @@
       "name": "Hit Sparks/Multi Hit",
       "offset": 348911,
       "length": 3888,
-      "sha256": "601b1e8c2a2cfe0bfef3c32e5c7608a2fc5b5d1dd4ba09d685cc6c9077278920",
+      "sha256": "5a3e3ff32d6c3b0fa119187a6fe9b297cc857582f8063d7858821bc8193d3daf",
       "frames": 9,
       "runs": 669,
       "full_frame_bytes": 2517
@@ -483,7 +483,7 @@
       "name": "Hit Sparks/Parry Flash",
       "offset": 352799,
       "length": 4678,
-      "sha256": "24ec206fb737f906abd880409b7605cb9086549f5ae00a868f8eb5de1161bd7a",
+      "sha256": "ab35febd1819e8ebf5663e4f5020557b06e5290ec5d29d73eaabd20d72b58b1c",
       "frames": 6,
       "runs": 827,
       "full_frame_bytes": 3591
@@ -492,7 +492,7 @@
       "name": "Hit Sparks/Pierce Spark",
       "offset": 357477,
       "length": 2538,
-      "sha256": "94b65edaeefaaef5329947228ea5d6a622168b75d02a2b97c9e269b9598462af",
+      "sha256": "fd3595f08050f621dc16e2b9a39ff245e860021e52ba161b2641bf8f9f3a0afe",
       "frames": 6,
       "runs": 399,
       "full_frame_bytes": 1716
@@ -501,7 +501,7 @@
       "name": "Hit Sparks/Poison Hit",
       "offset": 360015,
       "length": 5873,
-      "sha256": "dcfd118c8a7b9141ba2e96cc8ab6f4d9a1b7195e21308497f50733b427a6b663",
+      "sha256": "e22146280e187600fdefc0727a81addc244044eaefaa409655f9bae8044c8d63",
       "frames": 10,
       "runs": 1066,
       "full_frame_bytes": 5625
@@ -510,7 +510,7 @@
       "name": "Hit Sparks/Punch Impact",
       "offset": 365888,
       "length": 3248,
-      "sha256": "21ba15df745d1c9fa539c5ccba35054dbe923bb9a127733e5be8d18fb28cae63",
+      "sha256": "c9475b99c7568da67474b447a59253eda7ea2757f5500560a5488307eb175f00",
       "frames": 5,
       "runs": 541,
       "full_frame_bytes": 1884
@@ -519,7 +519,7 @@
       "name": "Hit Sparks/Shock Hit",
       "offset": 369136,
       "length": 3988,
-      "sha256": "ac499f6d476b39e22f223b05bcd1907bb5d11759db3238af51f4be966bf70725",
+      "sha256": "e67e1a47ccd1e9683207456946b642ca018487c77fa79ea6d9b682417838ad6a",
       "frames": 5,
       "runs": 689,
       "full_frame_bytes": 2340
@@ -528,7 +528,7 @@
       "name": "Hit Sparks/Slash Hit",
       "offset": 373124,
       "length": 3313,
-      "sha256": "4407a7b539135ea4177be4ce7208c5b01092bb742b98c41b2ae41d14821722a6",
+      "sha256": "22ecde40155213ce6893122805e57d08843af317b0821629bcbb613b2a948326",
       "frames": 6,
       "runs": 554,
       "full_frame_bytes": 2454
@@ -537,7 +537,7 @@
       "name": "Hit Sparks/Weak Hit",
       "offset": 376437,
       "length": 1363,
-      "sha256": "cfa7935d5bdf9036d5de47debbff7fa409ab9e8a52b0181964983e15476ea7c1",
+      "sha256": "836f22e082b1b3b3218e5fc010b4af50659d8c5b2acad4232d10cdeebc5157c2",
       "frames": 4,
       "runs": 164,
       "full_frame_bytes": 642
@@ -546,7 +546,7 @@
       "name": "Lightning/Bolt Strike",
       "offset": 377800,
       "length": 2823,
-      "sha256": "f0f25c057d906c76c1940f989cb2fe8a4000b2d431d5a08cd781570e205e1ef1",
+      "sha256": "f9c1b061ff4c609ee6726828c4c01d3961fce31e625aff075171bc428c315997",
       "frames": 6,
       "runs": 456,
       "full_frame_bytes": 2007
@@ -555,7 +555,7 @@
       "name": "Lightning/Chain Lightning",
       "offset": 380623,
       "length": 4778,
-      "sha256": "5619c099054bbb0ffcdaf11e1cac6bbf465bb4800c055083984ee7bc6c39e277",
+      "sha256": "b0ba3902d693e6cf7c531065c4584181b5d02384d99658b3e1159e5a82baace9",
       "frames": 5,
       "runs": 847,
       "full_frame_bytes": 2934
@@ -564,7 +564,7 @@
       "name": "Lightning/Charge Up",
       "offset": 385401,
       "length": 8483,
-      "sha256": "18c4d620bf9433413ef897cfc78820645adffeed59ccf15e448229cbf9d8c3a6",
+      "sha256": "a9240d7022d05d203d2bc20cb37e8a9787b075fcc64b49004586851a9c18fcb0",
       "frames": 16,
       "runs": 1588,
       "full_frame_bytes": 5544
@@ -573,7 +573,7 @@
       "name": "Lightning/EMP",
       "offset": 393884,
       "length": 7018,
-      "sha256": "29d77a66253281c6e6b3c60eece9542b175d1feb388d5b07d51af9a9355fe6d3",
+      "sha256": "c2bdfc47fae5f583614b75f1e988bf02584f6033827adfd603a8c2c42eaf0924",
       "frames": 6,
       "runs": 1295,
       "full_frame_bytes": 4050
@@ -582,7 +582,7 @@
       "name": "Lightning/Electric Shock",
       "offset": 400902,
       "length": 4443,
-      "sha256": "e10f2a3b95168b18931e1dc4fabf67b5b9e810b8044e649a80c83282e364fca1",
+      "sha256": "b41e14ac8710cbadc97fe4de9d73f0a8f75052c5ab9f121ca01271dc30b4ca33",
       "frames": 5,
       "runs": 780,
       "full_frame_bytes": 2838
@@ -591,7 +591,7 @@
       "name": "Lightning/Overload",
       "offset": 405345,
       "length": 5348,
-      "sha256": "09671f0ba06a77da56597df9a1fe305b9614168f353e1e3957d2b8c438d4553f",
+      "sha256": "158ca5bea985badf6d94913e6ad9911ecd34095fb890b712b496cdd3cd7be1ab",
       "frames": 5,
       "runs": 961,
       "full_frame_bytes": 3183
@@ -600,7 +600,7 @@
       "name": "Lightning/Plasma Orb",
       "offset": 410693,
       "length": 10633,
-      "sha256": "a1d1d5380a123ab60fc51d6a2f5e33c121d33ba0d58d75b41c0bb076bef091db",
+      "sha256": "1b3e8ac31be6d4df06d412790083adf2f9b18591bc800056f57bc01d111cfd3f",
       "frames": 16,
       "runs": 2018,
       "full_frame_bytes": 12450
@@ -609,7 +609,7 @@
       "name": "Lightning/Shock Aura",
       "offset": 421326,
       "length": 11048,
-      "sha256": "c6e872a1b9b14831e43e00137bfa8753c9de6dc8e5e83ea22c7775513cbcf7ea",
+      "sha256": "3651dca1c0523e422fc894e869a953559c662663d0a0cfd2c381514c25c74683",
       "frames": 16,
       "runs": 2101,
       "full_frame_bytes": 12450
@@ -618,7 +618,7 @@
       "name": "Lightning/Spark Burst",
       "offset": 432374,
       "length": 3373,
-      "sha256": "421eb66816e6888dc1d077b71eca7fc824a3311af0fef80725f66744c5da02ac",
+      "sha256": "ac585cf88a79b7f9733a3fc798141d942e1ff7fe57df0b9d48ee65c5e3c2f77f",
       "frames": 5,
       "runs": 566,
       "full_frame_bytes": 1995
@@ -627,7 +627,7 @@
       "name": "Lightning/Spark Trail",
       "offset": 435747,
       "length": 2563,
-      "sha256": "2bea52b72bf47e74dccce9ce5a940edf2194bca5a414aa7fa168ba6ee9b83e74",
+      "sha256": "e862a99b9f1809ddc10d9647505ae218654781406770af33574ec1e7924328b1",
       "frames": 16,
       "runs": 404,
       "full_frame_bytes": 1272
@@ -636,7 +636,7 @@
       "name": "Lightning/Static Loop",
       "offset": 438310,
       "length": 6363,
-      "sha256": "153fc47b053918c5c0683ee807b677f2199e63d04ffa0f0217660e4e5b0192d4",
+      "sha256": "1e49bdbfb42d9f33f8a7448221035ed4f1246f5a7638b0c27170770eca6b4264",
       "frames": 18,
       "runs": 1164,
       "full_frame_bytes": 3492
@@ -645,7 +645,7 @@
       "name": "Lightning/Storm Flash",
       "offset": 444673,
       "length": 3713,
-      "sha256": "3d6b76365ba79f17cd12683d6ffa73e250e31352f7e6b869a784697bdef43b7f",
+      "sha256": "5c8c246faecdd0c120b26ded2d4c0e3dc4859bb77ad5607784f09aa4f3a9533c",
       "frames": 6,
       "runs": 634,
       "full_frame_bytes": 2673
@@ -654,7 +654,7 @@
       "name": "Lightning/Tesla Arc",
       "offset": 448386,
       "length": 5168,
-      "sha256": "7ba351fed4befaceeee7c111f6a573ca5f8560730a2530c52692b192188ce18e",
+      "sha256": "d6e711b31aa1d2e8528264884c72f727d12848063df8c3a0c65b151b63357b4b",
       "frames": 8,
       "runs": 925,
       "full_frame_bytes": 3264
@@ -663,7 +663,7 @@
       "name": "Lightning/Thunder Impact",
       "offset": 453554,
       "length": 4433,
-      "sha256": "641191e429e2f097ff32349e885f58eebc4138f209efadd29d9dd1c44c1b29aa",
+      "sha256": "76d72a8589bd56e34bc9a1c5692987f821cbae942520fab08eafc8d4a505b605",
       "frames": 7,
       "runs": 778,
       "full_frame_bytes": 3168
@@ -672,7 +672,7 @@
       "name": "Lightning/Zap Ring",
       "offset": 457987,
       "length": 4498,
-      "sha256": "48b65f766472a7c784bde31693adda81dd6b788a6f88b9c0a289d03f2e7edbab",
+      "sha256": "eb6dc21ac81cfec545af3eb6053e46000b1adf28e42a7404ec1ec5238aa2ebf2",
       "frames": 5,
       "runs": 791,
       "full_frame_bytes": 2544
@@ -681,7 +681,7 @@
       "name": "Magic/Arcane Orb",
       "offset": 462485,
       "length": 9888,
-      "sha256": "c5d0d35413491d09f80ef03be87711022942fee23407c30ceeb7210b1295a688",
+      "sha256": "d8e274e3f6e267204779f80aad7ca9ad670ca6098a7014ab64d85ad88985c34c",
       "frames": 16,
       "runs": 1869,
       "full_frame_bytes": 13656
@@ -690,7 +690,7 @@
       "name": "Magic/Buff Up",
       "offset": 472373,
       "length": 6193,
-      "sha256": "acf7e2bb7893cc7fbd96fb38ad83db500cf03c84a6cde936b200fca1655f222b",
+      "sha256": "df0195423637403a0d2286fbd3b7120d6947f9d24d071898e6e4c17902b359e8",
       "frames": 6,
       "runs": 1130,
       "full_frame_bytes": 4362
@@ -699,7 +699,7 @@
       "name": "Magic/Cast Circle",
       "offset": 478566,
       "length": 7958,
-      "sha256": "4a5702cb649ec8345b3a202942eabfdc8c13ec8b6770b9125004570d73f2c9c6",
+      "sha256": "f13683e6547e4c66ddd4f5700e330cd59e9409e83a248a5ead13326295f33560",
       "frames": 16,
       "runs": 1483,
       "full_frame_bytes": 17844
@@ -708,7 +708,7 @@
       "name": "Magic/Dark Curse",
       "offset": 486524,
       "length": 10398,
-      "sha256": "bb71920ac1dddd729e9e0b5cc1842eb8c734aa62e2799771145e3436c30371c3",
+      "sha256": "512c46c3de986a405a9d26c17595b6d1b0064d501b6cb5acdd1c89901e64e488",
       "frames": 16,
       "runs": 1971,
       "full_frame_bytes": 21012
@@ -717,7 +717,7 @@
       "name": "Magic/Debuff Down",
       "offset": 496922,
       "length": 6023,
-      "sha256": "e402275ab8f53d7b54f2cdfbb96df6ca44c6777d1f770eecc02d574f9c280e77",
+      "sha256": "ff736bf757c36dc6c1cf285f9c8cec7770683cb7cbc094f0b86fc8f044cba960",
       "frames": 6,
       "runs": 1096,
       "full_frame_bytes": 4341
@@ -726,7 +726,7 @@
       "name": "Magic/Frost Nova",
       "offset": 502945,
       "length": 5938,
-      "sha256": "11d79c3ff76c9f62c4a4d95d5547064d836b5acecef1ae98f1f445353fea3755",
+      "sha256": "2b111f7becc52614dce5e8e3b6cfa12c41019a0c954372c15e286ba5a5267ada",
       "frames": 6,
       "runs": 1079,
       "full_frame_bytes": 3603
@@ -735,7 +735,7 @@
       "name": "Magic/Heal",
       "offset": 508883,
       "length": 3243,
-      "sha256": "c43b8f530f9a3029ad0701e7f93b3c586d2b69c4d7215c088a69805665194b59",
+      "sha256": "1add53d5318ba1d84de7e026b96ccae503e97852c3443adad0fdbde8286d27a9",
       "frames": 7,
       "runs": 540,
       "full_frame_bytes": 2451
@@ -744,7 +744,7 @@
       "name": "Magic/Holy Light",
       "offset": 512126,
       "length": 6193,
-      "sha256": "808cb771fdb3182871bf1402c03943a55f3c8f4178a4785759853654c081e48c",
+      "sha256": "bf3987e04615545a24d91a7ac166f6e06c2e0924cb7befa6054310a0bee59cfc",
       "frames": 8,
       "runs": 1130,
       "full_frame_bytes": 5928
@@ -753,7 +753,7 @@
       "name": "Magic/Poison Cloud",
       "offset": 518319,
       "length": 5808,
-      "sha256": "4f860a98b63bcb51a3b839b47194f5f53c6b8ddd44ff136e5a9f52380a7a3265",
+      "sha256": "31399b6217907e1cf26c013b572816e898e34779896a11771fc19d9c06a3295b",
       "frames": 16,
       "runs": 1053,
       "full_frame_bytes": 15828
@@ -762,7 +762,7 @@
       "name": "Magic/Portal",
       "offset": 524127,
       "length": 12198,
-      "sha256": "f1f5a0de324667668dda73bdfc76830bf0209e3ef1015006be2960911a7bd373",
+      "sha256": "0ce908b96f1c762201f1b6015c787baa7972ed301f0dbac78bfa6669a87584ea",
       "frames": 16,
       "runs": 2331,
       "full_frame_bytes": 21480
@@ -771,7 +771,7 @@
       "name": "Magic/Shield Bubble",
       "offset": 536325,
       "length": 7468,
-      "sha256": "01aa6ca478b4fd6fb86f0071ff612ea912b46eb37dcb89d40d10ca51d6283398",
+      "sha256": "744993cc01f056d4c0ba43c1f58cef7d681368e893e0931933d830814ccd69be",
       "frames": 16,
       "runs": 1385,
       "full_frame_bytes": 14016
@@ -780,7 +780,7 @@
       "name": "Magic/Summon",
       "offset": 543793,
       "length": 7758,
-      "sha256": "98e7b0f00c74685bc316baf4297b36961a849f85d647d9f5832879158ff30484",
+      "sha256": "0cbcadb908e9af11dbd0d33f06a0a90bc78d5ffe39d920f8798e921a9065eb93",
       "frames": 16,
       "runs": 1443,
       "full_frame_bytes": 11367
@@ -789,7 +789,7 @@
       "name": "Magic/Teleport",
       "offset": 551551,
       "length": 6323,
-      "sha256": "33445698bb2a97149e3a479d218e9ba8f549cef085295ccdcb70863ddb2f108c",
+      "sha256": "81ac29dfce0b7c22ab141f09ac0533f7fb36e87bfc52eec059a70e37c1083669",
       "frames": 10,
       "runs": 1156,
       "full_frame_bytes": 3699
@@ -798,7 +798,7 @@
       "name": "Magic/Water Splash",
       "offset": 557874,
       "length": 2543,
-      "sha256": "63727147e3e5749c7747fdd81aedfc6108cc19adb60e5a0a8a4fab8dc86cb14b",
+      "sha256": "026db8c7b995a22b0ffcaf5ceed37f38d9be38a11eb0197711a5c009b4de7f2f",
       "frames": 6,
       "runs": 400,
       "full_frame_bytes": 1584
@@ -807,7 +807,7 @@
       "name": "Magic/Wind Gust",
       "offset": 560417,
       "length": 8073,
-      "sha256": "935c3626fda21e0d253bc052f9c84a35bd678cd0b33c882998ced38f6ac09863",
+      "sha256": "46995f39f0e019afc7a058d1dd6296f0e6886528a2ed6207b20940dfe8c77795",
       "frames": 16,
       "runs": 1506,
       "full_frame_bytes": 5988
@@ -816,7 +816,7 @@
       "name": "Pickups and UI/Chest Open",
       "offset": 568490,
       "length": 6228,
-      "sha256": "08c0f26c364ef3cbc183befb089cd717ae04ec4eebb8961ad29661a5ebcd6889",
+      "sha256": "516723fe79de812b19850e347ac235b49897b51898b1ca09d9df0d8c15ede662",
       "frames": 7,
       "runs": 1137,
       "full_frame_bytes": 5316
@@ -825,7 +825,7 @@
       "name": "Pickups and UI/Coin Sparkle",
       "offset": 574718,
       "length": 1958,
-      "sha256": "8e66ca8cb9d7a6ac3addf645a0f7311f92117863ea510bae64c6c35f0f5fdf13",
+      "sha256": "e436d5b65640937a921ec2b97fd9e3895c20abf8ae315b5e856e779805b7ab51",
       "frames": 5,
       "runs": 283,
       "full_frame_bytes": 1002
@@ -834,7 +834,7 @@
       "name": "Pickups and UI/Damage Pop",
       "offset": 576676,
       "length": 4003,
-      "sha256": "e39b7e62d3b277f887f84713c896237e38464009401d83bac492f089b0dd43be",
+      "sha256": "b4d5eea2c7efded85d3c0a87a7337e33d89d73dffecdddfeff472fef470c1847",
       "frames": 6,
       "runs": 692,
       "full_frame_bytes": 2475
@@ -843,7 +843,7 @@
       "name": "Pickups and UI/EXP Gain",
       "offset": 580679,
       "length": 4643,
-      "sha256": "caec787531c384ff0ec83dcb79b76f5a30360ef0c92a0237c9a4969233e1a844",
+      "sha256": "812b98b1ffbd0f926008c48ce833ab5cf7da971d270071992fcc9325c03fec65",
       "frames": 7,
       "runs": 820,
       "full_frame_bytes": 3024
@@ -852,7 +852,7 @@
       "name": "Pickups and UI/Heal Cross",
       "offset": 585322,
       "length": 2813,
-      "sha256": "26bd353b8d1e163b9d0f355c109b88410af855042c6ec6fb38db0cc576390eac",
+      "sha256": "095588a35aee6c445b3b0daf98e942ab889f9b580380a479282b434fbbf5d172",
       "frames": 7,
       "runs": 454,
       "full_frame_bytes": 2589
@@ -861,7 +861,7 @@
       "name": "Pickups and UI/Item Glow",
       "offset": 588135,
       "length": 5933,
-      "sha256": "750299863ba38f9b1f3e7aa6f728eb7d00ad02cfb7e4cc8a78fa750566b6c03c",
+      "sha256": "d98956527b8bc25a567d9062c99c587fc4e9cba1898117c03a8f4fec1d0ba83e",
       "frames": 16,
       "runs": 1078,
       "full_frame_bytes": 8628
@@ -870,7 +870,7 @@
       "name": "Pickups and UI/Key Shine",
       "offset": 594068,
       "length": 2288,
-      "sha256": "d7ef3ba9209b15fd7cb0b8c2cb106a2d75b93c82b61acf71accf33a30d529617",
+      "sha256": "bf020bbb8e4306c7425ced8a56ced8d3a30fdf129cf15359fed55b7fa539c04d",
       "frames": 6,
       "runs": 349,
       "full_frame_bytes": 1530
@@ -879,7 +879,7 @@
       "name": "Pickups and UI/Level Up",
       "offset": 596356,
       "length": 8778,
-      "sha256": "aed411dcb7c599e8a2a267b02197b2d11a11b6fd627f00d2397533f062239408",
+      "sha256": "026e081fc0927e41a73365b4052dfaab1b679d42aa344442e167f235d5bf56d6",
       "frames": 9,
       "runs": 1647,
       "full_frame_bytes": 6015
@@ -888,7 +888,7 @@
       "name": "Pickups and UI/Mana Orb",
       "offset": 605134,
       "length": 6038,
-      "sha256": "6cd4e47be3a9107c6f25a8cdedd182daeaa7dbe7c24f97460b42d3d6c0e9c7e0",
+      "sha256": "0619d9cecb03ea99ee74717fc809cd5d605e4b89a21653fb3e85ac8b6672da00",
       "frames": 16,
       "runs": 1099,
       "full_frame_bytes": 8496
@@ -897,7 +897,7 @@
       "name": "Pickups and UI/Notify Ping",
       "offset": 611172,
       "length": 4948,
-      "sha256": "41bed123bb28230014c0518478e2452d0dd77593f1ab1aa480a9fffe360ef17f",
+      "sha256": "131bafb9493845fe5caa86533e48ba0f577a13a04af25c730de7bd33d975bc19",
       "frames": 8,
       "runs": 881,
       "full_frame_bytes": 2778
@@ -906,7 +906,7 @@
       "name": "Pickups and UI/Plus Sign",
       "offset": 616120,
       "length": 2268,
-      "sha256": "e69178437639b8c8e5772bbb204a0972178602b8c9d93a972a56c0d8b0b59e05",
+      "sha256": "c498c144b8810de8a643b7ce6ba6db2ac3cc1a500c2eeae3288a93449cc6f4de",
       "frames": 8,
       "runs": 345,
       "full_frame_bytes": 2316
@@ -915,7 +915,7 @@
       "name": "Pickups and UI/Rank Up",
       "offset": 618388,
       "length": 6423,
-      "sha256": "d89f2ad0162da40338373b40c5dc95c72aac349ab1e14a48a1333eda5baa0bbd",
+      "sha256": "6f699e92d869358e3bf24cb79453f03b4878bdfeb8c419d508c10643c7fb97ba",
       "frames": 9,
       "runs": 1176,
       "full_frame_bytes": 4632
@@ -924,7 +924,7 @@
       "name": "Pickups and UI/Save Sparkle",
       "offset": 624811,
       "length": 1818,
-      "sha256": "9b907aaee080a3d3ac83460ff8ebcac33a340c5ad9bc758afcfcffb55d1253ff",
+      "sha256": "940c2d79a0f00ff8b6d0f6641fb328835494ca577bbc0df26a2e9a0f10ca7453",
       "frames": 16,
       "runs": 255,
       "full_frame_bytes": 2184
@@ -933,7 +933,7 @@
       "name": "Pickups and UI/Star Burst",
       "offset": 626629,
       "length": 4073,
-      "sha256": "86097055d0350ed18d4fc86d852ec804a92b9876f6ff31ca7bc00ac245a6f895",
+      "sha256": "2298530ed3f7e90e27a03a26267b9fdb58b6ec436b997bc4f0f1be08c4e581ab",
       "frames": 7,
       "runs": 706,
       "full_frame_bytes": 2625
@@ -942,7 +942,7 @@
       "name": "Pickups and UI/Unlock",
       "offset": 630702,
       "length": 5273,
-      "sha256": "91aac16270b4899cd953c3038d8c9205a48d5e0fce7245a7f0b6686d69d8dfea",
+      "sha256": "a2516117e670da4e5ea8024a9d09923d4e61b58f8da6ece15a45e7376ebd6e60",
       "frames": 7,
       "runs": 946,
       "full_frame_bytes": 3288
@@ -951,7 +951,7 @@
       "name": "Projectiles/Arrow Trail",
       "offset": 635975,
       "length": 4383,
-      "sha256": "f67ed4a2ee4ca76120d1c1e71afac0b88a2068165e3d73dc82ac2ac83053a316",
+      "sha256": "a46806f4591bf95b38939eebed82df5b50f0cb2f29ff188e75dd7f82240937fb",
       "frames": 11,
       "runs": 768,
       "full_frame_bytes": 4395
@@ -960,7 +960,7 @@
       "name": "Projectiles/Boomerang",
       "offset": 640358,
       "length": 7528,
-      "sha256": "d3be70f27f415cc5d2bc5e9253aeb42fd72089b96cf58ea57d9b8b039775ab8f",
+      "sha256": "4bda7c6ed9ecfb8c2e3109e4d7e54ea23144375fffbef3275b0eec569c1a05c6",
       "frames": 11,
       "runs": 1397,
       "full_frame_bytes": 5007
@@ -969,7 +969,7 @@
       "name": "Projectiles/Bullet Tracer",
       "offset": 647886,
       "length": 768,
-      "sha256": "b4210c20b00acb2acec3103f6cb1b8c3855e9946d275833dc6d654f0b144f880",
+      "sha256": "0878553790dec3e97b0ce46b5e8eedfbdb148fa75349b6fe0a20add67fc8ed18",
       "frames": 11,
       "runs": 45,
       "full_frame_bytes": 1206
@@ -978,7 +978,7 @@
       "name": "Projectiles/Cannonball",
       "offset": 648654,
       "length": 1723,
-      "sha256": "0cfd06520b742af9943bfa3bc5e487f285176d2cc7cd52c287351c9c334469e3",
+      "sha256": "5d3b515a47942197ad933a06eea4c3264de8dd3f78aac2ba43948087c482f634",
       "frames": 11,
       "runs": 236,
       "full_frame_bytes": 3888
@@ -987,7 +987,7 @@
       "name": "Projectiles/Energy Bolt",
       "offset": 650377,
       "length": 4863,
-      "sha256": "d897b6e44aa6c5d9be5b7c2b28c15ae08dfd5f43a7deb6768732b6bc89425bbe",
+      "sha256": "cf87b41b4794016cbeefaf9aa2dcbc83ad68d7b28b5ebd1bbcdde7496ef1843d",
       "frames": 12,
       "runs": 864,
       "full_frame_bytes": 2667
@@ -996,7 +996,7 @@
       "name": "Projectiles/Fireball Shot",
       "offset": 655240,
       "length": 2428,
-      "sha256": "455ec16ace07c03870dc84241e926cabb68d2aad0afc1380e5d46ba2f3389c03",
+      "sha256": "a3da9edd3895d55e89c7195199a317137921650e5e5562f235c9f33f58660eca",
       "frames": 8,
       "runs": 377,
       "full_frame_bytes": 3501
@@ -1005,7 +1005,7 @@
       "name": "Projectiles/Homing Orb",
       "offset": 657668,
       "length": 8163,
-      "sha256": "7a50f71bcec63fc7ed701fa54b08e257c382319dac078999d1682ea080719c53",
+      "sha256": "2582c8742239de78e6059c2a9d57db5ccb610fe9ea874964a3b306de53eec17f",
       "frames": 16,
       "runs": 1524,
       "full_frame_bytes": 10716
@@ -1014,7 +1014,7 @@
       "name": "Projectiles/Ice Shard Shot",
       "offset": 665831,
       "length": 878,
-      "sha256": "8a71569a2b04ca5a4120d194a1787943b302e7b8fc560662008876cd846e2e63",
+      "sha256": "58832ea6bd021add19789a6573691bed3c103964b04541ff0195c9772a7d9515",
       "frames": 11,
       "runs": 67,
       "full_frame_bytes": 1887
@@ -1023,7 +1023,7 @@
       "name": "Projectiles/Laser Beam",
       "offset": 666709,
       "length": 11763,
-      "sha256": "2c938108aa39fcb4d3c098fdf93e28273c46a31346cbf0399ccd57b7ed6a26f4",
+      "sha256": "061ed97d6d0959588dd12c4348f7919981d59189135b7b4a4ae599401b4a74f3",
       "frames": 12,
       "runs": 2244,
       "full_frame_bytes": 8064
@@ -1032,7 +1032,7 @@
       "name": "Projectiles/Magic Missile",
       "offset": 678472,
       "length": 2528,
-      "sha256": "f5eff9c73d47c2e5700b96d8ea17fd49517cf1ff6849f713bc2a7367db82f222",
+      "sha256": "29572b6cf44a35bfbbb05b3777304e49422520734f7772c7da352708df6ecb3e",
       "frames": 11,
       "runs": 397,
       "full_frame_bytes": 2031
@@ -1041,7 +1041,7 @@
       "name": "Projectiles/Plasma Shot",
       "offset": 681000,
       "length": 3648,
-      "sha256": "7b1a7c86b4c8f387d0fef2cb30ffa52e7f94c2e8232c92c97ace170a6457f60b",
+      "sha256": "f1c823c6a0148242bcd562f60f488356a0c52c9a0361d17fcbed735692d5aa26",
       "frames": 8,
       "runs": 621,
       "full_frame_bytes": 2091
@@ -1050,7 +1050,7 @@
       "name": "Projectiles/Poison Dart",
       "offset": 684648,
       "length": 788,
-      "sha256": "2ff0d6e1cdea474d19a14d5f634c4a1e8b1ac3cc665bb13c66d5efa79710b8be",
+      "sha256": "710d074f982e61f630485ac2327e686ce10a5d3dd1600982027e7e1a96f63e66",
       "frames": 11,
       "runs": 49,
       "full_frame_bytes": 1131
@@ -1059,7 +1059,7 @@
       "name": "Projectiles/Rock Throw",
       "offset": 685436,
       "length": 2623,
-      "sha256": "42b36a7876e63df5578d91196a08f6bea89f3a137e5dbc94c4405c63bd254e36",
+      "sha256": "da9e82062f8075b8b555be89fd3c351eb57634a519c844f3cda7c35abc591af2",
       "frames": 11,
       "runs": 416,
       "full_frame_bytes": 3342
@@ -1068,7 +1068,7 @@
       "name": "Projectiles/Shuriken",
       "offset": 688059,
       "length": 6243,
-      "sha256": "9c383a0c033426078a072ef57d79af78118e92fe890fa9262e3f25d11dbfc736",
+      "sha256": "db60a2e8f655c213912f9d3115a6dc7108b88c00cc27ec44b51b8240c506afec",
       "frames": 11,
       "runs": 1140,
       "full_frame_bytes": 4254
@@ -1077,7 +1077,7 @@
       "name": "Projectiles/Spear Throw",
       "offset": 694302,
       "length": 4508,
-      "sha256": "feee9e5378a2b9d62c6e4e41bc748a4492c253e3164ec527bce33c80305842ec",
+      "sha256": "444b5cccd8b2bfe5c835cbfa8b4b72675e11e5d7fc6adcdb5f537687c145d1bb",
       "frames": 11,
       "runs": 793,
       "full_frame_bytes": 4047
@@ -1086,7 +1086,7 @@
       "name": "Slashes/Cross Slash",
       "offset": 698810,
       "length": 3958,
-      "sha256": "de878312bb475844ee76f713992b2ae11d53503d8bd59ce2f20d94c0eada6b3d",
+      "sha256": "c06dba191bb9a6e18ce03774a23b4d4816e87cdcae42f6abbbe314c7084a5723",
       "frames": 7,
       "runs": 683,
       "full_frame_bytes": 3207
@@ -1095,7 +1095,7 @@
       "name": "Slashes/Dagger Flick",
       "offset": 702768,
       "length": 1308,
-      "sha256": "f1bc1379f479b2c712ea793b7654d2cd664edde2b8ca3a8411f23d95042b0036",
+      "sha256": "0480f4b89373435c5e35cb906cc2948cab0b0088723fa253453645150b4f1bb6",
       "frames": 5,
       "runs": 153,
       "full_frame_bytes": 525
@@ -1104,7 +1104,7 @@
       "name": "Slashes/Dark Slash",
       "offset": 704076,
       "length": 4508,
-      "sha256": "6f3c1355339046e9c0fe378ad5cea37906a0777b53646aa14f2f3eb2327c5b70",
+      "sha256": "0f3887d606cd85f1b64541430507686a667eb26006bb0fd11c984ad75393e1da",
       "frames": 11,
       "runs": 793,
       "full_frame_bytes": 4803
@@ -1113,7 +1113,7 @@
       "name": "Slashes/Double Slash",
       "offset": 708584,
       "length": 2923,
-      "sha256": "0d9ba63204af214370f63645df89b804a81e92a72582a06dbb9724dc36fbd87c",
+      "sha256": "bd8d056bef81778dd4aeb10d7951d932aaeef6aa271ca15bdf7d612d9459b44d",
       "frames": 9,
       "runs": 476,
       "full_frame_bytes": 2370
@@ -1122,7 +1122,7 @@
       "name": "Slashes/Fire Slash",
       "offset": 711507,
       "length": 2418,
-      "sha256": "0dff7fb70d324d51f9e2a94fab2241f2eec9756311c8a1e2ca4dc3f666376622",
+      "sha256": "0f638a333889ffdb723ba436728a34c2383681c446ea533319831e45cedf0b4b",
       "frames": 6,
       "runs": 375,
       "full_frame_bytes": 1890
@@ -1131,7 +1131,7 @@
       "name": "Slashes/Ice Slash",
       "offset": 713925,
       "length": 2683,
-      "sha256": "bb0efd3b2cf2d9c8e3f126e89be67a9de35a50e7370f2ef81155a8a64a88336d",
+      "sha256": "7ca89d410ac0fa41273c9a768e1150b55df36e7034038aba01caeba7e4a6b784",
       "frames": 6,
       "runs": 428,
       "full_frame_bytes": 1971
@@ -1140,7 +1140,7 @@
       "name": "Slashes/Katana Draw",
       "offset": 716608,
       "length": 2583,
-      "sha256": "ab10ebe98d73c15e23664fa0b178ca2069bd1225a49efa60c10adebcb048b329",
+      "sha256": "e4810dfbe8baba3bef1cdc49cb03afabf1cef309a97e319041464b2ca764efd2",
       "frames": 5,
       "runs": 408,
       "full_frame_bytes": 1701
@@ -1149,7 +1149,7 @@
       "name": "Slashes/Slash Down",
       "offset": 719191,
       "length": 2033,
-      "sha256": "a3f437d2fe45aacd069f070394bc6c9313d0d711e9ad7ec009a029c0cb7df37c",
+      "sha256": "14285e682e1101caadd2d1135b4a9534add940e8e5bc2594711f1f25b8629f9e",
       "frames": 6,
       "runs": 298,
       "full_frame_bytes": 1554
@@ -1158,7 +1158,7 @@
       "name": "Slashes/Slash Left",
       "offset": 721224,
       "length": 2033,
-      "sha256": "c0bf5dd65b8cd36f274c47c582b9a5d47f95afc8946e8fb65e9c4453831fabd3",
+      "sha256": "e71a63cdf60acdf460e83531950217ad4cee5852282f228a08dde68365620e92",
       "frames": 6,
       "runs": 298,
       "full_frame_bytes": 1554
@@ -1167,7 +1167,7 @@
       "name": "Slashes/Slash Right",
       "offset": 723257,
       "length": 2038,
-      "sha256": "d14c14513007db6818e5421feb91d61440ac697f64499f8c08adb9ee26c69fb1",
+      "sha256": "fa399d4f5e4e98a119b7e8f0d6f71807ef791230074c9b9c3bc55dabe8da6cdb",
       "frames": 6,
       "runs": 299,
       "full_frame_bytes": 1554
@@ -1176,7 +1176,7 @@
       "name": "Slashes/Slash Up",
       "offset": 725295,
       "length": 2033,
-      "sha256": "4f3e0a59b721c097709441e005ff83887b9ffb31dae1dac6e00da52e4aa66534",
+      "sha256": "6d43bf943ae017dd622378f3caac1eb423b9139a7b293c31ae75310ceb773267",
       "frames": 6,
       "runs": 298,
       "full_frame_bytes": 1554
@@ -1185,7 +1185,7 @@
       "name": "Slashes/Spin Slash",
       "offset": 727328,
       "length": 4818,
-      "sha256": "72dd5c8ebe4b515fb076fe6b95fa54b61886cbade995eb1d1bafaf0cdd61e432",
+      "sha256": "302c66dbc540a77608fe36d0eecdcc492bd635b65021d43552e71c49f319059a",
       "frames": 6,
       "runs": 855,
       "full_frame_bytes": 2856
@@ -1194,7 +1194,7 @@
       "name": "Slashes/Thrust",
       "offset": 732146,
       "length": 1808,
-      "sha256": "5c6fdb3ffa9222988823a336c57c162dbc0fc971d6bbe84d3779ab05dd287b86",
+      "sha256": "172ad2f171d74c4903f6a16c3ce0368c1b9468f41ff17c61353bc88414538b4e",
       "frames": 5,
       "runs": 253,
       "full_frame_bytes": 1308
@@ -1203,7 +1203,7 @@
       "name": "Slashes/Triple Claw",
       "offset": 733954,
       "length": 2223,
-      "sha256": "6ca6c84eb41d3ec2d6d552926e8fa7e18ec822a4b394dd3a1e387317c0da4f21",
+      "sha256": "8f054db3c718ba71d6f6a2564fb861e04ed650764d540d978939119f267273c1",
       "frames": 8,
       "runs": 336,
       "full_frame_bytes": 1674
@@ -1212,7 +1212,7 @@
       "name": "Slashes/Wide Cleave",
       "offset": 736177,
       "length": 2763,
-      "sha256": "e2a424d6d713b7036bbb3ce7f47a219d527cfb7a98d99cc41a1f5c867c118c57",
+      "sha256": "d54c8cf46556dd2811957b03bdb99eaa692ff27bab2772ff77fca24030674d97",
       "frames": 6,
       "runs": 444,
       "full_frame_bytes": 2382
@@ -1221,7 +1221,7 @@
       "name": "Smoke and Dust/Ash Fall",
       "offset": 738940,
       "length": 3753,
-      "sha256": "8c7d01ec0c40cf8700a2e3f097a473bc6a4eeeba5421b013ecd9490242a4c707",
+      "sha256": "4e12c73aa6685a6322180ea7c9a76e609ccc555693ebdd42a5a416362af72b2f",
       "frames": 23,
       "runs": 642,
       "full_frame_bytes": 2022
@@ -1230,7 +1230,7 @@
       "name": "Smoke and Dust/Dirt Kick",
       "offset": 742693,
       "length": 4233,
-      "sha256": "59b30937266e69d20a6fc7e6c6cee8108a5886d9bd87cec280a0f0fcf2581b65",
+      "sha256": "798c748f02295c0c61bcd58025d8241ee5d3cbba9d2c5b9ae33c314bdfeea2b8",
       "frames": 8,
       "runs": 738,
       "full_frame_bytes": 3936
@@ -1239,7 +1239,7 @@
       "name": "Smoke and Dust/Dissipate",
       "offset": 746926,
       "length": 5438,
-      "sha256": "db201080b413a9172e7794d8709f1f6b9ee4d371e4dda174276d2b5eb35b1154",
+      "sha256": "892ac6429f840a325a6365a30f2ef87f8147b2e864b8b7bf7262ed75ff920187",
       "frames": 11,
       "runs": 979,
       "full_frame_bytes": 10365
@@ -1248,7 +1248,7 @@
       "name": "Smoke and Dust/Dust Cloud",
       "offset": 752364,
       "length": 5498,
-      "sha256": "593997562f15d3f0ddb7370074bc3eae43a1fed93a2400151d46a82ed9289d81",
+      "sha256": "6d88ed5ffffd6f2e50472c98101f2a8c18e5763107df9549b5fc4034f054bf64",
       "frames": 9,
       "runs": 991,
       "full_frame_bytes": 7353
@@ -1257,7 +1257,7 @@
       "name": "Smoke and Dust/Dust Devil",
       "offset": 757862,
       "length": 10603,
-      "sha256": "4223610ed73f5a4d1f5efeb10499250254b999747fe161a547d1ff80ec82fb46",
+      "sha256": "12229adb49b146cab9b567909abe00f57203e72e824e250d796a26f796e55654",
       "frames": 16,
       "runs": 2012,
       "full_frame_bytes": 11655
@@ -1266,7 +1266,7 @@
       "name": "Smoke and Dust/Exhaust",
       "offset": 768465,
       "length": 5018,
-      "sha256": "466240b442628961ecb0ffbea781a01888827fd5ba0b96589623cf345dae805a",
+      "sha256": "f445703cdd157575fd683eb09b457959823a6d409314a476788c0e90d2d98e09",
       "frames": 16,
       "runs": 895,
       "full_frame_bytes": 10488
@@ -1275,7 +1275,7 @@
       "name": "Smoke and Dust/Fog Drift",
       "offset": 773483,
       "length": 5583,
-      "sha256": "6867b9a6f6d8a7d1c756d79185e7d028828d4f571eb2d565f6be6e6acc71d58d",
+      "sha256": "8ffc10d9096cc3c3502519f7d9777c6508fbcce6d4526bfabe1fd8d33eba03a3",
       "frames": 16,
       "runs": 1008,
       "full_frame_bytes": 15816
@@ -1284,7 +1284,7 @@
       "name": "Smoke and Dust/Footstep",
       "offset": 779066,
       "length": 2213,
-      "sha256": "f3c9e40152cf4e490035434960d1bd7a42b3392648b5749dc5fbb543446a3d6f",
+      "sha256": "6746bd45797e5e87d799aff522635ccd009bd72b429bd19ff95a1b08c6b36ad7",
       "frames": 6,
       "runs": 334,
       "full_frame_bytes": 1638
@@ -1293,7 +1293,7 @@
       "name": "Smoke and Dust/Jump Puff",
       "offset": 781279,
       "length": 3643,
-      "sha256": "2aca801432eb635454195a9280d8e97294e2a03b9f27b2e1e953494eeeaeefbb",
+      "sha256": "77f6378a5742b6a5aaa3af9f52a2160996267187d01a4b76cc50b1f11591103b",
       "frames": 8,
       "runs": 620,
       "full_frame_bytes": 3705
@@ -1302,7 +1302,7 @@
       "name": "Smoke and Dust/Landing Dust",
       "offset": 784922,
       "length": 4403,
-      "sha256": "5a99caf0d323f1633536f6736ed81eae1980f4135ef0ff0725ecff0186ae9abe",
+      "sha256": "cddf2c39fef2e27201d6e347d9fab8579f2040d6eec52347941f50cff70d3d6a",
       "frames": 8,
       "runs": 772,
       "full_frame_bytes": 5013
@@ -1311,7 +1311,7 @@
       "name": "Smoke and Dust/Run Dust",
       "offset": 789325,
       "length": 2538,
-      "sha256": "e229c8deeaecca23f85451d5739452a3f01db3aead1cb1f1d8f4bad32991ba78",
+      "sha256": "6e297078a5a5fad739e9ed440448a869b229e6e28644aff1406b48da33994295",
       "frames": 8,
       "runs": 399,
       "full_frame_bytes": 2589
@@ -1320,7 +1320,7 @@
       "name": "Smoke and Dust/Sand Burst",
       "offset": 791863,
       "length": 4033,
-      "sha256": "d626df3263c564e6fcb4fdb722dec5278c38323c2d7c5768618816109f0d4b9c",
+      "sha256": "4250f07a39099a25df2b85bff83c6f0cfdbb393078a1ed3ecc206a7807f8bcc2",
       "frames": 8,
       "runs": 698,
       "full_frame_bytes": 4629
@@ -1329,7 +1329,7 @@
       "name": "Smoke and Dust/Smoke Column",
       "offset": 795896,
       "length": 7113,
-      "sha256": "fffeefa119a37fb9d39f8a985516f8488bda989457d98d9b70d274f51256150f",
+      "sha256": "b09b912926883144a91643705c456788f4e4802335fbdfa8e41082054bb6b957",
       "frames": 16,
       "runs": 1314,
       "full_frame_bytes": 12360
@@ -1338,7 +1338,7 @@
       "name": "Smoke and Dust/Smoke Puff",
       "offset": 803009,
       "length": 4553,
-      "sha256": "7df662f76eea0e06b61b158e6f8ac92964d411021835fa3abfe4ec47dd82b98d",
+      "sha256": "be697d98b27fc12128af592c1e4a236e2ce79db321951fb1caece2d597e9ca9d",
       "frames": 8,
       "runs": 802,
       "full_frame_bytes": 6015
@@ -1347,7 +1347,7 @@
       "name": "Smoke and Dust/Steam",
       "offset": 807562,
       "length": 5948,
-      "sha256": "deb816ce6682e22ddb42b33b4073832266226e2284448e9460a87c35aff3c07c",
+      "sha256": "25ff8f0cc1768d574c94d48e16ba88f15659434adaf431eb8f493482a3ed1f26",
       "frames": 16,
       "runs": 1081,
       "full_frame_bytes": 12192

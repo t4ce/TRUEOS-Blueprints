@@ -16,7 +16,7 @@ SLIDES = Path(__file__).resolve().parents[1] / 'slides'
 TIERS = {'tier1': (48, 6, 6), 'tier2': (128, 8, 16), 'tier3': (256, 16, 128)}
 EXTENSIONS = ('.png', '.jpg', '.jpeg', '.jgp')
 VFX_SIDE = 32
-VFX_PERIOD_MS = 500
+VFX_PERIOD_MS = 400
 
 
 def prepare(source, size='tier3'):
