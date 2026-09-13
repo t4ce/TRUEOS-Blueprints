@@ -247,3 +247,24 @@ retained 32768-instance limit. This leaves 26468 world-terrain seeds; collision 
 the full terrain. Both the SDK cap and native retained-transform row cap are
 32768; other Cubes modes retain their existing 8192-seed UI budget.
 Rebuild both CubeSrv and Cubes for this addition.
+
+### Center snake
+
+`snake.rs` owns a five-segment c1 snake. It steps every 200 ms independently of
+sprite batches, selecting a straight or 90-degree move without reversing or
+intersecting its body. The only allowed cells are the one-c1 outer shell around
+the 24-c1-wide center landmark. Edge and corner connector cells keep every pair
+of consecutive segments face-connected while crossing between all six sides.
+
+The five slots keep their identity. A step replaces just the tail slot with the
+new head, atomically; the other four cells are unchanged. The Key8 renderer uses
+theme 1 (sky) in four fixed brightness shades, repeating the brightest on the
+fifth slot. These cubes have no billboard rotation, growth animation or collision.
+
+UDP `0x8c` carries one 19-byte step body (27 bytes with framing). `0x8b` carries
+a 43-byte snapshot on join or explicit empty-body request `8`. Gallery identity,
+server epoch and wrapping tick counters reject duplicate/out-of-order steps;
+a missing step triggers a snapshot request rather than applying a partial snake.
+Both CubeSrv and Cubes need this contract. Host coverage is included in
+`Cubes/tools/test_slideshow_network.py`, including 100,000 movement steps, all
+six sides, packet loss/reordering and retained GPU seed updates.

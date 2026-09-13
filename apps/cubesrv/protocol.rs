@@ -44,6 +44,7 @@ pub enum ClientPacket<'a> {
         chunk: u16,
     },
     Telemetry(Telemetry),
+    SnakeRequest,
     WorldRequest {
         chunk: u16,
     },
@@ -131,6 +132,7 @@ pub fn decode(bytes: &[u8]) -> Result<ClientPacket<'_>, DecodeError> {
             revision: read_u32(payload, 0),
             chunk: read_u16(payload, 4),
         }),
+        8 if payload.is_empty() => Ok(ClientPacket::SnakeRequest),
         WORLD_REQUEST if payload.len() == 2 => Ok(ClientPacket::WorldRequest {
             chunk: read_u16(payload, 0),
         }),
@@ -317,6 +319,12 @@ pub fn slide_chunk(revision: u32, chunk: u16, bytes: &[u8]) -> Option<Vec<u8>> {
 /// Full four-slot timing snapshot; immutable VFX assets are fetched by revision.
 pub fn vfx_info(scene: crate::plateau::vfx::Scene) -> Vec<u8> {
     packet(0x89,&scene.encode())
+}
+pub fn snake_snapshot(state: crate::plateau::snake::State) -> Vec<u8> {
+    packet(0x8b, &state.encode())
+}
+pub fn snake_step(step: crate::plateau::snake::Step) -> Vec<u8> {
+    packet(0x8c, &step.encode())
 }
 pub fn vfx_chunk(revision: u32, chunk: u16, bytes: &[u8]) -> Option<Vec<u8>> {
     let start=chunk as usize*BLOB_CHUNK_BYTES;
