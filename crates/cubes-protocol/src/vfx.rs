@@ -1,11 +1,10 @@
 //! Fixed 32x32 sprites, encoded as pixel lifetimes [first, end) in frame units.
 pub const WIDTH: u8 = 32;
 pub const HEIGHT: u8 = 32;
-pub const TERRAIN_CUBES: usize = 6;
-pub const INSTANCES: usize = TERRAIN_CUBES;
+pub const INSTANCES: usize = 6;
 /// Existing cube presets: c1, c2, r1, c3, r2, c4, r3.
 pub const PIXEL_SIDES_C1: [u8;7] = [1,2,3,4,6,8,12];
-pub const DEMO_PIXEL_SIDES_C1: [u8;INSTANCES] = [1,2,3,4,6,8];
+pub const DEMO_PIXEL_SIDES_C1: [u8;4] = [1,2,3,4];
 pub const CELLS: usize = 1024;
 pub const PERIOD_MS: u16 = 400;
 pub const DELAY_MS: u16 = 500;
@@ -60,9 +59,6 @@ pub struct Slot {
     pub frames: u8, pub period_ms: u16, pub pixel_side_c1: u8,
 }
 impl Slot {
-    pub fn terrain(self, age: u64) -> bool {
-        age < DELAY_MS as u64 + self.frames as u64*self.period_ms as u64
-    }
     pub fn frame(self, age: u64) -> Option<u8> {
         age.checked_sub(DELAY_MS as u64).map(|t| t/self.period_ms as u64)
             .filter(|f| *f<self.frames as u64).map(|f| f as u8)
@@ -106,14 +102,10 @@ impl Scene {
             || s.anchor.iter().any(|v| !(-1024..=1024).contains(v))) { return None; }
         Some(scene)
     }
-    /// Spawn the next bases during the one-second VFX gap, leaving the usual
+    /// Announce the next effects during the one-second VFX gap, leaving the usual
     /// DELAY_MS lead-in. Thus next first frame - previous last expiry = REST_MS.
     pub fn batch_ms(self) -> u32 {
         self.slots.iter().map(|s|s.frames as u32*s.period_ms as u32).max().unwrap_or(0)+REST_MS
-    }
-    /// One effect per base cube; collision expires with that effect.
-    pub fn terrain(self, age: u64) -> [Option<[i16;3]>;TERRAIN_CUBES] {
-        self.slots.map(|s| (self.event!=0 && s.terrain(age)).then_some(s.anchor))
     }
     pub fn newer_than(self, old: Self) -> bool {
         let d=self.event.wrapping_sub(old.event);
@@ -124,6 +116,11 @@ impl Scene {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn demo_only_rolls_the_smallest_four_presets() {
+        assert_eq!(DEMO_PIXEL_SIDES_C1,PIXEL_SIDES_C1[..4]);
+        assert_eq!(INSTANCES,6);
+    }
     #[test]
     fn longest_loop_controls_next_batch_with_exact_one_second_vfx_gap() {
         let slot=Slot {revision:7,bytes:15,anchor:[0,0,0],frames:16,period_ms:PERIOD_MS,pixel_side_c1:1};
@@ -160,13 +157,14 @@ mod tests {
         assert!(Scene::parse(&[0;112]).is_none());
     }
     #[test]
-    fn six_independent_bases_expire_with_their_own_loop() {
+    fn six_independent_effects_expire_with_their_own_loop() {
         let slot=Slot {revision:7,bytes:100,anchor:[40,8,0],frames:2,period_ms:150,pixel_side_c1:1};
         let mut scene=Scene {gallery_revision:1,event:1,age_ms:0,slots:[slot;INSTANCES]};
         scene.slots[5].frames=10;
-        assert_eq!(scene.terrain(799),[Some(slot.anchor);TERRAIN_CUBES]);
-        assert_eq!(scene.terrain(800),[None,None,None,None,None,Some(slot.anchor)]);
-        assert_eq!(scene.terrain(2000),[None;TERRAIN_CUBES]);
+        let active=|age|scene.slots.map(|s|s.frame(age).is_some());
+        assert_eq!(active(799),[true;INSTANCES]);
+        assert_eq!(active(800),[false,false,false,false,false,true]);
+        assert_eq!(active(2000),[false;INSTANCES]);
         assert_eq!(Scene::BYTES,120);
         assert!(Scene::BYTES+8<1200);
         let bytes=scene.encode();
@@ -196,11 +194,9 @@ mod tests {
     #[test]
     fn scene_roundtrip_order_and_exact_timing_boundaries() {
         let slot=Slot {revision:7,bytes:100,anchor:[40,8,0],frames:16,period_ms:150,pixel_side_c1:1};
-        assert!(slot.terrain(0));
         assert_eq!(slot.frame(499),None);
         assert_eq!(slot.frame(500),Some(0));
         assert_eq!(slot.frame(2899),Some(15));
-        assert!(!slot.terrain(2900));
         assert_eq!(slot.frame(2900),None);
         let scene=Scene {gallery_revision:1,event:u32::MAX,age_ms:0,slots:[slot;INSTANCES]};
         assert_eq!(Scene::parse(&scene.encode()),Some(scene));

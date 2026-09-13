@@ -153,7 +153,7 @@ fn make_scene(event: u32, age_ms: u32, effects: [&Vfx;cubes_protocol::vfx::INSTA
             let sequence=effects[i].sequence();
             cubes_protocol::vfx::Slot {revision:effects[i].revision,
                 bytes:(effects[i].end-effects[i].start) as u32, anchor:anchors[i],
-                frames:sequence.frame_count(),period_ms:sequence.period_ms(),pixel_side_c1:cubes_protocol::vfx::DEMO_PIXEL_SIDES_C1[i]}
+                frames:sequence.frame_count(),period_ms:sequence.period_ms(),pixel_side_c1:cubes_protocol::vfx::DEMO_PIXEL_SIDES_C1[i%4]}
         }),
     }
 }
@@ -353,6 +353,10 @@ async fn udp_loop(state: Arc<RwLock<ServerState>>) {
                     let event=scene.event.wrapping_add(1).max(1);
                     batch_started=time::Instant::now();
                     scene=make_scene(event,0,effects);
+                    for slot in &mut scene.slots {
+                        // Four equally likely presets; duplicate rolls are allowed.
+                        slot.pixel_side_c1=cubes_protocol::vfx::DEMO_PIXEL_SIDES_C1[(trueos::rng::u32()%4) as usize];
+                    }
                     for (slot,effect) in effects.iter().enumerate() {
                         logl::log(level::DEBUG,format_args!("cubesrv: spawn={event} slot={slot} vfx={}",effect.name));
                     }
