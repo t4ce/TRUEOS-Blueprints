@@ -11,7 +11,7 @@ import unittest
 from pathlib import Path
 from PIL import Image
 from prepare_slides import (SLIDES, TIERS, HOLY_PERIOD_MS, prepare, texture, bake,
-                            bake_holy, load_manifest, load_faces, load_holy)
+                            bake_holy, load_manifest, load_faces, load_holy, load_vfx)
 
 class PreparationTests(unittest.TestCase):
     def test_exact_tiers_and_crop_pad_without_scaling(self):
@@ -78,7 +78,7 @@ class PreparationTests(unittest.TestCase):
             root=Path(folder);output=root/'built';manifest=root/'sources.json'
             Image.new('RGB',(48,48),(255,0,0)).save(root/'image.png')
             (root/'holy').mkdir()
-            holy=Image.new('RGBA',(48,48),(0,0,0,0));holy.putpixel((4,5),(9,8,7,255));holy.save(root/'holy'/'frame 1.png')
+            holy=Image.new('RGBA',(32,32),(0,0,0,0));holy.putpixel((4,5),(9,8,7,255));holy.save(root/'holy'/'frame 1.png')
             entries=[{'slide':i,'source':'image.png','Size':'tier1'} for i in range(7)]
             manifest.write_text(json.dumps(entries))
             gallery=root/'gallery.json'
@@ -86,7 +86,8 @@ class PreparationTests(unittest.TestCase):
                 config={'faces':selection,'manifest_sha256':'stale','package_sha256':'stale'}
                 gallery.write_text(json.dumps(config))
                 subprocess.run([sys.executable,'-B',str(Path(__file__).with_name('prepare_slides.py')),
-                                '--manifest',str(manifest),'--output',str(output)],check=True,capture_output=True)
+                                '--manifest',str(manifest),'--holy',str(root/'holy'),
+                                '--output',str(output)],check=True,capture_output=True)
                 receipt=json.loads((output/'gallery.json').read_text())
                 self.assertEqual(receipt['faces'],selection)
                 self.assertEqual(json.loads(gallery.read_text()),config)
@@ -118,21 +119,22 @@ class PreparationTests(unittest.TestCase):
     def test_holy_frames_are_naturally_sorted_sparse_and_palette_indexed(self):
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder)
-            for number,color,point in [(10,(30,20,10,255),(47,47)),(2,(3,2,1,255),(4,5))]:
-                image=Image.new('RGBA',(48,48),(0,0,0,0));image.putpixel(point,color)
+            for number,color,point in [(10,(30,20,10,255),(31,31)),(2,(3,2,1,255),(4,5))]:
+                image=Image.new('RGBA',(32,32),(0,0,0,0));image.putpixel(point,color)
                 image.save(root/f'Holy {number}.png')
             paths,palette,frames=load_holy(root)
             self.assertEqual([path.name for path in paths],['Holy 2.png','Holy 10.png'])
             self.assertEqual(palette,[(3,2,1),(30,20,10)])
-            self.assertEqual(frames,[[(4,5,0)],[(47,47,1)]])
+            self.assertEqual(frames,[[(4,5,0)],[(31,31,1)]])
             encoded=bake_holy(palette,frames)
-            self.assertEqual(encoded[:12],b'HFX1'+bytes([1,48,48,2])+HOLY_PERIOD_MS.to_bytes(2,'little')+bytes([2,0]))
+            self.assertEqual(encoded[:12],b'HFX1'+bytes([1,32,32,2])+HOLY_PERIOD_MS.to_bytes(2,'little')+bytes([2,0]))
 
     def test_package_matches_manifest_and_current_sources(self):
         manifest=SLIDES/'sources.json';receipt=json.loads((SLIDES/'gallery.json').read_text())
         data=(SLIDES/'gallery.cga').read_bytes()
         holy=(SLIDES/'holy.hfx').read_bytes()
-        _,palette,frames=load_holy(SLIDES/'holy')
+        _name,vfx=load_vfx(SLIDES/'pixvfx.json',SLIDES)
+        _,palette,frames=load_holy(vfx)
         self.assertEqual(hashlib.sha256(manifest.read_bytes()).hexdigest(),receipt['manifest_sha256'])
         self.assertEqual(hashlib.sha256(data).hexdigest(),receipt['package_sha256'])
         self.assertEqual(data,bake(load_manifest(manifest,receipt['faces']),SLIDES,palette))

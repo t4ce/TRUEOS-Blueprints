@@ -1,5 +1,5 @@
 // trueos-blueprint: features=["lifecycle-net"]
-//! Six-face gallery plus a revision-pinned, sparse 750 ms cube-frame asset.
+//! Six-face gallery plus a revision-pinned, sparse 150 ms cube-frame asset.
 
 extern crate alloc;
 
@@ -7,7 +7,7 @@ mod protocol;
 use cubes_protocol as plateau;
 mod profiles;
 
-use alloc::{collections::BTreeMap, string::String, sync::Arc, vec::Vec};
+use alloc::{collections::BTreeMap, string::String, sync::Arc, vec, vec::Vec};
 use core::net::SocketAddr;
 use core::sync::atomic::{AtomicU16, Ordering};
 
@@ -25,6 +25,9 @@ const HTTP_PORT: u16 = 18;
 const UDP_PORT: u16 = 30_018;
 const UDP_RETRY_MS: u64 = 1_000;
 const MAX_PLAYERS: usize = 64;
+const VFX_CYCLE_MS: u64 = 3_000;
+const VFX_DELAY_MS: u64 = 500;
+const IDLE_VFX_FRAME: u8 = u8::MAX;
 static PUBLISHED_HTTP_PORT: AtomicU16 = AtomicU16::new(0);
 
 struct Blob {
@@ -47,7 +50,10 @@ struct Player {
 struct ServerState {
     next_player_id: u32,
     revision: u32,
-    holy_frame: u8,
+    holy_frame: Option<u8>,
+    vfx_anchor: [i16; 3],
+    vfx_terrain: bool,
+    vfx_event: u32,
     players: BTreeMap<SocketAddr, Player>,
 }
 
@@ -56,7 +62,10 @@ impl ServerState {
         Self {
             next_player_id: 1,
             revision: GALLERY_REVISION,
-            holy_frame: 0,
+            holy_frame: None,
+            vfx_anchor: [0; 3],
+            vfx_terrain: false,
+            vfx_event: 0,
             players: BTreeMap::new(),
         }
     }
@@ -119,6 +128,30 @@ impl ServerState {
     }
 }
 
+/// Pick a deterministic cardinal c4-block position 5..=10 blocks from the landmark.
+/// Coordinates are c1 lattice units, so each terrain block is eight units wide.
+fn vfx_spawn_anchor(event: u32) -> [i16; 3] {
+    let distance = (5 + event % 6) as i16 * 8;
+    match event % 4 {
+        0 => [distance, 0, 0],
+        1 => [0, 0, distance],
+        2 => [-distance, 0, 0],
+        _ => [0, 0, -distance],
+    }
+}
+
+async fn announce_vfx(socket: &UdpSocket, players: Vec<(SocketAddr, u32)>,
+    frame: Option<u8>, anchor: [i16; 3], terrain: bool, event: u32)
+{
+    let sequence = cubes_protocol::holy::Sequence::parse(HOLY).unwrap();
+    let frame = frame.unwrap_or(IDLE_VFX_FRAME);
+    let encoded_len = sequence.frame(frame).map_or(0, |bytes| bytes.len());
+    for (peer, id) in players {
+        let _ = socket.send_to(&protocol::holy_info(id, GALLERY_REVISION, HOLY_REVISION,
+            frame, encoded_len, anchor, terrain, event), peer).await;
+    }
+}
+
 async fn hello() -> &'static str {
     "cubesrv hello\n"
 }
@@ -143,9 +176,9 @@ async fn send_welcome(
 ) {
     let _ = socket.send_to(&protocol::welcome(player_id, 1, WORLD1.len(),
         WORLD1.len().div_ceil(protocol::BLOB_CHUNK_BYTES) as u16, ASSETS.len() as u8), peer).await;
-    let (revision, holy_frame) = {
+    let (revision, holy_frame, vfx_anchor, vfx_terrain, vfx_event) = {
         let state = state.read().await;
-        (state.revision, state.holy_frame)
+        (state.revision, state.holy_frame, state.vfx_anchor, state.vfx_terrain, state.vfx_event)
     };
     let _ = socket
         .send_to(
@@ -157,11 +190,7 @@ async fn send_welcome(
             peer,
         )
         .await;
-    let sequence = cubes_protocol::holy::Sequence::parse(HOLY).unwrap();
-    let frame = sequence.frame(holy_frame).unwrap();
-    let _ = socket.send_to(
-        &protocol::holy_info(player_id, revision, HOLY_REVISION, holy_frame, frame.len()), peer,
-    ).await;
+    announce_vfx(socket, vec![(peer, player_id)], holy_frame, vfx_anchor, vfx_terrain, vfx_event).await;
 }
 
 async fn handle_packet(
@@ -275,9 +304,9 @@ async fn udp_loop(state: Arc<RwLock<ServerState>>) {
         );
 
         let mut next_slide = time::Instant::now() + Duration::from_secs(10);
-        let mut next_holy = time::Instant::now() + Duration::from_millis(
-            cubes_protocol::holy::PERIOD_MS as u64,
-        );
+        let mut next_spawn = time::Instant::now();
+        let mut vfx_start = None;
+        let mut next_holy = None;
         let mut buffer = [0_u8; protocol::MAX_DATAGRAM];
         loop {
             let now = time::Instant::now();
@@ -311,22 +340,51 @@ async fn udp_loop(state: Arc<RwLock<ServerState>>) {
                         .await;
                 }
             }
-            if now >= next_holy {
-                let sequence = cubes_protocol::holy::Sequence::parse(HOLY).unwrap();
-                let (frame, players) = {
+            if now >= next_spawn {
+                let (anchor, event, players) = {
                     let mut state = state.write().await;
-                    state.holy_frame = (state.holy_frame + 1) % sequence.frame_count();
-                    (state.holy_frame, state.players.iter().map(|(peer, p)| (*peer, p.id)).collect::<Vec<_>>())
+                    state.vfx_event = state.vfx_event.wrapping_add(1).max(1);
+                    state.vfx_anchor = vfx_spawn_anchor(state.vfx_event);
+                    state.vfx_terrain = true;
+                    state.holy_frame = None;
+                    (state.vfx_anchor, state.vfx_event, state.players.iter().map(|(peer, p)| (*peer, p.id)).collect::<Vec<_>>())
                 };
-                next_holy += Duration::from_millis(cubes_protocol::holy::PERIOD_MS as u64);
-                let encoded = sequence.frame(frame).unwrap();
-                for (peer, id) in players {
-                    let _ = socket.send_to(
-                        &protocol::holy_info(id, GALLERY_REVISION, HOLY_REVISION, frame, encoded.len()), peer,
-                    ).await;
-                }
+                announce_vfx(&socket, players, None, anchor, true, event).await;
+                next_spawn += Duration::from_millis(VFX_CYCLE_MS);
+                vfx_start = Some(now + Duration::from_millis(VFX_DELAY_MS));
             }
-            let next_event = if next_slide < next_holy { next_slide } else { next_holy };
+            if vfx_start.is_some_and(|start| now >= start) {
+                let (anchor, event, players) = {
+                    let mut state = state.write().await;
+                    state.holy_frame = Some(0);
+                    (state.vfx_anchor, state.vfx_event, state.players.iter().map(|(peer, p)| (*peer, p.id)).collect::<Vec<_>>())
+                };
+                announce_vfx(&socket, players, Some(0), anchor, true, event).await;
+                vfx_start = None;
+                next_holy = Some(now + Duration::from_millis(cubes_protocol::holy::PERIOD_MS as u64));
+            }
+            if next_holy.is_some_and(|deadline| now >= deadline) {
+                let sequence = cubes_protocol::holy::Sequence::parse(HOLY).unwrap();
+                let (frame, anchor, terrain, event, players) = {
+                    let mut state = state.write().await;
+                    let frame = state.holy_frame.unwrap_or(0).saturating_add(1);
+                    if frame == sequence.frame_count() {
+                        state.holy_frame = None;
+                        state.vfx_terrain = false;
+                        (None, state.vfx_anchor, false, state.vfx_event,
+                            state.players.iter().map(|(peer, p)| (*peer, p.id)).collect::<Vec<_>>())
+                    } else {
+                        state.holy_frame = Some(frame);
+                        (Some(frame), state.vfx_anchor, true, state.vfx_event,
+                            state.players.iter().map(|(peer, p)| (*peer, p.id)).collect::<Vec<_>>())
+                    }
+                };
+                announce_vfx(&socket, players, frame, anchor, terrain, event).await;
+                next_holy = frame.map(|_| now + Duration::from_millis(cubes_protocol::holy::PERIOD_MS as u64));
+            }
+            let mut next_event = next_slide.min(next_spawn);
+            if let Some(deadline) = vfx_start { next_event = next_event.min(deadline); }
+            if let Some(deadline) = next_holy { next_event = next_event.min(deadline); }
             match time::timeout(
                 next_event.saturating_duration_since(time::Instant::now()),
                 socket.recv_from(&mut buffer),

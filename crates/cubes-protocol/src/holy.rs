@@ -1,10 +1,10 @@
-//! Sparse 48x48 RGBA-frame asset shared by CubeSrv and Cubes.
+//! Sparse 32x32 RGBA-frame asset shared by CubeSrv and Cubes.
 
 pub const MAGIC: &[u8; 4] = b"HFX1";
 pub const VERSION: u8 = 1;
-pub const WIDTH: u8 = 48;
-pub const HEIGHT: u8 = 48;
-pub const PERIOD_MS: u16 = 750;
+pub const WIDTH: u8 = 32;
+pub const HEIGHT: u8 = 32;
+pub const PERIOD_MS: u16 = 150;
 pub const HEADER: usize = 12;
 pub const MAX_BYTES: usize = 256 * 1024;
 
@@ -103,16 +103,16 @@ mod tests {
 
     #[test]
     fn sparse_sequence_is_bounded_and_indexed() {
-        let mut bytes = b"HFX1\x01\x30\x30\x02\x64\x00\x02\x00".to_vec();
+        let mut bytes = b"HFX1\x01\x20\x20\x02\x64\x00\x02\x00".to_vec();
         bytes[8..10].copy_from_slice(&PERIOD_MS.to_le_bytes());
         bytes.extend_from_slice(&[10, 20, 30, 40, 50, 60]);
         bytes.extend_from_slice(&[0u32, 6, 9].into_iter().flat_map(u32::to_le_bytes).collect::<Vec<_>>());
-        bytes.extend_from_slice(&[1, 2, 0, 47, 47, 1, 3, 4, 1]);
+        bytes.extend_from_slice(&[1, 2, 0, 31, 31, 1, 3, 4, 1]);
         let sequence = Sequence::parse(&bytes).unwrap();
         assert_eq!(sequence.frame_count(), 2);
         assert_eq!(sequence.palette(1), Some([40, 50, 60]));
         assert_eq!(sequence.pixels(0).collect::<Vec<_>>(), vec![
-            Pixel { x: 1, y: 2, palette: 0 }, Pixel { x: 47, y: 47, palette: 1 },
+            Pixel { x: 1, y: 2, palette: 0 }, Pixel { x: 31, y: 31, palette: 1 },
         ]);
         assert_eq!(sequence.pixels(1).collect::<Vec<_>>(), vec![Pixel { x: 3, y: 4, palette: 1 }]);
     }

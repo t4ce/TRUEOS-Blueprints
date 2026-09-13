@@ -3,7 +3,7 @@
 Key 8 connects Cubes to CubeSrv and downloads its embedded gallery. Six image
 slabs surround the center at 10% of the standard 4×4×4-chunk world radius and
 face inward. A white 3×3×3 c4 landmark sits at the origin. Above it, the
-numbered PNGs in `slides/holy/` play as a sparse 48×48 c1 cube asset at 750 ms
+alpha PNG strip selected by `slides/pixvfx.json` plays as a sparse 32×32 c1 cube asset at 150 ms
 per frame. The player starts on the +Z part of the landmark's top face, looking
 along -Z toward that asset. Another numbered mode disconnects; Key 8 reconnects.
 
@@ -49,9 +49,9 @@ modes are removed. Quantization stays fixed at 16 channel levels and exposure
 1.05. Native lighting uses PBR rather than the HTML's simple preview light.
 
 `cargo bp cubesrv` automatically prepares the selected images in Cargo's build
-output directory, reads the numbered `slides/holy/*.png` frames, and embeds both
-resulting packages. Holy filenames need a trailing frame number and are sorted
-numerically. Every frame must be 48×48; alpha-zero pixels are omitted, while
+output directory, reads the numbered 32×32 RGBA frames selected by `slides/pixvfx.json`, and embeds both
+resulting packages. Frame filenames need a trailing frame number and are sorted
+numerically. Every frame must be 32×32; alpha-zero pixels are omitted, while
 every nonzero-alpha pixel becomes one colored c1 cube. Python 3 and Pillow are
 required on the build host. Source/config edits and image changes trigger a
 rebake; the build does not rewrite files under `slides/`.
@@ -68,7 +68,7 @@ To select six catalog IDs explicitly in face order:
 python3 -B tools/prepare_slides.py --faces 10 11 12 13 14 15
 ```
 
-`--manifest`, `--gallery`, `--source-root`, `--holy` and `--output` override their respective
+`--manifest`, `--gallery`, `--source-root`, `--vfx`, `--holy` and `--output` override their respective
 paths. `--faces` overrides the saved selection; otherwise the importer preserves
 `gallery.json`'s faces. The importer accepts PNG/JPG/JPEG/JGP. The hash fields in
 `gallery.json` are generated bookkeeping; they never need hand editing. The build
@@ -97,7 +97,7 @@ unit cube size as platforms and pathways. It spans 24 c1 (4.8 renderer units) on
 each axis and has ordinary walking collision. Holy's source palette remains in
 the atlas's final row. The client reads it once per gallery revision and converts
 it to the same RGB555 colors used by placed assets. The active Holy frame
-is an upright 48×48 c1 grid with its bottom edge resting on the landmark's top.
+is an upright 32×32 c1 grid with its bottom edge resting on the landmark's top.
 Only visible pixels have cube instances. The 27 center cubes and the current Holy
 frame use the placed-asset hull/tessellation/domain shader fastpath: one immutable
 44-patch cube mesh, with compact position, scale and color seeds. A complete frame
@@ -137,12 +137,15 @@ from the tiers and checked before decoding. Encoded size is bounded to 4 MiB.
 The revision comes from the package hash. Revision-mismatched chunks cannot mix
 images. Bounded chunk windows, retries and duplicate rejection remain in use.
 
-`holy.hfx` contains the 48×48 dimensions, 750 ms period, shared RGB palette,
+`holy.hfx` contains the 32×32 dimensions, 150 ms period, shared RGB palette,
 frame offsets and three-byte `(x, y, palette)` records. CubeSrv advances one
-global frame every 750 ms and announces it to connected players. Requests and
-responses are pinned to both the Holy revision and frame index, so late UDP
-chunks cannot mix frames. The included 16-frame sequence contains 3,601 visible
-cubes in total; its final transparent PNG intentionally produces a zero-cube frame.
+global frame every 150 ms and announces it to connected players. Requests and
+responses are pinned to both the VFX revision and frame index, so late UDP
+chunks cannot mix frames. The active Pixel VFX strip is selected in `pixvfx.json`;
+alpha-zero pixels produce no cubes. Every three seconds CubeSrv selects a cardinal
+position 5–10 c4 terrain blocks from the landmark, creates one temporary terrain
+cube, waits 500 ms, then plays one complete VFX strip on its top. The cube and
+effect clear before the next cycle.
 
 Cubes decodes the atlas in its networking worker through `vmedia::decode_retained`.
 Only a complete resident texture replaces the displayed scene. Failed transfers
@@ -183,6 +186,6 @@ Key8 uses that terrain's normal walker collision and nearest-first visibility
 selection, with the six images, center 3×3×3 c4 landmark and Holy VFX rendered
 in the same depth-tested frame. Spawn stays on top of the landmark. Portals and
 local editing remain disabled in this server-owned scene. Terrain submission
-reserves room for the landmark and all 48×48 possible Holy pixels within the
+reserves room for the landmark and all 32×32 possible VFX pixels within the
 existing 8192-instance limit; collision retains the full terrain.
 Rebuild both CubeSrv and Cubes for this addition.

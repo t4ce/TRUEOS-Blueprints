@@ -338,13 +338,19 @@ pub fn holy_info(
     revision: u32,
     frame: u8,
     encoded_len: usize,
+    anchor: [i16; 3],
+    terrain: bool,
+    event: u32,
 ) -> Vec<u8> {
-    let mut body = Vec::with_capacity(15);
+    let mut body = Vec::with_capacity(26);
     body.extend_from_slice(&player.to_le_bytes());
     body.extend_from_slice(&gallery_revision.to_le_bytes());
     body.extend_from_slice(&revision.to_le_bytes());
     body.push(frame);
     body.extend_from_slice(&(encoded_len as u16).to_le_bytes());
+    for coordinate in anchor { body.extend_from_slice(&coordinate.to_le_bytes()); }
+    body.push(terrain as u8);
+    body.extend_from_slice(&event.to_le_bytes());
     packet(0x87, &body)
 }
 

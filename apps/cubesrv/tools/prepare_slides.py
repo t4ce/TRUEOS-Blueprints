@@ -15,8 +15,8 @@ SLIDES = Path(__file__).resolve().parents[1] / 'slides'
 # source resolution, 1 x N x N assembly, projected texture pixels per slab face.
 TIERS = {'tier1': (48, 6, 6), 'tier2': (128, 8, 16), 'tier3': (256, 16, 128)}
 EXTENSIONS = ('.png', '.jpg', '.jpeg', '.jgp')
-HOLY_SIDE = 48
-HOLY_PERIOD_MS = 750
+HOLY_SIDE = 32
+HOLY_PERIOD_MS = 150
 
 
 def prepare(source, size='tier3'):
@@ -82,7 +82,7 @@ def load_faces(path):
 
 
 def load_holy(directory):
-    """Read numbered 48px PNG frames and return sparse indexed pixels."""
+    """Read numbered 32px PNG frames and return sparse indexed pixels."""
     def frame_number(path):
         match = re.search(r'(\d+)$', path.stem)
         if not match:
@@ -114,6 +114,19 @@ def load_holy(directory):
                        for y in range(HOLY_SIDE) for x in range(HOLY_SIDE)
                        for r,g,b,a in [rgba[y*HOLY_SIDE+x]] if a != 0])
     return paths, palette, frames
+
+
+def load_vfx(config, source_root):
+    """Resolve the selected alpha-preserving Pixel VFX PNG strip."""
+    value = json.loads(config.read_text())
+    if (not isinstance(value, dict) or set(value) != {'effect', 'frames', 'Size'}
+            or not isinstance(value['effect'], str) or not isinstance(value['frames'], str)
+            or value['Size'] != HOLY_SIDE):
+        raise ValueError('pixvfx.json requires effect, frames and Size: 32')
+    directory = source_root / value['frames']
+    if not directory.is_dir():
+        raise ValueError(f'Pixel VFX frames directory not found: {directory}')
+    return value['effect'], directory
 
 
 def bake_holy(palette, frames):
@@ -171,13 +184,20 @@ def main():
     parser.add_argument('--gallery', type=Path, help='face selection; default: gallery.json beside the manifest')
     parser.add_argument('--source-root', type=Path, help='default: manifest directory')
     parser.add_argument('--output', type=Path, default=SLIDES)
-    parser.add_argument('--holy', type=Path, help='numbered 48x48 RGBA PNG folder; default: holy beside the manifest')
+    parser.add_argument('--holy', type=Path, help='numbered 32x32 RGBA PNG folder; overrides --vfx')
+    parser.add_argument('--vfx', type=Path, help='Pixel VFX selection JSON; default: pixvfx.json beside the manifest')
     parser.add_argument('--faces', type=int, nargs=6, metavar='SLIDE', help='-Z +X +Z -X -Y +Y slide IDs; default: gallery.json faces, or first six manifest entries for a new gallery')
     args = parser.parse_args()
     try:
         faces = args.faces if args.faces is not None else load_faces(args.gallery or args.manifest.parent/'gallery.json')
         entries = load_manifest(args.manifest, faces)
-        _holy_paths, holy_palette, holy_frames = load_holy(args.holy or args.manifest.parent/'holy')
+        if args.holy:
+            vfx_name = args.holy.name
+            vfx_frames = args.holy
+        else:
+            vfx_name, vfx_frames = load_vfx(args.vfx or args.manifest.parent/'pixvfx.json',
+                                             args.source_root or args.manifest.parent)
+        _holy_paths, holy_palette, holy_frames = load_holy(vfx_frames)
         package = bake(entries, args.source_root or args.manifest.parent, holy_palette)
         holy = bake_holy(holy_palette, holy_frames)
         receipt = {'manifest_sha256': hashlib.sha256(args.manifest.read_bytes()).hexdigest(),
@@ -185,6 +205,7 @@ def main():
                    'holy_sha256': hashlib.sha256(holy).hexdigest(),
                    'holy_frames': len(holy_frames), 'holy_period_ms': HOLY_PERIOD_MS,
                    'holy_visible_pixels': [len(frame) for frame in holy_frames],
+                   'vfx': vfx_name,
                    'faces': [e['slide'] for e in entries]}
         args.output.mkdir(parents=True, exist_ok=True)
         atomic_write(args.output/'gallery.cga', package)
