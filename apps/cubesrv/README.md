@@ -3,12 +3,26 @@
 Key 8 connects Cubes to CubeSrv and downloads its embedded gallery. Six image
 slabs surround the center at 10% of the standard 4×4×4-chunk world radius and
 face inward. A white 3×3×3 c4 landmark sits at the origin. Every three seconds,
-the server spawns six temporary c4 terrain cubes: the original four cardinal
-positions 5–10 blocks from the center, plus one directly above and one below at
-7–10 blocks. The extra vertical clearance keeps the lower full-size billboard
-out of the landmark. After 500 ms, one independently selected 32×32 effect plays
-once above each terrain cube; each pair then disappears. All six effects remain
-billboarded, and duplicate rolls are allowed.
+the server spawns six temporary c4 terrain cubes: four cardinal positions, one
+above and one below. One randomly selected 32×32 billboard plays above each
+cube after 500 ms, then both disappear after one loop. Duplicate rolls are
+allowed. The size-comparison demo uses one of the smallest six cube presets
+per direction. Terrain-cube positions are fixed behind the six image centers,
+at twice the image radius: 205 c1 = 41 renderer units from (0,0,0).
+
+| Position | VFX pixel preset | Pixel side (renderer units) | Full 32-pixel width |
+|---|---|---|---|
+| +X | c1 | 0.2 | 6.4 |
+| +Z | c2 | 0.4 | 12.8 |
+| -X | r1 | 0.6 | 19.2 |
+| -Z | c3 | 0.8 | 25.6 |
+| Above | r2 | 1.2 | 38.4 |
+| Below | c4 | 1.6 | 51.2 |
+
+The renderer also accepts r3 (2.4-unit pixels), but the demo uses only the
+smallest six presets. Terrain supports remain c4. Their centers are (±41,0,0), (0,0,±41), (0,±41,0) in renderer units,
+independent of pixel size or timer cycle. Large billboard footprints may extend
+back toward the images; the fixed-position rule does not guarantee sprite clearance.
 The player starts on the +Z part of the landmark's top face, looking along -Z.
 Another numbered mode disconnects; Key 8 reconnects.
 
@@ -114,6 +128,8 @@ each axis and has ordinary walking collision. The shared VFX palette remains in
 the atlas's final row and uses the same RGB555 colors as placed assets.
 Each VFX is a 32×32 c1 grid, bottom-center anchored at its terrain cube's top.
 There is one slot per cube, ordered +X, +Z, -X, -Z, above, below.
+Pixel scale and grid spacing both use the slot's selected cube side. Asset revisions,
+lifetimes, source PNGs, cached bytes and visible-pixel counts do not change with size.
 Camera right/up orient both its pixel positions and cube rotations; terrain and
 the gallery retain their world orientation. Only visible pixels become geometry.
 The 27 landmark cubes, six terrain cubes and six effects use one immutable
@@ -136,7 +152,9 @@ UDP port 30018 retains the `CUB1` v1 envelope:
 - `0x86`: u32 revision, u16 chunk index, up to 1024 package bytes.
 - `0x89`: u32 gallery revision, u32 event, u16 event age in ms, followed
   by six descriptors: u32 asset revision, u32 byte length, three i16 c1 anchor
-  coordinates, u8 frame count, u16 frame period. Body length is 112 bytes; the previous 78- and 418-byte layouts are rejected.
+  coordinates, u8 frame count, u16 frame period, u8 pixel side in c1 units.
+  Allowed sides are 1, 2, 3, 4, 6, 8, 12. Body length is 118 bytes;
+  previous 78-, 112- and 418-byte layouts are rejected.
 - `0x07`: u32 asset revision, u16 requested chunk index.
 - `0x8a`: u32 asset revision, u16 chunk index, up to 1024 asset bytes.
 
@@ -172,7 +190,7 @@ A missing snapshot does not prevent local expiry of visuals or collision.
 Snapshots arrive every 50 ms. `spawn.rs::anchors` supplies six separated locations:
 first spawn at 3 s, first frame at 3.5 s, each effect expires after one
 loop along with its base cube, all cleared by 5.9 s, next spawn at 6 s.
-The four horizontal blocks have their tops at landmark-top height; there is no nearby
+The four horizontal blocks have centers at y=0; there is no nearby
 authored terrain in this sky world. They use world palette entry zero and walking
 collision. VFX pixels appear immediately without placement's growth delay.
 

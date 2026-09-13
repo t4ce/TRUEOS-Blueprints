@@ -147,7 +147,7 @@ impl ServerState {
 
 fn make_scene(elapsed: u64, effects: [&Vfx;cubes_protocol::vfx::INSTANCES]) -> cubes_protocol::vfx::Scene {
     let cycle=elapsed/spawn::INTERVAL_MS;
-    let anchors=spawn::anchors(cycle);
+    let anchors=spawn::anchors();
     cubes_protocol::vfx::Scene {
         gallery_revision:GALLERY_REVISION, event:cycle as u32,
         age_ms:(elapsed%spawn::INTERVAL_MS) as u16,
