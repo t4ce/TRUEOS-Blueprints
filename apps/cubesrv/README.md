@@ -49,7 +49,7 @@ RNG. The timer calls it six times per batch. Repeats are allowed.
 All effects share a palette equivalent to the client's existing RGB555 colours,
 so switching effects requires no new gallery download. There is only one VFX
 path; the old standalone VFX assets, importer and frame protocol are removed.
-Every effect uses exactly 300 ms/frame, regardless of strip length. No authored
+Every effect uses exactly 500 ms/frame, regardless of strip length. No authored
 frames are removed or accelerated. All six start together and each plays its
 full loop; the next batch's first frame follows the longest loop's expiry by
 one second (subject to the server's 50 ms announcement tick).
@@ -194,7 +194,7 @@ the initial bases spawn immediately and their effects start 500 ms later.
 Each effect expires with its base cube after its full loop. After the longest
 loop expires, wait 500 ms, spawn the next bases, then start their VFX 500 ms later.
 There is no forced three-second cycle. Event age is u32 so the full 255-frame
-format limit at 300 ms/frame remains representable.
+format limit at 500 ms/frame remains representable.
 The four horizontal blocks have centers at y=0; there is no nearby
 authored terrain in this sky world. They use world palette entry zero and walking
 collision. VFX pixels reuse Key4/Key5's uniform grow-in and two-bounce curve,

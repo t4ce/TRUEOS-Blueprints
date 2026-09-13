@@ -7,7 +7,7 @@ pub const INSTANCES: usize = TERRAIN_CUBES;
 pub const PIXEL_SIDES_C1: [u8;7] = [1,2,3,4,6,8,12];
 pub const DEMO_PIXEL_SIDES_C1: [u8;INSTANCES] = [1,2,3,4,6,8];
 pub const CELLS: usize = 1024;
-pub const PERIOD_MS: u16 = 300;
+pub const PERIOD_MS: u16 = 500;
 pub const DELAY_MS: u16 = 500;
 pub const REST_MS: u32 = 1000;
 pub const MAX_BYTES: usize = 128 * 1024;
@@ -130,19 +130,19 @@ mod tests {
         let mut scene=Scene {gallery_revision:1,event:1,age_ms:0,slots:[slot;INSTANCES]};
         scene.slots[5].frames=40;
         let last_expiry=DELAY_MS as u32+40*PERIOD_MS as u32;
-        assert_eq!(scene.batch_ms(),13000);
+        assert_eq!(scene.batch_ms(),21000);
         assert_eq!(scene.batch_ms()+DELAY_MS as u32-last_expiry,1000);
-        assert_eq!(scene.slots[5].frame(3000),Some(8)); // no forced three-second reset
+        assert_eq!(scene.slots[5].frame(3000),Some(5)); // no forced three-second reset
         assert_eq!(scene.slots[5].frame(last_expiry as u64-1),Some(39));
         assert_eq!(scene.slots[5].frame(last_expiry as u64),None);
         scene.slots[5].frames=255;
-        scene.age_ms=77000;
+        scene.age_ms=128000;
         assert_eq!(Scene::parse(&scene.encode()),Some(scene)); // exceeds u16 milliseconds
-        assert_eq!(scene.batch_ms(),77500);
-        scene.age_ms=77500;
+        assert_eq!(scene.batch_ms(),128500);
+        scene.age_ms=128500;
         assert!(Scene::parse(&scene.encode()).is_none());
-        let bytes=[b'V',b'F',b'X',b'1',1,32,32,255,44,1,1,0,255,255,255];
-        assert_eq!(Sequence::parse(&bytes).unwrap().period_ms(),300);
+        let bytes=[b'V',b'F',b'X',b'1',1,32,32,255,244,1,1,0,255,255,255];
+        assert_eq!(Sequence::parse(&bytes).unwrap().period_ms(),500);
     }
     #[test]
     fn size_selector_accepts_existing_tiers_without_changing_asset_identity() {
