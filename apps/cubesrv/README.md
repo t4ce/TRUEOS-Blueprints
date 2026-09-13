@@ -295,7 +295,11 @@ worker; no additional transport, runtime or indexed-world loader is created.
 World 2 is server-authored in `structure.rs`: a centered 3×3×3 arrangement of
 64-c1 cubes using palette entry 0, extending from -96 to +96 c1 on each axis.
 The server also supplies the top-face center spawn and outward normal.
-Its welcome announces a 464-byte CSW1 snapshot in one world chunk. The shared
+The virtual world is 9216³ c1 units, or 144 largest cubes per axis, with bounds
+-4608..4608 c1. Only the existing 27 central cubes are occupied; no boundary
+walls or additional cubes are generated. The client uses this extent for flight
+limits and camera clipping without allocating collision cells for the empty volume.
+Its welcome announces a 468-byte CSW2 snapshot in one world chunk. The shared
 `cubes-protocol::world` codec uses sixth-c1 integer coordinates and validates
 geometry, palette indices and surface spawn. The client installs only a complete,
 valid snapshot; zero-byte welcomes from old servers are rejected. There is no

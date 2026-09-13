@@ -5,5 +5,5 @@ pub fn world() -> cubes_protocol::world::World {
     for x in -1..=1 { for y in -1..=1 { for z in -1..=1 {
         cubes.push(Cube {min:[x,y,z].map(|v|v*384-192),side:384,material:0});
     }}}
-    World {cubes,spawn:[0,576,0],normal:[0,1,0]}
+    World {cubes,spawn:[0,576,0],normal:[0,1,0],side_c1:9216}
 }
