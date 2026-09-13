@@ -1,5 +1,4 @@
-//! Six fixed demo locations behind the gallery, sharing the three-second clock.
-pub const INTERVAL_MS: u64 = 3000;
+//! Six fixed demo locations behind the gallery.
 
 /// Twice the image-center distance, in the same six directions from the origin.
 /// Keep size-demo order: +X, +Z, -X, -Z, above, below.

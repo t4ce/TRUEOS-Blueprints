@@ -2,7 +2,7 @@
 
 Key 8 connects Cubes to CubeSrv and downloads its embedded gallery. Six image
 slabs surround the center at 10% of the standard 4×4×4-chunk world radius and
-face inward. A white 3×3×3 c4 landmark sits at the origin. Every three seconds,
+face inward. A white 3×3×3 c4 landmark sits at the origin. For each playback batch,
 the server spawns six temporary c4 terrain cubes: four cardinal positions, one
 above and one below. One randomly selected 32×32 billboard plays above each
 cube after 500 ms, then both disappear after one loop. Duplicate rolls are
@@ -45,12 +45,14 @@ The fixed `slides/pixvfx/Frames/<category>/<effect>/` pack supplies all 150 VFX.
 The importer generates `vfx.bin` and a named catalog in `gallery.json`; builds
 embed the catalog automatically. Server helper `select_vfx(Some("Magic/Arcane Orb"))`
 selects an exact category/name; `select_vfx(None)` chooses randomly using TRUEOS's
-RNG. The timer calls it six times per three-second cycle. Repeats are allowed.
+RNG. The timer calls it six times per batch. Repeats are allowed.
 All effects share a palette equivalent to the client's existing RGB555 colours,
 so switching effects requires no new gallery download. There is only one VFX
 path; the old standalone VFX assets, importer and frame protocol are removed.
-Playback uses 150 ms/frame, shortened for strips over 16 frames to fit the
-2.4-second playback window. No authored frames are removed.
+Every effect uses exactly 300 ms/frame, regardless of strip length. No authored
+frames are removed or accelerated. All six start together and each plays its
+full loop; the next batch's first frame follows the longest loop's expiry by
+one second (subject to the server's 50 ms announcement tick).
 
 `slides/sources.json` contains records with exactly these fields:
 
@@ -150,11 +152,11 @@ UDP port 30018 retains the `CUB1` v1 envelope:
   u32 package length.
 - `0x05`: u32 revision, u16 requested chunk index.
 - `0x86`: u32 revision, u16 chunk index, up to 1024 package bytes.
-- `0x89`: u32 gallery revision, u32 event, u16 event age in ms, followed
+- `0x89`: u32 gallery revision, u32 event, u32 event age in ms, followed
   by six descriptors: u32 asset revision, u32 byte length, three i16 c1 anchor
   coordinates, u8 frame count, u16 frame period, u8 pixel side in c1 units.
-  Allowed sides are 1, 2, 3, 4, 6, 8, 12. Body length is 118 bytes;
-  previous 78-, 112- and 418-byte layouts are rejected.
+  Allowed sides are 1, 2, 3, 4, 6, 8, 12. Body length is 120 bytes;
+  previous 78-, 112-, 118- and 418-byte layouts are rejected.
 - `0x07`: u32 asset revision, u16 requested chunk index.
 - `0x8a`: u32 asset revision, u16 chunk index, up to 1024 asset bytes.
 
@@ -188,11 +190,20 @@ locally. After caching, only small server timing snapshots are needed. Missing
 or reordered chunks cannot mix revisions; stale events cannot rewind playback.
 A missing snapshot does not prevent local expiry of visuals or collision.
 Snapshots arrive every 50 ms. `spawn.rs::anchors` supplies six separated locations:
-first spawn at 3 s, first frame at 3.5 s, each effect expires after one
-loop along with its base cube, all cleared by 5.9 s, next spawn at 6 s.
+the initial bases spawn immediately and their effects start 500 ms later.
+Each effect expires with its base cube after its full loop. After the longest
+loop expires, wait 500 ms, spawn the next bases, then start their VFX 500 ms later.
+There is no forced three-second cycle. Event age is u32 so the full 255-frame
+format limit at 300 ms/frame remains representable.
 The four horizontal blocks have centers at y=0; there is no nearby
 authored terrain in this sky world. They use world palette entry zero and walking
-collision. VFX pixels appear immediately without placement's growth delay.
+collision. VFX pixels reuse Key4/Key5's uniform grow-in and two-bounce curve,
+then ease down to a tiny seed before their lifetime expires. Growth lasts up to
+700 ms (at most half the pixel lifetime); shrink-out lasts up to 150 ms (also
+at most half). The 333 ms placement admission delay and rate limit do not apply
+to these short-lived pixels. Compressed runs retain animation progress across
+frames; each new run starts fresh. No fade tail extends beyond authored expiry,
+no alpha draw-group change is needed, and terrain supports stay full-sized.
 
 Cubes decodes the atlas in its networking worker through `vmedia::decode_retained`.
 Only a complete resident texture replaces the displayed scene. Failed transfers

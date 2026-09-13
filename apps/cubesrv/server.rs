@@ -82,7 +82,7 @@ impl ServerState {
         Self {
             next_player_id: 1,
             revision: GALLERY_REVISION,
-            vfx_scene: make_scene(0, [&VFX[0];cubes_protocol::vfx::INSTANCES]),
+            vfx_scene: make_scene(0, 0, [&VFX[0];cubes_protocol::vfx::INSTANCES]),
             players: BTreeMap::new(),
         }
     }
@@ -145,12 +145,10 @@ impl ServerState {
     }
 }
 
-fn make_scene(elapsed: u64, effects: [&Vfx;cubes_protocol::vfx::INSTANCES]) -> cubes_protocol::vfx::Scene {
-    let cycle=elapsed/spawn::INTERVAL_MS;
+fn make_scene(event: u32, age_ms: u32, effects: [&Vfx;cubes_protocol::vfx::INSTANCES]) -> cubes_protocol::vfx::Scene {
     let anchors=spawn::anchors();
     cubes_protocol::vfx::Scene {
-        gallery_revision:GALLERY_REVISION, event:cycle as u32,
-        age_ms:(elapsed%spawn::INTERVAL_MS) as u16,
+        gallery_revision:GALLERY_REVISION, event, age_ms,
         slots:core::array::from_fn(|i| {
             let sequence=effects[i].sequence();
             cubes_protocol::vfx::Slot {revision:effects[i].revision,
@@ -313,8 +311,8 @@ async fn udp_loop(state: Arc<RwLock<ServerState>>) {
         let mut next_slide = time::Instant::now() + Duration::from_secs(10);
         let started = time::Instant::now();
         let mut next_vfx = started;
-        let mut effects = [&VFX[0];cubes_protocol::vfx::INSTANCES];
-        let mut selected_cycle = 0;
+        let mut scene=make_scene(0,0,[&VFX[0];cubes_protocol::vfx::INSTANCES]);
+        let mut batch_started=started;
         let mut buffer = [0_u8; protocol::MAX_DATAGRAM];
         loop {
             let now = time::Instant::now();
@@ -349,16 +347,17 @@ async fn udp_loop(state: Arc<RwLock<ServerState>>) {
                 }
             }
             if now >= next_vfx {
-                let elapsed = started.elapsed().as_millis() as u64;
-                let cycle = elapsed / spawn::INTERVAL_MS;
-                if cycle != selected_cycle {
-                    effects = core::array::from_fn(|_| select_vfx(None).expect("nonempty VFX pack"));
-                    selected_cycle = cycle;
+                let age=batch_started.elapsed().as_millis() as u64;
+                if scene.event==0 || age>=scene.batch_ms() as u64 {
+                    let effects=core::array::from_fn(|_| select_vfx(None).expect("nonempty VFX pack"));
+                    let event=scene.event.wrapping_add(1).max(1);
+                    batch_started=time::Instant::now();
+                    scene=make_scene(event,0,effects);
                     for (slot,effect) in effects.iter().enumerate() {
-                        logl::log(level::DEBUG,format_args!("cubesrv: spawn={cycle} slot={slot} vfx={}",effect.name));
+                        logl::log(level::DEBUG,format_args!("cubesrv: spawn={event} slot={slot} vfx={}",effect.name));
                     }
                 }
-                let scene=make_scene(elapsed,effects);
+                scene.age_ms=batch_started.elapsed().as_millis() as u32;
                 let players = {
                     let mut state=state.write().await;
                     state.vfx_scene=scene;

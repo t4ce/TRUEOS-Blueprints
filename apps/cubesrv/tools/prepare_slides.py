@@ -16,7 +16,7 @@ SLIDES = Path(__file__).resolve().parents[1] / 'slides'
 TIERS = {'tier1': (48, 6, 6), 'tier2': (128, 8, 16), 'tier3': (256, 16, 128)}
 EXTENSIONS = ('.png', '.jpg', '.jpeg', '.jgp')
 VFX_SIDE = 32
-VFX_PERIOD_MS = 150
+VFX_PERIOD_MS = 300
 
 
 def prepare(source, size='tier3'):
@@ -131,7 +131,7 @@ def bake_vfx(palette, frames):
                 if color is not None:
                     runs.extend((x, y, color, start, end))
                 start = end
-    period = min(VFX_PERIOD_MS, 2400 // len(frames))
+    period = VFX_PERIOD_MS
     return (b'VFX1' + bytes([1, VFX_SIDE, VFX_SIDE, len(frames)])
             + period.to_bytes(2, 'little') + bytes([len(palette), 0])
             + bytes(v for color in palette for v in color) + runs)
