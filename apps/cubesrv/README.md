@@ -128,7 +128,10 @@ The center landmark contains 27 white c4 cubes, using the same 8-c1/1.6-renderer
 unit cube size as platforms and pathways. It spans 24 c1 (4.8 renderer units) on
 each axis and has ordinary walking collision. The shared VFX palette remains in
 the atlas's final row and uses the same RGB555 colors as placed assets.
-Each VFX is a 32×32 c1 grid, bottom-center anchored at its terrain cube's top.
+Each VFX is a 32×32 grid with a world-fixed canvas center half its full height
+above its terrain cube's top. Camera-facing rotation uses centered pixel offsets,
+so roll/pitch do not move the canvas center. In the upright orientation its bottom
+rests on the terrain cube.
 There is one slot per cube, ordered +X, +Z, -X, -Z, above, below.
 Pixel scale and grid spacing both use the slot's selected cube side. Asset revisions,
 lifetimes, source PNGs, cached bytes and visible-pixel counts do not change with size.
