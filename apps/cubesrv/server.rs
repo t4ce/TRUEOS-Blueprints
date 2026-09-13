@@ -4,6 +4,7 @@
 extern crate alloc;
 
 mod protocol;
+mod structure;
 mod spawn;
 mod snake;
 mod worm;
@@ -188,7 +189,8 @@ async fn send_welcome(
 ) {
     let world_id = state.read().await.players.get(&peer).map_or(1, |p| p.world_id);
     if world_id == 2 {
-        let _ = socket.send_to(&protocol::welcome(player_id, 2, 0, 0, 0), peer).await;
+        let bytes = structure::world().encode();
+        let _ = socket.send_to(&protocol::welcome(player_id, 2, bytes.len(), bytes.len().div_ceil(protocol::BLOB_CHUNK_BYTES) as u16, 0), peer).await;
         return;
     }
     let _ = socket.send_to(&protocol::welcome(player_id, 1, WORLD1.len(),
@@ -220,7 +222,7 @@ async fn handle_packet(
         Ok(packet) => packet,
         Err(_) => return,
     };
-    if !matches!(&packet, ClientPacket::Hello {..} | ClientPacket::Telemetry(_))
+    if !matches!(&packet, ClientPacket::Hello {..} | ClientPacket::Telemetry(_) | ClientPacket::WorldRequest {..})
         && state.read().await.players.get(&peer).is_some_and(|p| p.world_id == 2) { return; }
     match packet {
         ClientPacket::Hello { username, world_id } => {
@@ -298,12 +300,15 @@ async fn handle_packet(
             }
         }
         ClientPacket::WorldRequest { chunk } => {
-            {
+            let world_id = {
                 let mut state = state.write().await;
                 let Some(player) = state.players.get_mut(&peer) else { return; };
                 player.last_seen = time::Instant::now();
-            }
-            if let Some(packet) = protocol::blob_chunk(BlobKind::World, 1, chunk, WORLD1) {
+                player.world_id
+            };
+            let world2;
+            let bytes = if world_id == 2 { world2 = structure::world().encode(); world2.as_slice() } else { WORLD1 };
+            if let Some(packet) = protocol::blob_chunk(BlobKind::World, world_id, chunk, bytes) {
                 let _ = socket.send_to(&packet, peer).await;
             }
         }

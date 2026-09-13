@@ -6,6 +6,7 @@ pub mod gallery;
 pub mod vfx;
 pub mod snake;
 pub mod worm;
+pub mod world;
 mod chain;
 use alloc::vec::Vec;
 

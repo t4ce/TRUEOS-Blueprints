@@ -292,12 +292,17 @@ installed, each new press switches between preview and empty (world ID 2).
 Holding the key does not repeat. Swaps reuse the same UDP socket and native
 worker; no additional transport, runtime or indexed-world loader is created.
 
-An empty-world Hello receives the existing welcome envelope with world ID 2,
-zero bytes and zero chunks. Only that matching acknowledgement clears the client
-view. The server suppresses preview geometry, gallery, VFX, snake and worm traffic
-for empty peers. A periodic Hello keeps the peer alive while empty. The client
-uses the existing GPU surface-clear operation and removes its walker/targets;
-preview GPU resources remain cached but submit no geometry while empty.
+World 2 is server-authored in `structure.rs`: a centered 3×3×3 arrangement of
+64-c1 cubes using palette entry 0, extending from -96 to +96 c1 on each axis.
+The server also supplies the top-face center spawn and outward normal.
+Its welcome announces a 464-byte CSW1 snapshot in one world chunk. The shared
+`cubes-protocol::world` codec uses sixth-c1 integer coordinates and validates
+geometry, palette indices and surface spawn. The client installs only a complete,
+valid snapshot; zero-byte welcomes from old servers are rejected. There is no
+client-side structure generator in the production path.
+The server suppresses preview geometry, gallery, VFX, snake and worm traffic
+for world 2 peers. A periodic Hello keeps the peer alive without transferring
+geometry again. Preview GPU resources remain cached but are not submitted.
 Returning to preview repeats the original binary world and gallery transfer.
 Key5 remains local. Rebuild both Cubes and CubeSrv for this extension.
 
