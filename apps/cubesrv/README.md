@@ -3,12 +3,12 @@
 Key 8 connects Cubes to CubeSrv and downloads its embedded gallery. Six image
 slabs surround the center at 10% of the standard 4×4×4-chunk world radius and
 face inward. A white 3×3×3 c4 landmark sits at the origin. Every three seconds,
-the server spawns four temporary c4 terrain cubes at cardinal positions 5–10 c4
-blocks from the center. After 500 ms, six independently selected 32×32 alpha PNG
-sequences play once per cube, one anchored at each face; each cube disappears
-after its last face loop ends. All 24 effects remain billboarded. Duplicate rolls
-are allowed. The spacing exceeds two empty terrain cubes and keeps neighboring cube groups apart. Billboards on the same cube may overlap
-or occlude one another in screen space; ordinary shared depth still applies.
+the server spawns six temporary c4 terrain cubes: the original four cardinal
+positions 5–10 blocks from the center, plus one directly above and one below at
+7–10 blocks. The extra vertical clearance keeps the lower full-size billboard
+out of the landmark. After 500 ms, one independently selected 32×32 effect plays
+once above each terrain cube; each pair then disappears. All six effects remain
+billboarded, and duplicate rolls are allowed.
 The player starts on the +Z part of the landmark's top face, looking along -Z.
 Another numbered mode disconnects; Key 8 reconnects.
 
@@ -31,7 +31,7 @@ The fixed `slides/pixvfx/Frames/<category>/<effect>/` pack supplies all 150 VFX.
 The importer generates `vfx.bin` and a named catalog in `gallery.json`; builds
 embed the catalog automatically. Server helper `select_vfx(Some("Magic/Arcane Orb"))`
 selects an exact category/name; `select_vfx(None)` chooses randomly using TRUEOS's
-RNG. The timer calls it 24 times per three-second cycle. Repeats are allowed.
+RNG. The timer calls it six times per three-second cycle. Repeats are allowed.
 All effects share a palette equivalent to the client's existing RGB555 colours,
 so switching effects requires no new gallery download. There is only one VFX
 path; the old standalone VFX assets, importer and frame protocol are removed.
@@ -112,12 +112,11 @@ The center landmark contains 27 white c4 cubes, using the same 8-c1/1.6-renderer
 unit cube size as platforms and pathways. It spans 24 c1 (4.8 renderer units) on
 each axis and has ordinary walking collision. The shared VFX palette remains in
 the atlas's final row and uses the same RGB555 colors as placed assets.
-Each VFX is a 32×32 c1 grid, bottom-center anchored at one terrain-cube face center.
-Six consecutive slots share one base anchor, in +Y, -Y, +X, -X, +Z, -Z order;
-the client offsets each anchor by the c4 half-side (0.8 renderer units).
+Each VFX is a 32×32 c1 grid, bottom-center anchored at its terrain cube's top.
+There is one slot per cube, ordered +X, +Z, -X, -Z, above, below.
 Camera right/up orient both its pixel positions and cube rotations; terrain and
 the gallery retain their world orientation. Only visible pixels become geometry.
-The 27 landmark cubes, four terrain cubes and 24 effects use one immutable
+The 27 landmark cubes, six terrain cubes and six effects use one immutable
 44-patch cube mesh. GPU seed buffers still update for camera-facing positions;
 compression eliminates network frame retransmission, not these GPU uploads.
 The textured gallery mesh stays resident. V4 submits both meshes with shared
@@ -136,8 +135,8 @@ UDP port 30018 retains the `CUB1` v1 envelope:
 - `0x05`: u32 revision, u16 requested chunk index.
 - `0x86`: u32 revision, u16 chunk index, up to 1024 package bytes.
 - `0x89`: u32 gallery revision, u32 event, u16 event age in ms, followed
-  by 24 descriptors: u32 asset revision, u32 byte length, three i16 c1 anchor
-  coordinates, u8 frame count, u16 frame period. Body length is 418 bytes; the previous 78-byte layout is rejected.
+  by six descriptors: u32 asset revision, u32 byte length, three i16 c1 anchor
+  coordinates, u8 frame count, u16 frame period. Body length is 112 bytes; the previous 78- and 418-byte layouts are rejected.
 - `0x07`: u32 asset revision, u16 requested chunk index.
 - `0x8a`: u32 asset revision, u16 chunk index, up to 1024 asset bytes.
 
@@ -166,14 +165,14 @@ exactly at the existing display-color precision. The bundle is 813,510 bytes
 (previous full-frame bundle: 954,664 bytes).
 
 Clients cache complete validated sequences by revision (4 MiB bound, enough for
-the whole pack), reuse them across all 24 slots and future rolls, and evaluate lifetimes
+the whole pack), reuse them across all six slots and future rolls, and evaluate lifetimes
 locally. After caching, only small server timing snapshots are needed. Missing
 or reordered chunks cannot mix revisions; stale events cannot rewind playback.
 A missing snapshot does not prevent local expiry of visuals or collision.
-Snapshots arrive every 50 ms. `spawn.rs::anchors` supplies four separated locations:
+Snapshots arrive every 50 ms. `spawn.rs::anchors` supplies six separated locations:
 first spawn at 3 s, first frame at 3.5 s, each effect expires after one
-loop and its base cube after the last of its six loops, all cleared by 5.9 s, next spawn at 6 s.
-The blocks float with their tops at landmark-top height; there is no nearby
+loop along with its base cube, all cleared by 5.9 s, next spawn at 6 s.
+The four horizontal blocks have their tops at landmark-top height; there is no nearby
 authored terrain in this sky world. They use world palette entry zero and walking
 collision. VFX pixels appear immediately without placement's growth delay.
 
@@ -217,8 +216,8 @@ Key8 uses that terrain's normal walker collision and nearest-first visibility
 selection, with the six images, center 3×3×3 c4 landmark and VFX rendered
 in the same depth-tested frame. Spawn stays on top of the landmark. Portals and
 local editing remain disabled in this server-owned scene. Terrain submission
-reserves room for the landmark and all 24 32×32 planes, four terrain cubes and 129 navigation slots within the
-new 32768-instance limit. This leaves 8032 world-terrain seeds; collision retains
+reserves room for the landmark and all six 32×32 planes, six terrain cubes and 129 navigation slots within the
+retained 32768-instance limit. This leaves 26462 world-terrain seeds; collision retains
 the full terrain. Both the SDK cap and native retained-transform row cap are
 32768; other Cubes modes retain their existing 8192-seed UI budget.
 Rebuild both CubeSrv and Cubes for this addition.

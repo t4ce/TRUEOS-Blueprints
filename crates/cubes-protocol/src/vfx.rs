@@ -1,11 +1,11 @@
 //! Fixed 32x32 sprites, encoded as pixel lifetimes [first, end) in frame units.
 pub const WIDTH: u8 = 32;
 pub const HEIGHT: u8 = 32;
-pub const TERRAIN_CUBES: usize = 4;
-pub const FACES: usize = 6;
-pub const INSTANCES: usize = TERRAIN_CUBES * FACES;
-/// Each group of six slots belongs to one terrain cube; top face first.
-pub const FACE_NORMALS: [[i16;3];FACES] = [[0,1,0],[0,-1,0],[1,0,0],[-1,0,0],[0,0,1],[0,0,-1]];
+pub const TERRAIN_CUBES: usize = 6;
+pub const INSTANCES: usize = TERRAIN_CUBES;
+/// Existing cube presets: c1, c2, r1, c3, r2, c4, r3.
+pub const PIXEL_SIDES_C1: [u8;7] = [1,2,3,4,6,8,12];
+pub const DEMO_PIXEL_SIDES_C1: [u8;INSTANCES] = [1,2,3,4,6,8];
 pub const CELLS: usize = 1024;
 pub const PERIOD_MS: u16 = 150;
 pub const DELAY_MS: u16 = 500;
@@ -50,7 +50,7 @@ impl<'a> Sequence<'a> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Slot {
     pub revision: u32, pub bytes: u32, pub anchor: [i16;3],
-    pub frames: u8, pub period_ms: u16,
+    pub frames: u8, pub period_ms: u16, pub pixel_side_c1: u8,
 }
 impl Slot {
     pub fn terrain(self, age: u64) -> bool {
@@ -68,44 +68,40 @@ pub struct Scene {
     pub slots: [Slot;INSTANCES],
 }
 impl Scene {
-    pub const BYTES: usize = 10 + 17*INSTANCES;
+    pub const BYTES: usize = 10 + 18*INSTANCES;
     pub fn encode(self) -> [u8;Self::BYTES] {
         let mut b=[0;Self::BYTES];
         b[..4].copy_from_slice(&self.gallery_revision.to_le_bytes());
         b[4..8].copy_from_slice(&self.event.to_le_bytes());
         b[8..10].copy_from_slice(&self.age_ms.to_le_bytes());
-        for (slot,r) in self.slots.iter().zip(b[10..].chunks_exact_mut(17)) {
+        for (slot,r) in self.slots.iter().zip(b[10..].chunks_exact_mut(18)) {
             r[..4].copy_from_slice(&slot.revision.to_le_bytes());
             r[4..8].copy_from_slice(&slot.bytes.to_le_bytes());
             for (i,v) in slot.anchor.iter().enumerate() { r[8+i*2..10+i*2].copy_from_slice(&v.to_le_bytes()); }
-            r[14]=slot.frames; r[15..17].copy_from_slice(&slot.period_ms.to_le_bytes());
+            r[14]=slot.frames; r[15..17].copy_from_slice(&slot.period_ms.to_le_bytes()); r[17]=slot.pixel_side_c1;
         }
         b
     }
     pub fn parse(b: &[u8]) -> Option<Self> {
         if b.len()!=Self::BYTES { return None; }
         let slots=core::array::from_fn(|i| {
-            let r=&b[10+i*17..27+i*17];
+            let r=&b[10+i*18..28+i*18];
             Slot {revision:u32::from_le_bytes(r[..4].try_into().unwrap()),
                 bytes:u32::from_le_bytes(r[4..8].try_into().unwrap()),
                 anchor:core::array::from_fn(|a| i16::from_le_bytes(r[8+a*2..10+a*2].try_into().unwrap())),
-                frames:r[14],period_ms:u16::from_le_bytes(r[15..17].try_into().unwrap())}
+                frames:r[14],period_ms:u16::from_le_bytes(r[15..17].try_into().unwrap()),pixel_side_c1:r[17]}
         });
         let scene=Self {gallery_revision:u32::from_le_bytes(b[..4].try_into().unwrap()),
             event:u32::from_le_bytes(b[4..8].try_into().unwrap()),
             age_ms:u16::from_le_bytes(b[8..10].try_into().unwrap()),slots};
         if scene.age_ms>=INTERVAL_MS || slots.iter().any(|s| s.bytes<HEADER as u32 || s.bytes>MAX_BYTES as u32
-            || s.frames==0 || s.period_ms==0 || s.frames as u32*s.period_ms as u32+DELAY_MS as u32>=INTERVAL_MS as u32
+            || !PIXEL_SIDES_C1.contains(&s.pixel_side_c1) || s.frames==0 || s.period_ms==0 || s.frames as u32*s.period_ms as u32+DELAY_MS as u32>=INTERVAL_MS as u32
             || s.anchor.iter().any(|v| !(-1024..=1024).contains(v))) { return None; }
-        if slots.chunks_exact(FACES).any(|group| group.iter().any(|s| s.anchor!=group[0].anchor)) { return None; }
         Some(scene)
     }
-    /// A base cube outlives all six independent face loops.
+    /// One effect per base cube; collision expires with that effect.
     pub fn terrain(self, age: u64) -> [Option<[i16;3]>;TERRAIN_CUBES] {
-        core::array::from_fn(|i| {
-            let group=&self.slots[i*FACES..(i+1)*FACES];
-            (self.event!=0 && group.iter().any(|s|s.terrain(age))).then_some(group[0].anchor)
-        })
+        self.slots.map(|s| (self.event!=0 && s.terrain(age)).then_some(s.anchor))
     }
     pub fn newer_than(self, old: Self) -> bool {
         let d=self.event.wrapping_sub(old.event);
@@ -117,20 +113,20 @@ impl Scene {
 mod tests {
     use super::*;
     #[test]
-    fn six_face_groups_keep_only_four_bases_until_their_last_loop_finishes() {
-        let slot=Slot {revision:7,bytes:100,anchor:[40,8,0],frames:2,period_ms:150};
+    fn six_independent_bases_expire_with_their_own_loop() {
+        let slot=Slot {revision:7,bytes:100,anchor:[40,8,0],frames:2,period_ms:150,pixel_side_c1:1};
         let mut scene=Scene {gallery_revision:1,event:1,age_ms:0,slots:[slot;INSTANCES]};
         scene.slots[5].frames=10;
         assert_eq!(scene.terrain(799),[Some(slot.anchor);TERRAIN_CUBES]);
-        assert_eq!(scene.terrain(800),[Some(slot.anchor),None,None,None]);
+        assert_eq!(scene.terrain(800),[None,None,None,None,None,Some(slot.anchor)]);
         assert_eq!(scene.terrain(2000),[None;TERRAIN_CUBES]);
-        assert_eq!(Scene::BYTES,418);
+        assert_eq!(Scene::BYTES,118);
         assert!(Scene::BYTES+8<1200);
         let bytes=scene.encode();
         assert_eq!(Scene::parse(&bytes),Some(scene));
         assert!(Scene::parse(&bytes[..78]).is_none()); // former four-slot wire layout
         scene.slots[1].anchor[0]+=8;
-        assert!(Scene::parse(&scene.encode()).is_none());
+        assert_eq!(Scene::parse(&scene.encode()),Some(scene));
     }
     #[test]
     fn lifetimes_retain_change_disappear_and_reappear() {
@@ -151,7 +147,7 @@ mod tests {
     }
     #[test]
     fn scene_roundtrip_order_and_exact_timing_boundaries() {
-        let slot=Slot {revision:7,bytes:100,anchor:[40,8,0],frames:16,period_ms:150};
+        let slot=Slot {revision:7,bytes:100,anchor:[40,8,0],frames:16,period_ms:150,pixel_side_c1:1};
         assert!(slot.terrain(0));
         assert_eq!(slot.frame(499),None);
         assert_eq!(slot.frame(500),Some(0));

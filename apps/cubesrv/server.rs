@@ -154,8 +154,8 @@ fn make_scene(elapsed: u64, effects: [&Vfx;cubes_protocol::vfx::INSTANCES]) -> c
         slots:core::array::from_fn(|i| {
             let sequence=effects[i].sequence();
             cubes_protocol::vfx::Slot {revision:effects[i].revision,
-                bytes:(effects[i].end-effects[i].start) as u32, anchor:anchors[i/cubes_protocol::vfx::FACES],
-                frames:sequence.frame_count(),period_ms:sequence.period_ms()}
+                bytes:(effects[i].end-effects[i].start) as u32, anchor:anchors[i],
+                frames:sequence.frame_count(),period_ms:sequence.period_ms(),pixel_side_c1:cubes_protocol::vfx::DEMO_PIXEL_SIDES_C1[i]}
         }),
     }
 }
