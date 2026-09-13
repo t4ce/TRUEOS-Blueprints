@@ -3,7 +3,7 @@
 Key 8 connects Cubes to CubeSrv and downloads its embedded gallery. Six image
 slabs surround the center at 10% of the standard 4×4×4-chunk world radius and
 face inward. A white 3×3×3 c4 landmark sits at the origin. Above it, the
-numbered PNGs in `slides/holy/` play as a sparse 48×48 c1 cube asset at 100 ms
+numbered PNGs in `slides/holy/` play as a sparse 48×48 c1 cube asset at 750 ms
 per frame. The player starts on the +Z part of the landmark's top face, looking
 along -Z toward that asset. Another numbered mode disconnects; Key 8 reconnects.
 
@@ -137,9 +137,9 @@ from the tiers and checked before decoding. Encoded size is bounded to 4 MiB.
 The revision comes from the package hash. Revision-mismatched chunks cannot mix
 images. Bounded chunk windows, retries and duplicate rejection remain in use.
 
-`holy.hfx` contains the 48×48 dimensions, 100 ms period, shared RGB palette,
+`holy.hfx` contains the 48×48 dimensions, 750 ms period, shared RGB palette,
 frame offsets and three-byte `(x, y, palette)` records. CubeSrv advances one
-global frame every 100 ms and announces it to connected players. Requests and
+global frame every 750 ms and announces it to connected players. Requests and
 responses are pinned to both the Holy revision and frame index, so late UDP
 chunks cannot mix frames. The included 16-frame sequence contains 3,601 visible
 cubes in total; its final transparent PNG intentionally produces a zero-cube frame.

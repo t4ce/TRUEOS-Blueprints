@@ -1,5 +1,5 @@
 // trueos-blueprint: features=["lifecycle-net"]
-//! Six-face gallery plus a revision-pinned, sparse 100 ms cube-frame asset.
+//! Six-face gallery plus a revision-pinned, sparse 750 ms cube-frame asset.
 
 extern crate alloc;
 
