@@ -1,5 +1,5 @@
 // trueos-blueprint: features=["lifecycle-net"]
-//! Six-face gallery plus a revision-pinned, sparse 150 ms cube-frame asset.
+//! Six-face gallery plus a revision-pinned, four cached 32x32 lifetime-compressed VFX sprites.
 
 extern crate alloc;
 
@@ -8,7 +8,7 @@ mod spawn;
 use cubes_protocol as plateau;
 mod profiles;
 
-use alloc::{collections::BTreeMap, string::String, sync::Arc, vec, vec::Vec};
+use alloc::{collections::BTreeMap, string::String, sync::Arc, vec::Vec};
 use core::net::SocketAddr;
 use core::sync::atomic::{AtomicU16, Ordering};
 
@@ -26,7 +26,6 @@ const HTTP_PORT: u16 = 18;
 const UDP_PORT: u16 = 30_018;
 const UDP_RETRY_MS: u64 = 1_000;
 const MAX_PLAYERS: usize = 64;
-const IDLE_VFX_FRAME: u8 = u8::MAX;
 static PUBLISHED_HTTP_PORT: AtomicU16 = AtomicU16::new(0);
 
 struct Blob {
@@ -42,8 +41,8 @@ struct Vfx {
     revision: u32,
 }
 impl Vfx {
-    fn sequence(&self) -> cubes_protocol::holy::Sequence<'static> {
-        cubes_protocol::holy::Sequence::parse(&VFX_BYTES[self.start..self.end]).unwrap()
+    fn sequence(&self) -> cubes_protocol::vfx::Sequence<'static> {
+        cubes_protocol::vfx::Sequence::parse(&VFX_BYTES[self.start..self.end]).unwrap()
     }
 }
 
@@ -74,11 +73,7 @@ struct Player {
 struct ServerState {
     next_player_id: u32,
     revision: u32,
-    holy_frame: Option<u8>,
-    vfx_anchor: [i16; 3],
-    vfx_terrain: bool,
-    vfx_event: u32,
-    vfx: &'static Vfx,
+    vfx_scene: cubes_protocol::vfx::Scene,
     players: BTreeMap<SocketAddr, Player>,
 }
 
@@ -87,11 +82,7 @@ impl ServerState {
         Self {
             next_player_id: 1,
             revision: GALLERY_REVISION,
-            holy_frame: None,
-            vfx_anchor: [0; 3],
-            vfx_terrain: false,
-            vfx_event: 0,
-            vfx: &VFX[0],
+            vfx_scene: make_scene(0, [&VFX[0];cubes_protocol::vfx::INSTANCES]),
             players: BTreeMap::new(),
         }
     }
@@ -154,15 +145,18 @@ impl ServerState {
     }
 }
 
-async fn announce_vfx(socket: &UdpSocket, players: Vec<(SocketAddr, u32)>,
-    frame: Option<u8>, anchor: [i16; 3], terrain: bool, event: u32, effect: &Vfx)
-{
-    let sequence = effect.sequence();
-    let frame = frame.unwrap_or(IDLE_VFX_FRAME);
-    let encoded_len = sequence.frame(frame).map_or(0, |bytes| bytes.len());
-    for (peer, id) in players {
-        let _ = socket.send_to(&protocol::holy_info(id, GALLERY_REVISION, effect.revision,
-            frame, encoded_len, anchor, terrain, event), peer).await;
+fn make_scene(elapsed: u64, effects: [&Vfx;cubes_protocol::vfx::INSTANCES]) -> cubes_protocol::vfx::Scene {
+    let cycle=elapsed/spawn::INTERVAL_MS;
+    let anchors=spawn::anchors(cycle);
+    cubes_protocol::vfx::Scene {
+        gallery_revision:GALLERY_REVISION, event:cycle as u32,
+        age_ms:(elapsed%spawn::INTERVAL_MS) as u16,
+        slots:core::array::from_fn(|i| {
+            let sequence=effects[i].sequence();
+            cubes_protocol::vfx::Slot {revision:effects[i].revision,
+                bytes:(effects[i].end-effects[i].start) as u32, anchor:anchors[i/cubes_protocol::vfx::FACES],
+                frames:sequence.frame_count(),period_ms:sequence.period_ms()}
+        }),
     }
 }
 
@@ -190,9 +184,9 @@ async fn send_welcome(
 ) {
     let _ = socket.send_to(&protocol::welcome(player_id, 1, WORLD1.len(),
         WORLD1.len().div_ceil(protocol::BLOB_CHUNK_BYTES) as u16, ASSETS.len() as u8), peer).await;
-    let (revision, holy_frame, vfx_anchor, vfx_terrain, vfx_event, vfx) = {
+    let (revision, scene) = {
         let state = state.read().await;
-        (state.revision, state.holy_frame, state.vfx_anchor, state.vfx_terrain, state.vfx_event, state.vfx)
+        (state.revision, state.vfx_scene)
     };
     let _ = socket
         .send_to(
@@ -204,7 +198,7 @@ async fn send_welcome(
             peer,
         )
         .await;
-    announce_vfx(socket, vec![(peer, player_id)], holy_frame, vfx_anchor, vfx_terrain, vfx_event, vfx).await;
+    let _ = socket.send_to(&protocol::vfx_info(scene),peer).await;
 }
 
 async fn handle_packet(
@@ -259,16 +253,15 @@ async fn handle_packet(
                 let _ = socket.send_to(&packet, peer).await;
             }
         }
-        ClientPacket::HolyRequest { revision, frame, chunk } => {
+        ClientPacket::VfxRequest { revision, chunk } => {
             {
                 let mut state = state.write().await;
                 let Some(player) = state.players.get_mut(&peer) else { return; };
                 player.last_seen = time::Instant::now();
             }
             let Some(effect) = VFX.iter().find(|effect| effect.revision == revision) else { return; };
-            let sequence = effect.sequence();
-            let Some(bytes) = sequence.frame(frame) else { return; };
-            if let Some(packet) = protocol::holy_chunk(revision, frame, chunk, bytes) {
+            let bytes = &VFX_BYTES[effect.start..effect.end];
+            if let Some(packet) = protocol::vfx_chunk(revision, chunk, bytes) {
                 let _ = socket.send_to(&packet, peer).await;
             }
         }
@@ -320,8 +313,7 @@ async fn udp_loop(state: Arc<RwLock<ServerState>>) {
         let mut next_slide = time::Instant::now() + Duration::from_secs(10);
         let started = time::Instant::now();
         let mut next_vfx = started;
-        let mut previous_vfx = None;
-        let mut effect = &VFX[0];
+        let mut effects = [&VFX[0];cubes_protocol::vfx::INSTANCES];
         let mut selected_cycle = 0;
         let mut buffer = [0_u8; protocol::MAX_DATAGRAM];
         loop {
@@ -360,28 +352,21 @@ async fn udp_loop(state: Arc<RwLock<ServerState>>) {
                 let elapsed = started.elapsed().as_millis() as u64;
                 let cycle = elapsed / spawn::INTERVAL_MS;
                 if cycle != selected_cycle {
-                    effect = select_vfx(None).expect("nonempty VFX pack");
+                    effects = core::array::from_fn(|_| select_vfx(None).expect("nonempty VFX pack"));
                     selected_cycle = cycle;
-                    logl::log(level::DEBUG, format_args!("cubesrv: spawn={cycle} vfx={}", effect.name));
+                    for (slot,effect) in effects.iter().enumerate() {
+                        logl::log(level::DEBUG,format_args!("cubesrv: spawn={cycle} slot={slot} vfx={}",effect.name));
+                    }
                 }
-                let sequence = effect.sequence();
-                let current = spawn::spawn_with_vfx(elapsed,
-                    sequence.frame_count(), cubes_protocol::holy::PERIOD_MS);
-                if previous_vfx != Some(current) {
-                    let players = {
-                        let mut state = state.write().await;
-                        state.holy_frame = current.frame;
-                        state.vfx_anchor = current.anchor;
-                        state.vfx_terrain = current.terrain;
-                        state.vfx_event = current.event;
-                        state.vfx = effect;
-                        state.players.iter().map(|(peer,p)| (*peer,p.id)).collect()
-                    };
-                    announce_vfx(&socket, players, current.frame, current.anchor,
-                        current.terrain, current.event, effect).await;
-                    previous_vfx = Some(current);
-                }
-                next_vfx = now + Duration::from_millis(10);
+                let scene=make_scene(elapsed,effects);
+                let players = {
+                    let mut state=state.write().await;
+                    state.vfx_scene=scene;
+                    state.players.keys().copied().collect::<Vec<_>>()
+                };
+                let packet=protocol::vfx_info(scene);
+                for peer in players { let _=socket.send_to(&packet,peer).await; }
+                next_vfx = now + Duration::from_millis(50);
             }
             let next_event = next_slide.min(next_vfx);
             match time::timeout(

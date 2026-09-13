@@ -1,9 +1,9 @@
 #[path = "../../crates/cubes-protocol/src/gallery.rs"]
 #[allow(dead_code)]
 mod gallery;
-#[path = "../../crates/cubes-protocol/src/holy.rs"]
+#[path = "../../crates/cubes-protocol/src/vfx.rs"]
 #[allow(dead_code)]
-mod holy;
+mod vfx;
 use std::{env, fs, path::Path, process::Command};
 
 fn catalog(directory: &str, constant: &str, expected: usize) -> String {
@@ -68,7 +68,7 @@ fn main() {
     source.push_str(&format!("const WORLD1: &[u8] = include_bytes!({world:?});\n"));
     println!("cargo:rerun-if-changed=tools/prepare_slides.py");
     let out = std::path::PathBuf::from(env::var_os("OUT_DIR").unwrap());
-    // Gallery sources, face selection and Holy frames are authored inputs; bake
+    // Gallery sources, face selection and VFX lifetimes are authored inputs; bake
     // both embedded packages into Cargo's output directory so ordinary builds
     // never rewrite the catalog.
     let prepared = Command::new("python3")
@@ -79,7 +79,6 @@ fn main() {
         String::from_utf8_lossy(&prepared.stdout), String::from_utf8_lossy(&prepared.stderr));
     let manifest = fs::read("slides/sources.json").expect("gallery manifest");
     let bytes = fs::read(out.join("gallery.cga")).expect("run tools/prepare_slides.py");
-    let holy_bytes = fs::read(out.join("holy.hfx")).expect("bake holy frames");
     let receipt: serde_json::Value = serde_json::from_slice(
         &fs::read(out.join("gallery.json")).expect("gallery bake receipt")).unwrap();
     use sha2::{Digest, Sha256};
@@ -87,10 +86,7 @@ fn main() {
         "sources.json changed; run tools/prepare_slides.py");
     assert_eq!(receipt["package_sha256"].as_str().unwrap(), format!("{:x}", Sha256::digest(&bytes)),
         "gallery package changed; run tools/prepare_slides.py");
-    assert_eq!(receipt["holy_sha256"].as_str().unwrap(), format!("{:x}", Sha256::digest(&holy_bytes)),
-        "holy package changed; run tools/prepare_slides.py");
     assert!(gallery::Layout::parse(&bytes).is_some(), "invalid gallery package");
-    assert!(holy::Sequence::parse(&holy_bytes).is_some(), "invalid holy package");
     let digest = Sha256::digest(&bytes);
     let revision = u32::from_le_bytes(digest[..4].try_into().unwrap());
     let path = fs::canonicalize(out.join("gallery.cga")).unwrap();
@@ -103,7 +99,7 @@ fn main() {
         let start = effect["offset"].as_u64().unwrap() as usize;
         let end = start + effect["length"].as_u64().unwrap() as usize;
         let bytes = &bundle[start..end];
-        assert!(holy::Sequence::parse(bytes).is_some(), "invalid VFX {name}");
+        assert!(vfx::Sequence::parse(bytes).is_some(), "invalid VFX {name}");
         let digest = Sha256::digest(bytes);
         assert_eq!(effect["sha256"].as_str().unwrap(), format!("{digest:x}"));
         let revision = u32::from_le_bytes(digest[..4].try_into().unwrap());

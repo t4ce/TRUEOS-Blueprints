@@ -57,8 +57,8 @@ impl Layout {
         let [w,h] = self.extent().map(|v| v as f32);
         [0.5/w, (self.tile() as f32*2.+0.5)/h]
     }
-    /// Palette texels for the sparse Holy asset follow the landmark's white texel.
-    pub fn holy_uv(self, palette: u8) -> [f32; 2] {
+    /// Palette texels for the VFX catalog follow the landmark's white texel.
+    pub fn vfx_uv(self, palette: u8) -> [f32; 2] {
         let [w,h] = self.extent().map(|v| v as f32);
         [(palette as f32+1.5)/w, (self.tile() as f32*2.+0.5)/h]
     }

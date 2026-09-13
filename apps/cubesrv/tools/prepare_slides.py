@@ -15,8 +15,8 @@ SLIDES = Path(__file__).resolve().parents[1] / 'slides'
 # source resolution, 1 x N x N assembly, projected texture pixels per slab face.
 TIERS = {'tier1': (48, 6, 6), 'tier2': (128, 8, 16), 'tier3': (256, 16, 128)}
 EXTENSIONS = ('.png', '.jpg', '.jpeg', '.jgp')
-HOLY_SIDE = 32
-HOLY_PERIOD_MS = 150
+VFX_SIDE = 32
+VFX_PERIOD_MS = 150
 
 
 def prepare(source, size='tier3'):
@@ -81,62 +81,60 @@ def load_faces(path):
     return faces
 
 
-def load_holy(directory):
+def load_frames(directory):
     """Read numbered 32px PNG frames and return sparse indexed pixels."""
     def frame_number(path):
         match = re.search(r'(\d+)$', path.stem)
         if not match:
-            raise ValueError(f'holy frame needs a trailing number: {path.name}')
+            raise ValueError(f'VFX frame needs a trailing number: {path.name}')
         return int(match.group(1))
     paths = sorted(directory.glob('*.png'), key=frame_number)
     if not paths or len(paths) > 255:
-        raise ValueError('holy requires 1..255 PNG frames')
+        raise ValueError('VFX requires 1..255 PNG frames')
     numbers = [frame_number(path) for path in paths]
     if len(set(numbers)) != len(numbers):
-        raise ValueError('holy frame numbers must be unique')
+        raise ValueError('VFX frame numbers must be unique')
     rgba_frames = []
     colors = set()
     for path in paths:
         with Image.open(path) as source:
             image = ImageOps.exif_transpose(source).convert('RGBA')
-            if image.size != (HOLY_SIDE, HOLY_SIDE):
-                raise ValueError(f'{path.name} must be {HOLY_SIDE}x{HOLY_SIDE}')
+            if image.size != (VFX_SIDE, VFX_SIDE):
+                raise ValueError(f'{path.name} must be {VFX_SIDE}x{VFX_SIDE}')
             rgba = list(image.get_flattened_data())
         rgba_frames.append(rgba)
         colors.update((r,g,b) for r,g,b,a in rgba if a != 0)
     palette = sorted(colors)
     if not palette or len(palette) > 255:
-        raise ValueError('holy requires 1..255 visible RGB colors')
+        raise ValueError('VFX requires 1..255 visible RGB colors')
     indices = {color: index for index, color in enumerate(palette)}
     frames = []
     for rgba in rgba_frames:
         frames.append([(x, y, indices[(r,g,b)])
-                       for y in range(HOLY_SIDE) for x in range(HOLY_SIDE)
-                       for r,g,b,a in [rgba[y*HOLY_SIDE+x]] if a != 0])
+                       for y in range(VFX_SIDE) for x in range(VFX_SIDE)
+                       for r,g,b,a in [rgba[y*VFX_SIDE+x]] if a != 0])
     return paths, palette, frames
 
 
-def load_vfx(config, source_root):
-    """Resolve the selected alpha-preserving Pixel VFX PNG strip."""
-    value = json.loads(config.read_text())
-    if (not isinstance(value, dict) or set(value) != {'effect', 'frames', 'Size'}
-            or not isinstance(value['effect'], str) or not isinstance(value['frames'], str)
-            or value['Size'] != HOLY_SIDE):
-        raise ValueError('pixvfx.json requires effect, frames and Size: 32')
-    directory = source_root / value['frames']
-    if not directory.is_dir():
-        raise ValueError(f'Pixel VFX frames directory not found: {directory}')
-    return value['effect'], directory
-
-
-def bake_holy(palette, frames):
-    records = [bytes(value for pixel in frame for value in pixel) for frame in frames]
-    offsets = [0]
-    for frame in records: offsets.append(offsets[-1] + len(frame))
-    header = b'HFX1' + bytes([1, HOLY_SIDE, HOLY_SIDE, len(frames)]) \
-        + HOLY_PERIOD_MS.to_bytes(2, 'little') + bytes([len(palette), 0])
-    return header + bytes(value for color in palette for value in color) \
-        + b''.join(offset.to_bytes(4, 'little') for offset in offsets) + b''.join(records)
+def bake_vfx(palette, frames):
+    """One record per unchanged pixel lifetime, with exclusive end-frame removal."""
+    grid = [dict(((x, y), color) for x, y, color in frame) for frame in frames]
+    runs = bytearray()
+    for y in range(VFX_SIDE):
+        for x in range(VFX_SIDE):
+            start = 0
+            while start < len(frames):
+                color = grid[start].get((x, y))
+                end = start + 1
+                while end < len(frames) and grid[end].get((x, y)) == color:
+                    end += 1
+                if color is not None:
+                    runs.extend((x, y, color, start, end))
+                start = end
+    period = min(VFX_PERIOD_MS, 2400 // len(frames))
+    return (b'VFX1' + bytes([1, VFX_SIDE, VFX_SIDE, len(frames)])
+            + period.to_bytes(2, 'little') + bytes([len(palette), 0])
+            + bytes(v for color in palette for v in color) + runs)
 
 
 def load_vfx_catalog(root):
@@ -148,7 +146,7 @@ def load_vfx_catalog(root):
     for directory in sorted(root.glob('*/*')):
         if not directory.is_dir():
             continue
-        _, palette, frames = load_holy(directory)
+        _, palette, frames = load_frames(directory)
         palette = [display_rgb(rgb) for rgb in palette]
         colors.update(palette)
         sources.append((directory.relative_to(root).as_posix(), palette, frames))
@@ -160,16 +158,16 @@ def load_vfx_catalog(root):
                              for frame in frames]) for name, local, frames in sources]
 
 
-def bake(entries, source_root, holy_palette=()):
+def bake(entries, source_root, vfx_palette=()):
     tile = max(TIERS[e['Size']][2] for e in entries)+2
     # The final white row supplies one constant texel for the client's central
     # c4 landmark while preserving one atlas and one retained draw.
     atlas = Image.new('RGB', (tile*3, tile*2+1))
     for x in range(atlas.width):
         atlas.putpixel((x, atlas.height-1), (255, 255, 255))
-    if len(holy_palette) + 1 > atlas.width:
-        raise ValueError('holy palette exceeds the gallery atlas row')
-    for index, color in enumerate(holy_palette):
+    if len(vfx_palette) + 1 > atlas.width:
+        raise ValueError('VFX palette exceeds the gallery atlas row')
+    for index, color in enumerate(vfx_palette):
         atlas.putpixel((index + 1, atlas.height - 1), color)
     for face, entry in enumerate(entries):
         image = texture(prepare(source_root / entry['source'], entry['Size']), entry['Size'])
@@ -205,51 +203,35 @@ def main():
     parser.add_argument('--gallery', type=Path, help='face selection; default: gallery.json beside the manifest')
     parser.add_argument('--source-root', type=Path, help='default: manifest directory')
     parser.add_argument('--output', type=Path, default=SLIDES)
-    parser.add_argument('--holy', type=Path, help='numbered 32x32 RGBA PNG folder; overrides --vfx')
-    parser.add_argument('--vfx', type=Path, help='Pixel VFX selection JSON; default: pixvfx.json beside the manifest')
+    parser.add_argument('--vfx-root', type=Path, help='pack frame root; default: pixvfx/Frames beside manifest')
     parser.add_argument('--faces', type=int, nargs=6, metavar='SLIDE', help='-Z +X +Z -X -Y +Y slide IDs; default: gallery.json faces, or first six manifest entries for a new gallery')
     args = parser.parse_args()
     try:
         faces = args.faces if args.faces is not None else load_faces(args.gallery or args.manifest.parent/'gallery.json')
         entries = load_manifest(args.manifest, faces)
-        if args.holy:
-            vfx_name = args.holy.name
-            vfx_frames = args.holy
-        else:
-            vfx_name, vfx_frames = load_vfx(args.vfx or args.manifest.parent/'pixvfx.json',
-                                             args.source_root or args.manifest.parent)
-        _holy_paths, holy_palette, holy_frames = load_holy(vfx_frames)
-        catalog = [(vfx_name, holy_frames)]
-        pack_root = (args.source_root or args.manifest.parent) / 'pixvfx/Frames'
-        if not args.holy and pack_root.is_dir():
-            holy_palette, catalog = load_vfx_catalog(pack_root)
-            selected = vfx_frames.relative_to(pack_root).as_posix()
-            holy_frames = dict(catalog)[selected]
-        package = bake(entries, args.source_root or args.manifest.parent, holy_palette)
-        holy = bake_holy(holy_palette, holy_frames)
+        pack_root = args.vfx_root or (args.source_root or args.manifest.parent) / 'pixvfx/Frames'
+        vfx_palette, catalog = load_vfx_catalog(pack_root)
+        package = bake(entries, args.source_root or args.manifest.parent, vfx_palette)
         bundle = bytearray()
         catalog_receipt = []
         for name, frames in catalog:
-            encoded = bake_holy(holy_palette, frames)
+            encoded = bake_vfx(vfx_palette, frames)
             catalog_receipt.append({'name': name, 'offset': len(bundle), 'length': len(encoded),
-                                    'sha256': hashlib.sha256(encoded).hexdigest()})
+                                    'sha256': hashlib.sha256(encoded).hexdigest(),
+                                    'frames': len(frames), 'runs': (len(encoded)-12-3*len(vfx_palette))//5,
+                                    'full_frame_bytes': sum(map(len, frames))*3})
             bundle.extend(encoded)
         receipt = {'manifest_sha256': hashlib.sha256(args.manifest.read_bytes()).hexdigest(),
                    'package_sha256': hashlib.sha256(package).hexdigest(),
-                   'holy_sha256': hashlib.sha256(holy).hexdigest(),
-                   'holy_frames': len(holy_frames), 'holy_period_ms': HOLY_PERIOD_MS,
-                   'holy_visible_pixels': [len(frame) for frame in holy_frames],
-                   'vfx': vfx_name,
                    'vfx_catalog': catalog_receipt,
                    'faces': [e['slide'] for e in entries]}
         args.output.mkdir(parents=True, exist_ok=True)
         atomic_write(args.output/'gallery.cga', package)
-        atomic_write(args.output/'holy.hfx', holy)
         atomic_write(args.output/'vfx.bin', bundle)
         atomic_write(args.output/'gallery.json', (json.dumps(receipt, indent=2)+'\n').encode())
     except (ValueError, OSError) as error:
         parser.error(str(error))
-    print(f'six faces: {receipt["faces"]}; {len(package):,} encoded bytes; tiers: {[e["Size"] for e in entries]}; '
-          f'holy: {len(holy_frames)} frames / {sum(map(len, holy_frames)):,} visible pixels / {len(holy):,} bytes')
+    print(f'six faces: {receipt["faces"]}; {len(package):,} gallery bytes; '
+          f'VFX: {len(catalog)} effects / {len(bundle):,} lifetime-encoded bytes')
 
 if __name__ == '__main__': main()

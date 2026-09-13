@@ -10,8 +10,8 @@ import sys
 import unittest
 from pathlib import Path
 from PIL import Image
-from prepare_slides import (SLIDES, TIERS, HOLY_PERIOD_MS, prepare, texture, bake,
-                            bake_holy, load_manifest, load_faces, load_holy, load_vfx, load_vfx_catalog)
+from prepare_slides import (SLIDES, TIERS, VFX_PERIOD_MS, prepare, texture, bake,
+                            bake_vfx, load_manifest, load_faces, load_frames, load_vfx_catalog)
 
 class PreparationTests(unittest.TestCase):
     def test_exact_tiers_and_crop_pad_without_scaling(self):
@@ -77,8 +77,8 @@ class PreparationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder);output=root/'built';manifest=root/'sources.json'
             Image.new('RGB',(48,48),(255,0,0)).save(root/'image.png')
-            (root/'holy').mkdir()
-            holy=Image.new('RGBA',(32,32),(0,0,0,0));holy.putpixel((4,5),(9,8,7,255));holy.save(root/'holy'/'frame 1.png')
+            (root/'pack'/'category'/'effect').mkdir(parents=True)
+            sprite=Image.new('RGBA',(32,32),(0,0,0,0));sprite.putpixel((4,5),(9,8,7,255));sprite.save(root/'pack'/'category'/'effect'/'frame 1.png')
             entries=[{'slide':i,'source':'image.png','Size':'tier1'} for i in range(7)]
             manifest.write_text(json.dumps(entries))
             gallery=root/'gallery.json'
@@ -86,14 +86,14 @@ class PreparationTests(unittest.TestCase):
                 config={'faces':selection,'manifest_sha256':'stale','package_sha256':'stale'}
                 gallery.write_text(json.dumps(config))
                 subprocess.run([sys.executable,'-B',str(Path(__file__).with_name('prepare_slides.py')),
-                                '--manifest',str(manifest),'--holy',str(root/'holy'),
+                                '--manifest',str(manifest),'--vfx-root',str(root/'pack'),
                                 '--output',str(output)],check=True,capture_output=True)
                 receipt=json.loads((output/'gallery.json').read_text())
                 self.assertEqual(receipt['faces'],selection)
                 self.assertEqual(json.loads(gallery.read_text()),config)
-                _,palette,frames=load_holy(root/'holy')
+                palette,catalog=load_vfx_catalog(root/'pack');frames=catalog[0][1]
                 self.assertEqual((output/'gallery.cga').read_bytes(),bake(load_manifest(manifest,selection),root,palette))
-                self.assertEqual((output/'holy.hfx').read_bytes(),bake_holy(palette,frames))
+                self.assertEqual((output/'vfx.bin').read_bytes(),bake_vfx(palette,frames))
                 self.assertEqual(receipt['manifest_sha256'],hashlib.sha256(manifest.read_bytes()).hexdigest())
 
     def test_mixed_atlas_order_border_and_version(self):
@@ -116,40 +116,39 @@ class PreparationTests(unittest.TestCase):
             self.assertEqual(atlas.getpixel((2,260)),palette[1])
             self.assertEqual(data,bake(entries,root,palette))
 
-    def test_holy_frames_are_naturally_sorted_sparse_and_palette_indexed(self):
+    def test_vfx_frames_are_naturally_sorted_sparse_and_palette_indexed(self):
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder)
             for number,color,point in [(10,(30,20,10,255),(31,31)),(2,(3,2,1,255),(4,5))]:
                 image=Image.new('RGBA',(32,32),(0,0,0,0));image.putpixel(point,color)
-                image.save(root/f'Holy {number}.png')
-            paths,palette,frames=load_holy(root)
-            self.assertEqual([path.name for path in paths],['Holy 2.png','Holy 10.png'])
+                image.save(root/f'Sprite {number}.png')
+            paths,palette,frames=load_frames(root)
+            self.assertEqual([path.name for path in paths],['Sprite 2.png','Sprite 10.png'])
             self.assertEqual(palette,[(3,2,1),(30,20,10)])
             self.assertEqual(frames,[[(4,5,0)],[(31,31,1)]])
-            encoded=bake_holy(palette,frames)
-            self.assertEqual(encoded[:12],b'HFX1'+bytes([1,32,32,2])+HOLY_PERIOD_MS.to_bytes(2,'little')+bytes([2,0]))
+            encoded=bake_vfx(palette,frames)
+            self.assertEqual(encoded[:12],b'VFX1'+bytes([1,32,32,2])+VFX_PERIOD_MS.to_bytes(2,'little')+bytes([2,0]))
 
     def test_package_matches_manifest_and_current_sources(self):
         manifest=SLIDES/'sources.json';receipt=json.loads((SLIDES/'gallery.json').read_text())
         data=(SLIDES/'gallery.cga').read_bytes()
-        holy=(SLIDES/'holy.hfx').read_bytes()
-        _name,vfx=load_vfx(SLIDES/'pixvfx.json',SLIDES)
         palette,catalog=load_vfx_catalog(SLIDES/'pixvfx/Frames')
-        frames=dict(catalog)[vfx.relative_to(SLIDES/'pixvfx/Frames').as_posix()]
         self.assertEqual(len(catalog),150)
         bundle=(SLIDES/'vfx.bin').read_bytes()
         self.assertEqual(len(receipt['vfx_catalog']),len(catalog))
         for (name,effect_frames),entry in zip(catalog,receipt['vfx_catalog']):
             self.assertEqual(name,entry['name'])
             encoded=bundle[entry['offset']:entry['offset']+entry['length']]
-            self.assertEqual(encoded,bake_holy(palette,effect_frames))
+            self.assertEqual(encoded,bake_vfx(palette,effect_frames))
             self.assertEqual(hashlib.sha256(encoded).hexdigest(),entry['sha256'])
+            runs=[encoded[i:i+5] for i in range(12+3*len(palette),len(encoded),5)]
+            for frame_index,expected in enumerate(effect_frames):
+                actual=[tuple(r[:3]) for r in runs if r[3]<=frame_index<r[4]]
+                self.assertEqual(sorted(actual),sorted(expected),f'{name} frame {frame_index}')
+            self.assertEqual(entry['runs'],len(runs))
         self.assertEqual(hashlib.sha256(manifest.read_bytes()).hexdigest(),receipt['manifest_sha256'])
         self.assertEqual(hashlib.sha256(data).hexdigest(),receipt['package_sha256'])
         self.assertEqual(data,bake(load_manifest(manifest,receipt['faces']),SLIDES,palette))
-        self.assertEqual(holy,bake_holy(palette,frames))
-        self.assertEqual(hashlib.sha256(holy).hexdigest(),receipt['holy_sha256'])
-        self.assertEqual(receipt['holy_visible_pixels'],list(map(len,frames)))
         self.assertLessEqual(len(data),4*1024*1024)
 
 if __name__=='__main__':unittest.main()

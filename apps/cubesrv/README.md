@@ -3,9 +3,12 @@
 Key 8 connects Cubes to CubeSrv and downloads its embedded gallery. Six image
 slabs surround the center at 10% of the standard 4×4×4-chunk world radius and
 face inward. A white 3×3×3 c4 landmark sits at the origin. Every three seconds,
-the server spawns a temporary c4 terrain cube 5–10 c4 blocks from the center.
-After 500 ms, a randomly selected 32×32 alpha PNG sequence from the Pixel VFX
-pack plays once above that cube; both then disappear.
+the server spawns four temporary c4 terrain cubes at cardinal positions 5–10 c4
+blocks from the center. After 500 ms, six independently selected 32×32 alpha PNG
+sequences play once per cube, one anchored at each face; each cube disappears
+after its last face loop ends. All 24 effects remain billboarded. Duplicate rolls
+are allowed. The spacing exceeds two empty terrain cubes and keeps neighboring cube groups apart. Billboards on the same cube may overlap
+or occlude one another in screen space; ordinary shared depth still applies.
 The player starts on the +Z part of the landmark's top face, looking along -Z.
 Another numbered mode disconnects; Key 8 reconnects.
 
@@ -28,10 +31,10 @@ The fixed `slides/pixvfx/Frames/<category>/<effect>/` pack supplies all 150 VFX.
 The importer generates `vfx.bin` and a named catalog in `gallery.json`; builds
 embed the catalog automatically. Server helper `select_vfx(Some("Magic/Arcane Orb"))`
 selects an exact category/name; `select_vfx(None)` chooses randomly using TRUEOS's
-RNG. The timer calls it once per three-second cycle. Repeats are allowed.
+RNG. The timer calls it 24 times per three-second cycle. Repeats are allowed.
 All effects share a palette equivalent to the client's existing RGB555 colours,
-so switching effects requires no new gallery download or packet format.
-`pixvfx.json` still selects the standalone `holy.hfx` preview, not the random timer.
+so switching effects requires no new gallery download. There is only one VFX
+path; the old standalone VFX assets, importer and frame protocol are removed.
 Playback uses 150 ms/frame, shortened for strips over 16 frames to fit the
 2.4-second playback window. No authored frames are removed.
 
@@ -81,13 +84,13 @@ To select six catalog IDs explicitly in face order:
 python3 -B tools/prepare_slides.py --faces 10 11 12 13 14 15
 ```
 
-`--manifest`, `--gallery`, `--source-root`, `--vfx`, `--holy` and `--output` override their respective
+`--manifest`, `--gallery`, `--source-root`, `--vfx-root` and `--output` override their respective
 paths. `--faces` overrides the saved selection; otherwise the importer preserves
 `gallery.json`'s faces. The importer accepts PNG/JPG/JPEG/JGP. The hash fields in
 `gallery.json` are generated bookkeeping; they never need hand editing. The build
 validates the freshly generated packages before embedding them alongside the existing
-49-asset catalog. Original image files are kept. `holy.hfx` is the generated
-sparse sequence used by the server.
+49-asset catalog. Original pack PNGs are kept unchanged. `vfx.bin` is the generated
+lifetime-compressed catalog used by the server.
 
 ## Rendering and transport
 
@@ -107,17 +110,18 @@ target.
 
 The center landmark contains 27 white c4 cubes, using the same 8-c1/1.6-renderer-
 unit cube size as platforms and pathways. It spans 24 c1 (4.8 renderer units) on
-each axis and has ordinary walking collision. Holy's source palette remains in
-the atlas's final row. The client reads it once per gallery revision and converts
-it to the same RGB555 colors used by placed assets. The active Holy frame
-is an upright 32×32 c1 grid with its bottom edge resting on the spawned cube's top.
-Only visible pixels have cube instances. The 27 center cubes and the current Holy
-frame use the placed-asset hull/tessellation/domain shader fastpath: one immutable
-44-patch cube mesh, with compact position, scale and color seeds. A complete frame
-replaces only those seeds; an empty frame leaves the center cubes. The textured
-gallery mesh stays resident. V4 submits both meshes with independent transform
-buffers and shared depth, one clear and one completion fence. The player is
-attached to the +Z part of the top surface.
+each axis and has ordinary walking collision. The shared VFX palette remains in
+the atlas's final row and uses the same RGB555 colors as placed assets.
+Each VFX is a 32×32 c1 grid, bottom-center anchored at one terrain-cube face center.
+Six consecutive slots share one base anchor, in +Y, -Y, +X, -X, +Z, -Z order;
+the client offsets each anchor by the c4 half-side (0.8 renderer units).
+Camera right/up orient both its pixel positions and cube rotations; terrain and
+the gallery retain their world orientation. Only visible pixels become geometry.
+The 27 landmark cubes, four terrain cubes and 24 effects use one immutable
+44-patch cube mesh. GPU seed buffers still update for camera-facing positions;
+compression eliminates network frame retransmission, not these GPU uploads.
+The textured gallery mesh stays resident. V4 submits both meshes with shared
+depth, one clear and one completion fence.
 
 The largest atlas is 390×261, including duplicated edge texels and the white row:
 about 397.5 KiB
@@ -131,11 +135,11 @@ UDP port 30018 retains the `CUB1` v1 envelope:
   u32 package length.
 - `0x05`: u32 revision, u16 requested chunk index.
 - `0x86`: u32 revision, u16 chunk index, up to 1024 package bytes.
-- `0x87`: u32 player ID, u32 gallery revision, u32 Holy revision, u8 frame,
-  u16 sparse-frame length, three i16 anchor coordinates in c1 units,
-  u8 terrain-present flag, u32 spawn event. Frame 255 means no active VFX.
-- `0x06`: u32 Holy revision, u8 frame, u16 requested chunk index.
-- `0x88`: u32 Holy revision, u8 frame, u16 chunk index, up to 1024 frame bytes.
+- `0x89`: u32 gallery revision, u32 event, u16 event age in ms, followed
+  by 24 descriptors: u32 asset revision, u32 byte length, three i16 c1 anchor
+  coordinates, u8 frame count, u16 frame period. Body length is 418 bytes; the previous 78-byte layout is rejected.
+- `0x07`: u32 asset revision, u16 requested chunk index.
+- `0x8a`: u32 asset revision, u16 chunk index, up to 1024 asset bytes.
 
 The package has a 16-byte header followed by a standard RGB PNG: `CGA1`,
 version byte **8**, face count 6, six tier bytes (1–3), cube side byte 1,
@@ -144,27 +148,34 @@ Each face/tier is a compact regular grid descriptor for N² c1 cubes plus its
 atlas tile; the client expands exact integer cube positions through the shared
 `Layout::cube_min` contract. Rows run bottom to top and columns image-right to
 image-left. The v8 placement rule fixes the gallery at 10% radius and reserves
-the atlas's final row for the landmark and Holy palette. This sends cube placement without repeating per-cube coordinates
+the atlas's final row for the landmark and VFX palette. This sends cube placement without repeating per-cube coordinates
 or transmitting a mesh. Side, unit and world extent are validated on receipt.
 Older package versions and tier4 are rejected. The atlas dimensions are derived
 from the tiers and checked before decoding. Encoded size is bounded to 4 MiB.
 The revision comes from the package hash. Revision-mismatched chunks cannot mix
 images. Bounded chunk windows, retries and duplicate rejection remain in use.
 
-`holy.hfx` contains the 32×32 dimensions, 150 ms period, shared RGB palette,
-frame offsets and three-byte `(x, y, palette)` records. CubeSrv advances one
-global frame every 150 ms and announces it to connected players. Requests and
-responses are pinned to both the VFX revision and frame index, so late UDP
-chunks cannot mix frames. Each catalog effect has its own content revision;
-alpha-zero pixels produce no cubes. Every three seconds CubeSrv selects a cardinal
-position 5–10 c4 terrain blocks from the landmark, creates one temporary terrain
-cube, waits 500 ms, then plays one complete VFX strip on its top. The cube and
-effect clear before the next cycle. `spawn.rs::spawn_with_vfx` owns the schedule:
-first spawn at 3 s, first VFX frame at 3.5 s, cleanup at 5.9 s, next spawn at 6 s.
-The block floats with its top at landmark-top height; there is no nearby authored
-terrain in this sky world. It uses world palette entry zero and has walking collision.
-VFX frames render immediately at full size, without placement's per-pixel growth delay.
-Late frame announcements cannot rewind a spawn or resurrect a finished effect.
+`vfx.bin` contains revision-addressed VFX1 sequences. Each has a 12-byte header
+(magic, version 1, width 32, height 32, frame count, u16 frame period, palette
+count, reserved zero), RGB palette, then five-byte
+`(x, y, palette, first_frame, end_frame_exclusive)` records. Consecutive identical
+RGB555 pixels share a single lifetime, including runs across N frames; transparent
+frames end a run rather than incorrectly retaining a vanished pixel. The importer
+precomputes this without modifying source PNGs. All 150 effects reconstruct
+exactly at the existing display-color precision. The bundle is 813,510 bytes
+(previous full-frame bundle: 954,664 bytes).
+
+Clients cache complete validated sequences by revision (4 MiB bound, enough for
+the whole pack), reuse them across all 24 slots and future rolls, and evaluate lifetimes
+locally. After caching, only small server timing snapshots are needed. Missing
+or reordered chunks cannot mix revisions; stale events cannot rewind playback.
+A missing snapshot does not prevent local expiry of visuals or collision.
+Snapshots arrive every 50 ms. `spawn.rs::anchors` supplies four separated locations:
+first spawn at 3 s, first frame at 3.5 s, each effect expires after one
+loop and its base cube after the last of its six loops, all cleared by 5.9 s, next spawn at 6 s.
+The blocks float with their tops at landmark-top height; there is no nearby
+authored terrain in this sky world. They use world palette entry zero and walking
+collision. VFX pixels appear immediately without placement's growth delay.
 
 Cubes decodes the atlas in its networking worker through `vmedia::decode_retained`.
 Only a complete resident texture replaces the displayed scene. Failed transfers
@@ -172,11 +183,12 @@ keep the current gallery visible. Matching layouts reuse the mesh; layout
 changes build the replacement before releasing the old one. Telemetry and
 periodic announcements continue; peers expire after 30 seconds disconnected.
 
-**Rebuild CubeSrv and Cubes together** for the v8 gallery and Holy-frame contract.
+**Rebuild TRUEOS, CubeSrv and Cubes together** for the v8 gallery and new VFX1/snapshot contract.
 The hull fastpath integration also requires rebuilding TRUEOS with
 `RetainedFrameSubmitV4` / `trueos_cabi_vgpu_retained_frame_submit_v4`. This is an
 additive kernel/SDK interface; older retained submissions keep their contracts.
-The CubeSrv asset and network contracts are unchanged by this rendering change.
+The new VFX protocol replaces the old frame requests; old clients and servers
+must not be mixed.
 
 ## Validation
 
@@ -188,23 +200,25 @@ python3 -B tools/check_host.py
 
 In Cubes: `cargo check --offline`, `python3 -B tools/test_slideshow_network.py`
 and `python3 -B tools/test_walker_camera.py`. The host suites check all three
-presets, crop/padding, Holy alpha sparsity/order, source orientation, geometry, winding, collision, packet
+presets, crop/padding, VFX alpha sparsity/order, source orientation, geometry, winding, collision, packet
 validation and native material descriptors. A live TRUEOS run is still needed
 to verify appearance, frame timing and actual GPU residency.
 
 ## Key8 world1 terrain
 
 CubeSrv embeds `Cubes/Cube/lvl27/world_01_sky.cubes` at build time alongside the
-gallery and Holy packages. The normal CUB1 welcome (`0x81`) announces world ID 1
+gallery and VFX packages. The normal CUB1 welcome (`0x81`) announces world ID 1
 and its byte/chunk counts; world requests (`0x03`) receive world chunks (`0x83`).
 The client downloads a complete world once per connection with bounded retries
 and validates it through the normal `.cubes` level decoder before entering.
 World1 is fixed for that server build; rebuilding the world requires reconnecting.
 
 Key8 uses that terrain's normal walker collision and nearest-first visibility
-selection, with the six images, center 3×3×3 c4 landmark and Holy VFX rendered
+selection, with the six images, center 3×3×3 c4 landmark and VFX rendered
 in the same depth-tested frame. Spawn stays on top of the landmark. Portals and
 local editing remain disabled in this server-owned scene. Terrain submission
-reserves room for the landmark and all 32×32 possible VFX pixels within the
-existing 8192-instance limit; collision retains the full terrain.
+reserves room for the landmark and all 24 32×32 planes, four terrain cubes and 129 navigation slots within the
+new 32768-instance limit. This leaves 8032 world-terrain seeds; collision retains
+the full terrain. Both the SDK cap and native retained-transform row cap are
+32768; other Cubes modes retain their existing 8192-seed UI budget.
 Rebuild both CubeSrv and Cubes for this addition.
