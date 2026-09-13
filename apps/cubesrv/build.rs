@@ -94,10 +94,22 @@ fn main() {
     let digest = Sha256::digest(&bytes);
     let revision = u32::from_le_bytes(digest[..4].try_into().unwrap());
     let path = fs::canonicalize(out.join("gallery.cga")).unwrap();
-    let holy_digest = Sha256::digest(&holy_bytes);
-    let holy_revision = u32::from_le_bytes(holy_digest[..4].try_into().unwrap());
-    let holy_path = fs::canonicalize(out.join("holy.hfx")).unwrap();
-    source.push_str(&format!("const GALLERY: &[u8] = include_bytes!({path:?});\nconst GALLERY_REVISION: u32 = {revision};\nconst HOLY: &[u8] = include_bytes!({holy_path:?});\nconst HOLY_REVISION: u32 = {holy_revision};\n"));
+    source.push_str(&format!("const GALLERY: &[u8] = include_bytes!({path:?});\nconst GALLERY_REVISION: u32 = {revision};\n"));
+    let bundle_path = fs::canonicalize(out.join("vfx.bin")).unwrap();
+    let bundle = fs::read(&bundle_path).unwrap();
+    source.push_str(&format!("const VFX_BYTES: &[u8] = include_bytes!({bundle_path:?});\nconst VFX: &[Vfx] = &[\n"));
+    for effect in receipt["vfx_catalog"].as_array().expect("VFX catalog") {
+        let name = effect["name"].as_str().unwrap();
+        let start = effect["offset"].as_u64().unwrap() as usize;
+        let end = start + effect["length"].as_u64().unwrap() as usize;
+        let bytes = &bundle[start..end];
+        assert!(holy::Sequence::parse(bytes).is_some(), "invalid VFX {name}");
+        let digest = Sha256::digest(bytes);
+        assert_eq!(effect["sha256"].as_str().unwrap(), format!("{digest:x}"));
+        let revision = u32::from_le_bytes(digest[..4].try_into().unwrap());
+        source.push_str(&format!("Vfx {{ name: {name:?}, start: {start}, end: {end}, revision: {revision} }},\n"));
+    }
+    source.push_str("];\n");
     fs::write(
         Path::new(&env::var_os("OUT_DIR").unwrap()).join("catalog.rs"),
         source,

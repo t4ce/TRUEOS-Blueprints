@@ -139,6 +139,27 @@ def bake_holy(palette, frames):
         + b''.join(offset.to_bytes(4, 'little') for offset in offsets) + b''.join(records)
 
 
+def load_vfx_catalog(root):
+    """Fixed Pixel VFX pack, sharing exactly the client's RGB555 display colours."""
+    def display_rgb(rgb):
+        return tuple((((v * 31 + 127) // 255) * 255 + 15) // 31 for v in rgb)
+    sources = []
+    colors = set()
+    for directory in sorted(root.glob('*/*')):
+        if not directory.is_dir():
+            continue
+        _, palette, frames = load_holy(directory)
+        palette = [display_rgb(rgb) for rgb in palette]
+        colors.update(palette)
+        sources.append((directory.relative_to(root).as_posix(), palette, frames))
+    if not sources or len(colors) > 255:
+        raise ValueError('VFX catalog requires effects and at most 255 RGB555 colours')
+    palette = sorted(colors)
+    indices = {rgb: i for i, rgb in enumerate(palette)}
+    return palette, [(name, [[(x, y, indices[local[index]]) for x, y, index in frame]
+                             for frame in frames]) for name, local, frames in sources]
+
+
 def bake(entries, source_root, holy_palette=()):
     tile = max(TIERS[e['Size']][2] for e in entries)+2
     # The final white row supplies one constant texel for the client's central
@@ -198,18 +219,33 @@ def main():
             vfx_name, vfx_frames = load_vfx(args.vfx or args.manifest.parent/'pixvfx.json',
                                              args.source_root or args.manifest.parent)
         _holy_paths, holy_palette, holy_frames = load_holy(vfx_frames)
+        catalog = [(vfx_name, holy_frames)]
+        pack_root = (args.source_root or args.manifest.parent) / 'pixvfx/Frames'
+        if not args.holy and pack_root.is_dir():
+            holy_palette, catalog = load_vfx_catalog(pack_root)
+            selected = vfx_frames.relative_to(pack_root).as_posix()
+            holy_frames = dict(catalog)[selected]
         package = bake(entries, args.source_root or args.manifest.parent, holy_palette)
         holy = bake_holy(holy_palette, holy_frames)
+        bundle = bytearray()
+        catalog_receipt = []
+        for name, frames in catalog:
+            encoded = bake_holy(holy_palette, frames)
+            catalog_receipt.append({'name': name, 'offset': len(bundle), 'length': len(encoded),
+                                    'sha256': hashlib.sha256(encoded).hexdigest()})
+            bundle.extend(encoded)
         receipt = {'manifest_sha256': hashlib.sha256(args.manifest.read_bytes()).hexdigest(),
                    'package_sha256': hashlib.sha256(package).hexdigest(),
                    'holy_sha256': hashlib.sha256(holy).hexdigest(),
                    'holy_frames': len(holy_frames), 'holy_period_ms': HOLY_PERIOD_MS,
                    'holy_visible_pixels': [len(frame) for frame in holy_frames],
                    'vfx': vfx_name,
+                   'vfx_catalog': catalog_receipt,
                    'faces': [e['slide'] for e in entries]}
         args.output.mkdir(parents=True, exist_ok=True)
         atomic_write(args.output/'gallery.cga', package)
         atomic_write(args.output/'holy.hfx', holy)
+        atomic_write(args.output/'vfx.bin', bundle)
         atomic_write(args.output/'gallery.json', (json.dumps(receipt, indent=2)+'\n').encode())
     except (ValueError, OSError) as error:
         parser.error(str(error))

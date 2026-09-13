@@ -4,6 +4,7 @@
 extern crate alloc;
 
 mod protocol;
+mod spawn;
 use cubes_protocol as plateau;
 mod profiles;
 
@@ -25,8 +26,6 @@ const HTTP_PORT: u16 = 18;
 const UDP_PORT: u16 = 30_018;
 const UDP_RETRY_MS: u64 = 1_000;
 const MAX_PLAYERS: usize = 64;
-const VFX_CYCLE_MS: u64 = 3_000;
-const VFX_DELAY_MS: u64 = 500;
 const IDLE_VFX_FRAME: u8 = u8::MAX;
 static PUBLISHED_HTTP_PORT: AtomicU16 = AtomicU16::new(0);
 
@@ -34,6 +33,31 @@ struct Blob {
     #[allow(dead_code)]
     name: &'static str,
     bytes: &'static [u8],
+}
+
+struct Vfx {
+    name: &'static str,
+    start: usize,
+    end: usize,
+    revision: u32,
+}
+impl Vfx {
+    fn sequence(&self) -> cubes_protocol::holy::Sequence<'static> {
+        cubes_protocol::holy::Sequence::parse(&VFX_BYTES[self.start..self.end]).unwrap()
+    }
+}
+
+/// Select a pack entry by category/name (e.g. "Magic/Arcane Orb"), or random.
+fn select_vfx(name: Option<&str>) -> Option<&'static Vfx> {
+    if let Some(name) = name { return VFX.iter().find(|effect| effect.name == name); }
+    let count = VFX.len() as u32;
+    if count == 0 { return None; }
+    // Rejection sampling avoids modulo bias. This uses TRUEOS's existing RNG.
+    let threshold = count.wrapping_neg() % count;
+    loop {
+        let value = trueos::rng::u32();
+        if value >= threshold { return VFX.get((value % count) as usize); }
+    }
 }
 
 include!(concat!(env!("OUT_DIR"), "/catalog.rs"));
@@ -54,6 +78,7 @@ struct ServerState {
     vfx_anchor: [i16; 3],
     vfx_terrain: bool,
     vfx_event: u32,
+    vfx: &'static Vfx,
     players: BTreeMap<SocketAddr, Player>,
 }
 
@@ -66,6 +91,7 @@ impl ServerState {
             vfx_anchor: [0; 3],
             vfx_terrain: false,
             vfx_event: 0,
+            vfx: &VFX[0],
             players: BTreeMap::new(),
         }
     }
@@ -128,26 +154,14 @@ impl ServerState {
     }
 }
 
-/// Pick a deterministic cardinal c4-block position 5..=10 blocks from the landmark.
-/// Coordinates are c1 lattice units, so each terrain block is eight units wide.
-fn vfx_spawn_anchor(event: u32) -> [i16; 3] {
-    let distance = (5 + event % 6) as i16 * 8;
-    match event % 4 {
-        0 => [distance, 0, 0],
-        1 => [0, 0, distance],
-        2 => [-distance, 0, 0],
-        _ => [0, 0, -distance],
-    }
-}
-
 async fn announce_vfx(socket: &UdpSocket, players: Vec<(SocketAddr, u32)>,
-    frame: Option<u8>, anchor: [i16; 3], terrain: bool, event: u32)
+    frame: Option<u8>, anchor: [i16; 3], terrain: bool, event: u32, effect: &Vfx)
 {
-    let sequence = cubes_protocol::holy::Sequence::parse(HOLY).unwrap();
+    let sequence = effect.sequence();
     let frame = frame.unwrap_or(IDLE_VFX_FRAME);
     let encoded_len = sequence.frame(frame).map_or(0, |bytes| bytes.len());
     for (peer, id) in players {
-        let _ = socket.send_to(&protocol::holy_info(id, GALLERY_REVISION, HOLY_REVISION,
+        let _ = socket.send_to(&protocol::holy_info(id, GALLERY_REVISION, effect.revision,
             frame, encoded_len, anchor, terrain, event), peer).await;
     }
 }
@@ -176,9 +190,9 @@ async fn send_welcome(
 ) {
     let _ = socket.send_to(&protocol::welcome(player_id, 1, WORLD1.len(),
         WORLD1.len().div_ceil(protocol::BLOB_CHUNK_BYTES) as u16, ASSETS.len() as u8), peer).await;
-    let (revision, holy_frame, vfx_anchor, vfx_terrain, vfx_event) = {
+    let (revision, holy_frame, vfx_anchor, vfx_terrain, vfx_event, vfx) = {
         let state = state.read().await;
-        (state.revision, state.holy_frame, state.vfx_anchor, state.vfx_terrain, state.vfx_event)
+        (state.revision, state.holy_frame, state.vfx_anchor, state.vfx_terrain, state.vfx_event, state.vfx)
     };
     let _ = socket
         .send_to(
@@ -190,7 +204,7 @@ async fn send_welcome(
             peer,
         )
         .await;
-    announce_vfx(socket, vec![(peer, player_id)], holy_frame, vfx_anchor, vfx_terrain, vfx_event).await;
+    announce_vfx(socket, vec![(peer, player_id)], holy_frame, vfx_anchor, vfx_terrain, vfx_event, vfx).await;
 }
 
 async fn handle_packet(
@@ -251,8 +265,8 @@ async fn handle_packet(
                 let Some(player) = state.players.get_mut(&peer) else { return; };
                 player.last_seen = time::Instant::now();
             }
-            if revision != HOLY_REVISION { return; }
-            let sequence = cubes_protocol::holy::Sequence::parse(HOLY).unwrap();
+            let Some(effect) = VFX.iter().find(|effect| effect.revision == revision) else { return; };
+            let sequence = effect.sequence();
             let Some(bytes) = sequence.frame(frame) else { return; };
             if let Some(packet) = protocol::holy_chunk(revision, frame, chunk, bytes) {
                 let _ = socket.send_to(&packet, peer).await;
@@ -304,9 +318,11 @@ async fn udp_loop(state: Arc<RwLock<ServerState>>) {
         );
 
         let mut next_slide = time::Instant::now() + Duration::from_secs(10);
-        let mut next_spawn = time::Instant::now();
-        let mut vfx_start = None;
-        let mut next_holy = None;
+        let started = time::Instant::now();
+        let mut next_vfx = started;
+        let mut previous_vfx = None;
+        let mut effect = &VFX[0];
+        let mut selected_cycle = 0;
         let mut buffer = [0_u8; protocol::MAX_DATAGRAM];
         loop {
             let now = time::Instant::now();
@@ -340,51 +356,34 @@ async fn udp_loop(state: Arc<RwLock<ServerState>>) {
                         .await;
                 }
             }
-            if now >= next_spawn {
-                let (anchor, event, players) = {
-                    let mut state = state.write().await;
-                    state.vfx_event = state.vfx_event.wrapping_add(1).max(1);
-                    state.vfx_anchor = vfx_spawn_anchor(state.vfx_event);
-                    state.vfx_terrain = true;
-                    state.holy_frame = None;
-                    (state.vfx_anchor, state.vfx_event, state.players.iter().map(|(peer, p)| (*peer, p.id)).collect::<Vec<_>>())
-                };
-                announce_vfx(&socket, players, None, anchor, true, event).await;
-                next_spawn += Duration::from_millis(VFX_CYCLE_MS);
-                vfx_start = Some(now + Duration::from_millis(VFX_DELAY_MS));
+            if now >= next_vfx {
+                let elapsed = started.elapsed().as_millis() as u64;
+                let cycle = elapsed / spawn::INTERVAL_MS;
+                if cycle != selected_cycle {
+                    effect = select_vfx(None).expect("nonempty VFX pack");
+                    selected_cycle = cycle;
+                    logl::log(level::DEBUG, format_args!("cubesrv: spawn={cycle} vfx={}", effect.name));
+                }
+                let sequence = effect.sequence();
+                let current = spawn::spawn_with_vfx(elapsed,
+                    sequence.frame_count(), cubes_protocol::holy::PERIOD_MS);
+                if previous_vfx != Some(current) {
+                    let players = {
+                        let mut state = state.write().await;
+                        state.holy_frame = current.frame;
+                        state.vfx_anchor = current.anchor;
+                        state.vfx_terrain = current.terrain;
+                        state.vfx_event = current.event;
+                        state.vfx = effect;
+                        state.players.iter().map(|(peer,p)| (*peer,p.id)).collect()
+                    };
+                    announce_vfx(&socket, players, current.frame, current.anchor,
+                        current.terrain, current.event, effect).await;
+                    previous_vfx = Some(current);
+                }
+                next_vfx = now + Duration::from_millis(10);
             }
-            if vfx_start.is_some_and(|start| now >= start) {
-                let (anchor, event, players) = {
-                    let mut state = state.write().await;
-                    state.holy_frame = Some(0);
-                    (state.vfx_anchor, state.vfx_event, state.players.iter().map(|(peer, p)| (*peer, p.id)).collect::<Vec<_>>())
-                };
-                announce_vfx(&socket, players, Some(0), anchor, true, event).await;
-                vfx_start = None;
-                next_holy = Some(now + Duration::from_millis(cubes_protocol::holy::PERIOD_MS as u64));
-            }
-            if next_holy.is_some_and(|deadline| now >= deadline) {
-                let sequence = cubes_protocol::holy::Sequence::parse(HOLY).unwrap();
-                let (frame, anchor, terrain, event, players) = {
-                    let mut state = state.write().await;
-                    let frame = state.holy_frame.unwrap_or(0).saturating_add(1);
-                    if frame == sequence.frame_count() {
-                        state.holy_frame = None;
-                        state.vfx_terrain = false;
-                        (None, state.vfx_anchor, false, state.vfx_event,
-                            state.players.iter().map(|(peer, p)| (*peer, p.id)).collect::<Vec<_>>())
-                    } else {
-                        state.holy_frame = Some(frame);
-                        (Some(frame), state.vfx_anchor, true, state.vfx_event,
-                            state.players.iter().map(|(peer, p)| (*peer, p.id)).collect::<Vec<_>>())
-                    }
-                };
-                announce_vfx(&socket, players, frame, anchor, terrain, event).await;
-                next_holy = frame.map(|_| now + Duration::from_millis(cubes_protocol::holy::PERIOD_MS as u64));
-            }
-            let mut next_event = next_slide.min(next_spawn);
-            if let Some(deadline) = vfx_start { next_event = next_event.min(deadline); }
-            if let Some(deadline) = next_holy { next_event = next_event.min(deadline); }
+            let next_event = next_slide.min(next_vfx);
             match time::timeout(
                 next_event.saturating_duration_since(time::Instant::now()),
                 socket.recv_from(&mut buffer),

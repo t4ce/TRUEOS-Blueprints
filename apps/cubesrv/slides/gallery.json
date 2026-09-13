@@ -1,7 +1,7 @@
 {
   "manifest_sha256": "ba7cf8d15754e287a4038d4c217d43b4004071f4dde20f2a516aa1faacf3c0f3",
-  "package_sha256": "ad56c97aa68d29c58bb791b2e1ba3cdde57e5a6145be5b22a376a6860d5c7af0",
-  "holy_sha256": "0438336c82b7bff6badb287afea64bf82af7c802a41a0c368e0dd29c902bcaa1",
+  "package_sha256": "c762b5052bcd0c5a359842664c02291049af9bec4fc3de3db1a161764e63439e",
+  "holy_sha256": "cc11b2daadd4ee9b7d97493238c10759aa0c1ae8effa6584d26d0ab991631744",
   "holy_frames": 16,
   "holy_period_ms": 150,
   "holy_visible_pixels": [
@@ -23,6 +23,908 @@
     281
   ],
   "vfx": "Arcane Orb",
+  "vfx_catalog": [
+    {
+      "name": "Ambient/Aurora",
+      "offset": 0,
+      "length": 23311,
+      "sha256": "d5832b6759e8f1c5ab5b708a92252be01a2c47d4101a55dbacf242ad62bc1522"
+    },
+    {
+      "name": "Ambient/Bubbles",
+      "offset": 23311,
+      "length": 6369,
+      "sha256": "c81f6dc68299f3627f6fe21eda60c6c67b2b831f68935518dfb50af02aa3de3e"
+    },
+    {
+      "name": "Ambient/Dust Motes",
+      "offset": 29680,
+      "length": 2073,
+      "sha256": "99c141e54d5ccffaa5a3ed3125867cda4454e79b4197aed968702cc3718120ad"
+    },
+    {
+      "name": "Ambient/Embers Ambient",
+      "offset": 31753,
+      "length": 2973,
+      "sha256": "9fd3cc1c115f9743529542c99ac61a039a8bd4b7d19439befb709bceb08e7a94"
+    },
+    {
+      "name": "Ambient/Falling Leaves",
+      "offset": 34726,
+      "length": 15555,
+      "sha256": "9295e67d61a96e96d328e78ed76d776d2d62a19a054233797967cd2c48d692c2"
+    },
+    {
+      "name": "Ambient/Fireflies",
+      "offset": 50281,
+      "length": 6243,
+      "sha256": "1bb4c6fc4869a2529c09eca66e22eb5b6cc4915cc8f0024b1b200c16196e4650"
+    },
+    {
+      "name": "Ambient/Lava Bubble",
+      "offset": 56524,
+      "length": 4399,
+      "sha256": "b2f0c11c2ab8ab1b9d3fc4e8f6f0939c91386ee68d1c68820950608faf632e87"
+    },
+    {
+      "name": "Ambient/Puddle Splash",
+      "offset": 60923,
+      "length": 1884,
+      "sha256": "58789419ac674180bb5e3191c0825acd650b954acc7576cf5d1aeece8377ed2b"
+    },
+    {
+      "name": "Ambient/Rain",
+      "offset": 62807,
+      "length": 1662,
+      "sha256": "3eaf3370593739d79d68a7d94c1746a98d9b095ef3aab12881f699e8f3eedf4b"
+    },
+    {
+      "name": "Ambient/Snow",
+      "offset": 64469,
+      "length": 2997,
+      "sha256": "c73cf78bfbd30654912f4e97de412f0a96bc7b2b620097c6f6f01179189615df"
+    },
+    {
+      "name": "Ambient/Sparkles Ambient",
+      "offset": 67466,
+      "length": 4236,
+      "sha256": "3720b984255c5466ea89d387dd5f92da7daaa07f0d4f40f6c2b6d9829efbe1dc"
+    },
+    {
+      "name": "Ambient/Stars Twinkle",
+      "offset": 71702,
+      "length": 5203,
+      "sha256": "9d454a6e3a072c804d07406e74d85e799d2323b87590d23adbc1c2f551db2fce"
+    },
+    {
+      "name": "Ambient/Water Drip",
+      "offset": 76905,
+      "length": 5098,
+      "sha256": "8acbf31edbe95dce25f43f4e32dc4bd2c2f04c82c87b9ee05dd09775303dfbea"
+    },
+    {
+      "name": "Ambient/Waterfall Mist",
+      "offset": 82003,
+      "length": 17812,
+      "sha256": "fb67263c043895b19fa268019404731139b96c5b674bc56a7eeef62dc23c29cc"
+    },
+    {
+      "name": "Ambient/Wind Lines",
+      "offset": 99815,
+      "length": 5957,
+      "sha256": "535abc534d46b6d6cc9a0d962d9e9105a96a210d2341dc5da460aad5dee43ca4"
+    },
+    {
+      "name": "Explosions/Barrel Blast",
+      "offset": 105772,
+      "length": 13508,
+      "sha256": "bca72c2773aa792fca0274c165b00da4c30a06cd87dc15215e957c1b528ccd41"
+    },
+    {
+      "name": "Explosions/Big Boom",
+      "offset": 119280,
+      "length": 13538,
+      "sha256": "70b2e351f0999ff47fbe98a652aa304fba1d7483aea460e464fd4ae27873675f"
+    },
+    {
+      "name": "Explosions/Blast",
+      "offset": 132818,
+      "length": 13529,
+      "sha256": "8597127833b3d0dd47266a5d0ccf26a5c902882fa8f6e9b6a3806620ef4a4cd7"
+    },
+    {
+      "name": "Explosions/Bomb",
+      "offset": 146347,
+      "length": 10565,
+      "sha256": "a4f4835910983a9304a896c01484e866ff804cf988016dd24762a892bb070d1e"
+    },
+    {
+      "name": "Explosions/Chain Blast",
+      "offset": 156912,
+      "length": 8170,
+      "sha256": "bc1e07bae5f2d81ee325ed1f8c775b77f3d723940e1c13e4838a2f3ac9ccb230"
+    },
+    {
+      "name": "Explosions/Fireball Burst",
+      "offset": 165082,
+      "length": 6040,
+      "sha256": "5ac40e9c8af8d99c9a0b7fce56917c9f2ce9d98df44921304716fe023bd04f94"
+    },
+    {
+      "name": "Explosions/Ice Shatter",
+      "offset": 171122,
+      "length": 4009,
+      "sha256": "c1c3cb5127ead984408db0ff8077545111a14bdb398e020e1ded297f496ba9c1"
+    },
+    {
+      "name": "Explosions/Mine Pop",
+      "offset": 175131,
+      "length": 7957,
+      "sha256": "c072811907fa7aaee68242910f93fa46e8cf00fcc44aad58d987f7fb13ebd54f"
+    },
+    {
+      "name": "Explosions/Nuke Mini",
+      "offset": 183088,
+      "length": 5575,
+      "sha256": "318da174d99572f4b9783e1432ddc934390d1b116cac33a8f4cf4e52181ade09"
+    },
+    {
+      "name": "Explosions/Plasma Blast",
+      "offset": 188663,
+      "length": 13490,
+      "sha256": "f92c9fb86be206eaab4c60614420fc5172840cacd8e2c0e85eb531739efa4233"
+    },
+    {
+      "name": "Explosions/Rock Burst",
+      "offset": 202153,
+      "length": 8867,
+      "sha256": "d43e27a9d7fcad618e50a4d864afec40af852c1ea581d3bf35c2ac2b7da17c78"
+    },
+    {
+      "name": "Explosions/Sci-Fi Blast",
+      "offset": 211020,
+      "length": 6481,
+      "sha256": "1acdf9ad883de497b301358a8203e8ada73375e1cd21fd0ca3492b10116efc53"
+    },
+    {
+      "name": "Explosions/Shockwave",
+      "offset": 217501,
+      "length": 4252,
+      "sha256": "63a3ffc8fbe03ecfe002b0f89d5a97c2fbb733ddd09d5522fd099ed9c8cd212b"
+    },
+    {
+      "name": "Explosions/Small Pop",
+      "offset": 221753,
+      "length": 3583,
+      "sha256": "7dbf33b9632602abb61c18568191647595c5a9e361f4ae107c77706b7f1efc17"
+    },
+    {
+      "name": "Explosions/Smoke Burst",
+      "offset": 225336,
+      "length": 11099,
+      "sha256": "bd7f7a69c951c695e6573d165dc7c9a833e267695ac98c505a1180e30dd4ae74"
+    },
+    {
+      "name": "Fire/Blue Flame",
+      "offset": 236435,
+      "length": 10391,
+      "sha256": "42b5bc689369971cd646afbb4c93b16ed4227ba85b4c5e43587785eba083dbb1"
+    },
+    {
+      "name": "Fire/Burning Ground",
+      "offset": 246826,
+      "length": 16712,
+      "sha256": "9311c43602d900ae094ea920df617c7562e0c4ed175b86bdca2ba78115422709"
+    },
+    {
+      "name": "Fire/Campfire",
+      "offset": 263538,
+      "length": 12428,
+      "sha256": "01b25506171a4e440f66b0295b0073851f7083366708df7d2f8b2d93b1d27c05"
+    },
+    {
+      "name": "Fire/Candle",
+      "offset": 275966,
+      "length": 4511,
+      "sha256": "d688d33f0aea462deb46f96588769e48967e72b0c8e5fda79bd813cff29b2a7c"
+    },
+    {
+      "name": "Fire/Ember Rise",
+      "offset": 280477,
+      "length": 2229,
+      "sha256": "13fd0bc0db50c98f29b00c30a505bd252d6de8463af36073bf5054b6b1dbd5cc"
+    },
+    {
+      "name": "Fire/Fire Orb",
+      "offset": 282706,
+      "length": 10892,
+      "sha256": "a08e2842760385a6c5c12367521adc9a2416ddf123198e34ca3277c6291fc8e5"
+    },
+    {
+      "name": "Fire/Fire Puff",
+      "offset": 293598,
+      "length": 4489,
+      "sha256": "ba67be0352a14fd668c90f38f739359952018627297fb5de35cc76e3cdeb4cc7"
+    },
+    {
+      "name": "Fire/Fire Ring",
+      "offset": 298087,
+      "length": 14105,
+      "sha256": "4168814f1022d3370dcfa0900ef6eae601fe1c7ecb16bcfda6af9249cf412c90"
+    },
+    {
+      "name": "Fire/Fire Shield",
+      "offset": 312192,
+      "length": 20639,
+      "sha256": "6c99a90689bb5c49c4e6efca6bc05d78e0cb31320ed75ba874544bb44fcb20fe"
+    },
+    {
+      "name": "Fire/Fire Trail",
+      "offset": 332831,
+      "length": 10523,
+      "sha256": "9f69eedcb83c8e75d37b2b96ce22ef393f6378301519344a5f103ad38e5d5005"
+    },
+    {
+      "name": "Fire/Flame Loop",
+      "offset": 343354,
+      "length": 10331,
+      "sha256": "77ac99894e65477d95f3840b2d628f7556d75ced34dc9718c4b4326f7a1f4b7a"
+    },
+    {
+      "name": "Fire/Flamethrower",
+      "offset": 353685,
+      "length": 12680,
+      "sha256": "8b88771e2a35c886b3b3ef589a5ed019aa81cd41feb2f18ec16a44ab661efb72"
+    },
+    {
+      "name": "Fire/Ignite",
+      "offset": 366365,
+      "length": 3798,
+      "sha256": "bb4d0f8d2e42c45ae982d47cf0ef85f4f27c16cbbc62c1e55ebed2a021181019"
+    },
+    {
+      "name": "Fire/Phoenix Flare",
+      "offset": 370163,
+      "length": 7178,
+      "sha256": "fc54da47702a3620bb0c2007895923b853345a6e15f3336691c56a02ffb285b7"
+    },
+    {
+      "name": "Fire/Torch",
+      "offset": 377341,
+      "length": 6041,
+      "sha256": "673faba21040293e3d7c03e5d35dd1f8ffa911070fa88b39953485ada5750b23"
+    },
+    {
+      "name": "Hit Sparks/Block Spark",
+      "offset": 383382,
+      "length": 1716,
+      "sha256": "e03b88456e831f80ea60c14bcc8cce4deacbe7fc07e4a7d3fcc986ef141f28ed"
+    },
+    {
+      "name": "Hit Sparks/Blunt Thud",
+      "offset": 385098,
+      "length": 5437,
+      "sha256": "acca84c55b1e3cf870b6a4b6ff6835637fc19c39e34fa99ac435fc832b85eb4e"
+    },
+    {
+      "name": "Hit Sparks/Critical Star",
+      "offset": 390535,
+      "length": 3973,
+      "sha256": "f98f999ee9d86ddcbc8c8890a3f208a45bd9d1138e4938a30f74a6859f3ada03"
+    },
+    {
+      "name": "Hit Sparks/Fire Hit",
+      "offset": 394508,
+      "length": 5262,
+      "sha256": "a5a8404551e850faa7a4b3b9e63e8be8e487a9de9e7696fe25461074840cdb98"
+    },
+    {
+      "name": "Hit Sparks/Heavy Hit",
+      "offset": 399770,
+      "length": 4549,
+      "sha256": "016e6bd87deed51c83269e3cd584744c69371be2559045cbde9d565eaa8dab16"
+    },
+    {
+      "name": "Hit Sparks/Hit Spark",
+      "offset": 404319,
+      "length": 2895,
+      "sha256": "fb4ac502a62f8bf5acacb7388fa223b79fe0fd816fba8a2e1efe4ae0b04da5ca"
+    },
+    {
+      "name": "Hit Sparks/Ice Hit",
+      "offset": 407214,
+      "length": 2476,
+      "sha256": "fc70d204cd54db0df0f8489449a2c9d3bb382ca6aca54b6ea0c97f761c81657f"
+    },
+    {
+      "name": "Hit Sparks/Multi Hit",
+      "offset": 409690,
+      "length": 3100,
+      "sha256": "be772f1dbc9b079f3aa6a9fd6c71e2ac31f676a18abfc02dc0fdbcb1ab21e8ae"
+    },
+    {
+      "name": "Hit Sparks/Parry Flash",
+      "offset": 412790,
+      "length": 4162,
+      "sha256": "fc83ae8cf61beff989f2203d16cc9eae050a862776b5c74ef6faba33e7326085"
+    },
+    {
+      "name": "Hit Sparks/Pierce Spark",
+      "offset": 416952,
+      "length": 2287,
+      "sha256": "e62863d06995911e6bfeedadf201cdb00ab09e215184106701ff0b8abed21dee"
+    },
+    {
+      "name": "Hit Sparks/Poison Hit",
+      "offset": 419239,
+      "length": 6212,
+      "sha256": "e21b62d7af7152bfbc7e3e32c64e42ca12b3cf03f7f490147d25b413dfb23a7b"
+    },
+    {
+      "name": "Hit Sparks/Punch Impact",
+      "offset": 425451,
+      "length": 2451,
+      "sha256": "8080d9dfc6801555d250b80c44c297d71b4afe19472d1b4a72e102781bf898dc"
+    },
+    {
+      "name": "Hit Sparks/Shock Hit",
+      "offset": 427902,
+      "length": 2907,
+      "sha256": "12981afe887716f191bdb52c796d6a4333d2cafd13948cdd9e26ae7ba4287435"
+    },
+    {
+      "name": "Hit Sparks/Slash Hit",
+      "offset": 430809,
+      "length": 3025,
+      "sha256": "d47d4fdfd1def711dedb863de5501938032e9f745af1f4e7d2ff2ff43029342a"
+    },
+    {
+      "name": "Hit Sparks/Weak Hit",
+      "offset": 433834,
+      "length": 1205,
+      "sha256": "e799e23c08e1e8f9e4442c5959c7270cc33573b3b41723e81b48b4d7dd2505cc"
+    },
+    {
+      "name": "Lightning/Bolt Strike",
+      "offset": 435039,
+      "length": 2578,
+      "sha256": "9d7c7c689d624d8f293a50f118b538ae57c9b2cfd5dd7bbdb43cc0335e8ce027"
+    },
+    {
+      "name": "Lightning/Chain Lightning",
+      "offset": 437617,
+      "length": 3501,
+      "sha256": "1e187873e03043b114bfad685cdae0fbed86cf61c738de30bd35b08fc5ff4296"
+    },
+    {
+      "name": "Lightning/Charge Up",
+      "offset": 441118,
+      "length": 6155,
+      "sha256": "93d43409c1319b3ca5cbbbb3084549bd94b9568f9c51fa4e6a104a7f43ce546e"
+    },
+    {
+      "name": "Lightning/EMP",
+      "offset": 447273,
+      "length": 4621,
+      "sha256": "2cf02135b76b118af860cfc77a8e1f33b6c3709455f9dd44707a4619b3554aba"
+    },
+    {
+      "name": "Lightning/Electric Shock",
+      "offset": 451894,
+      "length": 3405,
+      "sha256": "d5b80e24f13c10f61467da5a8b0e16957444eadc6470091e3fb05e756a286287"
+    },
+    {
+      "name": "Lightning/Overload",
+      "offset": 455299,
+      "length": 3750,
+      "sha256": "d916c1955513ea866f55d470dc290d6ff1c0da55e0efcea1ecadba8992db63ff"
+    },
+    {
+      "name": "Lightning/Plasma Orb",
+      "offset": 459049,
+      "length": 13061,
+      "sha256": "4c88f8fd4818a127632a94c18e0518b4abf6a7136d6506e79966c2787d8853ac"
+    },
+    {
+      "name": "Lightning/Shock Aura",
+      "offset": 472110,
+      "length": 13061,
+      "sha256": "a974214b3fa286a3a1ac76874102a2af139aea4b9b5f80fe10e4d7cde8b7309e"
+    },
+    {
+      "name": "Lightning/Spark Burst",
+      "offset": 485171,
+      "length": 2562,
+      "sha256": "a114327eacef4f351f0124e23bfe4b85832b2abe66dec09e08a8c41da4a6641a"
+    },
+    {
+      "name": "Lightning/Spark Trail",
+      "offset": 487733,
+      "length": 1883,
+      "sha256": "a3bde01bf4499098b91c715964739e8f0fb9529d80627f19005d7c37144e91e7"
+    },
+    {
+      "name": "Lightning/Static Loop",
+      "offset": 489616,
+      "length": 4111,
+      "sha256": "da49d991fe88024127d693a76271c936b0f61de14ac5152d5146c4421e8f94f2"
+    },
+    {
+      "name": "Lightning/Storm Flash",
+      "offset": 493727,
+      "length": 3244,
+      "sha256": "a912cc4286842e0ea5442599252d57b8a99dbf1321a6f2dab79c9cd3dc46e506"
+    },
+    {
+      "name": "Lightning/Tesla Arc",
+      "offset": 496971,
+      "length": 3843,
+      "sha256": "a3c28a3d36b0966304561a78f93ecf2a4db5a8f78d337179b7e5c48fe9de0200"
+    },
+    {
+      "name": "Lightning/Thunder Impact",
+      "offset": 500814,
+      "length": 3743,
+      "sha256": "2f165ee2e0586200278b3279a5e8a66661e596ea3b45a693555cd95b11c4302d"
+    },
+    {
+      "name": "Lightning/Zap Ring",
+      "offset": 504557,
+      "length": 3111,
+      "sha256": "435d93b12ac2ce2c008bcd81af57f98aa9555f9d7c9cd4db3f5a9eb7f05f555d"
+    },
+    {
+      "name": "Magic/Arcane Orb",
+      "offset": 507668,
+      "length": 14267,
+      "sha256": "cc11b2daadd4ee9b7d97493238c10759aa0c1ae8effa6584d26d0ab991631744"
+    },
+    {
+      "name": "Magic/Buff Up",
+      "offset": 521935,
+      "length": 4933,
+      "sha256": "dd1af003ffa2214d13a71074e77a18f06a2218de82a2dff8b21ffc809918c8a0"
+    },
+    {
+      "name": "Magic/Cast Circle",
+      "offset": 526868,
+      "length": 18455,
+      "sha256": "e4f012a2a88bb84f147a4503e9f0f92f0652800316c3969ca388f2eb79ea1da9"
+    },
+    {
+      "name": "Magic/Dark Curse",
+      "offset": 545323,
+      "length": 21623,
+      "sha256": "bb868a70929b15684bca9d12f60e47ce54b3b94c15bd7e934a145951b96ae32b"
+    },
+    {
+      "name": "Magic/Debuff Down",
+      "offset": 566946,
+      "length": 4912,
+      "sha256": "a4f36c078af80fe059f1ece261bf6f93548a83f7f308be9242d0fa79d27a236a"
+    },
+    {
+      "name": "Magic/Frost Nova",
+      "offset": 571858,
+      "length": 4174,
+      "sha256": "54b095a0ee7c2f25a283d22846045cbd72a341c5ebb1b7e98a8a1d32c7ed2565"
+    },
+    {
+      "name": "Magic/Heal",
+      "offset": 576032,
+      "length": 3026,
+      "sha256": "f7ead31160d6bb526a084d9d1290edc5e3dda21fd893dff37eff7fa04ac008c7"
+    },
+    {
+      "name": "Magic/Holy Light",
+      "offset": 579058,
+      "length": 6507,
+      "sha256": "36fb253778b6e407aa622f3decbc4d0837081eada252da09766adc6eeb63cf7e"
+    },
+    {
+      "name": "Magic/Poison Cloud",
+      "offset": 585565,
+      "length": 16439,
+      "sha256": "2f9491eaabd07067c65238d797eeb7d6b61424f06f737c61a30256bcdda98b1c"
+    },
+    {
+      "name": "Magic/Portal",
+      "offset": 602004,
+      "length": 22091,
+      "sha256": "9245ee8fbf84fd34403fcf4654da9962d4b359d19cbeaee815909a533184b050"
+    },
+    {
+      "name": "Magic/Shield Bubble",
+      "offset": 624095,
+      "length": 14627,
+      "sha256": "7fcc41b28b7b5d9c1bbb4e9c136dcfa9d338c1106ae3ce5be2189242417b44d3"
+    },
+    {
+      "name": "Magic/Summon",
+      "offset": 638722,
+      "length": 11978,
+      "sha256": "824d38bea401aa0d1ab087eccbfc4c52d9d5a2568f49a5e6318d698ee320026b"
+    },
+    {
+      "name": "Magic/Teleport",
+      "offset": 650700,
+      "length": 4286,
+      "sha256": "6fa0fd00a9544d9ec4f1b5211089f9b686ca80a3ac95c146d6465d65fcff3e4a"
+    },
+    {
+      "name": "Magic/Water Splash",
+      "offset": 654986,
+      "length": 2155,
+      "sha256": "825b0cf2f224e854eae26724a2cfce8353c5b1a1c4be8cb55f2c3a62ff7f24f2"
+    },
+    {
+      "name": "Magic/Wind Gust",
+      "offset": 657141,
+      "length": 6599,
+      "sha256": "3345508703c675e83f40cba884d9ec65ff9ab7b2a39bac7877c4a365f27c1d5e"
+    },
+    {
+      "name": "Pickups and UI/Chest Open",
+      "offset": 663740,
+      "length": 5891,
+      "sha256": "1fdcb7441e43601bba4a44409b644011aad39d34d6df8fda1dc151853ceaab1d"
+    },
+    {
+      "name": "Pickups and UI/Coin Sparkle",
+      "offset": 669631,
+      "length": 1569,
+      "sha256": "fef3900c821b6a982111c12f87122224166c063cf7c85ccef3d5154358d80be0"
+    },
+    {
+      "name": "Pickups and UI/Damage Pop",
+      "offset": 671200,
+      "length": 3046,
+      "sha256": "033871145825a96d6adc6a62b0392efa1a8e556d27188df3165fc633c9492b04"
+    },
+    {
+      "name": "Pickups and UI/EXP Gain",
+      "offset": 674246,
+      "length": 3599,
+      "sha256": "5ffa4ac4646b170ded18abc327944281471a2677dd9623347de968de7045e475"
+    },
+    {
+      "name": "Pickups and UI/Heal Cross",
+      "offset": 677845,
+      "length": 3164,
+      "sha256": "239b32006c15eb25d98caa037dfcc3b3a7fb1b959030888cd8b82b6b1a48cf06"
+    },
+    {
+      "name": "Pickups and UI/Item Glow",
+      "offset": 681009,
+      "length": 9239,
+      "sha256": "e5e5df13d462728e8f711f9ab893404e9dbf055c9b72967ba11d9d75b78c3f4e"
+    },
+    {
+      "name": "Pickups and UI/Key Shine",
+      "offset": 690248,
+      "length": 2101,
+      "sha256": "9069c6063020b1efbb942cd6747331492e2d5b263861dfe54ebce2ee72fcfe12"
+    },
+    {
+      "name": "Pickups and UI/Level Up",
+      "offset": 692349,
+      "length": 6598,
+      "sha256": "e3f9fbeb3b85a2c6599026280e32c8263023324804f37e5e2eec5b25ec324815"
+    },
+    {
+      "name": "Pickups and UI/Mana Orb",
+      "offset": 698947,
+      "length": 9107,
+      "sha256": "caa83de6b515d12d7e05266db1e65263560346cb7098297b486621d5f6091418"
+    },
+    {
+      "name": "Pickups and UI/Notify Ping",
+      "offset": 708054,
+      "length": 3357,
+      "sha256": "a8f89008878210a34e35e542db79268bc0e84b1c8b93cd16f98aa2e2b4c3bb18"
+    },
+    {
+      "name": "Pickups and UI/Plus Sign",
+      "offset": 711411,
+      "length": 2895,
+      "sha256": "f4bcb49169f2d7c4c17b3c86553a62553bceada3617c5e812db6eac94ece2793"
+    },
+    {
+      "name": "Pickups and UI/Rank Up",
+      "offset": 714306,
+      "length": 5215,
+      "sha256": "c0f3f0d3ee082fe630ca4b29d1cd66265b57711d3a7c17e4dc8e66e33cfd0a06"
+    },
+    {
+      "name": "Pickups and UI/Save Sparkle",
+      "offset": 719521,
+      "length": 2795,
+      "sha256": "1c3391400bedb1bd472b37b2dd332a9b2fb712ae223668c664d01a7914223b4e"
+    },
+    {
+      "name": "Pickups and UI/Star Burst",
+      "offset": 722316,
+      "length": 3200,
+      "sha256": "44779fd602532139d0222d24ddb5b6506540515d22c57e83f07da5d7bfee06c2"
+    },
+    {
+      "name": "Pickups and UI/Unlock",
+      "offset": 725516,
+      "length": 3863,
+      "sha256": "4a6efad48094f1f4f1ffc227883455768c4bdb5410e860d76f57dc1f187bd217"
+    },
+    {
+      "name": "Projectiles/Arrow Trail",
+      "offset": 729379,
+      "length": 4986,
+      "sha256": "a5a22303f8b0efc4601c650c01bf3a4b266b139173fd5c6f308af5f430216b58"
+    },
+    {
+      "name": "Projectiles/Boomerang",
+      "offset": 734365,
+      "length": 5598,
+      "sha256": "d435a04f60b68570c07076c7606a58af57e0f000a209b3dd471a98410a8fd32a"
+    },
+    {
+      "name": "Projectiles/Bullet Tracer",
+      "offset": 739963,
+      "length": 1797,
+      "sha256": "21b6fcbe535d95b0cb9c00643239e3108b1b19dde293221d18cd4be56c30470b"
+    },
+    {
+      "name": "Projectiles/Cannonball",
+      "offset": 741760,
+      "length": 4479,
+      "sha256": "9c07c52c79d52e028c5b150ec9db3b3cf6b85d35cf7d00db770f3d89fc123d5d"
+    },
+    {
+      "name": "Projectiles/Energy Bolt",
+      "offset": 746239,
+      "length": 3262,
+      "sha256": "f37a621396e93706026c5e845582d8327ac94f3161bb2dbb7d509b8e264f86e1"
+    },
+    {
+      "name": "Projectiles/Fireball Shot",
+      "offset": 749501,
+      "length": 4080,
+      "sha256": "b10cec045417a96f7e5df147ed07c4f2c93031eb9910565ee8b1975092363915"
+    },
+    {
+      "name": "Projectiles/Homing Orb",
+      "offset": 753581,
+      "length": 11327,
+      "sha256": "12af1cdc25e14e86d19ada2b0ab95254f364ef19106e29e0db4f42a796459321"
+    },
+    {
+      "name": "Projectiles/Ice Shard Shot",
+      "offset": 764908,
+      "length": 2478,
+      "sha256": "cf64f614afde0b0614734785ca0dce8ea3127e993968ba11103eaba0eabfbff6"
+    },
+    {
+      "name": "Projectiles/Laser Beam",
+      "offset": 767386,
+      "length": 8659,
+      "sha256": "5b08ec975d9833b7c66e40f2c108dbf8964e0df3e595e7a99a002396ede5ebea"
+    },
+    {
+      "name": "Projectiles/Magic Missile",
+      "offset": 776045,
+      "length": 2622,
+      "sha256": "8d22854123e327c23f806444b8d212395175abed84c6255ceec861a60942eb6b"
+    },
+    {
+      "name": "Projectiles/Plasma Shot",
+      "offset": 778667,
+      "length": 2670,
+      "sha256": "7b3f3413c2af865a5354af18bd0bfed6bc424aae9aa6dc86d785442636a1c14a"
+    },
+    {
+      "name": "Projectiles/Poison Dart",
+      "offset": 781337,
+      "length": 1722,
+      "sha256": "cf12fdda51da913dc07d2815599baf9aceba78f97f0e1c5de047f7f82c24e5d4"
+    },
+    {
+      "name": "Projectiles/Rock Throw",
+      "offset": 783059,
+      "length": 3933,
+      "sha256": "aef923df87ab525de21866e2aa19e17cfbab12898f41eebf1907d3005c17ea33"
+    },
+    {
+      "name": "Projectiles/Shuriken",
+      "offset": 786992,
+      "length": 4845,
+      "sha256": "db4dd9b2bee503635ad5f9ce8100a260aacf010ad17dce588e5477cdd7eb6251"
+    },
+    {
+      "name": "Projectiles/Spear Throw",
+      "offset": 791837,
+      "length": 4638,
+      "sha256": "996e22250db6991307648a47ceb0c9c714949bf3f0b195b0fdfc7b5adcdda54b"
+    },
+    {
+      "name": "Slashes/Cross Slash",
+      "offset": 796475,
+      "length": 3782,
+      "sha256": "b5073904973f8329553725d4d8c08abc9515b79883386faa21e3520dfb16920e"
+    },
+    {
+      "name": "Slashes/Dagger Flick",
+      "offset": 800257,
+      "length": 1092,
+      "sha256": "0effc088d7402b739368be4f3a0973bfc0967b18a9576e627adc906cbff6510e"
+    },
+    {
+      "name": "Slashes/Dark Slash",
+      "offset": 801349,
+      "length": 5394,
+      "sha256": "62a08e507fcb1a5640bdd27174d1c34f21f7c37b603eb3dfa77ec2494704b6af"
+    },
+    {
+      "name": "Slashes/Double Slash",
+      "offset": 806743,
+      "length": 2953,
+      "sha256": "77c5ba230dfe14b86ce4cf52833a5b2e083dba3caeaf3b842b379417200b8873"
+    },
+    {
+      "name": "Slashes/Fire Slash",
+      "offset": 809696,
+      "length": 2461,
+      "sha256": "0383f6649f4684960e9009e758b0704e6f43a3ea6519449f61a9924fcb3880ce"
+    },
+    {
+      "name": "Slashes/Ice Slash",
+      "offset": 812157,
+      "length": 2542,
+      "sha256": "cf9e8c7630acf12972edc95a8c2f5e176706fb413da13c19857f8e680347c93d"
+    },
+    {
+      "name": "Slashes/Katana Draw",
+      "offset": 814699,
+      "length": 2268,
+      "sha256": "bbc6f6026806360181d5ab68005270b7d84d301628cd53afcdbfb030cd798dd5"
+    },
+    {
+      "name": "Slashes/Slash Down",
+      "offset": 816967,
+      "length": 2125,
+      "sha256": "9aaa68d588ad4aa41ee9dd537746f31dca6d7bd7d1ae4fc08aaf9b75a0bf8f27"
+    },
+    {
+      "name": "Slashes/Slash Left",
+      "offset": 819092,
+      "length": 2125,
+      "sha256": "d85b5ea82e3831cb06175cd869fd8c82f65d947979cd1ce15ed347efb0f1c87f"
+    },
+    {
+      "name": "Slashes/Slash Right",
+      "offset": 821217,
+      "length": 2125,
+      "sha256": "3f54ae34d02b67bcc1923b868d501ac671cdef589d2efbd42bb1fce67ad464f6"
+    },
+    {
+      "name": "Slashes/Slash Up",
+      "offset": 823342,
+      "length": 2125,
+      "sha256": "ffab25937a4c5e7cb706a90914dbb6c48e1259891317cbe7554e4d3d146208d1"
+    },
+    {
+      "name": "Slashes/Spin Slash",
+      "offset": 825467,
+      "length": 3427,
+      "sha256": "6069f614a545faa07398f882b197977584b88ef745d33925e94a4c420a990680"
+    },
+    {
+      "name": "Slashes/Thrust",
+      "offset": 828894,
+      "length": 1875,
+      "sha256": "9e7839e6de46dab9cac50617c182f74c5a24bcf9278ff0e9122ba5fb90f5d0b0"
+    },
+    {
+      "name": "Slashes/Triple Claw",
+      "offset": 830769,
+      "length": 2253,
+      "sha256": "c5fe75d4ad2238e0f8e07394087e12b9a098e13eee1e179b0d9bf16f907a4976"
+    },
+    {
+      "name": "Slashes/Wide Cleave",
+      "offset": 833022,
+      "length": 2953,
+      "sha256": "bcfddd3eb97e73a666b02f39d91e9a9f9408f82c1e0e7c1b9228523ed29cf765"
+    },
+    {
+      "name": "Smoke and Dust/Ash Fall",
+      "offset": 835975,
+      "length": 2661,
+      "sha256": "3119f9c14ab6651abdc770c3b585dd6daf9f3df33f2039fdc3f65d1c8ffd5736"
+    },
+    {
+      "name": "Smoke and Dust/Dirt Kick",
+      "offset": 838636,
+      "length": 4515,
+      "sha256": "a7ff50a5775184d6eed3b1648be163cf2ca0649df39879eb346793ea83994f68"
+    },
+    {
+      "name": "Smoke and Dust/Dissipate",
+      "offset": 843151,
+      "length": 10956,
+      "sha256": "0bdfcd66328564161f863df1be82fe2ebdd7262b8164bbf4dc25881185528f44"
+    },
+    {
+      "name": "Smoke and Dust/Dust Cloud",
+      "offset": 854107,
+      "length": 7936,
+      "sha256": "f184c1aef08cdc8524bf8f2b8b7ed143626700de481ba7af74a58687418ab2f2"
+    },
+    {
+      "name": "Smoke and Dust/Dust Devil",
+      "offset": 862043,
+      "length": 12266,
+      "sha256": "4cdf747a39ae6fe9a0fc6966b89f2a2483524e5ad01f22f96694b4220ec18c32"
+    },
+    {
+      "name": "Smoke and Dust/Exhaust",
+      "offset": 874309,
+      "length": 11099,
+      "sha256": "1f7c24af2fc28bb18c1df06077f69e025f53b3c4d63c427308c097b0346bb5a3"
+    },
+    {
+      "name": "Smoke and Dust/Fog Drift",
+      "offset": 885408,
+      "length": 16427,
+      "sha256": "5af9883465b7b81f2c2b67b6dca6b6abc41a0403d01f88ea99c8ce0c05fda5c3"
+    },
+    {
+      "name": "Smoke and Dust/Footstep",
+      "offset": 901835,
+      "length": 2209,
+      "sha256": "7a8d944562b88c56cd81f62fe9dab5aeaa757a3f73d3bda2a093cb8a44700a52"
+    },
+    {
+      "name": "Smoke and Dust/Jump Puff",
+      "offset": 904044,
+      "length": 4284,
+      "sha256": "6db9a78dd392c847aa0fcf2c374b57c042145aef1f22c2d2ee6d1bff2474a0ae"
+    },
+    {
+      "name": "Smoke and Dust/Landing Dust",
+      "offset": 908328,
+      "length": 5592,
+      "sha256": "b7dc8ea06b1eab38c7895f31feca812f82336ce8ef1283773d91d9b5faa690bb"
+    },
+    {
+      "name": "Smoke and Dust/Run Dust",
+      "offset": 913920,
+      "length": 3168,
+      "sha256": "da994b4f91c94d98e3e0f824dbd0e13d2b8087c338d8665c28c59d4466533fe1"
+    },
+    {
+      "name": "Smoke and Dust/Sand Burst",
+      "offset": 917088,
+      "length": 5208,
+      "sha256": "b083cc5b29f0b273add31ad34557d2e874b50421cbb0e0914c661c97773b92c9"
+    },
+    {
+      "name": "Smoke and Dust/Smoke Column",
+      "offset": 922296,
+      "length": 12971,
+      "sha256": "0fd828d00f7dfe85c5ba761f3ec88a7d8b05df38cc19c76a81d02b05f6ca7fe0"
+    },
+    {
+      "name": "Smoke and Dust/Smoke Puff",
+      "offset": 935267,
+      "length": 6594,
+      "sha256": "f2aa5d2b709ac34ec1437a1b6ca3f6a669708ddf412d3080c98de6bb2551498b"
+    },
+    {
+      "name": "Smoke and Dust/Steam",
+      "offset": 941861,
+      "length": 12803,
+      "sha256": "50343ed70d9821750634222e95b86ca787205d31a4122d334ae3271b99df6230"
+    }
+  ],
   "faces": [
     10,
     11,

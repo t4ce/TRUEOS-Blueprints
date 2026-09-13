@@ -2,10 +2,12 @@
 
 Key 8 connects Cubes to CubeSrv and downloads its embedded gallery. Six image
 slabs surround the center at 10% of the standard 4×4×4-chunk world radius and
-face inward. A white 3×3×3 c4 landmark sits at the origin. Above it, the
-alpha PNG strip selected by `slides/pixvfx.json` plays as a sparse 32×32 c1 cube asset at 150 ms
-per frame. The player starts on the +Z part of the landmark's top face, looking
-along -Z toward that asset. Another numbered mode disconnects; Key 8 reconnects.
+face inward. A white 3×3×3 c4 landmark sits at the origin. Every three seconds,
+the server spawns a temporary c4 terrain cube 5–10 c4 blocks from the center.
+After 500 ms, a randomly selected 32×32 alpha PNG sequence from the Pixel VFX
+pack plays once above that cube; both then disappear.
+The player starts on the +Z part of the landmark's top face, looking along -Z.
+Another numbered mode disconnects; Key 8 reconnects.
 
 ## Final asset presets
 
@@ -21,6 +23,17 @@ whole slab face; the world still has six image slabs. Each preset aligns exactly
 with the reference cube bevels. Tier1 has one texture cell per block side; tier2 has two and tier3 has eight. There is no additional alignment crop.
 
 ## Source import and preview
+
+The fixed `slides/pixvfx/Frames/<category>/<effect>/` pack supplies all 150 VFX.
+The importer generates `vfx.bin` and a named catalog in `gallery.json`; builds
+embed the catalog automatically. Server helper `select_vfx(Some("Magic/Arcane Orb"))`
+selects an exact category/name; `select_vfx(None)` chooses randomly using TRUEOS's
+RNG. The timer calls it once per three-second cycle. Repeats are allowed.
+All effects share a palette equivalent to the client's existing RGB555 colours,
+so switching effects requires no new gallery download or packet format.
+`pixvfx.json` still selects the standalone `holy.hfx` preview, not the random timer.
+Playback uses 150 ms/frame, shortened for strips over 16 frames to fit the
+2.4-second playback window. No authored frames are removed.
 
 `slides/sources.json` contains records with exactly these fields:
 
@@ -49,7 +62,7 @@ modes are removed. Quantization stays fixed at 16 channel levels and exposure
 1.05. Native lighting uses PBR rather than the HTML's simple preview light.
 
 `cargo bp cubesrv` automatically prepares the selected images in Cargo's build
-output directory, reads the numbered 32×32 RGBA frames selected by `slides/pixvfx.json`, and embeds both
+output directory, reads all numbered 32×32 RGBA frames from the fixed pack, and embeds the
 resulting packages. Frame filenames need a trailing frame number and are sorted
 numerically. Every frame must be 32×32; alpha-zero pixels are omitted, while
 every nonzero-alpha pixel becomes one colored c1 cube. Python 3 and Pillow are
@@ -97,7 +110,7 @@ unit cube size as platforms and pathways. It spans 24 c1 (4.8 renderer units) on
 each axis and has ordinary walking collision. Holy's source palette remains in
 the atlas's final row. The client reads it once per gallery revision and converts
 it to the same RGB555 colors used by placed assets. The active Holy frame
-is an upright 32×32 c1 grid with its bottom edge resting on the landmark's top.
+is an upright 32×32 c1 grid with its bottom edge resting on the spawned cube's top.
 Only visible pixels have cube instances. The 27 center cubes and the current Holy
 frame use the placed-asset hull/tessellation/domain shader fastpath: one immutable
 44-patch cube mesh, with compact position, scale and color seeds. A complete frame
@@ -119,7 +132,8 @@ UDP port 30018 retains the `CUB1` v1 envelope:
 - `0x05`: u32 revision, u16 requested chunk index.
 - `0x86`: u32 revision, u16 chunk index, up to 1024 package bytes.
 - `0x87`: u32 player ID, u32 gallery revision, u32 Holy revision, u8 frame,
-  u16 sparse-frame length.
+  u16 sparse-frame length, three i16 anchor coordinates in c1 units,
+  u8 terrain-present flag, u32 spawn event. Frame 255 means no active VFX.
 - `0x06`: u32 Holy revision, u8 frame, u16 requested chunk index.
 - `0x88`: u32 Holy revision, u8 frame, u16 chunk index, up to 1024 frame bytes.
 
@@ -141,11 +155,16 @@ images. Bounded chunk windows, retries and duplicate rejection remain in use.
 frame offsets and three-byte `(x, y, palette)` records. CubeSrv advances one
 global frame every 150 ms and announces it to connected players. Requests and
 responses are pinned to both the VFX revision and frame index, so late UDP
-chunks cannot mix frames. The active Pixel VFX strip is selected in `pixvfx.json`;
+chunks cannot mix frames. Each catalog effect has its own content revision;
 alpha-zero pixels produce no cubes. Every three seconds CubeSrv selects a cardinal
 position 5–10 c4 terrain blocks from the landmark, creates one temporary terrain
 cube, waits 500 ms, then plays one complete VFX strip on its top. The cube and
-effect clear before the next cycle.
+effect clear before the next cycle. `spawn.rs::spawn_with_vfx` owns the schedule:
+first spawn at 3 s, first VFX frame at 3.5 s, cleanup at 5.9 s, next spawn at 6 s.
+The block floats with its top at landmark-top height; there is no nearby authored
+terrain in this sky world. It uses world palette entry zero and has walking collision.
+VFX frames render immediately at full size, without placement's per-pixel growth delay.
+Late frame announcements cannot rewind a spawn or resurrect a finished effect.
 
 Cubes decodes the atlas in its networking worker through `vmedia::decode_retained`.
 Only a complete resident texture replaces the displayed scene. Failed transfers

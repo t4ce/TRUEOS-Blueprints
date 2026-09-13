@@ -11,7 +11,7 @@ import unittest
 from pathlib import Path
 from PIL import Image
 from prepare_slides import (SLIDES, TIERS, HOLY_PERIOD_MS, prepare, texture, bake,
-                            bake_holy, load_manifest, load_faces, load_holy, load_vfx)
+                            bake_holy, load_manifest, load_faces, load_holy, load_vfx, load_vfx_catalog)
 
 class PreparationTests(unittest.TestCase):
     def test_exact_tiers_and_crop_pad_without_scaling(self):
@@ -134,7 +134,16 @@ class PreparationTests(unittest.TestCase):
         data=(SLIDES/'gallery.cga').read_bytes()
         holy=(SLIDES/'holy.hfx').read_bytes()
         _name,vfx=load_vfx(SLIDES/'pixvfx.json',SLIDES)
-        _,palette,frames=load_holy(vfx)
+        palette,catalog=load_vfx_catalog(SLIDES/'pixvfx/Frames')
+        frames=dict(catalog)[vfx.relative_to(SLIDES/'pixvfx/Frames').as_posix()]
+        self.assertEqual(len(catalog),150)
+        bundle=(SLIDES/'vfx.bin').read_bytes()
+        self.assertEqual(len(receipt['vfx_catalog']),len(catalog))
+        for (name,effect_frames),entry in zip(catalog,receipt['vfx_catalog']):
+            self.assertEqual(name,entry['name'])
+            encoded=bundle[entry['offset']:entry['offset']+entry['length']]
+            self.assertEqual(encoded,bake_holy(palette,effect_frames))
+            self.assertEqual(hashlib.sha256(encoded).hexdigest(),entry['sha256'])
         self.assertEqual(hashlib.sha256(manifest.read_bytes()).hexdigest(),receipt['manifest_sha256'])
         self.assertEqual(hashlib.sha256(data).hexdigest(),receipt['package_sha256'])
         self.assertEqual(data,bake(load_manifest(manifest,receipt['faces']),SLIDES,palette))
