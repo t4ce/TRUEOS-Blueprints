@@ -268,3 +268,19 @@ a missing step triggers a snapshot request rather than applying a partial snake.
 Both CubeSrv and Cubes need this contract. Host coverage is included in
 `Cubes/tools/test_slideshow_network.py`, including 100,000 movement steps, all
 six sides, packet loss/reordering and retained GPU seed updates.
+
+### Center worm
+
+`worm.rs` runs independently alongside the snake with nine c1 segments, a separate
+200 ms timer, and theme 2 in the same four fixed brightness shades. It makes no
+ordinary left/right turns: it continues straight across a face, folding around
+an edge through the face-connected connector cell. On each eligible face step,
+a 1-in-16 roll instead tunnels the head instantly to the opposite face, preserving
+its tangent heading. The body follows that jump as tail slots are replaced.
+There are no self-collision or snake/worm collision checks; overlaps are allowed.
+
+Snake and worm share the stable-slot contract and renderer. The worm has its own
+snapshot (`0x8d`, 67-byte body), step (`0x8e`, 19-byte body), and empty snapshot
+request (`9`), with independent sequence and recovery state. Only its tail slot
+changes per step. The renderer reserves all fourteen creature slots alongside
+VFX and navigation overlays. Both server and client must include this extension.

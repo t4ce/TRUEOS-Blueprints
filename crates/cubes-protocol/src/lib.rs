@@ -5,6 +5,8 @@ extern crate alloc;
 pub mod gallery;
 pub mod vfx;
 pub mod snake;
+pub mod worm;
+mod chain;
 use alloc::vec::Vec;
 
 pub const USERNAME: &str = "t4ce";

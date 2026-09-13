@@ -6,6 +6,7 @@ extern crate alloc;
 mod protocol;
 mod spawn;
 mod snake;
+mod worm;
 use cubes_protocol as plateau;
 mod profiles;
 
@@ -76,6 +77,7 @@ struct ServerState {
     revision: u32,
     vfx_scene: cubes_protocol::vfx::Scene,
     snake: snake::Snake,
+    worm: worm::Worm,
     players: BTreeMap<SocketAddr, Player>,
 }
 
@@ -86,6 +88,7 @@ impl ServerState {
             revision: GALLERY_REVISION,
             vfx_scene: make_scene(0, 0, [&VFX[0];cubes_protocol::vfx::INSTANCES]),
             snake: snake::Snake::new(GALLERY_REVISION, trueos::rng::u32()),
+            worm: worm::Worm::new(GALLERY_REVISION, trueos::rng::u32()),
             players: BTreeMap::new(),
         }
     }
@@ -221,6 +224,8 @@ async fn handle_packet(
                     send_welcome(socket, state, peer, player_id).await;
                     let snapshot = state.read().await.snake.state;
                     let _ = socket.send_to(&protocol::snake_snapshot(snapshot), peer).await;
+                    let snapshot = state.read().await.worm.state;
+                    let _ = socket.send_to(&protocol::worm_snapshot(snapshot), peer).await;
                 },
                 None => {
                     let _ = socket.send_to(&protocol::error(1), peer).await;
@@ -231,6 +236,13 @@ async fn handle_packet(
             let state = state.read().await;
             if !state.players.contains_key(&peer) { return; }
             let packet = protocol::snake_snapshot(state.snake.state);
+            drop(state);
+            let _ = socket.send_to(&packet, peer).await;
+        }
+        ClientPacket::WormRequest => {
+            let state = state.read().await;
+            if !state.players.contains_key(&peer) { return; }
+            let packet = protocol::worm_snapshot(state.worm.state);
             drop(state);
             let _ = socket.send_to(&packet, peer).await;
         }
@@ -326,6 +338,7 @@ async fn udp_loop(state: Arc<RwLock<ServerState>>) {
         let started = time::Instant::now();
         let mut next_vfx = started;
         let mut next_snake = started + Duration::from_millis(cubes_protocol::snake::STEP_MS);
+        let mut next_worm = started + Duration::from_millis(cubes_protocol::worm::STEP_MS);
         let mut scene=make_scene(0,0,[&VFX[0];cubes_protocol::vfx::INSTANCES]);
         let mut batch_started=started;
         let mut buffer = [0_u8; protocol::MAX_DATAGRAM];
@@ -396,7 +409,17 @@ async fn udp_loop(state: Arc<RwLock<ServerState>>) {
                 for peer in players { let _ = socket.send_to(&packet, peer).await; }
                 next_snake = now + Duration::from_millis(cubes_protocol::snake::STEP_MS);
             }
-            let next_event = next_slide.min(next_vfx).min(next_snake);
+            if now >= next_worm {
+                let (step, players) = {
+                    let mut state = state.write().await;
+                    let step = state.worm.step(trueos::rng::u32());
+                    (step, state.players.keys().copied().collect::<Vec<_>>())
+                };
+                let packet = protocol::worm_step(step);
+                for peer in players { let _ = socket.send_to(&packet, peer).await; }
+                next_worm = now + Duration::from_millis(cubes_protocol::worm::STEP_MS);
+            }
+            let next_event = next_slide.min(next_vfx).min(next_snake).min(next_worm);
             match time::timeout(
                 next_event.saturating_duration_since(time::Instant::now()),
                 socket.recv_from(&mut buffer),

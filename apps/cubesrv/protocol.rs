@@ -45,6 +45,7 @@ pub enum ClientPacket<'a> {
     },
     Telemetry(Telemetry),
     SnakeRequest,
+    WormRequest,
     WorldRequest {
         chunk: u16,
     },
@@ -133,6 +134,7 @@ pub fn decode(bytes: &[u8]) -> Result<ClientPacket<'_>, DecodeError> {
             chunk: read_u16(payload, 4),
         }),
         8 if payload.is_empty() => Ok(ClientPacket::SnakeRequest),
+        9 if payload.is_empty() => Ok(ClientPacket::WormRequest),
         WORLD_REQUEST if payload.len() == 2 => Ok(ClientPacket::WorldRequest {
             chunk: read_u16(payload, 0),
         }),
@@ -325,6 +327,12 @@ pub fn snake_snapshot(state: crate::plateau::snake::State) -> Vec<u8> {
 }
 pub fn snake_step(step: crate::plateau::snake::Step) -> Vec<u8> {
     packet(0x8c, &step.encode())
+}
+pub fn worm_snapshot(state: crate::plateau::worm::State) -> Vec<u8> {
+    packet(0x8d, &state.encode())
+}
+pub fn worm_step(step: crate::plateau::worm::Step) -> Vec<u8> {
+    packet(0x8e, &step.encode())
 }
 pub fn vfx_chunk(revision: u32, chunk: u16, bytes: &[u8]) -> Option<Vec<u8>> {
     let start=chunk as usize*BLOB_CHUNK_BYTES;
