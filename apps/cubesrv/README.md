@@ -229,14 +229,15 @@ presets, crop/padding, VFX alpha sparsity/order, source orientation, geometry, w
 validation and native material descriptors. A live TRUEOS run is still needed
 to verify appearance, frame timing and actual GPU residency.
 
-## Key8 world1 terrain
+## Key8 demo world
 
-CubeSrv embeds `Cubes/Cube/lvl27/world_01_sky.cubes` at build time alongside the
+CubeSrv embeds `worlds/demo.cubes` at build time alongside the
 gallery and VFX packages. The normal CUB1 welcome (`0x81`) announces world ID 1
 and its byte/chunk counts; world requests (`0x03`) receive world chunks (`0x83`).
 The client downloads a complete world once per connection with bounded retries
 and validates it through the normal `.cubes` level decoder before entering.
-World1 is fixed for that server build; rebuilding the world requires reconnecting.
+The demo is fixed for that server build; rebuilding it requires reconnecting.
+It is a separate copy of the pre-migration terrain, independent of Key5 world 1.
 
 Key8 uses that terrain's normal walker collision and nearest-first visibility
 selection, with the six images, center 3×3×3 c4 landmark and VFX rendered
@@ -284,3 +285,22 @@ snapshot (`0x8d`, 67-byte body), step (`0x8e`, 19-byte body), and empty snapshot
 request (`9`), with independent sequence and recovery state. Only its tail slot
 changes per step. The renderer reserves all fourteen creature slots alongside
 VFX and navigation overlays. Both server and client must include this extension.
+
+## Key5 server world catalog
+
+`worlds/WorldShowcase.html`, its palette inputs, `worlds/export_lvl27_defaults.cjs`,
+and `worlds/lvl27/` are the authoritative authoring source for the 27 normal worlds.
+Regenerate from this directory with `node worlds/export_lvl27_defaults.cjs`;
+`--check` verifies the exports without writing. Key8's `worlds/demo.cubes` is
+separate and is not rewritten by the exporter.
+
+`GET /worlds/{id}` serves an atomic JSON bundle for IDs 1–27: original `.cubes`
+bytes plus their platform ownership/bounds metadata. Other numeric IDs return
+404. The build verifies geometry hashes against the platform manifest before
+embedding responses. Key5 fetches through the same HTTP server as profiles,
+validates geometry, identity and LOD ownership, and caches completed worlds for
+revisits. No local geometry fallback exists. Key5, puzzle entry and portal entry
+all use this path; obsolete or cancelled requests cannot replace a newer view.
+
+Host validation: `Cubes/tools/test_world_server.py` exercises real HTTP handlers,
+all 27 downloads, invalid responses, cancelled requests and superseded workers.

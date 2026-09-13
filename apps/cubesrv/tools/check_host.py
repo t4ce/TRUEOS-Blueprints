@@ -12,7 +12,7 @@ APP = Path(__file__).resolve().parents[1]
 BLUEPRINTS = APP.parents[1]
 with tempfile.TemporaryDirectory(prefix='cubesrv-host-') as directory:
     root = Path(directory)
-    for name in ('slides','assets','tools'): (root/name).symlink_to(APP/name, target_is_directory=True)
+    for name in ('slides','assets','tools','worlds'): (root/name).symlink_to(APP/name, target_is_directory=True)
     (root/'Cargo.toml').write_text(f'''[package]
 name = "cubesrv-host-check"
 version = "0.0.0"
@@ -34,4 +34,4 @@ sha2 = "0.10"
 ''')
     subprocess.run(['cargo','check','--offline','--manifest-path',str(root/'Cargo.toml'),
                     '--target-dir',str(APP/'target/host-check')],cwd=root,check=True,
-                    env={**os.environ, 'CUBES_WORLD1_SOURCE': str(BLUEPRINTS.parent/'Cubes/Cube/lvl27/world_01_sky.cubes')})
+                    env=os.environ)

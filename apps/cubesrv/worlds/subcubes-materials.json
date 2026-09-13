@@ -1,0 +1,73 @@
+{
+  "format": "subcubes-material-palette",
+  "version": 1,
+  "colorSpace": "sRGB",
+  "materials": [
+    {
+      "id": "red",
+      "name": "City",
+      "rgb": {
+        "r": 0.869,
+        "g": 0.245,
+        "b": 0.318
+      },
+      "roughness": 0.547,
+      "metallic": 0
+    },
+    {
+      "id": "orange",
+      "name": "Underground",
+      "rgb": {
+        "r": 0.971,
+        "g": 0.607843,
+        "b": 0.258824
+      },
+      "roughness": 0.318,
+      "metallic": 0.143
+    },
+    {
+      "id": "yellow",
+      "name": "white-hole",
+      "rgb": {
+        "r": 0.866667,
+        "g": 0.764706,
+        "b": 0.224
+      },
+      "roughness": 0.253,
+      "metallic": 0.469
+    },
+    {
+      "id": "green",
+      "name": "Island",
+      "rgb": {
+        "r": 0.237,
+        "g": 0.706,
+        "b": 0.22
+      },
+      "roughness": 1,
+      "metallic": 0.518
+    },
+    {
+      "id": "blue",
+      "name": "Sky",
+      "rgb": {
+        "r": 0.269,
+        "g": 0.535,
+        "b": 1
+      },
+      "roughness": 0.131,
+      "metallic": 0
+    },
+    {
+      "id": "violet",
+      "name": "black-hole",
+      "rgb": {
+        "r": 0.603922,
+        "g": 0.314,
+        "b": 0.709804
+      },
+      "roughness": 1,
+      "metallic": 0
+    }
+  ]
+}

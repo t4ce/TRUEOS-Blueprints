@@ -9,6 +9,7 @@ mod snake;
 mod worm;
 use cubes_protocol as plateau;
 mod profiles;
+mod worlds;
 
 use alloc::{collections::BTreeMap, string::String, sync::Arc, vec::Vec};
 use core::net::SocketAddr;
@@ -172,6 +173,7 @@ fn router() -> Router {
     Router::new()
         .route("/", get(hello))
         .route("/healthz", get(hello))
+        .merge(worlds::router(WORLDS))
         .merge(profiles::router(Arc::new(profiles::Store::new("common/cubesrv/cubeusers.db"))))
 }
 
@@ -186,8 +188,8 @@ async fn send_welcome(
     peer: SocketAddr,
     player_id: u32,
 ) {
-    let _ = socket.send_to(&protocol::welcome(player_id, 1, WORLD1.len(),
-        WORLD1.len().div_ceil(protocol::BLOB_CHUNK_BYTES) as u16, ASSETS.len() as u8), peer).await;
+    let _ = socket.send_to(&protocol::welcome(player_id, 1, DEMO_WORLD.len(),
+        DEMO_WORLD.len().div_ceil(protocol::BLOB_CHUNK_BYTES) as u16, ASSETS.len() as u8), peer).await;
     let (revision, scene) = {
         let state = state.read().await;
         (state.revision, state.vfx_scene)
@@ -295,7 +297,7 @@ async fn handle_packet(
                 let Some(player) = state.players.get_mut(&peer) else { return; };
                 player.last_seen = time::Instant::now();
             }
-            if let Some(packet) = protocol::blob_chunk(BlobKind::World, 1, chunk, WORLD1) {
+            if let Some(packet) = protocol::blob_chunk(BlobKind::World, 1, chunk, DEMO_WORLD) {
                 let _ = socket.send_to(&packet, peer).await;
             }
         }
@@ -331,7 +333,7 @@ async fn udp_loop(state: Arc<RwLock<ServerState>>) {
         logl::log(
             level::INFO,
             format_args!("cubesrv: udp listening on {addr} world=1 world_bytes={} world_chunks={} welcome=0x81",
-                WORLD1.len(), WORLD1.len().div_ceil(protocol::BLOB_CHUNK_BYTES)),
+                DEMO_WORLD.len(), DEMO_WORLD.len().div_ceil(protocol::BLOB_CHUNK_BYTES)),
         );
 
         let mut next_slide = time::Instant::now() + Duration::from_secs(10);
