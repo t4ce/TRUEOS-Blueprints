@@ -22,7 +22,7 @@ small live datagrams after joining.
 
 ## Initial scope
 
-- 27 authored Key5 worlds from `worlds/lvl27`, served via HTTP; Key8 has the separate `worlds/demo.cubes` terrain.
+- 27 authored worlds from `Cubes/Cube/lvl27`.
 - 49 placeable assets from `Cubes/Cube/Assets`.
 - Player position and orientation vectors in one selected world.
 - Server-authoritative, additive asset placement.

@@ -9,7 +9,6 @@ mod snake;
 mod worm;
 use cubes_protocol as plateau;
 mod profiles;
-mod worlds;
 
 use alloc::{collections::BTreeMap, string::String, sync::Arc, vec::Vec};
 use core::net::SocketAddr;
@@ -173,7 +172,6 @@ fn router() -> Router {
     Router::new()
         .route("/", get(hello))
         .route("/healthz", get(hello))
-        .merge(worlds::router(WORLDS))
         .merge(profiles::router(Arc::new(profiles::Store::new("common/cubesrv/cubeusers.db"))))
 }
 
@@ -188,8 +186,13 @@ async fn send_welcome(
     peer: SocketAddr,
     player_id: u32,
 ) {
-    let _ = socket.send_to(&protocol::welcome(player_id, 1, DEMO_WORLD.len(),
-        DEMO_WORLD.len().div_ceil(protocol::BLOB_CHUNK_BYTES) as u16, ASSETS.len() as u8), peer).await;
+    let world_id = state.read().await.players.get(&peer).map_or(1, |p| p.world_id);
+    if world_id == 2 {
+        let _ = socket.send_to(&protocol::welcome(player_id, 2, 0, 0, 0), peer).await;
+        return;
+    }
+    let _ = socket.send_to(&protocol::welcome(player_id, 1, WORLD1.len(),
+        WORLD1.len().div_ceil(protocol::BLOB_CHUNK_BYTES) as u16, ASSETS.len() as u8), peer).await;
     let (revision, scene) = {
         let state = state.read().await;
         (state.revision, state.vfx_scene)
@@ -217,13 +220,16 @@ async fn handle_packet(
         Ok(packet) => packet,
         Err(_) => return,
     };
+    if !matches!(&packet, ClientPacket::Hello {..} | ClientPacket::Telemetry(_))
+        && state.read().await.players.get(&peer).is_some_and(|p| p.world_id == 2) { return; }
     match packet {
-        ClientPacket::Hello { username, .. } => {
-            let world_id = 1;
+        ClientPacket::Hello { username, world_id } => {
+            let world_id = if world_id == 2 { 2 } else { 1 };
             let player_id = state.write().await.join(peer, world_id, username);
             match player_id {
                 Some(player_id) => {
                     send_welcome(socket, state, peer, player_id).await;
+                    if world_id == 2 { return; }
                     let snapshot = state.read().await.snake.state;
                     let _ = socket.send_to(&protocol::snake_snapshot(snapshot), peer).await;
                     let snapshot = state.read().await.worm.state;
@@ -249,7 +255,7 @@ async fn handle_packet(
             let _ = socket.send_to(&packet, peer).await;
         }
         ClientPacket::Telemetry(mut telemetry) => {
-            telemetry.world_id = 1;
+            telemetry.world_id = state.read().await.players.get(&peer).map_or(1, |p| p.world_id);
             let accepted = state.write().await.telemetry(peer, telemetry);
             let Some((player_id, send_info, recipients)) = accepted else {
                 return;
@@ -297,7 +303,7 @@ async fn handle_packet(
                 let Some(player) = state.players.get_mut(&peer) else { return; };
                 player.last_seen = time::Instant::now();
             }
-            if let Some(packet) = protocol::blob_chunk(BlobKind::World, 1, chunk, DEMO_WORLD) {
+            if let Some(packet) = protocol::blob_chunk(BlobKind::World, 1, chunk, WORLD1) {
                 let _ = socket.send_to(&packet, peer).await;
             }
         }
@@ -333,7 +339,7 @@ async fn udp_loop(state: Arc<RwLock<ServerState>>) {
         logl::log(
             level::INFO,
             format_args!("cubesrv: udp listening on {addr} world=1 world_bytes={} world_chunks={} welcome=0x81",
-                DEMO_WORLD.len(), DEMO_WORLD.len().div_ceil(protocol::BLOB_CHUNK_BYTES)),
+                WORLD1.len(), WORLD1.len().div_ceil(protocol::BLOB_CHUNK_BYTES)),
         );
 
         let mut next_slide = time::Instant::now() + Duration::from_secs(10);
@@ -395,7 +401,7 @@ async fn udp_loop(state: Arc<RwLock<ServerState>>) {
                 let players = {
                     let mut state=state.write().await;
                     state.vfx_scene=scene;
-                    state.players.keys().copied().collect::<Vec<_>>()
+                    state.players.iter().filter_map(|(peer,p)| (p.world_id == 1).then_some(*peer)).collect::<Vec<_>>()
                 };
                 let packet=protocol::vfx_info(scene);
                 for peer in players { let _=socket.send_to(&packet,peer).await; }
@@ -405,7 +411,7 @@ async fn udp_loop(state: Arc<RwLock<ServerState>>) {
                 let (step, players) = {
                     let mut state = state.write().await;
                     let step = state.snake.step(trueos::rng::u32());
-                    (step, state.players.keys().copied().collect::<Vec<_>>())
+                    (step, state.players.iter().filter_map(|(peer,p)| (p.world_id == 1).then_some(*peer)).collect::<Vec<_>>())
                 };
                 let packet = protocol::snake_step(step);
                 for peer in players { let _ = socket.send_to(&packet, peer).await; }
@@ -415,7 +421,7 @@ async fn udp_loop(state: Arc<RwLock<ServerState>>) {
                 let (step, players) = {
                     let mut state = state.write().await;
                     let step = state.worm.step(trueos::rng::u32());
-                    (step, state.players.keys().copied().collect::<Vec<_>>())
+                    (step, state.players.iter().filter_map(|(peer,p)| (p.world_id == 1).then_some(*peer)).collect::<Vec<_>>())
                 };
                 let packet = protocol::worm_step(step);
                 for peer in players { let _ = socket.send_to(&packet, peer).await; }

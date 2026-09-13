@@ -22,7 +22,7 @@ VFX centers are (±41,0,0), (0,0,±41), (0,±41,0) in renderer units,
 independent of pixel size or timer cycle. Large billboard footprints may extend
 back toward the images; the fixed-position rule does not guarantee sprite clearance.
 The player starts on the +Z part of the landmark's top face, looking along -Z.
-Another numbered mode disconnects; Key 8 reconnects.
+Another numbered mode disconnects; Key 8 connects to preview again.
 
 ## Final asset presets
 
@@ -229,15 +229,14 @@ presets, crop/padding, VFX alpha sparsity/order, source orientation, geometry, w
 validation and native material descriptors. A live TRUEOS run is still needed
 to verify appearance, frame timing and actual GPU residency.
 
-## Key8 demo world
+## Key8 world1 terrain
 
-CubeSrv embeds `worlds/demo.cubes` at build time alongside the
+CubeSrv embeds `Cubes/Cube/lvl27/world_01_sky.cubes` at build time alongside the
 gallery and VFX packages. The normal CUB1 welcome (`0x81`) announces world ID 1
 and its byte/chunk counts; world requests (`0x03`) receive world chunks (`0x83`).
 The client downloads a complete world once per connection with bounded retries
 and validates it through the normal `.cubes` level decoder before entering.
-The demo is fixed for that server build; rebuilding it requires reconnecting.
-It is a separate copy of the pre-migration terrain, independent of Key5 world 1.
+World1 is fixed for that server build; rebuilding the world requires reconnecting.
 
 Key8 uses that terrain's normal walker collision and nearest-first visibility
 selection, with the six images, center 3×3×3 c4 landmark and VFX rendered
@@ -286,21 +285,22 @@ request (`9`), with independent sequence and recovery state. Only its tail slot
 changes per step. The renderer reserves all fourteen creature slots alongside
 VFX and navigation overlays. Both server and client must include this extension.
 
-## Key5 server world catalog
+## Key8 preview / empty toggle
 
-`worlds/WorldShowcase.html`, its palette inputs, `worlds/export_lvl27_defaults.cjs`,
-and `worlds/lvl27/` are the authoritative authoring source for the 27 normal worlds.
-Regenerate from this directory with `node worlds/export_lvl27_defaults.cjs`;
-`--check` verifies the exports without writing. Key8's `worlds/demo.cubes` is
-separate and is not rewritten by the exporter.
+The first Key8 press connects to preview (world ID 1). After preview has been
+installed, each new press switches between preview and empty (world ID 2).
+Holding the key does not repeat. Swaps reuse the same UDP socket and native
+worker; no additional transport, runtime or indexed-world loader is created.
 
-`GET /worlds/{id}` serves an atomic JSON bundle for IDs 1–27: original `.cubes`
-bytes plus their platform ownership/bounds metadata. Other numeric IDs return
-404. The build verifies geometry hashes against the platform manifest before
-embedding responses. Key5 fetches through the same HTTP server as profiles,
-validates geometry, identity and LOD ownership, and caches completed worlds for
-revisits. No local geometry fallback exists. Key5, puzzle entry and portal entry
-all use this path; obsolete or cancelled requests cannot replace a newer view.
+An empty-world Hello receives the existing welcome envelope with world ID 2,
+zero bytes and zero chunks. Only that matching acknowledgement clears the client
+view. The server suppresses preview geometry, gallery, VFX, snake and worm traffic
+for empty peers. A periodic Hello keeps the peer alive while empty. The client
+uses the existing GPU surface-clear operation and removes its walker/targets;
+preview GPU resources remain cached but submit no geometry while empty.
+Returning to preview repeats the original binary world and gallery transfer.
+Key5 remains local. Rebuild both Cubes and CubeSrv for this extension.
 
-Host validation: `Cubes/tools/test_world_server.py` exercises real HTTP handlers,
-all 27 downloads, invalid responses, cancelled requests and superseded workers.
+Host tests exercise preview → empty → preview repeatedly on one real UDP socket,
+including stale welcomes. GPU presentation and dual-VM host responsiveness still
+require a recoverable target test; host tests do not establish fault containment.

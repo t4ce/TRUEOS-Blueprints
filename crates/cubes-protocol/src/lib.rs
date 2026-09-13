@@ -3,7 +3,6 @@
 #![no_std]
 extern crate alloc;
 pub mod gallery;
-pub mod worlds;
 pub mod vfx;
 pub mod snake;
 pub mod worm;
