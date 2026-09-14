@@ -1,6 +1,10 @@
 {
   "probes": [
     "condvar",
+    {
+      "name": "wgpu-trueos-hal-probe",
+      "path": "../wgpu/examples/standalone/00_trueos_hal_probe"
+    },
     "cross",
     "framework_stack",
     "panick",
