@@ -5,6 +5,10 @@
       "name": "wgpu-trueos-hal-probe",
       "path": "../wgpu/examples/standalone/00_trueos_hal_probe"
     },
+    {
+      "name": "wgpu-trueos-hal-adapter",
+      "path": "../wgpu/examples/standalone/01_trueos_hal_adapter"
+    },
     "cross",
     "framework_stack",
     "panick",

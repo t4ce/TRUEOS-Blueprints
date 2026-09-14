@@ -14,9 +14,9 @@ incorrect results fail the run.
 
 The Blueprint enables the local fork's experimental `trueos` HAL feature.
 Startup now reaches the native mediated vGPU probe (open, device info, close)
-and prints its reported facts through the HAL instance. Adapter enumeration
-remains empty until the generic shader/buffer/dispatch/readback path exists,
-so the app currently exits with an explicit adapter error on TRUEOS.
+and prints its reported facts through the HAL instance. The HAL now enumerates
+one TRUEOS adapter, but advertises no compute capability or usable resources;
+Adapter::open still rejects requests. This app cannot run compute on TRUEOS yet.
 
 This is a backend bring-up app, not yet a working TRUEOS GPU compute demo.
 It does not use a CPU substitute or the wgpu noop backend. The implementation
