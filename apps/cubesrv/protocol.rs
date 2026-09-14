@@ -31,28 +31,14 @@ pub struct Telemetry {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ClientPacket<'a> {
-    Hello {
-        world_id: u8,
-        username: &'a str,
-    },
-    SlideRequest {
-        revision: u32,
-        chunk: u16,
-    },
-    VfxRequest {
-        revision: u32,
-        chunk: u16,
-    },
+    Hello { world_id: u8, username: &'a str },
+    SlideRequest { revision: u32, chunk: u16 },
+    VfxRequest { revision: u32, chunk: u16 },
     Telemetry(Telemetry),
     SnakeRequest,
     WormRequest,
-    WorldRequest {
-        chunk: u16,
-    },
-    AssetRequest {
-        asset_id: u8,
-        chunk: u16,
-    },
+    WorldRequest { chunk: u16 },
+    AssetRequest { asset_id: u8, chunk: u16 },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -320,7 +306,7 @@ pub fn slide_chunk(revision: u32, chunk: u16, bytes: &[u8]) -> Option<Vec<u8>> {
 
 /// Full four-slot timing snapshot; immutable VFX assets are fetched by revision.
 pub fn vfx_info(scene: crate::plateau::vfx::Scene) -> Vec<u8> {
-    packet(0x89,&scene.encode())
+    packet(0x89, &scene.encode())
 }
 pub fn snake_snapshot(state: crate::plateau::snake::State) -> Vec<u8> {
     packet(0x8b, &state.encode())
@@ -335,10 +321,12 @@ pub fn worm_step(step: crate::plateau::worm::Step) -> Vec<u8> {
     packet(0x8e, &step.encode())
 }
 pub fn vfx_chunk(revision: u32, chunk: u16, bytes: &[u8]) -> Option<Vec<u8>> {
-    let start=chunk as usize*BLOB_CHUNK_BYTES;
-    if start>=bytes.len() { return None; }
-    let mut body=revision.to_le_bytes().to_vec();
+    let start = chunk as usize * BLOB_CHUNK_BYTES;
+    if start >= bytes.len() {
+        return None;
+    }
+    let mut body = revision.to_le_bytes().to_vec();
     body.extend_from_slice(&chunk.to_le_bytes());
-    body.extend_from_slice(&bytes[start..(start+BLOB_CHUNK_BYTES).min(bytes.len())]);
-    Some(packet(0x8a,&body))
+    body.extend_from_slice(&bytes[start..(start + BLOB_CHUNK_BYTES).min(bytes.len())]);
+    Some(packet(0x8a, &body))
 }

@@ -12,6 +12,7 @@
     "gboi",
     "tredb",
     "hello_world",
+    "wgpu-hello-compute",
     "hello_world_replicatable",
     {
       "name": "img",

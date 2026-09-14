@@ -36,7 +36,13 @@ pub enum VideoPoll {
 }
 impl Video {
     pub fn open(device: Device, encoded: &[u8], looping: bool) -> Result<Self, i32> {
-        let id = command(0, device.raw(), encoded.len() as u64, &[looping as u8], &mut []);
+        let id = command(
+            0,
+            device.raw(),
+            encoded.len() as u64,
+            &[looping as u8],
+            &mut [],
+        );
         if id <= 0 {
             return Err(if id == 0 { -3 } else { id });
         }

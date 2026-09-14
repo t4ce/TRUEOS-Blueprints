@@ -2,12 +2,12 @@
 //! Coordinates are authored c1 units; one of the world's 4³ chunks is 512³ c1.
 #![no_std]
 extern crate alloc;
-pub mod gallery;
-pub mod vfx;
-pub mod snake;
-pub mod worm;
-pub mod world;
 mod chain;
+pub mod gallery;
+pub mod snake;
+pub mod vfx;
+pub mod world;
+pub mod worm;
 use alloc::vec::Vec;
 
 pub const USERNAME: &str = "t4ce";

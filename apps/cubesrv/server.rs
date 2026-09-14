@@ -4,9 +4,9 @@
 extern crate alloc;
 
 mod protocol;
-mod structure;
-mod spawn;
 mod snake;
+mod spawn;
+mod structure;
 mod worm;
 use cubes_protocol as plateau;
 mod profiles;
@@ -51,14 +51,20 @@ impl Vfx {
 
 /// Select a pack entry by category/name (e.g. "Magic/Arcane Orb"), or random.
 fn select_vfx(name: Option<&str>) -> Option<&'static Vfx> {
-    if let Some(name) = name { return VFX.iter().find(|effect| effect.name == name); }
+    if let Some(name) = name {
+        return VFX.iter().find(|effect| effect.name == name);
+    }
     let count = VFX.len() as u32;
-    if count == 0 { return None; }
+    if count == 0 {
+        return None;
+    }
     // Rejection sampling avoids modulo bias. This uses TRUEOS's existing RNG.
     let threshold = count.wrapping_neg() % count;
     loop {
         let value = trueos::rng::u32();
-        if value >= threshold { return VFX.get((value % count) as usize); }
+        if value >= threshold {
+            return VFX.get((value % count) as usize);
+        }
     }
 }
 
@@ -87,7 +93,7 @@ impl ServerState {
         Self {
             next_player_id: 1,
             revision: GALLERY_REVISION,
-            vfx_scene: make_scene(0, 0, [&VFX[0];cubes_protocol::vfx::INSTANCES]),
+            vfx_scene: make_scene(0, 0, [&VFX[0]; cubes_protocol::vfx::INSTANCES]),
             snake: snake::Snake::new(GALLERY_REVISION, trueos::rng::u32()),
             worm: worm::Worm::new(GALLERY_REVISION, trueos::rng::u32()),
             players: BTreeMap::new(),
@@ -98,7 +104,9 @@ impl ServerState {
         self.players
             .retain(|_, player| player.last_seen.elapsed() < Duration::from_secs(30));
         if let Some(player) = self.players.get_mut(&peer) {
-            if player.username != username { return None; }
+            if player.username != username {
+                return None;
+            }
             player.world_id = world_id;
             player.last_seen = time::Instant::now();
             return Some(player.id);
@@ -152,15 +160,26 @@ impl ServerState {
     }
 }
 
-fn make_scene(event: u32, age_ms: u32, effects: [&Vfx;cubes_protocol::vfx::INSTANCES]) -> cubes_protocol::vfx::Scene {
-    let anchors=spawn::anchors();
+fn make_scene(
+    event: u32,
+    age_ms: u32,
+    effects: [&Vfx; cubes_protocol::vfx::INSTANCES],
+) -> cubes_protocol::vfx::Scene {
+    let anchors = spawn::anchors();
     cubes_protocol::vfx::Scene {
-        gallery_revision:GALLERY_REVISION, event, age_ms,
-        slots:core::array::from_fn(|i| {
-            let sequence=effects[i].sequence();
-            cubes_protocol::vfx::Slot {revision:effects[i].revision,
-                bytes:(effects[i].end-effects[i].start) as u32, anchor:anchors[i],
-                frames:sequence.frame_count(),period_ms:sequence.period_ms(),pixel_side_c1:cubes_protocol::vfx::DEMO_PIXEL_SIDES_C1[i%4]}
+        gallery_revision: GALLERY_REVISION,
+        event,
+        age_ms,
+        slots: core::array::from_fn(|i| {
+            let sequence = effects[i].sequence();
+            cubes_protocol::vfx::Slot {
+                revision: effects[i].revision,
+                bytes: (effects[i].end - effects[i].start) as u32,
+                anchor: anchors[i],
+                frames: sequence.frame_count(),
+                period_ms: sequence.period_ms(),
+                pixel_side_c1: cubes_protocol::vfx::DEMO_PIXEL_SIDES_C1[i % 4],
+            }
         }),
     }
 }
@@ -173,7 +192,9 @@ fn router() -> Router {
     Router::new()
         .route("/", get(hello))
         .route("/healthz", get(hello))
-        .merge(profiles::router(Arc::new(profiles::Store::new("common/cubesrv/cubeusers.db"))))
+        .merge(profiles::router(Arc::new(profiles::Store::new(
+            "common/cubesrv/cubeusers.db",
+        ))))
 }
 
 fn blob(catalog: &'static [Blob], id: u8) -> Option<&'static Blob> {
@@ -187,29 +208,51 @@ async fn send_welcome(
     peer: SocketAddr,
     player_id: u32,
 ) {
-    let world_id = state.read().await.players.get(&peer).map_or(1, |p| p.world_id);
+    let world_id = state
+        .read()
+        .await
+        .players
+        .get(&peer)
+        .map_or(1, |p| p.world_id);
     if world_id == 2 {
         let bytes = structure::world().encode();
-        let _ = socket.send_to(&protocol::welcome(player_id, 2, bytes.len(), bytes.len().div_ceil(protocol::BLOB_CHUNK_BYTES) as u16, 0), peer).await;
+        let _ = socket
+            .send_to(
+                &protocol::welcome(
+                    player_id,
+                    2,
+                    bytes.len(),
+                    bytes.len().div_ceil(protocol::BLOB_CHUNK_BYTES) as u16,
+                    0,
+                ),
+                peer,
+            )
+            .await;
         return;
     }
-    let _ = socket.send_to(&protocol::welcome(player_id, 1, WORLD1.len(),
-        WORLD1.len().div_ceil(protocol::BLOB_CHUNK_BYTES) as u16, ASSETS.len() as u8), peer).await;
+    let _ = socket
+        .send_to(
+            &protocol::welcome(
+                player_id,
+                1,
+                WORLD1.len(),
+                WORLD1.len().div_ceil(protocol::BLOB_CHUNK_BYTES) as u16,
+                ASSETS.len() as u8,
+            ),
+            peer,
+        )
+        .await;
     let (revision, scene) = {
         let state = state.read().await;
         (state.revision, state.vfx_scene)
     };
     let _ = socket
         .send_to(
-            &protocol::slide_info(
-                player_id,
-                revision,
-                GALLERY.len(),
-            ),
+            &protocol::slide_info(player_id, revision, GALLERY.len()),
             peer,
         )
         .await;
-    let _ = socket.send_to(&protocol::vfx_info(scene),peer).await;
+    let _ = socket.send_to(&protocol::vfx_info(scene), peer).await;
 }
 
 async fn handle_packet(
@@ -222,8 +265,18 @@ async fn handle_packet(
         Ok(packet) => packet,
         Err(_) => return,
     };
-    if !matches!(&packet, ClientPacket::Hello {..} | ClientPacket::Telemetry(_) | ClientPacket::WorldRequest {..})
-        && state.read().await.players.get(&peer).is_some_and(|p| p.world_id == 2) { return; }
+    if !matches!(
+        &packet,
+        ClientPacket::Hello { .. } | ClientPacket::Telemetry(_) | ClientPacket::WorldRequest { .. }
+    ) && state
+        .read()
+        .await
+        .players
+        .get(&peer)
+        .is_some_and(|p| p.world_id == 2)
+    {
+        return;
+    }
     match packet {
         ClientPacket::Hello { username, world_id } => {
             let world_id = if world_id == 2 { 2 } else { 1 };
@@ -231,12 +284,18 @@ async fn handle_packet(
             match player_id {
                 Some(player_id) => {
                     send_welcome(socket, state, peer, player_id).await;
-                    if world_id == 2 { return; }
+                    if world_id == 2 {
+                        return;
+                    }
                     let snapshot = state.read().await.snake.state;
-                    let _ = socket.send_to(&protocol::snake_snapshot(snapshot), peer).await;
+                    let _ = socket
+                        .send_to(&protocol::snake_snapshot(snapshot), peer)
+                        .await;
                     let snapshot = state.read().await.worm.state;
-                    let _ = socket.send_to(&protocol::worm_snapshot(snapshot), peer).await;
-                },
+                    let _ = socket
+                        .send_to(&protocol::worm_snapshot(snapshot), peer)
+                        .await;
+                }
                 None => {
                     let _ = socket.send_to(&protocol::error(1), peer).await;
                 }
@@ -244,20 +303,29 @@ async fn handle_packet(
         }
         ClientPacket::SnakeRequest => {
             let state = state.read().await;
-            if !state.players.contains_key(&peer) { return; }
+            if !state.players.contains_key(&peer) {
+                return;
+            }
             let packet = protocol::snake_snapshot(state.snake.state);
             drop(state);
             let _ = socket.send_to(&packet, peer).await;
         }
         ClientPacket::WormRequest => {
             let state = state.read().await;
-            if !state.players.contains_key(&peer) { return; }
+            if !state.players.contains_key(&peer) {
+                return;
+            }
             let packet = protocol::worm_snapshot(state.worm.state);
             drop(state);
             let _ = socket.send_to(&packet, peer).await;
         }
         ClientPacket::Telemetry(mut telemetry) => {
-            telemetry.world_id = state.read().await.players.get(&peer).map_or(1, |p| p.world_id);
+            telemetry.world_id = state
+                .read()
+                .await
+                .players
+                .get(&peer)
+                .map_or(1, |p| p.world_id);
             let accepted = state.write().await.telemetry(peer, telemetry);
             let Some((player_id, send_info, recipients)) = accepted else {
                 return;
@@ -282,7 +350,9 @@ async fn handle_packet(
                 };
                 player.last_seen = time::Instant::now();
             }
-            if revision != GALLERY_REVISION { return; }
+            if revision != GALLERY_REVISION {
+                return;
+            }
             if let Some(packet) = protocol::slide_chunk(revision, chunk, GALLERY) {
                 let _ = socket.send_to(&packet, peer).await;
             }
@@ -290,10 +360,14 @@ async fn handle_packet(
         ClientPacket::VfxRequest { revision, chunk } => {
             {
                 let mut state = state.write().await;
-                let Some(player) = state.players.get_mut(&peer) else { return; };
+                let Some(player) = state.players.get_mut(&peer) else {
+                    return;
+                };
                 player.last_seen = time::Instant::now();
             }
-            let Some(effect) = VFX.iter().find(|effect| effect.revision == revision) else { return; };
+            let Some(effect) = VFX.iter().find(|effect| effect.revision == revision) else {
+                return;
+            };
             let bytes = &VFX_BYTES[effect.start..effect.end];
             if let Some(packet) = protocol::vfx_chunk(revision, chunk, bytes) {
                 let _ = socket.send_to(&packet, peer).await;
@@ -302,12 +376,19 @@ async fn handle_packet(
         ClientPacket::WorldRequest { chunk } => {
             let world_id = {
                 let mut state = state.write().await;
-                let Some(player) = state.players.get_mut(&peer) else { return; };
+                let Some(player) = state.players.get_mut(&peer) else {
+                    return;
+                };
                 player.last_seen = time::Instant::now();
                 player.world_id
             };
             let world2;
-            let bytes = if world_id == 2 { world2 = structure::world().encode(); world2.as_slice() } else { WORLD1 };
+            let bytes = if world_id == 2 {
+                world2 = structure::world().encode();
+                world2.as_slice()
+            } else {
+                WORLD1
+            };
             if let Some(packet) = protocol::blob_chunk(BlobKind::World, world_id, chunk, bytes) {
                 let _ = socket.send_to(&packet, peer).await;
             }
@@ -343,8 +424,11 @@ async fn udp_loop(state: Arc<RwLock<ServerState>>) {
         };
         logl::log(
             level::INFO,
-            format_args!("cubesrv: udp listening on {addr} world=1 world_bytes={} world_chunks={} welcome=0x81",
-                WORLD1.len(), WORLD1.len().div_ceil(protocol::BLOB_CHUNK_BYTES)),
+            format_args!(
+                "cubesrv: udp listening on {addr} world=1 world_bytes={} world_chunks={} welcome=0x81",
+                WORLD1.len(),
+                WORLD1.len().div_ceil(protocol::BLOB_CHUNK_BYTES)
+            ),
         );
 
         let mut next_slide = time::Instant::now() + Duration::from_secs(10);
@@ -352,8 +436,8 @@ async fn udp_loop(state: Arc<RwLock<ServerState>>) {
         let mut next_vfx = started;
         let mut next_snake = started + Duration::from_millis(cubes_protocol::snake::STEP_MS);
         let mut next_worm = started + Duration::from_millis(cubes_protocol::worm::STEP_MS);
-        let mut scene=make_scene(0,0,[&VFX[0];cubes_protocol::vfx::INSTANCES]);
-        let mut batch_started=started;
+        let mut scene = make_scene(0, 0, [&VFX[0]; cubes_protocol::vfx::INSTANCES]);
+        let mut batch_started = started;
         let mut buffer = [0_u8; protocol::MAX_DATAGRAM];
         loop {
             let now = time::Instant::now();
@@ -376,60 +460,82 @@ async fn udp_loop(state: Arc<RwLock<ServerState>>) {
                 next_slide += Duration::from_secs(10);
                 for (peer, id) in players {
                     let _ = socket
-                        .send_to(
-                            &protocol::slide_info(
-                                id,
-                                revision,
-                                GALLERY.len(),
-                            ),
-                            peer,
-                        )
+                        .send_to(&protocol::slide_info(id, revision, GALLERY.len()), peer)
                         .await;
                 }
             }
             if now >= next_vfx {
-                let age=batch_started.elapsed().as_millis() as u64;
-                if scene.event==0 || age>=scene.batch_ms() as u64 {
-                    let effects=core::array::from_fn(|_| select_vfx(None).expect("nonempty VFX pack"));
-                    let event=scene.event.wrapping_add(1).max(1);
-                    batch_started=time::Instant::now();
-                    scene=make_scene(event,0,effects);
+                let age = batch_started.elapsed().as_millis() as u64;
+                if scene.event == 0 || age >= scene.batch_ms() as u64 {
+                    let effects =
+                        core::array::from_fn(|_| select_vfx(None).expect("nonempty VFX pack"));
+                    let event = scene.event.wrapping_add(1).max(1);
+                    batch_started = time::Instant::now();
+                    scene = make_scene(event, 0, effects);
                     for slot in &mut scene.slots {
                         // Four equally likely presets; duplicate rolls are allowed.
-                        slot.pixel_side_c1=cubes_protocol::vfx::DEMO_PIXEL_SIDES_C1[(trueos::rng::u32()%4) as usize];
+                        slot.pixel_side_c1 = cubes_protocol::vfx::DEMO_PIXEL_SIDES_C1
+                            [(trueos::rng::u32() % 4) as usize];
                     }
-                    for (slot,effect) in effects.iter().enumerate() {
-                        logl::log(level::DEBUG,format_args!("cubesrv: spawn={event} slot={slot} vfx={}",effect.name));
+                    for (slot, effect) in effects.iter().enumerate() {
+                        logl::log(
+                            level::DEBUG,
+                            format_args!("cubesrv: spawn={event} slot={slot} vfx={}", effect.name),
+                        );
                     }
                 }
-                scene.age_ms=batch_started.elapsed().as_millis() as u32;
+                scene.age_ms = batch_started.elapsed().as_millis() as u32;
                 let players = {
-                    let mut state=state.write().await;
-                    state.vfx_scene=scene;
-                    state.players.iter().filter_map(|(peer,p)| (p.world_id == 1).then_some(*peer)).collect::<Vec<_>>()
+                    let mut state = state.write().await;
+                    state.vfx_scene = scene;
+                    state
+                        .players
+                        .iter()
+                        .filter_map(|(peer, p)| (p.world_id == 1).then_some(*peer))
+                        .collect::<Vec<_>>()
                 };
-                let packet=protocol::vfx_info(scene);
-                for peer in players { let _=socket.send_to(&packet,peer).await; }
+                let packet = protocol::vfx_info(scene);
+                for peer in players {
+                    let _ = socket.send_to(&packet, peer).await;
+                }
                 next_vfx = now + Duration::from_millis(50);
             }
             if now >= next_snake {
                 let (step, players) = {
                     let mut state = state.write().await;
                     let step = state.snake.step(trueos::rng::u32());
-                    (step, state.players.iter().filter_map(|(peer,p)| (p.world_id == 1).then_some(*peer)).collect::<Vec<_>>())
+                    (
+                        step,
+                        state
+                            .players
+                            .iter()
+                            .filter_map(|(peer, p)| (p.world_id == 1).then_some(*peer))
+                            .collect::<Vec<_>>(),
+                    )
                 };
                 let packet = protocol::snake_step(step);
-                for peer in players { let _ = socket.send_to(&packet, peer).await; }
+                for peer in players {
+                    let _ = socket.send_to(&packet, peer).await;
+                }
                 next_snake = now + Duration::from_millis(cubes_protocol::snake::STEP_MS);
             }
             if now >= next_worm {
                 let (step, players) = {
                     let mut state = state.write().await;
                     let step = state.worm.step(trueos::rng::u32());
-                    (step, state.players.iter().filter_map(|(peer,p)| (p.world_id == 1).then_some(*peer)).collect::<Vec<_>>())
+                    (
+                        step,
+                        state
+                            .players
+                            .iter()
+                            .filter_map(|(peer, p)| (p.world_id == 1).then_some(*peer))
+                            .collect::<Vec<_>>(),
+                    )
                 };
                 let packet = protocol::worm_step(step);
-                for peer in players { let _ = socket.send_to(&packet, peer).await; }
+                for peer in players {
+                    let _ = socket.send_to(&packet, peer).await;
+                }
                 next_worm = now + Duration::from_millis(cubes_protocol::worm::STEP_MS);
             }
             let next_event = next_slide.min(next_vfx).min(next_snake).min(next_worm);

@@ -1,0 +1,23 @@
+[package]
+name = "wgpu-hello-compute"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "MIT OR Apache-2.0"
+description = "wgpu standalone compute example packaged for TRUEOS backend bring-up"
+
+[workspace]
+
+[dependencies]
+bytemuck = { version = "1.22.0", features = ["extern_crate_alloc"] }
+pollster = "1.0"
+wgpu = { path = "../../../wgpu/wgpu", default-features = false, features = ["std", "wgsl"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+wgpu = { path = "../../../wgpu/wgpu", default-features = false, features = ["vulkan"] }
+
+[target.'cfg(target_os = "trueos")'.dependencies]
+wgpu = { path = "../../../wgpu/wgpu", default-features = false, features = ["trueos"] }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("trueos"))'] }
