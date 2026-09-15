@@ -3952,6 +3952,9 @@ fn rewrite_trueos_collection_imports_in_source(source: &str) -> String {
 }
 
 fn rewrite_trueos_collection_import_line(line: &str) -> String {
+    if line.trim_start().starts_with("use std::collections::") && line.contains(" as ") {
+        return line.to_owned();
+    }
     let line = rewrite_trueos_time_import_line(line);
     if let Some(rewritten) = rewrite_trueos_grouped_collection_import(&line) {
         return rewritten;
@@ -3976,6 +3979,9 @@ fn rewrite_trueos_collection_import_line(line: &str) -> String {
 }
 
 fn rewrite_trueos_time_import_line(line: &str) -> String {
+    if line.trim_start().starts_with("use std::time::Instant as ") {
+        return line.to_owned();
+    }
     if let Some(rewritten) = rewrite_trueos_grouped_time_import(line) {
         return rewritten;
     }
@@ -4025,25 +4031,51 @@ fn rewrite_trueos_grouped_collection_import(line: &str) -> Option<String> {
     let inner = trimmed
         .strip_prefix("use std::collections::{")?
         .strip_suffix("};")?;
-    let mut items = Vec::new();
+    let mut std_items = Vec::new();
+    let mut supported_items = Vec::new();
     for item in inner.split(',') {
         let item = item.trim();
         if item.is_empty() {
             continue;
         }
-        if !matches!(item, "BTreeMap" | "BTreeSet" | "HashMap" | "HashSet") {
-            return None;
+        if matches!(item, "BTreeMap" | "BTreeSet" | "HashMap" | "HashSet") {
+            supported_items.push(item);
+        } else {
+            if item.contains("::") || item.contains('{') || item.contains('}') {
+                return None;
+            }
+            std_items.push(item);
         }
-        items.push(item);
     }
-    if items.is_empty() {
+    let trueos_items = if std_items.is_empty() {
+        supported_items
+    } else {
+        let mut trueos_items = Vec::new();
+        for item in supported_items {
+            if item == "HashSet" {
+                trueos_items.push(item);
+            } else {
+                std_items.push(item);
+            }
+        }
+        trueos_items
+    };
+    if trueos_items.is_empty() {
         return None;
     }
 
-    Some(format!(
+    let mut lines = Vec::new();
+    if !std_items.is_empty() {
+        lines.push(format!(
+            "{indent}use std::collections::{{{}}};",
+            std_items.join(", ")
+        ));
+    }
+    lines.push(format!(
         "{indent}use trueos::collections::{{{}}};",
-        items.join(", ")
-    ))
+        trueos_items.join(", ")
+    ));
+    Some(lines.join("\n"))
 }
 
 struct LockMismatch {

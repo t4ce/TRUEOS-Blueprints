@@ -326,9 +326,12 @@ mod source_rewrite_tests {
         let source = "\
 use std::collections::HashMap;
 use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::HashMap as StdHashMap;
 use std::collections::{HashMap, hash_map::{Iter, Keys}};
 type Ordered = std::collections::BTreeMap<u8, u8>;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::Instant as StdInstant;
 let start = std::time::Instant::now();
 ";
 
@@ -336,10 +339,15 @@ let start = std::time::Instant::now();
 
         assert!(rewritten.contains("use trueos::collections::HashMap;"));
         assert!(rewritten.contains("use trueos::collections::{HashMap, HashSet};"));
+        assert!(rewritten.contains(
+            "use std::collections::{VecDeque, HashMap};\nuse trueos::collections::{HashSet};"
+        ));
+        assert!(rewritten.contains("use std::collections::HashMap as StdHashMap;"));
         assert!(rewritten.contains("type Ordered = trueos::collections::BTreeMap<u8, u8>;"));
         assert!(rewritten.contains("use std::collections::{HashMap, hash_map::{Iter, Keys}};"));
         assert!(rewritten.contains("use std::time::{Duration, SystemTime, UNIX_EPOCH};"));
         assert!(rewritten.contains("use trueos::clock::Instant;"));
+        assert!(rewritten.contains("use std::time::Instant as StdInstant;"));
         assert!(rewritten.contains("let start = trueos::clock::Instant::now();"));
     }
 }
