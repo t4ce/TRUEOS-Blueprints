@@ -5329,7 +5329,10 @@ fn strip_manifest_patch_section(manifest_path: &Path) -> Result<(), String> {
                 continue;
             }
         }
-        if in_patch && !trimmed.starts_with("glutin =") {
+        if in_patch
+            && !trimmed.starts_with("glutin =")
+            && !trimmed.starts_with("raw-window-handle =")
+        {
             continue;
         }
         out.push_str(line);
@@ -5348,7 +5351,7 @@ fn materialize_staged_workspace_patches(
     };
     let workspace = fs::read_to_string(workspace_manifest).map_err(io_string)?;
     let mut in_patch = false;
-    let mut patch = None;
+    let mut patches = Vec::new();
     for line in workspace.lines() {
         let trimmed = line.split('#').next().unwrap_or("").trim();
         if trimmed.starts_with('[') {
@@ -5359,22 +5362,24 @@ fn materialize_staged_workspace_patches(
             continue;
         }
         if let Some((dependency, path)) = inline_dependency_name_and_path(line)
-            && dependency == "glutin"
+            && matches!(dependency, "glutin" | "raw-window-handle")
         {
-            patch = rewrite_dependency_path(line, &dependency, &path, &workspace_root);
-            break;
+            if let Some(patch) = rewrite_dependency_path(line, &dependency, &path, &workspace_root)
+            {
+                patches.push(patch);
+            }
         }
     }
-    let Some(patch) = patch else {
+    if patches.is_empty() {
         return Ok(());
-    };
+    }
 
     let mut staged = fs::read_to_string(manifest_path).map_err(io_string)?;
     if !staged.ends_with('\n') {
         staged.push('\n');
     }
     staged.push_str("\n[patch.crates-io]\n");
-    staged.push_str(&patch);
+    staged.push_str(&patches.join("\n"));
     staged.push('\n');
     fs::write(manifest_path, staged).map_err(io_string)
 }
