@@ -125,6 +125,78 @@ mod external_path_overlay_tests {
     }
 
     #[test]
+    fn staged_external_workspace_materializes_package_and_dependency_inheritance() {
+        let root = test_dir("external-workspace-inheritance");
+        let app = root.join("app");
+        let helper = root.join("crates/helper");
+        let staged = root.join("stage/app/Cargo.toml");
+        let work_dir = root.join("work");
+        fs::create_dir_all(&app).unwrap();
+        fs::create_dir_all(helper.join("src")).unwrap();
+        fs::create_dir_all(staged.parent().unwrap()).unwrap();
+        fs::create_dir_all(staged.parent().unwrap().join("src")).unwrap();
+        fs::create_dir_all(&work_dir).unwrap();
+        fs::write(
+            root.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"app\", \"crates/helper\"]\nresolver = \"2\"\n\n[workspace.package]\nversion = \"0.1.0\"\nedition = \"2024\"\nrust-version = \"1.85\"\n\n[workspace.dependencies]\nhelper = { path = \"crates/helper\" }\n",
+        )
+        .unwrap();
+        let app_manifest = app.join("Cargo.toml");
+        let source = "[package]\nname = \"external-app\"\nversion.workspace = true\nedition.workspace = true\nrust-version.workspace = true\n\n[dependencies]\nhelper.workspace = true\n";
+        fs::write(&app_manifest, source).unwrap();
+        fs::write(&staged, source).unwrap();
+        fs::write(
+            staged.parent().unwrap().join("src/lib.rs"),
+            "pub fn app() {}\n",
+        )
+        .unwrap();
+        fs::write(
+            helper.join("Cargo.toml"),
+            "[package]\nname = \"helper\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+        fs::write(helper.join("src/lib.rs"), "pub fn value() {}\n").unwrap();
+
+        materialize_staged_workspace_package_fields(&app, &staged).unwrap();
+        materialize_staged_workspace_dependencies(&app, &work_dir, &staged, &[]).unwrap();
+        ensure_standalone_manifest_workspace(&staged).unwrap();
+
+        let staged_text = fs::read_to_string(&staged).unwrap();
+        assert!(staged_text.contains("edition = \"2024\""));
+        assert!(staged_text.contains("rust-version = \"1.85\""));
+        assert!(staged_text.contains(&format!(
+            "helper = {{ path = \"{}\" }}",
+            fs::canonicalize(&helper).unwrap().display()
+        )));
+        assert!(!staged_text.contains("edition.workspace"));
+        assert!(!staged_text.contains("rust-version.workspace"));
+
+        let metadata = Command::new("cargo")
+            .arg("metadata")
+            .arg("--manifest-path")
+            .arg(&staged)
+            .arg("--format-version")
+            .arg("1")
+            .arg("--offline")
+            .output()
+            .expect("run cargo metadata on staged external app");
+        assert!(
+            metadata.status.success(),
+            "cargo metadata failed: {}",
+            String::from_utf8_lossy(&metadata.stderr)
+        );
+        let metadata: serde_json::Value = serde_json::from_slice(&metadata.stdout).unwrap();
+        let packages = metadata["packages"].as_array().unwrap();
+        assert!(
+            packages
+                .iter()
+                .any(|package| package["name"] == "external-app")
+        );
+        assert!(packages.iter().any(|package| package["name"] == "helper"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn staged_relative_dependency_keeps_its_original_package_identity() {
         let root = test_dir("staged-path");
         let app = root.join("app");

@@ -3541,6 +3541,7 @@ fn staged_manifest_for_overlay(
     isolate_staged_workspace_members(&staged_manifest)?;
     strip_manifest_patch_section(&staged_manifest)?;
     if !nested_workspace_package {
+        materialize_staged_workspace_package_fields(app_dir, &staged_manifest)?;
         materialize_staged_workspace_dependencies(
             app_dir,
             work_dir,
@@ -5268,9 +5269,16 @@ fn materialize_staged_workspace_dependencies(
     let blueprint_root = blueprint_root(app_dir).unwrap_or_else(|| app_dir.to_path_buf());
     let mut changed = false;
     let mut out = String::with_capacity(cargo_toml.len());
+    let mut table = String::new();
 
     for line in cargo_toml.lines() {
-        if let Some(dep_name) = workspace_dependency_name(line) {
+        let trimmed = line.split('#').next().unwrap_or("").trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            table = trimmed.to_owned();
+        }
+        if is_dependency_table(&table)
+            && let Some(dep_name) = workspace_dependency_name(line)
+        {
             let mut dependency = materialized_workspace_dependency(
                 app_dir,
                 &blueprint_root,
@@ -5294,6 +5302,78 @@ fn materialize_staged_workspace_dependencies(
         fs::write(manifest_path, out).map_err(io_string)?;
     }
     Ok(())
+}
+
+fn is_dependency_table(table: &str) -> bool {
+    matches!(
+        table,
+        "[dependencies]" | "[dev-dependencies]" | "[build-dependencies]"
+    ) || (table.starts_with("[target.")
+        && table.ends_with(".dependencies]")
+        && !table.starts_with("[workspace."))
+}
+
+fn materialize_staged_workspace_package_fields(
+    app_dir: &Path,
+    manifest_path: &Path,
+) -> Result<(), String> {
+    let Some((_, workspace_manifest)) = app_workspace_manifest(app_dir) else {
+        return Ok(());
+    };
+    let workspace = fs::read_to_string(workspace_manifest).map_err(io_string)?;
+    let package_values = toml_table_values(&workspace, "[workspace.package]");
+    if package_values.is_empty() {
+        return Ok(());
+    }
+
+    let manifest = fs::read_to_string(manifest_path).map_err(io_string)?;
+    let mut table = String::new();
+    let mut out = String::with_capacity(manifest.len());
+    let mut changed = false;
+    for line in manifest.lines() {
+        let trimmed = line.split('#').next().unwrap_or("").trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            table = trimmed.to_owned();
+        }
+        if table == "[package]"
+            && let Some((key, value)) = trimmed.split_once('=')
+            && value.trim() == "true"
+            && let Some(field) = key.trim().strip_suffix(".workspace")
+            && let Some(inherited) = package_values.get(field)
+        {
+            out.push_str(field);
+            out.push_str(" = ");
+            out.push_str(inherited);
+            out.push('\n');
+            changed = true;
+        } else {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    if changed {
+        fs::write(manifest_path, out).map_err(io_string)?;
+    }
+    Ok(())
+}
+
+fn toml_table_values(source: &str, wanted_table: &str) -> HashMap<String, String> {
+    let mut table = String::new();
+    let mut values = HashMap::new();
+    for line in source.lines() {
+        let trimmed = line.split('#').next().unwrap_or("").trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            table = trimmed.to_owned();
+        } else if table == wanted_table
+            && let Some((key, value)) = trimmed.split_once('=')
+        {
+            values.insert(
+                key.trim().to_owned(),
+                value.trim().trim_end_matches(',').to_owned(),
+            );
+        }
+    }
+    values
 }
 
 fn materialize_hidden_build_std_pins(
@@ -5780,21 +5860,26 @@ fn app_workspace_manifest(app_dir: &Path) -> Option<(PathBuf, PathBuf)> {
         if !manifest.is_file() {
             continue;
         }
-        if manifest_has_workspace_dependencies(&manifest) {
+        if manifest_has_app_workspace(&manifest) {
             return Some((ancestor.to_path_buf(), manifest));
         }
     }
     None
 }
 
-fn manifest_has_workspace_dependencies(manifest_path: &Path) -> bool {
+fn manifest_has_app_workspace(manifest_path: &Path) -> bool {
     let Ok(cargo_toml) = fs::read_to_string(manifest_path) else {
         return false;
     };
     cargo_toml
         .lines()
         .map(|line| line.split('#').next().unwrap_or("").trim())
-        .any(|line| line == "[workspace.dependencies]")
+        .any(|line| {
+            matches!(
+                line,
+                "[workspace]" | "[workspace.package]" | "[workspace.dependencies]"
+            )
+        })
 }
 
 fn materialize_app_workspace_dependency(
