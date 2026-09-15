@@ -2,17 +2,22 @@
 //!
 //! CoreText is used on macOS.
 //! DirectWrite is used on Windows.
-//! FreeType is used everywhere else.
+//! FreeType is used on Unix-like desktop platforms.
 
 #![deny(clippy::all, clippy::if_not_else, clippy::enum_glob_use)]
 
 use std::fmt::{self, Display, Formatter};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-#[cfg(not(any(target_os = "macos", windows)))]
+#[cfg(all(not(target_os = "trueos"), not(any(target_os = "macos", windows))))]
 pub mod ft;
-#[cfg(not(any(target_os = "macos", windows)))]
+#[cfg(all(not(target_os = "trueos"), not(any(target_os = "macos", windows))))]
 pub use ft::FreeTypeRasterizer as Rasterizer;
+
+#[cfg(target_os = "trueos")]
+pub mod trueos;
+#[cfg(target_os = "trueos")]
+pub use trueos::TrueosRasterizer as Rasterizer;
 
 #[cfg(windows)]
 pub mod directwrite;
