@@ -3593,16 +3593,23 @@ fn canonicalize_staged_manifest_paths_from_original(
     let cargo_toml = fs::read_to_string(staged_manifest).map_err(io_string)?;
     let mut changed = false;
     let mut out = String::with_capacity(cargo_toml.len());
+    let mut table_dependency = None;
     for line in cargo_toml.lines() {
-        let rewritten = inline_dependency_name_and_path(line).and_then(|(dependency, path)| {
-            let path = PathBuf::from(path);
-            if path.is_absolute() {
-                return None;
-            }
-            fs::canonicalize(original_dir.join(path))
-                .ok()
-                .and_then(|canonical| dependency_with_rewritten_path(line, dependency, &canonical))
-        });
+        let trimmed = line.split('#').next().unwrap_or("").trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            table_dependency = table_dependency_name(trimmed);
+        }
+        let rewritten = if let Some((dependency, path)) = inline_dependency_name_and_path(line) {
+            rewrite_dependency_path(line, dependency, &path, original_dir)
+        } else if table_dependency.is_some()
+            && let Some((key, value)) = trimmed.split_once('=')
+            && key.trim() == "path"
+        {
+            toml_string_value(value.trim())
+                .and_then(|path| rewrite_path_field(line, &path, original_dir))
+        } else {
+            None
+        };
         let output_line = rewritten.as_deref().unwrap_or(line);
         changed |= output_line != line;
         out.push_str(output_line);
@@ -3612,6 +3619,77 @@ fn canonicalize_staged_manifest_paths_from_original(
         fs::write(staged_manifest, out).map_err(io_string)?;
     }
     Ok(())
+}
+
+fn rewrite_dependency_path(
+    line: &str,
+    dependency: &str,
+    path: &str,
+    original_dir: &Path,
+) -> Option<String> {
+    let path = PathBuf::from(path);
+    if path.is_absolute() {
+        return None;
+    }
+    let canonical = fs::canonicalize(original_dir.join(&path)).ok()?;
+    dependency_with_rewritten_path(line, dependency, &canonical)
+}
+
+fn rewrite_path_field(line: &str, path: &str, original_dir: &Path) -> Option<String> {
+    let path = PathBuf::from(path);
+    if path.is_absolute() {
+        return None;
+    }
+    let canonical = fs::canonicalize(original_dir.join(&path)).ok()?;
+    let (declaration, comment) = line.split_once('#').unwrap_or((line, ""));
+    let (key, value) = declaration.split_once('=')?;
+    let old_value = toml_string(path.to_string_lossy().as_ref());
+    let offset = value.find(old_value.as_str())?;
+    let mut rewritten = String::with_capacity(line.len() + canonical.as_os_str().len());
+    rewritten.push_str(key);
+    rewritten.push('=');
+    rewritten.push_str(&value[..offset]);
+    rewritten.push_str(&toml_string(canonical.to_string_lossy().as_ref()));
+    rewritten.push_str(&value[offset + old_value.len()..]);
+    if !comment.is_empty() {
+        rewritten.push('#');
+        rewritten.push_str(comment);
+    }
+    Some(rewritten)
+}
+
+fn table_dependency_name(table: &str) -> Option<String> {
+    let table = table.strip_prefix('[')?.strip_suffix(']')?;
+    let dependency = if let Some(dep) = table.strip_prefix("dependencies.") {
+        dep
+    } else if let Some(dep) = table.strip_prefix("dev-dependencies.") {
+        dep
+    } else if let Some(dep) = table.strip_prefix("build-dependencies.") {
+        dep
+    } else if table.starts_with("target.") {
+        let marker = [
+            ".dependencies.",
+            ".dev-dependencies.",
+            ".build-dependencies.",
+        ]
+        .into_iter()
+        .filter_map(|marker| table.rfind(marker).map(|index| (index, marker.len())))
+        .max_by_key(|(index, _)| *index)?;
+        &table[marker.0 + marker.1..]
+    } else {
+        return None;
+    };
+    let dependency = dependency.trim();
+    let dependency = dependency
+        .strip_prefix('"')
+        .and_then(|dep| dep.strip_suffix('"'))
+        .or_else(|| {
+            dependency
+                .strip_prefix('\'')
+                .and_then(|dep| dep.strip_suffix('\''))
+        })
+        .unwrap_or(dependency);
+    (!dependency.is_empty()).then(|| dependency.to_owned())
 }
 
 /// Build only the selected package from a staged application workspace.

@@ -227,6 +227,77 @@ mod external_path_overlay_tests {
     }
 
     #[test]
+    fn staged_external_table_path_dependencies_resolve_from_original_manifest() {
+        let root = test_dir("staged-external-table-paths");
+        let app = root.join("app");
+        let staged_dir = root.join("stage/app");
+        fs::create_dir_all(app.join("src")).unwrap();
+        fs::create_dir_all(staged_dir.join("src")).unwrap();
+        fs::write(
+            app.join("Cargo.toml"),
+            "[package]\nname = \"external-app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies.helper]\npath = \"../helper\"\n\n[dev-dependencies.dev_helper]\npath = \"../dev-helper\"\n\n[build-dependencies.build_helper]\npath = \"../build-helper\"\n\n[target.'cfg(unix)'.dependencies.target_helper]\npath = \"../target-helper\"\n",
+        )
+        .unwrap();
+        fs::write(
+            staged_dir.join("Cargo.toml"),
+            fs::read(app.join("Cargo.toml")).unwrap(),
+        )
+        .unwrap();
+        fs::write(app.join("src/lib.rs"), "pub fn app() {}\n").unwrap();
+        fs::write(staged_dir.join("src/lib.rs"), "pub fn app() {}\n").unwrap();
+
+        for name in ["helper", "dev-helper", "build-helper", "target-helper"] {
+            let package = root.join(name);
+            fs::create_dir_all(package.join("src")).unwrap();
+            fs::write(
+                package.join("Cargo.toml"),
+                format!(
+                    "[package]\nname = \"{}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+                    name.replace('-', "_")
+                ),
+            )
+            .unwrap();
+            fs::write(package.join("src/lib.rs"), "pub fn value() {}\n").unwrap();
+        }
+
+        canonicalize_staged_manifest_paths_from_original(
+            &app.join("Cargo.toml"),
+            &staged_dir.join("Cargo.toml"),
+        )
+        .unwrap();
+        ensure_standalone_manifest_workspace(&staged_dir.join("Cargo.toml")).unwrap();
+        let staged_text = fs::read_to_string(staged_dir.join("Cargo.toml")).unwrap();
+        for name in ["helper", "dev-helper", "build-helper", "target-helper"] {
+            let canonical = fs::canonicalize(root.join(name)).unwrap();
+            assert!(
+                staged_text.contains(&format!("path = \"{}\"", canonical.display())),
+                "did not canonicalize {name}: {staged_text}"
+            );
+        }
+
+        let metadata = Command::new("cargo")
+            .arg("metadata")
+            .arg("--manifest-path")
+            .arg(staged_dir.join("Cargo.toml"))
+            .arg("--format-version")
+            .arg("1")
+            .arg("--offline")
+            .output()
+            .expect("run cargo metadata for staged table dependencies");
+        assert!(
+            metadata.status.success(),
+            "cargo metadata failed: {}",
+            String::from_utf8_lossy(&metadata.stderr)
+        );
+        let metadata: serde_json::Value = serde_json::from_slice(&metadata.stdout).unwrap();
+        let packages = metadata["packages"].as_array().unwrap();
+        for name in ["helper", "dev_helper", "build_helper", "target_helper"] {
+            assert!(packages.iter().any(|package| package["name"] == name));
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn staged_workspace_only_keeps_the_selected_root_package() {
         let root = test_dir("staged-workspace-members");
         let manifest = root.join("Cargo.toml");
