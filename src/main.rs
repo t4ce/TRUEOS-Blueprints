@@ -3539,6 +3539,7 @@ fn staged_manifest_for_overlay(
     let nested_workspace_package = manifest_relative.components().count() > 1;
     canonicalize_staged_manifest_paths_from_original(manifest_path, &staged_manifest)?;
     isolate_staged_workspace_members(&staged_manifest)?;
+    materialize_staged_workspace_patches(app_dir, &staged_manifest)?;
     strip_manifest_patch_section(&staged_manifest)?;
     if !nested_workspace_package {
         materialize_staged_workspace_package_fields(app_dir, &staged_manifest)?;
@@ -5324,10 +5325,11 @@ fn strip_manifest_patch_section(manifest_path: &Path) -> Result<(), String> {
         if trimmed.starts_with('[') {
             in_patch = trimmed == "[patch.crates-io]";
             if in_patch {
+                out.push_str("[patch.crates-io]\n");
                 continue;
             }
         }
-        if in_patch {
+        if in_patch && !trimmed.starts_with("glutin =") {
             continue;
         }
         out.push_str(line);
@@ -5335,6 +5337,46 @@ fn strip_manifest_patch_section(manifest_path: &Path) -> Result<(), String> {
     }
 
     fs::write(manifest_path, out).map_err(io_string)
+}
+
+fn materialize_staged_workspace_patches(
+    app_dir: &Path,
+    manifest_path: &Path,
+) -> Result<(), String> {
+    let Some((workspace_root, workspace_manifest)) = app_workspace_manifest(app_dir) else {
+        return Ok(());
+    };
+    let workspace = fs::read_to_string(workspace_manifest).map_err(io_string)?;
+    let mut in_patch = false;
+    let mut patch = None;
+    for line in workspace.lines() {
+        let trimmed = line.split('#').next().unwrap_or("").trim();
+        if trimmed.starts_with('[') {
+            in_patch = trimmed == "[patch.crates-io]";
+            continue;
+        }
+        if !in_patch {
+            continue;
+        }
+        if let Some((dependency, path)) = inline_dependency_name_and_path(line)
+            && dependency == "glutin"
+        {
+            patch = rewrite_dependency_path(line, &dependency, &path, &workspace_root);
+            break;
+        }
+    }
+    let Some(patch) = patch else {
+        return Ok(());
+    };
+
+    let mut staged = fs::read_to_string(manifest_path).map_err(io_string)?;
+    if !staged.ends_with('\n') {
+        staged.push('\n');
+    }
+    staged.push_str("\n[patch.crates-io]\n");
+    staged.push_str(&patch);
+    staged.push('\n');
+    fs::write(manifest_path, staged).map_err(io_string)
 }
 
 fn materialize_staged_workspace_dependencies(
