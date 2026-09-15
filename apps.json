@@ -12,6 +12,10 @@
     "gboi",
     "tredb",
     "hello_world",
+    {
+      "name": "alacritty",
+      "path": "../alacritty/alacritty"
+    },
     "wgpu-hello-compute",
     "hello_world_replicatable",
     {
