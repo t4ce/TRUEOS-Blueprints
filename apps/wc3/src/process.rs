@@ -18,6 +18,7 @@ pub const PROCESS_DATA_VA: u32 = 0x0021_1000;
 /// Historical launcher stack: 0x0430_0000..0x0440_0000.
 pub const STACK_BASE: u32 = 0x0430_0000;
 pub const STACK_BYTES: usize = 0x10_0000;
+pub const STACK_TOP: u32 = STACK_BASE + STACK_BYTES as u32;
 pub const THUNK_PAGE_BYTES: usize = 0x1000;
 /// Process state returned by GetCommandLineA.  The launcher constructs its
 /// separate `"war3.exe" ` child command line on its native stack.
@@ -1299,7 +1300,7 @@ mod tests {
     #[test]
     fn historical_launcher_layout_and_create_process_frontier_match() {
         assert_eq!(STACK_BASE, 0x0430_0000);
-        assert_eq!(STACK_BASE + STACK_BYTES as u32, 0x0440_0000);
+        assert_eq!(STACK_TOP, 0x0440_0000);
         assert_eq!(COMMAND_LINE, b"\"Warcraft III.exe\"\0");
         assert_eq!(WINDOW_HWND, 0x5743_4001);
 

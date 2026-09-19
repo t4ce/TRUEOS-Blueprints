@@ -7,7 +7,7 @@ use trueos::{
 };
 use wc3::{
     EXPECTED_SHA256, LAUNCHER_PATH, pe32,
-    process::{DispatchResult, Frontier, GuestMemory, PreparedProcess, STACK_BASE, STACK_BYTES, ThreadObject, WindowRequest},
+    process::{DispatchResult, Frontier, GuestMemory, PreparedProcess, STACK_BASE, STACK_TOP, ThreadObject, WindowRequest},
     thunk32,
 };
 
@@ -57,7 +57,7 @@ async fn run() -> Result<(), String> {
         }
     }
 
-    let esp = STACK_BASE + u32::try_from(STACK_BYTES).map_err(|_| "stack too large")? - 16;
+    let esp = STACK_TOP;
     let registers = Registers {
         esp,
         eip: pe32::IMAGE_BASE + pe32::ENTRY_RVA,
