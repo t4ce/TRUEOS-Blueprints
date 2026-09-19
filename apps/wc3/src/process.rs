@@ -7,6 +7,7 @@
 use std::collections::{HashMap, VecDeque};
 
 use crate::{
+    child_loader::{ChildProvider, ProviderImport},
     imports::{LauncherImport, WinCall},
     pe32,
     session::{
@@ -296,6 +297,9 @@ struct Message {
 
 pub struct XpProcess {
     imports: Vec<LauncherImport>,
+    provider_imports: Vec<ProviderImport>,
+    provider_thunks: Vec<u8>,
+    provider_modules: Vec<ChildProvider>,
     pub call_count: u32,
     pub threads: Vec<ThreadObject>,
     next_tid: u32,
@@ -351,6 +355,9 @@ impl XpProcess {
         );
         Self {
             imports,
+            provider_imports: Vec::new(),
+            provider_thunks: Vec::new(),
+            provider_modules: Vec::new(),
             call_count: 0,
             threads: Vec::new(),
             next_tid: 2,
@@ -375,6 +382,25 @@ impl XpProcess {
 
     pub fn import(&self, id: u32) -> Option<&LauncherImport> {
         self.imports.get(id as usize)
+    }
+
+    pub fn install_provider_surface(
+        &mut self,
+        imports: Vec<ProviderImport>,
+        thunks: Vec<u8>,
+        modules: Vec<ChildProvider>,
+    ) {
+        self.provider_imports = imports;
+        self.provider_thunks = thunks;
+        self.provider_modules = modules;
+    }
+
+    pub fn provider_import(&self, id: u32) -> Option<&ProviderImport> {
+        self.provider_imports.get(id as usize)
+    }
+
+    pub fn provider_modules(&self) -> &[ChildProvider] {
+        &self.provider_modules
     }
 
     /// Handle one import VMCALL and return the value for EAX.

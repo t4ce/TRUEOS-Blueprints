@@ -9,6 +9,7 @@ pub mod pe32;
 pub mod process;
 pub mod session;
 pub mod thunk32;
+pub mod child_loader;
 
 pub const LAUNCHER_PATH: &str = "/common/Warcraft III/Warcraft III.exe";
 pub const EXPECTED_SHA256: [u8; 32] = [

@@ -1,4 +1,4 @@
-use std::{collections::{BTreeMap, HashMap, HashSet}, time::Duration};
+use std::{collections::{HashMap, HashSet}, time::Duration};
 
 use sha2::{Digest, Sha256};
 use trueos::{
@@ -8,6 +8,7 @@ use trueos::{
     x86::{AddressSpace, Context, ExitKind, Permissions, Registers},
 };
 use wc3::{
+    child_loader,
     EXPECTED_SHA256, LAUNCHER_PATH,
     imports::WinCall,
     pe32,
@@ -17,7 +18,7 @@ use wc3::{
     },
     session::{
         GuestCall, LAUNCHER_PID, LAUNCHER_TID, PersonalityAction, SessionRequest,
-        ThreadKey, WINDOW_HANDLE_BASE, Wc3Session, WindowPresentation,
+        SessionObject, ThreadKey, WINDOW_HANDLE_BASE, Wc3Session, WindowPresentation,
     },
     thunk32,
 };
@@ -1252,11 +1253,13 @@ async fn run() -> Result<(), String> {
                         memory
                             .write(frame.process_information + 12, &created.tid.to_le_bytes())
                             .map_err(str::to_owned)?;
-                        log_child_image(&child, created.pid, created.tid);
+                        log_child_handles(&session, created.pid);
                         pending_child = Some(PendingChild {
                             pid: created.pid,
                             tid: created.tid,
                             image: child,
+                            native_modules: Vec::new(),
+                            address_space: AddressSpace::create().map_err(|error| error.to_string())?,
                         });
                         logl::log(
                             level::INFO,
@@ -1541,19 +1544,77 @@ async fn run() -> Result<(), String> {
                             active = next;
                             continue;
                         }
-                        if let Some(key) = session.runnable.iter().find(|key| key.pid != LAUNCHER_PID)
-                        {
+                        if let Some(key) = session.runnable.iter().find(|key| key.pid != LAUNCHER_PID) {
+                            let child = pending_child
+                                .as_mut()
+                                .filter(|child| child.pid == key.pid && child.tid == key.tid)
+                                .ok_or_else(|| "runnable child missing pending image".to_owned())?;
+                            let listing = async_fs::list_dir(b"/common/Warcraft III")
+                                .await
+                                .map_err(|error| format!("list Warcraft III directory: TRUEOSFS {error}"))?;
+                            if listing.truncated {
+                                return Err("Warcraft III directory listing truncated".into());
+                            }
+                            let surface = child_loader::prepare(&mut child.image, &listing)
+                                .map_err(str::to_owned)?;
+                            map_child_image(&child.address_space, &child.image)?;
+                            map_child_thunks(&child.address_space, &surface.thunks)?;
                             logl::log(
                                 level::IMPORTANT,
                                 format_args!(
-                                    "WC3 CHILD LOADER FRONTIER pid={} tid={} reason=primary-thread-runnable launcher_tid1=blocked launcher_tid2=blocked entry_va=0x{:08x}",
-                                    key.pid,
-                                    key.tid,
-                                    pending_child
-                                        .as_ref()
-                                        .filter(|child| child.pid == key.pid && child.tid == key.tid)
-                                        .and_then(|child| child.image.image_base.checked_add(child.image.entry_rva))
-                                        .unwrap_or(0),
+                                    "WC3 CHILD PROVIDERS READY pid={} modules={} imports={} named={} ordinal={} thunk_base=0x{:08x} thunk_bytes={} patched_iat={}",
+                                    child.pid,
+                                    surface.external_modules,
+                                    surface.imports.len(),
+                                    surface.named,
+                                    surface.ordinal,
+                                    thunk32::THUNK_BASE,
+                                    surface.thunks.len(),
+                                    surface.imports.len(),
+                                ),
+                            );
+                            session
+                                .process_mut(child.pid)
+                                .ok_or_else(|| "child process missing".to_owned())?
+                                .xp
+                                .install_provider_surface(surface.imports, surface.thunks, surface.providers);
+                            let native = surface
+                                .native
+                                .into_iter()
+                                .next()
+                                .ok_or_else(|| "child has no local native direct module".to_owned())?;
+                            let path = format!("/common/Warcraft III/{}", native.stored);
+                            let bytes = async_fs::read_file(path.as_bytes())
+                                .await
+                                .map_err(|error| format!("read {path}: TRUEOSFS error {error}"))?;
+                            let image = pe32::parse(&bytes).map_err(str::to_owned)?;
+                            child.address_space
+                                .map(
+                                    image.image_base,
+                                    image.image.len(),
+                                    Permissions::READ | Permissions::WRITE | Permissions::EXECUTE,
+                                )
+                                .map_err(|_| "preferred-base-unavailable".to_owned())?;
+                            let written = child.address_space
+                                .write(image.image_base, &image.image)
+                                .map_err(|error| error.to_string())?;
+                            if written != image.image.len() { return Err("short native image write".into()); }
+                            logl::log(level::IMPORTANT, format_args!(
+                                "WC3 CHILD NATIVE MAP pid={} module=\"{}\" preferred_base=0x{:08x} mapped_base=0x{:08x} size=0x{:08x} relocation_delta=0 relocations_applied=0",
+                                child.pid, native.stored, image.image_base, image.image_base, image.size_of_image
+                            ));
+                            log_native_child_image(&native.requested, &native.stored, &image, &listing)
+                                .map_err(str::to_owned)?;
+                            child.native_modules.push(PendingNativeModule {
+                                requested: native.requested,
+                                stored: native.stored.clone(),
+                                image,
+                            });
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD NATIVE LOADER FRONTIER pid={} tid={} module=\"{}\" reason=dependencies-known-not-mapped",
+                                    child.pid, child.tid, native.stored,
                                 ),
                             );
                             return Ok(());
@@ -1948,59 +2009,133 @@ struct PendingChild {
     pid: u32,
     tid: u32,
     image: pe32::PeImage,
+    native_modules: Vec<PendingNativeModule>,
+    address_space: AddressSpace,
 }
 
-fn log_child_image(image: &pe32::PeImage, pid: u32, tid: u32) {
+struct PendingNativeModule {
+    requested: String,
+    stored: String,
+    image: pe32::PeImage,
+}
+
+fn map_child_image(address_space: &AddressSpace, image: &pe32::PeImage) -> Result<(), String> {
+    address_space
+        .map(
+            image.image_base,
+            image.image.len(),
+            Permissions::READ | Permissions::WRITE | Permissions::EXECUTE,
+        )
+        .map_err(|error| format!("map child image: {error}"))?;
+    let written = address_space
+        .write(image.image_base, &image.image)
+        .map_err(|error| format!("write child image: {error}"))?;
+    if written != image.image.len() {
+        return Err("short child image write".into());
+    }
+    Ok(())
+}
+
+fn map_child_thunks(address_space: &AddressSpace, thunks: &[u8]) -> Result<(), String> {
+    address_space
+        .map(
+            thunk32::THUNK_BASE,
+            thunks.len(),
+            Permissions::READ | Permissions::WRITE | Permissions::EXECUTE,
+        )
+        .map_err(|error| format!("map child provider thunks: {error}"))?;
+    let written = address_space
+        .write(thunk32::THUNK_BASE, thunks)
+        .map_err(|error| format!("write child provider thunks: {error}"))?;
+    if written != thunks.len() {
+        return Err("short child provider thunk write".into());
+    }
+    Ok(())
+}
+
+fn log_native_child_image(
+    requested: &str,
+    stored: &str,
+    image: &pe32::PeImage,
+    listing: &async_fs::DirListing,
+) -> Result<(), &'static str> {
+    let entry_va = image.image_base.checked_add(image.entry_rva).ok_or("native entry overflow")?;
     logl::log(
         level::IMPORTANT,
         format_args!(
-            "WC3 CHILD IMAGE pid={} tid={} image_base=0x{:08x} entry_rva=0x{:08x} entry_va=0x{:08x} size_of_image=0x{:08x} imports={} relocations={}",
-            pid,
-            tid,
+            "WC3 CHILD NATIVE DLL parent=\"War3.exe\" requested=\"{}\" stored=\"{}\" image_base=0x{:08x} entry_rva=0x{:08x} entry_va=0x{:08x} size_of_image={} sections={} imports={} relocations={}",
+            requested,
+            stored,
             image.image_base,
             image.entry_rva,
-            image.image_base.saturating_add(image.entry_rva),
+            entry_va,
             image.size_of_image,
+            image.sections.len(),
             image.imports.len(),
             image.relocations.len(),
         ),
     );
-
-    let mut modules: BTreeMap<&str, (usize, usize, usize)> = BTreeMap::new();
+    let mut dependencies: Vec<(String, usize, usize, usize)> = Vec::new();
     for import in &image.imports {
-        let entry = modules.entry(import.module.as_str()).or_default();
-        entry.0 += 1;
-        match import.symbol {
-            pe32::ImportSymbol::Name(_) => entry.1 += 1,
-            pe32::ImportSymbol::Ordinal(_) => entry.2 += 1,
+        if let Some((_, count, named, ordinal)) = dependencies.iter_mut().find(|(module, _, _, _)| module == &import.module) {
+            *count += 1;
+            match &import.symbol {
+                pe32::ImportSymbol::Name(_) => *named += 1,
+                pe32::ImportSymbol::Ordinal(_) => *ordinal += 1,
+            }
+        } else {
+            dependencies.push((
+                import.module.clone(),
+                1,
+                usize::from(matches!(&import.symbol, pe32::ImportSymbol::Name(_))),
+                usize::from(matches!(&import.symbol, pe32::ImportSymbol::Ordinal(_))),
+            ));
         }
     }
-    for (module, (count, named, ordinal)) in modules {
+    for (index, (module, imports, named, ordinal)) in dependencies.into_iter().enumerate() {
+        let local = child_loader::resolve_file(listing, &module)?;
         logl::log(
             level::IMPORTANT,
             format_args!(
-                "WC3 CHILD IMPORT MODULE module=\"{}\" imports={} named={} ordinal={}",
-                module, count, named, ordinal
+                "WC3 CHILD NATIVE DLL DEPENDENCY parent=\"{}\" index={} module=\"{}\" imports={} named={} ordinal={} local={}{}",
+                stored,
+                index,
+                module,
+                imports,
+                named,
+                ordinal,
+                usize::from(local.is_some()),
+                local.as_ref().map(|value| format!(" stored=\"{}\"", value)).unwrap_or_default(),
             ),
         );
-        for import in image
-            .imports
-            .iter()
-            .filter(|import| import.module == module)
-            .take(8)
-        {
-            let symbol = match &import.symbol {
-                pe32::ImportSymbol::Name(name) => name.clone(),
-                pe32::ImportSymbol::Ordinal(ordinal) => format!("#{ordinal}"),
-            };
-            logl::log(
-                level::INFO,
-                format_args!(
-                    "WC3 CHILD IMPORT module=\"{}\" symbol=\"{}\" iat_rva=0x{:08x}",
-                    module, symbol, import.iat_rva
-                ),
-            );
-        }
+    }
+    Ok(())
+}
+
+fn log_child_handles(session: &Wc3Session, pid: u32) {
+    let Some(process) = session.process(pid) else {
+        return;
+    };
+    logl::log(
+        level::IMPORTANT,
+        format_args!("WC3 CHILD HANDLES pid={} count={}", pid, process.handles.len()),
+    );
+    let mut handles: Vec<_> = process.handles.iter().collect();
+    handles.sort_unstable_by_key(|(handle, _)| **handle);
+    for (handle, entry) in handles {
+        let kind = match session.objects.get(&entry.object) {
+            Some(SessionObject::Event(_)) => "event",
+            Some(SessionObject::Process(_)) => "process",
+            Some(SessionObject::Thread(_)) => "thread",
+            None => "unknown",
+        };
+        logl::log(
+            level::IMPORTANT,
+            format_args!(
+                "WC3 CHILD HANDLE handle=0x{:08x} object_id={} kind={}",
+                handle, entry.object, kind
+            ),
+        );
     }
 }
 
