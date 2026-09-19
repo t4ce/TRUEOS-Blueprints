@@ -13,6 +13,8 @@ pub type Tid = u32;
 pub type ObjectId = u64;
 pub const LAUNCHER_PID: Pid = 1;
 pub const LAUNCHER_TID: Tid = 1;
+pub const PROCESS_HANDLE_BASE: u32 = 0x5743_6001;
+pub const THREAD_HANDLE_BASE: u32 = 0x5743_5001;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct ThreadKey {
@@ -80,6 +82,16 @@ pub struct CreateProcessRequest {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CreatedChild {
+    pub pid: Pid,
+    pub tid: Tid,
+    pub process_handle: u32,
+    pub thread_handle: u32,
+    pub process_object: ObjectId,
+    pub thread_object: ObjectId,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SessionRequest {
     CreateProcess(CreateProcessRequest),
 }
@@ -116,6 +128,8 @@ pub struct Wc3Session {
     pub next_pid: Pid,
     pub next_tid: Tid,
     pub next_object: ObjectId,
+    pub next_process_handle: u32,
+    pub next_thread_handle: u32,
     pub sequence: u64,
 }
 
@@ -145,6 +159,8 @@ impl Wc3Session {
             next_pid: 2,
             next_tid: 2,
             next_object: 1,
+            next_process_handle: PROCESS_HANDLE_BASE,
+            next_thread_handle: THREAD_HANDLE_BASE,
             sequence: 0,
         }
     }
@@ -205,5 +221,81 @@ impl Wc3Session {
     /// session state rather than reaching into a launcher carrier.
     pub fn sync_launcher_focus(&mut self) {
         self.focused_window = self.launcher().xp.focused_window();
+    }
+
+    pub fn create_child(&mut self) -> CreatedChild {
+        let pid = self.next_pid;
+        self.next_pid += 1;
+        let tid = self.next_tid;
+        self.next_tid += 1;
+        let process_object = self.next_object;
+        self.next_object += 1;
+        let thread_object = self.next_object;
+        self.next_object += 1;
+        self.objects.insert(
+            process_object,
+            SessionObject::Process(ProcessObject { pid }),
+        );
+        self.objects.insert(
+            thread_object,
+            SessionObject::Thread(ThreadSessionObject {
+                key: ThreadKey { pid, tid },
+                exit_code: None,
+            }),
+        );
+        let process_handle = self.next_process_handle;
+        self.next_process_handle += 1;
+        let thread_handle = self.next_thread_handle;
+        self.next_thread_handle += 1;
+        self.launcher_mut().handles.insert(
+            process_handle,
+            HandleEntry {
+                object: process_object,
+                inheritable: false,
+            },
+        );
+        self.launcher_mut().handles.insert(
+            thread_handle,
+            HandleEntry {
+                object: thread_object,
+                inheritable: false,
+            },
+        );
+        self.processes.insert(
+            pid,
+            Wc3Process {
+                pid,
+                xp: XpProcess::new(Vec::new()),
+                handles: HashMap::new(),
+            },
+        );
+        CreatedChild {
+            pid,
+            tid,
+            process_handle,
+            thread_handle,
+            process_object,
+            thread_object,
+        }
+    }
+
+    pub fn describe_handle(&self, pid: Pid, handle: u32) -> String {
+        let Some(entry) = self
+            .process(pid)
+            .and_then(|process| process.handles.get(&handle))
+        else {
+            return "unknown".into();
+        };
+        let Some(object) = self.objects.get(&entry.object) else {
+            return format!("object_id={} unknown", entry.object);
+        };
+        let kind = match object {
+            SessionObject::Event(event) => format!("Event name={:?}", event.name),
+            SessionObject::Process(process) => format!("Process pid={}", process.pid),
+            SessionObject::Thread(thread) => {
+                format!("Thread pid={} tid={}", thread.key.pid, thread.key.tid)
+            }
+        };
+        format!("object_id={} {}", entry.object, kind)
     }
 }

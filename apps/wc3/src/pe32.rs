@@ -5,9 +5,51 @@ pub const ENTRY_RVA: u32 = 0x2144;
 pub const IMAGE_BYTES: usize = 0x44_000;
 pub const HEADERS_BYTES: usize = 0x1_000;
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PeSection {
+    pub virtual_address: u32,
+    pub virtual_size: u32,
+    pub raw_offset: u32,
+    pub raw_size: u32,
+    pub characteristics: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ImportSymbol {
+    Name(String),
+    Ordinal(u16),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ImportDescriptor {
+    pub module: String,
+    pub symbol: ImportSymbol,
+    pub iat_rva: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BaseRelocation {
+    pub page_rva: u32,
+    pub offset: u16,
+    pub kind: u16,
+}
+
+pub struct PeImage {
+    pub image_base: u32,
+    pub entry_rva: u32,
+    pub size_of_image: u32,
+    pub size_of_headers: u32,
+    pub sections: Vec<PeSection>,
+    pub imports: Vec<ImportDescriptor>,
+    pub relocations: Vec<BaseRelocation>,
+    pub image: Vec<u8>,
+}
+
 pub struct Materialized {
     pub image: Vec<u8>,
     pub imports: Vec<LauncherImport>,
+    pub image_base: u32,
+    pub entry_rva: u32,
 }
 
 fn u16_at(bytes: &[u8], offset: usize) -> Result<u16, &'static str> {
@@ -41,8 +83,8 @@ fn c_string(bytes: &[u8], offset: usize) -> Result<String, &'static str> {
         .map_err(|_| "PE non-ASCII import")
 }
 
-/// Materialize the fixed Warcraft III 1.00 launcher image and its import table.
-pub fn materialize(bytes: &[u8]) -> Result<Materialized, &'static str> {
+/// Parse and materialize a PE32/i386 image without applying launcher policy.
+pub fn parse(bytes: &[u8]) -> Result<PeImage, &'static str> {
     if bytes.get(..2) != Some(b"MZ") {
         return Err("PE DOS signature");
     }
@@ -59,24 +101,17 @@ pub fn materialize(bytes: &[u8]) -> Result<Materialized, &'static str> {
     if optional_bytes < 0xe0 || u16_at(bytes, optional)? != 0x10b {
         return Err("PE optional header is not PE32");
     }
-    if u32_at(bytes, optional + 16)? != ENTRY_RVA
-        || u32_at(bytes, optional + 28)? != IMAGE_BASE
-        || usize::try_from(u32_at(bytes, optional + 56)?).ok() != Some(IMAGE_BYTES)
-        || usize::try_from(u32_at(bytes, optional + 60)?).ok() != Some(HEADERS_BYTES)
-    {
-        return Err("PE fixed launcher header mismatch");
-    }
-    for directory in [5usize, 9] {
-        let offset = optional + 96 + directory * 8;
-        if u32_at(bytes, offset)? != 0 || u32_at(bytes, offset + 4)? != 0 {
-            return Err("PE unsupported relocation or TLS directory");
-        }
-    }
-    if bytes.len() < HEADERS_BYTES {
+    let entry_rva = u32_at(bytes, optional + 16)?;
+    let image_base = u32_at(bytes, optional + 28)?;
+    let size_of_image = u32_at(bytes, optional + 56)?;
+    let size_of_headers = u32_at(bytes, optional + 60)?;
+    let image_len = usize::try_from(size_of_image).map_err(|_| "PE image size")?;
+    let headers_len = usize::try_from(size_of_headers).map_err(|_| "PE headers size")?;
+    if image_len == 0 || headers_len > image_len || bytes.len() < headers_len {
         return Err("PE headers truncated");
     }
-    let mut image = vec![0; IMAGE_BYTES];
-    image[..HEADERS_BYTES].copy_from_slice(&bytes[..HEADERS_BYTES]);
+    let mut image = vec![0; image_len];
+    image[..headers_len].copy_from_slice(&bytes[..headers_len]);
     let table = optional
         .checked_add(optional_bytes)
         .ok_or("PE section table overflow")?;
@@ -84,26 +119,34 @@ pub fn materialize(bytes: &[u8]) -> Result<Materialized, &'static str> {
         let section = table
             .checked_add(index.checked_mul(40).ok_or("PE section count")?)
             .ok_or("PE section offset overflow")?;
-        let virtual_size =
-            usize::try_from(u32_at(bytes, section + 8)?).map_err(|_| "PE virtual size")?;
-        let virtual_address =
-            usize::try_from(u32_at(bytes, section + 12)?).map_err(|_| "PE virtual address")?;
-        let raw_size = usize::try_from(u32_at(bytes, section + 16)?).map_err(|_| "PE raw size")?;
-        let raw_offset =
-            usize::try_from(u32_at(bytes, section + 20)?).map_err(|_| "PE raw offset")?;
+        let virtual_size = u32_at(bytes, section + 8)?;
+        let virtual_address = u32_at(bytes, section + 12)?;
+        let characteristics = u32_at(bytes, section + 36)?;
+        let raw_size = u32_at(bytes, section + 16)?;
+        let raw_offset = u32_at(bytes, section + 20)?;
         if virtual_address
             .checked_add(virtual_size.max(raw_size))
-            .filter(|end| *end <= IMAGE_BYTES)
+            .filter(|end| {
+                usize::try_from(*end)
+                    .ok()
+                    .is_some_and(|end| end <= image_len)
+            })
             .is_none()
             || raw_offset
                 .checked_add(raw_size)
-                .filter(|end| *end <= bytes.len())
+                .filter(|end| {
+                    usize::try_from(*end)
+                        .ok()
+                        .is_some_and(|end| end <= bytes.len())
+                })
                 .is_none()
         {
             return Err("PE section range");
         }
-        image[virtual_address..virtual_address + raw_size]
-            .copy_from_slice(&bytes[raw_offset..raw_offset + raw_size]);
+        let va = usize::try_from(virtual_address).map_err(|_| "PE virtual address")?;
+        let raw = usize::try_from(raw_size).map_err(|_| "PE raw size")?;
+        let source = usize::try_from(raw_offset).map_err(|_| "PE raw offset")?;
+        image[va..va + raw].copy_from_slice(&bytes[source..source + raw]);
     }
     let import_rva =
         usize::try_from(u32_at(bytes, optional + 104)?).map_err(|_| "PE import RVA")?;
@@ -111,7 +154,11 @@ pub fn materialize(bytes: &[u8]) -> Result<Materialized, &'static str> {
         usize::try_from(u32_at(bytes, optional + 108)?).map_err(|_| "PE import size")?;
     let import_end = import_rva
         .checked_add(import_size)
-        .filter(|end| *end <= IMAGE_BYTES)
+        .filter(|end| {
+            usize::try_from(*end)
+                .ok()
+                .is_some_and(|end| end <= image_len)
+        })
         .ok_or("PE import directory range")?;
     if import_rva == 0 || import_size == 0 {
         return Err("PE import directory missing");
@@ -137,17 +184,19 @@ pub fn materialize(bytes: &[u8]) -> Result<Materialized, &'static str> {
             let slot = lookup
                 .checked_add(index.checked_mul(4).ok_or("PE import index")?)
                 .ok_or("PE lookup overflow")?;
-            let name_rva = usize::try_from(u32_at(&image, slot)?).map_err(|_| "PE import name")?;
-            if name_rva == 0 {
+            let lookup_value = u32_at(&image, slot)?;
+            if lookup_value == 0 {
                 break;
             }
-            if name_rva & 0x8000_0000 != 0 {
-                return Err("PE ordinal import unsupported");
-            }
-            let symbol = c_string(
-                &image,
-                name_rva.checked_add(2).ok_or("PE import name overflow")?,
-            )?;
+            let symbol = if lookup_value & 0x8000_0000 != 0 {
+                ImportSymbol::Ordinal((lookup_value & 0xffff) as u16)
+            } else {
+                let name_rva = usize::try_from(lookup_value).map_err(|_| "PE import name")?;
+                ImportSymbol::Name(c_string(
+                    &image,
+                    name_rva.checked_add(2).ok_or("PE import name overflow")?,
+                )?)
+            };
             let iat_rva = u32::try_from(iat.checked_add(index * 4).ok_or("PE IAT overflow")?)
                 .map_err(|_| "PE IAT RVA")?;
             if image
@@ -157,8 +206,7 @@ pub fn materialize(bytes: &[u8]) -> Result<Materialized, &'static str> {
             {
                 return Err("PE IAT outside image");
             }
-            imports.push(LauncherImport {
-                id: u32::try_from(imports.len()).map_err(|_| "PE import count")?,
+            imports.push(ImportDescriptor {
                 module: module.clone(),
                 symbol,
                 iat_rva,
@@ -167,11 +215,95 @@ pub fn materialize(bytes: &[u8]) -> Result<Materialized, &'static str> {
         }
         descriptor += 20;
     }
+    let mut relocations = Vec::new();
+    let reloc_rva = u32_at(bytes, optional + 96 + 5 * 8)?;
+    let reloc_size = u32_at(bytes, optional + 96 + 5 * 8 + 4)?;
+    if reloc_rva != 0 && reloc_size >= 8 {
+        let end = reloc_rva
+            .checked_add(reloc_size)
+            .ok_or("PE relocation range")?;
+        if usize::try_from(end).ok().is_none_or(|end| end > image_len) {
+            return Err("PE relocation directory range");
+        }
+        let mut cursor = reloc_rva;
+        while cursor + 8 <= end {
+            let page_rva = u32_at(&image, usize::try_from(cursor).unwrap())?;
+            let block_size = u32_at(&image, usize::try_from(cursor + 4).unwrap())?;
+            if block_size < 8 || cursor + block_size > end {
+                return Err("PE relocation block");
+            }
+            let mut item = cursor + 8;
+            while item + 2 <= cursor + block_size {
+                let value = u16_at(&image, usize::try_from(item).unwrap())?;
+                relocations.push(BaseRelocation {
+                    page_rva,
+                    offset: value & 0x0fff,
+                    kind: value >> 12,
+                });
+                item += 2;
+            }
+            cursor += block_size;
+        }
+    }
+    let sections = (0..sections)
+        .map(|index| {
+            let section = table + index * 40;
+            Ok(PeSection {
+                virtual_address: u32_at(bytes, section + 12)?,
+                virtual_size: u32_at(bytes, section + 8)?,
+                raw_offset: u32_at(bytes, section + 20)?,
+                raw_size: u32_at(bytes, section + 16)?,
+                characteristics: u32_at(bytes, section + 36)?,
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(PeImage {
+        image_base,
+        entry_rva,
+        size_of_image,
+        size_of_headers,
+        sections,
+        imports,
+        relocations,
+        image,
+    })
+}
+
+/// Launcher-facing materialization retains the historical import identity and
+/// applies only the launcher's policy checks outside the generic parser.
+pub fn materialize(bytes: &[u8]) -> Result<Materialized, &'static str> {
+    let parsed = parse(bytes)?;
+    if parsed.entry_rva != ENTRY_RVA
+        || parsed.image_base != IMAGE_BASE
+        || parsed.size_of_image as usize != IMAGE_BYTES
+        || parsed.size_of_headers as usize != HEADERS_BYTES
+        || !parsed.relocations.is_empty()
+    {
+        return Err("PE fixed launcher header mismatch");
+    }
+    let mut imports = Vec::new();
+    for descriptor in parsed.imports {
+        let symbol = match descriptor.symbol {
+            ImportSymbol::Name(name) => name,
+            ImportSymbol::Ordinal(_) => return Err("launcher ordinal import unsupported"),
+        };
+        imports.push(LauncherImport {
+            id: u32::try_from(imports.len()).map_err(|_| "PE import count")?,
+            module: descriptor.module,
+            symbol,
+            iat_rva: descriptor.iat_rva,
+        });
+    }
     if !imports
         .iter()
         .any(|item| item.module.eq_ignore_ascii_case("KERNEL32.dll") && item.symbol == "GetVersion")
     {
         return Err("PE expected GetVersion missing");
     }
-    Ok(Materialized { image, imports })
+    Ok(Materialized {
+        image: parsed.image,
+        imports,
+        image_base: parsed.image_base,
+        entry_rva: parsed.entry_rva,
+    })
 }

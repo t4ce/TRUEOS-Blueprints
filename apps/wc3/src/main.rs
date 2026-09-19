@@ -7,7 +7,10 @@ use trueos::{
 };
 use wc3::{
     EXPECTED_SHA256, LAUNCHER_PATH, pe32,
-    process::{GuestMemory, PreparedProcess, STACK_BASE, STACK_TOP, ThreadObject, WindowRequest},
+    process::{
+        GuestMemory, PreparedProcess, STACK_BASE, STACK_BYTES, STACK_TOP, TEB_VA, ThreadObject,
+        WindowRequest,
+    },
     session::{LAUNCHER_PID, LAUNCHER_TID, PersonalityAction, SessionRequest, Wc3Session},
     thunk32,
 };
@@ -86,6 +89,7 @@ async fn run() -> Result<(), String> {
         context,
         started: false,
     }];
+    let mut child_runtime: Option<RuntimeProcess> = None;
     let mut window_frame: Option<Frame> = None;
     let mut active = 0usize;
     loop {
@@ -175,21 +179,53 @@ async fn run() -> Result<(), String> {
                                 frame.process_information,
                             ),
                         );
+                        let child_bytes = async_fs::read_file(b"/common/Warcraft III/War3.exe")
+                            .await
+                            .map_err(|error| {
+                                format!(
+                                    "read /common/Warcraft III/War3.exe: TRUEOSFS error {error}"
+                                )
+                            })?;
+                        let child = pe32::parse(&child_bytes).map_err(str::to_owned)?;
+                        let created = session.create_child();
+                        memory
+                            .write(
+                                frame.process_information,
+                                &created.process_handle.to_le_bytes(),
+                            )
+                            .map_err(str::to_owned)?;
+                        memory
+                            .write(
+                                frame.process_information + 4,
+                                &created.thread_handle.to_le_bytes(),
+                            )
+                            .map_err(str::to_owned)?;
+                        memory
+                            .write(frame.process_information + 8, &created.pid.to_le_bytes())
+                            .map_err(str::to_owned)?;
+                        memory
+                            .write(frame.process_information + 12, &created.tid.to_le_bytes())
+                            .map_err(str::to_owned)?;
+                        child_runtime = Some(create_child_runtime(&child)?);
                         logl::log(
                             level::INFO,
                             format_args!(
-                                "wc3: frontier state deferred_tid={:?} focused_root={:?}",
-                                session.deferred_runnable_tid(),
-                                session.focused_root(),
+                                "wc3: CreateProcessA succeeded pid={} tid={} process_handle=0x{:08x} thread_handle=0x{:08x}",
+                                created.pid,
+                                created.tid,
+                                created.process_handle,
+                                created.thread_handle
                             ),
                         );
-                        return Ok(());
+                        1
                     }
                     PersonalityAction::Block(request) => {
                         logl::log(
                             level::IMPORTANT,
                             format_args!(
-                                "WC3 BLUEPRINT FRONTIER: WaitForMultipleObjects call #{} ret=0x{:08x} count={} handles_ptr=0x{:08x} handle0=0x{:08x} handle1=0x{:08x} wait_all={} timeout=0x{:08x}",
+                                "WC3 BLUEPRINT FRONTIER: WaitForMultipleObjects process=launcher pid={} tid={} call=#{} ret=0x{:08x} count={} handles_ptr=0x{:08x} handle0=0x{:08x} handle1=0x{:08x} wait_all={} timeout=0x{:08x}",
+                                LAUNCHER_PID,
+                                request.key.tid,
                                 session.launcher().xp.call_count,
                                 request.return_address,
                                 request.count,
@@ -198,6 +234,20 @@ async fn run() -> Result<(), String> {
                                 request.handles[1],
                                 request.wait_all,
                                 request.timeout,
+                            ),
+                        );
+                        logl::log(
+                            level::INFO,
+                            format_args!(
+                                "wc3: wait handle0 {}",
+                                session.describe_handle(LAUNCHER_PID, request.handles[0])
+                            ),
+                        );
+                        logl::log(
+                            level::INFO,
+                            format_args!(
+                                "wc3: wait handle1 {}",
+                                session.describe_handle(LAUNCHER_PID, request.handles[1])
                             ),
                         );
                         return Ok(());
@@ -375,6 +425,54 @@ fn thread_teb_va(tid: u32) -> Result<u32, String> {
         )
         .filter(|address| *address < wc3::process::HEAP_VA)
         .ok_or_else(|| "x86 TEB address space exhausted".to_owned())
+}
+
+struct RuntimeProcess {
+    _address_space: AddressSpace,
+    _primary: Context,
+}
+
+fn create_child_runtime(image: &pe32::PeImage) -> Result<RuntimeProcess, String> {
+    let address_space = AddressSpace::create().map_err(|error| error.to_string())?;
+    address_space
+        .map(
+            image.image_base,
+            image.image.len(),
+            Permissions::READ | Permissions::WRITE | Permissions::EXECUTE,
+        )
+        .map_err(|error| format!("map child image: {error}"))?;
+    if address_space
+        .write(image.image_base, &image.image)
+        .map_err(|error| format!("write child image: {error}"))?
+        != image.image.len()
+    {
+        return Err("short child image write".into());
+    }
+    address_space
+        .map(TEB_VA, 0x1000, Permissions::READ | Permissions::WRITE)
+        .map_err(|error| format!("map child TEB: {error}"))?;
+    address_space
+        .map(
+            STACK_BASE,
+            STACK_BYTES,
+            Permissions::READ | Permissions::WRITE,
+        )
+        .map_err(|error| format!("map child stack: {error}"))?;
+    let registers = Registers {
+        esp: STACK_TOP,
+        eip: image
+            .image_base
+            .checked_add(image.entry_rva)
+            .ok_or("child entry overflow")?,
+        eflags: 0x202,
+        fs_base: TEB_VA,
+        ..Registers::default()
+    };
+    let primary = Context::create(&address_space, registers).map_err(|error| error.to_string())?;
+    Ok(RuntimeProcess {
+        _address_space: address_space,
+        _primary: primary,
+    })
 }
 
 struct X86Memory<'a>(&'a AddressSpace);
