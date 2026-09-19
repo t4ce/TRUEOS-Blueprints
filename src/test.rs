@@ -583,6 +583,12 @@ mod workspace_dependency_tests {
     use super::*;
 
     #[test]
+    fn absolute_workspace_path_is_not_a_workspace_inherited_dependency() {
+        let line = "trueos = { path = \"/home/build/workspace/trueos-blueprints/api\", features = [\"tokio-runtime\"] }";
+        assert_eq!(workspace_dependency_name(line), None);
+    }
+
+    #[test]
     fn vendored_workspace_dependency_keeps_the_overlay_canonical_path() {
         let canonical = PathBuf::from("/sdk/vendor/hyper-1.10.0");
         let patches = [CratePatch::new("hyper", canonical.clone())];

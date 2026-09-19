@@ -97,6 +97,7 @@
     "cubesrv",
     "superseedr",
     "webmail",
+    "wc3",
     {
       "name": "commander",
       "path": "buildins/commander"

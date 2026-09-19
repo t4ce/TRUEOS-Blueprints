@@ -1,0 +1,21 @@
+[package]
+name = "wc3"
+version = "0.1.0"
+edition = "2024"
+
+[package.metadata.trueos-blueprint]
+replicatable = false
+
+[[bin]]
+name = "wc3"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+sha2 = "=0.10.9"
+tokio = { workspace = true, features = ["rt", "sync", "time"] }
+trueos = { path = "../../api", features = ["tokio-runtime", "ui4-scene"] }
+
+[dev-dependencies]
+pretty_assertions.workspace = true
