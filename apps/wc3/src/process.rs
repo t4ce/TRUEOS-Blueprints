@@ -35,6 +35,7 @@ const THREAD_HANDLE_BASE: u32 = 0x5743_5001;
 const DESKTOP_HWND: u32 = 0x5743_3000;
 const GDI_HANDLE_BASE: u32 = 0x5743_7001;
 const STOCK_MONO_BITMAP: u32 = 0x5743_7f01;
+const STOCK_DEFAULT_PALETTE: u32 = 0x5743_7f02;
 const GDI_DIB_BASE: u32 = 0x0500_0000;
 const ENVIRONMENT_BLOCK_VA: u32 = PROCESS_DATA_VA + 0x100;
 
@@ -156,13 +157,23 @@ struct BitmapObject {
 #[derive(Clone, Debug)]
 struct DeviceContext {
     compatible_with: DcCompatibility,
-    selected_bitmap: u32,
+    target: DcTarget,
+    selected_palette: u32,
+    palette_force_background: bool,
+    realized_palette: Option<u32>,
+}
+
+#[derive(Clone, Debug)]
+enum DcTarget {
+    Memory { selected_bitmap: u32 },
+    WindowPaint { hwnd: u32 },
 }
 
 #[derive(Clone, Debug)]
 struct PaletteObject {
     version: u16,
     entries: Vec<PaletteEntry>,
+    stock: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -317,6 +328,14 @@ impl XpProcess {
                 stock: true,
             }),
         );
+        gdi_objects.insert(
+            STOCK_DEFAULT_PALETTE,
+            GdiObject::Palette(PaletteObject {
+                version: 0,
+                entries: Vec::new(),
+                stock: true,
+            }),
+        );
         Self {
             imports,
             call_count: 0,
@@ -445,6 +464,14 @@ impl XpProcess {
                 }));
             }
             WinCall::DefWindowProcA => self.def_window_proc(esp, memory),
+            WinCall::BeginPaint => {
+                let [_, hwnd, paint_struct] = arguments::<3>(memory, esp)?;
+                return Ok(PersonalityAction::Session(SessionRequest::BeginPaint {
+                    pid,
+                    hwnd,
+                    paint_struct,
+                }));
+            }
             WinCall::LoadStringA => self.load_string(esp, memory),
             WinCall::LoadImageA => {
                 return Ok(PersonalityAction::Session(SessionRequest::LoadImage(
@@ -456,6 +483,8 @@ impl XpProcess {
             WinCall::SelectObject => self.select_object(esp, memory),
             WinCall::GetDIBColorTable => self.get_dib_color_table(esp, memory),
             WinCall::CreatePalette => self.create_palette(esp, memory),
+            WinCall::SelectPalette => self.select_palette(esp, memory),
+            WinCall::RealizePalette => self.realize_palette(esp, memory),
             WinCall::DeleteDC => self.delete_dc(esp, memory),
             WinCall::DeleteObject => self.delete_object(esp, memory),
             WinCall::CreateThread => self.create_thread(esp, memory),
@@ -944,9 +973,44 @@ impl XpProcess {
         memory: &impl GuestMemory,
     ) -> Result<u32, &'static str> {
         let [ret, source_dc] = arguments::<2>(memory, esp)?;
-        if source_dc != 0 {
-            return Err("unsupported CreateCompatibleDC source DC");
-        }
+        let compatibility = if source_dc == 0 {
+            DcCompatibility::Display
+        } else {
+            match self.gdi_objects.get(&source_dc) {
+                Some(GdiObject::DeviceContext(dc)) => dc.compatible_with,
+                Some(_) => return Err("CreateCompatibleDC source is not a device context"),
+                None => return Err("unknown CreateCompatibleDC source DC"),
+            }
+        };
+        let handle = self.next_gdi_handle;
+        self.next_gdi_handle = self
+            .next_gdi_handle
+            .checked_add(1)
+            .ok_or("GDI handle overflow")?;
+        self.gdi_objects.insert(
+            handle,
+            GdiObject::DeviceContext(DeviceContext {
+                compatible_with: compatibility,
+                target: DcTarget::Memory {
+                    selected_bitmap: STOCK_MONO_BITMAP,
+                },
+                selected_palette: STOCK_DEFAULT_PALETTE,
+                palette_force_background: false,
+                realized_palette: None,
+            }),
+        );
+        let _ = ret;
+        Ok(handle)
+    }
+
+    pub fn begin_paint(
+        &mut self,
+        hwnd: u32,
+        paint_struct: u32,
+        width: u32,
+        height: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<u32, &'static str> {
         let handle = self.next_gdi_handle;
         self.next_gdi_handle = self
             .next_gdi_handle
@@ -956,10 +1020,25 @@ impl XpProcess {
             handle,
             GdiObject::DeviceContext(DeviceContext {
                 compatible_with: DcCompatibility::Display,
-                selected_bitmap: STOCK_MONO_BITMAP,
+                target: DcTarget::WindowPaint { hwnd },
+                selected_palette: STOCK_DEFAULT_PALETTE,
+                palette_force_background: false,
+                realized_palette: None,
             }),
         );
-        let _ = ret;
+        memory.write(paint_struct, &[0; 64])?;
+        for (offset, value) in [
+            (0, handle),
+            (4, 0),
+            (8, 0),
+            (12, 0),
+            (16, width),
+            (20, height),
+            (24, 0),
+            (28, 0),
+        ] {
+            write_u32(memory, paint_struct + offset, value)?;
+        }
         Ok(handle)
     }
 
@@ -972,7 +1051,13 @@ impl XpProcess {
             None => return Err("SelectObject unknown bitmap"),
         };
         let old = match self.gdi_objects.get(&hdc) {
-            Some(GdiObject::DeviceContext(dc)) => dc.selected_bitmap,
+            Some(GdiObject::DeviceContext(DeviceContext {
+                target: DcTarget::Memory { selected_bitmap },
+                ..
+            })) => *selected_bitmap,
+            Some(GdiObject::DeviceContext(_)) => {
+                return Err("SelectObject requires memory device context");
+            }
             Some(GdiObject::Bitmap(_)) => return Err("SelectObject requires device context"),
             Some(GdiObject::Palette(_)) => return Err("SelectObject requires device context"),
             None => return Err("SelectObject unknown device context"),
@@ -982,7 +1067,7 @@ impl XpProcess {
                 *handle != hdc
                     && matches!(
                         value,
-                        GdiObject::DeviceContext(dc) if dc.selected_bitmap == object
+                        GdiObject::DeviceContext(DeviceContext { target: DcTarget::Memory { selected_bitmap }, .. }) if *selected_bitmap == object
                     )
             })
         {
@@ -991,7 +1076,10 @@ impl XpProcess {
         let Some(GdiObject::DeviceContext(dc)) = self.gdi_objects.get_mut(&hdc) else {
             return Err("SelectObject unknown device context");
         };
-        dc.selected_bitmap = object;
+        let DcTarget::Memory { selected_bitmap } = &mut dc.target else {
+            return Err("SelectObject requires memory device context");
+        };
+        *selected_bitmap = object;
         let _ = ret;
         Ok(old)
     }
@@ -1006,7 +1094,10 @@ impl XpProcess {
             return Ok(0);
         }
         let selected = match self.gdi_objects.get(&hdc) {
-            Some(GdiObject::DeviceContext(dc)) => dc.selected_bitmap,
+            Some(GdiObject::DeviceContext(DeviceContext {
+                target: DcTarget::Memory { selected_bitmap },
+                ..
+            })) => *selected_bitmap,
             _ => return Ok(0),
         };
         let palette = match self.gdi_objects.get(&selected) {
@@ -1073,10 +1164,61 @@ impl XpProcess {
             .ok_or("GDI handle overflow")?;
         self.gdi_objects.insert(
             handle,
-            GdiObject::Palette(PaletteObject { version, entries }),
+            GdiObject::Palette(PaletteObject {
+                version,
+                entries,
+                stock: false,
+            }),
         );
         let _ = ret;
         Ok(handle)
+    }
+
+    fn select_palette(&mut self, esp: u32, memory: &impl GuestMemory) -> Result<u32, &'static str> {
+        let [ret, hdc, hpalette, force_background] = arguments::<4>(memory, esp)?;
+        if !matches!(self.gdi_objects.get(&hpalette), Some(GdiObject::Palette(_))) {
+            return Ok(0);
+        }
+        let old = match self.gdi_objects.get(&hdc) {
+            Some(GdiObject::DeviceContext(dc)) => dc.selected_palette,
+            _ => return Ok(0),
+        };
+        let Some(GdiObject::DeviceContext(dc)) = self.gdi_objects.get_mut(&hdc) else {
+            return Ok(0);
+        };
+        dc.selected_palette = hpalette;
+        dc.palette_force_background = force_background != 0;
+        dc.realized_palette = None;
+        let _ = ret;
+        Ok(old)
+    }
+
+    fn realize_palette(
+        &mut self,
+        esp: u32,
+        memory: &impl GuestMemory,
+    ) -> Result<u32, &'static str> {
+        let [ret, hdc] = arguments::<2>(memory, esp)?;
+        let (selected_palette, already_realized) = match self.gdi_objects.get(&hdc) {
+            Some(GdiObject::DeviceContext(dc)) => (
+                dc.selected_palette,
+                dc.realized_palette == Some(dc.selected_palette),
+            ),
+            _ => return Ok(u32::MAX),
+        };
+        let entry_count = match self.gdi_objects.get(&selected_palette) {
+            Some(GdiObject::Palette(palette)) => palette.entries.len(),
+            _ => return Ok(u32::MAX),
+        };
+        if already_realized {
+            return Ok(0);
+        }
+        let Some(GdiObject::DeviceContext(dc)) = self.gdi_objects.get_mut(&hdc) else {
+            return Ok(u32::MAX);
+        };
+        dc.realized_palette = Some(selected_palette);
+        let _ = ret;
+        u32::try_from(entry_count).map_err(|_| "palette entry count overflow")
     }
 
     fn delete_dc(&mut self, esp: u32, memory: &impl GuestMemory) -> Result<u32, &'static str> {
@@ -1108,7 +1250,7 @@ impl XpProcess {
                         *handle != object
                             && matches!(
                                 value,
-                                GdiObject::DeviceContext(dc) if dc.selected_bitmap == object
+                                GdiObject::DeviceContext(DeviceContext { target: DcTarget::Memory { selected_bitmap }, .. }) if *selected_bitmap == object
                             )
                     })
                 {
@@ -1118,6 +1260,17 @@ impl XpProcess {
                 Ok(1)
             }
             GdiObject::Palette(_) => {
+                if self.gdi_objects.get(&object).is_some_and(|value| {
+                    matches!(value, GdiObject::Palette(PaletteObject { stock: true, .. }))
+                }) || self.gdi_objects.values().any(|value| {
+                    matches!(
+                        value,
+                        GdiObject::DeviceContext(DeviceContext { selected_palette, .. })
+                            if *selected_palette == object
+                    )
+                }) {
+                    return Ok(0);
+                }
                 self.gdi_objects.remove(&object);
                 Ok(1)
             }
@@ -1486,25 +1639,67 @@ impl XpProcess {
 
     pub fn compatible_dc_info(&self, handle: u32) -> Option<(u32, i32, i32, u16)> {
         match self.gdi_objects.get(&handle)? {
-            GdiObject::DeviceContext(dc) => match dc.compatible_with {
-                DcCompatibility::Display => Some((dc.selected_bitmap, 1, 1, 1)),
+            GdiObject::DeviceContext(dc) => match (&dc.compatible_with, &dc.target) {
+                (DcCompatibility::Display, DcTarget::Memory { selected_bitmap }) => {
+                    Some((*selected_bitmap, 1, 1, 1))
+                }
+                (_, DcTarget::WindowPaint { .. }) => None,
             },
             GdiObject::Bitmap(_) => None,
             GdiObject::Palette(_) => None,
         }
     }
 
+    pub fn dc_target(&self, handle: u32) -> Option<Option<u32>> {
+        match self.gdi_objects.get(&handle)? {
+            GdiObject::DeviceContext(DeviceContext {
+                target: DcTarget::Memory { .. },
+                ..
+            }) => Some(None),
+            GdiObject::DeviceContext(DeviceContext {
+                target: DcTarget::WindowPaint { hwnd },
+                ..
+            }) => Some(Some(*hwnd)),
+            _ => None,
+        }
+    }
+
     pub fn selected_bitmap(&self, handle: u32) -> Option<u32> {
         match self.gdi_objects.get(&handle)? {
-            GdiObject::DeviceContext(dc) => Some(dc.selected_bitmap),
+            GdiObject::DeviceContext(DeviceContext {
+                target: DcTarget::Memory { selected_bitmap },
+                ..
+            }) => Some(*selected_bitmap),
+            GdiObject::DeviceContext(_) => None,
             GdiObject::Bitmap(_) => None,
             GdiObject::Palette(_) => None,
         }
     }
 
+    pub fn selected_palette(&self, handle: u32) -> Option<u32> {
+        match self.gdi_objects.get(&handle)? {
+            GdiObject::DeviceContext(dc) => Some(dc.selected_palette),
+            _ => None,
+        }
+    }
+
+    pub fn realized_palette(&self, handle: u32) -> Option<Option<u32>> {
+        match self.gdi_objects.get(&handle)? {
+            GdiObject::DeviceContext(dc) => Some(dc.realized_palette),
+            _ => None,
+        }
+    }
+
+    pub fn palette_entries(&self, handle: u32) -> Option<usize> {
+        match self.gdi_objects.get(&handle)? {
+            GdiObject::Palette(palette) => Some(palette.entries.len()),
+            _ => None,
+        }
+    }
+
     pub fn bitmap_selected_in_dc(&self, bitmap: u32) -> bool {
         self.gdi_objects.values().any(
-            |value| matches!(value, GdiObject::DeviceContext(dc) if dc.selected_bitmap == bitmap),
+            |value| matches!(value, GdiObject::DeviceContext(DeviceContext { target: DcTarget::Memory { selected_bitmap }, .. }) if *selected_bitmap == bitmap),
         )
     }
 
@@ -2043,14 +2238,24 @@ mod tests {
             hdc0,
             GdiObject::DeviceContext(DeviceContext {
                 compatible_with: DcCompatibility::Display,
-                selected_bitmap: STOCK_MONO_BITMAP,
+                target: DcTarget::Memory {
+                    selected_bitmap: STOCK_MONO_BITMAP,
+                },
+                selected_palette: STOCK_DEFAULT_PALETTE,
+                palette_force_background: false,
+                realized_palette: None,
             }),
         );
         xp.gdi_objects.insert(
             hdc1,
             GdiObject::DeviceContext(DeviceContext {
                 compatible_with: DcCompatibility::Display,
-                selected_bitmap: STOCK_MONO_BITMAP,
+                target: DcTarget::Memory {
+                    selected_bitmap: STOCK_MONO_BITMAP,
+                },
+                selected_palette: STOCK_DEFAULT_PALETTE,
+                palette_force_background: false,
+                realized_palette: None,
             }),
         );
         let mut memory = Memory {
@@ -2077,6 +2282,46 @@ mod tests {
             xp.compatible_dc_info(hdc1),
             Some((STOCK_MONO_BITMAP, 1, 1, 1))
         );
+    }
+
+    #[test]
+    fn create_compatible_dc_resolves_memory_and_window_paint_sources() {
+        let imports = vec![LauncherImport {
+            id: 0,
+            module: "GDI32.dll".into(),
+            symbol: "CreateCompatibleDC".into(),
+            iat_rva: 0,
+        }];
+        let mut xp = XpProcess::new(imports);
+        let paint = GDI_HANDLE_BASE + 3;
+        xp.gdi_objects.insert(
+            paint,
+            GdiObject::DeviceContext(DeviceContext {
+                compatible_with: DcCompatibility::Display,
+                target: DcTarget::WindowPaint { hwnd: 0x5743_4002 },
+                selected_palette: STOCK_DEFAULT_PALETTE,
+                palette_force_background: false,
+                realized_palette: None,
+            }),
+        );
+        let mut memory = Memory {
+            base: 0x0021_0000,
+            bytes: vec![0; 0x1000],
+        };
+        let esp = 0x0021_0800;
+        write_u32(&mut memory, esp, 0).unwrap();
+        write_u32(&mut memory, esp + 4, paint).unwrap();
+        let PersonalityAction::Return(result) = xp.dispatch(1, 0, esp, &mut memory).unwrap() else {
+            panic!("CreateCompatibleDC did not return");
+        };
+        assert_ne!(result, paint);
+        assert_eq!(xp.dc_target(result), Some(None));
+        assert_eq!(xp.selected_bitmap(result), Some(STOCK_MONO_BITMAP));
+        assert!(xp.gdi_live(paint));
+
+        write_u32(&mut memory, esp + 4, 0xdead_beef).unwrap();
+        assert!(xp.dispatch(1, 0, esp, &mut memory).is_err());
+        assert!(!xp.gdi_live(0x5743_7003));
     }
 
     #[test]
@@ -2116,7 +2361,12 @@ mod tests {
             hdc,
             GdiObject::DeviceContext(DeviceContext {
                 compatible_with: DcCompatibility::Display,
-                selected_bitmap: bitmap,
+                target: DcTarget::Memory {
+                    selected_bitmap: bitmap,
+                },
+                selected_palette: STOCK_DEFAULT_PALETTE,
+                palette_force_background: false,
+                realized_palette: None,
             }),
         );
         let mut memory = Memory {
@@ -2165,6 +2415,141 @@ mod tests {
             PersonalityAction::Return(0)
         );
     }
+    #[test]
+    fn select_palette_swaps_per_dc_state_and_protects_selected_palette() {
+        let imports = vec![LauncherImport {
+            id: 0,
+            module: "GDI32.dll".into(),
+            symbol: "SelectPalette".into(),
+            iat_rva: 0,
+        }];
+        let mut xp = XpProcess::new(imports);
+        let paint = GDI_HANDLE_BASE;
+        let memory_dc = GDI_HANDLE_BASE + 1;
+        let palette = GDI_HANDLE_BASE + 2;
+        for (handle, target) in [
+            (paint, DcTarget::WindowPaint { hwnd: 0x5743_4002 }),
+            (
+                memory_dc,
+                DcTarget::Memory {
+                    selected_bitmap: STOCK_MONO_BITMAP,
+                },
+            ),
+        ] {
+            xp.gdi_objects.insert(
+                handle,
+                GdiObject::DeviceContext(DeviceContext {
+                    compatible_with: DcCompatibility::Display,
+                    target,
+                    selected_palette: STOCK_DEFAULT_PALETTE,
+                    palette_force_background: false,
+                    realized_palette: None,
+                }),
+            );
+        }
+        xp.gdi_objects.insert(
+            palette,
+            GdiObject::Palette(PaletteObject {
+                version: 0x0300,
+                entries: vec![PaletteEntry {
+                    red: 10,
+                    green: 20,
+                    blue: 30,
+                    flags: 0,
+                }],
+                stock: false,
+            }),
+        );
+        let mut memory = Memory {
+            base: 0x0021_0000,
+            bytes: vec![0; 0x1000],
+        };
+        let esp = 0x0021_0800;
+        for (index, value) in [0x0040_16e8, paint, palette, 0].into_iter().enumerate() {
+            write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
+        }
+        assert_eq!(
+            xp.dispatch(1, 0, esp, &mut memory).unwrap(),
+            PersonalityAction::Return(STOCK_DEFAULT_PALETTE)
+        );
+        assert_eq!(xp.selected_palette(paint), Some(palette));
+        assert_eq!(xp.selected_palette(memory_dc), Some(STOCK_DEFAULT_PALETTE));
+        assert_eq!(
+            xp.dispatch(1, 0, esp, &mut memory).unwrap(),
+            PersonalityAction::Return(palette)
+        );
+        write_u32(&mut memory, esp + 4, memory_dc).unwrap();
+        assert_eq!(
+            xp.dispatch(1, 0, esp, &mut memory).unwrap(),
+            PersonalityAction::Return(STOCK_DEFAULT_PALETTE)
+        );
+        assert_eq!(xp.selected_palette(memory_dc), Some(palette));
+        write_u32(&mut memory, esp + 4, paint).unwrap();
+        write_u32(&mut memory, esp + 8, STOCK_DEFAULT_PALETTE).unwrap();
+        assert_eq!(
+            xp.dispatch(1, 0, esp, &mut memory).unwrap(),
+            PersonalityAction::Return(palette)
+        );
+        write_u32(&mut memory, esp + 4, STOCK_DEFAULT_PALETTE).unwrap();
+        assert_eq!(
+            xp.dispatch(1, 0, esp, &mut memory).unwrap(),
+            PersonalityAction::Return(0)
+        );
+    }
+
+    #[test]
+    fn realize_palette_is_first_use_only_and_is_invalidated_by_selection() {
+        let imports = vec![LauncherImport {
+            id: 0,
+            module: "GDI32.dll".into(),
+            symbol: "RealizePalette".into(),
+            iat_rva: 0,
+        }];
+        let mut xp = XpProcess::new(imports);
+        let hdc = GDI_HANDLE_BASE;
+        let palette = GDI_HANDLE_BASE + 1;
+        xp.gdi_objects.insert(
+            hdc,
+            GdiObject::DeviceContext(DeviceContext {
+                compatible_with: DcCompatibility::Display,
+                target: DcTarget::WindowPaint { hwnd: 0x5743_4002 },
+                selected_palette: palette,
+                palette_force_background: false,
+                realized_palette: None,
+            }),
+        );
+        xp.gdi_objects.insert(
+            palette,
+            GdiObject::Palette(PaletteObject {
+                version: 0x0300,
+                entries: vec![PaletteEntry {
+                    red: 1,
+                    green: 2,
+                    blue: 3,
+                    flags: 0,
+                }],
+                stock: false,
+            }),
+        );
+        let mut memory = Memory {
+            base: 0x0021_0000,
+            bytes: vec![0; 0x1000],
+        };
+        let esp = 0x0021_0800;
+        write_u32(&mut memory, esp, 0x0040_16f0).unwrap();
+        write_u32(&mut memory, esp + 4, hdc).unwrap();
+        assert_eq!(
+            xp.dispatch(1, 0, esp, &mut memory).unwrap(),
+            PersonalityAction::Return(1)
+        );
+        assert_eq!(xp.realized_palette(hdc), Some(Some(palette)));
+        assert_eq!(
+            xp.dispatch(1, 0, esp, &mut memory).unwrap(),
+            PersonalityAction::Return(0)
+        );
+        assert_eq!(xp.realized_palette(hdc), Some(Some(palette)));
+    }
+
     #[test]
     fn create_palette_preserves_guest_palette_entries_and_bounds_reads() {
         let imports = vec![LauncherImport {
@@ -2261,7 +2646,12 @@ mod tests {
             dc,
             GdiObject::DeviceContext(DeviceContext {
                 compatible_with: DcCompatibility::Display,
-                selected_bitmap: bitmap,
+                target: DcTarget::Memory {
+                    selected_bitmap: bitmap,
+                },
+                selected_palette: STOCK_DEFAULT_PALETTE,
+                palette_force_background: false,
+                realized_palette: None,
             }),
         );
         xp.gdi_objects.insert(
@@ -2274,6 +2664,7 @@ mod tests {
                     blue: 3,
                     flags: 0,
                 }],
+                stock: false,
             }),
         );
         let mut memory = Memory {
@@ -2296,7 +2687,12 @@ mod tests {
             dc2,
             GdiObject::DeviceContext(DeviceContext {
                 compatible_with: DcCompatibility::Display,
-                selected_bitmap: STOCK_MONO_BITMAP,
+                target: DcTarget::Memory {
+                    selected_bitmap: STOCK_MONO_BITMAP,
+                },
+                selected_palette: STOCK_DEFAULT_PALETTE,
+                palette_force_background: false,
+                realized_palette: None,
             }),
         );
         write_u32(&mut memory, esp, 0x0040_156f).unwrap();
@@ -2358,7 +2754,12 @@ mod tests {
             dc,
             GdiObject::DeviceContext(DeviceContext {
                 compatible_with: DcCompatibility::Display,
-                selected_bitmap: bitmap,
+                target: DcTarget::Memory {
+                    selected_bitmap: bitmap,
+                },
+                selected_palette: STOCK_DEFAULT_PALETTE,
+                palette_force_background: false,
+                realized_palette: None,
             }),
         );
         xp.gdi_objects.insert(
@@ -2371,6 +2772,7 @@ mod tests {
                     blue: 3,
                     flags: 0,
                 }],
+                stock: false,
             }),
         );
         let mut memory = Memory {

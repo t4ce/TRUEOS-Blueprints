@@ -628,17 +628,97 @@ async fn run() -> Result<(), String> {
                             }
                         }
                         if WinCall::from_import(&import) == WinCall::CreateCompatibleDC {
+                            let frame = read_guest_words(&memory, exit.registers.esp, 2)?;
+                            let source = frame[1];
+                            let (source_kind, source_hwnd) = if source == 0 {
+                                ("DISPLAY", None)
+                            } else {
+                                match session.launcher().xp.dc_target(source) {
+                                    Some(Some(hwnd)) => ("WINDOW_PAINT", Some(hwnd)),
+                                    Some(None) => ("MEMORY_DC", None),
+                                    None => ("UNKNOWN", None),
+                                }
+                            };
                             if let Some((selected, width, height, bpp)) =
                                 session.launcher().xp.compatible_dc_info(value)
                             {
                                 logl::log(
                                     level::IMPORTANT,
                                     format_args!(
-                                        "WC3 CreateCompatibleDC source=DISPLAY hdc=0x{:08x} selected_bitmap=0x{:08x} selected_bitmap_shape={}x{}x{}",
-                                        value, selected, width, height, bpp
+                                        "WC3 CreateCompatibleDC source=0x{:08x} source_kind={} source_hwnd={} compatibility=DISPLAY hdc=0x{:08x} target=MEMORY selected_bitmap=0x{:08x} selected_bitmap_shape={}x{}x{}",
+                                        source,
+                                        source_kind,
+                                        source_hwnd.map_or_else(
+                                            || "-".to_owned(),
+                                            |hwnd| format!("0x{hwnd:08x}")
+                                        ),
+                                        value,
+                                        selected,
+                                        width,
+                                        height,
+                                        bpp
                                     ),
                                 );
                             }
+                        }
+                        if WinCall::from_import(&import) == WinCall::SelectPalette && value != 0 {
+                            let frame = read_guest_words(&memory, exit.registers.esp, 4)?;
+                            let target = match session.launcher().xp.dc_target(frame[1]) {
+                                Some(Some(hwnd)) => format!("WINDOW_PAINT hwnd=0x{hwnd:08x}"),
+                                Some(None) => "MEMORY".to_owned(),
+                                None => "UNKNOWN".to_owned(),
+                            };
+                            let entries =
+                                session.launcher().xp.palette_entries(frame[2]).unwrap_or(0);
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 SelectPalette hdc=0x{:08x} target={} new=0x{:08x} old=0x{:08x} force_background={} entries={}",
+                                    frame[1],
+                                    target,
+                                    frame[2],
+                                    value,
+                                    frame[3] != 0,
+                                    entries
+                                ),
+                            );
+                            if let (Some(paint_palette), Some(memory_bitmap)) = (
+                                session.launcher().xp.selected_palette(0x5743_7004),
+                                session.launcher().xp.selected_bitmap(0x5743_7008),
+                            ) {
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 palette state paint_hdc=0x57437004 selected_palette=0x{:08x} memory_hdc=0x57437008 selected_bitmap=0x{:08x}",
+                                        paint_palette, memory_bitmap
+                                    ),
+                                );
+                            }
+                        }
+                        if WinCall::from_import(&import) == WinCall::RealizePalette {
+                            let frame = read_guest_words(&memory, exit.registers.esp, 2)?;
+                            let target = match session.launcher().xp.dc_target(frame[1]) {
+                                Some(Some(hwnd)) => format!("WINDOW_PAINT hwnd=0x{hwnd:08x}"),
+                                Some(None) => "MEMORY".to_owned(),
+                                None => "UNKNOWN".to_owned(),
+                            };
+                            let palette = session.launcher().xp.selected_palette(frame[1]);
+                            let entries = palette
+                                .and_then(|handle| session.launcher().xp.palette_entries(handle))
+                                .unwrap_or(0);
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 RealizePalette hdc=0x{:08x} target={} palette={} entries={} first_realization={} mapped={}",
+                                    frame[1],
+                                    target,
+                                    palette
+                                        .map_or_else(|| "-".to_owned(), |v| format!("0x{v:08x}")),
+                                    entries,
+                                    u32::from(value != 0 && value != u32::MAX),
+                                    value
+                                ),
+                            );
                         }
                         if WinCall::from_import(&import) == WinCall::GetObjectA && value != 0 {
                             let frame = read_guest_words(&memory, exit.registers.esp, 4)?;
@@ -859,6 +939,38 @@ async fn run() -> Result<(), String> {
                             });
                         }
                         pending
+                    }
+                    PersonalityAction::Session(SessionRequest::BeginPaint {
+                        pid,
+                        hwnd,
+                        paint_struct,
+                    }) => {
+                        let (width, height) = session
+                            .begin_paint_window(pid, hwnd)
+                            .map_err(str::to_owned)?;
+                        let hdc = session
+                            .process_mut(pid)
+                            .ok_or("BeginPaint process missing")?
+                            .xp
+                            .begin_paint(hwnd, paint_struct, width, height, &mut memory)
+                            .map_err(str::to_owned)?;
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 BeginPaint hwnd=0x{:08x} ps=0x{:08x} hdc=0x{:08x} target=WINDOW client={}x{} rcPaint=[0,0,{},{}] erase=0",
+                                hwnd, paint_struct, hdc, width, height, width, height
+                            ),
+                        );
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 PAINT HANDLES hwnd=0x{:08x} hdc=0x{:08x} distinct={}",
+                                hwnd,
+                                hdc,
+                                u32::from(hwnd != hdc)
+                            ),
+                        );
+                        hdc
                     }
                     PersonalityAction::Session(SessionRequest::SetFocus { pid: _, hwnd }) => {
                         session.set_focus(hwnd).map_err(str::to_owned)?

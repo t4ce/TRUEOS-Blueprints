@@ -160,10 +160,28 @@ pub enum SessionRequest {
     CreateEvent(CreateEventRequest),
     LoadImage(LoadImageRequest),
     CreateWindow(CreateWindowRequest),
-    ShowWindow { pid: Pid, hwnd: u32, show: u32 },
-    UpdateWindow { pid: Pid, hwnd: u32 },
-    SetFocus { pid: Pid, hwnd: u32 },
-    CloseHandle { pid: Pid, handle: u32 },
+    ShowWindow {
+        pid: Pid,
+        hwnd: u32,
+        show: u32,
+    },
+    UpdateWindow {
+        pid: Pid,
+        hwnd: u32,
+    },
+    SetFocus {
+        pid: Pid,
+        hwnd: u32,
+    },
+    BeginPaint {
+        pid: Pid,
+        hwnd: u32,
+        paint_struct: u32,
+    },
+    CloseHandle {
+        pid: Pid,
+        handle: u32,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -357,6 +375,14 @@ impl Wc3Session {
         let pending = window.paint_pending;
         window.paint_pending = false;
         Ok(pending as u32)
+    }
+
+    pub fn begin_paint_window(&self, pid: Pid, hwnd: u32) -> Result<(u32, u32), &'static str> {
+        let window = self.windows.get(&hwnd).ok_or("unknown paint window")?;
+        if window.owner.pid != pid || !window.visible {
+            return Err("BeginPaint requires visible owned window");
+        }
+        Ok((window.width, window.height))
     }
 
     pub fn set_focus(&mut self, hwnd: u32) -> Result<u32, &'static str> {

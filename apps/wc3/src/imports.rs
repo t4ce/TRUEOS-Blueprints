@@ -37,6 +37,7 @@ pub enum WinCall {
     PeekMessageA,
     SetFocus,
     DefWindowProcA,
+    BeginPaint,
     LoadStringA,
     LoadImageA,
     GetObjectA,
@@ -44,6 +45,8 @@ pub enum WinCall {
     SelectObject,
     GetDIBColorTable,
     CreatePalette,
+    SelectPalette,
+    RealizePalette,
     DeleteDC,
     DeleteObject,
     CreateThread,
@@ -98,6 +101,7 @@ impl WinCall {
             "PeekMessageA" if user => Self::PeekMessageA,
             "SetFocus" if user => Self::SetFocus,
             "DefWindowProcA" if user => Self::DefWindowProcA,
+            "BeginPaint" if user => Self::BeginPaint,
             "LoadStringA" if user => Self::LoadStringA,
             "LoadImageA" if user => Self::LoadImageA,
             "GetObjectA" if import.module.eq_ignore_ascii_case("GDI32.dll") => Self::GetObjectA,
@@ -110,6 +114,12 @@ impl WinCall {
             }
             "CreatePalette" if import.module.eq_ignore_ascii_case("GDI32.dll") => {
                 Self::CreatePalette
+            }
+            "SelectPalette" if import.module.eq_ignore_ascii_case("GDI32.dll") => {
+                Self::SelectPalette
+            }
+            "RealizePalette" if import.module.eq_ignore_ascii_case("GDI32.dll") => {
+                Self::RealizePalette
             }
             "DeleteDC" if import.module.eq_ignore_ascii_case("GDI32.dll") => Self::DeleteDC,
             "DeleteObject" if import.module.eq_ignore_ascii_case("GDI32.dll") => Self::DeleteObject,
@@ -148,7 +158,6 @@ impl WinCall {
             | Self::RegisterClassA
             | Self::UpdateWindow
             | Self::SetFocus
-            | Self::DefWindowProcA
             | Self::ResumeThread
             | Self::GetStdHandle
             | Self::GetFileType
@@ -173,12 +182,16 @@ impl WinCall {
             Self::SelectObject => Kind::Stdcall(8),
             Self::GetDIBColorTable => Kind::Stdcall(16),
             Self::CreatePalette => Kind::Stdcall(4),
+            Self::SelectPalette => Kind::Stdcall(12),
+            Self::RealizePalette => Kind::Stdcall(4),
             Self::DeleteDC => Kind::Stdcall(4),
             Self::DeleteObject => Kind::Stdcall(4),
             Self::TlsSetValue | Self::GetClientRect | Self::ShowWindow | Self::GetCPInfo => {
                 Kind::Stdcall(8)
             }
             Self::CreateWindowExA => Kind::Stdcall(48),
+            Self::DefWindowProcA => Kind::Stdcall(16),
+            Self::BeginPaint => Kind::Stdcall(8),
             Self::PeekMessageA => Kind::Stdcall(20),
             Self::CreateThread | Self::LCMapStringW | Self::MultiByteToWideChar => {
                 Kind::Stdcall(24)
