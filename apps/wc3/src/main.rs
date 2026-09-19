@@ -92,6 +92,14 @@ async fn run() -> Result<(), String> {
         }
         .map_err(|error| error.to_string())?;
         match exit.kind {
+            // A transient VMCS always starts with VMLAUNCH.  Its preemption
+            // timer is therefore a Blueprint scheduling boundary, not an x86
+            // program stop: Context::resume() restores the logical context
+            // into a fresh VMCS on whichever Tokio carrier runs next.
+            ExitKind::Other if exit.detail == 52 => {
+                tokio::task::yield_now().await;
+                continue;
+            }
             ExitKind::VmCall => {
                 if exit.registers.eip == thunk32::THREAD_EXIT_AFTER_VMCALL {
                     let exited = contexts.remove(active);
