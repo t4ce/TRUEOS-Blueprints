@@ -190,6 +190,7 @@ impl PreparedProcess {
         let mut thunks = vec![0; THUNK_PAGE_BYTES];
         crate::imports::patch(&mut materialized.image, &materialized.imports, &mut thunks)?;
         thunk32::install_thread_exit(&mut thunks)?;
+        thunk32::install_guest_return(&mut thunks)?;
         let mut teb = vec![0; 0x1000];
         teb[..4].copy_from_slice(&u32::MAX.to_le_bytes());
         let mut process_data = vec![0; 0x1000];
@@ -443,6 +444,7 @@ impl XpProcess {
                     hwnd,
                 }));
             }
+            WinCall::DefWindowProcA => self.def_window_proc(esp, memory),
             WinCall::LoadStringA => self.load_string(esp, memory),
             WinCall::LoadImageA => {
                 return Ok(PersonalityAction::Session(SessionRequest::LoadImage(
@@ -1271,6 +1273,12 @@ impl XpProcess {
         }
         Ok(1)
     }
+
+    fn def_window_proc(&self, esp: u32, memory: &impl GuestMemory) -> Result<u32, &'static str> {
+        let [_, _, _, _, _] = arguments::<5>(memory, esp)?;
+        Ok(0)
+    }
+
     fn create_window_request(
         &self,
         esp: u32,

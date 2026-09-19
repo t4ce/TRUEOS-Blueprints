@@ -169,6 +169,8 @@ pub enum SessionRequest {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GuestCall {
     pub address: u32,
+    pub arguments: [u32; 4],
+    pub completion_eax: u32,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use sha2::{Digest, Sha256};
 use trueos::{
@@ -16,8 +16,8 @@ use wc3::{
         bmp_file_from_dib, dib_layout,
     },
     session::{
-        LAUNCHER_PID, LAUNCHER_TID, PersonalityAction, SessionRequest, Wc3Session,
-        WindowPresentation,
+        GuestCall, LAUNCHER_PID, LAUNCHER_TID, PersonalityAction, SessionRequest,
+        WINDOW_HANDLE_BASE, Wc3Session, WindowPresentation,
     },
     thunk32,
 };
@@ -103,9 +103,11 @@ async fn run() -> Result<(), String> {
         tid: LAUNCHER_TID,
         context,
         started: false,
+        continuation: None,
     }];
     let mut child_runtime: Option<RuntimeProcess> = None;
     let mut thread_calls: HashMap<(u32, u32), u32> = HashMap::new();
+    let mut default_proc_messages = HashSet::new();
     let mut frames: HashMap<u32, Frame> = HashMap::new();
     let mut active = 0usize;
     loop {
@@ -163,6 +165,48 @@ async fn run() -> Result<(), String> {
                     active %= contexts.len();
                     continue;
                 }
+                if exit.registers.eip == thunk32::GUEST_RETURN_AFTER_VMCALL {
+                    let continuation = contexts[active]
+                        .continuation
+                        .take()
+                        .ok_or_else(|| "guest return without continuation".to_owned())?;
+                    logl::log(
+                        level::IMPORTANT,
+                        format_args!(
+                            "WC3 CALL_GUEST RETURN tid={} hwnd=0x{:08x} message=0x{:08x} wndproc=0x{:08x} result=0x{:08x}",
+                            contexts[active].tid,
+                            continuation.hwnd,
+                            continuation.message,
+                            continuation.wndproc,
+                            exit.registers.eax
+                        ),
+                    );
+                    if contexts[active].tid == 1 && continuation.hwnd == WINDOW_HANDLE_BASE {
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CALL_GUEST RETURN tid=1 hwnd=0x{:08x} wndproc=0x{:08x} message=WM_PAINT result=0x{:08x}",
+                                continuation.hwnd, continuation.wndproc, exit.registers.eax
+                            ),
+                        );
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 UI4 ROOT WM_PAINT RETURN hwnd=0x{:08x}",
+                                continuation.hwnd
+                            ),
+                        );
+                    }
+                    let mut registers = exit.registers;
+                    registers.eip = continuation.import_resume_eip;
+                    registers.esp = continuation.import_esp;
+                    registers.eax = continuation.completion_eax;
+                    contexts[active]
+                        .context
+                        .set_registers(registers)
+                        .map_err(|error| error.to_string())?;
+                    continue;
+                }
                 let import_id = exit.registers.eax;
                 let import = session
                     .launcher()
@@ -188,6 +232,18 @@ async fn run() -> Result<(), String> {
                     ),
                 );
                 let call_kind = WinCall::from_import(&import);
+                if call_kind == WinCall::DefWindowProcA {
+                    let frame = read_guest_words(&memory, exit.registers.esp, 5)?;
+                    if default_proc_messages.insert(frame[2]) {
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 DefWindowProcA hwnd=0x{:08x} message=0x{:08x} wparam=0x{:08x} lparam=0x{:08x}",
+                                frame[1], frame[2], frame[3], frame[4]
+                            ),
+                        );
+                    }
+                }
                 if call_kind == WinCall::RegisterClassA {
                     let frame = read_guest_words(&memory, exit.registers.esp, 2)?;
                     let fields = read_guest_words(&memory, frame[1], 10)?;
@@ -420,6 +476,7 @@ async fn run() -> Result<(), String> {
                             import.symbol
                         )
                     })?;
+                let mut callback = None;
                 let result = match result {
                     PersonalityAction::Return(value) => {
                         if let Some((handle, Some(info), Some(stock), selected_in_dc)) =
@@ -792,7 +849,16 @@ async fn run() -> Result<(), String> {
                         show,
                     }) => session.show_window(hwnd, show).map_err(str::to_owned)?,
                     PersonalityAction::Session(SessionRequest::UpdateWindow { pid: _, hwnd }) => {
-                        session.update_window(hwnd).map_err(str::to_owned)?
+                        let pending = session.update_window(hwnd).map_err(str::to_owned)?;
+                        if pending != 0 {
+                            let window = session.windows.get(&hwnd).ok_or("window disappeared")?;
+                            callback = Some(GuestCall {
+                                address: window.wndproc,
+                                arguments: [hwnd, 0x000f, 0, 0],
+                                completion_eax: 1,
+                            });
+                        }
+                        pending
                     }
                     PersonalityAction::Session(SessionRequest::SetFocus { pid: _, hwnd }) => {
                         session.set_focus(hwnd).map_err(str::to_owned)?
@@ -880,20 +946,9 @@ async fn run() -> Result<(), String> {
                             })?;
                         continue;
                     }
-                    PersonalityAction::CallGuest(_) => {
-                        if contexts[active].tid != LAUNCHER_TID {
-                            logl::log(
-                                level::IMPORTANT,
-                                format_args!(
-                                    "WC3 TID2 CALL_GUEST pid={} tid={}",
-                                    LAUNCHER_PID, contexts[active].tid
-                                ),
-                            );
-                            return Ok(());
-                        }
-                        return Err(
-                            "wc3: CallGuest action is not wired into the launcher loop".into()
-                        );
+                    PersonalityAction::CallGuest(call) => {
+                        callback = Some(call);
+                        0
                     }
                     PersonalityAction::ExitThread(_) => {
                         if contexts[active].tid != LAUNCHER_TID {
@@ -912,6 +967,68 @@ async fn run() -> Result<(), String> {
                         );
                     }
                 };
+                if let Some(call) = callback {
+                    let callback_esp = exit
+                        .registers
+                        .esp
+                        .checked_sub(20)
+                        .ok_or("callback stack underflow")?;
+                    for (offset, value) in [
+                        (0, thunk32::GUEST_RETURN_ADDRESS),
+                        (4, call.arguments[0]),
+                        (8, call.arguments[1]),
+                        (12, call.arguments[2]),
+                        (16, call.arguments[3]),
+                    ] {
+                        memory
+                            .write(callback_esp + offset, &value.to_le_bytes())
+                            .map_err(str::to_owned)?;
+                    }
+                    contexts[active].continuation = Some(GuestContinuation {
+                        import_resume_eip: exit.registers.eip,
+                        import_esp: exit.registers.esp,
+                        completion_eax: call.completion_eax,
+                        wndproc: call.address,
+                        hwnd: call.arguments[0],
+                        message: call.arguments[1],
+                    });
+                    logl::log(
+                        level::IMPORTANT,
+                        format_args!(
+                            "WC3 CALL_GUEST tid={} reason=UpdateWindow/WM_PAINT hwnd=0x{:08x} wndproc=0x{:08x} message=0x{:08x} wparam=0x{:08x} lparam=0x{:08x}",
+                            contexts[active].tid,
+                            call.arguments[0],
+                            call.address,
+                            call.arguments[1],
+                            call.arguments[2],
+                            call.arguments[3]
+                        ),
+                    );
+                    if let Some(window) = session.windows.get(&call.arguments[0]) {
+                        if call.arguments[0] == WINDOW_HANDLE_BASE && call.arguments[1] == 0x000f {
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 UI4 ROOT WM_PAINT ENTER hwnd=0x{:08x}",
+                                    call.arguments[0]
+                                ),
+                            );
+                        }
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!("WC3 UI4 PAINT BEGIN hwnd=0x{:08x}", call.arguments[0]),
+                        );
+                        let _ = window;
+                    }
+                    let mut registers = exit.registers;
+                    registers.eip = call.address;
+                    registers.esp = callback_esp;
+                    contexts[active]
+                        .context
+                        .set_registers(registers)
+                        .map_err(|error| error.to_string())?;
+                    continue;
+                }
                 let mut registers = exit.registers;
                 registers.eax = result;
                 contexts[active]
@@ -977,12 +1094,24 @@ fn present_window(
             if frames.contains_key(&hwnd) {
                 return Ok(());
             }
+            if hwnd == WINDOW_HANDLE_BASE {
+                logl::log(
+                    level::IMPORTANT,
+                    format_args!("WC3 UI4 ROOT OPEN hwnd=0x{:08x}", hwnd),
+                );
+            }
             let mut opened = Frame::open(x, y, width, height)
                 .map_err(|error| format!("create WC3 UI4 window: {error:?}"))?;
             opened
                 .begin(rgba(0, 0, 0, 255))
                 .and_then(|()| opened.publish(Damage::full(width, height)))
                 .map_err(|error| format!("publish WC3 UI4 window: {error:?}"))?;
+            if hwnd == WINDOW_HANDLE_BASE {
+                logl::log(
+                    level::IMPORTANT,
+                    format_args!("WC3 UI4 ROOT INITIAL PUBLISH hwnd=0x{:08x}", hwnd),
+                );
+            }
             logl::log(
                 level::IMPORTANT,
                 format_args!(
@@ -1003,6 +1132,12 @@ fn present_window(
         }
         WindowPresentation::Hide { hwnd } => {
             frames.remove(&hwnd);
+            if hwnd == WINDOW_HANDLE_BASE {
+                logl::log(
+                    level::IMPORTANT,
+                    format_args!("WC3 UI4 ROOT CLOSE hwnd=0x{:08x}", hwnd),
+                );
+            }
         }
     }
     Ok(())
@@ -1012,6 +1147,16 @@ struct GuestContext {
     tid: u32,
     context: Context,
     started: bool,
+    continuation: Option<GuestContinuation>,
+}
+
+struct GuestContinuation {
+    import_resume_eip: u32,
+    import_esp: u32,
+    completion_eax: u32,
+    wndproc: u32,
+    hwnd: u32,
+    message: u32,
 }
 
 fn create_thread_context(
@@ -1076,6 +1221,7 @@ fn create_thread_context(
         tid: thread.tid,
         context,
         started: false,
+        continuation: None,
     })
 }
 

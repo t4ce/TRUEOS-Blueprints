@@ -36,6 +36,7 @@ pub enum WinCall {
     UpdateWindow,
     PeekMessageA,
     SetFocus,
+    DefWindowProcA,
     LoadStringA,
     LoadImageA,
     GetObjectA,
@@ -96,6 +97,7 @@ impl WinCall {
             "UpdateWindow" if user => Self::UpdateWindow,
             "PeekMessageA" if user => Self::PeekMessageA,
             "SetFocus" if user => Self::SetFocus,
+            "DefWindowProcA" if user => Self::DefWindowProcA,
             "LoadStringA" if user => Self::LoadStringA,
             "LoadImageA" if user => Self::LoadImageA,
             "GetObjectA" if import.module.eq_ignore_ascii_case("GDI32.dll") => Self::GetObjectA,
@@ -146,6 +148,7 @@ impl WinCall {
             | Self::RegisterClassA
             | Self::UpdateWindow
             | Self::SetFocus
+            | Self::DefWindowProcA
             | Self::ResumeThread
             | Self::GetStdHandle
             | Self::GetFileType
