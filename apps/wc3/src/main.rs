@@ -118,6 +118,11 @@ async fn run() -> Result<(), String> {
                     .import(import_id)
                     .cloned()
                     .ok_or_else(|| format!("unknown import trap id={import_id}"))?;
+                let call_number = prepared.xp.call_count + 1;
+                logl::log(
+                    level::INFO,
+                    format_args!("wc3: call #{call_number} {}!{}", import.module, import.symbol),
+                );
                 let result = prepared
                     .xp
                     .dispatch(import_id, exit.registers.esp, &mut memory)
@@ -158,7 +163,7 @@ async fn run() -> Result<(), String> {
                 logl::log(
                     level::INFO,
                     format_args!(
-                        "wc3: call #{} {}!{} eax=0x{result:08x}",
+                        "wc3: return #{} {}!{} eax=0x{result:08x}",
                         prepared.xp.call_count, import.module, import.symbol,
                     ),
                 );
