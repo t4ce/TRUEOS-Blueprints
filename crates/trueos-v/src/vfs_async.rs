@@ -12,6 +12,7 @@ pub use infer::{ContentTypeId, ContentTypeInfo, content_type_info};
 
 pub const ERR_BAD_UTF8: i32 = -1;
 pub const ERR_IO: i32 = -2;
+pub const ERR_NO_MEMORY: i32 = -5;
 pub const ERR_BAD_PARAM: i32 = -4;
 pub const ERR_NOT_FOUND: i32 = -8;
 pub const ERR_ALREADY_EXISTS: i32 = -9;
@@ -215,7 +216,9 @@ pub async fn read_file(path: &[u8]) -> Result<Vec<u8>, i32> {
         return Err(len as i32);
     }
     let len = len as usize;
-    let mut bytes = vec![0u8; len];
+    let mut bytes = Vec::new();
+    bytes.try_reserve_exact(len).map_err(|_| ERR_NO_MEMORY)?;
+    bytes.resize(len, 0);
     let mut offset = 0usize;
     while offset < len {
         let end = core::cmp::min(offset.saturating_add(READ_CHUNK_BYTES), len);

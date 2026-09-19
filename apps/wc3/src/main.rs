@@ -1593,6 +1593,19 @@ async fn run() -> Result<(), String> {
                             if listing.truncated {
                                 return Err("Warcraft III directory listing truncated".into());
                             }
+                            let loaded = session.assets.preload_war3(&listing).await.map_err(|error| {
+                                logl::log(level::ERROR, format_args!(
+                                    "WC3 RAM ASSET FAILED asset=\"war3.mpq\" error={error:?}"
+                                ));
+                                error
+                            })?;
+                            if loaded {
+                                let asset = session.assets.war3_mpq().expect("resident MPQ");
+                                logl::log(level::IMPORTANT, format_args!(
+                                    "WC3 RAM ASSET READY asset=\"war3.mpq\" stored=\"{}\" bytes={} backing=host-ram guest_mapped=0 copies=1",
+                                    asset.stored_path(), asset.len(),
+                                ));
+                            }
                             let surface = child_loader::prepare(&mut child.image, &listing)
                                 .map_err(str::to_owned)?;
                             child.loader.native_requests = surface.native.clone();

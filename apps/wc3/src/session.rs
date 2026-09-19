@@ -320,6 +320,7 @@ pub struct Wc3Process {
 }
 
 pub struct Wc3Session {
+    pub assets: crate::assets::Wc3AssetCache,
     pub processes: HashMap<Pid, Wc3Process>,
     pub objects: HashMap<ObjectId, SessionObject>,
     pub names: HashMap<String, ObjectId>,
@@ -351,6 +352,7 @@ impl Wc3Session {
             },
         );
         Self {
+            assets: crate::assets::Wc3AssetCache::default(),
             processes,
             objects: HashMap::new(),
             names: HashMap::new(),
