@@ -8,7 +8,7 @@ use trueos::{
 use wc3::{
     EXPECTED_SHA256, LAUNCHER_PATH, pe32,
     process::{GuestMemory, PreparedProcess, STACK_BASE, STACK_TOP, ThreadObject, WindowRequest},
-    session::{PersonalityAction, SessionRequest},
+    session::{LAUNCHER_PID, LAUNCHER_TID, PersonalityAction, SessionRequest, Wc3Session},
     thunk32,
 };
 
@@ -37,12 +37,17 @@ async fn run() -> Result<(), String> {
     }
     let materialized = pe32::materialize(&bytes).map_err(str::to_owned)?;
     let imports = materialized.imports.len();
-    let mut prepared = PreparedProcess::new(materialized).map_err(str::to_owned)?;
+    let PreparedProcess { mappings, xp } =
+        PreparedProcess::new(materialized).map_err(str::to_owned)?;
+    let mut session = Wc3Session::new(xp);
     let (desktop_width, desktop_height) = ui4_scene::output_dimensions()
         .map_err(|error| format!("query UI4 output dimensions: {error:?}"))?;
-    prepared.xp.set_desktop_size(desktop_width, desktop_height);
+    session
+        .launcher_mut()
+        .xp
+        .set_desktop_size(desktop_width, desktop_height);
     let address_space = AddressSpace::create().map_err(|error| error.to_string())?;
-    for mapping in &prepared.mappings {
+    for mapping in &mappings {
         let mut permissions = Permissions::READ | Permissions::WRITE;
         if mapping.executable {
             permissions |= Permissions::EXECUTE;
@@ -77,7 +82,7 @@ async fn run() -> Result<(), String> {
     );
 
     let mut contexts = vec![GuestContext {
-        tid: 1,
+        tid: LAUNCHER_TID,
         context,
         started: false,
     }];
@@ -103,7 +108,8 @@ async fn run() -> Result<(), String> {
             ExitKind::VmCall => {
                 if exit.registers.eip == thunk32::THREAD_EXIT_AFTER_VMCALL {
                     let exited = contexts.remove(active);
-                    prepared
+                    session
+                        .launcher_mut()
                         .xp
                         .exit_thread(exited.tid, exit.registers.eax)
                         .map_err(str::to_owned)?;
@@ -121,12 +127,13 @@ async fn run() -> Result<(), String> {
                     continue;
                 }
                 let import_id = exit.registers.eax;
-                let import = prepared
+                let import = session
+                    .launcher()
                     .xp
                     .import(import_id)
                     .cloned()
                     .ok_or_else(|| format!("unknown import trap id={import_id}"))?;
-                let call_number = prepared.xp.call_count + 1;
+                let call_number = session.launcher().xp.call_count + 1;
                 logl::log(
                     level::INFO,
                     format_args!(
@@ -134,9 +141,11 @@ async fn run() -> Result<(), String> {
                         import.module, import.symbol
                     ),
                 );
-                let result = prepared
+                let result = session
+                    .launcher_mut()
                     .xp
-                    .dispatch(
+                    .dispatch_for_process(
+                        LAUNCHER_PID,
                         contexts[active].tid,
                         import_id,
                         exit.registers.esp,
@@ -145,7 +154,9 @@ async fn run() -> Result<(), String> {
                     .map_err(|error| {
                         format!(
                             "call #{} {}!{}: {error}",
-                            prepared.xp.call_count, import.module, import.symbol
+                            session.launcher().xp.call_count,
+                            import.module,
+                            import.symbol
                         )
                     })?;
                 let result = match result {
@@ -156,7 +167,7 @@ async fn run() -> Result<(), String> {
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 BLUEPRINT FRONTIER: CreateProcessA call #{} esp=0x{:08x} ret=0x{:08x} command_line=0x{:08x} startup=0x{:08x} process_info=0x{:08x}",
-                                prepared.xp.call_count,
+                                session.launcher().xp.call_count,
                                 exit.registers.esp,
                                 frame.return_address,
                                 frame.command_line,
@@ -168,8 +179,8 @@ async fn run() -> Result<(), String> {
                             level::INFO,
                             format_args!(
                                 "wc3: frontier state deferred_tid={:?} focused_root={:?}",
-                                prepared.xp.deferred_runnable_tid(),
-                                prepared.xp.focused_window(),
+                                session.deferred_runnable_tid(),
+                                session.focused_root(),
                             ),
                         );
                         return Ok(());
@@ -179,7 +190,7 @@ async fn run() -> Result<(), String> {
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 BLUEPRINT FRONTIER: WaitForMultipleObjects call #{} ret=0x{:08x} count={} handles_ptr=0x{:08x} handle0=0x{:08x} handle1=0x{:08x} wait_all={} timeout=0x{:08x}",
-                                prepared.xp.call_count,
+                                session.launcher().xp.call_count,
                                 request.return_address,
                                 request.count,
                                 request.handles_pointer,
@@ -217,10 +228,14 @@ async fn run() -> Result<(), String> {
                     level::INFO,
                     format_args!(
                         "wc3: return #{} {}!{} eax=0x{result:08x}",
-                        prepared.xp.call_count, import.module, import.symbol,
+                        session.launcher().xp.call_count,
+                        import.module,
+                        import.symbol,
                     ),
                 );
-                if let Some(request) = prepared.xp.take_window_request() {
+                session.absorb_runnable_thread();
+                session.sync_launcher_focus();
+                if let Some(request) = session.launcher_mut().xp.take_window_request() {
                     present_window(request, &mut window_frame)?;
                 }
                 // The proven launcher resumes TID2 but does not execute it
@@ -235,7 +250,7 @@ async fn run() -> Result<(), String> {
                     level::INFO,
                     format_args!(
                         "wc3: x86 context halted tid={halted_tid} after {} calls",
-                        prepared.xp.call_count
+                        session.launcher().xp.call_count
                     ),
                 );
                 if contexts.is_empty() {

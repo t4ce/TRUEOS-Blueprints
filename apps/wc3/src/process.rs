@@ -288,6 +288,17 @@ impl XpProcess {
         esp: u32,
         memory: &mut impl GuestMemory,
     ) -> Result<PersonalityAction, &'static str> {
+        self.dispatch_for_process(1, tid, import_id, esp, memory)
+    }
+
+    pub fn dispatch_for_process(
+        &mut self,
+        pid: u32,
+        tid: u32,
+        import_id: u32,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<PersonalityAction, &'static str> {
         let import = self
             .import(import_id)
             .cloned()
@@ -350,7 +361,7 @@ impl XpProcess {
             WinCall::WaitForMultipleObjects => {
                 let frame = self.wait_for_multiple_objects(esp, memory)?;
                 return Ok(PersonalityAction::Block(WaitRequest {
-                    key: ThreadKey { pid: 1, tid },
+                    key: ThreadKey { pid, tid },
                     return_address: frame.return_address,
                     count: frame.count,
                     handles_pointer: frame.handles_pointer,

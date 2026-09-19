@@ -11,6 +11,8 @@ use crate::process::{CreateProcessAFrame, XpProcess};
 pub type Pid = u32;
 pub type Tid = u32;
 pub type ObjectId = u64;
+pub const LAUNCHER_PID: Pid = 1;
+pub const LAUNCHER_TID: Tid = 1;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct ThreadKey {
@@ -119,7 +121,7 @@ pub struct Wc3Session {
 
 impl Wc3Session {
     pub fn new(xp: XpProcess) -> Self {
-        let pid = 1;
+        let pid = LAUNCHER_PID;
         let mut processes = HashMap::new();
         processes.insert(
             pid,
@@ -135,7 +137,10 @@ impl Wc3Session {
             names: HashMap::new(),
             windows: HashMap::new(),
             focused_window: None,
-            runnable: VecDeque::new(),
+            runnable: VecDeque::from([ThreadKey {
+                pid: LAUNCHER_PID,
+                tid: LAUNCHER_TID,
+            }]),
             blocked: HashMap::new(),
             next_pid: 2,
             next_tid: 2,
@@ -163,5 +168,42 @@ impl Wc3Session {
 
     pub fn process_mut(&mut self, pid: Pid) -> Option<&mut Wc3Process> {
         self.processes.get_mut(&pid)
+    }
+
+    pub fn launcher(&self) -> &Wc3Process {
+        self.process(LAUNCHER_PID).expect("launcher process")
+    }
+
+    pub fn launcher_mut(&mut self) -> &mut Wc3Process {
+        self.process_mut(LAUNCHER_PID).expect("launcher process")
+    }
+
+    /// Transfer the process personality's one-shot notification into the
+    /// session scheduler. The personality may observe the Windows operation;
+    /// only the session decides which logical thread is runnable.
+    pub fn absorb_runnable_thread(&mut self) {
+        if let Some(thread) = self.launcher_mut().xp.take_runnable_thread() {
+            self.enqueue(ThreadKey {
+                pid: LAUNCHER_PID,
+                tid: thread.tid,
+            });
+        }
+    }
+
+    pub fn deferred_runnable_tid(&self) -> Option<Tid> {
+        self.runnable
+            .iter()
+            .find_map(|key| (key.pid == LAUNCHER_PID && key.tid != LAUNCHER_TID).then_some(key.tid))
+    }
+
+    pub fn focused_root(&self) -> Option<u32> {
+        self.focused_window
+    }
+
+    /// Publish the USER32 focus transition at the session boundary. This is
+    /// intentionally explicit so diagnostics and future child processes read
+    /// session state rather than reaching into a launcher carrier.
+    pub fn sync_launcher_focus(&mut self) {
+        self.focused_window = self.launcher().xp.focused_window();
     }
 }
