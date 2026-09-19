@@ -10,8 +10,8 @@ use crate::{
     imports::{LauncherImport, WinCall},
     pe32,
     session::{
-        CreateEventRequest, CreateProcessRequest, PersonalityAction, SessionRequest, ThreadKey,
-        WaitRequest,
+        CreateEventRequest, CreateProcessRequest, LoadImageRequest, PersonalityAction,
+        SessionRequest, ThreadKey, WaitRequest,
     },
     thunk32,
 };
@@ -140,7 +140,10 @@ struct BitmapObject {
     planes: u16,
     bit_count: u16,
     compression: u32,
+    size_image: u32,
+    clr_used: u32,
     dib: Vec<u8>,
+    decoded_rgba: Vec<u8>,
 }
 
 #[derive(Clone, Debug)]
@@ -374,7 +377,11 @@ impl XpProcess {
             WinCall::PeekMessageA => self.peek_message(esp, memory),
             WinCall::SetFocus => self.set_focus(esp, memory),
             WinCall::LoadStringA => self.load_string(esp, memory),
-            WinCall::LoadImageA => self.load_image(esp, memory),
+            WinCall::LoadImageA => {
+                return Ok(PersonalityAction::Session(SessionRequest::LoadImage(
+                    self.load_image_request(esp, memory)?,
+                )));
+            }
             WinCall::CreateThread => self.create_thread(esp, memory),
             WinCall::ResumeThread => self.resume_thread(esp, memory),
             WinCall::CreateProcessA => {
@@ -778,7 +785,11 @@ impl XpProcess {
         Err("resource string slot missing")
     }
 
-    fn load_image(&mut self, esp: u32, memory: &impl GuestMemory) -> Result<u32, &'static str> {
+    fn load_image_request(
+        &self,
+        esp: u32,
+        memory: &impl GuestMemory,
+    ) -> Result<LoadImageRequest, &'static str> {
         let [ret, module, name, image_type, cx, cy, flags] = arguments::<7>(memory, esp)?;
         if module != pe32::IMAGE_BASE
             || name & 0xffff_0000 != 0
@@ -803,6 +814,8 @@ impl XpProcess {
         let planes = read_u16(memory, resource.address + 12)?;
         let bit_count = read_u16(memory, resource.address + 14)?;
         let compression = read_u32(memory, resource.address + 16)?;
+        let size_image = read_u32(memory, resource.address + 20)?;
+        let clr_used = read_u32(memory, resource.address + 32)?;
         if width == 0 || height == 0 || planes != 1 {
             return Err("bitmap dimensions or planes invalid");
         }
@@ -812,22 +825,18 @@ impl XpProcess {
             memory.read(resource.address + index as u32, &mut value)?;
             *byte = value[0];
         }
-        let handle = self.next_gdi_handle;
-        self.next_gdi_handle += 1;
-        self.gdi_objects.insert(
-            handle,
-            GdiObject::Bitmap(BitmapObject {
-                resource_id,
-                width,
-                height,
-                planes,
-                bit_count,
-                compression,
-                dib,
-            }),
-        );
         let _ = ret;
-        Ok(handle)
+        Ok(LoadImageRequest {
+            resource_id,
+            dib,
+            width,
+            height,
+            planes,
+            bit_count,
+            compression,
+            size_image,
+            clr_used,
+        })
     }
 
     fn multi_byte_to_wide(
@@ -1134,16 +1143,51 @@ impl XpProcess {
         self.window_request.take()
     }
 
-    pub fn bitmap_info(&self, handle: u32) -> Option<(u32, i32, i32, u16, u32, usize)> {
+    pub fn admit_bitmap(
+        &mut self,
+        request: LoadImageRequest,
+        decoded_rgba: Vec<u8>,
+    ) -> Result<u32, &'static str> {
+        if decoded_rgba.is_empty() || decoded_rgba.len() % 4 != 0 {
+            return Err("decoded bitmap is not canonical RGBA8");
+        }
+        let handle = self.next_gdi_handle;
+        self.next_gdi_handle = self
+            .next_gdi_handle
+            .checked_add(1)
+            .ok_or("GDI handle overflow")?;
+        self.gdi_objects.insert(
+            handle,
+            GdiObject::Bitmap(BitmapObject {
+                resource_id: request.resource_id,
+                width: request.width,
+                height: request.height,
+                planes: request.planes,
+                bit_count: request.bit_count,
+                compression: request.compression,
+                size_image: request.size_image,
+                clr_used: request.clr_used,
+                dib: request.dib,
+                decoded_rgba,
+            }),
+        );
+        Ok(handle)
+    }
+
+    pub fn bitmap_info(&self, handle: u32) -> Option<BitmapDiagnostic> {
         match self.gdi_objects.get(&handle)? {
-            GdiObject::Bitmap(bitmap) => Some((
-                bitmap.resource_id,
-                bitmap.width,
-                bitmap.height,
-                bitmap.bit_count,
-                bitmap.compression,
-                bitmap.dib.len(),
-            )),
+            GdiObject::Bitmap(bitmap) => Some(BitmapDiagnostic {
+                resource_id: bitmap.resource_id,
+                width: bitmap.width,
+                height: bitmap.height,
+                planes: bitmap.planes,
+                bit_count: bitmap.bit_count,
+                compression: bitmap.compression,
+                size_image: bitmap.size_image,
+                clr_used: bitmap.clr_used,
+                dib_bytes: bitmap.dib.len(),
+                rgba: bitmap.decoded_rgba.clone(),
+            }),
         }
     }
 
@@ -1156,6 +1200,81 @@ impl XpProcess {
         thread.exit_code = Some(exit_code);
         Ok(())
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BitmapDiagnostic {
+    pub resource_id: u32,
+    pub width: i32,
+    pub height: i32,
+    pub planes: u16,
+    pub bit_count: u16,
+    pub compression: u32,
+    pub size_image: u32,
+    pub clr_used: u32,
+    pub dib_bytes: usize,
+    pub rgba: Vec<u8>,
+}
+
+/// Adapt a Windows RT_BITMAP DIB resource to the production BMP decoder.
+/// The DIB bytes are appended byte-for-byte; only the missing file header is
+/// synthesized. `bfOffBits` is derived from the DIB's header, masks, and
+/// palette rather than assuming a 40-byte header has no trailing metadata.
+pub fn bmp_file_from_dib(dib: &[u8]) -> Result<Vec<u8>, &'static str> {
+    if dib.len() < 40 {
+        return Err("bitmap resource header truncated");
+    }
+    let header_size = u32::from_le_bytes(dib[0..4].try_into().unwrap());
+    if header_size < 40 || header_size as usize > dib.len() {
+        return Err("bitmap header unsupported");
+    }
+    let planes = u16::from_le_bytes(dib[12..14].try_into().unwrap());
+    let bit_count = u16::from_le_bytes(dib[14..16].try_into().unwrap());
+    let compression = u32::from_le_bytes(dib[16..20].try_into().unwrap());
+    if planes != 1 {
+        return Err("bitmap planes invalid");
+    }
+    let clr_used = u32::from_le_bytes(dib[32..36].try_into().unwrap());
+    let masks = if header_size == 40 {
+        match compression {
+            3 => 12usize,
+            6 => 16usize,
+            _ => 0,
+        }
+    } else {
+        0
+    };
+    let palette_entries = if bit_count <= 8 {
+        if clr_used != 0 {
+            clr_used as usize
+        } else {
+            1usize
+                .checked_shl(bit_count as u32)
+                .ok_or("bitmap palette overflow")?
+        }
+    } else {
+        0
+    };
+    let pixel_offset = (header_size as usize)
+        .checked_add(masks)
+        .and_then(|value| value.checked_add(palette_entries.checked_mul(4)?))
+        .ok_or("bitmap pixel offset overflow")?;
+    if pixel_offset > dib.len() {
+        return Err("bitmap pixel data outside resource");
+    }
+    let file_size = 14usize
+        .checked_add(dib.len())
+        .ok_or("bitmap file size overflow")?;
+    let file_size_u32 = u32::try_from(file_size).map_err(|_| "bitmap file too large")?;
+    let offset_u32 =
+        u32::try_from(14usize + pixel_offset).map_err(|_| "bitmap offset too large")?;
+    let mut bmp = Vec::with_capacity(file_size);
+    bmp.extend_from_slice(b"BM");
+    bmp.extend_from_slice(&file_size_u32.to_le_bytes());
+    bmp.extend_from_slice(&0u32.to_le_bytes());
+    bmp.extend_from_slice(&offset_u32.to_le_bytes());
+    bmp.extend_from_slice(dib);
+    Ok(bmp)
 }
 
 fn read_u16(memory: &impl GuestMemory, address: u32) -> Result<u16, &'static str> {
@@ -1417,12 +1536,14 @@ mod tests {
         write_u32(&mut memory, base + 0x3000 + 16, 1033).unwrap();
         write_u32(&mut memory, base + 0x3000 + 20, 0x3000).unwrap();
         write_u32(&mut memory, base + 0x4000, 0x4500).unwrap();
-        write_u32(&mut memory, base + 0x4004, 40).unwrap();
+        write_u32(&mut memory, base + 0x4004, 44).unwrap();
         write_u32(&mut memory, base + 0x4500, 40).unwrap();
-        write_u32(&mut memory, base + 0x4504, 7).unwrap();
-        write_u32(&mut memory, base + 0x4508, (-9i32 as u32)).unwrap();
+        write_u32(&mut memory, base + 0x4504, 1).unwrap();
+        write_u32(&mut memory, base + 0x4508, 1).unwrap();
         write_u16(&mut memory, base + 0x450c, 1).unwrap();
-        write_u16(&mut memory, base + 0x450e, 8).unwrap();
+        write_u16(&mut memory, base + 0x450e, 24).unwrap();
+        write_u32(&mut memory, base + 0x4514, 4).unwrap();
+        memory.bytes[0x4500 + 40..0x4500 + 44].copy_from_slice(&[0, 0, 255, 0]);
         let esp = base + 0x5000;
         for (index, value) in [0x0040_1501, base, 106, 2, 0, 0, 0x2000]
             .into_iter()
@@ -1430,11 +1551,24 @@ mod tests {
         {
             write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
         }
-        let PersonalityAction::Return(handle) = xp.dispatch(2, 0, esp, &mut memory).unwrap() else {
-            panic!("LoadImageA did not return a handle");
+        let PersonalityAction::Session(SessionRequest::LoadImage(request)) =
+            xp.dispatch(2, 0, esp, &mut memory).unwrap()
+        else {
+            panic!("LoadImageA did not produce a decode request");
         };
+        assert_eq!(request.resource_id, 106);
+        assert_eq!(request.width, 1);
+        assert_eq!(request.height, 1);
+        assert_eq!(request.bit_count, 24);
+        let bmp = bmp_file_from_dib(&request.dib).unwrap();
+        assert_eq!(&bmp[..2], b"BM");
+        assert_eq!(&bmp[14..], request.dib.as_slice());
+        let handle = xp.admit_bitmap(request, vec![255, 0, 0, 255]).unwrap();
+        let info = xp.bitmap_info(handle).unwrap();
         assert_eq!(handle, GDI_HANDLE_BASE);
-        assert_eq!(xp.bitmap_info(handle), Some((106, 7, -9, 8, 0, 40)));
+        assert_eq!(info.resource_id, 106);
+        assert_eq!(info.dib_bytes, 44);
+        assert_eq!(info.rgba, vec![255, 0, 0, 255]);
     }
     #[test]
     fn image_mapping_precedes_overlapping_stack() {

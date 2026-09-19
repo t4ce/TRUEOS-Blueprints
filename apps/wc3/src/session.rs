@@ -90,6 +90,19 @@ pub struct CreateEventRequest {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LoadImageRequest {
+    pub resource_id: u32,
+    pub dib: Vec<u8>,
+    pub width: i32,
+    pub height: i32,
+    pub planes: u16,
+    pub bit_count: u16,
+    pub compression: u32,
+    pub size_image: u32,
+    pub clr_used: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CreatedChild {
     pub pid: Pid,
     pub tid: Tid,
@@ -103,6 +116,7 @@ pub struct CreatedChild {
 pub enum SessionRequest {
     CreateProcess(CreateProcessRequest),
     CreateEvent(CreateEventRequest),
+    LoadImage(LoadImageRequest),
     CloseHandle { pid: Pid, handle: u32 },
 }
 

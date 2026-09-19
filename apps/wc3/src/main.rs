@@ -13,7 +13,7 @@ use wc3::{
     pe32,
     process::{
         GuestMemory, PreparedProcess, STACK_BASE, STACK_BYTES, STACK_TOP, TEB_VA, ThreadObject,
-        WindowRequest,
+        WindowRequest, bmp_file_from_dib,
     },
     session::{LAUNCHER_PID, LAUNCHER_TID, PersonalityAction, SessionRequest, Wc3Session},
     thunk32,
@@ -219,30 +219,69 @@ async fn run() -> Result<(), String> {
                         )
                     })?;
                 let result = match result {
-                    PersonalityAction::Return(value) => {
-                        if contexts[active].tid == 2
-                            && WinCall::from_import(&import) == WinCall::LoadImageA
+                    PersonalityAction::Return(value) => value,
+                    PersonalityAction::Session(SessionRequest::LoadImage(request)) => {
+                        let bmp = bmp_file_from_dib(&request.dib).map_err(str::to_owned)?;
+                        let decoded = match trueos::vmedia::decode(
+                            trueos::vmedia::ImageFormat::Bmp,
+                            &bmp,
+                        )
+                        .await
                         {
-                            if let Some((resource_id, width, height, bpp, compression, bytes)) =
-                                session.launcher().xp.bitmap_info(value)
-                            {
+                            Ok(decoded) => decoded,
+                            Err(error) => {
                                 logl::log(
                                     level::IMPORTANT,
                                     format_args!(
-                                        "wc3: LoadImageA ret=0x{:08x} module=0x{:08x} resource_id={} type=IMAGE_BITMAP flags=LR_CREATEDIBSECTION width={} height={} bpp={} compression={} bytes={} hbitmap=0x{:08x}",
-                                        read_guest_words(&memory, exit.registers.esp, 1)?[0],
-                                        pe32::IMAGE_BASE,
-                                        resource_id,
-                                        width,
-                                        height,
-                                        bpp,
-                                        compression,
-                                        bytes,
-                                        value
+                                        "WC3 BITMAP DECODE_REJECTED resource={} width={} height={} planes={} bpp={} compression={} dib_bytes={} decoder_error={}",
+                                        request.resource_id,
+                                        request.width,
+                                        request.height,
+                                        request.planes,
+                                        request.bit_count,
+                                        request.compression,
+                                        request.dib.len(),
+                                        error
                                     ),
                                 );
+                                return Ok(());
                             }
-                        }
+                        };
+                        let value = session
+                            .launcher_mut()
+                            .xp
+                            .admit_bitmap(request, decoded.rgba)
+                            .map_err(str::to_owned)?;
+                        let info = session
+                            .launcher()
+                            .xp
+                            .bitmap_info(value)
+                            .ok_or_else(|| "admitted bitmap disappeared".to_owned())?;
+                        let rgba_top_left = info
+                            .rgba
+                            .get(..4)
+                            .ok_or_else(|| "decoded bitmap has no top-left pixel".to_owned())?;
+                        let digest = Sha256::digest(&info.rgba);
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 BITMAP resource={} width={} height={} planes={} bpp={} compression={} dib_bytes={} rgba_bytes={} rgba_top_left=[{},{},{},{}] rgba_sha256={} hbitmap=0x{:08x}",
+                                info.resource_id,
+                                info.width,
+                                info.height,
+                                info.planes,
+                                info.bit_count,
+                                info.compression,
+                                info.dib_bytes,
+                                info.rgba.len(),
+                                rgba_top_left[0],
+                                rgba_top_left[1],
+                                rgba_top_left[2],
+                                rgba_top_left[3],
+                                hex_digest(&digest),
+                                value
+                            ),
+                        );
                         value
                     }
                     PersonalityAction::Session(SessionRequest::CreateProcess(request)) => {
@@ -643,6 +682,15 @@ fn read_guest_words(memory: &impl GuestMemory, esp: u32, count: usize) -> Result
             Ok(u32::from_le_bytes(bytes))
         })
         .collect()
+}
+
+fn hex_digest(digest: &[u8]) -> String {
+    let mut output = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        use std::fmt::Write;
+        let _ = write!(output, "{byte:02x}");
+    }
+    output
 }
 
 impl GuestMemory for X86Memory<'_> {
