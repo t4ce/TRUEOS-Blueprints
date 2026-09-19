@@ -112,8 +112,19 @@ pub struct CreateProcessAFrame {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WaitForMultipleObjectsFrame {
+    pub return_address: u32,
+    pub count: u32,
+    pub handles_pointer: u32,
+    pub handles: [u32; 2],
+    pub wait_all: u32,
+    pub timeout: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Frontier {
     CreateProcessA(CreateProcessAFrame),
+    WaitForMultipleObjects(WaitForMultipleObjectsFrame),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -346,6 +357,11 @@ impl XpProcess {
                     self.create_process_a(esp, memory)?,
                 )))
             }
+            WinCall::WaitForMultipleObjects => {
+                return Ok(DispatchResult::Frontier(Frontier::WaitForMultipleObjects(
+                    self.wait_for_multiple_objects(esp, memory)?,
+                )))
+            }
             WinCall::Unsupported => Err("unsupported launcher import"),
         }?;
         Ok(DispatchResult::Value(value))
@@ -395,6 +411,32 @@ impl XpProcess {
             current_directory,
             startup_info,
             process_information,
+        })
+    }
+
+    fn wait_for_multiple_objects(
+        &self,
+        esp: u32,
+        memory: &impl GuestMemory,
+    ) -> Result<WaitForMultipleObjectsFrame, &'static str> {
+        let [ret, count, handles_pointer, wait_all, timeout] = arguments::<5>(memory, esp)?;
+        if ret != 0x0040_1362 || count != 2 || handles_pointer == 0 {
+            return Err("unexpected WaitForMultipleObjects frame");
+        }
+        let handles = [
+            read_u32(memory, handles_pointer)?,
+            read_u32(
+                memory,
+                handles_pointer.checked_add(4).ok_or("handles pointer overflow")?,
+            )?,
+        ];
+        Ok(WaitForMultipleObjectsFrame {
+            return_address: ret,
+            count,
+            handles_pointer,
+            handles,
+            wait_all,
+            timeout,
         })
     }
 
@@ -1356,6 +1398,44 @@ mod tests {
                 width: 16,
                 height: 16,
             })
+        );
+    }
+
+    #[test]
+    fn wait_for_multiple_objects_frontier_captures_both_handles() {
+        let xp = XpProcess::new(Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = 0x043f_f700;
+        let handles_pointer = 0x043f_f900;
+        let handles = [0x5743_2001, 0x5743_5001];
+        for (index, value) in [
+            0x0040_1362,
+            2,
+            handles_pointer,
+            0,
+            u32::MAX,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
+        }
+        write_u32(&mut memory, handles_pointer, handles[0]).unwrap();
+        write_u32(&mut memory, handles_pointer + 4, handles[1]).unwrap();
+
+        assert_eq!(
+            xp.wait_for_multiple_objects(esp, &memory).unwrap(),
+            WaitForMultipleObjectsFrame {
+                return_address: 0x0040_1362,
+                count: 2,
+                handles_pointer,
+                handles,
+                wait_all: 0,
+                timeout: u32::MAX,
+            }
         );
     }
 

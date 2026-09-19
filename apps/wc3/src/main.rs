@@ -164,6 +164,23 @@ async fn run() -> Result<(), String> {
                         );
                         return Ok(());
                     }
+                    DispatchResult::Frontier(Frontier::WaitForMultipleObjects(frame)) => {
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 BLUEPRINT FRONTIER: WaitForMultipleObjects call #{} ret=0x{:08x} count={} handles_ptr=0x{:08x} handle0=0x{:08x} handle1=0x{:08x} wait_all={} timeout=0x{:08x}",
+                                prepared.xp.call_count,
+                                frame.return_address,
+                                frame.count,
+                                frame.handles_pointer,
+                                frame.handles[0],
+                                frame.handles[1],
+                                frame.wait_all,
+                                frame.timeout,
+                            ),
+                        );
+                        return Ok(());
+                    }
                 };
                 let mut registers = exit.registers;
                 registers.eax = result;

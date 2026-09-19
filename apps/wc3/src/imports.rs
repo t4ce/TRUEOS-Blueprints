@@ -47,6 +47,7 @@ pub enum WinCall {
     GetEnvironmentStringsA,
     FreeEnvironmentStringsA,
     CreateProcessA,
+    WaitForMultipleObjects,
     GetACP,
     GetCPInfo,
     GetStringTypeW,
@@ -98,6 +99,7 @@ impl WinCall {
             "GetEnvironmentStrings" if kernel => Self::GetEnvironmentStringsA,
             "FreeEnvironmentStringsA" if kernel => Self::FreeEnvironmentStringsA,
             "CreateProcessA" if kernel => Self::CreateProcessA,
+            "WaitForMultipleObjects" if kernel => Self::WaitForMultipleObjects,
             "GetACP" if kernel => Self::GetACP,
             "GetCPInfo" if kernel => Self::GetCPInfo,
             "GetStringTypeW" if kernel => Self::GetStringTypeW,
@@ -128,6 +130,7 @@ impl WinCall {
             | Self::SetHandleCount
             | Self::FreeEnvironmentStringsA => Kind::Stdcall(4),
             Self::CreateProcessA => Kind::Stdcall(40),
+            Self::WaitForMultipleObjects => Kind::Stdcall(16),
             Self::TlsAlloc
             | Self::GetLastError
             | Self::GetTickCount
