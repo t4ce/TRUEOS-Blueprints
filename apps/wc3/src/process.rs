@@ -160,6 +160,20 @@ struct DeviceContext {
     selected_bitmap: u32,
 }
 
+#[derive(Clone, Debug)]
+struct PaletteObject {
+    version: u16,
+    entries: Vec<PaletteEntry>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct PaletteEntry {
+    red: u8,
+    green: u8,
+    blue: u8,
+    flags: u8,
+}
+
 #[derive(Clone, Copy, Debug)]
 enum DcCompatibility {
     Display,
@@ -169,6 +183,7 @@ enum DcCompatibility {
 enum GdiObject {
     Bitmap(BitmapObject),
     DeviceContext(DeviceContext),
+    Palette(PaletteObject),
 }
 
 impl PreparedProcess {
@@ -429,6 +444,8 @@ impl XpProcess {
             WinCall::GetObjectA => self.get_object_a(esp, memory),
             WinCall::CreateCompatibleDC => self.create_compatible_dc(esp, memory),
             WinCall::SelectObject => self.select_object(esp, memory),
+            WinCall::GetDIBColorTable => self.get_dib_color_table(esp, memory),
+            WinCall::CreatePalette => self.create_palette(esp, memory),
             WinCall::CreateThread => self.create_thread(esp, memory),
             WinCall::ResumeThread => self.resume_thread(esp, memory),
             WinCall::CreateProcessA => {
@@ -939,11 +956,13 @@ impl XpProcess {
         let stock = match self.gdi_objects.get(&object) {
             Some(GdiObject::Bitmap(bitmap)) => bitmap.stock,
             Some(GdiObject::DeviceContext(_)) => return Err("SelectObject requires bitmap"),
+            Some(GdiObject::Palette(_)) => return Err("SelectObject requires bitmap"),
             None => return Err("SelectObject unknown bitmap"),
         };
         let old = match self.gdi_objects.get(&hdc) {
             Some(GdiObject::DeviceContext(dc)) => dc.selected_bitmap,
             Some(GdiObject::Bitmap(_)) => return Err("SelectObject requires device context"),
+            Some(GdiObject::Palette(_)) => return Err("SelectObject requires device context"),
             None => return Err("SelectObject unknown device context"),
         };
         if !stock
@@ -963,6 +982,89 @@ impl XpProcess {
         dc.selected_bitmap = object;
         let _ = ret;
         Ok(old)
+    }
+
+    fn get_dib_color_table(
+        &self,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<u32, &'static str> {
+        let [ret, hdc, start, count, output] = arguments::<5>(memory, esp)?;
+        if count == 0 || output == 0 {
+            return Ok(0);
+        }
+        let selected = match self.gdi_objects.get(&hdc) {
+            Some(GdiObject::DeviceContext(dc)) => dc.selected_bitmap,
+            _ => return Ok(0),
+        };
+        let palette = match self.gdi_objects.get(&selected) {
+            Some(GdiObject::Bitmap(bitmap)) if !bitmap.palette.is_empty() => &bitmap.palette,
+            _ => return Ok(0),
+        };
+        let start = start as usize;
+        if start >= palette.len() {
+            return Ok(0);
+        }
+        let copied = (count as usize).min(palette.len() - start);
+        for (index, entry) in palette[start..start + copied].iter().enumerate() {
+            let address = output
+                .checked_add(
+                    (index as u32)
+                        .checked_mul(4)
+                        .ok_or("palette output overflow")?,
+                )
+                .ok_or("palette output overflow")?;
+            memory.write(address, entry)?;
+        }
+        let _ = ret;
+        Ok(copied as u32)
+    }
+
+    fn create_palette(&mut self, esp: u32, memory: &impl GuestMemory) -> Result<u32, &'static str> {
+        let [ret, log_palette] = arguments::<2>(memory, esp)?;
+        let allocation = self
+            .allocations
+            .get(&log_palette)
+            .copied()
+            .ok_or("CreatePalette requires live heap allocation")?;
+        let version = read_u16(memory, log_palette)?;
+        let count = read_u16(memory, log_palette + 2)?;
+        if count == 0 || count > 256 {
+            return Err("CreatePalette entry count unsupported");
+        }
+        let required = 4usize
+            .checked_add(
+                usize::from(count)
+                    .checked_mul(4)
+                    .ok_or("palette size overflow")?,
+            )
+            .ok_or("palette size overflow")?;
+        if required > allocation as usize {
+            return Err("CreatePalette palette exceeds heap allocation");
+        }
+        let mut entries = Vec::with_capacity(count as usize);
+        for index in 0..count as u32 {
+            let address = log_palette
+                .checked_add(4 + index * 4)
+                .ok_or("palette address overflow")?;
+            entries.push(PaletteEntry {
+                red: read_byte(memory, address)?,
+                green: read_byte(memory, address + 1)?,
+                blue: read_byte(memory, address + 2)?,
+                flags: read_byte(memory, address + 3)?,
+            });
+        }
+        let handle = self.next_gdi_handle;
+        self.next_gdi_handle = self
+            .next_gdi_handle
+            .checked_add(1)
+            .ok_or("GDI handle overflow")?;
+        self.gdi_objects.insert(
+            handle,
+            GdiObject::Palette(PaletteObject { version, entries }),
+        );
+        let _ = ret;
+        Ok(handle)
     }
 
     fn multi_byte_to_wide(
@@ -1338,6 +1440,7 @@ impl XpProcess {
                 row_stride: bitmap.row_stride,
             }),
             GdiObject::DeviceContext(_) => None,
+            GdiObject::Palette(_) => None,
         }
     }
 
@@ -1347,6 +1450,26 @@ impl XpProcess {
                 DcCompatibility::Display => Some((dc.selected_bitmap, 1, 1, 1)),
             },
             GdiObject::Bitmap(_) => None,
+            GdiObject::Palette(_) => None,
+        }
+    }
+
+    pub fn selected_bitmap(&self, handle: u32) -> Option<u32> {
+        match self.gdi_objects.get(&handle)? {
+            GdiObject::DeviceContext(dc) => Some(dc.selected_bitmap),
+            GdiObject::Bitmap(_) => None,
+            GdiObject::Palette(_) => None,
+        }
+    }
+
+    pub fn allocation_size(&self, pointer: u32) -> Option<u32> {
+        self.allocations.get(&pointer).copied()
+    }
+
+    pub fn palette_info(&self, handle: u32) -> Option<(u16, usize)> {
+        match self.gdi_objects.get(&handle)? {
+            GdiObject::Palette(palette) => Some((palette.version, palette.entries.len())),
+            _ => None,
         }
     }
 
@@ -1527,6 +1650,12 @@ fn read_u16(memory: &impl GuestMemory, address: u32) -> Result<u16, &'static str
     let mut b = [0; 2];
     memory.read(address, &mut b)?;
     Ok(u16::from_le_bytes(b))
+}
+
+fn read_byte(memory: &impl GuestMemory, address: u32) -> Result<u8, &'static str> {
+    let mut byte = [0];
+    memory.read(address, &mut byte)?;
+    Ok(byte[0])
 }
 
 fn read_i32(memory: &impl GuestMemory, address: u32) -> Result<i32, &'static str> {
@@ -1892,6 +2021,130 @@ mod tests {
             Some((STOCK_MONO_BITMAP, 1, 1, 1))
         );
     }
+
+    #[test]
+    fn get_dib_color_table_reads_live_rgbquad_ranges() {
+        let imports = vec![LauncherImport {
+            id: 0,
+            module: "GDI32.dll".into(),
+            symbol: "GetDIBColorTable".into(),
+            iat_rva: 0,
+        }];
+        let mut xp = XpProcess::new(imports);
+        let bitmap = GDI_HANDLE_BASE;
+        let hdc = GDI_HANDLE_BASE + 1;
+        let palette = vec![[1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12]];
+        xp.gdi_objects.insert(
+            bitmap,
+            GdiObject::Bitmap(BitmapObject {
+                resource_id: 106,
+                width: 1,
+                height: 1,
+                planes: 1,
+                bit_count: 8,
+                compression: 0,
+                size_image: 4,
+                clr_used: 3,
+                dib: Vec::new(),
+                decoded_rgba: vec![3, 2, 1, 255],
+                palette,
+                bits_va: 0x0500_0000,
+                bits_len: 4,
+                row_stride: 4,
+                pixel_offset: 52,
+                stock: false,
+            }),
+        );
+        xp.gdi_objects.insert(
+            hdc,
+            GdiObject::DeviceContext(DeviceContext {
+                compatible_with: DcCompatibility::Display,
+                selected_bitmap: bitmap,
+            }),
+        );
+        let mut memory = Memory {
+            base: 0x0021_0000,
+            bytes: vec![0; 0x1000],
+        };
+        let esp = 0x0021_0800;
+        for (index, value) in [0x0040_1587, hdc, 1, 4, 0x0021_0600]
+            .into_iter()
+            .enumerate()
+        {
+            write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
+        }
+        assert_eq!(
+            xp.dispatch(1, 0, esp, &mut memory).unwrap(),
+            PersonalityAction::Return(2)
+        );
+        let mut output = [0; 8];
+        memory.read(0x0021_0600, &mut output).unwrap();
+        assert_eq!(&output, &[5, 6, 7, 8, 9, 10, 11, 12]);
+        for (index, value) in [0x0040_1587, hdc, 9, 1, 0x0021_0600]
+            .into_iter()
+            .enumerate()
+        {
+            write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
+        }
+        assert_eq!(
+            xp.dispatch(1, 0, esp, &mut memory).unwrap(),
+            PersonalityAction::Return(0)
+        );
+        for (index, value) in [0x0040_1587, hdc, 0, 0, 0].into_iter().enumerate() {
+            write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
+        }
+        assert_eq!(
+            xp.dispatch(1, 0, esp, &mut memory).unwrap(),
+            PersonalityAction::Return(0)
+        );
+        for (index, value) in [0x0040_1587, STOCK_MONO_BITMAP, 0, 1, 0x0021_0600]
+            .into_iter()
+            .enumerate()
+        {
+            write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
+        }
+        assert_eq!(
+            xp.dispatch(1, 0, esp, &mut memory).unwrap(),
+            PersonalityAction::Return(0)
+        );
+    }
+    #[test]
+    fn create_palette_preserves_guest_palette_entries_and_bounds_reads() {
+        let imports = vec![LauncherImport {
+            id: 0,
+            module: "GDI32.dll".into(),
+            symbol: "CreatePalette".into(),
+            iat_rva: 0,
+        }];
+        let mut xp = XpProcess::new(imports);
+        let pointer = 0x0021_05e0;
+        xp.allocations.insert(pointer, 12);
+        let mut memory = Memory {
+            base: 0x0021_0000,
+            bytes: vec![0; 0x1000],
+        };
+        write_u16(&mut memory, pointer, 0x0300).unwrap();
+        write_u16(&mut memory, pointer + 2, 2).unwrap();
+        memory
+            .write(pointer + 4, &[10, 20, 30, 0, 40, 50, 60, 1])
+            .unwrap();
+        let esp = 0x0021_0800;
+        write_u32(&mut memory, esp, 0x0040_15cb).unwrap();
+        write_u32(&mut memory, esp + 4, pointer).unwrap();
+        let PersonalityAction::Return(handle) = xp.dispatch(1, 0, esp, &mut memory).unwrap() else {
+            panic!("CreatePalette did not return a handle");
+        };
+        assert_ne!(handle, 0);
+        assert_eq!(xp.palette_info(handle), Some((0x0300, 2)));
+
+        write_u16(&mut memory, pointer + 2, 0).unwrap();
+        assert!(xp.dispatch(1, 0, esp, &mut memory).is_err());
+        write_u16(&mut memory, pointer + 2, 3).unwrap();
+        assert!(xp.dispatch(1, 0, esp, &mut memory).is_err());
+        write_u16(&mut memory, pointer + 2, 257).unwrap();
+        assert!(xp.dispatch(1, 0, esp, &mut memory).is_err());
+    }
+
     #[test]
     fn image_mapping_precedes_overlapping_stack() {
         let image = Mapping {

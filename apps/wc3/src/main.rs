@@ -237,6 +237,93 @@ async fn run() -> Result<(), String> {
                     })?;
                 let result = match result {
                     PersonalityAction::Return(value) => {
+                        if WinCall::from_import(&import) == WinCall::CreatePalette && value != 0 {
+                            let frame = read_guest_words(&memory, exit.registers.esp, 2)?;
+                            let header = read_guest_bytes(&memory, frame[1], 4)?;
+                            let entries = u16::from_le_bytes([header[2], header[3]]) as usize;
+                            let exact = read_guest_bytes(&memory, frame[1] + 4, entries * 4)?;
+                            let digest = Sha256::digest(&exact);
+                            let allocation =
+                                session.launcher().xp.allocation_size(frame[1]).unwrap_or(0);
+                            let version = u16::from_le_bytes([header[0], header[1]]);
+                            let entry0 = exact.get(..4).unwrap_or(&[]);
+                            let entry255 = exact.get(255 * 4..256 * 4).unwrap_or(&[]);
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CreatePalette LOGPALETTE ptr=0x{:08x} version=0x{:04x} entries={} required_bytes={} allocation_bytes={} entry0={:?} entry255={:?} palette_sha256={} hpalette=0x{:08x}",
+                                    frame[1],
+                                    version,
+                                    entries,
+                                    4 + entries * 4,
+                                    allocation,
+                                    entry0,
+                                    entry255,
+                                    hex_digest(&digest),
+                                    value
+                                ),
+                            );
+                            if let Some((stored_version, stored_entries)) =
+                                session.launcher().xp.palette_info(value)
+                            {
+                                logl::log(
+                                    level::INFO,
+                                    format_args!(
+                                        "wc3: logical palette admitted version=0x{:04x} entries={}",
+                                        stored_version, stored_entries
+                                    ),
+                                );
+                            }
+                        }
+                        if WinCall::from_import(&import) == WinCall::GetDIBColorTable {
+                            let frame = read_guest_words(&memory, exit.registers.esp, 5)?;
+                            if value != 0 {
+                                let bytes =
+                                    read_guest_bytes(&memory, frame[4], value as usize * 4)?;
+                                let digest = Sha256::digest(&bytes);
+                                if let Some(bitmap) =
+                                    session.launcher().xp.selected_bitmap(frame[1])
+                                {
+                                    if let Some(info) = session.launcher().xp.bitmap_info(bitmap) {
+                                        let source_offset = (info.height.unsigned_abs() as usize
+                                            - 1)
+                                            * info.row_stride as usize;
+                                        let mut source_index = [0; 1];
+                                        memory
+                                            .read(
+                                                info.bits_va + source_offset as u32,
+                                                &mut source_index,
+                                            )
+                                            .map_err(str::to_owned)?;
+                                        let palette_offset = source_index[0] as usize * 4;
+                                        let visual = bytes
+                                            .get(palette_offset..palette_offset + 3)
+                                            .ok_or_else(|| {
+                                                "palette index outside returned table".to_owned()
+                                            })?;
+                                        logl::log(
+                                            level::IMPORTANT,
+                                            format_args!(
+                                                "WC3 GetDIBColorTable hdc=0x{:08x} bitmap=0x{:08x} start={} requested={} copied={} output=0x{:08x} entry0={:?} entry255={:?} palette_sha256={} top_left_index={} top_left_rgb=[{},{},{}]",
+                                                frame[1],
+                                                bitmap,
+                                                frame[2],
+                                                frame[3],
+                                                value,
+                                                frame[4],
+                                                bytes.get(..4).unwrap_or(&[]),
+                                                bytes.get(255 * 4..256 * 4).unwrap_or(&[]),
+                                                hex_digest(&digest),
+                                                source_index[0],
+                                                visual[2],
+                                                visual[1],
+                                                visual[0]
+                                            ),
+                                        );
+                                    }
+                                }
+                            }
+                        }
                         if WinCall::from_import(&import) == WinCall::SelectObject {
                             let frame = read_guest_words(&memory, exit.registers.esp, 3)?;
                             if let Some(info) = session.launcher().xp.bitmap_info(frame[2]) {
@@ -780,6 +867,16 @@ fn read_guest_words(memory: &impl GuestMemory, esp: u32, count: usize) -> Result
             Ok(u32::from_le_bytes(bytes))
         })
         .collect()
+}
+
+fn read_guest_bytes(
+    memory: &impl GuestMemory,
+    address: u32,
+    count: usize,
+) -> Result<Vec<u8>, String> {
+    let mut bytes = vec![0; count];
+    memory.read(address, &mut bytes).map_err(str::to_owned)?;
+    Ok(bytes)
 }
 
 fn hex_digest(digest: &[u8]) -> String {

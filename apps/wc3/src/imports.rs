@@ -41,6 +41,8 @@ pub enum WinCall {
     GetObjectA,
     CreateCompatibleDC,
     SelectObject,
+    GetDIBColorTable,
+    CreatePalette,
     CreateThread,
     ResumeThread,
     GetStdHandle,
@@ -99,6 +101,12 @@ impl WinCall {
                 Self::CreateCompatibleDC
             }
             "SelectObject" if import.module.eq_ignore_ascii_case("GDI32.dll") => Self::SelectObject,
+            "GetDIBColorTable" if import.module.eq_ignore_ascii_case("GDI32.dll") => {
+                Self::GetDIBColorTable
+            }
+            "CreatePalette" if import.module.eq_ignore_ascii_case("GDI32.dll") => {
+                Self::CreatePalette
+            }
             "CreateThread" if kernel => Self::CreateThread,
             "ResumeThread" if kernel => Self::ResumeThread,
             "GetStdHandle" if kernel => Self::GetStdHandle,
@@ -156,6 +164,8 @@ impl WinCall {
             Self::GetObjectA => Kind::Stdcall(12),
             Self::CreateCompatibleDC => Kind::Stdcall(4),
             Self::SelectObject => Kind::Stdcall(8),
+            Self::GetDIBColorTable => Kind::Stdcall(16),
+            Self::CreatePalette => Kind::Stdcall(4),
             Self::TlsSetValue | Self::GetClientRect | Self::ShowWindow | Self::GetCPInfo => {
                 Kind::Stdcall(8)
             }
