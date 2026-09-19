@@ -438,18 +438,18 @@ impl XpProcess {
         memory: &impl GuestMemory,
     ) -> Result<WaitForMultipleObjectsFrame, &'static str> {
         let [ret, count, handles_pointer, wait_all, timeout] = arguments::<5>(memory, esp)?;
-        if ret != 0x0040_1362 || count != 2 || handles_pointer == 0 {
-            return Err("unexpected WaitForMultipleObjects frame");
+        let mut handles = [0; 2];
+        if handles_pointer != 0 && count <= 1024 {
+            handles[0] = read_u32(memory, handles_pointer)?;
+            if count >= 2 {
+                handles[1] = read_u32(
+                    memory,
+                    handles_pointer
+                        .checked_add(4)
+                        .ok_or("handles pointer overflow")?,
+                )?;
+            }
         }
-        let handles = [
-            read_u32(memory, handles_pointer)?,
-            read_u32(
-                memory,
-                handles_pointer
-                    .checked_add(4)
-                    .ok_or("handles pointer overflow")?,
-            )?,
-        ];
         Ok(WaitForMultipleObjectsFrame {
             return_address: ret,
             count,

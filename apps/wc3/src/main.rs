@@ -223,6 +223,27 @@ async fn run() -> Result<(), String> {
                         logl::log(
                             level::IMPORTANT,
                             format_args!(
+                                "WC3 RAW #90 WaitForMultipleObjects esp=0x{:08x} ret=0x{:08x} count={} handles_ptr=0x{:08x} wait_all={} timeout=0x{:08x}",
+                                exit.registers.esp,
+                                request.return_address,
+                                request.count,
+                                request.handles_pointer,
+                                request.wait_all,
+                                request.timeout,
+                            ),
+                        );
+                        if request.handles_pointer != 0 && request.count <= 1024 {
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 RAW #90 handles handle0=0x{:08x} handle1=0x{:08x}",
+                                    request.handles[0], request.handles[1],
+                                ),
+                            );
+                        }
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
                                 "WC3 BLUEPRINT FRONTIER: WaitForMultipleObjects process=launcher pid={} tid={} call=#{} ret=0x{:08x} count={} handles_ptr=0x{:08x} handle0=0x{:08x} handle1=0x{:08x} wait_all={} timeout=0x{:08x}",
                                 LAUNCHER_PID,
                                 request.key.tid,
