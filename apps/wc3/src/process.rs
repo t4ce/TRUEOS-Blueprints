@@ -9,7 +9,10 @@ use std::collections::{HashMap, VecDeque};
 use crate::{
     imports::{LauncherImport, WinCall},
     pe32,
-    session::{CreateProcessRequest, PersonalityAction, SessionRequest, ThreadKey, WaitRequest},
+    session::{
+        CreateEventRequest, CreateProcessRequest, PersonalityAction, SessionRequest, ThreadKey,
+        WaitRequest,
+    },
     thunk32,
 };
 
@@ -28,7 +31,6 @@ pub const COMMAND_LINE: &[u8] = b"\"Warcraft III.exe\"\0";
 const MODULE_FILENAME: &[u8] = b"C:\\Warcraft III\\Warcraft III.exe\0";
 const WINDOWS_XP_GET_VERSION: u32 = 0x0a28_0105;
 const CREATE_SUSPENDED: u32 = 4;
-const EVENT_HANDLE_BASE: u32 = 0x5743_2001;
 const THREAD_HANDLE_BASE: u32 = 0x5743_5001;
 const DESKTOP_HWND: u32 = 0x5743_3000;
 const WINDOW_HWND: u32 = 0x5743_4001;
@@ -184,14 +186,6 @@ pub struct ThreadObject {
 }
 
 #[derive(Clone, Debug)]
-struct EventObject {
-    manual_reset: bool,
-    signaled: bool,
-    name: Option<String>,
-    references: u32,
-}
-
-#[derive(Clone, Debug)]
 struct Window {
     class: String,
     title: String,
@@ -231,8 +225,6 @@ pub struct XpProcess {
     pub threads: Vec<ThreadObject>,
     next_tid: u32,
     next_thread_handle: u32,
-    next_event_handle: u32,
-    events: HashMap<u32, EventObject>,
     heap_next: u32,
     allocations: HashMap<u32, u32>,
     tls_allocated: [bool; 64],
@@ -257,8 +249,6 @@ impl XpProcess {
             threads: Vec::new(),
             next_tid: 2,
             next_thread_handle: THREAD_HANDLE_BASE,
-            next_event_handle: EVENT_HANDLE_BASE,
-            events: HashMap::new(),
             heap_next: 0,
             allocations: HashMap::new(),
             tls_allocated: [false; 64],
@@ -319,9 +309,18 @@ impl XpProcess {
             WinCall::TlsSetValue => self.tls_set_value(tid, esp, memory),
             WinCall::HeapAlloc => self.heap_alloc(esp, memory),
             WinCall::HeapFree => self.heap_free(esp, memory),
-            WinCall::CreateEventA => self.create_event(esp, memory),
+            WinCall::CreateEventA => {
+                return Ok(PersonalityAction::Session(SessionRequest::CreateEvent(
+                    self.create_event_request(esp, memory)?,
+                )));
+            }
             WinCall::GetLastError => Ok(self.last_error),
-            WinCall::CloseHandle => self.close_handle(esp, memory),
+            WinCall::CloseHandle => {
+                return Ok(PersonalityAction::Session(SessionRequest::CloseHandle {
+                    pid,
+                    handle: read_u32(memory, esp + 4)?,
+                }));
+            }
             WinCall::GetTickCount => Ok(self.tick_ms),
             WinCall::GetCurrentThreadId => Ok(tid),
             WinCall::GetStartupInfoA => self.get_startup_info(esp, memory),
@@ -604,59 +603,32 @@ impl XpProcess {
         Ok(1)
     }
 
-    fn create_event(&mut self, esp: u32, memory: &impl GuestMemory) -> Result<u32, &'static str> {
+    fn create_event_request(
+        &self,
+        esp: u32,
+        memory: &impl GuestMemory,
+    ) -> Result<CreateEventRequest, &'static str> {
         let [_, attributes, manual_reset, initial, name] = arguments::<5>(memory, esp)?;
-        if attributes != 0 {
-            return Err("event security attributes unsupported");
-        }
+        let inheritable = if attributes == 0 {
+            false
+        } else {
+            read_u32(memory, attributes + 8)? != 0
+        };
         let name = if name == 0 {
             None
         } else {
             Some(read_c_string(memory, name, 260)?)
         };
-        if let Some((handle, event)) = self
-            .events
-            .iter_mut()
-            .find(|(_, event)| event.name.is_some() && event.name == name)
-        {
-            event.references += 1;
-            self.last_error = 183;
-            return Ok(*handle);
-        }
-        let handle = self.next_event_handle;
-        self.next_event_handle += 1;
-        self.events.insert(
-            handle,
-            EventObject {
-                manual_reset: manual_reset != 0,
-                signaled: initial != 0,
-                name,
-                references: 1,
-            },
-        );
-        self.last_error = 0;
-        Ok(handle)
+        Ok(CreateEventRequest {
+            name,
+            manual_reset: manual_reset != 0,
+            initial_state: initial != 0,
+            inheritable,
+        })
     }
 
-    fn close_handle(&mut self, esp: u32, memory: &impl GuestMemory) -> Result<u32, &'static str> {
-        let handle = read_u32(memory, esp + 4)?;
-        if let Some(event) = self.events.get_mut(&handle) {
-            event.references -= 1;
-            if event.references == 0 {
-                self.events.remove(&handle);
-            }
-            return Ok(1);
-        }
-        if let Some(thread) = self
-            .threads
-            .iter_mut()
-            .find(|thread| thread.handle == handle && thread.open)
-        {
-            thread.open = false;
-            return Ok(1);
-        }
-        self.last_error = 6;
-        Ok(0)
+    pub fn set_last_error(&mut self, value: u32) {
+        self.last_error = value;
     }
 
     fn get_startup_info(

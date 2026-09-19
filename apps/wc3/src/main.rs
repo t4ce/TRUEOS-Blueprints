@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use sha2::{Digest, Sha256};
 use trueos::{
     async_fs,
@@ -90,6 +92,7 @@ async fn run() -> Result<(), String> {
         started: false,
     }];
     let mut child_runtime: Option<RuntimeProcess> = None;
+    let mut thread_calls: HashMap<(u32, u32), u32> = HashMap::new();
     let mut window_frame: Option<Frame> = None;
     let mut active = 0usize;
     loop {
@@ -137,14 +140,36 @@ async fn run() -> Result<(), String> {
                     .import(import_id)
                     .cloned()
                     .ok_or_else(|| format!("unknown import trap id={import_id}"))?;
-                let call_number = session.launcher().xp.call_count + 1;
+                let thread_call = thread_calls
+                    .entry((LAUNCHER_PID, contexts[active].tid))
+                    .and_modify(|call| *call += 1)
+                    .or_insert(1);
+                let sequence = session.note();
                 logl::log(
                     level::INFO,
                     format_args!(
-                        "wc3: call #{call_number} {}!{}",
-                        import.module, import.symbol
+                        "wc3[seq={sequence} p=launcher pid={} tid={} call={}] {}!{}",
+                        LAUNCHER_PID,
+                        contexts[active].tid,
+                        *thread_call,
+                        import.module,
+                        import.symbol
                     ),
                 );
+                if contexts[active].tid != LAUNCHER_TID {
+                    logl::log(
+                        level::IMPORTANT,
+                        format_args!(
+                            "WC3 TID2 FRONTIER pid={} tid={} call={} {}!{}",
+                            LAUNCHER_PID,
+                            contexts[active].tid,
+                            *thread_call,
+                            import.module,
+                            import.symbol
+                        ),
+                    );
+                    return Ok(());
+                }
                 let result = session
                     .launcher_mut()
                     .xp
@@ -219,6 +244,23 @@ async fn run() -> Result<(), String> {
                         );
                         1
                     }
+                    PersonalityAction::Session(SessionRequest::CreateEvent(request)) => {
+                        let (handle, already_exists) = session.create_event(LAUNCHER_PID, request);
+                        session.launcher_mut().xp.set_last_error(if already_exists {
+                            183
+                        } else {
+                            0
+                        });
+                        handle
+                    }
+                    PersonalityAction::Session(SessionRequest::CloseHandle { pid, handle }) => {
+                        if session.close_handle(pid, handle) {
+                            1
+                        } else {
+                            session.launcher_mut().xp.set_last_error(6);
+                            0
+                        }
+                    }
                     PersonalityAction::Block(request) => {
                         logl::log(
                             level::IMPORTANT,
@@ -271,7 +313,18 @@ async fn run() -> Result<(), String> {
                                 session.describe_handle(LAUNCHER_PID, request.handles[1])
                             ),
                         );
-                        return Ok(());
+                        session.block_wait(request.clone()).map_err(str::to_owned)?;
+                        let next = session
+                            .runnable
+                            .pop_front()
+                            .ok_or_else(|| "no runnable thread after launcher block".to_owned())?;
+                        active = contexts
+                            .iter()
+                            .position(|context| context.tid == next.tid)
+                            .ok_or_else(|| {
+                                format!("no runtime context for pid={} tid={}", next.pid, next.tid)
+                            })?;
+                        continue;
                     }
                     PersonalityAction::CallGuest(_) => {
                         return Err(
@@ -304,16 +357,16 @@ async fn run() -> Result<(), String> {
                         import.symbol,
                     ),
                 );
-                session.absorb_runnable_thread();
+                if let Some(thread) = session.absorb_runnable_thread() {
+                    contexts.push(create_thread_context(&address_space, &thread)?);
+                }
                 session.sync_launcher_focus();
                 if let Some(request) = session.launcher_mut().xp.take_window_request() {
                     present_window(request, &mut window_frame)?;
                 }
-                // The proven launcher resumes TID2 but does not execute it
-                // before the main thread reaches CreateProcessA (#89).
-                // Keep the runnable state in the personality; scheduling it
-                // is deliberately outside this migration checkpoint.
-                active = 0;
+                if contexts[active].tid == LAUNCHER_TID {
+                    active = 0;
+                }
             }
             ExitKind::Halted => {
                 let halted_tid = contexts.remove(active).tid;

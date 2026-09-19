@@ -6,7 +6,7 @@
 
 use std::collections::{HashMap, VecDeque};
 
-use crate::process::{CreateProcessAFrame, XpProcess};
+use crate::process::{CreateProcessAFrame, ThreadObject, XpProcess};
 
 pub type Pid = u32;
 pub type Tid = u32;
@@ -82,6 +82,14 @@ pub struct CreateProcessRequest {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CreateEventRequest {
+    pub name: Option<String>,
+    pub manual_reset: bool,
+    pub initial_state: bool,
+    pub inheritable: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CreatedChild {
     pub pid: Pid,
     pub tid: Tid,
@@ -94,6 +102,8 @@ pub struct CreatedChild {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SessionRequest {
     CreateProcess(CreateProcessRequest),
+    CreateEvent(CreateEventRequest),
+    CloseHandle { pid: Pid, handle: u32 },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -130,6 +140,7 @@ pub struct Wc3Session {
     pub next_object: ObjectId,
     pub next_process_handle: u32,
     pub next_thread_handle: u32,
+    pub next_event_handle: u32,
     pub sequence: u64,
 }
 
@@ -161,6 +172,7 @@ impl Wc3Session {
             next_object: 1,
             next_process_handle: PROCESS_HANDLE_BASE,
             next_thread_handle: THREAD_HANDLE_BASE,
+            next_event_handle: 0x5743_2001,
             sequence: 0,
         }
     }
@@ -197,13 +209,16 @@ impl Wc3Session {
     /// Transfer the process personality's one-shot notification into the
     /// session scheduler. The personality may observe the Windows operation;
     /// only the session decides which logical thread is runnable.
-    pub fn absorb_runnable_thread(&mut self) {
-        if let Some(thread) = self.launcher_mut().xp.take_runnable_thread() {
+    pub fn absorb_runnable_thread(&mut self) -> Option<ThreadObject> {
+        let thread = self.launcher_mut().xp.take_runnable_thread();
+        if let Some(thread) = thread.clone() {
+            self.register_thread(LAUNCHER_PID, thread.handle, thread.tid);
             self.enqueue(ThreadKey {
                 pid: LAUNCHER_PID,
                 tid: thread.tid,
             });
         }
+        thread
     }
 
     pub fn deferred_runnable_tid(&self) -> Option<Tid> {
@@ -277,6 +292,121 @@ impl Wc3Session {
             process_object,
             thread_object,
         }
+    }
+
+    pub fn register_thread(&mut self, pid: Pid, handle: u32, tid: Tid) -> ObjectId {
+        let object = self.next_object;
+        self.next_object += 1;
+        self.objects.insert(
+            object,
+            SessionObject::Thread(ThreadSessionObject {
+                key: ThreadKey { pid, tid },
+                exit_code: None,
+            }),
+        );
+        if let Some(process) = self.process_mut(pid) {
+            process.handles.insert(
+                handle,
+                HandleEntry {
+                    object,
+                    inheritable: false,
+                },
+            );
+        }
+        self.next_tid = self.next_tid.max(tid + 1);
+        self.next_thread_handle = self.next_thread_handle.max(handle + 1);
+        object
+    }
+
+    pub fn create_event(&mut self, pid: Pid, request: CreateEventRequest) -> (u32, bool) {
+        let (object, already_exists) = if let Some(name) = request.name.as_ref() {
+            if let Some(&object) = self.names.get(name) {
+                (object, true)
+            } else {
+                let object = self.next_object;
+                self.next_object += 1;
+                self.objects.insert(
+                    object,
+                    SessionObject::Event(EventObject {
+                        manual_reset: request.manual_reset,
+                        signaled: request.initial_state,
+                        name: request.name.clone(),
+                    }),
+                );
+                self.names.insert(name.clone(), object);
+                (object, false)
+            }
+        } else {
+            let object = self.next_object;
+            self.next_object += 1;
+            self.objects.insert(
+                object,
+                SessionObject::Event(EventObject {
+                    manual_reset: request.manual_reset,
+                    signaled: request.initial_state,
+                    name: None,
+                }),
+            );
+            (object, false)
+        };
+        let handle = self.next_event_handle;
+        self.next_event_handle += 1;
+        self.process_mut(pid).expect("event owner").handles.insert(
+            handle,
+            HandleEntry {
+                object,
+                inheritable: request.inheritable,
+            },
+        );
+        (handle, already_exists)
+    }
+
+    pub fn close_handle(&mut self, pid: Pid, handle: u32) -> bool {
+        let Some(entry) = self
+            .process_mut(pid)
+            .and_then(|process| process.handles.remove(&handle))
+        else {
+            return false;
+        };
+        let Some(SessionObject::Event(event)) = self.objects.get(&entry.object) else {
+            return true;
+        };
+        if let Some(name) = event.name.clone() {
+            let still_open = self.processes.values().any(|process| {
+                process
+                    .handles
+                    .values()
+                    .any(|held| held.object == entry.object)
+            });
+            if !still_open {
+                self.names.remove(&name);
+                self.objects.remove(&entry.object);
+            }
+        }
+        true
+    }
+
+    pub fn block_wait(&mut self, request: WaitRequest) -> Result<(), &'static str> {
+        for handle in request.handles.iter().take(request.count.min(2) as usize) {
+            let entry = self
+                .process(request.key.pid)
+                .and_then(|process| process.handles.get(handle))
+                .ok_or("wait handle is not in process table")?;
+            let object = self
+                .objects
+                .get(&entry.object)
+                .ok_or("wait object missing")?;
+            let signaled = match object {
+                SessionObject::Event(event) => event.signaled,
+                SessionObject::Process(_) | SessionObject::Thread(_) => false,
+            };
+            if signaled {
+                return Err("unexpected signaled object at #90");
+            }
+        }
+        self.runnable.retain(|key| *key != request.key);
+        self.blocked.insert(request.key, request);
+        Ok(())
     }
 
     pub fn describe_handle(&self, pid: Pid, handle: u32) -> String {
