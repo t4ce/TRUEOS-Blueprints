@@ -38,6 +38,7 @@ pub enum WinCall {
     SetFocus,
     DefWindowProcA,
     BeginPaint,
+    EndPaint,
     DrawTextA,
     LoadStringA,
     LoadImageA,
@@ -49,6 +50,8 @@ pub enum WinCall {
     SelectPalette,
     RealizePalette,
     SetTextColor,
+    SetBkColor,
+    SetBkMode,
     BitBlt,
     DeleteDC,
     DeleteObject,
@@ -105,6 +108,7 @@ impl WinCall {
             "SetFocus" if user => Self::SetFocus,
             "DefWindowProcA" if user => Self::DefWindowProcA,
             "BeginPaint" if user => Self::BeginPaint,
+            "EndPaint" if user => Self::EndPaint,
             "DrawTextA" if user => Self::DrawTextA,
             "LoadStringA" if user => Self::LoadStringA,
             "LoadImageA" if user => Self::LoadImageA,
@@ -127,6 +131,12 @@ impl WinCall {
             }
             "SetTextColor" if import.module.eq_ignore_ascii_case("GDI32.dll") => {
                 Self::SetTextColor
+            }
+            "SetBkColor" if import.module.eq_ignore_ascii_case("GDI32.dll") => {
+                Self::SetBkColor
+            }
+            "SetBkMode" if import.module.eq_ignore_ascii_case("GDI32.dll") => {
+                Self::SetBkMode
             }
             "BitBlt" if import.module.eq_ignore_ascii_case("GDI32.dll") => Self::BitBlt,
             "DeleteDC" if import.module.eq_ignore_ascii_case("GDI32.dll") => Self::DeleteDC,
@@ -193,6 +203,8 @@ impl WinCall {
             Self::SelectPalette => Kind::Stdcall(12),
             Self::RealizePalette => Kind::Stdcall(4),
             Self::SetTextColor => Kind::Stdcall(8),
+            Self::SetBkColor => Kind::Stdcall(8),
+            Self::SetBkMode => Kind::Stdcall(8),
             Self::BitBlt => Kind::Stdcall(36),
             Self::DeleteDC => Kind::Stdcall(4),
             Self::DeleteObject => Kind::Stdcall(4),
@@ -201,7 +213,7 @@ impl WinCall {
             }
             Self::CreateWindowExA => Kind::Stdcall(48),
             Self::DefWindowProcA => Kind::Stdcall(16),
-            Self::BeginPaint => Kind::Stdcall(8),
+            Self::BeginPaint | Self::EndPaint => Kind::Stdcall(8),
             Self::DrawTextA => Kind::Stdcall(20),
             Self::PeekMessageA => Kind::Stdcall(20),
             Self::CreateThread | Self::LCMapStringW | Self::MultiByteToWideChar => {

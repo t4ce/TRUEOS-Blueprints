@@ -12,6 +12,7 @@ use crate::{
     session::{
         CreateEventRequest, CreateProcessRequest, CreateWindowRequest, LoadImageRequest,
         PersonalityAction, SessionRequest, ThreadKey, WaitRequest, WindowBlitRequest,
+        WindowTextRequest,
     },
     thunk32,
 };
@@ -36,6 +37,8 @@ const DESKTOP_HWND: u32 = 0x5743_3000;
 const GDI_HANDLE_BASE: u32 = 0x5743_7001;
 const STOCK_MONO_BITMAP: u32 = 0x5743_7f01;
 const STOCK_DEFAULT_PALETTE: u32 = 0x5743_7f02;
+const TRANSPARENT: u32 = 1;
+const OPAQUE: u32 = 2;
 const GDI_DIB_BASE: u32 = 0x0500_0000;
 const ENVIRONMENT_BLOCK_VA: u32 = PROCESS_DATA_VA + 0x100;
 
@@ -162,6 +165,14 @@ struct DeviceContext {
     palette_force_background: bool,
     realized_palette: Option<u32>,
     text_color: u32,
+    bk_color: u32,
+    bk_mode: u32,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ActivePaint {
+    hwnd: u32,
+    hdc: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -301,6 +312,7 @@ pub struct XpProcess {
     runnable_thread: Option<u32>,
     desktop_size: (u32, u32),
     gdi_objects: HashMap<u32, GdiObject>,
+    active_paints: HashMap<u32, ActivePaint>,
     next_gdi_handle: u32,
     next_gdi_dib_va: u32,
 }
@@ -355,6 +367,7 @@ impl XpProcess {
             runnable_thread: None,
             desktop_size: (1920, 1080),
             gdi_objects,
+            active_paints: HashMap::new(),
             next_gdi_handle: GDI_HANDLE_BASE,
             next_gdi_dib_va: GDI_DIB_BASE,
         }
@@ -465,7 +478,7 @@ impl XpProcess {
                 }));
             }
             WinCall::DefWindowProcA => self.def_window_proc(esp, memory),
-            WinCall::DrawTextA => self.draw_text_a(esp, memory),
+            WinCall::DrawTextA => return self.draw_text_a(esp, memory),
             WinCall::BeginPaint => {
                 let [_, hwnd, paint_struct] = arguments::<3>(memory, esp)?;
                 return Ok(PersonalityAction::Session(SessionRequest::BeginPaint {
@@ -474,6 +487,7 @@ impl XpProcess {
                     paint_struct,
                 }));
             }
+            WinCall::EndPaint => self.end_paint(esp, memory),
             WinCall::LoadStringA => self.load_string(esp, memory),
             WinCall::LoadImageA => {
                 return Ok(PersonalityAction::Session(SessionRequest::LoadImage(
@@ -488,6 +502,8 @@ impl XpProcess {
             WinCall::SelectPalette => self.select_palette(esp, memory),
             WinCall::RealizePalette => self.realize_palette(esp, memory),
             WinCall::SetTextColor => self.set_text_color(esp, memory),
+            WinCall::SetBkColor => self.set_bk_color(esp, memory),
+            WinCall::SetBkMode => self.set_bk_mode(esp, memory),
             WinCall::BitBlt => return self.bit_blt(esp, memory),
             WinCall::DeleteDC => self.delete_dc(esp, memory),
             WinCall::DeleteObject => self.delete_object(esp, memory),
@@ -1002,6 +1018,8 @@ impl XpProcess {
                 palette_force_background: false,
                 realized_palette: None,
                 text_color: 0,
+                bk_color: 0x00ff_ffff,
+                bk_mode: OPAQUE,
             }),
         );
         let _ = ret;
@@ -1016,6 +1034,9 @@ impl XpProcess {
         height: u32,
         memory: &mut impl GuestMemory,
     ) -> Result<u32, &'static str> {
+        if self.active_paints.contains_key(&paint_struct) {
+            return Err("BeginPaint PAINTSTRUCT already active");
+        }
         let handle = self.next_gdi_handle;
         self.next_gdi_handle = self
             .next_gdi_handle
@@ -1030,6 +1051,8 @@ impl XpProcess {
                 palette_force_background: false,
                 realized_palette: None,
                 text_color: 0,
+                bk_color: 0x00ff_ffff,
+                bk_mode: OPAQUE,
             }),
         );
         memory.write(paint_struct, &[0; 64])?;
@@ -1045,7 +1068,35 @@ impl XpProcess {
         ] {
             write_u32(memory, paint_struct + offset, value)?;
         }
+        self.active_paints
+            .insert(paint_struct, ActivePaint { hwnd, hdc: handle });
         Ok(handle)
+    }
+
+    fn end_paint(&mut self, esp: u32, memory: &impl GuestMemory) -> Result<u32, &'static str> {
+        let [_, hwnd, paint_struct] = arguments::<3>(memory, esp)?;
+        if paint_struct == 0 {
+            return Ok(0);
+        }
+        let Some(active) = self.active_paints.get(&paint_struct).copied() else {
+            return Ok(0);
+        };
+        if active.hwnd != hwnd || read_u32(memory, paint_struct)? != active.hdc {
+            return Ok(0);
+        }
+        let valid_window_dc = matches!(
+            self.gdi_objects.get(&active.hdc),
+            Some(GdiObject::DeviceContext(DeviceContext {
+                target: DcTarget::WindowPaint { hwnd: target_hwnd },
+                ..
+            })) if *target_hwnd == hwnd
+        );
+        if !valid_window_dc {
+            return Ok(0);
+        }
+        self.active_paints.remove(&paint_struct);
+        self.gdi_objects.remove(&active.hdc);
+        Ok(1)
     }
 
     fn select_object(&mut self, esp: u32, memory: &impl GuestMemory) -> Result<u32, &'static str> {
@@ -1242,6 +1293,38 @@ impl XpProcess {
         Ok(old)
     }
 
+    fn set_bk_color(
+        &mut self,
+        esp: u32,
+        memory: &impl GuestMemory,
+    ) -> Result<u32, &'static str> {
+        let [ret, hdc, color] = arguments::<3>(memory, esp)?;
+        let Some(GdiObject::DeviceContext(dc)) = self.gdi_objects.get_mut(&hdc) else {
+            return Ok(u32::MAX);
+        };
+        let old = dc.bk_color;
+        dc.bk_color = color & 0x00ff_ffff;
+        let _ = ret;
+        Ok(old)
+    }
+
+    fn set_bk_mode(
+        &mut self,
+        esp: u32,
+        memory: &impl GuestMemory,
+    ) -> Result<u32, &'static str> {
+        let [_, hdc, mode] = arguments::<3>(memory, esp)?;
+        if !matches!(mode, TRANSPARENT | OPAQUE) {
+            return Ok(0);
+        }
+        let Some(GdiObject::DeviceContext(dc)) = self.gdi_objects.get_mut(&hdc) else {
+            return Ok(0);
+        };
+        let old = dc.bk_mode;
+        dc.bk_mode = mode;
+        Ok(old)
+    }
+
     fn bit_blt(
         &self,
         esp: u32,
@@ -1355,7 +1438,10 @@ impl XpProcess {
         let [ret, hdc] = arguments::<2>(memory, esp)?;
         let is_dc = matches!(
             self.gdi_objects.get(&hdc),
-            Some(GdiObject::DeviceContext(_))
+            Some(GdiObject::DeviceContext(DeviceContext {
+                target: DcTarget::Memory { .. },
+                ..
+            }))
         );
         if is_dc {
             self.gdi_objects.remove(&hdc);
@@ -1562,7 +1648,11 @@ impl XpProcess {
         Ok(0)
     }
 
-    fn draw_text_a(&self, esp: u32, memory: &mut impl GuestMemory) -> Result<u32, &'static str> {
+    fn draw_text_a(
+        &self,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<PersonalityAction, &'static str> {
         let [ret, hdc, text_ptr, count_raw, rect_ptr, format] = arguments::<6>(memory, esp)?;
         let _ = ret;
         if (count_raw as i32) < 0 {
@@ -1574,7 +1664,7 @@ impl XpProcess {
         ) {
             return Err("DrawTextA unknown device context");
         }
-        if format != 0x0000_0411 {
+        if format != 0x0000_0411 && format != 0x0000_0011 {
             return Err("DrawTextA format unsupported");
         }
         if rect_ptr == 0 {
@@ -1582,6 +1672,12 @@ impl XpProcess {
         }
         let mut bytes = vec![0; count_raw as usize];
         memory.read(text_ptr, &mut bytes)?;
+        let mut text = String::with_capacity(bytes.len());
+        for byte in &bytes {
+            let codepoint = decode_cp1252(*byte) as u32;
+            let character = char::from_u32(codepoint).ok_or("DrawTextA CP1252 decode")?;
+            text.push(character);
+        }
         let measured_width = bytes
             .iter()
             .map(|byte| system_font_advance_cp1252(*byte).ok_or("DrawTextA character unsupported"))
@@ -1598,18 +1694,36 @@ impl XpProcess {
         if measured_width > u32::try_from(available_width).map_err(|_| "DrawTextA RECT width")? {
             return Err("DrawTextA word wrap frontier");
         }
-        write_u32(
-            memory,
-            rect_ptr + 8,
-            left.checked_add(measured_width as i32)
-                .ok_or("DrawTextA right overflow")? as u32,
-        )?;
-        write_u32(
-            memory,
-            rect_ptr + 12,
-            top.checked_add(16).ok_or("DrawTextA bottom overflow")? as u32,
-        )?;
-        Ok(16)
+        if format == 0x0000_0411 {
+            write_u32(
+                memory,
+                rect_ptr + 8,
+                left.checked_add(measured_width as i32)
+                    .ok_or("DrawTextA right overflow")? as u32,
+            )?;
+            write_u32(
+                memory,
+                rect_ptr + 12,
+                top.checked_add(16).ok_or("DrawTextA bottom overflow")? as u32,
+            )?;
+            return Ok(PersonalityAction::Return(16));
+        }
+
+        let (hwnd, colorref) = match self.gdi_objects.get(&hdc) {
+            Some(GdiObject::DeviceContext(dc)) => match &dc.target {
+                DcTarget::WindowPaint { hwnd } => (*hwnd, dc.text_color),
+                DcTarget::Memory { .. } => return Err("DrawTextA target is memory DC"),
+            },
+            _ => return Err("DrawTextA unknown device context"),
+        };
+        Ok(PersonalityAction::WindowText(WindowTextRequest {
+            hwnd,
+            hdc,
+            text,
+            rect: [left, top, right, read_i32(memory, rect_ptr + 12)?],
+            colorref,
+            height: 16,
+        }))
     }
 
     fn create_window_request(
@@ -1877,6 +1991,15 @@ impl XpProcess {
         }
     }
 
+    pub fn text_state(&self, handle: u32) -> Option<(u32, u32, u32)> {
+        match self.gdi_objects.get(&handle) {
+            Some(GdiObject::DeviceContext(dc)) => {
+                Some((dc.text_color, dc.bk_color, dc.bk_mode))
+            }
+            _ => None,
+        }
+    }
+
     pub fn palette_entries(&self, handle: u32) -> Option<usize> {
         match self.gdi_objects.get(&handle)? {
             GdiObject::Palette(palette) => Some(palette.entries.len()),
@@ -1899,6 +2022,10 @@ impl XpProcess {
 
     pub fn gdi_live(&self, handle: u32) -> bool {
         self.gdi_objects.contains_key(&handle)
+    }
+
+    pub fn active_paint_count(&self) -> usize {
+        self.active_paints.len()
     }
 
     pub fn allocation_size(&self, pointer: u32) -> Option<u32> {
@@ -2456,6 +2583,8 @@ mod tests {
                 palette_force_background: false,
                 realized_palette: None,
                 text_color: 0,
+                bk_color: 0x00ff_ffff,
+                bk_mode: OPAQUE,
             }),
         );
         xp.gdi_objects.insert(
@@ -2469,6 +2598,8 @@ mod tests {
                 palette_force_background: false,
                 realized_palette: None,
                 text_color: 0,
+                bk_color: 0x00ff_ffff,
+                bk_mode: OPAQUE,
             }),
         );
         let mut memory = Memory {
@@ -2516,6 +2647,8 @@ mod tests {
                 palette_force_background: false,
                 realized_palette: None,
                 text_color: 0,
+                bk_color: 0x00ff_ffff,
+                bk_mode: OPAQUE,
             }),
         );
         let mut memory = Memory {
@@ -2582,6 +2715,8 @@ mod tests {
                 palette_force_background: false,
                 realized_palette: None,
                 text_color: 0,
+                bk_color: 0x00ff_ffff,
+                bk_mode: OPAQUE,
             }),
         );
         let mut memory = Memory {
@@ -2660,6 +2795,8 @@ mod tests {
                     palette_force_background: false,
                     realized_palette: None,
                     text_color: 0,
+                    bk_color: 0x00ff_ffff,
+                    bk_mode: OPAQUE,
                 }),
             );
         }
@@ -2733,6 +2870,8 @@ mod tests {
                 palette_force_background: false,
                 realized_palette: None,
                 text_color: 0,
+                bk_color: 0x00ff_ffff,
+                bk_mode: OPAQUE,
             }),
         );
         xp.gdi_objects.insert(
@@ -2870,6 +3009,8 @@ mod tests {
                 palette_force_background: false,
                 realized_palette: None,
                 text_color: 0,
+                bk_color: 0x00ff_ffff,
+                bk_mode: OPAQUE,
             }),
         );
         xp.gdi_objects.insert(
@@ -2912,6 +3053,8 @@ mod tests {
                 palette_force_background: false,
                 realized_palette: None,
                 text_color: 0,
+                bk_color: 0x00ff_ffff,
+                bk_mode: OPAQUE,
             }),
         );
         write_u32(&mut memory, esp, 0x0040_156f).unwrap();
@@ -2980,6 +3123,8 @@ mod tests {
                 palette_force_background: false,
                 realized_palette: None,
                 text_color: 0,
+                bk_color: 0x00ff_ffff,
+                bk_mode: OPAQUE,
             }),
         );
         xp.gdi_objects.insert(
@@ -3255,6 +3400,8 @@ mod tests {
                 palette_force_background: false,
                 realized_palette: None,
                 text_color: 0,
+                bk_color: 0x00ff_ffff,
+                bk_mode: OPAQUE,
             }),
         );
         let mut memory = Memory {
@@ -3292,6 +3439,219 @@ mod tests {
             PersonalityAction::Return(u32::MAX)
         );
         assert_eq!(xp.text_color(hdc), Some(0x0012_3456));
+    }
+
+    #[test]
+    fn set_bk_color_swaps_default_white_without_changing_other_dc_state() {
+        let imports = vec![LauncherImport {
+            id: 0,
+            module: "GDI32.dll".into(),
+            symbol: "SetBkColor".into(),
+            iat_rva: 0,
+        }];
+        let mut xp = XpProcess::new(imports);
+        let hdc = GDI_HANDLE_BASE;
+        let hwnd = 0x5743_4002;
+        xp.gdi_objects.insert(
+            hdc,
+            GdiObject::DeviceContext(DeviceContext {
+                compatible_with: DcCompatibility::Display,
+                target: DcTarget::WindowPaint { hwnd },
+                selected_palette: STOCK_DEFAULT_PALETTE,
+                palette_force_background: false,
+                realized_palette: None,
+                text_color: 0x0000_c8f0,
+                bk_color: 0x00ff_ffff,
+                bk_mode: OPAQUE,
+            }),
+        );
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = 0x043f_f700;
+        for (index, value) in [0x0040_17b3, hdc, 0]
+            .into_iter()
+            .enumerate()
+        {
+            write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
+        }
+        assert_eq!(
+            xp.dispatch(2, 0, esp, &mut memory).unwrap(),
+            PersonalityAction::Return(0x00ff_ffff)
+        );
+        let Some(GdiObject::DeviceContext(dc)) = xp.gdi_objects.get(&hdc) else {
+            panic!("device context disappeared")
+        };
+        assert_eq!(dc.bk_color, 0);
+        assert_eq!(dc.text_color, 0x0000_c8f0);
+        assert_eq!(dc.selected_palette, STOCK_DEFAULT_PALETTE);
+        assert!(matches!(dc.target, DcTarget::WindowPaint { hwnd: value } if value == hwnd));
+
+        write_u32(&mut memory, esp + 8, 0x0012_3456).unwrap();
+        assert_eq!(
+            xp.dispatch(2, 0, esp, &mut memory).unwrap(),
+            PersonalityAction::Return(0)
+        );
+        assert_eq!(xp.gdi_objects.get(&hdc).and_then(|value| match value {
+            GdiObject::DeviceContext(dc) => Some(dc.bk_color),
+            _ => None,
+        }), Some(0x0012_3456));
+
+        write_u32(&mut memory, esp + 4, STOCK_MONO_BITMAP).unwrap();
+        assert_eq!(
+            xp.dispatch(2, 0, esp, &mut memory).unwrap(),
+            PersonalityAction::Return(u32::MAX)
+        );
+        assert_eq!(xp.text_color(hdc), Some(0x0000_c8f0));
+    }
+
+    #[test]
+    fn set_bk_mode_uses_opaque_defaults_and_preserves_dc_state() {
+        let imports = vec![LauncherImport {
+            id: 0,
+            module: "GDI32.dll".into(),
+            symbol: "SetBkMode".into(),
+            iat_rva: 0,
+        }];
+        let mut xp = XpProcess::new(imports);
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = 0x043f_f700;
+        for (index, value) in [0x0040_1561, 0]
+            .into_iter()
+            .enumerate()
+        {
+            write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
+        }
+        let memory_hdc = xp.create_compatible_dc(esp, &memory).unwrap();
+        let paint_struct = 0x043f_f500;
+        let paint_hdc = xp
+            .begin_paint(0x5743_4002, paint_struct, 500, 400, &mut memory)
+            .unwrap();
+
+        for hdc in [memory_hdc, paint_hdc] {
+            let Some(GdiObject::DeviceContext(dc)) = xp.gdi_objects.get(&hdc) else {
+                panic!("missing device context")
+            };
+            assert_eq!(dc.bk_mode, OPAQUE);
+            assert_eq!(dc.text_color, 0);
+            assert_eq!(dc.bk_color, 0x00ff_ffff);
+        }
+
+        write_u32(&mut memory, esp, 0x0040_17bc).unwrap();
+        write_u32(&mut memory, esp + 4, paint_hdc).unwrap();
+        write_u32(&mut memory, esp + 8, TRANSPARENT).unwrap();
+        assert_eq!(
+            xp.dispatch(2, 0, esp, &mut memory).unwrap(),
+            PersonalityAction::Return(OPAQUE)
+        );
+        let Some(GdiObject::DeviceContext(dc)) = xp.gdi_objects.get(&paint_hdc) else {
+            panic!("missing paint device context")
+        };
+        assert_eq!(dc.bk_mode, TRANSPARENT);
+        assert_eq!(dc.text_color, 0);
+        assert_eq!(dc.bk_color, 0x00ff_ffff);
+        assert_eq!(dc.selected_palette, STOCK_DEFAULT_PALETTE);
+        assert!(matches!(dc.target, DcTarget::WindowPaint { hwnd } if hwnd == 0x5743_4002));
+
+        write_u32(&mut memory, esp + 8, OPAQUE).unwrap();
+        assert_eq!(
+            xp.dispatch(2, 0, esp, &mut memory).unwrap(),
+            PersonalityAction::Return(TRANSPARENT)
+        );
+        write_u32(&mut memory, esp + 8, 3).unwrap();
+        assert_eq!(
+            xp.dispatch(2, 0, esp, &mut memory).unwrap(),
+            PersonalityAction::Return(0)
+        );
+        assert_eq!(
+            xp.gdi_objects.get(&paint_hdc).and_then(|value| match value {
+                GdiObject::DeviceContext(dc) => Some(dc.bk_mode),
+                _ => None,
+            }),
+            Some(OPAQUE)
+        );
+
+        write_u32(&mut memory, esp + 4, STOCK_MONO_BITMAP).unwrap();
+        assert_eq!(
+            xp.dispatch(2, 0, esp, &mut memory).unwrap(),
+            PersonalityAction::Return(0)
+        );
+    }
+
+    #[test]
+    fn end_paint_retires_only_matching_active_window_paint() {
+        let imports = vec![
+            LauncherImport {
+                id: 0,
+                module: "USER32.dll".into(),
+                symbol: "EndPaint".into(),
+                iat_rva: 0,
+            },
+            LauncherImport {
+                id: 1,
+                module: "GDI32.dll".into(),
+                symbol: "DeleteDC".into(),
+                iat_rva: 4,
+            },
+        ];
+        let mut xp = XpProcess::new(imports);
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = 0x043f_f700;
+        let ps = 0x043f_f500;
+        let hwnd = 0x5743_4002;
+        let hdc = xp.begin_paint(hwnd, ps, 500, 400, &mut memory).unwrap();
+        assert_eq!(read_u32(&memory, ps).unwrap(), hdc);
+        assert_eq!(xp.active_paint_count(), 1);
+        assert!(xp.gdi_live(hdc));
+
+        for (index, value) in [0x0040_1833, hwnd + 1, ps].into_iter().enumerate() {
+            write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
+        }
+        assert_eq!(
+            xp.dispatch(2, 0, esp, &mut memory).unwrap(),
+            PersonalityAction::Return(0)
+        );
+        assert_eq!(xp.active_paint_count(), 1);
+        assert!(xp.gdi_live(hdc));
+
+        write_u32(&mut memory, esp + 4, hwnd).unwrap();
+        write_u32(&mut memory, ps, 0).unwrap();
+        assert_eq!(
+            xp.dispatch(2, 0, esp, &mut memory).unwrap(),
+            PersonalityAction::Return(0)
+        );
+        assert_eq!(xp.active_paint_count(), 1);
+        assert!(xp.gdi_live(hdc));
+
+        write_u32(&mut memory, ps, hdc).unwrap();
+        assert_eq!(
+            xp.dispatch(2, 0, esp, &mut memory).unwrap(),
+            PersonalityAction::Return(1)
+        );
+        assert_eq!(xp.active_paint_count(), 0);
+        assert!(!xp.gdi_live(hdc));
+        assert_eq!(
+            xp.dispatch(2, 0, esp, &mut memory).unwrap(),
+            PersonalityAction::Return(0)
+        );
+
+        let ps2 = ps + 0x100;
+        let hdc2 = xp.begin_paint(hwnd, ps2, 500, 400, &mut memory).unwrap();
+        write_u32(&mut memory, esp, 0x0040_15ec).unwrap();
+        write_u32(&mut memory, esp + 4, hdc2).unwrap();
+        assert_eq!(
+            xp.dispatch(2, 1, esp, &mut memory).unwrap(),
+            PersonalityAction::Return(0)
+        );
+        assert!(xp.gdi_live(hdc2));
+        assert_eq!(xp.active_paint_count(), 1);
     }
 
     #[test]

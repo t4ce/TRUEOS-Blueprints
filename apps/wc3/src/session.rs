@@ -160,6 +160,16 @@ pub struct WindowBlitRequest {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WindowTextRequest {
+    pub hwnd: u32,
+    pub hdc: u32,
+    pub text: String,
+    pub rect: [i32; 4],
+    pub colorref: u32,
+    pub height: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CreatedChild {
     pub pid: Pid,
     pub tid: Tid,
@@ -211,6 +221,7 @@ pub enum PersonalityAction {
     Return(u32),
     Session(SessionRequest),
     WindowBlit(WindowBlitRequest),
+    WindowText(WindowTextRequest),
     Block(WaitRequest),
     CallGuest(GuestCall),
     ExitThread(u32),

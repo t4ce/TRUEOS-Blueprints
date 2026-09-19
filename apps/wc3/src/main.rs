@@ -4,7 +4,7 @@ use sha2::{Digest, Sha256};
 use trueos::{
     async_fs,
     logl::{self, level},
-    ui4_scene::{self, Damage, Frame, rgba},
+    ui4_scene::{self, rgba, Damage, Font, Frame, SceneTextRow},
     x86::{AddressSpace, Context, ExitKind, Permissions, Registers},
 };
 use wc3::{
@@ -109,6 +109,7 @@ async fn run() -> Result<(), String> {
     let mut thread_calls: HashMap<(u32, u32), u32> = HashMap::new();
     let mut default_proc_messages = HashSet::new();
     let mut frames: HashMap<u32, Frame> = HashMap::new();
+    let mut window_rgba: HashMap<u32, Vec<u8>> = HashMap::new();
     let mut blit_checkpoint_done = false;
     let mut active = 0usize;
     loop {
@@ -574,6 +575,18 @@ async fn run() -> Result<(), String> {
                 } else {
                     None
                 };
+                let end_paint_input = if WinCall::from_import(&import) == WinCall::EndPaint {
+                    let frame = read_guest_words(&memory, exit.registers.esp, 3)?;
+                    let hdc = read_guest_words(&memory, frame[2], 1)?[0];
+                    let target = match session.launcher().xp.dc_target(hdc) {
+                        Some(Some(hwnd)) => format!("WINDOW_PAINT hwnd=0x{hwnd:08x}"),
+                        Some(None) => "MEMORY".to_owned(),
+                        None => "UNKNOWN".to_owned(),
+                    };
+                    Some((frame, hdc, target))
+                } else {
+                    None
+                };
                 let result = session
                     .launcher_mut()
                     .xp
@@ -595,6 +608,26 @@ async fn run() -> Result<(), String> {
                 let mut callback = None;
                 let result = match result {
                     PersonalityAction::Return(value) => {
+                        if let Some((frame, hdc, target)) = end_paint_input.as_ref() {
+                            if value == 1 {
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 EndPaint hwnd=0x{:08x} ps=0x{:08x} hdc=0x{:08x} target={} retired=1",
+                                        frame[1], frame[2], hdc, target
+                                    ),
+                                );
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 paint lifecycle active_paints={} paint_hdc_0x{:08x}_live={}",
+                                        session.launcher().xp.active_paint_count(),
+                                        hdc,
+                                        u32::from(session.launcher().xp.gdi_live(*hdc))
+                                    ),
+                                );
+                            }
+                        }
                         if WinCall::from_import(&import) == WinCall::SetTextColor {
                             let frame = read_guest_words(&memory, exit.registers.esp, 3)?;
                             let target = match session.launcher().xp.dc_target(frame[1]) {
@@ -616,6 +649,67 @@ async fn run() -> Result<(), String> {
                                     (new_color >> 16) & 0xff
                                 ),
                             );
+                        }
+                        if WinCall::from_import(&import) == WinCall::SetBkColor {
+                            let frame = read_guest_words(&memory, exit.registers.esp, 3)?;
+                            let target = match session.launcher().xp.dc_target(frame[1]) {
+                                Some(Some(hwnd)) => format!("WINDOW_PAINT hwnd=0x{hwnd:08x}"),
+                                Some(None) => "MEMORY".to_owned(),
+                                None => "UNKNOWN".to_owned(),
+                            };
+                            let new_color = frame[2] & 0x00ff_ffff;
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 SetBkColor hdc=0x{:08x} target={} old=0x{:08x} new=0x{:08x} rgb=[{},{},{}]",
+                                    frame[1],
+                                    target,
+                                    value,
+                                    new_color,
+                                    new_color & 0xff,
+                                    (new_color >> 8) & 0xff,
+                                    (new_color >> 16) & 0xff
+                                ),
+                            );
+                        }
+                        if WinCall::from_import(&import) == WinCall::SetBkMode {
+                            let frame = read_guest_words(&memory, exit.registers.esp, 3)?;
+                            let target = match session.launcher().xp.dc_target(frame[1]) {
+                                Some(Some(hwnd)) => format!("WINDOW_PAINT hwnd=0x{hwnd:08x}"),
+                                Some(None) => "MEMORY".to_owned(),
+                                None => "UNKNOWN".to_owned(),
+                            };
+                            let mode_name = |mode| match mode {
+                                1 => "TRANSPARENT",
+                                2 => "OPAQUE",
+                                _ => "UNKNOWN",
+                            };
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 SetBkMode hdc=0x{:08x} target={} old={} new={} old_name={} new_name={}",
+                                    frame[1],
+                                    target,
+                                    value,
+                                    frame[2],
+                                    mode_name(value),
+                                    mode_name(frame[2])
+                                ),
+                            );
+                            if let Some((text_color, bk_color, bk_mode)) =
+                                session.launcher().xp.text_state(frame[1])
+                            {
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 TEXT DC hdc=0x{:08x} text_color=0x{:08x} bk_color=0x{:08x} bk_mode={}",
+                                        frame[1],
+                                        text_color,
+                                        bk_color,
+                                        mode_name(bk_mode)
+                                    ),
+                                );
+                            }
                         }
                         if let Some((handle, Some(info), Some(stock), selected_in_dc)) =
                             delete_object_before
@@ -974,6 +1068,7 @@ async fn run() -> Result<(), String> {
                     }
                     PersonalityAction::WindowBlit(request) => {
                         let digest = Sha256::digest(&request.rgba);
+                        window_rgba.insert(request.hwnd, request.rgba.clone());
                         let frame = frames
                             .get_mut(&request.hwnd)
                             .ok_or_else(|| "BitBlt destination frame missing".to_owned())?;
@@ -1033,6 +1128,70 @@ async fn run() -> Result<(), String> {
                             );
                         }
                         1
+                    }
+                    PersonalityAction::WindowText(request) => {
+                        let backing = window_rgba
+                            .get(&request.hwnd)
+                            .ok_or_else(|| "DrawTextA window backing missing".to_owned())?;
+                        let frame = frames
+                            .get_mut(&request.hwnd)
+                            .ok_or_else(|| "DrawTextA destination frame missing".to_owned())?;
+                        let expected_bytes = (frame.width() as usize)
+                            .checked_mul(frame.height() as usize)
+                            .and_then(|pixels| pixels.checked_mul(4))
+                            .ok_or_else(|| "DrawTextA frame size overflow".to_owned())?;
+                        if backing.len() != expected_bytes {
+                            return Err("DrawTextA window backing size mismatch".into());
+                        }
+                        frame
+                            .begin(rgba(0, 0, 0, 255))
+                            .map_err(|error| format!("begin WC3 DrawTextA frame: {error:?}"))?;
+                        frame
+                            .write_opaque_rgba8(backing)
+                            .map_err(|error| format!("restore WC3 DrawTextA backing: {error:?}"))?;
+                        let row = SceneTextRow {
+                            text: request.text.as_str(),
+                            x: request.rect[0] as f32,
+                            y: request.rect[1] as f32,
+                            font_pixels: request.height as f32,
+                        };
+                        frame
+                            .stamp_text_scene(
+                                Font::Default,
+                                (frame.width(), frame.height()),
+                                rgba(240, 200, 0, 255),
+                                core::slice::from_ref(&row),
+                            )
+                            .map_err(|error| format!("stamp WC3 DrawTextA text: {error:?}"))?;
+                        let damage = Damage::full(frame.width(), frame.height());
+                        loop {
+                            match frame.publish(damage) {
+                                Ok(()) => break,
+                                Err(ui4_scene::Error::Busy) => {
+                                    trueos::vsys::poll_once();
+                                    trueos::vsys::sleep_ms(1);
+                                }
+                                Err(error) => {
+                                    return Err(format!(
+                                        "publish WC3 DrawTextA text: {error:?}"
+                                    ));
+                                }
+                            }
+                        }
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 UI4 TEXT hwnd=0x{:08x} hdc=0x{:08x} rect=[{},{},{},{}] height={} published=1",
+                                request.hwnd,
+                                request.hdc,
+                                request.rect[0],
+                                request.rect[1],
+                                request.rect[2],
+                                request.rect[3],
+                                request.height
+                            ),
+                        );
+                        16
                     }
                     PersonalityAction::Session(SessionRequest::CreateProcess(request)) => {
                         let frame = request.frame;
@@ -1279,7 +1438,7 @@ async fn run() -> Result<(), String> {
                         );
                     }
                 };
-                if let Some((frame, input)) = draw_text_input {
+                if let Some((frame, input)) = draw_text_input.filter(|(frame, _)| frame[5] == 0x0000_0411) {
                     let output = read_guest_words(&memory, frame[4], 4)?;
                     logl::log(
                         level::IMPORTANT,
