@@ -405,6 +405,13 @@ impl XpProcess {
 
     pub fn provider_import_count(&self) -> usize { self.provider_imports.len() }
 
+    pub fn dispatch_provider_for_process(
+        &mut self, _pid: u32, _tid: u32, provider_id: u32, _esp: u32, _memory: &mut impl GuestMemory,
+    ) -> Result<PersonalityAction, &'static str> {
+        self.provider_import(provider_id).ok_or("unknown child provider import")?;
+        Err("unsupported child provider import")
+    }
+
     pub fn append_provider_imports(
         &mut self,
         imports: Vec<ProviderImport>,

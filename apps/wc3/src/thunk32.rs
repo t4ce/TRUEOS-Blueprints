@@ -6,6 +6,19 @@ pub const THREAD_EXIT_AFTER_VMCALL: u32 = THREAD_EXIT_ADDRESS + 3;
 pub const GUEST_RETURN_OFFSET: usize = 0x0fe0;
 pub const GUEST_RETURN_ADDRESS: u32 = THUNK_BASE + GUEST_RETURN_OFFSET as u32;
 pub const GUEST_RETURN_AFTER_VMCALL: u32 = GUEST_RETURN_ADDRESS + 3;
+pub const CHILD_CONTROL_BASE: u32 = 0x002f_0000;
+pub const CHILD_DLL_RETURN_ADDRESS: u32 = CHILD_CONTROL_BASE;
+pub const CHILD_DLL_RETURN_AFTER_VMCALL: u32 = CHILD_DLL_RETURN_ADDRESS + 3;
+pub const CHILD_THREAD_EXIT_ADDRESS: u32 = CHILD_CONTROL_BASE + 0x10;
+pub const CHILD_CALLBACK_RETURN_ADDRESS: u32 = CHILD_CONTROL_BASE + 0x20;
+
+pub fn install_child_controls(output: &mut [u8]) -> Result<(), &'static str> {
+    for offset in [0usize, 0x10, 0x20] {
+        let trap = output.get_mut(offset..offset + 5).ok_or("child control range")?;
+        trap.copy_from_slice(&[0x0f, 0x01, 0xc1, 0x0f, 0x0b]);
+    }
+    Ok(())
+}
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Kind {
