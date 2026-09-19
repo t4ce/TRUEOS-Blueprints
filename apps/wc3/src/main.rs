@@ -186,6 +186,23 @@ async fn run() -> Result<(), String> {
                         ),
                     );
                 }
+                if WinCall::from_import(&import) == WinCall::LoadImageA {
+                    let raw = read_guest_words(&memory, exit.registers.esp, 7)?;
+                    logl::log(
+                        level::IMPORTANT,
+                        format_args!(
+                            "WC3 LoadImageA RAW esp=0x{:08x} ret=0x{:08x} module=0x{:08x} name=0x{:08x} type={} cx={} cy={} flags=0x{:08x}",
+                            exit.registers.esp,
+                            raw[0],
+                            raw[1],
+                            raw[2],
+                            raw[3],
+                            raw[4],
+                            raw[5],
+                            raw[6]
+                        ),
+                    );
+                }
                 if WinCall::from_import(&import) == WinCall::Unsupported {
                     logl::log(
                         level::IMPORTANT,

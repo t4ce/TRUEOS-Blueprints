@@ -793,7 +793,7 @@ impl XpProcess {
         let [ret, module, name, image_type, cx, cy, flags] = arguments::<7>(memory, esp)?;
         if module != pe32::IMAGE_BASE
             || name & 0xffff_0000 != 0
-            || image_type != 2
+            || image_type != 0
             || cx != 0
             || cy != 0
             || flags != 0x2000
@@ -1545,7 +1545,7 @@ mod tests {
         write_u32(&mut memory, base + 0x4514, 4).unwrap();
         memory.bytes[0x4500 + 40..0x4500 + 44].copy_from_slice(&[0, 0, 255, 0]);
         let esp = base + 0x5000;
-        for (index, value) in [0x0040_1501, base, 106, 2, 0, 0, 0x2000]
+        for (index, value) in [0x0040_1501, base, 106, 0, 0, 0, 0x2000]
             .into_iter()
             .enumerate()
         {
