@@ -1599,6 +1599,46 @@ async fn run() -> Result<(), String> {
                                 .write(image.image_base, &image.image)
                                 .map_err(|error| error.to_string())?;
                             if written != image.image.len() { return Err("short native image write".into()); }
+                            let storm_imports: Vec<_> = image.imports.iter().map(|import| child_loader::ProviderImport {
+                                module: import.module.clone(),
+                                symbol: match &import.symbol {
+                                    pe32::ImportSymbol::Name(name) => child_loader::ProviderSymbol::Name(name.clone()),
+                                    pe32::ImportSymbol::Ordinal(ordinal) => child_loader::ProviderSymbol::Ordinal(*ordinal),
+                                },
+                                iat_rva: import.iat_rva,
+                            }).collect();
+                            let external_modules = storm_imports.iter().map(|import| import.module.as_str()).collect::<std::collections::HashSet<_>>().len();
+                            let (addresses, old_bytes, new_bytes, grown) = session
+                                .process_mut(child.pid)
+                                .ok_or_else(|| "child process missing".to_owned())?
+                                .xp
+                                .append_provider_imports(storm_imports)
+                                .map_err(str::to_owned)?;
+                            let provider_thunks_total = session.process(child.pid)
+                                .ok_or_else(|| "child process missing".to_owned())?
+                                .xp.provider_import_count();
+                            if new_bytes > old_bytes {
+                                child.address_space.map(
+                                    thunk32::THUNK_BASE + old_bytes as u32,
+                                    new_bytes - old_bytes,
+                                    Permissions::READ | Permissions::WRITE | Permissions::EXECUTE,
+                                ).map_err(|error| error.to_string())?;
+                                child.address_space.write(thunk32::THUNK_BASE + old_bytes as u32, &grown)
+                                    .map_err(|error| error.to_string())?;
+                                logl::log(level::IMPORTANT, format_args!(
+                                    "WC3 CHILD PROVIDER THUNK GROW pid={} old_bytes={} new_bytes={}",
+                                    child.pid, old_bytes, new_bytes
+                                ));
+                            }
+                            for (import, address) in image.imports.iter().zip(addresses) {
+                                child.address_space.write(image.image_base + import.iat_rva, &address.to_le_bytes())
+                                    .map_err(|error| error.to_string())?;
+                            }
+                            logl::log(level::IMPORTANT, format_args!(
+                                "WC3 CHILD NATIVE IMPORTS READY pid={} module=\"{}\" external_modules={} external_imports={} patched_iat={} provider_thunks_total={} thunk_bytes={}",
+                                child.pid, native.stored, external_modules, image.imports.len(), image.imports.len(),
+                                provider_thunks_total, new_bytes
+                            ));
                             logl::log(level::IMPORTANT, format_args!(
                                 "WC3 CHILD NATIVE MAP pid={} module=\"{}\" preferred_base=0x{:08x} mapped_base=0x{:08x} size=0x{:08x} relocation_delta=0 relocations_applied=0",
                                 child.pid, native.stored, image.image_base, image.image_base, image.size_of_image

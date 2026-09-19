@@ -403,6 +403,32 @@ impl XpProcess {
         &self.provider_modules
     }
 
+    pub fn provider_import_count(&self) -> usize { self.provider_imports.len() }
+
+    pub fn append_provider_imports(
+        &mut self,
+        imports: Vec<ProviderImport>,
+    ) -> Result<(Vec<u32>, usize, usize, Vec<u8>), &'static str> {
+        let old_bytes = self.provider_thunks.len();
+        let first = u32::try_from(self.provider_imports.len()).map_err(|_| "provider id")?;
+        let mut addresses = Vec::with_capacity(imports.len());
+        for (offset, import) in imports.into_iter().enumerate() {
+            let id = first.checked_add(u32::try_from(offset).map_err(|_| "provider id")?).ok_or("provider id")?;
+            let address = thunk32::address(id).ok_or("provider address")?;
+            addresses.push(address);
+            self.provider_imports.push(import);
+        }
+        let required = self.provider_imports.len().checked_mul(thunk32::THUNK_BYTES).ok_or("provider bytes")?;
+        let new_bytes = required.checked_add(0xfff).ok_or("provider page")? & !0xfff;
+        self.provider_thunks.resize(new_bytes, 0x90);
+        for (offset, _) in addresses.iter().enumerate() {
+            let id = first + offset as u32;
+            let start = id as usize * thunk32::THUNK_BYTES;
+            thunk32::write(id, thunk32::Kind::Return, &mut self.provider_thunks[start..start + thunk32::THUNK_BYTES])?;
+        }
+        Ok((addresses, old_bytes, new_bytes, self.provider_thunks[old_bytes..].to_vec()))
+    }
+
     /// Handle one import VMCALL and return the value for EAX.
     pub fn dispatch(
         &mut self,
