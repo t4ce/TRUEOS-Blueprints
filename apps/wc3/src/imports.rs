@@ -38,6 +38,7 @@ pub enum WinCall {
     SetFocus,
     DefWindowProcA,
     BeginPaint,
+    DrawTextA,
     LoadStringA,
     LoadImageA,
     GetObjectA,
@@ -47,6 +48,7 @@ pub enum WinCall {
     CreatePalette,
     SelectPalette,
     RealizePalette,
+    SetTextColor,
     BitBlt,
     DeleteDC,
     DeleteObject,
@@ -103,6 +105,7 @@ impl WinCall {
             "SetFocus" if user => Self::SetFocus,
             "DefWindowProcA" if user => Self::DefWindowProcA,
             "BeginPaint" if user => Self::BeginPaint,
+            "DrawTextA" if user => Self::DrawTextA,
             "LoadStringA" if user => Self::LoadStringA,
             "LoadImageA" if user => Self::LoadImageA,
             "GetObjectA" if import.module.eq_ignore_ascii_case("GDI32.dll") => Self::GetObjectA,
@@ -121,6 +124,9 @@ impl WinCall {
             }
             "RealizePalette" if import.module.eq_ignore_ascii_case("GDI32.dll") => {
                 Self::RealizePalette
+            }
+            "SetTextColor" if import.module.eq_ignore_ascii_case("GDI32.dll") => {
+                Self::SetTextColor
             }
             "BitBlt" if import.module.eq_ignore_ascii_case("GDI32.dll") => Self::BitBlt,
             "DeleteDC" if import.module.eq_ignore_ascii_case("GDI32.dll") => Self::DeleteDC,
@@ -186,6 +192,7 @@ impl WinCall {
             Self::CreatePalette => Kind::Stdcall(4),
             Self::SelectPalette => Kind::Stdcall(12),
             Self::RealizePalette => Kind::Stdcall(4),
+            Self::SetTextColor => Kind::Stdcall(8),
             Self::BitBlt => Kind::Stdcall(36),
             Self::DeleteDC => Kind::Stdcall(4),
             Self::DeleteObject => Kind::Stdcall(4),
@@ -195,6 +202,7 @@ impl WinCall {
             Self::CreateWindowExA => Kind::Stdcall(48),
             Self::DefWindowProcA => Kind::Stdcall(16),
             Self::BeginPaint => Kind::Stdcall(8),
+            Self::DrawTextA => Kind::Stdcall(20),
             Self::PeekMessageA => Kind::Stdcall(20),
             Self::CreateThread | Self::LCMapStringW | Self::MultiByteToWideChar => {
                 Kind::Stdcall(24)

@@ -161,6 +161,7 @@ struct DeviceContext {
     selected_palette: u32,
     palette_force_background: bool,
     realized_palette: Option<u32>,
+    text_color: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -464,6 +465,7 @@ impl XpProcess {
                 }));
             }
             WinCall::DefWindowProcA => self.def_window_proc(esp, memory),
+            WinCall::DrawTextA => self.draw_text_a(esp, memory),
             WinCall::BeginPaint => {
                 let [_, hwnd, paint_struct] = arguments::<3>(memory, esp)?;
                 return Ok(PersonalityAction::Session(SessionRequest::BeginPaint {
@@ -485,6 +487,7 @@ impl XpProcess {
             WinCall::CreatePalette => self.create_palette(esp, memory),
             WinCall::SelectPalette => self.select_palette(esp, memory),
             WinCall::RealizePalette => self.realize_palette(esp, memory),
+            WinCall::SetTextColor => self.set_text_color(esp, memory),
             WinCall::BitBlt => return self.bit_blt(esp, memory),
             WinCall::DeleteDC => self.delete_dc(esp, memory),
             WinCall::DeleteObject => self.delete_object(esp, memory),
@@ -998,6 +1001,7 @@ impl XpProcess {
                 selected_palette: STOCK_DEFAULT_PALETTE,
                 palette_force_background: false,
                 realized_palette: None,
+                text_color: 0,
             }),
         );
         let _ = ret;
@@ -1025,6 +1029,7 @@ impl XpProcess {
                 selected_palette: STOCK_DEFAULT_PALETTE,
                 palette_force_background: false,
                 realized_palette: None,
+                text_color: 0,
             }),
         );
         memory.write(paint_struct, &[0; 64])?;
@@ -1220,6 +1225,21 @@ impl XpProcess {
         dc.realized_palette = Some(selected_palette);
         let _ = ret;
         u32::try_from(entry_count).map_err(|_| "palette entry count overflow")
+    }
+
+    fn set_text_color(
+        &mut self,
+        esp: u32,
+        memory: &impl GuestMemory,
+    ) -> Result<u32, &'static str> {
+        let [ret, hdc, color] = arguments::<3>(memory, esp)?;
+        let Some(GdiObject::DeviceContext(dc)) = self.gdi_objects.get_mut(&hdc) else {
+            return Ok(u32::MAX);
+        };
+        let old = dc.text_color;
+        dc.text_color = color & 0x00ff_ffff;
+        let _ = ret;
+        Ok(old)
     }
 
     fn bit_blt(
@@ -1542,6 +1562,56 @@ impl XpProcess {
         Ok(0)
     }
 
+    fn draw_text_a(&self, esp: u32, memory: &mut impl GuestMemory) -> Result<u32, &'static str> {
+        let [ret, hdc, text_ptr, count_raw, rect_ptr, format] = arguments::<6>(memory, esp)?;
+        let _ = ret;
+        if (count_raw as i32) < 0 {
+            return Err("DrawTextA count=-1 unsupported");
+        }
+        if !matches!(
+            self.gdi_objects.get(&hdc),
+            Some(GdiObject::DeviceContext(_))
+        ) {
+            return Err("DrawTextA unknown device context");
+        }
+        if format != 0x0000_0411 {
+            return Err("DrawTextA format unsupported");
+        }
+        if rect_ptr == 0 {
+            return Err("DrawTextA requires RECT");
+        }
+        let mut bytes = vec![0; count_raw as usize];
+        memory.read(text_ptr, &mut bytes)?;
+        let measured_width = bytes
+            .iter()
+            .map(|byte| system_font_advance_cp1252(*byte).ok_or("DrawTextA character unsupported"))
+            .try_fold(0u32, |total, advance| {
+                total
+                    .checked_add(advance?)
+                    .ok_or("DrawTextA width overflow")
+            })?;
+        let left = read_i32(memory, rect_ptr)?;
+        let top = read_i32(memory, rect_ptr + 4)?;
+        let right = read_i32(memory, rect_ptr + 8)?;
+        let _bottom = read_i32(memory, rect_ptr + 12)?;
+        let available_width = right.checked_sub(left).ok_or("DrawTextA RECT overflow")?;
+        if measured_width > u32::try_from(available_width).map_err(|_| "DrawTextA RECT width")? {
+            return Err("DrawTextA word wrap frontier");
+        }
+        write_u32(
+            memory,
+            rect_ptr + 8,
+            left.checked_add(measured_width as i32)
+                .ok_or("DrawTextA right overflow")? as u32,
+        )?;
+        write_u32(
+            memory,
+            rect_ptr + 12,
+            top.checked_add(16).ok_or("DrawTextA bottom overflow")? as u32,
+        )?;
+        Ok(16)
+    }
+
     fn create_window_request(
         &self,
         esp: u32,
@@ -1796,6 +1866,13 @@ impl XpProcess {
     pub fn realized_palette(&self, handle: u32) -> Option<Option<u32>> {
         match self.gdi_objects.get(&handle)? {
             GdiObject::DeviceContext(dc) => Some(dc.realized_palette),
+            _ => None,
+        }
+    }
+
+    pub fn text_color(&self, handle: u32) -> Option<u32> {
+        match self.gdi_objects.get(&handle) {
+            Some(GdiObject::DeviceContext(dc)) => Some(dc.text_color),
             _ => None,
         }
     }
@@ -2121,6 +2198,19 @@ fn decode_cp1252(byte: u8) -> u16 {
         _ => byte as u16,
     }
 }
+
+fn system_font_advance_cp1252(ch: u8) -> Option<u32> {
+    match ch {
+        b' ' | b'.' | b'i' | b'l' | b't' => Some(4),
+        b'r' => Some(5),
+        b'C' | b'E' => Some(9),
+        b'B' | b'R' | 0xa9 => Some(10),
+        b'm' => Some(12),
+        b'0' | b'2' | b'A' | b'a' | b'd' | b'e' | b'g' | b'h' | b'n' | b'o' | b'p' | b's'
+        | b'v' | b'y' | b'z' => Some(8),
+        _ => None,
+    }
+}
 fn encode_cp1252(value: u16) -> Option<u8> {
     match value {
         0x20ac => Some(0x80),
@@ -2206,6 +2296,17 @@ mod tests {
             Ok(())
         }
     }
+    #[test]
+    fn system_font_metric_matches_draw_text_measurement_string() {
+        let text = b"Copyright \xa9 2002 Blizzard Entertainment. All Rights Reserved.";
+        assert_eq!(text.len(), 61);
+        let width = text
+            .iter()
+            .map(|byte| system_font_advance_cp1252(*byte).unwrap())
+            .sum::<u32>();
+        assert_eq!(width, 406);
+    }
+
     #[test]
     fn proven_create_thread_is_logical_and_suspended() {
         let imports = vec![LauncherImport {
@@ -2354,6 +2455,7 @@ mod tests {
                 selected_palette: STOCK_DEFAULT_PALETTE,
                 palette_force_background: false,
                 realized_palette: None,
+                text_color: 0,
             }),
         );
         xp.gdi_objects.insert(
@@ -2366,6 +2468,7 @@ mod tests {
                 selected_palette: STOCK_DEFAULT_PALETTE,
                 palette_force_background: false,
                 realized_palette: None,
+                text_color: 0,
             }),
         );
         let mut memory = Memory {
@@ -2412,6 +2515,7 @@ mod tests {
                 selected_palette: STOCK_DEFAULT_PALETTE,
                 palette_force_background: false,
                 realized_palette: None,
+                text_color: 0,
             }),
         );
         let mut memory = Memory {
@@ -2477,6 +2581,7 @@ mod tests {
                 selected_palette: STOCK_DEFAULT_PALETTE,
                 palette_force_background: false,
                 realized_palette: None,
+                text_color: 0,
             }),
         );
         let mut memory = Memory {
@@ -2554,6 +2659,7 @@ mod tests {
                     selected_palette: STOCK_DEFAULT_PALETTE,
                     palette_force_background: false,
                     realized_palette: None,
+                    text_color: 0,
                 }),
             );
         }
@@ -2626,6 +2732,7 @@ mod tests {
                 selected_palette: palette,
                 palette_force_background: false,
                 realized_palette: None,
+                text_color: 0,
             }),
         );
         xp.gdi_objects.insert(
@@ -2762,6 +2869,7 @@ mod tests {
                 selected_palette: STOCK_DEFAULT_PALETTE,
                 palette_force_background: false,
                 realized_palette: None,
+                text_color: 0,
             }),
         );
         xp.gdi_objects.insert(
@@ -2803,6 +2911,7 @@ mod tests {
                 selected_palette: STOCK_DEFAULT_PALETTE,
                 palette_force_background: false,
                 realized_palette: None,
+                text_color: 0,
             }),
         );
         write_u32(&mut memory, esp, 0x0040_156f).unwrap();
@@ -2870,6 +2979,7 @@ mod tests {
                 selected_palette: STOCK_DEFAULT_PALETTE,
                 palette_force_background: false,
                 realized_palette: None,
+                text_color: 0,
             }),
         );
         xp.gdi_objects.insert(
@@ -3123,6 +3233,65 @@ mod tests {
                 timeout: u32::MAX,
             }
         );
+    }
+
+    #[test]
+    fn set_text_color_swaps_color_without_changing_dc_state() {
+        let imports = vec![LauncherImport {
+            id: 0,
+            module: "GDI32.dll".into(),
+            symbol: "SetTextColor".into(),
+            iat_rva: 0,
+        }];
+        let mut xp = XpProcess::new(imports);
+        let hdc = GDI_HANDLE_BASE;
+        let hwnd = 0x5743_4002;
+        xp.gdi_objects.insert(
+            hdc,
+            GdiObject::DeviceContext(DeviceContext {
+                compatible_with: DcCompatibility::Display,
+                target: DcTarget::WindowPaint { hwnd },
+                selected_palette: STOCK_DEFAULT_PALETTE,
+                palette_force_background: false,
+                realized_palette: None,
+                text_color: 0,
+            }),
+        );
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = 0x043f_f700;
+        for (index, value) in [0x0040_17aa, hdc, 0x0000_c8f0]
+            .into_iter()
+            .enumerate()
+        {
+            write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
+        }
+
+        assert_eq!(xp.text_color(hdc), Some(0));
+        assert_eq!(
+            xp.dispatch(2, 0, esp, &mut memory).unwrap(),
+            PersonalityAction::Return(0)
+        );
+        assert_eq!(xp.text_color(hdc), Some(0x0000_c8f0));
+        assert_eq!(xp.dc_target(hdc), Some(Some(hwnd)));
+        assert_eq!(xp.selected_palette(hdc), Some(STOCK_DEFAULT_PALETTE));
+        assert_eq!(xp.realized_palette(hdc), Some(None));
+
+        write_u32(&mut memory, esp + 8, 0x0012_3456).unwrap();
+        assert_eq!(
+            xp.dispatch(2, 0, esp, &mut memory).unwrap(),
+            PersonalityAction::Return(0x0000_c8f0)
+        );
+        assert_eq!(xp.text_color(hdc), Some(0x0012_3456));
+
+        write_u32(&mut memory, esp + 4, STOCK_MONO_BITMAP).unwrap();
+        assert_eq!(
+            xp.dispatch(2, 0, esp, &mut memory).unwrap(),
+            PersonalityAction::Return(u32::MAX)
+        );
+        assert_eq!(xp.text_color(hdc), Some(0x0012_3456));
     }
 
     #[test]

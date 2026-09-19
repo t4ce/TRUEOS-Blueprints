@@ -109,6 +109,7 @@ async fn run() -> Result<(), String> {
     let mut thread_calls: HashMap<(u32, u32), u32> = HashMap::new();
     let mut default_proc_messages = HashSet::new();
     let mut frames: HashMap<u32, Frame> = HashMap::new();
+    let mut blit_checkpoint_done = false;
     let mut active = 0usize;
     loop {
         let exit = if contexts[active].started {
@@ -566,6 +567,13 @@ async fn run() -> Result<(), String> {
                 } else {
                     None
                 };
+                let draw_text_input = if WinCall::from_import(&import) == WinCall::DrawTextA {
+                    let frame = read_guest_words(&memory, exit.registers.esp, 6)?;
+                    let rect = read_guest_words(&memory, frame[4], 4)?;
+                    Some((frame, rect))
+                } else {
+                    None
+                };
                 let result = session
                     .launcher_mut()
                     .xp
@@ -587,6 +595,28 @@ async fn run() -> Result<(), String> {
                 let mut callback = None;
                 let result = match result {
                     PersonalityAction::Return(value) => {
+                        if WinCall::from_import(&import) == WinCall::SetTextColor {
+                            let frame = read_guest_words(&memory, exit.registers.esp, 3)?;
+                            let target = match session.launcher().xp.dc_target(frame[1]) {
+                                Some(Some(hwnd)) => format!("WINDOW_PAINT hwnd=0x{hwnd:08x}"),
+                                Some(None) => "MEMORY".to_owned(),
+                                None => "UNKNOWN".to_owned(),
+                            };
+                            let new_color = frame[2] & 0x00ff_ffff;
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 SetTextColor hdc=0x{:08x} target={} old=0x{:08x} new=0x{:08x} rgb=[{},{},{}]",
+                                    frame[1],
+                                    target,
+                                    value,
+                                    new_color,
+                                    new_color & 0xff,
+                                    (new_color >> 8) & 0xff,
+                                    (new_color >> 16) & 0xff
+                                ),
+                            );
+                        }
                         if let Some((handle, Some(info), Some(stock), selected_in_dc)) =
                             delete_object_before
                         {
@@ -979,18 +1009,30 @@ async fn run() -> Result<(), String> {
                                 request.hwnd, request.width, request.height, request.source_bitmap
                             ),
                         );
-                        logl::log(
-                            level::IMPORTANT,
-                            format_args!("WC3 UI4 BLIT LIVE confirm=anykey"),
-                        );
-                        logl::log(
-                            level::IMPORTANT,
-                            format_args!("WC3 UI4 BLIT STOPPED awaiting operator input"),
-                        );
-                        // Keep the local Frame alive after the visual checkpoint. Returning
-                        // from run() would drop `frames` and close the UI4 surface.
-                        std::future::pending::<()>().await;
-                        unreachable!("WC3 UI4 checkpoint future unexpectedly completed");
+                        if !blit_checkpoint_done {
+                            while trueos::vshell::attached_read_byte().is_some() {}
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!("WC3 UI4 BLIT LIVE confirm=anykey"),
+                            );
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!("WC3 UI4 BLIT STOPPED awaiting operator input"),
+                            );
+                            let confirm = loop {
+                                trueos::vsys::poll_once();
+                                if let Some(byte) = trueos::vshell::attached_read_byte() {
+                                    break byte;
+                                }
+                                trueos::vsys::sleep_ms(8);
+                            };
+                            blit_checkpoint_done = true;
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!("WC3 UI4 BLIT RESUME byte=0x{:02x}", confirm),
+                            );
+                        }
+                        1
                     }
                     PersonalityAction::Session(SessionRequest::CreateProcess(request)) => {
                         let frame = request.frame;
@@ -1237,6 +1279,35 @@ async fn run() -> Result<(), String> {
                         );
                     }
                 };
+                if let Some((frame, input)) = draw_text_input {
+                    let output = read_guest_words(&memory, frame[4], 4)?;
+                    logl::log(
+                        level::IMPORTANT,
+                        format_args!(
+                            "WC3 DrawTextA CALCRECT hdc=0x{:08x} count={} format=0x{:08x} input=[{},{},{},{}] output=[{},{},{},{}] height={}",
+                            frame[1],
+                            frame[3],
+                            frame[5],
+                            input[0] as i32,
+                            input[1] as i32,
+                            input[2] as i32,
+                            input[3] as i32,
+                            output[0] as i32,
+                            output[1] as i32,
+                            output[2] as i32,
+                            output[3] as i32,
+                            output[3].wrapping_sub(output[1])
+                        ),
+                    );
+                    logl::log(
+                        level::IMPORTANT,
+                        format_args!(
+                            "WC3 DrawTextA placement client=500x400 measured={}x{} expected_final_rect=[47,376,453,392]",
+                            output[2].wrapping_sub(output[0]),
+                            output[3].wrapping_sub(output[1])
+                        ),
+                    );
+                }
                 if let Some(call) = callback {
                     let callback_esp = exit
                         .registers
