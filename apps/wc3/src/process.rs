@@ -34,6 +34,7 @@ const CREATE_SUSPENDED: u32 = 4;
 const THREAD_HANDLE_BASE: u32 = 0x5743_5001;
 const DESKTOP_HWND: u32 = 0x5743_3000;
 const WINDOW_HWND: u32 = 0x5743_4001;
+const GDI_HANDLE_BASE: u32 = 0x5743_7001;
 const ENVIRONMENT_BLOCK_VA: u32 = PROCESS_DATA_VA + 0x100;
 
 pub trait GuestMemory {
@@ -48,6 +49,11 @@ fn read_u32(memory: &impl GuestMemory, address: u32) -> Result<u32, &'static str
 }
 
 fn write_u32(memory: &mut impl GuestMemory, address: u32, value: u32) -> Result<(), &'static str> {
+    memory.write(address, &value.to_le_bytes())
+}
+
+#[cfg(test)]
+fn write_u16(memory: &mut impl GuestMemory, address: u32, value: u16) -> Result<(), &'static str> {
     memory.write(address, &value.to_le_bytes())
 }
 
@@ -124,6 +130,22 @@ pub struct WaitForMultipleObjectsFrame {
     pub handles: [u32; 2],
     pub wait_all: u32,
     pub timeout: u32,
+}
+
+#[derive(Clone, Debug)]
+struct BitmapObject {
+    resource_id: u32,
+    width: i32,
+    height: i32,
+    planes: u16,
+    bit_count: u16,
+    compression: u32,
+    dib: Vec<u8>,
+}
+
+#[derive(Clone, Debug)]
+enum GdiObject {
+    Bitmap(BitmapObject),
 }
 
 impl PreparedProcess {
@@ -239,6 +261,8 @@ pub struct XpProcess {
     runnable_thread: Option<u32>,
     desktop_size: (u32, u32),
     window_request: Option<WindowRequest>,
+    gdi_objects: HashMap<u32, GdiObject>,
+    next_gdi_handle: u32,
 }
 
 impl XpProcess {
@@ -263,6 +287,8 @@ impl XpProcess {
             runnable_thread: None,
             desktop_size: (1920, 1080),
             window_request: None,
+            gdi_objects: HashMap::new(),
+            next_gdi_handle: GDI_HANDLE_BASE,
         }
     }
 
@@ -348,6 +374,7 @@ impl XpProcess {
             WinCall::PeekMessageA => self.peek_message(esp, memory),
             WinCall::SetFocus => self.set_focus(esp, memory),
             WinCall::LoadStringA => self.load_string(esp, memory),
+            WinCall::LoadImageA => self.load_image(esp, memory),
             WinCall::CreateThread => self.create_thread(esp, memory),
             WinCall::ResumeThread => self.resume_thread(esp, memory),
             WinCall::CreateProcessA => {
@@ -712,30 +739,16 @@ impl XpProcess {
         if instance != pe32::IMAGE_BASE || max_chars == 0 {
             return Err("unexpected LoadStringA frame");
         }
-        let pe = read_u32(memory, pe32::IMAGE_BASE + 0x3c)?;
-        let optional = pe32::IMAGE_BASE
-            .checked_add(pe)
-            .and_then(|value| value.checked_add(24))
-            .ok_or("resource optional offset")?;
-        let root_rva = read_u32(memory, optional + 96 + 16)?;
-        let resource_size = read_u32(memory, optional + 96 + 20)?;
-        if root_rva == 0 || resource_size < 16 {
-            return Err("resource directory range");
-        }
-        let root = pe32::IMAGE_BASE
-            .checked_add(root_rva)
-            .ok_or("resource root")?;
-        let string_type = resource_directory_entry(memory, root, root, 6)?;
-        let block_id = (resource_id >> 4)
-            .checked_add(1)
-            .ok_or("resource block id")?;
-        let block = resource_directory_entry(memory, root, string_type, block_id)?;
-        let data_entry = resource_first_language_data(memory, root, block)?;
-        let data_rva = read_u32(memory, data_entry)?;
-        let data_size = read_u32(memory, data_entry + 4)?;
-        let data = pe32::IMAGE_BASE
-            .checked_add(data_rva)
-            .ok_or("resource data")?;
+        let resource = numeric_resource(
+            memory,
+            pe32::IMAGE_BASE,
+            6,
+            (resource_id >> 4)
+                .checked_add(1)
+                .ok_or("resource block id")?,
+        )?;
+        let data = resource.address;
+        let data_size = resource.size;
         let data_end = data.checked_add(data_size).ok_or("resource data range")?;
         let slot = resource_id & 0x0f;
         let mut cursor = data;
@@ -763,6 +776,58 @@ impl XpProcess {
             cursor = end;
         }
         Err("resource string slot missing")
+    }
+
+    fn load_image(&mut self, esp: u32, memory: &impl GuestMemory) -> Result<u32, &'static str> {
+        let [ret, module, name, image_type, cx, cy, flags] = arguments::<7>(memory, esp)?;
+        if module != pe32::IMAGE_BASE
+            || name & 0xffff_0000 != 0
+            || image_type != 2
+            || cx != 0
+            || cy != 0
+            || flags != 0x2000
+        {
+            return Err("unexpected LoadImageA frame");
+        }
+        let resource_id = name & 0xffff;
+        let resource = numeric_resource(memory, pe32::IMAGE_BASE, 2, resource_id)?;
+        if resource.size < 40 {
+            return Err("bitmap resource header truncated");
+        }
+        let header_size = read_u32(memory, resource.address)?;
+        if !matches!(header_size, 40 | 108 | 124) || header_size > resource.size {
+            return Err("bitmap header unsupported");
+        }
+        let width = read_i32(memory, resource.address + 4)?;
+        let height = read_i32(memory, resource.address + 8)?;
+        let planes = read_u16(memory, resource.address + 12)?;
+        let bit_count = read_u16(memory, resource.address + 14)?;
+        let compression = read_u32(memory, resource.address + 16)?;
+        if width == 0 || height == 0 || planes != 1 {
+            return Err("bitmap dimensions or planes invalid");
+        }
+        let mut dib = vec![0; resource.size as usize];
+        for (index, byte) in dib.iter_mut().enumerate() {
+            let mut value = [0];
+            memory.read(resource.address + index as u32, &mut value)?;
+            *byte = value[0];
+        }
+        let handle = self.next_gdi_handle;
+        self.next_gdi_handle += 1;
+        self.gdi_objects.insert(
+            handle,
+            GdiObject::Bitmap(BitmapObject {
+                resource_id,
+                width,
+                height,
+                planes,
+                bit_count,
+                compression,
+                dib,
+            }),
+        );
+        let _ = ret;
+        Ok(handle)
     }
 
     fn multi_byte_to_wide(
@@ -1069,6 +1134,19 @@ impl XpProcess {
         self.window_request.take()
     }
 
+    pub fn bitmap_info(&self, handle: u32) -> Option<(u32, i32, i32, u16, u32, usize)> {
+        match self.gdi_objects.get(&handle)? {
+            GdiObject::Bitmap(bitmap) => Some((
+                bitmap.resource_id,
+                bitmap.width,
+                bitmap.height,
+                bitmap.bit_count,
+                bitmap.compression,
+                bitmap.dib.len(),
+            )),
+        }
+    }
+
     pub fn exit_thread(&mut self, tid: u32, exit_code: u32) -> Result<(), &'static str> {
         let thread = self
             .threads
@@ -1085,6 +1163,44 @@ fn read_u16(memory: &impl GuestMemory, address: u32) -> Result<u16, &'static str
     memory.read(address, &mut b)?;
     Ok(u16::from_le_bytes(b))
 }
+
+fn read_i32(memory: &impl GuestMemory, address: u32) -> Result<i32, &'static str> {
+    Ok(read_u32(memory, address)? as i32)
+}
+
+struct ResourceData {
+    address: u32,
+    size: u32,
+}
+
+fn numeric_resource(
+    memory: &impl GuestMemory,
+    module_base: u32,
+    type_id: u32,
+    resource_id: u32,
+) -> Result<ResourceData, &'static str> {
+    let pe = read_u32(memory, module_base + 0x3c)?;
+    let optional = module_base
+        .checked_add(pe)
+        .and_then(|value| value.checked_add(24))
+        .ok_or("resource optional offset")?;
+    let root_rva = read_u32(memory, optional + 96 + 16)?;
+    let resource_size = read_u32(memory, optional + 96 + 20)?;
+    if root_rva == 0 || resource_size < 16 {
+        return Err("resource directory range");
+    }
+    let root = module_base.checked_add(root_rva).ok_or("resource root")?;
+    let type_directory = resource_directory_entry(memory, root, root, type_id)?;
+    let resource_directory = resource_directory_entry(memory, root, type_directory, resource_id)?;
+    let data_entry = resource_first_language_data(memory, root, resource_directory)?;
+    let data_rva = read_u32(memory, data_entry)?;
+    let data_size = read_u32(memory, data_entry + 4)?;
+    Ok(ResourceData {
+        address: module_base.checked_add(data_rva).ok_or("resource data")?,
+        size: data_size,
+    })
+}
+
 fn resource_directory_entry(
     memory: &impl GuestMemory,
     root: u32,
@@ -1268,6 +1384,57 @@ mod tests {
         );
         assert_eq!(read_u32(&memory, 0x0021_0560).unwrap(), 2);
         assert_eq!(xp.threads[0].suspend_count, 1);
+    }
+
+    #[test]
+    fn load_image_resolves_numeric_bitmap_resource_without_fixed_rva() {
+        let imports = vec![LauncherImport {
+            id: 0,
+            module: "USER32.dll".into(),
+            symbol: "LoadImageA".into(),
+            iat_rva: 0,
+        }];
+        let mut xp = XpProcess::new(imports);
+        let base = pe32::IMAGE_BASE;
+        let mut memory = Memory {
+            base,
+            bytes: vec![0; 0x6000],
+        };
+        write_u32(&mut memory, base + 0x3c, 0x80).unwrap();
+        write_u32(&mut memory, base + 0x80 + 24 + 96 + 16, 0x1000).unwrap();
+        write_u32(&mut memory, base + 0x80 + 24 + 96 + 20, 0x4000).unwrap();
+        // RT_BITMAP (2) -> resource ID 106 -> language 1033 -> data entry.
+        write_u16(&mut memory, base + 0x1000 + 12, 0).unwrap();
+        write_u16(&mut memory, base + 0x1000 + 14, 1).unwrap();
+        write_u32(&mut memory, base + 0x1000 + 16, 2).unwrap();
+        write_u32(&mut memory, base + 0x1000 + 20, 0x8000_1000).unwrap();
+        write_u16(&mut memory, base + 0x2000 + 12, 0).unwrap();
+        write_u16(&mut memory, base + 0x2000 + 14, 1).unwrap();
+        write_u32(&mut memory, base + 0x2000 + 16, 106).unwrap();
+        write_u32(&mut memory, base + 0x2000 + 20, 0x8000_2000).unwrap();
+        write_u16(&mut memory, base + 0x3000 + 12, 0).unwrap();
+        write_u16(&mut memory, base + 0x3000 + 14, 1).unwrap();
+        write_u32(&mut memory, base + 0x3000 + 16, 1033).unwrap();
+        write_u32(&mut memory, base + 0x3000 + 20, 0x3000).unwrap();
+        write_u32(&mut memory, base + 0x4000, 0x4500).unwrap();
+        write_u32(&mut memory, base + 0x4004, 40).unwrap();
+        write_u32(&mut memory, base + 0x4500, 40).unwrap();
+        write_u32(&mut memory, base + 0x4504, 7).unwrap();
+        write_u32(&mut memory, base + 0x4508, (-9i32 as u32)).unwrap();
+        write_u16(&mut memory, base + 0x450c, 1).unwrap();
+        write_u16(&mut memory, base + 0x450e, 8).unwrap();
+        let esp = base + 0x5000;
+        for (index, value) in [0x0040_1501, base, 106, 2, 0, 0, 0x2000]
+            .into_iter()
+            .enumerate()
+        {
+            write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
+        }
+        let PersonalityAction::Return(handle) = xp.dispatch(2, 0, esp, &mut memory).unwrap() else {
+            panic!("LoadImageA did not return a handle");
+        };
+        assert_eq!(handle, GDI_HANDLE_BASE);
+        assert_eq!(xp.bitmap_info(handle), Some((106, 7, -9, 8, 0, 40)));
     }
     #[test]
     fn image_mapping_precedes_overlapping_stack() {

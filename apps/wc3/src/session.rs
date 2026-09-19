@@ -386,6 +386,16 @@ impl Wc3Session {
         true
     }
 
+    pub fn signal_thread(&mut self, key: ThreadKey, exit_code: u32) {
+        for object in self.objects.values_mut() {
+            if let SessionObject::Thread(thread) = object {
+                if thread.key == key {
+                    thread.exit_code = Some(exit_code);
+                }
+            }
+        }
+    }
+
     pub fn block_wait(&mut self, request: WaitRequest) -> Result<(), &'static str> {
         for handle in request.handles.iter().take(request.count.min(2) as usize) {
             let entry = self

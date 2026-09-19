@@ -8,7 +8,9 @@ use trueos::{
     x86::{AddressSpace, Context, ExitKind, Permissions, Registers},
 };
 use wc3::{
-    EXPECTED_SHA256, LAUNCHER_PATH, pe32,
+    EXPECTED_SHA256, LAUNCHER_PATH,
+    imports::WinCall,
+    pe32,
     process::{
         GuestMemory, PreparedProcess, STACK_BASE, STACK_BYTES, STACK_TOP, TEB_VA, ThreadObject,
         WindowRequest,
@@ -115,6 +117,23 @@ async fn run() -> Result<(), String> {
             ExitKind::VmCall => {
                 if exit.registers.eip == thunk32::THREAD_EXIT_AFTER_VMCALL {
                     let exited = contexts.remove(active);
+                    if exited.tid != LAUNCHER_TID {
+                        session.signal_thread(
+                            wc3::session::ThreadKey {
+                                pid: LAUNCHER_PID,
+                                tid: exited.tid,
+                            },
+                            exit.registers.eax,
+                        );
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 TID2 EXIT pid={} tid={} code=0x{:08x}",
+                                LAUNCHER_PID, exited.tid, exit.registers.eax
+                            ),
+                        );
+                        return Ok(());
+                    }
                     session
                         .launcher_mut()
                         .xp
@@ -145,10 +164,11 @@ async fn run() -> Result<(), String> {
                     .and_modify(|call| *call += 1)
                     .or_insert(1);
                 let sequence = session.note();
+                let process_call = session.launcher().xp.call_count + 1;
                 logl::log(
                     level::INFO,
                     format_args!(
-                        "wc3[seq={sequence} p=launcher pid={} tid={} call={}] {}!{}",
+                        "wc3[seq={sequence} p=launcher pid={} tid={} pcall={process_call} tcall={}] {}!{}",
                         LAUNCHER_PID,
                         contexts[active].tid,
                         *thread_call,
@@ -156,16 +176,26 @@ async fn run() -> Result<(), String> {
                         import.symbol
                     ),
                 );
-                if contexts[active].tid != LAUNCHER_TID {
+                if contexts[active].tid == 2 && import.symbol == "TlsSetValue" {
+                    let raw = read_guest_words(&memory, exit.registers.esp, 3)?;
                     logl::log(
                         level::IMPORTANT,
                         format_args!(
-                            "WC3 TID2 FRONTIER pid={} tid={} call={} {}!{}",
-                            LAUNCHER_PID,
-                            contexts[active].tid,
-                            *thread_call,
+                            "WC3 TID2 TlsSetValue esp=0x{:08x} return_address=0x{:08x} slot={} value=0x{:08x}",
+                            exit.registers.esp, raw[0], raw[1], raw[2]
+                        ),
+                    );
+                }
+                if WinCall::from_import(&import) == WinCall::Unsupported {
+                    logl::log(
+                        level::IMPORTANT,
+                        format_args!(
+                            "WC3 TID2 UNSUPPORTED module={} symbol={} esp=0x{:08x} eip=0x{:08x} stack[0..16 dwords]={:?}",
                             import.module,
-                            import.symbol
+                            import.symbol,
+                            exit.registers.esp,
+                            exit.registers.eip,
+                            read_guest_words(&memory, exit.registers.esp, 16)?
                         ),
                     );
                     return Ok(());
@@ -189,7 +219,32 @@ async fn run() -> Result<(), String> {
                         )
                     })?;
                 let result = match result {
-                    PersonalityAction::Return(value) => value,
+                    PersonalityAction::Return(value) => {
+                        if contexts[active].tid == 2
+                            && WinCall::from_import(&import) == WinCall::LoadImageA
+                        {
+                            if let Some((resource_id, width, height, bpp, compression, bytes)) =
+                                session.launcher().xp.bitmap_info(value)
+                            {
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "wc3: LoadImageA ret=0x{:08x} module=0x{:08x} resource_id={} type=IMAGE_BITMAP flags=LR_CREATEDIBSECTION width={} height={} bpp={} compression={} bytes={} hbitmap=0x{:08x}",
+                                        read_guest_words(&memory, exit.registers.esp, 1)?[0],
+                                        pe32::IMAGE_BASE,
+                                        resource_id,
+                                        width,
+                                        height,
+                                        bpp,
+                                        compression,
+                                        bytes,
+                                        value
+                                    ),
+                                );
+                            }
+                        }
+                        value
+                    }
                     PersonalityAction::Session(SessionRequest::CreateProcess(request)) => {
                         let frame = request.frame;
                         logl::log(
@@ -313,6 +368,16 @@ async fn run() -> Result<(), String> {
                                 session.describe_handle(LAUNCHER_PID, request.handles[1])
                             ),
                         );
+                        if request.key.tid != LAUNCHER_TID {
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 TID2 BLOCK pid={} tid={} pcall={} tcall={}",
+                                    request.key.pid, request.key.tid, process_call, *thread_call
+                                ),
+                            );
+                            return Ok(());
+                        }
                         session.block_wait(request.clone()).map_err(str::to_owned)?;
                         let next = session
                             .runnable
@@ -327,16 +392,32 @@ async fn run() -> Result<(), String> {
                         continue;
                     }
                     PersonalityAction::CallGuest(_) => {
+                        if contexts[active].tid != LAUNCHER_TID {
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 TID2 CALL_GUEST pid={} tid={}",
+                                    LAUNCHER_PID, contexts[active].tid
+                                ),
+                            );
+                            return Ok(());
+                        }
                         return Err(
                             "wc3: CallGuest action is not wired into the launcher loop".into()
                         );
                     }
                     PersonalityAction::ExitThread(_) => {
+                        if contexts[active].tid != LAUNCHER_TID {
+                            return Ok(());
+                        }
                         return Err(
                             "wc3: ExitThread action is not wired into the launcher loop".into()
                         );
                     }
                     PersonalityAction::ExitProcess(_) => {
+                        if contexts[active].tid != LAUNCHER_TID {
+                            return Ok(());
+                        }
                         return Err(
                             "wc3: ExitProcess action is not wired into the launcher loop".into(),
                         );
@@ -550,6 +631,19 @@ fn create_child_runtime(image: &pe32::PeImage) -> Result<RuntimeProcess, String>
 }
 
 struct X86Memory<'a>(&'a AddressSpace);
+
+fn read_guest_words(memory: &impl GuestMemory, esp: u32, count: usize) -> Result<Vec<u32>, String> {
+    (0..count)
+        .map(|index| {
+            let address = esp
+                .checked_add((index as u32) * 4)
+                .ok_or_else(|| "guest stack address overflow".to_owned())?;
+            let mut bytes = [0; 4];
+            memory.read(address, &mut bytes).map_err(str::to_owned)?;
+            Ok(u32::from_le_bytes(bytes))
+        })
+        .collect()
+}
 
 impl GuestMemory for X86Memory<'_> {
     fn read(&self, address: u32, output: &mut [u8]) -> Result<(), &'static str> {
