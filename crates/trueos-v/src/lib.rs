@@ -59,6 +59,9 @@ pub mod vsys;
 pub mod vsystem_services;
 pub mod vthermal;
 pub mod vusb;
+/// WC3-private 32-bit execution transport.  This remains unavailable to
+/// unrelated Blueprints until a second real consumer justifies promotion.
+#[cfg(feature = "wc3-x86")]
 pub mod vx86;
 #[doc(hidden)]
 pub mod worker_abi;

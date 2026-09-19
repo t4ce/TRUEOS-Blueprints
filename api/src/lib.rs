@@ -288,6 +288,9 @@ pub mod worker;
 /// The kernel supplies only memory/context mechanics. Application and OS
 /// compatibility semantics remain in the Blueprint that owns these objects.
 #[cfg(feature = "tokio-runtime")]
+/// WC3-private 32-bit execution transport.  Applications must opt in
+/// explicitly; Tokio support alone does not grant an x86 execution API.
+#[cfg(feature = "wc3-x86")]
 pub mod x86;
 
 #[cfg(feature = "tokio-runtime")]

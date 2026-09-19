@@ -2,6 +2,7 @@
 name = "v"
 version = "0.1.0"
 edition = "2024"
+
 license = "MIT OR Apache-2.0"
 
 [dependencies]
@@ -15,6 +16,7 @@ infer = { path = "../../../TRUEOS/vendor/infer", default-features = false }
 
 [features]
 default = []
+wc3-x86 = []
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("trueos", "zkvm"))'] }

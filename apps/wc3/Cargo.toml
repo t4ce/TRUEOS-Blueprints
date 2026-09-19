@@ -15,7 +15,7 @@ bench = false
 [dependencies]
 sha2 = "=0.10.9"
 tokio = { workspace = true, features = ["rt", "sync", "time"] }
-trueos = { path = "../../api", features = ["tokio-runtime", "ui4-scene"] }
+trueos = { path = "../../api", features = ["tokio-runtime", "ui4-scene", "wc3-x86"] }
 
 [dev-dependencies]
 pretty_assertions.workspace = true
