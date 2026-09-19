@@ -18,7 +18,7 @@ pub const PROCESS_DATA_VA: u32 = 0x0021_1000;
 pub const STACK_BASE: u32 = 0x7ff0_0000;
 pub const STACK_BYTES: usize = 0x10_0000;
 pub const THUNK_PAGE_BYTES: usize = 0x1000;
-pub const COMMAND_LINE: &[u8] = b"\"Warcraft III.exe\"\0";
+pub const COMMAND_LINE: &[u8] = b"\"war3.exe\" \0";
 const MODULE_FILENAME: &[u8] = b"C:\\Warcraft III\\Warcraft III.exe\0";
 const WINDOWS_XP_GET_VERSION: u32 = 0x0a28_0105;
 const CREATE_SUSPENDED: u32 = 4;
@@ -91,6 +91,32 @@ pub struct Mapping {
 pub struct PreparedProcess {
     pub mappings: Vec<Mapping>,
     pub xp: XpProcess,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CreateProcessAFrame {
+    pub return_address: u32,
+    pub application_name: u32,
+    pub command_line: u32,
+    pub process_attributes: u32,
+    pub thread_attributes: u32,
+    pub inherit_handles: u32,
+    pub creation_flags: u32,
+    pub environment: u32,
+    pub current_directory: u32,
+    pub startup_info: u32,
+    pub process_information: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Frontier {
+    CreateProcessA(CreateProcessAFrame),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DispatchResult {
+    Value(u32),
+    Frontier(Frontier),
 }
 
 impl PreparedProcess {
@@ -257,7 +283,7 @@ impl XpProcess {
         import_id: u32,
         esp: u32,
         memory: &mut impl GuestMemory,
-    ) -> Result<u32, &'static str> {
+    ) -> Result<DispatchResult, &'static str> {
         let import = self
             .import(import_id)
             .cloned()
@@ -267,7 +293,7 @@ impl XpProcess {
             .checked_add(1)
             .ok_or("call count overflow")?;
         let call = WinCall::from_import(&import);
-        match call {
+        let value = match call {
             WinCall::GetVersion => Ok(WINDOWS_XP_GET_VERSION),
             WinCall::HeapCreate => Ok(0x5743_0001),
             WinCall::GetVersionExA => self.get_version_ex(esp, memory),
@@ -282,7 +308,6 @@ impl XpProcess {
             WinCall::GetLastError => Ok(self.last_error),
             WinCall::CloseHandle => self.close_handle(esp, memory),
             WinCall::GetTickCount => {
-                self.tick_ms = self.tick_ms.wrapping_add(16);
                 Ok(self.tick_ms)
             }
             WinCall::GetCurrentThreadId => Ok(self.current_tid),
@@ -293,9 +318,8 @@ impl XpProcess {
             WinCall::GetFileType => Ok(2),
             WinCall::SetHandleCount => Ok(read_u32(memory, esp + 4)?),
             WinCall::GetCommandLineA => Ok(PROCESS_DATA_VA),
-            WinCall::GetEnvironmentStringsW | WinCall::GetEnvironmentStringsA => {
-                Ok(ENVIRONMENT_BLOCK_VA)
-            }
+            WinCall::GetEnvironmentStringsW => Ok(0),
+            WinCall::GetEnvironmentStringsA => Ok(ENVIRONMENT_BLOCK_VA),
             WinCall::FreeEnvironmentStringsA => Ok(1),
             WinCall::GetACP => Ok(1252),
             WinCall::GetCPInfo => self.get_cp_info(esp, memory),
@@ -314,8 +338,54 @@ impl XpProcess {
             WinCall::LoadStringA => self.load_string(esp, memory),
             WinCall::CreateThread => self.create_thread(esp, memory),
             WinCall::ResumeThread => self.resume_thread(esp, memory),
+            WinCall::CreateProcessA => {
+                return Ok(DispatchResult::Frontier(Frontier::CreateProcessA(
+                    self.create_process_a(esp, memory)?,
+                )))
+            }
             WinCall::Unsupported => Err("unsupported launcher import"),
+        }?;
+        Ok(DispatchResult::Value(value))
+    }
+
+    fn create_process_a(
+        &self,
+        esp: u32,
+        memory: &impl GuestMemory,
+    ) -> Result<CreateProcessAFrame, &'static str> {
+        let [ret, application_name, command_line, process_attributes, thread_attributes,
+            inherit_handles, creation_flags, environment, current_directory, startup_info,
+            process_information] = arguments::<11>(memory, esp)?;
+        if ret != 0x0040_12E0
+            || application_name != 0
+            || read_c_string(memory, command_line, 64)? != "\"war3.exe\" "
+            || process_attributes != 0
+            || thread_attributes != 0
+            || inherit_handles != 1
+            || creation_flags != 0
+            || environment != 0
+            || current_directory != 0
+            || startup_info == 0
+            || process_information == 0
+            || read_u32(memory, startup_info)? != 0x44
+        {
+            return Err("unexpected CreateProcessA frame");
         }
+        let mut _process_information_bytes = [0u8; 16];
+        memory.read(process_information, &mut _process_information_bytes)?;
+        Ok(CreateProcessAFrame {
+            return_address: ret,
+            application_name,
+            command_line,
+            process_attributes,
+            thread_attributes,
+            inherit_handles,
+            creation_flags,
+            environment,
+            current_directory,
+            startup_info,
+            process_information,
+        })
     }
 
     fn get_version_ex(
@@ -930,6 +1000,16 @@ impl XpProcess {
             .cloned()
     }
 
+    /// The launcher checkpoint deliberately keeps the resumed worker runnable
+    /// but unexecuted. This is observable at CreateProcessA #89.
+    pub fn deferred_runnable_tid(&self) -> Option<u32> {
+        self.runnable_thread
+    }
+
+    pub fn focused_window(&self) -> Option<u32> {
+        self.focused_window
+    }
+
     pub fn set_current_thread(&mut self, tid: u32) {
         self.current_tid = tid;
     }
@@ -1137,7 +1217,7 @@ mod tests {
         }
         assert_eq!(
             xp.dispatch(0, esp, &mut memory).unwrap(),
-            THREAD_HANDLE_BASE
+            DispatchResult::Value(THREAD_HANDLE_BASE)
         );
         assert_eq!(read_u32(&memory, 0x0021_0560).unwrap(), 2);
         assert_eq!(xp.threads[0].suspend_count, 1);
@@ -1248,10 +1328,15 @@ mod tests {
         {
             write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
         }
-        let handle = xp.dispatch(0, esp, &mut memory).unwrap();
+        let DispatchResult::Value(handle) = xp.dispatch(0, esp, &mut memory).unwrap() else {
+            panic!("CreateThread unexpectedly reached a frontier");
+        };
         write_u32(&mut memory, esp, 0x0040_0000).unwrap();
         write_u32(&mut memory, esp + 4, handle).unwrap();
-        assert_eq!(xp.dispatch(1, esp, &mut memory).unwrap(), 1);
+        assert_eq!(
+            xp.dispatch(1, esp, &mut memory).unwrap(),
+            DispatchResult::Value(1)
+        );
         let runnable = xp.take_runnable_thread().unwrap();
         assert_eq!(runnable.tid, 2);
         assert_eq!(runnable.suspend_count, 0);

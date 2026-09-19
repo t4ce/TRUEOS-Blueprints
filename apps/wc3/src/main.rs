@@ -7,7 +7,7 @@ use trueos::{
 };
 use wc3::{
     EXPECTED_SHA256, LAUNCHER_PATH, pe32,
-    process::{GuestMemory, PreparedProcess, STACK_BASE, STACK_BYTES, ThreadObject, WindowRequest},
+    process::{DispatchResult, Frontier, GuestMemory, PreparedProcess, STACK_BASE, STACK_BYTES, ThreadObject, WindowRequest},
     thunk32,
 };
 
@@ -127,12 +127,34 @@ async fn run() -> Result<(), String> {
                             prepared.xp.call_count, import.module, import.symbol
                         )
                     })?;
+                let result = match result {
+                    DispatchResult::Value(value) => value,
+                    DispatchResult::Frontier(Frontier::CreateProcessA(frame)) => {
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 BLUEPRINT FRONTIER: CreateProcessA call #{} ret=0x{:08x} command_line=0x{:08x} startup=0x{:08x} process_info=0x{:08x}",
+                                prepared.xp.call_count,
+                                frame.return_address,
+                                frame.command_line,
+                                frame.startup_info,
+                                frame.process_information,
+                            ),
+                        );
+                        logl::log(
+                            level::INFO,
+                            format_args!(
+                                "wc3: frontier state deferred_tid={:?} focused_root={:?}",
+                                prepared.xp.deferred_runnable_tid(),
+                                prepared.xp.focused_window(),
+                            ),
+                        );
+                        return Ok(());
+                    }
+                };
                 let mut registers = exit.registers;
                 registers.eax = result;
-                contexts[active]
-                    .context
-                    .set_registers(registers)
-                    .map_err(|error| error.to_string())?;
+                contexts[active].context.set_registers(registers).map_err(|error| error.to_string())?;
                 logl::log(
                     level::INFO,
                     format_args!(
@@ -143,17 +165,11 @@ async fn run() -> Result<(), String> {
                 if let Some(request) = prepared.xp.take_window_request() {
                     present_window(request, &mut window_frame)?;
                 }
-                if let Some(thread) = prepared.xp.take_runnable_thread() {
-                    contexts.push(create_thread_context(&address_space, &thread)?);
-                    logl::log(
-                        level::INFO,
-                        format_args!(
-                            "wc3: Blueprint thread runnable tid={} start=0x{:08x} parameter=0x{:08x}",
-                            thread.tid, thread.start_address, thread.parameter,
-                        ),
-                    );
-                }
-                active = (active + 1) % contexts.len();
+                // The proven launcher resumes TID2 but does not execute it
+                // before the main thread reaches CreateProcessA (#89).
+                // Keep the runnable state in the personality; scheduling it
+                // is deliberately outside this migration checkpoint.
+                active = 0;
             }
             ExitKind::Halted => {
                 let halted_tid = contexts.remove(active).tid;
