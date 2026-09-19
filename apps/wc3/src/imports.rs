@@ -38,6 +38,7 @@ pub enum WinCall {
     SetFocus,
     LoadStringA,
     LoadImageA,
+    GetObjectA,
     CreateThread,
     ResumeThread,
     GetStdHandle,
@@ -91,6 +92,7 @@ impl WinCall {
             "SetFocus" if user => Self::SetFocus,
             "LoadStringA" if user => Self::LoadStringA,
             "LoadImageA" if user => Self::LoadImageA,
+            "GetObjectA" if import.module.eq_ignore_ascii_case("GDI32.dll") => Self::GetObjectA,
             "CreateThread" if kernel => Self::CreateThread,
             "ResumeThread" if kernel => Self::ResumeThread,
             "GetStdHandle" if kernel => Self::GetStdHandle,
@@ -145,6 +147,7 @@ impl WinCall {
             Self::HeapAlloc | Self::HeapFree | Self::GetModuleFileNameA => Kind::Stdcall(12),
             Self::CreateEventA | Self::GetStringTypeW | Self::LoadStringA => Kind::Stdcall(16),
             Self::LoadImageA => Kind::Stdcall(24),
+            Self::GetObjectA => Kind::Stdcall(12),
             Self::TlsSetValue | Self::GetClientRect | Self::ShowWindow | Self::GetCPInfo => {
                 Kind::Stdcall(8)
             }

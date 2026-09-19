@@ -35,6 +35,7 @@ const THREAD_HANDLE_BASE: u32 = 0x5743_5001;
 const DESKTOP_HWND: u32 = 0x5743_3000;
 const WINDOW_HWND: u32 = 0x5743_4001;
 const GDI_HANDLE_BASE: u32 = 0x5743_7001;
+const GDI_DIB_BASE: u32 = 0x0500_0000;
 const ENVIRONMENT_BLOCK_VA: u32 = PROCESS_DATA_VA + 0x100;
 
 pub trait GuestMemory {
@@ -144,6 +145,11 @@ struct BitmapObject {
     clr_used: u32,
     dib: Vec<u8>,
     decoded_rgba: Vec<u8>,
+    palette: Vec<[u8; 4]>,
+    bits_va: u32,
+    bits_len: usize,
+    row_stride: u32,
+    pixel_offset: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -266,6 +272,7 @@ pub struct XpProcess {
     window_request: Option<WindowRequest>,
     gdi_objects: HashMap<u32, GdiObject>,
     next_gdi_handle: u32,
+    next_gdi_dib_va: u32,
 }
 
 impl XpProcess {
@@ -292,6 +299,7 @@ impl XpProcess {
             window_request: None,
             gdi_objects: HashMap::new(),
             next_gdi_handle: GDI_HANDLE_BASE,
+            next_gdi_dib_va: GDI_DIB_BASE,
         }
     }
 
@@ -382,6 +390,7 @@ impl XpProcess {
                     self.load_image_request(esp, memory)?,
                 )));
             }
+            WinCall::GetObjectA => self.get_object_a(esp, memory),
             WinCall::CreateThread => self.create_thread(esp, memory),
             WinCall::ResumeThread => self.resume_thread(esp, memory),
             WinCall::CreateProcessA => {
@@ -839,6 +848,29 @@ impl XpProcess {
         })
     }
 
+    fn get_object_a(&self, esp: u32, memory: &mut impl GuestMemory) -> Result<u32, &'static str> {
+        let [ret, handle, buffer_bytes, output] = arguments::<4>(memory, esp)?;
+        let Some(GdiObject::Bitmap(bitmap)) = self.gdi_objects.get(&handle) else {
+            return Ok(0);
+        };
+        let required = 24u32;
+        if output == 0 {
+            return Ok(required);
+        }
+        if buffer_bytes < required {
+            return Ok(0);
+        }
+        write_u32(memory, output, 0)?;
+        write_u32(memory, output + 4, bitmap.width as u32)?;
+        write_u32(memory, output + 8, bitmap.height.unsigned_abs())?;
+        write_u32(memory, output + 12, bitmap.row_stride)?;
+        memory.write(output + 16, &bitmap.planes.to_le_bytes())?;
+        memory.write(output + 18, &bitmap.bit_count.to_le_bytes())?;
+        write_u32(memory, output + 20, bitmap.bits_va)?;
+        let _ = ret;
+        Ok(required)
+    }
+
     fn multi_byte_to_wide(
         &self,
         esp: u32,
@@ -1147,6 +1179,8 @@ impl XpProcess {
         &mut self,
         request: LoadImageRequest,
         decoded_rgba: Vec<u8>,
+        bits_va: u32,
+        layout: DibLayout,
     ) -> Result<u32, &'static str> {
         if decoded_rgba.is_empty() || decoded_rgba.len() % 4 != 0 {
             return Err("decoded bitmap is not canonical RGBA8");
@@ -1169,9 +1203,26 @@ impl XpProcess {
                 clr_used: request.clr_used,
                 dib: request.dib,
                 decoded_rgba,
+                palette: layout.palette,
+                bits_va,
+                bits_len: layout.bits_len,
+                row_stride: layout.row_stride as u32,
+                pixel_offset: layout.pixel_offset,
             }),
         );
         Ok(handle)
+    }
+
+    pub fn allocate_gdi_bits(&mut self, bits_len: usize) -> Result<u32, &'static str> {
+        let pages = bits_len
+            .checked_add(0xfff)
+            .ok_or("DIB allocation overflow")?
+            & !0xfff;
+        let va = self.next_gdi_dib_va;
+        self.next_gdi_dib_va = va
+            .checked_add(u32::try_from(pages).map_err(|_| "DIB allocation too large")?)
+            .ok_or("DIB VA overflow")?;
+        Ok(va)
     }
 
     pub fn bitmap_info(&self, handle: u32) -> Option<BitmapDiagnostic> {
@@ -1187,6 +1238,9 @@ impl XpProcess {
                 clr_used: bitmap.clr_used,
                 dib_bytes: bitmap.dib.len(),
                 rgba: bitmap.decoded_rgba.clone(),
+                bits_va: bitmap.bits_va,
+                bits_len: bitmap.bits_len,
+                row_stride: bitmap.row_stride,
             }),
         }
     }
@@ -1214,6 +1268,93 @@ pub struct BitmapDiagnostic {
     pub clr_used: u32,
     pub dib_bytes: usize,
     pub rgba: Vec<u8>,
+    pub bits_va: u32,
+    pub bits_len: usize,
+    pub row_stride: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DibLayout {
+    pub pixel_offset: usize,
+    pub row_stride: usize,
+    pub bits_len: usize,
+    pub palette: Vec<[u8; 4]>,
+}
+
+pub fn dib_layout(dib: &[u8]) -> Result<DibLayout, &'static str> {
+    if dib.len() < 40 {
+        return Err("bitmap resource header truncated");
+    }
+    let header_size = u32::from_le_bytes(dib[0..4].try_into().unwrap()) as usize;
+    if header_size < 40 || header_size > dib.len() {
+        return Err("bitmap header unsupported");
+    }
+    let width = i32::from_le_bytes(dib[4..8].try_into().unwrap());
+    let height = i32::from_le_bytes(dib[8..12].try_into().unwrap());
+    let planes = u16::from_le_bytes(dib[12..14].try_into().unwrap());
+    let bits = u16::from_le_bytes(dib[14..16].try_into().unwrap());
+    let compression = u32::from_le_bytes(dib[16..20].try_into().unwrap());
+    let clr_used = u32::from_le_bytes(dib[32..36].try_into().unwrap());
+    if width <= 0 || height == 0 || planes != 1 || compression != 0 {
+        return Err("bitmap layout unsupported");
+    }
+    if !matches!(bits, 8 | 24 | 32) {
+        return Err("bitmap depth unsupported");
+    }
+    let palette_count = if bits == 8 {
+        if clr_used == 0 {
+            256
+        } else {
+            clr_used as usize
+        }
+    } else {
+        0
+    };
+    if palette_count > 256 {
+        return Err("bitmap palette too large");
+    }
+    let palette_start = header_size;
+    let palette_end = palette_start
+        .checked_add(
+            palette_count
+                .checked_mul(4)
+                .ok_or("bitmap palette overflow")?,
+        )
+        .ok_or("bitmap palette overflow")?;
+    if palette_end > dib.len() {
+        return Err("bitmap palette outside resource");
+    }
+    let mut palette = Vec::with_capacity(palette_count);
+    for index in 0..palette_count {
+        let offset = palette_start + index * 4;
+        palette.push([
+            dib[offset],
+            dib[offset + 1],
+            dib[offset + 2],
+            dib[offset + 3],
+        ]);
+    }
+    let bytes_per_pixel = if bits == 8 { 1 } else { usize::from(bits / 8) };
+    let row_bytes = (width as usize)
+        .checked_mul(bytes_per_pixel)
+        .ok_or("bitmap row overflow")?;
+    let row_stride = row_bytes.checked_add(3).ok_or("bitmap stride overflow")? & !3;
+    let bits_len = row_stride
+        .checked_mul(height.unsigned_abs() as usize)
+        .ok_or("bitmap bits overflow")?;
+    if palette_end
+        .checked_add(bits_len)
+        .ok_or("bitmap bits overflow")?
+        > dib.len()
+    {
+        return Err("bitmap bits outside resource");
+    }
+    Ok(DibLayout {
+        pixel_offset: palette_end,
+        row_stride,
+        bits_len,
+        palette,
+    })
 }
 
 /// Adapt a Windows RT_BITMAP DIB resource to the production BMP decoder.
@@ -1563,11 +1704,15 @@ mod tests {
         let bmp = bmp_file_from_dib(&request.dib).unwrap();
         assert_eq!(&bmp[..2], b"BM");
         assert_eq!(&bmp[14..], request.dib.as_slice());
-        let handle = xp.admit_bitmap(request, vec![255, 0, 0, 255]).unwrap();
+        let layout = dib_layout(&request.dib).unwrap();
+        let handle = xp
+            .admit_bitmap(request, vec![255, 0, 0, 255], 0x0500_0000, layout)
+            .unwrap();
         let info = xp.bitmap_info(handle).unwrap();
         assert_eq!(handle, GDI_HANDLE_BASE);
         assert_eq!(info.resource_id, 106);
         assert_eq!(info.dib_bytes, 44);
+        assert_eq!(info.bits_len, 4);
         assert_eq!(info.rgba, vec![255, 0, 0, 255]);
     }
     #[test]

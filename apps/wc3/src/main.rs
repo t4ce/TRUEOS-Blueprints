@@ -13,7 +13,7 @@ use wc3::{
     pe32,
     process::{
         GuestMemory, PreparedProcess, STACK_BASE, STACK_BYTES, STACK_TOP, TEB_VA, ThreadObject,
-        WindowRequest, bmp_file_from_dib,
+        WindowRequest, bmp_file_from_dib, dib_layout,
     },
     session::{LAUNCHER_PID, LAUNCHER_TID, PersonalityAction, SessionRequest, Wc3Session},
     thunk32,
@@ -236,8 +236,58 @@ async fn run() -> Result<(), String> {
                         )
                     })?;
                 let result = match result {
-                    PersonalityAction::Return(value) => value,
+                    PersonalityAction::Return(value) => {
+                        if WinCall::from_import(&import) == WinCall::GetObjectA && value != 0 {
+                            let frame = read_guest_words(&memory, exit.registers.esp, 4)?;
+                            if let Some(info) = session.launcher().xp.bitmap_info(frame[1]) {
+                                let mut first = [0; 1];
+                                memory
+                                    .read(info.bits_va, &mut first)
+                                    .map_err(str::to_owned)?;
+                                let rgba = &info.rgba[..4];
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 GetObjectA BITMAP hbitmap=0x{:08x} buffer=0x{:08x} bytes={} width={} height={} width_bytes={} planes={} bpp={} bits_va=0x{:08x} bits_len={} first_index={} first_visual_rgba=[{},{},{},{}]",
+                                        frame[1],
+                                        frame[3],
+                                        frame[2],
+                                        info.width,
+                                        info.height,
+                                        info.row_stride,
+                                        info.planes,
+                                        info.bit_count,
+                                        info.bits_va,
+                                        info.bits_len,
+                                        first[0],
+                                        rgba[0],
+                                        rgba[1],
+                                        rgba[2],
+                                        rgba[3]
+                                    ),
+                                );
+                            }
+                        }
+                        value
+                    }
                     PersonalityAction::Session(SessionRequest::LoadImage(request)) => {
+                        let layout = dib_layout(&request.dib).map_err(str::to_owned)?;
+                        let bits_va = session
+                            .launcher_mut()
+                            .xp
+                            .allocate_gdi_bits(layout.bits_len)
+                            .map_err(str::to_owned)?;
+                        let mapped_len = (layout.bits_len + 0xfff) & !0xfff;
+                        address_space
+                            .map(bits_va, mapped_len, Permissions::READ | Permissions::WRITE)
+                            .map_err(|error| format!("map DIB bits: {error}"))?;
+                        let bits_end = layout
+                            .pixel_offset
+                            .checked_add(layout.bits_len)
+                            .ok_or_else(|| "DIB bits range overflow".to_owned())?;
+                        address_space
+                            .write(bits_va, &request.dib[layout.pixel_offset..bits_end])
+                            .map_err(|error| format!("write DIB bits: {error}"))?;
                         let bmp = bmp_file_from_dib(&request.dib).map_err(str::to_owned)?;
                         let decoded = match trueos::vmedia::decode(
                             trueos::vmedia::ImageFormat::Bmp,
@@ -267,7 +317,7 @@ async fn run() -> Result<(), String> {
                         let value = session
                             .launcher_mut()
                             .xp
-                            .admit_bitmap(request, decoded.rgba)
+                            .admit_bitmap(request, decoded.rgba, bits_va, layout)
                             .map_err(str::to_owned)?;
                         let info = session
                             .launcher()
