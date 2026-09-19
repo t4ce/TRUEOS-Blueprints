@@ -146,8 +146,9 @@ async fn run() -> Result<(), String> {
                         logl::log(
                             level::IMPORTANT,
                             format_args!(
-                                "WC3 BLUEPRINT FRONTIER: CreateProcessA call #{} ret=0x{:08x} command_line=0x{:08x} startup=0x{:08x} process_info=0x{:08x}",
+                                "WC3 BLUEPRINT FRONTIER: CreateProcessA call #{} esp=0x{:08x} ret=0x{:08x} command_line=0x{:08x} startup=0x{:08x} process_info=0x{:08x}",
                                 prepared.xp.call_count,
+                                exit.registers.esp,
                                 frame.return_address,
                                 frame.command_line,
                                 frame.startup_info,
