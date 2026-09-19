@@ -8,7 +8,9 @@ use std::collections::{HashMap, VecDeque};
 
 use crate::{
     imports::{LauncherImport, WinCall},
-    pe32, thunk32,
+    pe32,
+    session::{CreateProcessRequest, PersonalityAction, SessionRequest, ThreadKey, WaitRequest},
+    thunk32,
 };
 
 pub const ENTRY_VA: u32 = pe32::IMAGE_BASE + pe32::ENTRY_RVA;
@@ -122,18 +124,6 @@ pub struct WaitForMultipleObjectsFrame {
     pub timeout: u32,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum Frontier {
-    CreateProcessA(CreateProcessAFrame),
-    WaitForMultipleObjects(WaitForMultipleObjectsFrame),
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum DispatchResult {
-    Value(u32),
-    Frontier(Frontier),
-}
-
 impl PreparedProcess {
     pub fn new(mut materialized: pe32::Materialized) -> Result<Self, &'static str> {
         let mut thunks = vec![0; THUNK_PAGE_BYTES];
@@ -239,7 +229,6 @@ pub struct XpProcess {
     imports: Vec<LauncherImport>,
     pub call_count: u32,
     pub threads: Vec<ThreadObject>,
-    current_tid: u32,
     next_tid: u32,
     next_thread_handle: u32,
     next_event_handle: u32,
@@ -266,7 +255,6 @@ impl XpProcess {
             imports,
             call_count: 0,
             threads: Vec::new(),
-            current_tid: 1,
             next_tid: 2,
             next_thread_handle: THREAD_HANDLE_BASE,
             next_event_handle: EVENT_HANDLE_BASE,
@@ -295,10 +283,11 @@ impl XpProcess {
     /// Handle one import VMCALL and return the value for EAX.
     pub fn dispatch(
         &mut self,
+        tid: u32,
         import_id: u32,
         esp: u32,
         memory: &mut impl GuestMemory,
-    ) -> Result<DispatchResult, &'static str> {
+    ) -> Result<PersonalityAction, &'static str> {
         let import = self
             .import(import_id)
             .cloned()
@@ -313,19 +302,17 @@ impl XpProcess {
             WinCall::HeapCreate => Ok(0x5743_0001),
             WinCall::GetVersionExA => self.get_version_ex(esp, memory),
             WinCall::InitializeCriticalSection => self.initialize_critical_section(esp, memory),
-            WinCall::EnterCriticalSection => self.enter_critical_section(esp, memory),
-            WinCall::LeaveCriticalSection => self.leave_critical_section(esp, memory),
+            WinCall::EnterCriticalSection => self.enter_critical_section(tid, esp, memory),
+            WinCall::LeaveCriticalSection => self.leave_critical_section(tid, esp, memory),
             WinCall::TlsAlloc => self.tls_alloc(),
-            WinCall::TlsSetValue => self.tls_set_value(esp, memory),
+            WinCall::TlsSetValue => self.tls_set_value(tid, esp, memory),
             WinCall::HeapAlloc => self.heap_alloc(esp, memory),
             WinCall::HeapFree => self.heap_free(esp, memory),
             WinCall::CreateEventA => self.create_event(esp, memory),
             WinCall::GetLastError => Ok(self.last_error),
             WinCall::CloseHandle => self.close_handle(esp, memory),
-            WinCall::GetTickCount => {
-                Ok(self.tick_ms)
-            }
-            WinCall::GetCurrentThreadId => Ok(self.current_tid),
+            WinCall::GetTickCount => Ok(self.tick_ms),
+            WinCall::GetCurrentThreadId => Ok(tid),
             WinCall::GetStartupInfoA => self.get_startup_info(esp, memory),
             WinCall::GetModuleFileNameA => self.get_module_filename(esp, memory),
             WinCall::GetModuleHandleA => Ok(pe32::IMAGE_BASE),
@@ -354,18 +341,27 @@ impl XpProcess {
             WinCall::CreateThread => self.create_thread(esp, memory),
             WinCall::ResumeThread => self.resume_thread(esp, memory),
             WinCall::CreateProcessA => {
-                return Ok(DispatchResult::Frontier(Frontier::CreateProcessA(
-                    self.create_process_a(esp, memory)?,
-                )))
+                return Ok(PersonalityAction::Session(SessionRequest::CreateProcess(
+                    CreateProcessRequest {
+                        frame: self.create_process_a(esp, memory)?,
+                    },
+                )));
             }
             WinCall::WaitForMultipleObjects => {
-                return Ok(DispatchResult::Frontier(Frontier::WaitForMultipleObjects(
-                    self.wait_for_multiple_objects(esp, memory)?,
-                )))
+                let frame = self.wait_for_multiple_objects(esp, memory)?;
+                return Ok(PersonalityAction::Block(WaitRequest {
+                    key: ThreadKey { pid: 1, tid },
+                    return_address: frame.return_address,
+                    count: frame.count,
+                    handles_pointer: frame.handles_pointer,
+                    handles: frame.handles,
+                    wait_all: frame.wait_all,
+                    timeout: frame.timeout,
+                }));
             }
             WinCall::Unsupported => Err("unsupported launcher import"),
         }?;
-        Ok(DispatchResult::Value(value))
+        Ok(PersonalityAction::Return(value))
     }
 
     fn create_process_a(
@@ -373,9 +369,19 @@ impl XpProcess {
         esp: u32,
         memory: &impl GuestMemory,
     ) -> Result<CreateProcessAFrame, &'static str> {
-        let [ret, application_name, command_line, process_attributes, thread_attributes,
-            inherit_handles, creation_flags, environment, current_directory, startup_info,
-            process_information] = arguments::<11>(memory, esp)?;
+        let [
+            ret,
+            application_name,
+            command_line,
+            process_attributes,
+            thread_attributes,
+            inherit_handles,
+            creation_flags,
+            environment,
+            current_directory,
+            startup_info,
+            process_information,
+        ] = arguments::<11>(memory, esp)?;
         if ret != 0x0040_12E0
             || application_name != 0
             || read_c_string(memory, command_line, 64)? != "\"war3.exe\" "
@@ -428,7 +434,9 @@ impl XpProcess {
             read_u32(memory, handles_pointer)?,
             read_u32(
                 memory,
-                handles_pointer.checked_add(4).ok_or("handles pointer overflow")?,
+                handles_pointer
+                    .checked_add(4)
+                    .ok_or("handles pointer overflow")?,
             )?,
         ];
         Ok(WaitForMultipleObjectsFrame {
@@ -473,6 +481,7 @@ impl XpProcess {
 
     fn enter_critical_section(
         &mut self,
+        tid: u32,
         esp: u32,
         memory: &mut impl GuestMemory,
     ) -> Result<u32, &'static str> {
@@ -481,10 +490,10 @@ impl XpProcess {
             .critical_sections
             .get_mut(&address)
             .ok_or("unknown critical section")?;
-        if entry.0 != 0 && entry.0 != self.current_tid {
+        if entry.0 != 0 && entry.0 != tid {
             return Err("critical section contention");
         }
-        entry.0 = self.current_tid;
+        entry.0 = tid;
         entry.1 = entry
             .1
             .checked_add(1)
@@ -497,6 +506,7 @@ impl XpProcess {
 
     fn leave_critical_section(
         &mut self,
+        tid: u32,
         esp: u32,
         memory: &mut impl GuestMemory,
     ) -> Result<u32, &'static str> {
@@ -505,7 +515,7 @@ impl XpProcess {
             .critical_sections
             .get_mut(&address)
             .ok_or("unknown critical section")?;
-        if entry.0 != self.current_tid || entry.1 == 0 {
+        if entry.0 != tid || entry.1 == 0 {
             return Err("critical section owner");
         }
         entry.1 -= 1;
@@ -532,7 +542,12 @@ impl XpProcess {
         Ok(slot as u32)
     }
 
-    fn tls_set_value(&mut self, esp: u32, memory: &impl GuestMemory) -> Result<u32, &'static str> {
+    fn tls_set_value(
+        &mut self,
+        tid: u32,
+        esp: u32,
+        memory: &impl GuestMemory,
+    ) -> Result<u32, &'static str> {
         let [_, slot, value] = arguments::<3>(memory, esp)?;
         if !self
             .tls_allocated
@@ -542,7 +557,7 @@ impl XpProcess {
         {
             return Err("TLS slot not allocated");
         }
-        self.tls_values.insert((self.current_tid, slot), value);
+        self.tls_values.insert((tid, slot), value);
         Ok(1)
     }
 
@@ -1063,10 +1078,6 @@ impl XpProcess {
         self.focused_window
     }
 
-    pub fn set_current_thread(&mut self, tid: u32) {
-        self.current_tid = tid;
-    }
-
     pub fn set_desktop_size(&mut self, width: u32, height: u32) {
         self.desktop_size = (width, height);
     }
@@ -1269,8 +1280,8 @@ mod tests {
             write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
         }
         assert_eq!(
-            xp.dispatch(0, esp, &mut memory).unwrap(),
-            DispatchResult::Value(THREAD_HANDLE_BASE)
+            xp.dispatch(1, 0, esp, &mut memory).unwrap(),
+            PersonalityAction::Return(THREAD_HANDLE_BASE)
         );
         assert_eq!(read_u32(&memory, 0x0021_0560).unwrap(), 2);
         assert_eq!(xp.threads[0].suspend_count, 1);
@@ -1335,7 +1346,9 @@ mod tests {
             write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
         }
 
-        let frame = XpProcess::new(Vec::new()).create_process_a(esp, &memory).unwrap();
+        let frame = XpProcess::new(Vec::new())
+            .create_process_a(esp, &memory)
+            .unwrap();
         assert_eq!(
             frame,
             CreateProcessAFrame {
@@ -1412,15 +1425,9 @@ mod tests {
         let esp = 0x043f_f700;
         let handles_pointer = 0x043f_f900;
         let handles = [0x5743_2001, 0x5743_5001];
-        for (index, value) in [
-            0x0040_1362,
-            2,
-            handles_pointer,
-            0,
-            u32::MAX,
-        ]
-        .into_iter()
-        .enumerate()
+        for (index, value) in [0x0040_1362, 2, handles_pointer, 0, u32::MAX]
+            .into_iter()
+            .enumerate()
         {
             write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
         }
@@ -1476,14 +1483,14 @@ mod tests {
         {
             write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
         }
-        let DispatchResult::Value(handle) = xp.dispatch(0, esp, &mut memory).unwrap() else {
+        let PersonalityAction::Return(handle) = xp.dispatch(1, 0, esp, &mut memory).unwrap() else {
             panic!("CreateThread unexpectedly reached a frontier");
         };
         write_u32(&mut memory, esp, 0x0040_0000).unwrap();
         write_u32(&mut memory, esp + 4, handle).unwrap();
         assert_eq!(
-            xp.dispatch(1, esp, &mut memory).unwrap(),
-            DispatchResult::Value(1)
+            xp.dispatch(1, 1, esp, &mut memory).unwrap(),
+            PersonalityAction::Return(1)
         );
         let runnable = xp.take_runnable_thread().unwrap();
         assert_eq!(runnable.tid, 2);

@@ -7,7 +7,8 @@ use trueos::{
 };
 use wc3::{
     EXPECTED_SHA256, LAUNCHER_PATH, pe32,
-    process::{DispatchResult, Frontier, GuestMemory, PreparedProcess, STACK_BASE, STACK_TOP, ThreadObject, WindowRequest},
+    process::{GuestMemory, PreparedProcess, STACK_BASE, STACK_TOP, ThreadObject, WindowRequest},
+    session::{PersonalityAction, SessionRequest},
     thunk32,
 };
 
@@ -83,7 +84,6 @@ async fn run() -> Result<(), String> {
     let mut window_frame: Option<Frame> = None;
     let mut active = 0usize;
     loop {
-        prepared.xp.set_current_thread(contexts[active].tid);
         let exit = if contexts[active].started {
             contexts[active].context.resume().await
         } else {
@@ -129,11 +129,19 @@ async fn run() -> Result<(), String> {
                 let call_number = prepared.xp.call_count + 1;
                 logl::log(
                     level::INFO,
-                    format_args!("wc3: call #{call_number} {}!{}", import.module, import.symbol),
+                    format_args!(
+                        "wc3: call #{call_number} {}!{}",
+                        import.module, import.symbol
+                    ),
                 );
                 let result = prepared
                     .xp
-                    .dispatch(import_id, exit.registers.esp, &mut memory)
+                    .dispatch(
+                        contexts[active].tid,
+                        import_id,
+                        exit.registers.esp,
+                        &mut memory,
+                    )
                     .map_err(|error| {
                         format!(
                             "call #{} {}!{}: {error}",
@@ -141,8 +149,9 @@ async fn run() -> Result<(), String> {
                         )
                     })?;
                 let result = match result {
-                    DispatchResult::Value(value) => value,
-                    DispatchResult::Frontier(Frontier::CreateProcessA(frame)) => {
+                    PersonalityAction::Return(value) => value,
+                    PersonalityAction::Session(SessionRequest::CreateProcess(request)) => {
+                        let frame = request.frame;
                         logl::log(
                             level::IMPORTANT,
                             format_args!(
@@ -165,27 +174,45 @@ async fn run() -> Result<(), String> {
                         );
                         return Ok(());
                     }
-                    DispatchResult::Frontier(Frontier::WaitForMultipleObjects(frame)) => {
+                    PersonalityAction::Block(request) => {
                         logl::log(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 BLUEPRINT FRONTIER: WaitForMultipleObjects call #{} ret=0x{:08x} count={} handles_ptr=0x{:08x} handle0=0x{:08x} handle1=0x{:08x} wait_all={} timeout=0x{:08x}",
                                 prepared.xp.call_count,
-                                frame.return_address,
-                                frame.count,
-                                frame.handles_pointer,
-                                frame.handles[0],
-                                frame.handles[1],
-                                frame.wait_all,
-                                frame.timeout,
+                                request.return_address,
+                                request.count,
+                                request.handles_pointer,
+                                request.handles[0],
+                                request.handles[1],
+                                request.wait_all,
+                                request.timeout,
                             ),
                         );
                         return Ok(());
                     }
+                    PersonalityAction::CallGuest(_) => {
+                        return Err(
+                            "wc3: CallGuest action is not wired into the launcher loop".into()
+                        );
+                    }
+                    PersonalityAction::ExitThread(_) => {
+                        return Err(
+                            "wc3: ExitThread action is not wired into the launcher loop".into()
+                        );
+                    }
+                    PersonalityAction::ExitProcess(_) => {
+                        return Err(
+                            "wc3: ExitProcess action is not wired into the launcher loop".into(),
+                        );
+                    }
                 };
                 let mut registers = exit.registers;
                 registers.eax = result;
-                contexts[active].context.set_registers(registers).map_err(|error| error.to_string())?;
+                contexts[active]
+                    .context
+                    .set_registers(registers)
+                    .map_err(|error| error.to_string())?;
                 logl::log(
                     level::INFO,
                     format_args!(
