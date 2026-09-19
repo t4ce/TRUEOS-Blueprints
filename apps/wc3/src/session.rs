@@ -24,6 +24,91 @@ pub struct ThreadKey {
     pub tid: Tid,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn request(handle: u32, timeout: u32) -> WaitRequest {
+        WaitRequest {
+            key: ThreadKey {
+                pid: LAUNCHER_PID,
+                tid: LAUNCHER_TID,
+            },
+            return_address: 0x0040_196f,
+            count: 1,
+            handles_pointer: 0,
+            handles: [handle, 0],
+            wait_all: 0,
+            timeout,
+        }
+    }
+
+    #[test]
+    fn single_event_wait_consumes_auto_reset_and_preserves_manual_reset() {
+        let mut session = Wc3Session::new(XpProcess::new(Vec::new()));
+        let (auto, _) = session.create_event(
+            LAUNCHER_PID,
+            CreateEventRequest {
+                name: None,
+                manual_reset: false,
+                initial_state: true,
+                inheritable: false,
+            },
+        );
+        assert_eq!(session.poll_single_wait(&request(auto, u32::MAX)).unwrap(), Some(0));
+        assert_eq!(session.event_state(LAUNCHER_PID, auto), Some((false, false)));
+        assert_eq!(session.poll_single_wait(&request(auto, 0)).unwrap(), Some(0x102));
+
+        let (manual, _) = session.create_event(
+            LAUNCHER_PID,
+            CreateEventRequest {
+                name: None,
+                manual_reset: true,
+                initial_state: true,
+                inheritable: false,
+            },
+        );
+        assert_eq!(session.poll_single_wait(&request(manual, u32::MAX)).unwrap(), Some(0));
+        assert_eq!(session.event_state(LAUNCHER_PID, manual), Some((true, true)));
+    }
+
+    #[test]
+    fn single_event_wait_blocks_only_for_positive_timeout_and_rejects_unknown_handles() {
+        let mut session = Wc3Session::new(XpProcess::new(Vec::new()));
+        let (handle, _) = session.create_event(
+            LAUNCHER_PID,
+            CreateEventRequest {
+                name: None,
+                manual_reset: false,
+                initial_state: false,
+                inheritable: false,
+            },
+        );
+        assert_eq!(session.poll_single_wait(&request(handle, 100)).unwrap(), None);
+        assert_eq!(session.poll_single_wait(&request(handle, 0)).unwrap(), Some(0x102));
+        assert_eq!(
+            session.poll_single_wait(&request(0xdead_beef, 100)).unwrap(),
+            Some(u32::MAX)
+        );
+    }
+
+    #[test]
+    fn enqueue_deduplicates_a_runnable_child_thread() {
+        let mut session = Wc3Session::new(XpProcess::new(Vec::new()));
+        let child = session.create_child();
+        let key = ThreadKey {
+            pid: child.pid,
+            tid: child.tid,
+        };
+        session.enqueue(key);
+        session.enqueue(key);
+        assert_eq!(
+            session.runnable.iter().filter(|queued| **queued == key).count(),
+            1
+        );
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct EventObject {
     pub manual_reset: bool,
@@ -289,7 +374,9 @@ impl Wc3Session {
     }
 
     pub fn enqueue(&mut self, key: ThreadKey) {
-        self.runnable.push_back(key);
+        if !self.runnable.contains(&key) {
+            self.runnable.push_back(key);
+        }
     }
 
     pub fn defer_wait(&mut self, request: WaitRequest) {
@@ -602,6 +689,58 @@ impl Wc3Session {
         self.runnable.retain(|key| *key != request.key);
         self.blocked.insert(request.key, request);
         Ok(())
+    }
+
+    pub fn poll_single_wait(
+        &mut self,
+        request: &WaitRequest,
+    ) -> Result<Option<u32>, &'static str> {
+        if request.count != 1 || request.wait_all != 0 {
+            return Err("unsupported single-object wait shape");
+        }
+        let Some(entry) = self
+            .process(request.key.pid)
+            .and_then(|process| process.handles.get(&request.handles[0]))
+            .cloned()
+        else {
+            self.process_mut(request.key.pid)
+                .ok_or("wait process missing")?
+                .xp
+                .set_last_error(6);
+            return Ok(Some(u32::MAX));
+        };
+        let Some(object) = self.objects.get_mut(&entry.object) else {
+            self.process_mut(request.key.pid)
+                .ok_or("wait process missing")?
+                .xp
+                .set_last_error(6);
+            return Ok(Some(u32::MAX));
+        };
+        let SessionObject::Event(event) = object else {
+            self.process_mut(request.key.pid)
+                .ok_or("wait process missing")?
+                .xp
+                .set_last_error(6);
+            return Ok(Some(u32::MAX));
+        };
+        if event.signaled {
+            if !event.manual_reset {
+                event.signaled = false;
+            }
+            return Ok(Some(0));
+        }
+        if request.timeout == 0 {
+            return Ok(Some(0x0000_0102));
+        }
+        Ok(None)
+    }
+
+    pub fn event_state(&self, pid: Pid, handle: u32) -> Option<(bool, bool)> {
+        let entry = self.process(pid)?.handles.get(&handle)?;
+        match self.objects.get(&entry.object)? {
+            SessionObject::Event(event) => Some((event.manual_reset, event.signaled)),
+            _ => None,
+        }
     }
 
     pub fn describe_handle(&self, pid: Pid, handle: u32) -> String {

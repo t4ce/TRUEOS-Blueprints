@@ -528,6 +528,18 @@ impl XpProcess {
                     timeout: frame.timeout,
                 }));
             }
+            WinCall::WaitForSingleObject => {
+                let [ret, handle, timeout] = arguments::<3>(memory, esp)?;
+                return Ok(PersonalityAction::Block(WaitRequest {
+                    key: ThreadKey { pid, tid },
+                    return_address: ret,
+                    count: 1,
+                    handles_pointer: 0,
+                    handles: [handle, 0],
+                    wait_all: 0,
+                    timeout,
+                }));
+            }
             WinCall::Unsupported => Err("unsupported launcher import"),
         }?;
         Ok(PersonalityAction::Return(value))

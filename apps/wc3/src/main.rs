@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::{collections::{BTreeMap, HashMap, HashSet}, time::Duration};
 
 use sha2::{Digest, Sha256};
 use trueos::{
@@ -17,13 +17,21 @@ use wc3::{
     },
     session::{
         GuestCall, LAUNCHER_PID, LAUNCHER_TID, PersonalityAction, SessionRequest,
-        WINDOW_HANDLE_BASE, Wc3Session, WindowPresentation,
+        ThreadKey, WINDOW_HANDLE_BASE, Wc3Session, WindowPresentation,
     },
     thunk32,
 };
 
+const WAIT_OBJECT_0: u32 = 0;
+const WAIT_TIMEOUT: u32 = 0x0000_0102;
+const WAIT_FAILED: u32 = u32::MAX;
+const INFINITE: u32 = u32::MAX;
+
 fn main() {
-    let runtime = match tokio::runtime::Builder::new_current_thread().build() {
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+    {
         Ok(runtime) => runtime,
         Err(error) => {
             logl::log(
@@ -105,12 +113,14 @@ async fn run() -> Result<(), String> {
         started: false,
         continuation: None,
     }];
-    let mut child_runtime: Option<RuntimeProcess> = None;
+    let mut pending_child: Option<PendingChild> = None;
     let mut thread_calls: HashMap<(u32, u32), u32> = HashMap::new();
     let mut default_proc_messages = HashSet::new();
     let mut frames: HashMap<u32, Frame> = HashMap::new();
     let mut window_rgba: HashMap<u32, Vec<u8>> = HashMap::new();
     let mut blit_checkpoint_done = false;
+    let mut wait_deadlines: HashMap<ThreadKey, RuntimeWait> = HashMap::new();
+    let mut previous_wait_timeout: Option<(u32, u32)> = None;
     let mut active = 0usize;
     loop {
         let exit = if contexts[active].started {
@@ -1216,6 +1226,14 @@ async fn run() -> Result<(), String> {
                             })?;
                         let child = pe32::parse(&child_bytes).map_err(str::to_owned)?;
                         let created = session.create_child();
+                        // CREATE_SUSPENDED was not requested.  The logical
+                        // child thread is runnable, but its native entry is
+                        // held at the loader frontier until dependencies are
+                        // prepared.
+                        session.enqueue(ThreadKey {
+                            pid: created.pid,
+                            tid: created.tid,
+                        });
                         memory
                             .write(
                                 frame.process_information,
@@ -1234,7 +1252,12 @@ async fn run() -> Result<(), String> {
                         memory
                             .write(frame.process_information + 12, &created.tid.to_le_bytes())
                             .map_err(str::to_owned)?;
-                        child_runtime = Some(create_child_runtime(&child)?);
+                        log_child_image(&child, created.pid, created.tid);
+                        pending_child = Some(PendingChild {
+                            pid: created.pid,
+                            tid: created.tid,
+                            image: child,
+                        });
                         logl::log(
                             level::INFO,
                             format_args!(
@@ -1343,79 +1366,244 @@ async fn run() -> Result<(), String> {
                         }
                     }
                     PersonalityAction::Block(request) => {
-                        logl::log(
-                            level::IMPORTANT,
-                            format_args!(
-                                "WC3 RAW #90 WaitForMultipleObjects esp=0x{:08x} ret=0x{:08x} count={} handles_ptr=0x{:08x} wait_all={} timeout=0x{:08x}",
-                                exit.registers.esp,
-                                request.return_address,
-                                request.count,
-                                request.handles_pointer,
-                                request.wait_all,
-                                request.timeout,
-                            ),
-                        );
-                        if request.handles_pointer != 0 && request.count <= 1024 {
+                        let is_single = import.symbol == "WaitForSingleObject";
+                        if is_single {
+                            let handle = request.handles[0];
+                            if previous_wait_timeout == Some((handle, request.timeout)) {
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 WAIT LOOP same_handle=0x{:08x} timeout={}",
+                                        handle, request.timeout
+                                    ),
+                                );
+                                return Ok(());
+                            }
+                            let description =
+                                session.describe_handle(request.key.pid, handle);
+                            let state = session.event_state(request.key.pid, handle);
                             logl::log(
                                 level::IMPORTANT,
                                 format_args!(
-                                    "WC3 RAW #90 handles handle0=0x{:08x} handle1=0x{:08x}",
-                                    request.handles[0], request.handles[1],
+                                    "WC3 WaitForSingleObject pid={} tid={} ret=0x{:08x} handle=0x{:08x} timeout={} object={}",
+                                    request.key.pid,
+                                    request.key.tid,
+                                    request.return_address,
+                                    handle,
+                                    request.timeout,
+                                    description
+                                ),
+                            );
+                            if let Some((manual_reset, signaled)) = state {
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 WaitForSingleObject state manual_reset={} signaled={}",
+                                        u32::from(manual_reset),
+                                        u32::from(signaled)
+                                    ),
+                                );
+                            }
+                            if let Some(wait_result) = session
+                                .poll_single_wait(&request)
+                                .map_err(str::to_owned)?
+                            {
+                                let consumed = state
+                                    .map(|(manual_reset, signaled)| signaled && !manual_reset)
+                                    .unwrap_or(false);
+                                if wait_result == WAIT_OBJECT_0 {
+                                    logl::log(
+                                        level::IMPORTANT,
+                                        format_args!(
+                                            "WC3 WAIT SIGNALED pid={} tid={} handle=0x{:08x} auto_reset_consumed={} result=0x{:08x}",
+                                            request.key.pid,
+                                            request.key.tid,
+                                            handle,
+                                            u32::from(consumed),
+                                            wait_result
+                                        ),
+                                    );
+                                } else if wait_result == WAIT_TIMEOUT {
+                                    logl::log(
+                                        level::IMPORTANT,
+                                        format_args!(
+                                            "WC3 WAIT TIMEOUT pid={} tid={} handle=0x{:08x} elapsed_ms=0 result=0x{:08x}",
+                                            request.key.pid,
+                                            request.key.tid,
+                                            handle,
+                                            wait_result
+                                        ),
+                                    );
+                                } else if wait_result == WAIT_FAILED {
+                                    logl::log(
+                                        level::IMPORTANT,
+                                        format_args!(
+                                            "WC3 WAIT FAILED pid={} tid={} handle=0x{:08x} result=0x{:08x}",
+                                            request.key.pid,
+                                            request.key.tid,
+                                            handle,
+                                            wait_result
+                                        ),
+                                    );
+                                }
+                                let mut registers = exit.registers;
+                                registers.eax = wait_result;
+                                contexts[active]
+                                    .context
+                                    .set_registers(registers)
+                                    .map_err(|error| error.to_string())?;
+                                logl::log(
+                                    level::INFO,
+                                    format_args!(
+                                        "wc3: return #{} KERNEL32.dll!WaitForSingleObject eax=0x{:08x}",
+                                        session.launcher().xp.call_count,
+                                        wait_result
+                                    ),
+                                );
+                                continue;
+                            }
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 WAIT BLOCK pid={} tid={} handle=0x{:08x} timeout_ms={}",
+                                    request.key.pid, request.key.tid, handle, request.timeout
+                                ),
+                            );
+                        } else {
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 RAW #90 WaitForMultipleObjects esp=0x{:08x} ret=0x{:08x} count={} handles_ptr=0x{:08x} wait_all={} timeout=0x{:08x}",
+                                    exit.registers.esp,
+                                    request.return_address,
+                                    request.count,
+                                    request.handles_pointer,
+                                    request.wait_all,
+                                    request.timeout,
+                                ),
+                            );
+                            if request.handles_pointer != 0 && request.count <= 1024 {
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 RAW #90 handles handle0=0x{:08x} handle1=0x{:08x}",
+                                        request.handles[0], request.handles[1],
+                                    ),
+                                );
+                            }
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 BLUEPRINT FRONTIER: WaitForMultipleObjects process=launcher pid={} tid={} call=#{} ret=0x{:08x} count={} handles_ptr=0x{:08x} handle0=0x{:08x} handle1=0x{:08x} wait_all={} timeout=0x{:08x}",
+                                    LAUNCHER_PID,
+                                    request.key.tid,
+                                    session.launcher().xp.call_count,
+                                    request.return_address,
+                                    request.count,
+                                    request.handles_pointer,
+                                    request.handles[0],
+                                    request.handles[1],
+                                    request.wait_all,
+                                    request.timeout,
+                                ),
+                            );
+                            logl::log(
+                                level::INFO,
+                                format_args!(
+                                    "wc3: wait handle0 {}",
+                                    session.describe_handle(LAUNCHER_PID, request.handles[0])
+                                ),
+                            );
+                            logl::log(
+                                level::INFO,
+                                format_args!(
+                                    "wc3: wait handle1 {}",
+                                    session.describe_handle(LAUNCHER_PID, request.handles[1])
                                 ),
                             );
                         }
-                        logl::log(
-                            level::IMPORTANT,
-                            format_args!(
-                                "WC3 BLUEPRINT FRONTIER: WaitForMultipleObjects process=launcher pid={} tid={} call=#{} ret=0x{:08x} count={} handles_ptr=0x{:08x} handle0=0x{:08x} handle1=0x{:08x} wait_all={} timeout=0x{:08x}",
-                                LAUNCHER_PID,
-                                request.key.tid,
-                                session.launcher().xp.call_count,
-                                request.return_address,
-                                request.count,
-                                request.handles_pointer,
-                                request.handles[0],
-                                request.handles[1],
-                                request.wait_all,
-                                request.timeout,
-                            ),
-                        );
-                        logl::log(
-                            level::INFO,
-                            format_args!(
-                                "wc3: wait handle0 {}",
-                                session.describe_handle(LAUNCHER_PID, request.handles[0])
-                            ),
-                        );
-                        logl::log(
-                            level::INFO,
-                            format_args!(
-                                "wc3: wait handle1 {}",
-                                session.describe_handle(LAUNCHER_PID, request.handles[1])
-                            ),
-                        );
-                        if request.key.tid != LAUNCHER_TID {
+                        session.block_wait(request.clone()).map_err(str::to_owned)?;
+                        if request.timeout != INFINITE {
+                            wait_deadlines.insert(
+                                request.key,
+                                RuntimeWait {
+                                    deadline: tokio::time::Instant::now()
+                                        + Duration::from_millis(request.timeout as u64),
+                                    timeout_ms: request.timeout,
+                                    handle: request.handles[0],
+                                    resume_registers: exit.registers,
+                                },
+                            );
+                        }
+                        if let Some(next) =
+                            pop_runnable_launcher_context(&mut session, &contexts)
+                        {
+                            active = next;
+                            continue;
+                        }
+                        if let Some(key) = session.runnable.iter().find(|key| key.pid != LAUNCHER_PID)
+                        {
                             logl::log(
                                 level::IMPORTANT,
                                 format_args!(
-                                    "WC3 TID2 BLOCK pid={} tid={} pcall={} tcall={}",
-                                    request.key.pid, request.key.tid, process_call, *thread_call
+                                    "WC3 CHILD LOADER FRONTIER pid={} tid={} reason=primary-thread-runnable launcher_tid1=blocked launcher_tid2=blocked entry_va=0x{:08x}",
+                                    key.pid,
+                                    key.tid,
+                                    pending_child
+                                        .as_ref()
+                                        .filter(|child| child.pid == key.pid && child.tid == key.tid)
+                                        .and_then(|child| child.image.image_base.checked_add(child.image.entry_rva))
+                                        .unwrap_or(0),
                                 ),
                             );
                             return Ok(());
                         }
-                        session.block_wait(request.clone()).map_err(str::to_owned)?;
-                        let next = session
-                            .runnable
-                            .pop_front()
-                            .ok_or_else(|| "no runnable thread after launcher block".to_owned())?;
-                        active = contexts
+                        let Some(deadline) = wait_deadlines.values().map(|wait| wait.deadline).min()
+                        else {
+                            return Err("no runnable thread after launcher block".into());
+                        };
+                        tokio::time::sleep_until(deadline).await;
+                        let now = tokio::time::Instant::now();
+                        let expired: Vec<_> = wait_deadlines
                             .iter()
-                            .position(|context| context.tid == next.tid)
-                            .ok_or_else(|| {
-                                format!("no runtime context for pid={} tid={}", next.pid, next.tid)
-                            })?;
-                        continue;
+                            .filter_map(|(key, wait)| (wait.deadline <= now).then_some(*key))
+                            .collect();
+                        for key in expired {
+                            let Some(wait) = wait_deadlines.remove(&key) else {
+                                continue;
+                            };
+                            session.blocked.remove(&key);
+                            session.enqueue(key);
+                            let mut registers = wait.resume_registers;
+                            registers.eax = WAIT_TIMEOUT;
+                            let index = contexts
+                                .iter()
+                                .position(|context| context.tid == key.tid)
+                                .ok_or_else(|| "timed-out wait context missing".to_owned())?;
+                            contexts[index]
+                                .context
+                                .set_registers(registers)
+                                .map_err(|error| error.to_string())?;
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 WAIT TIMEOUT pid={} tid={} handle=0x{:08x} elapsed_ms={} result=0x{:08x}",
+                                    key.pid,
+                                    key.tid,
+                                    wait.handle,
+                                    wait.timeout_ms,
+                                    WAIT_TIMEOUT
+                                ),
+                            );
+                            previous_wait_timeout = Some((wait.handle, wait.timeout_ms));
+                        }
+                        if let Some(next) =
+                            pop_runnable_launcher_context(&mut session, &contexts)
+                        {
+                            active = next;
+                            continue;
+                        }
+                        return Err("expired wait did not produce runnable launcher context".into());
                     }
                     PersonalityAction::CallGuest(call) => {
                         callback = Some(call);
@@ -1650,6 +1838,25 @@ struct GuestContext {
     continuation: Option<GuestContinuation>,
 }
 
+struct RuntimeWait {
+    deadline: tokio::time::Instant,
+    timeout_ms: u32,
+    handle: u32,
+    resume_registers: Registers,
+}
+
+fn pop_runnable_launcher_context(
+    session: &mut Wc3Session,
+    contexts: &[GuestContext],
+) -> Option<usize> {
+    let queue_index = session.runnable.iter().position(|key| {
+        key.pid == LAUNCHER_PID
+            && contexts.iter().any(|context| context.tid == key.tid)
+    })?;
+    let key = session.runnable.remove(queue_index)?;
+    contexts.iter().position(|context| context.tid == key.tid)
+}
+
 struct GuestContinuation {
     import_resume_eip: u32,
     import_esp: u32,
@@ -1737,52 +1944,64 @@ fn thread_teb_va(tid: u32) -> Result<u32, String> {
         .ok_or_else(|| "x86 TEB address space exhausted".to_owned())
 }
 
-struct RuntimeProcess {
-    _address_space: AddressSpace,
-    _primary: Context,
+struct PendingChild {
+    pid: u32,
+    tid: u32,
+    image: pe32::PeImage,
 }
 
-fn create_child_runtime(image: &pe32::PeImage) -> Result<RuntimeProcess, String> {
-    let address_space = AddressSpace::create().map_err(|error| error.to_string())?;
-    address_space
-        .map(
+fn log_child_image(image: &pe32::PeImage, pid: u32, tid: u32) {
+    logl::log(
+        level::IMPORTANT,
+        format_args!(
+            "WC3 CHILD IMAGE pid={} tid={} image_base=0x{:08x} entry_rva=0x{:08x} entry_va=0x{:08x} size_of_image=0x{:08x} imports={} relocations={}",
+            pid,
+            tid,
             image.image_base,
-            image.image.len(),
-            Permissions::READ | Permissions::WRITE | Permissions::EXECUTE,
-        )
-        .map_err(|error| format!("map child image: {error}"))?;
-    if address_space
-        .write(image.image_base, &image.image)
-        .map_err(|error| format!("write child image: {error}"))?
-        != image.image.len()
-    {
-        return Err("short child image write".into());
+            image.entry_rva,
+            image.image_base.saturating_add(image.entry_rva),
+            image.size_of_image,
+            image.imports.len(),
+            image.relocations.len(),
+        ),
+    );
+
+    let mut modules: BTreeMap<&str, (usize, usize, usize)> = BTreeMap::new();
+    for import in &image.imports {
+        let entry = modules.entry(import.module.as_str()).or_default();
+        entry.0 += 1;
+        match import.symbol {
+            pe32::ImportSymbol::Name(_) => entry.1 += 1,
+            pe32::ImportSymbol::Ordinal(_) => entry.2 += 1,
+        }
     }
-    address_space
-        .map(TEB_VA, 0x1000, Permissions::READ | Permissions::WRITE)
-        .map_err(|error| format!("map child TEB: {error}"))?;
-    address_space
-        .map(
-            STACK_BASE,
-            STACK_BYTES,
-            Permissions::READ | Permissions::WRITE,
-        )
-        .map_err(|error| format!("map child stack: {error}"))?;
-    let registers = Registers {
-        esp: STACK_TOP,
-        eip: image
-            .image_base
-            .checked_add(image.entry_rva)
-            .ok_or("child entry overflow")?,
-        eflags: 0x202,
-        fs_base: TEB_VA,
-        ..Registers::default()
-    };
-    let primary = Context::create(&address_space, registers).map_err(|error| error.to_string())?;
-    Ok(RuntimeProcess {
-        _address_space: address_space,
-        _primary: primary,
-    })
+    for (module, (count, named, ordinal)) in modules {
+        logl::log(
+            level::IMPORTANT,
+            format_args!(
+                "WC3 CHILD IMPORT MODULE module=\"{}\" imports={} named={} ordinal={}",
+                module, count, named, ordinal
+            ),
+        );
+        for import in image
+            .imports
+            .iter()
+            .filter(|import| import.module == module)
+            .take(8)
+        {
+            let symbol = match &import.symbol {
+                pe32::ImportSymbol::Name(name) => name.clone(),
+                pe32::ImportSymbol::Ordinal(ordinal) => format!("#{ordinal}"),
+            };
+            logl::log(
+                level::INFO,
+                format_args!(
+                    "WC3 CHILD IMPORT module=\"{}\" symbol=\"{}\" iat_rva=0x{:08x}",
+                    module, symbol, import.iat_rva
+                ),
+            );
+        }
+    }
 }
 
 struct X86Memory<'a>(&'a AddressSpace);
