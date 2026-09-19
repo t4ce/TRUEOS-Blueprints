@@ -59,6 +59,7 @@ pub mod vsys;
 pub mod vsystem_services;
 pub mod vthermal;
 pub mod vusb;
+pub mod vx86;
 #[doc(hidden)]
 pub mod worker_abi;
 

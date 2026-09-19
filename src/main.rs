@@ -5734,7 +5734,11 @@ fn workspace_dependency_name(line: &str) -> Option<String> {
     {
         return Some(dep_name.to_string());
     }
-    if value.contains("workspace") && value.contains("true") {
+    let compact = value
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>();
+    if compact.contains("workspace=true") {
         return Some(key.to_string());
     }
     None

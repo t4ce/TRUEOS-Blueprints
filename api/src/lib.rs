@@ -283,6 +283,13 @@ pub mod logl {
 #[cfg(feature = "tokio-runtime")]
 pub mod worker;
 
+/// Blueprint-owned 32-bit x86 address spaces and execution contexts.
+///
+/// The kernel supplies only memory/context mechanics. Application and OS
+/// compatibility semantics remain in the Blueprint that owns these objects.
+#[cfg(feature = "tokio-runtime")]
+pub mod x86;
+
 #[cfg(feature = "tokio-runtime")]
 pub mod runtime {
     pub use tokio::runtime::{Builder, Handle, Runtime};

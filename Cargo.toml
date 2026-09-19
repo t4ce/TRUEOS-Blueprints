@@ -51,6 +51,7 @@ members = [
     "probes/tokio_rt",
     "probes/tokio_stack",
     "apps/webmail",
+    "apps/wc3",
     "probes/wls",
 ]
 exclude = [
