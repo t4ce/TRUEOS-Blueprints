@@ -15,17 +15,20 @@ pub const ENTRY_VA: u32 = pe32::IMAGE_BASE + pe32::ENTRY_RVA;
 pub const TEB_VA: u32 = 0x0020_1000;
 pub const HEAP_VA: u32 = 0x0021_0000;
 pub const PROCESS_DATA_VA: u32 = 0x0021_1000;
-pub const STACK_BASE: u32 = 0x7ff0_0000;
+/// Historical launcher stack: 0x0430_0000..0x0440_0000.
+pub const STACK_BASE: u32 = 0x0430_0000;
 pub const STACK_BYTES: usize = 0x10_0000;
 pub const THUNK_PAGE_BYTES: usize = 0x1000;
-pub const COMMAND_LINE: &[u8] = b"\"war3.exe\" \0";
+/// Process state returned by GetCommandLineA.  The launcher constructs its
+/// separate `"war3.exe" ` child command line on its native stack.
+pub const COMMAND_LINE: &[u8] = b"\"Warcraft III.exe\"\0";
 const MODULE_FILENAME: &[u8] = b"C:\\Warcraft III\\Warcraft III.exe\0";
 const WINDOWS_XP_GET_VERSION: u32 = 0x0a28_0105;
 const CREATE_SUSPENDED: u32 = 4;
 const EVENT_HANDLE_BASE: u32 = 0x5743_2001;
 const THREAD_HANDLE_BASE: u32 = 0x5743_5001;
 const DESKTOP_HWND: u32 = 0x5743_3000;
-const WINDOW_HWND: u32 = 0x5743_3001;
+const WINDOW_HWND: u32 = 0x5743_4001;
 const ENVIRONMENT_BLOCK_VA: u32 = PROCESS_DATA_VA + 0x100;
 
 pub trait GuestMemory {
@@ -367,12 +370,19 @@ impl XpProcess {
             || current_directory != 0
             || startup_info == 0
             || process_information == 0
-            || read_u32(memory, startup_info)? != 0x44
         {
             return Err("unexpected CreateProcessA frame");
         }
-        let mut _process_information_bytes = [0u8; 16];
-        memory.read(process_information, &mut _process_information_bytes)?;
+        // These are launcher-local output structures, not the STARTUPINFOA
+        // synthesized by GetStartupInfoA.  At #89 both are pristine zeroed
+        // storage, including STARTUPINFOA.cb.
+        let mut startup_info_bytes = [0u8; 68];
+        memory.read(startup_info, &mut startup_info_bytes)?;
+        let mut process_information_bytes = [0u8; 16];
+        memory.read(process_information, &mut process_information_bytes)?;
+        if startup_info_bytes != [0; 68] || process_information_bytes != [0; 16] {
+            return Err("unexpected CreateProcessA output storage");
+        }
         Ok(CreateProcessAFrame {
             return_address: ret,
             application_name,
@@ -1245,6 +1255,63 @@ mod tests {
     }
 
     #[test]
+    fn historical_launcher_layout_and_create_process_frontier_match() {
+        assert_eq!(STACK_BASE, 0x0430_0000);
+        assert_eq!(STACK_BASE + STACK_BYTES as u32, 0x0440_0000);
+        assert_eq!(COMMAND_LINE, b"\"Warcraft III.exe\"\0");
+        assert_eq!(WINDOW_HWND, 0x5743_4001);
+
+        // This is the hardware-observed #89 frame.  Its positions are a
+        // consequence of the restored historical stack, not special cases in
+        // the dispatch implementation.
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = 0x043f_f8b0;
+        let command_line = 0x043f_fb20;
+        let startup_info = 0x043f_fc24;
+        let process_information = 0x043f_f900;
+        memory.write(command_line, b"\"war3.exe\" \0").unwrap();
+        for (index, value) in [
+            0x0040_12e0,
+            0,
+            command_line,
+            0,
+            0,
+            1,
+            0,
+            0,
+            0,
+            startup_info,
+            process_information,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
+        }
+
+        let frame = XpProcess::new(Vec::new()).create_process_a(esp, &memory).unwrap();
+        assert_eq!(
+            frame,
+            CreateProcessAFrame {
+                return_address: 0x0040_12e0,
+                application_name: 0,
+                command_line,
+                process_attributes: 0,
+                thread_attributes: 0,
+                inherit_handles: 1,
+                creation_flags: 0,
+                environment: 0,
+                current_directory: 0,
+                startup_info,
+                process_information,
+            }
+        );
+    }
+
+    #[test]
     fn proven_create_window_frame_reaches_ui4_presentation() {
         let mut xp = XpProcess::new(Vec::new());
         xp.classes.push("Warcraft III".into());
@@ -1277,7 +1344,7 @@ mod tests {
         {
             write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
         }
-        assert_eq!(xp.create_window(esp, &memory).unwrap(), WINDOW_HWND);
+        assert_eq!(xp.create_window(esp, &memory).unwrap(), 0x5743_4001);
         write_u32(&mut memory, esp + 4, WINDOW_HWND).unwrap();
         write_u32(&mut memory, esp + 8, 5).unwrap();
         assert_eq!(xp.show_window(esp, &memory).unwrap(), 0);
