@@ -47,6 +47,7 @@ pub enum WinCall {
     CreatePalette,
     SelectPalette,
     RealizePalette,
+    BitBlt,
     DeleteDC,
     DeleteObject,
     CreateThread,
@@ -121,6 +122,7 @@ impl WinCall {
             "RealizePalette" if import.module.eq_ignore_ascii_case("GDI32.dll") => {
                 Self::RealizePalette
             }
+            "BitBlt" if import.module.eq_ignore_ascii_case("GDI32.dll") => Self::BitBlt,
             "DeleteDC" if import.module.eq_ignore_ascii_case("GDI32.dll") => Self::DeleteDC,
             "DeleteObject" if import.module.eq_ignore_ascii_case("GDI32.dll") => Self::DeleteObject,
             "CreateThread" if kernel => Self::CreateThread,
@@ -184,6 +186,7 @@ impl WinCall {
             Self::CreatePalette => Kind::Stdcall(4),
             Self::SelectPalette => Kind::Stdcall(12),
             Self::RealizePalette => Kind::Stdcall(4),
+            Self::BitBlt => Kind::Stdcall(36),
             Self::DeleteDC => Kind::Stdcall(4),
             Self::DeleteObject => Kind::Stdcall(4),
             Self::TlsSetValue | Self::GetClientRect | Self::ShowWindow | Self::GetCPInfo => {

@@ -232,6 +232,25 @@ async fn run() -> Result<(), String> {
                     ),
                 );
                 let call_kind = WinCall::from_import(&import);
+                if call_kind == WinCall::BitBlt {
+                    let frame = read_guest_words(&memory, exit.registers.esp, 10)?;
+                    logl::log(
+                        level::IMPORTANT,
+                        format_args!(
+                            "WC3 BitBlt ret=0x{:08x} dst=0x{:08x} dst_xy={},{} size={}x{} src=0x{:08x} src_xy={},{} rop=0x{:08x}",
+                            frame[0],
+                            frame[1],
+                            frame[2],
+                            frame[3],
+                            frame[4],
+                            frame[5],
+                            frame[6],
+                            frame[7],
+                            frame[8],
+                            frame[9]
+                        ),
+                    );
+                }
                 if call_kind == WinCall::DefWindowProcA {
                     let frame = read_guest_words(&memory, exit.registers.esp, 5)?;
                     if default_proc_messages.insert(frame[2]) {
@@ -405,6 +424,95 @@ async fn run() -> Result<(), String> {
                             exit.registers.esp, raw[0], raw[1], raw[2]
                         ),
                     );
+                }
+                if import.symbol == "DrawTextA" {
+                    match read_guest_words(&memory, exit.registers.esp, 6) {
+                        Ok(a) => {
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!("WC3 DT0 ret=0x{:08x} hdc=0x{:08x}", a[0], a[1]),
+                            );
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 DT1 text_ptr=0x{:08x} count={}",
+                                    a[2], a[3] as i32
+                                ),
+                            );
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 DT2 rect_ptr=0x{:08x} format=0x{:08x}",
+                                    a[4], a[5]
+                                ),
+                            );
+                            if (a[3] as i32) >= 0 {
+                                match read_guest_bytes(&memory, a[2], a[3] as usize) {
+                                    Ok(bytes) => {
+                                        let text = diagnostic_cp1252(&bytes);
+                                        let digest = Sha256::digest(&bytes);
+                                        logl::log(
+                                            level::IMPORTANT,
+                                            format_args!(
+                                                "WC3 DTTEXT {:?} bytes_sha256={}",
+                                                text,
+                                                hex_digest(&digest)
+                                            ),
+                                        );
+                                    }
+                                    Err(error) => logl::log(
+                                        level::IMPORTANT,
+                                        format_args!(
+                                            "WC3 DTTEXT decode-failed ptr=0x{:08x} count={} error={}",
+                                            a[2], a[3], error
+                                        ),
+                                    ),
+                                }
+                            }
+                            if a[4] != 0 {
+                                match read_guest_words(&memory, a[4], 4) {
+                                    Ok(rect) => logl::log(
+                                        level::IMPORTANT,
+                                        format_args!(
+                                            "WC3 DTRECT in=[{},{},{},{}]",
+                                            rect[0] as i32,
+                                            rect[1] as i32,
+                                            rect[2] as i32,
+                                            rect[3] as i32
+                                        ),
+                                    ),
+                                    Err(error) => logl::log(
+                                        level::IMPORTANT,
+                                        format_args!(
+                                            "WC3 DTRECT decode-failed ptr=0x{:08x} error={}",
+                                            a[4], error
+                                        ),
+                                    ),
+                                }
+                            }
+                            let flags = a[5];
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 DTFLAGS raw=0x{:08x} center={} vcenter={} wordbreak={} singleline={} calcrect={} noprefix={}",
+                                    flags,
+                                    u32::from(flags & 0x0001 != 0),
+                                    u32::from(flags & 0x0004 != 0),
+                                    u32::from(flags & 0x0010 != 0),
+                                    u32::from(flags & 0x0020 != 0),
+                                    u32::from(flags & 0x0400 != 0),
+                                    u32::from(flags & 0x0800 != 0)
+                                ),
+                            );
+                        }
+                        Err(error) => logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 DT0 decode-failed esp=0x{:08x} error={}",
+                                exit.registers.esp, error
+                            ),
+                        ),
+                    }
                 }
                 if WinCall::from_import(&import) == WinCall::LoadImageA {
                     let raw = read_guest_words(&memory, exit.registers.esp, 7)?;
@@ -833,6 +941,56 @@ async fn run() -> Result<(), String> {
                             ),
                         );
                         value
+                    }
+                    PersonalityAction::WindowBlit(request) => {
+                        let digest = Sha256::digest(&request.rgba);
+                        let frame = frames
+                            .get_mut(&request.hwnd)
+                            .ok_or_else(|| "BitBlt destination frame missing".to_owned())?;
+                        frame
+                            .begin(rgba(0, 0, 0, 255))
+                            .and_then(|()| frame.write_opaque_rgba8(&request.rgba))
+                            .and_then(|()| {
+                                frame.publish(Damage::full(request.width, request.height))
+                            })
+                            .map_err(|error| format!("publish WC3 BitBlt: {error:?}"))?;
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 BitBlt SRCCOPY dst_hdc=0x{:08x} dst_hwnd=0x{:08x} dst=[{},{} {}x{}] src_hdc=0x{:08x} src_bitmap=0x{:08x} src=[0,0] rop=0x00cc0020 bits_va=0x{:08x} bpp=8 bottom_up={} rgba_bytes={} rgba_sha256={}",
+                                request.dst_hdc,
+                                request.hwnd,
+                                request.dst_x,
+                                request.dst_y,
+                                request.width,
+                                request.height,
+                                request.src_hdc,
+                                request.source_bitmap,
+                                request.bits_va,
+                                u32::from(request.bottom_up),
+                                request.rgba.len(),
+                                hex_digest(&digest)
+                            ),
+                        );
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 UI4 BLIT hwnd=0x{:08x} width={} height={} source_bitmap=0x{:08x} published=1",
+                                request.hwnd, request.width, request.height, request.source_bitmap
+                            ),
+                        );
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!("WC3 UI4 BLIT LIVE confirm=anykey"),
+                        );
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!("WC3 UI4 BLIT STOPPED awaiting operator input"),
+                        );
+                        // Keep the local Frame alive after the visual checkpoint. Returning
+                        // from run() would drop `frames` and close the UI4 surface.
+                        std::future::pending::<()>().await;
+                        unreachable!("WC3 UI4 checkpoint future unexpectedly completed");
                     }
                     PersonalityAction::Session(SessionRequest::CreateProcess(request)) => {
                         let frame = request.frame;
@@ -1438,6 +1596,28 @@ fn diagnostic_ansi_string(memory: &impl GuestMemory, address: u32) -> Result<Str
         bytes.push(byte[0]);
     }
     Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+fn diagnostic_cp1252(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(|byte| match byte {
+            0x80 => '\u{20ac}',
+            0x82 => '\u{201a}',
+            0x83 => '\u{192}',
+            0x84 => '\u{201e}',
+            0x85 => '\u{2026}',
+            0x86 => '\u{2020}',
+            0x87 => '\u{2021}',
+            0x91 => '\u{2018}',
+            0x92 => '\u{2019}',
+            0x93 => '\u{201c}',
+            0x94 => '\u{201d}',
+            0x96 => '\u{2013}',
+            0x97 => '\u{2014}',
+            byte => char::from(*byte),
+        })
+        .collect()
 }
 
 fn hex_digest(digest: &[u8]) -> String {

@@ -145,6 +145,21 @@ pub struct LoadImageRequest {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WindowBlitRequest {
+    pub dst_hdc: u32,
+    pub hwnd: u32,
+    pub dst_x: u32,
+    pub dst_y: u32,
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+    pub source_bitmap: u32,
+    pub src_hdc: u32,
+    pub bits_va: u32,
+    pub bottom_up: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CreatedChild {
     pub pid: Pid,
     pub tid: Tid,
@@ -195,6 +210,7 @@ pub struct GuestCall {
 pub enum PersonalityAction {
     Return(u32),
     Session(SessionRequest),
+    WindowBlit(WindowBlitRequest),
     Block(WaitRequest),
     CallGuest(GuestCall),
     ExitThread(u32),

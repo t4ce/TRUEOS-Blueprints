@@ -11,7 +11,7 @@ use crate::{
     pe32,
     session::{
         CreateEventRequest, CreateProcessRequest, CreateWindowRequest, LoadImageRequest,
-        PersonalityAction, SessionRequest, ThreadKey, WaitRequest,
+        PersonalityAction, SessionRequest, ThreadKey, WaitRequest, WindowBlitRequest,
     },
     thunk32,
 };
@@ -485,6 +485,7 @@ impl XpProcess {
             WinCall::CreatePalette => self.create_palette(esp, memory),
             WinCall::SelectPalette => self.select_palette(esp, memory),
             WinCall::RealizePalette => self.realize_palette(esp, memory),
+            WinCall::BitBlt => return self.bit_blt(esp, memory),
             WinCall::DeleteDC => self.delete_dc(esp, memory),
             WinCall::DeleteObject => self.delete_object(esp, memory),
             WinCall::CreateThread => self.create_thread(esp, memory),
@@ -1219,6 +1220,115 @@ impl XpProcess {
         dc.realized_palette = Some(selected_palette);
         let _ = ret;
         u32::try_from(entry_count).map_err(|_| "palette entry count overflow")
+    }
+
+    fn bit_blt(
+        &self,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<PersonalityAction, &'static str> {
+        let [
+            ret,
+            hdc_dst,
+            x,
+            y,
+            width,
+            height,
+            hdc_src,
+            x_src,
+            y_src,
+            rop,
+        ] = arguments::<10>(memory, esp)?;
+        if rop != 0x00cc_0020 {
+            return Err("unsupported BitBlt raster operation");
+        }
+        if x != 0 || y != 0 || x_src != 0 || y_src != 0 || width == 0 || height == 0 {
+            return Err("unsupported BitBlt coordinates or dimensions");
+        }
+        let hwnd = match self.gdi_objects.get(&hdc_dst) {
+            Some(GdiObject::DeviceContext(dc)) => match &dc.target {
+                DcTarget::WindowPaint { hwnd } => {
+                    if dc.realized_palette != Some(dc.selected_palette) {
+                        return Err("BitBlt destination palette is not realized");
+                    }
+                    *hwnd
+                }
+                DcTarget::Memory { .. } => return Err("BitBlt destination is not window paint DC"),
+            },
+            _ => return Err("BitBlt unknown destination DC"),
+        };
+        let bitmap_handle = match self.gdi_objects.get(&hdc_src) {
+            Some(GdiObject::DeviceContext(DeviceContext {
+                target: DcTarget::Memory { selected_bitmap },
+                ..
+            })) => *selected_bitmap,
+            Some(GdiObject::DeviceContext(_)) => return Err("BitBlt source is not memory DC"),
+            _ => return Err("BitBlt unknown source DC"),
+        };
+        let bitmap = match self.gdi_objects.get(&bitmap_handle) {
+            Some(GdiObject::Bitmap(bitmap)) => bitmap.clone(),
+            _ => return Err("BitBlt source selection is not bitmap"),
+        };
+        if bitmap.planes != 1
+            || bitmap.bit_count != 8
+            || bitmap.compression != 0
+            || bitmap.width <= 0
+            || bitmap.height == 0
+            || width > bitmap.width as u32
+            || height > bitmap.height.unsigned_abs()
+            || bitmap.palette.len() > 256
+        {
+            return Err("unsupported BitBlt bitmap shape");
+        }
+        let pixels = (width as usize)
+            .checked_mul(height as usize)
+            .and_then(|value| value.checked_mul(4))
+            .ok_or("BitBlt RGBA size overflow")?;
+        let mut rgba = vec![0; pixels];
+        let mut row = vec![0; bitmap.row_stride as usize];
+        for logical_y in 0..height as usize {
+            let physical_y = if bitmap.height > 0 {
+                bitmap.height as usize - 1 - logical_y
+            } else {
+                logical_y
+            };
+            let source = bitmap
+                .bits_va
+                .checked_add(
+                    u32::try_from(
+                        physical_y
+                            .checked_mul(bitmap.row_stride as usize)
+                            .ok_or("BitBlt source row overflow")?,
+                    )
+                    .map_err(|_| "BitBlt source row overflow")?,
+                )
+                .ok_or("BitBlt source address overflow")?;
+            memory.read(source, &mut row)?;
+            for logical_x in 0..width as usize {
+                let index = row[logical_x] as usize;
+                let entry = *bitmap
+                    .palette
+                    .get(index)
+                    .ok_or("BitBlt palette index out of range")?;
+                let destination = (logical_y * width as usize + logical_x) * 4;
+                rgba[destination..destination + 4]
+                    .copy_from_slice(&[entry[2], entry[1], entry[0], 255]);
+            }
+        }
+        let _ = ret;
+        Ok(PersonalityAction::WindowBlit(WindowBlitRequest {
+            dst_hdc: hdc_dst,
+            hwnd,
+            dst_x: x,
+            dst_y: y,
+            width,
+            height,
+            rgba,
+            source_bitmap: bitmap_handle,
+            src_hdc: hdc_src,
+            bits_va: bitmap.bits_va,
+            bottom_up: bitmap.height > 0,
+        }))
     }
 
     fn delete_dc(&mut self, esp: u32, memory: &impl GuestMemory) -> Result<u32, &'static str> {
