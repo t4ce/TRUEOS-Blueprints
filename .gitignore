@@ -3,6 +3,8 @@ dist/
 !apps/ferris-says-nix/dist/
 !apps/ferris-says-nix/dist/ferris-says-nix.bp
 Cargo.lock
+!apps/wc3/tools/
+apps/wc3/tools/Warcraft III/
 package.json
 package-lock.json
 !apps/texteditor/package.json
