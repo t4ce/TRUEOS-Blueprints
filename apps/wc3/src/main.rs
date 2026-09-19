@@ -122,7 +122,7 @@ async fn run() -> Result<(), String> {
     let mut window_rgba: HashMap<u32, Vec<u8>> = HashMap::new();
     let mut blit_checkpoint_done = false;
     let mut wait_deadlines: HashMap<ThreadKey, RuntimeWait> = HashMap::new();
-    let mut previous_wait_timeout: Option<(u32, u32)> = None;
+    let mut previous_wait_timeout: Option<(ThreadKey, u32, u32)> = None;
     let mut active = 0usize;
     loop {
         let exit = if contexts[active].started {
@@ -132,6 +132,7 @@ async fn run() -> Result<(), String> {
             contexts[active].context.run().await
         }
         .map_err(|error| error.to_string())?;
+        let active_key = contexts.get(active).ok_or_else(|| "active guest context missing".to_owned())?.key();
         match exit.kind {
             // A transient VMCS always starts with VMLAUNCH.  Its preemption
             // timer is therefore a Blueprint scheduling boundary, not an x86
@@ -142,9 +143,18 @@ async fn run() -> Result<(), String> {
                 continue;
             }
             ExitKind::VmCall => {
-                let active_pid = contexts[active].pid;
-                let active_tid = contexts[active].tid;
+                let active_pid = active_key.pid;
+                let active_tid = active_key.tid;
                 if active_pid != LAUNCHER_PID {
+                    if exit.registers.eip == thunk32::CHILD_DLL_RETURN_AFTER_VMCALL {
+                        return Err("child DLL return reached before child execution enabled".into());
+                    }
+                    if exit.registers.eip == thunk32::CHILD_THREAD_EXIT_AFTER_VMCALL {
+                        return Err("child thread exit reached before child execution enabled".into());
+                    }
+                    if exit.registers.eip == thunk32::CHILD_CALLBACK_RETURN_AFTER_VMCALL {
+                        return Err("child callback return reached before child execution enabled".into());
+                    }
                     let provider_id = exit.registers.eax;
                     let provider = session.process(active_pid)
                         .and_then(|process| process.xp.provider_import(provider_id))
@@ -1400,7 +1410,7 @@ async fn run() -> Result<(), String> {
                         let is_single = import.symbol == "WaitForSingleObject";
                         if is_single {
                             let handle = request.handles[0];
-                            if previous_wait_timeout == Some((handle, request.timeout)) {
+                            if previous_wait_timeout == Some((request.key, handle, request.timeout)) {
                                 logl::log(
                                     level::IMPORTANT,
                                     format_args!(
@@ -1567,7 +1577,7 @@ async fn run() -> Result<(), String> {
                             );
                         }
                         if let Some(next) =
-                            pop_runnable_launcher_context(&mut session, &contexts)
+                            pop_runnable_context(&mut session, &contexts)
                         {
                             active = next;
                             continue;
@@ -1851,6 +1861,10 @@ async fn run() -> Result<(), String> {
                                 .ok_or_else(|| "loaded Storm missing".to_owned())?;
                             let storm_entry = storm.image.image_base.checked_add(storm.image.entry_rva)
                                 .ok_or_else(|| "Storm entry overflow".to_owned())?;
+                            logl::log(level::IMPORTANT, format_args!(
+                                "WC3 CHILD SCHEDULER READY pid={} tid={} context_identity=thread-key runnable_selection=process-aware wait_resume=process-aware control_routing=process-aware context_created=0",
+                                child.pid, child.tid
+                            ));
                             logl::log(
                                 level::IMPORTANT,
                                 format_args!(
@@ -1880,7 +1894,7 @@ async fn run() -> Result<(), String> {
                             registers.eax = WAIT_TIMEOUT;
                             let index = contexts
                                 .iter()
-                                .position(|context| context.tid == key.tid)
+                                .position(|context| context.key() == key)
                                 .ok_or_else(|| "timed-out wait context missing".to_owned())?;
                             contexts[index]
                                 .context
@@ -1897,10 +1911,10 @@ async fn run() -> Result<(), String> {
                                     WAIT_TIMEOUT
                                 ),
                             );
-                            previous_wait_timeout = Some((wait.handle, wait.timeout_ms));
+                            previous_wait_timeout = Some((key, wait.handle, wait.timeout_ms));
                         }
                         if let Some(next) =
-                            pop_runnable_launcher_context(&mut session, &contexts)
+                            pop_runnable_context(&mut session, &contexts)
                         {
                             active = next;
                             continue;
@@ -2141,6 +2155,12 @@ struct GuestContext {
     continuation: Option<GuestContinuation>,
 }
 
+impl GuestContext {
+    fn key(&self) -> ThreadKey {
+        ThreadKey { pid: self.pid, tid: self.tid }
+    }
+}
+
 struct RuntimeWait {
     deadline: tokio::time::Instant,
     timeout_ms: u32,
@@ -2148,16 +2168,17 @@ struct RuntimeWait {
     resume_registers: Registers,
 }
 
-fn pop_runnable_launcher_context(
+fn context_index(contexts: &[GuestContext], key: ThreadKey) -> Option<usize> {
+    contexts.iter().position(|context| context.key() == key)
+}
+
+fn pop_runnable_context(
     session: &mut Wc3Session,
     contexts: &[GuestContext],
 ) -> Option<usize> {
-    let queue_index = session.runnable.iter().position(|key| {
-        key.pid == LAUNCHER_PID
-            && contexts.iter().any(|context| context.tid == key.tid)
-    })?;
+    let queue_index = session.runnable.iter().position(|key| context_index(contexts, *key).is_some())?;
     let key = session.runnable.remove(queue_index)?;
-    contexts.iter().position(|context| context.tid == key.tid)
+    context_index(contexts, key)
 }
 
 struct GuestContinuation {
