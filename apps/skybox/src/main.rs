@@ -13,6 +13,7 @@ use trueos::{hid, logl, vshell, vsys};
 include!(concat!(env!("OUT_DIR"), "/skybox_meta.rs"));
 
 const SKYBOX_RGB565: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/skybox_rgb565.bin"));
+const SKYBOX_GPU_PACKAGE: &[u8] = include_bytes!("../assets/skybox.stpkg");
 
 const DEFAULT_FRAME_X: i32 = 64;
 const DEFAULT_FRAME_Y: i32 = 64;
@@ -203,6 +204,11 @@ fn main() {
         return;
     };
     status_line("skybox: ui4 scene frame created");
+
+    if let Err(error) = frame.register_skybox_kernel(SKYBOX_GPU_PACKAGE) {
+        status_line("skybox: GPU package registration failed");
+        logl::log(logl::level::ERROR, format_args!("skybox: package error={error:?}"));
+    }
 
     let mut gpu_ready = frame
         .upload_skybox_rgb565(SKYBOX_WIDTH as u32, SKYBOX_HEIGHT as u32, SKYBOX_RGB565)

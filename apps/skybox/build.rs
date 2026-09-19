@@ -1,10 +1,36 @@
 use std::env;
 use std::fs::File;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::PathBuf;
 
 fn main() {
     println!("cargo:rerun-if-changed=assets/skybox8k.png");
+    println!("cargo:rerun-if-changed=assets/skybox.stpkg");
+    let package = include_bytes!("assets/skybox.stpkg");
+    assert_eq!(&package[..8], b"STPKG01\0");
+    let mut parts = Vec::new();
+    for path in [
+        "assets/skybox_sample_rgb565/skybox_sample_rgb565.bin",
+        "assets/skybox_sample_rgb565/skybox_sample_rgb565.spv",
+        "assets/skybox_sample_rgb565/input.clcpp",
+        "assets/skybox_sample_rgb565/kernel.clcpp",
+        "assets/skybox_sample_rgb565/skybox_sample_rgb565.manifest.json",
+        "assets/skybox_sample_rgb565/skybox_sample_rgb565.contract.rs",
+    ] {
+        println!("cargo:rerun-if-changed={path}");
+        let mut file = File::open(path).unwrap();
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes).unwrap();
+        parts.push(bytes);
+    }
+    let mut expected = b"STPKG01\0".to_vec();
+    for bytes in &parts {
+        expected.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+    }
+    for bytes in parts {
+        expected.extend_from_slice(&bytes);
+    }
+    assert_eq!(package, expected.as_slice(), "stale skybox GPU package");
 
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
 

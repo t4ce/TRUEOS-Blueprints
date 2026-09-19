@@ -1320,6 +1320,27 @@ impl Frame {
         })
     }
 
+    pub fn register_skybox_kernel(&mut self, package: &[u8]) -> Result<(), Error> {
+        if package.is_empty() {
+            return Err(Error::Invalid);
+        }
+        let mut offset = 0usize;
+        while offset < package.len() {
+            let end = core::cmp::min(offset + 2048, package.len());
+            status(unsafe {
+                v::bp_abi::trueos_cabi_ui4_scene_skybox_register_kernel(
+                    self.window_id,
+                    package.len() as u32,
+                    offset as u32,
+                    package[offset..end].as_ptr(),
+                    end - offset,
+                )
+            })?;
+            offset = end;
+        }
+        Ok(())
+    }
+
     /// Shade the retained skybox into the currently acquired UI4 back buffer.
     pub fn render_skybox_rgb565(&mut self, params: &SkyboxRenderParams) -> Result<(), Error> {
         let raw = v::bp_abi::TrueosUi4SkyboxRenderParams {
