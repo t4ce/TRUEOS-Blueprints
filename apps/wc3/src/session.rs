@@ -15,6 +15,8 @@ pub const LAUNCHER_PID: Pid = 1;
 pub const LAUNCHER_TID: Tid = 1;
 pub const PROCESS_HANDLE_BASE: u32 = 0x5743_6001;
 pub const THREAD_HANDLE_BASE: u32 = 0x5743_5001;
+pub const WINDOW_HANDLE_BASE: u32 = 0x5743_4001;
+pub const DESKTOP_HWND: u32 = 0x5743_3000;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct ThreadKey {
@@ -51,12 +53,52 @@ pub enum SessionObject {
 pub struct WindowObject {
     pub owner: ThreadKey,
     pub class: String,
+    pub wndproc: u32,
     pub title: String,
+    pub ex_style: u32,
+    pub style: u32,
     pub x: i32,
     pub y: i32,
     pub width: u32,
     pub height: u32,
+    pub parent: u32,
+    pub menu: u32,
+    pub instance: u32,
+    pub param: u32,
     pub visible: bool,
+    pub paint_pending: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CreateWindowRequest {
+    pub owner: ThreadKey,
+    pub class: String,
+    pub wndproc: u32,
+    pub title: String,
+    pub ex_style: u32,
+    pub style: u32,
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+    pub parent: u32,
+    pub menu: u32,
+    pub instance: u32,
+    pub param: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum WindowPresentation {
+    Show {
+        hwnd: u32,
+        x: i32,
+        y: i32,
+        width: u32,
+        height: u32,
+    },
+    Hide {
+        hwnd: u32,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -117,6 +159,10 @@ pub enum SessionRequest {
     CreateProcess(CreateProcessRequest),
     CreateEvent(CreateEventRequest),
     LoadImage(LoadImageRequest),
+    CreateWindow(CreateWindowRequest),
+    ShowWindow { pid: Pid, hwnd: u32, show: u32 },
+    UpdateWindow { pid: Pid, hwnd: u32 },
+    SetFocus { pid: Pid, hwnd: u32 },
     CloseHandle { pid: Pid, handle: u32 },
 }
 
@@ -155,7 +201,9 @@ pub struct Wc3Session {
     pub next_process_handle: u32,
     pub next_thread_handle: u32,
     pub next_event_handle: u32,
+    pub next_window_handle: u32,
     pub sequence: u64,
+    pub window_presentation: Option<WindowPresentation>,
 }
 
 impl Wc3Session {
@@ -187,7 +235,9 @@ impl Wc3Session {
             next_process_handle: PROCESS_HANDLE_BASE,
             next_thread_handle: THREAD_HANDLE_BASE,
             next_event_handle: 0x5743_2001,
+            next_window_handle: WINDOW_HANDLE_BASE,
             sequence: 0,
+            window_presentation: None,
         }
     }
 
@@ -245,11 +295,77 @@ impl Wc3Session {
         self.focused_window
     }
 
-    /// Publish the USER32 focus transition at the session boundary. This is
-    /// intentionally explicit so diagnostics and future child processes read
-    /// session state rather than reaching into a launcher carrier.
-    pub fn sync_launcher_focus(&mut self) {
-        self.focused_window = self.launcher().xp.focused_window();
+    pub fn create_window(&mut self, request: CreateWindowRequest) -> Result<u32, &'static str> {
+        if request.parent != DESKTOP_HWND && !self.windows.contains_key(&request.parent) {
+            return Err("unknown window parent");
+        }
+        let hwnd = self.next_window_handle;
+        self.next_window_handle = self
+            .next_window_handle
+            .checked_add(1)
+            .ok_or("HWND overflow")?;
+        self.windows.insert(
+            hwnd,
+            WindowObject {
+                owner: request.owner,
+                class: request.class,
+                wndproc: request.wndproc,
+                title: request.title,
+                ex_style: request.ex_style,
+                style: request.style,
+                x: request.x,
+                y: request.y,
+                width: request.width,
+                height: request.height,
+                parent: request.parent,
+                menu: request.menu,
+                instance: request.instance,
+                param: request.param,
+                visible: request.style & 0x1000_0000 != 0,
+                paint_pending: false,
+            },
+        );
+        Ok(hwnd)
+    }
+
+    pub fn show_window(&mut self, hwnd: u32, show: u32) -> Result<u32, &'static str> {
+        let window = self.windows.get_mut(&hwnd).ok_or("unknown window")?;
+        let old = window.visible;
+        let visible = show != 0;
+        window.visible = visible;
+        window.paint_pending = visible;
+        if old != visible {
+            self.window_presentation = Some(if visible {
+                WindowPresentation::Show {
+                    hwnd,
+                    x: window.x,
+                    y: window.y,
+                    width: window.width,
+                    height: window.height,
+                }
+            } else {
+                WindowPresentation::Hide { hwnd }
+            });
+        }
+        Ok(old as u32)
+    }
+
+    pub fn update_window(&mut self, hwnd: u32) -> Result<u32, &'static str> {
+        let window = self.windows.get_mut(&hwnd).ok_or("unknown window")?;
+        let pending = window.paint_pending;
+        window.paint_pending = false;
+        Ok(pending as u32)
+    }
+
+    pub fn set_focus(&mut self, hwnd: u32) -> Result<u32, &'static str> {
+        if hwnd != 0 && !self.windows.contains_key(&hwnd) {
+            return Err("unknown window");
+        }
+        Ok(self.focused_window.replace(hwnd).unwrap_or(0))
+    }
+
+    pub fn take_window_presentation(&mut self) -> Option<WindowPresentation> {
+        self.window_presentation.take()
     }
 
     pub fn create_child(&mut self) -> CreatedChild {

@@ -13,9 +13,12 @@ use wc3::{
     pe32,
     process::{
         GuestMemory, PreparedProcess, STACK_BASE, STACK_BYTES, STACK_TOP, TEB_VA, ThreadObject,
-        WindowRequest, bmp_file_from_dib, dib_layout,
+        bmp_file_from_dib, dib_layout,
     },
-    session::{LAUNCHER_PID, LAUNCHER_TID, PersonalityAction, SessionRequest, Wc3Session},
+    session::{
+        LAUNCHER_PID, LAUNCHER_TID, PersonalityAction, SessionRequest, Wc3Session,
+        WindowPresentation,
+    },
     thunk32,
 };
 
@@ -47,12 +50,20 @@ async fn run() -> Result<(), String> {
     let PreparedProcess { mappings, xp } =
         PreparedProcess::new(materialized).map_err(str::to_owned)?;
     let mut session = Wc3Session::new(xp);
+    logl::log(level::IMPORTANT, format_args!("WC3 DIAG BUILD CWEX_V2"));
     let (desktop_width, desktop_height) = ui4_scene::output_dimensions()
         .map_err(|error| format!("query UI4 output dimensions: {error:?}"))?;
     session
         .launcher_mut()
         .xp
         .set_desktop_size(desktop_width, desktop_height);
+    logl::log(
+        level::IMPORTANT,
+        format_args!(
+            "WC3 desktop dimensions used by GetClientRect width={} height={}",
+            desktop_width, desktop_height
+        ),
+    );
     let address_space = AddressSpace::create().map_err(|error| error.to_string())?;
     for mapping in &mappings {
         let mut permissions = Permissions::READ | Permissions::WRITE;
@@ -95,7 +106,7 @@ async fn run() -> Result<(), String> {
     }];
     let mut child_runtime: Option<RuntimeProcess> = None;
     let mut thread_calls: HashMap<(u32, u32), u32> = HashMap::new();
-    let mut window_frame: Option<Frame> = None;
+    let mut frames: HashMap<u32, Frame> = HashMap::new();
     let mut active = 0usize;
     loop {
         let exit = if contexts[active].started {
@@ -176,6 +187,159 @@ async fn run() -> Result<(), String> {
                         import.symbol
                     ),
                 );
+                let call_kind = WinCall::from_import(&import);
+                if call_kind == WinCall::RegisterClassA {
+                    let frame = read_guest_words(&memory, exit.registers.esp, 2)?;
+                    let fields = read_guest_words(&memory, frame[1], 10)?;
+                    logl::log(
+                        level::IMPORTANT,
+                        format_args!(
+                            "WC3 RC0 tid={} ptr={:#010x}",
+                            contexts[active].tid, frame[1]
+                        ),
+                    );
+                    logl::log(
+                        level::IMPORTANT,
+                        format_args!(
+                            "WC3 RC1 style={:#010x} wndproc={:#010x}",
+                            fields[0], fields[1]
+                        ),
+                    );
+                    logl::log(
+                        level::IMPORTANT,
+                        format_args!("WC3 RC2 cls_extra={} wnd_extra={}", fields[2], fields[3]),
+                    );
+                    logl::log(
+                        level::IMPORTANT,
+                        format_args!(
+                            "WC3 RC3 instance={:#010x} icon={:#010x}",
+                            fields[4], fields[5]
+                        ),
+                    );
+                    logl::log(
+                        level::IMPORTANT,
+                        format_args!(
+                            "WC3 RC4 cursor={:#010x} background={:#010x}",
+                            fields[6], fields[7]
+                        ),
+                    );
+                    logl::log(
+                        level::IMPORTANT,
+                        format_args!(
+                            "WC3 RC5 menu_ptr={:#010x} class_ptr={:#010x}",
+                            fields[8], fields[9]
+                        ),
+                    );
+                    if fields[9] != 0 && fields[9] >> 16 != 0 {
+                        match diagnostic_ansi_string(&memory, fields[9]) {
+                            Ok(value) => {
+                                logl::log(level::IMPORTANT, format_args!("WC3 RCCLASS {:?}", value))
+                            }
+                            Err(_) => logl::log(
+                                level::IMPORTANT,
+                                format_args!("WC3 RCCLASS decode-failed ptr={:#010x}", fields[9]),
+                            ),
+                        }
+                    } else {
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!("WC3 RCCLASS atom=0x{:04x}", fields[9] & 0xffff),
+                        );
+                    }
+                    if fields[8] == 0 {
+                        logl::log(level::IMPORTANT, format_args!("WC3 RCMENU <null>"));
+                    } else if fields[8] >> 16 != 0 {
+                        match diagnostic_ansi_string(&memory, fields[8]) {
+                            Ok(value) => {
+                                logl::log(level::IMPORTANT, format_args!("WC3 RCMENU {:?}", value))
+                            }
+                            Err(_) => logl::log(
+                                level::IMPORTANT,
+                                format_args!("WC3 RCMENU decode-failed ptr={:#010x}", fields[8]),
+                            ),
+                        }
+                    } else {
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!("WC3 RCMENU atom=0x{:04x}", fields[8] & 0xffff),
+                        );
+                    }
+                }
+                if call_kind == WinCall::CreateWindowExA {
+                    let a = read_guest_words(&memory, exit.registers.esp, 13)?;
+                    logl::log(
+                        level::IMPORTANT,
+                        format_args!(
+                            "WC3 CW0 tid={} esp={:#010x} ret={:#010x}",
+                            contexts[active].tid, exit.registers.esp, a[0]
+                        ),
+                    );
+                    logl::log(
+                        level::IMPORTANT,
+                        format_args!("WC3 CW1 ex={:#010x} style={:#010x}", a[1], a[4]),
+                    );
+                    logl::log(
+                        level::IMPORTANT,
+                        format_args!("WC3 CW2 class_ptr={:#010x} title_ptr={:#010x}", a[2], a[3]),
+                    );
+                    logl::log(
+                        level::IMPORTANT,
+                        format_args!("WC3 CW3 x={} y={}", a[5] as i32, a[6] as i32),
+                    );
+                    logl::log(
+                        level::IMPORTANT,
+                        format_args!("WC3 CW4 width={} height={}", a[7], a[8]),
+                    );
+                    logl::log(
+                        level::IMPORTANT,
+                        format_args!("WC3 CW5 parent={:#010x} menu={:#010x}", a[9], a[10]),
+                    );
+                    logl::log(
+                        level::IMPORTANT,
+                        format_args!("WC3 CW6 instance={:#010x} param={:#010x}", a[11], a[12]),
+                    );
+                    logl::log(
+                        level::IMPORTANT,
+                        format_args!("WC3 CWA a0..a4={:?}", &a[0..5]),
+                    );
+                    logl::log(
+                        level::IMPORTANT,
+                        format_args!("WC3 CWB a5..a8={:?}", &a[5..9]),
+                    );
+                    logl::log(
+                        level::IMPORTANT,
+                        format_args!("WC3 CWC a9..a12={:?}", &a[9..13]),
+                    );
+                    if a[2] != 0 && a[2] >> 16 != 0 {
+                        match diagnostic_ansi_string(&memory, a[2]) {
+                            Ok(value) => {
+                                logl::log(level::IMPORTANT, format_args!("WC3 CWCLASS {:?}", value))
+                            }
+                            Err(_) => logl::log(
+                                level::IMPORTANT,
+                                format_args!("WC3 CWCLASS decode-failed ptr={:#010x}", a[2]),
+                            ),
+                        }
+                    } else {
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!("WC3 CWCLASS atom=0x{:04x}", a[2] & 0xffff),
+                        );
+                    }
+                    if a[3] == 0 {
+                        logl::log(level::IMPORTANT, format_args!("WC3 CWTITLE <null>"));
+                    } else {
+                        match diagnostic_ansi_string(&memory, a[3]) {
+                            Ok(value) => {
+                                logl::log(level::IMPORTANT, format_args!("WC3 CWTITLE {:?}", value))
+                            }
+                            Err(_) => logl::log(
+                                level::IMPORTANT,
+                                format_args!("WC3 CWTITLE decode-failed ptr={:#010x}", a[3]),
+                            ),
+                        }
+                    }
+                }
                 if contexts[active].tid == 2 && import.symbol == "TlsSetValue" {
                     let raw = read_guest_words(&memory, exit.registers.esp, 3)?;
                     logl::log(
@@ -217,6 +381,27 @@ async fn run() -> Result<(), String> {
                     );
                     return Ok(());
                 }
+                let result = session.launcher().xp.selected_bitmap(
+                    if WinCall::from_import(&import) == WinCall::DeleteDC {
+                        read_guest_words(&memory, exit.registers.esp, 2)?[1]
+                    } else {
+                        0
+                    },
+                );
+                let delete_dc_selected = (WinCall::from_import(&import) == WinCall::DeleteDC)
+                    .then_some((read_guest_words(&memory, exit.registers.esp, 2)?[1], result));
+                let delete_object_before = if WinCall::from_import(&import) == WinCall::DeleteObject
+                {
+                    let frame = read_guest_words(&memory, exit.registers.esp, 2)?;
+                    Some((
+                        frame[1],
+                        session.launcher().xp.bitmap_info(frame[1]),
+                        session.launcher().xp.bitmap_stock(frame[1]),
+                        session.launcher().xp.bitmap_selected_in_dc(frame[1]),
+                    ))
+                } else {
+                    None
+                };
                 let result = session
                     .launcher_mut()
                     .xp
@@ -237,6 +422,49 @@ async fn run() -> Result<(), String> {
                     })?;
                 let result = match result {
                     PersonalityAction::Return(value) => {
+                        if let Some((handle, Some(info), Some(stock), selected_in_dc)) =
+                            delete_object_before
+                        {
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 DeleteObject handle=0x{:08x} kind=BITMAP stock={} selected_in_dc={} bits_va=0x{:08x} bits_len={}",
+                                    handle,
+                                    u32::from(stock),
+                                    u32::from(selected_in_dc),
+                                    info.bits_va,
+                                    info.bits_len
+                                ),
+                            );
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 DeleteObject complete handle=0x{:08x} bitmap_live={} palette_0x57437003_live={} stock_bitmap_live={}",
+                                    handle,
+                                    u32::from(session.launcher().xp.gdi_live(handle)),
+                                    u32::from(session.launcher().xp.gdi_live(0x5743_7003)),
+                                    u32::from(session.launcher().xp.gdi_live(0x5743_7f01))
+                                ),
+                            );
+                        }
+                        if let Some((hdc, Some(selected))) = delete_dc_selected {
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 DeleteDC hdc=0x{:08x} kind=MEMORY_DC selected_bitmap=0x{:08x}",
+                                    hdc, selected
+                                ),
+                            );
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 DeleteDC complete hdc=0x{:08x} remaining_bitmap_0x57437001={} remaining_stock_bitmap={} ",
+                                    hdc,
+                                    u32::from(session.launcher().xp.gdi_live(0x5743_7001)),
+                                    u32::from(session.launcher().xp.gdi_live(0x5743_7f01))
+                                ),
+                            );
+                        }
                         if WinCall::from_import(&import) == WinCall::CreatePalette && value != 0 {
                             let frame = read_guest_words(&memory, exit.registers.esp, 2)?;
                             let header = read_guest_bytes(&memory, frame[1], 4)?;
@@ -532,6 +760,43 @@ async fn run() -> Result<(), String> {
                         });
                         handle
                     }
+                    PersonalityAction::Session(SessionRequest::CreateWindow(request)) => {
+                        let hwnd = session
+                            .create_window(request.clone())
+                            .map_err(str::to_owned)?;
+                        let window = session.windows.get(&hwnd).ok_or("created window missing")?;
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CreateWindowExA hwnd=0x{:08x} owner=pid{}/tid{} class={:?} title={:?} wndproc=0x{:08x} geometry={},{} {}x{} style=0x{:08x} ex_style=0x{:08x} visible={} ui4_frame=0",
+                                hwnd,
+                                window.owner.pid,
+                                window.owner.tid,
+                                window.class,
+                                window.title,
+                                window.wndproc,
+                                window.x,
+                                window.y,
+                                window.width,
+                                window.height,
+                                window.style,
+                                window.ex_style,
+                                u32::from(window.visible)
+                            ),
+                        );
+                        hwnd
+                    }
+                    PersonalityAction::Session(SessionRequest::ShowWindow {
+                        pid: _,
+                        hwnd,
+                        show,
+                    }) => session.show_window(hwnd, show).map_err(str::to_owned)?,
+                    PersonalityAction::Session(SessionRequest::UpdateWindow { pid: _, hwnd }) => {
+                        session.update_window(hwnd).map_err(str::to_owned)?
+                    }
+                    PersonalityAction::Session(SessionRequest::SetFocus { pid: _, hwnd }) => {
+                        session.set_focus(hwnd).map_err(str::to_owned)?
+                    }
                     PersonalityAction::Session(SessionRequest::CloseHandle { pid, handle }) => {
                         if session.close_handle(pid, handle) {
                             1
@@ -665,9 +930,8 @@ async fn run() -> Result<(), String> {
                 if let Some(thread) = session.absorb_runnable_thread() {
                     contexts.push(create_thread_context(&address_space, &thread)?);
                 }
-                session.sync_launcher_focus();
-                if let Some(request) = session.launcher_mut().xp.take_window_request() {
-                    present_window(request, &mut window_frame)?;
+                if let Some(request) = session.take_window_presentation() {
+                    present_window(request, &mut frames, &session)?;
                 }
                 if contexts[active].tid == LAUNCHER_TID {
                     active = 0;
@@ -697,15 +961,20 @@ async fn run() -> Result<(), String> {
     }
 }
 
-fn present_window(request: WindowRequest, frame: &mut Option<Frame>) -> Result<(), String> {
+fn present_window(
+    request: WindowPresentation,
+    frames: &mut HashMap<u32, Frame>,
+    session: &Wc3Session,
+) -> Result<(), String> {
     match request {
-        WindowRequest::Show {
+        WindowPresentation::Show {
+            hwnd,
             x,
             y,
             width,
             height,
         } => {
-            if frame.is_some() {
+            if frames.contains_key(&hwnd) {
                 return Ok(());
             }
             let mut opened = Frame::open(x, y, width, height)
@@ -714,10 +983,26 @@ fn present_window(request: WindowRequest, frame: &mut Option<Frame>) -> Result<(
                 .begin(rgba(0, 0, 0, 255))
                 .and_then(|()| opened.publish(Damage::full(width, height)))
                 .map_err(|error| format!("publish WC3 UI4 window: {error:?}"))?;
-            *frame = Some(opened);
+            logl::log(
+                level::IMPORTANT,
+                format_args!(
+                    "WC3 UI4 FRAME OPEN hwnd=0x{:08x} title={:?} x={} y={} width={} height={}",
+                    hwnd,
+                    session
+                        .windows
+                        .get(&hwnd)
+                        .map(|window| window.title.as_str())
+                        .unwrap_or(""),
+                    x,
+                    y,
+                    width,
+                    height
+                ),
+            );
+            frames.insert(hwnd, opened);
         }
-        WindowRequest::Hide => {
-            *frame = None;
+        WindowPresentation::Hide { hwnd } => {
+            frames.remove(&hwnd);
         }
     }
     Ok(())
@@ -877,6 +1162,24 @@ fn read_guest_bytes(
     let mut bytes = vec![0; count];
     memory.read(address, &mut bytes).map_err(str::to_owned)?;
     Ok(bytes)
+}
+
+fn diagnostic_ansi_string(memory: &impl GuestMemory, address: u32) -> Result<String, String> {
+    let mut bytes = Vec::new();
+    for offset in 0..256u32 {
+        let Some(current) = address.checked_add(offset) else {
+            return Err(format!("address overflow at +0x{offset:x}"));
+        };
+        let mut byte = [0];
+        if let Err(error) = memory.read(current, &mut byte) {
+            return Err(error.to_owned());
+        }
+        if byte[0] == 0 {
+            return Ok(String::from_utf8_lossy(&bytes).into_owned());
+        }
+        bytes.push(byte[0]);
+    }
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
 fn hex_digest(digest: &[u8]) -> String {

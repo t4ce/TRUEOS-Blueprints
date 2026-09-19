@@ -10,8 +10,8 @@ use crate::{
     imports::{LauncherImport, WinCall},
     pe32,
     session::{
-        CreateEventRequest, CreateProcessRequest, LoadImageRequest, PersonalityAction,
-        SessionRequest, ThreadKey, WaitRequest,
+        CreateEventRequest, CreateProcessRequest, CreateWindowRequest, LoadImageRequest,
+        PersonalityAction, SessionRequest, ThreadKey, WaitRequest,
     },
     thunk32,
 };
@@ -33,7 +33,6 @@ const WINDOWS_XP_GET_VERSION: u32 = 0x0a28_0105;
 const CREATE_SUSPENDED: u32 = 4;
 const THREAD_HANDLE_BASE: u32 = 0x5743_5001;
 const DESKTOP_HWND: u32 = 0x5743_3000;
-const WINDOW_HWND: u32 = 0x5743_4001;
 const GDI_HANDLE_BASE: u32 = 0x5743_7001;
 const STOCK_MONO_BITMAP: u32 = 0x5743_7f01;
 const GDI_DIB_BASE: u32 = 0x0500_0000;
@@ -246,26 +245,18 @@ pub struct ThreadObject {
 }
 
 #[derive(Clone, Debug)]
-struct Window {
-    class: String,
-    title: String,
-    x: i32,
-    y: i32,
-    width: u32,
-    height: u32,
-    visible: bool,
-    paint_pending: bool,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum WindowRequest {
-    Show {
-        x: i32,
-        y: i32,
-        width: u32,
-        height: u32,
-    },
-    Hide,
+struct RegisteredClass {
+    atom: u16,
+    name: String,
+    style: u32,
+    wndproc: u32,
+    cls_extra: i32,
+    wnd_extra: i32,
+    instance: u32,
+    icon: u32,
+    cursor: u32,
+    background: u32,
+    menu_name: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -292,13 +283,10 @@ pub struct XpProcess {
     critical_sections: HashMap<u32, (u32, u32)>,
     last_error: u32,
     tick_ms: u32,
-    classes: Vec<String>,
-    window: Option<Window>,
-    focused_window: Option<u32>,
+    registered_classes: HashMap<String, RegisteredClass>,
     messages: VecDeque<Message>,
     runnable_thread: Option<u32>,
     desktop_size: (u32, u32),
-    window_request: Option<WindowRequest>,
     gdi_objects: HashMap<u32, GdiObject>,
     next_gdi_handle: u32,
     next_gdi_dib_va: u32,
@@ -341,13 +329,10 @@ impl XpProcess {
             critical_sections: HashMap::new(),
             last_error: 0,
             tick_ms: 0,
-            classes: Vec::new(),
-            window: None,
-            focused_window: None,
+            registered_classes: HashMap::new(),
             messages: VecDeque::new(),
             runnable_thread: None,
             desktop_size: (1920, 1080),
-            window_request: None,
             gdi_objects,
             next_gdi_handle: GDI_HANDLE_BASE,
             next_gdi_dib_va: GDI_DIB_BASE,
@@ -430,11 +415,34 @@ impl XpProcess {
             WinCall::RegisterClassA => self.register_class(esp, memory),
             WinCall::GetDesktopWindow => Ok(DESKTOP_HWND),
             WinCall::GetClientRect => self.get_client_rect(esp, memory),
-            WinCall::CreateWindowExA => self.create_window(esp, memory),
-            WinCall::ShowWindow => self.show_window(esp, memory),
-            WinCall::UpdateWindow => self.update_window(esp, memory),
+            WinCall::CreateWindowExA => {
+                return Ok(PersonalityAction::Session(SessionRequest::CreateWindow(
+                    self.create_window_request(esp, memory, ThreadKey { pid, tid })?,
+                )));
+            }
+            WinCall::ShowWindow => {
+                let [_, hwnd, show] = arguments::<3>(memory, esp)?;
+                return Ok(PersonalityAction::Session(SessionRequest::ShowWindow {
+                    pid,
+                    hwnd,
+                    show,
+                }));
+            }
+            WinCall::UpdateWindow => {
+                let hwnd = read_u32(memory, esp + 4)?;
+                return Ok(PersonalityAction::Session(SessionRequest::UpdateWindow {
+                    pid,
+                    hwnd,
+                }));
+            }
             WinCall::PeekMessageA => self.peek_message(esp, memory),
-            WinCall::SetFocus => self.set_focus(esp, memory),
+            WinCall::SetFocus => {
+                let hwnd = read_u32(memory, esp + 4)?;
+                return Ok(PersonalityAction::Session(SessionRequest::SetFocus {
+                    pid,
+                    hwnd,
+                }));
+            }
             WinCall::LoadStringA => self.load_string(esp, memory),
             WinCall::LoadImageA => {
                 return Ok(PersonalityAction::Session(SessionRequest::LoadImage(
@@ -446,6 +454,8 @@ impl XpProcess {
             WinCall::SelectObject => self.select_object(esp, memory),
             WinCall::GetDIBColorTable => self.get_dib_color_table(esp, memory),
             WinCall::CreatePalette => self.create_palette(esp, memory),
+            WinCall::DeleteDC => self.delete_dc(esp, memory),
+            WinCall::DeleteObject => self.delete_object(esp, memory),
             WinCall::CreateThread => self.create_thread(esp, memory),
             WinCall::ResumeThread => self.resume_thread(esp, memory),
             WinCall::CreateProcessA => {
@@ -1067,6 +1077,51 @@ impl XpProcess {
         Ok(handle)
     }
 
+    fn delete_dc(&mut self, esp: u32, memory: &impl GuestMemory) -> Result<u32, &'static str> {
+        let [ret, hdc] = arguments::<2>(memory, esp)?;
+        let is_dc = matches!(
+            self.gdi_objects.get(&hdc),
+            Some(GdiObject::DeviceContext(_))
+        );
+        if is_dc {
+            self.gdi_objects.remove(&hdc);
+            let _ = ret;
+            return Ok(1);
+        }
+        let _ = ret;
+        Ok(0)
+    }
+
+    fn delete_object(&mut self, esp: u32, memory: &impl GuestMemory) -> Result<u32, &'static str> {
+        let [ret, object] = arguments::<2>(memory, esp)?;
+        let Some(value) = self.gdi_objects.get(&object) else {
+            let _ = ret;
+            return Ok(0);
+        };
+        match value {
+            GdiObject::DeviceContext(_) => Ok(0),
+            GdiObject::Bitmap(bitmap) => {
+                if bitmap.stock
+                    || self.gdi_objects.iter().any(|(handle, value)| {
+                        *handle != object
+                            && matches!(
+                                value,
+                                GdiObject::DeviceContext(dc) if dc.selected_bitmap == object
+                            )
+                    })
+                {
+                    return Ok(0);
+                }
+                self.gdi_objects.remove(&object);
+                Ok(1)
+            }
+            GdiObject::Palette(_) => {
+                self.gdi_objects.remove(&object);
+                Ok(1)
+            }
+        }
+    }
+
     fn multi_byte_to_wide(
         &self,
         esp: u32,
@@ -1170,10 +1225,32 @@ impl XpProcess {
 
     fn register_class(&mut self, esp: u32, memory: &impl GuestMemory) -> Result<u32, &'static str> {
         let structure = read_u32(memory, esp + 4)?;
-        let name = read_u32(memory, structure + 36)?;
-        let name = read_c_string(memory, name, 256)?;
-        self.classes.push(name);
-        Ok(self.classes.len() as u32)
+        let name_ptr = read_u32(memory, structure + 36)?;
+        let name = read_c_string(memory, name_ptr, 256)?;
+        let menu_ptr = read_u32(memory, structure + 32)?;
+        let menu_name = if menu_ptr == 0 || menu_ptr >> 16 == 0 {
+            None
+        } else {
+            Some(read_c_string(memory, menu_ptr, 256)?)
+        };
+        let atom = self.registered_classes.len() as u16 + 1;
+        self.registered_classes.insert(
+            name.clone(),
+            RegisteredClass {
+                atom,
+                name,
+                style: read_u32(memory, structure)?,
+                wndproc: read_u32(memory, structure + 4)?,
+                cls_extra: read_u32(memory, structure + 8)? as i32,
+                wnd_extra: read_u32(memory, structure + 12)? as i32,
+                instance: read_u32(memory, structure + 16)?,
+                icon: read_u32(memory, structure + 20)?,
+                cursor: read_u32(memory, structure + 24)?,
+                background: read_u32(memory, structure + 28)?,
+                menu_name,
+            },
+        );
+        Ok(atom as u32)
     }
     fn get_client_rect(
         &self,
@@ -1194,75 +1271,38 @@ impl XpProcess {
         }
         Ok(1)
     }
-    fn create_window(&mut self, esp: u32, memory: &impl GuestMemory) -> Result<u32, &'static str> {
+    fn create_window_request(
+        &self,
+        esp: u32,
+        memory: &impl GuestMemory,
+        owner: ThreadKey,
+    ) -> Result<CreateWindowRequest, &'static str> {
         let a = arguments::<13>(memory, esp)?;
-        if a[1] != 0
-            || a[4] != 0x8000_0000
-            || a[9] != DESKTOP_HWND
-            || a[10] != 0
-            || a[11] != pe32::IMAGE_BASE
-            || a[12] != 0
-            || a[7] == 0
-            || a[8] == 0
-        {
+        if a[7] == 0 || a[8] == 0 || (a[11] != 0 && a[11] != pe32::IMAGE_BASE) {
             return Err("unexpected CreateWindowExA frame");
         }
         let class = read_c_string(memory, a[2], 256)?;
-        if !self.classes.contains(&class) {
-            return Err("unregistered class");
-        }
+        let registered = self
+            .registered_classes
+            .get(&class)
+            .ok_or("unregistered class")?;
         let title = read_c_string(memory, a[3], 256)?;
-        self.window = Some(Window {
+        Ok(CreateWindowRequest {
+            owner,
             class,
+            wndproc: registered.wndproc,
             title,
+            ex_style: a[1],
+            style: a[4],
             x: a[5] as i32,
             y: a[6] as i32,
             width: a[7],
             height: a[8],
-            visible: false,
-            paint_pending: false,
-        });
-        Ok(WINDOW_HWND)
-    }
-    fn show_window(&mut self, esp: u32, memory: &impl GuestMemory) -> Result<u32, &'static str> {
-        let [_, hwnd, show] = arguments::<3>(memory, esp)?;
-        if hwnd != WINDOW_HWND {
-            return Err("unknown window");
-        }
-        let w = self.window.as_mut().ok_or("window absent")?;
-        let old = w.visible;
-        w.visible = show != 0;
-        w.paint_pending = w.visible;
-        if old != w.visible {
-            self.window_request = Some(if w.visible {
-                WindowRequest::Show {
-                    x: w.x,
-                    y: w.y,
-                    width: w.width,
-                    height: w.height,
-                }
-            } else {
-                WindowRequest::Hide
-            });
-        }
-        Ok(old as u32)
-    }
-    fn update_window(&mut self, esp: u32, memory: &impl GuestMemory) -> Result<u32, &'static str> {
-        if read_u32(memory, esp + 4)? != WINDOW_HWND {
-            return Err("unknown window");
-        }
-        let w = self.window.as_mut().ok_or("window absent")?;
-        let pending = w.paint_pending;
-        w.paint_pending = false;
-        Ok(pending as u32)
-    }
-    fn set_focus(&mut self, esp: u32, memory: &impl GuestMemory) -> Result<u32, &'static str> {
-        let hwnd = read_u32(memory, esp + 4)?;
-        if hwnd != WINDOW_HWND || self.window.is_none() {
-            return Err("SetFocus unknown window");
-        }
-        let previous = self.focused_window.replace(hwnd).unwrap_or(0);
-        Ok(previous)
+            parent: a[9],
+            menu: a[10],
+            instance: a[11],
+            param: a[12],
+        })
     }
     fn peek_message(
         &mut self,
@@ -1359,16 +1399,8 @@ impl XpProcess {
         self.runnable_thread
     }
 
-    pub fn focused_window(&self) -> Option<u32> {
-        self.focused_window
-    }
-
     pub fn set_desktop_size(&mut self, width: u32, height: u32) {
         self.desktop_size = (width, height);
-    }
-
-    pub fn take_window_request(&mut self) -> Option<WindowRequest> {
-        self.window_request.take()
     }
 
     pub fn admit_bitmap(
@@ -1460,6 +1492,23 @@ impl XpProcess {
             GdiObject::Bitmap(_) => None,
             GdiObject::Palette(_) => None,
         }
+    }
+
+    pub fn bitmap_selected_in_dc(&self, bitmap: u32) -> bool {
+        self.gdi_objects.values().any(
+            |value| matches!(value, GdiObject::DeviceContext(dc) if dc.selected_bitmap == bitmap),
+        )
+    }
+
+    pub fn bitmap_stock(&self, handle: u32) -> Option<bool> {
+        match self.gdi_objects.get(&handle)? {
+            GdiObject::Bitmap(bitmap) => Some(bitmap.stock),
+            _ => None,
+        }
+    }
+
+    pub fn gdi_live(&self, handle: u32) -> bool {
+        self.gdi_objects.contains_key(&handle)
     }
 
     pub fn allocation_size(&self, pointer: u32) -> Option<u32> {
@@ -2168,11 +2217,213 @@ mod tests {
     }
 
     #[test]
+    fn delete_dc_only_removes_device_context_and_releases_selection() {
+        let imports = vec![LauncherImport {
+            id: 0,
+            module: "GDI32.dll".into(),
+            symbol: "DeleteDC".into(),
+            iat_rva: 0,
+        }];
+        let mut xp = XpProcess::new(imports);
+        let bitmap = GDI_HANDLE_BASE;
+        let dc = GDI_HANDLE_BASE + 1;
+        let palette = GDI_HANDLE_BASE + 2;
+        xp.gdi_objects.insert(
+            bitmap,
+            GdiObject::Bitmap(BitmapObject {
+                resource_id: 106,
+                width: 1,
+                height: 1,
+                planes: 1,
+                bit_count: 8,
+                compression: 0,
+                size_image: 4,
+                clr_used: 1,
+                dib: Vec::new(),
+                decoded_rgba: vec![0, 0, 0, 255],
+                palette: vec![[0, 0, 0, 0]],
+                bits_va: 0x0500_0000,
+                bits_len: 4,
+                row_stride: 4,
+                pixel_offset: 44,
+                stock: false,
+            }),
+        );
+        xp.gdi_objects.insert(
+            dc,
+            GdiObject::DeviceContext(DeviceContext {
+                compatible_with: DcCompatibility::Display,
+                selected_bitmap: bitmap,
+            }),
+        );
+        xp.gdi_objects.insert(
+            palette,
+            GdiObject::Palette(PaletteObject {
+                version: 0x0300,
+                entries: vec![PaletteEntry {
+                    red: 1,
+                    green: 2,
+                    blue: 3,
+                    flags: 0,
+                }],
+            }),
+        );
+        let mut memory = Memory {
+            base: 0x0021_0000,
+            bytes: vec![0; 0x1000],
+        };
+        let esp = 0x0021_0800;
+        write_u32(&mut memory, esp, 0x0040_15ec).unwrap();
+        write_u32(&mut memory, esp + 4, dc).unwrap();
+        assert_eq!(
+            xp.dispatch(1, 0, esp, &mut memory).unwrap(),
+            PersonalityAction::Return(1)
+        );
+        assert!(!xp.gdi_live(dc));
+        assert!(xp.gdi_live(bitmap));
+        assert!(xp.gdi_live(palette));
+
+        let dc2 = GDI_HANDLE_BASE + 3;
+        xp.gdi_objects.insert(
+            dc2,
+            GdiObject::DeviceContext(DeviceContext {
+                compatible_with: DcCompatibility::Display,
+                selected_bitmap: STOCK_MONO_BITMAP,
+            }),
+        );
+        write_u32(&mut memory, esp, 0x0040_156f).unwrap();
+        write_u32(&mut memory, esp + 4, dc2).unwrap();
+        write_u32(&mut memory, esp + 8, bitmap).unwrap();
+        assert_eq!(xp.select_object(esp, &memory).unwrap(), STOCK_MONO_BITMAP);
+
+        write_u32(&mut memory, esp + 4, bitmap).unwrap();
+        assert_eq!(
+            xp.dispatch(1, 0, esp, &mut memory).unwrap(),
+            PersonalityAction::Return(0)
+        );
+        write_u32(&mut memory, esp + 4, palette).unwrap();
+        assert_eq!(
+            xp.dispatch(1, 0, esp, &mut memory).unwrap(),
+            PersonalityAction::Return(0)
+        );
+        write_u32(&mut memory, esp + 4, 0xdead_beef).unwrap();
+        assert_eq!(
+            xp.dispatch(1, 0, esp, &mut memory).unwrap(),
+            PersonalityAction::Return(0)
+        );
+    }
+
+    #[test]
+    fn delete_object_obeys_gdi_lifetime_and_selection_rules() {
+        let imports = vec![LauncherImport {
+            id: 0,
+            module: "GDI32.dll".into(),
+            symbol: "DeleteObject".into(),
+            iat_rva: 0,
+        }];
+        let mut xp = XpProcess::new(imports);
+        let bitmap = GDI_HANDLE_BASE;
+        let dc = GDI_HANDLE_BASE + 1;
+        let palette = GDI_HANDLE_BASE + 2;
+        xp.gdi_objects.insert(
+            bitmap,
+            GdiObject::Bitmap(BitmapObject {
+                resource_id: 106,
+                width: 1,
+                height: 1,
+                planes: 1,
+                bit_count: 8,
+                compression: 0,
+                size_image: 4,
+                clr_used: 1,
+                dib: Vec::new(),
+                decoded_rgba: vec![0, 0, 0, 255],
+                palette: vec![[0, 0, 0, 0]],
+                bits_va: 0x0500_0000,
+                bits_len: 4,
+                row_stride: 4,
+                pixel_offset: 44,
+                stock: false,
+            }),
+        );
+        xp.gdi_objects.insert(
+            dc,
+            GdiObject::DeviceContext(DeviceContext {
+                compatible_with: DcCompatibility::Display,
+                selected_bitmap: bitmap,
+            }),
+        );
+        xp.gdi_objects.insert(
+            palette,
+            GdiObject::Palette(PaletteObject {
+                version: 0x0300,
+                entries: vec![PaletteEntry {
+                    red: 1,
+                    green: 2,
+                    blue: 3,
+                    flags: 0,
+                }],
+            }),
+        );
+        let mut memory = Memory {
+            base: 0x0021_0000,
+            bytes: vec![0; 0x1000],
+        };
+        let esp = 0x0021_0800;
+        write_u32(&mut memory, esp, 0x0040_188a).unwrap();
+        write_u32(&mut memory, esp + 4, bitmap).unwrap();
+
+        assert_eq!(
+            xp.dispatch(1, 0, esp, &mut memory).unwrap(),
+            PersonalityAction::Return(0)
+        );
+        assert!(xp.gdi_live(bitmap));
+
+        assert_eq!(
+            xp.dispatch(1, 0, esp, &mut memory).unwrap(),
+            PersonalityAction::Return(0)
+        );
+
+        xp.gdi_objects.remove(&dc);
+        assert_eq!(
+            xp.dispatch(1, 0, esp, &mut memory).unwrap(),
+            PersonalityAction::Return(1)
+        );
+        assert!(!xp.gdi_live(bitmap));
+
+        write_u32(&mut memory, esp + 4, palette).unwrap();
+        assert_eq!(
+            xp.dispatch(1, 0, esp, &mut memory).unwrap(),
+            PersonalityAction::Return(1)
+        );
+        assert!(!xp.gdi_live(palette));
+
+        write_u32(&mut memory, esp + 4, dc).unwrap();
+        assert_eq!(
+            xp.dispatch(1, 0, esp, &mut memory).unwrap(),
+            PersonalityAction::Return(0)
+        );
+
+        write_u32(&mut memory, esp + 4, STOCK_MONO_BITMAP).unwrap();
+        assert_eq!(
+            xp.dispatch(1, 0, esp, &mut memory).unwrap(),
+            PersonalityAction::Return(0)
+        );
+        assert!(xp.gdi_live(STOCK_MONO_BITMAP));
+
+        write_u32(&mut memory, esp + 4, 0xdead_beef).unwrap();
+        assert_eq!(
+            xp.dispatch(1, 0, esp, &mut memory).unwrap(),
+            PersonalityAction::Return(0)
+        );
+    }
+
+    #[test]
     fn historical_launcher_layout_and_create_process_frontier_match() {
         assert_eq!(STACK_BASE, 0x0430_0000);
         assert_eq!(STACK_TOP, 0x0440_0000);
         assert_eq!(COMMAND_LINE, b"\"Warcraft III.exe\"\0");
-        assert_eq!(WINDOW_HWND, 0x5743_4001);
+        assert_eq!(crate::session::WINDOW_HANDLE_BASE, 0x5743_4001);
 
         // This is the hardware-observed #89 frame.  Its positions are a
         // consequence of the restored historical stack, not special cases in
@@ -2227,28 +2478,55 @@ mod tests {
     }
 
     #[test]
-    fn proven_create_window_frame_reaches_ui4_presentation() {
-        let mut xp = XpProcess::new(Vec::new());
-        xp.classes.push("Warcraft III".into());
+    fn session_allocates_first_and_second_windows_and_presents_only_visible_one() {
+        let imports = vec![
+            LauncherImport {
+                id: 0,
+                module: "USER32.dll".into(),
+                symbol: "RegisterClassA".into(),
+                iat_rva: 0,
+            },
+            LauncherImport {
+                id: 1,
+                module: "USER32.dll".into(),
+                symbol: "CreateWindowExA".into(),
+                iat_rva: 4,
+            },
+        ];
+        let mut xp = XpProcess::new(imports);
         let mut memory = Memory {
             base: pe32::IMAGE_BASE,
             bytes: vec![0; 0x10_000],
         };
         let class = pe32::IMAGE_BASE + 0x80a8;
         let title = pe32::IMAGE_BASE + 0x8080;
+        let wndclass = pe32::IMAGE_BASE + 0x8100;
         memory.write(class, b"Warcraft III\0").unwrap();
-        memory.write(title, b"Warcraft III\0").unwrap();
+        memory.write(title, b"Launching Warcraft III\0").unwrap();
+        for (offset, value) in [0, 0x0040_1630, 0, 0, pe32::IMAGE_BASE, 0, 0, 0, 0, class]
+            .into_iter()
+            .enumerate()
+        {
+            write_u32(&mut memory, wndclass + offset as u32 * 4, value).unwrap();
+        }
+        let register_esp = pe32::IMAGE_BASE + 0x9000;
+        write_u32(&mut memory, register_esp, 0).unwrap();
+        write_u32(&mut memory, register_esp + 4, wndclass).unwrap();
+        assert!(matches!(
+            xp.dispatch(1, 0, register_esp, &mut memory).unwrap(),
+            PersonalityAction::Return(1)
+        ));
         let esp = pe32::IMAGE_BASE + 0x9000;
         for (index, value) in [
-            0x0040_1aa7,
+            0x0040_1946,
             0,
             class,
             title,
-            0x8000_0000,
-            1264,
-            704,
-            16,
-            16,
+            0,
+            1030,
+            520,
+            500,
+            400,
             DESKTOP_HWND,
             0,
             pe32::IMAGE_BASE,
@@ -2259,17 +2537,38 @@ mod tests {
         {
             write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
         }
-        assert_eq!(xp.create_window(esp, &memory).unwrap(), 0x5743_4001);
-        write_u32(&mut memory, esp + 4, WINDOW_HWND).unwrap();
-        write_u32(&mut memory, esp + 8, 5).unwrap();
-        assert_eq!(xp.show_window(esp, &memory).unwrap(), 0);
+        let PersonalityAction::Session(SessionRequest::CreateWindow(request)) =
+            xp.dispatch(1, 1, esp, &mut memory).unwrap()
+        else {
+            panic!("missing create window request")
+        };
+        let mut session = crate::session::Wc3Session::new(XpProcess::new(Vec::new()));
+        let first = session
+            .create_window(crate::session::CreateWindowRequest {
+                owner: ThreadKey { pid: 1, tid: 1 },
+                style: 0x8000_0000,
+                ex_style: 0,
+                ..request.clone()
+            })
+            .unwrap();
+        assert_eq!(first, 0x5743_4001);
+        let second = session
+            .create_window(crate::session::CreateWindowRequest {
+                owner: ThreadKey { pid: 1, tid: 2 },
+                ..request
+            })
+            .unwrap();
+        assert_eq!(second, 0x5743_4002);
+        assert!(!session.windows[&second].visible);
+        assert_eq!(session.show_window(second, 1).unwrap(), 0);
         assert_eq!(
-            xp.take_window_request(),
-            Some(WindowRequest::Show {
-                x: 1264,
-                y: 704,
-                width: 16,
-                height: 16,
+            session.take_window_presentation(),
+            Some(crate::session::WindowPresentation::Show {
+                hwnd: second,
+                x: 1030,
+                y: 520,
+                width: 500,
+                height: 400
             })
         );
     }
