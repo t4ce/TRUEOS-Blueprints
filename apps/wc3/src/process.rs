@@ -35,6 +35,7 @@ const THREAD_HANDLE_BASE: u32 = 0x5743_5001;
 const DESKTOP_HWND: u32 = 0x5743_3000;
 const WINDOW_HWND: u32 = 0x5743_4001;
 const GDI_HANDLE_BASE: u32 = 0x5743_7001;
+const STOCK_MONO_BITMAP: u32 = 0x5743_7f01;
 const GDI_DIB_BASE: u32 = 0x0500_0000;
 const ENVIRONMENT_BLOCK_VA: u32 = PROCESS_DATA_VA + 0x100;
 
@@ -150,11 +151,24 @@ struct BitmapObject {
     bits_len: usize,
     row_stride: u32,
     pixel_offset: usize,
+    stock: bool,
+}
+
+#[derive(Clone, Debug)]
+struct DeviceContext {
+    compatible_with: DcCompatibility,
+    selected_bitmap: u32,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum DcCompatibility {
+    Display,
 }
 
 #[derive(Clone, Debug)]
 enum GdiObject {
     Bitmap(BitmapObject),
+    DeviceContext(DeviceContext),
 }
 
 impl PreparedProcess {
@@ -277,6 +291,28 @@ pub struct XpProcess {
 
 impl XpProcess {
     pub fn new(imports: Vec<LauncherImport>) -> Self {
+        let mut gdi_objects = HashMap::new();
+        gdi_objects.insert(
+            STOCK_MONO_BITMAP,
+            GdiObject::Bitmap(BitmapObject {
+                resource_id: 0,
+                width: 1,
+                height: 1,
+                planes: 1,
+                bit_count: 1,
+                compression: 0,
+                size_image: 0,
+                clr_used: 0,
+                dib: Vec::new(),
+                decoded_rgba: Vec::new(),
+                palette: Vec::new(),
+                bits_va: 0,
+                bits_len: 0,
+                row_stride: 0,
+                pixel_offset: 0,
+                stock: true,
+            }),
+        );
         Self {
             imports,
             call_count: 0,
@@ -297,7 +333,7 @@ impl XpProcess {
             runnable_thread: None,
             desktop_size: (1920, 1080),
             window_request: None,
-            gdi_objects: HashMap::new(),
+            gdi_objects,
             next_gdi_handle: GDI_HANDLE_BASE,
             next_gdi_dib_va: GDI_DIB_BASE,
         }
@@ -391,6 +427,8 @@ impl XpProcess {
                 )));
             }
             WinCall::GetObjectA => self.get_object_a(esp, memory),
+            WinCall::CreateCompatibleDC => self.create_compatible_dc(esp, memory),
+            WinCall::SelectObject => self.select_object(esp, memory),
             WinCall::CreateThread => self.create_thread(esp, memory),
             WinCall::ResumeThread => self.resume_thread(esp, memory),
             WinCall::CreateProcessA => {
@@ -871,6 +909,62 @@ impl XpProcess {
         Ok(required)
     }
 
+    fn create_compatible_dc(
+        &mut self,
+        esp: u32,
+        memory: &impl GuestMemory,
+    ) -> Result<u32, &'static str> {
+        let [ret, source_dc] = arguments::<2>(memory, esp)?;
+        if source_dc != 0 {
+            return Err("unsupported CreateCompatibleDC source DC");
+        }
+        let handle = self.next_gdi_handle;
+        self.next_gdi_handle = self
+            .next_gdi_handle
+            .checked_add(1)
+            .ok_or("GDI handle overflow")?;
+        self.gdi_objects.insert(
+            handle,
+            GdiObject::DeviceContext(DeviceContext {
+                compatible_with: DcCompatibility::Display,
+                selected_bitmap: STOCK_MONO_BITMAP,
+            }),
+        );
+        let _ = ret;
+        Ok(handle)
+    }
+
+    fn select_object(&mut self, esp: u32, memory: &impl GuestMemory) -> Result<u32, &'static str> {
+        let [ret, hdc, object] = arguments::<3>(memory, esp)?;
+        let stock = match self.gdi_objects.get(&object) {
+            Some(GdiObject::Bitmap(bitmap)) => bitmap.stock,
+            Some(GdiObject::DeviceContext(_)) => return Err("SelectObject requires bitmap"),
+            None => return Err("SelectObject unknown bitmap"),
+        };
+        let old = match self.gdi_objects.get(&hdc) {
+            Some(GdiObject::DeviceContext(dc)) => dc.selected_bitmap,
+            Some(GdiObject::Bitmap(_)) => return Err("SelectObject requires device context"),
+            None => return Err("SelectObject unknown device context"),
+        };
+        if !stock
+            && self.gdi_objects.iter().any(|(handle, value)| {
+                *handle != hdc
+                    && matches!(
+                        value,
+                        GdiObject::DeviceContext(dc) if dc.selected_bitmap == object
+                    )
+            })
+        {
+            return Err("bitmap already selected into another device context");
+        }
+        let Some(GdiObject::DeviceContext(dc)) = self.gdi_objects.get_mut(&hdc) else {
+            return Err("SelectObject unknown device context");
+        };
+        dc.selected_bitmap = object;
+        let _ = ret;
+        Ok(old)
+    }
+
     fn multi_byte_to_wide(
         &self,
         esp: u32,
@@ -1208,6 +1302,7 @@ impl XpProcess {
                 bits_len: layout.bits_len,
                 row_stride: layout.row_stride as u32,
                 pixel_offset: layout.pixel_offset,
+                stock: false,
             }),
         );
         Ok(handle)
@@ -1242,6 +1337,16 @@ impl XpProcess {
                 bits_len: bitmap.bits_len,
                 row_stride: bitmap.row_stride,
             }),
+            GdiObject::DeviceContext(_) => None,
+        }
+    }
+
+    pub fn compatible_dc_info(&self, handle: u32) -> Option<(u32, i32, i32, u16)> {
+        match self.gdi_objects.get(&handle)? {
+            GdiObject::DeviceContext(dc) => match dc.compatible_with {
+                DcCompatibility::Display => Some((dc.selected_bitmap, 1, 1, 1)),
+            },
+            GdiObject::Bitmap(_) => None,
         }
     }
 
@@ -1714,6 +1819,78 @@ mod tests {
         assert_eq!(info.dib_bytes, 44);
         assert_eq!(info.bits_len, 4);
         assert_eq!(info.rgba, vec![255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn select_object_returns_previous_bitmap_and_rejects_duplicate_selection() {
+        let imports = vec![LauncherImport {
+            id: 0,
+            module: "GDI32.dll".into(),
+            symbol: "SelectObject".into(),
+            iat_rva: 0,
+        }];
+        let mut xp = XpProcess::new(imports);
+        xp.gdi_objects.insert(
+            GDI_HANDLE_BASE,
+            GdiObject::Bitmap(BitmapObject {
+                resource_id: 106,
+                width: 500,
+                height: 400,
+                planes: 1,
+                bit_count: 8,
+                compression: 0,
+                size_image: 200_000,
+                clr_used: 256,
+                dib: Vec::new(),
+                decoded_rgba: vec![0, 0, 0, 255],
+                palette: Vec::new(),
+                bits_va: 0x0500_0000,
+                bits_len: 200_000,
+                row_stride: 500,
+                pixel_offset: 1064,
+                stock: false,
+            }),
+        );
+        let hdc0 = GDI_HANDLE_BASE + 1;
+        let hdc1 = GDI_HANDLE_BASE + 2;
+        xp.gdi_objects.insert(
+            hdc0,
+            GdiObject::DeviceContext(DeviceContext {
+                compatible_with: DcCompatibility::Display,
+                selected_bitmap: STOCK_MONO_BITMAP,
+            }),
+        );
+        xp.gdi_objects.insert(
+            hdc1,
+            GdiObject::DeviceContext(DeviceContext {
+                compatible_with: DcCompatibility::Display,
+                selected_bitmap: STOCK_MONO_BITMAP,
+            }),
+        );
+        let mut memory = Memory {
+            base: 0x0021_0000,
+            bytes: vec![0; 0x1000],
+        };
+        let esp = 0x0021_0800;
+        for (index, value) in [0x0040_156f, hdc0, GDI_HANDLE_BASE].into_iter().enumerate() {
+            write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
+        }
+        assert_eq!(
+            xp.dispatch(1, 0, esp, &mut memory).unwrap(),
+            PersonalityAction::Return(STOCK_MONO_BITMAP)
+        );
+        assert_eq!(
+            xp.compatible_dc_info(hdc0),
+            Some((GDI_HANDLE_BASE, 1, 1, 1))
+        );
+        for (index, value) in [0x0040_156f, hdc1, GDI_HANDLE_BASE].into_iter().enumerate() {
+            write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
+        }
+        assert!(xp.dispatch(1, 0, esp, &mut memory).is_err());
+        assert_eq!(
+            xp.compatible_dc_info(hdc1),
+            Some((STOCK_MONO_BITMAP, 1, 1, 1))
+        );
     }
     #[test]
     fn image_mapping_precedes_overlapping_stack() {

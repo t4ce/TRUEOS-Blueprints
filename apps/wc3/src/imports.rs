@@ -39,6 +39,8 @@ pub enum WinCall {
     LoadStringA,
     LoadImageA,
     GetObjectA,
+    CreateCompatibleDC,
+    SelectObject,
     CreateThread,
     ResumeThread,
     GetStdHandle,
@@ -93,6 +95,10 @@ impl WinCall {
             "LoadStringA" if user => Self::LoadStringA,
             "LoadImageA" if user => Self::LoadImageA,
             "GetObjectA" if import.module.eq_ignore_ascii_case("GDI32.dll") => Self::GetObjectA,
+            "CreateCompatibleDC" if import.module.eq_ignore_ascii_case("GDI32.dll") => {
+                Self::CreateCompatibleDC
+            }
+            "SelectObject" if import.module.eq_ignore_ascii_case("GDI32.dll") => Self::SelectObject,
             "CreateThread" if kernel => Self::CreateThread,
             "ResumeThread" if kernel => Self::ResumeThread,
             "GetStdHandle" if kernel => Self::GetStdHandle,
@@ -148,6 +154,8 @@ impl WinCall {
             Self::CreateEventA | Self::GetStringTypeW | Self::LoadStringA => Kind::Stdcall(16),
             Self::LoadImageA => Kind::Stdcall(24),
             Self::GetObjectA => Kind::Stdcall(12),
+            Self::CreateCompatibleDC => Kind::Stdcall(4),
+            Self::SelectObject => Kind::Stdcall(8),
             Self::TlsSetValue | Self::GetClientRect | Self::ShowWindow | Self::GetCPInfo => {
                 Kind::Stdcall(8)
             }

@@ -237,6 +237,37 @@ async fn run() -> Result<(), String> {
                     })?;
                 let result = match result {
                     PersonalityAction::Return(value) => {
+                        if WinCall::from_import(&import) == WinCall::SelectObject {
+                            let frame = read_guest_words(&memory, exit.registers.esp, 3)?;
+                            if let Some(info) = session.launcher().xp.bitmap_info(frame[2]) {
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 SelectObject hdc=0x{:08x} new=0x{:08x} old=0x{:08x} new_type=BITMAP width={} height={} bpp={} bits_va=0x{:08x}",
+                                        frame[1],
+                                        frame[2],
+                                        value,
+                                        info.width,
+                                        info.height,
+                                        info.bit_count,
+                                        info.bits_va
+                                    ),
+                                );
+                            }
+                        }
+                        if WinCall::from_import(&import) == WinCall::CreateCompatibleDC {
+                            if let Some((selected, width, height, bpp)) =
+                                session.launcher().xp.compatible_dc_info(value)
+                            {
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 CreateCompatibleDC source=DISPLAY hdc=0x{:08x} selected_bitmap=0x{:08x} selected_bitmap_shape={}x{}x{}",
+                                        value, selected, width, height, bpp
+                                    ),
+                                );
+                            }
+                        }
                         if WinCall::from_import(&import) == WinCall::GetObjectA && value != 0 {
                             let frame = read_guest_words(&memory, exit.registers.esp, 4)?;
                             if let Some(info) = session.launcher().xp.bitmap_info(frame[1]) {
