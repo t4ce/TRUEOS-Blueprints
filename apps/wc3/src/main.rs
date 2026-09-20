@@ -27,6 +27,7 @@ const WAIT_OBJECT_0: u32 = 0;
 const WAIT_TIMEOUT: u32 = 0x0000_0102;
 const WAIT_FAILED: u32 = u32::MAX;
 const INFINITE: u32 = u32::MAX;
+const WC3_REGISTRY_IMAGE_PATH: &[u8] = b"/common/Warcraft III/ok.reg";
 
 fn main() {
     let runtime = match tokio::runtime::Builder::new_current_thread()
@@ -59,6 +60,14 @@ async fn run() -> Result<(), String> {
     let PreparedProcess { mappings, xp } =
         PreparedProcess::new(materialized).map_err(str::to_owned)?;
     let mut session = Wc3Session::new(xp);
+    let registry_bytes = async_fs::read_file(WC3_REGISTRY_IMAGE_PATH).await
+        .map_err(|error| format!("read complete WC3 registry image: TRUEOSFS error {error}"))?;
+    session.registry = wc3::session::RegistryImage::parse(&registry_bytes).map_err(str::to_owned)?;
+    let (registry_roots, registry_keys, registry_values) = session.registry.stats();
+    logl::log(level::IMPORTANT, format_args!(
+        "WC3 REGISTRY IMAGE READY path=\"{}\" bytes={} roots={} keys={} values={} backing=host-ram guest_mapped=0",
+        String::from_utf8_lossy(WC3_REGISTRY_IMAGE_PATH), registry_bytes.len(), registry_roots, registry_keys, registry_values
+    ));
     logl::log(level::IMPORTANT, format_args!("WC3 DIAG BUILD CWEX_V2"));
     let (desktop_width, desktop_height) = ui4_scene::output_dimensions()
         .map_err(|error| format!("query UI4 output dimensions: {error:?}"))?;
@@ -225,6 +234,92 @@ async fn run() -> Result<(), String> {
                         child_loader::ProviderSymbol::Name(name) => format!("symbol=\"{}\"", name),
                         child_loader::ProviderSymbol::Ordinal(ordinal) => format!("ordinal={}", ordinal),
                     };
+                    let is_initialize_critical_section = matches!(
+                        &provider.symbol,
+                        child_loader::ProviderSymbol::Name(name)
+                            if provider.module.eq_ignore_ascii_case("KERNEL32.dll")
+                                && name == "InitializeCriticalSection"
+                    );
+                    if is_initialize_critical_section {
+                        let argument = exit.registers.esp.checked_add(4)
+                            .ok_or_else(|| "child provider argument address overflow".to_owned())?;
+                        let mut critical_section = [0; 4];
+                        child.address_space.read(argument, &mut critical_section).map_err(|error| error.to_string())?;
+                        let critical_section = u32::from_le_bytes(critical_section);
+                        logl::log(level::IMPORTANT, format_args!(
+                            "WC3 CHILD PROVIDER CALL pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" provider_id={} module=\"{}\" symbol=\"InitializeCriticalSection\" esp=0x{:08x} critical_section=0x{:08x}",
+                            active_pid, active_tid, running_module_name, provider_id, provider.module,
+                            exit.registers.esp, critical_section
+                        ));
+                        let mut child_memory = X86Memory(&child.address_space);
+                        let action = session.process_mut(active_pid)
+                            .ok_or_else(|| "child process missing".to_owned())?
+                            .xp
+                            .dispatch_provider_for_process(active_pid, active_tid, provider_id, exit.registers.esp, &mut child_memory)
+                            .map_err(str::to_owned)?;
+                        let PersonalityAction::Return(value) = action else {
+                            return Err("InitializeCriticalSection child provider did not return".into());
+                        };
+                        let mut initialized = [0; 0x18];
+                        child.address_space.read(critical_section, &mut initialized).map_err(|error| error.to_string())?;
+                        let lock_count = u32::from_le_bytes(initialized[4..8].try_into().map_err(|_| "critical-section lock count")?);
+                        let recursion = u32::from_le_bytes(initialized[8..12].try_into().map_err(|_| "critical-section recursion")?);
+                        let owner = u32::from_le_bytes(initialized[12..16].try_into().map_err(|_| "critical-section owner")?);
+                        if lock_count != u32::MAX || recursion != 0 || owner != 0 {
+                            return Err("child critical-section initialization verification failed".into());
+                        }
+                        logl::log(level::IMPORTANT, format_args!(
+                            "WC3 CHILD CRITICAL SECTION INIT pid={} address=0x{:08x} lock_count=0xffffffff recursion=0 owner=0",
+                            active_pid, critical_section
+                        ));
+                        let mut registers = exit.registers;
+                        registers.eax = value;
+                        contexts[active].context.set_registers(registers).map_err(|error| error.to_string())?;
+                        continue;
+                    }
+                    let is_reg_open_key_ex_a = matches!(
+                        &provider.symbol,
+                        child_loader::ProviderSymbol::Name(name)
+                            if provider.module.eq_ignore_ascii_case("ADVAPI32.dll")
+                                && name == "RegOpenKeyExA"
+                    );
+                    if is_reg_open_key_ex_a {
+                        let child_memory = X86Memory(&child.address_space);
+                        let frame = decode_reg_open_key_ex_a(&child_memory, exit.registers.esp)?;
+                        if frame.caller_ret != u32::from_le_bytes(caller_ret) {
+                            return Err("RegOpenKeyExA caller return mismatch".into());
+                        }
+                        let subkey = frame.subkey.as_deref().unwrap_or("");
+                        logl::log(level::IMPORTANT, format_args!(
+                            "WC3 CHILD REGISTRY OPEN pid={} tid={} root=\"{}\" subkey=\"{}\" sam=0x{:08x}",
+                            active_pid, active_tid, registry_root_name(frame.hkey), subkey, frame.sam
+                        ));
+                        let start = session.registry.root(frame.hkey).or_else(|| {
+                            session.process(active_pid).and_then(|process| process.xp.registry_handle_node(frame.hkey))
+                        });
+                        let node = (frame.options == 0).then_some(start).flatten()
+                            .and_then(|node| session.registry.child_path(node, subkey));
+                        let (result, handle) = if let Some(node) = node {
+                            let handle = session.process_mut(active_pid)
+                                .ok_or_else(|| "child process missing".to_owned())?
+                                .xp
+                                .open_registry_key(node, frame.sam)
+                                .map_err(str::to_owned)?;
+                            child.address_space.write(frame.result_ptr, &handle.to_le_bytes()).map_err(|error| error.to_string())?;
+                            (0u32, Some(handle))
+                        } else {
+                            (2u32, None)
+                        };
+                        logl::log(level::IMPORTANT, format_args!(
+                            "WC3 CHILD REGISTRY OPEN RESULT pid={} exists={} result={} handle={}",
+                            active_pid, node.is_some() as u8, result,
+                            handle.map(|handle| format!("0x{handle:08x}")).unwrap_or_else(|| "-".into())
+                        ));
+                        let mut registers = exit.registers;
+                        registers.eax = result;
+                        contexts[active].context.set_registers(registers).map_err(|error| error.to_string())?;
+                        continue;
+                    }
                     logl::log(level::IMPORTANT, format_args!(
                         "WC3 CHILD PROVIDER FRONTIER pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" provider_id={} module=\"{}\" {} eip=0x{:08x} esp=0x{:08x} caller_ret=0x{:08x}",
                         active_pid, active_tid, running_module_name, provider_id, provider.module, symbol,
@@ -2715,6 +2810,39 @@ fn log_child_handles(session: &Wc3Session, pid: u32) {
 
 struct X86Memory<'a>(&'a AddressSpace);
 
+struct RegOpenKeyExAFrame {
+    caller_ret: u32,
+    hkey: u32,
+    subkey: Option<String>,
+    options: u32,
+    sam: u32,
+    result_ptr: u32,
+}
+
+fn registry_root_name(hkey: u32) -> String {
+    match hkey {
+        0x8000_0000 => "HKEY_CLASSES_ROOT".into(),
+        0x8000_0001 => "HKEY_CURRENT_USER".into(),
+        0x8000_0002 => "HKEY_LOCAL_MACHINE".into(),
+        0x8000_0003 => "HKEY_USERS".into(),
+        0x8000_0005 => "HKEY_CURRENT_CONFIG".into(),
+        _ => format!("0x{hkey:08x}"),
+    }
+}
+
+fn decode_reg_open_key_ex_a(memory: &impl GuestMemory, esp: u32) -> Result<RegOpenKeyExAFrame, String> {
+    let frame = read_guest_words(memory, esp, 6)?;
+    let subkey = if frame[2] == 0 { None } else { Some(diagnostic_ansi_string(memory, frame[2])?) };
+    Ok(RegOpenKeyExAFrame {
+        caller_ret: frame[0],
+        hkey: frame[1],
+        subkey,
+        options: frame[3],
+        sam: frame[4],
+        result_ptr: frame[5],
+    })
+}
+
 fn read_guest_words(memory: &impl GuestMemory, esp: u32, count: usize) -> Result<Vec<u32>, String> {
     (0..count)
         .map(|index| {
@@ -2807,6 +2935,25 @@ impl GuestMemory for X86Memory<'_> {
 mod tests {
     use super::*;
 
+    struct TestMemory {
+        base: u32,
+        bytes: Vec<u8>,
+    }
+
+    impl GuestMemory for TestMemory {
+        fn read(&self, address: u32, output: &mut [u8]) -> Result<(), &'static str> {
+            let start = usize::try_from(address.checked_sub(self.base).ok_or("test memory below base")?).map_err(|_| "test memory offset")?;
+            output.copy_from_slice(self.bytes.get(start..start + output.len()).ok_or("test memory range")?);
+            Ok(())
+        }
+
+        fn write(&mut self, address: u32, input: &[u8]) -> Result<(), &'static str> {
+            let start = usize::try_from(address.checked_sub(self.base).ok_or("test memory below base")?).map_err(|_| "test memory offset")?;
+            self.bytes.get_mut(start..start + input.len()).ok_or("test memory range")?.copy_from_slice(input);
+            Ok(())
+        }
+    }
+
     fn native_module(stored: &str, image_base: u32, entry_rva: u32) -> PendingNativeModule {
         PendingNativeModule {
             requested: stored.to_owned(),
@@ -2841,5 +2988,23 @@ mod tests {
         assert!(!modules[0].initialized);
         assert!(!modules[1].initialized);
         assert_eq!(begin_child_dll_init_state(&mut state, &modules), Err("child DLL init not ready"));
+    }
+
+    #[test]
+    fn reg_open_frame_is_diagnostic_only_and_preserves_all_guest_bytes() {
+        let base = 0x0430_0000;
+        let esp = 0x043f_ff00;
+        let subkey = 0x043f_fe00;
+        let mut memory = TestMemory { base, bytes: vec![0x5a; STACK_BYTES] };
+        for (index, word) in [0x1502_e2f9, 0x8000_0002, subkey, 0, 0x0002_0019, 0x043f_fd00].into_iter().enumerate() {
+            memory.write(esp + index as u32 * 4, &word.to_le_bytes()).unwrap();
+        }
+        memory.write(subkey, b"SOFTWARE\\Example\0").unwrap();
+        let before = memory.bytes.clone();
+        let frame = decode_reg_open_key_ex_a(&memory, esp).unwrap();
+        assert_eq!(registry_root_name(frame.hkey), "HKEY_LOCAL_MACHINE");
+        assert_eq!(frame.subkey.as_deref(), Some("SOFTWARE\\Example"));
+        assert_eq!(frame.sam, 0x0002_0019);
+        assert_eq!(memory.bytes, before);
     }
 }

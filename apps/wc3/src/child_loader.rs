@@ -15,6 +15,24 @@ pub struct ProviderImport {
     pub iat_rva: u32,
 }
 
+pub fn provider_thunk_kind(import: &ProviderImport) -> thunk32::Kind {
+    match &import.symbol {
+        ProviderSymbol::Name(symbol)
+            if import.module.eq_ignore_ascii_case("KERNEL32.dll")
+                && symbol == "InitializeCriticalSection" =>
+        {
+            thunk32::Kind::Stdcall(4)
+        }
+        ProviderSymbol::Name(symbol)
+            if import.module.eq_ignore_ascii_case("ADVAPI32.dll")
+                && symbol == "RegOpenKeyExA" =>
+        {
+            thunk32::Kind::Stdcall(20)
+        }
+        _ => thunk32::Kind::Return,
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NativeModuleRequest {
     pub requested: String,
@@ -99,7 +117,7 @@ pub fn prepare(image: &mut PeImage, listing: &DirListing) -> Result<ProviderSurf
         let iat = usize::try_from(import.iat_rva).map_err(|_| "child IAT rva")?;
         image.image.get_mut(iat..iat + 4).ok_or("child IAT range")?.copy_from_slice(&address.to_le_bytes());
         let offset = usize::try_from(id).map_err(|_| "child thunk offset")? * thunk32::THUNK_BYTES;
-        thunk32::write(id, thunk32::Kind::Return, &mut thunks[offset..offset + thunk32::THUNK_BYTES])?;
+        thunk32::write(id, provider_thunk_kind(import), &mut thunks[offset..offset + thunk32::THUNK_BYTES])?;
     }
     let named = imports.iter().filter(|import| matches!(import.symbol, ProviderSymbol::Name(_))).count();
     let ordinal = imports.len() - named;
@@ -122,5 +140,33 @@ mod tests {
         assert_eq!(surface.imports[0].symbol, ProviderSymbol::Ordinal(25));
         assert_eq!(u32::from_le_bytes(image.image[..4].try_into().unwrap()), 0);
         assert_eq!(u32::from_le_bytes(image.image[4..8].try_into().unwrap()), thunk32::THUNK_BASE);
+    }
+
+    #[test]
+    fn initialize_critical_section_provider_uses_stdcall_cleanup() {
+        let import = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("InitializeCriticalSection".into()),
+            iat_rva: 0,
+        };
+        let mut bytes = [0; thunk32::THUNK_BYTES];
+        thunk32::write(403, provider_thunk_kind(&import), &mut bytes).unwrap();
+        assert_eq!(&bytes[8..11], &[0xc2, 4, 0]);
+
+        let unrelated = ProviderImport { module: "KERNEL32.dll".into(), symbol: ProviderSymbol::Name("GetModuleHandleA".into()), iat_rva: 0 };
+        thunk32::write(404, provider_thunk_kind(&unrelated), &mut bytes).unwrap();
+        assert_eq!(bytes[8], 0xc3);
+    }
+
+    #[test]
+    fn reg_open_key_ex_a_provider_uses_stdcall_twenty() {
+        let import = ProviderImport {
+            module: "ADVAPI32.dll".into(),
+            symbol: ProviderSymbol::Name("RegOpenKeyExA".into()),
+            iat_rva: 0,
+        };
+        let mut bytes = [0; thunk32::THUNK_BYTES];
+        thunk32::write(548, provider_thunk_kind(&import), &mut bytes).unwrap();
+        assert_eq!(&bytes[8..11], &[0xc2, 20, 0]);
     }
 }

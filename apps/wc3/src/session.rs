@@ -18,6 +18,65 @@ pub const THREAD_HANDLE_BASE: u32 = 0x5743_5001;
 pub const WINDOW_HANDLE_BASE: u32 = 0x5743_4001;
 pub const DESKTOP_HWND: u32 = 0x5743_3000;
 
+pub type RegistryNodeId = u32;
+
+pub struct RegistryValue { pub ty: u32, pub bytes: Vec<u8> }
+pub struct RegistryNode {
+    pub name: String,
+    pub parent: Option<RegistryNodeId>,
+    children: HashMap<String, RegistryNodeId>,
+    values: HashMap<String, RegistryValue>,
+}
+pub struct RegistryImage { pub nodes: Vec<RegistryNode>, roots: HashMap<u32, RegistryNodeId> }
+
+impl RegistryImage {
+    pub fn parse(bytes: &[u8]) -> Result<Self, &'static str> {
+        let text = if bytes.starts_with(&[0xff, 0xfe]) {
+            String::from_utf16(&bytes[2..].chunks_exact(2).map(|v| u16::from_le_bytes([v[0], v[1]])).collect::<Vec<_>>()).map_err(|_| "registry UTF-16")?
+        } else {
+            String::from_utf8(bytes.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(bytes).to_vec()).map_err(|_| "registry UTF-8")?
+        };
+        let mut image = Self { nodes: Vec::new(), roots: HashMap::new() };
+        for (root, name) in [(0x8000_0000, "HKEY_CLASSES_ROOT"), (0x8000_0001, "HKEY_CURRENT_USER"), (0x8000_0002, "HKEY_LOCAL_MACHINE"), (0x8000_0003, "HKEY_USERS"), (0x8000_0005, "HKEY_CURRENT_CONFIG")] {
+            let id = image.push_node(name.into(), None); image.roots.insert(root, id);
+        }
+        let mut current = None;
+        let mut lines = text.lines().peekable();
+        while let Some(raw) = lines.next() {
+            let mut line = raw.trim().to_owned();
+            while line.ends_with('\\') { line.pop(); line.push_str(lines.next().ok_or("registry continuation")?.trim()); }
+            if line.is_empty() || line.starts_with(';') || line == "REGEDIT4" || line == "Windows Registry Editor Version 5.00" { continue; }
+            if line.starts_with('[') && line.ends_with(']') {
+                current = image.add_key(&line[1..line.len()-1]); continue;
+            }
+            if let Some(node) = current { image.add_value(node, &line)?; }
+        }
+        Ok(image)
+    }
+    fn push_node(&mut self, name: String, parent: Option<RegistryNodeId>) -> RegistryNodeId { let id = self.nodes.len() as u32; self.nodes.push(RegistryNode { name, parent, children: HashMap::new(), values: HashMap::new() }); id }
+    fn add_key(&mut self, header: &str) -> Option<RegistryNodeId> {
+        let (root_name, tail) = header.split_once('\\').unwrap_or((header, ""));
+        let root = [("HKEY_CLASSES_ROOT",0x8000_0000),("HKEY_CURRENT_USER",0x8000_0001),("HKEY_LOCAL_MACHINE",0x8000_0002),("HKEY_USERS",0x8000_0003),("HKEY_CURRENT_CONFIG",0x8000_0005)].iter().find(|(name,_)| name.eq_ignore_ascii_case(root_name)).map(|(_,root)| *root)?;
+        let mut node = *self.roots.get(&root)?;
+        for part in tail.split('\\').filter(|part| !part.is_empty()) {
+            let key = canonical(part);
+            node = match self.nodes[node as usize].children.get(&key) { Some(id) => *id, None => { let id = self.push_node(part.into(), Some(node)); self.nodes[node as usize].children.insert(key, id); id } };
+        }
+        Some(node)
+    }
+    fn add_value(&mut self, node: RegistryNodeId, line: &str) -> Result<(), &'static str> {
+        let (name_part, data) = line.split_once('=').ok_or("registry value")?;
+        let name = if name_part == "@" { String::new() } else { unquote(name_part)? };
+        let (ty, bytes) = if data.starts_with('"') { (1, unquote(data)?.into_bytes()) } else if let Some(hex) = data.strip_prefix("dword:") { (4, u32::from_str_radix(hex, 16).map_err(|_| "registry dword")?.to_le_bytes().to_vec()) } else if let Some(rest) = data.strip_prefix("hex") { let (ty, values) = if let Some(rest) = rest.strip_prefix(':') { (3, rest) } else { let (ty, values) = rest.strip_prefix('(').and_then(|r| r.split_once("):" )).ok_or("registry hex type")?; (u32::from_str_radix(ty,16).map_err(|_| "registry hex type")?, values) }; (ty, values.split(',').filter(|v| !v.is_empty()).map(|v| u8::from_str_radix(v.trim(),16).map_err(|_| "registry hex")).collect::<Result<Vec<_>,_>>().map_err(|_| "registry hex")?) } else { return Err("registry value encoding"); };
+        self.nodes[node as usize].values.insert(canonical(&name), RegistryValue { ty, bytes }); Ok(())
+    }
+    pub fn root(&self, hkey: u32) -> Option<RegistryNodeId> { self.roots.get(&hkey).copied() }
+    pub fn child_path(&self, mut node: RegistryNodeId, path: &str) -> Option<RegistryNodeId> { for part in path.split('\\').filter(|part| !part.is_empty()) { node = *self.nodes.get(node as usize)?.children.get(&canonical(part))?; } Some(node) }
+    pub fn stats(&self) -> (usize, usize, usize) { (self.roots.len(), self.nodes.len(), self.nodes.iter().map(|n| n.values.len()).sum()) }
+}
+fn canonical(name: &str) -> String { name.bytes().map(|byte| byte.to_ascii_lowercase() as char).collect() }
+fn unquote(value: &str) -> Result<String, &'static str> { let body = value.strip_prefix('"').and_then(|v| v.strip_suffix('"')).ok_or("registry quote")?; Ok(body.replace("\\\\", "\\").replace("\\\"", "\"")) }
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct ThreadKey {
     pub pid: Pid,
@@ -27,6 +86,15 @@ pub struct ThreadKey {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn registry_image_parses_multiroot_case_insensitive_tree() {
+        let fixture = b"Windows Registry Editor Version 5.00\n\n[HKEY_CURRENT_USER\\Software\\Blizzard Entertainment\\Internal]\n\"x\"=dword:00000001\n[HKEY_LOCAL_MACHINE\\A]\n[HKEY_USERS\\B]\n[HKEY_CLASSES_ROOT\\C]\n[HKEY_CURRENT_CONFIG\\D]\n";
+        let image = RegistryImage::parse(fixture).unwrap();
+        let hkcu = image.root(0x8000_0001).unwrap();
+        assert!(image.child_path(hkcu, "software\\BLIZZARD entertainment\\internal").is_some());
+        assert!(image.root(0x8000_0002).and_then(|root| image.child_path(root, "a")).is_some());
+    }
 
     fn request(handle: u32, timeout: u32) -> WaitRequest {
         WaitRequest {
@@ -321,6 +389,7 @@ pub struct Wc3Process {
 
 pub struct Wc3Session {
     pub assets: crate::assets::Wc3AssetCache,
+    pub registry: RegistryImage,
     pub processes: HashMap<Pid, Wc3Process>,
     pub objects: HashMap<ObjectId, SessionObject>,
     pub names: HashMap<String, ObjectId>,
@@ -353,6 +422,7 @@ impl Wc3Session {
         );
         Self {
             assets: crate::assets::Wc3AssetCache::default(),
+            registry: RegistryImage { nodes: Vec::new(), roots: HashMap::new() },
             processes,
             objects: HashMap::new(),
             names: HashMap::new(),
@@ -550,11 +620,14 @@ impl Wc3Session {
                 inheritable: false,
             },
         );
+        let mut xp = XpProcess::new(Vec::new());
+        let registry_base = 0x5743_8001u32.checked_add(pid.checked_mul(0x100).ok_or("registry handle base")?).ok_or("registry handle base")?;
+        xp.set_registry_handle_base(registry_base).map_err(str::to_owned)?;
         self.processes.insert(
             pid,
             Wc3Process {
                 pid,
-                xp: XpProcess::new(Vec::new()),
+                xp,
                 handles: HashMap::new(),
             },
         );

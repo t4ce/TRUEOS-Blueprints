@@ -7,7 +7,7 @@
 use std::collections::{HashMap, VecDeque};
 
 use crate::{
-    child_loader::{ChildProvider, ProviderImport},
+    child_loader::{ChildProvider, ProviderImport, ProviderSymbol},
     imports::{LauncherImport, WinCall},
     pe32,
     session::{
@@ -295,6 +295,12 @@ struct Message {
     y: i32,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RegistryHandle {
+    node: crate::session::RegistryNodeId,
+    access: u32,
+}
+
 pub struct XpProcess {
     imports: Vec<LauncherImport>,
     provider_imports: Vec<ProviderImport>,
@@ -309,6 +315,8 @@ pub struct XpProcess {
     tls_allocated: [bool; 64],
     tls_values: HashMap<(u32, u32), u32>,
     critical_sections: HashMap<u32, (u32, u32)>,
+    registry_handles: HashMap<u32, RegistryHandle>,
+    next_registry_handle: u32,
     last_error: u32,
     tick_ms: u32,
     registered_classes: HashMap<String, RegisteredClass>,
@@ -367,6 +375,8 @@ impl XpProcess {
             tls_allocated: [false; 64],
             tls_values: HashMap::new(),
             critical_sections: HashMap::new(),
+            registry_handles: HashMap::new(),
+            next_registry_handle: 0x5743_8001,
             last_error: 0,
             tick_ms: 0,
             registered_classes: HashMap::new(),
@@ -405,11 +415,39 @@ impl XpProcess {
 
     pub fn provider_import_count(&self) -> usize { self.provider_imports.len() }
 
+    pub fn set_registry_handle_base(&mut self, base: u32) -> Result<(), &'static str> {
+        if !self.registry_handles.is_empty() { return Err("registry handles already allocated"); }
+        self.next_registry_handle = base;
+        Ok(())
+    }
+
+    pub fn open_registry_key(&mut self, node: crate::session::RegistryNodeId, access: u32) -> Result<u32, &'static str> {
+        let handle = self.next_registry_handle;
+        self.next_registry_handle = self.next_registry_handle.checked_add(1).ok_or("registry handle overflow")?;
+        if self.registry_handles.insert(handle, RegistryHandle { node, access }).is_some() {
+            return Err("registry handle collision");
+        }
+        Ok(handle)
+    }
+
+    pub fn registry_handle_node(&self, handle: u32) -> Option<crate::session::RegistryNodeId> {
+        self.registry_handles.get(&handle).map(|handle| handle.node)
+    }
+
     pub fn dispatch_provider_for_process(
-        &mut self, _pid: u32, _tid: u32, provider_id: u32, _esp: u32, _memory: &mut impl GuestMemory,
+        &mut self, _pid: u32, _tid: u32, provider_id: u32, esp: u32, memory: &mut impl GuestMemory,
     ) -> Result<PersonalityAction, &'static str> {
-        self.provider_import(provider_id).ok_or("unknown child provider import")?;
-        Err("unsupported child provider import")
+        let provider = self.provider_import(provider_id).cloned().ok_or("unknown child provider import")?;
+        match (&provider.module[..], &provider.symbol) {
+            (module, ProviderSymbol::Name(symbol))
+                if module.eq_ignore_ascii_case("KERNEL32.dll")
+                    && symbol == "InitializeCriticalSection" =>
+            {
+                self.call_count = self.call_count.checked_add(1).ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(self.initialize_critical_section(esp, memory)?))
+            }
+            _ => Err("unsupported child provider import"),
+        }
     }
 
     pub fn append_provider_imports(
@@ -431,7 +469,8 @@ impl XpProcess {
         for (offset, _) in addresses.iter().enumerate() {
             let id = first + offset as u32;
             let start = id as usize * thunk32::THUNK_BYTES;
-            thunk32::write(id, thunk32::Kind::Return, &mut self.provider_thunks[start..start + thunk32::THUNK_BYTES])?;
+            let import = self.provider_import(id).ok_or("provider import")?;
+            thunk32::write(id, crate::child_loader::provider_thunk_kind(import), &mut self.provider_thunks[start..start + thunk32::THUNK_BYTES])?;
         }
         Ok((addresses, old_bytes, new_bytes, self.provider_thunks[old_bytes..].to_vec()))
     }
@@ -3775,5 +3814,59 @@ mod tests {
         assert_eq!(runnable.suspend_count, 0);
         xp.exit_thread(runnable.tid, 0x1234).unwrap();
         assert_eq!(xp.threads[0].exit_code, Some(0x1234));
+    }
+
+    #[test]
+    fn child_initialize_critical_section_is_process_private() {
+        let provider = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("InitializeCriticalSection".into()),
+            iat_rva: 0,
+        };
+        let pid1 = XpProcess::new(Vec::new());
+        let mut pid2 = XpProcess::new(Vec::new());
+        pid2.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory { base: STACK_BASE, bytes: vec![0; STACK_BYTES] };
+        let esp = STACK_TOP - 0x40;
+        let critical_section = STACK_TOP - 0x100;
+        write_u32(&mut memory, esp, 0x1501_fbd3).unwrap();
+        write_u32(&mut memory, esp + 4, critical_section).unwrap();
+        assert_eq!(
+            pid2.dispatch_provider_for_process(2, 3, 0, esp, &mut memory).unwrap(),
+            PersonalityAction::Return(0)
+        );
+        assert!(pid2.critical_sections.contains_key(&critical_section));
+        assert!(!pid1.critical_sections.contains_key(&critical_section));
+        assert_eq!(read_u32(&memory, critical_section + 4).unwrap(), u32::MAX);
+    }
+
+    #[test]
+    fn unsupported_child_provider_does_not_mutate_memory() {
+        let provider = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("GetModuleHandleA".into()),
+            iat_rva: 0,
+        };
+        let mut pid2 = XpProcess::new(Vec::new());
+        pid2.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory { base: STACK_BASE, bytes: vec![0x5a; STACK_BYTES] };
+        let before = memory.bytes.clone();
+        assert_eq!(
+            pid2.dispatch_provider_for_process(2, 3, 0, STACK_TOP - 0x40, &mut memory),
+            Err("unsupported child provider import")
+        );
+        assert_eq!(memory.bytes, before);
+    }
+
+    #[test]
+    fn registry_handles_are_process_private() {
+        let mut pid1 = XpProcess::new(Vec::new());
+        let mut pid2 = XpProcess::new(Vec::new());
+        let pid1_handle = pid1.open_registry_key(7, 0x0002_0019).unwrap();
+        let pid2_handle = pid2.open_registry_key(7, 0x0002_0019).unwrap();
+        assert_eq!(pid1_handle, 0x5743_8001);
+        assert_eq!(pid2_handle, 0x5743_8001);
+        assert_eq!(pid1.registry_handles.len(), 1);
+        assert_eq!(pid2.registry_handles.len(), 1);
     }
 }
