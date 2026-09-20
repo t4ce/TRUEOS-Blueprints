@@ -24,6 +24,7 @@ pub const HEAP_VA: u32 = 0x0021_0000;
 pub const CHILD_CRT_HEAP_BASE: u32 = 0x0100_0000;
 pub const CHILD_CRT_HEAP_LIMIT: u32 = 0x0400_0000;
 pub const XP_ALLOCATION_GRANULARITY: u32 = 0x0001_0000;
+pub const XP_PAGE_SIZE: u32 = 0x1000;
 pub const CHILD_VIRTUAL_ALLOC_BASE: u32 = 0x0600_0000;
 pub const CHILD_VIRTUAL_ALLOC_LIMIT: u32 = 0x1400_0000;
 pub const PROCESS_DATA_VA: u32 = 0x0021_1000;
@@ -327,6 +328,21 @@ pub struct CrtResize {
 pub struct VirtualReservation {
     pub base: u32,
     pub size: u32,
+    pub committed: Vec<VirtualCommit>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VirtualCommit {
+    pub base: u32,
+    pub size: u32,
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct VirtualCommitRequest {
+    pub reservation_base: u32,
+    pub reservation_size: u32,
+    pub base: u32,
+    pub size: u32,
 }
 
 pub struct XpProcess {
@@ -546,6 +562,7 @@ impl XpProcess {
         let reservation = VirtualReservation {
             base,
             size: rounded,
+            committed: Vec::new(),
         };
         self.virtual_reservations.push(reservation.clone());
         self.virtual_reserve_next = end;
@@ -572,6 +589,76 @@ impl XpProcess {
 
     pub fn virtual_reservation_state(&self) -> (usize, u32) {
         (self.virtual_reservations.len(), self.virtual_reserve_next)
+    }
+
+    pub fn virtual_prepare_commit(
+        &self,
+        address: u32,
+        size: u32,
+    ) -> Result<Option<VirtualCommitRequest>, &'static str> {
+        if address == 0 || size == 0 || address % XP_PAGE_SIZE != 0 {
+            return Ok(None);
+        }
+        let rounded = size
+            .checked_add(XP_PAGE_SIZE - 1)
+            .ok_or("VirtualAlloc commit size overflow")?
+            & !(XP_PAGE_SIZE - 1);
+        let end = address
+            .checked_add(rounded)
+            .ok_or("VirtualAlloc commit address overflow")?;
+        let Some(reservation) = self.virtual_reservations.iter().find(|reservation| {
+            reservation
+                .base
+                .checked_add(reservation.size)
+                .is_some_and(|reservation_end| address >= reservation.base && end <= reservation_end)
+        }) else {
+            return Ok(None);
+        };
+        if reservation.committed.iter().any(|commit| {
+            commit
+                .base
+                .checked_add(commit.size)
+                .is_some_and(|commit_end| address < commit_end && commit.base < end)
+        }) {
+            return Err("VirtualAlloc overlapping commit");
+        }
+        Ok(Some(VirtualCommitRequest {
+            reservation_base: reservation.base,
+            reservation_size: reservation.size,
+            base: address,
+            size: rounded,
+        }))
+    }
+
+    pub fn virtual_finish_commit(
+        &mut self,
+        request: VirtualCommitRequest,
+    ) -> Result<(), &'static str> {
+        let reservation = self
+            .virtual_reservations
+            .iter_mut()
+            .find(|reservation| {
+                reservation.base == request.reservation_base
+                    && reservation.size == request.reservation_size
+            })
+            .ok_or("VirtualAlloc reservation disappeared")?;
+        reservation.committed.push(VirtualCommit {
+            base: request.base,
+            size: request.size,
+        });
+        Ok(())
+    }
+
+    pub fn virtual_commit_state(&self) -> (usize, u32) {
+        let mut ranges = 0usize;
+        let mut bytes = 0u32;
+        for reservation in &self.virtual_reservations {
+            ranges += reservation.committed.len();
+            for commit in &reservation.committed {
+                bytes = bytes.saturating_add(commit.size);
+            }
+        }
+        (ranges, bytes)
     }
 
     /// Reserve a replacement CRT block for an internal CRT table resize.  The
@@ -4234,6 +4321,30 @@ mod tests {
         );
         assert!(pid1.virtual_reservation_at(one_byte.base).is_none());
         assert_eq!(pid2.virtual_reserve_null(u32::MAX), Err("VirtualAlloc size overflow"));
+    }
+
+    #[test]
+    fn child_virtual_commit_is_page_granular_and_rejects_overlap() {
+        let mut process = XpProcess::new(Vec::new());
+        let reservation = process.virtual_reserve_null(0x10000).unwrap().unwrap();
+        let request = process
+            .virtual_prepare_commit(reservation.base, 0x1000)
+            .unwrap()
+            .unwrap();
+        assert_eq!(request.reservation_base, reservation.base);
+        assert_eq!(request.reservation_size, 0x10000);
+        assert_eq!(request.size, XP_PAGE_SIZE);
+        assert_eq!(process.virtual_reservation_at(reservation.base).unwrap().committed, []);
+        process.virtual_finish_commit(request).unwrap();
+        assert_eq!(process.virtual_commit_state(), (1, XP_PAGE_SIZE));
+        assert_eq!(
+            process.virtual_prepare_commit(reservation.base, XP_PAGE_SIZE),
+            Err("VirtualAlloc overlapping commit")
+        );
+        assert_eq!(
+            process.virtual_prepare_commit(reservation.base + 0xf000, 0x1001),
+            Ok(None)
+        );
     }
 
     #[test]

@@ -938,9 +938,32 @@ async fn run() -> Result<(), String> {
                             &X86Memory(&child.address_space),
                             exit.registers.esp,
                         )?;
-                        logl::log(
-                            level::IMPORTANT,
-                            format_args!(
+                        if frame.size == 0 {
+                            session
+                                .process_mut(active_pid)
+                                .ok_or_else(|| "child process missing".to_owned())?
+                                .xp
+                                .set_last_error(87);
+                            let mut registers = exit.registers;
+                            registers.eax = 0;
+                            contexts[active]
+                                .context
+                                .set_registers(registers)
+                                .map_err(|error| error.to_string())?;
+                            continue;
+                        }
+                        let supported_reserve = frame.address == 0
+                            && frame.size != 0
+                            && frame.allocation_type == 0x0000_2000
+                            && frame.protect == 0x01;
+                        let supported_commit = frame.address != 0
+                            && frame.size != 0
+                            && frame.allocation_type == 0x0000_1000
+                            && frame.protect == 0x04;
+                        if !supported_reserve && !supported_commit {
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
                                 "WC3 CHILD VIRTUALALLOC FRONTIER pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" provider_id={} caller_ret=0x{:08x} address=0x{:08x} size=0x{:08x} allocation_type=0x{:08x} protect=0x{:08x}",
                                 active_pid,
                                 active_tid,
@@ -951,23 +974,18 @@ async fn run() -> Result<(), String> {
                                 frame.size,
                                 frame.allocation_type,
                                 frame.protect,
-                            ),
-                        );
-                        logl::log(
-                            level::IMPORTANT,
-                            format_args!(
+                                ),
+                            );
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
                                 "WC3 CHILD VIRTUALALLOC FLAGS commit={} reserve={} top_down={} protect_name=\"{}\"",
                                 (frame.allocation_type & 0x0000_1000 != 0) as u8,
                                 (frame.allocation_type & 0x0000_2000 != 0) as u8,
                                 (frame.allocation_type & 0x0010_0000 != 0) as u8,
                                 virtual_alloc_protect_name(frame.protect),
-                            ),
-                        );
-                        let supported_reserve = frame.address == 0
-                            && frame.size != 0
-                            && frame.allocation_type == 0x0000_2000
-                            && frame.protect == 0x01;
-                        if !supported_reserve {
+                                ),
+                            );
                             logl::log(
                                 level::IMPORTANT,
                                 format_args!(
@@ -975,6 +993,83 @@ async fn run() -> Result<(), String> {
                                 ),
                             );
                             return Ok(());
+                        }
+                        if supported_commit {
+                            let request = {
+                                let process = &session
+                                    .process(active_pid)
+                                    .ok_or_else(|| "child process missing".to_owned())?
+                                    .xp;
+                                match process.virtual_prepare_commit(frame.address, frame.size) {
+                                    Ok(Some(request)) => request,
+                                    Ok(None) => {
+                                        session
+                                            .process_mut(active_pid)
+                                            .ok_or_else(|| "child process missing".to_owned())?
+                                            .xp
+                                            .set_last_error(487);
+                                        let mut registers = exit.registers;
+                                        registers.eax = 0;
+                                        contexts[active]
+                                            .context
+                                            .set_registers(registers)
+                                            .map_err(|error| error.to_string())?;
+                                        continue;
+                                    }
+                                    Err("VirtualAlloc overlapping commit") => {
+                                        logl::log(level::IMPORTANT, format_args!(
+                                            "WC3 CHILD VIRTUALALLOC FRONTIER reason=overlapping-commit"
+                                        ));
+                                        return Ok(());
+                                    }
+                                    Err(error) => return Err(error.into()),
+                                }
+                            };
+                            child
+                                .address_space
+                                .map(
+                                    request.base,
+                                    usize::try_from(request.size)
+                                        .map_err(|_| "VirtualAlloc commit size")?,
+                                    Permissions::READ | Permissions::WRITE,
+                                )
+                                .map_err(|error| format!("map VirtualAlloc commit: {error}"))?;
+                            let zeroes = vec![0; usize::try_from(request.size)
+                                .map_err(|_| "VirtualAlloc zero size")?];
+                            if child
+                                .address_space
+                                .write(request.base, &zeroes)
+                                .map_err(|error| error.to_string())?
+                                != zeroes.len()
+                            {
+                                return Err("short VirtualAlloc commit initialization".into());
+                            }
+                            let (reservations, reserve_next, committed_ranges, committed_bytes) = {
+                                let process = &mut session
+                                    .process_mut(active_pid)
+                                    .ok_or_else(|| "child process missing".to_owned())?
+                                    .xp;
+                                process.virtual_finish_commit(request).map_err(str::to_owned)?;
+                                let (reservations, reserve_next) = process.virtual_reservation_state();
+                                let (committed_ranges, committed_bytes) = process.virtual_commit_state();
+                                (reservations, reserve_next, committed_ranges, committed_bytes)
+                            };
+                            logl::log(level::IMPORTANT, format_args!(
+                                "WC3 CHILD VIRTUALALLOC COMMIT pid={} tid={} address=0x{:08x} requested_size=0x{:08x} commit_size=0x{:08x} reservation_base=0x{:08x} reservation_size=0x{:08x} protect=PAGE_READWRITE permissions=RW guest_mapped=1 zero_initialized=1 return_eax=0x{:08x}",
+                                active_pid, active_tid, frame.address, frame.size, request.size,
+                                request.reservation_base, request.reservation_size, request.base
+                            ));
+                            logl::log(level::IMPORTANT, format_args!(
+                                "WC3 CHILD VIRTUAL MEMORY pid={} reservations={} committed_ranges={} committed_bytes={} reserve_next=0x{:08x}",
+                                active_pid, reservations, committed_ranges, committed_bytes, reserve_next
+                            ));
+                            let mut registers = exit.registers;
+                            registers.eax = request.base;
+                            contexts[active]
+                                .context
+                                .set_registers(registers)
+                                .map_err(|error| error.to_string())?;
+                            continue;
                         }
                         let (reservation, reservation_count, reserve_next) = {
                             let process = &mut session
