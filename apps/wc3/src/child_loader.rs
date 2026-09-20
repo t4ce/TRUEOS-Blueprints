@@ -26,6 +26,7 @@ pub enum ProviderOp {
     GetStartupInfoA,
     GetStdHandle,
     GetFileType,
+    SetHandleCount,
     GetVersion,
     GetVersionExA,
     WideCharToMultiByte,
@@ -55,6 +56,7 @@ impl ProviderOp {
             | Self::GetStartupInfoA
             | Self::GetStdHandle
             | Self::GetFileType
+            | Self::SetHandleCount
             | Self::SetLastError => 4,
             Self::VirtualAlloc => 16,
             Self::WideCharToMultiByte => 32,
@@ -71,6 +73,7 @@ impl ProviderOp {
                 | Self::GetStartupInfoA
                 | Self::GetStdHandle
                 | Self::GetFileType
+                | Self::SetHandleCount
         )
     }
 }
@@ -87,6 +90,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "GetStartupInfoA" => ProviderOp::GetStartupInfoA,
             "GetStdHandle" => ProviderOp::GetStdHandle,
             "GetFileType" => ProviderOp::GetFileType,
+            "SetHandleCount" => ProviderOp::SetHandleCount,
             "GetVersion" => ProviderOp::GetVersion,
             "GetVersionExA" => ProviderOp::GetVersionExA,
             "WideCharToMultiByte" => ProviderOp::WideCharToMultiByte,
@@ -435,6 +439,22 @@ mod tests {
         assert_eq!(operation.stack_cleanup_bytes(), 4);
         let mut bytes = [0; thunk32::THUNK_BYTES];
         thunk32::write(626, provider_thunk_kind(&import), &mut bytes).unwrap();
+        assert_eq!(&bytes[8..11], &[0xc2, 0x04, 0x00]);
+    }
+
+    #[test]
+    fn set_handle_count_is_pure_process_stdcall_four() {
+        let import = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("SetHandleCount".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&import);
+        assert_eq!(operation, ProviderOp::SetHandleCount);
+        assert!(operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 4);
+        let mut bytes = [0; thunk32::THUNK_BYTES];
+        thunk32::write(624, provider_thunk_kind(&import), &mut bytes).unwrap();
         assert_eq!(&bytes[8..11], &[0xc2, 0x04, 0x00]);
     }
 

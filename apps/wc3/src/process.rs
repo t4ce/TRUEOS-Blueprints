@@ -749,19 +749,13 @@ impl XpProcess {
         self.crt_allocations.remove(&pointer).is_some()
     }
 
-    pub fn dispatch_provider_for_process_typed(
+    fn dispatch_process_local_provider(
         &mut self,
-        _pid: u32,
-        tid: u32,
-        provider_id: u32,
+        operation: ProviderOp,
         esp: u32,
         memory: &mut impl GuestMemory,
     ) -> Result<PersonalityAction, ProviderDispatchError> {
-        let provider = self
-            .provider_import(provider_id)
-            .cloned()
-            .ok_or("unknown child provider import")?;
-        match provider_op(&provider) {
+        match operation {
             ProviderOp::FreeEnvironmentStringsW => {
                 let pointer = read_u32(
                     memory,
@@ -774,30 +768,55 @@ impl XpProcess {
                     .call_count
                     .checked_add(1)
                     .ok_or("call count overflow")?;
-                return Ok(PersonalityAction::Return(1));
+                Ok(PersonalityAction::Return(1))
             }
             ProviderOp::GetStartupInfoA => {
                 self.call_count = self
                     .call_count
                     .checked_add(1)
                     .ok_or("call count overflow")?;
-                return Ok(PersonalityAction::Return(self.get_startup_info(esp, memory)?));
+                Ok(PersonalityAction::Return(self.get_startup_info(esp, memory)?))
             }
             ProviderOp::GetStdHandle => {
                 self.call_count = self
                     .call_count
                     .checked_add(1)
                     .ok_or("call count overflow")?;
-                return Ok(PersonalityAction::Return(self.get_std_handle(esp, memory)?));
+                Ok(PersonalityAction::Return(self.get_std_handle(esp, memory)?))
             }
             ProviderOp::GetFileType => {
                 self.call_count = self
                     .call_count
                     .checked_add(1)
                     .ok_or("call count overflow")?;
-                return Ok(PersonalityAction::Return(self.get_file_type(esp, memory)?));
+                Ok(PersonalityAction::Return(self.get_file_type(esp, memory)?))
             }
-            _ => {}
+            ProviderOp::SetHandleCount => {
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(self.set_handle_count(esp, memory)?))
+            }
+            _ => Err(ProviderDispatchError::Unsupported),
+        }
+    }
+
+    pub fn dispatch_provider_for_process_typed(
+        &mut self,
+        _pid: u32,
+        tid: u32,
+        provider_id: u32,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<PersonalityAction, ProviderDispatchError> {
+        let provider = self
+            .provider_import(provider_id)
+            .cloned()
+            .ok_or("unknown child provider import")?;
+        let operation = provider_op(&provider);
+        if operation.is_generic_process_local() {
+            return self.dispatch_process_local_provider(operation, esp, memory);
         }
         match (&provider.module[..], &provider.symbol) {
             (module, ProviderSymbol::Name(symbol))
@@ -1124,7 +1143,7 @@ impl XpProcess {
             WinCall::GetModuleHandleA => Ok(pe32::IMAGE_BASE),
             WinCall::GetStdHandle => self.get_std_handle(esp, memory),
             WinCall::GetFileType => self.get_file_type(esp, memory),
-            WinCall::SetHandleCount => Ok(read_u32(memory, esp + 4)?),
+            WinCall::SetHandleCount => self.set_handle_count(esp, memory),
             WinCall::GetCommandLineA => Ok(PROCESS_DATA_VA),
             WinCall::GetEnvironmentStringsW => Ok(0),
             WinCall::GetEnvironmentStringsA => Ok(ENVIRONMENT_BLOCK_VA),
@@ -1540,6 +1559,14 @@ impl XpProcess {
         _memory: &impl GuestMemory,
     ) -> Result<u32, &'static str> {
         Ok(2)
+    }
+
+    fn set_handle_count(
+        &self,
+        esp: u32,
+        memory: &impl GuestMemory,
+    ) -> Result<u32, &'static str> {
+        read_u32(memory, esp + 4)
     }
 
     fn get_cp_info(&self, esp: u32, memory: &mut impl GuestMemory) -> Result<u32, &'static str> {
@@ -4937,6 +4964,53 @@ mod tests {
         assert_eq!(
             xp.dispatch(1, 0, esp, &mut memory).unwrap(),
             PersonalityAction::Return(2)
+        );
+    }
+
+    #[test]
+    fn child_set_handle_count_reuses_process_compatibility_semantics() {
+        let provider = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("SetHandleCount".into()),
+            iat_rva: 0,
+        };
+        let mut pid2 = XpProcess::new(Vec::new());
+        pid2.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+        let requested = 0x40;
+        write_u32(&mut memory, esp, 0x2113_1e23).unwrap();
+        write_u32(&mut memory, esp + 4, requested).unwrap();
+        assert_eq!(
+            pid2.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(requested))
+        );
+        assert_eq!(pid2.call_count, 1);
+    }
+
+    #[test]
+    fn launcher_set_handle_count_reuses_process_compatibility_semantics() {
+        let imports = vec![LauncherImport {
+            id: 0,
+            module: "KERNEL32.dll".into(),
+            symbol: "SetHandleCount".into(),
+            iat_rva: 0,
+        }];
+        let mut xp = XpProcess::new(imports);
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+        let requested = 0x40;
+        write_u32(&mut memory, esp, 0x0040_1e23).unwrap();
+        write_u32(&mut memory, esp + 4, requested).unwrap();
+        assert_eq!(
+            xp.dispatch(1, 0, esp, &mut memory).unwrap(),
+            PersonalityAction::Return(requested)
         );
     }
 
