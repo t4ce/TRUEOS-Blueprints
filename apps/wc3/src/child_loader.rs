@@ -34,6 +34,7 @@ pub enum ProviderOp {
     LCMapStringW,
     GetModuleFileNameA,
     GetModuleHandleA,
+    LoadLibraryA,
     GetWindowsDirectoryA,
     GetSystemDirectoryA,
     QueryPerformanceFrequency,
@@ -71,6 +72,7 @@ impl ProviderOp {
             | Self::SetHandleCount
             | Self::SetLastError
             | Self::GetModuleHandleA
+            | Self::LoadLibraryA
             | Self::QueryPerformanceFrequency
             | Self::QueryPerformanceCounter => 4,
             Self::GetCPInfo | Self::GetWindowsDirectoryA | Self::GetSystemDirectoryA => 8,
@@ -127,6 +129,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "LCMapStringW" => ProviderOp::LCMapStringW,
             "GetModuleFileNameA" => ProviderOp::GetModuleFileNameA,
             "GetModuleHandleA" => ProviderOp::GetModuleHandleA,
+            "LoadLibraryA" => ProviderOp::LoadLibraryA,
             "GetWindowsDirectoryA" => ProviderOp::GetWindowsDirectoryA,
             "GetSystemDirectoryA" => ProviderOp::GetSystemDirectoryA,
             "QueryPerformanceFrequency" => ProviderOp::QueryPerformanceFrequency,
@@ -613,6 +616,22 @@ mod tests {
         let mut bytes = [0; thunk32::THUNK_BYTES];
         thunk32::write(573, provider_thunk_kind(&import), &mut bytes).unwrap();
         assert_eq!(&bytes[8..11], &[0xc2, 0x04, 0x00]);
+    }
+
+    #[test]
+    fn load_library_a_is_runtime_stdcall_four() {
+        let import = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("LoadLibraryA".into()),
+            iat_rva: 0,
+        };
+
+        let operation = provider_op(&import);
+
+        assert_eq!(operation, ProviderOp::LoadLibraryA);
+        assert!(!operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 4);
+        assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Stdcall(4));
     }
 
     #[test]

@@ -1647,6 +1647,79 @@ pub(super) async fn run_loop(
                         continue;
                     }
                     let operation = child_loader::provider_op(&provider);
+                    if operation == child_loader::ProviderOp::LoadLibraryA {
+                        let frame = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            exit.registers.esp,
+                            2,
+                        )?;
+                        let name_ptr = frame[1];
+                        if name_ptr == 0 {
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD LOADLIBRARY FRONTIER pid={} tid={} during=\"{}\" kind=null-name caller_ret=0x{:08x}",
+                                    active_pid,
+                                    active_tid,
+                                    running_module_name,
+                                    u32::from_le_bytes(caller_ret),
+                                ),
+                            );
+                            return Ok(());
+                        }
+                        let requested = wc3::process::read_c_string(
+                            &X86Memory(&child.address_space),
+                            name_ptr,
+                            260,
+                        )
+                        .map_err(|error| format!("LoadLibraryA module name: {error}"))?;
+                        let existing = session
+                            .process(active_pid)
+                            .ok_or_else(|| "child process missing".to_owned())?
+                            .xp
+                            .loaded_module_handle(&requested);
+                        if let Some(handle) = existing {
+                            let mut registers = exit.registers;
+                            registers.eax = handle;
+                            contexts[active]
+                                .context
+                                .set_registers(registers)
+                                .map_err(|error| error.to_string())?;
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD LOADLIBRARY RETURN pid={} tid={} during=\"{}\" requested={:?} handle=0x{:08x} already_loaded=1 cleanup=4-by-thunk",
+                                    active_pid, active_tid, running_module_name, requested, handle,
+                                ),
+                            );
+                            continue;
+                        }
+                        let listing = async_fs::list_dir(b"/common/Warcraft III")
+                            .await
+                            .map_err(|error| {
+                                format!("list Warcraft III directory for LoadLibraryA: TRUEOSFS {error}")
+                            })?;
+                        if listing.truncated {
+                            return Err("Warcraft III directory listing truncated".into());
+                        }
+                        let stored = child_loader::resolve_file(&listing, &requested)
+                            .map_err(str::to_owned)?;
+                        let kind = if stored.is_some() { "local-native" } else { "external" };
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD LOADLIBRARY FRONTIER pid={} tid={} during=\"{}\" requested={:?} kind={} stored={:?} caller_ret=0x{:08x}",
+                                active_pid,
+                                active_tid,
+                                running_module_name,
+                                requested,
+                                kind,
+                                stored,
+                                u32::from_le_bytes(caller_ret),
+                            ),
+                        );
+                        return Ok(());
+                    }
                     if operation.is_generic_process_local() {
                         let dispatch = {
                             let mut child_memory = X86Memory(&child.address_space);

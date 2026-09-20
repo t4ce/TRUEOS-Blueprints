@@ -201,7 +201,7 @@ fn write_ansi_directory(
     Ok(required - 1)
 }
 
-fn read_c_string(
+pub fn read_c_string(
     memory: &impl GuestMemory,
     address: u32,
     limit: usize,
@@ -589,6 +589,16 @@ pub struct XpProcess {
 }
 
 impl XpProcess {
+    pub fn loaded_module_handle(&self, requested: &str) -> Option<u32> {
+        self.loaded_modules
+            .iter()
+            .find(|module| {
+                module_names_match(&module.requested_name, requested)
+                    || module_names_match(&module.stored_name, requested)
+            })
+            .map(|module| module.handle)
+    }
+
     pub fn new(imports: Vec<LauncherImport>) -> Self {
         Self::with_image(imports, ProcessImage::Launcher)
     }
@@ -2023,14 +2033,8 @@ impl XpProcess {
             return Ok(pe32::IMAGE_BASE);
         }
         let requested = read_c_string(memory, module_name, 260)?;
-        if let Some(module) = self.loaded_modules
-            .iter()
-            .find(|module| {
-                module_names_match(&module.requested_name, &requested)
-                    || module_names_match(&module.stored_name, &requested)
-            })
-        {
-            return Ok(module.handle);
+        if let Some(handle) = self.loaded_module_handle(&requested) {
+            return Ok(handle);
         }
         self.last_error = ERROR_MOD_NOT_FOUND;
         Ok(0)
@@ -5961,6 +5965,12 @@ mod tests {
             .unwrap();
         pid2.register_native_module("Storm.dll", "Storm.dll", 0x1500_0000)
             .unwrap();
+        assert_eq!(pid2.loaded_module_handle("mss32.dll"), Some(0x2110_0000));
+        assert_eq!(
+            pid2.loaded_module_handle("C:\\Warcraft III\\Mss32.dll"),
+            Some(0x2110_0000)
+        );
+        assert_eq!(pid2.loaded_module_handle("Unknown.dll"), None);
         let mut memory = Memory {
             base: STACK_BASE,
             bytes: vec![0; STACK_BYTES],
@@ -6316,6 +6326,7 @@ mod tests {
         };
         assert_ne!(kernel, 0);
         assert_ne!(kernel, msvcrt);
+        assert_eq!(pid2.loaded_module_handle("KERNEL32.dll"), Some(kernel));
     }
 
     #[test]
