@@ -33,6 +33,16 @@ pub fn provider_thunk_kind(import: &ProviderImport) -> thunk32::Kind {
             thunk32::Kind::Stdcall(4)
         }
         ProviderSymbol::Name(symbol)
+            if import.module.eq_ignore_ascii_case("KERNEL32.dll")
+                && symbol == "LeaveCriticalSection" =>
+        {
+            thunk32::Kind::Stdcall(4)
+        }
+        ProviderSymbol::Name(symbol)
+            if import.module.eq_ignore_ascii_case("KERNEL32.dll")
+                && symbol == "SetUnhandledExceptionFilter" =>
+        { thunk32::Kind::Stdcall(4) }
+        ProviderSymbol::Name(symbol)
             if import.module.eq_ignore_ascii_case("KERNEL32.dll") && symbol == "VirtualAlloc" =>
         {
             thunk32::Kind::Stdcall(16)
@@ -260,6 +270,26 @@ mod tests {
         };
         let mut bytes = [0; thunk32::THUNK_BYTES];
         thunk32::write(435, provider_thunk_kind(&import), &mut bytes).unwrap();
+        assert_eq!(&bytes[8..11], &[0xc2, 4, 0]);
+    }
+
+    #[test]
+    fn leave_critical_section_provider_uses_stdcall_four() {
+        let import = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("LeaveCriticalSection".into()),
+            iat_rva: 0,
+        };
+        let mut bytes = [0; thunk32::THUNK_BYTES];
+        thunk32::write(437, provider_thunk_kind(&import), &mut bytes).unwrap();
+        assert_eq!(&bytes[8..11], &[0xc2, 4, 0]);
+    }
+
+    #[test]
+    fn set_unhandled_exception_filter_provider_uses_stdcall_four() {
+        let import = ProviderImport { module: "KERNEL32.dll".into(), symbol: ProviderSymbol::Name("SetUnhandledExceptionFilter".into()), iat_rva: 0 };
+        let mut bytes = [0; thunk32::THUNK_BYTES];
+        thunk32::write(409, provider_thunk_kind(&import), &mut bytes).unwrap();
         assert_eq!(&bytes[8..11], &[0xc2, 4, 0]);
     }
 

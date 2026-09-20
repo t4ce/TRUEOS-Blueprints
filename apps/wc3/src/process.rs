@@ -366,6 +366,7 @@ pub struct XpProcess {
     registry_handles: HashMap<u32, RegistryHandle>,
     next_registry_handle: u32,
     last_error: u32,
+    unhandled_exception_filter: u32,
     tick_ms: u32,
     registered_classes: HashMap<String, RegisteredClass>,
     messages: VecDeque<Message>,
@@ -430,6 +431,7 @@ impl XpProcess {
             registry_handles: HashMap::new(),
             next_registry_handle: 0x5743_8001,
             last_error: 0,
+            unhandled_exception_filter: 0,
             tick_ms: 0,
             registered_classes: HashMap::new(),
             messages: VecDeque::new(),
@@ -729,6 +731,18 @@ impl XpProcess {
                 ))
             }
             (module, ProviderSymbol::Name(symbol))
+                if module.eq_ignore_ascii_case("KERNEL32.dll")
+                    && symbol == "LeaveCriticalSection" =>
+            {
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(
+                    self.leave_critical_section(tid, esp, memory)?,
+                ))
+            }
+            (module, ProviderSymbol::Name(symbol))
                 if module.eq_ignore_ascii_case("KERNEL32.dll") && symbol == "SetLastError" =>
             {
                 let value = read_u32(
@@ -741,6 +755,13 @@ impl XpProcess {
                     .ok_or("call count overflow")?;
                 self.set_last_error(value);
                 Ok(PersonalityAction::Return(0))
+            }
+            (module, ProviderSymbol::Name(symbol))
+                if module.eq_ignore_ascii_case("KERNEL32.dll") && symbol == "SetUnhandledExceptionFilter" =>
+            {
+                let filter = read_u32(memory, esp.checked_add(4).ok_or("provider argument overflow")?)?;
+                self.call_count = self.call_count.checked_add(1).ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(self.set_unhandled_exception_filter(filter)))
             }
             (module, ProviderSymbol::Name(symbol))
                 if module.eq_ignore_ascii_case("MSVCRT.dll") && symbol == "malloc" =>
@@ -1231,6 +1252,12 @@ impl XpProcess {
 
     pub fn set_last_error(&mut self, value: u32) {
         self.last_error = value;
+    }
+
+    pub fn set_unhandled_exception_filter(&mut self, filter: u32) -> u32 {
+        let previous = self.unhandled_exception_filter;
+        self.unhandled_exception_filter = filter;
+        previous
     }
 
     fn get_startup_info(
@@ -4171,9 +4198,14 @@ mod tests {
             symbol: ProviderSymbol::Name("EnterCriticalSection".into()),
             iat_rva: 0,
         };
+        let leave = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("LeaveCriticalSection".into()),
+            iat_rva: 0,
+        };
         let pid1 = XpProcess::new(Vec::new());
         let mut pid2 = XpProcess::new(Vec::new());
-        pid2.install_provider_surface(vec![initialize, enter], Vec::new(), Vec::new());
+        pid2.install_provider_surface(vec![initialize, enter, leave], Vec::new(), Vec::new());
         let mut memory = Memory {
             base: STACK_BASE,
             bytes: vec![0; STACK_BYTES],
@@ -4203,12 +4235,20 @@ mod tests {
         assert_eq!(read_u32(&memory, critical_section + 4).unwrap(), 1);
         assert_eq!(read_u32(&memory, critical_section + 8).unwrap(), 2);
         assert_eq!(read_u32(&memory, critical_section + 12).unwrap(), 3);
-        let before = memory.bytes.clone();
+        let before_wrong_owner = memory.bytes.clone();
         assert_eq!(
-            pid2.dispatch_provider_for_process(2, 4, 1, esp, &mut memory),
-            Err("critical section contention")
+            pid2.dispatch_provider_for_process(2, 4, 2, esp, &mut memory),
+            Err("critical section owner")
         );
-        assert_eq!(memory.bytes, before);
+        assert_eq!(memory.bytes, before_wrong_owner);
+        pid2.dispatch_provider_for_process(2, 3, 2, esp, &mut memory).unwrap();
+        assert_eq!(read_u32(&memory, critical_section + 4).unwrap(), 0);
+        assert_eq!(read_u32(&memory, critical_section + 8).unwrap(), 1);
+        assert_eq!(read_u32(&memory, critical_section + 12).unwrap(), 3);
+        pid2.dispatch_provider_for_process(2, 3, 2, esp, &mut memory).unwrap();
+        assert_eq!(read_u32(&memory, critical_section + 4).unwrap(), u32::MAX);
+        assert_eq!(read_u32(&memory, critical_section + 8).unwrap(), 0);
+        assert_eq!(read_u32(&memory, critical_section + 12).unwrap(), 0);
         assert!(!pid1.has_critical_section(critical_section));
         assert!(pid2.has_critical_section(critical_section));
     }

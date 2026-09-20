@@ -602,6 +602,67 @@ async fn run() -> Result<(), String> {
                             .map_err(|error| error.to_string())?;
                         continue;
                     }
+                    let is_leave_critical_section = matches!(
+                        &provider.symbol,
+                        child_loader::ProviderSymbol::Name(name)
+                            if provider.module.eq_ignore_ascii_case("KERNEL32.dll")
+                                && name == "LeaveCriticalSection"
+                    );
+                    if is_leave_critical_section {
+                        let argument = exit.registers.esp.checked_add(4).ok_or_else(|| {
+                            "child provider argument address overflow".to_owned()
+                        })?;
+                        let mut address = [0; 4];
+                        child.address_space.read(argument, &mut address)
+                            .map_err(|error| error.to_string())?;
+                        let address = u32::from_le_bytes(address);
+                        if !session.process(active_pid)
+                            .ok_or_else(|| "child process missing".to_owned())?
+                            .xp.has_critical_section(address)
+                        {
+                            logl::log(level::IMPORTANT, format_args!(
+                                "WC3 CHILD CRITICAL SECTION FRONTIER pid={} tid={} operation=leave reason=unknown-critical-section address=0x{:08x}",
+                                active_pid, active_tid, address
+                            ));
+                            return Ok(());
+                        }
+                        let mut before = [0; 16];
+                        child.address_space.read(address, &mut before)
+                            .map_err(|error| error.to_string())?;
+                        let lock_before = u32::from_le_bytes(before[4..8].try_into().unwrap());
+                        let recursion_before = u32::from_le_bytes(before[8..12].try_into().unwrap());
+                        let owner_before = u32::from_le_bytes(before[12..16].try_into().unwrap());
+                        logl::log(level::IMPORTANT, format_args!(
+                            "WC3 CHILD PROVIDER CALL pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" provider_id={} module=\"{}\" symbol=\"LeaveCriticalSection\" esp=0x{:08x} critical_section=0x{:08x} caller_ret=0x{:08x} lock_count_before=0x{:08x} recursion_before={} owner_before={}",
+                            active_pid, active_tid, running_module_name, provider_id, provider.module,
+                            exit.registers.esp, address, u32::from_le_bytes(caller_ret), lock_before,
+                            recursion_before, owner_before
+                        ));
+                        let mut child_memory = X86Memory(&child.address_space);
+                        let action = session.process_mut(active_pid)
+                            .ok_or_else(|| "child process missing".to_owned())?.xp
+                            .dispatch_provider_for_process(active_pid, active_tid, provider_id,
+                                exit.registers.esp, &mut child_memory).map_err(str::to_owned)?;
+                        let PersonalityAction::Return(value) = action else {
+                            return Err("LeaveCriticalSection child provider did not return".into());
+                        };
+                        let mut after = [0; 16];
+                        child.address_space.read(address, &mut after)
+                            .map_err(|error| error.to_string())?;
+                        let lock_count = u32::from_le_bytes(after[4..8].try_into().unwrap());
+                        let recursion = u32::from_le_bytes(after[8..12].try_into().unwrap());
+                        let owner = u32::from_le_bytes(after[12..16].try_into().unwrap());
+                        logl::log(level::IMPORTANT, format_args!(
+                            "WC3 CHILD CRITICAL SECTION LEAVE pid={} tid={} address=0x{:08x} lock_count=0x{:08x} recursion={} owner={} caller_ret=0x{:08x} resume_eip=0x{:08x} return_eax=0x{:08x}",
+                            active_pid, active_tid, address, lock_count, recursion, owner,
+                            u32::from_le_bytes(caller_ret), exit.registers.eip, value
+                        ));
+                        let mut registers = exit.registers;
+                        registers.eax = value;
+                        contexts[active].context.set_registers(registers)
+                            .map_err(|error| error.to_string())?;
+                        continue;
+                    }
                     let is_set_last_error = matches!(
                         &provider.symbol,
                         child_loader::ProviderSymbol::Name(name)
@@ -661,6 +722,30 @@ async fn run() -> Result<(), String> {
                             .context
                             .set_registers(registers)
                             .map_err(|error| error.to_string())?;
+                        continue;
+                    }
+                    let is_unhandled_filter = matches!(
+                        &provider.symbol,
+                        child_loader::ProviderSymbol::Name(name)
+                            if provider.module.eq_ignore_ascii_case("KERNEL32.dll")
+                                && name == "SetUnhandledExceptionFilter"
+                    );
+                    if is_unhandled_filter {
+                        let filter = read_guest_words(&X86Memory(&child.address_space), exit.registers.esp, 2)?[1];
+                        let mut child_memory = X86Memory(&child.address_space);
+                        let action = session.process_mut(active_pid)
+                            .ok_or_else(|| "child process missing".to_owned())?.xp
+                            .dispatch_provider_for_process(active_pid, active_tid, provider_id, exit.registers.esp, &mut child_memory)
+                            .map_err(str::to_owned)?;
+                        let PersonalityAction::Return(previous) = action else { return Err("SetUnhandledExceptionFilter child provider did not return".into()); };
+                        logl::log(level::IMPORTANT, format_args!(
+                            "WC3 CHILD UNHANDLED FILTER SET pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" filter=0x{:08x} previous=0x{:08x} caller_ret=0x{:08x} resume_eip=0x{:08x}",
+                            active_pid, active_tid, running_module_name, filter, previous,
+                            u32::from_le_bytes(caller_ret), exit.registers.eip
+                        ));
+                        let mut registers = exit.registers;
+                        registers.eax = previous;
+                        contexts[active].context.set_registers(registers).map_err(|error| error.to_string())?;
                         continue;
                     }
                     let is_crt_malloc = matches!(
