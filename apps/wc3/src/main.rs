@@ -6,11 +6,21 @@ use std::{
 use sha2::{Digest, Sha256};
 use trueos::{
     async_fs,
-    logl::{self, level},
+    logl::level,
     ui4_scene::{self, Damage, Font, Frame, SceneTextRow, rgba},
     x86::{AddressSpace, Context, ExitKind, Permissions, Registers},
 };
 mod asupersync;
+
+mod logl {
+    #[inline]
+    pub fn log(level: u8, message: core::fmt::Arguments<'_>) {
+        #[cfg(not(feature = "nolog"))]
+        trueos::logl::log(level, message);
+        #[cfg(feature = "nolog")]
+        let _ = (level, message);
+    }
+}
 
 use wc3::{
     EXPECTED_SHA256, LAUNCHER_PATH, child_loader,
