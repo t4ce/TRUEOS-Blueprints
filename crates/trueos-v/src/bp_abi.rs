@@ -64,7 +64,9 @@ pub struct TrueosX86RegistersV1 {
 ///
 /// For `kind=Exception`, `detail` carries VM-exit interruption information:
 /// bits 0..7 are the vector, bits 8..10 the interruption type, bit 11 means
-/// `qualification` contains an exception error code, and bit 31 is valid.
+/// `qualification` low 32 bits contain an exception error code, and bit 31 is
+/// valid. For a valid page fault, `qualification` high 32 bits contain CR2
+/// (the architectural fault linear address).
 /// For `kind=MemoryViolation`, `qualification` remains the EPT qualification.
 /// Other exit kinds retain their existing detail and qualification meanings.
 #[repr(C)]

@@ -5,7 +5,9 @@
 //! crosses this boundary. For [`ExitKind::Exception`], `Exit::detail` is the
 //! VM-exit interruption-information field (vector in bits 0..7, interruption
 //! type in bits 8..10, error-code-valid in bit 11, valid in bit 31), and
-//! `Exit::qualification` is the exception error code only when bit 11 is set.
+//! `Exit::qualification` low 32 bits are the exception error code only when
+//! bit 11 is set. For a valid page fault its high 32 bits are CR2, the fault
+//! linear address.
 //! For [`ExitKind::MemoryViolation`], qualification remains the EPT value.
 
 use alloc::sync::Arc;

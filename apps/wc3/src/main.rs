@@ -2372,9 +2372,15 @@ async fn run() -> Result<(), String> {
                 logl::log(level::IMPORTANT, format_args!(
                     "WC3 CHILD EXCEPTION pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" eip=0x{:08x} esp=0x{:08x} vector={} name=\"{}\" type={} valid={} error_valid={} error={}",
                     active_key.pid, active_key.tid, module.stored, registers.eip, registers.esp,
-                    exception.vector, exception.name, exception.interruption_type,
-                    exception.valid as u8, exception.error_valid as u8,
+                    exception.vector.map(|value| value.to_string()).unwrap_or_else(|| "-".into()), exception.name,
+                    exception.interruption_type.map(|value| value.to_string()).unwrap_or_else(|| "-".into()),
+                    exception.valid as u8,
+                    exception.error_valid.map(|value| (value as u8).to_string()).unwrap_or_else(|| "-".into()),
                     exception.error.map(|value| format!("0x{value:08x}")).unwrap_or_else(|| "-".into()),
+                ));
+                logl::log(level::IMPORTANT, format_args!(
+                    "WC3 CHILD EXCEPTION FAULT {}",
+                    child_exception_fault_detail(exception),
                 ));
                 logl::log(level::IMPORTANT, format_args!(
                     "WC3 CHILD EXCEPTION REGS eax=0x{:08x} ebx=0x{:08x} ecx=0x{:08x} edx=0x{:08x} esi=0x{:08x} edi=0x{:08x} ebp=0x{:08x} esp=0x{:08x} eip=0x{:08x} eflags=0x{:08x} fs_base=0x{:08x}",
@@ -2389,6 +2395,11 @@ async fn run() -> Result<(), String> {
                 logl::log(level::IMPORTANT, format_args!(
                     "WC3 CHILD EXCEPTION STACK esp=0x{:08x} words={}",
                     registers.esp, exception_stack_window(&child.address_space, registers.esp),
+                ));
+                logl::log(level::IMPORTANT, format_args!(
+                    "WC3 CHILD SEH FRONTIER pid={} tid={} fs_base=0x{:08x} registration_head={}",
+                    active_key.pid, active_key.tid, registers.fs_base,
+                    seh_registration_head(&child.address_space, registers.fs_base),
                 ));
                 return Ok(());
             }
@@ -2934,24 +2945,51 @@ fn registry_root_name(hkey: u32) -> String {
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 struct ChildException {
-    vector: u32,
-    interruption_type: u32,
+    vector: Option<u32>,
+    interruption_type: Option<u32>,
     valid: bool,
-    error_valid: bool,
+    error_valid: Option<bool>,
     error: Option<u32>,
+    fault_linear: Option<u32>,
     name: &'static str,
 }
 
 fn decode_child_exception(detail: u32, qualification: u64) -> ChildException {
-    let vector = detail & 0xff;
-    let error_valid = detail & (1 << 11) != 0;
+    let valid = detail & (1 << 31) != 0;
+    let vector = valid.then_some(detail & 0xff);
+    let error_valid = valid.then_some(detail & (1 << 11) != 0);
     ChildException {
         vector,
-        interruption_type: (detail >> 8) & 7,
-        valid: detail & (1 << 31) != 0,
+        interruption_type: valid.then_some((detail >> 8) & 7),
+        valid,
         error_valid,
-        error: error_valid.then_some(qualification as u32),
-        name: child_exception_name(vector),
+        error: error_valid.unwrap_or(false).then_some(qualification as u32),
+        fault_linear: (valid && vector == Some(14)).then_some((qualification >> 32) as u32),
+        name: vector.map(child_exception_name).unwrap_or("invalid-interruption-info"),
+    }
+}
+
+fn child_exception_fault_detail(exception: ChildException) -> String {
+    if exception.vector != Some(14) {
+        return "linear=-".into();
+    }
+    let error = exception.error.unwrap_or(0);
+    let linear = exception.fault_linear.unwrap_or(0);
+    format!(
+        "linear=0x{linear:08x} error=0x{error:08x} present={} write={} user={} reserved={} instruction_fetch={}",
+        error & 1,
+        (error >> 1) & 1,
+        (error >> 2) & 1,
+        (error >> 3) & 1,
+        (error >> 4) & 1,
+    )
+}
+
+fn seh_registration_head(address_space: &AddressSpace, fs_base: u32) -> String {
+    let mut bytes = [0; 4];
+    match address_space.read(fs_base, &mut bytes) {
+        Ok(4) => format!("0x{:08x}", u32::from_le_bytes(bytes)),
+        _ => "<unreadable>".into(),
     }
 }
 
@@ -3180,10 +3218,27 @@ mod tests {
     #[test]
     fn child_exception_diagnostic_decodes_ud_without_guest_mutation() {
         let exception = decode_child_exception((1 << 31) | 6, 0);
-        assert_eq!(exception.vector, 6);
+        assert_eq!(exception.vector, Some(6));
         assert_eq!(exception.name, "#UD");
         assert!(exception.valid);
-        assert!(!exception.error_valid);
+        assert_eq!(exception.error_valid, Some(false));
         assert_eq!(exception.error, None);
+        assert_eq!(exception.fault_linear, None);
+    }
+
+    #[test]
+    fn child_exception_diagnostic_decodes_page_fault_and_rejects_invalid_info() {
+        let exception = decode_child_exception((1 << 31) | (1 << 11) | 14, (1u64 << 32) | 2);
+        assert_eq!(exception.vector, Some(14));
+        assert_eq!(exception.name, "#PF");
+        assert_eq!(exception.error, Some(2));
+        assert_eq!(exception.fault_linear, Some(1));
+
+        let invalid = decode_child_exception(0, 0);
+        assert_eq!(invalid.vector, None);
+        assert_eq!(invalid.name, "invalid-interruption-info");
+        assert_eq!(invalid.interruption_type, None);
+        assert_eq!(invalid.error_valid, None);
+        assert_eq!(child_exception_fault_detail(exception), "linear=0x00000001 error=0x00000002 present=0 write=1 user=0 reserved=0 instruction_fetch=0");
     }
 }
