@@ -610,6 +610,115 @@ async fn run() -> Result<(), String> {
                             .map_err(|error| error.to_string())?;
                         continue;
                     }
+                    let is_wide_char_to_multi_byte = matches!(
+                        &provider.symbol,
+                        child_loader::ProviderSymbol::Name(name)
+                            if provider.module.eq_ignore_ascii_case("KERNEL32.dll")
+                                && name == "WideCharToMultiByte"
+                    );
+                    if is_wide_char_to_multi_byte {
+                        let frame = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            exit.registers.esp,
+                            9,
+                        )?;
+                        let code_page = frame[1];
+                        let flags = frame[2];
+                        let source = frame[3];
+                        let count = frame[4];
+                        let output = frame[5];
+                        let capacity = frame[6];
+                        let default_char = frame[7];
+                        let used_default_char = frame[8];
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD WIDECHARTOMULTIBYTE CALL pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" provider_id={} code_page={} flags=0x{:08x} source=0x{:08x} count={} output=0x{:08x} capacity={} default_char=0x{:08x} used_default_char=0x{:08x} caller_ret=0x{:08x}",
+                                active_pid,
+                                active_tid,
+                                running_module_name,
+                                provider_id,
+                                code_page,
+                                flags,
+                                source,
+                                count as i32,
+                                output,
+                                capacity,
+                                default_char,
+                                used_default_char,
+                                u32::from_le_bytes(caller_ret),
+                            ),
+                        );
+                        if code_page != 0 && code_page != 1252 {
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD WIDECHARTOMULTIBYTE FRONTIER pid={} tid={} reason=unsupported-code-page code_page={}",
+                                    active_pid, active_tid, code_page,
+                                ),
+                            );
+                            return Ok(());
+                        }
+                        let mut child_memory = X86Memory(&child.address_space);
+                        let action = session
+                            .process_mut(active_pid)
+                            .ok_or_else(|| "child process missing".to_owned())?
+                            .xp
+                            .dispatch_provider_for_process(
+                                active_pid,
+                                active_tid,
+                                provider_id,
+                                exit.registers.esp,
+                                &mut child_memory,
+                            )
+                            .map_err(str::to_owned)?;
+                        let PersonalityAction::Return(result) = action else {
+                            return Err("WideCharToMultiByte child provider did not return".into());
+                        };
+                        if output == 0 {
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD WIDECHARTOMULTIBYTE RESULT pid={} tid={} mode=size-query eax={} cleanup=32-by-thunk",
+                                    active_pid, active_tid, result,
+                                ),
+                            );
+                        } else {
+                            let byte_count = usize::try_from(result)
+                                .map_err(|_| "WideCharToMultiByte result too large".to_owned())?;
+                            let mut bytes = vec![0; byte_count];
+                            let read = child
+                                .address_space
+                                .read(output, &mut bytes)
+                                .map_err(|error| error.to_string())?;
+                            if read != bytes.len() {
+                                return Err("short WideCharToMultiByte output read".into());
+                            }
+                            let mut preview = bytes
+                                .iter()
+                                .take(64)
+                                .map(|byte| format!("{byte:02x}"))
+                                .collect::<Vec<_>>()
+                                .join(" ");
+                            if bytes.len() > 64 {
+                                preview.push_str(" ...");
+                            }
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD WIDECHARTOMULTIBYTE RESULT pid={} tid={} mode=convert eax={} output=0x{:08x} bytes=\"{}\" cleanup=32-by-thunk",
+                                    active_pid, active_tid, result, output, preview,
+                                ),
+                            );
+                        }
+                        let mut registers = exit.registers;
+                        registers.eax = result;
+                        contexts[active]
+                            .context
+                            .set_registers(registers)
+                            .map_err(|error| error.to_string())?;
+                        continue;
+                    }
                     let is_get_version_ex_a = matches!(
                         &provider.symbol,
                         child_loader::ProviderSymbol::Name(name)

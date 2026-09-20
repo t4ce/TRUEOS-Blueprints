@@ -53,6 +53,12 @@ pub fn provider_thunk_kind(import: &ProviderImport) -> thunk32::Kind {
             thunk32::Kind::Stdcall(4)
         }
         ProviderSymbol::Name(symbol)
+            if import.module.eq_ignore_ascii_case("KERNEL32.dll")
+                && symbol == "WideCharToMultiByte" =>
+        {
+            thunk32::Kind::Stdcall(32)
+        }
+        ProviderSymbol::Name(symbol)
             if import.module.eq_ignore_ascii_case("KERNEL32.dll") && symbol == "HeapCreate" =>
         {
             thunk32::Kind::Stdcall(12)
@@ -335,6 +341,18 @@ mod tests {
         let mut bytes = [0; thunk32::THUNK_BYTES];
         thunk32::write(581, provider_thunk_kind(&import), &mut bytes).unwrap();
         assert_eq!(&bytes[8..11], &[0xc2, 0x04, 0x00]);
+    }
+
+    #[test]
+    fn wide_char_to_multi_byte_provider_uses_stdcall_thirty_two() {
+        let import = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("WideCharToMultiByte".into()),
+            iat_rva: 0,
+        };
+        let mut bytes = [0; thunk32::THUNK_BYTES];
+        thunk32::write(612, provider_thunk_kind(&import), &mut bytes).unwrap();
+        assert_eq!(&bytes[8..11], &[0xc2, 0x20, 0x00]);
     }
 
     #[test]

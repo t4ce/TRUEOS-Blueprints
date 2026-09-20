@@ -755,6 +755,18 @@ impl XpProcess {
                 Ok(PersonalityAction::Return(self.get_version_ex(esp, memory)?))
             }
             (module, ProviderSymbol::Name(symbol))
+                if module.eq_ignore_ascii_case("KERNEL32.dll")
+                    && symbol == "WideCharToMultiByte" =>
+            {
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(
+                    self.wide_to_multi_byte(esp, memory)?,
+                ))
+            }
+            (module, ProviderSymbol::Name(symbol))
                 if module.eq_ignore_ascii_case("KERNEL32.dll") && symbol == "HeapCreate" =>
             {
                 Ok(PersonalityAction::Return(
