@@ -1345,6 +1345,7 @@ struct PendingChild {
     cipow: Option<ChildCiPow>,
     cipow_diagnostic_logged: bool,
     seh: Option<ChildSehDispatch>,
+    unhandled_filter_call: Option<ChildUnhandledFilterCall>,
     loader: ChildLoaderState,
     execution: ChildExecutionState,
 }
@@ -1360,6 +1361,7 @@ struct ChildSehDispatch {
     preserved_fs_base: u32,
     depth: u32,
 }
+#[derive(Clone, Debug)] struct ChildUnhandledFilterCall { provider_resume_eip: u32, provider_esp: u32, filter: u32 }
 
 struct ChildCiPow { provider_esp: u32 }
 
@@ -2203,6 +2205,7 @@ mod tests {
             cipow: None,
             cipow_diagnostic_logged: false,
             seh: None,
+            unhandled_filter_call: None,
             loader: ChildLoaderState {
                 prepared: true,
                 native_requests: Vec::new(),
@@ -2426,6 +2429,7 @@ mod tests {
             cipow: None,
             cipow_diagnostic_logged: false,
             seh: None,
+            unhandled_filter_call: None,
             loader: ChildLoaderState {
                 prepared: true,
                 native_requests: Vec::new(),

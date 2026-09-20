@@ -53,6 +53,7 @@ pub enum ProviderOp {
     LeaveCriticalSection,
     SetLastError,
     SetUnhandledExceptionFilter,
+    UnhandledExceptionFilter,
     VirtualAlloc,
     RegOpenKeyExA,
     CrtMalloc,
@@ -73,6 +74,7 @@ impl ProviderOp {
             | Self::EnterCriticalSection
             | Self::LeaveCriticalSection
             | Self::SetUnhandledExceptionFilter
+            | Self::UnhandledExceptionFilter
             | Self::GetVersionExA
             | Self::FreeEnvironmentStringsW
             | Self::GetStartupInfoA
@@ -158,6 +160,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "LeaveCriticalSection" => ProviderOp::LeaveCriticalSection,
             "SetLastError" => ProviderOp::SetLastError,
             "SetUnhandledExceptionFilter" => ProviderOp::SetUnhandledExceptionFilter,
+            "UnhandledExceptionFilter" => ProviderOp::UnhandledExceptionFilter,
             "VirtualAlloc" => ProviderOp::VirtualAlloc,
             _ => ProviderOp::Unknown,
         };

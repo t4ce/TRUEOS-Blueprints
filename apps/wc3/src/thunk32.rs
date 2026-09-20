@@ -17,6 +17,8 @@ pub const CHILD_IMAGE_RETURN_ADDRESS: u32 = CHILD_CONTROL_BASE + 0x30;
 pub const CHILD_IMAGE_RETURN_AFTER_VMCALL: u32 = CHILD_IMAGE_RETURN_ADDRESS + 3;
 pub const CHILD_SEH_RETURN_ADDRESS: u32 = CHILD_CONTROL_BASE + 0x40;
 pub const CHILD_SEH_RETURN_AFTER_VMCALL: u32 = CHILD_SEH_RETURN_ADDRESS + 3;
+pub const CHILD_UEF_RETURN_ADDRESS: u32 = CHILD_CONTROL_BASE + 0x50;
+pub const CHILD_UEF_RETURN_AFTER_VMCALL: u32 = CHILD_UEF_RETURN_ADDRESS + 3;
 pub const CHILD_CIPOW_SPILL_OFFSET: usize = 0x100;
 pub const CHILD_CIPOW_SPILL_ADDRESS: u32 = CHILD_CONTROL_BASE + CHILD_CIPOW_SPILL_OFFSET as u32;
 pub const CHILD_CIPOW_EXPONENT_OFFSET: usize = 0x200;
@@ -30,7 +32,7 @@ pub const CHILD_CIPOW_RESTORE_ADDRESS: u32 = CHILD_CONTROL_BASE + CHILD_CIPOW_RE
 pub const CHILD_CIPOW_SPILL_AFTER_VMCALL: u32 = CHILD_CIPOW_SPILL_ADDRESS + 15;
 
 pub fn install_child_controls(output: &mut [u8]) -> Result<(), &'static str> {
-    for offset in [0usize, 0x10, 0x20, 0x30, 0x40] {
+    for offset in [0usize, 0x10, 0x20, 0x30, 0x40, 0x50] {
         let trap = output
             .get_mut(offset..offset + 5)
             .ok_or("child control range")?;

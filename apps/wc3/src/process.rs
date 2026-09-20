@@ -34,6 +34,9 @@ pub const CHILD_WIN_HEAP_BASE: u32 = 0x1400_0000;
 pub const CHILD_WIN_HEAP_LIMIT: u32 = 0x1500_0000;
 pub const PROVIDER_MODULE_HANDLE_BASE: u32 = 0x5743_a001;
 pub const CURRENT_PROCESS_PSEUDO_HANDLE: u32 = u32::MAX;
+pub const EXCEPTION_CONTINUE_EXECUTION: u32 = u32::MAX;
+pub const EXCEPTION_CONTINUE_SEARCH: u32 = 0;
+pub const EXCEPTION_EXECUTE_HANDLER: u32 = 1;
 const ERROR_MOD_NOT_FOUND: u32 = 126;
 pub const PROCESS_DATA_VA: u32 = 0x0021_1000;
 /// Historical launcher stack: 0x0430_0000..0x0440_0000.
@@ -2011,6 +2014,17 @@ impl XpProcess {
         let previous = self.unhandled_exception_filter;
         self.unhandled_exception_filter = filter;
         previous
+    }
+
+    pub fn unhandled_exception_filter(&self) -> u32 { self.unhandled_exception_filter }
+
+    pub fn complete_unhandled_exception_filter(&self, result: Option<u32>) -> Result<u32, &'static str> {
+        match result {
+            None | Some(EXCEPTION_CONTINUE_SEARCH) => Ok(EXCEPTION_EXECUTE_HANDLER),
+            Some(EXCEPTION_CONTINUE_EXECUTION) => Ok(EXCEPTION_CONTINUE_EXECUTION),
+            Some(EXCEPTION_EXECUTE_HANDLER) => Ok(EXCEPTION_EXECUTE_HANDLER),
+            Some(_) => Err("top-level exception filter result"),
+        }
     }
 
     fn get_startup_info(

@@ -251,6 +251,14 @@ pub(super) async fn run_loop(
                         .as_mut()
                         .filter(|child| child.pid == active_pid && child.tid == active_tid)
                         .ok_or_else(|| "active child address space missing".to_owned())?;
+                    if exit.registers.eip == thunk32::CHILD_UEF_RETURN_AFTER_VMCALL {
+                        let pending = child.unhandled_filter_call.take().ok_or("UEF return without pending filter call")?;
+                        let result = session.process(active_pid).ok_or_else(|| "child process missing".to_owned())?.xp.complete_unhandled_exception_filter(Some(exit.registers.eax)).map_err(str::to_owned)?;
+                        let mut registers = exit.registers; registers.eip = pending.provider_resume_eip; registers.esp = pending.provider_esp; registers.eax = result;
+                        contexts[active].context.set_registers(registers).map_err(|error| error.to_string())?;
+                        logl::log(level::IMPORTANT, format_args!("WC3 CHILD UEF FILTER RETURN pid={} tid={} filter=0x{:08x} filter_result=0x{:08x} uef_result=0x{:08x}", active_pid, active_tid, pending.filter, exit.registers.eax, result));
+                        continue;
+                    }
                     if exit.registers.eip == thunk32::CHILD_SEH_RETURN_AFTER_VMCALL {
                         let seh = child.seh.take().ok_or("SEH return without pending dispatch")?;
                         logl::log(level::IMPORTANT, format_args!(
@@ -1858,6 +1866,28 @@ pub(super) async fn run_loop(
                         continue;
                     }
                     let operation = child_loader::provider_op(&provider);
+                    if operation == child_loader::ProviderOp::UnhandledExceptionFilter {
+                        let exception_pointers = read_guest_words(&X86Memory(&child.address_space), exit.registers.esp, 2)?[1];
+                        if exception_pointers == 0 { return Err("WC3 CHILD UEF FRONTIER reason=null-exception-pointers".into()); }
+                        let mut pointers = [0; 8];
+                        if child.address_space.read(exception_pointers, &mut pointers).map_err(|error| error.to_string())? != 8 { return Err("WC3 CHILD UEF FRONTIER reason=unreadable-exception-pointers".into()); }
+                        let filter = session.process(active_pid).ok_or_else(|| "child process missing".to_owned())?.xp.unhandled_exception_filter();
+                        if filter == 0 {
+                            let result = session.process(active_pid).ok_or_else(|| "child process missing".to_owned())?.xp.complete_unhandled_exception_filter(None).map_err(str::to_owned)?;
+                            let mut registers = exit.registers; registers.eax = result;
+                            contexts[active].context.set_registers(registers).map_err(|error| error.to_string())?;
+                            logl::log(level::IMPORTANT, format_args!("WC3 CHILD UEF RETURN pid={} tid={} source=default filter=0x00000000 result=0x{:08x} cleanup=4-by-thunk", active_pid, active_tid, result));
+                            continue;
+                        }
+                        let Some((owner, rva)) = child_pc_owner(child, filter).map(|(owner, rva)| (owner.to_owned(), rva)) else { return Err(format!("WC3 CHILD UEF FRONTIER reason=unknown-filter-address filter=0x{filter:08x}")); };
+                        let callback_esp = exit.registers.esp.checked_sub(8).ok_or("UEF callback stack underflow")?;
+                        let frame = [thunk32::CHILD_UEF_RETURN_ADDRESS, exception_pointers]; let mut bytes=[0;8]; for (i,value) in frame.into_iter().enumerate(){bytes[i*4..i*4+4].copy_from_slice(&value.to_le_bytes());}
+                        if child.address_space.write(callback_esp,&bytes).map_err(|error| error.to_string())? != 8 { return Err("short UEF callback frame write".into()); }
+                        child.unhandled_filter_call = Some(ChildUnhandledFilterCall { provider_resume_eip: exit.registers.eip, provider_esp: exit.registers.esp, filter });
+                        let mut registers=exit.registers; registers.eip=filter; registers.esp=callback_esp; contexts[active].context.set_registers(registers).map_err(|error| error.to_string())?;
+                        logl::log(level::IMPORTANT, format_args!("WC3 CHILD UEF FILTER CALL pid={} tid={} filter=0x{:08x} filter_owner={:?} filter_rva=0x{:08x} exception_pointers=0x{:08x} provider_esp=0x{:08x} callback_esp=0x{:08x}", active_pid,active_tid,filter,owner,rva,exception_pointers,exit.registers.esp,callback_esp));
+                        continue;
+                    }
                     if operation == child_loader::ProviderOp::LoadLibraryA {
                         let frame = read_guest_words(
                             &X86Memory(&child.address_space),
@@ -3327,6 +3357,7 @@ pub(super) async fn run_loop(
                             cipow: None,
                             cipow_diagnostic_logged: false,
                             seh: None,
+                            unhandled_filter_call: None,
                             loader: ChildLoaderState {
                                 prepared: false,
                                 native_requests: Vec::new(),
