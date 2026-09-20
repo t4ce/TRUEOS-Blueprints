@@ -366,16 +366,6 @@ pub(super) async fn run_loop(
                                 u32::from_le_bytes(caller_ret),
                             ),
                         );
-                        if heap != 0x5743_0001 {
-                            logl::log(
-                                level::IMPORTANT,
-                                format_args!(
-                                    "WC3 CHILD HEAP ALLOC FRONTIER pid={} tid={} reason=unexpected-heap heap=0x{:08x}",
-                                    active_pid, active_tid, heap,
-                                ),
-                            );
-                            return Ok(());
-                        }
                         let allocation = session
                             .process_mut(active_pid)
                             .ok_or_else(|| "child process missing".to_owned())?

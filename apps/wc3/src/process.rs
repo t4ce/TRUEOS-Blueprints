@@ -6553,6 +6553,55 @@ mod tests {
     }
 
     #[test]
+    fn child_win_heap_accepts_multiple_heaps_in_one_process() {
+        let mut pid2 = XpProcess::new_child();
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+
+        for (index, word) in [0x2113_1b92, 1, 0x1000, 0].into_iter().enumerate() {
+            write_u32(&mut memory, esp + index as u32 * 4, word).unwrap();
+        }
+        let heap1 = pid2.create_win_heap(esp, &memory).unwrap().handle;
+        for (index, word) in [0x0046_847b, 1, 0x1000, 0].into_iter().enumerate() {
+            write_u32(&mut memory, esp + index as u32 * 4, word).unwrap();
+        }
+        let heap2 = pid2.create_win_heap(esp, &memory).unwrap().handle;
+        assert_eq!(heap1, 0x5743_0001);
+        assert_eq!(heap2, 0x5743_0002);
+
+        for (index, word) in [0x2113_24c2, heap1, 0, 16].into_iter().enumerate() {
+            write_u32(&mut memory, esp + index as u32 * 4, word).unwrap();
+        }
+        let first = pid2.alloc_win_heap(esp, &memory).unwrap().unwrap();
+        assert_eq!(first.heap, heap1);
+
+        for (index, word) in [0x0046_765e, heap2, 0, 256].into_iter().enumerate() {
+            write_u32(&mut memory, esp + index as u32 * 4, word).unwrap();
+        }
+        let second = pid2.alloc_win_heap(esp, &memory).unwrap().unwrap();
+        assert_eq!(second.heap, heap2);
+        assert_ne!(first.pointer, second.pointer);
+        assert!(second.pointer >= first.end);
+
+        for (index, word) in [0x2113_0706, heap1, 0, second.pointer]
+            .into_iter()
+            .enumerate()
+        {
+            write_u32(&mut memory, esp + index as u32 * 4, word).unwrap();
+        }
+        assert_eq!(pid2.free_win_heap(esp, &memory).unwrap(), None);
+        assert_eq!(pid2.last_error, 6);
+        assert!(pid2.win_heap_allocations.contains_key(&second.pointer));
+
+        write_u32(&mut memory, esp + 4, heap2).unwrap();
+        assert_eq!(pid2.free_win_heap(esp, &memory).unwrap(), Some(second));
+        assert!(!pid2.win_heap_allocations.contains_key(&second.pointer));
+    }
+
+    #[test]
     fn registry_handles_are_process_private() {
         let mut pid1 = XpProcess::new(Vec::new());
         let mut pid2 = XpProcess::new(Vec::new());
