@@ -23,6 +23,7 @@ pub enum ProviderOp {
     GetEnvironmentStringsW,
     FreeEnvironmentStringsW,
     GetCommandLineA,
+    GetStartupInfoA,
     GetVersion,
     GetVersionExA,
     WideCharToMultiByte,
@@ -49,6 +50,7 @@ impl ProviderOp {
             | Self::SetUnhandledExceptionFilter
             | Self::GetVersionExA
             | Self::FreeEnvironmentStringsW
+            | Self::GetStartupInfoA
             | Self::SetLastError => 4,
             Self::VirtualAlloc => 16,
             Self::WideCharToMultiByte => 32,
@@ -59,7 +61,7 @@ impl ProviderOp {
     }
 
     pub const fn is_generic_process_local(self) -> bool {
-        matches!(self, Self::FreeEnvironmentStringsW)
+        matches!(self, Self::FreeEnvironmentStringsW | Self::GetStartupInfoA)
     }
 }
 
@@ -72,6 +74,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "GetEnvironmentStringsW" => ProviderOp::GetEnvironmentStringsW,
             "FreeEnvironmentStringsW" => ProviderOp::FreeEnvironmentStringsW,
             "GetCommandLineA" => ProviderOp::GetCommandLineA,
+            "GetStartupInfoA" => ProviderOp::GetStartupInfoA,
             "GetVersion" => ProviderOp::GetVersion,
             "GetVersionExA" => ProviderOp::GetVersionExA,
             "WideCharToMultiByte" => ProviderOp::WideCharToMultiByte,
@@ -372,6 +375,22 @@ mod tests {
         assert_eq!(operation.stack_cleanup_bytes(), 4);
         let mut bytes = [0; thunk32::THUNK_BYTES];
         thunk32::write(613, provider_thunk_kind(&import), &mut bytes).unwrap();
+        assert_eq!(&bytes[8..11], &[0xc2, 0x04, 0x00]);
+    }
+
+    #[test]
+    fn get_startup_info_a_is_pure_process_stdcall_four() {
+        let import = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("GetStartupInfoA".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&import);
+        assert_eq!(operation, ProviderOp::GetStartupInfoA);
+        assert!(operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 4);
+        let mut bytes = [0; thunk32::THUNK_BYTES];
+        thunk32::write(627, provider_thunk_kind(&import), &mut bytes).unwrap();
         assert_eq!(&bytes[8..11], &[0xc2, 0x04, 0x00]);
     }
 

@@ -761,19 +761,29 @@ impl XpProcess {
             .provider_import(provider_id)
             .cloned()
             .ok_or("unknown child provider import")?;
-        if provider_op(&provider) == ProviderOp::FreeEnvironmentStringsW {
-            let pointer = read_u32(
-                memory,
-                esp.checked_add(4).ok_or("provider argument overflow")?,
-            )?;
-            if pointer != ENVIRONMENT_BLOCK_VA {
-                return Err(ProviderDispatchError::Unsupported);
+        match provider_op(&provider) {
+            ProviderOp::FreeEnvironmentStringsW => {
+                let pointer = read_u32(
+                    memory,
+                    esp.checked_add(4).ok_or("provider argument overflow")?,
+                )?;
+                if pointer != ENVIRONMENT_BLOCK_VA {
+                    return Err(ProviderDispatchError::Unsupported);
+                }
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                return Ok(PersonalityAction::Return(1));
             }
-            self.call_count = self
-                .call_count
-                .checked_add(1)
-                .ok_or("call count overflow")?;
-            return Ok(PersonalityAction::Return(1));
+            ProviderOp::GetStartupInfoA => {
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                return Ok(PersonalityAction::Return(self.get_startup_info(esp, memory)?));
+            }
+            _ => {}
         }
         match (&provider.module[..], &provider.symbol) {
             (module, ProviderSymbol::Name(symbol))
@@ -4796,6 +4806,34 @@ mod tests {
             pid2.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
             Err(ProviderDispatchError::Unsupported)
         );
+        assert_eq!(pid2.call_count, 1);
+    }
+
+    #[test]
+    fn child_get_startup_info_a_reuses_process_startup_info_semantics() {
+        let provider = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("GetStartupInfoA".into()),
+            iat_rva: 0,
+        };
+        let mut pid2 = XpProcess::new(Vec::new());
+        pid2.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0x5a; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x200;
+        let output = esp + 0x40;
+        write_u32(&mut memory, esp, 0x2113_1cdf).unwrap();
+        write_u32(&mut memory, esp + 4, output).unwrap();
+        assert_eq!(
+            pid2.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(0))
+        );
+        let mut startup = [0u8; 0x44];
+        memory.read(output, &mut startup).unwrap();
+        assert_eq!(u32::from_le_bytes(startup[..4].try_into().unwrap()), 0x44);
+        assert!(startup[4..].iter().all(|byte| *byte == 0));
         assert_eq!(pid2.call_count, 1);
     }
 
