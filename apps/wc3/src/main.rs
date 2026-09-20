@@ -16,8 +16,9 @@ use wc3::{
     pe32,
     process::{
         CHILD_COMMAND_LINE, CHILD_CRT_HEAP_BASE, CHILD_CRT_HEAP_LIMIT,
-        CHILD_VIRTUAL_ALLOC_BASE, CHILD_VIRTUAL_ALLOC_LIMIT, GuestMemory, PROCESS_DATA_VA,
-        PreparedProcess, STACK_BASE, STACK_BYTES, STACK_TOP, ThreadObject, XpProcess,
+        CHILD_VIRTUAL_ALLOC_BASE, CHILD_VIRTUAL_ALLOC_LIMIT, ENVIRONMENT_BLOCK_VA, GuestMemory,
+        PROCESS_DATA_VA, PreparedProcess, STACK_BASE, STACK_BYTES, STACK_TOP, ThreadObject,
+        XpProcess,
         bmp_file_from_dib, dib_layout,
     },
     session::{
@@ -552,6 +553,55 @@ async fn run() -> Result<(), String> {
                                 ),
                             );
                         }
+                        let mut registers = exit.registers;
+                        registers.eax = result;
+                        contexts[active]
+                            .context
+                            .set_registers(registers)
+                            .map_err(|error| error.to_string())?;
+                        continue;
+                    }
+                    let is_get_environment_strings_w = matches!(
+                        &provider.symbol,
+                        child_loader::ProviderSymbol::Name(name)
+                            if provider.module.eq_ignore_ascii_case("KERNEL32.dll")
+                                && name == "GetEnvironmentStringsW"
+                    );
+                    if is_get_environment_strings_w {
+                        let mut child_memory = X86Memory(&child.address_space);
+                        let action = session
+                            .process_mut(active_pid)
+                            .ok_or_else(|| "child process missing".to_owned())?
+                            .xp
+                            .dispatch_provider_for_process(
+                                active_pid,
+                                active_tid,
+                                provider_id,
+                                exit.registers.esp,
+                                &mut child_memory,
+                            )
+                            .map_err(str::to_owned)?;
+                        let PersonalityAction::Return(result) = action else {
+                            return Err("GetEnvironmentStringsW child provider did not return".into());
+                        };
+                        if result != ENVIRONMENT_BLOCK_VA {
+                            return Err("child environment pointer mismatch".into());
+                        }
+                        let mut terminator = [0u8; 4];
+                        child
+                            .address_space
+                            .read(result, &mut terminator)
+                            .map_err(|error| error.to_string())?;
+                        if terminator != [0, 0, 0, 0] {
+                            return Err("child wide environment block is not double-NUL terminated".into());
+                        }
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD GETENVIRONMENTSTRINGSW RESULT pid={} tid={} pointer=0x{:08x} environment=empty encoding=utf16le process_private=1 stack_cleanup=none",
+                                active_pid, active_tid, result,
+                            ),
+                        );
                         let mut registers = exit.registers;
                         registers.eax = result;
                         contexts[active]
@@ -2639,6 +2689,12 @@ async fn run() -> Result<(), String> {
                             .map_err(|error| format!("write child command line: {error}"))?;
                         if written != CHILD_COMMAND_LINE.len() {
                             return Err("short child command-line write".into());
+                        }
+                        let environment_written = child_address_space
+                            .write(ENVIRONMENT_BLOCK_VA, &[0, 0, 0, 0])
+                            .map_err(|error| format!("write child environment block: {error}"))?;
+                        if environment_written != 4 {
+                            return Err("short child environment-block write".into());
                         }
                         pending_child = Some(PendingChild {
                             pid: created.pid,
@@ -5781,15 +5837,21 @@ mod tests {
             .write(PROCESS_DATA_VA, wc3::process::COMMAND_LINE)
             .unwrap();
         child.write(PROCESS_DATA_VA, CHILD_COMMAND_LINE).unwrap();
+        child.write(ENVIRONMENT_BLOCK_VA, &[0, 0, 0, 0]).unwrap();
         let mut launcher_bytes = [0; wc3::process::COMMAND_LINE.len()];
         let mut child_bytes = [0; CHILD_COMMAND_LINE.len()];
+        let mut child_environment = [0; 4];
         launcher
             .read(PROCESS_DATA_VA, &mut launcher_bytes)
             .unwrap();
         child.read(PROCESS_DATA_VA, &mut child_bytes).unwrap();
+        child
+            .read(ENVIRONMENT_BLOCK_VA, &mut child_environment)
+            .unwrap();
         assert_eq!(PROCESS_DATA_VA, 0x0021_1000);
         assert_eq!(launcher_bytes, wc3::process::COMMAND_LINE);
         assert_eq!(child_bytes, CHILD_COMMAND_LINE);
+        assert_eq!(child_environment, [0, 0, 0, 0]);
         assert_ne!(launcher_bytes, CHILD_COMMAND_LINE);
     }
 

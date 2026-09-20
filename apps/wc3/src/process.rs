@@ -48,7 +48,7 @@ const STOCK_DEFAULT_PALETTE: u32 = 0x5743_7f02;
 const TRANSPARENT: u32 = 1;
 const OPAQUE: u32 = 2;
 const GDI_DIB_BASE: u32 = 0x0500_0000;
-const ENVIRONMENT_BLOCK_VA: u32 = PROCESS_DATA_VA + 0x100;
+pub const ENVIRONMENT_BLOCK_VA: u32 = PROCESS_DATA_VA + 0x100;
 
 pub trait GuestMemory {
     fn read(&self, address: u32, output: &mut [u8]) -> Result<(), &'static str>;
@@ -726,6 +726,16 @@ impl XpProcess {
             .cloned()
             .ok_or("unknown child provider import")?;
         match (&provider.module[..], &provider.symbol) {
+            (module, ProviderSymbol::Name(symbol))
+                if module.eq_ignore_ascii_case("KERNEL32.dll")
+                    && symbol == "GetEnvironmentStringsW" =>
+            {
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(ENVIRONMENT_BLOCK_VA))
+            }
             (module, ProviderSymbol::Name(symbol))
                 if module.eq_ignore_ascii_case("KERNEL32.dll") && symbol == "GetCommandLineA" =>
             {
@@ -4616,6 +4626,26 @@ mod tests {
             pid2.dispatch_provider_for_process(2, 3, 0, esp, &mut memory)
                 .unwrap(),
             PersonalityAction::Return(PROCESS_DATA_VA)
+        );
+    }
+
+    #[test]
+    fn child_get_environment_strings_w_returns_the_process_data_block() {
+        let provider = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("GetEnvironmentStringsW".into()),
+            iat_rva: 0,
+        };
+        let mut pid2 = XpProcess::new(Vec::new());
+        pid2.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0x5a; STACK_BYTES],
+        };
+        assert_eq!(
+            pid2.dispatch_provider_for_process(2, 3, 0, STACK_TOP - 0x40, &mut memory)
+                .unwrap(),
+            PersonalityAction::Return(ENVIRONMENT_BLOCK_VA)
         );
     }
 
