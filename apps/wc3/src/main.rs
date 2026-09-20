@@ -1344,8 +1344,21 @@ struct PendingChild {
     initterm: Option<ChildInitterm>,
     cipow: Option<ChildCiPow>,
     cipow_diagnostic_logged: bool,
+    seh: Option<ChildSehDispatch>,
     loader: ChildLoaderState,
     execution: ChildExecutionState,
+}
+
+#[derive(Clone, Debug)]
+struct ChildSehDispatch {
+    original_registers: Registers,
+    registration: u32,
+    next_registration: u32,
+    handler: u32,
+    exception_record_va: u32,
+    context_va: u32,
+    preserved_fs_base: u32,
+    depth: u32,
 }
 
 struct ChildCiPow { provider_esp: u32 }
@@ -2189,6 +2202,7 @@ mod tests {
             initterm: None,
             cipow: None,
             cipow_diagnostic_logged: false,
+            seh: None,
             loader: ChildLoaderState {
                 prepared: true,
                 native_requests: Vec::new(),
@@ -2411,6 +2425,7 @@ mod tests {
             }),
             cipow: None,
             cipow_diagnostic_logged: false,
+            seh: None,
             loader: ChildLoaderState {
                 prepared: true,
                 native_requests: Vec::new(),

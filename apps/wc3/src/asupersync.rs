@@ -32,6 +32,49 @@ fn child_pc_owner(child: &PendingChild, eip: u32) -> Option<(&str, u32)> {
     None
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct SehRegistration { frame: u32, next: u32, handler: u32 }
+
+fn read_seh_registration(address_space: &AddressSpace, frame: u32) -> Result<SehRegistration, String> {
+    if frame == 0 || frame & 3 != 0 { return Err("invalid SEH registration frame".into()); }
+    let mut bytes = [0; 8];
+    if address_space.read(frame, &mut bytes).map_err(|error| error.to_string())? != bytes.len() { return Err("short SEH registration read".into()); }
+    let next = u32::from_le_bytes(bytes[..4].try_into().unwrap());
+    let handler = u32::from_le_bytes(bytes[4..].try_into().unwrap());
+    if handler == 0 { return Err("SEH registration has zero handler".into()); }
+    if next == frame { return Err("SEH registration self-loop".into()); }
+    Ok(SehRegistration { frame, next, handler })
+}
+
+fn begin_child_seh_dispatch(child: &mut PendingChild, guest: &mut GuestContext, exception: ChildException, registers: Registers) -> Result<(), String> {
+    if child.seh.is_some() { return Err("nested-SEH frontier".into()); }
+    if exception.vector != Some(14) { return Err("unsupported-exception-mapping frontier".into()); }
+    let mut head = [0; 4];
+    if child.address_space.read(registers.fs_base, &mut head).map_err(|error| error.to_string())? != 4 { return Err("short SEH chain head read".into()); }
+    let head = u32::from_le_bytes(head);
+    if head == u32::MAX { return Err("unhandled-SEH-chain frontier".into()); }
+    let registration = read_seh_registration(&child.address_space, head)?;
+    let linear = exception.fault_linear.ok_or("page fault linear address")?;
+    let error = exception.error.ok_or("page fault error")?;
+    let context = wc3::seh::encode_x86_context(registers);
+    let record = wc3::seh::encode_page_fault_exception_record(registers.eip, linear, error);
+    let context_va = registers.esp.checked_sub(wc3::seh::X86_CONTEXT_BYTES as u32).ok_or("SEH context stack underflow")? & !15;
+    let record_va = context_va.checked_sub(wc3::seh::EXCEPTION_RECORD_BYTES as u32).ok_or("SEH record stack underflow")?;
+    let frame_esp = record_va.checked_sub(20).ok_or("SEH call stack underflow")?;
+    for (address, bytes) in [(context_va, context.as_slice()), (record_va, record.as_slice())] {
+        if child.address_space.write(address, bytes).map_err(|error| error.to_string())? != bytes.len() { return Err("short SEH scratch write".into()); }
+    }
+    let frame = [thunk32::CHILD_SEH_RETURN_ADDRESS, record_va, registration.frame, context_va, 0];
+    let mut bytes = [0; 20]; for (index, value) in frame.into_iter().enumerate() { bytes[index * 4..index * 4 + 4].copy_from_slice(&value.to_le_bytes()); }
+    if child.address_space.write(frame_esp, &bytes).map_err(|error| error.to_string())? != bytes.len() { return Err("short SEH handler frame write".into()); }
+    child.seh = Some(ChildSehDispatch { original_registers: registers, registration: registration.frame, next_registration: registration.next, handler: registration.handler, exception_record_va: record_va, context_va, preserved_fs_base: registers.fs_base, depth: 1 });
+    let mut handler_registers = registers; handler_registers.eip = registration.handler; handler_registers.esp = frame_esp;
+    guest.context.set_registers(handler_registers).map_err(|error| error.to_string())?;
+    let (owner, rva) = child_pc_owner(child, registration.handler).unwrap_or(("unknown", 0));
+    logl::log(level::IMPORTANT, format_args!("WC3 CHILD SEH DISPATCH pid={} tid={} registration=0x{:08x} next=0x{:08x} handler=0x{:08x} handler_owner={:?} handler_rva=0x{:08x} exception=0xc0000005 address=0x{:08x} access={}", child.pid, child.tid, registration.frame, registration.next, registration.handler, owner, rva, registers.eip, if error & 0x10 != 0 { "execute" } else if error & 2 != 0 { "write" } else { "read" }));
+    Ok(())
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum ProcSelector {
     Name(String),
@@ -208,6 +251,25 @@ pub(super) async fn run_loop(
                         .as_mut()
                         .filter(|child| child.pid == active_pid && child.tid == active_tid)
                         .ok_or_else(|| "active child address space missing".to_owned())?;
+                    if exit.registers.eip == thunk32::CHILD_SEH_RETURN_AFTER_VMCALL {
+                        let seh = child.seh.take().ok_or("SEH return without pending dispatch")?;
+                        logl::log(level::IMPORTANT, format_args!(
+                            "WC3 CHILD SEH RETURN pid={} tid={} registration=0x{:08x} handler=0x{:08x} disposition={}",
+                            active_pid, active_tid, seh.registration, seh.handler, exit.registers.eax,
+                        ));
+                        if exit.registers.eax != wc3::seh::DISPOSITION_CONTINUE_EXECUTION {
+                            return Err(format!("WC3 CHILD SEH FRONTIER reason=unsupported-disposition value={}", exit.registers.eax));
+                        }
+                        let mut bytes = [0; wc3::seh::X86_CONTEXT_BYTES];
+                        if child.address_space.read(seh.context_va, &mut bytes).map_err(|error| error.to_string())? != bytes.len() { return Err("short SEH context readback".into()); }
+                        let restored = wc3::seh::decode_x86_context(&bytes, seh.preserved_fs_base).map_err(str::to_owned)?;
+                        contexts[active].context.set_registers(restored).map_err(|error| error.to_string())?;
+                        logl::log(level::IMPORTANT, format_args!(
+                            "WC3 CHILD SEH CONTINUE pid={} tid={} old_eip=0x{:08x} new_eip=0x{:08x} old_esp=0x{:08x} new_esp=0x{:08x}",
+                            active_pid, active_tid, seh.original_registers.eip, restored.eip, seh.original_registers.esp, restored.esp,
+                        ));
+                        continue;
+                    }
                     if exit.registers.eip == thunk32::CHILD_DLL_RETURN_AFTER_VMCALL {
                         let native_index = match child.execution {
                             ChildExecutionState::DllInitRunning { native_index } => native_index,
@@ -3264,6 +3326,7 @@ pub(super) async fn run_loop(
                             initterm: None,
                             cipow: None,
                             cipow_diagnostic_logged: false,
+                            seh: None,
                             loader: ChildLoaderState {
                                 prepared: false,
                                 native_requests: Vec::new(),
@@ -4528,7 +4591,7 @@ pub(super) async fn run_loop(
                     .as_ref()
                     .filter(|child| child.pid == active_key.pid && child.tid == active_key.tid)
                     .ok_or_else(|| "exception child missing pending state".to_owned())?;
-                let (_, module) = child_execution_module(child).map_err(str::to_owned)?;
+                let scope = child_execution_scope(child).map_err(str::to_owned)?;
                 let exception = decode_child_exception(exit.detail, exit.qualification);
                 let registers = exit.registers;
                 logl::log(
@@ -4555,10 +4618,10 @@ pub(super) async fn run_loop(
                 logl::log(
                     level::IMPORTANT,
                     format_args!(
-                        "WC3 CHILD EXCEPTION pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" eip=0x{:08x} esp=0x{:08x} vector={} name=\"{}\" type={} valid={} error_valid={} error={}",
+                        "WC3 CHILD EXCEPTION pid={} tid={} during={:?} eip=0x{:08x} esp=0x{:08x} vector={} name=\"{}\" type={} valid={} error_valid={} error={}",
                         active_key.pid,
                         active_key.tid,
-                        module.stored,
+                        scope,
                         registers.eip,
                         registers.esp,
                         exception
@@ -4620,29 +4683,32 @@ pub(super) async fn run_loop(
                         registers.esp,
                     ),
                 );
-                logl::log(
-                    level::IMPORTANT,
-                    format_args!(
-                        "WC3 CHILD SEH FRONTIER pid={} tid={} fs_base=0x{:08x} registration_head={}",
-                        active_key.pid,
-                        active_key.tid,
-                        registers.fs_base,
-                        seh_registration_head(&child.address_space, registers.fs_base),
-                    ),
-                );
-                if module.stored.eq_ignore_ascii_case("Storm.dll") && registers.eip == 0x1503_62ee {
-                    log_child_fault_precursor(
-                        child,
-                        module,
-                        session
-                            .process(active_key.pid)
-                            .ok_or_else(|| "faulted child process missing".to_owned())?,
-                        active_key.pid,
-                        active_key.tid,
-                        registers.eax,
-                    )?;
+                if let ChildExecutionState::DllInitRunning { native_index } = child.execution {
+                    let module = child
+                        .native_modules
+                        .get(native_index)
+                        .ok_or_else(|| "child DLL exception native index".to_owned())?;
+                    if module.stored.eq_ignore_ascii_case("Storm.dll")
+                        && registers.eip == 0x1503_62ee
+                    {
+                        log_child_fault_precursor(
+                            child,
+                            module,
+                            session
+                                .process(active_key.pid)
+                                .ok_or_else(|| "faulted child process missing".to_owned())?,
+                            active_key.pid,
+                            active_key.tid,
+                            registers.eax,
+                        )?;
+                    }
                 }
-                return Ok(());
+                let child = pending_child
+                    .as_mut()
+                    .filter(|child| child.pid == active_key.pid && child.tid == active_key.tid)
+                    .ok_or_else(|| "exception child missing mutable pending state".to_owned())?;
+                begin_child_seh_dispatch(child, &mut contexts[active], exception, registers)?;
+                continue;
             }
             ExitKind::Halted => {
                 if active_key.pid != LAUNCHER_PID {
@@ -4650,14 +4716,14 @@ pub(super) async fn run_loop(
                         .as_ref()
                         .filter(|child| child.pid == active_key.pid && child.tid == active_key.tid)
                         .ok_or_else(|| "halted child missing pending state".to_owned())?;
-                    let (_, module) = child_execution_module(child).map_err(str::to_owned)?;
+                    let scope = child_execution_scope(child).map_err(str::to_owned)?;
                     logl::log(
                         level::IMPORTANT,
                         format_args!(
-                            "WC3 CHILD NATIVE EXECUTION FAULT pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" eip=0x{:08x} esp=0x{:08x} kind=Halted detail={}",
+                            "WC3 CHILD EXECUTION FAULT pid={} tid={} during={:?} eip=0x{:08x} esp=0x{:08x} kind=Halted detail={}",
                             active_key.pid,
                             active_key.tid,
-                            module.stored,
+                            scope,
                             exit.registers.eip,
                             exit.registers.esp,
                             exit.detail
@@ -4684,14 +4750,14 @@ pub(super) async fn run_loop(
                         .as_ref()
                         .filter(|child| child.pid == active_key.pid && child.tid == active_key.tid)
                         .ok_or_else(|| "faulted child missing pending state".to_owned())?;
-                    let (_, module) = child_execution_module(child).map_err(str::to_owned)?;
+                    let scope = child_execution_scope(child).map_err(str::to_owned)?;
                     logl::log(
                         level::IMPORTANT,
                         format_args!(
-                            "WC3 CHILD NATIVE EXECUTION FAULT pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" eip=0x{:08x} esp=0x{:08x} kind={:?} detail={}",
+                            "WC3 CHILD EXECUTION FAULT pid={} tid={} during={:?} eip=0x{:08x} esp=0x{:08x} kind={:?} detail={}",
                             active_key.pid,
                             active_key.tid,
-                            module.stored,
+                            scope,
                             exit.registers.eip,
                             exit.registers.esp,
                             kind,
