@@ -2415,6 +2415,16 @@ async fn run() -> Result<(), String> {
                     active_key.pid, active_key.tid, registers.fs_base,
                     seh_registration_head(&child.address_space, registers.fs_base),
                 ));
+                if module.stored.eq_ignore_ascii_case("Storm.dll") && registers.eip == 0x1503_62ee {
+                    log_child_fault_precursor(
+                        child,
+                        module,
+                        session.process(active_key.pid).ok_or_else(|| "faulted child process missing".to_owned())?,
+                        active_key.pid,
+                        active_key.tid,
+                        registers.eax,
+                    )?;
+                }
                 return Ok(());
             }
             ExitKind::Halted => {
@@ -2788,6 +2798,74 @@ fn child_execution_module(child: &PendingChild) -> Result<(usize, &PendingNative
         ChildExecutionState::Loader => return Err("child execution has no native module"),
     };
     child.native_modules.get(native_index).map(|module| (native_index, module)).ok_or("child execution native index")
+}
+
+fn log_child_fault_precursor(
+    child: &PendingChild,
+    storm: &PendingNativeModule,
+    process: &wc3::session::Wc3Process,
+    pid: u32,
+    tid: u32,
+    returned_eax: u32,
+) -> Result<(), String> {
+    const CALL_EIP: u32 = 0x1503_62da;
+    const IAT_RVA: u32 = 0x0003_d1e0;
+    let iat_va = storm.image.image_base.checked_add(IAT_RVA)
+        .ok_or_else(|| "Storm precursor IAT address overflow".to_owned())?;
+    let import = storm.image.imports.iter().find(|import| import.iat_rva == IAT_RVA)
+        .ok_or_else(|| "Storm precursor IAT has no parsed import".to_owned())?;
+    let mut target_bytes = [0; 4];
+    child.address_space.read(iat_va, &mut target_bytes).map_err(|error| error.to_string())?;
+    let target = u32::from_le_bytes(target_bytes);
+    let provider = target.checked_sub(thunk32::THUNK_BASE)
+        .filter(|offset| *offset % thunk32::THUNK_BYTES as u32 == 0)
+        .map(|offset| offset / thunk32::THUNK_BYTES as u32)
+        .filter(|provider_id| (*provider_id as usize) < process.xp.provider_import_count())
+        .and_then(|provider_id| process.xp.provider_import(provider_id).map(|provider| (provider_id, provider)));
+
+    let import_symbol = pe_import_symbol_label(&import.symbol);
+    let mut detail = format!(
+        "WC3 CHILD FAULT PRECURSOR pid={} tid={} module=\"Storm.dll\" call_eip=0x{:08x} iat_va=0x{:08x} iat_rva=0x{:08x} import_module=\"{}\" {} argument0=0x00000080 returned_eax=0x{:08x} target=0x{:08x}",
+        pid, tid, CALL_EIP, iat_va, IAT_RVA, import.module, import_symbol, returned_eax, target,
+    );
+    if let Some((provider_id, provider)) = provider {
+        let provider_symbol = provider_symbol_label(&provider.symbol);
+        detail.push_str(&format!(
+            " provider_id={} provider_module=\"{}\" {}",
+            provider_id, provider.module, provider_symbol,
+        ));
+        if !provider_matches_import(provider, import) {
+            logl::log(level::IMPORTANT, format_args!(
+                "WC3 CHILD IAT BINDING MISMATCH iat_rva=0x{:08x} pe_module=\"{}\" pe_{} provider_module=\"{}\" provider_{} provider_id={} target=0x{:08x}",
+                IAT_RVA, import.module, import_symbol, provider.module, provider_symbol, provider_id, target,
+            ));
+            return Err("child IAT binding mismatch".into());
+        }
+    }
+    logl::log(level::IMPORTANT, format_args!("{detail}"));
+    Ok(())
+}
+
+fn pe_import_symbol_label(symbol: &pe32::ImportSymbol) -> String {
+    match symbol {
+        pe32::ImportSymbol::Name(name) => format!("symbol=\"{}\"", name),
+        pe32::ImportSymbol::Ordinal(ordinal) => format!("ordinal={}", ordinal),
+    }
+}
+
+fn provider_symbol_label(symbol: &child_loader::ProviderSymbol) -> String {
+    match symbol {
+        child_loader::ProviderSymbol::Name(name) => format!("symbol=\"{}\"", name),
+        child_loader::ProviderSymbol::Ordinal(ordinal) => format!("ordinal={}", ordinal),
+    }
+}
+
+fn provider_matches_import(provider: &child_loader::ProviderImport, import: &pe32::ImportDescriptor) -> bool {
+    provider.module.eq_ignore_ascii_case(&import.module) && match (&provider.symbol, &import.symbol) {
+        (child_loader::ProviderSymbol::Name(provider), pe32::ImportSymbol::Name(import)) => provider == import,
+        (child_loader::ProviderSymbol::Ordinal(provider), pe32::ImportSymbol::Ordinal(import)) => provider == import,
+        _ => false,
+    }
 }
 
 fn begin_child_dll_init(child: &mut PendingChild) -> Result<(usize, u32, u32), &'static str> {
