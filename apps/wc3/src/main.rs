@@ -734,11 +734,11 @@ async fn run() -> Result<(), String> {
                         logl::log(
                             level::IMPORTANT,
                             format_args!(
-                                "WC3 CHILD REGISTRY OPEN pid={} tid={} root=\"{}\" subkey=\"{}\" sam=0x{:08x}",
+                                "WC3 CHILD REGISTRY OPEN pid={} tid={} root=\"{}\" subkey=[redacted] subkey_bytes={} sam=0x{:08x}",
                                 active_pid,
                                 active_tid,
                                 registry_root_name(frame.hkey),
-                                subkey,
+                                subkey.len(),
                                 frame.sam
                             ),
                         );
@@ -3290,9 +3290,8 @@ async fn run() -> Result<(), String> {
                 logl::log(
                     level::IMPORTANT,
                     format_args!(
-                        "WC3 CHILD EXCEPTION STACK esp=0x{:08x} words={}",
+                        "WC3 CHILD EXCEPTION STACK esp=0x{:08x} words=[redacted]",
                         registers.esp,
-                        exception_stack_window(&child.address_space, registers.esp),
                     ),
                 );
                 logl::log(
@@ -4359,24 +4358,6 @@ fn exception_code_window(address_space: &AddressSpace, eip: u32) -> String {
             .map(|byte| format!("{byte:02x}"))
             .collect::<Vec<_>>()
             .join(" "),
-        _ => "<unreadable>".into(),
-    }
-}
-
-fn exception_stack_window(address_space: &AddressSpace, esp: u32) -> String {
-    let mut bytes = [0; 0x20];
-    match address_space.read(esp, &mut bytes) {
-        Ok(0x20) => format!(
-            "[{}]",
-            bytes
-                .chunks_exact(4)
-                .map(|word| format!(
-                    "0x{:08x}",
-                    u32::from_le_bytes(word.try_into().expect("stack word"))
-                ))
-                .collect::<Vec<_>>()
-                .join(", "),
-        ),
         _ => "<unreadable>".into(),
     }
 }
