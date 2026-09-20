@@ -32,6 +32,8 @@ pub enum ProviderOp {
     GetStringTypeW,
     MultiByteToWideChar,
     LCMapStringW,
+    GetModuleFileNameA,
+    GetModuleHandleA,
     GetVersion,
     GetVersionExA,
     WideCharToMultiByte,
@@ -62,12 +64,13 @@ impl ProviderOp {
             | Self::GetStdHandle
             | Self::GetFileType
             | Self::SetHandleCount
-            | Self::SetLastError => 4,
+            | Self::SetLastError
+            | Self::GetModuleHandleA => 4,
             Self::GetCPInfo => 8,
             Self::GetStringTypeW | Self::VirtualAlloc => 16,
             Self::MultiByteToWideChar | Self::LCMapStringW => 24,
             Self::WideCharToMultiByte => 32,
-            Self::HeapCreate | Self::HeapAlloc | Self::HeapFree => 12,
+            Self::GetModuleFileNameA | Self::HeapCreate | Self::HeapAlloc | Self::HeapFree => 12,
             Self::RegOpenKeyExA => 20,
             _ => 0,
         }
@@ -86,6 +89,8 @@ impl ProviderOp {
                 | Self::GetStringTypeW
                 | Self::MultiByteToWideChar
                 | Self::LCMapStringW
+                | Self::GetModuleFileNameA
+                | Self::GetModuleHandleA
         )
     }
 }
@@ -108,6 +113,8 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "GetStringTypeW" => ProviderOp::GetStringTypeW,
             "MultiByteToWideChar" => ProviderOp::MultiByteToWideChar,
             "LCMapStringW" => ProviderOp::LCMapStringW,
+            "GetModuleFileNameA" => ProviderOp::GetModuleFileNameA,
+            "GetModuleHandleA" => ProviderOp::GetModuleHandleA,
             "GetVersion" => ProviderOp::GetVersion,
             "GetVersionExA" => ProviderOp::GetVersionExA,
             "WideCharToMultiByte" => ProviderOp::WideCharToMultiByte,
@@ -555,6 +562,38 @@ mod tests {
         let mut bytes = [0; thunk32::THUNK_BYTES];
         thunk32::write(617, provider_thunk_kind(&import), &mut bytes).unwrap();
         assert_eq!(&bytes[8..11], &[0xc2, 0x18, 0x00]);
+    }
+
+    #[test]
+    fn get_module_file_name_a_is_pure_process_stdcall_twelve() {
+        let import = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("GetModuleFileNameA".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&import);
+        assert_eq!(operation, ProviderOp::GetModuleFileNameA);
+        assert!(operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 12);
+        let mut bytes = [0; thunk32::THUNK_BYTES];
+        thunk32::write(642, provider_thunk_kind(&import), &mut bytes).unwrap();
+        assert_eq!(&bytes[8..11], &[0xc2, 0x0c, 0x00]);
+    }
+
+    #[test]
+    fn get_module_handle_a_is_pure_process_stdcall_four() {
+        let import = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("GetModuleHandleA".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&import);
+        assert_eq!(operation, ProviderOp::GetModuleHandleA);
+        assert!(operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 4);
+        let mut bytes = [0; thunk32::THUNK_BYTES];
+        thunk32::write(573, provider_thunk_kind(&import), &mut bytes).unwrap();
+        assert_eq!(&bytes[8..11], &[0xc2, 0x04, 0x00]);
     }
 
     #[test]

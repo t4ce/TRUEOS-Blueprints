@@ -29,6 +29,7 @@ pub const CHILD_VIRTUAL_ALLOC_BASE: u32 = 0x0600_0000;
 pub const CHILD_VIRTUAL_ALLOC_LIMIT: u32 = 0x1400_0000;
 pub const CHILD_WIN_HEAP_BASE: u32 = 0x1400_0000;
 pub const CHILD_WIN_HEAP_LIMIT: u32 = 0x1500_0000;
+pub const PROVIDER_MODULE_HANDLE_BASE: u32 = 0x5743_a001;
 pub const PROCESS_DATA_VA: u32 = 0x0021_1000;
 /// Historical launcher stack: 0x0430_0000..0x0440_0000.
 pub const STACK_BASE: u32 = 0x0430_0000;
@@ -39,6 +40,8 @@ pub const THUNK_PAGE_BYTES: usize = 0x1000;
 /// separate `"war3.exe" ` child command line on its native stack.
 pub const COMMAND_LINE: &[u8] = b"\"Warcraft III.exe\"\0";
 pub const CHILD_COMMAND_LINE: &[u8] = b"\"war3.exe\" \0";
+pub const LAUNCHER_IMAGE_FILENAME: &[u8] = b"C:\\Warcraft III\\Warcraft III.exe\0";
+pub const CHILD_IMAGE_FILENAME: &[u8] = b"C:\\Warcraft III\\War3.exe\0";
 pub const XP_ANSI_CODE_PAGE: u32 = 1252;
 const CT_CTYPE1: u32 = 1;
 const C1_UPPER: u16 = 0x0001;
@@ -53,7 +56,6 @@ const C1_ALPHA: u16 = 0x0100;
 const LCMAP_LOWERCASE: u32 = 0x0000_0100;
 const LCMAP_UPPERCASE: u32 = 0x0000_0200;
 const LCMAP_LINGUISTIC_CASING: u32 = 0x0100_0000;
-const MODULE_FILENAME: &[u8] = b"C:\\Warcraft III\\Warcraft III.exe\0";
 const WINDOWS_XP_GET_VERSION: u32 = 0x0a28_0105;
 const CREATE_SUSPENDED: u32 = 4;
 const THREAD_HANDLE_BASE: u32 = 0x5743_5001;
@@ -433,10 +435,49 @@ pub struct WinHeapAllocation {
     pub end: u32,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProviderDispatchError {
     Unsupported,
     Fault(&'static str),
+    Frontier { api: &'static str, detail: String },
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+enum ProcessImage {
+    Launcher,
+    War3Child,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct LoadedModule {
+    requested_name: String,
+    stored_name: String,
+    handle: u32,
+    kind: LoadedModuleKind,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LoadedModuleKind {
+    MainImage,
+    NativeImage,
+    ExternalProvider,
+}
+
+fn module_basename(name: &str) -> &str {
+    name.rsplit(['\\', '/']).next().unwrap_or(name)
+}
+
+fn module_names_match(left: &str, right: &str) -> bool {
+    module_basename(left).eq_ignore_ascii_case(module_basename(right))
+}
+
+impl ProcessImage {
+    const fn filename(self) -> &'static [u8] {
+        match self {
+            Self::Launcher => LAUNCHER_IMAGE_FILENAME,
+            Self::War3Child => CHILD_IMAGE_FILENAME,
+        }
+    }
 }
 
 impl From<&'static str> for ProviderDispatchError {
@@ -450,11 +491,15 @@ impl core::fmt::Display for ProviderDispatchError {
         match self {
             Self::Unsupported => formatter.write_str("unsupported child provider import"),
             Self::Fault(error) => formatter.write_str(error),
+            Self::Frontier { api, detail } => write!(formatter, "{api} frontier: {detail}"),
         }
     }
 }
 
 pub struct XpProcess {
+    image: ProcessImage,
+    loaded_modules: Vec<LoadedModule>,
+    next_provider_module_handle: u32,
     imports: Vec<LauncherImport>,
     provider_imports: Vec<ProviderImport>,
     provider_thunks: Vec<u8>,
@@ -493,6 +538,17 @@ pub struct XpProcess {
 
 impl XpProcess {
     pub fn new(imports: Vec<LauncherImport>) -> Self {
+        Self::with_image(imports, ProcessImage::Launcher)
+    }
+
+    pub fn new_child() -> Self {
+        Self::with_image(Vec::new(), ProcessImage::War3Child)
+    }
+
+    fn with_image(imports: Vec<LauncherImport>, image: ProcessImage) -> Self {
+        let image_filename = std::str::from_utf8(image.filename())
+            .expect("process image filename must be ASCII")
+            .trim_end_matches('\0');
         let mut gdi_objects = HashMap::new();
         gdi_objects.insert(
             STOCK_MONO_BITMAP,
@@ -524,6 +580,14 @@ impl XpProcess {
             }),
         );
         Self {
+            image,
+            loaded_modules: vec![LoadedModule {
+                requested_name: module_basename(image_filename).to_owned(),
+                stored_name: image_filename.to_owned(),
+                handle: pe32::IMAGE_BASE,
+                kind: LoadedModuleKind::MainImage,
+            }],
+            next_provider_module_handle: PROVIDER_MODULE_HANDLE_BASE,
             imports,
             provider_imports: Vec::new(),
             provider_thunks: Vec::new(),
@@ -571,9 +635,107 @@ impl XpProcess {
         thunks: Vec<u8>,
         modules: Vec<ChildProvider>,
     ) {
+        self.try_install_provider_surface(imports, thunks, modules)
+            .expect("provider module namespace");
+    }
+
+    pub fn try_install_provider_surface(
+        &mut self,
+        imports: Vec<ProviderImport>,
+        thunks: Vec<u8>,
+        modules: Vec<ChildProvider>,
+    ) -> Result<(), &'static str> {
+        self.register_external_provider_modules(&modules)?;
         self.provider_imports = imports;
         self.provider_thunks = thunks;
         self.provider_modules = modules;
+        Ok(())
+    }
+
+    pub fn register_native_module(
+        &mut self,
+        requested: &str,
+        stored: &str,
+        handle: u32,
+    ) -> Result<(), &'static str> {
+        self.register_loaded_module(requested, stored, handle, LoadedModuleKind::NativeImage)
+    }
+
+    fn register_external_provider_modules(
+        &mut self,
+        modules: &[ChildProvider],
+    ) -> Result<(), &'static str> {
+        for module in modules {
+            let ChildProvider::External { module } = module else {
+                continue;
+            };
+            self.register_external_provider_module(module)?;
+        }
+        Ok(())
+    }
+
+    fn register_external_provider_imports(
+        &mut self,
+        imports: &[ProviderImport],
+    ) -> Result<(), &'static str> {
+        for import in imports {
+            self.register_external_provider_module(&import.module)?;
+        }
+        Ok(())
+    }
+
+    fn register_external_provider_module(&mut self, module: &str) -> Result<(), &'static str> {
+        if let Some(loaded) = self
+            .loaded_modules
+            .iter()
+            .find(|loaded| module_names_match(&loaded.requested_name, module))
+        {
+            return if loaded.kind == LoadedModuleKind::ExternalProvider {
+                Ok(())
+            } else {
+                Err("loaded module name collision")
+            };
+        }
+        let handle = self.next_provider_module_handle;
+        self.next_provider_module_handle = self
+            .next_provider_module_handle
+            .checked_add(1)
+            .ok_or("provider module handle overflow")?;
+        self.register_loaded_module(module, module, handle, LoadedModuleKind::ExternalProvider)
+    }
+
+    fn register_loaded_module(
+        &mut self,
+        requested: &str,
+        stored: &str,
+        handle: u32,
+        kind: LoadedModuleKind,
+    ) -> Result<(), &'static str> {
+        if handle == 0 {
+            return Err("loaded module handle is zero");
+        }
+        for existing in &self.loaded_modules {
+            let same_module = module_names_match(&existing.requested_name, requested)
+                || module_names_match(&existing.requested_name, stored)
+                || module_names_match(&existing.stored_name, requested)
+                || module_names_match(&existing.stored_name, stored);
+            if existing.handle == handle {
+                if same_module && existing.kind == kind {
+                    return Ok(());
+                }
+                return Err("loaded module handle collision");
+            }
+            if same_module {
+                return Err("loaded module name collision");
+            }
+        }
+        self.loaded_modules.push(LoadedModule {
+            requested_name: requested.to_owned(),
+            stored_name: stored.to_owned(),
+            handle,
+            kind,
+        });
+        Ok(())
     }
 
     pub fn provider_import(&self, id: u32) -> Option<&ProviderImport> {
@@ -903,6 +1065,24 @@ impl XpProcess {
                     .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(self.lc_map_string(esp, memory)?))
             }
+            ProviderOp::GetModuleFileNameA => {
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(
+                    self.get_module_filename(esp, memory)?,
+                ))
+            }
+            ProviderOp::GetModuleHandleA => {
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(
+                    self.get_module_handle_a(esp, memory)?,
+                ))
+            }
             _ => Err(ProviderDispatchError::Unsupported),
         }
     }
@@ -1070,6 +1250,7 @@ impl XpProcess {
             .map_err(|error| match error {
                 ProviderDispatchError::Unsupported => "unsupported child provider import",
                 ProviderDispatchError::Fault(error) => error,
+                ProviderDispatchError::Frontier { .. } => "child provider frontier",
             })
     }
 
@@ -1145,10 +1326,36 @@ impl XpProcess {
         Ok(Some(allocation))
     }
 
+    pub fn free_win_heap(
+        &mut self,
+        esp: u32,
+        memory: &impl GuestMemory,
+    ) -> Result<Option<WinHeapAllocation>, &'static str> {
+        let [_, heap, flags, pointer] = arguments::<4>(memory, esp)?;
+        if flags != 0 {
+            return Err("HeapFree flags frontier");
+        }
+        let Some(allocation) = self.win_heap_allocations.get(&pointer).copied() else {
+            self.last_error = 6;
+            return Ok(None);
+        };
+        if allocation.heap != heap {
+            self.last_error = 6;
+            return Ok(None);
+        }
+        self.win_heap_allocations.remove(&pointer);
+        self.call_count = self
+            .call_count
+            .checked_add(1)
+            .ok_or("call count overflow")?;
+        Ok(Some(allocation))
+    }
+
     pub fn append_provider_imports(
         &mut self,
         imports: Vec<ProviderImport>,
     ) -> Result<(Vec<u32>, usize, usize, usize, Vec<u8>), &'static str> {
+        self.register_external_provider_imports(&imports)?;
         let old_bytes = self.provider_thunks.len();
         let first = u32::try_from(self.provider_imports.len()).map_err(|_| "provider id")?;
         let updated_from = usize::try_from(first)
@@ -1642,11 +1849,35 @@ impl XpProcess {
         if module != 0 && module != pe32::IMAGE_BASE {
             return Err("unknown module");
         }
-        if (capacity as usize) < MODULE_FILENAME.len() {
+        let filename = self.image.filename();
+        if (capacity as usize) < filename.len() {
             return Err("module filename buffer");
         }
-        memory.write(output, MODULE_FILENAME)?;
-        Ok((MODULE_FILENAME.len() - 1) as u32)
+        memory.write(output, filename)?;
+        Ok((filename.len() - 1) as u32)
+    }
+
+    fn get_module_handle_a(
+        &self,
+        esp: u32,
+        memory: &impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
+        let [_, module_name] = arguments::<2>(memory, esp)?;
+        if module_name == 0 {
+            return Ok(pe32::IMAGE_BASE);
+        }
+        let requested = read_c_string(memory, module_name, 260)?;
+        self.loaded_modules
+            .iter()
+            .find(|module| {
+                module_names_match(&module.requested_name, &requested)
+                    || module_names_match(&module.stored_name, &requested)
+            })
+            .map(|module| module.handle)
+            .ok_or_else(|| ProviderDispatchError::Frontier {
+                api: "GetModuleHandleA",
+                detail: format!("unknown-loaded-module name={requested:?}"),
+            })
     }
 
     fn get_std_handle(&self, esp: u32, memory: &impl GuestMemory) -> Result<u32, &'static str> {
@@ -4917,7 +5148,7 @@ mod tests {
     fn unsupported_child_provider_does_not_mutate_memory() {
         let provider = ProviderImport {
             module: "KERNEL32.dll".into(),
-            symbol: ProviderSymbol::Name("GetModuleHandleA".into()),
+            symbol: ProviderSymbol::Name("GetComputerNameA".into()),
             iat_rva: 0,
         };
         let mut pid2 = XpProcess::new(Vec::new());
@@ -5479,6 +5710,183 @@ mod tests {
     }
 
     #[test]
+    fn child_get_module_file_name_a_reports_the_child_image_only() {
+        let provider = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("GetModuleFileNameA".into()),
+            iat_rva: 0,
+        };
+        let mut pid2 = XpProcess::new_child();
+        pid2.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+        let output = STACK_TOP - 0x200;
+        for (index, value) in [
+            0x2113_6200,
+            0,
+            output,
+            CHILD_IMAGE_FILENAME.len() as u32,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
+        }
+        assert_eq!(
+            pid2.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(
+                (CHILD_IMAGE_FILENAME.len() - 1) as u32
+            ))
+        );
+        let mut filename = vec![0; CHILD_IMAGE_FILENAME.len()];
+        memory.read(output, &mut filename).unwrap();
+        assert_eq!(filename, CHILD_IMAGE_FILENAME);
+        assert_eq!(pid2.call_count, 1);
+    }
+
+    #[test]
+    fn child_get_module_handle_a_null_reports_the_child_main_image() {
+        let provider = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("GetModuleHandleA".into()),
+            iat_rva: 0,
+        };
+        let mut pid2 = XpProcess::new_child();
+        pid2.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+        write_u32(&mut memory, esp, 0x2113_094f).unwrap();
+        write_u32(&mut memory, esp + 4, 0).unwrap();
+        assert_eq!(
+            pid2.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(pe32::IMAGE_BASE))
+        );
+        assert_eq!(pid2.call_count, 1);
+    }
+
+    #[test]
+    fn child_get_module_handle_a_resolves_native_module_aliases() {
+        let provider = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("GetModuleHandleA".into()),
+            iat_rva: 0,
+        };
+        let mut pid2 = XpProcess::new_child();
+        pid2.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        pid2.register_native_module("MSS32.DLL", "Mss32.dll", 0x2110_0000)
+            .unwrap();
+        pid2.register_native_module("Storm.dll", "Storm.dll", 0x1500_0000)
+            .unwrap();
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+        let name = STACK_TOP - 0x200;
+        write_u32(&mut memory, esp, 0x2113_094f).unwrap();
+        write_u32(&mut memory, esp + 4, name).unwrap();
+        for spelling in [b"Mss32.dll\0".as_slice(), b"mss32.dll\0", b"MSS32.DLL\0"] {
+            memory.write(name, spelling).unwrap();
+            assert_eq!(
+                pid2.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+                Ok(PersonalityAction::Return(0x2110_0000))
+            );
+        }
+        memory.write(name, b"Storm.dll\0").unwrap();
+        assert_eq!(
+            pid2.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(0x1500_0000))
+        );
+        memory.write(name, b"Unknown.dll\0").unwrap();
+        assert_eq!(
+            pid2.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Err(ProviderDispatchError::Frontier {
+                api: "GetModuleHandleA",
+                detail: "unknown-loaded-module name=\"Unknown.dll\"".into(),
+            })
+        );
+    }
+
+    #[test]
+    fn child_get_module_handle_a_resolves_stable_external_provider_handles() {
+        let provider = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("GetModuleHandleA".into()),
+            iat_rva: 0,
+        };
+        let mut pid2 = XpProcess::new_child();
+        pid2.install_provider_surface(
+            vec![provider],
+            Vec::new(),
+            vec![
+                ChildProvider::External {
+                    module: "KERNEL32.dll".into(),
+                },
+                ChildProvider::External {
+                    module: "MSVCRT.dll".into(),
+                },
+            ],
+        );
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+        let name = STACK_TOP - 0x200;
+        write_u32(&mut memory, esp, 0x2113_094f).unwrap();
+        write_u32(&mut memory, esp + 4, name).unwrap();
+        memory.write(name, b"kernel32.dll\0").unwrap();
+        let kernel = match pid2.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory) {
+            Ok(PersonalityAction::Return(handle)) => handle,
+            other => panic!("unexpected KERNEL32 result: {other:?}"),
+        };
+        memory.write(name, b"KERNEL32.DLL\0").unwrap();
+        assert_eq!(
+            pid2.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(kernel))
+        );
+        memory.write(name, b"MSVCRT.dll\0").unwrap();
+        let msvcrt = match pid2.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory) {
+            Ok(PersonalityAction::Return(handle)) => handle,
+            other => panic!("unexpected MSVCRT result: {other:?}"),
+        };
+        assert_ne!(kernel, 0);
+        assert_ne!(kernel, msvcrt);
+    }
+
+    #[test]
+    fn loaded_module_registration_rejects_conflicting_names_and_handles() {
+        let mut pid2 = XpProcess::new_child();
+        pid2.register_native_module("MSS32.DLL", "Mss32.dll", 0x2110_0000)
+            .unwrap();
+        pid2.register_native_module("mss32.dll", "MSS32.DLL", 0x2110_0000)
+            .unwrap();
+        assert_eq!(
+            pid2.register_native_module("mss32.dll", "Mss32.dll", 0x2111_0000),
+            Err("loaded module name collision")
+        );
+        assert_eq!(
+            pid2.register_native_module("Other.dll", "Other.dll", 0x2110_0000),
+            Err("loaded module handle collision")
+        );
+    }
+
+    #[test]
+    fn launcher_and_child_have_distinct_main_image_filenames() {
+        let launcher = XpProcess::new(Vec::new());
+        let child = XpProcess::new_child();
+        assert_eq!(launcher.image.filename(), LAUNCHER_IMAGE_FILENAME);
+        assert_eq!(child.image.filename(), CHILD_IMAGE_FILENAME);
+        assert_ne!(launcher.image.filename(), child.image.filename());
+    }
+
+    #[test]
     fn launcher_get_acp_reuses_process_ansi_code_page() {
         let imports = vec![LauncherImport {
             id: 0,
@@ -5653,6 +6061,37 @@ mod tests {
             write_u32(&mut memory, esp + index as u32 * 4, word).unwrap();
         }
         assert_eq!(pid2.alloc_win_heap(esp, &memory).unwrap(), None);
+    }
+
+    #[test]
+    fn child_win_heap_free_releases_an_allocation_only_once() {
+        let mut pid2 = XpProcess::new_child();
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+        for (index, word) in [0x2113_1b92, 0, 0x1000, 0].into_iter().enumerate() {
+            write_u32(&mut memory, esp + index as u32 * 4, word).unwrap();
+        }
+        let heap = pid2.create_win_heap(esp, &memory).unwrap().handle;
+        for (index, word) in [0x2113_24c2, heap, 0, 16].into_iter().enumerate() {
+            write_u32(&mut memory, esp + index as u32 * 4, word).unwrap();
+        }
+        let allocation = pid2.alloc_win_heap(esp, &memory).unwrap().unwrap();
+        for (index, word) in [0x2113_0706, heap, 0, allocation.pointer]
+            .into_iter()
+            .enumerate()
+        {
+            write_u32(&mut memory, esp + index as u32 * 4, word).unwrap();
+        }
+        assert_eq!(
+            pid2.free_win_heap(esp, &memory).unwrap(),
+            Some(allocation)
+        );
+        assert!(!pid2.win_heap_allocations.contains_key(&allocation.pointer));
+        assert_eq!(pid2.free_win_heap(esp, &memory).unwrap(), None);
+        assert_eq!(pid2.last_error, 6);
     }
 
     #[test]

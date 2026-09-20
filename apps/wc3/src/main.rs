@@ -605,6 +605,83 @@ async fn run() -> Result<(), String> {
                             .map_err(|error| error.to_string())?;
                         continue;
                     }
+                    let is_heap_free = matches!(
+                        &provider.symbol,
+                        child_loader::ProviderSymbol::Name(name)
+                            if provider.module.eq_ignore_ascii_case("KERNEL32.dll")
+                                && name == "HeapFree"
+                    );
+                    if is_heap_free {
+                        let frame = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            exit.registers.esp,
+                            4,
+                        )?;
+                        let heap = frame[1];
+                        let flags = frame[2];
+                        let pointer = frame[3];
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD HEAP FREE CALL pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" provider_id={} heap=0x{:08x} flags=0x{:08x} pointer=0x{:08x} caller_ret=0x{:08x}",
+                                active_pid,
+                                active_tid,
+                                running_module_name,
+                                provider_id,
+                                heap,
+                                flags,
+                                pointer,
+                                u32::from_le_bytes(caller_ret),
+                            ),
+                        );
+                        if flags != 0 {
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD HEAP FREE FRONTIER pid={} tid={} reason=unsupported-flags flags=0x{:08x}",
+                                    active_pid, active_tid, flags,
+                                ),
+                            );
+                            return Ok(());
+                        }
+                        let freed = session
+                            .process_mut(active_pid)
+                            .ok_or_else(|| "child process missing".to_owned())?
+                            .xp
+                            .free_win_heap(exit.registers.esp, &X86Memory(&child.address_space))
+                            .map_err(str::to_owned)?;
+                        let result = if let Some(allocation) = freed {
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD HEAP FREE RESULT pid={} tid={} heap=0x{:08x} pointer=0x{:08x} requested={} end=0x{:08x} freed=1 cleanup=12-by-thunk",
+                                    active_pid,
+                                    active_tid,
+                                    allocation.heap,
+                                    allocation.pointer,
+                                    allocation.requested,
+                                    allocation.end,
+                                ),
+                            );
+                            1
+                        } else {
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD HEAP FREE RESULT pid={} tid={} heap=0x{:08x} pointer=0x{:08x} freed=0 cleanup=12-by-thunk",
+                                    active_pid, active_tid, heap, pointer,
+                                ),
+                            );
+                            0
+                        };
+                        let mut registers = exit.registers;
+                        registers.eax = result;
+                        contexts[active]
+                            .context
+                            .set_registers(registers)
+                            .map_err(|error| error.to_string())?;
+                        continue;
+                    }
                     let is_get_command_line_a = matches!(
                         &provider.symbol,
                         child_loader::ProviderSymbol::Name(name)
@@ -1798,6 +1875,26 @@ async fn run() -> Result<(), String> {
                             Err(ProviderDispatchError::Unsupported) => {}
                             Err(ProviderDispatchError::Fault(error)) => {
                                 return Err(format!("child provider semantic fault: {error}"));
+                            }
+                            Err(ProviderDispatchError::Frontier { api, detail }) => {
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 CHILD PROVIDER FRONTIER pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" provider_id={} module=\"{}\" {} eip=0x{:08x} esp=0x{:08x} caller_ret=0x{:08x} api=\"{}\" detail={:?}",
+                                        active_pid,
+                                        active_tid,
+                                        running_module_name,
+                                        provider_id,
+                                        provider.module,
+                                        symbol,
+                                        exit.registers.eip,
+                                        exit.registers.esp,
+                                        u32::from_le_bytes(caller_ret),
+                                        api,
+                                        detail,
+                                    ),
+                                );
+                                return Ok(());
                             }
                         }
                     }
@@ -3310,11 +3407,12 @@ async fn run() -> Result<(), String> {
                                 .process_mut(child.pid)
                                 .ok_or_else(|| "child process missing".to_owned())?
                                 .xp
-                                .install_provider_surface(
+                                .try_install_provider_surface(
                                     surface.imports,
                                     surface.thunks,
                                     surface.providers,
-                                );
+                                )
+                                .map_err(str::to_owned)?;
                             child.provider_thunk_bytes = initial_provider_thunk_bytes;
                             logl::log(
                                 level::IMPORTANT,
@@ -3568,6 +3666,16 @@ async fn run() -> Result<(), String> {
                             .map_err(str::to_owned)?;
                             let native_base = image.image_base;
                             let native_imports = image.imports.len();
+                            session
+                                .process_mut(child.pid)
+                                .ok_or_else(|| "child process missing".to_owned())?
+                                .xp
+                                .register_native_module(
+                                    &native.requested,
+                                    &native.stored,
+                                    native_base,
+                                )
+                                .map_err(str::to_owned)?;
                             child.native_modules.push(PendingNativeModule {
                                 requested: native.requested,
                                 stored: native.stored.clone(),
@@ -3867,6 +3975,12 @@ async fn run() -> Result<(), String> {
                             .map_err(str::to_owned)?;
                             let mss_base = mss_image.image_base;
                             let mss_imports = mss_image.imports.len();
+                            session
+                                .process_mut(child.pid)
+                                .ok_or_else(|| "child process missing".to_owned())?
+                                .xp
+                                .register_native_module(&mss.requested, &mss.stored, mss_base)
+                                .map_err(str::to_owned)?;
                             child.native_modules.push(PendingNativeModule {
                                 requested: mss.requested,
                                 stored: mss.stored.clone(),
