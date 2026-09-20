@@ -40,6 +40,16 @@ pub const THUNK_PAGE_BYTES: usize = 0x1000;
 pub const COMMAND_LINE: &[u8] = b"\"Warcraft III.exe\"\0";
 pub const CHILD_COMMAND_LINE: &[u8] = b"\"war3.exe\" \0";
 pub const XP_ANSI_CODE_PAGE: u32 = 1252;
+const CT_CTYPE1: u32 = 1;
+const C1_UPPER: u16 = 0x0001;
+const C1_LOWER: u16 = 0x0002;
+const C1_DIGIT: u16 = 0x0004;
+const C1_SPACE: u16 = 0x0008;
+const C1_PUNCT: u16 = 0x0010;
+const C1_CNTRL: u16 = 0x0020;
+const C1_BLANK: u16 = 0x0040;
+const C1_XDIGIT: u16 = 0x0080;
+const C1_ALPHA: u16 = 0x0100;
 const MODULE_FILENAME: &[u8] = b"C:\\Warcraft III\\Warcraft III.exe\0";
 const WINDOWS_XP_GET_VERSION: u32 = 0x0a28_0105;
 const CREATE_SUSPENDED: u32 = 4;
@@ -66,6 +76,35 @@ fn read_u32(memory: &impl GuestMemory, address: u32) -> Result<u32, &'static str
 
 fn write_u32(memory: &mut impl GuestMemory, address: u32, value: u32) -> Result<(), &'static str> {
     memory.write(address, &value.to_le_bytes())
+}
+
+fn ascii_ctype1(value: u16) -> u16 {
+    let Ok(byte) = u8::try_from(value) else {
+        return 0;
+    };
+    match byte {
+        b'A'..=b'Z' => {
+            let mut class = C1_ALPHA | C1_UPPER;
+            if matches!(byte, b'A'..=b'F') {
+                class |= C1_XDIGIT;
+            }
+            class
+        }
+        b'a'..=b'z' => {
+            let mut class = C1_ALPHA | C1_LOWER;
+            if matches!(byte, b'a'..=b'f') {
+                class |= C1_XDIGIT;
+            }
+            class
+        }
+        b'0'..=b'9' => C1_DIGIT | C1_XDIGIT,
+        b' ' => C1_SPACE | C1_BLANK,
+        b'\t' => C1_SPACE | C1_BLANK | C1_CNTRL,
+        b'\n' | b'\r' | 0x0b | 0x0c => C1_SPACE | C1_CNTRL,
+        0x00..=0x1f | 0x7f => C1_CNTRL,
+        0x21..=0x2f | 0x3a..=0x40 | 0x5b..=0x60 | 0x7b..=0x7e => C1_PUNCT,
+        _ => 0,
+    }
 }
 
 #[cfg(test)]
@@ -805,6 +844,20 @@ impl XpProcess {
                     .checked_add(1)
                     .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(self.get_acp()))
+            }
+            ProviderOp::GetCPInfo => {
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(self.get_cp_info(esp, memory)?))
+            }
+            ProviderOp::GetStringTypeW => {
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(self.get_string_type(esp, memory)?))
             }
             _ => Err(ProviderDispatchError::Unsupported),
         }
@@ -1599,23 +1652,35 @@ impl XpProcess {
         memory: &mut impl GuestMemory,
     ) -> Result<u32, &'static str> {
         let [_, info_type, source, count, output] = arguments::<5>(memory, esp)?;
-        if info_type != 1 {
+        if info_type != CT_CTYPE1 {
             return Err("unsupported character info type");
         }
-        for index in 0..count {
-            let mut bytes = [0; 2];
-            memory.read(source + index * 2, &mut bytes)?;
-            let value = u16::from_le_bytes(bytes);
-            let class = if u8::try_from(value).is_ok_and(|value| value.is_ascii_alphabetic()) {
-                0x101
-            } else if u8::try_from(value).is_ok_and(|value| value.is_ascii_digit()) {
-                0x204
-            } else if u8::try_from(value).is_ok_and(|value| value.is_ascii_whitespace()) {
-                0x8
-            } else {
-                0
-            };
-            memory.write(output + index * 2, &u16::to_le_bytes(class))?;
+        if source == output {
+            return Err("GetStringTypeW aliased buffers");
+        }
+        let signed_count = count as i32;
+        let length = if signed_count < 0 {
+            let mut length = 0u32;
+            loop {
+                let offset = length.checked_mul(2).ok_or("GetStringTypeW length overflow")?;
+                let address = source.checked_add(offset).ok_or("GetStringTypeW source overflow")?;
+                let value = read_u16(memory, address)?;
+                length = length
+                    .checked_add(1)
+                    .ok_or("GetStringTypeW length overflow")?;
+                if value == 0 {
+                    break length;
+                }
+            }
+        } else {
+            count
+        };
+        for index in 0..length {
+            let offset = index.checked_mul(2).ok_or("GetStringTypeW length overflow")?;
+            let source_address = source.checked_add(offset).ok_or("GetStringTypeW source overflow")?;
+            let output_address = output.checked_add(offset).ok_or("GetStringTypeW output overflow")?;
+            let class = ascii_ctype1(read_u16(memory, source_address)?);
+            memory.write(output_address, &class.to_le_bytes())?;
         }
         Ok(1)
     }
@@ -5027,6 +5092,110 @@ mod tests {
     }
 
     #[test]
+    fn ascii_ctype1_distinguishes_the_minimal_crt_classes() {
+        assert_eq!(ascii_ctype1(u16::from(b'A')), C1_ALPHA | C1_UPPER | C1_XDIGIT);
+        assert_eq!(ascii_ctype1(u16::from(b'a')), C1_ALPHA | C1_LOWER | C1_XDIGIT);
+        assert_eq!(ascii_ctype1(u16::from(b'F')), C1_ALPHA | C1_UPPER | C1_XDIGIT);
+        assert_eq!(ascii_ctype1(u16::from(b'f')), C1_ALPHA | C1_LOWER | C1_XDIGIT);
+        assert_eq!(ascii_ctype1(u16::from(b'0')), C1_DIGIT | C1_XDIGIT);
+        assert_eq!(ascii_ctype1(u16::from(b' ')), C1_SPACE | C1_BLANK);
+        assert_eq!(ascii_ctype1(u16::from(b'\t')), C1_SPACE | C1_BLANK | C1_CNTRL);
+        assert_eq!(ascii_ctype1(u16::from(b'!')), C1_PUNCT);
+        assert_eq!(ascii_ctype1(0), C1_CNTRL);
+    }
+
+    #[test]
+    fn child_get_string_type_w_uses_ctype1_and_process_memory_only() {
+        let provider = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("GetStringTypeW".into()),
+            iat_rva: 0,
+        };
+        let mut pid2 = XpProcess::new(Vec::new());
+        pid2.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+        let source = STACK_TOP - 0x200;
+        let output = STACK_TOP - 0x300;
+        for (index, value) in [b'A', b'a', b'F', b'f', b'0', b' ', b'\t', b'!', 0]
+            .into_iter()
+            .enumerate()
+        {
+            write_u16(&mut memory, source + index as u32 * 2, u16::from(value)).unwrap();
+        }
+        for (index, value) in [0x2113_61d2, CT_CTYPE1, source, 9, output]
+            .into_iter()
+            .enumerate()
+        {
+            write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
+        }
+        assert_eq!(
+            pid2.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(1))
+        );
+        let expected = [
+            C1_ALPHA | C1_UPPER | C1_XDIGIT,
+            C1_ALPHA | C1_LOWER | C1_XDIGIT,
+            C1_ALPHA | C1_UPPER | C1_XDIGIT,
+            C1_ALPHA | C1_LOWER | C1_XDIGIT,
+            C1_DIGIT | C1_XDIGIT,
+            C1_SPACE | C1_BLANK,
+            C1_SPACE | C1_BLANK | C1_CNTRL,
+            C1_PUNCT,
+            C1_CNTRL,
+        ];
+        for (index, class) in expected.into_iter().enumerate() {
+            assert_eq!(read_u16(&memory, output + index as u32 * 2).unwrap(), class);
+        }
+        assert_eq!(pid2.call_count, 1);
+    }
+
+    #[test]
+    fn child_get_string_type_w_negative_count_includes_the_terminating_nul() {
+        let provider = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("GetStringTypeW".into()),
+            iat_rva: 0,
+        };
+        let mut pid2 = XpProcess::new(Vec::new());
+        pid2.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+        let source = STACK_TOP - 0x200;
+        let output = STACK_TOP - 0x300;
+        for (index, value) in [b'A', b'a', 0].into_iter().enumerate() {
+            write_u16(&mut memory, source + index as u32 * 2, u16::from(value)).unwrap();
+        }
+        write_u16(&mut memory, output + 6, 0x5a5a).unwrap();
+        for (index, value) in [0x2113_61d2, CT_CTYPE1, source, u32::MAX, output]
+            .into_iter()
+            .enumerate()
+        {
+            write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
+        }
+        assert_eq!(
+            pid2.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(1))
+        );
+        assert_eq!(
+            read_u16(&memory, output).unwrap(),
+            C1_ALPHA | C1_UPPER | C1_XDIGIT
+        );
+        assert_eq!(
+            read_u16(&memory, output + 2).unwrap(),
+            C1_ALPHA | C1_LOWER | C1_XDIGIT
+        );
+        assert_eq!(read_u16(&memory, output + 4).unwrap(), C1_CNTRL);
+        assert_eq!(read_u16(&memory, output + 6).unwrap(), 0x5a5a);
+    }
+
+    #[test]
     fn launcher_get_acp_reuses_process_ansi_code_page() {
         let imports = vec![LauncherImport {
             id: 0,
@@ -5045,6 +5214,36 @@ mod tests {
             xp.dispatch(1, 0, esp, &mut memory).unwrap(),
             PersonalityAction::Return(XP_ANSI_CODE_PAGE)
         );
+    }
+
+    #[test]
+    fn child_get_cp_info_reuses_process_ansi_code_page() {
+        let provider = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("GetCPInfo".into()),
+            iat_rva: 0,
+        };
+        let mut pid2 = XpProcess::new(Vec::new());
+        pid2.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+        let output = STACK_TOP - 0x100;
+        write_u32(&mut memory, esp, 0x2113_61b0).unwrap();
+        write_u32(&mut memory, esp + 4, XP_ANSI_CODE_PAGE).unwrap();
+        write_u32(&mut memory, esp + 8, output).unwrap();
+        assert_eq!(
+            pid2.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(1))
+        );
+        let mut info = [0; 0x14];
+        memory.read(output, &mut info).unwrap();
+        assert_eq!(u32::from_le_bytes(info[..4].try_into().unwrap()), 1);
+        assert_eq!(info[4], b'?');
+        assert_eq!(info[5..], [0; 0x0f]);
+        assert_eq!(pid2.call_count, 1);
     }
 
     #[test]

@@ -28,6 +28,8 @@ pub enum ProviderOp {
     GetFileType,
     SetHandleCount,
     GetACP,
+    GetCPInfo,
+    GetStringTypeW,
     GetVersion,
     GetVersionExA,
     WideCharToMultiByte,
@@ -59,7 +61,8 @@ impl ProviderOp {
             | Self::GetFileType
             | Self::SetHandleCount
             | Self::SetLastError => 4,
-            Self::VirtualAlloc => 16,
+            Self::GetCPInfo => 8,
+            Self::GetStringTypeW | Self::VirtualAlloc => 16,
             Self::WideCharToMultiByte => 32,
             Self::HeapCreate | Self::HeapAlloc | Self::HeapFree => 12,
             Self::RegOpenKeyExA => 20,
@@ -76,6 +79,8 @@ impl ProviderOp {
                 | Self::GetFileType
                 | Self::SetHandleCount
                 | Self::GetACP
+                | Self::GetCPInfo
+                | Self::GetStringTypeW
         )
     }
 }
@@ -94,6 +99,8 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "GetFileType" => ProviderOp::GetFileType,
             "SetHandleCount" => ProviderOp::SetHandleCount,
             "GetACP" => ProviderOp::GetACP,
+            "GetCPInfo" => ProviderOp::GetCPInfo,
+            "GetStringTypeW" => ProviderOp::GetStringTypeW,
             "GetVersion" => ProviderOp::GetVersion,
             "GetVersionExA" => ProviderOp::GetVersionExA,
             "WideCharToMultiByte" => ProviderOp::WideCharToMultiByte,
@@ -476,6 +483,39 @@ mod tests {
         let mut bytes = [0; thunk32::THUNK_BYTES];
         thunk32::write(640, provider_thunk_kind(&import), &mut bytes).unwrap();
         assert_eq!(bytes[8], 0xc3);
+    }
+
+    #[test]
+    fn get_cp_info_is_pure_process_stdcall_eight() {
+        let import = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("GetCPInfo".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&import);
+        assert_eq!(operation, ProviderOp::GetCPInfo);
+        assert!(operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 8);
+        assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Stdcall(8));
+        let mut bytes = [0; thunk32::THUNK_BYTES];
+        thunk32::write(641, provider_thunk_kind(&import), &mut bytes).unwrap();
+        assert_eq!(&bytes[8..11], &[0xc2, 0x08, 0x00]);
+    }
+
+    #[test]
+    fn get_string_type_w_is_pure_process_stdcall_sixteen() {
+        let import = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("GetStringTypeW".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&import);
+        assert_eq!(operation, ProviderOp::GetStringTypeW);
+        assert!(operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 16);
+        let mut bytes = [0; thunk32::THUNK_BYTES];
+        thunk32::write(638, provider_thunk_kind(&import), &mut bytes).unwrap();
+        assert_eq!(&bytes[8..11], &[0xc2, 0x10, 0x00]);
     }
 
     #[test]
