@@ -148,6 +148,7 @@ async fn ensure_registry_loaded(session: &mut Wc3Session) -> Result<(), String> 
 }
 
 async fn run() -> Result<(), String> {
+    run_x86_extended_state_self_test().await?;
     let bytes = async_fs::read_file(LAUNCHER_PATH.as_bytes())
         .await
         .map_err(|error| format!("read {LAUNCHER_PATH}: TRUEOSFS error {error}"))?;
@@ -351,6 +352,16 @@ async fn run() -> Result<(), String> {
                         let base = read_guest_words(&X86Memory(&child.address_space), thunk32::CHILD_CIPOW_BASE_ADDRESS, 2)?;
                         let exponent = f64::from_bits((exponent[0] as u64) | ((exponent[1] as u64) << 32));
                         let base = f64::from_bits((base[0] as u64) | ((base[1] as u64) << 32));
+                        if !child.cipow_diagnostic_logged {
+                            child.cipow_diagnostic_logged = true;
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD CRT CIPOW base={} exponent={}",
+                                    base, exponent
+                                ),
+                            );
+                        }
                         if !base.is_finite() || !exponent.is_finite() || base <= 0.0 { return Ok(()); }
                         let result = base.powf(exponent);
                         if !result.is_finite() { return Ok(()); }
@@ -2365,6 +2376,7 @@ async fn run() -> Result<(), String> {
                             provider_thunk_bytes: 0,
                             initterm: None,
                             cipow: None,
+                            cipow_diagnostic_logged: false,
                             loader: ChildLoaderState {
                                 prepared: false,
                                 native_requests: Vec::new(),
@@ -3817,6 +3829,219 @@ async fn run() -> Result<(), String> {
     }
 }
 
+const XSTATE_TEST_CODE_BASE: u32 = 0x0010_0000;
+const XSTATE_TEST_DATA_BASE: u32 = 0x0011_0000;
+
+fn emit_fld_m64(code: &mut Vec<u8>, address: u32) {
+    code.extend_from_slice(&[0xdd, 0x05]);
+    code.extend_from_slice(&address.to_le_bytes());
+}
+
+fn emit_fst_m64(code: &mut Vec<u8>, address: u32, pop: bool) {
+    code.extend_from_slice(&[0xdd, if pop { 0x1d } else { 0x15 }]);
+    code.extend_from_slice(&address.to_le_bytes());
+}
+
+fn emit_movdqu_xmm0_from(code: &mut Vec<u8>, address: u32) {
+    code.extend_from_slice(&[0xf3, 0x0f, 0x6f, 0x05]);
+    code.extend_from_slice(&address.to_le_bytes());
+}
+
+fn emit_movdqu_xmm0_to(code: &mut Vec<u8>, address: u32) {
+    code.extend_from_slice(&[0xf3, 0x0f, 0x7f, 0x05]);
+    code.extend_from_slice(&address.to_le_bytes());
+}
+
+fn emit_vmcall(code: &mut Vec<u8>) {
+    code.extend_from_slice(&[0x0f, 0x01, 0xc1]);
+}
+
+fn require_vmcall(exit: &trueos::x86::Exit, phase: &str) -> Result<(), String> {
+    if exit.kind == ExitKind::VmCall {
+        Ok(())
+    } else {
+        Err(format!(
+            "x86 xstate self-test {phase}: expected VMCALL, got {:?} detail=0x{:08x} qualification=0x{:016x}",
+            exit.kind, exit.detail, exit.qualification
+        ))
+    }
+}
+
+fn read_exact_x86(address_space: &AddressSpace, address: u32, output: &mut [u8]) -> Result<(), String> {
+    let read = address_space.read(address, output).map_err(|error| error.to_string())?;
+    if read == output.len() {
+        Ok(())
+    } else {
+        Err(format!("x86 xstate self-test short read: {read}/{}", output.len()))
+    }
+}
+
+async fn run_x86_extended_state_self_test() -> Result<(), String> {
+    const A_CODE: u32 = XSTATE_TEST_CODE_BASE;
+    const B_CODE: u32 = XSTATE_TEST_CODE_BASE + 0x100;
+    const DEEP_CODE: u32 = XSTATE_TEST_CODE_BASE + 0x200;
+    const A_PATTERN: u32 = XSTATE_TEST_DATA_BASE;
+    const B_PATTERN: u32 = XSTATE_TEST_DATA_BASE + 0x10;
+    const A_X87_OUT: u32 = XSTATE_TEST_DATA_BASE + 0x20;
+    const B_X87_OUT: u32 = XSTATE_TEST_DATA_BASE + 0x28;
+    const A_XMM_OUT: u32 = XSTATE_TEST_DATA_BASE + 0x30;
+    const B_XMM_OUT: u32 = XSTATE_TEST_DATA_BASE + 0x40;
+    const SENTINEL1: u32 = XSTATE_TEST_DATA_BASE + 0x50;
+    const SENTINEL0: u32 = XSTATE_TEST_DATA_BASE + 0x58;
+    const BASE: u32 = XSTATE_TEST_DATA_BASE + 0x60;
+    const EXPONENT: u32 = XSTATE_TEST_DATA_BASE + 0x68;
+    const SPILLED_EXPONENT: u32 = XSTATE_TEST_DATA_BASE + 0x70;
+    const SPILLED_BASE: u32 = XSTATE_TEST_DATA_BASE + 0x78;
+    const RESULT: u32 = XSTATE_TEST_DATA_BASE + 0x80;
+    const FINAL_RESULT: u32 = XSTATE_TEST_DATA_BASE + 0x88;
+    const FINAL_SENTINEL0: u32 = XSTATE_TEST_DATA_BASE + 0x90;
+    const FINAL_SENTINEL1: u32 = XSTATE_TEST_DATA_BASE + 0x98;
+
+    let address_space = AddressSpace::create().map_err(|error| error.to_string())?;
+    address_space
+        .map(
+            XSTATE_TEST_CODE_BASE,
+            0x1000,
+            Permissions::READ | Permissions::WRITE | Permissions::EXECUTE,
+        )
+        .map_err(|error| error.to_string())?;
+    address_space
+        .map(
+            XSTATE_TEST_DATA_BASE,
+            0x1000,
+            Permissions::READ | Permissions::WRITE,
+        )
+        .map_err(|error| error.to_string())?;
+
+    let a_pattern = [
+        0x10, 0x21, 0x32, 0x43, 0x54, 0x65, 0x76, 0x87,
+        0x98, 0xa9, 0xba, 0xcb, 0xdc, 0xed, 0xfe, 0x0f,
+    ];
+    let b_pattern = [
+        0xf0, 0xde, 0xbc, 0x9a, 0x78, 0x56, 0x34, 0x12,
+        0x0f, 0x1e, 0x2d, 0x3c, 0x4b, 0x5a, 0x69, 0x78,
+    ];
+    address_space.write(A_PATTERN, &a_pattern).map_err(|error| error.to_string())?;
+    address_space.write(B_PATTERN, &b_pattern).map_err(|error| error.to_string())?;
+
+    let context_program = |ones: usize, pattern: u32, x87_out: u32, xmm_out: u32| {
+        let mut code = Vec::new();
+        for _ in 0..ones {
+            code.extend_from_slice(&[0xd9, 0xe8]); // fld1
+        }
+        for _ in 1..ones {
+            code.extend_from_slice(&[0xde, 0xc1]); // faddp st(1), st(0)
+        }
+        emit_movdqu_xmm0_from(&mut code, pattern);
+        emit_vmcall(&mut code);
+        emit_fst_m64(&mut code, x87_out, false);
+        emit_movdqu_xmm0_to(&mut code, xmm_out);
+        emit_vmcall(&mut code);
+        code.extend_from_slice(&[0x0f, 0x0b]);
+        code
+    };
+    let a_code = context_program(2, A_PATTERN, A_X87_OUT, A_XMM_OUT);
+    let b_code = context_program(3, B_PATTERN, B_X87_OUT, B_XMM_OUT);
+    address_space.write(A_CODE, &a_code).map_err(|error| error.to_string())?;
+    address_space.write(B_CODE, &b_code).map_err(|error| error.to_string())?;
+
+    let registers = |eip| Registers { eip, eflags: 0x202, ..Registers::default() };
+    let mut a = Context::create(&address_space, registers(A_CODE)).map_err(|error| error.to_string())?;
+    let mut b = Context::create(&address_space, registers(B_CODE)).map_err(|error| error.to_string())?;
+    let (a_initial, b_initial) = tokio::join!(a.run(), b.run());
+    require_vmcall(&a_initial.map_err(|error| error.to_string())?, "A initialize")?;
+    require_vmcall(&b_initial.map_err(|error| error.to_string())?, "B initialize")?;
+    tokio::task::yield_now().await;
+    // Reverse submission order while both contexts are runnable. Concurrent
+    // jobs hold distinct lane leases and the allocator advances round-robin,
+    // so the second pair exercises carrier migration instead of repeatedly
+    // resuming both contexts on one favored lane.
+    let (b_inspect, a_inspect) = tokio::join!(b.resume(), a.resume());
+    require_vmcall(&a_inspect.map_err(|error| error.to_string())?, "A inspect")?;
+    require_vmcall(&b_inspect.map_err(|error| error.to_string())?, "B inspect")?;
+
+    let mut scalar = [0; 8];
+    read_exact_x86(&address_space, A_X87_OUT, &mut scalar)?;
+    if u64::from_le_bytes(scalar) != 2.0f64.to_bits() {
+        return Err("x86 xstate self-test A lost ST0=2.0".into());
+    }
+    read_exact_x86(&address_space, B_X87_OUT, &mut scalar)?;
+    if u64::from_le_bytes(scalar) != 3.0f64.to_bits() {
+        return Err("x86 xstate self-test B lost ST0=3.0".into());
+    }
+    let mut xmm = [0; 16];
+    read_exact_x86(&address_space, A_XMM_OUT, &mut xmm)?;
+    if xmm != a_pattern {
+        return Err("x86 xstate self-test A lost XMM0".into());
+    }
+    read_exact_x86(&address_space, B_XMM_OUT, &mut xmm)?;
+    if xmm != b_pattern {
+        return Err("x86 xstate self-test B lost XMM0".into());
+    }
+
+    let sentinel0 = 17.0f64;
+    let sentinel1 = -29.0f64;
+    let base = 2.0f64;
+    let exponent = 5.0f64;
+    for (address, value) in [
+        (SENTINEL1, sentinel1),
+        (SENTINEL0, sentinel0),
+        (BASE, base),
+        (EXPONENT, exponent),
+    ] {
+        address_space.write(address, &value.to_bits().to_le_bytes()).map_err(|error| error.to_string())?;
+    }
+    let mut deep_code = Vec::new();
+    for address in [SENTINEL1, SENTINEL0, BASE, EXPONENT] {
+        emit_fld_m64(&mut deep_code, address);
+    }
+    emit_vmcall(&mut deep_code);
+    emit_fst_m64(&mut deep_code, SPILLED_EXPONENT, true);
+    emit_fst_m64(&mut deep_code, SPILLED_BASE, true);
+    emit_vmcall(&mut deep_code);
+    emit_fld_m64(&mut deep_code, RESULT);
+    emit_vmcall(&mut deep_code);
+    emit_fst_m64(&mut deep_code, FINAL_RESULT, true);
+    emit_fst_m64(&mut deep_code, FINAL_SENTINEL0, true);
+    emit_fst_m64(&mut deep_code, FINAL_SENTINEL1, true);
+    emit_vmcall(&mut deep_code);
+    deep_code.extend_from_slice(&[0x0f, 0x0b]);
+    address_space.write(DEEP_CODE, &deep_code).map_err(|error| error.to_string())?;
+    let mut deep = Context::create(&address_space, registers(DEEP_CODE)).map_err(|error| error.to_string())?;
+    require_vmcall(&deep.run().await.map_err(|error| error.to_string())?, "deep initialize")?;
+    tokio::task::yield_now().await;
+    require_vmcall(&deep.resume().await.map_err(|error| error.to_string())?, "deep spill")?;
+    let mut spilled = [0; 8];
+    read_exact_x86(&address_space, SPILLED_EXPONENT, &mut spilled)?;
+    if u64::from_le_bytes(spilled) != exponent.to_bits() {
+        return Err("x86 xstate self-test spilled exponent mismatch".into());
+    }
+    read_exact_x86(&address_space, SPILLED_BASE, &mut spilled)?;
+    if u64::from_le_bytes(spilled) != base.to_bits() {
+        return Err("x86 xstate self-test spilled base mismatch".into());
+    }
+    let result = base.powf(exponent);
+    address_space.write(RESULT, &result.to_bits().to_le_bytes()).map_err(|error| error.to_string())?;
+    require_vmcall(&deep.resume().await.map_err(|error| error.to_string())?, "deep restore")?;
+    tokio::task::yield_now().await;
+    require_vmcall(&deep.resume().await.map_err(|error| error.to_string())?, "deep inspect")?;
+    for (address, expected, label) in [
+        (FINAL_RESULT, result, "result"),
+        (FINAL_SENTINEL0, sentinel0, "sentinel0"),
+        (FINAL_SENTINEL1, sentinel1, "sentinel1"),
+    ] {
+        read_exact_x86(&address_space, address, &mut spilled)?;
+        if u64::from_le_bytes(spilled) != expected.to_bits() {
+            return Err(format!("x86 xstate self-test deeper-stack {label} mismatch"));
+        }
+    }
+    logl::log(
+        level::IMPORTANT,
+        format_args!("WC3 X86 XSTATE SELFTEST PASS contexts=2 x87=pass xmm0=pass migration=exercised deeper_stack=pass"),
+    );
+    Ok(())
+}
+
 fn present_window(
     request: WindowPresentation,
     frames: &mut HashMap<u32, Frame>,
@@ -4470,6 +4695,7 @@ struct PendingChild {
     provider_thunk_bytes: usize,
     initterm: Option<ChildInitterm>,
     cipow: Option<ChildCiPow>,
+    cipow_diagnostic_logged: bool,
     loader: ChildLoaderState,
     execution: ChildExecutionState,
 }
@@ -5379,6 +5605,7 @@ mod tests {
                 callbacks_invoked: 0,
             }),
             cipow: None,
+            cipow_diagnostic_logged: false,
             loader: ChildLoaderState {
                 prepared: true,
                 native_requests: Vec::new(),
