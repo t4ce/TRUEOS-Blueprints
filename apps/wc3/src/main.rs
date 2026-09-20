@@ -344,6 +344,22 @@ async fn run() -> Result<(), String> {
                         );
                         return Ok(());
                     }
+                    if exit.registers.eip == thunk32::CHILD_CIPOW_SPILL_AFTER_VMCALL {
+                        let pending = child.cipow.take().ok_or_else(|| "CIPOW spill without pending state".to_owned())?;
+                        if exit.registers.esp != pending.provider_esp { return Err("CIPOW spill ESP mismatch".into()); }
+                        let exponent = read_guest_words(&X86Memory(&child.address_space), thunk32::CHILD_CIPOW_EXPONENT_ADDRESS, 2)?;
+                        let base = read_guest_words(&X86Memory(&child.address_space), thunk32::CHILD_CIPOW_BASE_ADDRESS, 2)?;
+                        let exponent = f64::from_bits((exponent[0] as u64) | ((exponent[1] as u64) << 32));
+                        let base = f64::from_bits((base[0] as u64) | ((base[1] as u64) << 32));
+                        if !base.is_finite() || !exponent.is_finite() || base <= 0.0 { return Ok(()); }
+                        let result = base.powf(exponent);
+                        if !result.is_finite() { return Ok(()); }
+                        child.address_space.write(thunk32::CHILD_CIPOW_RESULT_ADDRESS, &result.to_bits().to_le_bytes()).map_err(|error| error.to_string())?;
+                        let mut registers = exit.registers;
+                        registers.eip = thunk32::CHILD_CIPOW_RESTORE_ADDRESS;
+                        contexts[active].context.set_registers(registers).map_err(|error| error.to_string())?;
+                        continue;
+                    }
                     if exit.registers.eip == thunk32::CHILD_CALLBACK_RETURN_AFTER_VMCALL {
                         if let Some(initterm) = child.initterm.as_ref() {
                             if exit.registers.esp != initterm.provider_esp {
@@ -722,6 +738,15 @@ async fn run() -> Result<(), String> {
                             .context
                             .set_registers(registers)
                             .map_err(|error| error.to_string())?;
+                        continue;
+                    }
+                    let is_cipow = matches!(&provider.symbol, child_loader::ProviderSymbol::Name(name) if provider.module.eq_ignore_ascii_case("MSVCRT.dll") && name == "_CIpow");
+                    if is_cipow {
+                        if child.cipow.is_some() { return Err("nested CIPOW".into()); }
+                        child.cipow = Some(ChildCiPow { provider_esp: exit.registers.esp });
+                        let mut registers = exit.registers;
+                        registers.eip = thunk32::CHILD_CIPOW_SPILL_ADDRESS;
+                        contexts[active].context.set_registers(registers).map_err(|error| error.to_string())?;
                         continue;
                     }
                     let is_unhandled_filter = matches!(
@@ -2339,6 +2364,7 @@ async fn run() -> Result<(), String> {
                             crt_heap_mapped_end: CHILD_CRT_HEAP_BASE,
                             provider_thunk_bytes: 0,
                             initterm: None,
+                            cipow: None,
                             loader: ChildLoaderState {
                                 prepared: false,
                                 native_requests: Vec::new(),
@@ -4443,9 +4469,12 @@ struct PendingChild {
     crt_heap_mapped_end: u32,
     provider_thunk_bytes: usize,
     initterm: Option<ChildInitterm>,
+    cipow: Option<ChildCiPow>,
     loader: ChildLoaderState,
     execution: ChildExecutionState,
 }
+
+struct ChildCiPow { provider_esp: u32 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ChildInitterm {
@@ -5349,6 +5378,7 @@ mod tests {
                 end: begin + 12,
                 callbacks_invoked: 0,
             }),
+            cipow: None,
             loader: ChildLoaderState {
                 prepared: true,
                 native_requests: Vec::new(),
