@@ -18,72 +18,88 @@ pub struct ProviderImport {
     pub iat_rva: u32,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProviderOp {
+    GetEnvironmentStringsW,
+    FreeEnvironmentStringsW,
+    GetCommandLineA,
+    GetVersion,
+    GetVersionExA,
+    WideCharToMultiByte,
+    HeapCreate,
+    HeapAlloc,
+    HeapFree,
+    InitializeCriticalSection,
+    EnterCriticalSection,
+    LeaveCriticalSection,
+    SetLastError,
+    SetUnhandledExceptionFilter,
+    VirtualAlloc,
+    RegOpenKeyExA,
+    CrtMalloc,
+    Unknown,
+}
+
+impl ProviderOp {
+    pub const fn stack_cleanup_bytes(self) -> u8 {
+        match self {
+            Self::InitializeCriticalSection
+            | Self::EnterCriticalSection
+            | Self::LeaveCriticalSection
+            | Self::SetUnhandledExceptionFilter
+            | Self::GetVersionExA
+            | Self::FreeEnvironmentStringsW
+            | Self::SetLastError => 4,
+            Self::VirtualAlloc => 16,
+            Self::WideCharToMultiByte => 32,
+            Self::HeapCreate | Self::HeapAlloc | Self::HeapFree => 12,
+            Self::RegOpenKeyExA => 20,
+            _ => 0,
+        }
+    }
+
+    pub const fn is_generic_process_local(self) -> bool {
+        matches!(self, Self::FreeEnvironmentStringsW)
+    }
+}
+
+pub fn provider_op(import: &ProviderImport) -> ProviderOp {
+    let ProviderSymbol::Name(symbol) = &import.symbol else {
+        return ProviderOp::Unknown;
+    };
+    if import.module.eq_ignore_ascii_case("KERNEL32.dll") {
+        return match symbol.as_str() {
+            "GetEnvironmentStringsW" => ProviderOp::GetEnvironmentStringsW,
+            "FreeEnvironmentStringsW" => ProviderOp::FreeEnvironmentStringsW,
+            "GetCommandLineA" => ProviderOp::GetCommandLineA,
+            "GetVersion" => ProviderOp::GetVersion,
+            "GetVersionExA" => ProviderOp::GetVersionExA,
+            "WideCharToMultiByte" => ProviderOp::WideCharToMultiByte,
+            "HeapCreate" => ProviderOp::HeapCreate,
+            "HeapAlloc" => ProviderOp::HeapAlloc,
+            "HeapFree" => ProviderOp::HeapFree,
+            "InitializeCriticalSection" => ProviderOp::InitializeCriticalSection,
+            "EnterCriticalSection" => ProviderOp::EnterCriticalSection,
+            "LeaveCriticalSection" => ProviderOp::LeaveCriticalSection,
+            "SetLastError" => ProviderOp::SetLastError,
+            "SetUnhandledExceptionFilter" => ProviderOp::SetUnhandledExceptionFilter,
+            "VirtualAlloc" => ProviderOp::VirtualAlloc,
+            _ => ProviderOp::Unknown,
+        };
+    }
+    if import.module.eq_ignore_ascii_case("ADVAPI32.dll") && symbol == "RegOpenKeyExA" {
+        return ProviderOp::RegOpenKeyExA;
+    }
+    if import.module.eq_ignore_ascii_case("MSVCRT.dll") && symbol == "malloc" {
+        return ProviderOp::CrtMalloc;
+    }
+    ProviderOp::Unknown
+}
+
 pub fn provider_thunk_kind(import: &ProviderImport) -> thunk32::Kind {
-    match &import.symbol {
-        ProviderSymbol::Name(symbol)
-            if import.module.eq_ignore_ascii_case("KERNEL32.dll")
-                && symbol == "InitializeCriticalSection" =>
-        {
-            thunk32::Kind::Stdcall(4)
-        }
-        ProviderSymbol::Name(symbol)
-            if import.module.eq_ignore_ascii_case("KERNEL32.dll")
-                && symbol == "EnterCriticalSection" =>
-        {
-            thunk32::Kind::Stdcall(4)
-        }
-        ProviderSymbol::Name(symbol)
-            if import.module.eq_ignore_ascii_case("KERNEL32.dll")
-                && symbol == "LeaveCriticalSection" =>
-        {
-            thunk32::Kind::Stdcall(4)
-        }
-        ProviderSymbol::Name(symbol)
-            if import.module.eq_ignore_ascii_case("KERNEL32.dll")
-                && symbol == "SetUnhandledExceptionFilter" =>
-        { thunk32::Kind::Stdcall(4) }
-        ProviderSymbol::Name(symbol)
-            if import.module.eq_ignore_ascii_case("KERNEL32.dll") && symbol == "VirtualAlloc" =>
-        {
-            thunk32::Kind::Stdcall(16)
-        }
-        ProviderSymbol::Name(symbol)
-            if import.module.eq_ignore_ascii_case("KERNEL32.dll") && symbol == "GetVersionExA" =>
-        {
-            thunk32::Kind::Stdcall(4)
-        }
-        ProviderSymbol::Name(symbol)
-            if import.module.eq_ignore_ascii_case("KERNEL32.dll")
-                && symbol == "WideCharToMultiByte" =>
-        {
-            thunk32::Kind::Stdcall(32)
-        }
-        ProviderSymbol::Name(symbol)
-            if import.module.eq_ignore_ascii_case("KERNEL32.dll") && symbol == "HeapCreate" =>
-        {
-            thunk32::Kind::Stdcall(12)
-        }
-        ProviderSymbol::Name(symbol)
-            if import.module.eq_ignore_ascii_case("KERNEL32.dll") && symbol == "HeapAlloc" =>
-        {
-            thunk32::Kind::Stdcall(12)
-        }
-        ProviderSymbol::Name(symbol)
-            if import.module.eq_ignore_ascii_case("KERNEL32.dll") && symbol == "HeapFree" =>
-        {
-            thunk32::Kind::Stdcall(12)
-        }
-        ProviderSymbol::Name(symbol)
-            if import.module.eq_ignore_ascii_case("KERNEL32.dll") && symbol == "SetLastError" =>
-        {
-            thunk32::Kind::Stdcall(4)
-        }
-        ProviderSymbol::Name(symbol)
-            if import.module.eq_ignore_ascii_case("ADVAPI32.dll") && symbol == "RegOpenKeyExA" =>
-        {
-            thunk32::Kind::Stdcall(20)
-        }
-        _ => thunk32::Kind::Return,
+    match provider_op(import).stack_cleanup_bytes() {
+        0 => thunk32::Kind::Return,
+        bytes => thunk32::Kind::Stdcall(bytes),
     }
 }
 
@@ -340,6 +356,22 @@ mod tests {
         };
         let mut bytes = [0; thunk32::THUNK_BYTES];
         thunk32::write(581, provider_thunk_kind(&import), &mut bytes).unwrap();
+        assert_eq!(&bytes[8..11], &[0xc2, 0x04, 0x00]);
+    }
+
+    #[test]
+    fn free_environment_strings_w_is_pure_process_stdcall_four() {
+        let import = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("FreeEnvironmentStringsW".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&import);
+        assert_eq!(operation, ProviderOp::FreeEnvironmentStringsW);
+        assert!(operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 4);
+        let mut bytes = [0; thunk32::THUNK_BYTES];
+        thunk32::write(613, provider_thunk_kind(&import), &mut bytes).unwrap();
         assert_eq!(&bytes[8..11], &[0xc2, 0x04, 0x00]);
     }
 

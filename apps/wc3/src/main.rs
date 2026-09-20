@@ -18,7 +18,8 @@ use wc3::{
         CHILD_COMMAND_LINE, CHILD_CRT_HEAP_BASE, CHILD_CRT_HEAP_LIMIT,
         CHILD_VIRTUAL_ALLOC_BASE, CHILD_VIRTUAL_ALLOC_LIMIT, CHILD_WIN_HEAP_BASE,
         CHILD_WIN_HEAP_LIMIT, ENVIRONMENT_BLOCK_VA, GuestMemory, PROCESS_DATA_VA,
-        PreparedProcess, STACK_BASE, STACK_BYTES, STACK_TOP, ThreadObject, XpProcess,
+        PreparedProcess, ProviderDispatchError, STACK_BASE, STACK_BYTES, STACK_TOP, ThreadObject,
+        XpProcess,
         bmp_file_from_dib, dib_layout,
     },
     session::{
@@ -1750,6 +1751,55 @@ async fn run() -> Result<(), String> {
                             .set_registers(registers)
                             .map_err(|error| error.to_string())?;
                         continue;
+                    }
+                    let operation = child_loader::provider_op(&provider);
+                    if operation.is_generic_process_local() {
+                        let dispatch = {
+                            let mut child_memory = X86Memory(&child.address_space);
+                            session
+                                .process_mut(active_pid)
+                                .ok_or_else(|| "child process missing".to_owned())?
+                                .xp
+                                .dispatch_provider_for_process_typed(
+                                    active_pid,
+                                    active_tid,
+                                    provider_id,
+                                    exit.registers.esp,
+                                    &mut child_memory,
+                                )
+                        };
+                        match dispatch {
+                            Ok(PersonalityAction::Return(result)) => {
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 CHILD PROVIDER RETURN pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" provider_id={} module=\"{}\" {} eax=0x{:08x} cleanup={}-by-thunk",
+                                        active_pid,
+                                        active_tid,
+                                        running_module_name,
+                                        provider_id,
+                                        provider.module,
+                                        symbol,
+                                        result,
+                                        operation.stack_cleanup_bytes(),
+                                    ),
+                                );
+                                let mut registers = exit.registers;
+                                registers.eax = result;
+                                contexts[active]
+                                    .context
+                                    .set_registers(registers)
+                                    .map_err(|error| error.to_string())?;
+                                continue;
+                            }
+                            Ok(_) => {
+                                return Err("pure child provider requested a runtime effect".into());
+                            }
+                            Err(ProviderDispatchError::Unsupported) => {}
+                            Err(ProviderDispatchError::Fault(error)) => {
+                                return Err(format!("child provider semantic fault: {error}"));
+                            }
+                        }
                     }
                     logl::log(
                         level::IMPORTANT,
