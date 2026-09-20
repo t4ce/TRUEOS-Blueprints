@@ -281,6 +281,10 @@ async fn run() -> Result<(), String> {
                             ChildExecutionState::DllInitReady { .. } => {
                                 return Err("child DLL return while DLL init is not running".into());
                             }
+                            ChildExecutionState::ImageEntryReady
+                            | ChildExecutionState::ImageEntryRunning => {
+                                return Err("child DLL return while image entry is active".into());
+                            }
                         };
                         let module = child
                             .native_modules
@@ -319,12 +323,45 @@ async fn run() -> Result<(), String> {
                                 child.native_modules[native_index].image.image_base
                             ),
                         );
-                        let Some(next_index) = child
+                        let next_index = child
                             .native_modules
                             .iter()
-                            .position(|module| !module.initialized)
-                        else {
-                            return Ok(());
+                            .position(|module| !module.initialized);
+                        let Some(next_index) = next_index else {
+                            let initialized = child
+                                .native_modules
+                                .iter()
+                                .filter(|module| module.initialized)
+                                .count();
+                            if initialized != child.native_modules.len() {
+                                return Err("child loader completion count mismatch".into());
+                            }
+                            child.execution = ChildExecutionState::ImageEntryReady;
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD LOADER COMPLETE pid={} tid={} modules={} initialized={}",
+                                    child.pid, child.tid, child.native_modules.len(), initialized
+                                ),
+                            );
+                            let (entry, frame_esp) = arm_existing_child_image_entry(
+                                child,
+                                &mut contexts[active],
+                                exit.registers,
+                            )?;
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD IMAGE ENTRY RESUME pid={} tid={} image=\"War3.exe\" base=0x{:08x} entry=0x{:08x} esp=0x{:08x} return=0x{:08x} context_reused=1 teb_preserved=1 xstate_preserved=1",
+                                    active_pid,
+                                    active_tid,
+                                    child.image.image_base,
+                                    entry,
+                                    frame_esp,
+                                    thunk32::CHILD_IMAGE_RETURN_ADDRESS,
+                                ),
+                            );
+                            continue;
                         };
                         let previous_name = module_name;
                         child.execution = ChildExecutionState::DllInitReady { native_index: next_index };
@@ -362,13 +399,26 @@ async fn run() -> Result<(), String> {
                         );
                         continue;
                     }
-                    if exit.registers.eip == thunk32::CHILD_THREAD_EXIT_AFTER_VMCALL {
-                        let (_, module) = child_execution_module(child).map_err(str::to_owned)?;
+                    if exit.registers.eip == thunk32::CHILD_IMAGE_RETURN_AFTER_VMCALL {
+                        if child.execution != ChildExecutionState::ImageEntryRunning {
+                            return Err("child image return outside image-entry-running state".into());
+                        }
                         logl::log(
                             level::IMPORTANT,
                             format_args!(
-                                "WC3 CHILD CONTROL FRONTIER pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" kind=thread-exit",
-                                active_pid, active_tid, module.stored
+                                "WC3 CHILD IMAGE RETURN pid={} tid={} eax=0x{:08x}",
+                                active_pid, active_tid, exit.registers.eax
+                            ),
+                        );
+                        return Ok(());
+                    }
+                    if exit.registers.eip == thunk32::CHILD_THREAD_EXIT_AFTER_VMCALL {
+                        let scope = child_execution_scope(child).map_err(str::to_owned)?;
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD CONTROL FRONTIER pid={} tid={} during=\"{}\" kind=thread-exit",
+                                active_pid, active_tid, scope
                             ),
                         );
                         return Ok(());
@@ -418,28 +468,18 @@ async fn run() -> Result<(), String> {
                                 InittermAdvance::CallbackScheduled | InittermAdvance::Complete => continue,
                             }
                         }
-                        let (_, module) = child_execution_module(child).map_err(str::to_owned)?;
+                        let scope = child_execution_scope(child).map_err(str::to_owned)?;
                         logl::log(
                             level::IMPORTANT,
                             format_args!(
-                                "WC3 CHILD CONTROL FRONTIER pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" kind=callback-return",
-                                active_pid, active_tid, module.stored
+                                "WC3 CHILD CONTROL FRONTIER pid={} tid={} during=\"{}\" kind=callback-return",
+                                active_pid, active_tid, scope
                             ),
                         );
                         return Ok(());
                     }
-                    let (_, running_module) = match child.execution {
-                        ChildExecutionState::DllInitRunning { .. } => {
-                            child_execution_module(child).map_err(str::to_owned)?
-                        }
-                        ChildExecutionState::Loader => {
-                            return Err("child provider trap while execution=loader".into());
-                        }
-                        ChildExecutionState::DllInitReady { .. } => {
-                            return Err("child provider trap while DLL init is not running".into());
-                        }
-                    };
-                    let running_module_name = running_module.stored.clone();
+                    let running_scope = child_execution_scope(child).map_err(str::to_owned)?;
+                    let running_module_name = running_scope.clone();
                     let provider_id = exit.registers.eax;
                     let provider = session
                         .process(active_pid)
@@ -479,7 +519,7 @@ async fn run() -> Result<(), String> {
                         logl::log(
                             level::IMPORTANT,
                             format_args!(
-                                "WC3 CHILD HEAP CREATE pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" provider_id={} options=0x{:08x} initial_size=0x{:08x} maximum_size=0x{:08x} handle=0x{:08x} caller_ret=0x{:08x}",
+                                "WC3 CHILD HEAP CREATE pid={} tid={} during=\"{}\" provider_id={} options=0x{:08x} initial_size=0x{:08x} maximum_size=0x{:08x} handle=0x{:08x} caller_ret=0x{:08x}",
                                 active_pid,
                                 active_tid,
                                 running_module_name,
@@ -528,7 +568,7 @@ async fn run() -> Result<(), String> {
                         logl::log(
                             level::IMPORTANT,
                             format_args!(
-                                "WC3 CHILD HEAP ALLOC CALL pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" provider_id={} heap=0x{:08x} flags=0x{:08x} bytes={} caller_ret=0x{:08x}",
+                                "WC3 CHILD HEAP ALLOC CALL pid={} tid={} during=\"{}\" provider_id={} heap=0x{:08x} flags=0x{:08x} bytes={} caller_ret=0x{:08x}",
                                 active_pid,
                                 active_tid,
                                 running_module_name,
@@ -623,7 +663,7 @@ async fn run() -> Result<(), String> {
                         logl::log(
                             level::IMPORTANT,
                             format_args!(
-                                "WC3 CHILD HEAP FREE CALL pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" provider_id={} heap=0x{:08x} flags=0x{:08x} pointer=0x{:08x} caller_ret=0x{:08x}",
+                                "WC3 CHILD HEAP FREE CALL pid={} tid={} during=\"{}\" provider_id={} heap=0x{:08x} flags=0x{:08x} pointer=0x{:08x} caller_ret=0x{:08x}",
                                 active_pid,
                                 active_tid,
                                 running_module_name,
@@ -806,7 +846,7 @@ async fn run() -> Result<(), String> {
                         logl::log(
                             level::IMPORTANT,
                             format_args!(
-                                "WC3 CHILD WIDECHARTOMULTIBYTE CALL pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" provider_id={} code_page={} flags=0x{:08x} source=0x{:08x} count={} output=0x{:08x} capacity={} default_char=0x{:08x} used_default_char=0x{:08x} caller_ret=0x{:08x}",
+                                "WC3 CHILD WIDECHARTOMULTIBYTE CALL pid={} tid={} during=\"{}\" provider_id={} code_page={} flags=0x{:08x} source=0x{:08x} count={} output=0x{:08x} capacity={} default_char=0x{:08x} used_default_char=0x{:08x} caller_ret=0x{:08x}",
                                 active_pid,
                                 active_tid,
                                 running_module_name,
@@ -909,7 +949,7 @@ async fn run() -> Result<(), String> {
                         logl::log(
                             level::IMPORTANT,
                             format_args!(
-                                "WC3 CHILD GETVERSIONEXA CALL pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" provider_id={} info=0x{:08x} size=0x{:08x} caller_ret=0x{:08x}",
+                                "WC3 CHILD GETVERSIONEXA CALL pid={} tid={} during=\"{}\" provider_id={} info=0x{:08x} size=0x{:08x} caller_ret=0x{:08x}",
                                 active_pid,
                                 active_tid,
                                 running_module_name,
@@ -1850,7 +1890,7 @@ async fn run() -> Result<(), String> {
                                 logl::log(
                                     level::IMPORTANT,
                                     format_args!(
-                                        "WC3 CHILD PROVIDER RETURN pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" provider_id={} module=\"{}\" {} eax=0x{:08x} cleanup={}-by-thunk",
+                                "WC3 CHILD PROVIDER RETURN pid={} tid={} during=\"{}\" provider_id={} module=\"{}\" {} eax=0x{:08x} cleanup={}-by-thunk",
                                         active_pid,
                                         active_tid,
                                         running_module_name,
@@ -1880,7 +1920,7 @@ async fn run() -> Result<(), String> {
                                 logl::log(
                                     level::IMPORTANT,
                                     format_args!(
-                                        "WC3 CHILD PROVIDER FRONTIER pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" provider_id={} module=\"{}\" {} eip=0x{:08x} esp=0x{:08x} caller_ret=0x{:08x} api=\"{}\" detail={:?}",
+                                        "WC3 CHILD PROVIDER FRONTIER pid={} tid={} during=\"{}\" provider_id={} module=\"{}\" {} eip=0x{:08x} esp=0x{:08x} caller_ret=0x{:08x} api=\"{}\" detail={:?}",
                                         active_pid,
                                         active_tid,
                                         running_module_name,
@@ -1901,7 +1941,7 @@ async fn run() -> Result<(), String> {
                     logl::log(
                         level::IMPORTANT,
                         format_args!(
-                            "WC3 CHILD PROVIDER FRONTIER pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" provider_id={} module=\"{}\" {} eip=0x{:08x} esp=0x{:08x} caller_ret=0x{:08x}",
+                            "WC3 CHILD PROVIDER FRONTIER pid={} tid={} during=\"{}\" provider_id={} module=\"{}\" {} eip=0x{:08x} esp=0x{:08x} caller_ret=0x{:08x}",
                             active_pid,
                             active_tid,
                             running_module_name,
@@ -5135,6 +5175,65 @@ fn arm_existing_child_dll_init(
     Ok((module.stored.clone(), entry, frame_esp))
 }
 
+fn arm_existing_child_image_entry(
+    child: &mut PendingChild,
+    guest: &mut GuestContext,
+    returned: Registers,
+) -> Result<(u32, u32), String> {
+    if guest.pid != child.pid || guest.tid != child.tid {
+        return Err("child image-entry context identity mismatch".into());
+    }
+    if !guest.started {
+        return Err("child image-entry requires a started context".into());
+    }
+    if child.execution != ChildExecutionState::ImageEntryReady {
+        return Err("child image-entry requires image-entry-ready state".into());
+    }
+    if child.native_modules.iter().any(|module| !module.initialized) {
+        return Err("child image-entry requires all native modules initialized".into());
+    }
+    let entry = child
+        .image
+        .image_base
+        .checked_add(child.image.entry_rva)
+        .ok_or_else(|| "War3 entry overflow".to_owned())?;
+    if returned.esp < STACK_BASE + 4 || returned.esp > STACK_TOP || returned.esp % 4 != 0 {
+        return Err("child image-entry returned ESP is outside the child stack".into());
+    }
+    let frame_esp = returned
+        .esp
+        .checked_sub(4)
+        .ok_or_else(|| "child image-entry stack underflow".to_owned())?;
+    let frame = thunk32::CHILD_IMAGE_RETURN_ADDRESS.to_le_bytes();
+    if child
+        .address_space
+        .write(frame_esp, &frame)
+        .map_err(|error| error.to_string())?
+        != frame.len()
+    {
+        return Err("short child image-entry frame write".into());
+    }
+    let mut actual = [0; 4];
+    if child
+        .address_space
+        .read(frame_esp, &mut actual)
+        .map_err(|error| error.to_string())?
+        != actual.len()
+        || actual != frame
+    {
+        return Err("child image-entry frame verification failed".into());
+    }
+    let mut registers = returned;
+    registers.eip = entry;
+    registers.esp = frame_esp;
+    guest
+        .context
+        .set_registers(registers)
+        .map_err(|error| error.to_string())?;
+    child.execution = ChildExecutionState::ImageEntryRunning;
+    Ok((entry, frame_esp))
+}
+
 fn validate_child_crt_heap_range(child: &PendingChild) -> Result<(), String> {
     validate_child_private_arena_range(
         child,
@@ -5606,6 +5705,8 @@ enum ChildExecutionState {
     Loader,
     DllInitReady { native_index: usize },
     DllInitRunning { native_index: usize },
+    ImageEntryReady,
+    ImageEntryRunning,
 }
 
 struct ChildLoaderState {
@@ -5627,13 +5728,29 @@ fn child_execution_module(
     let native_index = match child.execution {
         ChildExecutionState::DllInitReady { native_index }
         | ChildExecutionState::DllInitRunning { native_index } => native_index,
-        ChildExecutionState::Loader => return Err("child execution has no native module"),
+        ChildExecutionState::Loader
+        | ChildExecutionState::ImageEntryReady
+        | ChildExecutionState::ImageEntryRunning => return Err("child execution has no native module"),
     };
     child
         .native_modules
         .get(native_index)
         .map(|module| (native_index, module))
         .ok_or("child execution native index")
+}
+
+fn child_execution_scope(child: &PendingChild) -> Result<String, &'static str> {
+    match child.execution {
+        ChildExecutionState::DllInitRunning { .. } => {
+            let (_, module) = child_execution_module(child)?;
+            Ok(format!("{}:DLL_PROCESS_ATTACH", module.stored))
+        }
+        ChildExecutionState::ImageEntryRunning => Ok("War3.exe:ENTRY".to_owned()),
+        ChildExecutionState::Loader => Err("child provider trap while execution=loader"),
+        ChildExecutionState::DllInitReady { .. } | ChildExecutionState::ImageEntryReady => {
+            Err("child provider trap while execution is not running")
+        }
+    }
 }
 
 fn log_child_fault_precursor(
