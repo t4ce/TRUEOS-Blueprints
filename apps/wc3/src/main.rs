@@ -13,7 +13,7 @@ use wc3::{
     imports::WinCall,
     pe32,
     process::{
-        GuestMemory, PreparedProcess, STACK_BASE, STACK_BYTES, STACK_TOP, TEB_VA, ThreadObject,
+        GuestMemory, PreparedProcess, STACK_BASE, STACK_BYTES, STACK_TOP, ThreadObject,
         bmp_file_from_dib, dib_layout,
     },
     session::{
@@ -146,37 +146,91 @@ async fn run() -> Result<(), String> {
                 let active_pid = active_key.pid;
                 let active_tid = active_key.tid;
                 if active_pid != LAUNCHER_PID {
+                    let child = pending_child.as_mut().filter(|child| child.pid == active_pid && child.tid == active_tid)
+                        .ok_or_else(|| "active child address space missing".to_owned())?;
                     if exit.registers.eip == thunk32::CHILD_DLL_RETURN_AFTER_VMCALL {
-                        return Err("child DLL return reached before child execution enabled".into());
+                        let native_index = match child.execution {
+                            ChildExecutionState::DllInitRunning { native_index } => native_index,
+                            ChildExecutionState::Loader => return Err("child DLL return while execution=loader".into()),
+                            ChildExecutionState::DllInitReady { .. } => return Err("child DLL return while DLL init is not running".into()),
+                        };
+                        let module = child.native_modules.get(native_index)
+                            .ok_or_else(|| "child DLL return native index".to_owned())?;
+                        let module_name = module.stored.clone();
+                        let success = exit.registers.eax != 0;
+                        logl::log(level::IMPORTANT, format_args!(
+                            "WC3 CHILD DLL INIT RETURN pid={} tid={} module=\"{}\" eax=0x{:08x} success={}",
+                            active_pid, active_tid, module_name, exit.registers.eax, success as u8
+                        ));
+                        if !success {
+                            logl::log(level::IMPORTANT, format_args!(
+                                "WC3 CHILD DLL INIT FAILED pid={} module=\"{}\" reason=DLL_PROCESS_ATTACH-returned-FALSE",
+                                active_pid, module_name
+                            ));
+                            return Ok(());
+                        }
+                        child.native_modules[native_index].initialized = true;
+                        logl::log(level::IMPORTANT, format_args!(
+                            "WC3 CHILD NATIVE MODULE INITIALIZED pid={} module=\"{}\" base=0x{:08x} initialized=1",
+                            active_pid, module_name, child.native_modules[native_index].image.image_base
+                        ));
+                        let Some(next_index) = child.native_modules.iter().position(|module| !module.initialized) else {
+                            return Ok(());
+                        };
+                        let next = &child.native_modules[next_index];
+                        let next_name = next.stored.clone();
+                        let next_entry = next.image.image_base.checked_add(next.image.entry_rva)
+                            .ok_or_else(|| "child DLL entry overflow".to_owned())?;
+                        child.execution = ChildExecutionState::DllInitReady { native_index: next_index };
+                        logl::log(level::IMPORTANT, format_args!(
+                            "WC3 CHILD EXECUTION STATE pid={} tid={} state=dll-init-ready module=\"{}\" context_created=1",
+                            active_pid, active_tid, next_name
+                        ));
+                        logl::log(level::IMPORTANT, format_args!(
+                            "WC3 CHILD DLL INIT FRONTIER pid={} tid={} module=\"{}\" entry_va=0x{:08x} reason=previous-dll-returned-context-not-reconfigured",
+                            active_pid, active_tid, next_name, next_entry
+                        ));
+                        return Ok(());
                     }
                     if exit.registers.eip == thunk32::CHILD_THREAD_EXIT_AFTER_VMCALL {
-                        return Err("child thread exit reached before child execution enabled".into());
+                        let (_, module) = child_execution_module(child).map_err(str::to_owned)?;
+                        logl::log(level::IMPORTANT, format_args!(
+                            "WC3 CHILD CONTROL FRONTIER pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" kind=thread-exit",
+                            active_pid, active_tid, module.stored
+                        ));
+                        return Ok(());
                     }
                     if exit.registers.eip == thunk32::CHILD_CALLBACK_RETURN_AFTER_VMCALL {
-                        return Err("child callback return reached before child execution enabled".into());
+                        let (_, module) = child_execution_module(child).map_err(str::to_owned)?;
+                        logl::log(level::IMPORTANT, format_args!(
+                            "WC3 CHILD CONTROL FRONTIER pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" kind=callback-return",
+                            active_pid, active_tid, module.stored
+                        ));
+                        return Ok(());
                     }
+                    let (_, running_module) = match child.execution {
+                        ChildExecutionState::DllInitRunning { .. } => child_execution_module(child).map_err(str::to_owned)?,
+                        ChildExecutionState::Loader => return Err("child provider trap while execution=loader".into()),
+                        ChildExecutionState::DllInitReady { .. } => return Err("child provider trap while DLL init is not running".into()),
+                    };
+                    let running_module_name = running_module.stored.clone();
                     let provider_id = exit.registers.eax;
                     let provider = session.process(active_pid)
                         .and_then(|process| process.xp.provider_import(provider_id))
                         .cloned()
                         .ok_or_else(|| format!("unknown child provider trap pid={} tid={} id={}", active_pid, active_tid, provider_id))?;
-                    let child = pending_child.as_ref().filter(|child| child.pid == active_pid)
-                        .ok_or_else(|| "active child address space missing".to_owned())?;
-                    let mut child_memory = X86Memory(&child.address_space);
+                    let mut caller_ret = [0; 4];
+                    child.address_space.read(exit.registers.esp, &mut caller_ret).map_err(|error| error.to_string())?;
                     let symbol = match &provider.symbol {
                         child_loader::ProviderSymbol::Name(name) => format!("symbol=\"{}\"", name),
                         child_loader::ProviderSymbol::Ordinal(ordinal) => format!("ordinal={}", ordinal),
                     };
                     logl::log(level::IMPORTANT, format_args!(
-                        "WC3 CHILD PROVIDER TRAP pid={} tid={} provider_id={} module=\"{}\" {}",
-                        active_pid, active_tid, provider_id, provider.module, symbol
+                        "WC3 CHILD PROVIDER FRONTIER pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" provider_id={} module=\"{}\" {} eip=0x{:08x} esp=0x{:08x} caller_ret=0x{:08x}",
+                        active_pid, active_tid, running_module_name, provider_id, provider.module, symbol,
+                        exit.registers.eip, exit.registers.esp, u32::from_le_bytes(caller_ret)
                     ));
-                    let _ = session.process_mut(active_pid).ok_or_else(|| "child process missing".to_owned())?
-                        .xp.dispatch_provider_for_process(active_pid, active_tid, provider_id, exit.registers.esp, &mut child_memory);
-                    return Err(format!(
-                        "WC3 CHILD UNSUPPORTED pid={} tid={} module=\"{}\" {} provider_id={} eip=0x{:08x} esp=0x{:08x}",
-                        active_pid, active_tid, provider.module, symbol, provider_id, exit.registers.eip, exit.registers.esp
-                    ));
+                    return Ok(());
                 }
                 if exit.registers.eip == thunk32::THREAD_EXIT_AFTER_VMCALL {
                     let exited = contexts.remove(active);
@@ -1298,6 +1352,7 @@ async fn run() -> Result<(), String> {
                             native_modules: Vec::new(),
                             address_space: AddressSpace::create().map_err(|error| error.to_string())?,
                             loader: ChildLoaderState { prepared: false, native_requests: Vec::new(), next_native: 0 },
+                            execution: ChildExecutionState::Loader,
                         });
                         logl::log(
                             level::INFO,
@@ -1754,10 +1809,12 @@ async fn run() -> Result<(), String> {
                                 requested: native.requested,
                                 stored: native.stored.clone(),
                                 image,
+                                initialized: false,
                             });
+                            let initialized = child.native_modules.last().ok_or_else(|| "stored Storm missing".to_owned())?.initialized;
                             logl::log(level::IMPORTANT, format_args!(
-                                "WC3 CHILD NATIVE MODULE READY pid={} module=\"{}\" base=0x{:08x} imports_bound={} parent_imports_resolved={} initialized=0",
-                                child.pid, native.stored, native_base, native_imports, resolved
+                                "WC3 CHILD NATIVE MODULE READY pid={} module=\"{}\" base=0x{:08x} imports_bound={} parent_imports_resolved={} initialized={}",
+                                child.pid, native.stored, native_base, native_imports, resolved, initialized as u8
                             ));
                             child.loader.next_native += 1;
                             let next_native = child.loader.native_requests
@@ -1861,31 +1918,98 @@ async fn run() -> Result<(), String> {
                             log_native_child_image(&mss.requested, &mss.stored, &mss_image, &listing).map_err(str::to_owned)?;
                             let mss_base = mss_image.image_base;
                             let mss_imports = mss_image.imports.len();
-                            child.native_modules.push(PendingNativeModule { requested: mss.requested, stored: mss.stored.clone(), image: mss_image });
+                            child.native_modules.push(PendingNativeModule { requested: mss.requested, stored: mss.stored.clone(), image: mss_image, initialized: false });
+                            let initialized = child.native_modules.last().ok_or_else(|| "stored Mss missing".to_owned())?.initialized;
                             logl::log(level::IMPORTANT, format_args!(
-                                "WC3 CHILD NATIVE MODULE READY pid={} module=\"{}\" base=0x{:08x} imports_bound={} parent_imports_resolved={} initialized=0",
-                                child.pid, mss.stored, mss_base, mss_imports, mss_resolved
+                                "WC3 CHILD NATIVE MODULE READY pid={} module=\"{}\" base=0x{:08x} imports_bound={} parent_imports_resolved={} initialized={}",
+                                child.pid, mss.stored, mss_base, mss_imports, mss_resolved, initialized as u8
                             ));
                             logl::log(level::IMPORTANT, format_args!(
                                 "WC3 CHILD NATIVE LOAD COMPLETE pid={} modules={} initialized=0",
                                 child.pid, child.native_modules.len()
                             ));
-                            let storm = child.native_modules.iter().find(|module| module.stored.eq_ignore_ascii_case("Storm.dll"))
+                            let storm_index = child.native_modules.iter().position(|module| module.stored.eq_ignore_ascii_case("Storm.dll"))
                                 .ok_or_else(|| "loaded Storm missing".to_owned())?;
+                            child.execution = ChildExecutionState::DllInitReady { native_index: storm_index };
+                            let storm = child.native_modules.get(storm_index)
+                                .ok_or_else(|| "loaded Storm missing".to_owned())?;
+                            let storm_name = storm.stored.clone();
+                            let storm_base = storm.image.image_base;
                             let storm_entry = storm.image.image_base.checked_add(storm.image.entry_rva)
                                 .ok_or_else(|| "Storm entry overflow".to_owned())?;
                             logl::log(level::IMPORTANT, format_args!(
-                                "WC3 CHILD SCHEDULER READY pid={} tid={} context_identity=thread-key runnable_selection=process-aware wait_resume=process-aware control_routing=process-aware context_created=0",
+                                "WC3 CHILD EXECUTION STATE pid={} tid={} state=dll-init-ready module=\"{}\" context_created=0",
+                                child.pid, child.tid, storm_name
+                            ));
+                            let child_key = ThreadKey { pid: child.pid, tid: child.tid };
+                            if context_index(&contexts, child_key).is_some() {
+                                return Err("child primary context already exists".into());
+                            }
+                            let child_context = create_child_primary_context(child, storm_index)?;
+                            let child_esp = STACK_TOP - 0x10;
+                            let child_teb = thread_teb_va(child.tid)?;
+                            let reserved = STACK_TOP - 0x20;
+                            contexts.push(child_context);
+                            if contexts.iter().filter(|context| context.key() == child_key).count() != 1 {
+                                return Err("child primary context insertion mismatch".into());
+                            }
+                            logl::log(level::IMPORTANT, format_args!(
+                                "WC3 CHILD CONTEXT READY pid={} tid={} state=dll-init-ready module=\"{}\" context_created=1 started=0 scheduled=0 eip=0x{:08x} esp=0x{:08x} teb=0x{:08x} stack_base=0x{:08x} stack_top=0x{:08x} return_va=0x{:08x}",
+                                child.pid, child.tid, storm_name, storm_entry, child_esp, child_teb,
+                                STACK_BASE, STACK_TOP, thunk32::CHILD_DLL_RETURN_ADDRESS
+                            ));
+                            logl::log(level::IMPORTANT, format_args!(
+                                "WC3 CHILD DLL FRAME pid={} tid={} module=\"{}\" return=0x{:08x} hinst=0x{:08x} reason=1 reserved=0x{:08x}",
+                                child.pid, child.tid, storm_name, thunk32::CHILD_DLL_RETURN_ADDRESS,
+                                storm_base, reserved
+                            ));
+                            logl::log(level::IMPORTANT, format_args!(
+                                "WC3 CHILD SCHEDULER READY pid={} tid={} context_identity=thread-key runnable_selection=process-aware wait_resume=process-aware control_routing=process-aware context_created=1",
                                 child.pid, child.tid
                             ));
                             logl::log(
                                 level::IMPORTANT,
                                 format_args!(
-                                    "WC3 CHILD DLL INIT FRONTIER pid={} tid={} module=\"{}\" entry_va=0x{:08x} reason=DLL_PROCESS_ATTACH-not-called",
-                                    child.pid, child.tid, storm.stored, storm_entry,
+                                    "WC3 CHILD DLL INIT FRONTIER pid={} tid={} module=\"{}\" entry_va=0x{:08x} reason=context-ready-not-scheduled",
+                                    child.pid, child.tid, storm_name, storm_entry,
                                 ),
                             );
-                            return Ok(());
+                            let child_context_index = context_index(&contexts, child_key)
+                                .ok_or_else(|| "child primary context missing after insertion".to_owned())?;
+                            let matching_contexts = contexts.iter().filter(|context| context.key() == child_key).count();
+                            if matching_contexts != 1 {
+                                return Err("child primary context is not unique".into());
+                            }
+                            if contexts[child_context_index].started {
+                                return Err("child primary context unexpectedly started".into());
+                            }
+                            if child.native_modules[storm_index].initialized {
+                                return Err("Storm unexpectedly initialized before scheduling".into());
+                            }
+                            verify_child_primary_context(child, &contexts[child_context_index], storm_index)?;
+                            let (_, _, scheduled_entry) = begin_child_dll_init(child).map_err(str::to_owned)?;
+                            if scheduled_entry != storm_entry {
+                                return Err("child DLL scheduling entry mismatch".into());
+                            }
+                            let runnable_count = session.runnable.iter().filter(|key| **key == child_key).count();
+                            if runnable_count != 1 {
+                                return Err("child runnable queue entry missing or duplicated".into());
+                            }
+                            logl::log(level::IMPORTANT, format_args!(
+                                "WC3 CHILD DLL INIT SCHEDULE pid={} tid={} module=\"{}\" state=dll-init-running eip=0x{:08x} esp=0x{:08x}",
+                                child.pid, child.tid, storm_name, storm_entry, child_esp
+                            ));
+                            let selected = pop_runnable_context(&mut session, &contexts)
+                                .ok_or_else(|| "child runnable context was not selected".to_owned())?;
+                            if contexts[selected].key() != child_key {
+                                return Err("ordinary scheduler selected non-child context".into());
+                            }
+                            active = selected;
+                            logl::log(level::IMPORTANT, format_args!(
+                                "WC3 CHILD SCHEDULED pid={} tid={} module=\"{}\" started=0",
+                                child.pid, child.tid, storm_name
+                            ));
+                            continue;
                         }
                         let Some(deadline) = wait_deadlines.values().map(|wait| wait.deadline).min()
                         else {
@@ -2072,6 +2196,16 @@ async fn run() -> Result<(), String> {
                 }
             }
             ExitKind::Halted => {
+                if active_key.pid != LAUNCHER_PID {
+                    let child = pending_child.as_ref().filter(|child| child.pid == active_key.pid && child.tid == active_key.tid)
+                        .ok_or_else(|| "halted child missing pending state".to_owned())?;
+                    let (_, module) = child_execution_module(child).map_err(str::to_owned)?;
+                    logl::log(level::IMPORTANT, format_args!(
+                        "WC3 CHILD NATIVE EXECUTION FAULT pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" eip=0x{:08x} esp=0x{:08x} kind=Halted detail={}",
+                        active_key.pid, active_key.tid, module.stored, exit.registers.eip, exit.registers.esp, exit.detail
+                    ));
+                    return Ok(());
+                }
                 let halted_tid = contexts.remove(active).tid;
                 logl::log(
                     level::INFO,
@@ -2086,6 +2220,16 @@ async fn run() -> Result<(), String> {
                 active %= contexts.len();
             }
             kind => {
+                if active_key.pid != LAUNCHER_PID {
+                    let child = pending_child.as_ref().filter(|child| child.pid == active_key.pid && child.tid == active_key.tid)
+                        .ok_or_else(|| "faulted child missing pending state".to_owned())?;
+                    let (_, module) = child_execution_module(child).map_err(str::to_owned)?;
+                    logl::log(level::IMPORTANT, format_args!(
+                        "WC3 CHILD NATIVE EXECUTION FAULT pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" eip=0x{:08x} esp=0x{:08x} kind={:?} detail={}",
+                        active_key.pid, active_key.tid, module.stored, exit.registers.eip, exit.registers.esp, kind, exit.detail
+                    ));
+                    return Ok(());
+                }
                 return Err(format!(
                     "x86 context stopped: kind={kind:?} detail={} qualification=0x{:x} eip=0x{:08x}",
                     exit.detail, exit.qualification, exit.registers.eip,
@@ -2270,6 +2414,110 @@ fn create_thread_context(
     })
 }
 
+fn create_child_primary_context(
+    child: &PendingChild,
+    native_index: usize,
+) -> Result<GuestContext, String> {
+    if child.execution != (ChildExecutionState::DllInitReady { native_index }) {
+        return Err("child primary context requires matching DLL-init-ready state".into());
+    }
+    let module = child.native_modules.get(native_index)
+        .ok_or_else(|| "child primary context native index".to_owned())?;
+    let entry = module.image.image_base.checked_add(module.image.entry_rva)
+        .ok_or_else(|| "child primary context entry overflow".to_owned())?;
+    let teb = thread_teb_va(child.tid)?;
+    child.address_space
+        .map(teb, 0x1000, Permissions::READ | Permissions::WRITE)
+        .map_err(|error| format!("map child TEB: {error}"))?;
+    let exception_list = u32::MAX.to_le_bytes();
+    if child.address_space.write(teb, &exception_list).map_err(|error| error.to_string())? != exception_list.len() {
+        return Err("short child TEB write".into());
+    }
+    child.address_space
+        .map(STACK_BASE, STACK_BYTES, Permissions::READ | Permissions::WRITE)
+        .map_err(|error| format!("map child primary stack: {error}"))?;
+    let esp = STACK_TOP - 0x10;
+    let reserved = STACK_TOP - 0x20;
+    let marker = 0x5743_3344u32.to_le_bytes();
+    if child.address_space.write(reserved, &marker).map_err(|error| error.to_string())? != marker.len() {
+        return Err("short child static-load marker write".into());
+    }
+    let mut frame = [0u8; 16];
+    frame[0..4].copy_from_slice(&thunk32::CHILD_DLL_RETURN_ADDRESS.to_le_bytes());
+    frame[4..8].copy_from_slice(&module.image.image_base.to_le_bytes());
+    frame[8..12].copy_from_slice(&1u32.to_le_bytes());
+    frame[12..16].copy_from_slice(&reserved.to_le_bytes());
+    if child.address_space.write(esp, &frame).map_err(|error| error.to_string())? != frame.len() {
+        return Err("short child DLL frame write".into());
+    }
+
+    let mut actual_exception_list = [0; 4];
+    let mut actual_frame = [0; 16];
+    let mut actual_marker = [0; 4];
+    child.address_space.read(teb, &mut actual_exception_list).map_err(|error| error.to_string())?;
+    child.address_space.read(esp, &mut actual_frame).map_err(|error| error.to_string())?;
+    child.address_space.read(reserved, &mut actual_marker).map_err(|error| error.to_string())?;
+    if u32::from_le_bytes(actual_exception_list) != u32::MAX
+        || u32::from_le_bytes(actual_frame[0..4].try_into().map_err(|_| "child frame return")?) != thunk32::CHILD_DLL_RETURN_ADDRESS
+        || u32::from_le_bytes(actual_frame[4..8].try_into().map_err(|_| "child frame hinst")?) != module.image.image_base
+        || u32::from_le_bytes(actual_frame[8..12].try_into().map_err(|_| "child frame reason")?) != 1
+        || u32::from_le_bytes(actual_frame[12..16].try_into().map_err(|_| "child frame reserved")?) != reserved
+        || u32::from_le_bytes(actual_marker) != u32::from_le_bytes(marker)
+    {
+        return Err("child primary context frame verification failed".into());
+    }
+    let registers = Registers {
+        eip: entry,
+        esp,
+        eflags: 0x202,
+        fs_base: teb,
+        ..Registers::default()
+    };
+    let context = Context::create(&child.address_space, registers).map_err(|error| error.to_string())?;
+    let actual_registers = context.registers().map_err(|error| error.to_string())?;
+    if actual_registers.eip != entry || actual_registers.esp != esp || actual_registers.fs_base != teb {
+        return Err("child primary context register verification failed".into());
+    }
+    Ok(GuestContext {
+        pid: child.pid,
+        tid: child.tid,
+        context,
+        started: false,
+        continuation: None,
+    })
+}
+
+fn verify_child_primary_context(
+    child: &PendingChild,
+    context: &GuestContext,
+    native_index: usize,
+) -> Result<(), String> {
+    if context.key() != (ThreadKey { pid: child.pid, tid: child.tid }) {
+        return Err("child primary context identity mismatch".into());
+    }
+    let module = child.native_modules.get(native_index)
+        .ok_or_else(|| "child primary context native index".to_owned())?;
+    let entry = module.image.image_base.checked_add(module.image.entry_rva)
+        .ok_or_else(|| "child primary context entry overflow".to_owned())?;
+    let teb = thread_teb_va(child.tid)?;
+    let esp = STACK_TOP - 0x10;
+    let reserved = STACK_TOP - 0x20;
+    let registers = context.context.registers().map_err(|error| error.to_string())?;
+    let mut frame = [0; 16];
+    child.address_space.read(esp, &mut frame).map_err(|error| error.to_string())?;
+    if registers.eip != entry
+        || registers.esp != esp
+        || registers.fs_base != teb
+        || u32::from_le_bytes(frame[0..4].try_into().map_err(|_| "child frame return")?) != thunk32::CHILD_DLL_RETURN_ADDRESS
+        || u32::from_le_bytes(frame[4..8].try_into().map_err(|_| "child frame hinst")?) != module.image.image_base
+        || u32::from_le_bytes(frame[8..12].try_into().map_err(|_| "child frame reason")?) != 1
+        || u32::from_le_bytes(frame[12..16].try_into().map_err(|_| "child frame reserved")?) != reserved
+    {
+        return Err("child primary context preservation mismatch".into());
+    }
+    Ok(())
+}
+
 fn thread_teb_va(tid: u32) -> Result<u32, String> {
     wc3::process::TEB_VA
         .checked_add(
@@ -2289,6 +2537,14 @@ struct PendingChild {
     native_modules: Vec<PendingNativeModule>,
     address_space: AddressSpace,
     loader: ChildLoaderState,
+    execution: ChildExecutionState,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum ChildExecutionState {
+    Loader,
+    DllInitReady { native_index: usize },
+    DllInitRunning { native_index: usize },
 }
 
 struct ChildLoaderState {
@@ -2301,6 +2557,30 @@ struct PendingNativeModule {
     requested: String,
     stored: String,
     image: pe32::PeImage,
+    initialized: bool,
+}
+
+fn child_execution_module(child: &PendingChild) -> Result<(usize, &PendingNativeModule), &'static str> {
+    let native_index = match child.execution {
+        ChildExecutionState::DllInitReady { native_index } | ChildExecutionState::DllInitRunning { native_index } => native_index,
+        ChildExecutionState::Loader => return Err("child execution has no native module"),
+    };
+    child.native_modules.get(native_index).map(|module| (native_index, module)).ok_or("child execution native index")
+}
+
+fn begin_child_dll_init(child: &mut PendingChild) -> Result<(usize, u32, u32), &'static str> {
+    begin_child_dll_init_state(&mut child.execution, &child.native_modules)
+}
+
+fn begin_child_dll_init_state(
+    execution: &mut ChildExecutionState,
+    native_modules: &[PendingNativeModule],
+) -> Result<(usize, u32, u32), &'static str> {
+    let ChildExecutionState::DllInitReady { native_index } = *execution else { return Err("child DLL init not ready"); };
+    let module = native_modules.get(native_index).ok_or("child execution native index")?;
+    let entry = module.image.image_base.checked_add(module.image.entry_rva).ok_or("child DLL entry")?;
+    *execution = ChildExecutionState::DllInitRunning { native_index };
+    Ok((native_index, module.image.image_base, entry))
 }
 
 fn map_child_image(address_space: &AddressSpace, image: &pe32::PeImage) -> Result<(), String> {
@@ -2520,5 +2800,46 @@ impl GuestMemory for X86Memory<'_> {
             Ok(written) if written == input.len() => Ok(()),
             _ => Err("x86 guest write"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn native_module(stored: &str, image_base: u32, entry_rva: u32) -> PendingNativeModule {
+        PendingNativeModule {
+            requested: stored.to_owned(),
+            stored: stored.to_owned(),
+            image: pe32::PeImage {
+                image_base,
+                entry_rva,
+                size_of_image: 0,
+                size_of_headers: 0,
+                sections: Vec::new(),
+                imports: Vec::new(),
+                relocations: Vec::new(),
+                exports: Vec::new(),
+                image: Vec::new(),
+            },
+            initialized: false,
+        }
+    }
+
+    #[test]
+    fn child_dll_init_transitions_only_from_ready() {
+        let modules = vec![
+            native_module("Storm.dll", 0x1500_0000, 0x0003_2950),
+            native_module("Mss32.dll", 0x2110_0000, 0x0002_f2e5),
+        ];
+        let mut state = ChildExecutionState::Loader;
+        assert_eq!(begin_child_dll_init_state(&mut state, &modules), Err("child DLL init not ready"));
+
+        state = ChildExecutionState::DllInitReady { native_index: 0 };
+        assert_eq!(begin_child_dll_init_state(&mut state, &modules), Ok((0, 0x1500_0000, 0x1503_2950)));
+        assert_eq!(state, ChildExecutionState::DllInitRunning { native_index: 0 });
+        assert!(!modules[0].initialized);
+        assert!(!modules[1].initialized);
+        assert_eq!(begin_child_dll_init_state(&mut state, &modules), Err("child DLL init not ready"));
     }
 }
