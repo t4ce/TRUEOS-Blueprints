@@ -1,6 +1,36 @@
 use super::*;
 
 const ERROR_PROC_NOT_FOUND: u32 = 127;
+const EXEC_SAMPLE_PREEMPTIONS: u64 = 256;
+
+fn should_log_execution_sample(count: u64) -> bool {
+    count == 1 || count % EXEC_SAMPLE_PREEMPTIONS == 0
+}
+
+fn child_pc_owner(child: &PendingChild, eip: u32) -> Option<(&str, u32)> {
+    let in_image = |base: u32, size: u32| {
+        base.checked_add(size)
+            .filter(|end| base <= eip && eip < *end)
+            .map(|_| eip - base)
+    };
+    if let Some(rva) = in_image(child.image.image_base, child.image.size_of_image) {
+        return Some(("War3.exe", rva));
+    }
+    for module in &child.native_modules {
+        if let Some(rva) = in_image(module.image.image_base, module.image.size_of_image) {
+            return Some((module.stored.as_str(), rva));
+        }
+    }
+    let provider_end = thunk32::THUNK_BASE.checked_add(child.provider_thunk_bytes as u32)?;
+    if thunk32::THUNK_BASE <= eip && eip < provider_end {
+        return Some(("provider-thunks", eip - thunk32::THUNK_BASE));
+    }
+    let control_end = thunk32::CHILD_CONTROL_BASE.checked_add(0x1000)?;
+    if thunk32::CHILD_CONTROL_BASE <= eip && eip < control_end {
+        return Some(("child-control", eip - thunk32::CHILD_CONTROL_BASE));
+    }
+    None
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum ProcSelector {
@@ -99,6 +129,60 @@ pub(super) async fn run_loop(
             // program stop: Context::resume() restores the logical context
             // into a fresh VMCS on whichever Tokio carrier runs next.
             ExitKind::Other if exit.detail == 52 => {
+                let (preemptions, same_page) = {
+                    let context = contexts
+                        .get_mut(active)
+                        .ok_or_else(|| "active guest context missing".to_owned())?;
+                    context.preemption_count = context
+                        .preemption_count
+                        .checked_add(1)
+                        .ok_or_else(|| "preemption count overflow".to_owned())?;
+                    let page = exit.registers.eip & !0xfff;
+                    if context.last_preemption_page == page {
+                        context.same_page_preemptions =
+                            context.same_page_preemptions.saturating_add(1);
+                    } else {
+                        context.last_preemption_page = page;
+                        context.same_page_preemptions = 1;
+                    }
+                    (context.preemption_count, context.same_page_preemptions)
+                };
+                if active_key.pid != LAUNCHER_PID
+                    && should_log_execution_sample(preemptions)
+                    && pending_child
+                        .as_ref()
+                        .is_some_and(|child| child.execution == ChildExecutionState::ImageEntryRunning)
+                {
+                    let child = pending_child.as_ref().unwrap();
+                    let (owner, rva) = child_pc_owner(child, exit.registers.eip)
+                        .unwrap_or(("unknown", 0));
+                    let mut code = [0u8; 16];
+                    let code_len = child.address_space.read(exit.registers.eip, &mut code).unwrap_or(0);
+                    let code = code[..code_len]
+                        .iter()
+                        .map(|byte| format!("{byte:02x}"))
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    logl::log(
+                        level::IMPORTANT,
+                        format_args!(
+                            "WC3 CHILD EXEC SAMPLE pid={} tid={} during=\"War3.exe:ENTRY\" preemptions={} owner={:?} rva=0x{:08x} eip=0x{:08x} esp=0x{:08x} ebp=0x{:08x} eax=0x{:08x} same_page={} code={}",
+                            active_key.pid, active_key.tid, preemptions, owner, rva,
+                            exit.registers.eip, exit.registers.esp, exit.registers.ebp,
+                            exit.registers.eax, same_page, code,
+                        ),
+                    );
+                    if same_page == 1024 {
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD EXEC HOTPAGE pid={} tid={} owner={:?} page=0x{:08x} eip=0x{:08x} samples={}",
+                                active_key.pid, active_key.tid, owner,
+                                exit.registers.eip & !0xfff, exit.registers.eip, same_page,
+                            ),
+                        );
+                    }
+                }
                 expire_runtime_waits(
                     &mut session,
                     &mut contexts,

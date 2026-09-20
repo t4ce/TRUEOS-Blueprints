@@ -230,6 +230,9 @@ async fn run() -> Result<(), String> {
         context,
         started: false,
         continuation: None,
+        preemption_count: 0,
+        last_preemption_page: 0,
+        same_page_preemptions: 0,
     }];
     let mut pending_child: Option<PendingChild> = None;
     let mut thread_calls: HashMap<(u32, u32), u32> = HashMap::new();
@@ -545,6 +548,9 @@ struct GuestContext {
     context: Context,
     started: bool,
     continuation: Option<GuestContinuation>,
+    preemption_count: u64,
+    last_preemption_page: u32,
+    same_page_preemptions: u32,
 }
 
 impl GuestContext {
@@ -688,6 +694,9 @@ fn create_thread_context(
         context,
         started: false,
         continuation: None,
+        preemption_count: 0,
+        last_preemption_page: 0,
+        same_page_preemptions: 0,
     })
 }
 
@@ -816,6 +825,9 @@ fn create_child_primary_context(
         context,
         started: false,
         continuation: None,
+        preemption_count: 0,
+        last_preemption_page: 0,
+        same_page_preemptions: 0,
     })
 }
 
@@ -2156,6 +2168,9 @@ mod tests {
             context,
             started: true,
             continuation: None,
+            preemption_count: 0,
+            last_preemption_page: 0,
+            same_page_preemptions: 0,
         };
         let context_address = &guest.context as *const Context as usize;
         let mut child = PendingChild {
@@ -2371,6 +2386,9 @@ mod tests {
             context,
             started: true,
             continuation: None,
+            preemption_count: 0,
+            last_preemption_page: 0,
+            same_page_preemptions: 0,
         };
         let child_image = native_module("War3.exe", 0x0040_0000, 0).image;
         let mut child = PendingChild {
