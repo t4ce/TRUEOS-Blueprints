@@ -599,6 +599,26 @@ impl XpProcess {
             .map(|module| module.handle)
     }
 
+    pub fn external_provider_module_name(&self, handle: u32) -> Option<&str> {
+        self.loaded_modules
+            .iter()
+            .find(|module| module.handle == handle && module.kind == LoadedModuleKind::ExternalProvider)
+            .map(|module| module_basename(&module.stored_name))
+    }
+
+    pub fn provider_thunk_address(
+        &self,
+        module: &str,
+        symbol: &ProviderSymbol,
+    ) -> Option<u32> {
+        self.provider_imports
+            .iter()
+            .position(|import| {
+                import.module.eq_ignore_ascii_case(module) && import.symbol == *symbol
+            })
+            .and_then(|id| thunk32::address(u32::try_from(id).ok()?))
+    }
+
     pub fn new(imports: Vec<LauncherImport>) -> Self {
         Self::with_image(imports, ProcessImage::Launcher)
     }

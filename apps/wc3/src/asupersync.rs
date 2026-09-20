@@ -1,5 +1,70 @@
 use super::*;
 
+const ERROR_PROC_NOT_FOUND: u32 = 127;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum ProcSelector {
+    Name(String),
+    Ordinal(u16),
+}
+
+impl ProcSelector {
+    fn provider_symbol(&self) -> child_loader::ProviderSymbol {
+        match self {
+            Self::Name(name) => child_loader::ProviderSymbol::Name(name.clone()),
+            Self::Ordinal(ordinal) => child_loader::ProviderSymbol::Ordinal(*ordinal),
+        }
+    }
+}
+
+fn install_child_provider_imports(
+    child: &mut PendingChild,
+    process: &mut XpProcess,
+    imports: Vec<child_loader::ProviderImport>,
+) -> Result<Vec<u32>, String> {
+    let (addresses, old_bytes, new_bytes, updated_from, updated) = process
+        .append_provider_imports(imports)
+        .map_err(str::to_owned)?;
+    child.provider_thunk_bytes = new_bytes;
+    if new_bytes > old_bytes {
+        child
+            .address_space
+            .map(
+                thunk32::THUNK_BASE + old_bytes as u32,
+                new_bytes - old_bytes,
+                Permissions::READ | Permissions::WRITE | Permissions::EXECUTE,
+            )
+            .map_err(|error| error.to_string())?;
+        logl::log(
+            level::IMPORTANT,
+            format_args!(
+                "WC3 CHILD PROVIDER THUNK GROW pid={} old_bytes={} new_bytes={}",
+                child.pid, old_bytes, new_bytes
+            ),
+        );
+    }
+    let existing_update = old_bytes.saturating_sub(updated_from).min(updated.len());
+    if existing_update != 0 {
+        child
+            .address_space
+            .write(
+                thunk32::THUNK_BASE + updated_from as u32,
+                &updated[..existing_update],
+            )
+            .map_err(|error| error.to_string())?;
+    }
+    if existing_update < updated.len() {
+        child
+            .address_space
+            .write(
+                thunk32::THUNK_BASE + old_bytes as u32,
+                &updated[existing_update..],
+            )
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(addresses)
+}
+
 pub(super) async fn run_loop(
     address_space: &AddressSpace,
     mut memory: X86Memory<'_>,

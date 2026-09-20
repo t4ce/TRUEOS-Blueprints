@@ -35,6 +35,7 @@ pub enum ProviderOp {
     GetModuleFileNameA,
     GetModuleHandleA,
     LoadLibraryA,
+    GetProcAddress,
     GetWindowsDirectoryA,
     GetSystemDirectoryA,
     QueryPerformanceFrequency,
@@ -76,6 +77,7 @@ impl ProviderOp {
             | Self::QueryPerformanceFrequency
             | Self::QueryPerformanceCounter => 4,
             Self::GetCPInfo | Self::GetWindowsDirectoryA | Self::GetSystemDirectoryA => 8,
+            Self::GetProcAddress => 8,
             Self::GetStringTypeW | Self::VirtualAlloc => 16,
             Self::MultiByteToWideChar | Self::LCMapStringW => 24,
             Self::WideCharToMultiByte => 32,
@@ -130,6 +132,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "GetModuleFileNameA" => ProviderOp::GetModuleFileNameA,
             "GetModuleHandleA" => ProviderOp::GetModuleHandleA,
             "LoadLibraryA" => ProviderOp::LoadLibraryA,
+            "GetProcAddress" => ProviderOp::GetProcAddress,
             "GetWindowsDirectoryA" => ProviderOp::GetWindowsDirectoryA,
             "GetSystemDirectoryA" => ProviderOp::GetSystemDirectoryA,
             "QueryPerformanceFrequency" => ProviderOp::QueryPerformanceFrequency,
@@ -632,6 +635,20 @@ mod tests {
         assert!(!operation.is_generic_process_local());
         assert_eq!(operation.stack_cleanup_bytes(), 4);
         assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Stdcall(4));
+    }
+
+    #[test]
+    fn get_proc_address_is_runtime_stdcall_eight() {
+        let import = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("GetProcAddress".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&import);
+        assert_eq!(operation, ProviderOp::GetProcAddress);
+        assert!(!operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 8);
+        assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Stdcall(8));
     }
 
     #[test]
