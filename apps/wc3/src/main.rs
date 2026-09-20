@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     time::Duration,
 };
 
@@ -224,6 +224,7 @@ async fn run() -> Result<(), String> {
     let mut blit_checkpoint_done = false;
     let mut wait_deadlines: HashMap<ThreadKey, RuntimeWait> = HashMap::new();
     let mut previous_wait_timeout: Option<(ThreadKey, u32, u32)> = None;
+    let mut preemption_watches: HashMap<ThreadKey, PreemptionWatch> = HashMap::new();
     let mut active = 0usize;
     loop {
         let exit = if contexts[active].started {
@@ -237,12 +238,53 @@ async fn run() -> Result<(), String> {
             .get(active)
             .ok_or_else(|| "active guest context missing".to_owned())?
             .key();
+        if !matches!(exit.kind, ExitKind::Other) || exit.detail != 52 {
+            preemption_watches.remove(&active_key);
+        }
         match exit.kind {
             // A transient VMCS always starts with VMLAUNCH.  Its preemption
             // timer is therefore a Blueprint scheduling boundary, not an x86
             // program stop: Context::resume() restores the logical context
             // into a fresh VMCS on whichever Tokio carrier runs next.
             ExitKind::Other if exit.detail == 52 => {
+                expire_runtime_waits(
+                    &mut session,
+                    &mut contexts,
+                    &mut wait_deadlines,
+                    &mut previous_wait_timeout,
+                )?;
+                let watch = preemption_watches.entry(active_key).or_default();
+                watch.record(exit.registers);
+                if active_key.pid != LAUNCHER_PID
+                    && pending_child.as_ref().is_some_and(|child| {
+                        child.pid == active_key.pid
+                            && child.tid == active_key.tid
+                            && matches!(child.execution, ChildExecutionState::DllInitRunning { .. })
+                    })
+                    && watch.consecutive >= 8
+                {
+                    let child = pending_child
+                        .as_ref()
+                        .ok_or_else(|| "preemption child state missing".to_owned())?;
+                    let (_, module) = child_execution_module(child).map_err(str::to_owned)?;
+                    let registers = watch.last_registers.unwrap_or(exit.registers);
+                    emit_child_cpu_stall_frontier(
+                        child,
+                        active_key,
+                        &module.stored,
+                        watch,
+                        registers,
+                    );
+                    return Ok(());
+                }
+                if !session.blocked.contains_key(&active_key)
+                    && context_index(&contexts, active_key).is_some()
+                {
+                    session.enqueue(active_key);
+                }
+                if let Some(next) = pop_runnable_context(&mut session, &contexts) {
+                    active = next;
+                }
                 tokio::task::yield_now().await;
                 continue;
             }
@@ -3535,36 +3577,12 @@ async fn run() -> Result<(), String> {
                             return Err("no runnable thread after launcher block".into());
                         };
                         tokio::time::sleep_until(deadline).await;
-                        let now = tokio::time::Instant::now();
-                        let expired: Vec<_> = wait_deadlines
-                            .iter()
-                            .filter_map(|(key, wait)| (wait.deadline <= now).then_some(*key))
-                            .collect();
-                        for key in expired {
-                            let Some(wait) = wait_deadlines.remove(&key) else {
-                                continue;
-                            };
-                            session.blocked.remove(&key);
-                            session.enqueue(key);
-                            let mut registers = wait.resume_registers;
-                            registers.eax = WAIT_TIMEOUT;
-                            let index = contexts
-                                .iter()
-                                .position(|context| context.key() == key)
-                                .ok_or_else(|| "timed-out wait context missing".to_owned())?;
-                            contexts[index]
-                                .context
-                                .set_registers(registers)
-                                .map_err(|error| error.to_string())?;
-                            logl::log(
-                                level::IMPORTANT,
-                                format_args!(
-                                    "WC3 WAIT TIMEOUT pid={} tid={} handle=0x{:08x} elapsed_ms={} result=0x{:08x}",
-                                    key.pid, key.tid, wait.handle, wait.timeout_ms, WAIT_TIMEOUT
-                                ),
-                            );
-                            previous_wait_timeout = Some((key, wait.handle, wait.timeout_ms));
-                        }
+                        expire_runtime_waits(
+                            &mut session,
+                            &mut contexts,
+                            &mut wait_deadlines,
+                            &mut previous_wait_timeout,
+                        )?;
                         if let Some(next) = pop_runnable_context(&mut session, &contexts) {
                             active = next;
                             continue;
@@ -4196,6 +4214,164 @@ struct RuntimeWait {
     timeout_ms: u32,
     handle: u32,
     resume_registers: Registers,
+}
+
+#[derive(Default)]
+struct PreemptionWatch {
+    consecutive: u32,
+    eips: VecDeque<u32>,
+    last_registers: Option<Registers>,
+}
+
+impl PreemptionWatch {
+    fn record(&mut self, registers: Registers) {
+        self.consecutive = self.consecutive.saturating_add(1);
+        if self.eips.len() == 8 {
+            self.eips.pop_front();
+        }
+        self.eips.push_back(registers.eip);
+        self.last_registers = Some(registers);
+    }
+
+    fn classification(&self) -> &'static str {
+        let Some(low) = self.eips.iter().copied().min() else {
+            return "long-native-execution";
+        };
+        let high = self.eips.iter().copied().max().unwrap_or(low);
+        if high.saturating_sub(low) <= 16 {
+            "probable-native-spin"
+        } else {
+            "long-native-execution"
+        }
+    }
+}
+
+fn expire_runtime_waits(
+    session: &mut Wc3Session,
+    contexts: &mut [GuestContext],
+    wait_deadlines: &mut HashMap<ThreadKey, RuntimeWait>,
+    previous_wait_timeout: &mut Option<(ThreadKey, u32, u32)>,
+) -> Result<(), String> {
+    let now = tokio::time::Instant::now();
+    let expired: Vec<_> = wait_deadlines
+        .iter()
+        .filter_map(|(key, wait)| (wait.deadline <= now).then_some(*key))
+        .collect();
+    for key in expired {
+        let Some(wait) = wait_deadlines.remove(&key) else {
+            continue;
+        };
+        session.blocked.remove(&key);
+        session.enqueue(key);
+        let mut registers = wait.resume_registers;
+        registers.eax = WAIT_TIMEOUT;
+        let index = contexts
+            .iter()
+            .position(|context| context.key() == key)
+            .ok_or_else(|| "timed-out wait context missing".to_owned())?;
+        contexts[index]
+            .context
+            .set_registers(registers)
+            .map_err(|error| error.to_string())?;
+        logl::log(
+            level::IMPORTANT,
+            format_args!(
+                "WC3 WAIT TIMEOUT pid={} tid={} handle=0x{:08x} elapsed_ms={} result=0x{:08x}",
+                key.pid, key.tid, wait.handle, wait.timeout_ms, WAIT_TIMEOUT
+            ),
+        );
+        *previous_wait_timeout = Some((key, wait.handle, wait.timeout_ms));
+    }
+    Ok(())
+}
+
+fn child_stall_bytes(address_space: &AddressSpace, address: u32, len: usize) -> String {
+    let mut bytes = vec![0; len];
+    match address_space.read(address, &mut bytes) {
+        Ok(read) if read == len => bytes
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<Vec<_>>()
+            .join(" "),
+        Ok(read) => format!("<unreadable: short-read {read}/{len}>"),
+        Err(error) => format!("<unreadable: {error}>"),
+    }
+}
+
+fn emit_child_cpu_stall_frontier(
+    child: &PendingChild,
+    key: ThreadKey,
+    module_name: &str,
+    watch: &PreemptionWatch,
+    registers: Registers,
+) {
+    let eip_samples = watch
+        .eips
+        .iter()
+        .map(|eip| format!("0x{eip:08x}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    logl::log(
+        level::IMPORTANT,
+        format_args!(
+            "WC3 CHILD CPU STALL FRONTIER pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" quanta={} eip_samples=[{}] current_eip=0x{:08x} esp=0x{:08x} eax=0x{:08x} ebx=0x{:08x} ecx=0x{:08x} edx=0x{:08x} esi=0x{:08x} edi=0x{:08x} ebp=0x{:08x} classification={}",
+            key.pid,
+            key.tid,
+            module_name,
+            watch.consecutive,
+            eip_samples,
+            registers.eip,
+            registers.esp,
+            registers.eax,
+            registers.ebx,
+            registers.ecx,
+            registers.edx,
+            registers.esi,
+            registers.edi,
+            registers.ebp,
+            watch.classification(),
+        ),
+    );
+    match registers.eip.checked_sub(16) {
+        Some(address) => logl::log(
+            level::IMPORTANT,
+            format_args!(
+                "WC3 CHILD CPU STALL CODE BEFORE address=0x{:08x} bytes=\"{}\"",
+                address,
+                child_stall_bytes(&child.address_space, address, 16),
+            ),
+        ),
+        None => logl::log(
+            level::IMPORTANT,
+            format_args!(
+                "WC3 CHILD CPU STALL CODE BEFORE address=<underflow> bytes=\"<unreadable: EIP below 16>\""
+            ),
+        ),
+    }
+    logl::log(
+        level::IMPORTANT,
+        format_args!(
+            "WC3 CHILD CPU STALL CODE address=0x{:08x} bytes=\"{}\"",
+            registers.eip,
+            child_stall_bytes(&child.address_space, registers.eip, 32),
+        ),
+    );
+    let stack = read_guest_words(&X86Memory(&child.address_space), registers.esp, 8)
+        .map(|words| {
+            words
+                .iter()
+                .map(|word| format!("0x{word:08x}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .unwrap_or_else(|error| format!("<unreadable: {error}>"));
+    logl::log(
+        level::IMPORTANT,
+        format_args!(
+            "WC3 CHILD CPU STALL STACK esp=0x{:08x} words=[{}]",
+            registers.esp, stack
+        ),
+    );
 }
 
 fn context_index(contexts: &[GuestContext], key: ThreadKey) -> Option<usize> {
