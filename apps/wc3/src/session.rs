@@ -689,7 +689,7 @@ mod tests {
 
         let woken = session.terminate_process(child.pid, 7).unwrap();
 
-        assert_eq!(woken, vec![wait]);
+        assert_eq!(woken, vec![wait.clone()]);
         assert!(!session.blocked.contains_key(&wait.key));
         assert_eq!(
             session

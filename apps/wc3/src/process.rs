@@ -6369,6 +6369,30 @@ mod tests {
     }
 
     #[test]
+    fn child_exit_process_is_non_returning_lifecycle_action() {
+        let provider = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("ExitProcess".into()),
+            iat_rva: 0,
+        };
+        let mut xp = XpProcess::new_child();
+        xp.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+        write_u32(&mut memory, esp, 0x0046_7796).unwrap();
+        write_u32(&mut memory, esp + 4, 0xc000_0005).unwrap();
+
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::ExitProcess(0xc000_0005))
+        );
+        assert_eq!(xp.call_count, 1);
+    }
+
+    #[test]
     fn child_get_module_handle_a_resolves_native_module_aliases() {
         let provider = ProviderImport {
             module: "KERNEL32.dll".into(),
