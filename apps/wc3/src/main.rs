@@ -344,6 +344,24 @@ async fn run() -> Result<(), String> {
                         return Ok(());
                     }
                     if exit.registers.eip == thunk32::CHILD_CALLBACK_RETURN_AFTER_VMCALL {
+                        if let Some(initterm) = child.initterm.as_ref() {
+                            if exit.registers.esp != initterm.provider_esp {
+                                return Err(format!(
+                                    "child _initterm callback ESP mismatch expected=0x{:08x} actual=0x{:08x}",
+                                    initterm.provider_esp, exit.registers.esp
+                                ));
+                            }
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD CRT INITTERM RETURN pid={} tid={} completed={} eax=0x{:08x}",
+                                    active_pid, active_tid, initterm.callbacks_invoked, exit.registers.eax
+                                ),
+                            );
+                            match advance_child_initterm(child, &mut contexts[active])? {
+                                InittermAdvance::CallbackScheduled | InittermAdvance::Complete => continue,
+                            }
+                        }
                         let (_, module) = child_execution_module(child).map_err(str::to_owned)?;
                         logl::log(
                             level::IMPORTANT,
@@ -631,6 +649,74 @@ async fn run() -> Result<(), String> {
                             .set_registers(registers)
                             .map_err(|error| error.to_string())?;
                         continue;
+                    }
+                    let is_crt_initterm = matches!(
+                        &provider.symbol,
+                        child_loader::ProviderSymbol::Name(name)
+                            if provider.module.eq_ignore_ascii_case("MSVCRT.dll")
+                                && name == "_initterm"
+                    );
+                    if is_crt_initterm {
+                        if child.initterm.is_some() {
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD CRT INITTERM FRONTIER pid={} tid={} reason=nested-initterm",
+                                    active_pid, active_tid
+                                ),
+                            );
+                            return Ok(());
+                        }
+                        let frame = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            exit.registers.esp,
+                            3,
+                        )?;
+                        let caller_ret = frame[0];
+                        let begin = frame[1];
+                        let end = frame[2];
+                        if running_module_name.eq_ignore_ascii_case("Storm.dll")
+                            && caller_ret != 0x1503_630a
+                        {
+                            return Err(format!(
+                                "Storm _initterm caller mismatch expected=0x1503630a actual=0x{caller_ret:08x}"
+                            ));
+                        }
+                        if begin > end || begin % 4 != 0 || end % 4 != 0 {
+                            return Err(format!(
+                                "malformed child _initterm range begin=0x{begin:08x} end=0x{end:08x}"
+                            ));
+                        }
+                        let bytes = end
+                            .checked_sub(begin)
+                            .ok_or_else(|| "child _initterm range underflow".to_owned())?;
+                        if bytes % 4 != 0 {
+                            return Err("child _initterm byte range is not pointer-aligned".into());
+                        }
+                        let entries = bytes / 4;
+                        if entries > 65_536 {
+                            return Err(format!(
+                                "child _initterm range exceeds defensive bound entries={entries}"
+                            ));
+                        }
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD CRT INITTERM pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" provider_id={} begin=0x{:08x} end=0x{:08x} entries={} caller_ret=0x{:08x}",
+                                active_pid, active_tid, running_module_name, provider_id, begin, end, entries, caller_ret
+                            ),
+                        );
+                        child.initterm = Some(ChildInitterm {
+                            provider_resume_eip: exit.registers.eip,
+                            provider_esp: exit.registers.esp,
+                            begin,
+                            cursor: begin,
+                            end,
+                            callbacks_invoked: 0,
+                        });
+                        match advance_child_initterm(child, &mut contexts[active])? {
+                            InittermAdvance::CallbackScheduled | InittermAdvance::Complete => continue,
+                        }
                     }
                     let is_reg_open_key_ex_a = matches!(
                         &provider.symbol,
@@ -1844,6 +1930,7 @@ async fn run() -> Result<(), String> {
                                 .map_err(|error| error.to_string())?,
                             crt_heap_mapped_end: CHILD_CRT_HEAP_BASE,
                             provider_thunk_bytes: 0,
+                            initterm: None,
                             loader: ChildLoaderState {
                                 prepared: false,
                                 native_requests: Vec::new(),
@@ -3773,8 +3860,87 @@ struct PendingChild {
     address_space: AddressSpace,
     crt_heap_mapped_end: u32,
     provider_thunk_bytes: usize,
+    initterm: Option<ChildInitterm>,
     loader: ChildLoaderState,
     execution: ChildExecutionState,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ChildInitterm {
+    provider_resume_eip: u32,
+    provider_esp: u32,
+    begin: u32,
+    cursor: u32,
+    end: u32,
+    callbacks_invoked: u32,
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+enum InittermAdvance {
+    CallbackScheduled,
+    Complete,
+}
+
+fn advance_child_initterm(
+    child: &mut PendingChild,
+    context: &mut GuestContext,
+) -> Result<InittermAdvance, String> {
+    loop {
+        let state = child
+            .initterm
+            .as_mut()
+            .ok_or_else(|| "child _initterm continuation missing".to_owned())?;
+        if state.cursor == state.end {
+            let complete = child
+                .initterm
+                .take()
+                .ok_or_else(|| "child _initterm completion state missing".to_owned())?;
+            let mut registers = context.context.registers().map_err(|error| error.to_string())?;
+            registers.eip = complete.provider_resume_eip;
+            registers.esp = complete.provider_esp;
+            registers.eax = 0;
+            context.context.set_registers(registers).map_err(|error| error.to_string())?;
+            return Ok(InittermAdvance::Complete);
+        }
+        if state.cursor > state.end {
+            return Err("child _initterm cursor exceeded range".into());
+        }
+        let slot = state.cursor;
+        state.cursor = state.cursor.checked_add(4)
+            .ok_or_else(|| "child _initterm cursor overflow".to_owned())?;
+        let mut target = [0; 4];
+        child.address_space.read(slot, &mut target)
+            .map_err(|error| format!("read child _initterm slot 0x{slot:08x}: {error}"))?;
+        let target = u32::from_le_bytes(target);
+        if target == 0 {
+            continue;
+        }
+        let callback_esp = state.provider_esp.checked_sub(4)
+            .ok_or_else(|| "child _initterm callback stack underflow".to_owned())?;
+        let callback_return = thunk32::CHILD_CALLBACK_RETURN_ADDRESS.to_le_bytes();
+        if child.address_space.write(callback_esp, &callback_return)
+            .map_err(|error| format!("write child _initterm callback return: {error}"))?
+            != callback_return.len()
+        {
+            return Err("short child _initterm callback return write".into());
+        }
+        state.callbacks_invoked = state.callbacks_invoked.checked_add(1)
+            .ok_or_else(|| "child _initterm callback count overflow".to_owned())?;
+        let index = slot.checked_sub(state.begin)
+            .ok_or_else(|| "child _initterm index underflow".to_owned())? / 4;
+        logl::log(
+            level::IMPORTANT,
+            format_args!(
+                "WC3 CHILD CRT INITTERM CALL pid={} tid={} index={} slot=0x{:08x} target=0x{:08x}",
+                child.pid, child.tid, index, slot, target
+            ),
+        );
+        let mut registers = context.context.registers().map_err(|error| error.to_string())?;
+        registers.eip = target;
+        registers.esp = callback_esp;
+        context.context.set_registers(registers).map_err(|error| error.to_string())?;
+        return Ok(InittermAdvance::CallbackScheduled);
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -4489,5 +4655,116 @@ mod tests {
             .unwrap(),
             CHILD_CRT_HEAP_BASE + 0x2000,
         );
+    }
+
+    #[test]
+    fn child_initterm_runs_non_null_callbacks_in_order_and_restores_provider() {
+        let address_space = AddressSpace::create().unwrap();
+        address_space
+            .map(
+                STACK_BASE,
+                STACK_BYTES,
+                Permissions::READ | Permissions::WRITE,
+            )
+            .unwrap();
+        let begin = 0x0100_0000;
+        address_space
+            .map(begin, 0x1000, Permissions::READ | Permissions::WRITE)
+            .unwrap();
+        let entries = [0x1111_1111u32, 0, 0x2222_2222];
+        for (index, target) in entries.into_iter().enumerate() {
+            address_space
+                .write(begin + index as u32 * 4, &target.to_le_bytes())
+                .unwrap();
+        }
+        let provider_esp = 0x043f_ffa8;
+        let provider_resume_eip = 0x0030_0fe0;
+        let context = Context::create(
+            &address_space,
+            Registers {
+                eip: provider_resume_eip,
+                esp: provider_esp,
+                eax: 338,
+                ..Registers::default()
+            },
+        )
+        .unwrap();
+        let mut guest = GuestContext {
+            pid: 2,
+            tid: 3,
+            context,
+            started: true,
+            continuation: None,
+        };
+        let child_image = native_module("War3.exe", 0x0040_0000, 0).image;
+        let mut child = PendingChild {
+            pid: 2,
+            tid: 3,
+            image: child_image,
+            native_modules: vec![native_module("Storm.dll", 0x1500_0000, 0)],
+            address_space,
+            crt_heap_mapped_end: CHILD_CRT_HEAP_BASE,
+            provider_thunk_bytes: 0x1000,
+            initterm: Some(ChildInitterm {
+                provider_resume_eip,
+                provider_esp,
+                begin,
+                cursor: begin,
+                end: begin + 12,
+                callbacks_invoked: 0,
+            }),
+            loader: ChildLoaderState {
+                prepared: true,
+                native_requests: Vec::new(),
+                next_native: 0,
+            },
+            execution: ChildExecutionState::DllInitRunning { native_index: 0 },
+        };
+
+        assert_eq!(
+            advance_child_initterm(&mut child, &mut guest).unwrap(),
+            InittermAdvance::CallbackScheduled
+        );
+        let first = guest.context.registers().unwrap();
+        assert_eq!(first.eip, 0x1111_1111);
+        assert_eq!(first.esp, provider_esp - 4);
+        let mut callback_return = [0; 4];
+        child
+            .address_space
+            .read(provider_esp - 4, &mut callback_return)
+            .unwrap();
+        assert_eq!(
+            u32::from_le_bytes(callback_return),
+            thunk32::CHILD_CALLBACK_RETURN_ADDRESS
+        );
+
+        let mut returned = first;
+        returned.eip = thunk32::CHILD_CALLBACK_RETURN_AFTER_VMCALL;
+        returned.esp = provider_esp;
+        returned.eax = 0xfeed_face;
+        guest.context.set_registers(returned).unwrap();
+        assert_eq!(
+            advance_child_initterm(&mut child, &mut guest).unwrap(),
+            InittermAdvance::CallbackScheduled
+        );
+        let second = guest.context.registers().unwrap();
+        assert_eq!(second.eip, 0x2222_2222);
+        assert_eq!(second.esp, provider_esp - 4);
+        assert_eq!(child.initterm.as_ref().unwrap().callbacks_invoked, 2);
+
+        let mut returned = second;
+        returned.eip = thunk32::CHILD_CALLBACK_RETURN_AFTER_VMCALL;
+        returned.esp = provider_esp;
+        returned.eax = 0x1234_5678;
+        guest.context.set_registers(returned).unwrap();
+        assert_eq!(
+            advance_child_initterm(&mut child, &mut guest).unwrap(),
+            InittermAdvance::Complete
+        );
+        assert!(child.initterm.is_none());
+        let complete = guest.context.registers().unwrap();
+        assert_eq!(complete.eip, provider_resume_eip);
+        assert_eq!(complete.esp, provider_esp);
+        assert_eq!(complete.eax, 0);
     }
 }
