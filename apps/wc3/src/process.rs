@@ -859,6 +859,15 @@ impl XpProcess {
                     .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(self.get_string_type(esp, memory)?))
             }
+            ProviderOp::MultiByteToWideChar => {
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(
+                    self.multi_byte_to_wide(esp, memory)?,
+                ))
+            }
             _ => Err(ProviderDispatchError::Unsupported),
         }
     }
@@ -5193,6 +5202,39 @@ mod tests {
         );
         assert_eq!(read_u16(&memory, output + 4).unwrap(), C1_CNTRL);
         assert_eq!(read_u16(&memory, output + 6).unwrap(), 0x5a5a);
+    }
+
+    #[test]
+    fn child_multi_byte_to_wide_char_reuses_cp_acp_conversion() {
+        let provider = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("MultiByteToWideChar".into()),
+            iat_rva: 0,
+        };
+        let mut pid2 = XpProcess::new(Vec::new());
+        pid2.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+        let source = STACK_TOP - 0x200;
+        let output = STACK_TOP - 0x300;
+        memory.write(source, b"Az\0").unwrap();
+        for (index, value) in [0x2113_4cfc, 0, 0, source, u32::MAX, output, 3]
+            .into_iter()
+            .enumerate()
+        {
+            write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
+        }
+        assert_eq!(
+            pid2.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(3))
+        );
+        assert_eq!(read_u16(&memory, output).unwrap(), u16::from(b'A'));
+        assert_eq!(read_u16(&memory, output + 2).unwrap(), u16::from(b'z'));
+        assert_eq!(read_u16(&memory, output + 4).unwrap(), 0);
+        assert_eq!(pid2.call_count, 1);
     }
 
     #[test]

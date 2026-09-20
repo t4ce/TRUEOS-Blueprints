@@ -30,6 +30,7 @@ pub enum ProviderOp {
     GetACP,
     GetCPInfo,
     GetStringTypeW,
+    MultiByteToWideChar,
     GetVersion,
     GetVersionExA,
     WideCharToMultiByte,
@@ -63,6 +64,7 @@ impl ProviderOp {
             | Self::SetLastError => 4,
             Self::GetCPInfo => 8,
             Self::GetStringTypeW | Self::VirtualAlloc => 16,
+            Self::MultiByteToWideChar => 24,
             Self::WideCharToMultiByte => 32,
             Self::HeapCreate | Self::HeapAlloc | Self::HeapFree => 12,
             Self::RegOpenKeyExA => 20,
@@ -81,6 +83,7 @@ impl ProviderOp {
                 | Self::GetACP
                 | Self::GetCPInfo
                 | Self::GetStringTypeW
+                | Self::MultiByteToWideChar
         )
     }
 }
@@ -101,6 +104,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "GetACP" => ProviderOp::GetACP,
             "GetCPInfo" => ProviderOp::GetCPInfo,
             "GetStringTypeW" => ProviderOp::GetStringTypeW,
+            "MultiByteToWideChar" => ProviderOp::MultiByteToWideChar,
             "GetVersion" => ProviderOp::GetVersion,
             "GetVersionExA" => ProviderOp::GetVersionExA,
             "WideCharToMultiByte" => ProviderOp::WideCharToMultiByte,
@@ -516,6 +520,22 @@ mod tests {
         let mut bytes = [0; thunk32::THUNK_BYTES];
         thunk32::write(638, provider_thunk_kind(&import), &mut bytes).unwrap();
         assert_eq!(&bytes[8..11], &[0xc2, 0x10, 0x00]);
+    }
+
+    #[test]
+    fn multi_byte_to_wide_char_is_pure_process_stdcall_twenty_four() {
+        let import = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("MultiByteToWideChar".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&import);
+        assert_eq!(operation, ProviderOp::MultiByteToWideChar);
+        assert!(operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 24);
+        let mut bytes = [0; thunk32::THUNK_BYTES];
+        thunk32::write(615, provider_thunk_kind(&import), &mut bytes).unwrap();
+        assert_eq!(&bytes[8..11], &[0xc2, 0x18, 0x00]);
     }
 
     #[test]
