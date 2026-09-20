@@ -46,6 +46,8 @@ const WAIT_TIMEOUT: u32 = 0x0000_0102;
 const WAIT_FAILED: u32 = u32::MAX;
 const INFINITE: u32 = u32::MAX;
 const WC3_REGISTRY_IMAGE_PATH: &[u8] = b"/common/Warcraft III/ok.reg";
+const CHILD_IMAGE_ENTRY_HEADROOM: u32 = 0x100;
+const CHILD_IMAGE_ENTRY_CALLER_BYTES: usize = 0x40;
 
 fn main() {
     let runtime = match tokio::runtime::Builder::new_current_thread()
@@ -930,24 +932,33 @@ fn arm_existing_child_image_entry(
     }
     let frame_esp = returned
         .esp
-        .checked_sub(4)
+        .checked_sub(CHILD_IMAGE_ENTRY_HEADROOM)
         .ok_or_else(|| "child image-entry stack underflow".to_owned())?;
-    let frame = thunk32::CHILD_IMAGE_RETURN_ADDRESS.to_le_bytes();
+    let caller_bytes = u32::try_from(CHILD_IMAGE_ENTRY_CALLER_BYTES)
+        .map_err(|_| "child image-entry caller bytes")?;
+    let caller_end = frame_esp
+        .checked_add(caller_bytes)
+        .ok_or_else(|| "child image-entry caller range overflow".to_owned())?;
+    if frame_esp < STACK_BASE || caller_end > returned.esp || caller_end > STACK_TOP {
+        return Err("child image-entry caller frame outside stack".into());
+    }
+    let mut caller = [0; CHILD_IMAGE_ENTRY_CALLER_BYTES];
+    caller[..4].copy_from_slice(&thunk32::CHILD_IMAGE_RETURN_ADDRESS.to_le_bytes());
     if child
         .address_space
-        .write(frame_esp, &frame)
+        .write(frame_esp, &caller)
         .map_err(|error| error.to_string())?
-        != frame.len()
+        != caller.len()
     {
         return Err("short child image-entry frame write".into());
     }
-    let mut actual = [0; 4];
+    let mut actual = [0; CHILD_IMAGE_ENTRY_CALLER_BYTES];
     if child
         .address_space
         .read(frame_esp, &mut actual)
         .map_err(|error| error.to_string())?
         != actual.len()
-        || actual != frame
+        || actual != caller
     {
         return Err("child image-entry frame verification failed".into());
     }
@@ -2299,6 +2310,97 @@ mod tests {
         assert_eq!(u32::from_le_bytes(frame[8..12].try_into().unwrap()), 1);
         assert_eq!(u32::from_le_bytes(frame[12..16].try_into().unwrap()), reserved);
         assert_ne!(reserved, 0);
+    }
+
+    #[test]
+    fn image_entry_has_readable_caller_headroom_below_stack_top() {
+        let address_space = AddressSpace::create().unwrap();
+        address_space
+            .map(
+                STACK_BASE,
+                STACK_BYTES,
+                Permissions::READ | Permissions::WRITE,
+            )
+            .unwrap();
+        let reserved = STACK_TOP - 0x20;
+        let marker = 0x5743_3344u32.to_le_bytes();
+        address_space.write(reserved, &marker).unwrap();
+        let returned = Registers {
+            eip: thunk32::CHILD_DLL_RETURN_AFTER_VMCALL,
+            esp: STACK_TOP,
+            eflags: 0x0000_0246,
+            fs_base: 0x0020_3000,
+            ..Registers::default()
+        };
+        let context = Context::create(&address_space, returned).unwrap();
+        let mut guest = GuestContext {
+            pid: 2,
+            tid: 3,
+            context,
+            started: true,
+            continuation: None,
+            preemption_count: 0,
+            last_preemption_page: 0,
+            same_page_preemptions: 0,
+        };
+        let mut child = PendingChild {
+            pid: 2,
+            tid: 3,
+            image: native_module("War3.exe", 0x0040_0000, 0).image,
+            native_modules: Vec::new(),
+            address_space,
+            crt_heap_mapped_end: CHILD_CRT_HEAP_BASE,
+            win_heap_mapped_end: CHILD_WIN_HEAP_BASE,
+            provider_thunk_bytes: 0x1000,
+            static_load_reserved: reserved,
+            initterm: None,
+            cipow: None,
+            cipow_diagnostic_logged: false,
+            seh: None,
+            unhandled_filter_call: None,
+            loader: ChildLoaderState {
+                prepared: true,
+                native_requests: Vec::new(),
+                next_native: 0,
+            },
+            execution: ChildExecutionState::ImageEntryReady,
+        };
+
+        let (_, frame_esp) =
+            arm_existing_child_image_entry(&mut child, &mut guest, returned).unwrap();
+
+        assert_eq!(frame_esp, STACK_TOP - CHILD_IMAGE_ENTRY_HEADROOM);
+        let mut caller = [0; CHILD_IMAGE_ENTRY_CALLER_BYTES];
+        child.address_space.read(frame_esp, &mut caller).unwrap();
+        assert_eq!(
+            u32::from_le_bytes(caller[..4].try_into().unwrap()),
+            thunk32::CHILD_IMAGE_RETURN_ADDRESS
+        );
+        assert!(caller[4..].iter().all(|byte| *byte == 0));
+        let mut preserved_marker = [0; 4];
+        child
+            .address_space
+            .read(child.static_load_reserved, &mut preserved_marker)
+            .unwrap();
+        assert_eq!(preserved_marker, marker);
+
+        let entry_ebp = frame_esp - 4;
+        let ebp_plus_8 = entry_ebp + 8;
+        assert_eq!(ebp_plus_8, frame_esp + 4);
+        assert!(ebp_plus_8 < STACK_TOP);
+        assert!(frame_esp + CHILD_IMAGE_ENTRY_CALLER_BYTES as u32 <= STACK_TOP);
+        let mut caller_slot = [0; 4];
+        child.address_space.read(ebp_plus_8, &mut caller_slot).unwrap();
+        assert_eq!(caller_slot, [0; 4]);
+    }
+
+    #[test]
+    fn image_entry_caller_window_stays_below_stack_top() {
+        let frame_esp = STACK_TOP - CHILD_IMAGE_ENTRY_HEADROOM;
+        let prologue_ebp = frame_esp - 4;
+
+        assert!(prologue_ebp + 8 < STACK_TOP);
+        assert!(frame_esp + CHILD_IMAGE_ENTRY_CALLER_BYTES as u32 <= STACK_TOP);
     }
 
     #[test]

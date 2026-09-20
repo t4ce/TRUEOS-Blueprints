@@ -439,13 +439,16 @@ pub(super) async fn run_loop(
                             logl::log(
                                 level::IMPORTANT,
                                 format_args!(
-                                    "WC3 CHILD IMAGE ENTRY RESUME pid={} tid={} image=\"War3.exe\" base=0x{:08x} entry=0x{:08x} esp=0x{:08x} return=0x{:08x} context_reused=1 teb_preserved=1 xstate_preserved=1",
+                                    "WC3 CHILD IMAGE ENTRY RESUME pid={} tid={} image=\"War3.exe\" base=0x{:08x} entry=0x{:08x} esp=0x{:08x} return=0x{:08x} caller_headroom={} caller_bytes={} stack_top=0x{:08x} context_reused=1 teb_preserved=1 xstate_preserved=1",
                                     active_pid,
                                     active_tid,
                                     child.image.image_base,
                                     entry,
                                     frame_esp,
                                     thunk32::CHILD_IMAGE_RETURN_ADDRESS,
+                                    CHILD_IMAGE_ENTRY_HEADROOM,
+                                    CHILD_IMAGE_ENTRY_CALLER_BYTES,
+                                    STACK_TOP,
                                 ),
                             );
                             continue;
