@@ -21,6 +21,8 @@ use crate::{
 pub const ENTRY_VA: u32 = pe32::IMAGE_BASE + pe32::ENTRY_RVA;
 pub const TEB_VA: u32 = 0x0020_1000;
 pub const HEAP_VA: u32 = 0x0021_0000;
+pub const CHILD_CRT_HEAP_BASE: u32 = 0x0100_0000;
+pub const CHILD_CRT_HEAP_LIMIT: u32 = 0x0400_0000;
 pub const PROCESS_DATA_VA: u32 = 0x0021_1000;
 /// Historical launcher stack: 0x0430_0000..0x0440_0000.
 pub const STACK_BASE: u32 = 0x0430_0000;
@@ -301,6 +303,13 @@ struct RegistryHandle {
     access: u32,
 }
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct CrtAllocation {
+    pub pointer: u32,
+    pub requested: u32,
+    pub end: u32,
+}
+
 pub struct XpProcess {
     imports: Vec<LauncherImport>,
     provider_imports: Vec<ProviderImport>,
@@ -312,6 +321,8 @@ pub struct XpProcess {
     next_thread_handle: u32,
     heap_next: u32,
     allocations: HashMap<u32, u32>,
+    crt_heap_next: u32,
+    crt_allocations: HashMap<u32, u32>,
     tls_allocated: [bool; 64],
     tls_values: HashMap<(u32, u32), u32>,
     critical_sections: HashMap<u32, (u32, u32)>,
@@ -372,6 +383,8 @@ impl XpProcess {
             next_thread_handle: THREAD_HANDLE_BASE,
             heap_next: 0,
             allocations: HashMap::new(),
+            crt_heap_next: 0,
+            crt_allocations: HashMap::new(),
             tls_allocated: [false; 64],
             tls_values: HashMap::new(),
             critical_sections: HashMap::new(),
@@ -434,6 +447,18 @@ impl XpProcess {
         self.registry_handles.get(&handle).map(|handle| handle.node)
     }
 
+    pub fn crt_malloc(&mut self, size: u32) -> Result<Option<CrtAllocation>, &'static str> {
+        if size == 0 { return Err("CRT malloc zero-size unobserved"); }
+        let aligned = size.checked_add(7).ok_or("CRT malloc size overflow")? & !7;
+        let pointer = CHILD_CRT_HEAP_BASE.checked_add(self.crt_heap_next).ok_or("CRT malloc pointer overflow")?;
+        let next = self.crt_heap_next.checked_add(aligned).ok_or("CRT malloc heap overflow")?;
+        let end = CHILD_CRT_HEAP_BASE.checked_add(next).ok_or("CRT malloc heap overflow")?;
+        if end > CHILD_CRT_HEAP_LIMIT { return Ok(None); }
+        self.crt_allocations.insert(pointer, size);
+        self.crt_heap_next = next;
+        Ok(Some(CrtAllocation { pointer, requested: size, end }))
+    }
+
     pub fn dispatch_provider_for_process(
         &mut self, _pid: u32, _tid: u32, provider_id: u32, esp: u32, memory: &mut impl GuestMemory,
     ) -> Result<PersonalityAction, &'static str> {
@@ -454,6 +479,14 @@ impl XpProcess {
                 self.call_count = self.call_count.checked_add(1).ok_or("call count overflow")?;
                 self.set_last_error(value);
                 Ok(PersonalityAction::Return(0))
+            }
+            (module, ProviderSymbol::Name(symbol))
+                if module.eq_ignore_ascii_case("MSVCRT.dll")
+                    && symbol == "malloc" =>
+            {
+                let size = read_u32(memory, esp.checked_add(4).ok_or("provider argument overflow")?)?;
+                self.call_count = self.call_count.checked_add(1).ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(self.crt_malloc(size)?.map(|allocation| allocation.pointer).unwrap_or(0)))
             }
             _ => Err("unsupported child provider import"),
         }
@@ -3889,6 +3922,40 @@ mod tests {
         pid2.dispatch_provider_for_process(2, 3, 0, esp, &mut memory).unwrap();
         assert_eq!(pid1.last_error, 0xfeed_face);
         assert_eq!(pid2.last_error, 0x1234_5678);
+    }
+
+    #[test]
+    fn child_crt_malloc_is_aligned_and_process_private() {
+        let mut pid1 = XpProcess::new(Vec::new());
+        let mut pid2 = XpProcess::new(Vec::new());
+        let first = pid2.crt_malloc(0x80).unwrap().unwrap();
+        assert_eq!(first.pointer, CHILD_CRT_HEAP_BASE);
+        assert_eq!(first.end, CHILD_CRT_HEAP_BASE + 0x80);
+        let second = pid2.crt_malloc(1).unwrap().unwrap();
+        assert_eq!(second.pointer, CHILD_CRT_HEAP_BASE + 0x80);
+        assert_eq!(second.end, CHILD_CRT_HEAP_BASE + 0x88);
+        assert_eq!(pid1.crt_malloc(0x80).unwrap().unwrap().pointer, CHILD_CRT_HEAP_BASE);
+    }
+
+    #[test]
+    fn child_malloc_provider_returns_guest_pointer_without_memory_mutation() {
+        let provider = ProviderImport {
+            module: "MSVCRT.dll".into(),
+            symbol: ProviderSymbol::Name("malloc".into()),
+            iat_rva: 0,
+        };
+        let mut pid2 = XpProcess::new(Vec::new());
+        pid2.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory { base: STACK_BASE, bytes: vec![0x5a; STACK_BYTES] };
+        let esp = STACK_TOP - 0x40;
+        write_u32(&mut memory, esp, 0x1503_62e0).unwrap();
+        write_u32(&mut memory, esp + 4, 0x80).unwrap();
+        let before = memory.bytes.clone();
+        assert_eq!(
+            pid2.dispatch_provider_for_process(2, 3, 0, esp, &mut memory).unwrap(),
+            PersonalityAction::Return(CHILD_CRT_HEAP_BASE)
+        );
+        assert_eq!(memory.bytes, before);
     }
 
     #[test]

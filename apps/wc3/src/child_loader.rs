@@ -177,6 +177,19 @@ mod tests {
     }
 
     #[test]
+    fn malloc_provider_keeps_cdecl_return_cleanup() {
+        let import = ProviderImport {
+            module: "MSVCRT.dll".into(),
+            symbol: ProviderSymbol::Name("malloc".into()),
+            iat_rva: 0,
+        };
+        let mut bytes = [0; thunk32::THUNK_BYTES];
+        thunk32::write(337, provider_thunk_kind(&import), &mut bytes).unwrap();
+        assert_eq!(bytes[8], 0xc3);
+        assert_ne!(&bytes[8..11], &[0xc2, 4, 0]);
+    }
+
+    #[test]
     fn reg_open_key_ex_a_provider_uses_stdcall_twenty() {
         let import = ProviderImport {
             module: "ADVAPI32.dll".into(),

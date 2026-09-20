@@ -13,7 +13,8 @@ use wc3::{
     imports::WinCall,
     pe32,
     process::{
-        GuestMemory, PreparedProcess, STACK_BASE, STACK_BYTES, STACK_TOP, ThreadObject,
+        CHILD_CRT_HEAP_BASE, CHILD_CRT_HEAP_LIMIT, GuestMemory, PreparedProcess, STACK_BASE,
+        STACK_BYTES, STACK_TOP, ThreadObject,
         bmp_file_from_dib, dib_layout,
     },
     session::{
@@ -342,6 +343,56 @@ async fn run() -> Result<(), String> {
                         ));
                         let mut registers = exit.registers;
                         registers.eax = result;
+                        contexts[active].context.set_registers(registers).map_err(|error| error.to_string())?;
+                        continue;
+                    }
+                    let is_crt_malloc = matches!(
+                        &provider.symbol,
+                        child_loader::ProviderSymbol::Name(name)
+                            if provider.module.eq_ignore_ascii_case("MSVCRT.dll")
+                                && name == "malloc"
+                    );
+                    if is_crt_malloc {
+                        let argument = exit.registers.esp.checked_add(4)
+                            .ok_or_else(|| "child provider argument address overflow".to_owned())?;
+                        let mut size = [0; 4];
+                        child.address_space.read(argument, &mut size).map_err(|error| error.to_string())?;
+                        let size = u32::from_le_bytes(size);
+                        if size == 0 {
+                            logl::log(level::IMPORTANT, format_args!(
+                                "WC3 CHILD PROVIDER FRONTIER pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" provider_id={} module=\"{}\" symbol=\"malloc\" reason=zero-size-unobserved",
+                                active_pid, active_tid, running_module_name, provider_id, provider.module,
+                            ));
+                            return Ok(());
+                        }
+                        let mut child_memory = X86Memory(&child.address_space);
+                        let action = session.process_mut(active_pid)
+                            .ok_or_else(|| "child process missing".to_owned())?
+                            .xp
+                            .dispatch_provider_for_process(active_pid, active_tid, provider_id, exit.registers.esp, &mut child_memory)
+                            .map_err(str::to_owned)?;
+                        let PersonalityAction::Return(pointer) = action else {
+                            return Err("malloc child provider did not return".into());
+                        };
+                        if pointer == 0 {
+                            logl::log(level::IMPORTANT, format_args!(
+                                "WC3 CHILD CRT MALLOC pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" size={} pointer=0x00000000 result=out-of-memory",
+                                active_pid, active_tid, running_module_name, size,
+                            ));
+                        } else {
+                            let mapped_end = ensure_child_crt_allocation_mapped(child, pointer, size)?;
+                            if pointer == 1 || pointer % 8 != 0 || pointer < CHILD_CRT_HEAP_BASE
+                                || pointer.checked_add(size).filter(|end| *end <= CHILD_CRT_HEAP_LIMIT && *end <= mapped_end).is_none()
+                            {
+                                return Err("child CRT malloc pointer verification failed".into());
+                            }
+                            logl::log(level::IMPORTANT, format_args!(
+                                "WC3 CHILD CRT MALLOC pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" size={} pointer=0x{:08x} mapped_end=0x{:08x}",
+                                active_pid, active_tid, running_module_name, size, pointer, mapped_end,
+                            ));
+                        }
+                        let mut registers = exit.registers;
+                        registers.eax = pointer;
                         contexts[active].context.set_registers(registers).map_err(|error| error.to_string())?;
                         continue;
                     }
@@ -1519,6 +1570,8 @@ async fn run() -> Result<(), String> {
                             image: child,
                             native_modules: Vec::new(),
                             address_space: AddressSpace::create().map_err(|error| error.to_string())?,
+                            crt_heap_mapped_end: CHILD_CRT_HEAP_BASE,
+                            provider_thunk_bytes: 0,
                             loader: ChildLoaderState { prepared: false, native_requests: Vec::new(), next_native: 0 },
                             execution: ChildExecutionState::Loader,
                         });
@@ -1850,11 +1903,13 @@ async fn run() -> Result<(), String> {
                                     surface.imports.len(),
                                 ),
                             );
+                            let initial_provider_thunk_bytes = surface.thunks.len();
                             session
                                 .process_mut(child.pid)
                                 .ok_or_else(|| "child process missing".to_owned())?
                                 .xp
                                 .install_provider_surface(surface.imports, surface.thunks, surface.providers);
+                            child.provider_thunk_bytes = initial_provider_thunk_bytes;
                             logl::log(level::IMPORTANT, format_args!(
                                 "WC3 CHILD EXECUTION ROUTER READY pid={} provider_imports={} provider_thunk_bytes={} control_base=0x{:08x} provider_namespace=child memory_space=child",
                                 child.pid,
@@ -1900,6 +1955,7 @@ async fn run() -> Result<(), String> {
                             let provider_thunks_total = session.process(child.pid)
                                 .ok_or_else(|| "child process missing".to_owned())?
                                 .xp.provider_import_count();
+                            child.provider_thunk_bytes = new_bytes;
                             if new_bytes > old_bytes {
                                 child.address_space.map(
                                     thunk32::THUNK_BASE + old_bytes as u32,
@@ -2053,6 +2109,7 @@ async fn run() -> Result<(), String> {
                             let (mss_addresses, old_bytes, new_bytes, grown) = session.process_mut(child.pid)
                                 .ok_or_else(|| "child process missing".to_owned())?.xp
                                 .append_provider_imports(mss_providers).map_err(str::to_owned)?;
+                            child.provider_thunk_bytes = new_bytes;
                             if new_bytes > old_bytes {
                                 child.address_space.map(thunk32::THUNK_BASE + old_bytes as u32, new_bytes - old_bytes,
                                     Permissions::READ | Permissions::WRITE | Permissions::EXECUTE).map_err(|error| error.to_string())?;
@@ -2653,6 +2710,7 @@ fn create_child_primary_context(
     if child.execution != (ChildExecutionState::DllInitReady { native_index }) {
         return Err("child primary context requires matching DLL-init-ready state".into());
     }
+    validate_child_crt_heap_range(child)?;
     let module = child.native_modules.get(native_index)
         .ok_or_else(|| "child primary context native index".to_owned())?;
     let entry = module.image.image_base.checked_add(module.image.entry_rva)
@@ -2719,6 +2777,55 @@ fn create_child_primary_context(
     })
 }
 
+fn validate_child_crt_heap_range(child: &PendingChild) -> Result<(), String> {
+    let heap = (CHILD_CRT_HEAP_BASE, CHILD_CRT_HEAP_LIMIT);
+    let mut ranges = vec![
+        ("child control", thunk32::CHILD_CONTROL_BASE, thunk32::CHILD_CONTROL_BASE + 0x1000),
+        ("provider thunk", thunk32::THUNK_BASE, thunk32::THUNK_BASE.checked_add(u32::try_from(child.provider_thunk_bytes).map_err(|_| "provider thunk bytes")?).ok_or("provider thunk range")?),
+        ("child TEB", thread_teb_va(child.tid)?, thread_teb_va(child.tid)?.checked_add(0x1000).ok_or("child TEB range")?),
+        ("child stack", STACK_BASE, STACK_TOP),
+        ("child GDI arena", 0x0500_0000, 0x0600_0000),
+        ("War3 image", child.image.image_base, child.image.image_base.checked_add(u32::try_from(child.image.image.len()).map_err(|_| "War3 image range")?).ok_or("War3 image range")?),
+    ];
+    for module in &child.native_modules {
+        ranges.push((
+            "native module",
+            module.image.image_base,
+            module.image.image_base.checked_add(u32::try_from(module.image.image.len()).map_err(|_| "native image range")?).ok_or("native image range")?,
+        ));
+    }
+    if ranges.iter().any(|(_, start, end)| heap.0 < *end && *start < heap.1) {
+        return Err("child CRT heap overlaps an established child mapping".into());
+    }
+    Ok(())
+}
+
+fn ensure_child_crt_allocation_mapped(
+    child: &mut PendingChild,
+    pointer: u32,
+    requested: u32,
+) -> Result<u32, String> {
+    let mapped_end = child_crt_mapping_end(child.crt_heap_mapped_end, pointer, requested)?;
+    if mapped_end > child.crt_heap_mapped_end {
+        child.address_space.map(
+            child.crt_heap_mapped_end,
+            usize::try_from(mapped_end - child.crt_heap_mapped_end).map_err(|_| "child CRT mapping length")?,
+            Permissions::READ | Permissions::WRITE,
+        ).map_err(|error| format!("map child CRT heap: {error}"))?;
+        child.crt_heap_mapped_end = mapped_end;
+    }
+    Ok(child.crt_heap_mapped_end)
+}
+
+fn child_crt_mapping_end(current: u32, pointer: u32, requested: u32) -> Result<u32, String> {
+    let allocation_end = pointer.checked_add(requested).ok_or_else(|| "child CRT allocation end overflow".to_owned())?;
+    let mapped_end = allocation_end.checked_add(0xfff).ok_or_else(|| "child CRT map alignment overflow".to_owned())? & !0xfff;
+    if current < CHILD_CRT_HEAP_BASE || mapped_end > CHILD_CRT_HEAP_LIMIT {
+        return Err("child CRT mapping exceeds heap limit".into());
+    }
+    Ok(current.max(mapped_end))
+}
+
 fn verify_child_primary_context(
     child: &PendingChild,
     context: &GuestContext,
@@ -2768,6 +2875,8 @@ struct PendingChild {
     image: pe32::PeImage,
     native_modules: Vec<PendingNativeModule>,
     address_space: AddressSpace,
+    crt_heap_mapped_end: u32,
+    provider_thunk_bytes: usize,
     loader: ChildLoaderState,
     execution: ChildExecutionState,
 }
@@ -3332,5 +3441,17 @@ mod tests {
         assert_eq!(invalid.interruption_type, None);
         assert_eq!(invalid.error_valid, None);
         assert_eq!(child_exception_fault_detail(exception), "linear=0x00000001 error=0x00000002 present=0 write=1 user=0 reserved=0 instruction_fetch=0");
+    }
+
+    #[test]
+    fn child_crt_mapping_grows_only_to_required_rw_pages() {
+        assert_eq!(
+            child_crt_mapping_end(CHILD_CRT_HEAP_BASE, CHILD_CRT_HEAP_BASE, 0x80).unwrap(),
+            CHILD_CRT_HEAP_BASE + 0x1000,
+        );
+        assert_eq!(
+            child_crt_mapping_end(CHILD_CRT_HEAP_BASE + 0x1000, CHILD_CRT_HEAP_BASE + 0xff8, 0x10).unwrap(),
+            CHILD_CRT_HEAP_BASE + 0x2000,
+        );
     }
 }
