@@ -707,6 +707,15 @@ impl XpProcess {
             .ok_or("unknown child provider import")?;
         match (&provider.module[..], &provider.symbol) {
             (module, ProviderSymbol::Name(symbol))
+                if module.eq_ignore_ascii_case("KERNEL32.dll") && symbol == "GetVersion" =>
+            {
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(WINDOWS_XP_GET_VERSION))
+            }
+            (module, ProviderSymbol::Name(symbol))
                 if module.eq_ignore_ascii_case("KERNEL32.dll")
                     && symbol == "InitializeCriticalSection" =>
             {
@@ -4457,6 +4466,28 @@ mod tests {
         assert_eq!(
             pid2.dispatch_provider_for_process(2, 3, 0, STACK_TOP - 0x40, &mut memory),
             Err("unsupported child provider import")
+        );
+        assert_eq!(memory.bytes, before);
+    }
+
+    #[test]
+    fn child_get_version_returns_xp_version_without_touching_the_stack() {
+        let provider = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("GetVersion".into()),
+            iat_rva: 0,
+        };
+        let mut pid2 = XpProcess::new(Vec::new());
+        pid2.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0x5a; STACK_BYTES],
+        };
+        let before = memory.bytes.clone();
+        assert_eq!(
+            pid2.dispatch_provider_for_process(2, 3, 0, STACK_TOP - 0x40, &mut memory)
+                .unwrap(),
+            PersonalityAction::Return(WINDOWS_XP_GET_VERSION)
         );
         assert_eq!(memory.bytes, before);
     }

@@ -444,6 +444,62 @@ async fn run() -> Result<(), String> {
                             format!("ordinal={}", ordinal)
                         }
                     };
+                    let is_get_version = matches!(
+                        &provider.symbol,
+                        child_loader::ProviderSymbol::Name(name)
+                            if provider.module.eq_ignore_ascii_case("KERNEL32.dll")
+                                && name == "GetVersion"
+                    );
+                    if is_get_version {
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD PROVIDER CALL pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" provider_id={} module=\"{}\" symbol=\"GetVersion\" esp=0x{:08x} caller_ret=0x{:08x}",
+                                active_pid,
+                                active_tid,
+                                running_module_name,
+                                provider_id,
+                                provider.module,
+                                exit.registers.esp,
+                                u32::from_le_bytes(caller_ret),
+                            ),
+                        );
+                        let mut child_memory = X86Memory(&child.address_space);
+                        let action = session
+                            .process_mut(active_pid)
+                            .ok_or_else(|| "child process missing".to_owned())?
+                            .xp
+                            .dispatch_provider_for_process(
+                                active_pid,
+                                active_tid,
+                                provider_id,
+                                exit.registers.esp,
+                                &mut child_memory,
+                            )
+                            .map_err(str::to_owned)?;
+                        let PersonalityAction::Return(value) = action else {
+                            return Err("GetVersion child provider did not return".into());
+                        };
+                        if value != 0x0a28_0105 {
+                            return Err(format!(
+                                "GetVersion result mismatch expected=0x0a280105 actual=0x{value:08x}"
+                            ));
+                        }
+                        let mut registers = exit.registers;
+                        registers.eax = value;
+                        contexts[active]
+                            .context
+                            .set_registers(registers)
+                            .map_err(|error| error.to_string())?;
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD GETVERSION RESULT pid={} tid={} eax=0x{:08x} stack_cleanup=none",
+                                active_pid, active_tid, value
+                            ),
+                        );
+                        continue;
+                    }
                     let is_initialize_critical_section = matches!(
                         &provider.symbol,
                         child_loader::ProviderSymbol::Name(name)
