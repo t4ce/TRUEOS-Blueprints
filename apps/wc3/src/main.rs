@@ -302,8 +302,8 @@ async fn run() -> Result<(), String> {
                             return Err("child critical-section initialization verification failed".into());
                         }
                         logl::log(level::IMPORTANT, format_args!(
-                            "WC3 CHILD CRITICAL SECTION INIT pid={} address=0x{:08x} lock_count=0xffffffff recursion=0 owner=0",
-                            active_pid, critical_section
+                            "WC3 CHILD CRITICAL SECTION INIT pid={} address=0x{:08x} lock_count=0xffffffff recursion=0 owner=0 caller_ret=0x{:08x} resume_eip=0x{:08x} return_eax=0x{:08x}",
+                            active_pid, critical_section, u32::from_le_bytes(caller_ret), exit.registers.eip, value
                         ));
                         let mut registers = exit.registers;
                         registers.eax = value;
@@ -2369,6 +2369,20 @@ async fn run() -> Result<(), String> {
                 let (_, module) = child_execution_module(child).map_err(str::to_owned)?;
                 let exception = decode_child_exception(exit.detail, exit.qualification);
                 let registers = exit.registers;
+                logl::log(level::IMPORTANT, format_args!(
+                    "WC3 CHILD EXCEPTION RAW detail=0x{:08x} qualification=0x{:016x}",
+                    exit.detail, exit.qualification,
+                ));
+                // Preceding bytes expose the call/return or pointer-producing
+                // instruction; these are raw bytes, not instruction boundaries.
+                for distance in [32u32, 16] {
+                    if let Some(start) = registers.eip.checked_sub(distance) {
+                        logl::log(level::IMPORTANT, format_args!(
+                            "WC3 CHILD EXCEPTION CODE BEFORE address=0x{:08x} bytes=\"{}\"",
+                            start, exception_code_window(&child.address_space, start),
+                        ));
+                    }
+                }
                 logl::log(level::IMPORTANT, format_args!(
                     "WC3 CHILD EXCEPTION pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" eip=0x{:08x} esp=0x{:08x} vector={} name=\"{}\" type={} valid={} error_valid={} error={}",
                     active_key.pid, active_key.tid, module.stored, registers.eip, registers.esp,
