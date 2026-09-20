@@ -48,6 +48,45 @@ fn main() {
     }
 }
 
+fn registry_encoding(bytes: &[u8]) -> &'static str {
+    if bytes.starts_with(&[0xff, 0xfe]) { "utf16le" }
+    else if bytes.starts_with(&[0xef, 0xbb, 0xbf]) || bytes.is_ascii() { "utf8" }
+    else { "unknown" }
+}
+
+async fn ensure_registry_loaded(session: &mut Wc3Session) -> Result<(), String> {
+    if matches!(session.registry, wc3::session::RegistryState::Ready(_)) { return Ok(()); }
+    let path = String::from_utf8_lossy(WC3_REGISTRY_IMAGE_PATH);
+    logl::log(level::IMPORTANT, format_args!(
+        "WC3 REGISTRY LOAD BEGIN path=\"{}\" trigger=\"ADVAPI32!RegOpenKeyExA\"", path
+    ));
+    let metadata = async_fs::metadata(WC3_REGISTRY_IMAGE_PATH).await.map_err(|error| {
+        logl::log(level::IMPORTANT, format_args!("WC3 REGISTRY LOAD FAILED phase=metadata path=\"{}\" error={error}", path));
+        format!("registry metadata: TRUEOSFS error {error}")
+    })?;
+    logl::log(level::IMPORTANT, format_args!("WC3 REGISTRY LOAD META bytes={}", metadata.len));
+    logl::log(level::IMPORTANT, format_args!("WC3 REGISTRY LOAD READ BEGIN"));
+    let bytes = async_fs::read_file(WC3_REGISTRY_IMAGE_PATH).await.map_err(|error| {
+        logl::log(level::IMPORTANT, format_args!("WC3 REGISTRY LOAD FAILED phase=read path=\"{}\" error={error}", path));
+        format!("registry read: TRUEOSFS error {error}")
+    })?;
+    logl::log(level::IMPORTANT, format_args!("WC3 REGISTRY LOAD READ COMPLETE bytes={}", bytes.len()));
+    logl::log(level::IMPORTANT, format_args!("WC3 REGISTRY INDEX BEGIN bytes={} encoding={} mode=keys-only", bytes.len(), registry_encoding(&bytes)));
+    let image = wc3::session::RegistryImage::index(&bytes, |scanned, keys| {
+        logl::log(level::IMPORTANT, format_args!("WC3 REGISTRY INDEX PROGRESS bytes_scanned={} keys={}", scanned, keys));
+    }).map_err(|error| {
+        logl::log(level::IMPORTANT, format_args!("WC3 REGISTRY LOAD FAILED phase=parse error=\"{}\"", error));
+        error.to_owned()
+    })?;
+    let (roots, keys) = image.stats();
+    session.registry = wc3::session::RegistryState::Ready(image);
+    logl::log(level::IMPORTANT, format_args!(
+        "WC3 REGISTRY INDEX READY path=\"{}\" bytes={} encoding={} roots={} keys={} values=lazy backing=host-ram guest_mapped=0",
+        path, bytes.len(), registry_encoding(&bytes), roots, keys
+    ));
+    Ok(())
+}
+
 async fn run() -> Result<(), String> {
     let bytes = async_fs::read_file(LAUNCHER_PATH.as_bytes())
         .await
@@ -60,14 +99,6 @@ async fn run() -> Result<(), String> {
     let PreparedProcess { mappings, xp } =
         PreparedProcess::new(materialized).map_err(str::to_owned)?;
     let mut session = Wc3Session::new(xp);
-    let registry_bytes = async_fs::read_file(WC3_REGISTRY_IMAGE_PATH).await
-        .map_err(|error| format!("read complete WC3 registry image: TRUEOSFS error {error}"))?;
-    session.registry = wc3::session::RegistryImage::parse(&registry_bytes).map_err(str::to_owned)?;
-    let (registry_roots, registry_keys, registry_values) = session.registry.stats();
-    logl::log(level::IMPORTANT, format_args!(
-        "WC3 REGISTRY IMAGE READY path=\"{}\" bytes={} roots={} keys={} values={} backing=host-ram guest_mapped=0",
-        String::from_utf8_lossy(WC3_REGISTRY_IMAGE_PATH), registry_bytes.len(), registry_roots, registry_keys, registry_values
-    ));
     logl::log(level::IMPORTANT, format_args!("WC3 DIAG BUILD CWEX_V2"));
     let (desktop_width, desktop_height) = ui4_scene::output_dimensions()
         .map_err(|error| format!("query UI4 output dimensions: {error:?}"))?;
@@ -294,11 +325,16 @@ async fn run() -> Result<(), String> {
                             "WC3 CHILD REGISTRY OPEN pid={} tid={} root=\"{}\" subkey=\"{}\" sam=0x{:08x}",
                             active_pid, active_tid, registry_root_name(frame.hkey), subkey, frame.sam
                         ));
-                        let start = session.registry.root(frame.hkey).or_else(|| {
+                        ensure_registry_loaded(&mut session).await?;
+                        let registry = match &session.registry {
+                            wc3::session::RegistryState::Ready(registry) => registry,
+                            wc3::session::RegistryState::Unloaded => return Err("registry remained unloaded".into()),
+                        };
+                        let start = registry.root(frame.hkey).or_else(|| {
                             session.process(active_pid).and_then(|process| process.xp.registry_handle_node(frame.hkey))
                         });
                         let node = (frame.options == 0).then_some(start).flatten()
-                            .and_then(|node| session.registry.child_path(node, subkey));
+                            .and_then(|node| registry.child_path(node, subkey));
                         let (result, handle) = if let Some(node) = node {
                             let handle = session.process_mut(active_pid)
                                 .ok_or_else(|| "child process missing".to_owned())?

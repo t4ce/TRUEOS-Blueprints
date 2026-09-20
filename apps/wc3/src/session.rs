@@ -19,63 +19,47 @@ pub const WINDOW_HANDLE_BASE: u32 = 0x5743_4001;
 pub const DESKTOP_HWND: u32 = 0x5743_3000;
 
 pub type RegistryNodeId = u32;
-
+#[derive(Copy, Clone, Debug, Eq, PartialEq)] pub enum RegistryEncoding { Utf16Le, Utf8 }
 pub struct RegistryValue { pub ty: u32, pub bytes: Vec<u8> }
 pub struct RegistryNode {
     pub name: String,
     pub parent: Option<RegistryNodeId>,
-    children: HashMap<String, RegistryNodeId>,
-    values: HashMap<String, RegistryValue>,
+    canonical_path: String,
+    body_start: usize,
+    body_end: usize,
+    pub values: Option<HashMap<String, RegistryValue>>,
 }
-pub struct RegistryImage { pub nodes: Vec<RegistryNode>, roots: HashMap<u32, RegistryNodeId> }
+pub struct RegistryOverlay { created_keys: HashMap<String, RegistryNodeId>, deleted_keys: std::collections::HashSet<String>, generation: u64 }
+pub struct RegistryImage { backing: std::sync::Arc<Vec<u8>>, pub encoding: RegistryEncoding, pub nodes: Vec<RegistryNode>, roots: HashMap<u32, RegistryNodeId>, by_path: HashMap<String, RegistryNodeId>, mutations: RegistryOverlay }
+pub enum RegistryState { Unloaded, Ready(RegistryImage) }
 
 impl RegistryImage {
-    pub fn parse(bytes: &[u8]) -> Result<Self, &'static str> {
-        let text = if bytes.starts_with(&[0xff, 0xfe]) {
-            String::from_utf16(&bytes[2..].chunks_exact(2).map(|v| u16::from_le_bytes([v[0], v[1]])).collect::<Vec<_>>()).map_err(|_| "registry UTF-16")?
-        } else {
-            String::from_utf8(bytes.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(bytes).to_vec()).map_err(|_| "registry UTF-8")?
-        };
-        let mut image = Self { nodes: Vec::new(), roots: HashMap::new() };
-        for (root, name) in [(0x8000_0000, "HKEY_CLASSES_ROOT"), (0x8000_0001, "HKEY_CURRENT_USER"), (0x8000_0002, "HKEY_LOCAL_MACHINE"), (0x8000_0003, "HKEY_USERS"), (0x8000_0005, "HKEY_CURRENT_CONFIG")] {
-            let id = image.push_node(name.into(), None); image.roots.insert(root, id);
+    pub fn parse(bytes: &[u8]) -> Result<Self, &'static str> { Self::index(bytes, |_, _| {}) }
+    pub fn index(bytes: &[u8], mut progress: impl FnMut(usize, usize)) -> Result<Self, &'static str> {
+        let encoding = if bytes.starts_with(&[0xff,0xfe]) { if (bytes.len()-2)%2 != 0 { return Err("registry UTF-16 odd trailing byte"); } RegistryEncoding::Utf16Le } else { RegistryEncoding::Utf8 };
+        let backing = std::sync::Arc::new(bytes.to_vec());
+        let mut image = Self { backing, encoding, nodes: Vec::new(), roots: HashMap::new(), by_path: HashMap::new(), mutations: RegistryOverlay { created_keys: HashMap::new(), deleted_keys: std::collections::HashSet::new(), generation: 0 } };
+        for (root,name) in [(0x8000_0000,"HKEY_CLASSES_ROOT"),(0x8000_0001,"HKEY_CURRENT_USER"),(0x8000_0002,"HKEY_LOCAL_MACHINE"),(0x8000_0003,"HKEY_USERS"),(0x8000_0005,"HKEY_CURRENT_CONFIG")] { let id=image.push_node(name,None,0,0); image.roots.insert(root,id); image.by_path.insert(canonical(name),id); }
+        let mut offset = if encoding == RegistryEncoding::Utf16Le { 2 } else { usize::from(bytes.starts_with(&[0xef,0xbb,0xbf]))*3 };
+        let mut previous = None; let mut next_progress = 4*1024*1024;
+        while offset < bytes.len() { let start=offset; let end=line_end(bytes, offset, encoding); offset=end; let line=decode_line(&bytes[start..end], encoding)?; let trimmed=line.trim();
+            if trimmed.starts_with('[') && trimmed.ends_with(']') { if let Some(id)=previous { image.nodes[id as usize].body_end=start; } previous=image.add_header(&trimmed[1..trimmed.len()-1], end); }
+            if offset >= next_progress { progress(offset, image.nodes.len()-5); next_progress += 4*1024*1024; }
         }
-        let mut current = None;
-        let mut lines = text.lines().peekable();
-        while let Some(raw) = lines.next() {
-            let mut line = raw.trim().to_owned();
-            while line.ends_with('\\') { line.pop(); line.push_str(lines.next().ok_or("registry continuation")?.trim()); }
-            if line.is_empty() || line.starts_with(';') || line == "REGEDIT4" || line == "Windows Registry Editor Version 5.00" { continue; }
-            if line.starts_with('[') && line.ends_with(']') {
-                current = image.add_key(&line[1..line.len()-1]); continue;
-            }
-            if let Some(node) = current { image.add_value(node, &line)?; }
-        }
+        if let Some(id)=previous { image.nodes[id as usize].body_end=bytes.len(); }
         Ok(image)
     }
-    fn push_node(&mut self, name: String, parent: Option<RegistryNodeId>) -> RegistryNodeId { let id = self.nodes.len() as u32; self.nodes.push(RegistryNode { name, parent, children: HashMap::new(), values: HashMap::new() }); id }
-    fn add_key(&mut self, header: &str) -> Option<RegistryNodeId> {
-        let (root_name, tail) = header.split_once('\\').unwrap_or((header, ""));
-        let root = [("HKEY_CLASSES_ROOT",0x8000_0000),("HKEY_CURRENT_USER",0x8000_0001),("HKEY_LOCAL_MACHINE",0x8000_0002),("HKEY_USERS",0x8000_0003),("HKEY_CURRENT_CONFIG",0x8000_0005)].iter().find(|(name,_)| name.eq_ignore_ascii_case(root_name)).map(|(_,root)| *root)?;
-        let mut node = *self.roots.get(&root)?;
-        for part in tail.split('\\').filter(|part| !part.is_empty()) {
-            let key = canonical(part);
-            node = match self.nodes[node as usize].children.get(&key) { Some(id) => *id, None => { let id = self.push_node(part.into(), Some(node)); self.nodes[node as usize].children.insert(key, id); id } };
-        }
-        Some(node)
-    }
-    fn add_value(&mut self, node: RegistryNodeId, line: &str) -> Result<(), &'static str> {
-        let (name_part, data) = line.split_once('=').ok_or("registry value")?;
-        let name = if name_part == "@" { String::new() } else { unquote(name_part)? };
-        let (ty, bytes) = if data.starts_with('"') { (1, unquote(data)?.into_bytes()) } else if let Some(hex) = data.strip_prefix("dword:") { (4, u32::from_str_radix(hex, 16).map_err(|_| "registry dword")?.to_le_bytes().to_vec()) } else if let Some(rest) = data.strip_prefix("hex") { let (ty, values) = if let Some(rest) = rest.strip_prefix(':') { (3, rest) } else { let (ty, values) = rest.strip_prefix('(').and_then(|r| r.split_once("):" )).ok_or("registry hex type")?; (u32::from_str_radix(ty,16).map_err(|_| "registry hex type")?, values) }; (ty, values.split(',').filter(|v| !v.is_empty()).map(|v| u8::from_str_radix(v.trim(),16).map_err(|_| "registry hex")).collect::<Result<Vec<_>,_>>().map_err(|_| "registry hex")?) } else { return Err("registry value encoding"); };
-        self.nodes[node as usize].values.insert(canonical(&name), RegistryValue { ty, bytes }); Ok(())
-    }
+    fn push_node(&mut self, name:&str, parent:Option<RegistryNodeId>, body_start:usize, body_end:usize)->RegistryNodeId { let id=self.nodes.len() as u32; let path=parent.map(|p| format!("{}\\{}",self.nodes[p as usize].canonical_path,canonical(name))).unwrap_or_else(||canonical(name)); self.nodes.push(RegistryNode{name:name.into(),parent,canonical_path:path,body_start,body_end,values:None}); id }
+    fn add_header(&mut self, header:&str, body_start:usize)->Option<RegistryNodeId> { let canonical_path=canonical(header); let (root_name,tail)=canonical_path.split_once('\\').unwrap_or((&canonical_path,"")); let root_id=*self.by_path.get(root_name)?; let path=if tail.is_empty(){root_name.into()}else{format!("{}\\{}",root_name,tail)}; if let Some(id)=self.by_path.get(&path){self.nodes[*id as usize].body_start=body_start;return Some(*id)} let parent=tail.rsplit_once('\\').map(|(p,_)|format!("{}\\{}",root_name,p)).and_then(|p|self.by_path.get(&p).copied()).or(Some(root_id)); let name=header.rsplit('\\').next()?; let id=self.push_node(name,parent,body_start,0); self.by_path.insert(path,id);Some(id) }
     pub fn root(&self, hkey: u32) -> Option<RegistryNodeId> { self.roots.get(&hkey).copied() }
-    pub fn child_path(&self, mut node: RegistryNodeId, path: &str) -> Option<RegistryNodeId> { for part in path.split('\\').filter(|part| !part.is_empty()) { node = *self.nodes.get(node as usize)?.children.get(&canonical(part))?; } Some(node) }
-    pub fn stats(&self) -> (usize, usize, usize) { (self.roots.len(), self.nodes.len(), self.nodes.iter().map(|n| n.values.len()).sum()) }
+    pub fn child_path(&self,node:RegistryNodeId,path:&str)->Option<RegistryNodeId>{let base=&self.nodes.get(node as usize)?.canonical_path;let full=if path.trim_matches('\\').is_empty(){base.clone()}else{format!("{}\\{}",base,canonical(path.trim_matches('\\')))}; self.by_path.get(&full).copied()}
+    pub fn stats(&self)->(usize,usize){(self.roots.len(),self.nodes.len())}
+    pub fn ensure_values_loaded(&mut self,node:RegistryNodeId)->Result<(),&'static str>{if self.nodes.get(node as usize).ok_or("registry node")?.values.is_some(){return Ok(())} let (start,end)= {let n=&self.nodes[node as usize];(n.body_start,n.body_end)};let text=decode_line(&self.backing[start..end],self.encoding)?;let mut values=HashMap::new();for line in text.lines(){if let Some((name,data))=line.trim().split_once('='){let name=if name=="@"{String::new()}else{unquote(name)?};if let Some(hex)=data.strip_prefix("hex:"){let bytes=hex.split(',').filter_map(|v|u8::from_str_radix(v.trim().trim_end_matches('\\'),16).ok()).collect();values.insert(canonical(&name),RegistryValue{ty:3,bytes});}}}self.nodes[node as usize].values=Some(values);Ok(())}
 }
 fn canonical(name: &str) -> String { name.bytes().map(|byte| byte.to_ascii_lowercase() as char).collect() }
 fn unquote(value: &str) -> Result<String, &'static str> { let body = value.strip_prefix('"').and_then(|v| v.strip_suffix('"')).ok_or("registry quote")?; Ok(body.replace("\\\\", "\\").replace("\\\"", "\"")) }
+fn line_end(bytes:&[u8],start:usize,encoding:RegistryEncoding)->usize{match encoding{RegistryEncoding::Utf8=>bytes[start..].iter().position(|b|*b==b'\n').map(|n|start+n+1).unwrap_or(bytes.len()),RegistryEncoding::Utf16Le=>{let mut p=start;while p+1<bytes.len(){if bytes[p]==b'\n'&&bytes[p+1]==0{return p+2}p+=2}bytes.len()}}}
+fn decode_line(bytes:&[u8],encoding:RegistryEncoding)->Result<String,&'static str>{match encoding{RegistryEncoding::Utf8=>String::from_utf8(bytes.to_vec()).map_err(|_|"registry UTF-8"),RegistryEncoding::Utf16Le=>{let units=bytes.chunks_exact(2).map(|p|u16::from_le_bytes([p[0],p[1]])).filter(|u|*u!=10&&*u!=13);std::char::decode_utf16(units).map(|u|u.map_err(|_|"registry UTF-16")).collect()}}}
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct ThreadKey {
@@ -94,6 +78,27 @@ mod tests {
         let hkcu = image.root(0x8000_0001).unwrap();
         assert!(image.child_path(hkcu, "software\\BLIZZARD entertainment\\internal").is_some());
         assert!(image.root(0x8000_0002).and_then(|root| image.child_path(root, "a")).is_some());
+    }
+
+    #[test]
+    fn registry_state_starts_unloaded_and_utf16_rejects_odd_payloads() {
+        let session = Wc3Session::new(XpProcess::new(Vec::new()));
+        assert!(matches!(session.registry, RegistryState::Unloaded));
+        assert!(matches!(RegistryImage::parse(&[0xff, 0xfe, b'R']), Err("registry UTF-16 odd trailing byte")));
+    }
+
+    #[test]
+    fn registry_index_leaves_unopened_values_lazy() {
+        let fixture = b"[HKEY_CURRENT_USER\\A]\n\"huge\"=hex:aa,bb,cc,\\\n dd,ee\n[HKEY_CURRENT_USER\\Software\\Blizzard Entertainment\\Internal]\n\"x\"=hex:01\n";
+        let mut image = RegistryImage::parse(fixture).unwrap();
+        let hkcu = image.root(0x8000_0001).unwrap();
+        let a = image.child_path(hkcu, "a").unwrap();
+        let internal = image.child_path(hkcu, "software\\blizzard entertainment\\internal").unwrap();
+        assert!(image.nodes[a as usize].values.is_none());
+        assert!(image.nodes[internal as usize].values.is_none());
+        image.ensure_values_loaded(internal).unwrap();
+        assert!(image.nodes[internal as usize].values.is_some());
+        assert!(image.nodes[a as usize].values.is_none());
     }
 
     fn request(handle: u32, timeout: u32) -> WaitRequest {
@@ -389,7 +394,7 @@ pub struct Wc3Process {
 
 pub struct Wc3Session {
     pub assets: crate::assets::Wc3AssetCache,
-    pub registry: RegistryImage,
+    pub registry: RegistryState,
     pub processes: HashMap<Pid, Wc3Process>,
     pub objects: HashMap<ObjectId, SessionObject>,
     pub names: HashMap<String, ObjectId>,
@@ -422,7 +427,7 @@ impl Wc3Session {
         );
         Self {
             assets: crate::assets::Wc3AssetCache::default(),
-            registry: RegistryImage { nodes: Vec::new(), roots: HashMap::new() },
+            registry: RegistryState::Unloaded,
             processes,
             objects: HashMap::new(),
             names: HashMap::new(),
