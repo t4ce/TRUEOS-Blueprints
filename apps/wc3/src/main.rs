@@ -308,31 +308,41 @@ async fn run() -> Result<(), String> {
                         else {
                             return Ok(());
                         };
-                        let next = &child.native_modules[next_index];
-                        let next_name = next.stored.clone();
-                        let next_entry = next
-                            .image
-                            .image_base
-                            .checked_add(next.image.entry_rva)
-                            .ok_or_else(|| "child DLL entry overflow".to_owned())?;
-                        child.execution = ChildExecutionState::DllInitReady {
-                            native_index: next_index,
-                        };
+                        let previous_name = module_name;
+                        child.execution = ChildExecutionState::DllInitReady { native_index: next_index };
+                        let (next_name, next_entry, frame_esp) = arm_existing_child_dll_init(
+                            child,
+                            &mut contexts[active],
+                            next_index,
+                            exit.registers,
+                        )?;
                         logl::log(
                             level::IMPORTANT,
                             format_args!(
-                                "WC3 CHILD EXECUTION STATE pid={} tid={} state=dll-init-ready module=\"{}\" context_created=1",
+                                "WC3 CHILD DLL REARM pid={} tid={} previous=\"{}\" next=\"{}\" context_reused=1 xstate_preserved=1 teb_preserved=1 entry=0x{:08x} esp=0x{:08x}",
+                                active_pid, active_tid, previous_name, next_name, next_entry, frame_esp
+                            ),
+                        );
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD DLL FRAME pid={} tid={} module=\"{}\" return=0x{:08x} hinst=0x{:08x} reason=1 reserved=0x{:08x}",
+                                active_pid,
+                                active_tid,
+                                next_name,
+                                thunk32::CHILD_DLL_RETURN_ADDRESS,
+                                child.native_modules[next_index].image.image_base,
+                                child.static_load_reserved,
+                            ),
+                        );
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD DLL INIT RESUME pid={} tid={} module=\"{}\" state=dll-init-running context_started=1",
                                 active_pid, active_tid, next_name
                             ),
                         );
-                        logl::log(
-                            level::IMPORTANT,
-                            format_args!(
-                                "WC3 CHILD DLL INIT FRONTIER pid={} tid={} module=\"{}\" entry_va=0x{:08x} reason=previous-dll-returned-context-not-reconfigured",
-                                active_pid, active_tid, next_name, next_entry
-                            ),
-                        );
-                        return Ok(());
+                        continue;
                     }
                     if exit.registers.eip == thunk32::CHILD_THREAD_EXIT_AFTER_VMCALL {
                         let (_, module) = child_execution_module(child).map_err(str::to_owned)?;
@@ -2374,6 +2384,7 @@ async fn run() -> Result<(), String> {
                                 .map_err(|error| error.to_string())?,
                             crt_heap_mapped_end: CHILD_CRT_HEAP_BASE,
                             provider_thunk_bytes: 0,
+                            static_load_reserved: 0,
                             initterm: None,
                             cipow: None,
                             cipow_diagnostic_logged: false,
@@ -4221,7 +4232,7 @@ fn create_thread_context(
 }
 
 fn create_child_primary_context(
-    child: &PendingChild,
+    child: &mut PendingChild,
     native_index: usize,
 ) -> Result<GuestContext, String> {
     if child.execution != (ChildExecutionState::DllInitReady { native_index }) {
@@ -4261,16 +4272,19 @@ fn create_child_primary_context(
         )
         .map_err(|error| format!("map child primary stack: {error}"))?;
     let esp = STACK_TOP - 0x10;
-    let reserved = STACK_TOP - 0x20;
-    let marker = 0x5743_3344u32.to_le_bytes();
-    if child
-        .address_space
-        .write(reserved, &marker)
-        .map_err(|error| error.to_string())?
-        != marker.len()
-    {
-        return Err("short child static-load marker write".into());
+    if child.static_load_reserved == 0 {
+        child.static_load_reserved = STACK_TOP - 0x20;
+        let marker = 0x5743_3344u32.to_le_bytes();
+        if child
+            .address_space
+            .write(child.static_load_reserved, &marker)
+            .map_err(|error| error.to_string())?
+            != marker.len()
+        {
+            return Err("short child static-load marker write".into());
+        }
     }
+    let reserved = child.static_load_reserved;
     let mut frame = [0u8; 16];
     frame[0..4].copy_from_slice(&thunk32::CHILD_DLL_RETURN_ADDRESS.to_le_bytes());
     frame[4..8].copy_from_slice(&module.image.image_base.to_le_bytes());
@@ -4287,7 +4301,6 @@ fn create_child_primary_context(
 
     let mut actual_exception_list = [0; 4];
     let mut actual_frame = [0; 16];
-    let mut actual_marker = [0; 4];
     child
         .address_space
         .read(teb, &mut actual_exception_list)
@@ -4295,10 +4308,6 @@ fn create_child_primary_context(
     child
         .address_space
         .read(esp, &mut actual_frame)
-        .map_err(|error| error.to_string())?;
-    child
-        .address_space
-        .read(reserved, &mut actual_marker)
         .map_err(|error| error.to_string())?;
     if u32::from_le_bytes(actual_exception_list) != u32::MAX
         || u32::from_le_bytes(
@@ -4321,7 +4330,6 @@ fn create_child_primary_context(
                 .try_into()
                 .map_err(|_| "child frame reserved")?,
         ) != reserved
-        || u32::from_le_bytes(actual_marker) != u32::from_le_bytes(marker)
     {
         return Err("child primary context frame verification failed".into());
     }
@@ -4348,6 +4356,78 @@ fn create_child_primary_context(
         started: false,
         continuation: None,
     })
+}
+
+fn arm_existing_child_dll_init(
+    child: &mut PendingChild,
+    guest: &mut GuestContext,
+    native_index: usize,
+    returned: Registers,
+) -> Result<(String, u32, u32), String> {
+    if guest.pid != child.pid || guest.tid != child.tid {
+        return Err("child DLL rearm context identity mismatch".into());
+    }
+    if !guest.started {
+        return Err("child DLL rearm requires a started context".into());
+    }
+    if child.execution != (ChildExecutionState::DllInitReady { native_index }) {
+        return Err("child DLL rearm requires matching DLL-init-ready state".into());
+    }
+    let module = child
+        .native_modules
+        .get(native_index)
+        .ok_or_else(|| "child DLL rearm native index".to_owned())?;
+    let entry = module
+        .image
+        .image_base
+        .checked_add(module.image.entry_rva)
+        .ok_or_else(|| "DLL entry overflow".to_owned())?;
+    let returned_esp = returned.esp;
+    if returned_esp < STACK_BASE
+        || returned_esp > STACK_TOP
+        || returned_esp % 4 != 0
+        || returned_esp < STACK_BASE + 16
+    {
+        return Err("child DLL rearm returned ESP is outside the child stack".into());
+    }
+    let frame_esp = returned_esp
+        .checked_sub(16)
+        .ok_or_else(|| "DLL frame stack underflow".to_owned())?;
+    if child.static_load_reserved == 0 {
+        return Err("child DLL rearm static-load marker is unavailable".into());
+    }
+    let mut frame = [0u8; 16];
+    frame[0..4].copy_from_slice(&thunk32::CHILD_DLL_RETURN_ADDRESS.to_le_bytes());
+    frame[4..8].copy_from_slice(&module.image.image_base.to_le_bytes());
+    frame[8..12].copy_from_slice(&1u32.to_le_bytes());
+    frame[12..16].copy_from_slice(&child.static_load_reserved.to_le_bytes());
+    if child
+        .address_space
+        .write(frame_esp, &frame)
+        .map_err(|error| error.to_string())?
+        != frame.len()
+    {
+        return Err("short child DLL rearm frame write".into());
+    }
+    let mut actual_frame = [0u8; 16];
+    if child
+        .address_space
+        .read(frame_esp, &mut actual_frame)
+        .map_err(|error| error.to_string())?
+        != actual_frame.len()
+        || actual_frame != frame
+    {
+        return Err("child DLL rearm frame verification failed".into());
+    }
+    let mut registers = returned;
+    registers.eip = entry;
+    registers.esp = frame_esp;
+    guest
+        .context
+        .set_registers(registers)
+        .map_err(|error| error.to_string())?;
+    child.execution = ChildExecutionState::DllInitRunning { native_index };
+    Ok((module.stored.clone(), entry, frame_esp))
 }
 
 fn validate_child_crt_heap_range(child: &PendingChild) -> Result<(), String> {
@@ -4693,6 +4773,7 @@ struct PendingChild {
     address_space: AddressSpace,
     crt_heap_mapped_end: u32,
     provider_thunk_bytes: usize,
+    static_load_reserved: u32,
     initterm: Option<ChildInitterm>,
     cipow: Option<ChildCiPow>,
     cipow_diagnostic_logged: bool,
@@ -5434,6 +5515,101 @@ mod tests {
     }
 
     #[test]
+    fn rearm_existing_child_context_preserves_returned_thread_state_for_mss() {
+        let address_space = AddressSpace::create().unwrap();
+        address_space
+            .map(
+                STACK_BASE,
+                STACK_BYTES,
+                Permissions::READ | Permissions::WRITE,
+            )
+            .unwrap();
+        let reserved = STACK_TOP - 0x20;
+        address_space
+            .write(reserved, &0x5743_3344u32.to_le_bytes())
+            .unwrap();
+        let returned = Registers {
+            eax: 0x1111_1111,
+            ebx: 0x2222_2222,
+            ecx: 0x3333_3333,
+            edx: 0x4444_4444,
+            esi: 0x5555_5555,
+            edi: 0x6666_6666,
+            ebp: 0x7777_7777,
+            eip: thunk32::CHILD_DLL_RETURN_AFTER_VMCALL,
+            esp: STACK_TOP,
+            eflags: 0x0000_0246,
+            fs_base: 0x7ffde000,
+        };
+        let context = Context::create(&address_space, returned).unwrap();
+        let mut guest = GuestContext {
+            pid: 2,
+            tid: 3,
+            context,
+            started: true,
+            continuation: None,
+        };
+        let context_address = &guest.context as *const Context as usize;
+        let mut child = PendingChild {
+            pid: 2,
+            tid: 3,
+            image: native_module("War3.exe", 0x0040_0000, 0).image,
+            native_modules: vec![
+                native_module("Storm.dll", 0x1500_0000, 0x0003_2950),
+                native_module("Mss32.dll", 0x2110_0000, 0x0002_f2e5),
+            ],
+            address_space,
+            crt_heap_mapped_end: CHILD_CRT_HEAP_BASE,
+            provider_thunk_bytes: 0x1000,
+            static_load_reserved: reserved,
+            initterm: None,
+            cipow: None,
+            cipow_diagnostic_logged: false,
+            loader: ChildLoaderState {
+                prepared: true,
+                native_requests: Vec::new(),
+                next_native: 0,
+            },
+            execution: ChildExecutionState::DllInitReady { native_index: 1 },
+        };
+
+        let (name, entry, frame_esp) =
+            arm_existing_child_dll_init(&mut child, &mut guest, 1, returned).unwrap();
+        assert_eq!(name, "Mss32.dll");
+        assert_eq!(entry, 0x2112_f2e5);
+        assert_eq!(frame_esp, returned.esp - 16);
+        assert_eq!(&guest.context as *const Context as usize, context_address);
+        assert_eq!(guest.pid, 2);
+        assert_eq!(guest.tid, 3);
+        assert!(guest.started);
+        assert_eq!(
+            child.execution,
+            ChildExecutionState::DllInitRunning { native_index: 1 }
+        );
+
+        let registers = guest.context.registers().unwrap();
+        assert_eq!(registers.eip, 0x2112_f2e5);
+        assert_eq!(registers.esp, returned.esp - 16);
+        assert_eq!(registers.eflags, returned.eflags);
+        assert_eq!(registers.fs_base, returned.fs_base);
+        assert_eq!(registers.eax, returned.eax);
+        assert_eq!(registers.ebx, returned.ebx);
+        assert_eq!(registers.ecx, returned.ecx);
+        assert_eq!(registers.edx, returned.edx);
+        assert_eq!(registers.esi, returned.esi);
+        assert_eq!(registers.edi, returned.edi);
+        assert_eq!(registers.ebp, returned.ebp);
+
+        let mut frame = [0; 16];
+        child.address_space.read(frame_esp, &mut frame).unwrap();
+        assert_eq!(u32::from_le_bytes(frame[0..4].try_into().unwrap()), thunk32::CHILD_DLL_RETURN_ADDRESS);
+        assert_eq!(u32::from_le_bytes(frame[4..8].try_into().unwrap()), 0x2110_0000);
+        assert_eq!(u32::from_le_bytes(frame[8..12].try_into().unwrap()), 1);
+        assert_eq!(u32::from_le_bytes(frame[12..16].try_into().unwrap()), reserved);
+        assert_ne!(reserved, 0);
+    }
+
+    #[test]
     fn reg_open_frame_is_diagnostic_only_and_preserves_all_guest_bytes() {
         let base = 0x0430_0000;
         let esp = 0x043f_ff00;
@@ -5522,7 +5698,7 @@ mod tests {
             bytes: vec![0; STACK_BYTES],
         };
         for (index, word) in [
-            0x1502_02c1,
+            0x1502_02c1u32,
             0,
             0x0001_0000,
             0x0000_3000,
@@ -5596,6 +5772,7 @@ mod tests {
             address_space,
             crt_heap_mapped_end: CHILD_CRT_HEAP_BASE,
             provider_thunk_bytes: 0x1000,
+            static_load_reserved: 0,
             initterm: Some(ChildInitterm {
                 provider_resume_eip,
                 provider_esp,
