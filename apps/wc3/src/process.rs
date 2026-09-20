@@ -43,6 +43,9 @@ pub const COMMAND_LINE: &[u8] = b"\"Warcraft III.exe\"\0";
 pub const CHILD_COMMAND_LINE: &[u8] = b"\"war3.exe\" \0";
 pub const LAUNCHER_IMAGE_FILENAME: &[u8] = b"C:\\Warcraft III\\Warcraft III.exe\0";
 pub const CHILD_IMAGE_FILENAME: &[u8] = b"C:\\Warcraft III\\War3.exe\0";
+pub const XP_WINDOWS_DIRECTORY: &[u8] = b"C:\\WINDOWS\0";
+pub const XP_SYSTEM_DIRECTORY: &[u8] = b"C:\\WINDOWS\\system32\0";
+const XP_PERFORMANCE_COUNTER_FREQUENCY: u64 = 1_000_000_000;
 pub const XP_ANSI_CODE_PAGE: u32 = 1252;
 const CT_CTYPE1: u32 = 1;
 const C1_UPPER: u16 = 0x0001;
@@ -149,6 +152,20 @@ fn arguments<const N: usize>(
         )?;
     }
     Ok(values)
+}
+
+fn write_ansi_directory(
+    path: &[u8],
+    esp: u32,
+    memory: &mut impl GuestMemory,
+) -> Result<u32, &'static str> {
+    let [_, output, capacity] = arguments::<3>(memory, esp)?;
+    let required = u32::try_from(path.len()).map_err(|_| "directory length")?;
+    if capacity < required {
+        return Ok(required);
+    }
+    memory.write(output, path)?;
+    Ok(required - 1)
 }
 
 fn read_c_string(
@@ -1113,6 +1130,33 @@ impl XpProcess {
                     self.get_module_handle_a(esp, memory)?,
                 ))
             }
+            ProviderOp::GetWindowsDirectoryA => {
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(
+                    self.get_windows_directory_a(esp, memory)?,
+                ))
+            }
+            ProviderOp::GetSystemDirectoryA => {
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(
+                    self.get_system_directory_a(esp, memory)?,
+                ))
+            }
+            ProviderOp::QueryPerformanceFrequency => {
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(
+                    self.query_performance_frequency(esp, memory)?,
+                ))
+            }
             _ => Err(ProviderDispatchError::Unsupported),
         }
     }
@@ -1941,6 +1985,32 @@ impl XpProcess {
         }
         self.last_error = ERROR_MOD_NOT_FOUND;
         Ok(0)
+    }
+
+    fn get_windows_directory_a(
+        &self,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<u32, &'static str> {
+        write_ansi_directory(XP_WINDOWS_DIRECTORY, esp, memory)
+    }
+
+    fn get_system_directory_a(
+        &self,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<u32, &'static str> {
+        write_ansi_directory(XP_SYSTEM_DIRECTORY, esp, memory)
+    }
+
+    fn query_performance_frequency(
+        &self,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<u32, &'static str> {
+        let [_, output] = arguments::<2>(memory, esp)?;
+        memory.write(output, &XP_PERFORMANCE_COUNTER_FREQUENCY.to_le_bytes())?;
+        Ok(1)
     }
 
     fn get_std_handle(&self, esp: u32, memory: &impl GuestMemory) -> Result<u32, &'static str> {
@@ -5896,6 +5966,128 @@ mod tests {
                 ),
             })
         );
+    }
+
+    #[test]
+    fn child_get_windows_directory_a_returns_xp_personality_directory() {
+        let provider = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("GetWindowsDirectoryA".into()),
+            iat_rva: 0,
+        };
+        let mut pid2 = XpProcess::new_child();
+        pid2.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+        let output = STACK_TOP - 0x200;
+        for (index, value) in [0x2110_1dca, output, 260].into_iter().enumerate() {
+            write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
+        }
+        assert_eq!(
+            pid2.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(10))
+        );
+        let mut actual = vec![0; XP_WINDOWS_DIRECTORY.len()];
+        memory.read(output, &mut actual).unwrap();
+        assert_eq!(actual, XP_WINDOWS_DIRECTORY);
+        assert_eq!(pid2.call_count, 1);
+    }
+
+    #[test]
+    fn child_get_windows_directory_a_reports_required_size_without_writing() {
+        let provider = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("GetWindowsDirectoryA".into()),
+            iat_rva: 0,
+        };
+        let mut pid2 = XpProcess::new_child();
+        pid2.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+        let output = STACK_TOP - 0x200;
+        memory.write(output, &[0x5a; 16]).unwrap();
+        for (index, value) in [0x2110_1dca, output, 1].into_iter().enumerate() {
+            write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
+        }
+        assert_eq!(
+            pid2.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(XP_WINDOWS_DIRECTORY.len() as u32))
+        );
+        let mut actual = [0; 16];
+        memory.read(output, &mut actual).unwrap();
+        assert_eq!(actual, [0x5a; 16]);
+        assert_eq!(pid2.call_count, 1);
+    }
+
+    #[test]
+    fn child_get_system_directory_a_reuses_ansi_directory_contract() {
+        let provider = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("GetSystemDirectoryA".into()),
+            iat_rva: 0,
+        };
+        let mut pid2 = XpProcess::new_child();
+        pid2.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+        let output = STACK_TOP - 0x200;
+        for (index, value) in [0x2110_1dca, output, 260].into_iter().enumerate() {
+            write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
+        }
+        assert_eq!(
+            pid2.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(19))
+        );
+        let mut actual = vec![0; XP_SYSTEM_DIRECTORY.len()];
+        memory.read(output, &mut actual).unwrap();
+        assert_eq!(actual, XP_SYSTEM_DIRECTORY);
+
+        memory.write(output, &[0x5a; 24]).unwrap();
+        write_u32(&mut memory, esp + 8, 1).unwrap();
+        assert_eq!(
+            pid2.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(20))
+        );
+        let mut sentinel = [0; 24];
+        memory.read(output, &mut sentinel).unwrap();
+        assert_eq!(sentinel, [0x5a; 24]);
+        assert_eq!(pid2.call_count, 2);
+    }
+
+    #[test]
+    fn child_query_performance_frequency_exposes_nanosecond_frequency() {
+        let provider = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("QueryPerformanceFrequency".into()),
+            iat_rva: 0,
+        };
+        let mut pid2 = XpProcess::new_child();
+        pid2.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+        let output = STACK_TOP - 0x200;
+        write_u32(&mut memory, esp, 0x2113_1b38).unwrap();
+        write_u32(&mut memory, esp + 4, output).unwrap();
+        assert_eq!(
+            pid2.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(1))
+        );
+        let mut actual = [0; 8];
+        memory.read(output, &mut actual).unwrap();
+        assert_eq!(u64::from_le_bytes(actual), XP_PERFORMANCE_COUNTER_FREQUENCY);
+        assert_eq!(pid2.call_count, 1);
     }
 
     #[test]

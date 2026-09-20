@@ -34,6 +34,9 @@ pub enum ProviderOp {
     LCMapStringW,
     GetModuleFileNameA,
     GetModuleHandleA,
+    GetWindowsDirectoryA,
+    GetSystemDirectoryA,
+    QueryPerformanceFrequency,
     GetVersion,
     GetVersionExA,
     WideCharToMultiByte,
@@ -65,8 +68,9 @@ impl ProviderOp {
             | Self::GetFileType
             | Self::SetHandleCount
             | Self::SetLastError
-            | Self::GetModuleHandleA => 4,
-            Self::GetCPInfo => 8,
+            | Self::GetModuleHandleA
+            | Self::QueryPerformanceFrequency => 4,
+            Self::GetCPInfo | Self::GetWindowsDirectoryA | Self::GetSystemDirectoryA => 8,
             Self::GetStringTypeW | Self::VirtualAlloc => 16,
             Self::MultiByteToWideChar | Self::LCMapStringW => 24,
             Self::WideCharToMultiByte => 32,
@@ -91,6 +95,9 @@ impl ProviderOp {
                 | Self::LCMapStringW
                 | Self::GetModuleFileNameA
                 | Self::GetModuleHandleA
+                | Self::GetWindowsDirectoryA
+                | Self::GetSystemDirectoryA
+                | Self::QueryPerformanceFrequency
         )
     }
 }
@@ -115,6 +122,9 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "LCMapStringW" => ProviderOp::LCMapStringW,
             "GetModuleFileNameA" => ProviderOp::GetModuleFileNameA,
             "GetModuleHandleA" => ProviderOp::GetModuleHandleA,
+            "GetWindowsDirectoryA" => ProviderOp::GetWindowsDirectoryA,
+            "GetSystemDirectoryA" => ProviderOp::GetSystemDirectoryA,
+            "QueryPerformanceFrequency" => ProviderOp::QueryPerformanceFrequency,
             "GetVersion" => ProviderOp::GetVersion,
             "GetVersionExA" => ProviderOp::GetVersionExA,
             "WideCharToMultiByte" => ProviderOp::WideCharToMultiByte,
@@ -594,6 +604,48 @@ mod tests {
         let mut bytes = [0; thunk32::THUNK_BYTES];
         thunk32::write(573, provider_thunk_kind(&import), &mut bytes).unwrap();
         assert_eq!(&bytes[8..11], &[0xc2, 0x04, 0x00]);
+    }
+
+    #[test]
+    fn get_windows_directory_a_is_pure_process_stdcall_eight() {
+        let import = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("GetWindowsDirectoryA".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&import);
+        assert_eq!(operation, ProviderOp::GetWindowsDirectoryA);
+        assert!(operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 8);
+        assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Stdcall(8));
+    }
+
+    #[test]
+    fn get_system_directory_a_is_pure_process_stdcall_eight() {
+        let import = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("GetSystemDirectoryA".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&import);
+        assert_eq!(operation, ProviderOp::GetSystemDirectoryA);
+        assert!(operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 8);
+        assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Stdcall(8));
+    }
+
+    #[test]
+    fn query_performance_frequency_is_pure_process_stdcall_four() {
+        let import = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("QueryPerformanceFrequency".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&import);
+        assert_eq!(operation, ProviderOp::QueryPerformanceFrequency);
+        assert!(operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 4);
+        assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Stdcall(4));
     }
 
     #[test]
