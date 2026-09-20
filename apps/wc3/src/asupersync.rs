@@ -2000,7 +2000,8 @@ pub(super) async fn run_loop(
                             .terminate_process(active_pid, exit_code)
                             .map_err(str::to_owned)?;
                         wait_deadlines.retain(|key, _| key.pid != active_pid);
-                        for request in &woken {
+                        for completed in &woken {
+                            let request = &completed.request;
                             let index = context_index(&contexts, request.key)
                                 .ok_or_else(|| "process-exit waiter context missing".to_owned())?;
                             let mut registers = wait_deadlines
@@ -2012,7 +2013,7 @@ pub(super) async fn run_loop(
                                         .registers()
                                         .map_err(|error| error.to_string())?,
                                 );
-                            registers.eax = WAIT_OBJECT_0;
+                            registers.eax = completed.result;
                             contexts[index]
                                 .context
                                 .set_registers(registers)
@@ -2020,11 +2021,15 @@ pub(super) async fn run_loop(
                             logl::log(
                                 level::IMPORTANT,
                                 format_args!(
-                                    "WC3 WAIT SIGNALED pid={} tid={} handle=0x{:08x} reason=process-exit result=0x{:08x}",
+                                    "WC3 WAIT SIGNALED pid={} tid={} handle0=0x{:08x} handle1=0x{:08x} count={} wait_all={} index={} reason=process-exit result=0x{:08x}",
                                     request.key.pid,
                                     request.key.tid,
                                     request.handles[0],
-                                    WAIT_OBJECT_0,
+                                    request.handles[1],
+                                    request.count,
+                                    request.wait_all,
+                                    completed.result.saturating_sub(WAIT_OBJECT_0),
+                                    completed.result,
                                 ),
                             );
                         }
@@ -3826,7 +3831,7 @@ pub(super) async fn run_loop(
                                 );
                             }
                             if let Some(wait_result) =
-                                session.poll_single_wait(&request).map_err(str::to_owned)?
+                                session.poll_wait(&request).map_err(str::to_owned)?
                             {
                                 let consumed = state
                                     .map(|(manual_reset, signaled)| signaled && !manual_reset)
@@ -3908,7 +3913,7 @@ pub(super) async fn run_loop(
                             logl::log(
                                 level::IMPORTANT,
                                 format_args!(
-                                    "WC3 BLUEPRINT FRONTIER: WaitForMultipleObjects process=launcher pid={} tid={} call=#{} ret=0x{:08x} count={} handles_ptr=0x{:08x} handle0=0x{:08x} handle1=0x{:08x} wait_all={} timeout=0x{:08x}",
+                                    "WC3 WAIT MULTIPLE pid={} tid={} call=#{} ret=0x{:08x} count={} handles_ptr=0x{:08x} handle0=0x{:08x} handle1=0x{:08x} wait_all={} timeout=0x{:08x}",
                                     LAUNCHER_PID,
                                     request.key.tid,
                                     session.launcher().xp.call_count,
@@ -3933,6 +3938,81 @@ pub(super) async fn run_loop(
                                 format_args!(
                                     "wc3: wait handle1 {}",
                                     session.describe_handle(LAUNCHER_PID, request.handles[1])
+                                ),
+                            );
+                            if request.count == 0 || request.count > 2 || request.wait_all > 1 {
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 WAIT FRONTIER reason=unsupported-shape count={} wait_all={}",
+                                        request.count, request.wait_all,
+                                    ),
+                                );
+                                return Ok(());
+                            }
+                            if let Some(wait_result) =
+                                session.poll_wait(&request).map_err(str::to_owned)?
+                            {
+                                let index = wait_result.saturating_sub(WAIT_OBJECT_0);
+                                if wait_result >= WAIT_OBJECT_0 && index < request.count {
+                                    logl::log(
+                                        level::IMPORTANT,
+                                        format_args!(
+                                            "WC3 WAIT SIGNALED pid={} tid={} handle0=0x{:08x} handle1=0x{:08x} count={} wait_all={} index={} result=0x{:08x}",
+                                            request.key.pid,
+                                            request.key.tid,
+                                            request.handles[0],
+                                            request.handles[1],
+                                            request.count,
+                                            request.wait_all,
+                                            index,
+                                            wait_result,
+                                        ),
+                                    );
+                                } else if wait_result == WAIT_TIMEOUT {
+                                    logl::log(
+                                        level::IMPORTANT,
+                                        format_args!(
+                                            "WC3 WAIT TIMEOUT pid={} tid={} count={} wait_all={} elapsed_ms=0 result=0x{:08x}",
+                                            request.key.pid,
+                                            request.key.tid,
+                                            request.count,
+                                            request.wait_all,
+                                            wait_result,
+                                        ),
+                                    );
+                                } else {
+                                    logl::log(
+                                        level::IMPORTANT,
+                                        format_args!(
+                                            "WC3 WAIT FAILED pid={} tid={} count={} wait_all={} result=0x{:08x}",
+                                            request.key.pid,
+                                            request.key.tid,
+                                            request.count,
+                                            request.wait_all,
+                                            wait_result,
+                                        ),
+                                    );
+                                }
+                                let mut registers = exit.registers;
+                                registers.eax = wait_result;
+                                contexts[active]
+                                    .context
+                                    .set_registers(registers)
+                                    .map_err(|error| error.to_string())?;
+                                continue;
+                            }
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 WAIT BLOCK pid={} tid={} handle0=0x{:08x} handle1=0x{:08x} count={} wait_all={} timeout_ms={}",
+                                    request.key.pid,
+                                    request.key.tid,
+                                    request.handles[0],
+                                    request.handles[1],
+                                    request.count,
+                                    request.wait_all,
+                                    request.timeout,
                                 ),
                             );
                         }

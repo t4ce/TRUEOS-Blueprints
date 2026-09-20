@@ -689,7 +689,137 @@ mod tests {
 
         let woken = session.terminate_process(child.pid, 7).unwrap();
 
-        assert_eq!(woken, vec![wait.clone()]);
+        assert_eq!(
+            woken,
+            vec![CompletedWait {
+                request: wait.clone(),
+                result: 0,
+            }]
+        );
+        assert!(!session.blocked.contains_key(&wait.key));
+        assert_eq!(
+            session
+                .runnable
+                .iter()
+                .filter(|key| **key == wait.key)
+                .count(),
+            1
+        );
+    }
+
+    fn multiple_request(handles: [u32; 2], wait_all: u32, timeout: u32) -> WaitRequest {
+        WaitRequest {
+            key: ThreadKey {
+                pid: LAUNCHER_PID,
+                tid: LAUNCHER_TID,
+            },
+            return_address: 0x0040_1362,
+            count: 2,
+            handles_pointer: 0x043f_ff00,
+            handles,
+            wait_all,
+            timeout,
+        }
+    }
+
+    #[test]
+    fn process_exit_completes_two_object_wait_any_and_wait_all() {
+        let mut session = Wc3Session::new(XpProcess::new(Vec::new()));
+        let child = session.create_child();
+        let wait_any = multiple_request(
+            [child.process_handle, child.thread_handle],
+            0,
+            u32::MAX,
+        );
+        let wait_all = multiple_request(
+            [child.process_handle, child.thread_handle],
+            1,
+            u32::MAX,
+        );
+        assert_eq!(session.poll_wait(&wait_any), Ok(None));
+        assert_eq!(session.poll_wait(&wait_all), Ok(None));
+
+        session.terminate_process(child.pid, 0xc000_0005).unwrap();
+
+        assert_eq!(session.poll_wait(&wait_any), Ok(Some(0)));
+        assert_eq!(
+            session.poll_wait(&multiple_request(
+                [child.thread_handle, child.process_handle],
+                0,
+                u32::MAX,
+            )),
+            Ok(Some(0))
+        );
+        assert_eq!(session.poll_wait(&wait_all), Ok(Some(0)));
+    }
+
+    #[test]
+    fn wait_any_uses_lowest_signaled_index_and_wait_all_consumes_no_partial_event() {
+        let mut session = Wc3Session::new(XpProcess::new(Vec::new()));
+        let child = session.create_child();
+        let (auto, _) = session.create_event(
+            LAUNCHER_PID,
+            CreateEventRequest {
+                name: None,
+                manual_reset: false,
+                initial_state: true,
+                inheritable: false,
+            },
+        );
+        let wait_all = multiple_request([auto, child.process_handle], 1, u32::MAX);
+        assert_eq!(session.poll_wait(&wait_all), Ok(None));
+        assert_eq!(session.event_state(LAUNCHER_PID, auto), Some((false, true)));
+
+        session.terminate_process(child.pid, 7).unwrap();
+
+        assert_eq!(session.poll_wait(&wait_all), Ok(Some(0)));
+        assert_eq!(session.event_state(LAUNCHER_PID, auto), Some((false, false)));
+        assert_eq!(
+            session.poll_wait(&multiple_request([auto, child.process_handle], 0, 0)),
+            Ok(Some(1))
+        );
+    }
+
+    #[test]
+    fn wait_any_consumes_only_the_selected_auto_reset_event() {
+        let mut session = Wc3Session::new(XpProcess::new(Vec::new()));
+        let child = session.create_child();
+        let (auto, _) = session.create_event(
+            LAUNCHER_PID,
+            CreateEventRequest {
+                name: None,
+                manual_reset: false,
+                initial_state: true,
+                inheritable: false,
+            },
+        );
+        let wait = multiple_request([auto, child.process_handle], 0, 0);
+
+        assert_eq!(session.poll_wait(&wait), Ok(Some(0)));
+        assert_eq!(session.event_state(LAUNCHER_PID, auto), Some((false, false)));
+        assert_eq!(session.poll_wait(&wait), Ok(Some(0x0000_0102)));
+    }
+
+    #[test]
+    fn process_exit_wakes_a_blocked_two_object_wait() {
+        let mut session = Wc3Session::new(XpProcess::new(Vec::new()));
+        let child = session.create_child();
+        let wait = multiple_request(
+            [child.process_handle, child.thread_handle],
+            0,
+            u32::MAX,
+        );
+        session.block_wait(wait.clone()).unwrap();
+
+        let completed = session.terminate_process(child.pid, 0xc000_0005).unwrap();
+
+        assert_eq!(
+            completed,
+            vec![CompletedWait {
+                request: wait.clone(),
+                result: 0,
+            }]
+        );
         assert!(!session.blocked.contains_key(&wait.key));
         assert_eq!(
             session
@@ -815,6 +945,12 @@ pub struct WaitRequest {
     pub handles: [u32; 2],
     pub wait_all: u32,
     pub timeout: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CompletedWait {
+    pub request: WaitRequest,
+    pub result: u32,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1311,7 +1447,7 @@ impl Wc3Session {
         &mut self,
         pid: Pid,
         exit_code: u32,
-    ) -> Result<Vec<WaitRequest>, &'static str> {
+    ) -> Result<Vec<CompletedWait>, &'static str> {
         if !self.processes.contains_key(&pid) {
             return Err("ExitProcess unknown process");
         }
@@ -1344,47 +1480,24 @@ impl Wc3Session {
         let blocked = std::mem::take(&mut self.blocked);
         let mut woken = Vec::new();
         for (key, request) in blocked {
-            let signals_terminated_process = request.count == 1
-                && request.wait_all == 0
-                && self
-                    .process(key.pid)
-                    .and_then(|process| process.handles.get(&request.handles[0]))
-                    .and_then(|entry| self.objects.get(&entry.object))
-                    .is_some_and(|object| match object {
-                        SessionObject::Process(process) => process.pid == pid,
-                        SessionObject::Thread(thread) => thread.key.pid == pid,
-                        SessionObject::Event(_) => false,
-                    });
-            if signals_terminated_process {
-                woken.push(request);
-            } else {
-                self.blocked.insert(key, request);
+            match self.poll_wait(&request)? {
+                Some(result) if result != 0x0000_0102 && result != u32::MAX => {
+                    woken.push(CompletedWait { request, result });
+                }
+                Some(_) | None => {
+                    self.blocked.insert(key, request);
+                }
             }
         }
-        for request in &woken {
-            self.enqueue(request.key);
+        for completed in &woken {
+            self.enqueue(completed.request.key);
         }
         Ok(woken)
     }
 
     pub fn block_wait(&mut self, request: WaitRequest) -> Result<(), &'static str> {
-        for handle in request.handles.iter().take(request.count.min(2) as usize) {
-            let entry = self
-                .process(request.key.pid)
-                .and_then(|process| process.handles.get(handle))
-                .ok_or("wait handle is not in process table")?;
-            let object = self
-                .objects
-                .get(&entry.object)
-                .ok_or("wait object missing")?;
-            let signaled = match object {
-                SessionObject::Event(event) => event.signaled,
-                SessionObject::Process(process) => process.exit_code.is_some(),
-                SessionObject::Thread(thread) => thread.exit_code.is_some(),
-            };
-            if signaled {
-                return Err("unexpected signaled object at #90");
-            }
+        if !(1..=2).contains(&request.count) || request.wait_all > 1 {
+            return Err("unsupported wait shape");
         }
         self.runnable.retain(|key| *key != request.key);
         self.blocked.insert(request.key, request);
@@ -1395,56 +1508,71 @@ impl Wc3Session {
         if request.count != 1 || request.wait_all != 0 {
             return Err("unsupported single-object wait shape");
         }
-        let Some(entry) = self
-            .process(request.key.pid)
-            .and_then(|process| process.handles.get(&request.handles[0]))
-            .cloned()
-        else {
-            self.process_mut(request.key.pid)
-                .ok_or("wait process missing")?
-                .xp
-                .set_last_error(6);
-            return Ok(Some(u32::MAX));
-        };
-        let Some(object) = self.objects.get_mut(&entry.object) else {
-            self.process_mut(request.key.pid)
-                .ok_or("wait process missing")?
-                .xp
-                .set_last_error(6);
-            return Ok(Some(u32::MAX));
-        };
-        match object {
-            SessionObject::Event(event) => {
-                if event.signaled {
-                    if !event.manual_reset {
-                        event.signaled = false;
-                    }
-                    Ok(Some(0))
-                } else if request.timeout == 0 {
-                    Ok(Some(0x0000_0102))
-                } else {
-                    Ok(None)
-                }
+        self.poll_wait(request)
+    }
+
+    pub fn poll_wait(&mut self, request: &WaitRequest) -> Result<Option<u32>, &'static str> {
+        if !(1..=2).contains(&request.count) {
+            return Err("unsupported wait count");
+        }
+        if request.wait_all > 1 {
+            return Err("unsupported wait_all value");
+        }
+
+        let mut objects = [0; 2];
+        let mut signaled = [false; 2];
+        for index in 0..request.count as usize {
+            let Some(entry) = self
+                .process(request.key.pid)
+                .and_then(|process| process.handles.get(&request.handles[index]))
+            else {
+                self.process_mut(request.key.pid)
+                    .ok_or("wait process missing")?
+                    .xp
+                    .set_last_error(6);
+                return Ok(Some(u32::MAX));
+            };
+            objects[index] = entry.object;
+            let Some(object) = self.objects.get(&entry.object) else {
+                self.process_mut(request.key.pid)
+                    .ok_or("wait process missing")?
+                    .xp
+                    .set_last_error(6);
+                return Ok(Some(u32::MAX));
+            };
+            signaled[index] = match object {
+                SessionObject::Event(event) => event.signaled,
+                SessionObject::Process(process) => process.exit_code.is_some(),
+                SessionObject::Thread(thread) => thread.exit_code.is_some(),
+            };
+        }
+
+        let selected: Vec<usize> = if request.wait_all == 0 {
+            match signaled[..request.count as usize]
+                .iter()
+                .position(|signaled| *signaled)
+            {
+                Some(index) => vec![index],
+                None => return Ok((request.timeout == 0).then_some(0x0000_0102)),
             }
-            SessionObject::Process(process) => {
-                if process.exit_code.is_some() {
-                    Ok(Some(0))
-                } else if request.timeout == 0 {
-                    Ok(Some(0x0000_0102))
-                } else {
-                    Ok(None)
-                }
-            }
-            SessionObject::Thread(thread) => {
-                if thread.exit_code.is_some() {
-                    Ok(Some(0))
-                } else if request.timeout == 0 {
-                    Ok(Some(0x0000_0102))
-                } else {
-                    Ok(None)
+        } else if signaled[..request.count as usize].iter().all(|signaled| *signaled) {
+            (0..request.count as usize).collect()
+        } else {
+            return Ok((request.timeout == 0).then_some(0x0000_0102));
+        };
+
+        for index in &selected {
+            if let Some(SessionObject::Event(event)) = self.objects.get_mut(&objects[*index]) {
+                if !event.manual_reset {
+                    event.signaled = false;
                 }
             }
         }
+        Ok(Some(if request.wait_all == 0 {
+            selected[0] as u32
+        } else {
+            0
+        }))
     }
 
     pub fn event_state(&self, pid: Pid, handle: u32) -> Option<(bool, bool)> {
