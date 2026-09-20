@@ -50,6 +50,9 @@ const C1_CNTRL: u16 = 0x0020;
 const C1_BLANK: u16 = 0x0040;
 const C1_XDIGIT: u16 = 0x0080;
 const C1_ALPHA: u16 = 0x0100;
+const LCMAP_LOWERCASE: u32 = 0x0000_0100;
+const LCMAP_UPPERCASE: u32 = 0x0000_0200;
+const LCMAP_LINGUISTIC_CASING: u32 = 0x0100_0000;
 const MODULE_FILENAME: &[u8] = b"C:\\Warcraft III\\Warcraft III.exe\0";
 const WINDOWS_XP_GET_VERSION: u32 = 0x0a28_0105;
 const CREATE_SUSPENDED: u32 = 4;
@@ -62,6 +65,24 @@ const TRANSPARENT: u32 = 1;
 const OPAQUE: u32 = 2;
 const GDI_DIB_BASE: u32 = 0x0500_0000;
 pub const ENVIRONMENT_BLOCK_VA: u32 = PROCESS_DATA_VA + 0x100;
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+enum LcMapMode {
+    Lower,
+    Upper,
+}
+
+fn lc_map_mode(flags: u32) -> Option<LcMapMode> {
+    let allowed = LCMAP_LOWERCASE | LCMAP_UPPERCASE | LCMAP_LINGUISTIC_CASING;
+    if flags & !allowed != 0 {
+        return None;
+    }
+    match flags & (LCMAP_LOWERCASE | LCMAP_UPPERCASE) {
+        LCMAP_LOWERCASE => Some(LcMapMode::Lower),
+        LCMAP_UPPERCASE => Some(LcMapMode::Upper),
+        _ => None,
+    }
+}
 
 pub trait GuestMemory {
     fn read(&self, address: u32, output: &mut [u8]) -> Result<(), &'static str>;
@@ -867,6 +888,20 @@ impl XpProcess {
                 Ok(PersonalityAction::Return(
                     self.multi_byte_to_wide(esp, memory)?,
                 ))
+            }
+            ProviderOp::LCMapStringW => {
+                let flags = read_u32(
+                    memory,
+                    esp.checked_add(8).ok_or("provider argument overflow")?,
+                )?;
+                if lc_map_mode(flags).is_none() {
+                    return Err(ProviderDispatchError::Unsupported);
+                }
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(self.lc_map_string(esp, memory)?))
             }
             _ => Err(ProviderDispatchError::Unsupported),
         }
@@ -2377,35 +2412,55 @@ impl XpProcess {
         Ok(length)
     }
 
-    fn lc_map_string(&self, esp: u32, memory: &mut impl GuestMemory) -> Result<u32, &'static str> {
-        let [_, _, flags, source, count, output, capacity] = arguments::<7>(memory, esp)?;
-        let length = if count == u32::MAX {
-            let mut n = 0;
+    fn lc_map_string(
+        &self,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<u32, &'static str> {
+        let [_, _locale, flags, source, count, output, capacity] = arguments::<7>(memory, esp)?;
+        let mode = lc_map_mode(flags).ok_or("unsupported LCMapStringW flags")?;
+        let signed_count = count as i32;
+        if signed_count == 0 {
+            return Err("LCMapStringW zero source length");
+        }
+        let length = if signed_count < 0 {
+            let mut length = 0u32;
             loop {
-                if read_u16(memory, source + n * 2)? == 0 {
-                    break n + 1;
+                let offset = length
+                    .checked_mul(2)
+                    .ok_or("LCMapStringW length overflow")?;
+                let address = source
+                    .checked_add(offset)
+                    .ok_or("LCMapStringW source overflow")?;
+                let value = read_u16(memory, address)?;
+                length = length
+                    .checked_add(1)
+                    .ok_or("LCMapStringW length overflow")?;
+                if value == 0 {
+                    break length;
                 }
-                n += 1;
             }
         } else {
             count
         };
-        if output == 0 {
+        if capacity == 0 {
             return Ok(length);
         }
-        if capacity < length {
+        if output == 0 || capacity < length {
             return Ok(0);
         }
         for index in 0..length {
-            let value = read_u16(memory, source + index * 2)?;
-            let mapped = if flags & 0x100 != 0 {
-                (value as u8).to_ascii_lowercase() as u16
-            } else if flags & 0x200 != 0 {
-                (value as u8).to_ascii_uppercase() as u16
-            } else {
-                value
-            };
-            memory.write(output + index * 2, &mapped.to_le_bytes())?;
+            let offset = index
+                .checked_mul(2)
+                .ok_or("LCMapStringW length overflow")?;
+            let source_address = source
+                .checked_add(offset)
+                .ok_or("LCMapStringW source overflow")?;
+            let output_address = output
+                .checked_add(offset)
+                .ok_or("LCMapStringW output overflow")?;
+            let mapped = lc_map_scalar(read_u16(memory, source_address)?, mode);
+            memory.write(output_address, &mapped.to_le_bytes())?;
         }
         Ok(length)
     }
@@ -3121,6 +3176,38 @@ fn resource_first_language_data(
     }
     root.checked_add(child).ok_or("resource data overflow")
 }
+
+fn cp1252_lower(value: u16) -> u16 {
+    match value {
+        0x0041..=0x005a => value + 0x20,
+        0x00c0..=0x00d6 | 0x00d8..=0x00de => value + 0x20,
+        0x0160 => 0x0161,
+        0x0152 => 0x0153,
+        0x017d => 0x017e,
+        0x0178 => 0x00ff,
+        _ => value,
+    }
+}
+
+fn cp1252_upper(value: u16) -> u16 {
+    match value {
+        0x0061..=0x007a => value - 0x20,
+        0x00e0..=0x00f6 | 0x00f8..=0x00fe => value - 0x20,
+        0x0161 => 0x0160,
+        0x0153 => 0x0152,
+        0x017e => 0x017d,
+        0x00ff => 0x0178,
+        _ => value,
+    }
+}
+
+fn lc_map_scalar(value: u16, mode: LcMapMode) -> u16 {
+    match mode {
+        LcMapMode::Lower => cp1252_lower(value),
+        LcMapMode::Upper => cp1252_upper(value),
+    }
+}
+
 fn decode_cp1252(byte: u8) -> u16 {
     match byte {
         0x80 => 0x20ac,
@@ -3130,12 +3217,26 @@ fn decode_cp1252(byte: u8) -> u16 {
         0x85 => 0x2026,
         0x86 => 0x2020,
         0x87 => 0x2021,
+        0x88 => 0x02c6,
+        0x89 => 0x2030,
+        0x8a => 0x0160,
+        0x8b => 0x2039,
+        0x8c => 0x0152,
+        0x8e => 0x017d,
         0x91 => 0x2018,
         0x92 => 0x2019,
         0x93 => 0x201c,
         0x94 => 0x201d,
+        0x95 => 0x2022,
         0x96 => 0x2013,
         0x97 => 0x2014,
+        0x98 => 0x02dc,
+        0x99 => 0x2122,
+        0x9a => 0x0161,
+        0x9b => 0x203a,
+        0x9c => 0x0153,
+        0x9e => 0x017e,
+        0x9f => 0x0178,
         _ => byte as u16,
     }
 }
@@ -3161,12 +3262,26 @@ fn encode_cp1252(value: u16) -> Option<u8> {
         0x2026 => Some(0x85),
         0x2020 => Some(0x86),
         0x2021 => Some(0x87),
+        0x02c6 => Some(0x88),
+        0x2030 => Some(0x89),
+        0x0160 => Some(0x8a),
+        0x2039 => Some(0x8b),
+        0x0152 => Some(0x8c),
+        0x017d => Some(0x8e),
         0x2018 => Some(0x91),
         0x2019 => Some(0x92),
         0x201c => Some(0x93),
         0x201d => Some(0x94),
+        0x2022 => Some(0x95),
         0x2013 => Some(0x96),
         0x2014 => Some(0x97),
+        0x02dc => Some(0x98),
+        0x2122 => Some(0x99),
+        0x0161 => Some(0x9a),
+        0x203a => Some(0x9b),
+        0x0153 => Some(0x9c),
+        0x017e => Some(0x9e),
+        0x0178 => Some(0x9f),
         0..=255 => Some(value as u8),
         _ => None,
     }
@@ -5235,6 +5350,132 @@ mod tests {
         assert_eq!(read_u16(&memory, output + 2).unwrap(), u16::from(b'z'));
         assert_eq!(read_u16(&memory, output + 4).unwrap(), 0);
         assert_eq!(pid2.call_count, 1);
+    }
+
+    #[test]
+    fn cp1252_scalar_mapping_round_trips_all_bytes() {
+        for byte in 0u8..=u8::MAX {
+            assert_eq!(encode_cp1252(decode_cp1252(byte)), Some(byte));
+        }
+        assert_eq!(decode_cp1252(0x8a), 0x0160);
+        assert_eq!(decode_cp1252(0x8c), 0x0152);
+        assert_eq!(decode_cp1252(0x9a), 0x0161);
+        assert_eq!(decode_cp1252(0x9c), 0x0153);
+        assert_eq!(decode_cp1252(0x9f), 0x0178);
+    }
+
+    #[test]
+    fn lc_map_scalars_use_bounded_cp1252_case_pairs() {
+        assert_eq!(lc_map_scalar(u16::from(b'A'), LcMapMode::Lower), u16::from(b'a'));
+        assert_eq!(lc_map_scalar(u16::from(b'Z'), LcMapMode::Lower), u16::from(b'z'));
+        assert_eq!(lc_map_scalar(u16::from(b'a'), LcMapMode::Upper), u16::from(b'A'));
+        assert_eq!(lc_map_scalar(u16::from(b'z'), LcMapMode::Upper), u16::from(b'Z'));
+        for (upper, lower) in [
+            (0x00c0, 0x00e0),
+            (0x00d6, 0x00f6),
+            (0x00d8, 0x00f8),
+            (0x00de, 0x00fe),
+            (0x0160, 0x0161),
+            (0x0152, 0x0153),
+            (0x017d, 0x017e),
+            (0x0178, 0x00ff),
+        ] {
+            assert_eq!(lc_map_scalar(upper, LcMapMode::Lower), lower);
+            assert_eq!(lc_map_scalar(lower, LcMapMode::Upper), upper);
+        }
+        assert_eq!(lc_map_scalar(0x20ac, LcMapMode::Lower), 0x20ac);
+        assert_eq!(lc_map_scalar(0x2122, LcMapMode::Upper), 0x2122);
+    }
+
+    #[test]
+    fn lc_map_string_w_negative_count_size_query_includes_nul() {
+        let xp = XpProcess::new(Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+        let source = STACK_TOP - 0x200;
+        for (index, value) in [0x0041, 0x0062, 0x0160, 0x20ac, 0]
+            .into_iter()
+            .enumerate()
+        {
+            write_u16(&mut memory, source + index as u32 * 2, value).unwrap();
+        }
+        for (index, value) in [0x2113_4d10, 0, LCMAP_LOWERCASE, source, u32::MAX, 0, 0]
+            .into_iter()
+            .enumerate()
+        {
+            write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
+        }
+        assert_eq!(xp.lc_map_string(esp, &mut memory), Ok(5));
+    }
+
+    #[test]
+    fn child_lc_map_string_w_reuses_cp1252_case_mapping() {
+        let provider = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("LCMapStringW".into()),
+            iat_rva: 0,
+        };
+        let mut pid2 = XpProcess::new(Vec::new());
+        pid2.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+        let source = STACK_TOP - 0x200;
+        let output = STACK_TOP - 0x300;
+        let input = [0x0041, 0x00c0, 0x0160, 0x0152, 0x017d, 0x0178, 0x20ac, 0];
+        let expected = [0x0061, 0x00e0, 0x0161, 0x0153, 0x017e, 0x00ff, 0x20ac, 0];
+        for (index, value) in input.into_iter().enumerate() {
+            write_u16(&mut memory, source + index as u32 * 2, value).unwrap();
+        }
+        for (index, value) in [
+            0x2113_4d10,
+            0,
+            LCMAP_LOWERCASE | LCMAP_LINGUISTIC_CASING,
+            source,
+            u32::MAX,
+            output,
+            8,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
+        }
+        assert_eq!(
+            pid2.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(8))
+        );
+        for (index, value) in expected.into_iter().enumerate() {
+            assert_eq!(read_u16(&memory, output + index as u32 * 2).unwrap(), value);
+        }
+        assert_eq!(pid2.call_count, 1);
+    }
+
+    #[test]
+    fn child_lc_map_string_w_rejects_unobserved_mapping_modes() {
+        let provider = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("LCMapStringW".into()),
+            iat_rva: 0,
+        };
+        let mut pid2 = XpProcess::new(Vec::new());
+        pid2.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+        write_u32(&mut memory, esp + 8, 0x0000_0400).unwrap();
+        assert_eq!(
+            pid2.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Err(ProviderDispatchError::Unsupported)
+        );
+        assert_eq!(pid2.call_count, 0);
     }
 
     #[test]
