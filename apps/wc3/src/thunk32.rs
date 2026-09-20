@@ -16,7 +16,9 @@ pub const CHILD_CALLBACK_RETURN_AFTER_VMCALL: u32 = CHILD_CALLBACK_RETURN_ADDRES
 
 pub fn install_child_controls(output: &mut [u8]) -> Result<(), &'static str> {
     for offset in [0usize, 0x10, 0x20] {
-        let trap = output.get_mut(offset..offset + 5).ok_or("child control range")?;
+        let trap = output
+            .get_mut(offset..offset + 5)
+            .ok_or("child control range")?;
         trap.copy_from_slice(&[0x0f, 0x01, 0xc1, 0x0f, 0x0b]);
     }
     Ok(())

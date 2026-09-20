@@ -166,31 +166,57 @@ pub fn parse(bytes: &[u8]) -> Result<PeImage, &'static str> {
     let export_size = u32_at(bytes, optional + 100)?;
     let mut exports = Vec::new();
     if export_rva != 0 && export_size != 0 {
-        let export_end = export_rva.checked_add(export_size).ok_or("PE export range")?;
-        if usize::try_from(export_end).ok().is_none_or(|end| end > image_len) {
+        let export_end = export_rva
+            .checked_add(export_size)
+            .ok_or("PE export range")?;
+        if usize::try_from(export_end)
+            .ok()
+            .is_none_or(|end| end > image_len)
+        {
             return Err("PE export directory range");
         }
         let directory = usize::try_from(export_rva).map_err(|_| "PE export RVA")?;
         let export_base = u32_at(&image, directory + 16)?;
-        let functions = usize::try_from(u32_at(&image, directory + 20)?).map_err(|_| "PE export functions")?;
-        let names = usize::try_from(u32_at(&image, directory + 24)?).map_err(|_| "PE export names")?;
-        let function_table = usize::try_from(u32_at(&image, directory + 28)?).map_err(|_| "PE export function table")?;
-        let name_table = usize::try_from(u32_at(&image, directory + 32)?).map_err(|_| "PE export name table")?;
-        let name_ordinal_table = usize::try_from(u32_at(&image, directory + 36)?).map_err(|_| "PE export ordinal table")?;
+        let functions =
+            usize::try_from(u32_at(&image, directory + 20)?).map_err(|_| "PE export functions")?;
+        let names =
+            usize::try_from(u32_at(&image, directory + 24)?).map_err(|_| "PE export names")?;
+        let function_table = usize::try_from(u32_at(&image, directory + 28)?)
+            .map_err(|_| "PE export function table")?;
+        let name_table =
+            usize::try_from(u32_at(&image, directory + 32)?).map_err(|_| "PE export name table")?;
+        let name_ordinal_table = usize::try_from(u32_at(&image, directory + 36)?)
+            .map_err(|_| "PE export ordinal table")?;
         let mut export_names = vec![None; functions];
         for index in 0..names {
-            let name_rva = usize::try_from(u32_at(&image, name_table + index * 4)?).map_err(|_| "PE export name")?;
+            let name_rva = usize::try_from(u32_at(&image, name_table + index * 4)?)
+                .map_err(|_| "PE export name")?;
             let function = usize::from(u16_at(&image, name_ordinal_table + index * 2)?);
-            if function >= functions { return Err("PE export name ordinal"); }
+            if function >= functions {
+                return Err("PE export name ordinal");
+            }
             export_names[function] = Some(c_string(&image, name_rva)?);
         }
         for index in 0..functions {
             let target_rva = u32_at(&image, function_table + index * 4)?;
-            if target_rva == 0 { continue; }
+            if target_rva == 0 {
+                continue;
+            }
             let target = if target_rva >= export_rva && target_rva < export_end {
-                ExportTarget::Forwarder(c_string(&image, usize::try_from(target_rva).map_err(|_| "PE forwarder")?)?)
-            } else { ExportTarget::Rva(target_rva) };
-            exports.push(ExportEntry { ordinal: export_base.checked_add(u32::try_from(index).map_err(|_| "PE export ordinal")?).ok_or("PE export ordinal")?, name: export_names[index].clone(), target });
+                ExportTarget::Forwarder(c_string(
+                    &image,
+                    usize::try_from(target_rva).map_err(|_| "PE forwarder")?,
+                )?)
+            } else {
+                ExportTarget::Rva(target_rva)
+            };
+            exports.push(ExportEntry {
+                ordinal: export_base
+                    .checked_add(u32::try_from(index).map_err(|_| "PE export ordinal")?)
+                    .ok_or("PE export ordinal")?,
+                name: export_names[index].clone(),
+                target,
+            });
         }
     }
     let import_rva =

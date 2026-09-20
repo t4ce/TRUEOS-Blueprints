@@ -130,15 +130,9 @@ impl WinCall {
             "RealizePalette" if import.module.eq_ignore_ascii_case("GDI32.dll") => {
                 Self::RealizePalette
             }
-            "SetTextColor" if import.module.eq_ignore_ascii_case("GDI32.dll") => {
-                Self::SetTextColor
-            }
-            "SetBkColor" if import.module.eq_ignore_ascii_case("GDI32.dll") => {
-                Self::SetBkColor
-            }
-            "SetBkMode" if import.module.eq_ignore_ascii_case("GDI32.dll") => {
-                Self::SetBkMode
-            }
+            "SetTextColor" if import.module.eq_ignore_ascii_case("GDI32.dll") => Self::SetTextColor,
+            "SetBkColor" if import.module.eq_ignore_ascii_case("GDI32.dll") => Self::SetBkColor,
+            "SetBkMode" if import.module.eq_ignore_ascii_case("GDI32.dll") => Self::SetBkMode,
             "BitBlt" if import.module.eq_ignore_ascii_case("GDI32.dll") => Self::BitBlt,
             "DeleteDC" if import.module.eq_ignore_ascii_case("GDI32.dll") => Self::DeleteDC,
             "DeleteObject" if import.module.eq_ignore_ascii_case("GDI32.dll") => Self::DeleteObject,

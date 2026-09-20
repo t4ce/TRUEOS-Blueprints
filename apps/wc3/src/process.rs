@@ -426,18 +426,33 @@ impl XpProcess {
         &self.provider_modules
     }
 
-    pub fn provider_import_count(&self) -> usize { self.provider_imports.len() }
+    pub fn provider_import_count(&self) -> usize {
+        self.provider_imports.len()
+    }
 
     pub fn set_registry_handle_base(&mut self, base: u32) -> Result<(), &'static str> {
-        if !self.registry_handles.is_empty() { return Err("registry handles already allocated"); }
+        if !self.registry_handles.is_empty() {
+            return Err("registry handles already allocated");
+        }
         self.next_registry_handle = base;
         Ok(())
     }
 
-    pub fn open_registry_key(&mut self, node: crate::session::RegistryNodeId, access: u32) -> Result<u32, &'static str> {
+    pub fn open_registry_key(
+        &mut self,
+        node: crate::session::RegistryNodeId,
+        access: u32,
+    ) -> Result<u32, &'static str> {
         let handle = self.next_registry_handle;
-        self.next_registry_handle = self.next_registry_handle.checked_add(1).ok_or("registry handle overflow")?;
-        if self.registry_handles.insert(handle, RegistryHandle { node, access }).is_some() {
+        self.next_registry_handle = self
+            .next_registry_handle
+            .checked_add(1)
+            .ok_or("registry handle overflow")?;
+        if self
+            .registry_handles
+            .insert(handle, RegistryHandle { node, access })
+            .is_some()
+        {
             return Err("registry handle collision");
         }
         Ok(handle)
@@ -448,45 +463,87 @@ impl XpProcess {
     }
 
     pub fn crt_malloc(&mut self, size: u32) -> Result<Option<CrtAllocation>, &'static str> {
-        if size == 0 { return Err("CRT malloc zero-size unobserved"); }
+        if size == 0 {
+            return Err("CRT malloc zero-size unobserved");
+        }
         let aligned = size.checked_add(7).ok_or("CRT malloc size overflow")? & !7;
-        let pointer = CHILD_CRT_HEAP_BASE.checked_add(self.crt_heap_next).ok_or("CRT malloc pointer overflow")?;
-        let next = self.crt_heap_next.checked_add(aligned).ok_or("CRT malloc heap overflow")?;
-        let end = CHILD_CRT_HEAP_BASE.checked_add(next).ok_or("CRT malloc heap overflow")?;
-        if end > CHILD_CRT_HEAP_LIMIT { return Ok(None); }
+        let pointer = CHILD_CRT_HEAP_BASE
+            .checked_add(self.crt_heap_next)
+            .ok_or("CRT malloc pointer overflow")?;
+        let next = self
+            .crt_heap_next
+            .checked_add(aligned)
+            .ok_or("CRT malloc heap overflow")?;
+        let end = CHILD_CRT_HEAP_BASE
+            .checked_add(next)
+            .ok_or("CRT malloc heap overflow")?;
+        if end > CHILD_CRT_HEAP_LIMIT {
+            return Ok(None);
+        }
         self.crt_allocations.insert(pointer, size);
         self.crt_heap_next = next;
-        Ok(Some(CrtAllocation { pointer, requested: size, end }))
+        Ok(Some(CrtAllocation {
+            pointer,
+            requested: size,
+            end,
+        }))
     }
 
     pub fn dispatch_provider_for_process(
-        &mut self, _pid: u32, _tid: u32, provider_id: u32, esp: u32, memory: &mut impl GuestMemory,
+        &mut self,
+        _pid: u32,
+        _tid: u32,
+        provider_id: u32,
+        esp: u32,
+        memory: &mut impl GuestMemory,
     ) -> Result<PersonalityAction, &'static str> {
-        let provider = self.provider_import(provider_id).cloned().ok_or("unknown child provider import")?;
+        let provider = self
+            .provider_import(provider_id)
+            .cloned()
+            .ok_or("unknown child provider import")?;
         match (&provider.module[..], &provider.symbol) {
             (module, ProviderSymbol::Name(symbol))
                 if module.eq_ignore_ascii_case("KERNEL32.dll")
                     && symbol == "InitializeCriticalSection" =>
             {
-                self.call_count = self.call_count.checked_add(1).ok_or("call count overflow")?;
-                Ok(PersonalityAction::Return(self.initialize_critical_section(esp, memory)?))
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(
+                    self.initialize_critical_section(esp, memory)?,
+                ))
             }
             (module, ProviderSymbol::Name(symbol))
-                if module.eq_ignore_ascii_case("KERNEL32.dll")
-                    && symbol == "SetLastError" =>
+                if module.eq_ignore_ascii_case("KERNEL32.dll") && symbol == "SetLastError" =>
             {
-                let value = read_u32(memory, esp.checked_add(4).ok_or("provider argument overflow")?)?;
-                self.call_count = self.call_count.checked_add(1).ok_or("call count overflow")?;
+                let value = read_u32(
+                    memory,
+                    esp.checked_add(4).ok_or("provider argument overflow")?,
+                )?;
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
                 self.set_last_error(value);
                 Ok(PersonalityAction::Return(0))
             }
             (module, ProviderSymbol::Name(symbol))
-                if module.eq_ignore_ascii_case("MSVCRT.dll")
-                    && symbol == "malloc" =>
+                if module.eq_ignore_ascii_case("MSVCRT.dll") && symbol == "malloc" =>
             {
-                let size = read_u32(memory, esp.checked_add(4).ok_or("provider argument overflow")?)?;
-                self.call_count = self.call_count.checked_add(1).ok_or("call count overflow")?;
-                Ok(PersonalityAction::Return(self.crt_malloc(size)?.map(|allocation| allocation.pointer).unwrap_or(0)))
+                let size = read_u32(
+                    memory,
+                    esp.checked_add(4).ok_or("provider argument overflow")?,
+                )?;
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(
+                    self.crt_malloc(size)?
+                        .map(|allocation| allocation.pointer)
+                        .unwrap_or(0),
+                ))
             }
             _ => Err("unsupported child provider import"),
         }
@@ -495,26 +552,46 @@ impl XpProcess {
     pub fn append_provider_imports(
         &mut self,
         imports: Vec<ProviderImport>,
-    ) -> Result<(Vec<u32>, usize, usize, Vec<u8>), &'static str> {
+    ) -> Result<(Vec<u32>, usize, usize, usize, Vec<u8>), &'static str> {
         let old_bytes = self.provider_thunks.len();
         let first = u32::try_from(self.provider_imports.len()).map_err(|_| "provider id")?;
+        let updated_from = usize::try_from(first)
+            .map_err(|_| "provider thunk offset")?
+            .checked_mul(thunk32::THUNK_BYTES)
+            .ok_or("provider thunk offset")?;
         let mut addresses = Vec::with_capacity(imports.len());
         for (offset, import) in imports.into_iter().enumerate() {
-            let id = first.checked_add(u32::try_from(offset).map_err(|_| "provider id")?).ok_or("provider id")?;
+            let id = first
+                .checked_add(u32::try_from(offset).map_err(|_| "provider id")?)
+                .ok_or("provider id")?;
             let address = thunk32::address(id).ok_or("provider address")?;
             addresses.push(address);
             self.provider_imports.push(import);
         }
-        let required = self.provider_imports.len().checked_mul(thunk32::THUNK_BYTES).ok_or("provider bytes")?;
+        let required = self
+            .provider_imports
+            .len()
+            .checked_mul(thunk32::THUNK_BYTES)
+            .ok_or("provider bytes")?;
         let new_bytes = required.checked_add(0xfff).ok_or("provider page")? & !0xfff;
         self.provider_thunks.resize(new_bytes, 0x90);
         for (offset, _) in addresses.iter().enumerate() {
             let id = first + offset as u32;
             let start = id as usize * thunk32::THUNK_BYTES;
             let import = self.provider_import(id).ok_or("provider import")?;
-            thunk32::write(id, crate::child_loader::provider_thunk_kind(import), &mut self.provider_thunks[start..start + thunk32::THUNK_BYTES])?;
+            thunk32::write(
+                id,
+                crate::child_loader::provider_thunk_kind(import),
+                &mut self.provider_thunks[start..start + thunk32::THUNK_BYTES],
+            )?;
         }
-        Ok((addresses, old_bytes, new_bytes, self.provider_thunks[old_bytes..].to_vec()))
+        Ok((
+            addresses,
+            old_bytes,
+            new_bytes,
+            updated_from,
+            self.provider_thunks[updated_from..].to_vec(),
+        ))
     }
 
     /// Handle one import VMCALL and return the value for EAX.
@@ -1430,11 +1507,7 @@ impl XpProcess {
         u32::try_from(entry_count).map_err(|_| "palette entry count overflow")
     }
 
-    fn set_text_color(
-        &mut self,
-        esp: u32,
-        memory: &impl GuestMemory,
-    ) -> Result<u32, &'static str> {
+    fn set_text_color(&mut self, esp: u32, memory: &impl GuestMemory) -> Result<u32, &'static str> {
         let [ret, hdc, color] = arguments::<3>(memory, esp)?;
         let Some(GdiObject::DeviceContext(dc)) = self.gdi_objects.get_mut(&hdc) else {
             return Ok(u32::MAX);
@@ -1445,11 +1518,7 @@ impl XpProcess {
         Ok(old)
     }
 
-    fn set_bk_color(
-        &mut self,
-        esp: u32,
-        memory: &impl GuestMemory,
-    ) -> Result<u32, &'static str> {
+    fn set_bk_color(&mut self, esp: u32, memory: &impl GuestMemory) -> Result<u32, &'static str> {
         let [ret, hdc, color] = arguments::<3>(memory, esp)?;
         let Some(GdiObject::DeviceContext(dc)) = self.gdi_objects.get_mut(&hdc) else {
             return Ok(u32::MAX);
@@ -1460,11 +1529,7 @@ impl XpProcess {
         Ok(old)
     }
 
-    fn set_bk_mode(
-        &mut self,
-        esp: u32,
-        memory: &impl GuestMemory,
-    ) -> Result<u32, &'static str> {
+    fn set_bk_mode(&mut self, esp: u32, memory: &impl GuestMemory) -> Result<u32, &'static str> {
         let [_, hdc, mode] = arguments::<3>(memory, esp)?;
         if !matches!(mode, TRANSPARENT | OPAQUE) {
             return Ok(0);
@@ -2145,9 +2210,7 @@ impl XpProcess {
 
     pub fn text_state(&self, handle: u32) -> Option<(u32, u32, u32)> {
         match self.gdi_objects.get(&handle) {
-            Some(GdiObject::DeviceContext(dc)) => {
-                Some((dc.text_color, dc.bk_color, dc.bk_mode))
-            }
+            Some(GdiObject::DeviceContext(dc)) => Some((dc.text_color, dc.bk_color, dc.bk_mode)),
             _ => None,
         }
     }
@@ -3561,10 +3624,7 @@ mod tests {
             bytes: vec![0; STACK_BYTES],
         };
         let esp = 0x043f_f700;
-        for (index, value) in [0x0040_17aa, hdc, 0x0000_c8f0]
-            .into_iter()
-            .enumerate()
-        {
+        for (index, value) in [0x0040_17aa, hdc, 0x0000_c8f0].into_iter().enumerate() {
             write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
         }
 
@@ -3622,10 +3682,7 @@ mod tests {
             bytes: vec![0; STACK_BYTES],
         };
         let esp = 0x043f_f700;
-        for (index, value) in [0x0040_17b3, hdc, 0]
-            .into_iter()
-            .enumerate()
-        {
+        for (index, value) in [0x0040_17b3, hdc, 0].into_iter().enumerate() {
             write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
         }
         assert_eq!(
@@ -3645,10 +3702,13 @@ mod tests {
             xp.dispatch(2, 0, esp, &mut memory).unwrap(),
             PersonalityAction::Return(0)
         );
-        assert_eq!(xp.gdi_objects.get(&hdc).and_then(|value| match value {
-            GdiObject::DeviceContext(dc) => Some(dc.bk_color),
-            _ => None,
-        }), Some(0x0012_3456));
+        assert_eq!(
+            xp.gdi_objects.get(&hdc).and_then(|value| match value {
+                GdiObject::DeviceContext(dc) => Some(dc.bk_color),
+                _ => None,
+            }),
+            Some(0x0012_3456)
+        );
 
         write_u32(&mut memory, esp + 4, STOCK_MONO_BITMAP).unwrap();
         assert_eq!(
@@ -3672,10 +3732,7 @@ mod tests {
             bytes: vec![0; STACK_BYTES],
         };
         let esp = 0x043f_f700;
-        for (index, value) in [0x0040_1561, 0]
-            .into_iter()
-            .enumerate()
-        {
+        for (index, value) in [0x0040_1561, 0].into_iter().enumerate() {
             write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
         }
         let memory_hdc = xp.create_compatible_dc(esp, &memory).unwrap();
@@ -3720,10 +3777,12 @@ mod tests {
             PersonalityAction::Return(0)
         );
         assert_eq!(
-            xp.gdi_objects.get(&paint_hdc).and_then(|value| match value {
-                GdiObject::DeviceContext(dc) => Some(dc.bk_mode),
-                _ => None,
-            }),
+            xp.gdi_objects
+                .get(&paint_hdc)
+                .and_then(|value| match value {
+                    GdiObject::DeviceContext(dc) => Some(dc.bk_mode),
+                    _ => None,
+                }),
             Some(OPAQUE)
         );
 
@@ -3868,13 +3927,17 @@ mod tests {
         let pid1 = XpProcess::new(Vec::new());
         let mut pid2 = XpProcess::new(Vec::new());
         pid2.install_provider_surface(vec![provider], Vec::new(), Vec::new());
-        let mut memory = Memory { base: STACK_BASE, bytes: vec![0; STACK_BYTES] };
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
         let esp = STACK_TOP - 0x40;
         let critical_section = STACK_TOP - 0x100;
         write_u32(&mut memory, esp, 0x1501_fbd3).unwrap();
         write_u32(&mut memory, esp + 4, critical_section).unwrap();
         assert_eq!(
-            pid2.dispatch_provider_for_process(2, 3, 0, esp, &mut memory).unwrap(),
+            pid2.dispatch_provider_for_process(2, 3, 0, esp, &mut memory)
+                .unwrap(),
             PersonalityAction::Return(0)
         );
         assert!(pid2.critical_sections.contains_key(&critical_section));
@@ -3891,13 +3954,17 @@ mod tests {
         };
         let mut pid2 = XpProcess::new(Vec::new());
         pid2.install_provider_surface(vec![provider], Vec::new(), Vec::new());
-        let mut memory = Memory { base: STACK_BASE, bytes: vec![0x5a; STACK_BYTES] };
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0x5a; STACK_BYTES],
+        };
         let esp = STACK_TOP - 0x40;
         write_u32(&mut memory, esp, 0x1502_e393).unwrap();
         write_u32(&mut memory, esp + 4, 0x1234_5678).unwrap();
         let before = memory.bytes.clone();
         assert_eq!(
-            pid2.dispatch_provider_for_process(2, 3, 0, esp, &mut memory).unwrap(),
+            pid2.dispatch_provider_for_process(2, 3, 0, esp, &mut memory)
+                .unwrap(),
             PersonalityAction::Return(0)
         );
         assert_eq!(pid2.last_error, 0x1234_5678);
@@ -3915,11 +3982,15 @@ mod tests {
         let mut pid2 = XpProcess::new(Vec::new());
         pid1.set_last_error(0xfeed_face);
         pid2.install_provider_surface(vec![provider], Vec::new(), Vec::new());
-        let mut memory = Memory { base: STACK_BASE, bytes: vec![0; STACK_BYTES] };
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
         let esp = STACK_TOP - 0x40;
         write_u32(&mut memory, esp, 0x1502_e393).unwrap();
         write_u32(&mut memory, esp + 4, 0x1234_5678).unwrap();
-        pid2.dispatch_provider_for_process(2, 3, 0, esp, &mut memory).unwrap();
+        pid2.dispatch_provider_for_process(2, 3, 0, esp, &mut memory)
+            .unwrap();
         assert_eq!(pid1.last_error, 0xfeed_face);
         assert_eq!(pid2.last_error, 0x1234_5678);
     }
@@ -3934,7 +4005,38 @@ mod tests {
         let second = pid2.crt_malloc(1).unwrap().unwrap();
         assert_eq!(second.pointer, CHILD_CRT_HEAP_BASE + 0x80);
         assert_eq!(second.end, CHILD_CRT_HEAP_BASE + 0x88);
-        assert_eq!(pid1.crt_malloc(0x80).unwrap().unwrap().pointer, CHILD_CRT_HEAP_BASE);
+        assert_eq!(
+            pid1.crt_malloc(0x80).unwrap().unwrap().pointer,
+            CHILD_CRT_HEAP_BASE
+        );
+    }
+
+    #[test]
+    fn appended_provider_updates_the_existing_thunk_page_tail() {
+        let mut xp = XpProcess::new(Vec::new());
+        let existing = (0..337)
+            .map(|index| ProviderImport {
+                module: "KERNEL32.dll".into(),
+                symbol: ProviderSymbol::Name(format!("existing_{index}")),
+                iat_rva: 0,
+            })
+            .collect::<Vec<_>>();
+        xp.install_provider_surface(existing, vec![0x90; 0x1000], Vec::new());
+        let malloc = ProviderImport {
+            module: "MSVCRT.dll".into(),
+            symbol: ProviderSymbol::Name("malloc".into()),
+            iat_rva: 0,
+        };
+        let (addresses, old_bytes, new_bytes, updated_from, updated) =
+            xp.append_provider_imports(vec![malloc]).unwrap();
+        assert_eq!(addresses, vec![thunk32::address(337).unwrap()]);
+        assert_eq!(old_bytes, 0x1000);
+        assert_eq!(new_bytes, 0x1000);
+        assert_eq!(updated_from, 337 * thunk32::THUNK_BYTES);
+        assert_eq!(
+            &updated[..9],
+            &[0xb8, 0x51, 0x01, 0, 0, 0x0f, 0x01, 0xc1, 0xc3]
+        );
     }
 
     #[test]
@@ -3946,13 +4048,17 @@ mod tests {
         };
         let mut pid2 = XpProcess::new(Vec::new());
         pid2.install_provider_surface(vec![provider], Vec::new(), Vec::new());
-        let mut memory = Memory { base: STACK_BASE, bytes: vec![0x5a; STACK_BYTES] };
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0x5a; STACK_BYTES],
+        };
         let esp = STACK_TOP - 0x40;
         write_u32(&mut memory, esp, 0x1503_62e0).unwrap();
         write_u32(&mut memory, esp + 4, 0x80).unwrap();
         let before = memory.bytes.clone();
         assert_eq!(
-            pid2.dispatch_provider_for_process(2, 3, 0, esp, &mut memory).unwrap(),
+            pid2.dispatch_provider_for_process(2, 3, 0, esp, &mut memory)
+                .unwrap(),
             PersonalityAction::Return(CHILD_CRT_HEAP_BASE)
         );
         assert_eq!(memory.bytes, before);
@@ -3967,7 +4073,10 @@ mod tests {
         };
         let mut pid2 = XpProcess::new(Vec::new());
         pid2.install_provider_surface(vec![provider], Vec::new(), Vec::new());
-        let mut memory = Memory { base: STACK_BASE, bytes: vec![0x5a; STACK_BYTES] };
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0x5a; STACK_BYTES],
+        };
         let before = memory.bytes.clone();
         assert_eq!(
             pid2.dispatch_provider_for_process(2, 3, 0, STACK_TOP - 0x40, &mut memory),

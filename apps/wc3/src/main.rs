@@ -1,25 +1,26 @@
-use std::{collections::{HashMap, HashSet}, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    time::Duration,
+};
 
 use sha2::{Digest, Sha256};
 use trueos::{
     async_fs,
     logl::{self, level},
-    ui4_scene::{self, rgba, Damage, Font, Frame, SceneTextRow},
+    ui4_scene::{self, Damage, Font, Frame, SceneTextRow, rgba},
     x86::{AddressSpace, Context, ExitKind, Permissions, Registers},
 };
 use wc3::{
-    child_loader,
-    EXPECTED_SHA256, LAUNCHER_PATH,
+    EXPECTED_SHA256, LAUNCHER_PATH, child_loader,
     imports::WinCall,
     pe32,
     process::{
         CHILD_CRT_HEAP_BASE, CHILD_CRT_HEAP_LIMIT, GuestMemory, PreparedProcess, STACK_BASE,
-        STACK_BYTES, STACK_TOP, ThreadObject,
-        bmp_file_from_dib, dib_layout,
+        STACK_BYTES, STACK_TOP, ThreadObject, bmp_file_from_dib, dib_layout,
     },
     session::{
-        GuestCall, LAUNCHER_PID, LAUNCHER_TID, PersonalityAction, SessionRequest,
-        SessionObject, ThreadKey, WINDOW_HANDLE_BASE, Wc3Session, WindowPresentation,
+        GuestCall, LAUNCHER_PID, LAUNCHER_TID, PersonalityAction, SessionObject, SessionRequest,
+        ThreadKey, WINDOW_HANDLE_BASE, Wc3Session, WindowPresentation,
     },
     thunk32,
 };
@@ -50,43 +51,98 @@ fn main() {
 }
 
 fn registry_encoding(bytes: &[u8]) -> &'static str {
-    if bytes.starts_with(&[0xff, 0xfe]) { "utf16le" }
-    else if bytes.starts_with(&[0xef, 0xbb, 0xbf]) || bytes.is_ascii() { "utf8" }
-    else { "unknown" }
+    if bytes.starts_with(&[0xff, 0xfe]) {
+        "utf16le"
+    } else if bytes.starts_with(&[0xef, 0xbb, 0xbf]) || bytes.is_ascii() {
+        "utf8"
+    } else {
+        "unknown"
+    }
 }
 
 async fn ensure_registry_loaded(session: &mut Wc3Session) -> Result<(), String> {
-    if matches!(session.registry, wc3::session::RegistryState::Ready(_)) { return Ok(()); }
+    if matches!(session.registry, wc3::session::RegistryState::Ready(_)) {
+        return Ok(());
+    }
     let path = String::from_utf8_lossy(WC3_REGISTRY_IMAGE_PATH);
-    logl::log(level::IMPORTANT, format_args!(
-        "WC3 REGISTRY LOAD BEGIN path=\"{}\" trigger=\"ADVAPI32!RegOpenKeyExA\"", path
-    ));
-    let metadata = async_fs::metadata(WC3_REGISTRY_IMAGE_PATH).await.map_err(|error| {
-        logl::log(level::IMPORTANT, format_args!("WC3 REGISTRY LOAD FAILED phase=metadata path=\"{}\" error={error}", path));
-        format!("registry metadata: TRUEOSFS error {error}")
-    })?;
-    logl::log(level::IMPORTANT, format_args!("WC3 REGISTRY LOAD META bytes={}", metadata.len));
-    logl::log(level::IMPORTANT, format_args!("WC3 REGISTRY LOAD READ BEGIN"));
-    let bytes = async_fs::read_file(WC3_REGISTRY_IMAGE_PATH).await.map_err(|error| {
-        logl::log(level::IMPORTANT, format_args!("WC3 REGISTRY LOAD FAILED phase=read path=\"{}\" error={error}", path));
-        format!("registry read: TRUEOSFS error {error}")
-    })?;
-    logl::log(level::IMPORTANT, format_args!("WC3 REGISTRY LOAD READ COMPLETE bytes={}", bytes.len()));
-    logl::log(level::IMPORTANT, format_args!("WC3 REGISTRY INDEX BEGIN bytes={} encoding={} mode=keys-only", bytes.len(), registry_encoding(&bytes)));
+    logl::log(
+        level::IMPORTANT,
+        format_args!(
+            "WC3 REGISTRY LOAD BEGIN path=\"{}\" trigger=\"ADVAPI32!RegOpenKeyExA\"",
+            path
+        ),
+    );
+    let metadata = async_fs::metadata(WC3_REGISTRY_IMAGE_PATH)
+        .await
+        .map_err(|error| {
+            logl::log(
+                level::IMPORTANT,
+                format_args!(
+                    "WC3 REGISTRY LOAD FAILED phase=metadata path=\"{}\" error={error}",
+                    path
+                ),
+            );
+            format!("registry metadata: TRUEOSFS error {error}")
+        })?;
+    logl::log(
+        level::IMPORTANT,
+        format_args!("WC3 REGISTRY LOAD META bytes={}", metadata.len),
+    );
+    logl::log(
+        level::IMPORTANT,
+        format_args!("WC3 REGISTRY LOAD READ BEGIN"),
+    );
+    let bytes = async_fs::read_file(WC3_REGISTRY_IMAGE_PATH)
+        .await
+        .map_err(|error| {
+            logl::log(
+                level::IMPORTANT,
+                format_args!(
+                    "WC3 REGISTRY LOAD FAILED phase=read path=\"{}\" error={error}",
+                    path
+                ),
+            );
+            format!("registry read: TRUEOSFS error {error}")
+        })?;
+    logl::log(
+        level::IMPORTANT,
+        format_args!("WC3 REGISTRY LOAD READ COMPLETE bytes={}", bytes.len()),
+    );
+    logl::log(
+        level::IMPORTANT,
+        format_args!(
+            "WC3 REGISTRY INDEX BEGIN bytes={} encoding={} mode=keys-only",
+            bytes.len(),
+            registry_encoding(&bytes)
+        ),
+    );
     let registry_bytes = bytes.len();
     let registry_encoding = registry_encoding(&bytes);
     let image = wc3::session::RegistryImage::index(bytes, |scanned, keys| {
-        logl::log(level::IMPORTANT, format_args!("WC3 REGISTRY INDEX PROGRESS bytes_scanned={} keys={}", scanned, keys));
-    }).map_err(|error| {
-        logl::log(level::IMPORTANT, format_args!("WC3 REGISTRY LOAD FAILED phase=parse error=\"{}\"", error));
+        logl::log(
+            level::IMPORTANT,
+            format_args!(
+                "WC3 REGISTRY INDEX PROGRESS bytes_scanned={} keys={}",
+                scanned, keys
+            ),
+        );
+    })
+    .map_err(|error| {
+        logl::log(
+            level::IMPORTANT,
+            format_args!("WC3 REGISTRY LOAD FAILED phase=parse error=\"{}\"", error),
+        );
         error.to_owned()
     })?;
     let (roots, keys) = image.stats();
     session.registry = wc3::session::RegistryState::Ready(image);
-    logl::log(level::IMPORTANT, format_args!(
-        "WC3 REGISTRY INDEX READY path=\"{}\" bytes={} encoding={} roots={} keys={} values=lazy representation=flat-spans backing=host-ram guest_mapped=0",
-        path, registry_bytes, registry_encoding, roots, keys
-    ));
+    logl::log(
+        level::IMPORTANT,
+        format_args!(
+            "WC3 REGISTRY INDEX READY path=\"{}\" bytes={} encoding={} roots={} keys={} values=lazy representation=flat-spans backing=host-ram guest_mapped=0",
+            path, registry_bytes, registry_encoding, roots, keys
+        ),
+    );
     Ok(())
 }
 
@@ -175,7 +231,10 @@ async fn run() -> Result<(), String> {
             contexts[active].context.run().await
         }
         .map_err(|error| error.to_string())?;
-        let active_key = contexts.get(active).ok_or_else(|| "active guest context missing".to_owned())?.key();
+        let active_key = contexts
+            .get(active)
+            .ok_or_else(|| "active guest context missing".to_owned())?
+            .key();
         match exit.kind {
             // A transient VMCS always starts with VMLAUNCH.  Its preemption
             // timer is therefore a Blueprint scheduling boundary, not an x86
@@ -189,84 +248,145 @@ async fn run() -> Result<(), String> {
                 let active_pid = active_key.pid;
                 let active_tid = active_key.tid;
                 if active_pid != LAUNCHER_PID {
-                    let child = pending_child.as_mut().filter(|child| child.pid == active_pid && child.tid == active_tid)
+                    let child = pending_child
+                        .as_mut()
+                        .filter(|child| child.pid == active_pid && child.tid == active_tid)
                         .ok_or_else(|| "active child address space missing".to_owned())?;
                     if exit.registers.eip == thunk32::CHILD_DLL_RETURN_AFTER_VMCALL {
                         let native_index = match child.execution {
                             ChildExecutionState::DllInitRunning { native_index } => native_index,
-                            ChildExecutionState::Loader => return Err("child DLL return while execution=loader".into()),
-                            ChildExecutionState::DllInitReady { .. } => return Err("child DLL return while DLL init is not running".into()),
+                            ChildExecutionState::Loader => {
+                                return Err("child DLL return while execution=loader".into());
+                            }
+                            ChildExecutionState::DllInitReady { .. } => {
+                                return Err("child DLL return while DLL init is not running".into());
+                            }
                         };
-                        let module = child.native_modules.get(native_index)
+                        let module = child
+                            .native_modules
+                            .get(native_index)
                             .ok_or_else(|| "child DLL return native index".to_owned())?;
                         let module_name = module.stored.clone();
                         let success = exit.registers.eax != 0;
-                        logl::log(level::IMPORTANT, format_args!(
-                            "WC3 CHILD DLL INIT RETURN pid={} tid={} module=\"{}\" eax=0x{:08x} success={}",
-                            active_pid, active_tid, module_name, exit.registers.eax, success as u8
-                        ));
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD DLL INIT RETURN pid={} tid={} module=\"{}\" eax=0x{:08x} success={}",
+                                active_pid,
+                                active_tid,
+                                module_name,
+                                exit.registers.eax,
+                                success as u8
+                            ),
+                        );
                         if !success {
-                            logl::log(level::IMPORTANT, format_args!(
-                                "WC3 CHILD DLL INIT FAILED pid={} module=\"{}\" reason=DLL_PROCESS_ATTACH-returned-FALSE",
-                                active_pid, module_name
-                            ));
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD DLL INIT FAILED pid={} module=\"{}\" reason=DLL_PROCESS_ATTACH-returned-FALSE",
+                                    active_pid, module_name
+                                ),
+                            );
                             return Ok(());
                         }
                         child.native_modules[native_index].initialized = true;
-                        logl::log(level::IMPORTANT, format_args!(
-                            "WC3 CHILD NATIVE MODULE INITIALIZED pid={} module=\"{}\" base=0x{:08x} initialized=1",
-                            active_pid, module_name, child.native_modules[native_index].image.image_base
-                        ));
-                        let Some(next_index) = child.native_modules.iter().position(|module| !module.initialized) else {
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD NATIVE MODULE INITIALIZED pid={} module=\"{}\" base=0x{:08x} initialized=1",
+                                active_pid,
+                                module_name,
+                                child.native_modules[native_index].image.image_base
+                            ),
+                        );
+                        let Some(next_index) = child
+                            .native_modules
+                            .iter()
+                            .position(|module| !module.initialized)
+                        else {
                             return Ok(());
                         };
                         let next = &child.native_modules[next_index];
                         let next_name = next.stored.clone();
-                        let next_entry = next.image.image_base.checked_add(next.image.entry_rva)
+                        let next_entry = next
+                            .image
+                            .image_base
+                            .checked_add(next.image.entry_rva)
                             .ok_or_else(|| "child DLL entry overflow".to_owned())?;
-                        child.execution = ChildExecutionState::DllInitReady { native_index: next_index };
-                        logl::log(level::IMPORTANT, format_args!(
-                            "WC3 CHILD EXECUTION STATE pid={} tid={} state=dll-init-ready module=\"{}\" context_created=1",
-                            active_pid, active_tid, next_name
-                        ));
-                        logl::log(level::IMPORTANT, format_args!(
-                            "WC3 CHILD DLL INIT FRONTIER pid={} tid={} module=\"{}\" entry_va=0x{:08x} reason=previous-dll-returned-context-not-reconfigured",
-                            active_pid, active_tid, next_name, next_entry
-                        ));
+                        child.execution = ChildExecutionState::DllInitReady {
+                            native_index: next_index,
+                        };
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD EXECUTION STATE pid={} tid={} state=dll-init-ready module=\"{}\" context_created=1",
+                                active_pid, active_tid, next_name
+                            ),
+                        );
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD DLL INIT FRONTIER pid={} tid={} module=\"{}\" entry_va=0x{:08x} reason=previous-dll-returned-context-not-reconfigured",
+                                active_pid, active_tid, next_name, next_entry
+                            ),
+                        );
                         return Ok(());
                     }
                     if exit.registers.eip == thunk32::CHILD_THREAD_EXIT_AFTER_VMCALL {
                         let (_, module) = child_execution_module(child).map_err(str::to_owned)?;
-                        logl::log(level::IMPORTANT, format_args!(
-                            "WC3 CHILD CONTROL FRONTIER pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" kind=thread-exit",
-                            active_pid, active_tid, module.stored
-                        ));
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD CONTROL FRONTIER pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" kind=thread-exit",
+                                active_pid, active_tid, module.stored
+                            ),
+                        );
                         return Ok(());
                     }
                     if exit.registers.eip == thunk32::CHILD_CALLBACK_RETURN_AFTER_VMCALL {
                         let (_, module) = child_execution_module(child).map_err(str::to_owned)?;
-                        logl::log(level::IMPORTANT, format_args!(
-                            "WC3 CHILD CONTROL FRONTIER pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" kind=callback-return",
-                            active_pid, active_tid, module.stored
-                        ));
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD CONTROL FRONTIER pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" kind=callback-return",
+                                active_pid, active_tid, module.stored
+                            ),
+                        );
                         return Ok(());
                     }
                     let (_, running_module) = match child.execution {
-                        ChildExecutionState::DllInitRunning { .. } => child_execution_module(child).map_err(str::to_owned)?,
-                        ChildExecutionState::Loader => return Err("child provider trap while execution=loader".into()),
-                        ChildExecutionState::DllInitReady { .. } => return Err("child provider trap while DLL init is not running".into()),
+                        ChildExecutionState::DllInitRunning { .. } => {
+                            child_execution_module(child).map_err(str::to_owned)?
+                        }
+                        ChildExecutionState::Loader => {
+                            return Err("child provider trap while execution=loader".into());
+                        }
+                        ChildExecutionState::DllInitReady { .. } => {
+                            return Err("child provider trap while DLL init is not running".into());
+                        }
                     };
                     let running_module_name = running_module.stored.clone();
                     let provider_id = exit.registers.eax;
-                    let provider = session.process(active_pid)
+                    let provider = session
+                        .process(active_pid)
                         .and_then(|process| process.xp.provider_import(provider_id))
                         .cloned()
-                        .ok_or_else(|| format!("unknown child provider trap pid={} tid={} id={}", active_pid, active_tid, provider_id))?;
+                        .ok_or_else(|| {
+                            format!(
+                                "unknown child provider trap pid={} tid={} id={}",
+                                active_pid, active_tid, provider_id
+                            )
+                        })?;
                     let mut caller_ret = [0; 4];
-                    child.address_space.read(exit.registers.esp, &mut caller_ret).map_err(|error| error.to_string())?;
+                    child
+                        .address_space
+                        .read(exit.registers.esp, &mut caller_ret)
+                        .map_err(|error| error.to_string())?;
                     let symbol = match &provider.symbol {
                         child_loader::ProviderSymbol::Name(name) => format!("symbol=\"{}\"", name),
-                        child_loader::ProviderSymbol::Ordinal(ordinal) => format!("ordinal={}", ordinal),
+                        child_loader::ProviderSymbol::Ordinal(ordinal) => {
+                            format!("ordinal={}", ordinal)
+                        }
                     };
                     let is_initialize_critical_section = matches!(
                         &provider.symbol,
@@ -275,40 +395,89 @@ async fn run() -> Result<(), String> {
                                 && name == "InitializeCriticalSection"
                     );
                     if is_initialize_critical_section {
-                        let argument = exit.registers.esp.checked_add(4)
-                            .ok_or_else(|| "child provider argument address overflow".to_owned())?;
+                        let argument =
+                            exit.registers.esp.checked_add(4).ok_or_else(|| {
+                                "child provider argument address overflow".to_owned()
+                            })?;
                         let mut critical_section = [0; 4];
-                        child.address_space.read(argument, &mut critical_section).map_err(|error| error.to_string())?;
+                        child
+                            .address_space
+                            .read(argument, &mut critical_section)
+                            .map_err(|error| error.to_string())?;
                         let critical_section = u32::from_le_bytes(critical_section);
-                        logl::log(level::IMPORTANT, format_args!(
-                            "WC3 CHILD PROVIDER CALL pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" provider_id={} module=\"{}\" symbol=\"InitializeCriticalSection\" esp=0x{:08x} critical_section=0x{:08x}",
-                            active_pid, active_tid, running_module_name, provider_id, provider.module,
-                            exit.registers.esp, critical_section
-                        ));
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD PROVIDER CALL pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" provider_id={} module=\"{}\" symbol=\"InitializeCriticalSection\" esp=0x{:08x} critical_section=0x{:08x}",
+                                active_pid,
+                                active_tid,
+                                running_module_name,
+                                provider_id,
+                                provider.module,
+                                exit.registers.esp,
+                                critical_section
+                            ),
+                        );
                         let mut child_memory = X86Memory(&child.address_space);
-                        let action = session.process_mut(active_pid)
+                        let action = session
+                            .process_mut(active_pid)
                             .ok_or_else(|| "child process missing".to_owned())?
                             .xp
-                            .dispatch_provider_for_process(active_pid, active_tid, provider_id, exit.registers.esp, &mut child_memory)
+                            .dispatch_provider_for_process(
+                                active_pid,
+                                active_tid,
+                                provider_id,
+                                exit.registers.esp,
+                                &mut child_memory,
+                            )
                             .map_err(str::to_owned)?;
                         let PersonalityAction::Return(value) = action else {
-                            return Err("InitializeCriticalSection child provider did not return".into());
+                            return Err(
+                                "InitializeCriticalSection child provider did not return".into()
+                            );
                         };
                         let mut initialized = [0; 0x18];
-                        child.address_space.read(critical_section, &mut initialized).map_err(|error| error.to_string())?;
-                        let lock_count = u32::from_le_bytes(initialized[4..8].try_into().map_err(|_| "critical-section lock count")?);
-                        let recursion = u32::from_le_bytes(initialized[8..12].try_into().map_err(|_| "critical-section recursion")?);
-                        let owner = u32::from_le_bytes(initialized[12..16].try_into().map_err(|_| "critical-section owner")?);
+                        child
+                            .address_space
+                            .read(critical_section, &mut initialized)
+                            .map_err(|error| error.to_string())?;
+                        let lock_count = u32::from_le_bytes(
+                            initialized[4..8]
+                                .try_into()
+                                .map_err(|_| "critical-section lock count")?,
+                        );
+                        let recursion = u32::from_le_bytes(
+                            initialized[8..12]
+                                .try_into()
+                                .map_err(|_| "critical-section recursion")?,
+                        );
+                        let owner = u32::from_le_bytes(
+                            initialized[12..16]
+                                .try_into()
+                                .map_err(|_| "critical-section owner")?,
+                        );
                         if lock_count != u32::MAX || recursion != 0 || owner != 0 {
-                            return Err("child critical-section initialization verification failed".into());
+                            return Err(
+                                "child critical-section initialization verification failed".into(),
+                            );
                         }
-                        logl::log(level::IMPORTANT, format_args!(
-                            "WC3 CHILD CRITICAL SECTION INIT pid={} address=0x{:08x} lock_count=0xffffffff recursion=0 owner=0 caller_ret=0x{:08x} resume_eip=0x{:08x} return_eax=0x{:08x}",
-                            active_pid, critical_section, u32::from_le_bytes(caller_ret), exit.registers.eip, value
-                        ));
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD CRITICAL SECTION INIT pid={} address=0x{:08x} lock_count=0xffffffff recursion=0 owner=0 caller_ret=0x{:08x} resume_eip=0x{:08x} return_eax=0x{:08x}",
+                                active_pid,
+                                critical_section,
+                                u32::from_le_bytes(caller_ret),
+                                exit.registers.eip,
+                                value
+                            ),
+                        );
                         let mut registers = exit.registers;
                         registers.eax = value;
-                        contexts[active].context.set_registers(registers).map_err(|error| error.to_string())?;
+                        contexts[active]
+                            .context
+                            .set_registers(registers)
+                            .map_err(|error| error.to_string())?;
                         continue;
                     }
                     let is_set_last_error = matches!(
@@ -318,32 +487,58 @@ async fn run() -> Result<(), String> {
                                 && name == "SetLastError"
                     );
                     if is_set_last_error {
-                        let argument = exit.registers.esp.checked_add(4)
-                            .ok_or_else(|| "child provider argument address overflow".to_owned())?;
+                        let argument =
+                            exit.registers.esp.checked_add(4).ok_or_else(|| {
+                                "child provider argument address overflow".to_owned()
+                            })?;
                         let mut value = [0; 4];
-                        child.address_space.read(argument, &mut value).map_err(|error| error.to_string())?;
+                        child
+                            .address_space
+                            .read(argument, &mut value)
+                            .map_err(|error| error.to_string())?;
                         let value = u32::from_le_bytes(value);
-                        logl::log(level::IMPORTANT, format_args!(
-                            "WC3 CHILD PROVIDER CALL pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" provider_id={} module=\"{}\" symbol=\"SetLastError\" esp=0x{:08x} value=0x{:08x}",
-                            active_pid, active_tid, running_module_name, provider_id, provider.module,
-                            exit.registers.esp, value
-                        ));
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD PROVIDER CALL pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" provider_id={} module=\"{}\" symbol=\"SetLastError\" esp=0x{:08x} value=0x{:08x}",
+                                active_pid,
+                                active_tid,
+                                running_module_name,
+                                provider_id,
+                                provider.module,
+                                exit.registers.esp,
+                                value
+                            ),
+                        );
                         let mut child_memory = X86Memory(&child.address_space);
-                        let action = session.process_mut(active_pid)
+                        let action = session
+                            .process_mut(active_pid)
                             .ok_or_else(|| "child process missing".to_owned())?
                             .xp
-                            .dispatch_provider_for_process(active_pid, active_tid, provider_id, exit.registers.esp, &mut child_memory)
+                            .dispatch_provider_for_process(
+                                active_pid,
+                                active_tid,
+                                provider_id,
+                                exit.registers.esp,
+                                &mut child_memory,
+                            )
                             .map_err(str::to_owned)?;
                         let PersonalityAction::Return(result) = action else {
                             return Err("SetLastError child provider did not return".into());
                         };
-                        logl::log(level::IMPORTANT, format_args!(
-                            "WC3 CHILD LAST ERROR SET pid={} tid={} value=0x{:08x}",
-                            active_pid, active_tid, value
-                        ));
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD LAST ERROR SET pid={} tid={} value=0x{:08x}",
+                                active_pid, active_tid, value
+                            ),
+                        );
                         let mut registers = exit.registers;
                         registers.eax = result;
-                        contexts[active].context.set_registers(registers).map_err(|error| error.to_string())?;
+                        contexts[active]
+                            .context
+                            .set_registers(registers)
+                            .map_err(|error| error.to_string())?;
                         continue;
                     }
                     let is_crt_malloc = matches!(
@@ -353,47 +548,88 @@ async fn run() -> Result<(), String> {
                                 && name == "malloc"
                     );
                     if is_crt_malloc {
-                        let argument = exit.registers.esp.checked_add(4)
-                            .ok_or_else(|| "child provider argument address overflow".to_owned())?;
+                        let argument =
+                            exit.registers.esp.checked_add(4).ok_or_else(|| {
+                                "child provider argument address overflow".to_owned()
+                            })?;
                         let mut size = [0; 4];
-                        child.address_space.read(argument, &mut size).map_err(|error| error.to_string())?;
+                        child
+                            .address_space
+                            .read(argument, &mut size)
+                            .map_err(|error| error.to_string())?;
                         let size = u32::from_le_bytes(size);
                         if size == 0 {
-                            logl::log(level::IMPORTANT, format_args!(
-                                "WC3 CHILD PROVIDER FRONTIER pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" provider_id={} module=\"{}\" symbol=\"malloc\" reason=zero-size-unobserved",
-                                active_pid, active_tid, running_module_name, provider_id, provider.module,
-                            ));
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD PROVIDER FRONTIER pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" provider_id={} module=\"{}\" symbol=\"malloc\" reason=zero-size-unobserved",
+                                    active_pid,
+                                    active_tid,
+                                    running_module_name,
+                                    provider_id,
+                                    provider.module,
+                                ),
+                            );
                             return Ok(());
                         }
                         let mut child_memory = X86Memory(&child.address_space);
-                        let action = session.process_mut(active_pid)
+                        let action = session
+                            .process_mut(active_pid)
                             .ok_or_else(|| "child process missing".to_owned())?
                             .xp
-                            .dispatch_provider_for_process(active_pid, active_tid, provider_id, exit.registers.esp, &mut child_memory)
+                            .dispatch_provider_for_process(
+                                active_pid,
+                                active_tid,
+                                provider_id,
+                                exit.registers.esp,
+                                &mut child_memory,
+                            )
                             .map_err(str::to_owned)?;
                         let PersonalityAction::Return(pointer) = action else {
                             return Err("malloc child provider did not return".into());
                         };
                         if pointer == 0 {
-                            logl::log(level::IMPORTANT, format_args!(
-                                "WC3 CHILD CRT MALLOC pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" size={} pointer=0x00000000 result=out-of-memory",
-                                active_pid, active_tid, running_module_name, size,
-                            ));
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD CRT MALLOC pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" size={} pointer=0x00000000 result=out-of-memory",
+                                    active_pid, active_tid, running_module_name, size,
+                                ),
+                            );
                         } else {
-                            let mapped_end = ensure_child_crt_allocation_mapped(child, pointer, size)?;
-                            if pointer == 1 || pointer % 8 != 0 || pointer < CHILD_CRT_HEAP_BASE
-                                || pointer.checked_add(size).filter(|end| *end <= CHILD_CRT_HEAP_LIMIT && *end <= mapped_end).is_none()
+                            let mapped_end =
+                                ensure_child_crt_allocation_mapped(child, pointer, size)?;
+                            if pointer == 1
+                                || pointer % 8 != 0
+                                || pointer < CHILD_CRT_HEAP_BASE
+                                || pointer
+                                    .checked_add(size)
+                                    .filter(|end| {
+                                        *end <= CHILD_CRT_HEAP_LIMIT && *end <= mapped_end
+                                    })
+                                    .is_none()
                             {
                                 return Err("child CRT malloc pointer verification failed".into());
                             }
-                            logl::log(level::IMPORTANT, format_args!(
-                                "WC3 CHILD CRT MALLOC pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" size={} pointer=0x{:08x} mapped_end=0x{:08x}",
-                                active_pid, active_tid, running_module_name, size, pointer, mapped_end,
-                            ));
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD CRT MALLOC pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" size={} pointer=0x{:08x} mapped_end=0x{:08x}",
+                                    active_pid,
+                                    active_tid,
+                                    running_module_name,
+                                    size,
+                                    pointer,
+                                    mapped_end,
+                                ),
+                            );
                         }
                         let mut registers = exit.registers;
                         registers.eax = pointer;
-                        contexts[active].context.set_registers(registers).map_err(|error| error.to_string())?;
+                        contexts[active]
+                            .context
+                            .set_registers(registers)
+                            .map_err(|error| error.to_string())?;
                         continue;
                     }
                     let is_reg_open_key_ex_a = matches!(
@@ -409,46 +645,83 @@ async fn run() -> Result<(), String> {
                             return Err("RegOpenKeyExA caller return mismatch".into());
                         }
                         let subkey = frame.subkey.as_deref().unwrap_or("");
-                        logl::log(level::IMPORTANT, format_args!(
-                            "WC3 CHILD REGISTRY OPEN pid={} tid={} root=\"{}\" subkey=\"{}\" sam=0x{:08x}",
-                            active_pid, active_tid, registry_root_name(frame.hkey), subkey, frame.sam
-                        ));
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD REGISTRY OPEN pid={} tid={} root=\"{}\" subkey=\"{}\" sam=0x{:08x}",
+                                active_pid,
+                                active_tid,
+                                registry_root_name(frame.hkey),
+                                subkey,
+                                frame.sam
+                            ),
+                        );
                         ensure_registry_loaded(&mut session).await?;
                         let registry = match &session.registry {
                             wc3::session::RegistryState::Ready(registry) => registry,
-                            wc3::session::RegistryState::Unloaded => return Err("registry remained unloaded".into()),
+                            wc3::session::RegistryState::Unloaded => {
+                                return Err("registry remained unloaded".into());
+                            }
                         };
                         let start = registry.root(frame.hkey).or_else(|| {
-                            session.process(active_pid).and_then(|process| process.xp.registry_handle_node(frame.hkey))
+                            session
+                                .process(active_pid)
+                                .and_then(|process| process.xp.registry_handle_node(frame.hkey))
                         });
-                        let node = (frame.options == 0).then_some(start).flatten()
+                        let node = (frame.options == 0)
+                            .then_some(start)
+                            .flatten()
                             .and_then(|node| registry.child_path(node, subkey));
                         let (result, handle) = if let Some(node) = node {
-                            let handle = session.process_mut(active_pid)
+                            let handle = session
+                                .process_mut(active_pid)
                                 .ok_or_else(|| "child process missing".to_owned())?
                                 .xp
                                 .open_registry_key(node, frame.sam)
                                 .map_err(str::to_owned)?;
-                            child.address_space.write(frame.result_ptr, &handle.to_le_bytes()).map_err(|error| error.to_string())?;
+                            child
+                                .address_space
+                                .write(frame.result_ptr, &handle.to_le_bytes())
+                                .map_err(|error| error.to_string())?;
                             (0u32, Some(handle))
                         } else {
                             (2u32, None)
                         };
-                        logl::log(level::IMPORTANT, format_args!(
-                            "WC3 CHILD REGISTRY OPEN RESULT pid={} exists={} result={} handle={}",
-                            active_pid, node.is_some() as u8, result,
-                            handle.map(|handle| format!("0x{handle:08x}")).unwrap_or_else(|| "-".into())
-                        ));
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD REGISTRY OPEN RESULT pid={} exists={} result={} handle={}",
+                                active_pid,
+                                node.is_some() as u8,
+                                result,
+                                handle
+                                    .map(|handle| format!("0x{handle:08x}"))
+                                    .unwrap_or_else(|| "-".into())
+                            ),
+                        );
                         let mut registers = exit.registers;
                         registers.eax = result;
-                        contexts[active].context.set_registers(registers).map_err(|error| error.to_string())?;
+                        contexts[active]
+                            .context
+                            .set_registers(registers)
+                            .map_err(|error| error.to_string())?;
                         continue;
                     }
-                    logl::log(level::IMPORTANT, format_args!(
-                        "WC3 CHILD PROVIDER FRONTIER pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" provider_id={} module=\"{}\" {} eip=0x{:08x} esp=0x{:08x} caller_ret=0x{:08x}",
-                        active_pid, active_tid, running_module_name, provider_id, provider.module, symbol,
-                        exit.registers.eip, exit.registers.esp, u32::from_le_bytes(caller_ret)
-                    ));
+                    logl::log(
+                        level::IMPORTANT,
+                        format_args!(
+                            "WC3 CHILD PROVIDER FRONTIER pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" provider_id={} module=\"{}\" {} eip=0x{:08x} esp=0x{:08x} caller_ret=0x{:08x}",
+                            active_pid,
+                            active_tid,
+                            running_module_name,
+                            provider_id,
+                            provider.module,
+                            symbol,
+                            exit.registers.eip,
+                            exit.registers.esp,
+                            u32::from_le_bytes(caller_ret)
+                        ),
+                    );
                     return Ok(());
                 }
                 if exit.registers.eip == thunk32::THREAD_EXIT_AFTER_VMCALL {
@@ -1493,9 +1766,7 @@ async fn run() -> Result<(), String> {
                                     trueos::vsys::sleep_ms(1);
                                 }
                                 Err(error) => {
-                                    return Err(format!(
-                                        "publish WC3 DrawTextA text: {error:?}"
-                                    ));
+                                    return Err(format!("publish WC3 DrawTextA text: {error:?}"));
                                 }
                             }
                         }
@@ -1569,10 +1840,15 @@ async fn run() -> Result<(), String> {
                             tid: created.tid,
                             image: child,
                             native_modules: Vec::new(),
-                            address_space: AddressSpace::create().map_err(|error| error.to_string())?,
+                            address_space: AddressSpace::create()
+                                .map_err(|error| error.to_string())?,
                             crt_heap_mapped_end: CHILD_CRT_HEAP_BASE,
                             provider_thunk_bytes: 0,
-                            loader: ChildLoaderState { prepared: false, native_requests: Vec::new(), next_native: 0 },
+                            loader: ChildLoaderState {
+                                prepared: false,
+                                native_requests: Vec::new(),
+                                next_native: 0,
+                            },
                             execution: ChildExecutionState::Loader,
                         });
                         logl::log(
@@ -1686,7 +1962,8 @@ async fn run() -> Result<(), String> {
                         let is_single = import.symbol == "WaitForSingleObject";
                         if is_single {
                             let handle = request.handles[0];
-                            if previous_wait_timeout == Some((request.key, handle, request.timeout)) {
+                            if previous_wait_timeout == Some((request.key, handle, request.timeout))
+                            {
                                 logl::log(
                                     level::IMPORTANT,
                                     format_args!(
@@ -1696,8 +1973,7 @@ async fn run() -> Result<(), String> {
                                 );
                                 return Ok(());
                             }
-                            let description =
-                                session.describe_handle(request.key.pid, handle);
+                            let description = session.describe_handle(request.key.pid, handle);
                             let state = session.event_state(request.key.pid, handle);
                             logl::log(
                                 level::IMPORTANT,
@@ -1721,9 +1997,8 @@ async fn run() -> Result<(), String> {
                                     ),
                                 );
                             }
-                            if let Some(wait_result) = session
-                                .poll_single_wait(&request)
-                                .map_err(str::to_owned)?
+                            if let Some(wait_result) =
+                                session.poll_single_wait(&request).map_err(str::to_owned)?
                             {
                                 let consumed = state
                                     .map(|(manual_reset, signaled)| signaled && !manual_reset)
@@ -1745,10 +2020,7 @@ async fn run() -> Result<(), String> {
                                         level::IMPORTANT,
                                         format_args!(
                                             "WC3 WAIT TIMEOUT pid={} tid={} handle=0x{:08x} elapsed_ms=0 result=0x{:08x}",
-                                            request.key.pid,
-                                            request.key.tid,
-                                            handle,
-                                            wait_result
+                                            request.key.pid, request.key.tid, handle, wait_result
                                         ),
                                     );
                                 } else if wait_result == WAIT_FAILED {
@@ -1756,10 +2028,7 @@ async fn run() -> Result<(), String> {
                                         level::IMPORTANT,
                                         format_args!(
                                             "WC3 WAIT FAILED pid={} tid={} handle=0x{:08x} result=0x{:08x}",
-                                            request.key.pid,
-                                            request.key.tid,
-                                            handle,
-                                            wait_result
+                                            request.key.pid, request.key.tid, handle, wait_result
                                         ),
                                     );
                                 }
@@ -1852,35 +2121,49 @@ async fn run() -> Result<(), String> {
                                 },
                             );
                         }
-                        if let Some(next) =
-                            pop_runnable_context(&mut session, &contexts)
-                        {
+                        if let Some(next) = pop_runnable_context(&mut session, &contexts) {
                             active = next;
                             continue;
                         }
-                        if let Some(key) = session.runnable.iter().find(|key| key.pid != LAUNCHER_PID) {
+                        if let Some(key) =
+                            session.runnable.iter().find(|key| key.pid != LAUNCHER_PID)
+                        {
                             let child = pending_child
                                 .as_mut()
                                 .filter(|child| child.pid == key.pid && child.tid == key.tid)
                                 .ok_or_else(|| "runnable child missing pending image".to_owned())?;
                             let listing = async_fs::list_dir(b"/common/Warcraft III")
                                 .await
-                                .map_err(|error| format!("list Warcraft III directory: TRUEOSFS {error}"))?;
+                                .map_err(|error| {
+                                    format!("list Warcraft III directory: TRUEOSFS {error}")
+                                })?;
                             if listing.truncated {
                                 return Err("Warcraft III directory listing truncated".into());
                             }
-                            let loaded = session.assets.preload_war3(&listing).await.map_err(|error| {
-                                logl::log(level::ERROR, format_args!(
+                            let loaded =
+                                session
+                                    .assets
+                                    .preload_war3(&listing)
+                                    .await
+                                    .map_err(|error| {
+                                        logl::log(
+                                            level::ERROR,
+                                            format_args!(
                                     "WC3 RAM ASSET FAILED asset=\"war3.mpq\" error={error:?}"
-                                ));
-                                error
-                            })?;
+                                ),
+                                        );
+                                        error
+                                    })?;
                             if loaded {
                                 let asset = session.assets.war3_mpq().expect("resident MPQ");
-                                logl::log(level::IMPORTANT, format_args!(
-                                    "WC3 RAM ASSET READY asset=\"war3.mpq\" stored=\"{}\" bytes={} backing=host-ram guest_mapped=0 copies=1",
-                                    asset.stored_path(), asset.len(),
-                                ));
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 RAM ASSET READY asset=\"war3.mpq\" stored=\"{}\" bytes={} backing=host-ram guest_mapped=0 copies=1",
+                                        asset.stored_path(),
+                                        asset.len(),
+                                    ),
+                                );
                             }
                             let surface = child_loader::prepare(&mut child.image, &listing)
                                 .map_err(str::to_owned)?;
@@ -1908,84 +2191,178 @@ async fn run() -> Result<(), String> {
                                 .process_mut(child.pid)
                                 .ok_or_else(|| "child process missing".to_owned())?
                                 .xp
-                                .install_provider_surface(surface.imports, surface.thunks, surface.providers);
+                                .install_provider_surface(
+                                    surface.imports,
+                                    surface.thunks,
+                                    surface.providers,
+                                );
                             child.provider_thunk_bytes = initial_provider_thunk_bytes;
-                            logl::log(level::IMPORTANT, format_args!(
-                                "WC3 CHILD EXECUTION ROUTER READY pid={} provider_imports={} provider_thunk_bytes={} control_base=0x{:08x} provider_namespace=child memory_space=child",
-                                child.pid,
-                                session.process(child.pid).ok_or_else(|| "child process missing".to_owned())?.xp.provider_import_count(),
-                                4096,
-                                thunk32::CHILD_CONTROL_BASE,
-                            ));
-                            let native = child.loader.native_requests
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD EXECUTION ROUTER READY pid={} provider_imports={} provider_thunk_bytes={} control_base=0x{:08x} provider_namespace=child memory_space=child",
+                                    child.pid,
+                                    session
+                                        .process(child.pid)
+                                        .ok_or_else(|| "child process missing".to_owned())?
+                                        .xp
+                                        .provider_import_count(),
+                                    4096,
+                                    thunk32::CHILD_CONTROL_BASE,
+                                ),
+                            );
+                            let native = child
+                                .loader
+                                .native_requests
                                 .get(child.loader.next_native)
                                 .cloned()
-                                .ok_or_else(|| "child has no local native direct module".to_owned())?;
+                                .ok_or_else(|| {
+                                    "child has no local native direct module".to_owned()
+                                })?;
                             let path = format!("/common/Warcraft III/{}", native.stored);
                             let bytes = async_fs::read_file(path.as_bytes())
                                 .await
                                 .map_err(|error| format!("read {path}: TRUEOSFS error {error}"))?;
                             let image = pe32::parse(&bytes).map_err(str::to_owned)?;
-                            child.address_space
+                            child
+                                .address_space
                                 .map(
                                     image.image_base,
                                     image.image.len(),
                                     Permissions::READ | Permissions::WRITE | Permissions::EXECUTE,
                                 )
                                 .map_err(|_| "preferred-base-unavailable".to_owned())?;
-                            let written = child.address_space
+                            let written = child
+                                .address_space
                                 .write(image.image_base, &image.image)
                                 .map_err(|error| error.to_string())?;
-                            if written != image.image.len() { return Err("short native image write".into()); }
-                            let storm_imports: Vec<_> = image.imports.iter().map(|import| child_loader::ProviderImport {
-                                module: import.module.clone(),
-                                symbol: match &import.symbol {
-                                    pe32::ImportSymbol::Name(name) => child_loader::ProviderSymbol::Name(name.clone()),
-                                    pe32::ImportSymbol::Ordinal(ordinal) => child_loader::ProviderSymbol::Ordinal(*ordinal),
-                                },
-                                iat_rva: import.iat_rva,
-                            }).collect();
-                            let external_modules = storm_imports.iter().map(|import| import.module.as_str()).collect::<std::collections::HashSet<_>>().len();
-                            let (addresses, old_bytes, new_bytes, grown) = session
+                            if written != image.image.len() {
+                                return Err("short native image write".into());
+                            }
+                            let storm_imports: Vec<_> = image
+                                .imports
+                                .iter()
+                                .map(|import| child_loader::ProviderImport {
+                                    module: import.module.clone(),
+                                    symbol: match &import.symbol {
+                                        pe32::ImportSymbol::Name(name) => {
+                                            child_loader::ProviderSymbol::Name(name.clone())
+                                        }
+                                        pe32::ImportSymbol::Ordinal(ordinal) => {
+                                            child_loader::ProviderSymbol::Ordinal(*ordinal)
+                                        }
+                                    },
+                                    iat_rva: import.iat_rva,
+                                })
+                                .collect();
+                            let external_modules = storm_imports
+                                .iter()
+                                .map(|import| import.module.as_str())
+                                .collect::<std::collections::HashSet<_>>()
+                                .len();
+                            let (addresses, old_bytes, new_bytes, updated_from, updated) = session
                                 .process_mut(child.pid)
                                 .ok_or_else(|| "child process missing".to_owned())?
                                 .xp
                                 .append_provider_imports(storm_imports)
                                 .map_err(str::to_owned)?;
-                            let provider_thunks_total = session.process(child.pid)
+                            let provider_thunks_total = session
+                                .process(child.pid)
                                 .ok_or_else(|| "child process missing".to_owned())?
-                                .xp.provider_import_count();
+                                .xp
+                                .provider_import_count();
                             child.provider_thunk_bytes = new_bytes;
                             if new_bytes > old_bytes {
-                                child.address_space.map(
-                                    thunk32::THUNK_BASE + old_bytes as u32,
-                                    new_bytes - old_bytes,
-                                    Permissions::READ | Permissions::WRITE | Permissions::EXECUTE,
-                                ).map_err(|error| error.to_string())?;
-                                child.address_space.write(thunk32::THUNK_BASE + old_bytes as u32, &grown)
+                                child
+                                    .address_space
+                                    .map(
+                                        thunk32::THUNK_BASE + old_bytes as u32,
+                                        new_bytes - old_bytes,
+                                        Permissions::READ
+                                            | Permissions::WRITE
+                                            | Permissions::EXECUTE,
+                                    )
                                     .map_err(|error| error.to_string())?;
-                                logl::log(level::IMPORTANT, format_args!(
-                                    "WC3 CHILD PROVIDER THUNK GROW pid={} old_bytes={} new_bytes={}",
-                                    child.pid, old_bytes, new_bytes
-                                ));
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 CHILD PROVIDER THUNK GROW pid={} old_bytes={} new_bytes={}",
+                                        child.pid, old_bytes, new_bytes
+                                    ),
+                                );
+                            }
+                            let existing_update =
+                                old_bytes.saturating_sub(updated_from).min(updated.len());
+                            if existing_update != 0 {
+                                child
+                                    .address_space
+                                    .write(
+                                        thunk32::THUNK_BASE + updated_from as u32,
+                                        &updated[..existing_update],
+                                    )
+                                    .map_err(|error| error.to_string())?;
+                            }
+                            if existing_update < updated.len() {
+                                child
+                                    .address_space
+                                    .write(
+                                        thunk32::THUNK_BASE + old_bytes as u32,
+                                        &updated[existing_update..],
+                                    )
+                                    .map_err(|error| error.to_string())?;
                             }
                             for (import, address) in image.imports.iter().zip(addresses) {
-                                child.address_space.write(image.image_base + import.iat_rva, &address.to_le_bytes())
+                                child
+                                    .address_space
+                                    .write(
+                                        image.image_base + import.iat_rva,
+                                        &address.to_le_bytes(),
+                                    )
                                     .map_err(|error| error.to_string())?;
                             }
-                            logl::log(level::IMPORTANT, format_args!(
-                                "WC3 CHILD NATIVE IMPORTS READY pid={} module=\"{}\" external_modules={} external_imports={} patched_iat={} provider_thunks_total={} thunk_bytes={}",
-                                child.pid, native.stored, external_modules, image.imports.len(), image.imports.len(),
-                                provider_thunks_total, new_bytes
-                            ));
-                            let export_named = image.exports.iter().filter(|export| export.name.is_some()).count();
-                            let export_forwarders = image.exports.iter().filter(|export| matches!(export.target, pe32::ExportTarget::Forwarder(_))).count();
-                            logl::log(level::IMPORTANT, format_args!(
-                                "WC3 CHILD NATIVE EXPORTS module=\"{}\" exports={} named={} ordinal_only={} forwarders={}",
-                                native.stored, image.exports.len(), export_named, image.exports.len() - export_named, export_forwarders
-                            ));
-                            let parent_imports: Vec<_> = child.image.imports.iter()
-                                .filter(|import| import.module.eq_ignore_ascii_case(&native.requested))
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD NATIVE IMPORTS READY pid={} module=\"{}\" external_modules={} external_imports={} patched_iat={} provider_thunks_total={} thunk_bytes={}",
+                                    child.pid,
+                                    native.stored,
+                                    external_modules,
+                                    image.imports.len(),
+                                    image.imports.len(),
+                                    provider_thunks_total,
+                                    new_bytes
+                                ),
+                            );
+                            let export_named = image
+                                .exports
+                                .iter()
+                                .filter(|export| export.name.is_some())
+                                .count();
+                            let export_forwarders = image
+                                .exports
+                                .iter()
+                                .filter(|export| {
+                                    matches!(export.target, pe32::ExportTarget::Forwarder(_))
+                                })
+                                .count();
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD NATIVE EXPORTS module=\"{}\" exports={} named={} ordinal_only={} forwarders={}",
+                                    native.stored,
+                                    image.exports.len(),
+                                    export_named,
+                                    image.exports.len() - export_named,
+                                    export_forwarders
+                                ),
+                            );
+                            let parent_imports: Vec<_> = child
+                                .image
+                                .imports
+                                .iter()
+                                .filter(|import| {
+                                    import.module.eq_ignore_ascii_case(&native.requested)
+                                })
                                 .collect();
                             let mut resolved = 0usize;
                             let mut parent_named = 0usize;
@@ -2005,28 +2382,71 @@ async fn run() -> Result<(), String> {
                                     pe32::ImportSymbol::Ordinal(ordinal) => format!("WC3 CHILD NATIVE EXPORT MISSING parent=\"War3.exe\" module=\"{}\" ordinal={}", native.stored, ordinal),
                                 })?;
                                 let pe32::ExportTarget::Rva(rva) = &export.target else {
-                                    let forwarder = match &export.target { pe32::ExportTarget::Forwarder(value) => value, _ => unreachable!() };
-                                    return Err(format!("WC3 CHILD NATIVE EXPORT FORWARDER FRONTIER parent=\"War3.exe\" module=\"{}\" forwarder=\"{}\"", native.stored, forwarder));
+                                    let forwarder = match &export.target {
+                                        pe32::ExportTarget::Forwarder(value) => value,
+                                        _ => unreachable!(),
+                                    };
+                                    return Err(format!(
+                                        "WC3 CHILD NATIVE EXPORT FORWARDER FRONTIER parent=\"War3.exe\" module=\"{}\" forwarder=\"{}\"",
+                                        native.stored, forwarder
+                                    ));
                                 };
-                                if *rva >= image.size_of_image { return Err("Storm export RVA outside image".into()); }
-                                let address = image.image_base.checked_add(*rva).ok_or_else(|| "Storm export VA overflow".to_owned())?;
-                                child.address_space.write(child.image.image_base + import.iat_rva, &address.to_le_bytes()).map_err(|error| error.to_string())?;
+                                if *rva >= image.size_of_image {
+                                    return Err("Storm export RVA outside image".into());
+                                }
+                                let address = image
+                                    .image_base
+                                    .checked_add(*rva)
+                                    .ok_or_else(|| "Storm export VA overflow".to_owned())?;
+                                child
+                                    .address_space
+                                    .write(
+                                        child.image.image_base + import.iat_rva,
+                                        &address.to_le_bytes(),
+                                    )
+                                    .map_err(|error| error.to_string())?;
                                 let mut readback = [0; 4];
-                                child.address_space.read(child.image.image_base + import.iat_rva, &mut readback).map_err(|error| error.to_string())?;
-                                if u32::from_le_bytes(readback) != address { return Err("War3 Storm IAT readback mismatch".into()); }
+                                child
+                                    .address_space
+                                    .read(child.image.image_base + import.iat_rva, &mut readback)
+                                    .map_err(|error| error.to_string())?;
+                                if u32::from_le_bytes(readback) != address {
+                                    return Err("War3 Storm IAT readback mismatch".into());
+                                }
                                 resolved += 1;
                             }
-                            logl::log(level::IMPORTANT, format_args!(
-                                "WC3 CHILD NATIVE BIND parent=\"War3.exe\" module=\"{}\" imports={} resolved={} named={} ordinal={} forwarded=0",
-                                native.stored, parent_imports.len(), resolved, parent_named, parent_ordinal
-                            ));
-                            if resolved != parent_imports.len() { return Err("incomplete War3 Storm binding".into()); }
-                            logl::log(level::IMPORTANT, format_args!(
-                                "WC3 CHILD NATIVE MAP pid={} module=\"{}\" preferred_base=0x{:08x} mapped_base=0x{:08x} size=0x{:08x} relocation_delta=0 relocations_applied=0",
-                                child.pid, native.stored, image.image_base, image.image_base, image.size_of_image
-                            ));
-                            log_native_child_image(&native.requested, &native.stored, &image, &listing)
-                                .map_err(str::to_owned)?;
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD NATIVE BIND parent=\"War3.exe\" module=\"{}\" imports={} resolved={} named={} ordinal={} forwarded=0",
+                                    native.stored,
+                                    parent_imports.len(),
+                                    resolved,
+                                    parent_named,
+                                    parent_ordinal
+                                ),
+                            );
+                            if resolved != parent_imports.len() {
+                                return Err("incomplete War3 Storm binding".into());
+                            }
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD NATIVE MAP pid={} module=\"{}\" preferred_base=0x{:08x} mapped_base=0x{:08x} size=0x{:08x} relocation_delta=0 relocations_applied=0",
+                                    child.pid,
+                                    native.stored,
+                                    image.image_base,
+                                    image.image_base,
+                                    image.size_of_image
+                                ),
+                            );
+                            log_native_child_image(
+                                &native.requested,
+                                &native.stored,
+                                &image,
+                                &listing,
+                            )
+                            .map_err(str::to_owned)?;
                             let native_base = image.image_base;
                             let native_imports = image.imports.len();
                             child.native_modules.push(PendingNativeModule {
@@ -2035,44 +2455,98 @@ async fn run() -> Result<(), String> {
                                 image,
                                 initialized: false,
                             });
-                            let initialized = child.native_modules.last().ok_or_else(|| "stored Storm missing".to_owned())?.initialized;
-                            logl::log(level::IMPORTANT, format_args!(
-                                "WC3 CHILD NATIVE MODULE READY pid={} module=\"{}\" base=0x{:08x} imports_bound={} parent_imports_resolved={} initialized={}",
-                                child.pid, native.stored, native_base, native_imports, resolved, initialized as u8
-                            ));
+                            let initialized = child
+                                .native_modules
+                                .last()
+                                .ok_or_else(|| "stored Storm missing".to_owned())?
+                                .initialized;
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD NATIVE MODULE READY pid={} module=\"{}\" base=0x{:08x} imports_bound={} parent_imports_resolved={} initialized={}",
+                                    child.pid,
+                                    native.stored,
+                                    native_base,
+                                    native_imports,
+                                    resolved,
+                                    initialized as u8
+                                ),
+                            );
                             child.loader.next_native += 1;
-                            let next_native = child.loader.native_requests
+                            let next_native = child
+                                .loader
+                                .native_requests
                                 .get(child.loader.next_native)
                                 .ok_or_else(|| "no unresolved native child module".to_owned())?;
-                            logl::log(level::IMPORTANT, format_args!(
-                                "WC3 CHILD NATIVE ADVANCE pid={} from=\"{}\" to=\"{}\"",
-                                child.pid, native.stored, next_native.stored
-                            ));
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD NATIVE ADVANCE pid={} from=\"{}\" to=\"{}\"",
+                                    child.pid, native.stored, next_native.stored
+                                ),
+                            );
                             let mss = next_native.clone();
                             let mss_path = format!("/common/Warcraft III/{}", mss.stored);
-                            let mss_bytes = async_fs::read_file(mss_path.as_bytes()).await
-                                .map_err(|error| format!("read {mss_path}: TRUEOSFS error {error}"))?;
+                            let mss_bytes =
+                                async_fs::read_file(mss_path.as_bytes()).await.map_err(
+                                    |error| format!("read {mss_path}: TRUEOSFS error {error}"),
+                                )?;
                             let mss_image = pe32::parse(&mss_bytes).map_err(str::to_owned)?;
-                            child.address_space.map(
-                                mss_image.image_base,
-                                mss_image.image.len(),
-                                Permissions::READ | Permissions::WRITE | Permissions::EXECUTE,
-                            ).map_err(|_| "preferred-base-unavailable".to_owned())?;
-                            let mss_written = child.address_space.write(mss_image.image_base, &mss_image.image)
+                            child
+                                .address_space
+                                .map(
+                                    mss_image.image_base,
+                                    mss_image.image.len(),
+                                    Permissions::READ | Permissions::WRITE | Permissions::EXECUTE,
+                                )
+                                .map_err(|_| "preferred-base-unavailable".to_owned())?;
+                            let mss_written = child
+                                .address_space
+                                .write(mss_image.image_base, &mss_image.image)
                                 .map_err(|error| error.to_string())?;
-                            if mss_written != mss_image.image.len() { return Err("short Mss image write".into()); }
-                            logl::log(level::IMPORTANT, format_args!(
-                                "WC3 CHILD NATIVE MAP pid={} module=\"{}\" preferred_base=0x{:08x} mapped_base=0x{:08x} size=0x{:08x} relocation_delta=0 relocations_applied=0",
-                                child.pid, mss.stored, mss_image.image_base, mss_image.image_base, mss_image.size_of_image
-                            ));
-                            let mss_export_named = mss_image.exports.iter().filter(|export| export.name.is_some()).count();
-                            let mss_forwarders = mss_image.exports.iter().filter(|export| matches!(export.target, pe32::ExportTarget::Forwarder(_))).count();
-                            logl::log(level::IMPORTANT, format_args!(
-                                "WC3 CHILD NATIVE EXPORTS module=\"{}\" exports={} named={} ordinal_only={} forwarders={}",
-                                mss.stored, mss_image.exports.len(), mss_export_named, mss_image.exports.len() - mss_export_named, mss_forwarders
-                            ));
-                            let mss_parent_imports: Vec<_> = child.image.imports.iter()
-                                .filter(|import| import.module.eq_ignore_ascii_case(&mss.requested)).collect();
+                            if mss_written != mss_image.image.len() {
+                                return Err("short Mss image write".into());
+                            }
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD NATIVE MAP pid={} module=\"{}\" preferred_base=0x{:08x} mapped_base=0x{:08x} size=0x{:08x} relocation_delta=0 relocations_applied=0",
+                                    child.pid,
+                                    mss.stored,
+                                    mss_image.image_base,
+                                    mss_image.image_base,
+                                    mss_image.size_of_image
+                                ),
+                            );
+                            let mss_export_named = mss_image
+                                .exports
+                                .iter()
+                                .filter(|export| export.name.is_some())
+                                .count();
+                            let mss_forwarders = mss_image
+                                .exports
+                                .iter()
+                                .filter(|export| {
+                                    matches!(export.target, pe32::ExportTarget::Forwarder(_))
+                                })
+                                .count();
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD NATIVE EXPORTS module=\"{}\" exports={} named={} ordinal_only={} forwarders={}",
+                                    mss.stored,
+                                    mss_image.exports.len(),
+                                    mss_export_named,
+                                    mss_image.exports.len() - mss_export_named,
+                                    mss_forwarders
+                                ),
+                            );
+                            let mss_parent_imports: Vec<_> = child
+                                .image
+                                .imports
+                                .iter()
+                                .filter(|import| import.module.eq_ignore_ascii_case(&mss.requested))
+                                .collect();
                             let mut mss_resolved = 0usize;
                             for import in &mss_parent_imports {
                                 let pe32::ImportSymbol::Name(name) = &import.symbol else {
@@ -2081,92 +2555,260 @@ async fn run() -> Result<(), String> {
                                 let export = mss_image.exports.iter().find(|export| export.name.as_deref() == Some(name.as_str()))
                                     .ok_or_else(|| format!("WC3 CHILD NATIVE EXPORT MISSING parent=\"War3.exe\" module=\"{}\" symbol=\"{}\"", mss.stored, name))?;
                                 let pe32::ExportTarget::Rva(rva) = &export.target else {
-                                    let pe32::ExportTarget::Forwarder(forwarder) = &export.target else { unreachable!() };
-                                    return Err(format!("WC3 CHILD NATIVE EXPORT FORWARDER FRONTIER parent=\"War3.exe\" module=\"{}\" symbol=\"{}\" forwarder=\"{}\"", mss.stored, name, forwarder));
+                                    let pe32::ExportTarget::Forwarder(forwarder) = &export.target
+                                    else {
+                                        unreachable!()
+                                    };
+                                    return Err(format!(
+                                        "WC3 CHILD NATIVE EXPORT FORWARDER FRONTIER parent=\"War3.exe\" module=\"{}\" symbol=\"{}\" forwarder=\"{}\"",
+                                        mss.stored, name, forwarder
+                                    ));
                                 };
-                                if *rva >= mss_image.size_of_image { return Err("Mss export RVA outside image".into()); }
-                                let address = mss_image.image_base.checked_add(*rva).ok_or_else(|| "Mss export VA overflow".to_owned())?;
-                                child.address_space.write(child.image.image_base + import.iat_rva, &address.to_le_bytes()).map_err(|error| error.to_string())?;
+                                if *rva >= mss_image.size_of_image {
+                                    return Err("Mss export RVA outside image".into());
+                                }
+                                let address = mss_image
+                                    .image_base
+                                    .checked_add(*rva)
+                                    .ok_or_else(|| "Mss export VA overflow".to_owned())?;
+                                child
+                                    .address_space
+                                    .write(
+                                        child.image.image_base + import.iat_rva,
+                                        &address.to_le_bytes(),
+                                    )
+                                    .map_err(|error| error.to_string())?;
                                 let mut readback = [0; 4];
-                                child.address_space.read(child.image.image_base + import.iat_rva, &mut readback).map_err(|error| error.to_string())?;
-                                if u32::from_le_bytes(readback) != address { return Err("War3 Mss IAT readback mismatch".into()); }
+                                child
+                                    .address_space
+                                    .read(child.image.image_base + import.iat_rva, &mut readback)
+                                    .map_err(|error| error.to_string())?;
+                                if u32::from_le_bytes(readback) != address {
+                                    return Err("War3 Mss IAT readback mismatch".into());
+                                }
                                 mss_resolved += 1;
                             }
-                            logl::log(level::IMPORTANT, format_args!(
-                                "WC3 CHILD NATIVE BIND parent=\"War3.exe\" module=\"{}\" imports={} resolved={} named={} ordinal=0 forwarded=0",
-                                mss.stored, mss_parent_imports.len(), mss_resolved, mss_parent_imports.len()
-                            ));
-                            if mss_resolved != mss_parent_imports.len() { return Err("incomplete War3 Mss binding".into()); }
-                            let mss_providers: Vec<_> = mss_image.imports.iter().map(|import| child_loader::ProviderImport {
-                                module: import.module.clone(),
-                                symbol: match &import.symbol {
-                                    pe32::ImportSymbol::Name(name) => child_loader::ProviderSymbol::Name(name.clone()),
-                                    pe32::ImportSymbol::Ordinal(ordinal) => child_loader::ProviderSymbol::Ordinal(*ordinal),
-                                },
-                                iat_rva: import.iat_rva,
-                            }).collect();
-                            let mss_external_modules = mss_providers.iter().map(|import| import.module.as_str()).collect::<std::collections::HashSet<_>>().len();
-                            let (mss_addresses, old_bytes, new_bytes, grown) = session.process_mut(child.pid)
-                                .ok_or_else(|| "child process missing".to_owned())?.xp
-                                .append_provider_imports(mss_providers).map_err(str::to_owned)?;
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD NATIVE BIND parent=\"War3.exe\" module=\"{}\" imports={} resolved={} named={} ordinal=0 forwarded=0",
+                                    mss.stored,
+                                    mss_parent_imports.len(),
+                                    mss_resolved,
+                                    mss_parent_imports.len()
+                                ),
+                            );
+                            if mss_resolved != mss_parent_imports.len() {
+                                return Err("incomplete War3 Mss binding".into());
+                            }
+                            let mss_providers: Vec<_> = mss_image
+                                .imports
+                                .iter()
+                                .map(|import| child_loader::ProviderImport {
+                                    module: import.module.clone(),
+                                    symbol: match &import.symbol {
+                                        pe32::ImportSymbol::Name(name) => {
+                                            child_loader::ProviderSymbol::Name(name.clone())
+                                        }
+                                        pe32::ImportSymbol::Ordinal(ordinal) => {
+                                            child_loader::ProviderSymbol::Ordinal(*ordinal)
+                                        }
+                                    },
+                                    iat_rva: import.iat_rva,
+                                })
+                                .collect();
+                            let mss_external_modules = mss_providers
+                                .iter()
+                                .map(|import| import.module.as_str())
+                                .collect::<std::collections::HashSet<_>>()
+                                .len();
+                            let (mss_addresses, old_bytes, new_bytes, updated_from, updated) =
+                                session
+                                    .process_mut(child.pid)
+                                    .ok_or_else(|| "child process missing".to_owned())?
+                                    .xp
+                                    .append_provider_imports(mss_providers)
+                                    .map_err(str::to_owned)?;
                             child.provider_thunk_bytes = new_bytes;
                             if new_bytes > old_bytes {
-                                child.address_space.map(thunk32::THUNK_BASE + old_bytes as u32, new_bytes - old_bytes,
-                                    Permissions::READ | Permissions::WRITE | Permissions::EXECUTE).map_err(|error| error.to_string())?;
-                                child.address_space.write(thunk32::THUNK_BASE + old_bytes as u32, &grown).map_err(|error| error.to_string())?;
-                                logl::log(level::IMPORTANT, format_args!("WC3 CHILD PROVIDER THUNK GROW pid={} old_bytes={} new_bytes={}", child.pid, old_bytes, new_bytes));
+                                child
+                                    .address_space
+                                    .map(
+                                        thunk32::THUNK_BASE + old_bytes as u32,
+                                        new_bytes - old_bytes,
+                                        Permissions::READ
+                                            | Permissions::WRITE
+                                            | Permissions::EXECUTE,
+                                    )
+                                    .map_err(|error| error.to_string())?;
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 CHILD PROVIDER THUNK GROW pid={} old_bytes={} new_bytes={}",
+                                        child.pid, old_bytes, new_bytes
+                                    ),
+                                );
+                            }
+                            let existing_update =
+                                old_bytes.saturating_sub(updated_from).min(updated.len());
+                            if existing_update != 0 {
+                                child
+                                    .address_space
+                                    .write(
+                                        thunk32::THUNK_BASE + updated_from as u32,
+                                        &updated[..existing_update],
+                                    )
+                                    .map_err(|error| error.to_string())?;
+                            }
+                            if existing_update < updated.len() {
+                                child
+                                    .address_space
+                                    .write(
+                                        thunk32::THUNK_BASE + old_bytes as u32,
+                                        &updated[existing_update..],
+                                    )
+                                    .map_err(|error| error.to_string())?;
                             }
                             for (import, address) in mss_image.imports.iter().zip(mss_addresses) {
-                                child.address_space.write(mss_image.image_base + import.iat_rva, &address.to_le_bytes()).map_err(|error| error.to_string())?;
+                                child
+                                    .address_space
+                                    .write(
+                                        mss_image.image_base + import.iat_rva,
+                                        &address.to_le_bytes(),
+                                    )
+                                    .map_err(|error| error.to_string())?;
                                 let mut readback = [0; 4];
-                                child.address_space.read(mss_image.image_base + import.iat_rva, &mut readback).map_err(|error| error.to_string())?;
-                                if u32::from_le_bytes(readback) != address { return Err("Mss provider IAT readback mismatch".into()); }
+                                child
+                                    .address_space
+                                    .read(mss_image.image_base + import.iat_rva, &mut readback)
+                                    .map_err(|error| error.to_string())?;
+                                if u32::from_le_bytes(readback) != address {
+                                    return Err("Mss provider IAT readback mismatch".into());
+                                }
                             }
-                            let mss_provider_total = session.process(child.pid).ok_or_else(|| "child process missing".to_owned())?.xp.provider_import_count();
-                            logl::log(level::IMPORTANT, format_args!(
-                                "WC3 CHILD NATIVE IMPORTS READY pid={} module=\"{}\" external_modules={} external_imports={} patched_iat={} provider_thunks_total={} thunk_bytes={}",
-                                child.pid, mss.stored, mss_external_modules, mss_image.imports.len(), mss_image.imports.len(), mss_provider_total, new_bytes
-                            ));
+                            let mss_provider_total = session
+                                .process(child.pid)
+                                .ok_or_else(|| "child process missing".to_owned())?
+                                .xp
+                                .provider_import_count();
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD NATIVE IMPORTS READY pid={} module=\"{}\" external_modules={} external_imports={} patched_iat={} provider_thunks_total={} thunk_bytes={}",
+                                    child.pid,
+                                    mss.stored,
+                                    mss_external_modules,
+                                    mss_image.imports.len(),
+                                    mss_image.imports.len(),
+                                    mss_provider_total,
+                                    new_bytes
+                                ),
+                            );
                             let mut winmm_total = 0usize;
                             let mut winmm_named = 0usize;
                             let mut winmm_ordinal = 0usize;
-                            for import in mss_image.imports.iter().filter(|import| import.module.eq_ignore_ascii_case("WINMM.dll")) {
+                            for import in mss_image
+                                .imports
+                                .iter()
+                                .filter(|import| import.module.eq_ignore_ascii_case("WINMM.dll"))
+                            {
                                 let index = winmm_total;
                                 let (symbol, kind) = match &import.symbol {
-                                    pe32::ImportSymbol::Name(name) => { winmm_named += 1; (name.clone(), "name") }
-                                    pe32::ImportSymbol::Ordinal(value) => { winmm_ordinal += 1; (format!("#{value}"), "ordinal") }
+                                    pe32::ImportSymbol::Name(name) => {
+                                        winmm_named += 1;
+                                        (name.clone(), "name")
+                                    }
+                                    pe32::ImportSymbol::Ordinal(value) => {
+                                        winmm_ordinal += 1;
+                                        (format!("#{value}"), "ordinal")
+                                    }
                                 };
-                                logl::log(level::IMPORTANT, format_args!("WC3 CHILD WINMM IMPORT index={} symbol=\"{}\" iat_rva=0x{:08x} kind={}", index, symbol, import.iat_rva, kind));
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 CHILD WINMM IMPORT index={} symbol=\"{}\" iat_rva=0x{:08x} kind={}",
+                                        index, symbol, import.iat_rva, kind
+                                    ),
+                                );
                                 winmm_total += 1;
                             }
-                            logl::log(level::IMPORTANT, format_args!("WC3 CHILD WINMM SURFACE module=\"Mss32.dll\" imports={} named={} ordinal={}", winmm_total, winmm_named, winmm_ordinal));
-                            log_native_child_image(&mss.requested, &mss.stored, &mss_image, &listing).map_err(str::to_owned)?;
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD WINMM SURFACE module=\"Mss32.dll\" imports={} named={} ordinal={}",
+                                    winmm_total, winmm_named, winmm_ordinal
+                                ),
+                            );
+                            log_native_child_image(
+                                &mss.requested,
+                                &mss.stored,
+                                &mss_image,
+                                &listing,
+                            )
+                            .map_err(str::to_owned)?;
                             let mss_base = mss_image.image_base;
                             let mss_imports = mss_image.imports.len();
-                            child.native_modules.push(PendingNativeModule { requested: mss.requested, stored: mss.stored.clone(), image: mss_image, initialized: false });
-                            let initialized = child.native_modules.last().ok_or_else(|| "stored Mss missing".to_owned())?.initialized;
-                            logl::log(level::IMPORTANT, format_args!(
-                                "WC3 CHILD NATIVE MODULE READY pid={} module=\"{}\" base=0x{:08x} imports_bound={} parent_imports_resolved={} initialized={}",
-                                child.pid, mss.stored, mss_base, mss_imports, mss_resolved, initialized as u8
-                            ));
-                            logl::log(level::IMPORTANT, format_args!(
-                                "WC3 CHILD NATIVE LOAD COMPLETE pid={} modules={} initialized=0",
-                                child.pid, child.native_modules.len()
-                            ));
-                            let storm_index = child.native_modules.iter().position(|module| module.stored.eq_ignore_ascii_case("Storm.dll"))
+                            child.native_modules.push(PendingNativeModule {
+                                requested: mss.requested,
+                                stored: mss.stored.clone(),
+                                image: mss_image,
+                                initialized: false,
+                            });
+                            let initialized = child
+                                .native_modules
+                                .last()
+                                .ok_or_else(|| "stored Mss missing".to_owned())?
+                                .initialized;
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD NATIVE MODULE READY pid={} module=\"{}\" base=0x{:08x} imports_bound={} parent_imports_resolved={} initialized={}",
+                                    child.pid,
+                                    mss.stored,
+                                    mss_base,
+                                    mss_imports,
+                                    mss_resolved,
+                                    initialized as u8
+                                ),
+                            );
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD NATIVE LOAD COMPLETE pid={} modules={} initialized=0",
+                                    child.pid,
+                                    child.native_modules.len()
+                                ),
+                            );
+                            let storm_index = child
+                                .native_modules
+                                .iter()
+                                .position(|module| module.stored.eq_ignore_ascii_case("Storm.dll"))
                                 .ok_or_else(|| "loaded Storm missing".to_owned())?;
-                            child.execution = ChildExecutionState::DllInitReady { native_index: storm_index };
-                            let storm = child.native_modules.get(storm_index)
+                            child.execution = ChildExecutionState::DllInitReady {
+                                native_index: storm_index,
+                            };
+                            let storm = child
+                                .native_modules
+                                .get(storm_index)
                                 .ok_or_else(|| "loaded Storm missing".to_owned())?;
                             let storm_name = storm.stored.clone();
                             let storm_base = storm.image.image_base;
-                            let storm_entry = storm.image.image_base.checked_add(storm.image.entry_rva)
+                            let storm_entry = storm
+                                .image
+                                .image_base
+                                .checked_add(storm.image.entry_rva)
                                 .ok_or_else(|| "Storm entry overflow".to_owned())?;
-                            logl::log(level::IMPORTANT, format_args!(
-                                "WC3 CHILD EXECUTION STATE pid={} tid={} state=dll-init-ready module=\"{}\" context_created=0",
-                                child.pid, child.tid, storm_name
-                            ));
-                            let child_key = ThreadKey { pid: child.pid, tid: child.tid };
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD EXECUTION STATE pid={} tid={} state=dll-init-ready module=\"{}\" context_created=0",
+                                    child.pid, child.tid, storm_name
+                                ),
+                            );
+                            let child_key = ThreadKey {
+                                pid: child.pid,
+                                tid: child.tid,
+                            };
                             if context_index(&contexts, child_key).is_some() {
                                 return Err("child primary context already exists".into());
                             }
@@ -2175,23 +2817,48 @@ async fn run() -> Result<(), String> {
                             let child_teb = thread_teb_va(child.tid)?;
                             let reserved = STACK_TOP - 0x20;
                             contexts.push(child_context);
-                            if contexts.iter().filter(|context| context.key() == child_key).count() != 1 {
+                            if contexts
+                                .iter()
+                                .filter(|context| context.key() == child_key)
+                                .count()
+                                != 1
+                            {
                                 return Err("child primary context insertion mismatch".into());
                             }
-                            logl::log(level::IMPORTANT, format_args!(
-                                "WC3 CHILD CONTEXT READY pid={} tid={} state=dll-init-ready module=\"{}\" context_created=1 started=0 scheduled=0 eip=0x{:08x} esp=0x{:08x} teb=0x{:08x} stack_base=0x{:08x} stack_top=0x{:08x} return_va=0x{:08x}",
-                                child.pid, child.tid, storm_name, storm_entry, child_esp, child_teb,
-                                STACK_BASE, STACK_TOP, thunk32::CHILD_DLL_RETURN_ADDRESS
-                            ));
-                            logl::log(level::IMPORTANT, format_args!(
-                                "WC3 CHILD DLL FRAME pid={} tid={} module=\"{}\" return=0x{:08x} hinst=0x{:08x} reason=1 reserved=0x{:08x}",
-                                child.pid, child.tid, storm_name, thunk32::CHILD_DLL_RETURN_ADDRESS,
-                                storm_base, reserved
-                            ));
-                            logl::log(level::IMPORTANT, format_args!(
-                                "WC3 CHILD SCHEDULER READY pid={} tid={} context_identity=thread-key runnable_selection=process-aware wait_resume=process-aware control_routing=process-aware context_created=1",
-                                child.pid, child.tid
-                            ));
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD CONTEXT READY pid={} tid={} state=dll-init-ready module=\"{}\" context_created=1 started=0 scheduled=0 eip=0x{:08x} esp=0x{:08x} teb=0x{:08x} stack_base=0x{:08x} stack_top=0x{:08x} return_va=0x{:08x}",
+                                    child.pid,
+                                    child.tid,
+                                    storm_name,
+                                    storm_entry,
+                                    child_esp,
+                                    child_teb,
+                                    STACK_BASE,
+                                    STACK_TOP,
+                                    thunk32::CHILD_DLL_RETURN_ADDRESS
+                                ),
+                            );
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD DLL FRAME pid={} tid={} module=\"{}\" return=0x{:08x} hinst=0x{:08x} reason=1 reserved=0x{:08x}",
+                                    child.pid,
+                                    child.tid,
+                                    storm_name,
+                                    thunk32::CHILD_DLL_RETURN_ADDRESS,
+                                    storm_base,
+                                    reserved
+                                ),
+                            );
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD SCHEDULER READY pid={} tid={} context_identity=thread-key runnable_selection=process-aware wait_resume=process-aware control_routing=process-aware context_created=1",
+                                    child.pid, child.tid
+                                ),
+                            );
                             logl::log(
                                 level::IMPORTANT,
                                 format_args!(
@@ -2200,8 +2867,13 @@ async fn run() -> Result<(), String> {
                                 ),
                             );
                             let child_context_index = context_index(&contexts, child_key)
-                                .ok_or_else(|| "child primary context missing after insertion".to_owned())?;
-                            let matching_contexts = contexts.iter().filter(|context| context.key() == child_key).count();
+                                .ok_or_else(|| {
+                                    "child primary context missing after insertion".to_owned()
+                                })?;
+                            let matching_contexts = contexts
+                                .iter()
+                                .filter(|context| context.key() == child_key)
+                                .count();
                             if matching_contexts != 1 {
                                 return Err("child primary context is not unique".into());
                             }
@@ -2209,34 +2881,56 @@ async fn run() -> Result<(), String> {
                                 return Err("child primary context unexpectedly started".into());
                             }
                             if child.native_modules[storm_index].initialized {
-                                return Err("Storm unexpectedly initialized before scheduling".into());
+                                return Err(
+                                    "Storm unexpectedly initialized before scheduling".into()
+                                );
                             }
-                            verify_child_primary_context(child, &contexts[child_context_index], storm_index)?;
-                            let (_, _, scheduled_entry) = begin_child_dll_init(child).map_err(str::to_owned)?;
+                            verify_child_primary_context(
+                                child,
+                                &contexts[child_context_index],
+                                storm_index,
+                            )?;
+                            let (_, _, scheduled_entry) =
+                                begin_child_dll_init(child).map_err(str::to_owned)?;
                             if scheduled_entry != storm_entry {
                                 return Err("child DLL scheduling entry mismatch".into());
                             }
-                            let runnable_count = session.runnable.iter().filter(|key| **key == child_key).count();
+                            let runnable_count = session
+                                .runnable
+                                .iter()
+                                .filter(|key| **key == child_key)
+                                .count();
                             if runnable_count != 1 {
-                                return Err("child runnable queue entry missing or duplicated".into());
+                                return Err(
+                                    "child runnable queue entry missing or duplicated".into()
+                                );
                             }
-                            logl::log(level::IMPORTANT, format_args!(
-                                "WC3 CHILD DLL INIT SCHEDULE pid={} tid={} module=\"{}\" state=dll-init-running eip=0x{:08x} esp=0x{:08x}",
-                                child.pid, child.tid, storm_name, storm_entry, child_esp
-                            ));
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD DLL INIT SCHEDULE pid={} tid={} module=\"{}\" state=dll-init-running eip=0x{:08x} esp=0x{:08x}",
+                                    child.pid, child.tid, storm_name, storm_entry, child_esp
+                                ),
+                            );
                             let selected = pop_runnable_context(&mut session, &contexts)
-                                .ok_or_else(|| "child runnable context was not selected".to_owned())?;
+                                .ok_or_else(|| {
+                                    "child runnable context was not selected".to_owned()
+                                })?;
                             if contexts[selected].key() != child_key {
                                 return Err("ordinary scheduler selected non-child context".into());
                             }
                             active = selected;
-                            logl::log(level::IMPORTANT, format_args!(
-                                "WC3 CHILD SCHEDULED pid={} tid={} module=\"{}\" started=0",
-                                child.pid, child.tid, storm_name
-                            ));
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD SCHEDULED pid={} tid={} module=\"{}\" started=0",
+                                    child.pid, child.tid, storm_name
+                                ),
+                            );
                             continue;
                         }
-                        let Some(deadline) = wait_deadlines.values().map(|wait| wait.deadline).min()
+                        let Some(deadline) =
+                            wait_deadlines.values().map(|wait| wait.deadline).min()
                         else {
                             return Err("no runnable thread after launcher block".into());
                         };
@@ -2266,18 +2960,12 @@ async fn run() -> Result<(), String> {
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 WAIT TIMEOUT pid={} tid={} handle=0x{:08x} elapsed_ms={} result=0x{:08x}",
-                                    key.pid,
-                                    key.tid,
-                                    wait.handle,
-                                    wait.timeout_ms,
-                                    WAIT_TIMEOUT
+                                    key.pid, key.tid, wait.handle, wait.timeout_ms, WAIT_TIMEOUT
                                 ),
                             );
                             previous_wait_timeout = Some((key, wait.handle, wait.timeout_ms));
                         }
-                        if let Some(next) =
-                            pop_runnable_context(&mut session, &contexts)
-                        {
+                        if let Some(next) = pop_runnable_context(&mut session, &contexts) {
                             active = next;
                             continue;
                         }
@@ -2304,7 +2992,9 @@ async fn run() -> Result<(), String> {
                         );
                     }
                 };
-                if let Some((frame, input)) = draw_text_input.filter(|(frame, _)| frame[5] == 0x0000_0411) {
+                if let Some((frame, input)) =
+                    draw_text_input.filter(|(frame, _)| frame[5] == 0x0000_0411)
+                {
                     let output = read_guest_words(&memory, frame[4], 4)?;
                     logl::log(
                         level::IMPORTANT,
@@ -2421,62 +3111,120 @@ async fn run() -> Result<(), String> {
                 }
             }
             ExitKind::Exception if active_key.pid != LAUNCHER_PID => {
-                let child = pending_child.as_ref().filter(|child| child.pid == active_key.pid && child.tid == active_key.tid)
+                let child = pending_child
+                    .as_ref()
+                    .filter(|child| child.pid == active_key.pid && child.tid == active_key.tid)
                     .ok_or_else(|| "exception child missing pending state".to_owned())?;
                 let (_, module) = child_execution_module(child).map_err(str::to_owned)?;
                 let exception = decode_child_exception(exit.detail, exit.qualification);
                 let registers = exit.registers;
-                logl::log(level::IMPORTANT, format_args!(
-                    "WC3 CHILD EXCEPTION RAW detail=0x{:08x} qualification=0x{:016x}",
-                    exit.detail, exit.qualification,
-                ));
+                logl::log(
+                    level::IMPORTANT,
+                    format_args!(
+                        "WC3 CHILD EXCEPTION RAW detail=0x{:08x} qualification=0x{:016x}",
+                        exit.detail, exit.qualification,
+                    ),
+                );
                 // Preceding bytes expose the call/return or pointer-producing
                 // instruction; these are raw bytes, not instruction boundaries.
                 for distance in [32u32, 16] {
                     if let Some(start) = registers.eip.checked_sub(distance) {
-                        logl::log(level::IMPORTANT, format_args!(
-                            "WC3 CHILD EXCEPTION CODE BEFORE address=0x{:08x} bytes=\"{}\"",
-                            start, exception_code_window(&child.address_space, start),
-                        ));
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD EXCEPTION CODE BEFORE address=0x{:08x} bytes=\"{}\"",
+                                start,
+                                exception_code_window(&child.address_space, start),
+                            ),
+                        );
                     }
                 }
-                logl::log(level::IMPORTANT, format_args!(
-                    "WC3 CHILD EXCEPTION pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" eip=0x{:08x} esp=0x{:08x} vector={} name=\"{}\" type={} valid={} error_valid={} error={}",
-                    active_key.pid, active_key.tid, module.stored, registers.eip, registers.esp,
-                    exception.vector.map(|value| value.to_string()).unwrap_or_else(|| "-".into()), exception.name,
-                    exception.interruption_type.map(|value| value.to_string()).unwrap_or_else(|| "-".into()),
-                    exception.valid as u8,
-                    exception.error_valid.map(|value| (value as u8).to_string()).unwrap_or_else(|| "-".into()),
-                    exception.error.map(|value| format!("0x{value:08x}")).unwrap_or_else(|| "-".into()),
-                ));
-                logl::log(level::IMPORTANT, format_args!(
-                    "WC3 CHILD EXCEPTION FAULT {}",
-                    child_exception_fault_detail(exception),
-                ));
-                logl::log(level::IMPORTANT, format_args!(
-                    "WC3 CHILD EXCEPTION REGS eax=0x{:08x} ebx=0x{:08x} ecx=0x{:08x} edx=0x{:08x} esi=0x{:08x} edi=0x{:08x} ebp=0x{:08x} esp=0x{:08x} eip=0x{:08x} eflags=0x{:08x} fs_base=0x{:08x}",
-                    registers.eax, registers.ebx, registers.ecx, registers.edx, registers.esi,
-                    registers.edi, registers.ebp, registers.esp, registers.eip,
-                    registers.eflags, registers.fs_base,
-                ));
-                logl::log(level::IMPORTANT, format_args!(
-                    "WC3 CHILD EXCEPTION CODE eip=0x{:08x} bytes=\"{}\"",
-                    registers.eip, exception_code_window(&child.address_space, registers.eip),
-                ));
-                logl::log(level::IMPORTANT, format_args!(
-                    "WC3 CHILD EXCEPTION STACK esp=0x{:08x} words={}",
-                    registers.esp, exception_stack_window(&child.address_space, registers.esp),
-                ));
-                logl::log(level::IMPORTANT, format_args!(
-                    "WC3 CHILD SEH FRONTIER pid={} tid={} fs_base=0x{:08x} registration_head={}",
-                    active_key.pid, active_key.tid, registers.fs_base,
-                    seh_registration_head(&child.address_space, registers.fs_base),
-                ));
+                logl::log(
+                    level::IMPORTANT,
+                    format_args!(
+                        "WC3 CHILD EXCEPTION pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" eip=0x{:08x} esp=0x{:08x} vector={} name=\"{}\" type={} valid={} error_valid={} error={}",
+                        active_key.pid,
+                        active_key.tid,
+                        module.stored,
+                        registers.eip,
+                        registers.esp,
+                        exception
+                            .vector
+                            .map(|value| value.to_string())
+                            .unwrap_or_else(|| "-".into()),
+                        exception.name,
+                        exception
+                            .interruption_type
+                            .map(|value| value.to_string())
+                            .unwrap_or_else(|| "-".into()),
+                        exception.valid as u8,
+                        exception
+                            .error_valid
+                            .map(|value| (value as u8).to_string())
+                            .unwrap_or_else(|| "-".into()),
+                        exception
+                            .error
+                            .map(|value| format!("0x{value:08x}"))
+                            .unwrap_or_else(|| "-".into()),
+                    ),
+                );
+                logl::log(
+                    level::IMPORTANT,
+                    format_args!(
+                        "WC3 CHILD EXCEPTION FAULT {}",
+                        child_exception_fault_detail(exception),
+                    ),
+                );
+                logl::log(
+                    level::IMPORTANT,
+                    format_args!(
+                        "WC3 CHILD EXCEPTION REGS eax=0x{:08x} ebx=0x{:08x} ecx=0x{:08x} edx=0x{:08x} esi=0x{:08x} edi=0x{:08x} ebp=0x{:08x} esp=0x{:08x} eip=0x{:08x} eflags=0x{:08x} fs_base=0x{:08x}",
+                        registers.eax,
+                        registers.ebx,
+                        registers.ecx,
+                        registers.edx,
+                        registers.esi,
+                        registers.edi,
+                        registers.ebp,
+                        registers.esp,
+                        registers.eip,
+                        registers.eflags,
+                        registers.fs_base,
+                    ),
+                );
+                logl::log(
+                    level::IMPORTANT,
+                    format_args!(
+                        "WC3 CHILD EXCEPTION CODE eip=0x{:08x} bytes=\"{}\"",
+                        registers.eip,
+                        exception_code_window(&child.address_space, registers.eip),
+                    ),
+                );
+                logl::log(
+                    level::IMPORTANT,
+                    format_args!(
+                        "WC3 CHILD EXCEPTION STACK esp=0x{:08x} words={}",
+                        registers.esp,
+                        exception_stack_window(&child.address_space, registers.esp),
+                    ),
+                );
+                logl::log(
+                    level::IMPORTANT,
+                    format_args!(
+                        "WC3 CHILD SEH FRONTIER pid={} tid={} fs_base=0x{:08x} registration_head={}",
+                        active_key.pid,
+                        active_key.tid,
+                        registers.fs_base,
+                        seh_registration_head(&child.address_space, registers.fs_base),
+                    ),
+                );
                 if module.stored.eq_ignore_ascii_case("Storm.dll") && registers.eip == 0x1503_62ee {
                     log_child_fault_precursor(
                         child,
                         module,
-                        session.process(active_key.pid).ok_or_else(|| "faulted child process missing".to_owned())?,
+                        session
+                            .process(active_key.pid)
+                            .ok_or_else(|| "faulted child process missing".to_owned())?,
                         active_key.pid,
                         active_key.tid,
                         registers.eax,
@@ -2486,13 +3234,23 @@ async fn run() -> Result<(), String> {
             }
             ExitKind::Halted => {
                 if active_key.pid != LAUNCHER_PID {
-                    let child = pending_child.as_ref().filter(|child| child.pid == active_key.pid && child.tid == active_key.tid)
+                    let child = pending_child
+                        .as_ref()
+                        .filter(|child| child.pid == active_key.pid && child.tid == active_key.tid)
                         .ok_or_else(|| "halted child missing pending state".to_owned())?;
                     let (_, module) = child_execution_module(child).map_err(str::to_owned)?;
-                    logl::log(level::IMPORTANT, format_args!(
-                        "WC3 CHILD NATIVE EXECUTION FAULT pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" eip=0x{:08x} esp=0x{:08x} kind=Halted detail={}",
-                        active_key.pid, active_key.tid, module.stored, exit.registers.eip, exit.registers.esp, exit.detail
-                    ));
+                    logl::log(
+                        level::IMPORTANT,
+                        format_args!(
+                            "WC3 CHILD NATIVE EXECUTION FAULT pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" eip=0x{:08x} esp=0x{:08x} kind=Halted detail={}",
+                            active_key.pid,
+                            active_key.tid,
+                            module.stored,
+                            exit.registers.eip,
+                            exit.registers.esp,
+                            exit.detail
+                        ),
+                    );
                     return Ok(());
                 }
                 let halted_tid = contexts.remove(active).tid;
@@ -2510,13 +3268,24 @@ async fn run() -> Result<(), String> {
             }
             kind => {
                 if active_key.pid != LAUNCHER_PID {
-                    let child = pending_child.as_ref().filter(|child| child.pid == active_key.pid && child.tid == active_key.tid)
+                    let child = pending_child
+                        .as_ref()
+                        .filter(|child| child.pid == active_key.pid && child.tid == active_key.tid)
                         .ok_or_else(|| "faulted child missing pending state".to_owned())?;
                     let (_, module) = child_execution_module(child).map_err(str::to_owned)?;
-                    logl::log(level::IMPORTANT, format_args!(
-                        "WC3 CHILD NATIVE EXECUTION FAULT pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" eip=0x{:08x} esp=0x{:08x} kind={:?} detail={}",
-                        active_key.pid, active_key.tid, module.stored, exit.registers.eip, exit.registers.esp, kind, exit.detail
-                    ));
+                    logl::log(
+                        level::IMPORTANT,
+                        format_args!(
+                            "WC3 CHILD NATIVE EXECUTION FAULT pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" eip=0x{:08x} esp=0x{:08x} kind={:?} detail={}",
+                            active_key.pid,
+                            active_key.tid,
+                            module.stored,
+                            exit.registers.eip,
+                            exit.registers.esp,
+                            kind,
+                            exit.detail
+                        ),
+                    );
                     return Ok(());
                 }
                 return Err(format!(
@@ -2603,7 +3372,10 @@ struct GuestContext {
 
 impl GuestContext {
     fn key(&self) -> ThreadKey {
-        ThreadKey { pid: self.pid, tid: self.tid }
+        ThreadKey {
+            pid: self.pid,
+            tid: self.tid,
+        }
     }
 }
 
@@ -2618,11 +3390,11 @@ fn context_index(contexts: &[GuestContext], key: ThreadKey) -> Option<usize> {
     contexts.iter().position(|context| context.key() == key)
 }
 
-fn pop_runnable_context(
-    session: &mut Wc3Session,
-    contexts: &[GuestContext],
-) -> Option<usize> {
-    let queue_index = session.runnable.iter().position(|key| context_index(contexts, *key).is_some())?;
+fn pop_runnable_context(session: &mut Wc3Session, contexts: &[GuestContext]) -> Option<usize> {
+    let queue_index = session
+        .runnable
+        .iter()
+        .position(|key| context_index(contexts, *key).is_some())?;
     let key = session.runnable.remove(queue_index)?;
     context_index(contexts, key)
 }
@@ -2711,25 +3483,46 @@ fn create_child_primary_context(
         return Err("child primary context requires matching DLL-init-ready state".into());
     }
     validate_child_crt_heap_range(child)?;
-    let module = child.native_modules.get(native_index)
+    let module = child
+        .native_modules
+        .get(native_index)
         .ok_or_else(|| "child primary context native index".to_owned())?;
-    let entry = module.image.image_base.checked_add(module.image.entry_rva)
+    let entry = module
+        .image
+        .image_base
+        .checked_add(module.image.entry_rva)
         .ok_or_else(|| "child primary context entry overflow".to_owned())?;
     let teb = thread_teb_va(child.tid)?;
-    child.address_space
+    child
+        .address_space
         .map(teb, 0x1000, Permissions::READ | Permissions::WRITE)
         .map_err(|error| format!("map child TEB: {error}"))?;
     let exception_list = u32::MAX.to_le_bytes();
-    if child.address_space.write(teb, &exception_list).map_err(|error| error.to_string())? != exception_list.len() {
+    if child
+        .address_space
+        .write(teb, &exception_list)
+        .map_err(|error| error.to_string())?
+        != exception_list.len()
+    {
         return Err("short child TEB write".into());
     }
-    child.address_space
-        .map(STACK_BASE, STACK_BYTES, Permissions::READ | Permissions::WRITE)
+    child
+        .address_space
+        .map(
+            STACK_BASE,
+            STACK_BYTES,
+            Permissions::READ | Permissions::WRITE,
+        )
         .map_err(|error| format!("map child primary stack: {error}"))?;
     let esp = STACK_TOP - 0x10;
     let reserved = STACK_TOP - 0x20;
     let marker = 0x5743_3344u32.to_le_bytes();
-    if child.address_space.write(reserved, &marker).map_err(|error| error.to_string())? != marker.len() {
+    if child
+        .address_space
+        .write(reserved, &marker)
+        .map_err(|error| error.to_string())?
+        != marker.len()
+    {
         return Err("short child static-load marker write".into());
     }
     let mut frame = [0u8; 16];
@@ -2737,21 +3530,51 @@ fn create_child_primary_context(
     frame[4..8].copy_from_slice(&module.image.image_base.to_le_bytes());
     frame[8..12].copy_from_slice(&1u32.to_le_bytes());
     frame[12..16].copy_from_slice(&reserved.to_le_bytes());
-    if child.address_space.write(esp, &frame).map_err(|error| error.to_string())? != frame.len() {
+    if child
+        .address_space
+        .write(esp, &frame)
+        .map_err(|error| error.to_string())?
+        != frame.len()
+    {
         return Err("short child DLL frame write".into());
     }
 
     let mut actual_exception_list = [0; 4];
     let mut actual_frame = [0; 16];
     let mut actual_marker = [0; 4];
-    child.address_space.read(teb, &mut actual_exception_list).map_err(|error| error.to_string())?;
-    child.address_space.read(esp, &mut actual_frame).map_err(|error| error.to_string())?;
-    child.address_space.read(reserved, &mut actual_marker).map_err(|error| error.to_string())?;
+    child
+        .address_space
+        .read(teb, &mut actual_exception_list)
+        .map_err(|error| error.to_string())?;
+    child
+        .address_space
+        .read(esp, &mut actual_frame)
+        .map_err(|error| error.to_string())?;
+    child
+        .address_space
+        .read(reserved, &mut actual_marker)
+        .map_err(|error| error.to_string())?;
     if u32::from_le_bytes(actual_exception_list) != u32::MAX
-        || u32::from_le_bytes(actual_frame[0..4].try_into().map_err(|_| "child frame return")?) != thunk32::CHILD_DLL_RETURN_ADDRESS
-        || u32::from_le_bytes(actual_frame[4..8].try_into().map_err(|_| "child frame hinst")?) != module.image.image_base
-        || u32::from_le_bytes(actual_frame[8..12].try_into().map_err(|_| "child frame reason")?) != 1
-        || u32::from_le_bytes(actual_frame[12..16].try_into().map_err(|_| "child frame reserved")?) != reserved
+        || u32::from_le_bytes(
+            actual_frame[0..4]
+                .try_into()
+                .map_err(|_| "child frame return")?,
+        ) != thunk32::CHILD_DLL_RETURN_ADDRESS
+        || u32::from_le_bytes(
+            actual_frame[4..8]
+                .try_into()
+                .map_err(|_| "child frame hinst")?,
+        ) != module.image.image_base
+        || u32::from_le_bytes(
+            actual_frame[8..12]
+                .try_into()
+                .map_err(|_| "child frame reason")?,
+        ) != 1
+        || u32::from_le_bytes(
+            actual_frame[12..16]
+                .try_into()
+                .map_err(|_| "child frame reserved")?,
+        ) != reserved
         || u32::from_le_bytes(actual_marker) != u32::from_le_bytes(marker)
     {
         return Err("child primary context frame verification failed".into());
@@ -2763,9 +3586,13 @@ fn create_child_primary_context(
         fs_base: teb,
         ..Registers::default()
     };
-    let context = Context::create(&child.address_space, registers).map_err(|error| error.to_string())?;
+    let context =
+        Context::create(&child.address_space, registers).map_err(|error| error.to_string())?;
     let actual_registers = context.registers().map_err(|error| error.to_string())?;
-    if actual_registers.eip != entry || actual_registers.esp != esp || actual_registers.fs_base != teb {
+    if actual_registers.eip != entry
+        || actual_registers.esp != esp
+        || actual_registers.fs_base != teb
+    {
         return Err("child primary context register verification failed".into());
     }
     Ok(GuestContext {
@@ -2780,21 +3607,59 @@ fn create_child_primary_context(
 fn validate_child_crt_heap_range(child: &PendingChild) -> Result<(), String> {
     let heap = (CHILD_CRT_HEAP_BASE, CHILD_CRT_HEAP_LIMIT);
     let mut ranges = vec![
-        ("child control", thunk32::CHILD_CONTROL_BASE, thunk32::CHILD_CONTROL_BASE + 0x1000),
-        ("provider thunk", thunk32::THUNK_BASE, thunk32::THUNK_BASE.checked_add(u32::try_from(child.provider_thunk_bytes).map_err(|_| "provider thunk bytes")?).ok_or("provider thunk range")?),
-        ("child TEB", thread_teb_va(child.tid)?, thread_teb_va(child.tid)?.checked_add(0x1000).ok_or("child TEB range")?),
+        (
+            "child control",
+            thunk32::CHILD_CONTROL_BASE,
+            thunk32::CHILD_CONTROL_BASE + 0x1000,
+        ),
+        (
+            "provider thunk",
+            thunk32::THUNK_BASE,
+            thunk32::THUNK_BASE
+                .checked_add(
+                    u32::try_from(child.provider_thunk_bytes)
+                        .map_err(|_| "provider thunk bytes")?,
+                )
+                .ok_or("provider thunk range")?,
+        ),
+        (
+            "child TEB",
+            thread_teb_va(child.tid)?,
+            thread_teb_va(child.tid)?
+                .checked_add(0x1000)
+                .ok_or("child TEB range")?,
+        ),
         ("child stack", STACK_BASE, STACK_TOP),
         ("child GDI arena", 0x0500_0000, 0x0600_0000),
-        ("War3 image", child.image.image_base, child.image.image_base.checked_add(u32::try_from(child.image.image.len()).map_err(|_| "War3 image range")?).ok_or("War3 image range")?),
+        (
+            "War3 image",
+            child.image.image_base,
+            child
+                .image
+                .image_base
+                .checked_add(
+                    u32::try_from(child.image.image.len()).map_err(|_| "War3 image range")?,
+                )
+                .ok_or("War3 image range")?,
+        ),
     ];
     for module in &child.native_modules {
         ranges.push((
             "native module",
             module.image.image_base,
-            module.image.image_base.checked_add(u32::try_from(module.image.image.len()).map_err(|_| "native image range")?).ok_or("native image range")?,
+            module
+                .image
+                .image_base
+                .checked_add(
+                    u32::try_from(module.image.image.len()).map_err(|_| "native image range")?,
+                )
+                .ok_or("native image range")?,
         ));
     }
-    if ranges.iter().any(|(_, start, end)| heap.0 < *end && *start < heap.1) {
+    if ranges
+        .iter()
+        .any(|(_, start, end)| heap.0 < *end && *start < heap.1)
+    {
         return Err("child CRT heap overlaps an established child mapping".into());
     }
     Ok(())
@@ -2807,19 +3672,28 @@ fn ensure_child_crt_allocation_mapped(
 ) -> Result<u32, String> {
     let mapped_end = child_crt_mapping_end(child.crt_heap_mapped_end, pointer, requested)?;
     if mapped_end > child.crt_heap_mapped_end {
-        child.address_space.map(
-            child.crt_heap_mapped_end,
-            usize::try_from(mapped_end - child.crt_heap_mapped_end).map_err(|_| "child CRT mapping length")?,
-            Permissions::READ | Permissions::WRITE,
-        ).map_err(|error| format!("map child CRT heap: {error}"))?;
+        child
+            .address_space
+            .map(
+                child.crt_heap_mapped_end,
+                usize::try_from(mapped_end - child.crt_heap_mapped_end)
+                    .map_err(|_| "child CRT mapping length")?,
+                Permissions::READ | Permissions::WRITE,
+            )
+            .map_err(|error| format!("map child CRT heap: {error}"))?;
         child.crt_heap_mapped_end = mapped_end;
     }
     Ok(child.crt_heap_mapped_end)
 }
 
 fn child_crt_mapping_end(current: u32, pointer: u32, requested: u32) -> Result<u32, String> {
-    let allocation_end = pointer.checked_add(requested).ok_or_else(|| "child CRT allocation end overflow".to_owned())?;
-    let mapped_end = allocation_end.checked_add(0xfff).ok_or_else(|| "child CRT map alignment overflow".to_owned())? & !0xfff;
+    let allocation_end = pointer
+        .checked_add(requested)
+        .ok_or_else(|| "child CRT allocation end overflow".to_owned())?;
+    let mapped_end = allocation_end
+        .checked_add(0xfff)
+        .ok_or_else(|| "child CRT map alignment overflow".to_owned())?
+        & !0xfff;
     if current < CHILD_CRT_HEAP_BASE || mapped_end > CHILD_CRT_HEAP_LIMIT {
         return Err("child CRT mapping exceeds heap limit".into());
     }
@@ -2831,26 +3705,48 @@ fn verify_child_primary_context(
     context: &GuestContext,
     native_index: usize,
 ) -> Result<(), String> {
-    if context.key() != (ThreadKey { pid: child.pid, tid: child.tid }) {
+    if context.key()
+        != (ThreadKey {
+            pid: child.pid,
+            tid: child.tid,
+        })
+    {
         return Err("child primary context identity mismatch".into());
     }
-    let module = child.native_modules.get(native_index)
+    let module = child
+        .native_modules
+        .get(native_index)
         .ok_or_else(|| "child primary context native index".to_owned())?;
-    let entry = module.image.image_base.checked_add(module.image.entry_rva)
+    let entry = module
+        .image
+        .image_base
+        .checked_add(module.image.entry_rva)
         .ok_or_else(|| "child primary context entry overflow".to_owned())?;
     let teb = thread_teb_va(child.tid)?;
     let esp = STACK_TOP - 0x10;
     let reserved = STACK_TOP - 0x20;
-    let registers = context.context.registers().map_err(|error| error.to_string())?;
+    let registers = context
+        .context
+        .registers()
+        .map_err(|error| error.to_string())?;
     let mut frame = [0; 16];
-    child.address_space.read(esp, &mut frame).map_err(|error| error.to_string())?;
+    child
+        .address_space
+        .read(esp, &mut frame)
+        .map_err(|error| error.to_string())?;
     if registers.eip != entry
         || registers.esp != esp
         || registers.fs_base != teb
-        || u32::from_le_bytes(frame[0..4].try_into().map_err(|_| "child frame return")?) != thunk32::CHILD_DLL_RETURN_ADDRESS
-        || u32::from_le_bytes(frame[4..8].try_into().map_err(|_| "child frame hinst")?) != module.image.image_base
+        || u32::from_le_bytes(frame[0..4].try_into().map_err(|_| "child frame return")?)
+            != thunk32::CHILD_DLL_RETURN_ADDRESS
+        || u32::from_le_bytes(frame[4..8].try_into().map_err(|_| "child frame hinst")?)
+            != module.image.image_base
         || u32::from_le_bytes(frame[8..12].try_into().map_err(|_| "child frame reason")?) != 1
-        || u32::from_le_bytes(frame[12..16].try_into().map_err(|_| "child frame reserved")?) != reserved
+        || u32::from_le_bytes(
+            frame[12..16]
+                .try_into()
+                .map_err(|_| "child frame reserved")?,
+        ) != reserved
     {
         return Err("child primary context preservation mismatch".into());
     }
@@ -2901,12 +3797,19 @@ struct PendingNativeModule {
     initialized: bool,
 }
 
-fn child_execution_module(child: &PendingChild) -> Result<(usize, &PendingNativeModule), &'static str> {
+fn child_execution_module(
+    child: &PendingChild,
+) -> Result<(usize, &PendingNativeModule), &'static str> {
     let native_index = match child.execution {
-        ChildExecutionState::DllInitReady { native_index } | ChildExecutionState::DllInitRunning { native_index } => native_index,
+        ChildExecutionState::DllInitReady { native_index }
+        | ChildExecutionState::DllInitRunning { native_index } => native_index,
         ChildExecutionState::Loader => return Err("child execution has no native module"),
     };
-    child.native_modules.get(native_index).map(|module| (native_index, module)).ok_or("child execution native index")
+    child
+        .native_modules
+        .get(native_index)
+        .map(|module| (native_index, module))
+        .ok_or("child execution native index")
 }
 
 fn log_child_fault_precursor(
@@ -2919,18 +3822,34 @@ fn log_child_fault_precursor(
 ) -> Result<(), String> {
     const CALL_EIP: u32 = 0x1503_62da;
     const IAT_RVA: u32 = 0x0003_d1e0;
-    let iat_va = storm.image.image_base.checked_add(IAT_RVA)
+    let iat_va = storm
+        .image
+        .image_base
+        .checked_add(IAT_RVA)
         .ok_or_else(|| "Storm precursor IAT address overflow".to_owned())?;
-    let import = storm.image.imports.iter().find(|import| import.iat_rva == IAT_RVA)
+    let import = storm
+        .image
+        .imports
+        .iter()
+        .find(|import| import.iat_rva == IAT_RVA)
         .ok_or_else(|| "Storm precursor IAT has no parsed import".to_owned())?;
     let mut target_bytes = [0; 4];
-    child.address_space.read(iat_va, &mut target_bytes).map_err(|error| error.to_string())?;
+    child
+        .address_space
+        .read(iat_va, &mut target_bytes)
+        .map_err(|error| error.to_string())?;
     let target = u32::from_le_bytes(target_bytes);
-    let provider = target.checked_sub(thunk32::THUNK_BASE)
+    let provider = target
+        .checked_sub(thunk32::THUNK_BASE)
         .filter(|offset| *offset % thunk32::THUNK_BYTES as u32 == 0)
         .map(|offset| offset / thunk32::THUNK_BYTES as u32)
         .filter(|provider_id| (*provider_id as usize) < process.xp.provider_import_count())
-        .and_then(|provider_id| process.xp.provider_import(provider_id).map(|provider| (provider_id, provider)));
+        .and_then(|provider_id| {
+            process
+                .xp
+                .provider_import(provider_id)
+                .map(|provider| (provider_id, provider))
+        });
 
     let import_symbol = pe_import_symbol_label(&import.symbol);
     let mut detail = format!(
@@ -2944,10 +3863,19 @@ fn log_child_fault_precursor(
             provider_id, provider.module, provider_symbol,
         ));
         if !provider_matches_import(provider, import) {
-            logl::log(level::IMPORTANT, format_args!(
-                "WC3 CHILD IAT BINDING MISMATCH iat_rva=0x{:08x} pe_module=\"{}\" pe_{} provider_module=\"{}\" provider_{} provider_id={} target=0x{:08x}",
-                IAT_RVA, import.module, import_symbol, provider.module, provider_symbol, provider_id, target,
-            ));
+            logl::log(
+                level::IMPORTANT,
+                format_args!(
+                    "WC3 CHILD IAT BINDING MISMATCH iat_rva=0x{:08x} pe_module=\"{}\" pe_{} provider_module=\"{}\" provider_{} provider_id={} target=0x{:08x}",
+                    IAT_RVA,
+                    import.module,
+                    import_symbol,
+                    provider.module,
+                    provider_symbol,
+                    provider_id,
+                    target,
+                ),
+            );
             return Err("child IAT binding mismatch".into());
         }
     }
@@ -2969,12 +3897,21 @@ fn provider_symbol_label(symbol: &child_loader::ProviderSymbol) -> String {
     }
 }
 
-fn provider_matches_import(provider: &child_loader::ProviderImport, import: &pe32::ImportDescriptor) -> bool {
-    provider.module.eq_ignore_ascii_case(&import.module) && match (&provider.symbol, &import.symbol) {
-        (child_loader::ProviderSymbol::Name(provider), pe32::ImportSymbol::Name(import)) => provider == import,
-        (child_loader::ProviderSymbol::Ordinal(provider), pe32::ImportSymbol::Ordinal(import)) => provider == import,
-        _ => false,
-    }
+fn provider_matches_import(
+    provider: &child_loader::ProviderImport,
+    import: &pe32::ImportDescriptor,
+) -> bool {
+    provider.module.eq_ignore_ascii_case(&import.module)
+        && match (&provider.symbol, &import.symbol) {
+            (child_loader::ProviderSymbol::Name(provider), pe32::ImportSymbol::Name(import)) => {
+                provider == import
+            }
+            (
+                child_loader::ProviderSymbol::Ordinal(provider),
+                pe32::ImportSymbol::Ordinal(import),
+            ) => provider == import,
+            _ => false,
+        }
 }
 
 fn begin_child_dll_init(child: &mut PendingChild) -> Result<(usize, u32, u32), &'static str> {
@@ -2985,9 +3922,17 @@ fn begin_child_dll_init_state(
     execution: &mut ChildExecutionState,
     native_modules: &[PendingNativeModule],
 ) -> Result<(usize, u32, u32), &'static str> {
-    let ChildExecutionState::DllInitReady { native_index } = *execution else { return Err("child DLL init not ready"); };
-    let module = native_modules.get(native_index).ok_or("child execution native index")?;
-    let entry = module.image.image_base.checked_add(module.image.entry_rva).ok_or("child DLL entry")?;
+    let ChildExecutionState::DllInitReady { native_index } = *execution else {
+        return Err("child DLL init not ready");
+    };
+    let module = native_modules
+        .get(native_index)
+        .ok_or("child execution native index")?;
+    let entry = module
+        .image
+        .image_base
+        .checked_add(module.image.entry_rva)
+        .ok_or("child DLL entry")?;
     *execution = ChildExecutionState::DllInitRunning { native_index };
     Ok((native_index, module.image.image_base, entry))
 }
@@ -3029,10 +3974,19 @@ fn map_child_thunks(address_space: &AddressSpace, thunks: &[u8]) -> Result<(), S
 fn map_child_controls(address_space: &AddressSpace) -> Result<(), String> {
     let mut page = vec![0x90; 0x1000];
     thunk32::install_child_controls(&mut page).map_err(str::to_owned)?;
-    address_space.map(thunk32::CHILD_CONTROL_BASE, page.len(), Permissions::READ | Permissions::WRITE | Permissions::EXECUTE)
+    address_space
+        .map(
+            thunk32::CHILD_CONTROL_BASE,
+            page.len(),
+            Permissions::READ | Permissions::WRITE | Permissions::EXECUTE,
+        )
         .map_err(|error| format!("map child controls: {error}"))?;
-    let written = address_space.write(thunk32::CHILD_CONTROL_BASE, &page).map_err(|error| format!("write child controls: {error}"))?;
-    if written != page.len() { return Err("short child control write".into()); }
+    let written = address_space
+        .write(thunk32::CHILD_CONTROL_BASE, &page)
+        .map_err(|error| format!("write child controls: {error}"))?;
+    if written != page.len() {
+        return Err("short child control write".into());
+    }
     Ok(())
 }
 
@@ -3042,7 +3996,10 @@ fn log_native_child_image(
     image: &pe32::PeImage,
     listing: &async_fs::DirListing,
 ) -> Result<(), &'static str> {
-    let entry_va = image.image_base.checked_add(image.entry_rva).ok_or("native entry overflow")?;
+    let entry_va = image
+        .image_base
+        .checked_add(image.entry_rva)
+        .ok_or("native entry overflow")?;
     logl::log(
         level::IMPORTANT,
         format_args!(
@@ -3060,7 +4017,10 @@ fn log_native_child_image(
     );
     let mut dependencies: Vec<(String, usize, usize, usize)> = Vec::new();
     for import in &image.imports {
-        if let Some((_, count, named, ordinal)) = dependencies.iter_mut().find(|(module, _, _, _)| module == &import.module) {
+        if let Some((_, count, named, ordinal)) = dependencies
+            .iter_mut()
+            .find(|(module, _, _, _)| module == &import.module)
+        {
             *count += 1;
             match &import.symbol {
                 pe32::ImportSymbol::Name(_) => *named += 1,
@@ -3088,7 +4048,10 @@ fn log_native_child_image(
                 named,
                 ordinal,
                 usize::from(local.is_some()),
-                local.as_ref().map(|value| format!(" stored=\"{}\"", value)).unwrap_or_default(),
+                local
+                    .as_ref()
+                    .map(|value| format!(" stored=\"{}\"", value))
+                    .unwrap_or_default(),
             ),
         );
     }
@@ -3101,7 +4064,11 @@ fn log_child_handles(session: &Wc3Session, pid: u32) {
     };
     logl::log(
         level::IMPORTANT,
-        format_args!("WC3 CHILD HANDLES pid={} count={}", pid, process.handles.len()),
+        format_args!(
+            "WC3 CHILD HANDLES pid={} count={}",
+            pid,
+            process.handles.len()
+        ),
     );
     let mut handles: Vec<_> = process.handles.iter().collect();
     handles.sort_unstable_by_key(|(handle, _)| **handle);
@@ -3166,7 +4133,9 @@ fn decode_child_exception(detail: u32, qualification: u64) -> ChildException {
         error_valid,
         error: error_valid.unwrap_or(false).then_some(qualification as u32),
         fault_linear: (valid && vector == Some(14)).then_some((qualification >> 32) as u32),
-        name: vector.map(child_exception_name).unwrap_or("invalid-interruption-info"),
+        name: vector
+            .map(child_exception_name)
+            .unwrap_or("invalid-interruption-info"),
     }
 }
 
@@ -3219,7 +4188,11 @@ fn child_exception_name(vector: u32) -> &'static str {
 fn exception_code_window(address_space: &AddressSpace, eip: u32) -> String {
     let mut bytes = [0; 16];
     match address_space.read(eip, &mut bytes) {
-        Ok(16) => bytes.iter().map(|byte| format!("{byte:02x}")).collect::<Vec<_>>().join(" "),
+        Ok(16) => bytes
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<Vec<_>>()
+            .join(" "),
         _ => "<unreadable>".into(),
     }
 }
@@ -3229,8 +4202,12 @@ fn exception_stack_window(address_space: &AddressSpace, esp: u32) -> String {
     match address_space.read(esp, &mut bytes) {
         Ok(0x20) => format!(
             "[{}]",
-            bytes.chunks_exact(4)
-                .map(|word| format!("0x{:08x}", u32::from_le_bytes(word.try_into().expect("stack word"))))
+            bytes
+                .chunks_exact(4)
+                .map(|word| format!(
+                    "0x{:08x}",
+                    u32::from_le_bytes(word.try_into().expect("stack word"))
+                ))
                 .collect::<Vec<_>>()
                 .join(", "),
         ),
@@ -3238,9 +4215,16 @@ fn exception_stack_window(address_space: &AddressSpace, esp: u32) -> String {
     }
 }
 
-fn decode_reg_open_key_ex_a(memory: &impl GuestMemory, esp: u32) -> Result<RegOpenKeyExAFrame, String> {
+fn decode_reg_open_key_ex_a(
+    memory: &impl GuestMemory,
+    esp: u32,
+) -> Result<RegOpenKeyExAFrame, String> {
     let frame = read_guest_words(memory, esp, 6)?;
-    let subkey = if frame[2] == 0 { None } else { Some(diagnostic_ansi_string(memory, frame[2])?) };
+    let subkey = if frame[2] == 0 {
+        None
+    } else {
+        Some(diagnostic_ansi_string(memory, frame[2])?)
+    };
     Ok(RegOpenKeyExAFrame {
         caller_ret: frame[0],
         hkey: frame[1],
@@ -3350,14 +4334,31 @@ mod tests {
 
     impl GuestMemory for TestMemory {
         fn read(&self, address: u32, output: &mut [u8]) -> Result<(), &'static str> {
-            let start = usize::try_from(address.checked_sub(self.base).ok_or("test memory below base")?).map_err(|_| "test memory offset")?;
-            output.copy_from_slice(self.bytes.get(start..start + output.len()).ok_or("test memory range")?);
+            let start = usize::try_from(
+                address
+                    .checked_sub(self.base)
+                    .ok_or("test memory below base")?,
+            )
+            .map_err(|_| "test memory offset")?;
+            output.copy_from_slice(
+                self.bytes
+                    .get(start..start + output.len())
+                    .ok_or("test memory range")?,
+            );
             Ok(())
         }
 
         fn write(&mut self, address: u32, input: &[u8]) -> Result<(), &'static str> {
-            let start = usize::try_from(address.checked_sub(self.base).ok_or("test memory below base")?).map_err(|_| "test memory offset")?;
-            self.bytes.get_mut(start..start + input.len()).ok_or("test memory range")?.copy_from_slice(input);
+            let start = usize::try_from(
+                address
+                    .checked_sub(self.base)
+                    .ok_or("test memory below base")?,
+            )
+            .map_err(|_| "test memory offset")?;
+            self.bytes
+                .get_mut(start..start + input.len())
+                .ok_or("test memory range")?
+                .copy_from_slice(input);
             Ok(())
         }
     }
@@ -3388,14 +4389,26 @@ mod tests {
             native_module("Mss32.dll", 0x2110_0000, 0x0002_f2e5),
         ];
         let mut state = ChildExecutionState::Loader;
-        assert_eq!(begin_child_dll_init_state(&mut state, &modules), Err("child DLL init not ready"));
+        assert_eq!(
+            begin_child_dll_init_state(&mut state, &modules),
+            Err("child DLL init not ready")
+        );
 
         state = ChildExecutionState::DllInitReady { native_index: 0 };
-        assert_eq!(begin_child_dll_init_state(&mut state, &modules), Ok((0, 0x1500_0000, 0x1503_2950)));
-        assert_eq!(state, ChildExecutionState::DllInitRunning { native_index: 0 });
+        assert_eq!(
+            begin_child_dll_init_state(&mut state, &modules),
+            Ok((0, 0x1500_0000, 0x1503_2950))
+        );
+        assert_eq!(
+            state,
+            ChildExecutionState::DllInitRunning { native_index: 0 }
+        );
         assert!(!modules[0].initialized);
         assert!(!modules[1].initialized);
-        assert_eq!(begin_child_dll_init_state(&mut state, &modules), Err("child DLL init not ready"));
+        assert_eq!(
+            begin_child_dll_init_state(&mut state, &modules),
+            Err("child DLL init not ready")
+        );
     }
 
     #[test]
@@ -3403,9 +4416,24 @@ mod tests {
         let base = 0x0430_0000;
         let esp = 0x043f_ff00;
         let subkey = 0x043f_fe00;
-        let mut memory = TestMemory { base, bytes: vec![0x5a; STACK_BYTES] };
-        for (index, word) in [0x1502_e2f9u32, 0x8000_0002, subkey, 0, 0x0002_0019, 0x043f_fd00].into_iter().enumerate() {
-            memory.write(esp + index as u32 * 4, &word.to_le_bytes()).unwrap();
+        let mut memory = TestMemory {
+            base,
+            bytes: vec![0x5a; STACK_BYTES],
+        };
+        for (index, word) in [
+            0x1502_e2f9u32,
+            0x8000_0002,
+            subkey,
+            0,
+            0x0002_0019,
+            0x043f_fd00,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            memory
+                .write(esp + index as u32 * 4, &word.to_le_bytes())
+                .unwrap();
         }
         memory.write(subkey, b"SOFTWARE\\Example\0").unwrap();
         let before = memory.bytes.clone();
@@ -3440,7 +4468,10 @@ mod tests {
         assert_eq!(invalid.name, "invalid-interruption-info");
         assert_eq!(invalid.interruption_type, None);
         assert_eq!(invalid.error_valid, None);
-        assert_eq!(child_exception_fault_detail(exception), "linear=0x00000001 error=0x00000002 present=0 write=1 user=0 reserved=0 instruction_fetch=0");
+        assert_eq!(
+            child_exception_fault_detail(exception),
+            "linear=0x00000001 error=0x00000002 present=0 write=1 user=0 reserved=0 instruction_fetch=0"
+        );
     }
 
     #[test]
@@ -3450,7 +4481,12 @@ mod tests {
             CHILD_CRT_HEAP_BASE + 0x1000,
         );
         assert_eq!(
-            child_crt_mapping_end(CHILD_CRT_HEAP_BASE + 0x1000, CHILD_CRT_HEAP_BASE + 0xff8, 0x10).unwrap(),
+            child_crt_mapping_end(
+                CHILD_CRT_HEAP_BASE + 0x1000,
+                CHILD_CRT_HEAP_BASE + 0xff8,
+                0x10
+            )
+            .unwrap(),
             CHILD_CRT_HEAP_BASE + 0x2000,
         );
     }

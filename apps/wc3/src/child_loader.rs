@@ -1,6 +1,9 @@
 use trueos::async_fs::{DirListing, NodeKind};
 
-use crate::{pe32::{ImportSymbol, PeImage}, thunk32};
+use crate::{
+    pe32::{ImportSymbol, PeImage},
+    thunk32,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProviderSymbol {
@@ -24,14 +27,12 @@ pub fn provider_thunk_kind(import: &ProviderImport) -> thunk32::Kind {
             thunk32::Kind::Stdcall(4)
         }
         ProviderSymbol::Name(symbol)
-            if import.module.eq_ignore_ascii_case("KERNEL32.dll")
-                && symbol == "SetLastError" =>
+            if import.module.eq_ignore_ascii_case("KERNEL32.dll") && symbol == "SetLastError" =>
         {
             thunk32::Kind::Stdcall(4)
         }
         ProviderSymbol::Name(symbol)
-            if import.module.eq_ignore_ascii_case("ADVAPI32.dll")
-                && symbol == "RegOpenKeyExA" =>
+            if import.module.eq_ignore_ascii_case("ADVAPI32.dll") && symbol == "RegOpenKeyExA" =>
         {
             thunk32::Kind::Stdcall(20)
         }
@@ -71,9 +72,11 @@ pub struct ProviderSurface {
 }
 
 pub fn resolve_file(listing: &DirListing, module: &str) -> Result<Option<String>, &'static str> {
-    let matches: Vec<_> = listing.entries.iter().filter(|entry| {
-        entry.kind == NodeKind::File && entry.name.eq_ignore_ascii_case(module)
-    }).collect();
+    let matches: Vec<_> = listing
+        .entries
+        .iter()
+        .filter(|entry| entry.kind == NodeKind::File && entry.name.eq_ignore_ascii_case(module))
+        .collect();
     if matches.len() > 1 {
         return Err("ambiguous case-insensitive child module name");
     }
@@ -86,12 +89,20 @@ pub fn prepare(image: &mut PeImage, listing: &DirListing) -> Result<ProviderSurf
     }
     let mut providers: Vec<ChildProvider> = Vec::new();
     for import in &image.imports {
-        if providers.iter().any(|provider| provider.requested_module() == import.module) {
+        if providers
+            .iter()
+            .any(|provider| provider.requested_module() == import.module)
+        {
             continue;
         }
         providers.push(match resolve_file(listing, &import.module)? {
-            Some(stored) => ChildProvider::Native { requested: import.module.clone(), stored },
-            None => ChildProvider::External { module: import.module.clone() },
+            Some(stored) => ChildProvider::Native {
+                requested: import.module.clone(),
+                stored,
+            },
+            None => ChildProvider::External {
+                module: import.module.clone(),
+            },
         });
     }
 
@@ -99,11 +110,20 @@ pub fn prepare(image: &mut PeImage, listing: &DirListing) -> Result<ProviderSurf
     let mut native = Vec::new();
     for provider in &providers {
         let ChildProvider::External { module } = provider else {
-            let ChildProvider::Native { requested, stored } = provider else { unreachable!() };
-            native.push(NativeModuleRequest { requested: requested.clone(), stored: stored.clone() });
+            let ChildProvider::Native { requested, stored } = provider else {
+                unreachable!()
+            };
+            native.push(NativeModuleRequest {
+                requested: requested.clone(),
+                stored: stored.clone(),
+            });
             continue;
         };
-        for import in image.imports.iter().filter(|import| import.module == *module) {
+        for import in image
+            .imports
+            .iter()
+            .filter(|import| import.module == *module)
+        {
             imports.push(ProviderImport {
                 module: import.module.clone(),
                 symbol: match &import.symbol {
@@ -114,21 +134,46 @@ pub fn prepare(image: &mut PeImage, listing: &DirListing) -> Result<ProviderSurf
             });
         }
     }
-    let thunk_bytes = imports.len().checked_mul(thunk32::THUNK_BYTES).ok_or("child thunk size")?;
+    let thunk_bytes = imports
+        .len()
+        .checked_mul(thunk32::THUNK_BYTES)
+        .ok_or("child thunk size")?;
     let thunk_len = thunk_bytes.checked_add(0xfff).ok_or("child thunk page")? & !0xfff;
     let mut thunks = vec![0x90; thunk_len];
     for (id, import) in imports.iter().enumerate() {
         let id = u32::try_from(id).map_err(|_| "child thunk id")?;
         let address = thunk32::address(id).ok_or("child thunk address")?;
         let iat = usize::try_from(import.iat_rva).map_err(|_| "child IAT rva")?;
-        image.image.get_mut(iat..iat + 4).ok_or("child IAT range")?.copy_from_slice(&address.to_le_bytes());
+        image
+            .image
+            .get_mut(iat..iat + 4)
+            .ok_or("child IAT range")?
+            .copy_from_slice(&address.to_le_bytes());
         let offset = usize::try_from(id).map_err(|_| "child thunk offset")? * thunk32::THUNK_BYTES;
-        thunk32::write(id, provider_thunk_kind(import), &mut thunks[offset..offset + thunk32::THUNK_BYTES])?;
+        thunk32::write(
+            id,
+            provider_thunk_kind(import),
+            &mut thunks[offset..offset + thunk32::THUNK_BYTES],
+        )?;
     }
-    let named = imports.iter().filter(|import| matches!(import.symbol, ProviderSymbol::Name(_))).count();
+    let named = imports
+        .iter()
+        .filter(|import| matches!(import.symbol, ProviderSymbol::Name(_)))
+        .count();
     let ordinal = imports.len() - named;
-    let external_modules = providers.iter().filter(|provider| matches!(provider, ChildProvider::External { .. })).count();
-    Ok(ProviderSurface { imports, thunks, external_modules, named, ordinal, native, providers })
+    let external_modules = providers
+        .iter()
+        .filter(|provider| matches!(provider, ChildProvider::External { .. }))
+        .count();
+    Ok(ProviderSurface {
+        imports,
+        thunks,
+        external_modules,
+        named,
+        ordinal,
+        native,
+        providers,
+    })
 }
 
 #[cfg(test)]
@@ -136,16 +181,43 @@ mod tests {
     use super::*;
     #[test]
     fn local_resolution_is_ascii_case_insensitive_and_ordinals_survive() {
-        let listing = DirListing { entries: vec![trueos::async_fs::DirEntry { name: "Mss32.dll".into(), kind: NodeKind::File }], truncated: false };
-        let mut image = PeImage { image_base: 0x400000, entry_rva: 0, size_of_image: 0x1000, size_of_headers: 0, sections: vec![], imports: vec![
-            crate::pe32::ImportDescriptor { module: "mss32.dll".into(), symbol: ImportSymbol::Name("x".into()), iat_rva: 0 },
-            crate::pe32::ImportDescriptor { module: "wsock32.dll".into(), symbol: ImportSymbol::Ordinal(25), iat_rva: 4 },
-        ], relocations: vec![], exports: vec![], image: vec![0; 8] };
+        let listing = DirListing {
+            entries: vec![trueos::async_fs::DirEntry {
+                name: "Mss32.dll".into(),
+                kind: NodeKind::File,
+            }],
+            truncated: false,
+        };
+        let mut image = PeImage {
+            image_base: 0x400000,
+            entry_rva: 0,
+            size_of_image: 0x1000,
+            size_of_headers: 0,
+            sections: vec![],
+            imports: vec![
+                crate::pe32::ImportDescriptor {
+                    module: "mss32.dll".into(),
+                    symbol: ImportSymbol::Name("x".into()),
+                    iat_rva: 0,
+                },
+                crate::pe32::ImportDescriptor {
+                    module: "wsock32.dll".into(),
+                    symbol: ImportSymbol::Ordinal(25),
+                    iat_rva: 4,
+                },
+            ],
+            relocations: vec![],
+            exports: vec![],
+            image: vec![0; 8],
+        };
         let surface = prepare(&mut image, &listing).unwrap();
         assert_eq!(surface.native[0].stored, "Mss32.dll");
         assert_eq!(surface.imports[0].symbol, ProviderSymbol::Ordinal(25));
         assert_eq!(u32::from_le_bytes(image.image[..4].try_into().unwrap()), 0);
-        assert_eq!(u32::from_le_bytes(image.image[4..8].try_into().unwrap()), thunk32::THUNK_BASE);
+        assert_eq!(
+            u32::from_le_bytes(image.image[4..8].try_into().unwrap()),
+            thunk32::THUNK_BASE
+        );
     }
 
     #[test]
@@ -159,7 +231,11 @@ mod tests {
         thunk32::write(403, provider_thunk_kind(&import), &mut bytes).unwrap();
         assert_eq!(&bytes[8..11], &[0xc2, 4, 0]);
 
-        let unrelated = ProviderImport { module: "KERNEL32.dll".into(), symbol: ProviderSymbol::Name("GetModuleHandleA".into()), iat_rva: 0 };
+        let unrelated = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("GetModuleHandleA".into()),
+            iat_rva: 0,
+        };
         thunk32::write(404, provider_thunk_kind(&unrelated), &mut bytes).unwrap();
         assert_eq!(bytes[8], 0xc3);
     }
