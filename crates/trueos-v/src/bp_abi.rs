@@ -61,6 +61,12 @@ pub struct TrueosX86RegistersV1 {
 }
 
 /// State returned when a generic 32-bit x86 context exits to its Blueprint.
+///
+/// For `kind=Exception`, `detail` carries VM-exit interruption information:
+/// bits 0..7 are the vector, bits 8..10 the interruption type, bit 11 means
+/// `qualification` contains an exception error code, and bit 31 is valid.
+/// For `kind=MemoryViolation`, `qualification` remains the EPT qualification.
+/// Other exit kinds retain their existing detail and qualification meanings.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 pub struct TrueosX86ExitV1 {

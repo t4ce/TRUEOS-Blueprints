@@ -2,7 +2,11 @@
 //!
 //! Running a context occupies a native TRUEOS carrier while this Blueprint's
 //! Tokio task awaits its completion. No Windows or application-specific policy
-//! crosses this boundary.
+//! crosses this boundary. For [`ExitKind::Exception`], `Exit::detail` is the
+//! VM-exit interruption-information field (vector in bits 0..7, interruption
+//! type in bits 8..10, error-code-valid in bit 11, valid in bit 31), and
+//! `Exit::qualification` is the exception error code only when bit 11 is set.
+//! For [`ExitKind::MemoryViolation`], qualification remains the EPT value.
 
 use alloc::sync::Arc;
 use core::fmt;

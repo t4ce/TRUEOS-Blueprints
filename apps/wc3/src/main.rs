@@ -2363,6 +2363,35 @@ async fn run() -> Result<(), String> {
                     active = 0;
                 }
             }
+            ExitKind::Exception if active_key.pid != LAUNCHER_PID => {
+                let child = pending_child.as_ref().filter(|child| child.pid == active_key.pid && child.tid == active_key.tid)
+                    .ok_or_else(|| "exception child missing pending state".to_owned())?;
+                let (_, module) = child_execution_module(child).map_err(str::to_owned)?;
+                let exception = decode_child_exception(exit.detail, exit.qualification);
+                let registers = exit.registers;
+                logl::log(level::IMPORTANT, format_args!(
+                    "WC3 CHILD EXCEPTION pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" eip=0x{:08x} esp=0x{:08x} vector={} name=\"{}\" type={} valid={} error_valid={} error={}",
+                    active_key.pid, active_key.tid, module.stored, registers.eip, registers.esp,
+                    exception.vector, exception.name, exception.interruption_type,
+                    exception.valid as u8, exception.error_valid as u8,
+                    exception.error.map(|value| format!("0x{value:08x}")).unwrap_or_else(|| "-".into()),
+                ));
+                logl::log(level::IMPORTANT, format_args!(
+                    "WC3 CHILD EXCEPTION REGS eax=0x{:08x} ebx=0x{:08x} ecx=0x{:08x} edx=0x{:08x} esi=0x{:08x} edi=0x{:08x} ebp=0x{:08x} esp=0x{:08x} eip=0x{:08x} eflags=0x{:08x} fs_base=0x{:08x}",
+                    registers.eax, registers.ebx, registers.ecx, registers.edx, registers.esi,
+                    registers.edi, registers.ebp, registers.esp, registers.eip,
+                    registers.eflags, registers.fs_base,
+                ));
+                logl::log(level::IMPORTANT, format_args!(
+                    "WC3 CHILD EXCEPTION CODE eip=0x{:08x} bytes=\"{}\"",
+                    registers.eip, exception_code_window(&child.address_space, registers.eip),
+                ));
+                logl::log(level::IMPORTANT, format_args!(
+                    "WC3 CHILD EXCEPTION STACK esp=0x{:08x} words={}",
+                    registers.esp, exception_stack_window(&child.address_space, registers.esp),
+                ));
+                return Ok(());
+            }
             ExitKind::Halted => {
                 if active_key.pid != LAUNCHER_PID {
                     let child = pending_child.as_ref().filter(|child| child.pid == active_key.pid && child.tid == active_key.tid)
@@ -2903,6 +2932,73 @@ fn registry_root_name(hkey: u32) -> String {
     }
 }
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+struct ChildException {
+    vector: u32,
+    interruption_type: u32,
+    valid: bool,
+    error_valid: bool,
+    error: Option<u32>,
+    name: &'static str,
+}
+
+fn decode_child_exception(detail: u32, qualification: u64) -> ChildException {
+    let vector = detail & 0xff;
+    let error_valid = detail & (1 << 11) != 0;
+    ChildException {
+        vector,
+        interruption_type: (detail >> 8) & 7,
+        valid: detail & (1 << 31) != 0,
+        error_valid,
+        error: error_valid.then_some(qualification as u32),
+        name: child_exception_name(vector),
+    }
+}
+
+fn child_exception_name(vector: u32) -> &'static str {
+    match vector {
+        0 => "#DE",
+        1 => "#DB",
+        3 => "#BP",
+        4 => "#OF",
+        5 => "#BR",
+        6 => "#UD",
+        7 => "#NM",
+        8 => "#DF",
+        10 => "#TS",
+        11 => "#NP",
+        12 => "#SS",
+        13 => "#GP",
+        14 => "#PF",
+        16 => "#MF",
+        17 => "#AC",
+        19 => "#XM",
+        _ => "unknown",
+    }
+}
+
+fn exception_code_window(address_space: &AddressSpace, eip: u32) -> String {
+    let mut bytes = [0; 16];
+    match address_space.read(eip, &mut bytes) {
+        Ok(16) => bytes.iter().map(|byte| format!("{byte:02x}")).collect::<Vec<_>>().join(" "),
+        _ => "<unreadable>".into(),
+    }
+}
+
+fn exception_stack_window(address_space: &AddressSpace, esp: u32) -> String {
+    let mut bytes = [0; 0x20];
+    match address_space.read(esp, &mut bytes) {
+        Ok(0x20) => format!(
+            "[{}]",
+            bytes.chunks_exact(4)
+                .map(|word| format!("0x{:08x}", u32::from_le_bytes(word.try_into().expect("stack word"))))
+                .collect::<Vec<_>>()
+                .join(", "),
+        ),
+        _ => "<unreadable>".into(),
+    }
+}
+
 fn decode_reg_open_key_ex_a(memory: &impl GuestMemory, esp: u32) -> Result<RegOpenKeyExAFrame, String> {
     let frame = read_guest_words(memory, esp, 6)?;
     let subkey = if frame[2] == 0 { None } else { Some(diagnostic_ansi_string(memory, frame[2])?) };
@@ -3069,7 +3165,7 @@ mod tests {
         let esp = 0x043f_ff00;
         let subkey = 0x043f_fe00;
         let mut memory = TestMemory { base, bytes: vec![0x5a; STACK_BYTES] };
-        for (index, word) in [0x1502_e2f9, 0x8000_0002, subkey, 0, 0x0002_0019, 0x043f_fd00].into_iter().enumerate() {
+        for (index, word) in [0x1502_e2f9u32, 0x8000_0002, subkey, 0, 0x0002_0019, 0x043f_fd00].into_iter().enumerate() {
             memory.write(esp + index as u32 * 4, &word.to_le_bytes()).unwrap();
         }
         memory.write(subkey, b"SOFTWARE\\Example\0").unwrap();
@@ -3079,5 +3175,15 @@ mod tests {
         assert_eq!(frame.subkey.as_deref(), Some("SOFTWARE\\Example"));
         assert_eq!(frame.sam, 0x0002_0019);
         assert_eq!(memory.bytes, before);
+    }
+
+    #[test]
+    fn child_exception_diagnostic_decodes_ud_without_guest_mutation() {
+        let exception = decode_child_exception((1 << 31) | 6, 0);
+        assert_eq!(exception.vector, 6);
+        assert_eq!(exception.name, "#UD");
+        assert!(exception.valid);
+        assert!(!exception.error_valid);
+        assert_eq!(exception.error, None);
     }
 }
