@@ -13,7 +13,8 @@ pub const PERMISSION_EXECUTE: u32 = 1 << 2;
 ///
 /// Keep bulk-transfer chunking above the raw ABI so every x86 client gets the
 /// same behavior without exposing transport details in application code.
-pub const TRANSFER_BYTES: usize = 4096 - 56;
+pub const PAGE_BYTES: usize = 4096;
+pub const TRANSFER_BYTES: usize = PAGE_BYTES - 56;
 
 pub const EXIT_VMCALL: u32 = 1;
 pub const EXIT_EXCEPTION: u32 = 2;

@@ -114,6 +114,19 @@ impl fmt::Display for Error {
 
 impl core::error::Error for Error {}
 
+fn transfer_chunk_len(guest_va: u32, remaining: usize) -> Result<usize, Error> {
+    if remaining == 0 {
+        return Ok(0);
+    }
+    let page_offset = usize::try_from(guest_va).map_err(|_| Error::Invalid)? % v::vx86::PAGE_BYTES;
+    let page_remaining = v::vx86::PAGE_BYTES
+        .checked_sub(page_offset)
+        .ok_or(Error::Invalid)?;
+    Ok(remaining
+        .min(v::vx86::TRANSFER_BYTES)
+        .min(page_remaining))
+}
+
 struct AddressSpaceInner {
     handle: u64,
 }
@@ -151,14 +164,24 @@ impl AddressSpace {
 
     pub fn read(&self, guest_va: u32, out: &mut [u8]) -> Result<usize, Error> {
         let mut transferred = 0usize;
-        for chunk in out.chunks_mut(v::vx86::TRANSFER_BYTES) {
+        while transferred < out.len() {
             let address = guest_va
                 .checked_add(u32::try_from(transferred).map_err(|_| Error::Invalid)?)
                 .ok_or(Error::Invalid)?;
-            let read = v::vx86::address_space_read(self.inner.handle, address, chunk)
+            let remaining = out.len().checked_sub(transferred).ok_or(Error::Invalid)?;
+            let len = transfer_chunk_len(address, remaining)?;
+            if len == 0 {
+                return Err(Error::Invalid);
+            }
+            let end = transferred.checked_add(len).ok_or(Error::Invalid)?;
+            let read = v::vx86::address_space_read(
+                self.inner.handle,
+                address,
+                &mut out[transferred..end],
+            )
                 .map_err(Error::from_kernel)?;
             transferred = transferred.checked_add(read).ok_or(Error::Invalid)?;
-            if read != chunk.len() {
+            if read != len {
                 break;
             }
         }
@@ -167,14 +190,24 @@ impl AddressSpace {
 
     pub fn write(&self, guest_va: u32, data: &[u8]) -> Result<usize, Error> {
         let mut transferred = 0usize;
-        for chunk in data.chunks(v::vx86::TRANSFER_BYTES) {
+        while transferred < data.len() {
             let address = guest_va
                 .checked_add(u32::try_from(transferred).map_err(|_| Error::Invalid)?)
                 .ok_or(Error::Invalid)?;
-            let written = v::vx86::address_space_write(self.inner.handle, address, chunk)
+            let remaining = data.len().checked_sub(transferred).ok_or(Error::Invalid)?;
+            let len = transfer_chunk_len(address, remaining)?;
+            if len == 0 {
+                return Err(Error::Invalid);
+            }
+            let end = transferred.checked_add(len).ok_or(Error::Invalid)?;
+            let written = v::vx86::address_space_write(
+                self.inner.handle,
+                address,
+                &data[transferred..end],
+            )
                 .map_err(Error::from_kernel)?;
             transferred = transferred.checked_add(written).ok_or(Error::Invalid)?;
-            if written != chunk.len() {
+            if written != len {
                 break;
             }
         }
@@ -272,5 +305,42 @@ mod tests {
     #[test]
     fn raw_transfer_limit_matches_vmcall_communication_page() {
         assert_eq!(v::vx86::TRANSFER_BYTES, 4040);
+        assert_eq!(v::vx86::PAGE_BYTES, 4096);
+    }
+
+    #[test]
+    fn transfer_chunk_stays_within_current_guest_page() {
+        assert_eq!(transfer_chunk_len(0x1400_0a80, 2048).unwrap(), 0x580);
+    }
+
+    #[test]
+    fn transfer_chunk_uses_transport_limit_when_page_allows_it() {
+        assert_eq!(
+            transfer_chunk_len(0x1400_0000, v::vx86::TRANSFER_BYTES).unwrap(),
+            v::vx86::TRANSFER_BYTES
+        );
+        assert_eq!(
+            transfer_chunk_len(0x1400_0000, usize::MAX).unwrap(),
+            v::vx86::TRANSFER_BYTES
+        );
+    }
+
+    #[test]
+    fn transfer_chunk_can_shrink_to_one_byte_at_page_end() {
+        assert_eq!(transfer_chunk_len(0x1400_0fff, 32).unwrap(), 1);
+    }
+
+    #[test]
+    fn transfer_chunks_model_the_observed_heap_zero_fill() {
+        let mut address = 0x1400_0a80u32;
+        let mut remaining = 2048usize;
+        let mut chunks = Vec::new();
+        while remaining != 0 {
+            let len = transfer_chunk_len(address, remaining).unwrap();
+            chunks.push((address, len));
+            address = address.checked_add(len as u32).unwrap();
+            remaining -= len;
+        }
+        assert_eq!(chunks, [(0x1400_0a80, 0x580), (0x1400_1000, 640)]);
     }
 }
