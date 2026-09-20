@@ -16,9 +16,9 @@ use wc3::{
     pe32,
     process::{
         CHILD_COMMAND_LINE, CHILD_CRT_HEAP_BASE, CHILD_CRT_HEAP_LIMIT,
-        CHILD_VIRTUAL_ALLOC_BASE, CHILD_VIRTUAL_ALLOC_LIMIT, ENVIRONMENT_BLOCK_VA, GuestMemory,
-        PROCESS_DATA_VA, PreparedProcess, STACK_BASE, STACK_BYTES, STACK_TOP, ThreadObject,
-        XpProcess,
+        CHILD_VIRTUAL_ALLOC_BASE, CHILD_VIRTUAL_ALLOC_LIMIT, CHILD_WIN_HEAP_BASE,
+        CHILD_WIN_HEAP_LIMIT, ENVIRONMENT_BLOCK_VA, GuestMemory, PROCESS_DATA_VA,
+        PreparedProcess, STACK_BASE, STACK_BYTES, STACK_TOP, ThreadObject, XpProcess,
         bmp_file_from_dib, dib_layout,
     },
     session::{
@@ -507,6 +507,101 @@ async fn run() -> Result<(), String> {
                                 registers.esp,
                             ),
                         );
+                        continue;
+                    }
+                    let is_heap_alloc = matches!(
+                        &provider.symbol,
+                        child_loader::ProviderSymbol::Name(name)
+                            if provider.module.eq_ignore_ascii_case("KERNEL32.dll")
+                                && name == "HeapAlloc"
+                    );
+                    if is_heap_alloc {
+                        let frame = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            exit.registers.esp,
+                            4,
+                        )?;
+                        let heap = frame[1];
+                        let flags = frame[2];
+                        let bytes = frame[3];
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD HEAP ALLOC CALL pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" provider_id={} heap=0x{:08x} flags=0x{:08x} bytes={} caller_ret=0x{:08x}",
+                                active_pid,
+                                active_tid,
+                                running_module_name,
+                                provider_id,
+                                heap,
+                                flags,
+                                bytes,
+                                u32::from_le_bytes(caller_ret),
+                            ),
+                        );
+                        if heap != 0x5743_0001 {
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD HEAP ALLOC FRONTIER pid={} tid={} reason=unexpected-heap heap=0x{:08x}",
+                                    active_pid, active_tid, heap,
+                                ),
+                            );
+                            return Ok(());
+                        }
+                        let allocation = session
+                            .process_mut(active_pid)
+                            .ok_or_else(|| "child process missing".to_owned())?
+                            .xp
+                            .alloc_win_heap(
+                                exit.registers.esp,
+                                &X86Memory(&child.address_space),
+                            )
+                            .map_err(str::to_owned)?;
+                        let pointer = if let Some(allocation) = allocation {
+                            let mapped_end =
+                                ensure_child_win_heap_mapped(child, allocation.end)?;
+                            if allocation.flags & 0x8 != 0 {
+                                let zeroes = vec![0; allocation.requested.max(1) as usize];
+                                let written = child
+                                    .address_space
+                                    .write(allocation.pointer, &zeroes)
+                                    .map_err(|error| error.to_string())?;
+                                if written != zeroes.len() {
+                                    return Err("short child HeapAlloc zero write".into());
+                                }
+                            }
+                            if allocation.pointer < CHILD_WIN_HEAP_BASE
+                                || allocation.pointer >= CHILD_WIN_HEAP_LIMIT
+                                || allocation.pointer % 8 != 0
+                                || allocation.end > mapped_end
+                            {
+                                return Err("child HeapAlloc pointer verification failed".into());
+                            }
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD HEAP ALLOC RESULT pid={} tid={} heap=0x{:08x} flags=0x{:08x} requested={} pointer=0x{:08x} end=0x{:08x} mapped_end=0x{:08x} zeroed={} cleanup=12-by-thunk",
+                                    active_pid,
+                                    active_tid,
+                                    allocation.heap,
+                                    allocation.flags,
+                                    allocation.requested,
+                                    allocation.pointer,
+                                    allocation.end,
+                                    mapped_end,
+                                    (allocation.flags & 0x8 != 0) as u8,
+                                ),
+                            );
+                            allocation.pointer
+                        } else {
+                            0
+                        };
+                        let mut registers = exit.registers;
+                        registers.eax = pointer;
+                        contexts[active]
+                            .context
+                            .set_registers(registers)
+                            .map_err(|error| error.to_string())?;
                         continue;
                     }
                     let is_get_command_line_a = matches!(
@@ -2812,6 +2907,7 @@ async fn run() -> Result<(), String> {
                             native_modules: Vec::new(),
                             address_space: child_address_space,
                             crt_heap_mapped_end: CHILD_CRT_HEAP_BASE,
+                            win_heap_mapped_end: CHILD_WIN_HEAP_BASE,
                             provider_thunk_bytes: 0,
                             static_load_reserved: 0,
                             initterm: None,
@@ -4684,6 +4780,7 @@ fn create_child_primary_context(
     }
     validate_child_crt_heap_range(child)?;
     validate_child_virtual_alloc_range(child)?;
+    validate_child_win_heap_range(child)?;
     let module = child
         .native_modules
         .get(native_index)
@@ -4890,6 +4987,14 @@ fn validate_child_virtual_alloc_range(child: &PendingChild) -> Result<(), String
     )
 }
 
+fn validate_child_win_heap_range(child: &PendingChild) -> Result<(), String> {
+    validate_child_private_arena_range(
+        child,
+        (CHILD_WIN_HEAP_BASE, CHILD_WIN_HEAP_LIMIT),
+        "child Win32 heap",
+    )
+}
+
 fn validate_child_private_arena_range(
     child: &PendingChild,
     arena: (u32, u32),
@@ -4973,6 +5078,32 @@ fn ensure_child_crt_allocation_mapped(
         child.crt_heap_mapped_end = mapped_end;
     }
     Ok(child.crt_heap_mapped_end)
+}
+
+fn ensure_child_win_heap_mapped(
+    child: &mut PendingChild,
+    allocation_end: u32,
+) -> Result<u32, String> {
+    let mapped_end = allocation_end
+        .checked_add(0xfff)
+        .ok_or_else(|| "child Win32 heap mapping end overflow".to_owned())?
+        & !0xfff;
+    if mapped_end > CHILD_WIN_HEAP_LIMIT {
+        return Err("child Win32 heap mapping exceeds arena".into());
+    }
+    if mapped_end > child.win_heap_mapped_end {
+        child
+            .address_space
+            .map(
+                child.win_heap_mapped_end,
+                usize::try_from(mapped_end - child.win_heap_mapped_end)
+                    .map_err(|_| "child Win32 heap mapping length")?,
+                Permissions::READ | Permissions::WRITE,
+            )
+            .map_err(|error| format!("map child Win32 heap: {error}"))?;
+        child.win_heap_mapped_end = mapped_end;
+    }
+    Ok(child.win_heap_mapped_end)
 }
 
 fn child_dllonexit(
@@ -5216,6 +5347,7 @@ struct PendingChild {
     native_modules: Vec<PendingNativeModule>,
     address_space: AddressSpace,
     crt_heap_mapped_end: u32,
+    win_heap_mapped_end: u32,
     provider_thunk_bytes: usize,
     static_load_reserved: u32,
     initterm: Option<ChildInitterm>,
@@ -6039,6 +6171,7 @@ mod tests {
             ],
             address_space,
             crt_heap_mapped_end: CHILD_CRT_HEAP_BASE,
+            win_heap_mapped_end: CHILD_WIN_HEAP_BASE,
             provider_thunk_bytes: 0x1000,
             static_load_reserved: reserved,
             initterm: None,
@@ -6250,6 +6383,7 @@ mod tests {
             native_modules: vec![native_module("Storm.dll", 0x1500_0000, 0)],
             address_space,
             crt_heap_mapped_end: CHILD_CRT_HEAP_BASE,
+            win_heap_mapped_end: CHILD_WIN_HEAP_BASE,
             provider_thunk_bytes: 0x1000,
             static_load_reserved: 0,
             initterm: Some(ChildInitterm {

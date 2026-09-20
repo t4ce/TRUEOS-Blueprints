@@ -27,6 +27,8 @@ pub const XP_ALLOCATION_GRANULARITY: u32 = 0x0001_0000;
 pub const XP_PAGE_SIZE: u32 = 0x1000;
 pub const CHILD_VIRTUAL_ALLOC_BASE: u32 = 0x0600_0000;
 pub const CHILD_VIRTUAL_ALLOC_LIMIT: u32 = 0x1400_0000;
+pub const CHILD_WIN_HEAP_BASE: u32 = 0x1400_0000;
+pub const CHILD_WIN_HEAP_LIMIT: u32 = 0x1500_0000;
 pub const PROCESS_DATA_VA: u32 = 0x0021_1000;
 /// Historical launcher stack: 0x0430_0000..0x0440_0000.
 pub const STACK_BASE: u32 = 0x0430_0000;
@@ -361,6 +363,15 @@ pub struct HeapCreateResult {
     pub handle: u32,
 }
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct WinHeapAllocation {
+    pub heap: u32,
+    pub flags: u32,
+    pub requested: u32,
+    pub pointer: u32,
+    pub end: u32,
+}
+
 pub struct XpProcess {
     imports: Vec<LauncherImport>,
     provider_imports: Vec<ProviderImport>,
@@ -374,6 +385,8 @@ pub struct XpProcess {
     allocations: HashMap<u32, u32>,
     heaps: HashMap<u32, WinHeap>,
     next_heap_handle: u32,
+    win_heap_next: u32,
+    win_heap_allocations: HashMap<u32, WinHeapAllocation>,
     crt_heap_next: u32,
     crt_allocations: HashMap<u32, u32>,
     virtual_reservations: Vec<VirtualReservation>,
@@ -441,6 +454,8 @@ impl XpProcess {
             allocations: HashMap::new(),
             heaps: HashMap::new(),
             next_heap_handle: 0x5743_0001,
+            win_heap_next: CHILD_WIN_HEAP_BASE,
+            win_heap_allocations: HashMap::new(),
             crt_heap_next: 0,
             crt_allocations: HashMap::new(),
             virtual_reservations: Vec::new(),
@@ -889,6 +904,47 @@ impl XpProcess {
             maximum_size,
             handle,
         })
+    }
+
+    pub fn alloc_win_heap(
+        &mut self,
+        esp: u32,
+        memory: &impl GuestMemory,
+    ) -> Result<Option<WinHeapAllocation>, &'static str> {
+        let [_, heap, flags, bytes] = arguments::<4>(memory, esp)?;
+        if !self.heaps.contains_key(&heap) {
+            self.last_error = 6;
+            return Ok(None);
+        }
+        if flags & !0x0000_0009 != 0 {
+            return Err("HeapAlloc flags frontier");
+        }
+        let logical = bytes.max(1);
+        let aligned = logical
+            .checked_add(7)
+            .ok_or("HeapAlloc size overflow")?
+            & !7;
+        let pointer = self.win_heap_next;
+        let end = pointer
+            .checked_add(aligned)
+            .ok_or("HeapAlloc address overflow")?;
+        if end > CHILD_WIN_HEAP_LIMIT {
+            return Ok(None);
+        }
+        let allocation = WinHeapAllocation {
+            heap,
+            flags,
+            requested: bytes,
+            pointer,
+            end,
+        };
+        self.win_heap_next = end;
+        self.win_heap_allocations.insert(pointer, allocation);
+        self.call_count = self
+            .call_count
+            .checked_add(1)
+            .ok_or("call count overflow")?;
+        Ok(Some(allocation))
     }
 
     pub fn append_provider_imports(
@@ -4708,6 +4764,60 @@ mod tests {
         assert_eq!(pid1.heaps.len(), 1);
         assert_eq!(pid2.heaps.len(), 1);
         assert_ne!(pid1.heaps.get(&0x5743_0001), pid2.heaps.get(&0x5743_0001));
+    }
+
+    #[test]
+    fn child_win_heap_allocations_are_private_aligned_and_bounded() {
+        let mut pid1 = XpProcess::new(Vec::new());
+        let mut pid2 = XpProcess::new(Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+        for (index, word) in [0x2113_1b92, 1, 0x1000, 0].into_iter().enumerate() {
+            write_u32(&mut memory, esp + index as u32 * 4, word).unwrap();
+        }
+        let pid1_heap = pid1.create_win_heap(esp, &memory).unwrap().handle;
+        let pid2_heap = pid2.create_win_heap(esp, &memory).unwrap().handle;
+        assert_eq!(pid2_heap, 0x5743_0001);
+
+        for (index, word) in [0x2113_24c2, pid2_heap, 0x8, 1]
+            .into_iter()
+            .enumerate()
+        {
+            write_u32(&mut memory, esp + index as u32 * 4, word).unwrap();
+        }
+        let first = pid2.alloc_win_heap(esp, &memory).unwrap().unwrap();
+        assert_eq!(first.pointer, CHILD_WIN_HEAP_BASE);
+        assert_eq!(first.end, CHILD_WIN_HEAP_BASE + 8);
+        assert_eq!(first.flags & 0x8, 0x8);
+        assert_eq!(pid2.win_heap_allocations.get(&first.pointer), Some(&first));
+
+        for (index, word) in [0x2113_24c2, pid2_heap, 0, 9].into_iter().enumerate() {
+            write_u32(&mut memory, esp + index as u32 * 4, word).unwrap();
+        }
+        let second = pid2.alloc_win_heap(esp, &memory).unwrap().unwrap();
+        assert_eq!(second.pointer, CHILD_WIN_HEAP_BASE + 8);
+        assert_eq!(second.pointer % 8, 0);
+
+        for (index, word) in [0x2113_24c2, pid1_heap, 0, 1].into_iter().enumerate() {
+            write_u32(&mut memory, esp + index as u32 * 4, word).unwrap();
+        }
+        assert_eq!(
+            pid1.alloc_win_heap(esp, &memory).unwrap().unwrap().pointer,
+            CHILD_WIN_HEAP_BASE
+        );
+
+        write_u32(&mut memory, esp + 4, 0xdead_beef).unwrap();
+        assert_eq!(pid2.alloc_win_heap(esp, &memory).unwrap(), None);
+        assert_eq!(pid2.last_error, 6);
+
+        pid2.win_heap_next = CHILD_WIN_HEAP_LIMIT - 8;
+        for (index, word) in [0x2113_24c2, pid2_heap, 0, 9].into_iter().enumerate() {
+            write_u32(&mut memory, esp + index as u32 * 4, word).unwrap();
+        }
+        assert_eq!(pid2.alloc_win_heap(esp, &memory).unwrap(), None);
     }
 
     #[test]
