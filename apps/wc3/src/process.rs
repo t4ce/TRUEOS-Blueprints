@@ -30,6 +30,7 @@ pub const CHILD_VIRTUAL_ALLOC_LIMIT: u32 = 0x1400_0000;
 pub const CHILD_WIN_HEAP_BASE: u32 = 0x1400_0000;
 pub const CHILD_WIN_HEAP_LIMIT: u32 = 0x1500_0000;
 pub const PROVIDER_MODULE_HANDLE_BASE: u32 = 0x5743_a001;
+const ERROR_MOD_NOT_FOUND: u32 = 126;
 pub const PROCESS_DATA_VA: u32 = 0x0021_1000;
 /// Historical launcher stack: 0x0430_0000..0x0440_0000.
 pub const STACK_BASE: u32 = 0x0430_0000;
@@ -454,6 +455,7 @@ struct LoadedModule {
     stored_name: String,
     handle: u32,
     kind: LoadedModuleKind,
+    filename: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -583,9 +585,10 @@ impl XpProcess {
             image,
             loaded_modules: vec![LoadedModule {
                 requested_name: module_basename(image_filename).to_owned(),
-                stored_name: image_filename.to_owned(),
+                stored_name: module_basename(image_filename).to_owned(),
                 handle: pe32::IMAGE_BASE,
                 kind: LoadedModuleKind::MainImage,
+                filename: Some(image_filename.to_owned()),
             }],
             next_provider_module_handle: PROVIDER_MODULE_HANDLE_BASE,
             imports,
@@ -658,7 +661,14 @@ impl XpProcess {
         stored: &str,
         handle: u32,
     ) -> Result<(), &'static str> {
-        self.register_loaded_module(requested, stored, handle, LoadedModuleKind::NativeImage)
+        let filename = self.native_module_filename(stored)?;
+        self.register_loaded_module(
+            requested,
+            stored,
+            handle,
+            LoadedModuleKind::NativeImage,
+            Some(filename),
+        )
     }
 
     fn register_external_provider_modules(
@@ -701,7 +711,25 @@ impl XpProcess {
             .next_provider_module_handle
             .checked_add(1)
             .ok_or("provider module handle overflow")?;
-        self.register_loaded_module(module, module, handle, LoadedModuleKind::ExternalProvider)
+        self.register_loaded_module(
+            module,
+            module,
+            handle,
+            LoadedModuleKind::ExternalProvider,
+            None,
+        )
+    }
+
+    fn native_module_filename(&self, stored: &str) -> Result<String, &'static str> {
+        let image = std::str::from_utf8(self.image.filename())
+            .map_err(|_| "process image filename encoding")?
+            .trim_end_matches('\0');
+        let split = image
+            .rfind(['\\', '/'])
+            .ok_or("process image has no directory")?;
+        let mut filename = image[..=split].to_owned();
+        filename.push_str(stored);
+        Ok(filename)
     }
 
     fn register_loaded_module(
@@ -710,6 +738,7 @@ impl XpProcess {
         stored: &str,
         handle: u32,
         kind: LoadedModuleKind,
+        filename: Option<String>,
     ) -> Result<(), &'static str> {
         if handle == 0 {
             return Err("loaded module handle is zero");
@@ -734,6 +763,7 @@ impl XpProcess {
             stored_name: stored.to_owned(),
             handle,
             kind,
+            filename,
         });
         Ok(())
     }
@@ -1451,7 +1481,13 @@ impl XpProcess {
             WinCall::GetTickCount => Ok(self.tick_ms),
             WinCall::GetCurrentThreadId => Ok(tid),
             WinCall::GetStartupInfoA => self.get_startup_info(esp, memory),
-            WinCall::GetModuleFileNameA => self.get_module_filename(esp, memory),
+            WinCall::GetModuleFileNameA => self.get_module_filename(esp, memory).map_err(|error| {
+                match error {
+                    ProviderDispatchError::Unsupported => "unsupported child provider import",
+                    ProviderDispatchError::Fault(error) => error,
+                    ProviderDispatchError::Frontier { .. } => "module filename frontier",
+                }
+            }),
             WinCall::GetModuleHandleA => Ok(pe32::IMAGE_BASE),
             WinCall::GetStdHandle => self.get_std_handle(esp, memory),
             WinCall::GetFileType => self.get_file_type(esp, memory),
@@ -1844,21 +1880,48 @@ impl XpProcess {
         &self,
         esp: u32,
         memory: &mut impl GuestMemory,
-    ) -> Result<u32, &'static str> {
+    ) -> Result<u32, ProviderDispatchError> {
         let [_, module, output, capacity] = arguments::<4>(memory, esp)?;
-        if module != 0 && module != pe32::IMAGE_BASE {
-            return Err("unknown module");
+        let loaded = if module == 0 {
+            self.loaded_modules
+                .iter()
+                .find(|loaded| loaded.kind == LoadedModuleKind::MainImage)
+                .ok_or("main image module missing")?
+        } else {
+            self.loaded_modules
+                .iter()
+                .find(|loaded| loaded.handle == module)
+                .ok_or_else(|| ProviderDispatchError::Frontier {
+                    api: "GetModuleFileNameA",
+                    detail: format!("unknown-hmodule handle=0x{module:08x}"),
+                })?
+        };
+        let filename = loaded.filename.as_ref().ok_or_else(|| {
+            ProviderDispatchError::Frontier {
+                api: "GetModuleFileNameA",
+                detail: format!(
+                    "module-filename-unmodeled handle=0x{module:08x} name={:?}",
+                    loaded.stored_name,
+                ),
+            }
+        })?;
+        let bytes = filename.as_bytes();
+        let required = bytes.len().checked_add(1).ok_or("module filename length")?;
+        if (capacity as usize) < required {
+            return Err("module filename buffer".into());
         }
-        let filename = self.image.filename();
-        if (capacity as usize) < filename.len() {
-            return Err("module filename buffer");
-        }
-        memory.write(output, filename)?;
-        Ok((filename.len() - 1) as u32)
+        memory.write(output, bytes)?;
+        memory.write(
+            output
+                .checked_add(bytes.len() as u32)
+                .ok_or("module filename output overflow")?,
+            &[0],
+        )?;
+        Ok(bytes.len() as u32)
     }
 
     fn get_module_handle_a(
-        &self,
+        &mut self,
         esp: u32,
         memory: &impl GuestMemory,
     ) -> Result<u32, ProviderDispatchError> {
@@ -1867,17 +1930,17 @@ impl XpProcess {
             return Ok(pe32::IMAGE_BASE);
         }
         let requested = read_c_string(memory, module_name, 260)?;
-        self.loaded_modules
+        if let Some(module) = self.loaded_modules
             .iter()
             .find(|module| {
                 module_names_match(&module.requested_name, &requested)
                     || module_names_match(&module.stored_name, &requested)
             })
-            .map(|module| module.handle)
-            .ok_or_else(|| ProviderDispatchError::Frontier {
-                api: "GetModuleHandleA",
-                detail: format!("unknown-loaded-module name={requested:?}"),
-            })
+        {
+            return Ok(module.handle);
+        }
+        self.last_error = ERROR_MOD_NOT_FOUND;
+        Ok(0)
     }
 
     fn get_std_handle(&self, esp: u32, memory: &impl GuestMemory) -> Result<u32, &'static str> {
@@ -5744,7 +5807,95 @@ mod tests {
         let mut filename = vec![0; CHILD_IMAGE_FILENAME.len()];
         memory.read(output, &mut filename).unwrap();
         assert_eq!(filename, CHILD_IMAGE_FILENAME);
-        assert_eq!(pid2.call_count, 1);
+        write_u32(&mut memory, esp + 4, pe32::IMAGE_BASE).unwrap();
+        assert_eq!(
+            pid2.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(
+                (CHILD_IMAGE_FILENAME.len() - 1) as u32
+            ))
+        );
+        memory.read(output, &mut filename).unwrap();
+        assert_eq!(filename, CHILD_IMAGE_FILENAME);
+        assert_eq!(pid2.call_count, 2);
+    }
+
+    #[test]
+    fn child_get_module_file_name_a_reports_native_module_paths() {
+        let provider = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("GetModuleFileNameA".into()),
+            iat_rva: 0,
+        };
+        let mut pid2 = XpProcess::new_child();
+        pid2.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        pid2.register_native_module("MSS32.DLL", "Mss32.dll", 0x2110_0000)
+            .unwrap();
+        pid2.register_native_module("Storm.dll", "Storm.dll", 0x1500_0000)
+            .unwrap();
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+        let output = STACK_TOP - 0x200;
+        write_u32(&mut memory, esp, 0x2113_6200).unwrap();
+        write_u32(&mut memory, esp + 8, output).unwrap();
+        for (handle, expected) in [
+            (0x2110_0000, b"C:\\Warcraft III\\Mss32.dll\0".as_slice()),
+            (0x1500_0000, b"C:\\Warcraft III\\Storm.dll\0".as_slice()),
+        ] {
+            write_u32(&mut memory, esp + 4, handle).unwrap();
+            write_u32(&mut memory, esp + 12, expected.len() as u32).unwrap();
+            assert_eq!(
+                pid2.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+                Ok(PersonalityAction::Return((expected.len() - 1) as u32))
+            );
+            let mut actual = vec![0; expected.len()];
+            memory.read(output, &mut actual).unwrap();
+            assert_eq!(actual, expected);
+        }
+    }
+
+    #[test]
+    fn child_get_module_file_name_a_reports_unmodeled_provider_filenames() {
+        let provider = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("GetModuleFileNameA".into()),
+            iat_rva: 0,
+        };
+        let mut pid2 = XpProcess::new_child();
+        pid2.install_provider_surface(
+            vec![provider],
+            Vec::new(),
+            vec![ChildProvider::External {
+                module: "KERNEL32.dll".into(),
+            }],
+        );
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+        for (index, value) in [
+            0x2113_6200,
+            PROVIDER_MODULE_HANDLE_BASE,
+            STACK_TOP - 0x200,
+            260,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
+        }
+        assert_eq!(
+            pid2.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Err(ProviderDispatchError::Frontier {
+                api: "GetModuleFileNameA",
+                detail: format!(
+                    "module-filename-unmodeled handle=0x{PROVIDER_MODULE_HANDLE_BASE:08x} name=\"KERNEL32.dll\""
+                ),
+            })
+        );
     }
 
     #[test]
@@ -5806,11 +5957,10 @@ mod tests {
         memory.write(name, b"Unknown.dll\0").unwrap();
         assert_eq!(
             pid2.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
-            Err(ProviderDispatchError::Frontier {
-                api: "GetModuleHandleA",
-                detail: "unknown-loaded-module name=\"Unknown.dll\"".into(),
-            })
+            Ok(PersonalityAction::Return(0))
         );
+        assert_eq!(pid2.last_error, ERROR_MOD_NOT_FOUND);
+        assert_eq!(pid2.call_count, 5);
     }
 
     #[test]
