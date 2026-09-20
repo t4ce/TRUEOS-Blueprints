@@ -33,6 +33,7 @@ pub const CHILD_VIRTUAL_ALLOC_LIMIT: u32 = 0x1400_0000;
 pub const CHILD_WIN_HEAP_BASE: u32 = 0x1400_0000;
 pub const CHILD_WIN_HEAP_LIMIT: u32 = 0x1500_0000;
 pub const PROVIDER_MODULE_HANDLE_BASE: u32 = 0x5743_a001;
+pub const CURRENT_PROCESS_PSEUDO_HANDLE: u32 = u32::MAX;
 const ERROR_MOD_NOT_FOUND: u32 = 126;
 pub const PROCESS_DATA_VA: u32 = 0x0021_1000;
 /// Historical launcher stack: 0x0430_0000..0x0440_0000.
@@ -1192,6 +1193,13 @@ impl XpProcess {
                 Ok(PersonalityAction::Return(
                     self.get_module_handle_a(esp, memory)?,
                 ))
+            }
+            ProviderOp::GetCurrentProcess => {
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(CURRENT_PROCESS_PSEUDO_HANDLE))
             }
             ProviderOp::GetWindowsDirectoryA => {
                 self.call_count = self
@@ -6257,6 +6265,27 @@ mod tests {
             Ok(PersonalityAction::Return(pe32::IMAGE_BASE))
         );
         assert_eq!(pid2.call_count, 1);
+    }
+
+    #[test]
+    fn child_get_current_process_returns_the_windows_pseudo_handle() {
+        let provider = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("GetCurrentProcess".into()),
+            iat_rva: 0,
+        };
+        let mut xp = XpProcess::new_child();
+        xp.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        assert_eq!(CURRENT_PROCESS_PSEUDO_HANDLE, 0xffff_ffff);
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 0, STACK_TOP - 0x40, &mut memory),
+            Ok(PersonalityAction::Return(CURRENT_PROCESS_PSEUDO_HANDLE))
+        );
+        assert_eq!(xp.call_count, 1);
     }
 
     #[test]

@@ -36,6 +36,7 @@ pub enum ProviderOp {
     GetModuleHandleA,
     LoadLibraryA,
     GetProcAddress,
+    GetCurrentProcess,
     GetWindowsDirectoryA,
     GetSystemDirectoryA,
     QueryPerformanceFrequency,
@@ -102,6 +103,7 @@ impl ProviderOp {
                 | Self::LCMapStringW
                 | Self::GetModuleFileNameA
                 | Self::GetModuleHandleA
+                | Self::GetCurrentProcess
                 | Self::GetWindowsDirectoryA
                 | Self::GetSystemDirectoryA
                 | Self::QueryPerformanceFrequency
@@ -133,6 +135,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "GetModuleHandleA" => ProviderOp::GetModuleHandleA,
             "LoadLibraryA" => ProviderOp::LoadLibraryA,
             "GetProcAddress" => ProviderOp::GetProcAddress,
+            "GetCurrentProcess" => ProviderOp::GetCurrentProcess,
             "GetWindowsDirectoryA" => ProviderOp::GetWindowsDirectoryA,
             "GetSystemDirectoryA" => ProviderOp::GetSystemDirectoryA,
             "QueryPerformanceFrequency" => ProviderOp::QueryPerformanceFrequency,
@@ -649,6 +652,20 @@ mod tests {
         assert!(!operation.is_generic_process_local());
         assert_eq!(operation.stack_cleanup_bytes(), 8);
         assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Stdcall(8));
+    }
+
+    #[test]
+    fn get_current_process_is_pure_process_plain_return() {
+        let import = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("GetCurrentProcess".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&import);
+        assert_eq!(operation, ProviderOp::GetCurrentProcess);
+        assert!(operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 0);
+        assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Return);
     }
 
     #[test]
