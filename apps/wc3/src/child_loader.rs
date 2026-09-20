@@ -37,6 +37,8 @@ pub enum ProviderOp {
     GetWindowsDirectoryA,
     GetSystemDirectoryA,
     QueryPerformanceFrequency,
+    QueryPerformanceCounter,
+    TimeGetTime,
     GetVersion,
     GetVersionExA,
     WideCharToMultiByte,
@@ -69,7 +71,8 @@ impl ProviderOp {
             | Self::SetHandleCount
             | Self::SetLastError
             | Self::GetModuleHandleA
-            | Self::QueryPerformanceFrequency => 4,
+            | Self::QueryPerformanceFrequency
+            | Self::QueryPerformanceCounter => 4,
             Self::GetCPInfo | Self::GetWindowsDirectoryA | Self::GetSystemDirectoryA => 8,
             Self::GetStringTypeW | Self::VirtualAlloc => 16,
             Self::MultiByteToWideChar | Self::LCMapStringW => 24,
@@ -98,6 +101,8 @@ impl ProviderOp {
                 | Self::GetWindowsDirectoryA
                 | Self::GetSystemDirectoryA
                 | Self::QueryPerformanceFrequency
+                | Self::QueryPerformanceCounter
+                | Self::TimeGetTime
         )
     }
 }
@@ -125,6 +130,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "GetWindowsDirectoryA" => ProviderOp::GetWindowsDirectoryA,
             "GetSystemDirectoryA" => ProviderOp::GetSystemDirectoryA,
             "QueryPerformanceFrequency" => ProviderOp::QueryPerformanceFrequency,
+            "QueryPerformanceCounter" => ProviderOp::QueryPerformanceCounter,
             "GetVersion" => ProviderOp::GetVersion,
             "GetVersionExA" => ProviderOp::GetVersionExA,
             "WideCharToMultiByte" => ProviderOp::WideCharToMultiByte,
@@ -142,6 +148,9 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
     }
     if import.module.eq_ignore_ascii_case("ADVAPI32.dll") && symbol == "RegOpenKeyExA" {
         return ProviderOp::RegOpenKeyExA;
+    }
+    if import.module.eq_ignore_ascii_case("WINMM.dll") && symbol == "timeGetTime" {
+        return ProviderOp::TimeGetTime;
     }
     if import.module.eq_ignore_ascii_case("MSVCRT.dll") && symbol == "malloc" {
         return ProviderOp::CrtMalloc;
@@ -646,6 +655,34 @@ mod tests {
         assert!(operation.is_generic_process_local());
         assert_eq!(operation.stack_cleanup_bytes(), 4);
         assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Stdcall(4));
+    }
+
+    #[test]
+    fn query_performance_counter_is_pure_process_stdcall_four() {
+        let import = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("QueryPerformanceCounter".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&import);
+        assert_eq!(operation, ProviderOp::QueryPerformanceCounter);
+        assert!(operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 4);
+        assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Stdcall(4));
+    }
+
+    #[test]
+    fn time_get_time_is_pure_process_plain_return() {
+        let import = ProviderImport {
+            module: "WINMM.dll".into(),
+            symbol: ProviderSymbol::Name("timeGetTime".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&import);
+        assert_eq!(operation, ProviderOp::TimeGetTime);
+        assert!(operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 0);
+        assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Return);
     }
 
     #[test]

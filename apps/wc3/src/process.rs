@@ -6,6 +6,9 @@
 
 use std::collections::{HashMap, VecDeque};
 
+#[cfg(target_os = "trueos")]
+use trueos::clock;
+
 use crate::{
     child_loader::{ChildProvider, ProviderImport, ProviderOp, ProviderSymbol, provider_op},
     imports::{LauncherImport, WinCall},
@@ -46,6 +49,36 @@ pub const CHILD_IMAGE_FILENAME: &[u8] = b"C:\\Warcraft III\\War3.exe\0";
 pub const XP_WINDOWS_DIRECTORY: &[u8] = b"C:\\WINDOWS\0";
 pub const XP_SYSTEM_DIRECTORY: &[u8] = b"C:\\WINDOWS\\system32\0";
 const XP_PERFORMANCE_COUNTER_FREQUENCY: u64 = 1_000_000_000;
+
+#[cfg(target_os = "trueos")]
+fn monotonic_counter_nanos() -> u64 {
+    clock::monotonic_nanos()
+}
+
+#[cfg(not(target_os = "trueos"))]
+fn monotonic_counter_nanos() -> u64 {
+    use std::sync::OnceLock;
+    use std::time::Instant;
+
+    static ORIGIN: OnceLock<Instant> = OnceLock::new();
+    ORIGIN
+        .get_or_init(Instant::now)
+        .elapsed()
+        .as_nanos()
+        .try_into()
+        .unwrap_or(u64::MAX)
+}
+
+fn monotonic_counter_millis() -> u32 {
+    #[cfg(target_os = "trueos")]
+    {
+        return clock::monotonic_millis() as u32;
+    }
+    #[cfg(not(target_os = "trueos"))]
+    {
+        (monotonic_counter_nanos() / 1_000_000) as u32
+    }
+}
 pub const XP_ANSI_CODE_PAGE: u32 = 1252;
 const CT_CTYPE1: u32 = 1;
 const C1_UPPER: u16 = 0x0001;
@@ -1157,6 +1190,22 @@ impl XpProcess {
                     self.query_performance_frequency(esp, memory)?,
                 ))
             }
+            ProviderOp::QueryPerformanceCounter => {
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(
+                    self.query_performance_counter(esp, memory)?,
+                ))
+            }
+            ProviderOp::TimeGetTime => {
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(monotonic_counter_millis()))
+            }
             _ => Err(ProviderDispatchError::Unsupported),
         }
     }
@@ -2010,6 +2059,16 @@ impl XpProcess {
     ) -> Result<u32, &'static str> {
         let [_, output] = arguments::<2>(memory, esp)?;
         memory.write(output, &XP_PERFORMANCE_COUNTER_FREQUENCY.to_le_bytes())?;
+        Ok(1)
+    }
+
+    fn query_performance_counter(
+        &self,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<u32, &'static str> {
+        let [_, output] = arguments::<2>(memory, esp)?;
+        memory.write(output, &monotonic_counter_nanos().to_le_bytes())?;
         Ok(1)
     }
 
@@ -6087,6 +6146,63 @@ mod tests {
         let mut actual = [0; 8];
         memory.read(output, &mut actual).unwrap();
         assert_eq!(u64::from_le_bytes(actual), XP_PERFORMANCE_COUNTER_FREQUENCY);
+        assert_eq!(pid2.call_count, 1);
+    }
+
+    #[test]
+    fn child_query_performance_counter_exposes_monotonic_nanoseconds() {
+        let provider = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("QueryPerformanceCounter".into()),
+            iat_rva: 0,
+        };
+        let mut pid2 = XpProcess::new_child();
+        pid2.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+        let output = STACK_TOP - 0x200;
+        write_u32(&mut memory, esp, 0x2113_1b2c).unwrap();
+        write_u32(&mut memory, esp + 4, output).unwrap();
+        let before = monotonic_counter_nanos();
+        assert_eq!(
+            pid2.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(1))
+        );
+        let after = monotonic_counter_nanos();
+        let mut actual = [0; 8];
+        memory.read(output, &mut actual).unwrap();
+        let counter = u64::from_le_bytes(actual);
+        assert!(before <= counter && counter <= after);
+        assert_eq!(pid2.call_count, 1);
+    }
+
+    #[test]
+    fn child_time_get_time_exposes_wrapping_monotonic_milliseconds() {
+        let provider = ProviderImport {
+            module: "WINMM.dll".into(),
+            symbol: ProviderSymbol::Name("timeGetTime".into()),
+            iat_rva: 0,
+        };
+        let mut pid2 = XpProcess::new_child();
+        pid2.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+        write_u32(&mut memory, esp, 0x2110_1fff).unwrap();
+        let before = monotonic_counter_millis();
+        let result = pid2
+            .dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory)
+            .unwrap();
+        let after = monotonic_counter_millis();
+        let PersonalityAction::Return(milliseconds) = result else {
+            panic!("timeGetTime requested a runtime effect");
+        };
+        assert!(before <= milliseconds && milliseconds <= after);
         assert_eq!(pid2.call_count, 1);
     }
 
