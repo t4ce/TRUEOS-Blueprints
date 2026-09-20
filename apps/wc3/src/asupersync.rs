@@ -1785,6 +1785,172 @@ pub(super) async fn run_loop(
                         );
                         return Ok(());
                     }
+                    if operation == child_loader::ProviderOp::GetProcAddress {
+                        let frame = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            exit.registers.esp,
+                            3,
+                        )?;
+                        let hmodule = frame[1];
+                        let selector = if frame[2] >> 16 == 0 {
+                            ProcSelector::Ordinal(frame[2] as u16)
+                        } else {
+                            ProcSelector::Name(
+                                wc3::process::read_c_string(
+                                    &X86Memory(&child.address_space),
+                                    frame[2],
+                                    260,
+                                )
+                                .map_err(|error| format!("GetProcAddress selector: {error}"))?,
+                            )
+                        };
+                        let provider_symbol = selector.provider_symbol();
+                        let provider_module = session
+                            .process(active_pid)
+                            .ok_or_else(|| "child process missing".to_owned())?
+                            .xp
+                            .external_provider_module_name(hmodule)
+                            .map(str::to_owned);
+                        if let Some(provider_module) = provider_module {
+                            let existing = session
+                                .process(active_pid)
+                                .ok_or_else(|| "child process missing".to_owned())?
+                                .xp
+                                .provider_thunk_address(&provider_module, &provider_symbol);
+                            let (address, source) = if let Some(address) = existing {
+                                (address, "provider-existing")
+                            } else {
+                                let import = child_loader::ProviderImport {
+                                    module: provider_module.clone(),
+                                    symbol: provider_symbol.clone(),
+                                    iat_rva: 0,
+                                };
+                                if child_loader::provider_op(&import)
+                                    == child_loader::ProviderOp::Unknown
+                                {
+                                    session
+                                        .process_mut(active_pid)
+                                        .ok_or_else(|| "child process missing".to_owned())?
+                                        .xp
+                                        .set_last_error(ERROR_PROC_NOT_FOUND);
+                                    logl::log(
+                                        level::IMPORTANT,
+                                        format_args!(
+                                            "WC3 CHILD GETPROCADDRESS MISS pid={} tid={} module={:?} selector={:?} reason=provider-op-unmodeled error={}",
+                                            active_pid, active_tid, provider_module, selector, ERROR_PROC_NOT_FOUND,
+                                        ),
+                                    );
+                                    let mut registers = exit.registers;
+                                    registers.eax = 0;
+                                    contexts[active]
+                                        .context
+                                        .set_registers(registers)
+                                        .map_err(|error| error.to_string())?;
+                                    continue;
+                                }
+                                let addresses = {
+                                    let process = &mut session
+                                        .process_mut(active_pid)
+                                        .ok_or_else(|| "child process missing".to_owned())?
+                                        .xp;
+                                    install_child_provider_imports(child, process, vec![import])?
+                                };
+                                (addresses[0], "provider-new")
+                            };
+                            let mut registers = exit.registers;
+                            registers.eax = address;
+                            contexts[active]
+                                .context
+                                .set_registers(registers)
+                                .map_err(|error| error.to_string())?;
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD GETPROCADDRESS RETURN pid={} tid={} module={:?} selector={:?} address=0x{:08x} source={} cleanup=8-by-thunk",
+                                    active_pid, active_tid, provider_module, selector, address, source,
+                                ),
+                            );
+                            continue;
+                        }
+
+                        let image_and_module = if hmodule == child.image.image_base {
+                            Some((&child.image, "War3.exe".to_owned()))
+                        } else {
+                            child.native_modules.iter().find_map(|native| {
+                                (native.image.image_base == hmodule)
+                                    .then(|| (&native.image, native.stored.clone()))
+                            })
+                        };
+                        let Some((image, module)) = image_and_module else {
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD GETPROCADDRESS FRONTIER pid={} tid={} kind=unknown-hmodule handle=0x{:08x} selector={:?}",
+                                    active_pid, active_tid, hmodule, selector,
+                                ),
+                            );
+                            return Ok(());
+                        };
+                        let export = image.exports.iter().find(|export| match &selector {
+                            ProcSelector::Name(name) => export.name.as_deref() == Some(name),
+                            ProcSelector::Ordinal(ordinal) => export.ordinal == u32::from(*ordinal),
+                        });
+                        let Some(export) = export else {
+                            session
+                                .process_mut(active_pid)
+                                .ok_or_else(|| "child process missing".to_owned())?
+                                .xp
+                                .set_last_error(ERROR_PROC_NOT_FOUND);
+                            let mut registers = exit.registers;
+                            registers.eax = 0;
+                            contexts[active]
+                                .context
+                                .set_registers(registers)
+                                .map_err(|error| error.to_string())?;
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD GETPROCADDRESS MISS pid={} tid={} module={:?} selector={:?} reason=export-not-found error={}",
+                                    active_pid, active_tid, module, selector, ERROR_PROC_NOT_FOUND,
+                                ),
+                            );
+                            continue;
+                        };
+                        let pe32::ExportTarget::Rva(rva) = &export.target else {
+                            let pe32::ExportTarget::Forwarder(forwarder) = &export.target else {
+                                unreachable!()
+                            };
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD GETPROCADDRESS FRONTIER pid={} tid={} kind=native-forwarder module={:?} selector={:?} forwarder={:?}",
+                                    active_pid, active_tid, module, selector, forwarder,
+                                ),
+                            );
+                            return Ok(());
+                        };
+                        if *rva >= image.size_of_image {
+                            return Err("GetProcAddress export RVA outside image".into());
+                        }
+                        let address = image
+                            .image_base
+                            .checked_add(*rva)
+                            .ok_or_else(|| "GetProcAddress export VA overflow".to_owned())?;
+                        let mut registers = exit.registers;
+                        registers.eax = address;
+                        contexts[active]
+                            .context
+                            .set_registers(registers)
+                            .map_err(|error| error.to_string())?;
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD GETPROCADDRESS RETURN pid={} tid={} module={:?} selector={:?} address=0x{:08x} source=native-export cleanup=8-by-thunk",
+                                active_pid, active_tid, module, selector, address,
+                            ),
+                        );
+                        continue;
+                    }
                     if operation.is_generic_process_local() {
                         let dispatch = {
                             let mut child_memory = X86Memory(&child.address_space);
