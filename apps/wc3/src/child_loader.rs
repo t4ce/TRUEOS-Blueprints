@@ -48,6 +48,26 @@ pub fn provider_thunk_kind(import: &ProviderImport) -> thunk32::Kind {
             thunk32::Kind::Stdcall(16)
         }
         ProviderSymbol::Name(symbol)
+            if import.module.eq_ignore_ascii_case("KERNEL32.dll") && symbol == "GetVersionExA" =>
+        {
+            thunk32::Kind::Stdcall(4)
+        }
+        ProviderSymbol::Name(symbol)
+            if import.module.eq_ignore_ascii_case("KERNEL32.dll") && symbol == "HeapCreate" =>
+        {
+            thunk32::Kind::Stdcall(12)
+        }
+        ProviderSymbol::Name(symbol)
+            if import.module.eq_ignore_ascii_case("KERNEL32.dll") && symbol == "HeapAlloc" =>
+        {
+            thunk32::Kind::Stdcall(12)
+        }
+        ProviderSymbol::Name(symbol)
+            if import.module.eq_ignore_ascii_case("KERNEL32.dll") && symbol == "HeapFree" =>
+        {
+            thunk32::Kind::Stdcall(12)
+        }
+        ProviderSymbol::Name(symbol)
             if import.module.eq_ignore_ascii_case("KERNEL32.dll") && symbol == "SetLastError" =>
         {
             thunk32::Kind::Stdcall(4)
@@ -303,6 +323,32 @@ mod tests {
         let mut bytes = [0; thunk32::THUNK_BYTES];
         thunk32::write(424, provider_thunk_kind(&import), &mut bytes).unwrap();
         assert_eq!(&bytes[8..11], &[0xc2, 0x10, 0]);
+    }
+
+    #[test]
+    fn get_version_ex_a_provider_uses_stdcall_four() {
+        let import = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("GetVersionExA".into()),
+            iat_rva: 0,
+        };
+        let mut bytes = [0; thunk32::THUNK_BYTES];
+        thunk32::write(581, provider_thunk_kind(&import), &mut bytes).unwrap();
+        assert_eq!(&bytes[8..11], &[0xc2, 0x04, 0x00]);
+    }
+
+    #[test]
+    fn heap_providers_use_stdcall_twelve() {
+        for (provider_id, symbol) in [(622, "HeapCreate"), (623, "HeapAlloc"), (624, "HeapFree")] {
+            let import = ProviderImport {
+                module: "KERNEL32.dll".into(),
+                symbol: ProviderSymbol::Name(symbol.into()),
+                iat_rva: 0,
+            };
+            let mut bytes = [0; thunk32::THUNK_BYTES];
+            thunk32::write(provider_id, provider_thunk_kind(&import), &mut bytes).unwrap();
+            assert_eq!(&bytes[8..11], &[0xc2, 0x0c, 0], "{symbol}");
+        }
     }
 
     #[test]

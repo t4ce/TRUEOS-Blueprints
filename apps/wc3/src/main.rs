@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, HashSet},
     time::Duration,
 };
 
@@ -224,7 +224,6 @@ async fn run() -> Result<(), String> {
     let mut blit_checkpoint_done = false;
     let mut wait_deadlines: HashMap<ThreadKey, RuntimeWait> = HashMap::new();
     let mut previous_wait_timeout: Option<(ThreadKey, u32, u32)> = None;
-    let mut preemption_watches: HashMap<ThreadKey, PreemptionWatch> = HashMap::new();
     let mut active = 0usize;
     loop {
         let exit = if contexts[active].started {
@@ -238,9 +237,6 @@ async fn run() -> Result<(), String> {
             .get(active)
             .ok_or_else(|| "active guest context missing".to_owned())?
             .key();
-        if !matches!(exit.kind, ExitKind::Other) || exit.detail != 52 {
-            preemption_watches.remove(&active_key);
-        }
         match exit.kind {
             // A transient VMCS always starts with VMLAUNCH.  Its preemption
             // timer is therefore a Blueprint scheduling boundary, not an x86
@@ -253,30 +249,6 @@ async fn run() -> Result<(), String> {
                     &mut wait_deadlines,
                     &mut previous_wait_timeout,
                 )?;
-                let watch = preemption_watches.entry(active_key).or_default();
-                watch.record(exit.registers);
-                if active_key.pid != LAUNCHER_PID
-                    && pending_child.as_ref().is_some_and(|child| {
-                        child.pid == active_key.pid
-                            && child.tid == active_key.tid
-                            && matches!(child.execution, ChildExecutionState::DllInitRunning { .. })
-                    })
-                    && watch.consecutive >= 8
-                {
-                    let child = pending_child
-                        .as_ref()
-                        .ok_or_else(|| "preemption child state missing".to_owned())?;
-                    let (_, module) = child_execution_module(child).map_err(str::to_owned)?;
-                    let registers = watch.last_registers.unwrap_or(exit.registers);
-                    emit_child_cpu_stall_frontier(
-                        child,
-                        active_key,
-                        &module.stored,
-                        watch,
-                        registers,
-                    );
-                    return Ok(());
-                }
                 if !session.blocked.contains_key(&active_key)
                     && context_index(&contexts, active_key).is_some()
                 {
@@ -486,6 +458,132 @@ async fn run() -> Result<(), String> {
                             format!("ordinal={}", ordinal)
                         }
                     };
+                    let is_heap_create = matches!(
+                        &provider.symbol,
+                        child_loader::ProviderSymbol::Name(name)
+                            if provider.module.eq_ignore_ascii_case("KERNEL32.dll")
+                                && name == "HeapCreate"
+                    );
+                    if is_heap_create {
+                        let mut child_memory = X86Memory(&child.address_space);
+                        let heap = session
+                            .process_mut(active_pid)
+                            .ok_or_else(|| "child process missing".to_owned())?
+                            .xp
+                            .create_win_heap(exit.registers.esp, &mut child_memory)
+                            .map_err(str::to_owned)?;
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD HEAP CREATE pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" provider_id={} options=0x{:08x} initial_size=0x{:08x} maximum_size=0x{:08x} handle=0x{:08x} caller_ret=0x{:08x}",
+                                active_pid,
+                                active_tid,
+                                running_module_name,
+                                provider_id,
+                                heap.options,
+                                heap.initial_size,
+                                heap.maximum_size,
+                                heap.handle,
+                                u32::from_le_bytes(caller_ret),
+                            ),
+                        );
+                        let mut registers = exit.registers;
+                        registers.eax = heap.handle;
+                        contexts[active]
+                            .context
+                            .set_registers(registers)
+                            .map_err(|error| error.to_string())?;
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD HEAP CREATE RESULT pid={} tid={} handle=0x{:08x} resume_eip=0x{:08x} esp=0x{:08x} cleanup=12-by-thunk",
+                                active_pid,
+                                active_tid,
+                                heap.handle,
+                                registers.eip,
+                                registers.esp,
+                            ),
+                        );
+                        continue;
+                    }
+                    let is_get_version_ex_a = matches!(
+                        &provider.symbol,
+                        child_loader::ProviderSymbol::Name(name)
+                            if provider.module.eq_ignore_ascii_case("KERNEL32.dll")
+                                && name == "GetVersionExA"
+                    );
+                    if is_get_version_ex_a {
+                        let frame = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            exit.registers.esp,
+                            2,
+                        )?;
+                        let info = frame[1];
+                        let size = read_guest_words(&X86Memory(&child.address_space), info, 1)?[0];
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD GETVERSIONEXA CALL pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" provider_id={} info=0x{:08x} size=0x{:08x} caller_ret=0x{:08x}",
+                                active_pid,
+                                active_tid,
+                                running_module_name,
+                                provider_id,
+                                info,
+                                size,
+                                u32::from_le_bytes(caller_ret),
+                            ),
+                        );
+                        if size != 0x94 {
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD GETVERSIONEXA FRONTIER pid={} tid={} reason=unsupported-structure-size size=0x{:08x}",
+                                    active_pid, active_tid, size,
+                                ),
+                            );
+                            return Ok(());
+                        }
+                        let mut child_memory = X86Memory(&child.address_space);
+                        let action = session
+                            .process_mut(active_pid)
+                            .ok_or_else(|| "child process missing".to_owned())?
+                            .xp
+                            .dispatch_provider_for_process(
+                                active_pid,
+                                active_tid,
+                                provider_id,
+                                exit.registers.esp,
+                                &mut child_memory,
+                            )
+                            .map_err(str::to_owned)?;
+                        let PersonalityAction::Return(result) = action else {
+                            return Err("GetVersionExA child provider did not return".into());
+                        };
+                        let version = read_guest_words(&X86Memory(&child.address_space), info, 5)?;
+                        if result != 1 || version != [0x94, 5, 1, 2600, 2] {
+                            return Err("GetVersionExA child result verification failed".into());
+                        }
+                        let mut registers = exit.registers;
+                        registers.eax = result;
+                        contexts[active]
+                            .context
+                            .set_registers(registers)
+                            .map_err(|error| error.to_string())?;
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD GETVERSIONEXA RESULT pid={} tid={} eax={} major={} minor={} build={} platform={} cleanup=4-by-thunk",
+                                active_pid,
+                                active_tid,
+                                result,
+                                version[1],
+                                version[2],
+                                version[3],
+                                version[4],
+                            ),
+                        );
+                        continue;
+                    }
                     let is_get_version = matches!(
                         &provider.symbol,
                         child_loader::ProviderSymbol::Name(name)
@@ -4216,36 +4314,6 @@ struct RuntimeWait {
     resume_registers: Registers,
 }
 
-#[derive(Default)]
-struct PreemptionWatch {
-    consecutive: u32,
-    eips: VecDeque<u32>,
-    last_registers: Option<Registers>,
-}
-
-impl PreemptionWatch {
-    fn record(&mut self, registers: Registers) {
-        self.consecutive = self.consecutive.saturating_add(1);
-        if self.eips.len() == 8 {
-            self.eips.pop_front();
-        }
-        self.eips.push_back(registers.eip);
-        self.last_registers = Some(registers);
-    }
-
-    fn classification(&self) -> &'static str {
-        let Some(low) = self.eips.iter().copied().min() else {
-            return "long-native-execution";
-        };
-        let high = self.eips.iter().copied().max().unwrap_or(low);
-        if high.saturating_sub(low) <= 16 {
-            "probable-native-spin"
-        } else {
-            "long-native-execution"
-        }
-    }
-}
-
 fn expire_runtime_waits(
     session: &mut Wc3Session,
     contexts: &mut [GuestContext],
@@ -4283,95 +4351,6 @@ fn expire_runtime_waits(
         *previous_wait_timeout = Some((key, wait.handle, wait.timeout_ms));
     }
     Ok(())
-}
-
-fn child_stall_bytes(address_space: &AddressSpace, address: u32, len: usize) -> String {
-    let mut bytes = vec![0; len];
-    match address_space.read(address, &mut bytes) {
-        Ok(read) if read == len => bytes
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<Vec<_>>()
-            .join(" "),
-        Ok(read) => format!("<unreadable: short-read {read}/{len}>"),
-        Err(error) => format!("<unreadable: {error}>"),
-    }
-}
-
-fn emit_child_cpu_stall_frontier(
-    child: &PendingChild,
-    key: ThreadKey,
-    module_name: &str,
-    watch: &PreemptionWatch,
-    registers: Registers,
-) {
-    let eip_samples = watch
-        .eips
-        .iter()
-        .map(|eip| format!("0x{eip:08x}"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    logl::log(
-        level::IMPORTANT,
-        format_args!(
-            "WC3 CHILD CPU STALL FRONTIER pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" quanta={} eip_samples=[{}] current_eip=0x{:08x} esp=0x{:08x} eax=0x{:08x} ebx=0x{:08x} ecx=0x{:08x} edx=0x{:08x} esi=0x{:08x} edi=0x{:08x} ebp=0x{:08x} classification={}",
-            key.pid,
-            key.tid,
-            module_name,
-            watch.consecutive,
-            eip_samples,
-            registers.eip,
-            registers.esp,
-            registers.eax,
-            registers.ebx,
-            registers.ecx,
-            registers.edx,
-            registers.esi,
-            registers.edi,
-            registers.ebp,
-            watch.classification(),
-        ),
-    );
-    match registers.eip.checked_sub(16) {
-        Some(address) => logl::log(
-            level::IMPORTANT,
-            format_args!(
-                "WC3 CHILD CPU STALL CODE BEFORE address=0x{:08x} bytes=\"{}\"",
-                address,
-                child_stall_bytes(&child.address_space, address, 16),
-            ),
-        ),
-        None => logl::log(
-            level::IMPORTANT,
-            format_args!(
-                "WC3 CHILD CPU STALL CODE BEFORE address=<underflow> bytes=\"<unreadable: EIP below 16>\""
-            ),
-        ),
-    }
-    logl::log(
-        level::IMPORTANT,
-        format_args!(
-            "WC3 CHILD CPU STALL CODE address=0x{:08x} bytes=\"{}\"",
-            registers.eip,
-            child_stall_bytes(&child.address_space, registers.eip, 32),
-        ),
-    );
-    let stack = read_guest_words(&X86Memory(&child.address_space), registers.esp, 8)
-        .map(|words| {
-            words
-                .iter()
-                .map(|word| format!("0x{word:08x}"))
-                .collect::<Vec<_>>()
-                .join(", ")
-        })
-        .unwrap_or_else(|error| format!("<unreadable: {error}>"));
-    logl::log(
-        level::IMPORTANT,
-        format_args!(
-            "WC3 CHILD CPU STALL STACK esp=0x{:08x} words=[{}]",
-            registers.esp, stack
-        ),
-    );
 }
 
 fn context_index(contexts: &[GuestContext], key: ThreadKey) -> Option<usize> {

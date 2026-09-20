@@ -345,6 +345,21 @@ pub struct VirtualCommitRequest {
     pub size: u32,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct WinHeap {
+    options: u32,
+    initial_size: u32,
+    maximum_size: u32,
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct HeapCreateResult {
+    pub options: u32,
+    pub initial_size: u32,
+    pub maximum_size: u32,
+    pub handle: u32,
+}
+
 pub struct XpProcess {
     imports: Vec<LauncherImport>,
     provider_imports: Vec<ProviderImport>,
@@ -356,6 +371,8 @@ pub struct XpProcess {
     next_thread_handle: u32,
     heap_next: u32,
     allocations: HashMap<u32, u32>,
+    heaps: HashMap<u32, WinHeap>,
+    next_heap_handle: u32,
     crt_heap_next: u32,
     crt_allocations: HashMap<u32, u32>,
     virtual_reservations: Vec<VirtualReservation>,
@@ -421,6 +438,8 @@ impl XpProcess {
             next_thread_handle: THREAD_HANDLE_BASE,
             heap_next: 0,
             allocations: HashMap::new(),
+            heaps: HashMap::new(),
+            next_heap_handle: 0x5743_0001,
             crt_heap_next: 0,
             crt_allocations: HashMap::new(),
             virtual_reservations: Vec::new(),
@@ -707,6 +726,22 @@ impl XpProcess {
             .ok_or("unknown child provider import")?;
         match (&provider.module[..], &provider.symbol) {
             (module, ProviderSymbol::Name(symbol))
+                if module.eq_ignore_ascii_case("KERNEL32.dll") && symbol == "GetVersionExA" =>
+            {
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(self.get_version_ex(esp, memory)?))
+            }
+            (module, ProviderSymbol::Name(symbol))
+                if module.eq_ignore_ascii_case("KERNEL32.dll") && symbol == "HeapCreate" =>
+            {
+                Ok(PersonalityAction::Return(
+                    self.create_win_heap(esp, memory)?.handle,
+                ))
+            }
+            (module, ProviderSymbol::Name(symbol))
                 if module.eq_ignore_ascii_case("KERNEL32.dll") && symbol == "GetVersion" =>
             {
                 self.call_count = self
@@ -791,6 +826,37 @@ impl XpProcess {
             }
             _ => Err("unsupported child provider import"),
         }
+    }
+
+    pub fn create_win_heap(
+        &mut self,
+        esp: u32,
+        memory: &impl GuestMemory,
+    ) -> Result<HeapCreateResult, &'static str> {
+        let [_, options, initial_size, maximum_size] = arguments::<4>(memory, esp)?;
+        let handle = self.next_heap_handle;
+        self.next_heap_handle = self
+            .next_heap_handle
+            .checked_add(1)
+            .ok_or("HeapCreate handle overflow")?;
+        self.heaps.insert(
+            handle,
+            WinHeap {
+                options,
+                initial_size,
+                maximum_size,
+            },
+        );
+        self.call_count = self
+            .call_count
+            .checked_add(1)
+            .ok_or("call count overflow")?;
+        Ok(HeapCreateResult {
+            options,
+            initial_size,
+            maximum_size,
+            handle,
+        })
     }
 
     pub fn append_provider_imports(
@@ -4490,6 +4556,85 @@ mod tests {
             PersonalityAction::Return(WINDOWS_XP_GET_VERSION)
         );
         assert_eq!(memory.bytes, before);
+    }
+
+    #[test]
+    fn child_get_version_ex_a_uses_the_xp_personality() {
+        let provider = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("GetVersionExA".into()),
+            iat_rva: 0,
+        };
+        let mut pid2 = XpProcess::new(Vec::new());
+        pid2.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+        let info = STACK_TOP - 0x100;
+        write_u32(&mut memory, esp, 0x2113_1a58).unwrap();
+        write_u32(&mut memory, esp + 4, info).unwrap();
+        write_u32(&mut memory, info, 0x94).unwrap();
+        assert_eq!(
+            pid2.dispatch_provider_for_process(2, 3, 0, esp, &mut memory)
+                .unwrap(),
+            PersonalityAction::Return(1)
+        );
+        assert_eq!(
+            [0, 4, 8, 12, 16]
+                .map(|offset| read_u32(&memory, info + offset).unwrap()),
+            [0x94, 5, 1, 2600, 2]
+        );
+    }
+
+    #[test]
+    fn child_heap_create_is_process_private_and_lazy() {
+        let provider = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("HeapCreate".into()),
+            iat_rva: 0,
+        };
+        let mut pid1 = XpProcess::new(Vec::new());
+        let mut pid2 = XpProcess::new(Vec::new());
+        pid1.install_provider_surface(vec![provider.clone()], Vec::new(), Vec::new());
+        pid2.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0x5a; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+        for (index, word) in [0x2113_1b92, 0x0004_0000, 0x0000_1000, 0x0000_0000]
+            .into_iter()
+            .enumerate()
+        {
+            write_u32(&mut memory, esp + index as u32 * 4, word).unwrap();
+        }
+        assert_eq!(
+            pid2.dispatch_provider_for_process(2, 3, 0, esp, &mut memory)
+                .unwrap(),
+            PersonalityAction::Return(0x5743_0001)
+        );
+        assert_eq!(
+            pid2.heaps.get(&0x5743_0001),
+            Some(&WinHeap {
+                options: 0x0004_0000,
+                initial_size: 0x0000_1000,
+                maximum_size: 0,
+            })
+        );
+        assert!(pid2.allocations.is_empty());
+        for (index, word) in [0x0040_0000, 0, 0, 0].into_iter().enumerate() {
+            write_u32(&mut memory, esp + index as u32 * 4, word).unwrap();
+        }
+        assert_eq!(
+            pid1.dispatch_provider_for_process(1, 1, 0, esp, &mut memory)
+                .unwrap(),
+            PersonalityAction::Return(0x5743_0001)
+        );
+        assert_eq!(pid1.heaps.len(), 1);
+        assert_eq!(pid2.heaps.len(), 1);
+        assert_ne!(pid1.heaps.get(&0x5743_0001), pid2.heaps.get(&0x5743_0001));
     }
 
     #[test]
