@@ -15,8 +15,9 @@ use wc3::{
     imports::WinCall,
     pe32,
     process::{
-        CHILD_CRT_HEAP_BASE, CHILD_CRT_HEAP_LIMIT, GuestMemory, PreparedProcess, STACK_BASE,
-        STACK_BYTES, STACK_TOP, ThreadObject, bmp_file_from_dib, dib_layout,
+        CHILD_CRT_HEAP_BASE, CHILD_CRT_HEAP_LIMIT, CHILD_VIRTUAL_ALLOC_BASE,
+        CHILD_VIRTUAL_ALLOC_LIMIT, GuestMemory, PreparedProcess, STACK_BASE, STACK_BYTES,
+        STACK_TOP, ThreadObject, XpProcess, bmp_file_from_dib, dib_layout,
     },
     session::{
         GuestCall, LAUNCHER_PID, LAUNCHER_TID, PersonalityAction, SessionObject, SessionRequest,
@@ -498,6 +499,109 @@ async fn run() -> Result<(), String> {
                             .map_err(|error| error.to_string())?;
                         continue;
                     }
+                    let is_enter_critical_section = matches!(
+                        &provider.symbol,
+                        child_loader::ProviderSymbol::Name(name)
+                            if provider.module.eq_ignore_ascii_case("KERNEL32.dll")
+                                && name == "EnterCriticalSection"
+                    );
+                    if is_enter_critical_section {
+                        let argument = exit.registers.esp.checked_add(4).ok_or_else(|| {
+                            "child provider argument address overflow".to_owned()
+                        })?;
+                        let mut critical_section = [0; 4];
+                        child
+                            .address_space
+                            .read(argument, &mut critical_section)
+                            .map_err(|error| error.to_string())?;
+                        let critical_section = u32::from_le_bytes(critical_section);
+                        let known = session
+                            .process(active_pid)
+                            .ok_or_else(|| "child process missing".to_owned())?
+                            .xp
+                            .has_critical_section(critical_section);
+                        if !known {
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD CRITICAL SECTION FRONTIER pid={} tid={} operation=enter reason=unknown-critical-section address=0x{:08x}",
+                                    active_pid, active_tid, critical_section
+                                ),
+                            );
+                            return Ok(());
+                        }
+                        let mut before = [0; 16];
+                        child
+                            .address_space
+                            .read(critical_section, &mut before)
+                            .map_err(|error| error.to_string())?;
+                        let lock_count_before = u32::from_le_bytes(before[4..8].try_into().unwrap());
+                        let recursion_before = u32::from_le_bytes(before[8..12].try_into().unwrap());
+                        let owner_before = u32::from_le_bytes(before[12..16].try_into().unwrap());
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD PROVIDER CALL pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" provider_id={} module=\"{}\" symbol=\"EnterCriticalSection\" esp=0x{:08x} critical_section=0x{:08x} caller_ret=0x{:08x} lock_count_before=0x{:08x} recursion_before={} owner_before={}",
+                                active_pid,
+                                active_tid,
+                                running_module_name,
+                                provider_id,
+                                provider.module,
+                                exit.registers.esp,
+                                critical_section,
+                                u32::from_le_bytes(caller_ret),
+                                lock_count_before,
+                                recursion_before,
+                                owner_before,
+                            ),
+                        );
+                        let mut child_memory = X86Memory(&child.address_space);
+                        let action = session
+                            .process_mut(active_pid)
+                            .ok_or_else(|| "child process missing".to_owned())?
+                            .xp
+                            .dispatch_provider_for_process(
+                                active_pid,
+                                active_tid,
+                                provider_id,
+                                exit.registers.esp,
+                                &mut child_memory,
+                            )
+                            .map_err(str::to_owned)?;
+                        let PersonalityAction::Return(value) = action else {
+                            return Err("EnterCriticalSection child provider did not return".into());
+                        };
+                        let mut after = [0; 16];
+                        child
+                            .address_space
+                            .read(critical_section, &mut after)
+                            .map_err(|error| error.to_string())?;
+                        let lock_count = u32::from_le_bytes(after[4..8].try_into().unwrap());
+                        let recursion = u32::from_le_bytes(after[8..12].try_into().unwrap());
+                        let owner = u32::from_le_bytes(after[12..16].try_into().unwrap());
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD CRITICAL SECTION ENTER pid={} tid={} address=0x{:08x} lock_count=0x{:08x} recursion={} owner={} caller_ret=0x{:08x} resume_eip=0x{:08x} return_eax=0x{:08x}",
+                                active_pid,
+                                active_tid,
+                                critical_section,
+                                lock_count,
+                                recursion,
+                                owner,
+                                u32::from_le_bytes(caller_ret),
+                                exit.registers.eip,
+                                value,
+                            ),
+                        );
+                        let mut registers = exit.registers;
+                        registers.eax = value;
+                        contexts[active]
+                            .context
+                            .set_registers(registers)
+                            .map_err(|error| error.to_string())?;
+                        continue;
+                    }
                     let is_set_last_error = matches!(
                         &provider.symbol,
                         child_loader::ProviderSymbol::Name(name)
@@ -650,6 +754,36 @@ async fn run() -> Result<(), String> {
                             .map_err(|error| error.to_string())?;
                         continue;
                     }
+                    let is_crt_dllonexit = matches!(
+                        &provider.symbol,
+                        child_loader::ProviderSymbol::Name(name)
+                            if provider.module.eq_ignore_ascii_case("MSVCRT.dll")
+                                && name == "__dllonexit"
+                    );
+                    if is_crt_dllonexit {
+                        let result = {
+                            let process = &mut session
+                                .process_mut(active_pid)
+                                .ok_or_else(|| "child process missing".to_owned())?
+                                .xp;
+                            child_dllonexit(
+                                child,
+                                process,
+                                active_pid,
+                                active_tid,
+                                &running_module_name,
+                                provider_id,
+                                exit.registers.esp,
+                            )?
+                        };
+                        let mut registers = exit.registers;
+                        registers.eax = result;
+                        contexts[active]
+                            .context
+                            .set_registers(registers)
+                            .map_err(|error| error.to_string())?;
+                        continue;
+                    }
                     let is_crt_initterm = matches!(
                         &provider.symbol,
                         child_loader::ProviderSymbol::Name(name)
@@ -785,6 +919,100 @@ async fn run() -> Result<(), String> {
                                     .unwrap_or_else(|| "-".into())
                             ),
                         );
+                        let mut registers = exit.registers;
+                        registers.eax = result;
+                        contexts[active]
+                            .context
+                            .set_registers(registers)
+                            .map_err(|error| error.to_string())?;
+                        continue;
+                    }
+                    let is_virtual_alloc = matches!(
+                        &provider.symbol,
+                        child_loader::ProviderSymbol::Name(name)
+                            if provider.module.eq_ignore_ascii_case("KERNEL32.dll")
+                                && name == "VirtualAlloc"
+                    );
+                    if is_virtual_alloc {
+                        let frame = decode_virtual_alloc_frame(
+                            &X86Memory(&child.address_space),
+                            exit.registers.esp,
+                        )?;
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD VIRTUALALLOC FRONTIER pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" provider_id={} caller_ret=0x{:08x} address=0x{:08x} size=0x{:08x} allocation_type=0x{:08x} protect=0x{:08x}",
+                                active_pid,
+                                active_tid,
+                                running_module_name,
+                                provider_id,
+                                frame.caller_ret,
+                                frame.address,
+                                frame.size,
+                                frame.allocation_type,
+                                frame.protect,
+                            ),
+                        );
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD VIRTUALALLOC FLAGS commit={} reserve={} top_down={} protect_name=\"{}\"",
+                                (frame.allocation_type & 0x0000_1000 != 0) as u8,
+                                (frame.allocation_type & 0x0000_2000 != 0) as u8,
+                                (frame.allocation_type & 0x0010_0000 != 0) as u8,
+                                virtual_alloc_protect_name(frame.protect),
+                            ),
+                        );
+                        let supported_reserve = frame.address == 0
+                            && frame.size != 0
+                            && frame.allocation_type == 0x0000_2000
+                            && frame.protect == 0x01;
+                        if !supported_reserve {
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD VIRTUALALLOC FRONTIER reason=unsupported-observed-shape"
+                                ),
+                            );
+                            return Ok(());
+                        }
+                        let (reservation, reservation_count, reserve_next) = {
+                            let process = &mut session
+                                .process_mut(active_pid)
+                                .ok_or_else(|| "child process missing".to_owned())?
+                                .xp;
+                            let reservation = match process.virtual_reserve_null(frame.size) {
+                                Ok(reservation) => reservation,
+                                Err(_) => None,
+                            };
+                            if reservation.is_none() {
+                                process.set_last_error(8);
+                            }
+                            let (reservation_count, reserve_next) = process.virtual_reservation_state();
+                            (reservation, reservation_count, reserve_next)
+                        };
+                        let result = reservation.as_ref().map(|value| value.base).unwrap_or(0);
+                        if let Some(reservation) = reservation {
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD VIRTUALALLOC RESERVE pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" requested_address=0x00000000 requested_size=0x{:08x} reserved_base=0x{:08x} reserved_size=0x{:08x} allocation_type=MEM_RESERVE protect=PAGE_NOACCESS committed=0 guest_mapped=0",
+                                    active_pid,
+                                    active_tid,
+                                    running_module_name,
+                                    frame.size,
+                                    reservation.base,
+                                    reservation.size,
+                                ),
+                            );
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD VIRTUAL MEMORY pid={} reservations={} reserve_next=0x{:08x}",
+                                    active_pid, reservation_count, reserve_next
+                                ),
+                            );
+                        }
                         let mut registers = exit.registers;
                         registers.eax = result;
                         contexts[active]
@@ -3569,6 +3797,7 @@ fn create_child_primary_context(
         return Err("child primary context requires matching DLL-init-ready state".into());
     }
     validate_child_crt_heap_range(child)?;
+    validate_child_virtual_alloc_range(child)?;
     let module = child
         .native_modules
         .get(native_index)
@@ -3691,7 +3920,26 @@ fn create_child_primary_context(
 }
 
 fn validate_child_crt_heap_range(child: &PendingChild) -> Result<(), String> {
-    let heap = (CHILD_CRT_HEAP_BASE, CHILD_CRT_HEAP_LIMIT);
+    validate_child_private_arena_range(
+        child,
+        (CHILD_CRT_HEAP_BASE, CHILD_CRT_HEAP_LIMIT),
+        "child CRT heap",
+    )
+}
+
+fn validate_child_virtual_alloc_range(child: &PendingChild) -> Result<(), String> {
+    validate_child_private_arena_range(
+        child,
+        (CHILD_VIRTUAL_ALLOC_BASE, CHILD_VIRTUAL_ALLOC_LIMIT),
+        "child VirtualAlloc arena",
+    )
+}
+
+fn validate_child_private_arena_range(
+    child: &PendingChild,
+    arena: (u32, u32),
+    arena_name: &str,
+) -> Result<(), String> {
     let mut ranges = vec![
         (
             "child control",
@@ -3744,9 +3992,9 @@ fn validate_child_crt_heap_range(child: &PendingChild) -> Result<(), String> {
     }
     if ranges
         .iter()
-        .any(|(_, start, end)| heap.0 < *end && *start < heap.1)
+        .any(|(_, start, end)| arena.0 < *end && *start < arena.1)
     {
-        return Err("child CRT heap overlaps an established child mapping".into());
+        return Err(format!("{arena_name} overlaps an established child mapping"));
     }
     Ok(())
 }
@@ -3770,6 +4018,161 @@ fn ensure_child_crt_allocation_mapped(
         child.crt_heap_mapped_end = mapped_end;
     }
     Ok(child.crt_heap_mapped_end)
+}
+
+fn child_dllonexit(
+    child: &mut PendingChild,
+    process: &mut XpProcess,
+    pid: u32,
+    tid: u32,
+    during: &str,
+    provider_id: u32,
+    esp: u32,
+) -> Result<u32, String> {
+    const MAX_CRT_CALLBACKS: u32 = 65_536;
+
+    let frame = read_guest_words(&X86Memory(&child.address_space), esp, 4)?;
+    let (caller_ret, func, start_ref, end_ref) = (frame[0], frame[1], frame[2], frame[3]);
+    let start = if start_ref == 0 {
+        0
+    } else {
+        read_guest_words(&X86Memory(&child.address_space), start_ref, 1)?[0]
+    };
+    let end = if end_ref == 0 {
+        0
+    } else {
+        read_guest_words(&X86Memory(&child.address_space), end_ref, 1)?[0]
+    };
+    let entries = end
+        .checked_sub(start)
+        .filter(|bytes| bytes % 4 == 0)
+        .map(|bytes| bytes / 4)
+        .unwrap_or(0);
+    logl::log(
+        level::IMPORTANT,
+        format_args!(
+            "WC3 CHILD CRT DLLONEXIT pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" provider_id={} caller_ret=0x{:08x} func=0x{:08x} start_ref=0x{:08x} end_ref=0x{:08x} start=0x{:08x} end=0x{:08x} entries={}",
+            pid, tid, during, provider_id, caller_ret, func, start_ref, end_ref, start, end, entries
+        ),
+    );
+    let fail = |reason: &str| {
+        logl::log(
+            level::IMPORTANT,
+            format_args!(
+                "WC3 CHILD CRT DLLONEXIT RESULT pid={} tid={} result=0x00000000 reason={}",
+                pid, tid, reason
+            ),
+        );
+        0
+    };
+    if start_ref == 0 || end_ref == 0 {
+        return Ok(fail("null-reference"));
+    }
+    if start == 0 || end == 0 {
+        return Ok(fail("null-table"));
+    }
+    if end < start || start % 4 != 0 || end % 4 != 0 {
+        return Ok(fail("malformed-table"));
+    }
+    let used_bytes = end
+        .checked_sub(start)
+        .ok_or_else(|| "child __dllonexit range underflow".to_owned())?;
+    let old_entries = used_bytes / 4;
+    if old_entries > MAX_CRT_CALLBACKS {
+        return Ok(fail("table-too-large"));
+    }
+    let required_bytes = used_bytes
+        .checked_add(4)
+        .ok_or_else(|| "child __dllonexit required size overflow".to_owned())?;
+    let Some(old_capacity) = process.crt_allocation_capacity(start) else {
+        return Ok(fail("untracked-table"));
+    };
+    if used_bytes > old_capacity {
+        return Ok(fail("table-exceeds-capacity"));
+    }
+
+    let (new_start, new_end, moved, mapped_end) = if required_bytes <= old_capacity {
+        let slot = start
+            .checked_add(used_bytes)
+            .ok_or_else(|| "child __dllonexit slot overflow".to_owned())?;
+        write_child_u32(child, slot, func)?;
+        write_child_u32(child, start_ref, start)?;
+        let new_end = start
+            .checked_add(required_bytes)
+            .ok_or_else(|| "child __dllonexit end overflow".to_owned())?;
+        write_child_u32(child, end_ref, new_end)?;
+        (start, new_end, false, None)
+    } else {
+        let Some(resize) = process
+            .crt_resize(start, used_bytes, required_bytes)
+            .map_err(str::to_owned)?
+        else {
+            return Ok(fail("oom"));
+        };
+        let old_mapped_end = child.crt_heap_mapped_end;
+        let current_mapped_end =
+            ensure_child_crt_allocation_mapped(child, resize.pointer, resize.required_bytes)?;
+        let bytes = read_guest_bytes(
+            &X86Memory(&child.address_space),
+            start,
+            usize::try_from(used_bytes).map_err(|_| "child __dllonexit copy length")?,
+        )?;
+        if !bytes.is_empty()
+            && child
+                .address_space
+                .write(resize.pointer, &bytes)
+                .map_err(|error| format!("copy child __dllonexit callbacks: {error}"))?
+                != bytes.len()
+        {
+            return Err("short child __dllonexit callback copy".into());
+        }
+        let slot = resize
+            .pointer
+            .checked_add(used_bytes)
+            .ok_or_else(|| "child __dllonexit replacement slot overflow".to_owned())?;
+        write_child_u32(child, slot, func)?;
+        let new_end = resize
+            .pointer
+            .checked_add(required_bytes)
+            .ok_or_else(|| "child __dllonexit replacement end overflow".to_owned())?;
+        write_child_u32(child, start_ref, resize.pointer)?;
+        write_child_u32(child, end_ref, new_end)?;
+        if !process.retire_crt_allocation(start) {
+            return Err("child __dllonexit old allocation disappeared".into());
+        }
+        (
+            resize.pointer,
+            new_end,
+            resize.moved,
+            (current_mapped_end != old_mapped_end).then_some(current_mapped_end),
+        )
+    };
+    logl::log(
+        level::IMPORTANT,
+        format_args!(
+            "WC3 CHILD CRT DLLONEXIT RESULT pid={} tid={} func=0x{:08x} old_start=0x{:08x} old_end=0x{:08x} new_start=0x{:08x} new_end=0x{:08x} entries_before={} entries_after={} moved={} return_eax=0x{:08x}",
+            pid, tid, func, start, end, new_start, new_end, old_entries, old_entries + 1, moved as u8, func
+        ),
+    );
+    if let Some(mapped_end) = mapped_end {
+        logl::log(
+            level::IMPORTANT,
+            format_args!("WC3 CHILD CRT DLLONEXIT RESULT mapped_end=0x{:08x}", mapped_end),
+        );
+    }
+    Ok(func)
+}
+
+fn write_child_u32(child: &mut PendingChild, address: u32, value: u32) -> Result<(), String> {
+    if child
+        .address_space
+        .write(address, &value.to_le_bytes())
+        .map_err(|error| format!("write child u32 0x{address:08x}: {error}"))?
+        != 4
+    {
+        return Err("short child u32 write".into());
+    }
+    Ok(())
 }
 
 fn child_crt_mapping_end(current: u32, pointer: u32, requested: u32) -> Result<u32, String> {
@@ -4395,6 +4798,43 @@ fn read_guest_words(memory: &impl GuestMemory, esp: u32, count: usize) -> Result
         .collect()
 }
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+struct VirtualAllocFrame {
+    caller_ret: u32,
+    address: u32,
+    size: u32,
+    allocation_type: u32,
+    protect: u32,
+}
+
+fn decode_virtual_alloc_frame(
+    memory: &impl GuestMemory,
+    esp: u32,
+) -> Result<VirtualAllocFrame, String> {
+    let frame = read_guest_words(memory, esp, 5)?;
+    Ok(VirtualAllocFrame {
+        caller_ret: frame[0],
+        address: frame[1],
+        size: frame[2],
+        allocation_type: frame[3],
+        protect: frame[4],
+    })
+}
+
+fn virtual_alloc_protect_name(protect: u32) -> &'static str {
+    match protect {
+        0x01 => "PAGE_NOACCESS",
+        0x02 => "PAGE_READONLY",
+        0x04 => "PAGE_READWRITE",
+        0x08 => "PAGE_WRITECOPY",
+        0x10 => "PAGE_EXECUTE",
+        0x20 => "PAGE_EXECUTE_READ",
+        0x40 => "PAGE_EXECUTE_READWRITE",
+        0x80 => "PAGE_EXECUTE_WRITECOPY",
+        _ => "UNKNOWN",
+    }
+}
+
 fn read_guest_bytes(
     memory: &impl GuestMemory,
     address: u32,
@@ -4636,6 +5076,41 @@ mod tests {
             .unwrap(),
             CHILD_CRT_HEAP_BASE + 0x2000,
         );
+    }
+
+    #[test]
+    fn virtual_alloc_frame_decoder_reads_the_live_stdcall_frame() {
+        let base = 0x0430_0000;
+        let esp = 0x043f_ff00;
+        let mut memory = TestMemory {
+            base,
+            bytes: vec![0; STACK_BYTES],
+        };
+        for (index, word) in [
+            0x1502_02c1,
+            0,
+            0x0001_0000,
+            0x0000_3000,
+            0x0000_0004,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            memory
+                .write(esp + index as u32 * 4, &word.to_le_bytes())
+                .unwrap();
+        }
+        assert_eq!(
+            decode_virtual_alloc_frame(&memory, esp).unwrap(),
+            VirtualAllocFrame {
+                caller_ret: 0x1502_02c1,
+                address: 0,
+                size: 0x0001_0000,
+                allocation_type: 0x0000_3000,
+                protect: 0x0000_0004,
+            }
+        );
+        assert_eq!(virtual_alloc_protect_name(0x04), "PAGE_READWRITE");
     }
 
     #[test]

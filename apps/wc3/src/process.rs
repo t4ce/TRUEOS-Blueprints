@@ -23,6 +23,9 @@ pub const TEB_VA: u32 = 0x0020_1000;
 pub const HEAP_VA: u32 = 0x0021_0000;
 pub const CHILD_CRT_HEAP_BASE: u32 = 0x0100_0000;
 pub const CHILD_CRT_HEAP_LIMIT: u32 = 0x0400_0000;
+pub const XP_ALLOCATION_GRANULARITY: u32 = 0x0001_0000;
+pub const CHILD_VIRTUAL_ALLOC_BASE: u32 = 0x0600_0000;
+pub const CHILD_VIRTUAL_ALLOC_LIMIT: u32 = 0x1400_0000;
 pub const PROCESS_DATA_VA: u32 = 0x0021_1000;
 /// Historical launcher stack: 0x0430_0000..0x0440_0000.
 pub const STACK_BASE: u32 = 0x0430_0000;
@@ -310,6 +313,22 @@ pub struct CrtAllocation {
     pub end: u32,
 }
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct CrtResize {
+    pub old_pointer: u32,
+    pub pointer: u32,
+    pub used_bytes: u32,
+    pub required_bytes: u32,
+    pub end: u32,
+    pub moved: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VirtualReservation {
+    pub base: u32,
+    pub size: u32,
+}
+
 pub struct XpProcess {
     imports: Vec<LauncherImport>,
     provider_imports: Vec<ProviderImport>,
@@ -323,6 +342,8 @@ pub struct XpProcess {
     allocations: HashMap<u32, u32>,
     crt_heap_next: u32,
     crt_allocations: HashMap<u32, u32>,
+    virtual_reservations: Vec<VirtualReservation>,
+    virtual_reserve_next: u32,
     tls_allocated: [bool; 64],
     tls_values: HashMap<(u32, u32), u32>,
     critical_sections: HashMap<u32, (u32, u32)>,
@@ -385,6 +406,8 @@ impl XpProcess {
             allocations: HashMap::new(),
             crt_heap_next: 0,
             crt_allocations: HashMap::new(),
+            virtual_reservations: Vec::new(),
+            virtual_reserve_next: CHILD_VIRTUAL_ALLOC_BASE,
             tls_allocated: [false; 64],
             tls_values: HashMap::new(),
             critical_sections: HashMap::new(),
@@ -462,6 +485,10 @@ impl XpProcess {
         self.registry_handles.get(&handle).map(|handle| handle.node)
     }
 
+    pub fn has_critical_section(&self, address: u32) -> bool {
+        self.critical_sections.contains_key(&address)
+    }
+
     pub fn crt_malloc(&mut self, size: u32) -> Result<Option<CrtAllocation>, &'static str> {
         if size == 0 {
             return Err("CRT malloc zero-size unobserved");
@@ -489,10 +516,98 @@ impl XpProcess {
         }))
     }
 
+    /// Return the live allocation's eight-byte-aligned capacity, rather than
+    /// its requested byte count.
+    pub fn crt_allocation_capacity(&self, pointer: u32) -> Option<u32> {
+        self.crt_allocations
+            .get(&pointer)
+            .and_then(|requested| requested.checked_add(7))
+            .map(|size| size & !7)
+    }
+
+    pub fn virtual_reserve_null(
+        &mut self,
+        size: u32,
+    ) -> Result<Option<VirtualReservation>, &'static str> {
+        let rounded = size
+            .checked_add(XP_ALLOCATION_GRANULARITY - 1)
+            .ok_or("VirtualAlloc size overflow")?
+            & !(XP_ALLOCATION_GRANULARITY - 1);
+        if rounded == 0 {
+            return Err("VirtualAlloc zero-size reservation");
+        }
+        let base = self.virtual_reserve_next;
+        let end = base
+            .checked_add(rounded)
+            .ok_or("VirtualAlloc address overflow")?;
+        if end > CHILD_VIRTUAL_ALLOC_LIMIT {
+            return Ok(None);
+        }
+        let reservation = VirtualReservation {
+            base,
+            size: rounded,
+        };
+        self.virtual_reservations.push(reservation.clone());
+        self.virtual_reserve_next = end;
+        Ok(Some(reservation))
+    }
+
+    pub fn virtual_reservation_at(&self, base: u32) -> Option<&VirtualReservation> {
+        self.virtual_reservations
+            .iter()
+            .find(|reservation| reservation.base == base)
+    }
+
+    pub fn virtual_reservation_containing(
+        &self,
+        address: u32,
+        size: u32,
+    ) -> Option<&VirtualReservation> {
+        let end = address.checked_add(size)?;
+        self.virtual_reservations.iter().find(|reservation| {
+            let reservation_end = reservation.base.checked_add(reservation.size);
+            address >= reservation.base && reservation_end.is_some_and(|limit| end <= limit)
+        })
+    }
+
+    pub fn virtual_reservation_state(&self) -> (usize, u32) {
+        (self.virtual_reservations.len(), self.virtual_reserve_next)
+    }
+
+    /// Reserve a replacement CRT block for an internal CRT table resize.  The
+    /// caller copies guest bytes and commits its pointers before retiring the
+    /// old logical allocation with `retire_crt_allocation`.
+    pub fn crt_resize(
+        &mut self,
+        old_pointer: u32,
+        used_bytes: u32,
+        required_bytes: u32,
+    ) -> Result<Option<CrtResize>, &'static str> {
+        if required_bytes == 0 || required_bytes < used_bytes {
+            return Err("invalid CRT resize size");
+        }
+        let allocation = match self.crt_malloc(required_bytes)? {
+            Some(allocation) => allocation,
+            None => return Ok(None),
+        };
+        Ok(Some(CrtResize {
+            old_pointer,
+            pointer: allocation.pointer,
+            used_bytes,
+            required_bytes,
+            end: allocation.end,
+            moved: allocation.pointer != old_pointer,
+        }))
+    }
+
+    pub fn retire_crt_allocation(&mut self, pointer: u32) -> bool {
+        self.crt_allocations.remove(&pointer).is_some()
+    }
+
     pub fn dispatch_provider_for_process(
         &mut self,
         _pid: u32,
-        _tid: u32,
+        tid: u32,
         provider_id: u32,
         esp: u32,
         memory: &mut impl GuestMemory,
@@ -512,6 +627,18 @@ impl XpProcess {
                     .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(
                     self.initialize_critical_section(esp, memory)?,
+                ))
+            }
+            (module, ProviderSymbol::Name(symbol))
+                if module.eq_ignore_ascii_case("KERNEL32.dll")
+                    && symbol == "EnterCriticalSection" =>
+            {
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(
+                    self.enter_critical_section(tid, esp, memory)?,
                 ))
             }
             (module, ProviderSymbol::Name(symbol))
@@ -3946,6 +4073,60 @@ mod tests {
     }
 
     #[test]
+    fn child_enter_critical_section_dispatch_is_recursive_and_process_private() {
+        let initialize = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("InitializeCriticalSection".into()),
+            iat_rva: 0,
+        };
+        let enter = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("EnterCriticalSection".into()),
+            iat_rva: 0,
+        };
+        let pid1 = XpProcess::new(Vec::new());
+        let mut pid2 = XpProcess::new(Vec::new());
+        pid2.install_provider_surface(vec![initialize, enter], Vec::new(), Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+        let critical_section = STACK_TOP - 0x100;
+        write_u32(&mut memory, esp, 0x1502_2867).unwrap();
+        write_u32(&mut memory, esp + 4, critical_section).unwrap();
+        assert_eq!(
+            pid2.dispatch_provider_for_process(2, 3, 0, esp, &mut memory)
+                .unwrap(),
+            PersonalityAction::Return(0)
+        );
+        assert_eq!(
+            pid2.dispatch_provider_for_process(2, 3, 1, esp, &mut memory)
+                .unwrap(),
+            PersonalityAction::Return(0)
+        );
+        assert_eq!(read_u32(&memory, critical_section + 4).unwrap(), 0);
+        assert_eq!(read_u32(&memory, critical_section + 8).unwrap(), 1);
+        assert_eq!(read_u32(&memory, critical_section + 12).unwrap(), 3);
+        assert_eq!(
+            pid2.dispatch_provider_for_process(2, 3, 1, esp, &mut memory)
+                .unwrap(),
+            PersonalityAction::Return(0)
+        );
+        assert_eq!(read_u32(&memory, critical_section + 4).unwrap(), 1);
+        assert_eq!(read_u32(&memory, critical_section + 8).unwrap(), 2);
+        assert_eq!(read_u32(&memory, critical_section + 12).unwrap(), 3);
+        let before = memory.bytes.clone();
+        assert_eq!(
+            pid2.dispatch_provider_for_process(2, 4, 1, esp, &mut memory),
+            Err("critical section contention")
+        );
+        assert_eq!(memory.bytes, before);
+        assert!(!pid1.has_critical_section(critical_section));
+        assert!(pid2.has_critical_section(critical_section));
+    }
+
+    #[test]
     fn child_set_last_error_returns_void_without_guest_memory_mutation() {
         let provider = ProviderImport {
             module: "KERNEL32.dll".into(),
@@ -4009,6 +4190,50 @@ mod tests {
             pid1.crt_malloc(0x80).unwrap().unwrap().pointer,
             CHILD_CRT_HEAP_BASE
         );
+    }
+
+    #[test]
+    fn child_crt_resize_preserves_old_ownership_until_commit() {
+        let mut process = XpProcess::new(Vec::new());
+        let old = process.crt_malloc(5).unwrap().unwrap();
+        assert_eq!(process.crt_allocation_capacity(old.pointer), Some(8));
+        let resize = process.crt_resize(old.pointer, 8, 12).unwrap().unwrap();
+        assert_ne!(resize.pointer, old.pointer);
+        assert_eq!(resize.used_bytes, 8);
+        assert_eq!(resize.required_bytes, 12);
+        assert!(resize.moved);
+        assert_eq!(process.crt_allocation_capacity(old.pointer), Some(8));
+        assert_eq!(process.crt_allocation_capacity(resize.pointer), Some(16));
+        assert!(process.retire_crt_allocation(old.pointer));
+        assert_eq!(process.crt_allocation_capacity(old.pointer), None);
+        assert_eq!(process.crt_allocation_capacity(resize.pointer), Some(16));
+    }
+
+    #[test]
+    fn child_virtual_reservations_are_granular_and_process_private() {
+        let mut pid1 = XpProcess::new(Vec::new());
+        let mut pid2 = XpProcess::new(Vec::new());
+        let first = pid2.virtual_reserve_null(0x10000).unwrap().unwrap();
+        assert_eq!(first.base, CHILD_VIRTUAL_ALLOC_BASE);
+        assert_eq!(first.size, XP_ALLOCATION_GRANULARITY);
+        assert_eq!(
+            pid2.virtual_reservation_state(),
+            (1, CHILD_VIRTUAL_ALLOC_BASE + XP_ALLOCATION_GRANULARITY)
+        );
+        let one_byte = pid2.virtual_reserve_null(1).unwrap().unwrap();
+        assert_eq!(one_byte.size, XP_ALLOCATION_GRANULARITY);
+        let rounded = pid2.virtual_reserve_null(0x10001).unwrap().unwrap();
+        assert_eq!(rounded.size, 0x20000);
+        assert_eq!(
+            pid2.virtual_reservation_containing(rounded.base + 0x10000, 0x10000),
+            Some(&rounded)
+        );
+        assert_eq!(
+            pid1.virtual_reserve_null(1).unwrap().unwrap().base,
+            CHILD_VIRTUAL_ALLOC_BASE
+        );
+        assert!(pid1.virtual_reservation_at(one_byte.base).is_none());
+        assert_eq!(pid2.virtual_reserve_null(u32::MAX), Err("VirtualAlloc size overflow"));
     }
 
     #[test]
