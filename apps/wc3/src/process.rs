@@ -446,6 +446,15 @@ impl XpProcess {
                 self.call_count = self.call_count.checked_add(1).ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(self.initialize_critical_section(esp, memory)?))
             }
+            (module, ProviderSymbol::Name(symbol))
+                if module.eq_ignore_ascii_case("KERNEL32.dll")
+                    && symbol == "SetLastError" =>
+            {
+                let value = read_u32(memory, esp.checked_add(4).ok_or("provider argument overflow")?)?;
+                self.call_count = self.call_count.checked_add(1).ok_or("call count overflow")?;
+                self.set_last_error(value);
+                Ok(PersonalityAction::Return(0))
+            }
             _ => Err("unsupported child provider import"),
         }
     }
@@ -3838,6 +3847,48 @@ mod tests {
         assert!(pid2.critical_sections.contains_key(&critical_section));
         assert!(!pid1.critical_sections.contains_key(&critical_section));
         assert_eq!(read_u32(&memory, critical_section + 4).unwrap(), u32::MAX);
+    }
+
+    #[test]
+    fn child_set_last_error_returns_void_without_guest_memory_mutation() {
+        let provider = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("SetLastError".into()),
+            iat_rva: 0,
+        };
+        let mut pid2 = XpProcess::new(Vec::new());
+        pid2.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory { base: STACK_BASE, bytes: vec![0x5a; STACK_BYTES] };
+        let esp = STACK_TOP - 0x40;
+        write_u32(&mut memory, esp, 0x1502_e393).unwrap();
+        write_u32(&mut memory, esp + 4, 0x1234_5678).unwrap();
+        let before = memory.bytes.clone();
+        assert_eq!(
+            pid2.dispatch_provider_for_process(2, 3, 0, esp, &mut memory).unwrap(),
+            PersonalityAction::Return(0)
+        );
+        assert_eq!(pid2.last_error, 0x1234_5678);
+        assert_eq!(memory.bytes, before);
+    }
+
+    #[test]
+    fn child_set_last_error_is_process_private() {
+        let provider = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("SetLastError".into()),
+            iat_rva: 0,
+        };
+        let mut pid1 = XpProcess::new(Vec::new());
+        let mut pid2 = XpProcess::new(Vec::new());
+        pid1.set_last_error(0xfeed_face);
+        pid2.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory { base: STACK_BASE, bytes: vec![0; STACK_BYTES] };
+        let esp = STACK_TOP - 0x40;
+        write_u32(&mut memory, esp, 0x1502_e393).unwrap();
+        write_u32(&mut memory, esp + 4, 0x1234_5678).unwrap();
+        pid2.dispatch_provider_for_process(2, 3, 0, esp, &mut memory).unwrap();
+        assert_eq!(pid1.last_error, 0xfeed_face);
+        assert_eq!(pid2.last_error, 0x1234_5678);
     }
 
     #[test]

@@ -19,47 +19,248 @@ pub const WINDOW_HANDLE_BASE: u32 = 0x5743_4001;
 pub const DESKTOP_HWND: u32 = 0x5743_3000;
 
 pub type RegistryNodeId = u32;
-#[derive(Copy, Clone, Debug, Eq, PartialEq)] pub enum RegistryEncoding { Utf16Le, Utf8 }
-pub struct RegistryValue { pub ty: u32, pub bytes: Vec<u8> }
-pub struct RegistryNode {
-    pub name: String,
-    pub parent: Option<RegistryNodeId>,
-    canonical_path: String,
-    body_start: usize,
-    body_end: usize,
-    pub values: Option<HashMap<String, RegistryValue>>,
+
+const HKEY_CLASSES_ROOT: u32 = 0x8000_0000;
+const HKEY_CURRENT_USER: u32 = 0x8000_0001;
+const HKEY_LOCAL_MACHINE: u32 = 0x8000_0002;
+const HKEY_USERS: u32 = 0x8000_0003;
+const HKEY_CURRENT_CONFIG: u32 = 0x8000_0005;
+const ROOT_NODE_BASE: RegistryNodeId = 0xffff_ff00;
+const REGISTRY_ROOTS: [(u32, &str); 5] = [
+    (HKEY_CLASSES_ROOT, "HKEY_CLASSES_ROOT"),
+    (HKEY_CURRENT_USER, "HKEY_CURRENT_USER"),
+    (HKEY_LOCAL_MACHINE, "HKEY_LOCAL_MACHINE"),
+    (HKEY_USERS, "HKEY_USERS"),
+    (HKEY_CURRENT_CONFIG, "HKEY_CURRENT_CONFIG"),
+];
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum RegistryEncoding { Utf16Le, Utf8 }
+
+/// A POD-sized reference into the immutable `.reg` backing.  The index owns no
+/// key path strings or value maps; values are decoded only by a future value API.
+#[derive(Clone, Copy, Debug)]
+pub struct RegistryKeyIndexEntry {
+    root: u32,
+    header_start: u32,
+    header_end: u32,
+    tail_start: u32,
+    tail_end: u32,
+    body_start: u32,
+    body_end: u32,
+    path_hash: u64,
 }
-pub struct RegistryOverlay { created_keys: HashMap<String, RegistryNodeId>, deleted_keys: std::collections::HashSet<String>, generation: u64 }
-pub struct RegistryImage { backing: std::sync::Arc<Vec<u8>>, pub encoding: RegistryEncoding, pub nodes: Vec<RegistryNode>, roots: HashMap<u32, RegistryNodeId>, by_path: HashMap<String, RegistryNodeId>, mutations: RegistryOverlay }
+
+pub struct RegistryValue { pub ty: u32, pub bytes: Vec<u8> }
+
+/// Reserved for future writes.  It remains empty for this read-only loader path.
+pub struct RegistryOverlay {
+    created_keys: HashMap<String, RegistryNodeId>,
+    deleted_keys: std::collections::HashSet<String>,
+    generation: u64,
+}
+
+pub struct RegistryImage {
+    backing: std::sync::Arc<Vec<u8>>,
+    pub encoding: RegistryEncoding,
+    entries: Vec<RegistryKeyIndexEntry>,
+    scanned_bytes: usize,
+    /// Lazy value materialization is deliberately empty during key indexing.
+    loaded_values: HashMap<RegistryNodeId, HashMap<String, RegistryValue>>,
+    mutations: RegistryOverlay,
+}
 pub enum RegistryState { Unloaded, Ready(RegistryImage) }
 
 impl RegistryImage {
-    pub fn parse(bytes: &[u8]) -> Result<Self, &'static str> { Self::index(bytes, |_, _| {}) }
-    pub fn index(bytes: &[u8], mut progress: impl FnMut(usize, usize)) -> Result<Self, &'static str> {
-        let encoding = if bytes.starts_with(&[0xff,0xfe]) { if (bytes.len()-2)%2 != 0 { return Err("registry UTF-16 odd trailing byte"); } RegistryEncoding::Utf16Le } else { RegistryEncoding::Utf8 };
-        let backing = std::sync::Arc::new(bytes.to_vec());
-        let mut image = Self { backing, encoding, nodes: Vec::new(), roots: HashMap::new(), by_path: HashMap::new(), mutations: RegistryOverlay { created_keys: HashMap::new(), deleted_keys: std::collections::HashSet::new(), generation: 0 } };
-        for (root,name) in [(0x8000_0000,"HKEY_CLASSES_ROOT"),(0x8000_0001,"HKEY_CURRENT_USER"),(0x8000_0002,"HKEY_LOCAL_MACHINE"),(0x8000_0003,"HKEY_USERS"),(0x8000_0005,"HKEY_CURRENT_CONFIG")] { let id=image.push_node(name,None,0,0); image.roots.insert(root,id); image.by_path.insert(canonical(name),id); }
-        let mut offset = if encoding == RegistryEncoding::Utf16Le { 2 } else { usize::from(bytes.starts_with(&[0xef,0xbb,0xbf]))*3 };
-        let mut previous = None; let mut next_progress = 4*1024*1024;
-        while offset < bytes.len() { let start=offset; let end=line_end(bytes, offset, encoding); offset=end; let line=decode_line(&bytes[start..end], encoding)?; let trimmed=line.trim();
-            if trimmed.starts_with('[') && trimmed.ends_with(']') { if let Some(id)=previous { image.nodes[id as usize].body_end=start; } previous=image.add_header(&trimmed[1..trimmed.len()-1], end); }
-            if offset >= next_progress { progress(offset, image.nodes.len()-5); next_progress += 4*1024*1024; }
-        }
-        if let Some(id)=previous { image.nodes[id as usize].body_end=bytes.len(); }
-        Ok(image)
+    pub fn parse(bytes: &[u8]) -> Result<Self, &'static str> {
+        Self::index(bytes.to_vec(), |_, _| {})
     }
-    fn push_node(&mut self, name:&str, parent:Option<RegistryNodeId>, body_start:usize, body_end:usize)->RegistryNodeId { let id=self.nodes.len() as u32; let path=parent.map(|p| format!("{}\\{}",self.nodes[p as usize].canonical_path,canonical(name))).unwrap_or_else(||canonical(name)); self.nodes.push(RegistryNode{name:name.into(),parent,canonical_path:path,body_start,body_end,values:None}); id }
-    fn add_header(&mut self, header:&str, body_start:usize)->Option<RegistryNodeId> { let canonical_path=canonical(header); let (root_name,tail)=canonical_path.split_once('\\').unwrap_or((&canonical_path,"")); let root_id=*self.by_path.get(root_name)?; let path=if tail.is_empty(){root_name.into()}else{format!("{}\\{}",root_name,tail)}; if let Some(id)=self.by_path.get(&path){self.nodes[*id as usize].body_start=body_start;return Some(*id)} let parent=tail.rsplit_once('\\').map(|(p,_)|format!("{}\\{}",root_name,p)).and_then(|p|self.by_path.get(&p).copied()).or(Some(root_id)); let name=header.rsplit('\\').next()?; let id=self.push_node(name,parent,body_start,0); self.by_path.insert(path,id);Some(id) }
-    pub fn root(&self, hkey: u32) -> Option<RegistryNodeId> { self.roots.get(&hkey).copied() }
-    pub fn child_path(&self,node:RegistryNodeId,path:&str)->Option<RegistryNodeId>{let base=&self.nodes.get(node as usize)?.canonical_path;let full=if path.trim_matches('\\').is_empty(){base.clone()}else{format!("{}\\{}",base,canonical(path.trim_matches('\\')))}; self.by_path.get(&full).copied()}
-    pub fn stats(&self)->(usize,usize){(self.roots.len(),self.nodes.len())}
-    pub fn ensure_values_loaded(&mut self,node:RegistryNodeId)->Result<(),&'static str>{if self.nodes.get(node as usize).ok_or("registry node")?.values.is_some(){return Ok(())} let (start,end)= {let n=&self.nodes[node as usize];(n.body_start,n.body_end)};let text=decode_line(&self.backing[start..end],self.encoding)?;let mut values=HashMap::new();for line in text.lines(){if let Some((name,data))=line.trim().split_once('='){let name=if name=="@"{String::new()}else{unquote(name)?};if let Some(hex)=data.strip_prefix("hex:"){let bytes=hex.split(',').filter_map(|v|u8::from_str_radix(v.trim().trim_end_matches('\\'),16).ok()).collect();values.insert(canonical(&name),RegistryValue{ty:3,bytes});}}}self.nodes[node as usize].values=Some(values);Ok(())}
+
+    /// Build the initial index by walking raw physical lines once.  In particular,
+    /// this never decodes registry values, builds a full text copy, or allocates a
+    /// path string for each key.
+    pub fn index(bytes: Vec<u8>, mut progress: impl FnMut(usize, usize)) -> Result<Self, &'static str> {
+        let encoding = if bytes.starts_with(&[0xff, 0xfe]) {
+            if (bytes.len() - 2) % 2 != 0 { return Err("registry UTF-16 odd trailing byte"); }
+            RegistryEncoding::Utf16Le
+        } else {
+            RegistryEncoding::Utf8
+        };
+        let offset = match encoding {
+            RegistryEncoding::Utf16Le => 2,
+            RegistryEncoding::Utf8 if bytes.starts_with(&[0xef, 0xbb, 0xbf]) => 3,
+            RegistryEncoding::Utf8 => 0,
+        };
+        let backing = std::sync::Arc::new(bytes);
+        let mut entries: Vec<RegistryKeyIndexEntry> = Vec::with_capacity(65_536);
+        let mut cursor = offset;
+        let mut previous: Option<usize> = None;
+        let mut next_progress = 1024 * 1024;
+
+        while cursor < backing.len() {
+            let old_cursor = cursor;
+            let line_start = cursor;
+            let stride = width(encoding);
+            let mut line_end = backing.len();
+            while cursor + stride <= backing.len() {
+                if unit(&backing, cursor, encoding) == 10 {
+                    line_end = cursor;
+                    cursor += stride;
+                    break;
+                }
+                cursor += stride;
+                if cursor >= next_progress {
+                    progress(cursor, entries.len());
+                    while next_progress <= cursor { next_progress += 1024 * 1024; }
+                }
+            }
+            if cursor <= old_cursor { return Err("registry index cursor did not advance"); }
+
+            let (trim_start, trim_end) = trim_line(&backing, line_start, line_end, encoding);
+            if let Some((root, tail_start, tail_end, path_hash)) =
+                parse_key_header(&backing, trim_start, trim_end, encoding)
+            {
+                if let Some(previous) = previous {
+                    entries[previous].body_end = u32_offset(line_start)?;
+                }
+                entries.push(RegistryKeyIndexEntry {
+                    root,
+                    header_start: u32_offset(line_start)?,
+                    header_end: u32_offset(line_end)?,
+                    tail_start: u32_offset(tail_start)?,
+                    tail_end: u32_offset(tail_end)?,
+                    body_start: u32_offset(cursor)?,
+                    body_end: 0,
+                    path_hash,
+                });
+                previous = Some(entries.len() - 1);
+            }
+            if cursor >= next_progress {
+                progress(cursor, entries.len());
+                while next_progress <= cursor { next_progress += 1024 * 1024; }
+            }
+        }
+        if let Some(previous) = previous { entries[previous].body_end = u32_offset(backing.len())?; }
+        entries.sort_unstable_by_key(|entry| (entry.root, entry.path_hash));
+        Ok(Self {
+            backing,
+            encoding,
+            entries,
+            scanned_bytes: cursor,
+            loaded_values: HashMap::new(),
+            mutations: RegistryOverlay {
+                created_keys: HashMap::new(),
+                deleted_keys: std::collections::HashSet::new(),
+                generation: 0,
+            },
+        })
+    }
+
+    pub fn root(&self, hkey: u32) -> Option<RegistryNodeId> {
+        REGISTRY_ROOTS.iter().position(|(root, _)| *root == hkey)
+            .map(|index| ROOT_NODE_BASE + index as u32)
+    }
+
+    pub fn child_path(&self, node: RegistryNodeId, path: &str) -> Option<RegistryNodeId> {
+        let path = path.trim_matches('\\');
+        if let Some(root) = root_from_node(node) {
+            return if path.is_empty() { Some(node) } else { self.find(root, path) };
+        }
+        let entry = *self.entries.get(node as usize)?;
+        if path.is_empty() { return Some(node); }
+        let base = self.decode_tail(entry)?;
+        let full = if base.is_empty() { path.to_owned() } else { format!("{base}\\{path}") };
+        self.find(entry.root, &full)
+    }
+
+    pub fn stats(&self) -> (usize, usize) { (REGISTRY_ROOTS.len(), self.entries.len()) }
+
+    pub fn index_entry_count(&self) -> usize { self.entries.len() }
+    pub fn scanned_bytes(&self) -> usize { self.scanned_bytes }
+    pub fn values_loaded(&self, node: RegistryNodeId) -> bool { self.loaded_values.contains_key(&node) }
+
+    fn find(&self, root: u32, path: &str) -> Option<RegistryNodeId> {
+        let hash = hash_query(path, self.encoding);
+        let first = self.entries.partition_point(|entry| (entry.root, entry.path_hash) < (root, hash));
+        let end = self.entries.partition_point(|entry| (entry.root, entry.path_hash) <= (root, hash));
+        self.entries[first..end].iter().enumerate().find_map(|(offset, entry)| {
+            tail_matches(&self.backing, *entry, path, self.encoding)
+                .then_some((first + offset) as RegistryNodeId)
+        })
+    }
+
+    fn decode_tail(&self, entry: RegistryKeyIndexEntry) -> Option<String> {
+        decode_span(&self.backing[entry.tail_start as usize..entry.tail_end as usize], self.encoding).ok()
+    }
+
+    /// Kept intentionally lazy for the next observed value API.  It only ever
+    /// decodes one key's body range, never the 27 MiB registry image.
+    pub fn ensure_values_loaded(&mut self, node: RegistryNodeId) -> Result<(), &'static str> {
+        if self.loaded_values.contains_key(&node) { return Ok(()); }
+        let entry = *self.entries.get(node as usize).ok_or("registry node")?;
+        let text = decode_span(&self.backing[entry.body_start as usize..entry.body_end as usize], self.encoding)?;
+        let mut values = HashMap::new();
+        for line in text.lines() {
+            if let Some((name, data)) = line.trim().split_once('=') {
+                let name = if name == "@" { String::new() } else { unquote(name)? };
+                if let Some(hex) = data.strip_prefix("hex:") {
+                    let bytes = hex.split(',').filter_map(|value| u8::from_str_radix(value.trim().trim_end_matches('\\'), 16).ok()).collect();
+                    values.insert(canonical(&name), RegistryValue { ty: 3, bytes });
+                }
+            }
+        }
+        self.loaded_values.insert(node, values);
+        Ok(())
+    }
 }
+
+fn u32_offset(offset: usize) -> Result<u32, &'static str> { u32::try_from(offset).map_err(|_| "registry exceeds u32 offsets") }
+fn width(encoding: RegistryEncoding) -> usize { if encoding == RegistryEncoding::Utf16Le { 2 } else { 1 } }
+fn unit(bytes: &[u8], at: usize, encoding: RegistryEncoding) -> u16 {
+    match encoding { RegistryEncoding::Utf16Le => u16::from_le_bytes([bytes[at], bytes[at + 1]]), RegistryEncoding::Utf8 => bytes[at] as u16 }
+}
+fn is_space(value: u16) -> bool { value == b' ' as u16 || value == b'\t' as u16 || value == b'\r' as u16 }
+fn fold(value: u16) -> u16 { if (b'A' as u16..=b'Z' as u16).contains(&value) { value + 32 } else { value } }
+fn trim_line(bytes: &[u8], mut start: usize, mut end: usize, encoding: RegistryEncoding) -> (usize, usize) {
+    let stride = width(encoding);
+    while start < end && is_space(unit(bytes, start, encoding)) { start += stride; }
+    while start < end && is_space(unit(bytes, end - stride, encoding)) { end -= stride; }
+    (start, end)
+}
+fn ascii_at(bytes: &[u8], at: usize, encoding: RegistryEncoding, expected: u8) -> bool { fold(unit(bytes, at, encoding)) == expected.to_ascii_lowercase() as u16 }
+fn parse_key_header(bytes: &[u8], start: usize, end: usize, encoding: RegistryEncoding) -> Option<(u32, usize, usize, u64)> {
+    let stride = width(encoding);
+    if end <= start + 2 * stride || unit(bytes, start, encoding) != b'[' as u16 || unit(bytes, end - stride, encoding) != b']' as u16 { return None; }
+    let content_start = start + stride;
+    let content_end = end - stride;
+    for (root, name) in REGISTRY_ROOTS {
+        let name_bytes = name.as_bytes();
+        let root_end = content_start.checked_add(name_bytes.len() * stride)?;
+        if root_end > content_end || !name_bytes.iter().enumerate().all(|(index, byte)| ascii_at(bytes, content_start + index * stride, encoding, *byte)) { continue; }
+        if root_end == content_end { return Some((root, root_end, root_end, FNV_OFFSET)); }
+        if unit(bytes, root_end, encoding) != b'\\' as u16 { return None; }
+        let tail_start = root_end + stride;
+        if tail_start >= content_end { return None; }
+        return Some((root, tail_start, content_end, hash_span(bytes, tail_start, content_end, encoding)));
+    }
+    None
+}
+const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+fn hash_unit(mut hash: u64, value: u16) -> u64 { hash ^= fold(value) as u64; hash.wrapping_mul(FNV_PRIME) }
+fn hash_span(bytes: &[u8], start: usize, end: usize, encoding: RegistryEncoding) -> u64 { let mut hash = FNV_OFFSET; let stride = width(encoding); let mut at = start; while at < end { hash = hash_unit(hash, unit(bytes, at, encoding)); at += stride; } hash }
+fn hash_query(path: &str, encoding: RegistryEncoding) -> u64 { match encoding { RegistryEncoding::Utf16Le => path.encode_utf16().fold(FNV_OFFSET, hash_unit), RegistryEncoding::Utf8 => path.bytes().fold(FNV_OFFSET, |hash, value| hash_unit(hash, value as u16)) } }
+fn tail_matches(bytes: &[u8], entry: RegistryKeyIndexEntry, path: &str, encoding: RegistryEncoding) -> bool {
+    let mut at = entry.tail_start as usize; let end = entry.tail_end as usize; let stride = width(encoding);
+    match encoding {
+        RegistryEncoding::Utf16Le => path.encode_utf16().all(|expected| { let matched = at < end && fold(unit(bytes, at, encoding)) == fold(expected); at += stride; matched }) && at == end,
+        RegistryEncoding::Utf8 => path.bytes().all(|expected| { let matched = at < end && fold(unit(bytes, at, encoding)) == fold(expected as u16); at += stride; matched }) && at == end,
+    }
+}
+fn root_from_node(node: RegistryNodeId) -> Option<u32> { let index = node.checked_sub(ROOT_NODE_BASE)? as usize; REGISTRY_ROOTS.get(index).map(|(root, _)| *root) }
 fn canonical(name: &str) -> String { name.bytes().map(|byte| byte.to_ascii_lowercase() as char).collect() }
 fn unquote(value: &str) -> Result<String, &'static str> { let body = value.strip_prefix('"').and_then(|v| v.strip_suffix('"')).ok_or("registry quote")?; Ok(body.replace("\\\\", "\\").replace("\\\"", "\"")) }
-fn line_end(bytes:&[u8],start:usize,encoding:RegistryEncoding)->usize{match encoding{RegistryEncoding::Utf8=>bytes[start..].iter().position(|b|*b==b'\n').map(|n|start+n+1).unwrap_or(bytes.len()),RegistryEncoding::Utf16Le=>{let mut p=start;while p+1<bytes.len(){if bytes[p]==b'\n'&&bytes[p+1]==0{return p+2}p+=2}bytes.len()}}}
-fn decode_line(bytes:&[u8],encoding:RegistryEncoding)->Result<String,&'static str>{match encoding{RegistryEncoding::Utf8=>String::from_utf8(bytes.to_vec()).map_err(|_|"registry UTF-8"),RegistryEncoding::Utf16Le=>{let units=bytes.chunks_exact(2).map(|p|u16::from_le_bytes([p[0],p[1]])).filter(|u|*u!=10&&*u!=13);std::char::decode_utf16(units).map(|u|u.map_err(|_|"registry UTF-16")).collect()}}}
+fn decode_span(bytes: &[u8], encoding: RegistryEncoding) -> Result<String, &'static str> { match encoding { RegistryEncoding::Utf8 => String::from_utf8(bytes.to_vec()).map_err(|_| "registry UTF-8"), RegistryEncoding::Utf16Le => std::char::decode_utf16(bytes.chunks_exact(2).map(|pair| u16::from_le_bytes([pair[0], pair[1]]))).map(|unit| unit.map_err(|_| "registry UTF-16")).collect() } }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct ThreadKey {
@@ -94,11 +295,44 @@ mod tests {
         let hkcu = image.root(0x8000_0001).unwrap();
         let a = image.child_path(hkcu, "a").unwrap();
         let internal = image.child_path(hkcu, "software\\blizzard entertainment\\internal").unwrap();
-        assert!(image.nodes[a as usize].values.is_none());
-        assert!(image.nodes[internal as usize].values.is_none());
+        assert!(!image.values_loaded(a));
+        assert!(!image.values_loaded(internal));
         image.ensure_values_loaded(internal).unwrap();
-        assert!(image.nodes[internal as usize].values.is_some());
-        assert!(image.nodes[a as usize].values.is_none());
+        assert!(image.values_loaded(internal));
+        assert!(!image.values_loaded(a));
+    }
+
+    #[test]
+    fn registry_index_scans_utf16_crlf_giant_ignored_value_and_final_key() {
+        let mut fixture = vec![0xff, 0xfe];
+        fixture.extend("Windows Registry Editor Version 5.00\r\n\r\n[HKEY_CURRENT_USER\\A]\r\n\"blob\"=hex:".encode_utf16().flat_map(u16::to_le_bytes));
+        for _ in 0..1_100_000 { fixture.extend([b'a', 0, b'a', 0, b',', 0]); }
+        fixture.extend("\r\n[HKEY_CURRENT_USER\\Software\\Blizzard Entertainment\\Internal]".encode_utf16().flat_map(u16::to_le_bytes));
+        let mut progress = Vec::new();
+        let image = RegistryImage::index(fixture, |scanned, keys| progress.push((scanned, keys))).unwrap();
+        let hkcu = image.root(HKEY_CURRENT_USER).unwrap();
+        assert_eq!(image.index_entry_count(), 2);
+        assert!(image.child_path(hkcu, "software\\BLIZZARD entertainment\\internal").is_some());
+        assert!(!progress.is_empty());
+        assert_eq!(image.scanned_bytes(), image.backing.len());
+        assert!(image.loaded_values.is_empty());
+    }
+
+    #[test]
+    fn registry_root_and_relative_paths_are_case_insensitive() {
+        let image = RegistryImage::parse(b"[HKEY_CURRENT_USER\\Software]\n[HKEY_CURRENT_USER\\Software\\Blizzard Entertainment]\n[HKEY_CURRENT_USER\\Software\\Blizzard Entertainment\\Internal]\n").unwrap();
+        let hkcu = image.root(HKEY_CURRENT_USER).unwrap();
+        let software = image.child_path(hkcu, "software").unwrap();
+        let blizzard = image.child_path(software, "BLIZZARD ENTERTAINMENT").unwrap();
+        assert!(image.child_path(blizzard, "internal").is_some());
+        assert!(image.child_path(hkcu, "").is_some());
+    }
+
+    #[test]
+    fn registry_hash_collision_candidate_requires_text_match() {
+        let mut image = RegistryImage::parse(b"[HKEY_CURRENT_USER\\Actual]\n").unwrap();
+        image.entries[0].path_hash = hash_query("different", image.encoding);
+        assert!(image.find(HKEY_CURRENT_USER, "different").is_none());
     }
 
     fn request(handle: u32, timeout: u32) -> WaitRequest {

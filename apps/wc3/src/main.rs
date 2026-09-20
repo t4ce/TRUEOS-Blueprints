@@ -72,7 +72,9 @@ async fn ensure_registry_loaded(session: &mut Wc3Session) -> Result<(), String> 
     })?;
     logl::log(level::IMPORTANT, format_args!("WC3 REGISTRY LOAD READ COMPLETE bytes={}", bytes.len()));
     logl::log(level::IMPORTANT, format_args!("WC3 REGISTRY INDEX BEGIN bytes={} encoding={} mode=keys-only", bytes.len(), registry_encoding(&bytes)));
-    let image = wc3::session::RegistryImage::index(&bytes, |scanned, keys| {
+    let registry_bytes = bytes.len();
+    let registry_encoding = registry_encoding(&bytes);
+    let image = wc3::session::RegistryImage::index(bytes, |scanned, keys| {
         logl::log(level::IMPORTANT, format_args!("WC3 REGISTRY INDEX PROGRESS bytes_scanned={} keys={}", scanned, keys));
     }).map_err(|error| {
         logl::log(level::IMPORTANT, format_args!("WC3 REGISTRY LOAD FAILED phase=parse error=\"{}\"", error));
@@ -81,8 +83,8 @@ async fn ensure_registry_loaded(session: &mut Wc3Session) -> Result<(), String> 
     let (roots, keys) = image.stats();
     session.registry = wc3::session::RegistryState::Ready(image);
     logl::log(level::IMPORTANT, format_args!(
-        "WC3 REGISTRY INDEX READY path=\"{}\" bytes={} encoding={} roots={} keys={} values=lazy backing=host-ram guest_mapped=0",
-        path, bytes.len(), registry_encoding(&bytes), roots, keys
+        "WC3 REGISTRY INDEX READY path=\"{}\" bytes={} encoding={} roots={} keys={} values=lazy representation=flat-spans backing=host-ram guest_mapped=0",
+        path, registry_bytes, registry_encoding, roots, keys
     ));
     Ok(())
 }
@@ -305,6 +307,41 @@ async fn run() -> Result<(), String> {
                         ));
                         let mut registers = exit.registers;
                         registers.eax = value;
+                        contexts[active].context.set_registers(registers).map_err(|error| error.to_string())?;
+                        continue;
+                    }
+                    let is_set_last_error = matches!(
+                        &provider.symbol,
+                        child_loader::ProviderSymbol::Name(name)
+                            if provider.module.eq_ignore_ascii_case("KERNEL32.dll")
+                                && name == "SetLastError"
+                    );
+                    if is_set_last_error {
+                        let argument = exit.registers.esp.checked_add(4)
+                            .ok_or_else(|| "child provider argument address overflow".to_owned())?;
+                        let mut value = [0; 4];
+                        child.address_space.read(argument, &mut value).map_err(|error| error.to_string())?;
+                        let value = u32::from_le_bytes(value);
+                        logl::log(level::IMPORTANT, format_args!(
+                            "WC3 CHILD PROVIDER CALL pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" provider_id={} module=\"{}\" symbol=\"SetLastError\" esp=0x{:08x} value=0x{:08x}",
+                            active_pid, active_tid, running_module_name, provider_id, provider.module,
+                            exit.registers.esp, value
+                        ));
+                        let mut child_memory = X86Memory(&child.address_space);
+                        let action = session.process_mut(active_pid)
+                            .ok_or_else(|| "child process missing".to_owned())?
+                            .xp
+                            .dispatch_provider_for_process(active_pid, active_tid, provider_id, exit.registers.esp, &mut child_memory)
+                            .map_err(str::to_owned)?;
+                        let PersonalityAction::Return(result) = action else {
+                            return Err("SetLastError child provider did not return".into());
+                        };
+                        logl::log(level::IMPORTANT, format_args!(
+                            "WC3 CHILD LAST ERROR SET pid={} tid={} value=0x{:08x}",
+                            active_pid, active_tid, value
+                        ));
+                        let mut registers = exit.registers;
+                        registers.eax = result;
                         contexts[active].context.set_registers(registers).map_err(|error| error.to_string())?;
                         continue;
                     }

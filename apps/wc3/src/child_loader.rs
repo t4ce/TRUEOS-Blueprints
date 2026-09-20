@@ -24,6 +24,12 @@ pub fn provider_thunk_kind(import: &ProviderImport) -> thunk32::Kind {
             thunk32::Kind::Stdcall(4)
         }
         ProviderSymbol::Name(symbol)
+            if import.module.eq_ignore_ascii_case("KERNEL32.dll")
+                && symbol == "SetLastError" =>
+        {
+            thunk32::Kind::Stdcall(4)
+        }
+        ProviderSymbol::Name(symbol)
             if import.module.eq_ignore_ascii_case("ADVAPI32.dll")
                 && symbol == "RegOpenKeyExA" =>
         {
@@ -156,6 +162,18 @@ mod tests {
         let unrelated = ProviderImport { module: "KERNEL32.dll".into(), symbol: ProviderSymbol::Name("GetModuleHandleA".into()), iat_rva: 0 };
         thunk32::write(404, provider_thunk_kind(&unrelated), &mut bytes).unwrap();
         assert_eq!(bytes[8], 0xc3);
+    }
+
+    #[test]
+    fn set_last_error_provider_uses_stdcall_four() {
+        let import = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("SetLastError".into()),
+            iat_rva: 0,
+        };
+        let mut bytes = [0; thunk32::THUNK_BYTES];
+        thunk32::write(408, provider_thunk_kind(&import), &mut bytes).unwrap();
+        assert_eq!(&bytes[8..11], &[0xc2, 4, 0]);
     }
 
     #[test]
