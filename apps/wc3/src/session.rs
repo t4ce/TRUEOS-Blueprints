@@ -621,8 +621,8 @@ impl Wc3Session {
             },
         );
         let mut xp = XpProcess::new(Vec::new());
-        let registry_base = 0x5743_8001u32.checked_add(pid.checked_mul(0x100).ok_or("registry handle base")?).ok_or("registry handle base")?;
-        xp.set_registry_handle_base(registry_base).map_err(str::to_owned)?;
+        let registry_base = 0x5743_8001u32.saturating_add(pid.saturating_mul(0x100));
+        xp.set_registry_handle_base(registry_base).expect("new process has no registry handles");
         self.processes.insert(
             pid,
             Wc3Process {
