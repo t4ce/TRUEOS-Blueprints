@@ -790,6 +790,13 @@ impl XpProcess {
                     .ok_or("call count overflow")?;
                 return Ok(PersonalityAction::Return(self.get_std_handle(esp, memory)?));
             }
+            ProviderOp::GetFileType => {
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                return Ok(PersonalityAction::Return(self.get_file_type(esp, memory)?));
+            }
             _ => {}
         }
         match (&provider.module[..], &provider.symbol) {
@@ -1116,7 +1123,7 @@ impl XpProcess {
             WinCall::GetModuleFileNameA => self.get_module_filename(esp, memory),
             WinCall::GetModuleHandleA => Ok(pe32::IMAGE_BASE),
             WinCall::GetStdHandle => self.get_std_handle(esp, memory),
-            WinCall::GetFileType => Ok(2),
+            WinCall::GetFileType => self.get_file_type(esp, memory),
             WinCall::SetHandleCount => Ok(read_u32(memory, esp + 4)?),
             WinCall::GetCommandLineA => Ok(PROCESS_DATA_VA),
             WinCall::GetEnvironmentStringsW => Ok(0),
@@ -1525,6 +1532,14 @@ impl XpProcess {
             -12 => 0x5743_1003,
             _ => u32::MAX,
         })
+    }
+
+    fn get_file_type(
+        &self,
+        _esp: u32,
+        _memory: &impl GuestMemory,
+    ) -> Result<u32, &'static str> {
+        Ok(2)
     }
 
     fn get_cp_info(&self, esp: u32, memory: &mut impl GuestMemory) -> Result<u32, &'static str> {
@@ -4878,6 +4893,51 @@ mod tests {
             Ok(PersonalityAction::Return(u32::MAX))
         );
         assert_eq!(pid2.call_count, 4);
+    }
+
+    #[test]
+    fn child_get_file_type_reuses_process_file_type_semantics() {
+        let provider = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("GetFileType".into()),
+            iat_rva: 0,
+        };
+        let mut pid2 = XpProcess::new(Vec::new());
+        pid2.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+        write_u32(&mut memory, esp, 0x2113_1dec).unwrap();
+        write_u32(&mut memory, esp + 4, 0x5743_1001).unwrap();
+        assert_eq!(
+            pid2.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(2))
+        );
+        assert_eq!(pid2.call_count, 1);
+    }
+
+    #[test]
+    fn launcher_get_file_type_reuses_process_file_type_semantics() {
+        let imports = vec![LauncherImport {
+            id: 0,
+            module: "KERNEL32.dll".into(),
+            symbol: "GetFileType".into(),
+            iat_rva: 0,
+        }];
+        let mut xp = XpProcess::new(imports);
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+        write_u32(&mut memory, esp, 0x0040_1dec).unwrap();
+        write_u32(&mut memory, esp + 4, 0x5743_1001).unwrap();
+        assert_eq!(
+            xp.dispatch(1, 0, esp, &mut memory).unwrap(),
+            PersonalityAction::Return(2)
+        );
     }
 
     #[test]
