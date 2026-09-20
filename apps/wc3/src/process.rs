@@ -783,6 +783,13 @@ impl XpProcess {
                     .ok_or("call count overflow")?;
                 return Ok(PersonalityAction::Return(self.get_startup_info(esp, memory)?));
             }
+            ProviderOp::GetStdHandle => {
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                return Ok(PersonalityAction::Return(self.get_std_handle(esp, memory)?));
+            }
             _ => {}
         }
         match (&provider.module[..], &provider.symbol) {
@@ -4835,6 +4842,42 @@ mod tests {
         assert_eq!(u32::from_le_bytes(startup[..4].try_into().unwrap()), 0x44);
         assert!(startup[4..].iter().all(|byte| *byte == 0));
         assert_eq!(pid2.call_count, 1);
+    }
+
+    #[test]
+    fn child_get_std_handle_reuses_process_standard_handles() {
+        let provider = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("GetStdHandle".into()),
+            iat_rva: 0,
+        };
+        let mut pid2 = XpProcess::new(Vec::new());
+        pid2.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+        write_u32(&mut memory, esp, 0x2113_1dde).unwrap();
+        for (selector, expected) in [
+            (-10i32, 0x5743_1001),
+            (-11i32, 0x5743_1002),
+            (-12i32, 0x5743_1003),
+        ] {
+            write_u32(&mut memory, esp + 4, selector as u32).unwrap();
+            assert_eq!(
+                pid2.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+                Ok(PersonalityAction::Return(expected))
+            );
+        }
+        assert_eq!(pid2.call_count, 3);
+
+        write_u32(&mut memory, esp + 4, 1234).unwrap();
+        assert_eq!(
+            pid2.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(u32::MAX))
+        );
+        assert_eq!(pid2.call_count, 4);
     }
 
     #[test]
