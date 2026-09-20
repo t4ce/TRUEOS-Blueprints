@@ -15,9 +15,10 @@ use wc3::{
     imports::WinCall,
     pe32,
     process::{
-        CHILD_CRT_HEAP_BASE, CHILD_CRT_HEAP_LIMIT, CHILD_VIRTUAL_ALLOC_BASE,
-        CHILD_VIRTUAL_ALLOC_LIMIT, GuestMemory, PreparedProcess, STACK_BASE, STACK_BYTES,
-        STACK_TOP, ThreadObject, XpProcess, bmp_file_from_dib, dib_layout,
+        CHILD_COMMAND_LINE, CHILD_CRT_HEAP_BASE, CHILD_CRT_HEAP_LIMIT,
+        CHILD_VIRTUAL_ALLOC_BASE, CHILD_VIRTUAL_ALLOC_LIMIT, GuestMemory, PROCESS_DATA_VA,
+        PreparedProcess, STACK_BASE, STACK_BYTES, STACK_TOP, ThreadObject, XpProcess,
+        bmp_file_from_dib, dib_layout,
     },
     session::{
         GuestCall, LAUNCHER_PID, LAUNCHER_TID, PersonalityAction, SessionObject, SessionRequest,
@@ -224,6 +225,7 @@ async fn run() -> Result<(), String> {
     let mut blit_checkpoint_done = false;
     let mut wait_deadlines: HashMap<ThreadKey, RuntimeWait> = HashMap::new();
     let mut previous_wait_timeout: Option<(ThreadKey, u32, u32)> = None;
+    let mut child_get_command_line_logged = false;
     let mut active = 0usize;
     loop {
         let exit = if contexts[active].started {
@@ -504,6 +506,58 @@ async fn run() -> Result<(), String> {
                                 registers.esp,
                             ),
                         );
+                        continue;
+                    }
+                    let is_get_command_line_a = matches!(
+                        &provider.symbol,
+                        child_loader::ProviderSymbol::Name(name)
+                            if provider.module.eq_ignore_ascii_case("KERNEL32.dll")
+                                && name == "GetCommandLineA"
+                    );
+                    if is_get_command_line_a {
+                        let mut child_memory = X86Memory(&child.address_space);
+                        let action = session
+                            .process_mut(active_pid)
+                            .ok_or_else(|| "child process missing".to_owned())?
+                            .xp
+                            .dispatch_provider_for_process(
+                                active_pid,
+                                active_tid,
+                                provider_id,
+                                exit.registers.esp,
+                                &mut child_memory,
+                            )
+                            .map_err(str::to_owned)?;
+                        let PersonalityAction::Return(result) = action else {
+                            return Err("GetCommandLineA child provider did not return".into());
+                        };
+                        if result != PROCESS_DATA_VA {
+                            return Err("child command-line pointer mismatch".into());
+                        }
+                        let mut bytes = [0; CHILD_COMMAND_LINE.len()];
+                        child
+                            .address_space
+                            .read(result, &mut bytes)
+                            .map_err(|error| error.to_string())?;
+                        if bytes != CHILD_COMMAND_LINE {
+                            return Err("child command-line backing mismatch".into());
+                        }
+                        if !child_get_command_line_logged {
+                            child_get_command_line_logged = true;
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD GETCOMMANDLINEA RESULT pid={} tid={} pointer=0x{:08x} value=\"\\\"war3.exe\\\" \" process_private=1 stack_cleanup=none",
+                                    active_pid, active_tid, result,
+                                ),
+                            );
+                        }
+                        let mut registers = exit.registers;
+                        registers.eax = result;
+                        contexts[active]
+                            .context
+                            .set_registers(registers)
+                            .map_err(|error| error.to_string())?;
                         continue;
                     }
                     let is_get_version_ex_a = matches!(
@@ -2571,13 +2625,27 @@ async fn run() -> Result<(), String> {
                             .write(frame.process_information + 12, &created.tid.to_le_bytes())
                             .map_err(str::to_owned)?;
                         log_child_handles(&session, created.pid);
+                        let child_address_space =
+                            AddressSpace::create().map_err(|error| error.to_string())?;
+                        child_address_space
+                            .map(
+                                PROCESS_DATA_VA,
+                                0x1000,
+                                Permissions::READ | Permissions::WRITE,
+                            )
+                            .map_err(|error| format!("map child process data: {error}"))?;
+                        let written = child_address_space
+                            .write(PROCESS_DATA_VA, CHILD_COMMAND_LINE)
+                            .map_err(|error| format!("write child command line: {error}"))?;
+                        if written != CHILD_COMMAND_LINE.len() {
+                            return Err("short child command-line write".into());
+                        }
                         pending_child = Some(PendingChild {
                             pid: created.pid,
                             tid: created.tid,
                             image: child,
                             native_modules: Vec::new(),
-                            address_space: AddressSpace::create()
-                                .map_err(|error| error.to_string())?,
+                            address_space: child_address_space,
                             crt_heap_mapped_end: CHILD_CRT_HEAP_BASE,
                             provider_thunk_bytes: 0,
                             static_load_reserved: 0,
@@ -5694,6 +5762,35 @@ mod tests {
             },
             initialized: false,
         }
+    }
+
+    #[test]
+    fn process_data_va_is_private_between_launcher_and_child_address_spaces() {
+        let launcher = AddressSpace::create().unwrap();
+        let child = AddressSpace::create().unwrap();
+        for address_space in [&launcher, &child] {
+            address_space
+                .map(
+                    PROCESS_DATA_VA,
+                    0x1000,
+                    Permissions::READ | Permissions::WRITE,
+                )
+                .unwrap();
+        }
+        launcher
+            .write(PROCESS_DATA_VA, wc3::process::COMMAND_LINE)
+            .unwrap();
+        child.write(PROCESS_DATA_VA, CHILD_COMMAND_LINE).unwrap();
+        let mut launcher_bytes = [0; wc3::process::COMMAND_LINE.len()];
+        let mut child_bytes = [0; CHILD_COMMAND_LINE.len()];
+        launcher
+            .read(PROCESS_DATA_VA, &mut launcher_bytes)
+            .unwrap();
+        child.read(PROCESS_DATA_VA, &mut child_bytes).unwrap();
+        assert_eq!(PROCESS_DATA_VA, 0x0021_1000);
+        assert_eq!(launcher_bytes, wc3::process::COMMAND_LINE);
+        assert_eq!(child_bytes, CHILD_COMMAND_LINE);
+        assert_ne!(launcher_bytes, CHILD_COMMAND_LINE);
     }
 
     #[test]

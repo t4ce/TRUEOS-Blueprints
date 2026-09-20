@@ -36,6 +36,7 @@ pub const THUNK_PAGE_BYTES: usize = 0x1000;
 /// Process state returned by GetCommandLineA.  The launcher constructs its
 /// separate `"war3.exe" ` child command line on its native stack.
 pub const COMMAND_LINE: &[u8] = b"\"Warcraft III.exe\"\0";
+pub const CHILD_COMMAND_LINE: &[u8] = b"\"war3.exe\" \0";
 const MODULE_FILENAME: &[u8] = b"C:\\Warcraft III\\Warcraft III.exe\0";
 const WINDOWS_XP_GET_VERSION: u32 = 0x0a28_0105;
 const CREATE_SUSPENDED: u32 = 4;
@@ -725,6 +726,15 @@ impl XpProcess {
             .cloned()
             .ok_or("unknown child provider import")?;
         match (&provider.module[..], &provider.symbol) {
+            (module, ProviderSymbol::Name(symbol))
+                if module.eq_ignore_ascii_case("KERNEL32.dll") && symbol == "GetCommandLineA" =>
+            {
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(PROCESS_DATA_VA))
+            }
             (module, ProviderSymbol::Name(symbol))
                 if module.eq_ignore_ascii_case("KERNEL32.dll") && symbol == "GetVersionExA" =>
             {
@@ -4585,6 +4595,27 @@ mod tests {
             [0, 4, 8, 12, 16]
                 .map(|offset| read_u32(&memory, info + offset).unwrap()),
             [0x94, 5, 1, 2600, 2]
+        );
+    }
+
+    #[test]
+    fn child_get_command_line_a_returns_the_process_data_va() {
+        let provider = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("GetCommandLineA".into()),
+            iat_rva: 0,
+        };
+        let mut pid2 = XpProcess::new(Vec::new());
+        pid2.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0x5a; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+        assert_eq!(
+            pid2.dispatch_provider_for_process(2, 3, 0, esp, &mut memory)
+                .unwrap(),
+            PersonalityAction::Return(PROCESS_DATA_VA)
         );
     }
 
