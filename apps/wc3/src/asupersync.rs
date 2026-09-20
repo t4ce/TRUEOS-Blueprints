@@ -1812,42 +1812,41 @@ pub(super) async fn run_loop(
                             .external_provider_module_name(hmodule)
                             .map(str::to_owned);
                         if let Some(provider_module) = provider_module {
+                            let import = child_loader::ProviderImport {
+                                module: provider_module.clone(),
+                                symbol: provider_symbol.clone(),
+                                iat_rva: 0,
+                            };
+                            let operation = child_loader::provider_op(&import);
+                            if !operation.is_modeled() {
+                                session
+                                    .process_mut(active_pid)
+                                    .ok_or_else(|| "child process missing".to_owned())?
+                                    .xp
+                                    .set_last_error(ERROR_PROC_NOT_FOUND);
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 CHILD GETPROCADDRESS MISS pid={} tid={} module={:?} selector={:?} reason=provider-op-unmodeled error={}",
+                                        active_pid, active_tid, provider_module, selector, ERROR_PROC_NOT_FOUND,
+                                    ),
+                                );
+                                let mut registers = exit.registers;
+                                registers.eax = 0;
+                                contexts[active]
+                                    .context
+                                    .set_registers(registers)
+                                    .map_err(|error| error.to_string())?;
+                                continue;
+                            }
                             let existing = session
                                 .process(active_pid)
                                 .ok_or_else(|| "child process missing".to_owned())?
                                 .xp
-                                .provider_thunk_address(&provider_module, &provider_symbol);
+                                .provider_export_address(&provider_module, &provider_symbol);
                             let (address, source) = if let Some(address) = existing {
                                 (address, "provider-existing")
                             } else {
-                                let import = child_loader::ProviderImport {
-                                    module: provider_module.clone(),
-                                    symbol: provider_symbol.clone(),
-                                    iat_rva: 0,
-                                };
-                                if child_loader::provider_op(&import)
-                                    == child_loader::ProviderOp::Unknown
-                                {
-                                    session
-                                        .process_mut(active_pid)
-                                        .ok_or_else(|| "child process missing".to_owned())?
-                                        .xp
-                                        .set_last_error(ERROR_PROC_NOT_FOUND);
-                                    logl::log(
-                                        level::IMPORTANT,
-                                        format_args!(
-                                            "WC3 CHILD GETPROCADDRESS MISS pid={} tid={} module={:?} selector={:?} reason=provider-op-unmodeled error={}",
-                                            active_pid, active_tid, provider_module, selector, ERROR_PROC_NOT_FOUND,
-                                        ),
-                                    );
-                                    let mut registers = exit.registers;
-                                    registers.eax = 0;
-                                    contexts[active]
-                                        .context
-                                        .set_registers(registers)
-                                        .map_err(|error| error.to_string())?;
-                                    continue;
-                                }
                                 let addresses = {
                                     let process = &mut session
                                         .process_mut(active_pid)

@@ -620,6 +620,24 @@ impl XpProcess {
             .and_then(|id| thunk32::address(u32::try_from(id).ok()?))
     }
 
+    /// A dynamically callable provider export, as opposed to any static IAT
+    /// trap thunk that happens to exist for an unmodeled provider import.
+    pub fn provider_export_address(
+        &self,
+        module: &str,
+        symbol: &ProviderSymbol,
+    ) -> Option<u32> {
+        self.provider_imports
+            .iter()
+            .enumerate()
+            .find(|(_, import)| {
+                import.module.eq_ignore_ascii_case(module)
+                    && import.symbol == *symbol
+                    && provider_op(import).is_modeled()
+            })
+            .and_then(|(id, _)| thunk32::address(u32::try_from(id).ok()?))
+    }
+
     pub fn new(imports: Vec<LauncherImport>) -> Self {
         Self::with_image(imports, ProcessImage::Launcher)
     }
@@ -5340,6 +5358,41 @@ mod tests {
         assert_eq!(
             &updated[..9],
             &[0xb8, 0x51, 0x01, 0, 0, 0x0f, 0x01, 0xc1, 0xc3]
+        );
+    }
+
+    #[test]
+    fn provider_export_lookup_hides_unmodeled_static_traps() {
+        let modeled = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("GetCurrentProcess".into()),
+            iat_rva: 0,
+        };
+        let unmodeled = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("DefinitelyUnmodeled".into()),
+            iat_rva: 0,
+        };
+        let mut xp = XpProcess::new_child();
+        xp.install_provider_surface(
+            vec![modeled.clone(), unmodeled.clone()],
+            vec![0x90; THUNK_PAGE_BYTES],
+            Vec::new(),
+        );
+        let modeled_address = xp
+            .provider_thunk_address("kernel32.dll", &modeled.symbol)
+            .unwrap();
+        assert_eq!(
+            xp.provider_export_address("KERNEL32.dll", &modeled.symbol),
+            Some(modeled_address)
+        );
+        assert_eq!(
+            xp.provider_thunk_address("KERNEL32.dll", &unmodeled.symbol),
+            Some(thunk32::address(1).unwrap())
+        );
+        assert_eq!(
+            xp.provider_export_address("KERNEL32.dll", &unmodeled.symbol),
+            None
         );
     }
 

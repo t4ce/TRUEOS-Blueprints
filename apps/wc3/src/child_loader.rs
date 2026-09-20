@@ -60,6 +60,13 @@ pub enum ProviderOp {
 }
 
 impl ProviderOp {
+    /// Non-unknown operations have a known ABI and an implemented process or
+    /// runtime dispatch path; unknown operations are never advertised through
+    /// dynamic provider export lookup.
+    pub const fn is_modeled(self) -> bool {
+        !matches!(self, Self::Unknown)
+    }
+
     pub const fn stack_cleanup_bytes(self) -> u8 {
         match self {
             Self::InitializeCriticalSection
@@ -367,7 +374,7 @@ mod tests {
 
         let unrelated = ProviderImport {
             module: "KERNEL32.dll".into(),
-            symbol: ProviderSymbol::Name("GetModuleHandleA".into()),
+            symbol: ProviderSymbol::Name("DefinitelyUnmodeled".into()),
             iat_rva: 0,
         };
         thunk32::write(404, provider_thunk_kind(&unrelated), &mut bytes).unwrap();
@@ -666,6 +673,8 @@ mod tests {
         assert!(operation.is_generic_process_local());
         assert_eq!(operation.stack_cleanup_bytes(), 0);
         assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Return);
+        assert!(operation.is_modeled());
+        assert!(!ProviderOp::Unknown.is_modeled());
     }
 
     #[test]
