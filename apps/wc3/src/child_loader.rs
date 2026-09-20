@@ -27,6 +27,7 @@ pub enum ProviderOp {
     GetStdHandle,
     GetFileType,
     SetHandleCount,
+    GetACP,
     GetVersion,
     GetVersionExA,
     WideCharToMultiByte,
@@ -74,6 +75,7 @@ impl ProviderOp {
                 | Self::GetStdHandle
                 | Self::GetFileType
                 | Self::SetHandleCount
+                | Self::GetACP
         )
     }
 }
@@ -91,6 +93,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "GetStdHandle" => ProviderOp::GetStdHandle,
             "GetFileType" => ProviderOp::GetFileType,
             "SetHandleCount" => ProviderOp::SetHandleCount,
+            "GetACP" => ProviderOp::GetACP,
             "GetVersion" => ProviderOp::GetVersion,
             "GetVersionExA" => ProviderOp::GetVersionExA,
             "WideCharToMultiByte" => ProviderOp::WideCharToMultiByte,
@@ -456,6 +459,23 @@ mod tests {
         let mut bytes = [0; thunk32::THUNK_BYTES];
         thunk32::write(624, provider_thunk_kind(&import), &mut bytes).unwrap();
         assert_eq!(&bytes[8..11], &[0xc2, 0x04, 0x00]);
+    }
+
+    #[test]
+    fn get_acp_is_pure_process_no_argument_provider() {
+        let import = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("GetACP".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&import);
+        assert_eq!(operation, ProviderOp::GetACP);
+        assert!(operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 0);
+        assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Return);
+        let mut bytes = [0; thunk32::THUNK_BYTES];
+        thunk32::write(640, provider_thunk_kind(&import), &mut bytes).unwrap();
+        assert_eq!(bytes[8], 0xc3);
     }
 
     #[test]

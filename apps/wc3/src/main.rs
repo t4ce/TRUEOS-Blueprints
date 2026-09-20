@@ -19,7 +19,7 @@ use wc3::{
         CHILD_VIRTUAL_ALLOC_BASE, CHILD_VIRTUAL_ALLOC_LIMIT, CHILD_WIN_HEAP_BASE,
         CHILD_WIN_HEAP_LIMIT, ENVIRONMENT_BLOCK_VA, GuestMemory, PROCESS_DATA_VA,
         PreparedProcess, ProviderDispatchError, STACK_BASE, STACK_BYTES, STACK_TOP, ThreadObject,
-        XpProcess,
+        XP_ANSI_CODE_PAGE, XpProcess,
         bmp_file_from_dib, dib_layout,
     },
     session::{
@@ -745,7 +745,7 @@ async fn run() -> Result<(), String> {
                                 u32::from_le_bytes(caller_ret),
                             ),
                         );
-                        if code_page != 0 && code_page != 1252 {
+                        if code_page != 0 && code_page != XP_ANSI_CODE_PAGE {
                             logl::log(
                                 level::IMPORTANT,
                                 format_args!(

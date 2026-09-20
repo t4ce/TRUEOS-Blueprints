@@ -39,6 +39,7 @@ pub const THUNK_PAGE_BYTES: usize = 0x1000;
 /// separate `"war3.exe" ` child command line on its native stack.
 pub const COMMAND_LINE: &[u8] = b"\"Warcraft III.exe\"\0";
 pub const CHILD_COMMAND_LINE: &[u8] = b"\"war3.exe\" \0";
+pub const XP_ANSI_CODE_PAGE: u32 = 1252;
 const MODULE_FILENAME: &[u8] = b"C:\\Warcraft III\\Warcraft III.exe\0";
 const WINDOWS_XP_GET_VERSION: u32 = 0x0a28_0105;
 const CREATE_SUSPENDED: u32 = 4;
@@ -798,6 +799,13 @@ impl XpProcess {
                     .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(self.set_handle_count(esp, memory)?))
             }
+            ProviderOp::GetACP => {
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(self.get_acp()))
+            }
             _ => Err(ProviderDispatchError::Unsupported),
         }
     }
@@ -1148,7 +1156,7 @@ impl XpProcess {
             WinCall::GetEnvironmentStringsW => Ok(0),
             WinCall::GetEnvironmentStringsA => Ok(ENVIRONMENT_BLOCK_VA),
             WinCall::FreeEnvironmentStringsA => Ok(1),
-            WinCall::GetACP => Ok(1252),
+            WinCall::GetACP => Ok(self.get_acp()),
             WinCall::GetCPInfo => self.get_cp_info(esp, memory),
             WinCall::GetStringTypeW => self.get_string_type(esp, memory),
             WinCall::MultiByteToWideChar => self.multi_byte_to_wide(esp, memory),
@@ -1569,9 +1577,13 @@ impl XpProcess {
         read_u32(memory, esp + 4)
     }
 
+    fn get_acp(&self) -> u32 {
+        XP_ANSI_CODE_PAGE
+    }
+
     fn get_cp_info(&self, esp: u32, memory: &mut impl GuestMemory) -> Result<u32, &'static str> {
         let [_, code_page, output] = arguments::<3>(memory, esp)?;
-        if code_page != 1252 {
+        if code_page != XP_ANSI_CODE_PAGE {
             return Err("unsupported code page");
         }
         let mut info = [0; 0x14];
@@ -2229,7 +2241,7 @@ impl XpProcess {
         memory: &mut impl GuestMemory,
     ) -> Result<u32, &'static str> {
         let [_, cp, _, source, count, output, capacity] = arguments::<7>(memory, esp)?;
-        if cp != 0 && cp != 1252 {
+        if cp != 0 && cp != XP_ANSI_CODE_PAGE {
             return Err("unsupported code page");
         }
         let bytes = if count == u32::MAX {
@@ -2264,7 +2276,7 @@ impl XpProcess {
         memory: &mut impl GuestMemory,
     ) -> Result<u32, &'static str> {
         let [_, cp, _, source, count, output, capacity, _, _] = arguments::<9>(memory, esp)?;
-        if cp != 0 && cp != 1252 {
+        if cp != 0 && cp != XP_ANSI_CODE_PAGE {
             return Err("unsupported code page");
         }
         let length = if count == u32::MAX {
@@ -4989,6 +5001,50 @@ mod tests {
             Ok(PersonalityAction::Return(requested))
         );
         assert_eq!(pid2.call_count, 1);
+    }
+
+    #[test]
+    fn child_get_acp_reuses_process_ansi_code_page() {
+        let provider = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("GetACP".into()),
+            iat_rva: 0,
+        };
+        let mut pid2 = XpProcess::new(Vec::new());
+        pid2.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+        write_u32(&mut memory, esp, 0x2113_6189).unwrap();
+        assert_eq!(
+            pid2.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(XP_ANSI_CODE_PAGE))
+        );
+        assert_eq!(XP_ANSI_CODE_PAGE, 1252);
+        assert_eq!(pid2.call_count, 1);
+    }
+
+    #[test]
+    fn launcher_get_acp_reuses_process_ansi_code_page() {
+        let imports = vec![LauncherImport {
+            id: 0,
+            module: "KERNEL32.dll".into(),
+            symbol: "GetACP".into(),
+            iat_rva: 0,
+        }];
+        let mut xp = XpProcess::new(imports);
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+        write_u32(&mut memory, esp, 0x0040_6189).unwrap();
+        assert_eq!(
+            xp.dispatch(1, 0, esp, &mut memory).unwrap(),
+            PersonalityAction::Return(XP_ANSI_CODE_PAGE)
+        );
     }
 
     #[test]
