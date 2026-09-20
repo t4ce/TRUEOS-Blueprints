@@ -642,6 +642,66 @@ mod tests {
     }
 
     #[test]
+    fn process_exit_signals_persistent_process_and_thread_handles() {
+        let mut session = Wc3Session::new(XpProcess::new(Vec::new()));
+        let child = session.create_child();
+        let child_key = ThreadKey {
+            pid: child.pid,
+            tid: child.tid,
+        };
+
+        assert_eq!(session.process_exit_code(child.pid), None);
+        assert_eq!(session.thread_exit_code(child_key), None);
+        assert_eq!(
+            session
+                .poll_single_wait(&request(child.process_handle, 0))
+                .unwrap(),
+            Some(0x0000_0102)
+        );
+
+        session.terminate_process(child.pid, 0xc000_0005).unwrap();
+
+        assert!(session.process(child.pid).is_some());
+        assert_eq!(session.process_exit_code(child.pid), Some(0xc000_0005));
+        assert_eq!(session.thread_exit_code(child_key), Some(0xc000_0005));
+        for timeout in [0, u32::MAX] {
+            assert_eq!(
+                session
+                    .poll_single_wait(&request(child.process_handle, timeout))
+                    .unwrap(),
+                Some(0)
+            );
+            assert_eq!(
+                session
+                    .poll_single_wait(&request(child.thread_handle, timeout))
+                    .unwrap(),
+                Some(0)
+            );
+        }
+    }
+
+    #[test]
+    fn process_exit_wakes_a_blocked_single_waiter() {
+        let mut session = Wc3Session::new(XpProcess::new(Vec::new()));
+        let child = session.create_child();
+        let wait = request(child.process_handle, u32::MAX);
+        session.block_wait(wait.clone()).unwrap();
+
+        let woken = session.terminate_process(child.pid, 7).unwrap();
+
+        assert_eq!(woken, vec![wait]);
+        assert!(!session.blocked.contains_key(&wait.key));
+        assert_eq!(
+            session
+                .runnable
+                .iter()
+                .filter(|key| **key == wait.key)
+                .count(),
+            1
+        );
+    }
+
+    #[test]
     fn enqueue_deduplicates_a_runnable_child_thread() {
         let mut session = Wc3Session::new(XpProcess::new(Vec::new()));
         let child = session.create_child();
@@ -672,6 +732,7 @@ pub struct EventObject {
 #[derive(Clone, Debug)]
 pub struct ProcessObject {
     pub pid: Pid,
+    pub exit_code: Option<u32>,
 }
 
 #[derive(Clone, Debug)]
@@ -1078,7 +1139,10 @@ impl Wc3Session {
         self.next_object += 1;
         self.objects.insert(
             process_object,
-            SessionObject::Process(ProcessObject { pid }),
+            SessionObject::Process(ProcessObject {
+                pid,
+                exit_code: None,
+            }),
         );
         self.objects.insert(
             thread_object,
@@ -1229,6 +1293,80 @@ impl Wc3Session {
         }
     }
 
+    pub fn process_exit_code(&self, pid: Pid) -> Option<u32> {
+        self.objects.values().find_map(|object| match object {
+            SessionObject::Process(process) if process.pid == pid => process.exit_code,
+            _ => None,
+        })
+    }
+
+    pub fn thread_exit_code(&self, key: ThreadKey) -> Option<u32> {
+        self.objects.values().find_map(|object| match object {
+            SessionObject::Thread(thread) if thread.key == key => thread.exit_code,
+            _ => None,
+        })
+    }
+
+    pub fn terminate_process(
+        &mut self,
+        pid: Pid,
+        exit_code: u32,
+    ) -> Result<Vec<WaitRequest>, &'static str> {
+        if !self.processes.contains_key(&pid) {
+            return Err("ExitProcess unknown process");
+        }
+        let mut found_process_object = false;
+        for object in self.objects.values_mut() {
+            match object {
+                SessionObject::Process(process) if process.pid == pid => {
+                    if process.exit_code.is_some() {
+                        return Err("ExitProcess process already terminated");
+                    }
+                    process.exit_code = Some(exit_code);
+                    found_process_object = true;
+                }
+                SessionObject::Thread(thread) if thread.key.pid == pid => {
+                    thread.exit_code = Some(exit_code);
+                }
+                _ => {}
+            }
+        }
+        if !found_process_object {
+            return Err("ExitProcess process object missing");
+        }
+
+        self.runnable.retain(|key| key.pid != pid);
+        self.process_mut(pid)
+            .ok_or("ExitProcess process missing")?
+            .handles
+            .clear();
+
+        let blocked = std::mem::take(&mut self.blocked);
+        let mut woken = Vec::new();
+        for (key, request) in blocked {
+            let signals_terminated_process = request.count == 1
+                && request.wait_all == 0
+                && self
+                    .process(key.pid)
+                    .and_then(|process| process.handles.get(&request.handles[0]))
+                    .and_then(|entry| self.objects.get(&entry.object))
+                    .is_some_and(|object| match object {
+                        SessionObject::Process(process) => process.pid == pid,
+                        SessionObject::Thread(thread) => thread.key.pid == pid,
+                        SessionObject::Event(_) => false,
+                    });
+            if signals_terminated_process {
+                woken.push(request);
+            } else {
+                self.blocked.insert(key, request);
+            }
+        }
+        for request in &woken {
+            self.enqueue(request.key);
+        }
+        Ok(woken)
+    }
+
     pub fn block_wait(&mut self, request: WaitRequest) -> Result<(), &'static str> {
         for handle in request.handles.iter().take(request.count.min(2) as usize) {
             let entry = self
@@ -1241,7 +1379,8 @@ impl Wc3Session {
                 .ok_or("wait object missing")?;
             let signaled = match object {
                 SessionObject::Event(event) => event.signaled,
-                SessionObject::Process(_) | SessionObject::Thread(_) => false,
+                SessionObject::Process(process) => process.exit_code.is_some(),
+                SessionObject::Thread(thread) => thread.exit_code.is_some(),
             };
             if signaled {
                 return Err("unexpected signaled object at #90");
@@ -1274,23 +1413,38 @@ impl Wc3Session {
                 .set_last_error(6);
             return Ok(Some(u32::MAX));
         };
-        let SessionObject::Event(event) = object else {
-            self.process_mut(request.key.pid)
-                .ok_or("wait process missing")?
-                .xp
-                .set_last_error(6);
-            return Ok(Some(u32::MAX));
-        };
-        if event.signaled {
-            if !event.manual_reset {
-                event.signaled = false;
+        match object {
+            SessionObject::Event(event) => {
+                if event.signaled {
+                    if !event.manual_reset {
+                        event.signaled = false;
+                    }
+                    Ok(Some(0))
+                } else if request.timeout == 0 {
+                    Ok(Some(0x0000_0102))
+                } else {
+                    Ok(None)
+                }
             }
-            return Ok(Some(0));
+            SessionObject::Process(process) => {
+                if process.exit_code.is_some() {
+                    Ok(Some(0))
+                } else if request.timeout == 0 {
+                    Ok(Some(0x0000_0102))
+                } else {
+                    Ok(None)
+                }
+            }
+            SessionObject::Thread(thread) => {
+                if thread.exit_code.is_some() {
+                    Ok(Some(0))
+                } else if request.timeout == 0 {
+                    Ok(Some(0x0000_0102))
+                } else {
+                    Ok(None)
+                }
+            }
         }
-        if request.timeout == 0 {
-            return Ok(Some(0x0000_0102));
-        }
-        Ok(None)
     }
 
     pub fn event_state(&self, pid: Pid, handle: u32) -> Option<(bool, bool)> {

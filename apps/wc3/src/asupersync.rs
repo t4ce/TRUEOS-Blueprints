@@ -1950,6 +1950,114 @@ pub(super) async fn run_loop(
                         continue;
                     }
                     let operation = child_loader::provider_op(&provider);
+                    if operation == child_loader::ProviderOp::ExitProcess {
+                        let frame = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            exit.registers.esp,
+                            2,
+                        )?;
+                        let exit_code = frame[1];
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD EXITPROCESS CALL pid={} tid={} during=\"{}\" exit_code=0x{:08x} caller_ret=0x{:08x}",
+                                active_pid,
+                                active_tid,
+                                running_module_name,
+                                exit_code,
+                                frame[0],
+                            ),
+                        );
+                        let action = {
+                            let mut child_memory = X86Memory(&child.address_space);
+                            session
+                                .process_mut(active_pid)
+                                .ok_or_else(|| "child process missing".to_owned())?
+                                .xp
+                                .dispatch_provider_for_process(
+                                    active_pid,
+                                    active_tid,
+                                    provider_id,
+                                    exit.registers.esp,
+                                    &mut child_memory,
+                                )
+                                .map_err(str::to_owned)?
+                        };
+                        let PersonalityAction::ExitProcess(dispatched_code) = action else {
+                            return Err("ExitProcess child provider returned a non-exit action".into());
+                        };
+                        if dispatched_code != exit_code {
+                            return Err("ExitProcess child provider exit code mismatch".into());
+                        }
+                        let threads_signaled = session
+                            .objects
+                            .values()
+                            .filter(|object| {
+                                matches!(object, SessionObject::Thread(thread) if thread.key.pid == active_pid)
+                            })
+                            .count();
+                        let woken = session
+                            .terminate_process(active_pid, exit_code)
+                            .map_err(str::to_owned)?;
+                        wait_deadlines.retain(|key, _| key.pid != active_pid);
+                        for request in &woken {
+                            let index = context_index(&contexts, request.key)
+                                .ok_or_else(|| "process-exit waiter context missing".to_owned())?;
+                            let mut registers = wait_deadlines
+                                .remove(&request.key)
+                                .map(|wait| wait.resume_registers)
+                                .unwrap_or(
+                                    contexts[index]
+                                        .context
+                                        .registers()
+                                        .map_err(|error| error.to_string())?,
+                                );
+                            registers.eax = WAIT_OBJECT_0;
+                            contexts[index]
+                                .context
+                                .set_registers(registers)
+                                .map_err(|error| error.to_string())?;
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 WAIT SIGNALED pid={} tid={} handle=0x{:08x} reason=process-exit result=0x{:08x}",
+                                    request.key.pid,
+                                    request.key.tid,
+                                    request.handles[0],
+                                    WAIT_OBJECT_0,
+                                ),
+                            );
+                        }
+                        thread_calls.retain(|(pid, _), _| *pid != active_pid);
+                        let before = contexts.len();
+                        contexts.retain(|context| context.pid != active_pid);
+                        let contexts_removed = before - contexts.len();
+                        let terminated = pending_child
+                            .take()
+                            .ok_or_else(|| "ExitProcess child state missing".to_owned())?;
+                        if terminated.pid != active_pid {
+                            return Err("ExitProcess child state PID mismatch".into());
+                        }
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD PROCESS EXIT pid={} exit_code=0x{:08x} contexts_removed={} threads_signaled={} waiters_woken={} address_space_dropped=1 dll_detach_callbacks=0",
+                                active_pid,
+                                exit_code,
+                                contexts_removed,
+                                threads_signaled,
+                                woken.len(),
+                            ),
+                        );
+                        if contexts.is_empty() {
+                            return Ok(());
+                        }
+                        if let Some(next) = pop_runnable_context(&mut session, &contexts) {
+                            active = next;
+                            continue;
+                        }
+                        return Err("no runnable context after child ExitProcess".into());
+                    }
                     if operation == child_loader::ProviderOp::RtlUnwind {
                         let frame = read_guest_words(
                             &X86Memory(&child.address_space),

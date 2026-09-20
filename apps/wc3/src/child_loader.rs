@@ -55,6 +55,7 @@ pub enum ProviderOp {
     SetUnhandledExceptionFilter,
     UnhandledExceptionFilter,
     RtlUnwind,
+    ExitProcess,
     VirtualAlloc,
     RegOpenKeyExA,
     CrtMalloc,
@@ -76,6 +77,7 @@ impl ProviderOp {
             | Self::LeaveCriticalSection
             | Self::SetUnhandledExceptionFilter
             | Self::UnhandledExceptionFilter
+            | Self::ExitProcess
             | Self::GetVersionExA
             | Self::FreeEnvironmentStringsW
             | Self::GetStartupInfoA
@@ -163,6 +165,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "SetUnhandledExceptionFilter" => ProviderOp::SetUnhandledExceptionFilter,
             "UnhandledExceptionFilter" => ProviderOp::UnhandledExceptionFilter,
             "RtlUnwind" => ProviderOp::RtlUnwind,
+            "ExitProcess" => ProviderOp::ExitProcess,
             "VirtualAlloc" => ProviderOp::VirtualAlloc,
             _ => ProviderOp::Unknown,
         };
@@ -445,6 +448,23 @@ mod tests {
         assert!(operation.is_modeled());
         assert_eq!(operation.stack_cleanup_bytes(), 16);
         assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Stdcall(16));
+    }
+
+    #[test]
+    fn exit_process_is_runtime_stdcall_four() {
+        let import = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("ExitProcess".into()),
+            iat_rva: 0,
+        };
+
+        let operation = provider_op(&import);
+
+        assert_eq!(operation, ProviderOp::ExitProcess);
+        assert!(operation.is_modeled());
+        assert!(!operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 4);
+        assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Stdcall(4));
     }
 
     #[test]

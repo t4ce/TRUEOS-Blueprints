@@ -1393,6 +1393,19 @@ impl XpProcess {
                 Ok(PersonalityAction::Return(0))
             }
             (module, ProviderSymbol::Name(symbol))
+                if module.eq_ignore_ascii_case("KERNEL32.dll") && symbol == "ExitProcess" =>
+            {
+                let exit_code = read_u32(
+                    memory,
+                    esp.checked_add(4).ok_or("provider argument overflow")?,
+                )?;
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::ExitProcess(exit_code))
+            }
+            (module, ProviderSymbol::Name(symbol))
                 if module.eq_ignore_ascii_case("KERNEL32.dll") && symbol == "SetUnhandledExceptionFilter" =>
             {
                 let filter = read_u32(memory, esp.checked_add(4).ok_or("provider argument overflow")?)?;
