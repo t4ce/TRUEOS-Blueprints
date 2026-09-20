@@ -2086,6 +2086,57 @@ mod tests {
     }
 
     #[test]
+    fn rtl_unwind_current_head_restores_post_call_state() {
+        let registers = Registers {
+            eax: 0xffff_ffff,
+            ebx: 0x1111_1111,
+            ecx: 0x2222_2222,
+            edx: 0x3333_3333,
+            esi: 0x4444_4444,
+            edi: 0x5555_5555,
+            ebp: 0x6666_6666,
+            esp: 0x043f_fc10,
+            eip: 0x7fff_0000,
+            eflags: 0x0001_0002,
+            fs_base: 0x0020_3000,
+            ..Registers::default()
+        };
+
+        let resumed = asupersync::rtl_unwind_current_target_registers(
+            registers,
+            registers.esp,
+            0x0046_ae84,
+            0x1234_5678,
+        )
+        .unwrap();
+
+        assert_eq!(resumed.eip, 0x0046_ae84);
+        assert_eq!(resumed.esp, 0x043f_fc24);
+        assert_eq!(resumed.eax, 0x1234_5678);
+        assert_eq!(resumed.ebx, registers.ebx);
+        assert_eq!(resumed.ecx, registers.ecx);
+        assert_eq!(resumed.edx, registers.edx);
+        assert_eq!(resumed.esi, registers.esi);
+        assert_eq!(resumed.edi, registers.edi);
+        assert_eq!(resumed.ebp, registers.ebp);
+        assert_eq!(resumed.eflags, registers.eflags);
+        assert_eq!(resumed.fs_base, registers.fs_base);
+    }
+
+    #[test]
+    fn rtl_unwind_current_head_rejects_stack_overflow() {
+        assert_eq!(
+            asupersync::rtl_unwind_current_target_registers(
+                Registers::default(),
+                u32::MAX - 19,
+                0x0046_ae84,
+                0,
+            ),
+            Err("RtlUnwind resume ESP overflow"),
+        );
+    }
+
+    #[test]
     fn process_data_va_is_private_between_launcher_and_child_address_spaces() {
         let launcher = AddressSpace::create().unwrap();
         let child = AddressSpace::create().unwrap();

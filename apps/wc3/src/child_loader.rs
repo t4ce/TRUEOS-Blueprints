@@ -54,6 +54,7 @@ pub enum ProviderOp {
     SetLastError,
     SetUnhandledExceptionFilter,
     UnhandledExceptionFilter,
+    RtlUnwind,
     VirtualAlloc,
     RegOpenKeyExA,
     CrtMalloc,
@@ -61,9 +62,9 @@ pub enum ProviderOp {
 }
 
 impl ProviderOp {
-    /// Non-unknown operations have a known ABI and an implemented process or
-    /// runtime dispatch path; unknown operations are never advertised through
-    /// dynamic provider export lookup.
+    /// Operations with callable semantics are advertised through dynamic
+    /// provider export lookup. Runtime operations can still stop at typed
+    /// frontiers for argument shapes whose semantics are not modeled yet.
     pub const fn is_modeled(self) -> bool {
         !matches!(self, Self::Unknown)
     }
@@ -88,7 +89,7 @@ impl ProviderOp {
             | Self::QueryPerformanceCounter => 4,
             Self::GetCPInfo | Self::GetWindowsDirectoryA | Self::GetSystemDirectoryA => 8,
             Self::GetProcAddress => 8,
-            Self::GetStringTypeW | Self::VirtualAlloc => 16,
+            Self::GetStringTypeW | Self::RtlUnwind | Self::VirtualAlloc => 16,
             Self::MultiByteToWideChar | Self::LCMapStringW => 24,
             Self::WideCharToMultiByte => 32,
             Self::GetModuleFileNameA | Self::HeapCreate | Self::HeapAlloc | Self::HeapFree => 12,
@@ -161,6 +162,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "SetLastError" => ProviderOp::SetLastError,
             "SetUnhandledExceptionFilter" => ProviderOp::SetUnhandledExceptionFilter,
             "UnhandledExceptionFilter" => ProviderOp::UnhandledExceptionFilter,
+            "RtlUnwind" => ProviderOp::RtlUnwind,
             "VirtualAlloc" => ProviderOp::VirtualAlloc,
             _ => ProviderOp::Unknown,
         };
@@ -426,6 +428,23 @@ mod tests {
         let mut bytes = [0; thunk32::THUNK_BYTES];
         thunk32::write(424, provider_thunk_kind(&import), &mut bytes).unwrap();
         assert_eq!(&bytes[8..11], &[0xc2, 0x10, 0]);
+    }
+
+    #[test]
+    fn rtl_unwind_is_runtime_stdcall_sixteen() {
+        let import = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("RtlUnwind".into()),
+            iat_rva: 0,
+        };
+
+        let operation = provider_op(&import);
+
+        assert_eq!(operation, ProviderOp::RtlUnwind);
+        assert!(!operation.is_generic_process_local());
+        assert!(operation.is_modeled());
+        assert_eq!(operation.stack_cleanup_bytes(), 16);
+        assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Stdcall(16));
     }
 
     #[test]

@@ -2,6 +2,7 @@ use super::*;
 
 const ERROR_PROC_NOT_FOUND: u32 = 127;
 const EXEC_SAMPLE_PREEMPTIONS: u64 = 256;
+const MAX_SEH_CHAIN_DEPTH: u32 = 64;
 
 fn should_log_execution_sample(count: u64) -> bool {
     count == 1 || count % EXEC_SAMPLE_PREEMPTIONS == 0
@@ -35,6 +36,42 @@ fn child_pc_owner(child: &PendingChild, eip: u32) -> Option<(&str, u32)> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct SehRegistration { frame: u32, next: u32, handler: u32 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum UnwindTargetRelation {
+    ExitUnwind,
+    CurrentHead,
+    ActiveSehRegistration,
+    LaterRegistration(u32),
+    NotInChain,
+}
+
+impl UnwindTargetRelation {
+    const fn name(self) -> &'static str {
+        match self {
+            Self::ExitUnwind => "exit-unwind",
+            Self::CurrentHead => "current-head",
+            Self::ActiveSehRegistration => "active-seh-registration",
+            Self::LaterRegistration(_) => "later-registration",
+            Self::NotInChain => "not-in-chain",
+        }
+    }
+}
+
+pub(super) fn rtl_unwind_current_target_registers(
+    registers: Registers,
+    provider_esp: u32,
+    target_ip: u32,
+    return_value: u32,
+) -> Result<Registers, &'static str> {
+    let mut resumed = registers;
+    resumed.eip = target_ip;
+    resumed.esp = provider_esp
+        .checked_add(20)
+        .ok_or("RtlUnwind resume ESP overflow")?;
+    resumed.eax = return_value;
+    Ok(resumed)
+}
+
 fn read_seh_registration(address_space: &AddressSpace, frame: u32) -> Result<SehRegistration, String> {
     if frame == 0 || frame & 3 != 0 { return Err("invalid SEH registration frame".into()); }
     let mut bytes = [0; 8];
@@ -44,6 +81,50 @@ fn read_seh_registration(address_space: &AddressSpace, frame: u32) -> Result<Seh
     if handler == 0 { return Err("SEH registration has zero handler".into()); }
     if next == frame { return Err("SEH registration self-loop".into()); }
     Ok(SehRegistration { frame, next, handler })
+}
+
+fn read_seh_chain_head(address_space: &AddressSpace, fs_base: u32) -> Result<u32, String> {
+    let mut bytes = [0; 4];
+    if address_space.read(fs_base, &mut bytes).map_err(|error| error.to_string())? != bytes.len() {
+        return Err("short SEH chain head read".into());
+    }
+    Ok(u32::from_le_bytes(bytes))
+}
+
+fn classify_unwind_target(
+    child: &PendingChild,
+    current_head: u32,
+    target_frame: u32,
+) -> Result<UnwindTargetRelation, String> {
+    if target_frame == 0 {
+        return Ok(UnwindTargetRelation::ExitUnwind);
+    }
+    if target_frame == current_head {
+        return Ok(UnwindTargetRelation::CurrentHead);
+    }
+    if child.seh.as_ref().is_some_and(|seh| seh.registration == target_frame) {
+        return Ok(UnwindTargetRelation::ActiveSehRegistration);
+    }
+
+    let mut frame = current_head;
+    let mut visited = HashSet::new();
+    for links in 0..MAX_SEH_CHAIN_DEPTH {
+        if frame == u32::MAX {
+            return Ok(UnwindTargetRelation::NotInChain);
+        }
+        if !visited.insert(frame) {
+            return Err("SEH registration loop while classifying RtlUnwind target".into());
+        }
+        if frame == target_frame {
+            return Ok(UnwindTargetRelation::LaterRegistration(links));
+        }
+        frame = read_seh_registration(&child.address_space, frame)?.next;
+    }
+    if frame == u32::MAX {
+        Ok(UnwindTargetRelation::NotInChain)
+    } else {
+        Err("SEH chain exceeds RtlUnwind classification depth".into())
+    }
 }
 
 fn begin_child_seh_dispatch(child: &mut PendingChild, guest: &mut GuestContext, exception: ChildException, registers: Registers) -> Result<(), String> {
@@ -1866,6 +1947,128 @@ pub(super) async fn run_loop(
                         continue;
                     }
                     let operation = child_loader::provider_op(&provider);
+                    if operation == child_loader::ProviderOp::RtlUnwind {
+                        let frame = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            exit.registers.esp,
+                            5,
+                        )?;
+                        let caller_ret = frame[0];
+                        let target_frame = frame[1];
+                        let target_ip = frame[2];
+                        let exception_record = frame[3];
+                        let return_value = frame[4];
+                        let current_head = read_seh_chain_head(
+                            &child.address_space,
+                            exit.registers.fs_base,
+                        )?;
+                        let target_relation =
+                            classify_unwind_target(child, current_head, target_frame)?;
+                        let target_location = (target_ip != 0)
+                            .then(|| child_pc_owner(child, target_ip))
+                            .flatten();
+                        let (target_owner, target_rva) = if target_ip == 0 {
+                            ("null", 0)
+                        } else {
+                            target_location.unwrap_or(("unknown", 0))
+                        };
+                        let exception_relation = if exception_record == 0 {
+                            "null".to_owned()
+                        } else if child
+                            .seh
+                            .as_ref()
+                            .is_some_and(|seh| seh.exception_record_va == exception_record)
+                        {
+                            "active-seh".to_owned()
+                        } else {
+                            let mut header = [0; 20];
+                            if child
+                                .address_space
+                                .read(exception_record, &mut header)
+                                .map_err(|error| error.to_string())?
+                                != header.len()
+                            {
+                                return Err("short RtlUnwind exception record header read".into());
+                            }
+                            format!(
+                                "external(code=0x{:08x},flags=0x{:08x},next=0x{:08x},address=0x{:08x},parameters={})",
+                                u32::from_le_bytes(header[0..4].try_into().unwrap()),
+                                u32::from_le_bytes(header[4..8].try_into().unwrap()),
+                                u32::from_le_bytes(header[8..12].try_into().unwrap()),
+                                u32::from_le_bytes(header[12..16].try_into().unwrap()),
+                                u32::from_le_bytes(header[16..20].try_into().unwrap()),
+                            )
+                        };
+                        let (active_registration, active_next, active_handler, active_record, active_context, active_depth) = child
+                            .seh
+                            .as_ref()
+                            .map(|seh| (
+                                seh.registration,
+                                seh.next_registration,
+                                seh.handler,
+                                seh.exception_record_va,
+                                seh.context_va,
+                                seh.depth,
+                            ))
+                            .unwrap_or((0, 0, 0, 0, 0, 0));
+                        let active_target = child
+                            .seh
+                            .as_ref()
+                            .is_some_and(|seh| seh.registration == target_frame);
+                        let supported_current_head = target_frame != 0
+                            && target_frame == current_head
+                            && active_target
+                            && target_ip != 0
+                            && target_ip == caller_ret
+                            && exception_record == 0
+                            && target_location.is_some();
+                        if supported_current_head {
+                            let resumed = rtl_unwind_current_target_registers(
+                                exit.registers,
+                                exit.registers.esp,
+                                target_ip,
+                                return_value,
+                            )
+                            .map_err(str::to_owned)?;
+                            contexts[active]
+                                .context
+                                .set_registers(resumed)
+                                .map_err(|error| error.to_string())?;
+                            logl::log(level::IMPORTANT, format_args!(
+                                "WC3 CHILD RTLUNWIND CONTINUE pid={} tid={} target_frame=0x{:08x} target_ip=0x{:08x} target_owner={:?} target_rva=0x{:08x} return_value=0x{:08x} old_esp=0x{:08x} new_esp=0x{:08x} fs_head=0x{:08x} handlers_called=0 frames_popped=0",
+                                active_pid, active_tid, target_frame, target_ip, target_owner,
+                                target_rva, return_value, exit.registers.esp, resumed.esp,
+                                current_head,
+                            ));
+                            continue;
+                        }
+                        let reason = if target_frame == 0 {
+                            "exit-unwind"
+                        } else if matches!(target_relation, UnwindTargetRelation::LaterRegistration(_)) {
+                            "multi-frame-unwind"
+                        } else if matches!(target_relation, UnwindTargetRelation::NotInChain) {
+                            "invalid-target-frame"
+                        } else if !active_target {
+                            "target-not-active-seh-registration"
+                        } else if exception_record != 0 {
+                            "supplied-exception-record"
+                        } else if target_ip != caller_ret {
+                            "nonlocal-target-ip"
+                        } else if target_location.is_none() {
+                            "unknown-target-ip"
+                        } else {
+                            "unsupported-current-head-shape"
+                        };
+                        logl::log(level::IMPORTANT, format_args!(
+                            "WC3 CHILD RTLUNWIND FRONTIER pid={} tid={} reason={} caller_ret=0x{:08x} target_frame=0x{:08x} target_relation={} target_relation_detail={:?} target_ip=0x{:08x} target_ip_owner={:?} target_ip_rva=0x{:08x} exception_record=0x{:08x} exception_relation={} return_value=0x{:08x} fs_head=0x{:08x} active_registration=0x{:08x} active_next=0x{:08x} active_handler=0x{:08x} active_record=0x{:08x} active_context=0x{:08x} active_depth={}",
+                            active_pid, active_tid, reason, caller_ret, target_frame, target_relation.name(), target_relation,
+                            target_ip, target_owner, target_rva, exception_record,
+                            exception_relation, return_value, current_head,
+                            active_registration, active_next, active_handler, active_record,
+                            active_context, active_depth,
+                        ));
+                        return Ok(());
+                    }
                     if operation == child_loader::ProviderOp::UnhandledExceptionFilter {
                         let exception_pointers = read_guest_words(&X86Memory(&child.address_space), exit.registers.esp, 2)?[1];
                         if exception_pointers == 0 { return Err("WC3 CHILD UEF FRONTIER reason=null-exception-pointers".into()); }
