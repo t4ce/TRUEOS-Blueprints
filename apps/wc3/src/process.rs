@@ -6,6 +6,7 @@
 
 use std::collections::{HashMap, VecDeque};
 
+use trueos::clock::UtcDateTime;
 #[cfg(target_os = "trueos")]
 use trueos::clock;
 
@@ -54,6 +55,50 @@ pub const CHILD_IMAGE_FILENAME: &[u8] = b"C:\\Warcraft III\\War3.exe\0";
 pub const XP_WINDOWS_DIRECTORY: &[u8] = b"C:\\WINDOWS\0";
 pub const XP_SYSTEM_DIRECTORY: &[u8] = b"C:\\WINDOWS\\system32\0";
 const XP_PERFORMANCE_COUNTER_FREQUENCY: u64 = 1_000_000_000;
+const NANOS_PER_SECOND: u64 = 1_000_000_000;
+const SECONDS_PER_DAY: u64 = 86_400;
+
+fn xp_system_time_from_unix_nanos(nanos: u64) -> [u16; 8] {
+    let seconds = nanos / NANOS_PER_SECOND;
+    let now = UtcDateTime::from_unix_seconds(seconds);
+    let day_of_week = ((seconds / SECONDS_PER_DAY + 4) % 7) as u16;
+    let milliseconds = ((nanos / 1_000_000) % 1_000) as u16;
+
+    [
+        now.year as u16,
+        now.month as u16,
+        day_of_week,
+        now.day as u16,
+        now.hour as u16,
+        now.minute as u16,
+        now.second as u16,
+        milliseconds,
+    ]
+}
+
+#[cfg(test)]
+#[test]
+fn xp_system_time_epoch_layout() {
+    assert_eq!(
+        xp_system_time_from_unix_nanos(123_000_000),
+        [1970, 1, 4, 1, 0, 0, 0, 123],
+    );
+}
+
+#[cfg(target_os = "trueos")]
+fn wall_clock_unix_nanos() -> Option<u64> {
+    clock::unix_nanos()
+}
+
+#[cfg(not(target_os = "trueos"))]
+fn wall_clock_unix_nanos() -> Option<u64> {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_nanos()
+        .try_into()
+        .ok()
+}
 
 #[cfg(target_os = "trueos")]
 fn monotonic_counter_nanos() -> u64 {
@@ -1320,6 +1365,13 @@ impl XpProcess {
                     self.query_performance_counter(esp, memory)?,
                 ))
             }
+            ProviderOp::GetLocalTime => {
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(self.get_local_time(esp, memory)?))
+            }
             ProviderOp::TimeGetTime => {
                 self.call_count = self
                     .call_count
@@ -2319,6 +2371,22 @@ impl XpProcess {
         let [_, output] = arguments::<2>(memory, esp)?;
         memory.write(output, &monotonic_counter_nanos().to_le_bytes())?;
         Ok(1)
+    }
+
+    fn get_local_time(
+        &self,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<u32, &'static str> {
+        let [_, output] = arguments::<2>(memory, esp)?;
+        let nanos = wall_clock_unix_nanos().ok_or("GetLocalTime wall clock unavailable")?;
+        let words = xp_system_time_from_unix_nanos(nanos);
+        let mut bytes = [0u8; 16];
+        for (index, word) in words.iter().enumerate() {
+            bytes[index * 2..index * 2 + 2].copy_from_slice(&word.to_le_bytes());
+        }
+        memory.write(output, &bytes)?;
+        Ok(0)
     }
 
     fn get_std_handle(&self, esp: u32, memory: &impl GuestMemory) -> Result<u32, &'static str> {

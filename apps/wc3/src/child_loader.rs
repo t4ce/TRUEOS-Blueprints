@@ -50,6 +50,7 @@ pub enum ProviderOp {
     GetSystemDirectoryA,
     QueryPerformanceFrequency,
     QueryPerformanceCounter,
+    GetLocalTime,
     TimeGetTime,
     GetVersion,
     GetVersionExA,
@@ -99,7 +100,8 @@ impl ProviderOp {
             | Self::GetModuleHandleA
             | Self::LoadLibraryA
             | Self::QueryPerformanceFrequency
-            | Self::QueryPerformanceCounter => 4,
+            | Self::QueryPerformanceCounter
+            | Self::GetLocalTime => 4,
             Self::GetCPInfo | Self::GetWindowsDirectoryA | Self::GetSystemDirectoryA => 8,
             Self::GetProcAddress | Self::WaitForSingleObject => 8,
             Self::GetStringTypeW | Self::RtlUnwind | Self::VirtualAlloc | Self::CreateEventA => 16,
@@ -136,6 +138,7 @@ impl ProviderOp {
                 | Self::GetSystemDirectoryA
                 | Self::QueryPerformanceFrequency
                 | Self::QueryPerformanceCounter
+                | Self::GetLocalTime
                 | Self::TimeGetTime
         )
     }
@@ -177,6 +180,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "GetSystemDirectoryA" => ProviderOp::GetSystemDirectoryA,
             "QueryPerformanceFrequency" => ProviderOp::QueryPerformanceFrequency,
             "QueryPerformanceCounter" => ProviderOp::QueryPerformanceCounter,
+            "GetLocalTime" => ProviderOp::GetLocalTime,
             "GetVersion" => ProviderOp::GetVersion,
             "GetVersionExA" => ProviderOp::GetVersionExA,
             "WideCharToMultiByte" => ProviderOp::WideCharToMultiByte,
