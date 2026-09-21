@@ -769,13 +769,16 @@ fn expire_runtime_waits(
             .context
             .set_registers(registers)
             .map_err(|error| error.to_string())?;
-        logl::log(
-            level::IMPORTANT,
-            format_args!(
-                "WC3 WAIT TIMEOUT pid={} tid={} handle=0x{:08x} elapsed_ms={} result=0x{:08x}",
-                key.pid, key.tid, wait.handle, wait.timeout_ms, WAIT_TIMEOUT
-            ),
-        );
+        let repeated = *previous_wait_timeout == Some((key, wait.handle, wait.timeout_ms));
+        if !repeated {
+            logl::log(
+                level::IMPORTANT,
+                format_args!(
+                    "WC3 WAIT TIMEOUT pid={} tid={} handle=0x{:08x} elapsed_ms={} result=0x{:08x}",
+                    key.pid, key.tid, wait.handle, wait.timeout_ms, WAIT_TIMEOUT
+                ),
+            );
+        }
         *previous_wait_timeout = Some((key, wait.handle, wait.timeout_ms));
     }
     Ok(())

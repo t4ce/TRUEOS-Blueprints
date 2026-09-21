@@ -12,8 +12,14 @@ const WAR3_DIVIDE_TABLE_BASE_SLOT: u32 = 0x0049_ef00;
 const WAR3_DIVIDE_INDEX_SLOT: u32 = 0x0049_c490;
 const WAR3_DIVIDE_STATE_POINTER_SLOT: u32 = 0x0049_dc6c;
 
-fn quiet_war3_divide(exception: ChildException, registers: Registers) -> bool {
-    exception.vector == Some(0) && registers.eip == WAR3_DIVIDE_EXCEPTION_EIP
+fn quiet_war3_exception(exception: ChildException, registers: Registers) -> bool {
+    (exception.vector == Some(0) && registers.eip == WAR3_DIVIDE_EXCEPTION_EIP)
+        || (exception.vector == Some(14)
+            && registers.eip == 0x0045_af51
+            && exception.fault_linear == Some(0)
+            && exception.error.is_some_and(|error| error & 2 != 0))
+        || (exception.vector == Some(1)
+            && matches!(registers.eip, 0x0045_af54 | 0x0045_af5a))
 }
 
 fn child_image_import_at_rva(
@@ -666,7 +672,8 @@ fn begin_child_seh_dispatch(child: &mut PendingChild, guest: &mut GuestContext, 
     let head = u32::from_le_bytes(head);
     if head == u32::MAX { return Err("unhandled-SEH-chain frontier".into()); }
     let registration = read_seh_registration(&child.address_space, head)?;
-    if registration.handler == WAR3_DIVIDE_EXCEPTION_HANDLER && !child.seh_handler_dumped {
+    let quiet = quiet_war3_exception(exception, registers);
+    if !quiet && registration.handler == WAR3_DIVIDE_EXCEPTION_HANDLER && !child.seh_handler_dumped {
         child.seh_handler_dumped = true;
         let mut bytes = [0; 128];
         let readable = child.address_space.read(registration.handler, &mut bytes).ok() == Some(bytes.len());
@@ -717,7 +724,6 @@ fn begin_child_seh_dispatch(child: &mut PendingChild, guest: &mut GuestContext, 
     let frame = [thunk32::CHILD_SEH_RETURN_ADDRESS, record_va, registration.frame, context_va, 0];
     let mut bytes = [0; 20]; for (index, value) in frame.into_iter().enumerate() { bytes[index * 4..index * 4 + 4].copy_from_slice(&value.to_le_bytes()); }
     if child.address_space.write(frame_esp, &bytes).map_err(|error| error.to_string())? != bytes.len() { return Err("short SEH handler frame write".into()); }
-    let quiet = quiet_war3_divide(exception, registers);
     child.seh = Some(ChildSehDispatch { original_registers: registers, registration: registration.frame, next_registration: registration.next, handler: registration.handler, exception_record_va: record_va, context_va, preserved_fs_base: registers.fs_base, depth: 1, quiet });
     let handler_registers = wc3::seh::exception_handler_registers(
         registers,
@@ -4785,44 +4791,40 @@ pub(super) async fn run_loop(
                         let is_single = import.symbol == "WaitForSingleObject";
                         if is_single {
                             let handle = request.handles[0];
-                            if *previous_wait_timeout == Some((request.key, handle, request.timeout))
-                            {
-                                logl::log(
-                                    level::IMPORTANT,
-                                    format_args!(
-                                        "WC3 WAIT LOOP same_handle=0x{:08x} timeout={}",
-                                        handle, request.timeout
-                                    ),
-                                );
-                                return Ok(());
-                            }
+                            let repeated_wait_timeout = *previous_wait_timeout
+                                == Some((request.key, handle, request.timeout));
                             let description = session.describe_handle(request.key.pid, handle);
                             let state = session.event_state(request.key.pid, handle);
-                            logl::log(
-                                level::IMPORTANT,
-                                format_args!(
-                                    "WC3 WaitForSingleObject pid={} tid={} ret=0x{:08x} handle=0x{:08x} timeout={} object={}",
-                                    request.key.pid,
-                                    request.key.tid,
-                                    request.return_address,
-                                    handle,
-                                    request.timeout,
-                                    description
-                                ),
-                            );
-                            if let Some((manual_reset, signaled)) = state {
+                            if !repeated_wait_timeout {
                                 logl::log(
                                     level::IMPORTANT,
                                     format_args!(
-                                        "WC3 WaitForSingleObject state manual_reset={} signaled={}",
-                                        u32::from(manual_reset),
-                                        u32::from(signaled)
+                                        "WC3 WaitForSingleObject pid={} tid={} ret=0x{:08x} handle=0x{:08x} timeout={} object={}",
+                                        request.key.pid,
+                                        request.key.tid,
+                                        request.return_address,
+                                        handle,
+                                        request.timeout,
+                                        description
                                     ),
                                 );
+                                if let Some((manual_reset, signaled)) = state {
+                                    logl::log(
+                                        level::IMPORTANT,
+                                        format_args!(
+                                            "WC3 WaitForSingleObject state manual_reset={} signaled={}",
+                                            u32::from(manual_reset),
+                                            u32::from(signaled)
+                                        ),
+                                    );
+                                }
                             }
                             if let Some(wait_result) =
                                 session.poll_wait(&request).map_err(str::to_owned)?
                             {
+                                if wait_result != WAIT_TIMEOUT {
+                                    *previous_wait_timeout = None;
+                                }
                                 let consumed = state
                                     .map(|(manual_reset, signaled)| signaled && !manual_reset)
                                     .unwrap_or(false);
@@ -4838,7 +4840,7 @@ pub(super) async fn run_loop(
                                             wait_result
                                         ),
                                     );
-                                } else if wait_result == WAIT_TIMEOUT {
+                                } else if wait_result == WAIT_TIMEOUT && !repeated_wait_timeout {
                                     logl::log(
                                         level::IMPORTANT,
                                         format_args!(
@@ -4861,23 +4863,27 @@ pub(super) async fn run_loop(
                                     .context
                                     .set_registers(registers)
                                     .map_err(|error| error.to_string())?;
-                                logl::log(
-                                    level::INFO,
-                                    format_args!(
-                                        "wc3: return #{} KERNEL32.dll!WaitForSingleObject eax=0x{:08x}",
-                                        session.launcher().xp.call_count,
-                                        wait_result
-                                    ),
-                                );
+                                if !repeated_wait_timeout {
+                                    logl::log(
+                                        level::INFO,
+                                        format_args!(
+                                            "wc3: return #{} KERNEL32.dll!WaitForSingleObject eax=0x{:08x}",
+                                            session.launcher().xp.call_count,
+                                            wait_result
+                                        ),
+                                    );
+                                }
                                 continue;
                             }
-                            logl::log(
-                                level::IMPORTANT,
-                                format_args!(
-                                    "WC3 WAIT BLOCK pid={} tid={} handle=0x{:08x} timeout_ms={}",
-                                    request.key.pid, request.key.tid, handle, request.timeout
-                                ),
-                            );
+                            if !repeated_wait_timeout {
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 WAIT BLOCK pid={} tid={} handle=0x{:08x} timeout_ms={}",
+                                        request.key.pid, request.key.tid, handle, request.timeout
+                                    ),
+                                );
+                            }
                         } else {
                             logl::log(
                                 level::IMPORTANT,
@@ -5989,15 +5995,17 @@ pub(super) async fn run_loop(
                     .context
                     .set_registers(registers)
                     .map_err(|error| error.to_string())?;
-                logl::log(
-                    level::INFO,
-                    format_args!(
-                        "wc3: return #{} {}!{} eax=0x{result:08x}",
-                        session.launcher().xp.call_count,
-                        import.module,
-                        import.symbol,
-                    ),
-                );
+                if import.symbol != "PeekMessageA" {
+                    logl::log(
+                        level::INFO,
+                        format_args!(
+                            "wc3: return #{} {}!{} eax=0x{result:08x}",
+                            session.launcher().xp.call_count,
+                            import.module,
+                            import.symbol,
+                        ),
+                    );
+                }
                 if let Some(thread) = session.absorb_runnable_thread() {
                     contexts.push(create_thread_context(&address_space, &thread)?);
                 }
@@ -6016,8 +6024,8 @@ pub(super) async fn run_loop(
                 let scope = child_execution_scope(child).map_err(str::to_owned)?;
                 let exception = decode_child_exception(exit.detail, exit.qualification);
                 let registers = exit.registers;
-                let quiet_divide = quiet_war3_divide(exception, registers);
-                if !quiet_divide {
+                let quiet_exception = quiet_war3_exception(exception, registers);
+                if !quiet_exception {
                 logl::log(
                     level::IMPORTANT,
                     format_args!(
