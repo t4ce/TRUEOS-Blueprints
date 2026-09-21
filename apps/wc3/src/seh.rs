@@ -47,7 +47,5 @@ pub fn encode_page_fault_exception_record(eip: u32, linear: u32, error: u32) -> 
     put(&mut bytes, 24, linear); bytes
 }
 
-#[cfg(test)] mod tests { use super::*;
- #[test] fn context_round_trips_visible_registers() { let r=Registers { eax:1,ebx:2,ecx:3,edx:4,esi:5,edi:6,ebp:7,eip:8,esp:9,eflags:10,fs_base:11,..Registers::default() }; assert_eq!(decode_x86_context(&encode_x86_context(r), 11).unwrap(),r); }
- #[test] fn page_fault_execute_is_access_violation() { let b=encode_page_fault_exception_record(0,0,0x10); assert_eq!(get(&b,0),STATUS_ACCESS_VIOLATION); assert_eq!(get(&b,12),0); assert_eq!(get(&b,16),2); assert_eq!(get(&b,20),8); }
-}
+#[cfg(test)]
+crate::wc3_seh_tests_1!();

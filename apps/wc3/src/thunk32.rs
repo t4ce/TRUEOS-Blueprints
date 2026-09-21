@@ -113,33 +113,4 @@ pub const fn address(import_id: u32) -> Option<u32> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn create_thread_has_real_stdcall_cleanup() {
-        let mut bytes = [0; THUNK_BYTES];
-        write(75, Kind::Stdcall(0x18), &mut bytes).unwrap();
-        assert_eq!(&bytes[8..11], &[0xC2, 0x18, 0]);
-    }
-
-    #[test]
-    fn thread_exit_trampoline_preserves_eax_for_blueprint_exit_state() {
-        let mut page = [0x90; 0x1000];
-        install_thread_exit(&mut page).unwrap();
-        assert_eq!(
-            &page[THREAD_EXIT_OFFSET..THREAD_EXIT_OFFSET + 5],
-            &[0x0f, 0x01, 0xc1, 0x0f, 0x0b]
-        );
-    }
-
-    #[test]
-    fn guest_return_trampoline_is_distinct_from_thread_exit() {
-        let mut page = [0x90; 0x1000];
-        install_guest_return(&mut page).unwrap();
-        assert_eq!(
-            &page[GUEST_RETURN_OFFSET..GUEST_RETURN_OFFSET + 5],
-            &[0x0f, 0x01, 0xc1, 0x0f, 0x0b]
-        );
-        assert_ne!(GUEST_RETURN_ADDRESS, THREAD_EXIT_ADDRESS);
-    }
-}
+crate::wc3_thunk32_tests_1!();

@@ -6,6 +6,11 @@
 //! [`trueos::x86`] address-space/context API; no WC3 operation is exposed by
 //! the kernel.
 
+#[cfg(test)]
+#[macro_use]
+#[path = "test.rs"]
+mod test;
+
 pub mod assets;
 pub mod child_loader;
 pub mod imports;
