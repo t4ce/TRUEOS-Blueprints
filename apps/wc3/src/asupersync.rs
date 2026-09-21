@@ -560,16 +560,29 @@ fn classify_unwind_target(
 
 fn begin_child_seh_dispatch(child: &mut PendingChild, guest: &mut GuestContext, exception: ChildException, registers: Registers) -> Result<(), String> {
     if child.seh.is_some() { return Err("nested-SEH frontier".into()); }
-    if exception.vector != Some(14) { return Err("unsupported-exception-mapping frontier".into()); }
     let mut head = [0; 4];
     if child.address_space.read(registers.fs_base, &mut head).map_err(|error| error.to_string())? != 4 { return Err("short SEH chain head read".into()); }
     let head = u32::from_le_bytes(head);
     if head == u32::MAX { return Err("unhandled-SEH-chain frontier".into()); }
     let registration = read_seh_registration(&child.address_space, head)?;
-    let linear = exception.fault_linear.ok_or("page fault linear address")?;
-    let error = exception.error.ok_or("page fault error")?;
     let context = wc3::seh::encode_x86_context(registers);
-    let record = wc3::seh::encode_page_fault_exception_record(registers.eip, linear, error);
+    let (record, exception_code, exception_kind) = match exception.vector {
+        Some(14) => {
+            let linear = exception.fault_linear.ok_or("page fault linear address")?;
+            let error = exception.error.ok_or("page fault error")?;
+            (
+                wc3::seh::encode_page_fault_exception_record(registers.eip, linear, error),
+                wc3::seh::STATUS_ACCESS_VIOLATION,
+                if error & 0x10 != 0 { "execute" } else if error & 2 != 0 { "write" } else { "read" },
+            )
+        }
+        Some(1) => (
+            wc3::seh::encode_single_step_exception_record(registers.eip),
+            wc3::seh::STATUS_SINGLE_STEP,
+            "single-step",
+        ),
+        _ => return Err("unsupported-exception-mapping frontier".into()),
+    };
     let context_va = registers.esp.checked_sub(wc3::seh::X86_CONTEXT_BYTES as u32).ok_or("SEH context stack underflow")? & !15;
     let record_va = context_va.checked_sub(wc3::seh::EXCEPTION_RECORD_BYTES as u32).ok_or("SEH record stack underflow")?;
     let frame_esp = record_va.checked_sub(20).ok_or("SEH call stack underflow")?;
@@ -583,7 +596,7 @@ fn begin_child_seh_dispatch(child: &mut PendingChild, guest: &mut GuestContext, 
     let mut handler_registers = registers; handler_registers.eip = registration.handler; handler_registers.esp = frame_esp;
     guest.context.set_registers(handler_registers).map_err(|error| error.to_string())?;
     let (owner, rva) = child_pc_owner(child, registration.handler).unwrap_or(("unknown", 0));
-    logl::log(level::IMPORTANT, format_args!("WC3 CHILD SEH DISPATCH pid={} tid={} registration=0x{:08x} next=0x{:08x} handler=0x{:08x} handler_owner={:?} handler_rva=0x{:08x} exception=0xc0000005 address=0x{:08x} access={}", child.pid, child.tid, registration.frame, registration.next, registration.handler, owner, rva, registers.eip, if error & 0x10 != 0 { "execute" } else if error & 2 != 0 { "write" } else { "read" }));
+    logl::log(level::IMPORTANT, format_args!("WC3 CHILD SEH DISPATCH pid={} tid={} registration=0x{:08x} next=0x{:08x} handler=0x{:08x} handler_owner={:?} handler_rva=0x{:08x} exception=0x{:08x} address=0x{:08x} kind={}", child.pid, child.tid, registration.frame, registration.next, registration.handler, owner, rva, exception_code, registers.eip, exception_kind));
     Ok(())
 }
 

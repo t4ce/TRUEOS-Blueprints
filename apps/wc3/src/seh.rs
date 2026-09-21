@@ -1,6 +1,7 @@
 use trueos::x86::Registers;
 
 pub const STATUS_ACCESS_VIOLATION: u32 = 0xc000_0005;
+pub const STATUS_SINGLE_STEP: u32 = 0x8000_0004;
 pub const DISPOSITION_CONTINUE_EXECUTION: u32 = 0;
 pub const DISPOSITION_CONTINUE_SEARCH: u32 = 1;
 pub const DISPOSITION_NESTED_EXCEPTION: u32 = 2;
@@ -47,5 +48,27 @@ pub fn encode_page_fault_exception_record(eip: u32, linear: u32, error: u32) -> 
     put(&mut bytes, 24, linear); bytes
 }
 
+pub fn encode_single_step_exception_record(eip: u32) -> [u8; EXCEPTION_RECORD_BYTES] {
+    let mut bytes = [0; EXCEPTION_RECORD_BYTES];
+    put(&mut bytes, 0, STATUS_SINGLE_STEP);
+    put(&mut bytes, 12, eip);
+    bytes
+}
+
 #[cfg(test)]
 crate::wc3_seh_tests_1!();
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn single_step_record_has_no_parameters_or_unwind_flags() {
+        let record = encode_single_step_exception_record(0x0046_1449);
+        assert_eq!(u32::from_le_bytes(record[0..4].try_into().unwrap()), STATUS_SINGLE_STEP);
+        assert_eq!(u32::from_le_bytes(record[4..8].try_into().unwrap()), 0);
+        assert_eq!(u32::from_le_bytes(record[8..12].try_into().unwrap()), 0);
+        assert_eq!(u32::from_le_bytes(record[12..16].try_into().unwrap()), 0x0046_1449);
+        assert_eq!(u32::from_le_bytes(record[16..20].try_into().unwrap()), 0);
+    }
+}
