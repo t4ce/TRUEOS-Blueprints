@@ -698,7 +698,7 @@ fn begin_child_seh_dispatch(child: &mut PendingChild, guest: &mut GuestContext, 
             ),
         );
     }
-    let context = wc3::seh::encode_x86_context(registers);
+    let context = wc3::seh::encode_x86_context(registers, exception.debug_status);
     let (record, exception_code, exception_kind) = match exception.vector {
         Some(14) => {
             let linear = exception.fault_linear.ok_or("page fault linear address")?;

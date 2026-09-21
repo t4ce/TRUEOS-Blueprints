@@ -2034,6 +2034,7 @@ struct ChildException {
     error_valid: Option<bool>,
     error: Option<u32>,
     fault_linear: Option<u32>,
+    debug_status: Option<u32>,
     name: &'static str,
 }
 
@@ -2048,6 +2049,7 @@ fn decode_child_exception(detail: u32, qualification: u64) -> ChildException {
         error_valid,
         error: error_valid.unwrap_or(false).then_some(qualification as u32),
         fault_linear: (valid && vector == Some(14)).then_some((qualification >> 32) as u32),
+        debug_status: (valid && vector == Some(1)).then_some(qualification as u32),
         name: vector
             .map(child_exception_name)
             .unwrap_or("invalid-interruption-info"),

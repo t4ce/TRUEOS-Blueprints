@@ -10,8 +10,10 @@ pub const DISPOSITION_COLLIDED_UNWIND: u32 = 3;
 pub const X86_CONTEXT_BYTES: usize = 716;
 pub const EXCEPTION_RECORD_BYTES: usize = 80;
 pub const X86_CONTEXT_FULL: u32 = 0x0001_0007;
+pub const X86_CONTEXT_DEBUG_REGISTERS: u32 = 0x0001_0010;
 pub const X86_EFLAGS_TF: u32 = 1 << 8;
 
+const DR6: usize = 20;
 const EDI: usize = 156;
 const ESI: usize = 160;
 const EBX: usize = 164;
@@ -27,9 +29,16 @@ const ESP: usize = 196;
 fn put(bytes: &mut [u8], offset: usize, value: u32) { bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes()); }
 fn get(bytes: &[u8], offset: usize) -> u32 { u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap()) }
 
-pub fn encode_x86_context(registers: Registers) -> [u8; X86_CONTEXT_BYTES] {
+pub fn encode_x86_context(registers: Registers, dr6: Option<u32>) -> [u8; X86_CONTEXT_BYTES] {
     let mut bytes = [0; X86_CONTEXT_BYTES];
-    put(&mut bytes, 0, X86_CONTEXT_FULL);
+    let mut flags = X86_CONTEXT_FULL;
+    if dr6.is_some() {
+        flags |= X86_CONTEXT_DEBUG_REGISTERS;
+    }
+    put(&mut bytes, 0, flags);
+    if let Some(dr6) = dr6 {
+        put(&mut bytes, DR6, dr6);
+    }
     put(&mut bytes, EDI, registers.edi); put(&mut bytes, ESI, registers.esi);
     put(&mut bytes, EBX, registers.ebx); put(&mut bytes, EDX, registers.edx);
     put(&mut bytes, ECX, registers.ecx); put(&mut bytes, EAX, registers.eax);
@@ -119,7 +128,7 @@ mod tests {
             fs_base: 0x0020_3000,
             ..Registers::default()
         };
-        let saved_context = encode_x86_context(interrupted);
+        let saved_context = encode_x86_context(interrupted, None);
         let saved_registers = decode_x86_context(&saved_context, interrupted.fs_base).unwrap();
         let handler_registers =
             exception_handler_registers(interrupted, 0x0045_a0c0, 0x043f_fc00);
@@ -127,5 +136,12 @@ mod tests {
         assert_eq!(saved_registers.eflags & X86_EFLAGS_TF, X86_EFLAGS_TF);
         assert_eq!(handler_registers.eflags & X86_EFLAGS_TF, 0);
         assert_eq!(handler_registers.eflags, 0x0000_0006);
+    }
+
+    #[test]
+    fn debug_context_carries_dr6() {
+        let context = encode_x86_context(Registers::default(), Some(0x4001));
+        assert_eq!(get(&context, 0) & X86_CONTEXT_DEBUG_REGISTERS, X86_CONTEXT_DEBUG_REGISTERS);
+        assert_eq!(get(&context, DR6), 0x4001);
     }
 }

@@ -496,6 +496,13 @@ mod tests_main_1 {
     }
 
     #[test]
+    fn child_debug_exception_carries_qualification_as_debug_status() {
+        let exception = decode_child_exception((1 << 31) | 1, 0x0000_4001);
+        assert_eq!(exception.vector, Some(1));
+        assert_eq!(exception.debug_status, Some(0x0000_4001));
+    }
+
+    #[test]
     fn child_exception_diagnostic_decodes_page_fault_and_rejects_invalid_info() {
         let exception = decode_child_exception((1 << 31) | (1 << 11) | 14, (1u64 << 32) | 2);
         assert_eq!(exception.vector, Some(14));
@@ -4275,7 +4282,7 @@ mod tests_assets_1 {
 macro_rules! wc3_seh_tests_1 {
     () => {
 #[cfg(test)] mod tests_seh_1 { use super::*;
- #[test] fn context_round_trips_visible_registers() { let r=Registers { eax:1,ebx:2,ecx:3,edx:4,esi:5,edi:6,ebp:7,eip:8,esp:9,eflags:10,fs_base:11,..Registers::default() }; assert_eq!(decode_x86_context(&encode_x86_context(r), 11).unwrap(),r); }
+ #[test] fn context_round_trips_visible_registers() { let r=Registers { eax:1,ebx:2,ecx:3,edx:4,esi:5,edi:6,ebp:7,eip:8,esp:9,eflags:10,fs_base:11,..Registers::default() }; assert_eq!(decode_x86_context(&encode_x86_context(r, None), 11).unwrap(),r); }
  #[test] fn page_fault_execute_is_access_violation() { let b=encode_page_fault_exception_record(0,0,0x10); assert_eq!(get(&b,0),STATUS_ACCESS_VIOLATION); assert_eq!(get(&b,12),0); assert_eq!(get(&b,16),2); assert_eq!(get(&b,20),8); }
 }
     };
