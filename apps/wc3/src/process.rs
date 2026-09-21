@@ -1714,6 +1714,7 @@ impl XpProcess {
             }
             WinCall::DefWindowProcA => self.def_window_proc(esp, memory),
             WinCall::DrawTextA => return self.draw_text_a(esp, memory),
+            WinCall::MessageBoxA => return Err("MessageBoxA requires runtime modal dispatch"),
             WinCall::BeginPaint => {
                 let [_, hwnd, paint_struct] = arguments::<3>(memory, esp)?;
                 return Ok(PersonalityAction::Session(SessionRequest::BeginPaint {

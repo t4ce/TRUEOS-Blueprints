@@ -44,6 +44,7 @@ pub enum WinCall {
     BeginPaint,
     EndPaint,
     DrawTextA,
+    MessageBoxA,
     LoadStringA,
     LoadImageA,
     GetObjectA,
@@ -121,6 +122,7 @@ impl WinCall {
             "BeginPaint" if user => Self::BeginPaint,
             "EndPaint" if user => Self::EndPaint,
             "DrawTextA" if user => Self::DrawTextA,
+            "MessageBoxA" if user => Self::MessageBoxA,
             "LoadStringA" if user => Self::LoadStringA,
             "LoadImageA" if user => Self::LoadImageA,
             "GetObjectA" if import.module.eq_ignore_ascii_case("GDI32.dll") => Self::GetObjectA,
@@ -232,6 +234,7 @@ impl WinCall {
             Self::DefWindowProcA => Kind::Stdcall(16),
             Self::BeginPaint | Self::EndPaint => Kind::Stdcall(8),
             Self::DrawTextA => Kind::Stdcall(20),
+            Self::MessageBoxA => Kind::Stdcall(16),
             Self::PeekMessageA => Kind::Stdcall(20),
             Self::CreateThread | Self::LCMapStringW | Self::MultiByteToWideChar => {
                 Kind::Stdcall(24)
@@ -274,3 +277,24 @@ pub fn patch(
 
 #[cfg(test)]
 crate::wc3_imports_tests_1!();
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn message_box_a_is_a_user32_stdcall_sixteen_import() {
+        let import = LauncherImport {
+            id: 0,
+            module: "USER32.dll".into(),
+            symbol: "MessageBoxA".into(),
+            iat_rva: 0,
+        };
+
+        assert_eq!(WinCall::from_import(&import), WinCall::MessageBoxA);
+        assert_eq!(WinCall::MessageBoxA.thunk_kind(), Kind::Stdcall(16));
+        let mut bytes = [0; thunk32::THUNK_BYTES];
+        thunk32::write(0, WinCall::MessageBoxA.thunk_kind(), &mut bytes).unwrap();
+        assert_eq!(&bytes[8..11], &[0xc2, 16, 0]);
+    }
+}

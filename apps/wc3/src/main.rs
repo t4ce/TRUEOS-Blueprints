@@ -53,6 +53,9 @@ const INFINITE: u32 = u32::MAX;
 const WC3_REGISTRY_IMAGE_PATH: &[u8] = b"/common/Warcraft III/ok.reg";
 const CHILD_IMAGE_ENTRY_HEADROOM: u32 = 0x100;
 const CHILD_IMAGE_ENTRY_CALLER_BYTES: usize = 0x40;
+const MESSAGE_BOX_WIDTH: u32 = 560;
+const MESSAGE_BOX_HEIGHT: u32 = 280;
+const MESSAGE_BOX_MAX_ANSI_BYTES: usize = 4096;
 
 fn main() {
     let runtime = match tokio::runtime::Builder::new_current_thread()
@@ -250,6 +253,7 @@ async fn run() -> Result<(), String> {
     let mut wait_deadlines: HashMap<ThreadKey, RuntimeWait> = HashMap::new();
     let mut previous_wait_timeout: Option<(ThreadKey, u32, u32)> = None;
     let mut child_get_command_line_logged = false;
+    let mut active_message_box = None;
     let mut active = 0usize;
     asupersync::run_loop(
         &address_space,
@@ -265,6 +269,7 @@ async fn run() -> Result<(), String> {
         &mut wait_deadlines,
         &mut previous_wait_timeout,
         &mut child_get_command_line_logged,
+        &mut active_message_box,
         active,
     )
     .await
@@ -571,6 +576,154 @@ struct GuestContext {
     preemption_count: u64,
     last_preemption_page: u32,
     same_page_preemptions: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PendingMessageBox {
+    caller: ThreadKey,
+    owner_hwnd: u32,
+    text: String,
+    caption: String,
+    style: u32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct MessageBoxButton {
+    label: &'static str,
+    id: u32,
+}
+
+struct ActiveMessageBox {
+    request: PendingMessageBox,
+    frame: Frame,
+    buttons: Vec<MessageBoxButton>,
+}
+
+fn message_box_buttons(style: u32) -> Option<Vec<MessageBoxButton>> {
+    let button = |label, id| MessageBoxButton { label, id };
+    Some(match style & 0x0f {
+        0 => vec![button("OK", 1)],
+        1 => vec![button("OK", 1), button("Cancel", 2)],
+        2 => vec![button("Abort", 3), button("Retry", 4), button("Ignore", 5)],
+        3 => vec![button("Yes", 6), button("No", 7), button("Cancel", 2)],
+        4 => vec![button("Yes", 6), button("No", 7)],
+        5 => vec![button("Retry", 4), button("Cancel", 2)],
+        6 => vec![button("Cancel", 2), button("Try Again", 10), button("Continue", 11)],
+        _ => return None,
+    })
+}
+
+fn copy_message_box_ansi(memory: &impl GuestMemory, address: u32) -> Result<String, String> {
+    if address == 0 {
+        return Ok(String::new());
+    }
+    let mut bytes = Vec::new();
+    for offset in 0..MESSAGE_BOX_MAX_ANSI_BYTES {
+        let current = address
+            .checked_add(u32::try_from(offset).map_err(|_| "MessageBoxA string offset")?)
+            .ok_or_else(|| "MessageBoxA string address overflow".to_owned())?;
+        let mut byte = [0];
+        memory.read(current, &mut byte).map_err(str::to_owned)?;
+        if byte[0] == 0 {
+            return Ok(diagnostic_cp1252(&bytes));
+        }
+        bytes.push(byte[0]);
+    }
+    Err("MessageBoxA ANSI string exceeds bounded copy".into())
+}
+
+fn message_box_lines(text: &str) -> Vec<String> {
+    let mut lines = Vec::new();
+    for source_line in text.split('\n') {
+        let characters: Vec<_> = source_line.chars().collect();
+        if characters.is_empty() {
+            lines.push(String::new());
+        } else {
+            for chunk in characters.chunks(58) {
+                lines.push(chunk.iter().collect());
+            }
+        }
+    }
+    lines
+}
+
+fn open_message_box(
+    request: PendingMessageBox,
+    buttons: Vec<MessageBoxButton>,
+) -> Result<ActiveMessageBox, String> {
+    let mut frame = Frame::open(180, 140, MESSAGE_BOX_WIDTH, MESSAGE_BOX_HEIGHT)
+        .map_err(|error| format!("create MessageBoxA UI4 frame: {error:?}"))?;
+    frame
+        .begin(rgba(28, 32, 42, 255))
+        .map_err(|error| format!("begin MessageBoxA UI4 frame: {error:?}"))?;
+    let caption = SceneTextRow {
+        text: request.caption.as_str(),
+        x: 20.0,
+        y: 18.0,
+        font_pixels: 22.0,
+    };
+    frame
+        .stamp_text_scene(
+            Font::Default,
+            (frame.width(), frame.height()),
+            rgba(255, 255, 255, 255),
+            core::slice::from_ref(&caption),
+        )
+        .map_err(|error| format!("stamp MessageBoxA caption: {error:?}"))?;
+    let lines = message_box_lines(&request.text);
+    let rows: Vec<_> = lines
+        .iter()
+        .enumerate()
+        .map(|(index, text)| SceneTextRow {
+            text: text.as_str(),
+            x: 20.0,
+            y: 62.0 + index as f32 * 19.0,
+            font_pixels: 16.0,
+        })
+        .collect();
+    frame
+        .stamp_text_scene(
+            Font::Default,
+            (frame.width(), frame.height()),
+            rgba(232, 232, 232, 255),
+            &rows,
+        )
+        .map_err(|error| format!("stamp MessageBoxA text: {error:?}"))?;
+    let labels = buttons
+        .iter()
+        .map(|button| format!("[ {} ]", button.label))
+        .collect::<Vec<_>>()
+        .join("    ");
+    let button_row = SceneTextRow {
+        text: labels.as_str(),
+        x: 20.0,
+        y: 238.0,
+        font_pixels: 18.0,
+    };
+    frame
+        .stamp_text_scene(
+            Font::Default,
+            (frame.width(), frame.height()),
+            rgba(180, 220, 255, 255),
+            core::slice::from_ref(&button_row),
+        )
+        .map_err(|error| format!("stamp MessageBoxA buttons: {error:?}"))?;
+    let damage = Damage::full(frame.width(), frame.height());
+    loop {
+        match frame.publish(damage) {
+            Ok(()) => break,
+            Err(ui4_scene::Error::Busy) => {
+                trueos::vsys::poll_once();
+                trueos::vsys::sleep_ms(1);
+            }
+            Err(error) => return Err(format!("publish MessageBoxA UI4 frame: {error:?}")),
+        }
+    }
+    Ok(ActiveMessageBox {
+        request,
+        frame,
+        buttons,
+    })
 }
 
 impl GuestContext {

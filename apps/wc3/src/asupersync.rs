@@ -611,9 +611,25 @@ pub(super) async fn run_loop(
     mut wait_deadlines: &mut HashMap<ThreadKey, RuntimeWait>,
     mut previous_wait_timeout: &mut Option<(ThreadKey, u32, u32)>,
     child_get_command_line_logged: &mut bool,
+    active_message_box: &mut Option<ActiveMessageBox>,
     mut active: usize,
 ) -> Result<(), String> {
     loop {
+        if let Some(modal) = active_message_box.as_mut() {
+            if modal.request.caller.pid != LAUNCHER_PID || modal.buttons.is_empty() {
+                return Err("invalid active MessageBoxA modal state".into());
+            }
+            while modal
+                .frame
+                .take_pointer_event()
+                .map_err(|error| format!("poll MessageBoxA pointer event: {error:?}"))?
+                .is_some()
+            {}
+            trueos::vsys::poll_once();
+            tokio::task::yield_now().await;
+            trueos::vsys::sleep_ms(8);
+            continue;
+        }
         let exit = if contexts[active].started {
             contexts[active].context.resume().await
         } else {
@@ -3281,6 +3297,44 @@ pub(super) async fn run_loop(
                             raw[6]
                         ),
                     );
+                }
+                if call_kind == WinCall::MessageBoxA {
+                    if active_message_box.is_some() {
+                        return Err("nested MessageBoxA modal frontier".into());
+                    }
+                    let frame = read_guest_words(&memory, exit.registers.esp, 5)?;
+                    let text = copy_message_box_ansi(&memory, frame[2])?;
+                    let caption = copy_message_box_ansi(&memory, frame[3])?;
+                    let buttons = message_box_buttons(frame[4]).ok_or_else(|| {
+                        format!("MessageBoxA unsupported button type=0x{:x}", frame[4] & 0x0f)
+                    })?;
+                    let request = PendingMessageBox {
+                        caller: active_key,
+                        owner_hwnd: frame[1],
+                        text,
+                        caption,
+                        style: frame[4],
+                    };
+                    logl::log(
+                        level::IMPORTANT,
+                        format_args!(
+                            "WC3 MESSAGEBOXA OPEN pid={} tid={} owner=0x{:08x} text={:?} caption={:?} type=0x{:08x} buttons=[{}] topmost={} state=modal-blocked",
+                            request.caller.pid,
+                            request.caller.tid,
+                            request.owner_hwnd,
+                            request.text,
+                            request.caption,
+                            request.style,
+                            buttons
+                                .iter()
+                                .map(|button| button.label)
+                                .collect::<Vec<_>>()
+                                .join(","),
+                            u32::from(request.style & 0x0004_0000 != 0),
+                        ),
+                    );
+                    *active_message_box = Some(open_message_box(request, buttons)?);
+                    continue;
                 }
                 if WinCall::from_import(&import) == WinCall::Unsupported {
                     logl::log(
