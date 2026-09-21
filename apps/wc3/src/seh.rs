@@ -14,6 +14,8 @@ pub const X86_CONTEXT_DEBUG_REGISTERS: u32 = 0x0001_0010;
 pub const X86_EFLAGS_TF: u32 = 1 << 8;
 
 const DR6: usize = 20;
+const DR7: usize = 24;
+const X86_DEFAULT_DR7: u32 = 0x0000_0400;
 const EDI: usize = 156;
 const ESI: usize = 160;
 const EBX: usize = 164;
@@ -38,6 +40,7 @@ pub fn encode_x86_context(registers: Registers, dr6: Option<u32>) -> [u8; X86_CO
     put(&mut bytes, 0, flags);
     if let Some(dr6) = dr6 {
         put(&mut bytes, DR6, dr6);
+        put(&mut bytes, DR7, X86_DEFAULT_DR7);
     }
     put(&mut bytes, EDI, registers.edi); put(&mut bytes, ESI, registers.esi);
     put(&mut bytes, EBX, registers.ebx); put(&mut bytes, EDX, registers.edx);
@@ -139,9 +142,10 @@ mod tests {
     }
 
     #[test]
-    fn debug_context_carries_dr6() {
-        let context = encode_x86_context(Registers::default(), Some(0x4001));
+    fn debug_context_carries_guest_debug_state() {
+        let context = encode_x86_context(Registers::default(), Some(0x4000));
         assert_eq!(get(&context, 0) & X86_CONTEXT_DEBUG_REGISTERS, X86_CONTEXT_DEBUG_REGISTERS);
-        assert_eq!(get(&context, DR6), 0x4001);
+        assert_eq!(get(&context, DR6), 0x4000);
+        assert_eq!(get(&context, DR7), X86_DEFAULT_DR7);
     }
 }

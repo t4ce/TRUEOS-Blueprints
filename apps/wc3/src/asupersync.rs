@@ -1057,6 +1057,25 @@ pub(super) async fn run_loop(
                         let mut bytes = [0; wc3::seh::X86_CONTEXT_BYTES];
                         if child.address_space.read(seh.context_va, &mut bytes).map_err(|error| error.to_string())? != bytes.len() { return Err("short SEH context readback".into()); }
                         let restored = wc3::seh::decode_x86_context(&bytes, seh.preserved_fs_base).map_err(str::to_owned)?;
+                        if matches!(seh.original_registers.eip, 0x0045_af54 | 0x0045_af5a) {
+                            let stage = child_read_u8(child, 0x0049_a590);
+                            let source = child_read_u32(child, 0x0049_a594);
+                            let checksum = child_read_u8(child, 0x0049_a598);
+                            let dr6 = u32::from_le_bytes(bytes[20..24].try_into().unwrap());
+                            let dr7 = u32::from_le_bytes(bytes[24..28].try_into().unwrap());
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD DB HANDLER STATE eip=0x{:08x} stage={:?} source={:?} checksum={:?} context_dr6=0x{:08x} context_dr7=0x{:08x}",
+                                    seh.original_registers.eip,
+                                    stage,
+                                    source,
+                                    checksum,
+                                    dr6,
+                                    dr7,
+                                ),
+                            );
+                        }
                         if !seh.quiet {
                             let raw_ecx = u32::from_le_bytes(
                                 bytes[wc3::seh::ECX_OFFSET..wc3::seh::ECX_OFFSET + 4]
