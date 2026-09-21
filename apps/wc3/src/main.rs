@@ -1941,6 +1941,7 @@ fn log_child_handles(session: &Wc3Session, pid: u32) {
     for (handle, entry) in handles {
         let kind = match session.objects.get(&entry.object) {
             Some(SessionObject::Event(_)) => "event",
+            Some(SessionObject::Mutex(_)) => "mutex",
             Some(SessionObject::Process(_)) => "process",
             Some(SessionObject::Thread(_)) => "thread",
             None => "unknown",

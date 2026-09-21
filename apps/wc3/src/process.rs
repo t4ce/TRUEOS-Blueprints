@@ -14,7 +14,7 @@ use crate::{
     imports::{LauncherImport, WinCall},
     pe32,
     session::{
-        CreateEventRequest, CreateProcessRequest, CreateWindowRequest, GetExitCodeProcessRequest,
+        CreateEventRequest, CreateMutexRequest, CreateProcessRequest, CreateWindowRequest, GetExitCodeProcessRequest,
         LoadImageRequest, PersonalityAction, SessionRequest, ThreadKey, WaitRequest,
         WindowBlitRequest, WindowTextRequest,
     },
@@ -1225,6 +1225,10 @@ impl XpProcess {
                     .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(pid))
             }
+            ProviderOp::GetLastError => {
+                self.call_count = self.call_count.checked_add(1).ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(self.last_error))
+            }
             ProviderOp::GetWindowsDirectoryA => {
                 self.call_count = self
                     .call_count
@@ -1287,6 +1291,60 @@ impl XpProcess {
         let operation = provider_op(&provider);
         if operation.is_generic_process_local() {
             return self.dispatch_process_local_provider(pid, operation, esp, memory);
+        }
+        let action = match operation {
+            ProviderOp::CreateMutexA => {
+                let [_, attributes, initial_owner, name] = arguments::<4>(memory, esp)?;
+                let inheritable = if attributes == 0 {
+                    false
+                } else {
+                    let [length, descriptor, inherit] = arguments::<3>(memory, attributes)?;
+                    if length != 12 {
+                        self.set_last_error(87);
+                        return Ok(PersonalityAction::Return(0));
+                    }
+                    if descriptor != 0 {
+                        return Err(ProviderDispatchError::Frontier {
+                            api: "CreateMutexA",
+                            detail: "non-default security descriptor".into(),
+                        });
+                    }
+                    inherit != 0
+                };
+                Some(PersonalityAction::Session(SessionRequest::CreateMutex {
+                    key: ThreadKey { pid, tid },
+                    request: CreateMutexRequest {
+                        name: if name == 0 { None } else { Some(read_c_string(memory, name, 260)?) },
+                        initial_owner: initial_owner != 0,
+                        inheritable,
+                    },
+                }))
+            }
+            ProviderOp::ReleaseMutex => Some(PersonalityAction::Session(SessionRequest::ReleaseMutex {
+                key: ThreadKey { pid, tid },
+                handle: arguments::<2>(memory, esp)?[1],
+            })),
+            ProviderOp::CloseHandle => Some(PersonalityAction::Session(SessionRequest::CloseHandle {
+                pid,
+                handle: arguments::<2>(memory, esp)?[1],
+            })),
+            ProviderOp::WaitForSingleObject => {
+                let [return_address, handle, timeout] = arguments::<3>(memory, esp)?;
+                Some(PersonalityAction::Block(WaitRequest {
+                    key: ThreadKey { pid, tid },
+                    return_address,
+                    count: 1,
+                    handles_pointer: 0,
+                    handles: [handle, 0],
+                    wait_all: 0,
+                    timeout,
+                }))
+            }
+            _ => None,
+        };
+        if let Some(action) = action {
+            self.call_count = self.call_count.checked_add(1).ok_or("call count overflow")?;
+            return Ok(action);
         }
         match (&provider.module[..], &provider.symbol) {
             (module, ProviderSymbol::Name(symbol))

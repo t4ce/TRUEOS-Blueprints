@@ -38,6 +38,11 @@ pub enum ProviderOp {
     GetProcAddress,
     GetCurrentProcess,
     GetCurrentProcessId,
+    GetLastError,
+    CreateMutexA,
+    ReleaseMutex,
+    CloseHandle,
+    WaitForSingleObject,
     GetWindowsDirectoryA,
     GetSystemDirectoryA,
     QueryPerformanceFrequency,
@@ -86,16 +91,19 @@ impl ProviderOp {
             | Self::GetFileType
             | Self::SetHandleCount
             | Self::SetLastError
+            | Self::ReleaseMutex
+            | Self::CloseHandle
             | Self::GetModuleHandleA
             | Self::LoadLibraryA
             | Self::QueryPerformanceFrequency
             | Self::QueryPerformanceCounter => 4,
             Self::GetCPInfo | Self::GetWindowsDirectoryA | Self::GetSystemDirectoryA => 8,
-            Self::GetProcAddress => 8,
+            Self::GetProcAddress | Self::WaitForSingleObject => 8,
             Self::GetStringTypeW | Self::RtlUnwind | Self::VirtualAlloc => 16,
             Self::MultiByteToWideChar | Self::LCMapStringW => 24,
             Self::WideCharToMultiByte => 32,
-            Self::GetModuleFileNameA | Self::HeapCreate | Self::HeapAlloc | Self::HeapFree => 12,
+            Self::GetModuleFileNameA | Self::HeapCreate | Self::HeapAlloc | Self::HeapFree
+            | Self::CreateMutexA => 12,
             Self::RegOpenKeyExA => 20,
             _ => 0,
         }
@@ -118,6 +126,7 @@ impl ProviderOp {
                 | Self::GetModuleHandleA
                 | Self::GetCurrentProcess
                 | Self::GetCurrentProcessId
+                | Self::GetLastError
                 | Self::GetWindowsDirectoryA
                 | Self::GetSystemDirectoryA
                 | Self::QueryPerformanceFrequency
@@ -151,6 +160,11 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "GetProcAddress" => ProviderOp::GetProcAddress,
             "GetCurrentProcess" => ProviderOp::GetCurrentProcess,
             "GetCurrentProcessId" => ProviderOp::GetCurrentProcessId,
+            "GetLastError" => ProviderOp::GetLastError,
+            "CreateMutexA" => ProviderOp::CreateMutexA,
+            "ReleaseMutex" => ProviderOp::ReleaseMutex,
+            "CloseHandle" => ProviderOp::CloseHandle,
+            "WaitForSingleObject" => ProviderOp::WaitForSingleObject,
             "GetWindowsDirectoryA" => ProviderOp::GetWindowsDirectoryA,
             "GetSystemDirectoryA" => ProviderOp::GetSystemDirectoryA,
             "QueryPerformanceFrequency" => ProviderOp::QueryPerformanceFrequency,

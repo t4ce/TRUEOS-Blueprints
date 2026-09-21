@@ -3427,6 +3427,71 @@ mod tests_process_1 {
     }
 
     #[test]
+    fn child_mutex_providers_decode_real_stdcall_frames_and_last_error() {
+        let providers = ["CreateMutexA", "ReleaseMutex", "CloseHandle", "WaitForSingleObject", "GetLastError"]
+            .map(|symbol| ProviderImport {
+                module: "KERNEL32.dll".into(),
+                symbol: ProviderSymbol::Name(symbol.into()),
+                iat_rva: 0,
+            });
+        let mut xp = XpProcess::new_child();
+        let (addresses, _, _, _, bytes) = xp.append_provider_imports(providers.to_vec()).unwrap();
+        for (id, cleanup) in [12, 4, 4, 8, 0].into_iter().enumerate() {
+            assert_eq!(xp.provider_export_address("kernel32.dll", &providers[id].symbol), Some(addresses[id]));
+            let tail = &bytes[id * thunk32::THUNK_BYTES + 8..];
+            if cleanup == 0 {
+                assert_eq!(tail[0], 0xc3);
+            } else {
+                assert_eq!(&tail[..3], &[0xc2, cleanup, 0]);
+            }
+        }
+        let mut memory = Memory { base: STACK_BASE, bytes: vec![0; STACK_BYTES] };
+        let esp = STACK_TOP - 0x40;
+        let name = STACK_TOP - 0x100;
+        let attributes = STACK_TOP - 0x200;
+        memory.write(name, b"CMS32_MUTEX\0").unwrap();
+        for (offset, value) in [0x0046_134e, attributes, 1, name].into_iter().enumerate() {
+            write_u32(&mut memory, esp + offset as u32 * 4, value).unwrap();
+        }
+        for (offset, value) in [12, 0, 1].into_iter().enumerate() {
+            write_u32(&mut memory, attributes + offset as u32 * 4, value).unwrap();
+        }
+        let key = ThreadKey { pid: 2, tid: 3 };
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Session(SessionRequest::CreateMutex {
+                key,
+                request: CreateMutexRequest { name: Some("CMS32_MUTEX".into()), initial_owner: true, inheritable: true },
+            }))
+        );
+        write_u32(&mut memory, esp + 4, 0x5743_2001).unwrap();
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 1, esp, &mut memory),
+            Ok(PersonalityAction::Session(SessionRequest::ReleaseMutex { key, handle: 0x5743_2001 }))
+        );
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 2, esp, &mut memory),
+            Ok(PersonalityAction::Session(SessionRequest::CloseHandle { pid: 2, handle: 0x5743_2001 }))
+        );
+        write_u32(&mut memory, esp, 0x0046_1457).unwrap();
+        write_u32(&mut memory, esp + 8, u32::MAX).unwrap();
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 3, esp, &mut memory),
+            Ok(PersonalityAction::Block(WaitRequest {
+                key, return_address: 0x0046_1457, count: 1, handles_pointer: 0,
+                handles: [0x5743_2001, 0], wait_all: 0, timeout: u32::MAX,
+            }))
+        );
+        xp.set_last_error(183);
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 4, esp, &mut memory),
+            Ok(PersonalityAction::Return(183))
+        );
+        assert_eq!(xp.last_error, 183);
+        assert_eq!(xp.call_count, 5);
+    }
+
+    #[test]
     fn child_get_module_handle_a_resolves_native_module_aliases() {
         let provider = ProviderImport {
             module: "KERNEL32.dll".into(),
@@ -4809,6 +4874,91 @@ mod tests_session_1 {
             session.event_state(LAUNCHER_PID, manual),
             Some((true, true))
         );
+    }
+
+    fn mutex_request(name: &str, initial_owner: bool) -> CreateMutexRequest {
+        CreateMutexRequest { name: Some(name.into()), initial_owner, inheritable: false }
+    }
+
+    #[test]
+    fn named_mutex_initial_owner_recursion_and_cross_process_wait() {
+        let mut session = Wc3Session::new(XpProcess::new(Vec::new()));
+        let owner = ThreadKey { pid: 1, tid: 1 };
+        let child = session.create_child();
+        let waiter = ThreadKey { pid: child.pid, tid: child.tid };
+        let (first, existing) = session.create_mutex(owner, mutex_request("CMS32_MUTEX", true)).unwrap();
+        assert!(!existing);
+        let (second, existing) = session.create_mutex(waiter, mutex_request("CMS32_MUTEX", true)).unwrap();
+        assert!(existing);
+        assert_ne!(first, second);
+        assert_eq!(session.poll_single_wait(&request(first, 0)).unwrap(), Some(0));
+        let waiting = WaitRequest { key: waiter, ..request(second, u32::MAX) };
+        assert_eq!(session.poll_single_wait(&waiting).unwrap(), None);
+        assert_eq!(session.release_mutex(waiter, second), Err(288));
+        assert_eq!(session.release_mutex(waiter, first), Err(6));
+        session.block_wait(waiting.clone()).unwrap();
+        assert_eq!(session.release_mutex(owner, first).unwrap(), Vec::new());
+        assert!(session.blocked.contains_key(&waiter));
+        assert_eq!(session.release_mutex(owner, first).unwrap(), vec![CompletedWait { request: waiting, result: 0 }]);
+        assert!(!session.blocked.contains_key(&waiter));
+        assert_eq!(session.poll_single_wait(&request(first, 0)).unwrap(), Some(0x102));
+        assert_eq!(session.release_mutex(owner, first), Err(288));
+        assert!(session.release_mutex(waiter, second).unwrap().is_empty());
+        assert_eq!(session.poll_single_wait(&request(first, 0)).unwrap(), Some(0));
+    }
+
+    #[test]
+    fn named_mutex_lifetime_case_sensitive_namespace_and_type_collisions() {
+        let mut session = Wc3Session::new(XpProcess::new(Vec::new()));
+        let key = ThreadKey { pid: 1, tid: 1 };
+        let (first, _) = session.create_mutex(key, mutex_request("CMS32_MUTEX", false)).unwrap();
+        let object = session.process(1).unwrap().handles[&first].object;
+        let (second, existing) = session.create_mutex(key, mutex_request("CMS32_MUTEX", true)).unwrap();
+        assert!(existing);
+        assert_eq!(session.release_mutex(key, second), Err(288));
+        let (different, existing) = session.create_mutex(key, mutex_request("cms32_mutex", false)).unwrap();
+        assert!(!existing);
+        assert_ne!(session.process(1).unwrap().handles[&different].object, object);
+        let (event_collision, _) = session.create_event(1, CreateEventRequest {
+            name: Some("CMS32_MUTEX".into()), manual_reset: false, initial_state: false, inheritable: false,
+        });
+        assert_eq!(event_collision, 0);
+        let (event, _) = session.create_event(1, CreateEventRequest {
+            name: Some("EVENT".into()), manual_reset: false, initial_state: false, inheritable: false,
+        });
+        assert_eq!(session.create_mutex(key, mutex_request("EVENT", false)), Err(6));
+        assert_eq!(session.release_mutex(key, event), Err(6));
+        assert!(session.close_handle(1, first));
+        assert_eq!(session.names.get("CMS32_MUTEX"), Some(&object));
+        assert!(session.close_handle(1, second));
+        assert!(!session.names.contains_key("CMS32_MUTEX"));
+        assert!(!session.objects.contains_key(&object));
+        assert!(!session.close_handle(1, second));
+        let (recreated, existing) = session.create_mutex(key, mutex_request("CMS32_MUTEX", false)).unwrap();
+        assert!(!existing);
+        assert_ne!(session.process(1).unwrap().handles[&recreated].object, object);
+    }
+
+    #[test]
+    fn mutex_owner_exit_reports_abandonment_and_transfers_ownership() {
+        for process_exit in [false, true] {
+            let mut session = Wc3Session::new(XpProcess::new(Vec::new()));
+            let child = session.create_child();
+            let owner = ThreadKey { pid: child.pid, tid: child.tid };
+            session.create_mutex(owner, mutex_request("CMS32_MUTEX", true)).unwrap();
+            let waiter = ThreadKey { pid: 1, tid: 1 };
+            let (handle, _) = session.create_mutex(waiter, mutex_request("CMS32_MUTEX", false)).unwrap();
+            let waiting = request(handle, u32::MAX);
+            session.block_wait(waiting.clone()).unwrap();
+            let woken = if process_exit {
+                session.terminate_process(child.pid, 0).unwrap()
+            } else {
+                session.signal_thread(owner, 0).unwrap()
+            };
+            assert_eq!(woken, vec![CompletedWait { request: waiting, result: 0x80 }]);
+            assert!(session.release_mutex(waiter, handle).unwrap().is_empty());
+            assert_eq!(session.poll_single_wait(&request(handle, 0)).unwrap(), Some(0));
+        }
     }
 
     #[test]

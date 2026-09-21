@@ -107,6 +107,59 @@ fn should_log_execution_sample(count: u64) -> bool {
     count == 1 || count % EXEC_SAMPLE_PREEMPTIONS == 0
 }
 
+fn service_sync_request(
+    session: &mut Wc3Session,
+    request: SessionRequest,
+    contexts: &mut [GuestContext],
+    wait_deadlines: &mut HashMap<ThreadKey, RuntimeWait>,
+) -> Result<u32, String> {
+    match request {
+        SessionRequest::CreateMutex { key, request } => {
+            let (handle, error, existed) = match session.create_mutex(key, request) {
+                Ok((handle, existed)) => (handle, if existed { 183 } else { 0 }, existed),
+                Err(error) => (0, error, false),
+            };
+            session.process_mut(key.pid)
+                .ok_or_else(|| "mutex process missing".to_owned())?
+                .xp.set_last_error(error);
+            logl::log(level::IMPORTANT, format_args!(
+                "WC3 CHILD MUTEX CREATE pid={} tid={} handle=0x{:08x} already_exists={} error={}",
+                key.pid, key.tid, handle, existed as u8, error
+            ));
+            Ok(handle)
+        }
+        SessionRequest::ReleaseMutex { key, handle } => {
+            match session.release_mutex(key, handle) {
+                Ok(woken) => {
+                    resume_completed_waiters(&woken, "release-mutex", contexts, wait_deadlines)?;
+                    logl::log(level::IMPORTANT, format_args!(
+                        "WC3 CHILD MUTEX RELEASE pid={} tid={} handle=0x{:08x} waiters_woken={} result=1",
+                        key.pid, key.tid, handle, woken.len()
+                    ));
+                    Ok(1)
+                }
+                Err(error) => {
+                    session.process_mut(key.pid)
+                        .ok_or_else(|| "mutex process missing".to_owned())?
+                        .xp.set_last_error(error);
+                    Ok(0)
+                }
+            }
+        }
+        SessionRequest::CloseHandle { pid, handle } => {
+            if session.close_handle(pid, handle) {
+                Ok(1)
+            } else {
+                session.process_mut(pid)
+                    .ok_or_else(|| "CloseHandle process missing".to_owned())?
+                    .xp.set_last_error(6);
+                Ok(0)
+            }
+        }
+        _ => Err("unexpected synchronization request".into()),
+    }
+}
+
 fn resume_completed_waiters(
     woken: &[CompletedWait],
     reason: &str,
@@ -2813,6 +2866,73 @@ pub(super) async fn run_loop(
                         );
                         continue;
                     }
+                    if matches!(operation,
+                        child_loader::ProviderOp::CreateMutexA
+                        | child_loader::ProviderOp::ReleaseMutex
+                        | child_loader::ProviderOp::CloseHandle
+                        | child_loader::ProviderOp::WaitForSingleObject
+                    ) {
+                        let action = session.process_mut(active_pid)
+                            .ok_or_else(|| "child process missing".to_owned())?
+                            .xp.dispatch_provider_for_process_typed(
+                                active_pid, active_tid, provider_id, exit.registers.esp,
+                                &mut X86Memory(&child.address_space),
+                            ).map_err(|error| error.to_string())?;
+                        let result = match action {
+                            PersonalityAction::Return(result) => result,
+                            PersonalityAction::Session(request) => service_sync_request(
+                                &mut session, request, &mut contexts, &mut wait_deadlines,
+                            )?,
+                            PersonalityAction::Block(request) => {
+                                if let Some(result) = session.poll_wait(&request).map_err(str::to_owned)? {
+                                    logl::log(level::IMPORTANT, format_args!(
+                                        "WC3 CHILD WAIT RETURN pid={} tid={} handle=0x{:08x} result=0x{:08x}",
+                                        active_pid, active_tid, request.handles[0], result
+                                    ));
+                                    result
+                                } else {
+                                    session.block_wait(request.clone()).map_err(str::to_owned)?;
+                                    if request.timeout != INFINITE {
+                                        wait_deadlines.insert(request.key, RuntimeWait {
+                                            deadline: tokio::time::Instant::now()
+                                                + Duration::from_millis(request.timeout as u64),
+                                            timeout_ms: request.timeout,
+                                            handle: request.handles[0],
+                                            resume_registers: exit.registers,
+                                        });
+                                    }
+                                    logl::log(level::IMPORTANT, format_args!(
+                                        "WC3 CHILD WAIT BLOCK pid={} tid={} handle=0x{:08x} timeout_ms={}",
+                                        active_pid, active_tid, request.handles[0], request.timeout
+                                    ));
+                                    loop {
+                                        if let Some(next) = pop_runnable_context(&mut session, &contexts) {
+                                            active = next;
+                                            break;
+                                        }
+                                        if let Some(deadline) = wait_deadlines.values().map(|wait| wait.deadline).min() {
+                                            tokio::time::sleep_until(deadline).await;
+                                            expire_runtime_waits(&mut session, &mut contexts,
+                                                &mut wait_deadlines, &mut previous_wait_timeout)?;
+                                        } else {
+                                            tokio::time::sleep(Duration::from_millis(8)).await;
+                                        }
+                                    }
+                                    continue;
+                                }
+                            }
+                            _ => return Err("unexpected child synchronization action".into()),
+                        };
+                        logl::log(level::IMPORTANT, format_args!(
+                            "WC3 CHILD SYNC RETURN pid={} tid={} {} eax=0x{:08x} cleanup={}-by-thunk",
+                            active_pid, active_tid, symbol, result, operation.stack_cleanup_bytes()
+                        ));
+                        let mut registers = exit.registers;
+                        registers.eax = result;
+                        contexts[active].context.set_registers(registers)
+                            .map_err(|error| error.to_string())?;
+                        continue;
+                    }
                     if operation.is_generic_process_local() {
                         let dispatch = {
                             let mut child_memory = X86Memory(&child.address_space);
@@ -4167,12 +4287,14 @@ pub(super) async fn run_loop(
                     }
                     PersonalityAction::Session(SessionRequest::CreateEvent(request)) => {
                         let (handle, already_exists) = session.create_event(LAUNCHER_PID, request);
-                        session.launcher_mut().xp.set_last_error(if already_exists {
-                            183
-                        } else {
-                            0
-                        });
+                        if handle != 0 {
+                            session.launcher_mut().xp.set_last_error(if already_exists { 183 } else { 0 });
+                        }
                         handle
+                    }
+                    PersonalityAction::Session(request @ SessionRequest::CreateMutex { .. })
+                    | PersonalityAction::Session(request @ SessionRequest::ReleaseMutex { .. }) => {
+                        service_sync_request(&mut session, request, &mut contexts, &mut wait_deadlines)?
                     }
                     PersonalityAction::Session(SessionRequest::SetEvent { pid, tid, handle }) => {
                         match session.set_event(pid, handle) {
