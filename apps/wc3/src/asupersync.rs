@@ -6091,6 +6091,18 @@ pub(super) async fn run_loop(
                 let exception = decode_child_exception(exit.detail, exit.qualification);
                 let registers = exit.registers;
                 let quiet_exception = quiet_war3_exception(exception, registers);
+                if exception.vector == Some(1)
+                    && matches!(registers.eip, 0x0045_af54 | 0x0045_af5a)
+                {
+                    logl::log(
+                        level::IMPORTANT,
+                        format_args!(
+                            "WC3 CHILD DB STATUS eip=0x{:08x} dr6={:?}",
+                            registers.eip,
+                            exception.debug_status,
+                        ),
+                    );
+                }
                 if !quiet_exception {
                 logl::log(
                     level::IMPORTANT,
