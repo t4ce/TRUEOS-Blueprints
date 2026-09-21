@@ -2642,11 +2642,95 @@ mod tests_process_1 {
         assert_eq!(pid2.last_error, 299);
         assert_eq!(pid2.call_count, 1);
 
+        write_u32(&mut memory, esp + 8, source).unwrap();
+        write_u32(&mut memory, esp + 12, STACK_TOP).unwrap();
+        assert_eq!(
+            pid2.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(0))
+        );
+        assert_eq!(pid2.last_error, 299);
+        assert_eq!(pid2.call_count, 1);
+
         write_u32(&mut memory, esp + 4, 0x5743_5001).unwrap();
         assert_eq!(
             pid2.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
             Err(ProviderDispatchError::Frontier {
                 api: "ReadProcessMemory",
+                detail: "non-self-process handle=0x57435001".into(),
+            })
+        );
+        assert_eq!(pid2.call_count, 1);
+    }
+
+    #[test]
+    fn child_write_process_memory_writes_only_to_the_current_process() {
+        let provider = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("WriteProcessMemory".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&provider);
+        assert_eq!(operation, ProviderOp::WriteProcessMemory);
+        assert!(operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 20);
+
+        let mut pid2 = XpProcess::new(Vec::new());
+        pid2.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0x5a; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x100;
+        let destination = esp - 0x40;
+        let source = esp - 0x60;
+        let bytes_written = esp - 0x70;
+        let input = [0x12, 0x34, 0x56, 0x78];
+        memory.write(source, &input).unwrap();
+        for (index, value) in [
+            0x2113_2228,
+            CURRENT_PROCESS_PSEUDO_HANDLE,
+            destination,
+            source,
+            input.len() as u32,
+            bytes_written,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
+        }
+        assert_eq!(
+            pid2.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(1))
+        );
+        let mut written = [0; 4];
+        memory.read(destination, &mut written).unwrap();
+        assert_eq!(written, input);
+        assert_eq!(read_u32(&memory, bytes_written).unwrap(), input.len() as u32);
+        assert_eq!(pid2.call_count, 1);
+
+        write_u32(&mut memory, esp + 12, STACK_TOP).unwrap();
+        assert_eq!(
+            pid2.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(0))
+        );
+        assert_eq!(pid2.last_error, 299);
+        assert_eq!(pid2.call_count, 1);
+
+        write_u32(&mut memory, esp + 8, STACK_TOP).unwrap();
+        write_u32(&mut memory, esp + 12, source).unwrap();
+        assert_eq!(
+            pid2.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(0))
+        );
+        assert_eq!(pid2.last_error, 299);
+        assert_eq!(pid2.call_count, 1);
+
+        write_u32(&mut memory, esp + 4, 0x5743_5001).unwrap();
+        assert_eq!(
+            pid2.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Err(ProviderDispatchError::Frontier {
+                api: "WriteProcessMemory",
                 detail: "non-self-process handle=0x57435001".into(),
             })
         );

@@ -1253,6 +1253,33 @@ impl XpProcess {
                     .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(1))
             }
+            ProviderOp::WriteProcessMemory => {
+                let [_, process, destination, source, size, bytes_written] =
+                    arguments::<6>(memory, esp)?;
+                if process != CURRENT_PROCESS_PSEUDO_HANDLE {
+                    return Err(ProviderDispatchError::Frontier {
+                        api: "WriteProcessMemory",
+                        detail: format!("non-self-process handle=0x{process:08x}"),
+                    });
+                }
+                let size = usize::try_from(size)
+                    .map_err(|_| ProviderDispatchError::Fault("WriteProcessMemory size"))?;
+                let mut bytes = vec![0; size];
+                if memory.read(source, &mut bytes).is_err()
+                    || memory.write(destination, &bytes).is_err()
+                {
+                    self.set_last_error(299);
+                    return Ok(PersonalityAction::Return(0));
+                }
+                if bytes_written != 0 {
+                    memory.write(bytes_written, &(size as u32).to_le_bytes())?;
+                }
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(1))
+            }
             ProviderOp::GetLastError => {
                 self.call_count = self.call_count.checked_add(1).ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(self.last_error))

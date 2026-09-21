@@ -39,6 +39,7 @@ pub enum ProviderOp {
     GetCurrentProcess,
     GetCurrentProcessId,
     ReadProcessMemory,
+    WriteProcessMemory,
     GetLastError,
     CreateMutexA,
     ReleaseMutex,
@@ -105,7 +106,7 @@ impl ProviderOp {
             Self::WideCharToMultiByte => 32,
             Self::GetModuleFileNameA | Self::HeapCreate | Self::HeapAlloc | Self::HeapFree
             | Self::CreateMutexA => 12,
-            Self::ReadProcessMemory | Self::RegOpenKeyExA => 20,
+            Self::ReadProcessMemory | Self::WriteProcessMemory | Self::RegOpenKeyExA => 20,
             _ => 0,
         }
     }
@@ -128,6 +129,7 @@ impl ProviderOp {
                 | Self::GetCurrentProcess
                 | Self::GetCurrentProcessId
                 | Self::ReadProcessMemory
+                | Self::WriteProcessMemory
                 | Self::GetLastError
                 | Self::GetWindowsDirectoryA
                 | Self::GetSystemDirectoryA
@@ -163,6 +165,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "GetCurrentProcess" => ProviderOp::GetCurrentProcess,
             "GetCurrentProcessId" => ProviderOp::GetCurrentProcessId,
             "ReadProcessMemory" => ProviderOp::ReadProcessMemory,
+            "WriteProcessMemory" => ProviderOp::WriteProcessMemory,
             "GetLastError" => ProviderOp::GetLastError,
             "CreateMutexA" => ProviderOp::CreateMutexA,
             "ReleaseMutex" => ProviderOp::ReleaseMutex,
