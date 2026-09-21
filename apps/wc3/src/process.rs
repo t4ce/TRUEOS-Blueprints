@@ -1101,6 +1101,7 @@ impl XpProcess {
 
     fn dispatch_process_local_provider(
         &mut self,
+        pid: u32,
         operation: ProviderOp,
         esp: u32,
         memory: &mut impl GuestMemory,
@@ -1217,6 +1218,13 @@ impl XpProcess {
                     .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(CURRENT_PROCESS_PSEUDO_HANDLE))
             }
+            ProviderOp::GetCurrentProcessId => {
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(pid))
+            }
             ProviderOp::GetWindowsDirectoryA => {
                 self.call_count = self
                     .call_count
@@ -1266,7 +1274,7 @@ impl XpProcess {
 
     pub fn dispatch_provider_for_process_typed(
         &mut self,
-        _pid: u32,
+        pid: u32,
         tid: u32,
         provider_id: u32,
         esp: u32,
@@ -1278,7 +1286,7 @@ impl XpProcess {
             .ok_or("unknown child provider import")?;
         let operation = provider_op(&provider);
         if operation.is_generic_process_local() {
-            return self.dispatch_process_local_provider(operation, esp, memory);
+            return self.dispatch_process_local_provider(pid, operation, esp, memory);
         }
         match (&provider.module[..], &provider.symbol) {
             (module, ProviderSymbol::Name(symbol))

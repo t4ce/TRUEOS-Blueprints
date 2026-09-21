@@ -3349,6 +3349,60 @@ mod tests_process_1 {
     }
 
     #[test]
+    fn child_get_current_process_id_returns_calling_pid_without_side_effects() {
+        let provider = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("GetCurrentProcessId".into()),
+            iat_rva: 0,
+        };
+        for pid in [2, 41] {
+            let mut xp = XpProcess::new_child();
+            xp.install_provider_surface(vec![provider.clone()], Vec::new(), Vec::new());
+            xp.set_last_error(0x1234_5678);
+            let mut memory = Memory {
+                base: STACK_TOP - 4,
+                bytes: 0x0046_12c3u32.to_le_bytes().to_vec(),
+            };
+            let before = memory.bytes.clone();
+            for tid in [3, 91] {
+                assert_eq!(
+                    xp.dispatch_provider_for_process_typed(pid, tid, 0, STACK_TOP - 4, &mut memory),
+                    Ok(PersonalityAction::Return(pid))
+                );
+                assert_eq!(xp.last_error, 0x1234_5678);
+                assert_eq!(memory.bytes, before);
+            }
+            assert_eq!(xp.call_count, 2);
+        }
+    }
+
+    #[test]
+    fn child_get_current_process_id_dynamic_export_has_zero_argument_return() {
+        let provider = ProviderImport {
+            module: "kernel32.dll".into(),
+            symbol: ProviderSymbol::Name("GetCurrentProcessId".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&provider);
+        assert_eq!(operation, ProviderOp::GetCurrentProcessId);
+        assert!(operation.is_modeled());
+        assert!(operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 0);
+
+        let mut xp = XpProcess::new_child();
+        assert_eq!(xp.provider_export_address("KERNEL32.dll", &provider.symbol), None);
+        let (addresses, _, _, updated_from, bytes) =
+            xp.append_provider_imports(vec![provider.clone()]).unwrap();
+        assert_eq!(updated_from, 0);
+        assert_eq!(addresses, vec![thunk32::address(0).unwrap()]);
+        assert_eq!(
+            xp.provider_export_address("KERNEL32.dll", &provider.symbol),
+            Some(addresses[0])
+        );
+        assert_eq!(&bytes[..9], &[0xb8, 0, 0, 0, 0, 0x0f, 0x01, 0xc1, 0xc3]);
+    }
+
+    #[test]
     fn child_exit_process_is_non_returning_lifecycle_action() {
         let provider = ProviderImport {
             module: "KERNEL32.dll".into(),

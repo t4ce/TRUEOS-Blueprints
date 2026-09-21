@@ -37,6 +37,7 @@ pub enum ProviderOp {
     LoadLibraryA,
     GetProcAddress,
     GetCurrentProcess,
+    GetCurrentProcessId,
     GetWindowsDirectoryA,
     GetSystemDirectoryA,
     QueryPerformanceFrequency,
@@ -116,6 +117,7 @@ impl ProviderOp {
                 | Self::GetModuleFileNameA
                 | Self::GetModuleHandleA
                 | Self::GetCurrentProcess
+                | Self::GetCurrentProcessId
                 | Self::GetWindowsDirectoryA
                 | Self::GetSystemDirectoryA
                 | Self::QueryPerformanceFrequency
@@ -148,6 +150,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "LoadLibraryA" => ProviderOp::LoadLibraryA,
             "GetProcAddress" => ProviderOp::GetProcAddress,
             "GetCurrentProcess" => ProviderOp::GetCurrentProcess,
+            "GetCurrentProcessId" => ProviderOp::GetCurrentProcessId,
             "GetWindowsDirectoryA" => ProviderOp::GetWindowsDirectoryA,
             "GetSystemDirectoryA" => ProviderOp::GetSystemDirectoryA,
             "QueryPerformanceFrequency" => ProviderOp::QueryPerformanceFrequency,
