@@ -3,6 +3,105 @@ use super::*;
 const ERROR_PROC_NOT_FOUND: u32 = 127;
 const EXEC_SAMPLE_PREEMPTIONS: u64 = 256;
 const MAX_SEH_CHAIN_DEPTH: u32 = 64;
+const WAR3_NULL_CALL_SLOT: u32 = 0x0049_cbec;
+const WAR3_NULL_CALL_NEIGHBORS: u32 = 0x0049_cbdc;
+
+fn child_image_import_at_rva(
+    child: &PendingChild,
+    rva: u32,
+) -> Option<&pe32::ImportDescriptor> {
+    child.image.imports.iter().find(|import| import.iat_rva == rva)
+}
+
+fn import_symbol_diagnostic(symbol: &pe32::ImportSymbol) -> String {
+    match symbol {
+        pe32::ImportSymbol::Name(name) => format!("\"{name}\""),
+        pe32::ImportSymbol::Ordinal(ordinal) => format!("ordinal:{ordinal}"),
+    }
+}
+
+fn log_null_slot_provenance(child: &PendingChild, slot: u32, runtime_value: Option<u32>) {
+    let Some(("War3.exe", rva)) = child_pc_owner(child, slot) else {
+        return;
+    };
+    let runtime_value = runtime_value
+        .map(|value| format!("0x{value:08x}"))
+        .unwrap_or_else(|| "<unreadable>".into());
+    let Some(import) = child_image_import_at_rva(child, rva) else {
+        logl::log(
+            level::IMPORTANT,
+            format_args!(
+                "WC3 CHILD NULL SLOT PROVENANCE slot=0x{slot:08x} rva=0x{rva:08x} kind=war3-runtime-pointer runtime_value={runtime_value}",
+            ),
+        );
+        return;
+    };
+    logl::log(
+        level::IMPORTANT,
+        format_args!(
+            "WC3 CHILD NULL SLOT PROVENANCE slot=0x{slot:08x} rva=0x{rva:08x} kind=pe-import module=\"{}\" symbol={} runtime_value={runtime_value}",
+            import.module,
+            import_symbol_diagnostic(&import.symbol),
+        ),
+    );
+    let (category, normal_path) = if import.module.eq_ignore_ascii_case("Storm.dll") {
+        ("storm-export", "War3-native-export-bind")
+    } else if import.module.eq_ignore_ascii_case("Mss32.dll") {
+        ("mss-export", "War3-native-export-bind")
+    } else {
+        ("external-provider", "child_loader-provider-thunk-bind")
+    };
+    logl::log(
+        level::IMPORTANT,
+        format_args!(
+            "WC3 CHILD NULL SLOT BINDING slot=0x{slot:08x} category={category} normal_path={normal_path} reason=slot-zero-after-loader",
+        ),
+    );
+}
+
+fn log_child_entry_null_slot_check(child: &PendingChild) {
+    let mut slot_bytes = [0; 4];
+    let slot_value = (child
+        .address_space
+        .read(WAR3_NULL_CALL_SLOT, &mut slot_bytes)
+        .ok()
+        == Some(slot_bytes.len()))
+    .then(|| u32::from_le_bytes(slot_bytes));
+    let is_import = WAR3_NULL_CALL_SLOT
+        .checked_sub(child.image.image_base)
+        .is_some_and(|rva| child_image_import_at_rva(child, rva).is_some());
+    logl::log(
+        level::IMPORTANT,
+        format_args!(
+            "WC3 CHILD ENTRY SLOT CHECK slot=0x{WAR3_NULL_CALL_SLOT:08x} value={} import={}",
+            slot_value
+                .map(|value| format!("0x{value:08x}"))
+                .unwrap_or_else(|| "<unreadable>".into()),
+            u32::from(is_import),
+        ),
+    );
+    let mut table = [0; 32];
+    let words = if child
+        .address_space
+        .read(WAR3_NULL_CALL_NEIGHBORS, &mut table)
+        .ok()
+        == Some(table.len())
+    {
+        table
+            .chunks_exact(4)
+            .map(|word| format!("0x{:08x}", u32::from_le_bytes(word.try_into().unwrap())))
+            .collect::<Vec<_>>()
+            .join(",")
+    } else {
+        "<unreadable>".into()
+    };
+    logl::log(
+        level::IMPORTANT,
+        format_args!(
+            "WC3 CHILD ENTRY SLOT NEIGHBORS base=0x{WAR3_NULL_CALL_NEIGHBORS:08x} words=[{words}]",
+        ),
+    );
+}
 
 fn should_log_execution_sample(count: u64) -> bool {
     count == 1 || count % EXEC_SAMPLE_PREEMPTIONS == 0
@@ -207,6 +306,9 @@ fn log_null_call_diagnostic(child: &PendingChild, pid: u32, tid: u32, registers:
                     target.map(|value| format!("0x{value:08x}")).unwrap_or_else(|| "<unreadable>".into()),
                 ),
             );
+            if target == Some(0) {
+                log_null_slot_provenance(child, slot, target);
+            }
         }
         NullCallSource::RegisterMemory { name, displacement, slot, target } => logl::log(
             level::IMPORTANT,
@@ -623,6 +725,7 @@ pub(super) async fn run_loop(
                                     child.pid, child.tid, child.native_modules.len(), initialized
                                 ),
                             );
+                            log_child_entry_null_slot_check(child);
                             let (entry, frame_esp) = arm_existing_child_image_entry(
                                 child,
                                 &mut contexts[active],
@@ -3129,7 +3232,9 @@ pub(super) async fn run_loop(
                     logl::log(
                         level::IMPORTANT,
                         format_args!(
-                            "WC3 TID2 UNSUPPORTED module={} symbol={} esp=0x{:08x} eip=0x{:08x} stack[0..16 dwords]={:?}",
+                            "WC3 LAUNCHER UNSUPPORTED pid={} tid={} module={} symbol={} esp=0x{:08x} eip=0x{:08x} stack[0..16 dwords]={:?}",
+                            active_key.pid,
+                            active_key.tid,
                             import.module,
                             import.symbol,
                             exit.registers.esp,
@@ -3887,6 +3992,44 @@ pub(super) async fn run_loop(
                             ),
                         );
                         1
+                    }
+                    PersonalityAction::Session(SessionRequest::GetExitCodeProcess(request)) => {
+                        match session.get_exit_code_process(request.pid, request.handle) {
+                            Ok((target_pid, exit_code)) => {
+                                memory
+                                    .write(request.exit_code_pointer, &exit_code.to_le_bytes())
+                                    .map_err(str::to_owned)?;
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 GETEXITCODEPROCESS pid={} tid={} handle=0x{:08x} target_pid={} exit_code=0x{:08x} result=1",
+                                        request.pid,
+                                        request.tid,
+                                        request.handle,
+                                        target_pid,
+                                        exit_code,
+                                    ),
+                                );
+                                1
+                            }
+                            Err(_) => {
+                                session
+                                    .process_mut(request.pid)
+                                    .ok_or_else(|| "GetExitCodeProcess caller missing".to_owned())?
+                                    .xp
+                                    .set_last_error(6);
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 GETEXITCODEPROCESS pid={} tid={} handle=0x{:08x} target_pid=- exit_code=- result=0 error=6",
+                                        request.pid,
+                                        request.tid,
+                                        request.handle,
+                                    ),
+                                );
+                                0
+                            }
+                        }
                     }
                     PersonalityAction::Session(SessionRequest::CreateEvent(request)) => {
                         let (handle, already_exists) = session.create_event(LAUNCHER_PID, request);

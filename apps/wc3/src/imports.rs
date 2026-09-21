@@ -65,6 +65,7 @@ pub enum WinCall {
     GetEnvironmentStringsA,
     FreeEnvironmentStringsA,
     CreateProcessA,
+    GetExitCodeProcess,
     WaitForMultipleObjects,
     WaitForSingleObject,
     GetACP,
@@ -146,6 +147,7 @@ impl WinCall {
             "GetEnvironmentStrings" if kernel => Self::GetEnvironmentStringsA,
             "FreeEnvironmentStringsA" if kernel => Self::FreeEnvironmentStringsA,
             "CreateProcessA" if kernel => Self::CreateProcessA,
+            "GetExitCodeProcess" if kernel => Self::GetExitCodeProcess,
             "WaitForMultipleObjects" if kernel => Self::WaitForMultipleObjects,
             "WaitForSingleObject" if kernel => Self::WaitForSingleObject,
             "GetACP" if kernel => Self::GetACP,
@@ -178,8 +180,8 @@ impl WinCall {
             | Self::SetHandleCount
             | Self::FreeEnvironmentStringsA => Kind::Stdcall(4),
             Self::CreateProcessA => Kind::Stdcall(40),
+            Self::GetExitCodeProcess | Self::WaitForSingleObject => Kind::Stdcall(8),
             Self::WaitForMultipleObjects => Kind::Stdcall(16),
-            Self::WaitForSingleObject => Kind::Stdcall(8),
             Self::TlsAlloc
             | Self::GetLastError
             | Self::GetTickCount
@@ -250,4 +252,24 @@ pub fn patch(
         )?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn get_exit_code_process_is_a_kernel32_stdcall_eight_import() {
+        let import = LauncherImport {
+            id: 0,
+            module: "KERNEL32.dll".into(),
+            symbol: "GetExitCodeProcess".into(),
+            iat_rva: 0,
+        };
+        assert_eq!(WinCall::from_import(&import), WinCall::GetExitCodeProcess);
+        assert_eq!(WinCall::GetExitCodeProcess.thunk_kind(), Kind::Stdcall(8));
+        let mut bytes = [0; thunk32::THUNK_BYTES];
+        thunk32::write(0, WinCall::GetExitCodeProcess.thunk_kind(), &mut bytes).unwrap();
+        assert_eq!(&bytes[8..11], &[0xc2, 8, 0]);
+    }
 }

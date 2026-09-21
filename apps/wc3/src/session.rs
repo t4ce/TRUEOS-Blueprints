@@ -681,6 +681,27 @@ mod tests {
     }
 
     #[test]
+    fn get_exit_code_process_reads_process_object_lifecycle_state() {
+        let mut session = Wc3Session::new(XpProcess::new(Vec::new()));
+        let child = session.create_child();
+
+        assert_eq!(
+            session.get_exit_code_process(LAUNCHER_PID, child.process_handle),
+            Ok((child.pid, 259))
+        );
+        assert_eq!(
+            session.get_exit_code_process(LAUNCHER_PID, child.thread_handle),
+            Err("GetExitCodeProcess handle is not a process")
+        );
+
+        session.terminate_process(child.pid, 0xc000_0005).unwrap();
+        assert_eq!(
+            session.get_exit_code_process(LAUNCHER_PID, child.process_handle),
+            Ok((child.pid, 0xc000_0005))
+        );
+    }
+
+    #[test]
     fn process_exit_wakes_a_blocked_single_waiter() {
         let mut session = Wc3Session::new(XpProcess::new(Vec::new()));
         let child = session.create_child();
@@ -967,6 +988,14 @@ pub struct CreateEventRequest {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GetExitCodeProcessRequest {
+    pub pid: Pid,
+    pub tid: Tid,
+    pub handle: u32,
+    pub exit_code_pointer: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LoadImageRequest {
     pub resource_id: u32,
     pub dib: Vec<u8>,
@@ -1017,6 +1046,7 @@ pub struct CreatedChild {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SessionRequest {
     CreateProcess(CreateProcessRequest),
+    GetExitCodeProcess(GetExitCodeProcessRequest),
     CreateEvent(CreateEventRequest),
     LoadImage(LoadImageRequest),
     CreateWindow(CreateWindowRequest),
@@ -1434,6 +1464,28 @@ impl Wc3Session {
             SessionObject::Process(process) if process.pid == pid => process.exit_code,
             _ => None,
         })
+    }
+
+    /// Resolve a process handle in the caller's handle table.  The result is
+    /// intentionally session-owned: an exit code belongs to the process
+    /// object, rather than to either process personality's private state.
+    pub fn get_exit_code_process(
+        &self,
+        caller_pid: Pid,
+        handle: u32,
+    ) -> Result<(Pid, u32), &'static str> {
+        let entry = self
+            .process(caller_pid)
+            .and_then(|process| process.handles.get(&handle))
+            .ok_or("GetExitCodeProcess invalid handle")?;
+        let SessionObject::Process(process) = self
+            .objects
+            .get(&entry.object)
+            .ok_or("GetExitCodeProcess missing object")?
+        else {
+            return Err("GetExitCodeProcess handle is not a process");
+        };
+        Ok((process.pid, process.exit_code.unwrap_or(259)))
     }
 
     pub fn thread_exit_code(&self, key: ThreadKey) -> Option<u32> {

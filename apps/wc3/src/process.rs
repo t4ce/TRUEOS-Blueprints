@@ -14,9 +14,9 @@ use crate::{
     imports::{LauncherImport, WinCall},
     pe32,
     session::{
-        CreateEventRequest, CreateProcessRequest, CreateWindowRequest, LoadImageRequest,
-        PersonalityAction, SessionRequest, ThreadKey, WaitRequest, WindowBlitRequest,
-        WindowTextRequest,
+        CreateEventRequest, CreateProcessRequest, CreateWindowRequest, GetExitCodeProcessRequest,
+        LoadImageRequest, PersonalityAction, SessionRequest, ThreadKey, WaitRequest,
+        WindowBlitRequest, WindowTextRequest,
     },
     thunk32,
 };
@@ -1734,6 +1734,17 @@ impl XpProcess {
                 return Ok(PersonalityAction::Session(SessionRequest::CreateProcess(
                     CreateProcessRequest {
                         frame: self.create_process_a(esp, memory)?,
+                    },
+                )));
+            }
+            WinCall::GetExitCodeProcess => {
+                let [_, handle, exit_code_pointer] = arguments::<3>(memory, esp)?;
+                return Ok(PersonalityAction::Session(SessionRequest::GetExitCodeProcess(
+                    GetExitCodeProcessRequest {
+                        pid,
+                        tid,
+                        handle,
+                        exit_code_pointer,
                     },
                 )));
             }
@@ -3897,6 +3908,39 @@ mod tests {
         );
         assert_eq!(read_u32(&memory, 0x0021_0560).unwrap(), 2);
         assert_eq!(xp.threads[0].suspend_count, 1);
+    }
+
+    #[test]
+    fn get_exit_code_process_delegates_handle_lifecycle_to_the_session() {
+        let mut xp = XpProcess::new(vec![LauncherImport {
+            id: 0,
+            module: "KERNEL32.dll".into(),
+            symbol: "GetExitCodeProcess".into(),
+            iat_rva: 0,
+        }]);
+        let mut memory = Memory {
+            base: 0x0021_0000,
+            bytes: vec![0; 0x1000],
+        };
+        let esp = 0x0021_0800;
+        for (index, value) in [0x0040_2200, 0x5743_6001, 0x0021_0560]
+            .into_iter()
+            .enumerate()
+        {
+            write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
+        }
+
+        assert_eq!(
+            xp.dispatch(1, 0, esp, &mut memory).unwrap(),
+            PersonalityAction::Session(SessionRequest::GetExitCodeProcess(
+                GetExitCodeProcessRequest {
+                    pid: 1,
+                    tid: 1,
+                    handle: 0x5743_6001,
+                    exit_code_pointer: 0x0021_0560,
+                },
+            )),
+        );
     }
 
     #[test]
