@@ -1075,6 +1075,23 @@ pub(super) async fn run_loop(
                                     dr7,
                                 ),
                             );
+                            if seh.original_registers.eip == 0x0045_af5a {
+                                let mut handler = [0u8; 0x90];
+                                if child
+                                    .address_space
+                                    .read(0x0045_a3f0, &mut handler)
+                                    .ok()
+                                    == Some(handler.len())
+                                {
+                                    logl::log(
+                                        level::IMPORTANT,
+                                        format_args!(
+                                            "WC3 CHILD DB HANDLER CODE start=0x0045a3f0 bytes=\"{}\"",
+                                            diagnostic_hex_bytes(&handler),
+                                        ),
+                                    );
+                                }
+                            }
                         }
                         if !seh.quiet {
                             let raw_ecx = u32::from_le_bytes(
@@ -6113,12 +6130,16 @@ pub(super) async fn run_loop(
                 if exception.vector == Some(1)
                     && matches!(registers.eip, 0x0045_af54 | 0x0045_af5a)
                 {
+                    let gate = child_read_u32(child, 0x0049_a430);
+                    let reset = child_read_u32(child, 0x0049_2614);
                     logl::log(
                         level::IMPORTANT,
                         format_args!(
-                            "WC3 CHILD DB STATUS eip=0x{:08x} dr6={:?}",
+                            "WC3 CHILD DB STATUS eip=0x{:08x} dr6={:?} gate_49a430={:?} reset_492614={:?}",
                             registers.eip,
                             exception.debug_status,
+                            gate,
+                            reset,
                         ),
                     );
                 }
