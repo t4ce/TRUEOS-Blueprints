@@ -1616,6 +1616,9 @@ struct PendingChild {
     unhandled_filter_call: Option<ChildUnhandledFilterCall>,
     repeated_null_call: Option<NullLoopWatch>,
     repeated_divide_fault: Option<DivideLoopWatch>,
+    scan_progress: Option<ScanProgress>,
+    scan_heartbeat_source: Option<u32>,
+    dword_scan_watch: Option<DwordScanWatch>,
     loader: ChildLoaderState,
     execution: ChildExecutionState,
 }
@@ -1661,6 +1664,27 @@ struct DivideLoopWatch {
     count: u8,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ScanProgress {
+    stage: Option<u8>,
+    source: Option<u32>,
+    checksum: Option<u8>,
+    index: Option<u32>,
+    bound: Option<u32>,
+    reset: Option<u32>,
+    gate: Option<u32>,
+    tf: bool,
+    dr7: u32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct DwordScanWatch {
+    samples: u32,
+    last_index: Option<u32>,
+    last_progress_index: Option<u32>,
+    unchanged_heartbeats: u8,
+}
+
 #[derive(Clone, Debug)]
 struct ChildSehDispatch {
     original_registers: Registers,
@@ -1672,6 +1696,8 @@ struct ChildSehDispatch {
     preserved_fs_base: u32,
     depth: u32,
     quiet: bool,
+    scan_single_step: bool,
+    dword_scan_single_step: bool,
 }
 #[derive(Clone, Debug)] struct ChildUnhandledFilterCall { provider_resume_eip: u32, provider_esp: u32, filter: u32 }
 

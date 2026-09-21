@@ -13,10 +13,33 @@ const WAR3_DIVIDE_INDEX_SLOT: u32 = 0x0049_c490;
 const WAR3_DIVIDE_STATE_POINTER_SLOT: u32 = 0x0049_dc6c;
 const WAR3_SCAN_INDEX: u32 = 0x0049_dc90;
 const WAR3_SCAN_SOURCE: u32 = 0x0049_a594;
+const WAR3_SCAN_STAGE: u32 = 0x0049_a590;
+const WAR3_SCAN_CHECKSUM: u32 = 0x0049_a598;
+const WAR3_SCAN_RESET: u32 = 0x0049_2614;
+const WAR3_SCAN_GATE: u32 = 0x0049_a430;
 const WAR3_SCAN_BOUND: u32 = 0x0049_c650;
 const WAR3_SCAN_COUNT: u32 = 0x0049_a980;
 const WAR3_HOTLOOP_START: u32 = 0x0045_af60;
-const WAR3_HOTLOOP_PREEMPT_EIP: u32 = 0x0045_afcd;
+const WAR3_SCAN_STEP_START: u32 = 0x0045_af54;
+const WAR3_SCAN_STEP_END: u32 = 0x0045_b010;
+const WAR3_DWORD_SCAN_INDEX: u32 = 0x0049_aa5c;
+const WAR3_DWORD_SCAN_BOUND: u32 = 0x0000_0360;
+const WAR3_DWORD_SCAN_STEP_START: u32 = 0x0045_b0a2;
+const WAR3_DWORD_SCAN_STEP_END: u32 = 0x0045_b0df;
+const WAR3_DWORD_SCAN_HEARTBEAT_STRIDE: u32 = 0x40;
+const WAR3_DWORD_SCAN_SAMPLE_STRIDE: u32 = 0x80;
+const WAR3_DWORD_SCAN_STALL_HEARTBEATS: u8 = 3;
+
+fn war3_scan_single_step(exception: ChildException, registers: Registers) -> bool {
+    exception.vector == Some(1)
+        && exception.debug_status == Some(0x0000_4000)
+        && (WAR3_SCAN_STEP_START..=WAR3_SCAN_STEP_END).contains(&registers.eip)
+}
+
+fn war3_dword_scan_single_step(exception: ChildException, registers: Registers) -> bool {
+    exception.vector == Some(1)
+        && (WAR3_DWORD_SCAN_STEP_START..=WAR3_DWORD_SCAN_STEP_END).contains(&registers.eip)
+}
 
 fn quiet_war3_exception(exception: ChildException, registers: Registers) -> bool {
     (exception.vector == Some(0) && registers.eip == WAR3_DIVIDE_EXCEPTION_EIP)
@@ -24,8 +47,8 @@ fn quiet_war3_exception(exception: ChildException, registers: Registers) -> bool
             && registers.eip == 0x0045_af51
             && exception.fault_linear == Some(0)
             && exception.error.is_some_and(|error| error & 2 != 0))
-        || (exception.vector == Some(1)
-            && matches!(registers.eip, 0x0045_af54 | 0x0045_af5a))
+        || war3_scan_single_step(exception, registers)
+        || war3_dword_scan_single_step(exception, registers)
 }
 
 fn child_image_import_at_rva(
@@ -462,6 +485,108 @@ fn child_read_u8(child: &PendingChild, address: u32) -> Option<u8> {
     (child.address_space.read(address, &mut byte).ok()? == byte.len()).then_some(byte[0])
 }
 
+fn log_war3_scan_progress(
+    child: &mut PendingChild,
+    eip: u32,
+    registers: Registers,
+    debug: DebugRegisters,
+) {
+    let progress = ScanProgress {
+        stage: child_read_u8(child, WAR3_SCAN_STAGE),
+        source: child_read_u32(child, WAR3_SCAN_SOURCE),
+        checksum: child_read_u8(child, WAR3_SCAN_CHECKSUM),
+        index: child_read_u32(child, WAR3_SCAN_INDEX),
+        bound: child_read_u32(child, WAR3_SCAN_BOUND),
+        reset: child_read_u32(child, WAR3_SCAN_RESET),
+        gate: child_read_u32(child, WAR3_SCAN_GATE),
+        tf: registers.eflags & wc3::seh::X86_EFLAGS_TF != 0,
+        dr7: debug.dr7,
+    };
+    let previous = child.scan_progress;
+    child.scan_progress = Some(progress);
+    let reset = previous.is_some_and(|previous| {
+        previous.source.zip(progress.source).is_some_and(|(old, new)| new < old)
+            || previous.index.zip(progress.index).is_some_and(|(old, new)| new < old)
+    });
+    let debug_transition = previous.is_some_and(|previous| {
+        previous.tf != progress.tf || previous.dr7 != progress.dr7
+    });
+    let heartbeat = progress.source.is_some_and(|source| {
+        source & 0xff == 0 && child.scan_heartbeat_source != Some(source)
+    });
+    if !heartbeat && !reset && !debug_transition {
+        return;
+    }
+    if heartbeat {
+        child.scan_heartbeat_source = progress.source;
+    }
+    let reason = if reset {
+        "reset"
+    } else if debug_transition {
+        "debug-transition"
+    } else {
+        "source-boundary"
+    };
+    logl::log(
+        level::IMPORTANT,
+        format_args!(
+            "WC3 CHILD SCAN HEARTBEAT reason={} eip=0x{:08x} index={} source={} bound={} stage={} dr7=0x{:08x} tf={} checksum={} gate={} reset={} dr6=0x{:08x}",
+            reason,
+            eip,
+            progress.index.map(|value| format!("0x{value:08x}")).unwrap_or_else(|| "-".into()),
+            progress.source.map(|value| format!("0x{value:08x}")).unwrap_or_else(|| "-".into()),
+            progress.bound.map(|value| format!("0x{value:08x}")).unwrap_or_else(|| "-".into()),
+            progress.stage.map(|value| format!("0x{value:02x}")).unwrap_or_else(|| "-".into()),
+            debug.dr7,
+            u32::from(progress.tf),
+            progress.checksum.map(|value| format!("0x{value:02x}")).unwrap_or_else(|| "-".into()),
+            progress.gate.map(|value| format!("0x{value:08x}")).unwrap_or_else(|| "-".into()),
+            progress.reset.map(|value| format!("0x{value:08x}")).unwrap_or_else(|| "-".into()),
+            debug.dr6,
+        ),
+    );
+}
+
+fn observe_war3_dword_scan(child: &mut PendingChild, eip: u32, accum_eax: u32) -> bool {
+    let Some(index) = child_read_u32(child, WAR3_DWORD_SCAN_INDEX) else {
+        return false;
+    };
+    let watch = child.dword_scan_watch.get_or_insert(DwordScanWatch {
+        samples: 0,
+        last_index: None,
+        last_progress_index: None,
+        unchanged_heartbeats: 0,
+    });
+    watch.samples = watch.samples.saturating_add(1);
+    let progress_heartbeat = index % WAR3_DWORD_SCAN_HEARTBEAT_STRIDE == 0
+        && watch.last_progress_index != Some(index);
+    let sample_heartbeat = watch.samples % WAR3_DWORD_SCAN_SAMPLE_STRIDE == 0;
+    if !progress_heartbeat && !sample_heartbeat {
+        return false;
+    }
+    if watch.last_index == Some(index) {
+        watch.unchanged_heartbeats = watch.unchanged_heartbeats.saturating_add(1);
+    } else {
+        watch.unchanged_heartbeats = 0;
+    }
+    watch.last_index = Some(index);
+    if progress_heartbeat {
+        watch.last_progress_index = Some(index);
+    }
+    logl::log(
+        level::IMPORTANT,
+        format_args!(
+            "WC3 CHILD DWORD SCAN eip=0x{:08x} index=0x{:04x} bound=0x{:04x} accum_eax=0x{:08x} unchanged_heartbeats={}",
+            eip,
+            index,
+            WAR3_DWORD_SCAN_BOUND,
+            accum_eax,
+            watch.unchanged_heartbeats,
+        ),
+    );
+    watch.unchanged_heartbeats >= WAR3_DWORD_SCAN_STALL_HEARTBEATS
+}
+
 fn divide_loop_progress(child: &PendingChild) -> Option<DivideLoopProgress> {
     let table_base = child_read_u32(child, WAR3_DIVIDE_TABLE_BASE_SLOT)?;
     let index = child_read_u32(child, WAR3_DIVIDE_INDEX_SLOT)?;
@@ -678,6 +803,8 @@ fn begin_child_seh_dispatch(child: &mut PendingChild, guest: &mut GuestContext, 
     let head = u32::from_le_bytes(head);
     if head == u32::MAX { return Err("unhandled-SEH-chain frontier".into()); }
     let registration = read_seh_registration(&child.address_space, head)?;
+    let scan_single_step = war3_scan_single_step(exception, registers);
+    let dword_scan_single_step = war3_dword_scan_single_step(exception, registers);
     let quiet = quiet_war3_exception(exception, registers);
     if !quiet && registration.handler == WAR3_DIVIDE_EXCEPTION_HANDLER && !child.seh_handler_dumped {
         child.seh_handler_dumped = true;
@@ -702,7 +829,7 @@ fn begin_child_seh_dispatch(child: &mut PendingChild, guest: &mut GuestContext, 
         .context
         .debug_registers()
         .map_err(|error| error.to_string())?;
-    if exception.vector == Some(1) {
+    if exception.vector == Some(1) && !quiet {
         logl::log(
             level::IMPORTANT,
             format_args!(
@@ -752,7 +879,7 @@ fn begin_child_seh_dispatch(child: &mut PendingChild, guest: &mut GuestContext, 
     let frame = [thunk32::CHILD_SEH_RETURN_ADDRESS, record_va, registration.frame, context_va, 0];
     let mut bytes = [0; 20]; for (index, value) in frame.into_iter().enumerate() { bytes[index * 4..index * 4 + 4].copy_from_slice(&value.to_le_bytes()); }
     if child.address_space.write(frame_esp, &bytes).map_err(|error| error.to_string())? != bytes.len() { return Err("short SEH handler frame write".into()); }
-    child.seh = Some(ChildSehDispatch { original_registers: registers, registration: registration.frame, next_registration: registration.next, handler: registration.handler, exception_record_va: record_va, context_va, preserved_fs_base: registers.fs_base, depth: 1, quiet });
+    child.seh = Some(ChildSehDispatch { original_registers: registers, registration: registration.frame, next_registration: registration.next, handler: registration.handler, exception_record_va: record_va, context_va, preserved_fs_base: registers.fs_base, depth: 1, quiet, scan_single_step, dword_scan_single_step });
     let handler_registers = wc3::seh::exception_handler_registers(
         registers,
         registration.handler,
@@ -955,27 +1082,15 @@ pub(super) async fn run_loop(
                     (context.preemption_count, context.same_page_preemptions)
                 };
                 if active_key.pid != LAUNCHER_PID
-                    && exit.registers.eip == WAR3_HOTLOOP_PREEMPT_EIP
-                    && same_page >= 8
-                    && pending_child.as_ref().is_some_and(|child| {
-                        child.pid == active_key.pid
-                            && child.tid == active_key.tid
-                            && child_read_u32(child, WAR3_SCAN_INDEX) == Some(0)
-                    })
-                {
-                    logl::log(
-                        level::IMPORTANT,
-                        format_args!(
-                            "WC3 CHILD OPERATOR STOP reason=hotloop-no-index-progress",
-                        ),
-                    );
-                    return Ok(());
-                }
-                if active_key.pid != LAUNCHER_PID
                     && should_log_execution_sample(preemptions)
                     && pending_child
                         .as_ref()
-                        .is_some_and(|child| child.execution == ChildExecutionState::ImageEntryRunning)
+                        .is_some_and(|child| {
+                            child.execution == ChildExecutionState::ImageEntryRunning
+                                && !(child.scan_progress.is_some()
+                                    && (WAR3_SCAN_STEP_START..=WAR3_SCAN_STEP_END)
+                                        .contains(&exit.registers.eip))
+                        })
                 {
                     let child = pending_child.as_ref().unwrap();
                     let (owner, rva) = child_pc_owner(child, exit.registers.eip)
@@ -1081,7 +1196,9 @@ pub(super) async fn run_loop(
                         let restored = wc3::seh::decode_x86_context(&bytes, seh.preserved_fs_base).map_err(str::to_owned)?;
                         let restored_debug = wc3::seh::decode_x86_debug_registers(&bytes)
                             .map_err(str::to_owned)?;
-                        if matches!(seh.original_registers.eip, 0x0045_af51 | 0x0045_af54 | 0x0045_af5a) {
+                        if !seh.quiet
+                            && matches!(seh.original_registers.eip, 0x0045_af51 | 0x0045_af54 | 0x0045_af5a)
+                        {
                             let get = |offset: usize| {
                                 u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap())
                             };
@@ -1099,41 +1216,28 @@ pub(super) async fn run_loop(
                                 ),
                             );
                         }
-                        if matches!(seh.original_registers.eip, 0x0045_af54 | 0x0045_af5a) {
-                            let stage = child_read_u8(child, 0x0049_a590);
-                            let source = child_read_u32(child, 0x0049_a594);
-                            let checksum = child_read_u8(child, 0x0049_a598);
-                            let dr6 = u32::from_le_bytes(bytes[20..24].try_into().unwrap());
-                            let dr7 = u32::from_le_bytes(bytes[24..28].try_into().unwrap());
+                        if seh.scan_single_step {
+                            log_war3_scan_progress(
+                                child,
+                                seh.original_registers.eip,
+                                restored,
+                                restored_debug,
+                            );
+                        }
+                        if seh.dword_scan_single_step
+                            && observe_war3_dword_scan(
+                                child,
+                                seh.original_registers.eip,
+                                restored.eax,
+                            )
+                        {
                             logl::log(
                                 level::IMPORTANT,
                                 format_args!(
-                                    "WC3 CHILD DB HANDLER STATE eip=0x{:08x} stage={:?} source={:?} checksum={:?} context_dr6=0x{:08x} context_dr7=0x{:08x}",
-                                    seh.original_registers.eip,
-                                    stage,
-                                    source,
-                                    checksum,
-                                    dr6,
-                                    dr7,
+                                    "WC3 CHILD OPERATOR STOP reason=dword-scan-index-stalled index_slot=0x{WAR3_DWORD_SCAN_INDEX:08x} heartbeats={WAR3_DWORD_SCAN_STALL_HEARTBEATS}",
                                 ),
                             );
-                            if seh.original_registers.eip == 0x0045_af5a {
-                                let mut handler = [0u8; 0x90];
-                                if child
-                                    .address_space
-                                    .read(0x0045_a3f0, &mut handler)
-                                    .ok()
-                                    == Some(handler.len())
-                                {
-                                    logl::log(
-                                        level::IMPORTANT,
-                                        format_args!(
-                                            "WC3 CHILD DB HANDLER CODE start=0x0045a3f0 bytes=\"{}\"",
-                                            diagnostic_hex_bytes(&handler),
-                                        ),
-                                    );
-                                }
-                            }
+                            return Ok(());
                         }
                         if !seh.quiet {
                             let raw_ecx = u32::from_le_bytes(
@@ -4687,6 +4791,9 @@ pub(super) async fn run_loop(
                             unhandled_filter_call: None,
                             repeated_null_call: None,
                             repeated_divide_fault: None,
+                            scan_progress: None,
+                            scan_heartbeat_source: None,
+                            dword_scan_watch: None,
                             loader: ChildLoaderState {
                                 prepared: false,
                                 native_requests: Vec::new(),
@@ -6173,7 +6280,8 @@ pub(super) async fn run_loop(
                 let exception = decode_child_exception(exit.detail, exit.qualification);
                 let registers = exit.registers;
                 let quiet_exception = quiet_war3_exception(exception, registers);
-                if exception.vector == Some(1)
+                if !quiet_exception
+                    && exception.vector == Some(1)
                     && matches!(registers.eip, 0x0045_af54 | 0x0045_af5a)
                 {
                     let gate = child_read_u32(child, 0x0049_a430);
