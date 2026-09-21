@@ -3321,6 +3321,32 @@ pub(super) async fn run_loop(
                 let mut callback = None;
                 let result = match result {
                     PersonalityAction::Return(value) => {
+                        if WinCall::from_import(&import) == WinCall::TlsGetValue {
+                            let frame = read_guest_words(&memory, exit.registers.esp, 2)?;
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 TLSGETVALUE pid={} tid={} slot={} value=0x{:08x} result=0x{:08x}",
+                                    active_key.pid,
+                                    active_key.tid,
+                                    frame[1],
+                                    value,
+                                    value,
+                                ),
+                            );
+                        }
+                        if WinCall::from_import(&import) == WinCall::SetLastError {
+                            let frame = read_guest_words(&memory, exit.registers.esp, 2)?;
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 SETLASTERROR pid={} tid={} value=0x{:08x}",
+                                    active_key.pid,
+                                    active_key.tid,
+                                    frame[1],
+                                ),
+                            );
+                        }
                         if let Some((frame, hdc, target)) = end_paint_input.as_ref() {
                             if value == 1 {
                                 logl::log(

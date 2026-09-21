@@ -1629,6 +1629,7 @@ impl XpProcess {
             WinCall::LeaveCriticalSection => self.leave_critical_section(tid, esp, memory),
             WinCall::TlsAlloc => self.tls_alloc(),
             WinCall::TlsSetValue => self.tls_set_value(tid, esp, memory),
+            WinCall::TlsGetValue => self.tls_get_value(tid, esp, memory),
             WinCall::HeapAlloc => self.heap_alloc(esp, memory),
             WinCall::HeapFree => self.heap_free(esp, memory),
             WinCall::CreateEventA => {
@@ -1644,6 +1645,11 @@ impl XpProcess {
                 }));
             }
             WinCall::GetLastError => Ok(self.last_error),
+            WinCall::SetLastError => {
+                let value = read_u32(memory, esp + 4)?;
+                self.set_last_error(value);
+                Ok(0)
+            }
             WinCall::CloseHandle => {
                 return Ok(PersonalityAction::Session(SessionRequest::CloseHandle {
                     pid,
@@ -1985,6 +1991,24 @@ impl XpProcess {
         }
         self.tls_values.insert((tid, slot), value);
         Ok(1)
+    }
+
+    fn tls_get_value(
+        &mut self,
+        tid: u32,
+        esp: u32,
+        memory: &impl GuestMemory,
+    ) -> Result<u32, &'static str> {
+        let [_, slot] = arguments::<2>(memory, esp)?;
+        if slot as usize >= self.tls_allocated.len() {
+            self.last_error = 87;
+            return Ok(0);
+        }
+        let value = self.tls_values.get(&(tid, slot)).copied().unwrap_or(0);
+        // A successful TlsGetValue explicitly clears LastError so callers can
+        // distinguish an empty TLS slot from a failed lookup.
+        self.last_error = 0;
+        Ok(value)
     }
 
     fn heap_alloc(&mut self, esp: u32, memory: &mut impl GuestMemory) -> Result<u32, &'static str> {
@@ -3954,6 +3978,78 @@ mod tests {
                 },
             )),
         );
+    }
+
+    #[test]
+    fn tls_get_value_isolated_by_thread_for_the_same_slot() {
+        let mut xp = XpProcess::new(Vec::new());
+        let slot = xp.tls_alloc().unwrap();
+        xp.tls_values.insert((1, slot), 0x1111_1111);
+        xp.tls_values.insert((2, slot), 0x2222_2222);
+        let mut memory = Memory {
+            base: 0x0021_0000,
+            bytes: vec![0; 0x1000],
+        };
+        let esp = 0x0021_0800;
+        write_u32(&mut memory, esp, 0x0040_3f45).unwrap();
+        write_u32(&mut memory, esp + 4, slot).unwrap();
+
+        assert_eq!(xp.tls_get_value(1, esp, &memory), Ok(0x1111_1111));
+        assert_eq!(xp.tls_get_value(2, esp, &memory), Ok(0x2222_2222));
+        assert_eq!(xp.last_error, 0);
+    }
+
+    #[test]
+    fn tls_get_value_returns_zero_and_clears_last_error_for_an_untouched_slot() {
+        let mut xp = XpProcess::new(Vec::new());
+        let slot = xp.tls_alloc().unwrap();
+        let mut memory = Memory {
+            base: 0x0021_0000,
+            bytes: vec![0; 0x1000],
+        };
+        let esp = 0x0021_0800;
+        write_u32(&mut memory, esp, 0x0040_3f45).unwrap();
+        write_u32(&mut memory, esp + 4, slot).unwrap();
+        xp.last_error = 0x1234_5678;
+
+        assert_eq!(xp.tls_get_value(2, esp, &memory), Ok(0));
+        assert_eq!(xp.last_error, 0);
+    }
+
+    #[test]
+    fn tls_get_value_rejects_an_out_of_range_slot() {
+        let mut xp = XpProcess::new(Vec::new());
+        let mut memory = Memory {
+            base: 0x0021_0000,
+            bytes: vec![0; 0x1000],
+        };
+        let esp = 0x0021_0800;
+        write_u32(&mut memory, esp, 0x0040_3f45).unwrap();
+        write_u32(&mut memory, esp + 4, 64).unwrap();
+
+        assert_eq!(xp.tls_get_value(2, esp, &memory), Ok(0));
+        assert_eq!(xp.last_error, 87);
+    }
+
+    #[test]
+    fn launcher_set_last_error_updates_the_existing_process_value() {
+        let mut xp = XpProcess::new(vec![LauncherImport {
+            id: 0,
+            module: "KERNEL32.dll".into(),
+            symbol: "SetLastError".into(),
+            iat_rva: 0,
+        }]);
+        let mut memory = Memory {
+            base: 0x0021_0000,
+            bytes: vec![0; 0x1000],
+        };
+        let esp = 0x0021_0800;
+        write_u32(&mut memory, esp, 0x0040_3f91).unwrap();
+        write_u32(&mut memory, esp + 4, 0).unwrap();
+        xp.set_last_error(0xdead_beef);
+
+        assert_eq!(xp.dispatch(1, 0, esp, &mut memory), Ok(PersonalityAction::Return(0)));
+        assert_eq!(xp.last_error, 0);
     }
 
     #[test]

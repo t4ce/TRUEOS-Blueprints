@@ -22,9 +22,11 @@ pub enum WinCall {
     CreateEventA,
     SetEvent,
     GetLastError,
+    SetLastError,
     CloseHandle,
     GetTickCount,
     TlsSetValue,
+    TlsGetValue,
     GetCurrentThreadId,
     GetStartupInfoA,
     GetModuleFileNameA,
@@ -96,9 +98,11 @@ impl WinCall {
             "CreateEventA" if kernel => Self::CreateEventA,
             "SetEvent" if kernel => Self::SetEvent,
             "GetLastError" if kernel => Self::GetLastError,
+            "SetLastError" if kernel => Self::SetLastError,
             "CloseHandle" if kernel => Self::CloseHandle,
             "GetTickCount" if kernel => Self::GetTickCount,
             "TlsSetValue" if kernel => Self::TlsSetValue,
+            "TlsGetValue" if kernel => Self::TlsGetValue,
             "GetCurrentThreadId" if kernel => Self::GetCurrentThreadId,
             "GetStartupInfoA" if kernel => Self::GetStartupInfoA,
             "GetModuleFileNameA" if kernel => Self::GetModuleFileNameA,
@@ -184,6 +188,8 @@ impl WinCall {
             | Self::SetHandleCount
             | Self::FreeEnvironmentStringsA
             | Self::SetEvent
+            | Self::SetLastError
+            | Self::TlsGetValue
             | Self::DestroyWindow => Kind::Stdcall(4),
             Self::CreateProcessA => Kind::Stdcall(40),
             Self::GetExitCodeProcess | Self::WaitForSingleObject => Kind::Stdcall(8),
@@ -293,6 +299,34 @@ mod tests {
         assert_eq!(WinCall::from_import(&import), WinCall::SetEvent);
         let mut bytes = [0; thunk32::THUNK_BYTES];
         thunk32::write(0, WinCall::SetEvent.thunk_kind(), &mut bytes).unwrap();
+        assert_eq!(&bytes[8..11], &[0xc2, 4, 0]);
+    }
+
+    #[test]
+    fn set_last_error_is_a_kernel32_stdcall_four_import() {
+        let import = LauncherImport {
+            id: 0,
+            module: "KERNEL32.dll".into(),
+            symbol: "SetLastError".into(),
+            iat_rva: 0,
+        };
+        assert_eq!(WinCall::from_import(&import), WinCall::SetLastError);
+        let mut bytes = [0; thunk32::THUNK_BYTES];
+        thunk32::write(0, WinCall::SetLastError.thunk_kind(), &mut bytes).unwrap();
+        assert_eq!(&bytes[8..11], &[0xc2, 4, 0]);
+    }
+
+    #[test]
+    fn tls_get_value_is_a_kernel32_stdcall_four_import() {
+        let import = LauncherImport {
+            id: 0,
+            module: "KERNEL32.dll".into(),
+            symbol: "TlsGetValue".into(),
+            iat_rva: 0,
+        };
+        assert_eq!(WinCall::from_import(&import), WinCall::TlsGetValue);
+        let mut bytes = [0; thunk32::THUNK_BYTES];
+        thunk32::write(0, WinCall::TlsGetValue.thunk_kind(), &mut bytes).unwrap();
         assert_eq!(&bytes[8..11], &[0xc2, 4, 0]);
     }
 
