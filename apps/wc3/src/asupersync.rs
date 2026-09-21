@@ -14,6 +14,8 @@ const WAR3_DIVIDE_STATE_POINTER_SLOT: u32 = 0x0049_dc6c;
 const WAR3_SCAN_INDEX: u32 = 0x0049_dc90;
 const WAR3_SCAN_BOUND: u32 = 0x0049_c650;
 const WAR3_SCAN_COUNT: u32 = 0x0049_a980;
+const WAR3_HOTLOOP_START: u32 = 0x0045_af60;
+const WAR3_HOTLOOP_PREEMPT_EIP: u32 = 0x0045_afcd;
 
 fn quiet_war3_exception(exception: ChildException, registers: Registers) -> bool {
     (exception.vector == Some(0) && registers.eip == WAR3_DIVIDE_EXCEPTION_EIP)
@@ -929,6 +931,23 @@ pub(super) async fn run_loop(
                     }
                     (context.preemption_count, context.same_page_preemptions)
                 };
+                if active_key.pid != LAUNCHER_PID
+                    && exit.registers.eip == WAR3_HOTLOOP_PREEMPT_EIP
+                    && same_page >= 8
+                    && pending_child.as_ref().is_some_and(|child| {
+                        child.pid == active_key.pid
+                            && child.tid == active_key.tid
+                            && child_read_u32(child, WAR3_SCAN_INDEX) == Some(0)
+                    })
+                {
+                    logl::log(
+                        level::IMPORTANT,
+                        format_args!(
+                            "WC3 CHILD OPERATOR STOP reason=hotloop-no-index-progress",
+                        ),
+                    );
+                    return Ok(());
+                }
                 if active_key.pid != LAUNCHER_PID
                     && should_log_execution_sample(preemptions)
                     && pending_child
@@ -5101,6 +5120,21 @@ pub(super) async fn run_loop(
                             child.loader.prepared = true;
                             map_child_image(&child.address_space, &child.image)?;
                             log_child_slot_xrefs(child, WAR3_REPEATED_NULL_CALL_SLOT);
+                            log_child_slot_xrefs(child, WAR3_SCAN_INDEX);
+                            log_child_slot_xrefs(child, WAR3_SCAN_BOUND);
+                            log_child_slot_xrefs(child, WAR3_SCAN_COUNT);
+                            let mut bytes = [0u8; 0xb0];
+                            if child.address_space.read(WAR3_HOTLOOP_START, &mut bytes).ok()
+                                == Some(bytes.len())
+                            {
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 CHILD HOTLOOP CODE start=0x{WAR3_HOTLOOP_START:08x} bytes=\"{}\"",
+                                        diagnostic_hex_bytes(&bytes),
+                                    ),
+                                );
+                            }
                             map_child_thunks(&child.address_space, &surface.thunks)?;
                             map_child_controls(&child.address_space)?;
                             logl::log(
