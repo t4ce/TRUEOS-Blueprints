@@ -13,7 +13,7 @@ use trueos::{
     async_fs,
     logl::level,
     ui4_scene::{self, Damage, Font, Frame, SceneTextRow, rgba},
-    x86::{AddressSpace, Context, ExitKind, Permissions, Registers},
+    x86::{AddressSpace, Context, DebugRegisters, ExitKind, Permissions, Registers},
 };
 mod asupersync;
 
@@ -327,6 +327,7 @@ async fn run_x86_extended_state_self_test() -> Result<(), String> {
     const A_CODE: u32 = XSTATE_TEST_CODE_BASE;
     const B_CODE: u32 = XSTATE_TEST_CODE_BASE + 0x100;
     const DEEP_CODE: u32 = XSTATE_TEST_CODE_BASE + 0x200;
+    const BREAKPOINT_CODE: u32 = XSTATE_TEST_CODE_BASE + 0x300;
     const A_PATTERN: u32 = XSTATE_TEST_DATA_BASE;
     const B_PATTERN: u32 = XSTATE_TEST_DATA_BASE + 0x10;
     const A_X87_OUT: u32 = XSTATE_TEST_DATA_BASE + 0x20;
@@ -391,10 +392,34 @@ async fn run_x86_extended_state_self_test() -> Result<(), String> {
     let b_code = context_program(3, B_PATTERN, B_X87_OUT, B_XMM_OUT);
     address_space.write(A_CODE, &a_code).map_err(|error| error.to_string())?;
     address_space.write(B_CODE, &b_code).map_err(|error| error.to_string())?;
+    address_space
+        .write(BREAKPOINT_CODE, &[0x0f, 0x01, 0xc1]) // vmcall, reached only after #DB
+        .map_err(|error| error.to_string())?;
 
     let registers = |eip| Registers { eip, eflags: 0x202, ..Registers::default() };
     let mut a = Context::create(&address_space, registers(A_CODE)).map_err(|error| error.to_string())?;
     let mut b = Context::create(&address_space, registers(B_CODE)).map_err(|error| error.to_string())?;
+    // Distinct, disabled slots make a carrier leak observable without
+    // perturbing either xstate program. DR7's fixed bit is intentionally part
+    // of the logical test value too.
+    let a_debug = DebugRegisters {
+        dr0: A_CODE,
+        dr1: 0x1111_1111,
+        dr2: 0x2222_2222,
+        dr3: 0x3333_3333,
+        dr6: 0,
+        dr7: 0x400,
+    };
+    let b_debug = DebugRegisters {
+        dr0: B_CODE,
+        dr1: 0xaaaa_aaaa,
+        dr2: 0xbbbb_bbbb,
+        dr3: 0xcccc_cccc,
+        dr6: 0,
+        dr7: 0x400,
+    };
+    a.set_debug_registers(a_debug).map_err(|error| error.to_string())?;
+    b.set_debug_registers(b_debug).map_err(|error| error.to_string())?;
     let (a_initial, b_initial) = tokio::join!(a.run(), b.run());
     require_vmcall(&a_initial.map_err(|error| error.to_string())?, "A initialize")?;
     require_vmcall(&b_initial.map_err(|error| error.to_string())?, "B initialize")?;
@@ -406,6 +431,45 @@ async fn run_x86_extended_state_self_test() -> Result<(), String> {
     let (b_inspect, a_inspect) = tokio::join!(b.resume(), a.resume());
     require_vmcall(&a_inspect.map_err(|error| error.to_string())?, "A inspect")?;
     require_vmcall(&b_inspect.map_err(|error| error.to_string())?, "B inspect")?;
+    if a.debug_registers().map_err(|error| error.to_string())? != a_debug {
+        return Err("x86 debug self-test A lost its sidecar across carrier migration".into());
+    }
+    if b.debug_registers().map_err(|error| error.to_string())? != b_debug {
+        return Err("x86 debug self-test B lost its sidecar across carrier migration".into());
+    }
+
+    // A real DR0 execute breakpoint must exit as #DB with B0 set before the
+    // instruction executes. This is deliberately a generic x86 test rather
+    // than a Windows/SEH behavior check.
+    let mut breakpoint =
+        Context::create(&address_space, registers(BREAKPOINT_CODE)).map_err(|error| error.to_string())?;
+    breakpoint
+        .set_debug_registers(DebugRegisters {
+            dr0: BREAKPOINT_CODE,
+            dr7: 0x401, // L0 enable for an instruction-execution breakpoint.
+            ..DebugRegisters::default()
+        })
+        .map_err(|error| error.to_string())?;
+    let breakpoint_exit = breakpoint.run().await.map_err(|error| error.to_string())?;
+    if breakpoint_exit.kind != ExitKind::Exception
+        || breakpoint_exit.detail & 0xff != 1
+        || breakpoint_exit.qualification & 1 == 0
+    {
+        return Err(format!(
+            "x86 debug self-test expected #DB/B0, got {:?} detail=0x{:08x} qualification=0x{:016x}",
+            breakpoint_exit.kind, breakpoint_exit.detail, breakpoint_exit.qualification,
+        ));
+    }
+    let breakpoint_debug = breakpoint.debug_registers().map_err(|error| error.to_string())?;
+    if breakpoint_debug.dr0 != BREAKPOINT_CODE
+        || breakpoint_debug.dr7 & 0x3 != 1
+        || breakpoint_debug.dr6 & 1 == 0
+    {
+        return Err(format!(
+            "x86 debug self-test #DB state mismatch dr0=0x{:08x} dr6=0x{:08x} dr7=0x{:08x}",
+            breakpoint_debug.dr0, breakpoint_debug.dr6, breakpoint_debug.dr7,
+        ));
+    }
 
     let mut scalar = [0; 8];
     read_exact_x86(&address_space, A_X87_OUT, &mut scalar)?;
@@ -484,7 +548,7 @@ async fn run_x86_extended_state_self_test() -> Result<(), String> {
     }
     logl::log(
         level::IMPORTANT,
-        format_args!("WC3 X86 XSTATE SELFTEST PASS contexts=2 x87=pass xmm0=pass migration=exercised deeper_stack=pass"),
+        format_args!("WC3 X86 XSTATE SELFTEST PASS contexts=2 x87=pass xmm0=pass migration=debug-sidecars-pass b0=pass deeper_stack=pass"),
     );
     Ok(())
 }
