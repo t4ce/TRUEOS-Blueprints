@@ -3124,6 +3124,16 @@ pub(super) async fn run_loop(
                         continue;
                     }
                     if operation.is_generic_process_local() {
+                        let read_process_memory = (operation
+                            == child_loader::ProviderOp::ReadProcessMemory)
+                            .then(|| {
+                                read_guest_words(
+                                    &X86Memory(&child.address_space),
+                                    exit.registers.esp,
+                                    6,
+                                )
+                            })
+                            .transpose()?;
                         let dispatch = {
                             let mut child_memory = X86Memory(&child.address_space);
                             session
@@ -3140,6 +3150,27 @@ pub(super) async fn run_loop(
                         };
                         match dispatch {
                             Ok(PersonalityAction::Return(result)) => {
+                                if let Some(frame) = read_process_memory {
+                                    let [_, process, source, destination, size, bytes_read] =
+                                        frame.as_slice()
+                                    else {
+                                        unreachable!("ReadProcessMemory frame has six words")
+                                    };
+                                    logl::log(
+                                        level::IMPORTANT,
+                                        format_args!(
+                                            "WC3 CHILD READPROCESSMEMORY pid={} tid={} process=0x{:08x} source=0x{:08x} destination=0x{:08x} size={} bytes_read=0x{:08x} result={}",
+                                            active_pid,
+                                            active_tid,
+                                            process,
+                                            source,
+                                            destination,
+                                            size,
+                                            bytes_read,
+                                            result,
+                                        ),
+                                    );
+                                }
                                 logl::log(
                                     level::IMPORTANT,
                                     format_args!(
