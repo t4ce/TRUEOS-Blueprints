@@ -12,6 +12,7 @@ const WAR3_DIVIDE_TABLE_BASE_SLOT: u32 = 0x0049_ef00;
 const WAR3_DIVIDE_INDEX_SLOT: u32 = 0x0049_c490;
 const WAR3_DIVIDE_STATE_POINTER_SLOT: u32 = 0x0049_dc6c;
 const WAR3_SCAN_INDEX: u32 = 0x0049_dc90;
+const WAR3_SCAN_SOURCE: u32 = 0x0049_a594;
 const WAR3_SCAN_BOUND: u32 = 0x0049_c650;
 const WAR3_SCAN_COUNT: u32 = 0x0049_a980;
 const WAR3_HOTLOOP_START: u32 = 0x0045_af60;
@@ -974,17 +975,21 @@ pub(super) async fn run_loop(
                         ),
                     );
                     let scan_index = child_read_u32(child, WAR3_SCAN_INDEX);
+                    let scan_source = child_read_u32(child, WAR3_SCAN_SOURCE);
                     let scan_bound = child_read_u32(child, WAR3_SCAN_BOUND);
                     let scan_count = child_read_u32(child, WAR3_SCAN_COUNT);
                     logl::log(
                         level::IMPORTANT,
                         format_args!(
-                            "WC3 CHILD HOTLOOP pid={} tid={} preemptions={} eip=0x{:08x} index={} bound={} count={} eflags=0x{:08x}",
+                            "WC3 CHILD HOTLOOP pid={} tid={} preemptions={} eip=0x{:08x} index={} source={} bound={} count={} eflags=0x{:08x}",
                             active_key.pid,
                             active_key.tid,
                             preemptions,
                             exit.registers.eip,
                             scan_index
+                                .map(|value| format!("0x{value:08x}"))
+                                .unwrap_or_else(|| "-".into()),
+                            scan_source
                                 .map(|value| format!("0x{value:08x}"))
                                 .unwrap_or_else(|| "-".into()),
                             scan_bound
@@ -5121,6 +5126,7 @@ pub(super) async fn run_loop(
                             map_child_image(&child.address_space, &child.image)?;
                             log_child_slot_xrefs(child, WAR3_REPEATED_NULL_CALL_SLOT);
                             log_child_slot_xrefs(child, WAR3_SCAN_INDEX);
+                            log_child_slot_xrefs(child, WAR3_SCAN_SOURCE);
                             log_child_slot_xrefs(child, WAR3_SCAN_BOUND);
                             log_child_slot_xrefs(child, WAR3_SCAN_COUNT);
                             let mut bytes = [0u8; 0xb0];
