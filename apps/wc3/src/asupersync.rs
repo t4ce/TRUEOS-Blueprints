@@ -5,6 +5,7 @@ const EXEC_SAMPLE_PREEMPTIONS: u64 = 256;
 const MAX_SEH_CHAIN_DEPTH: u32 = 64;
 const WAR3_NULL_CALL_SLOT: u32 = 0x0049_cbec;
 const WAR3_NULL_CALL_NEIGHBORS: u32 = 0x0049_cbdc;
+const WAR3_REPEATED_NULL_CALL_SLOT: u32 = 0x0049_a960;
 
 fn child_image_import_at_rva(
     child: &PendingChild,
@@ -101,6 +102,43 @@ fn log_child_entry_null_slot_check(child: &PendingChild) {
             "WC3 CHILD ENTRY SLOT NEIGHBORS base=0x{WAR3_NULL_CALL_NEIGHBORS:08x} words=[{words}]",
         ),
     );
+}
+
+fn log_child_slot_xrefs(child: &PendingChild, slot: u32) {
+    let needle = slot.to_le_bytes();
+    let mut matches = 0u32;
+    for (offset, bytes) in child.image.image.windows(needle.len()).enumerate() {
+        if bytes != needle {
+            continue;
+        }
+        let Ok(rva) = u32::try_from(offset) else {
+            break;
+        };
+        let Some(site) = child.image.image_base.checked_add(rva) else {
+            break;
+        };
+        let context_start = offset.saturating_sub(16);
+        let context_end = offset
+            .saturating_add(needle.len())
+            .saturating_add(16)
+            .min(child.image.image.len());
+        logl::log(
+            level::IMPORTANT,
+            format_args!(
+                "WC3 CHILD SLOT XREF slot=0x{slot:08x} site=0x{site:08x} rva=0x{rva:08x} bytes=\"{}\"",
+                diagnostic_hex_bytes(&child.image.image[context_start..context_end]),
+            ),
+        );
+        matches = matches.saturating_add(1);
+    }
+    if matches == 0 {
+        logl::log(
+            level::IMPORTANT,
+            format_args!(
+                "WC3 CHILD SLOT XREF slot=0x{slot:08x} matches=0",
+            ),
+        );
+    }
 }
 
 fn should_log_execution_sample(count: u64) -> bool {
@@ -386,20 +424,25 @@ fn diagnostic_hex_bytes(bytes: &[u8]) -> String {
         .join(" ")
 }
 
-fn log_null_call_diagnostic(child: &PendingChild, pid: u32, tid: u32, registers: Registers) {
+fn log_null_call_diagnostic(
+    child: &PendingChild,
+    pid: u32,
+    tid: u32,
+    registers: Registers,
+) -> Option<NullLoopSignature> {
     let Some(return_address) = child_fault_stack_return(child, registers) else {
         logl::log(
             level::IMPORTANT,
             format_args!("WC3 CHILD NULL CALL RETURN pid={pid} tid={tid} stack_ret=<unreadable>"),
         );
-        return;
+        return None;
     };
     if return_address == 0 {
         logl::log(
             level::IMPORTANT,
             format_args!("WC3 CHILD NULL CALL RETURN pid={pid} tid={tid} stack_ret=0x00000000"),
         );
-        return;
+        return None;
     }
     let (return_owner, return_rva) =
         child_pc_owner(child, return_address).unwrap_or(("unknown", 0));
@@ -414,7 +457,7 @@ fn log_null_call_diagnostic(child: &PendingChild, pid: u32, tid: u32, registers:
             level::IMPORTANT,
             format_args!("WC3 CHILD NULL CALL BYTES end=0x{return_address:08x} bytes=\"<unreadable>\""),
         );
-        return;
+        return None;
     };
     logl::log(
         level::IMPORTANT,
@@ -428,12 +471,15 @@ fn log_null_call_diagnostic(child: &PendingChild, pid: u32, tid: u32, registers:
         (child.address_space.read(slot, &mut word).ok()? == word.len())
             .then(|| u32::from_le_bytes(word))
     }) {
-        NullCallSource::Register { name, target } => logl::log(
-            level::IMPORTANT,
-            format_args!(
-                "WC3 CHILD NULL CALL pid={pid} tid={tid} return=0x{return_address:08x} return_owner=\"{return_owner}\" return_rva=0x{return_rva:08x} kind=call-register register={name} target=0x{target:08x}",
-            ),
-        ),
+        NullCallSource::Register { name, target } => {
+            logl::log(
+                level::IMPORTANT,
+                format_args!(
+                    "WC3 CHILD NULL CALL pid={pid} tid={tid} return=0x{return_address:08x} return_owner=\"{return_owner}\" return_rva=0x{return_rva:08x} kind=call-register register={name} target=0x{target:08x}",
+                ),
+            );
+            None
+        }
         NullCallSource::AbsoluteMemory { slot, target } => {
             let (slot_owner, slot_rva) = child_pc_owner(child, slot).unwrap_or(("unknown", 0));
             logl::log(
@@ -445,22 +491,36 @@ fn log_null_call_diagnostic(child: &PendingChild, pid: u32, tid: u32, registers:
             );
             if target == Some(0) {
                 log_null_slot_provenance(child, slot, target);
+                Some(NullLoopSignature {
+                    pid,
+                    tid,
+                    return_address,
+                    slot,
+                })
+            } else {
+                None
             }
         }
-        NullCallSource::RegisterMemory { name, displacement, slot, target } => logl::log(
-            level::IMPORTANT,
-            format_args!(
-                "WC3 CHILD NULL CALL pid={pid} tid={tid} return=0x{return_address:08x} return_owner=\"{return_owner}\" return_rva=0x{return_rva:08x} kind=call-register-memory base={name} displacement=0x{:08x} slot=0x{slot:08x} target={}",
-                displacement as u32,
-                target.map(|value| format!("0x{value:08x}")).unwrap_or_else(|| "<unreadable>".into()),
-            ),
-        ),
-        NullCallSource::Unknown => logl::log(
-            level::IMPORTANT,
-            format_args!(
-                "WC3 CHILD NULL CALL pid={pid} tid={tid} return=0x{return_address:08x} return_owner=\"{return_owner}\" return_rva=0x{return_rva:08x} kind=unclassified",
-            ),
-        ),
+        NullCallSource::RegisterMemory { name, displacement, slot, target } => {
+            logl::log(
+                level::IMPORTANT,
+                format_args!(
+                    "WC3 CHILD NULL CALL pid={pid} tid={tid} return=0x{return_address:08x} return_owner=\"{return_owner}\" return_rva=0x{return_rva:08x} kind=call-register-memory base={name} displacement=0x{:08x} slot=0x{slot:08x} target={}",
+                    displacement as u32,
+                    target.map(|value| format!("0x{value:08x}")).unwrap_or_else(|| "<unreadable>".into()),
+                ),
+            );
+            None
+        }
+        NullCallSource::Unknown => {
+            logl::log(
+                level::IMPORTANT,
+                format_args!(
+                    "WC3 CHILD NULL CALL pid={pid} tid={tid} return=0x{return_address:08x} return_owner=\"{return_owner}\" return_rva=0x{return_rva:08x} kind=unclassified",
+                ),
+            );
+            None
+        }
     }
 }
 
@@ -623,6 +683,56 @@ impl ProcSelector {
             Self::Name(name) => child_loader::ProviderSymbol::Name(name.clone()),
             Self::Ordinal(ordinal) => child_loader::ProviderSymbol::Ordinal(*ordinal),
         }
+    }
+}
+
+fn log_get_proc_address_continuation(
+    child: &PendingChild,
+    pid: u32,
+    tid: u32,
+    caller_return: u32,
+    selector: &ProcSelector,
+    result: u32,
+) {
+    let mut bytes = [0; 12];
+    let read = child.address_space.read(caller_return, &mut bytes).ok();
+    let Some(read) = read.filter(|read| *read != 0) else {
+        logl::log(
+            level::IMPORTANT,
+            format_args!(
+                "WC3 CHILD GETPROCADDRESS CONTINUATION pid={} tid={} caller_ret=0x{:08x} selector={:?} result=0x{:08x} next_bytes=<unreadable>",
+                pid, tid, caller_return, selector, result,
+            ),
+        );
+        return;
+    };
+    let next_bytes = bytes[..read]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    logl::log(
+        level::IMPORTANT,
+        format_args!(
+            "WC3 CHILD GETPROCADDRESS CONTINUATION pid={} tid={} caller_ret=0x{:08x} selector={:?} result=0x{:08x} next_bytes=\"{}\"",
+            pid, tid, caller_return, selector, result, next_bytes,
+        ),
+    );
+    let destination = if read >= 5 && bytes[0] == 0xa3 {
+        Some(("a3", u32::from_le_bytes(bytes[1..5].try_into().unwrap())))
+    } else if read >= 6 && bytes[0] == 0x89 && bytes[1] == 0x05 {
+        Some(("89-05", u32::from_le_bytes(bytes[2..6].try_into().unwrap())))
+    } else {
+        None
+    };
+    if let Some((form, destination)) = destination {
+        logl::log(
+            level::IMPORTANT,
+            format_args!(
+                "WC3 CHILD GETPROCADDRESS STORE pid={} tid={} caller_ret=0x{:08x} selector={:?} result=0x{:08x} form={} destination=0x{:08x}",
+                pid, tid, caller_return, selector, result, form, destination,
+            ),
+        );
     }
 }
 
@@ -2771,6 +2881,14 @@ pub(super) async fn run_loop(
                                         active_pid, active_tid, provider_module, selector, ERROR_PROC_NOT_FOUND,
                                     ),
                                 );
+                                log_get_proc_address_continuation(
+                                    child,
+                                    active_pid,
+                                    active_tid,
+                                    frame[0],
+                                    &selector,
+                                    0,
+                                );
                                 let mut registers = exit.registers;
                                 registers.eax = 0;
                                 contexts[active]
@@ -2809,6 +2927,14 @@ pub(super) async fn run_loop(
                                     active_pid, active_tid, provider_module, selector, address, source,
                                 ),
                             );
+                            log_get_proc_address_continuation(
+                                child,
+                                active_pid,
+                                active_tid,
+                                frame[0],
+                                &selector,
+                                address,
+                            );
                             continue;
                         }
 
@@ -2827,6 +2953,14 @@ pub(super) async fn run_loop(
                                     "WC3 CHILD GETPROCADDRESS FRONTIER pid={} tid={} kind=unknown-hmodule handle=0x{:08x} selector={:?}",
                                     active_pid, active_tid, hmodule, selector,
                                 ),
+                            );
+                            log_get_proc_address_continuation(
+                                child,
+                                active_pid,
+                                active_tid,
+                                frame[0],
+                                &selector,
+                                0,
                             );
                             return Ok(());
                         };
@@ -2853,6 +2987,14 @@ pub(super) async fn run_loop(
                                     active_pid, active_tid, module, selector, ERROR_PROC_NOT_FOUND,
                                 ),
                             );
+                            log_get_proc_address_continuation(
+                                child,
+                                active_pid,
+                                active_tid,
+                                frame[0],
+                                &selector,
+                                0,
+                            );
                             continue;
                         };
                         let pe32::ExportTarget::Rva(rva) = &export.target else {
@@ -2865,6 +3007,14 @@ pub(super) async fn run_loop(
                                     "WC3 CHILD GETPROCADDRESS FRONTIER pid={} tid={} kind=native-forwarder module={:?} selector={:?} forwarder={:?}",
                                     active_pid, active_tid, module, selector, forwarder,
                                 ),
+                            );
+                            log_get_proc_address_continuation(
+                                child,
+                                active_pid,
+                                active_tid,
+                                frame[0],
+                                &selector,
+                                0,
                             );
                             return Ok(());
                         };
@@ -2887,6 +3037,14 @@ pub(super) async fn run_loop(
                                 "WC3 CHILD GETPROCADDRESS RETURN pid={} tid={} module={:?} selector={:?} address=0x{:08x} source=native-export cleanup=8-by-thunk",
                                 active_pid, active_tid, module, selector, address,
                             ),
+                        );
+                        log_get_proc_address_continuation(
+                            child,
+                            active_pid,
+                            active_tid,
+                            frame[0],
+                            &selector,
+                            address,
                         );
                         continue;
                     }
@@ -4252,6 +4410,7 @@ pub(super) async fn run_loop(
                             cipow_diagnostic_logged: false,
                             seh: None,
                             unhandled_filter_call: None,
+                            repeated_null_call: None,
                             loader: ChildLoaderState {
                                 prepared: false,
                                 native_requests: Vec::new(),
@@ -4771,6 +4930,7 @@ pub(super) async fn run_loop(
                             child.loader.native_requests = surface.native.clone();
                             child.loader.prepared = true;
                             map_child_image(&child.address_space, &child.image)?;
+                            log_child_slot_xrefs(child, WAR3_REPEATED_NULL_CALL_SLOT);
                             map_child_thunks(&child.address_space, &surface.thunks)?;
                             map_child_controls(&child.address_space)?;
                             logl::log(
@@ -5831,13 +5991,47 @@ pub(super) async fn run_loop(
                     && registers.eip == 0
                     && exception.fault_linear == Some(0)
                     && exception.error.is_some_and(|error| error & 0x10 != 0);
-                if null_execute {
-                    log_null_call_diagnostic(child, active_key.pid, active_key.tid, registers);
-                }
+                let null_loop_signature = null_execute.then(|| {
+                    log_null_call_diagnostic(child, active_key.pid, active_key.tid, registers)
+                }).flatten();
                 let child = pending_child
                     .as_mut()
                     .filter(|child| child.pid == active_key.pid && child.tid == active_key.tid)
                     .ok_or_else(|| "exception child missing mutable pending state".to_owned())?;
+                if null_execute {
+                    if let Some(signature) = null_loop_signature {
+                        let count = match child.repeated_null_call {
+                            Some(mut watch) if watch.signature == signature => {
+                                watch.count = watch.count.saturating_add(1);
+                                child.repeated_null_call = Some(watch);
+                                watch.count
+                            }
+                            _ => {
+                                child.repeated_null_call = Some(NullLoopWatch {
+                                    signature,
+                                    count: 1,
+                                });
+                                1
+                            }
+                        };
+                        if count >= 3 {
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD OPERATOR STOP reason=repeated-null-call pid={} tid={} return=0x{:08x} slot=0x{:08x} target=0x00000000 repeats={}",
+                                    signature.pid,
+                                    signature.tid,
+                                    signature.return_address,
+                                    signature.slot,
+                                    count,
+                                ),
+                            );
+                            return Ok(());
+                        }
+                    } else {
+                        child.repeated_null_call = None;
+                    }
+                }
                 begin_child_seh_dispatch(child, &mut contexts[active], exception, registers)?;
                 continue;
             }

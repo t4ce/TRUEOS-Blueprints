@@ -1528,8 +1528,23 @@ struct PendingChild {
     cipow_diagnostic_logged: bool,
     seh: Option<ChildSehDispatch>,
     unhandled_filter_call: Option<ChildUnhandledFilterCall>,
+    repeated_null_call: Option<NullLoopWatch>,
     loader: ChildLoaderState,
     execution: ChildExecutionState,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct NullLoopSignature {
+    pid: u32,
+    tid: u32,
+    return_address: u32,
+    slot: u32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct NullLoopWatch {
+    signature: NullLoopSignature,
+    count: u8,
 }
 
 #[derive(Clone, Debug)]
