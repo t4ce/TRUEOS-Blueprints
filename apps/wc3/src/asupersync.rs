@@ -33,6 +33,198 @@ fn child_pc_owner(child: &PendingChild, eip: u32) -> Option<(&str, u32)> {
     None
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum NullCallSource {
+    Register {
+        name: &'static str,
+        target: u32,
+    },
+    AbsoluteMemory {
+        slot: u32,
+        target: Option<u32>,
+    },
+    RegisterMemory {
+        name: &'static str,
+        displacement: i32,
+        slot: u32,
+        target: Option<u32>,
+    },
+    Unknown,
+}
+
+fn register_value(registers: Registers, index: u8) -> (&'static str, u32) {
+    match index {
+        0 => ("eax", registers.eax),
+        1 => ("ecx", registers.ecx),
+        2 => ("edx", registers.edx),
+        3 => ("ebx", registers.ebx),
+        4 => ("esp", registers.esp),
+        5 => ("ebp", registers.ebp),
+        6 => ("esi", registers.esi),
+        7 => ("edi", registers.edi),
+        _ => unreachable!("x86 register index is three bits"),
+    }
+}
+
+pub(super) fn classify_null_call_source(
+    bytes: &[u8],
+    registers: Registers,
+    read_word: impl Fn(u32) -> Option<u32>,
+) -> NullCallSource {
+    let (modrm, displacement) = if let Some(instruction) = bytes.get(bytes.len().saturating_sub(2)..)
+        && instruction.len() == 2
+        && instruction[0] == 0xff
+        && instruction[1] >> 6 == 3
+    {
+        (instruction[1], 0)
+    } else if let Some(instruction) = bytes.get(bytes.len().saturating_sub(6)..)
+        && instruction.len() == 6
+        && instruction[0] == 0xff
+        && (instruction[1] == 0x15 || instruction[1] >> 6 == 2)
+    {
+        let modrm = instruction[1];
+        if modrm == 0x15 {
+            let slot = u32::from_le_bytes(instruction[2..6].try_into().unwrap());
+            return NullCallSource::AbsoluteMemory {
+                slot,
+                target: read_word(slot),
+            };
+        }
+        (modrm, i32::from_le_bytes(instruction[2..6].try_into().unwrap()))
+    } else if let Some(instruction) = bytes.get(bytes.len().saturating_sub(3)..)
+        && instruction.len() == 3
+        && instruction[0] == 0xff
+        && instruction[1] >> 6 == 1
+    {
+        (instruction[1], i32::from(instruction[2] as i8))
+    } else if let Some(instruction) = bytes.get(bytes.len().saturating_sub(2)..)
+        && instruction.len() == 2
+        && instruction[0] == 0xff
+        && instruction[1] >> 6 == 0
+    {
+        (instruction[1], 0)
+    } else {
+        return NullCallSource::Unknown;
+    };
+    if (modrm >> 3) & 7 != 2 {
+        return NullCallSource::Unknown;
+    }
+    let mode = modrm >> 6;
+    let base = modrm & 7;
+    if mode == 3 {
+        let (name, target) = register_value(registers, base);
+        return NullCallSource::Register { name, target };
+    }
+
+    // ModRM base 4 has a SIB byte, while mod=00/base=5 is absolute addressing.
+    if base == 4 || (mode == 0 && base == 5) {
+        return NullCallSource::Unknown;
+    }
+    let (name, value) = register_value(registers, base);
+    let slot = value.wrapping_add_signed(displacement);
+    NullCallSource::RegisterMemory {
+        name,
+        displacement,
+        slot,
+        target: read_word(slot),
+    }
+}
+
+fn child_fault_stack_return(child: &PendingChild, registers: Registers) -> Option<u32> {
+    let mut bytes = [0; 4];
+    (child.address_space.read(registers.esp, &mut bytes).ok()? == bytes.len())
+        .then(|| u32::from_le_bytes(bytes))
+}
+
+fn code_before_return(address_space: &AddressSpace, return_address: u32) -> Option<[u8; 16]> {
+    let start = return_address.checked_sub(16)?;
+    let mut bytes = [0; 16];
+    (address_space.read(start, &mut bytes).ok()? == bytes.len()).then_some(bytes)
+}
+
+fn diagnostic_hex_bytes(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn log_null_call_diagnostic(child: &PendingChild, pid: u32, tid: u32, registers: Registers) {
+    let Some(return_address) = child_fault_stack_return(child, registers) else {
+        logl::log(
+            level::IMPORTANT,
+            format_args!("WC3 CHILD NULL CALL RETURN pid={pid} tid={tid} stack_ret=<unreadable>"),
+        );
+        return;
+    };
+    if return_address == 0 {
+        logl::log(
+            level::IMPORTANT,
+            format_args!("WC3 CHILD NULL CALL RETURN pid={pid} tid={tid} stack_ret=0x00000000"),
+        );
+        return;
+    }
+    let (return_owner, return_rva) =
+        child_pc_owner(child, return_address).unwrap_or(("unknown", 0));
+    logl::log(
+        level::IMPORTANT,
+        format_args!(
+            "WC3 CHILD NULL CALL RETURN pid={pid} tid={tid} stack_ret=0x{return_address:08x} owner=\"{return_owner}\" rva=0x{return_rva:08x}",
+        ),
+    );
+    let Some(bytes) = code_before_return(&child.address_space, return_address) else {
+        logl::log(
+            level::IMPORTANT,
+            format_args!("WC3 CHILD NULL CALL BYTES end=0x{return_address:08x} bytes=\"<unreadable>\""),
+        );
+        return;
+    };
+    logl::log(
+        level::IMPORTANT,
+        format_args!(
+            "WC3 CHILD NULL CALL BYTES end=0x{return_address:08x} bytes=\"{}\"",
+            diagnostic_hex_bytes(&bytes),
+        ),
+    );
+    match classify_null_call_source(&bytes, registers, |slot| {
+        let mut word = [0; 4];
+        (child.address_space.read(slot, &mut word).ok()? == word.len())
+            .then(|| u32::from_le_bytes(word))
+    }) {
+        NullCallSource::Register { name, target } => logl::log(
+            level::IMPORTANT,
+            format_args!(
+                "WC3 CHILD NULL CALL pid={pid} tid={tid} return=0x{return_address:08x} return_owner=\"{return_owner}\" return_rva=0x{return_rva:08x} kind=call-register register={name} target=0x{target:08x}",
+            ),
+        ),
+        NullCallSource::AbsoluteMemory { slot, target } => {
+            let (slot_owner, slot_rva) = child_pc_owner(child, slot).unwrap_or(("unknown", 0));
+            logl::log(
+                level::IMPORTANT,
+                format_args!(
+                    "WC3 CHILD NULL CALL pid={pid} tid={tid} return=0x{return_address:08x} return_owner=\"{return_owner}\" return_rva=0x{return_rva:08x} kind=call-absolute-memory slot=0x{slot:08x} slot_owner=\"{slot_owner}\" slot_rva=0x{slot_rva:08x} target={}",
+                    target.map(|value| format!("0x{value:08x}")).unwrap_or_else(|| "<unreadable>".into()),
+                ),
+            );
+        }
+        NullCallSource::RegisterMemory { name, displacement, slot, target } => logl::log(
+            level::IMPORTANT,
+            format_args!(
+                "WC3 CHILD NULL CALL pid={pid} tid={tid} return=0x{return_address:08x} return_owner=\"{return_owner}\" return_rva=0x{return_rva:08x} kind=call-register-memory base={name} displacement=0x{:08x} slot=0x{slot:08x} target={}",
+                displacement as u32,
+                target.map(|value| format!("0x{value:08x}")).unwrap_or_else(|| "<unreadable>".into()),
+            ),
+        ),
+        NullCallSource::Unknown => logl::log(
+            level::IMPORTANT,
+            format_args!(
+                "WC3 CHILD NULL CALL pid={pid} tid={tid} return=0x{return_address:08x} return_owner=\"{return_owner}\" return_rva=0x{return_rva:08x} kind=unclassified",
+            ),
+        ),
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct SehRegistration { frame: u32, next: u32, handler: u32 }
 
@@ -5127,6 +5319,13 @@ pub(super) async fn run_loop(
                             registers.eax,
                         )?;
                     }
+                }
+                let null_execute = exception.vector == Some(14)
+                    && registers.eip == 0
+                    && exception.fault_linear == Some(0)
+                    && exception.error.is_some_and(|error| error & 0x10 != 0);
+                if null_execute {
+                    log_null_call_diagnostic(child, active_key.pid, active_key.tid, registers);
                 }
                 let child = pending_child
                     .as_mut()

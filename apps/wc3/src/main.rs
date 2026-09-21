@@ -2148,6 +2148,75 @@ mod tests {
     }
 
     #[test]
+    fn null_call_source_classifies_supported_indirect_call_forms() {
+        let registers = Registers {
+            eax: 0x0010_0000,
+            ebx: 0,
+            esi: 0x0020_0004,
+            edi: 0x0030_0000,
+            ..Registers::default()
+        };
+
+        assert_eq!(
+            asupersync::classify_null_call_source(&[0x90, 0xff, 0xd6], registers, |_| None),
+            asupersync::NullCallSource::Register {
+                name: "esi",
+                target: 0x0020_0004,
+            },
+        );
+        assert_eq!(
+            asupersync::classify_null_call_source(
+                &[0xff, 0x15, 0x34, 0x12, 0x40, 0x00],
+                registers,
+                |slot| (slot == 0x0040_1234).then_some(0),
+            ),
+            asupersync::NullCallSource::AbsoluteMemory {
+                slot: 0x0040_1234,
+                target: Some(0),
+            },
+        );
+        assert_eq!(
+            asupersync::classify_null_call_source(
+                &[0xff, 0x96, 0xfc, 0xff, 0xff, 0xff],
+                registers,
+                |slot| (slot == 0x0020_0000).then_some(0),
+            ),
+            asupersync::NullCallSource::RegisterMemory {
+                name: "esi",
+                displacement: -4,
+                slot: 0x0020_0000,
+                target: Some(0),
+            },
+        );
+        assert_eq!(
+            asupersync::classify_null_call_source(
+                &[0xff, 0x57, 4],
+                registers,
+                |slot| (slot == 0x0030_0004).then_some(0),
+            ),
+            asupersync::NullCallSource::RegisterMemory {
+                name: "edi",
+                displacement: 4,
+                slot: 0x0030_0004,
+                target: Some(0),
+            },
+        );
+        assert_eq!(
+            asupersync::classify_null_call_source(
+                &[0xff, 0x10],
+                registers,
+                |slot| (slot == 0x0010_0000).then_some(0),
+            ),
+            asupersync::NullCallSource::RegisterMemory {
+                name: "eax",
+                displacement: 0,
+                slot: 0x0010_0000,
+                target: Some(0),
+            },
+        );
+    }
+
+    #[test]
     fn process_data_va_is_private_between_launcher_and_child_address_spaces() {
         let launcher = AddressSpace::create().unwrap();
         let child = AddressSpace::create().unwrap();
