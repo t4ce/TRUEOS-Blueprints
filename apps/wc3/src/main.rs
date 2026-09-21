@@ -1526,6 +1526,7 @@ struct PendingChild {
     initterm: Option<ChildInitterm>,
     cipow: Option<ChildCiPow>,
     cipow_diagnostic_logged: bool,
+    seh_handler_dumped: bool,
     seh: Option<ChildSehDispatch>,
     unhandled_filter_call: Option<ChildUnhandledFilterCall>,
     repeated_null_call: Option<NullLoopWatch>,
@@ -1557,6 +1558,16 @@ struct DivideLoopSignature {
     eax: u32,
     ecx: u32,
     edx: u32,
+    progress: DivideLoopProgress,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct DivideLoopProgress {
+    table_base: u32,
+    index: u32,
+    state_ptr: u32,
+    input: u8,
+    accumulator: u16,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

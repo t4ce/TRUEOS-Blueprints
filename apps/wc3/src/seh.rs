@@ -17,6 +17,7 @@ const ESI: usize = 160;
 const EBX: usize = 164;
 const EDX: usize = 168;
 const ECX: usize = 172;
+pub const ECX_OFFSET: usize = ECX;
 const EAX: usize = 176;
 const EBP: usize = 180;
 const EIP: usize = 184;

@@ -6,6 +6,10 @@ const MAX_SEH_CHAIN_DEPTH: u32 = 64;
 const WAR3_NULL_CALL_SLOT: u32 = 0x0049_cbec;
 const WAR3_NULL_CALL_NEIGHBORS: u32 = 0x0049_cbdc;
 const WAR3_REPEATED_NULL_CALL_SLOT: u32 = 0x0049_a960;
+const WAR3_DIVIDE_EXCEPTION_HANDLER: u32 = 0x0045_a0c0;
+const WAR3_DIVIDE_TABLE_BASE_SLOT: u32 = 0x0049_ef00;
+const WAR3_DIVIDE_INDEX_SLOT: u32 = 0x0049_c490;
+const WAR3_DIVIDE_STATE_POINTER_SLOT: u32 = 0x0049_dc6c;
 
 fn child_image_import_at_rva(
     child: &PendingChild,
@@ -424,6 +428,38 @@ fn diagnostic_hex_bytes(bytes: &[u8]) -> String {
         .join(" ")
 }
 
+fn child_read_u32(child: &PendingChild, address: u32) -> Option<u32> {
+    let mut bytes = [0; 4];
+    (child.address_space.read(address, &mut bytes).ok()? == bytes.len())
+        .then(|| u32::from_le_bytes(bytes))
+}
+
+fn child_read_u16(child: &PendingChild, address: u32) -> Option<u16> {
+    let mut bytes = [0; 2];
+    (child.address_space.read(address, &mut bytes).ok()? == bytes.len())
+        .then(|| u16::from_le_bytes(bytes))
+}
+
+fn child_read_u8(child: &PendingChild, address: u32) -> Option<u8> {
+    let mut byte = [0; 1];
+    (child.address_space.read(address, &mut byte).ok()? == byte.len()).then_some(byte[0])
+}
+
+fn divide_loop_progress(child: &PendingChild) -> Option<DivideLoopProgress> {
+    let table_base = child_read_u32(child, WAR3_DIVIDE_TABLE_BASE_SLOT)?;
+    let index = child_read_u32(child, WAR3_DIVIDE_INDEX_SLOT)?;
+    let state_ptr = child_read_u32(child, WAR3_DIVIDE_STATE_POINTER_SLOT)?;
+    let input = child_read_u8(child, table_base.checked_add(index)?)?;
+    let accumulator = child_read_u16(child, state_ptr)?;
+    Some(DivideLoopProgress {
+        table_base,
+        index,
+        state_ptr,
+        input,
+        accumulator,
+    })
+}
+
 fn log_null_call_diagnostic(
     child: &PendingChild,
     pid: u32,
@@ -625,6 +661,25 @@ fn begin_child_seh_dispatch(child: &mut PendingChild, guest: &mut GuestContext, 
     let head = u32::from_le_bytes(head);
     if head == u32::MAX { return Err("unhandled-SEH-chain frontier".into()); }
     let registration = read_seh_registration(&child.address_space, head)?;
+    if registration.handler == WAR3_DIVIDE_EXCEPTION_HANDLER && !child.seh_handler_dumped {
+        child.seh_handler_dumped = true;
+        let mut bytes = [0; 128];
+        let readable = child.address_space.read(registration.handler, &mut bytes).ok() == Some(bytes.len());
+        logl::log(
+            level::IMPORTANT,
+            format_args!(
+                "WC3 CHILD SEH HANDLER DUMP pid={} tid={} handler=0x{:08x} bytes=\"{}\"",
+                child.pid,
+                child.tid,
+                registration.handler,
+                if readable {
+                    diagnostic_hex_bytes(&bytes)
+                } else {
+                    "<unreadable>".into()
+                },
+            ),
+        );
+    }
     let context = wc3::seh::encode_x86_context(registers);
     let (record, exception_code, exception_kind) = match exception.vector {
         Some(14) => {
@@ -939,7 +994,16 @@ pub(super) async fn run_loop(
                         }
                         let mut bytes = [0; wc3::seh::X86_CONTEXT_BYTES];
                         if child.address_space.read(seh.context_va, &mut bytes).map_err(|error| error.to_string())? != bytes.len() { return Err("short SEH context readback".into()); }
+                        let raw_ecx = u32::from_le_bytes(
+                            bytes[wc3::seh::ECX_OFFSET..wc3::seh::ECX_OFFSET + 4]
+                                .try_into()
+                                .unwrap(),
+                        );
                         let restored = wc3::seh::decode_x86_context(&bytes, seh.preserved_fs_base).map_err(str::to_owned)?;
+                        logl::log(level::IMPORTANT, format_args!(
+                            "WC3 CHILD SEH CONTEXT RETURN pid={} tid={} context=0x{:08x} old_ecx=0x{:08x} saved_ecx=0x{:08x} restored_ecx=0x{:08x}",
+                            active_pid, active_tid, seh.context_va, seh.original_registers.ecx, raw_ecx, restored.ecx,
+                        ));
                         contexts[active].context.set_registers(restored).map_err(|error| error.to_string())?;
                         logl::log(level::IMPORTANT, format_args!(
                             "WC3 CHILD SEH CONTINUE pid={} tid={} old_eip=0x{:08x} new_eip=0x{:08x} old_esp=0x{:08x} new_esp=0x{:08x}",
@@ -4472,6 +4536,7 @@ pub(super) async fn run_loop(
                             initterm: None,
                             cipow: None,
                             cipow_diagnostic_logged: false,
+                            seh_handler_dumped: false,
                             seh: None,
                             unhandled_filter_call: None,
                             repeated_null_call: None,
@@ -6098,6 +6163,34 @@ pub(super) async fn run_loop(
                     }
                 }
                 if exception.vector == Some(0) {
+                    let Some(progress) = divide_loop_progress(child) else {
+                        child.repeated_divide_fault = None;
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD DIVIDE PROGRESS pid={} tid={} eip=0x{:08x} table_base=<unreadable> index=<unreadable> state_ptr=<unreadable> input=<unreadable> accum=<unreadable>",
+                                active_key.pid,
+                                active_key.tid,
+                                registers.eip,
+                            ),
+                        );
+                        begin_child_seh_dispatch(child, &mut contexts[active], exception, registers)?;
+                        continue;
+                    };
+                    logl::log(
+                        level::IMPORTANT,
+                        format_args!(
+                            "WC3 CHILD DIVIDE PROGRESS pid={} tid={} eip=0x{:08x} table_base=0x{:08x} index=0x{:08x} state_ptr=0x{:08x} input=0x{:02x} accum=0x{:04x}",
+                            active_key.pid,
+                            active_key.tid,
+                            registers.eip,
+                            progress.table_base,
+                            progress.index,
+                            progress.state_ptr,
+                            progress.input,
+                            progress.accumulator,
+                        ),
+                    );
                     let signature = DivideLoopSignature {
                         pid: active_key.pid,
                         tid: active_key.tid,
@@ -6106,6 +6199,7 @@ pub(super) async fn run_loop(
                         eax: registers.eax,
                         ecx: registers.ecx,
                         edx: registers.edx,
+                        progress,
                     };
                     let count = match child.repeated_divide_fault {
                         Some(mut watch) if watch.signature == signature => {
@@ -6125,7 +6219,7 @@ pub(super) async fn run_loop(
                         logl::log(
                             level::IMPORTANT,
                             format_args!(
-                                "WC3 CHILD OPERATOR STOP reason=repeated-divide-error pid={} tid={} eip=0x{:08x} esp=0x{:08x} eax=0x{:08x} ecx=0x{:08x} edx=0x{:08x} repeats={}",
+                                "WC3 CHILD OPERATOR STOP reason=repeated-divide-error pid={} tid={} eip=0x{:08x} esp=0x{:08x} eax=0x{:08x} ecx=0x{:08x} edx=0x{:08x} table_base=0x{:08x} index=0x{:08x} state_ptr=0x{:08x} input=0x{:02x} accum=0x{:04x} repeats={}",
                                 signature.pid,
                                 signature.tid,
                                 signature.eip,
@@ -6133,6 +6227,11 @@ pub(super) async fn run_loop(
                                 signature.eax,
                                 signature.ecx,
                                 signature.edx,
+                                signature.progress.table_base,
+                                signature.progress.index,
+                                signature.progress.state_ptr,
+                                signature.progress.input,
+                                signature.progress.accumulator,
                                 count,
                             ),
                         );
