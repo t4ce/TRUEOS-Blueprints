@@ -1,7 +1,7 @@
 use super::*;
 
 const ERROR_PROC_NOT_FOUND: u32 = 127;
-const EXEC_SAMPLE_PREEMPTIONS: u64 = 256;
+const EXEC_SAMPLE_PREEMPTIONS: u64 = 8;
 const MAX_SEH_CHAIN_DEPTH: u32 = 64;
 const WAR3_NULL_CALL_SLOT: u32 = 0x0049_cbec;
 const WAR3_NULL_CALL_NEIGHBORS: u32 = 0x0049_cbdc;
@@ -11,6 +11,9 @@ const WAR3_DIVIDE_EXCEPTION_EIP: u32 = 0x0045_ae47;
 const WAR3_DIVIDE_TABLE_BASE_SLOT: u32 = 0x0049_ef00;
 const WAR3_DIVIDE_INDEX_SLOT: u32 = 0x0049_c490;
 const WAR3_DIVIDE_STATE_POINTER_SLOT: u32 = 0x0049_dc6c;
+const WAR3_SCAN_INDEX: u32 = 0x0049_dc90;
+const WAR3_SCAN_BOUND: u32 = 0x0049_c650;
+const WAR3_SCAN_COUNT: u32 = 0x0049_a980;
 
 fn quiet_war3_exception(exception: ChildException, registers: Registers) -> bool {
     (exception.vector == Some(0) && registers.eip == WAR3_DIVIDE_EXCEPTION_EIP)
@@ -949,6 +952,29 @@ pub(super) async fn run_loop(
                             active_key.pid, active_key.tid, preemptions, owner, rva,
                             exit.registers.eip, exit.registers.esp, exit.registers.ebp,
                             exit.registers.eax, same_page, code,
+                        ),
+                    );
+                    let scan_index = child_read_u32(child, WAR3_SCAN_INDEX);
+                    let scan_bound = child_read_u32(child, WAR3_SCAN_BOUND);
+                    let scan_count = child_read_u32(child, WAR3_SCAN_COUNT);
+                    logl::log(
+                        level::IMPORTANT,
+                        format_args!(
+                            "WC3 CHILD HOTLOOP pid={} tid={} preemptions={} eip=0x{:08x} index={} bound={} count={} eflags=0x{:08x}",
+                            active_key.pid,
+                            active_key.tid,
+                            preemptions,
+                            exit.registers.eip,
+                            scan_index
+                                .map(|value| format!("0x{value:08x}"))
+                                .unwrap_or_else(|| "-".into()),
+                            scan_bound
+                                .map(|value| format!("0x{value:08x}"))
+                                .unwrap_or_else(|| "-".into()),
+                            scan_count
+                                .map(|value| format!("0x{value:08x}"))
+                                .unwrap_or_else(|| "-".into()),
+                            exit.registers.eflags,
                         ),
                     );
                     if same_page == 1024 {
