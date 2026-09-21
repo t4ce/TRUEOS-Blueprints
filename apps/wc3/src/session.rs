@@ -702,6 +702,29 @@ mod tests {
     }
 
     #[test]
+    fn signal_thread_wakes_waiters_on_the_persistent_thread_object() {
+        let mut session = Wc3Session::new(XpProcess::new(Vec::new()));
+        let child = session.create_child();
+        let key = ThreadKey {
+            pid: child.pid,
+            tid: child.tid,
+        };
+        let wait = request(child.thread_handle, u32::MAX);
+        session.block_wait(wait.clone()).unwrap();
+
+        let woken = session.signal_thread(key, 0).unwrap();
+
+        assert_eq!(session.thread_exit_code(key), Some(0));
+        assert_eq!(
+            woken,
+            vec![CompletedWait {
+                request: wait,
+                result: 0,
+            }]
+        );
+    }
+
+    #[test]
     fn destroy_window_is_terminal_and_releases_focus_through_presentation() {
         let mut session = Wc3Session::new(XpProcess::new(Vec::new()));
         let hwnd = session
@@ -1609,14 +1632,24 @@ impl Wc3Session {
         true
     }
 
-    pub fn signal_thread(&mut self, key: ThreadKey, exit_code: u32) {
+    pub fn signal_thread(
+        &mut self,
+        key: ThreadKey,
+        exit_code: u32,
+    ) -> Result<Vec<CompletedWait>, &'static str> {
+        let mut found = false;
         for object in self.objects.values_mut() {
             if let SessionObject::Thread(thread) = object {
                 if thread.key == key {
                     thread.exit_code = Some(exit_code);
+                    found = true;
                 }
             }
         }
+        if !found {
+            return Err("ExitThread thread object missing");
+        }
+        self.reevaluate_blocked_waits()
     }
 
     pub fn process_exit_code(&self, pid: Pid) -> Option<u32> {

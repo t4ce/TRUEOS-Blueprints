@@ -150,6 +150,47 @@ fn resume_completed_waiters(
     Ok(())
 }
 
+fn terminate_launcher_thread(
+    session: &mut Wc3Session,
+    contexts: &mut Vec<GuestContext>,
+    active: usize,
+    exit_code: u32,
+    thread_calls: &mut HashMap<(u32, u32), u32>,
+    wait_deadlines: &mut HashMap<ThreadKey, RuntimeWait>,
+) -> Result<Option<usize>, String> {
+    let key = contexts
+        .get(active)
+        .ok_or_else(|| "ExitThread active context missing".to_owned())?
+        .key();
+    if key.pid != LAUNCHER_PID || key.tid == LAUNCHER_TID {
+        return Err("ExitThread launcher-primary-thread frontier".into());
+    }
+    contexts.remove(active);
+    session
+        .launcher_mut()
+        .xp
+        .exit_thread(key.tid, exit_code)
+        .map_err(str::to_owned)?;
+    let woken = session.signal_thread(key, exit_code).map_err(str::to_owned)?;
+    wait_deadlines.remove(&key);
+    thread_calls.remove(&(key.pid, key.tid));
+    resume_completed_waiters(&woken, "thread-exit", contexts, wait_deadlines)?;
+    logl::log(
+        level::IMPORTANT,
+        format_args!(
+            "WC3 EXITTHREAD pid={} tid={} exit_code=0x{:08x} contexts_removed=1 waiters_woken={} result=terminated",
+            key.pid,
+            key.tid,
+            exit_code,
+            woken.len(),
+        ),
+    );
+    if contexts.is_empty() {
+        return Ok(None);
+    }
+    Ok(pop_runnable_context(session, contexts).or(Some(active % contexts.len())))
+}
+
 fn child_pc_owner(child: &PendingChild, eip: u32) -> Option<(&str, u32)> {
     let in_image = |base: u32, size: u32| {
         base.checked_add(size)
@@ -2842,24 +2883,21 @@ pub(super) async fn run_loop(
                     return Ok(());
                 }
                 if exit.registers.eip == thunk32::THREAD_EXIT_AFTER_VMCALL {
-                    let exited = contexts.remove(active);
-                    if exited.tid != LAUNCHER_TID {
-                        session.signal_thread(
-                            wc3::session::ThreadKey {
-                                pid: LAUNCHER_PID,
-                                tid: exited.tid,
-                            },
+                    if contexts[active].tid != LAUNCHER_TID {
+                        let Some(next) = terminate_launcher_thread(
+                            &mut session,
+                            &mut contexts,
+                            active,
                             exit.registers.eax,
-                        );
-                        logl::log(
-                            level::IMPORTANT,
-                            format_args!(
-                                "WC3 TID2 EXIT pid={} tid={} code=0x{:08x}",
-                                LAUNCHER_PID, exited.tid, exit.registers.eax
-                            ),
-                        );
-                        return Ok(());
+                            thread_calls,
+                            &mut wait_deadlines,
+                        )? else {
+                            return Ok(());
+                        };
+                        active = next;
+                        continue;
                     }
+                    let exited = contexts.remove(active);
                     session
                         .launcher_mut()
                         .xp
@@ -5331,13 +5369,19 @@ pub(super) async fn run_loop(
                         callback = Some(call);
                         0
                     }
-                    PersonalityAction::ExitThread(_) => {
-                        if contexts[active].tid != LAUNCHER_TID {
+                    PersonalityAction::ExitThread(exit_code) => {
+                        let Some(next) = terminate_launcher_thread(
+                            &mut session,
+                            &mut contexts,
+                            active,
+                            exit_code,
+                            thread_calls,
+                            &mut wait_deadlines,
+                        )? else {
                             return Ok(());
-                        }
-                        return Err(
-                            "wc3: ExitThread action is not wired into the launcher loop".into()
-                        );
+                        };
+                        active = next;
+                        continue;
                     }
                     PersonalityAction::ExitProcess(_) => {
                         if contexts[active].tid != LAUNCHER_TID {

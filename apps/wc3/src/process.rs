@@ -1748,6 +1748,10 @@ impl XpProcess {
             WinCall::DeleteDC => self.delete_dc(esp, memory),
             WinCall::DeleteObject => self.delete_object(esp, memory),
             WinCall::CreateThread => self.create_thread(esp, memory),
+            WinCall::ExitThread => {
+                let [_, exit_code] = arguments::<2>(memory, esp)?;
+                return Ok(PersonalityAction::ExitThread(exit_code));
+            }
             WinCall::ResumeThread => self.resume_thread(esp, memory),
             WinCall::CreateProcessA => {
                 return Ok(PersonalityAction::Session(SessionRequest::CreateProcess(
@@ -3977,6 +3981,28 @@ mod tests {
                     exit_code_pointer: 0x0021_0560,
                 },
             )),
+        );
+    }
+
+    #[test]
+    fn exit_thread_is_a_non_returning_launcher_action() {
+        let mut xp = XpProcess::new(vec![LauncherImport {
+            id: 0,
+            module: "KERNEL32.dll".into(),
+            symbol: "ExitThread".into(),
+            iat_rva: 0,
+        }]);
+        let mut memory = Memory {
+            base: 0x0021_0000,
+            bytes: vec![0; 0x1000],
+        };
+        let esp = 0x0021_0800;
+        write_u32(&mut memory, esp, 0x0040_2300).unwrap();
+        write_u32(&mut memory, esp + 4, 0).unwrap();
+
+        assert_eq!(
+            xp.dispatch(2, 0, esp, &mut memory).unwrap(),
+            PersonalityAction::ExitThread(0)
         );
     }
 

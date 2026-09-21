@@ -60,6 +60,7 @@ pub enum WinCall {
     DeleteDC,
     DeleteObject,
     CreateThread,
+    ExitThread,
     ResumeThread,
     GetStdHandle,
     GetFileType,
@@ -146,6 +147,7 @@ impl WinCall {
             "DeleteDC" if import.module.eq_ignore_ascii_case("GDI32.dll") => Self::DeleteDC,
             "DeleteObject" if import.module.eq_ignore_ascii_case("GDI32.dll") => Self::DeleteObject,
             "CreateThread" if kernel => Self::CreateThread,
+            "ExitThread" if kernel => Self::ExitThread,
             "ResumeThread" if kernel => Self::ResumeThread,
             "GetStdHandle" if kernel => Self::GetStdHandle,
             "GetFileType" if kernel => Self::GetFileType,
@@ -182,6 +184,7 @@ impl WinCall {
             | Self::RegisterClassA
             | Self::UpdateWindow
             | Self::SetFocus
+            | Self::ExitThread
             | Self::ResumeThread
             | Self::GetStdHandle
             | Self::GetFileType
@@ -299,6 +302,20 @@ mod tests {
         assert_eq!(WinCall::from_import(&import), WinCall::SetEvent);
         let mut bytes = [0; thunk32::THUNK_BYTES];
         thunk32::write(0, WinCall::SetEvent.thunk_kind(), &mut bytes).unwrap();
+        assert_eq!(&bytes[8..11], &[0xc2, 4, 0]);
+    }
+
+    #[test]
+    fn exit_thread_is_a_kernel32_stdcall_four_import() {
+        let import = LauncherImport {
+            id: 0,
+            module: "KERNEL32.dll".into(),
+            symbol: "ExitThread".into(),
+            iat_rva: 0,
+        };
+        assert_eq!(WinCall::from_import(&import), WinCall::ExitThread);
+        let mut bytes = [0; thunk32::THUNK_BYTES];
+        thunk32::write(0, WinCall::ExitThread.thunk_kind(), &mut bytes).unwrap();
         assert_eq!(&bytes[8..11], &[0xc2, 4, 0]);
     }
 
