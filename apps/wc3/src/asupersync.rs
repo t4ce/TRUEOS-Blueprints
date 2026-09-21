@@ -4475,6 +4475,7 @@ pub(super) async fn run_loop(
                             seh: None,
                             unhandled_filter_call: None,
                             repeated_null_call: None,
+                            repeated_divide_fault: None,
                             loader: ChildLoaderState {
                                 prepared: false,
                                 native_requests: Vec::new(),
@@ -6095,6 +6096,50 @@ pub(super) async fn run_loop(
                     } else {
                         child.repeated_null_call = None;
                     }
+                }
+                if exception.vector == Some(0) {
+                    let signature = DivideLoopSignature {
+                        pid: active_key.pid,
+                        tid: active_key.tid,
+                        eip: registers.eip,
+                        esp: registers.esp,
+                        eax: registers.eax,
+                        ecx: registers.ecx,
+                        edx: registers.edx,
+                    };
+                    let count = match child.repeated_divide_fault {
+                        Some(mut watch) if watch.signature == signature => {
+                            watch.count = watch.count.saturating_add(1);
+                            child.repeated_divide_fault = Some(watch);
+                            watch.count
+                        }
+                        _ => {
+                            child.repeated_divide_fault = Some(DivideLoopWatch {
+                                signature,
+                                count: 1,
+                            });
+                            1
+                        }
+                    };
+                    if count >= 3 {
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD OPERATOR STOP reason=repeated-divide-error pid={} tid={} eip=0x{:08x} esp=0x{:08x} eax=0x{:08x} ecx=0x{:08x} edx=0x{:08x} repeats={}",
+                                signature.pid,
+                                signature.tid,
+                                signature.eip,
+                                signature.esp,
+                                signature.eax,
+                                signature.ecx,
+                                signature.edx,
+                                count,
+                            ),
+                        );
+                        return Ok(());
+                    }
+                } else {
+                    child.repeated_divide_fault = None;
                 }
                 begin_child_seh_dispatch(child, &mut contexts[active], exception, registers)?;
                 continue;

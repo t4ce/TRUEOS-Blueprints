@@ -1529,6 +1529,7 @@ struct PendingChild {
     seh: Option<ChildSehDispatch>,
     unhandled_filter_call: Option<ChildUnhandledFilterCall>,
     repeated_null_call: Option<NullLoopWatch>,
+    repeated_divide_fault: Option<DivideLoopWatch>,
     loader: ChildLoaderState,
     execution: ChildExecutionState,
 }
@@ -1544,6 +1545,23 @@ struct NullLoopSignature {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct NullLoopWatch {
     signature: NullLoopSignature,
+    count: u8,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct DivideLoopSignature {
+    pid: u32,
+    tid: u32,
+    eip: u32,
+    esp: u32,
+    eax: u32,
+    ecx: u32,
+    edx: u32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct DivideLoopWatch {
+    signature: DivideLoopSignature,
     count: u8,
 }
 
