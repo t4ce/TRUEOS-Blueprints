@@ -2,6 +2,7 @@ use trueos::x86::Registers;
 
 pub const STATUS_ACCESS_VIOLATION: u32 = 0xc000_0005;
 pub const STATUS_SINGLE_STEP: u32 = 0x8000_0004;
+pub const STATUS_INTEGER_DIVIDE_BY_ZERO: u32 = 0xc000_0094;
 pub const DISPOSITION_CONTINUE_EXECUTION: u32 = 0;
 pub const DISPOSITION_CONTINUE_SEARCH: u32 = 1;
 pub const DISPOSITION_NESTED_EXCEPTION: u32 = 2;
@@ -70,6 +71,16 @@ pub fn encode_single_step_exception_record(eip: u32) -> [u8; EXCEPTION_RECORD_BY
     bytes
 }
 
+pub fn encode_integer_divide_by_zero_exception_record(
+    eip: u32,
+) -> [u8; EXCEPTION_RECORD_BYTES] {
+    let mut bytes = [0; EXCEPTION_RECORD_BYTES];
+    put(&mut bytes, 0, STATUS_INTEGER_DIVIDE_BY_ZERO);
+    put(&mut bytes, 12, eip);
+    put(&mut bytes, 16, 0); // NumberParameters
+    bytes
+}
+
 #[cfg(test)]
 crate::wc3_seh_tests_1!();
 
@@ -84,6 +95,19 @@ mod tests {
         assert_eq!(u32::from_le_bytes(record[4..8].try_into().unwrap()), 0);
         assert_eq!(u32::from_le_bytes(record[8..12].try_into().unwrap()), 0);
         assert_eq!(u32::from_le_bytes(record[12..16].try_into().unwrap()), 0x0046_1449);
+        assert_eq!(u32::from_le_bytes(record[16..20].try_into().unwrap()), 0);
+    }
+
+    #[test]
+    fn integer_divide_by_zero_record_has_no_parameters_or_unwind_flags() {
+        let record = encode_integer_divide_by_zero_exception_record(0x0045_a0c0);
+        assert_eq!(
+            u32::from_le_bytes(record[0..4].try_into().unwrap()),
+            STATUS_INTEGER_DIVIDE_BY_ZERO,
+        );
+        assert_eq!(u32::from_le_bytes(record[4..8].try_into().unwrap()), 0);
+        assert_eq!(u32::from_le_bytes(record[8..12].try_into().unwrap()), 0);
+        assert_eq!(u32::from_le_bytes(record[12..16].try_into().unwrap()), 0x0045_a0c0);
         assert_eq!(u32::from_le_bytes(record[16..20].try_into().unwrap()), 0);
     }
 

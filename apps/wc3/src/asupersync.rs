@@ -641,6 +641,11 @@ fn begin_child_seh_dispatch(child: &mut PendingChild, guest: &mut GuestContext, 
             wc3::seh::STATUS_SINGLE_STEP,
             "single-step",
         ),
+        Some(0) => (
+            wc3::seh::encode_integer_divide_by_zero_exception_record(registers.eip),
+            wc3::seh::STATUS_INTEGER_DIVIDE_BY_ZERO,
+            "integer-divide-by-zero",
+        ),
         _ => return Err("unsupported-exception-mapping frontier".into()),
     };
     let context_va = registers.esp.checked_sub(wc3::seh::X86_CONTEXT_BYTES as u32).ok_or("SEH context stack underflow")? & !15;
