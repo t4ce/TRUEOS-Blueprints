@@ -13,6 +13,7 @@ use crate::{
     child_loader::{ChildProvider, ProviderImport, ProviderOp, ProviderSymbol, provider_op},
     imports::{LauncherImport, WinCall},
     pe32,
+    ThisToThat::{decode_cp1252, encode_cp1252},
     session::{
         CreateEventRequest, CreateMutexRequest, CreateProcessRequest, CreateWindowRequest, GetExitCodeProcessRequest,
         LoadImageRequest, PersonalityAction, SessionRequest, ThreadKey, WaitRequest,
@@ -3849,39 +3850,6 @@ fn lc_map_scalar(value: u16, mode: LcMapMode) -> u16 {
     }
 }
 
-fn decode_cp1252(byte: u8) -> u16 {
-    match byte {
-        0x80 => 0x20ac,
-        0x82 => 0x201a,
-        0x83 => 0x0192,
-        0x84 => 0x201e,
-        0x85 => 0x2026,
-        0x86 => 0x2020,
-        0x87 => 0x2021,
-        0x88 => 0x02c6,
-        0x89 => 0x2030,
-        0x8a => 0x0160,
-        0x8b => 0x2039,
-        0x8c => 0x0152,
-        0x8e => 0x017d,
-        0x91 => 0x2018,
-        0x92 => 0x2019,
-        0x93 => 0x201c,
-        0x94 => 0x201d,
-        0x95 => 0x2022,
-        0x96 => 0x2013,
-        0x97 => 0x2014,
-        0x98 => 0x02dc,
-        0x99 => 0x2122,
-        0x9a => 0x0161,
-        0x9b => 0x203a,
-        0x9c => 0x0153,
-        0x9e => 0x017e,
-        0x9f => 0x0178,
-        _ => byte as u16,
-    }
-}
-
 fn system_font_advance_cp1252(ch: u8) -> Option<u32> {
     match ch {
         b' ' | b'.' | b'i' | b'l' | b't' => Some(4),
@@ -3891,39 +3859,6 @@ fn system_font_advance_cp1252(ch: u8) -> Option<u32> {
         b'm' => Some(12),
         b'0' | b'2' | b'A' | b'a' | b'd' | b'e' | b'g' | b'h' | b'n' | b'o' | b'p' | b's'
         | b'v' | b'y' | b'z' => Some(8),
-        _ => None,
-    }
-}
-fn encode_cp1252(value: u16) -> Option<u8> {
-    match value {
-        0x20ac => Some(0x80),
-        0x201a => Some(0x82),
-        0x0192 => Some(0x83),
-        0x201e => Some(0x84),
-        0x2026 => Some(0x85),
-        0x2020 => Some(0x86),
-        0x2021 => Some(0x87),
-        0x02c6 => Some(0x88),
-        0x2030 => Some(0x89),
-        0x0160 => Some(0x8a),
-        0x2039 => Some(0x8b),
-        0x0152 => Some(0x8c),
-        0x017d => Some(0x8e),
-        0x2018 => Some(0x91),
-        0x2019 => Some(0x92),
-        0x201c => Some(0x93),
-        0x201d => Some(0x94),
-        0x2022 => Some(0x95),
-        0x2013 => Some(0x96),
-        0x2014 => Some(0x97),
-        0x02dc => Some(0x98),
-        0x2122 => Some(0x99),
-        0x0161 => Some(0x9a),
-        0x203a => Some(0x9b),
-        0x0153 => Some(0x9c),
-        0x017e => Some(0x9e),
-        0x0178 => Some(0x9f),
-        0..=255 => Some(value as u8),
         _ => None,
     }
 }

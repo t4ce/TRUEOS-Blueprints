@@ -2634,6 +2634,14 @@ mod tests_process_1 {
         assert_eq!(read_u32(&memory, bytes_read).unwrap(), input.len() as u32);
         assert_eq!(pid2.call_count, 1);
 
+        write_u32(&mut memory, esp + 8, STACK_TOP).unwrap();
+        assert_eq!(
+            pid2.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(0))
+        );
+        assert_eq!(pid2.last_error, 299);
+        assert_eq!(pid2.call_count, 1);
+
         write_u32(&mut memory, esp + 4, 0x5743_5001).unwrap();
         assert_eq!(
             pid2.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),

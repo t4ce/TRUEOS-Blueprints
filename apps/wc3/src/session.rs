@@ -7,6 +7,7 @@
 use std::collections::{HashMap, VecDeque};
 
 use crate::process::{CreateProcessAFrame, ThreadObject, XpProcess};
+use crate::ThisToThat;
 
 pub type Pid = u32;
 pub type Tid = u32;
@@ -239,9 +240,9 @@ impl RegistryImage {
     }
 
     fn decode_tail(&self, entry: RegistryKeyIndexEntry) -> Option<String> {
-        decode_span(
+        ThisToThat::decode_span(
             &self.backing[entry.tail_start as usize..entry.tail_end as usize],
-            self.encoding,
+            self.encoding == RegistryEncoding::Utf16Le,
         )
         .ok()
     }
@@ -253,9 +254,9 @@ impl RegistryImage {
             return Ok(());
         }
         let entry = *self.entries.get(node as usize).ok_or("registry node")?;
-        let text = decode_span(
+        let text = ThisToThat::decode_span(
             &self.backing[entry.body_start as usize..entry.body_end as usize],
-            self.encoding,
+            self.encoding == RegistryEncoding::Utf16Le,
         )?;
         let mut values = HashMap::new();
         for line in text.lines() {
@@ -434,18 +435,6 @@ fn unquote(value: &str) -> Result<String, &'static str> {
         .and_then(|v| v.strip_suffix('"'))
         .ok_or("registry quote")?;
     Ok(body.replace("\\\\", "\\").replace("\\\"", "\""))
-}
-fn decode_span(bytes: &[u8], encoding: RegistryEncoding) -> Result<String, &'static str> {
-    match encoding {
-        RegistryEncoding::Utf8 => String::from_utf8(bytes.to_vec()).map_err(|_| "registry UTF-8"),
-        RegistryEncoding::Utf16Le => std::char::decode_utf16(
-            bytes
-                .chunks_exact(2)
-                .map(|pair| u16::from_le_bytes([pair[0], pair[1]])),
-        )
-        .map(|unit| unit.map_err(|_| "registry UTF-16"))
-        .collect(),
-    }
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]

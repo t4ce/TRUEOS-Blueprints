@@ -3557,7 +3557,7 @@ pub(super) async fn run_loop(
                             if (a[3] as i32) >= 0 {
                                 match read_guest_bytes(&memory, a[2], a[3] as usize) {
                                     Ok(bytes) => {
-                                        let text = diagnostic_cp1252(&bytes);
+                                        let text = wc3::ThisToThat::cp1252_to_string(&bytes);
                                         let digest = Sha256::digest(&bytes);
                                         logl::log(
                                             level::IMPORTANT,

@@ -19,6 +19,8 @@ pub mod process;
 pub mod session;
 pub mod seh;
 pub mod thunk32;
+#[allow(non_snake_case)]
+pub mod ThisToThat;
 
 pub const LAUNCHER_PATH: &str = "/common/Warcraft III/Warcraft III.exe";
 pub const EXPECTED_SHA256: [u8; 32] = [

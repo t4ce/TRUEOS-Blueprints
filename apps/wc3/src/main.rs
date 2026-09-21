@@ -625,7 +625,7 @@ fn copy_message_box_ansi(memory: &impl GuestMemory, address: u32) -> Result<Stri
         let mut byte = [0];
         memory.read(current, &mut byte).map_err(str::to_owned)?;
         if byte[0] == 0 {
-            return Ok(diagnostic_cp1252(&bytes));
+            return Ok(wc3::ThisToThat::cp1252_to_string(&bytes));
         }
         bytes.push(byte[0]);
     }
@@ -2175,28 +2175,6 @@ fn diagnostic_ansi_string(memory: &impl GuestMemory, address: u32) -> Result<Str
         bytes.push(byte[0]);
     }
     Ok(String::from_utf8_lossy(&bytes).into_owned())
-}
-
-fn diagnostic_cp1252(bytes: &[u8]) -> String {
-    bytes
-        .iter()
-        .map(|byte| match byte {
-            0x80 => '\u{20ac}',
-            0x82 => '\u{201a}',
-            0x83 => '\u{192}',
-            0x84 => '\u{201e}',
-            0x85 => '\u{2026}',
-            0x86 => '\u{2020}',
-            0x87 => '\u{2021}',
-            0x91 => '\u{2018}',
-            0x92 => '\u{2019}',
-            0x93 => '\u{201c}',
-            0x94 => '\u{201d}',
-            0x96 => '\u{2013}',
-            0x97 => '\u{2014}',
-            byte => char::from(*byte),
-        })
-        .collect()
 }
 
 fn hex_digest(digest: &[u8]) -> String {
