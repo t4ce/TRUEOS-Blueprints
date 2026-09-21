@@ -1690,6 +1690,12 @@ impl XpProcess {
                     show,
                 }));
             }
+            WinCall::DestroyWindow => {
+                return Ok(PersonalityAction::Session(SessionRequest::DestroyWindow {
+                    pid,
+                    hwnd: read_u32(memory, esp + 4)?,
+                }));
+            }
             WinCall::UpdateWindow => {
                 let hwnd = read_u32(memory, esp + 4)?;
                 return Ok(PersonalityAction::Session(SessionRequest::UpdateWindow {

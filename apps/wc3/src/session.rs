@@ -702,6 +702,48 @@ mod tests {
     }
 
     #[test]
+    fn destroy_window_is_terminal_and_releases_focus_through_presentation() {
+        let mut session = Wc3Session::new(XpProcess::new(Vec::new()));
+        let hwnd = session
+            .create_window(CreateWindowRequest {
+                owner: ThreadKey {
+                    pid: LAUNCHER_PID,
+                    tid: 2,
+                },
+                class: "splash".into(),
+                wndproc: 0,
+                title: "Warcraft III".into(),
+                ex_style: 0,
+                style: 0,
+                x: 0,
+                y: 0,
+                width: 640,
+                height: 480,
+                parent: DESKTOP_HWND,
+                menu: 0,
+                instance: 0,
+                param: 0,
+            })
+            .unwrap();
+        session.set_focus(hwnd).unwrap();
+
+        assert_eq!(
+            session.destroy_window(LAUNCHER_PID, hwnd),
+            Ok(DestroyWindowResult { was_focused: true })
+        );
+        assert!(!session.windows.contains_key(&hwnd));
+        assert_eq!(session.focused_root(), None);
+        assert_eq!(
+            session.take_window_presentation(),
+            Some(WindowPresentation::Destroy { hwnd })
+        );
+        assert_eq!(
+            session.destroy_window(LAUNCHER_PID, hwnd),
+            Err("DestroyWindow unknown window")
+        );
+    }
+
+    #[test]
     fn set_event_manual_reset_wakes_all_blocked_waiters_and_stays_signaled() {
         let mut session = Wc3Session::new(XpProcess::new(Vec::new()));
         let (event, _) = session.create_event(
@@ -1029,6 +1071,9 @@ pub enum WindowPresentation {
     Hide {
         hwnd: u32,
     },
+    Destroy {
+        hwnd: u32,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -1059,6 +1104,11 @@ pub struct SetEventResult {
     pub manual_reset: bool,
     pub was_signaled: bool,
     pub woken: Vec<CompletedWait>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DestroyWindowResult {
+    pub was_focused: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1142,6 +1192,10 @@ pub enum SessionRequest {
         pid: Pid,
         hwnd: u32,
         show: u32,
+    },
+    DestroyWindow {
+        pid: Pid,
+        hwnd: u32,
     },
     UpdateWindow {
         pid: Pid,
@@ -1354,6 +1408,24 @@ impl Wc3Session {
             });
         }
         Ok(old as u32)
+    }
+
+    pub fn destroy_window(
+        &mut self,
+        pid: Pid,
+        hwnd: u32,
+    ) -> Result<DestroyWindowResult, &'static str> {
+        let window = self.windows.get(&hwnd).ok_or("DestroyWindow unknown window")?;
+        if window.owner.pid != pid {
+            return Err("DestroyWindow window owner mismatch");
+        }
+        let was_focused = self.focused_window == Some(hwnd);
+        self.windows.remove(&hwnd);
+        if was_focused {
+            self.focused_window = None;
+        }
+        self.window_presentation = Some(WindowPresentation::Destroy { hwnd });
+        Ok(DestroyWindowResult { was_focused })
     }
 
     pub fn update_window(&mut self, hwnd: u32) -> Result<u32, &'static str> {

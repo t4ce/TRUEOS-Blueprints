@@ -4128,6 +4128,43 @@ pub(super) async fn run_loop(
                         hwnd,
                         show,
                     }) => session.show_window(hwnd, show).map_err(str::to_owned)?,
+                    PersonalityAction::Session(SessionRequest::DestroyWindow { pid, hwnd }) => {
+                        let frame_present = frames.contains_key(&hwnd);
+                        match session.destroy_window(pid, hwnd) {
+                            Ok(result) => {
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 DESTROYWINDOW pid={} tid={} hwnd=0x{:08x} frame_present={} focused={} result=1",
+                                        pid,
+                                        active_key.tid,
+                                        hwnd,
+                                        frame_present as u8,
+                                        result.was_focused as u8,
+                                    ),
+                                );
+                                1
+                            }
+                            Err(_) => {
+                                session
+                                    .process_mut(pid)
+                                    .ok_or_else(|| "DestroyWindow caller missing".to_owned())?
+                                    .xp
+                                    .set_last_error(1400);
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 DESTROYWINDOW pid={} tid={} hwnd=0x{:08x} frame_present={} focused=- result=0 error=1400",
+                                        pid,
+                                        active_key.tid,
+                                        hwnd,
+                                        frame_present as u8,
+                                    ),
+                                );
+                                0
+                            }
+                        }
+                    }
                     PersonalityAction::Session(SessionRequest::UpdateWindow { pid: _, hwnd }) => {
                         let pending = session.update_window(hwnd).map_err(str::to_owned)?;
                         if pending != 0 {
@@ -5397,7 +5434,7 @@ pub(super) async fn run_loop(
                     contexts.push(create_thread_context(&address_space, &thread)?);
                 }
                 if let Some(request) = session.take_window_presentation() {
-                    present_window(request, &mut frames, &session)?;
+                    present_window(request, &mut frames, window_rgba, &session)?;
                 }
                 if contexts[active].tid == LAUNCHER_TID {
                     active = 0;

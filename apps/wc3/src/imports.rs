@@ -34,6 +34,7 @@ pub enum WinCall {
     GetClientRect,
     CreateWindowExA,
     ShowWindow,
+    DestroyWindow,
     UpdateWindow,
     PeekMessageA,
     SetFocus,
@@ -107,6 +108,7 @@ impl WinCall {
             "GetClientRect" if user => Self::GetClientRect,
             "CreateWindowExA" if user => Self::CreateWindowExA,
             "ShowWindow" if user => Self::ShowWindow,
+            "DestroyWindow" if user => Self::DestroyWindow,
             "UpdateWindow" if user => Self::UpdateWindow,
             "PeekMessageA" if user => Self::PeekMessageA,
             "SetFocus" if user => Self::SetFocus,
@@ -181,7 +183,8 @@ impl WinCall {
             | Self::GetFileType
             | Self::SetHandleCount
             | Self::FreeEnvironmentStringsA
-            | Self::SetEvent => Kind::Stdcall(4),
+            | Self::SetEvent
+            | Self::DestroyWindow => Kind::Stdcall(4),
             Self::CreateProcessA => Kind::Stdcall(40),
             Self::GetExitCodeProcess | Self::WaitForSingleObject => Kind::Stdcall(8),
             Self::WaitForMultipleObjects => Kind::Stdcall(16),
@@ -210,7 +213,10 @@ impl WinCall {
             Self::BitBlt => Kind::Stdcall(36),
             Self::DeleteDC => Kind::Stdcall(4),
             Self::DeleteObject => Kind::Stdcall(4),
-            Self::TlsSetValue | Self::GetClientRect | Self::ShowWindow | Self::GetCPInfo => {
+            Self::TlsSetValue
+            | Self::GetClientRect
+            | Self::ShowWindow
+            | Self::GetCPInfo => {
                 Kind::Stdcall(8)
             }
             Self::CreateWindowExA => Kind::Stdcall(48),
@@ -287,6 +293,20 @@ mod tests {
         assert_eq!(WinCall::from_import(&import), WinCall::SetEvent);
         let mut bytes = [0; thunk32::THUNK_BYTES];
         thunk32::write(0, WinCall::SetEvent.thunk_kind(), &mut bytes).unwrap();
+        assert_eq!(&bytes[8..11], &[0xc2, 4, 0]);
+    }
+
+    #[test]
+    fn destroy_window_is_a_user32_stdcall_four_import() {
+        let import = LauncherImport {
+            id: 0,
+            module: "USER32.dll".into(),
+            symbol: "DestroyWindow".into(),
+            iat_rva: 0,
+        };
+        assert_eq!(WinCall::from_import(&import), WinCall::DestroyWindow);
+        let mut bytes = [0; thunk32::THUNK_BYTES];
+        thunk32::write(0, WinCall::DestroyWindow.thunk_kind(), &mut bytes).unwrap();
         assert_eq!(&bytes[8..11], &[0xc2, 4, 0]);
     }
 }

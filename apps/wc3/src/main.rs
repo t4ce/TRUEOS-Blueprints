@@ -482,6 +482,7 @@ async fn run_x86_extended_state_self_test() -> Result<(), String> {
 fn present_window(
     request: WindowPresentation,
     frames: &mut HashMap<u32, Frame>,
+    window_rgba: &mut HashMap<u32, Vec<u8>>,
     session: &Wc3Session,
 ) -> Result<(), String> {
     match request {
@@ -539,6 +540,18 @@ fn present_window(
                     format_args!("WC3 UI4 ROOT CLOSE hwnd=0x{:08x}", hwnd),
                 );
             }
+        }
+        WindowPresentation::Destroy { hwnd } => {
+            let frame_dropped = frames.remove(&hwnd).is_some();
+            let backing_dropped = window_rgba.remove(&hwnd).is_some();
+            logl::log(
+                level::IMPORTANT,
+                format_args!(
+                    "WC3 UI4 WINDOW RELEASE hwnd=0x{hwnd:08x} frame_dropped={} backing_dropped={}",
+                    frame_dropped as u8,
+                    backing_dropped as u8,
+                ),
+            );
         }
     }
     Ok(())
