@@ -183,6 +183,19 @@ mod tests_main_1 {
     }
 
     #[test]
+    fn get_proc_address_caller_recognizes_eax_absolute_stores() {
+        assert_eq!(
+            asupersync::eax_absolute_store(&[0xa3, 0x60, 0xa9, 0x49, 0x00]),
+            Some(0x0049_a960),
+        );
+        assert_eq!(
+            asupersync::eax_absolute_store(&[0x89, 0x05, 0x60, 0xa9, 0x49, 0x00]),
+            Some(0x0049_a960),
+        );
+        assert_eq!(asupersync::eax_absolute_store(&[0x89, 0x45, 0xfc]), None);
+    }
+
+    #[test]
     fn process_data_va_is_private_between_launcher_and_child_address_spaces() {
         let launcher = AddressSpace::create().unwrap();
         let child = AddressSpace::create().unwrap();

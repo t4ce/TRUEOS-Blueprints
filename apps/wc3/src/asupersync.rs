@@ -686,51 +686,53 @@ impl ProcSelector {
     }
 }
 
+pub(super) fn eax_absolute_store(bytes: &[u8]) -> Option<u32> {
+    if bytes.len() >= 5 && bytes[0] == 0xa3 {
+        return Some(u32::from_le_bytes(bytes[1..5].try_into().unwrap()));
+    }
+    if bytes.len() >= 6 && bytes[0] == 0x89 && bytes[1] == 0x05 {
+        return Some(u32::from_le_bytes(bytes[2..6].try_into().unwrap()));
+    }
+    None
+}
+
 fn log_get_proc_address_continuation(
     child: &PendingChild,
     pid: u32,
     tid: u32,
+    module: &str,
     caller_return: u32,
     selector: &ProcSelector,
     result: u32,
 ) {
-    let mut bytes = [0; 12];
-    let read = child.address_space.read(caller_return, &mut bytes).ok();
-    let Some(read) = read.filter(|read| *read != 0) else {
-        logl::log(
-            level::IMPORTANT,
-            format_args!(
-                "WC3 CHILD GETPROCADDRESS CONTINUATION pid={} tid={} caller_ret=0x{:08x} selector={:?} result=0x{:08x} next_bytes=<unreadable>",
-                pid, tid, caller_return, selector, result,
-            ),
-        );
-        return;
-    };
-    let next_bytes = bytes[..read]
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<Vec<_>>()
-        .join(" ");
+    let mut bytes = [0; 16];
+    let readable = child.address_space.read(caller_return, &mut bytes).ok() == Some(bytes.len());
     logl::log(
         level::IMPORTANT,
         format_args!(
-            "WC3 CHILD GETPROCADDRESS CONTINUATION pid={} tid={} caller_ret=0x{:08x} selector={:?} result=0x{:08x} next_bytes=\"{}\"",
-            pid, tid, caller_return, selector, result, next_bytes,
+            "WC3 CHILD GETPROCADDRESS CALLER pid={} tid={} module={:?} selector={:?} result=0x{:08x} return=0x{:08x} after=\"{}\"",
+            pid,
+            tid,
+            module,
+            selector,
+            result,
+            caller_return,
+            if readable {
+                diagnostic_hex_bytes(&bytes)
+            } else {
+                "<unreadable>".into()
+            },
         ),
     );
-    let destination = if read >= 5 && bytes[0] == 0xa3 {
-        Some(("a3", u32::from_le_bytes(bytes[1..5].try_into().unwrap())))
-    } else if read >= 6 && bytes[0] == 0x89 && bytes[1] == 0x05 {
-        Some(("89-05", u32::from_le_bytes(bytes[2..6].try_into().unwrap())))
-    } else {
-        None
-    };
-    if let Some((form, destination)) = destination {
+    if !readable {
+        return;
+    }
+    if let Some(destination) = eax_absolute_store(&bytes) {
         logl::log(
             level::IMPORTANT,
             format_args!(
-                "WC3 CHILD GETPROCADDRESS STORE pid={} tid={} caller_ret=0x{:08x} selector={:?} result=0x{:08x} form={} destination=0x{:08x}",
-                pid, tid, caller_return, selector, result, form, destination,
+                "WC3 CHILD GETPROCADDRESS STORE pid={} tid={} module={:?} selector={:?} result=0x{:08x} return=0x{:08x} destination=0x{:08x}",
+                pid, tid, module, selector, result, caller_return, destination,
             ),
         );
     }
@@ -2885,6 +2887,7 @@ pub(super) async fn run_loop(
                                     child,
                                     active_pid,
                                     active_tid,
+                                    &provider_module,
                                     frame[0],
                                     &selector,
                                     0,
@@ -2931,6 +2934,7 @@ pub(super) async fn run_loop(
                                 child,
                                 active_pid,
                                 active_tid,
+                                &provider_module,
                                 frame[0],
                                 &selector,
                                 address,
@@ -2958,6 +2962,7 @@ pub(super) async fn run_loop(
                                 child,
                                 active_pid,
                                 active_tid,
+                                "<unknown-hmodule>",
                                 frame[0],
                                 &selector,
                                 0,
@@ -2991,6 +2996,7 @@ pub(super) async fn run_loop(
                                 child,
                                 active_pid,
                                 active_tid,
+                                &module,
                                 frame[0],
                                 &selector,
                                 0,
@@ -3012,6 +3018,7 @@ pub(super) async fn run_loop(
                                 child,
                                 active_pid,
                                 active_tid,
+                                &module,
                                 frame[0],
                                 &selector,
                                 0,
@@ -3042,6 +3049,7 @@ pub(super) async fn run_loop(
                             child,
                             active_pid,
                             active_tid,
+                            &module,
                             frame[0],
                             &selector,
                             address,
