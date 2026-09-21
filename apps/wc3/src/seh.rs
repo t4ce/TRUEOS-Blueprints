@@ -9,6 +9,7 @@ pub const DISPOSITION_COLLIDED_UNWIND: u32 = 3;
 pub const X86_CONTEXT_BYTES: usize = 716;
 pub const EXCEPTION_RECORD_BYTES: usize = 80;
 pub const X86_CONTEXT_FULL: u32 = 0x0001_0007;
+pub const X86_EFLAGS_TF: u32 = 1 << 8;
 
 const EDI: usize = 156;
 const ESI: usize = 160;
@@ -38,6 +39,20 @@ pub fn encode_x86_context(registers: Registers) -> [u8; X86_CONTEXT_BYTES] {
 pub fn decode_x86_context(bytes: &[u8; X86_CONTEXT_BYTES], fs_base: u32) -> Result<Registers, &'static str> {
     if get(bytes, 0) & X86_CONTEXT_FULL != X86_CONTEXT_FULL { return Err("SEH context flags"); }
     Ok(Registers { edi: get(bytes, EDI), esi: get(bytes, ESI), ebx: get(bytes, EBX), edx: get(bytes, EDX), ecx: get(bytes, ECX), eax: get(bytes, EAX), ebp: get(bytes, EBP), eip: get(bytes, EIP), eflags: get(bytes, EFLAGS), esp: get(bytes, ESP), fs_base, ..Registers::default() })
+}
+
+/// The saved CONTEXT describes the interrupted instruction, while live handler
+/// execution follows x86 exception-delivery rules and clears Trap Flag.
+pub fn exception_handler_registers(
+    interrupted: Registers,
+    handler: u32,
+    stack_pointer: u32,
+) -> Registers {
+    let mut handler_registers = interrupted;
+    handler_registers.eip = handler;
+    handler_registers.esp = stack_pointer;
+    handler_registers.eflags &= !X86_EFLAGS_TF;
+    handler_registers
 }
 
 pub fn encode_page_fault_exception_record(eip: u32, linear: u32, error: u32) -> [u8; EXCEPTION_RECORD_BYTES] {
@@ -70,5 +85,22 @@ mod tests {
         assert_eq!(u32::from_le_bytes(record[8..12].try_into().unwrap()), 0);
         assert_eq!(u32::from_le_bytes(record[12..16].try_into().unwrap()), 0x0046_1449);
         assert_eq!(u32::from_le_bytes(record[16..20].try_into().unwrap()), 0);
+    }
+
+    #[test]
+    fn exception_delivery_preserves_saved_tf_but_clears_live_handler_tf() {
+        let interrupted = Registers {
+            eflags: 0x0000_0106,
+            fs_base: 0x0020_3000,
+            ..Registers::default()
+        };
+        let saved_context = encode_x86_context(interrupted);
+        let saved_registers = decode_x86_context(&saved_context, interrupted.fs_base).unwrap();
+        let handler_registers =
+            exception_handler_registers(interrupted, 0x0045_a0c0, 0x043f_fc00);
+
+        assert_eq!(saved_registers.eflags & X86_EFLAGS_TF, X86_EFLAGS_TF);
+        assert_eq!(handler_registers.eflags & X86_EFLAGS_TF, 0);
+        assert_eq!(handler_registers.eflags, 0x0000_0006);
     }
 }

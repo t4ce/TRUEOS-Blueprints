@@ -593,7 +593,18 @@ fn begin_child_seh_dispatch(child: &mut PendingChild, guest: &mut GuestContext, 
     let mut bytes = [0; 20]; for (index, value) in frame.into_iter().enumerate() { bytes[index * 4..index * 4 + 4].copy_from_slice(&value.to_le_bytes()); }
     if child.address_space.write(frame_esp, &bytes).map_err(|error| error.to_string())? != bytes.len() { return Err("short SEH handler frame write".into()); }
     child.seh = Some(ChildSehDispatch { original_registers: registers, registration: registration.frame, next_registration: registration.next, handler: registration.handler, exception_record_va: record_va, context_va, preserved_fs_base: registers.fs_base, depth: 1 });
-    let mut handler_registers = registers; handler_registers.eip = registration.handler; handler_registers.esp = frame_esp;
+    let handler_registers = wc3::seh::exception_handler_registers(
+        registers,
+        registration.handler,
+        frame_esp,
+    );
+    logl::log(level::IMPORTANT, format_args!(
+        "WC3 CHILD SEH ENTER FLAGS interrupted=0x{:08x} saved_context=0x{:08x} handler_live=0x{:08x} tf_cleared={}",
+        registers.eflags,
+        registers.eflags,
+        handler_registers.eflags,
+        u32::from(registers.eflags & wc3::seh::X86_EFLAGS_TF != 0 && handler_registers.eflags & wc3::seh::X86_EFLAGS_TF == 0),
+    ));
     guest.context.set_registers(handler_registers).map_err(|error| error.to_string())?;
     let (owner, rva) = child_pc_owner(child, registration.handler).unwrap_or(("unknown", 0));
     logl::log(level::IMPORTANT, format_args!("WC3 CHILD SEH DISPATCH pid={} tid={} registration=0x{:08x} next=0x{:08x} handler=0x{:08x} handler_owner={:?} handler_rva=0x{:08x} exception=0x{:08x} address=0x{:08x} kind={}", child.pid, child.tid, registration.frame, registration.next, registration.handler, owner, rva, exception_code, registers.eip, exception_kind));
