@@ -399,24 +399,24 @@ async fn run_x86_extended_state_self_test() -> Result<(), String> {
     let registers = |eip| Registers { eip, eflags: 0x202, ..Registers::default() };
     let mut a = Context::create(&address_space, registers(A_CODE)).map_err(|error| error.to_string())?;
     let mut b = Context::create(&address_space, registers(B_CODE)).map_err(|error| error.to_string())?;
-    // Distinct, disabled slots make a carrier leak observable without
-    // perturbing either xstate program. DR7's fixed bit is intentionally part
-    // of the logical test value too.
+    // Arm distinct execution breakpoints at data addresses that neither
+    // program executes. This makes both DR0 and DR7 carrier leakage observable
+    // without perturbing either xstate program.
     let a_debug = DebugRegisters {
-        dr0: A_CODE,
+        dr0: A_PATTERN,
         dr1: 0x1111_1111,
         dr2: 0x2222_2222,
         dr3: 0x3333_3333,
         dr6: 0,
-        dr7: 0x400,
+        dr7: 0x401, // L0 enable.
     };
     let b_debug = DebugRegisters {
-        dr0: B_CODE,
+        dr0: B_PATTERN,
         dr1: 0xaaaa_aaaa,
         dr2: 0xbbbb_bbbb,
         dr3: 0xcccc_cccc,
         dr6: 0,
-        dr7: 0x400,
+        dr7: 0x402, // G0 enable.
     };
     a.set_debug_registers(a_debug).map_err(|error| error.to_string())?;
     b.set_debug_registers(b_debug).map_err(|error| error.to_string())?;
@@ -431,11 +431,29 @@ async fn run_x86_extended_state_self_test() -> Result<(), String> {
     let (b_inspect, a_inspect) = tokio::join!(b.resume(), a.resume());
     require_vmcall(&a_inspect.map_err(|error| error.to_string())?, "A inspect")?;
     require_vmcall(&b_inspect.map_err(|error| error.to_string())?, "B inspect")?;
-    if a.debug_registers().map_err(|error| error.to_string())? != a_debug {
-        return Err("x86 debug self-test A lost its sidecar across carrier migration".into());
+    // DR6 reserved bits are normalized by hardware and therefore cannot be
+    // compared byte-for-byte with the caller's zero. Compare its architectural
+    // condition bits while requiring the programmable addresses and DR7 to
+    // round-trip exactly.
+    let debug_sidecar_matches = |actual: DebugRegisters, expected: DebugRegisters| {
+        actual.dr0 == expected.dr0
+            && actual.dr1 == expected.dr1
+            && actual.dr2 == expected.dr2
+            && actual.dr3 == expected.dr3
+            && actual.dr6 & 0x0000_e00f == expected.dr6 & 0x0000_e00f
+            && actual.dr7 == expected.dr7
+    };
+    let a_observed = a.debug_registers().map_err(|error| error.to_string())?;
+    if !debug_sidecar_matches(a_observed, a_debug) {
+        return Err(format!(
+            "x86 debug self-test A sidecar mismatch expected={a_debug:?} observed={a_observed:?}",
+        ));
     }
-    if b.debug_registers().map_err(|error| error.to_string())? != b_debug {
-        return Err("x86 debug self-test B lost its sidecar across carrier migration".into());
+    let b_observed = b.debug_registers().map_err(|error| error.to_string())?;
+    if !debug_sidecar_matches(b_observed, b_debug) {
+        return Err(format!(
+            "x86 debug self-test B sidecar mismatch expected={b_debug:?} observed={b_observed:?}",
+        ));
     }
 
     // A real DR0 execute breakpoint must exit as #DB with B0 set before the
