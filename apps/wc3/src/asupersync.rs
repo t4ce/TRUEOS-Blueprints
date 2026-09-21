@@ -7,9 +7,14 @@ const WAR3_NULL_CALL_SLOT: u32 = 0x0049_cbec;
 const WAR3_NULL_CALL_NEIGHBORS: u32 = 0x0049_cbdc;
 const WAR3_REPEATED_NULL_CALL_SLOT: u32 = 0x0049_a960;
 const WAR3_DIVIDE_EXCEPTION_HANDLER: u32 = 0x0045_a0c0;
+const WAR3_DIVIDE_EXCEPTION_EIP: u32 = 0x0045_ae47;
 const WAR3_DIVIDE_TABLE_BASE_SLOT: u32 = 0x0049_ef00;
 const WAR3_DIVIDE_INDEX_SLOT: u32 = 0x0049_c490;
 const WAR3_DIVIDE_STATE_POINTER_SLOT: u32 = 0x0049_dc6c;
+
+fn quiet_war3_divide(exception: ChildException, registers: Registers) -> bool {
+    exception.vector == Some(0) && registers.eip == WAR3_DIVIDE_EXCEPTION_EIP
+}
 
 fn child_image_import_at_rva(
     child: &PendingChild,
@@ -712,22 +717,23 @@ fn begin_child_seh_dispatch(child: &mut PendingChild, guest: &mut GuestContext, 
     let frame = [thunk32::CHILD_SEH_RETURN_ADDRESS, record_va, registration.frame, context_va, 0];
     let mut bytes = [0; 20]; for (index, value) in frame.into_iter().enumerate() { bytes[index * 4..index * 4 + 4].copy_from_slice(&value.to_le_bytes()); }
     if child.address_space.write(frame_esp, &bytes).map_err(|error| error.to_string())? != bytes.len() { return Err("short SEH handler frame write".into()); }
-    child.seh = Some(ChildSehDispatch { original_registers: registers, registration: registration.frame, next_registration: registration.next, handler: registration.handler, exception_record_va: record_va, context_va, preserved_fs_base: registers.fs_base, depth: 1 });
+    let quiet = quiet_war3_divide(exception, registers);
+    child.seh = Some(ChildSehDispatch { original_registers: registers, registration: registration.frame, next_registration: registration.next, handler: registration.handler, exception_record_va: record_va, context_va, preserved_fs_base: registers.fs_base, depth: 1, quiet });
     let handler_registers = wc3::seh::exception_handler_registers(
         registers,
         registration.handler,
         frame_esp,
     );
-    logl::log(level::IMPORTANT, format_args!(
+    if !quiet { logl::log(level::IMPORTANT, format_args!(
         "WC3 CHILD SEH ENTER FLAGS interrupted=0x{:08x} saved_context=0x{:08x} handler_live=0x{:08x} tf_cleared={}",
         registers.eflags,
         registers.eflags,
         handler_registers.eflags,
         u32::from(registers.eflags & wc3::seh::X86_EFLAGS_TF != 0 && handler_registers.eflags & wc3::seh::X86_EFLAGS_TF == 0),
-    ));
+    )); }
     guest.context.set_registers(handler_registers).map_err(|error| error.to_string())?;
     let (owner, rva) = child_pc_owner(child, registration.handler).unwrap_or(("unknown", 0));
-    logl::log(level::IMPORTANT, format_args!("WC3 CHILD SEH DISPATCH pid={} tid={} registration=0x{:08x} next=0x{:08x} handler=0x{:08x} handler_owner={:?} handler_rva=0x{:08x} exception=0x{:08x} address=0x{:08x} kind={}", child.pid, child.tid, registration.frame, registration.next, registration.handler, owner, rva, exception_code, registers.eip, exception_kind));
+    if !quiet { logl::log(level::IMPORTANT, format_args!("WC3 CHILD SEH DISPATCH pid={} tid={} registration=0x{:08x} next=0x{:08x} handler=0x{:08x} handler_owner={:?} handler_rva=0x{:08x} exception=0x{:08x} address=0x{:08x} kind={}", child.pid, child.tid, registration.frame, registration.next, registration.handler, owner, rva, exception_code, registers.eip, exception_kind)); }
     Ok(())
 }
 
@@ -985,30 +991,32 @@ pub(super) async fn run_loop(
                     }
                     if exit.registers.eip == thunk32::CHILD_SEH_RETURN_AFTER_VMCALL {
                         let seh = child.seh.take().ok_or("SEH return without pending dispatch")?;
-                        logl::log(level::IMPORTANT, format_args!(
+                        if !seh.quiet { logl::log(level::IMPORTANT, format_args!(
                             "WC3 CHILD SEH RETURN pid={} tid={} registration=0x{:08x} handler=0x{:08x} disposition={}",
                             active_pid, active_tid, seh.registration, seh.handler, exit.registers.eax,
-                        ));
+                        )); }
                         if exit.registers.eax != wc3::seh::DISPOSITION_CONTINUE_EXECUTION {
                             return Err(format!("WC3 CHILD SEH FRONTIER reason=unsupported-disposition value={}", exit.registers.eax));
                         }
                         let mut bytes = [0; wc3::seh::X86_CONTEXT_BYTES];
                         if child.address_space.read(seh.context_va, &mut bytes).map_err(|error| error.to_string())? != bytes.len() { return Err("short SEH context readback".into()); }
-                        let raw_ecx = u32::from_le_bytes(
-                            bytes[wc3::seh::ECX_OFFSET..wc3::seh::ECX_OFFSET + 4]
-                                .try_into()
-                                .unwrap(),
-                        );
                         let restored = wc3::seh::decode_x86_context(&bytes, seh.preserved_fs_base).map_err(str::to_owned)?;
-                        logl::log(level::IMPORTANT, format_args!(
+                        if !seh.quiet {
+                            let raw_ecx = u32::from_le_bytes(
+                                bytes[wc3::seh::ECX_OFFSET..wc3::seh::ECX_OFFSET + 4]
+                                    .try_into()
+                                    .unwrap(),
+                            );
+                            logl::log(level::IMPORTANT, format_args!(
                             "WC3 CHILD SEH CONTEXT RETURN pid={} tid={} context=0x{:08x} old_ecx=0x{:08x} saved_ecx=0x{:08x} restored_ecx=0x{:08x}",
                             active_pid, active_tid, seh.context_va, seh.original_registers.ecx, raw_ecx, restored.ecx,
-                        ));
+                            ));
+                        }
                         contexts[active].context.set_registers(restored).map_err(|error| error.to_string())?;
-                        logl::log(level::IMPORTANT, format_args!(
+                        if !seh.quiet { logl::log(level::IMPORTANT, format_args!(
                             "WC3 CHILD SEH CONTINUE pid={} tid={} old_eip=0x{:08x} new_eip=0x{:08x} old_esp=0x{:08x} new_esp=0x{:08x}",
                             active_pid, active_tid, seh.original_registers.eip, restored.eip, seh.original_registers.esp, restored.esp,
-                        ));
+                        )); }
                         continue;
                     }
                     if exit.registers.eip == thunk32::CHILD_DLL_RETURN_AFTER_VMCALL {
@@ -6008,6 +6016,8 @@ pub(super) async fn run_loop(
                 let scope = child_execution_scope(child).map_err(str::to_owned)?;
                 let exception = decode_child_exception(exit.detail, exit.qualification);
                 let registers = exit.registers;
+                let quiet_divide = quiet_war3_divide(exception, registers);
+                if !quiet_divide {
                 logl::log(
                     level::IMPORTANT,
                     format_args!(
@@ -6117,6 +6127,7 @@ pub(super) async fn run_loop(
                         )?;
                     }
                 }
+                }
                 let null_execute = exception.vector == Some(14)
                     && registers.eip == 0
                     && exception.fault_linear == Some(0)
@@ -6165,32 +6176,9 @@ pub(super) async fn run_loop(
                 if exception.vector == Some(0) {
                     let Some(progress) = divide_loop_progress(child) else {
                         child.repeated_divide_fault = None;
-                        logl::log(
-                            level::IMPORTANT,
-                            format_args!(
-                                "WC3 CHILD DIVIDE PROGRESS pid={} tid={} eip=0x{:08x} table_base=<unreadable> index=<unreadable> state_ptr=<unreadable> input=<unreadable> accum=<unreadable>",
-                                active_key.pid,
-                                active_key.tid,
-                                registers.eip,
-                            ),
-                        );
                         begin_child_seh_dispatch(child, &mut contexts[active], exception, registers)?;
                         continue;
                     };
-                    logl::log(
-                        level::IMPORTANT,
-                        format_args!(
-                            "WC3 CHILD DIVIDE PROGRESS pid={} tid={} eip=0x{:08x} table_base=0x{:08x} index=0x{:08x} state_ptr=0x{:08x} input=0x{:02x} accum=0x{:04x}",
-                            active_key.pid,
-                            active_key.tid,
-                            registers.eip,
-                            progress.table_base,
-                            progress.index,
-                            progress.state_ptr,
-                            progress.input,
-                            progress.accumulator,
-                        ),
-                    );
                     let signature = DivideLoopSignature {
                         pid: active_key.pid,
                         tid: active_key.tid,

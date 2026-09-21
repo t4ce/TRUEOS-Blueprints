@@ -1586,6 +1586,7 @@ struct ChildSehDispatch {
     context_va: u32,
     preserved_fs_base: u32,
     depth: u32,
+    quiet: bool,
 }
 #[derive(Clone, Debug)] struct ChildUnhandledFilterCall { provider_resume_eip: u32, provider_esp: u32, filter: u32 }
 
