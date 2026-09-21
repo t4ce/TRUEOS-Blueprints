@@ -702,6 +702,86 @@ mod tests {
     }
 
     #[test]
+    fn set_event_manual_reset_wakes_all_blocked_waiters_and_stays_signaled() {
+        let mut session = Wc3Session::new(XpProcess::new(Vec::new()));
+        let (event, _) = session.create_event(
+            LAUNCHER_PID,
+            CreateEventRequest {
+                name: None,
+                manual_reset: true,
+                initial_state: false,
+                inheritable: false,
+            },
+        );
+        let first = request(event, u32::MAX);
+        let second = WaitRequest {
+            key: ThreadKey {
+                pid: LAUNCHER_PID,
+                tid: 2,
+            },
+            ..first.clone()
+        };
+        session.block_wait(first.clone()).unwrap();
+        session.block_wait(second.clone()).unwrap();
+
+        let outcome = session.set_event(LAUNCHER_PID, event).unwrap();
+
+        assert!(outcome.manual_reset);
+        assert!(!outcome.was_signaled);
+        assert_eq!(outcome.woken.len(), 2);
+        assert!(outcome.woken.iter().all(|completed| completed.result == 0));
+        assert_eq!(session.event_state(LAUNCHER_PID, event), Some((true, true)));
+        assert!(!session.blocked.contains_key(&first.key));
+        assert!(!session.blocked.contains_key(&second.key));
+    }
+
+    #[test]
+    fn set_event_auto_reset_wakes_one_waiter_and_consumes_the_signal() {
+        let mut session = Wc3Session::new(XpProcess::new(Vec::new()));
+        let (event, _) = session.create_event(
+            LAUNCHER_PID,
+            CreateEventRequest {
+                name: None,
+                manual_reset: false,
+                initial_state: false,
+                inheritable: false,
+            },
+        );
+        let first = request(event, u32::MAX);
+        let second = WaitRequest {
+            key: ThreadKey {
+                pid: LAUNCHER_PID,
+                tid: 2,
+            },
+            ..first.clone()
+        };
+        session.block_wait(first.clone()).unwrap();
+        session.block_wait(second.clone()).unwrap();
+
+        let outcome = session.set_event(LAUNCHER_PID, event).unwrap();
+
+        assert!(!outcome.manual_reset);
+        assert_eq!(outcome.woken.len(), 1);
+        assert_eq!(session.event_state(LAUNCHER_PID, event), Some((false, false)));
+        assert_eq!(session.blocked.len(), 1);
+    }
+
+    #[test]
+    fn set_event_rejects_invalid_and_non_event_handles() {
+        let mut session = Wc3Session::new(XpProcess::new(Vec::new()));
+        let child = session.create_child();
+
+        assert_eq!(
+            session.set_event(LAUNCHER_PID, 0xdead_beef),
+            Err("SetEvent invalid handle")
+        );
+        assert_eq!(
+            session.set_event(LAUNCHER_PID, child.process_handle),
+            Err("SetEvent handle is not an event")
+        );
+    }
+
+    #[test]
     fn process_exit_wakes_a_blocked_single_waiter() {
         let mut session = Wc3Session::new(XpProcess::new(Vec::new()));
         let child = session.create_child();
@@ -975,6 +1055,13 @@ pub struct CompletedWait {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SetEventResult {
+    pub manual_reset: bool,
+    pub was_signaled: bool,
+    pub woken: Vec<CompletedWait>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CreateProcessRequest {
     pub frame: CreateProcessAFrame,
 }
@@ -1047,6 +1134,7 @@ pub struct CreatedChild {
 pub enum SessionRequest {
     CreateProcess(CreateProcessRequest),
     GetExitCodeProcess(GetExitCodeProcessRequest),
+    SetEvent { pid: Pid, tid: Tid, handle: u32 },
     CreateEvent(CreateEventRequest),
     LoadImage(LoadImageRequest),
     CreateWindow(CreateWindowRequest),
@@ -1488,6 +1576,27 @@ impl Wc3Session {
         Ok((process.pid, process.exit_code.unwrap_or(259)))
     }
 
+    pub fn set_event(&mut self, pid: Pid, handle: u32) -> Result<SetEventResult, &'static str> {
+        let object = self
+            .process(pid)
+            .and_then(|process| process.handles.get(&handle))
+            .ok_or("SetEvent invalid handle")?
+            .object;
+        let (manual_reset, was_signaled) = {
+            let Some(SessionObject::Event(event)) = self.objects.get_mut(&object) else {
+                return Err("SetEvent handle is not an event");
+            };
+            let state = (event.manual_reset, event.signaled);
+            event.signaled = true;
+            state
+        };
+        Ok(SetEventResult {
+            manual_reset,
+            was_signaled,
+            woken: self.reevaluate_blocked_waits()?,
+        })
+    }
+
     pub fn thread_exit_code(&self, key: ThreadKey) -> Option<u32> {
         self.objects.values().find_map(|object| match object {
             SessionObject::Thread(thread) if thread.key == key => thread.exit_code,
@@ -1529,6 +1638,10 @@ impl Wc3Session {
             .handles
             .clear();
 
+        self.reevaluate_blocked_waits()
+    }
+
+    fn reevaluate_blocked_waits(&mut self) -> Result<Vec<CompletedWait>, &'static str> {
         let blocked = std::mem::take(&mut self.blocked);
         let mut woken = Vec::new();
         for (key, request) in blocked {

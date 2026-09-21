@@ -20,6 +20,7 @@ pub enum WinCall {
     HeapAlloc,
     HeapFree,
     CreateEventA,
+    SetEvent,
     GetLastError,
     CloseHandle,
     GetTickCount,
@@ -92,6 +93,7 @@ impl WinCall {
             "HeapAlloc" if kernel => Self::HeapAlloc,
             "HeapFree" if kernel => Self::HeapFree,
             "CreateEventA" if kernel => Self::CreateEventA,
+            "SetEvent" if kernel => Self::SetEvent,
             "GetLastError" if kernel => Self::GetLastError,
             "CloseHandle" if kernel => Self::CloseHandle,
             "GetTickCount" if kernel => Self::GetTickCount,
@@ -178,7 +180,8 @@ impl WinCall {
             | Self::GetStdHandle
             | Self::GetFileType
             | Self::SetHandleCount
-            | Self::FreeEnvironmentStringsA => Kind::Stdcall(4),
+            | Self::FreeEnvironmentStringsA
+            | Self::SetEvent => Kind::Stdcall(4),
             Self::CreateProcessA => Kind::Stdcall(40),
             Self::GetExitCodeProcess | Self::WaitForSingleObject => Kind::Stdcall(8),
             Self::WaitForMultipleObjects => Kind::Stdcall(16),
@@ -271,5 +274,19 @@ mod tests {
         let mut bytes = [0; thunk32::THUNK_BYTES];
         thunk32::write(0, WinCall::GetExitCodeProcess.thunk_kind(), &mut bytes).unwrap();
         assert_eq!(&bytes[8..11], &[0xc2, 8, 0]);
+    }
+
+    #[test]
+    fn set_event_is_a_kernel32_stdcall_four_import() {
+        let import = LauncherImport {
+            id: 0,
+            module: "KERNEL32.dll".into(),
+            symbol: "SetEvent".into(),
+            iat_rva: 0,
+        };
+        assert_eq!(WinCall::from_import(&import), WinCall::SetEvent);
+        let mut bytes = [0; thunk32::THUNK_BYTES];
+        thunk32::write(0, WinCall::SetEvent.thunk_kind(), &mut bytes).unwrap();
+        assert_eq!(&bytes[8..11], &[0xc2, 4, 0]);
     }
 }

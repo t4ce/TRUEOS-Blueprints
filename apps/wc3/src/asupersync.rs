@@ -107,6 +107,49 @@ fn should_log_execution_sample(count: u64) -> bool {
     count == 1 || count % EXEC_SAMPLE_PREEMPTIONS == 0
 }
 
+fn resume_completed_waiters(
+    woken: &[CompletedWait],
+    reason: &str,
+    contexts: &mut [GuestContext],
+    wait_deadlines: &mut HashMap<ThreadKey, RuntimeWait>,
+) -> Result<(), String> {
+    for completed in woken {
+        let request = &completed.request;
+        let index = context_index(contexts, request.key)
+            .ok_or_else(|| format!("{reason} waiter context missing"))?;
+        let mut registers = wait_deadlines
+            .remove(&request.key)
+            .map(|wait| wait.resume_registers)
+            .unwrap_or(
+                contexts[index]
+                    .context
+                    .registers()
+                    .map_err(|error| error.to_string())?,
+            );
+        registers.eax = completed.result;
+        contexts[index]
+            .context
+            .set_registers(registers)
+            .map_err(|error| error.to_string())?;
+        logl::log(
+            level::IMPORTANT,
+            format_args!(
+                "WC3 WAIT SIGNALED pid={} tid={} handle0=0x{:08x} handle1=0x{:08x} count={} wait_all={} index={} reason={} result=0x{:08x}",
+                request.key.pid,
+                request.key.tid,
+                request.handles[0],
+                request.handles[1],
+                request.count,
+                request.wait_all,
+                completed.result.saturating_sub(WAIT_OBJECT_0),
+                reason,
+                completed.result,
+            ),
+        );
+    }
+    Ok(())
+}
+
 fn child_pc_owner(child: &PendingChild, eip: u32) -> Option<(&str, u32)> {
     let in_image = |base: u32, size: u32| {
         base.checked_add(size)
@@ -2295,39 +2338,12 @@ pub(super) async fn run_loop(
                             .terminate_process(active_pid, exit_code)
                             .map_err(str::to_owned)?;
                         wait_deadlines.retain(|key, _| key.pid != active_pid);
-                        for completed in &woken {
-                            let request = &completed.request;
-                            let index = context_index(&contexts, request.key)
-                                .ok_or_else(|| "process-exit waiter context missing".to_owned())?;
-                            let mut registers = wait_deadlines
-                                .remove(&request.key)
-                                .map(|wait| wait.resume_registers)
-                                .unwrap_or(
-                                    contexts[index]
-                                        .context
-                                        .registers()
-                                        .map_err(|error| error.to_string())?,
-                                );
-                            registers.eax = completed.result;
-                            contexts[index]
-                                .context
-                                .set_registers(registers)
-                                .map_err(|error| error.to_string())?;
-                            logl::log(
-                                level::IMPORTANT,
-                                format_args!(
-                                    "WC3 WAIT SIGNALED pid={} tid={} handle0=0x{:08x} handle1=0x{:08x} count={} wait_all={} index={} reason=process-exit result=0x{:08x}",
-                                    request.key.pid,
-                                    request.key.tid,
-                                    request.handles[0],
-                                    request.handles[1],
-                                    request.count,
-                                    request.wait_all,
-                                    completed.result.saturating_sub(WAIT_OBJECT_0),
-                                    completed.result,
-                                ),
-                            );
-                        }
+                        resume_completed_waiters(
+                            &woken,
+                            "process-exit",
+                            &mut contexts,
+                            &mut wait_deadlines,
+                        )?;
                         thread_calls.retain(|(pid, _), _| *pid != active_pid);
                         let before = contexts.len();
                         contexts.retain(|context| context.pid != active_pid);
@@ -4039,6 +4055,47 @@ pub(super) async fn run_loop(
                             0
                         });
                         handle
+                    }
+                    PersonalityAction::Session(SessionRequest::SetEvent { pid, tid, handle }) => {
+                        match session.set_event(pid, handle) {
+                            Ok(outcome) => {
+                                let waiters_woken = outcome.woken.len();
+                                resume_completed_waiters(
+                                    &outcome.woken,
+                                    "set-event",
+                                    &mut contexts,
+                                    &mut wait_deadlines,
+                                )?;
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 SETEVENT pid={} tid={} handle=0x{:08x} manual_reset={} was_signaled={} waiters_woken={} result=1",
+                                        pid,
+                                        tid,
+                                        handle,
+                                        outcome.manual_reset as u8,
+                                        outcome.was_signaled as u8,
+                                        waiters_woken,
+                                    ),
+                                );
+                                1
+                            }
+                            Err(_) => {
+                                session
+                                    .process_mut(pid)
+                                    .ok_or_else(|| "SetEvent caller missing".to_owned())?
+                                    .xp
+                                    .set_last_error(6);
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 SETEVENT pid={} tid={} handle=0x{:08x} result=0 error=6",
+                                        pid, tid, handle,
+                                    ),
+                                );
+                                0
+                            }
+                        }
                     }
                     PersonalityAction::Session(SessionRequest::CreateWindow(request)) => {
                         let hwnd = session

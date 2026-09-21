@@ -1636,6 +1636,13 @@ impl XpProcess {
                     self.create_event_request(esp, memory)?,
                 )));
             }
+            WinCall::SetEvent => {
+                return Ok(PersonalityAction::Session(SessionRequest::SetEvent {
+                    pid,
+                    tid,
+                    handle: read_u32(memory, esp + 4)?,
+                }));
+            }
             WinCall::GetLastError => Ok(self.last_error),
             WinCall::CloseHandle => {
                 return Ok(PersonalityAction::Session(SessionRequest::CloseHandle {

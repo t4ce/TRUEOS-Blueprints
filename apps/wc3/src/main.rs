@@ -35,8 +35,8 @@ use wc3::{
         bmp_file_from_dib, dib_layout,
     },
     session::{
-        GuestCall, LAUNCHER_PID, LAUNCHER_TID, PersonalityAction, SessionObject, SessionRequest,
-        ThreadKey, WINDOW_HANDLE_BASE, Wc3Session, WindowPresentation,
+        CompletedWait, GuestCall, LAUNCHER_PID, LAUNCHER_TID, PersonalityAction, SessionObject,
+        SessionRequest, ThreadKey, WINDOW_HANDLE_BASE, Wc3Session, WindowPresentation,
     },
     thunk32,
 };
