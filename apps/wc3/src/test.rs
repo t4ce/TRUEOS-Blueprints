@@ -314,8 +314,14 @@ mod tests_main_1 {
             initterm: None,
             cipow: None,
             cipow_diagnostic_logged: false,
+            seh_handler_dumped: false,
             seh: None,
             unhandled_filter_call: None,
+            repeated_null_call: None,
+            repeated_divide_fault: None,
+            scan_progress: None,
+            scan_heartbeat_source: None,
+            dword_scan_watch: None,
             loader: ChildLoaderState {
                 prepared: true,
                 native_requests: Vec::new(),
@@ -404,8 +410,14 @@ mod tests_main_1 {
             initterm: None,
             cipow: None,
             cipow_diagnostic_logged: false,
+            seh_handler_dumped: false,
             seh: None,
             unhandled_filter_call: None,
+            repeated_null_call: None,
+            repeated_divide_fault: None,
+            scan_progress: None,
+            scan_heartbeat_source: None,
+            dword_scan_watch: None,
             loader: ChildLoaderState {
                 prepared: true,
                 native_requests: Vec::new(),
@@ -500,6 +512,26 @@ mod tests_main_1 {
         let exception = decode_child_exception((1 << 31) | 1, 0x0000_4001);
         assert_eq!(exception.vector, Some(1));
         assert_eq!(exception.debug_status, Some(0x0000_4001));
+    }
+
+    #[test]
+    fn table_fill_quiets_only_bs_single_steps_in_its_exact_range() {
+        let registers = Registers {
+            eip: 0x0046_14a5,
+            ..Registers::default()
+        };
+        let bs = decode_child_exception((1 << 31) | 1, 0x0000_4000);
+        let b0 = decode_child_exception((1 << 31) | 1, 0x0000_0001);
+
+        assert!(asupersync::war3_dword_scan_single_step(bs, registers));
+        assert!(!asupersync::war3_dword_scan_single_step(b0, registers));
+        assert!(!asupersync::war3_dword_scan_single_step(
+            bs,
+            Registers {
+                eip: 0x0046_1482,
+                ..Registers::default()
+            },
+        ));
     }
 
     #[test]
@@ -636,8 +668,14 @@ mod tests_main_1 {
             }),
             cipow: None,
             cipow_diagnostic_logged: false,
+            seh_handler_dumped: false,
             seh: None,
             unhandled_filter_call: None,
+            repeated_null_call: None,
+            repeated_divide_fault: None,
+            scan_progress: None,
+            scan_heartbeat_source: None,
+            dword_scan_watch: None,
             loader: ChildLoaderState {
                 prepared: true,
                 native_requests: Vec::new(),
@@ -3592,6 +3630,39 @@ mod tests_process_1 {
         assert_eq!(
             xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
             Ok(PersonalityAction::ExitProcess(0xc000_0005))
+        );
+        assert_eq!(xp.call_count, 1);
+    }
+
+    #[test]
+    fn child_create_event_a_provider_decodes_anonymous_auto_reset_frame() {
+        let provider = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("CreateEventA".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&provider);
+        assert_eq!(operation, ProviderOp::CreateEventA);
+        assert_eq!(operation.stack_cleanup_bytes(), 16);
+        let mut xp = XpProcess::new_child();
+        let (_, _, _, _, thunk_bytes) = xp.append_provider_imports(vec![provider]).unwrap();
+        assert_eq!(&thunk_bytes[8..11], &[0xc2, 0x10, 0]);
+
+        let mut memory = Memory { base: STACK_BASE, bytes: vec![0; STACK_BYTES] };
+        let esp = STACK_TOP - 0x40;
+        for (offset, value) in [0x0046_151c, 0, 0, 0, 0].into_iter().enumerate() {
+            write_u32(&mut memory, esp + offset as u32 * 4, value).unwrap();
+        }
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Session(SessionRequest::CreateEvent(
+                CreateEventRequest {
+                    name: None,
+                    manual_reset: false,
+                    initial_state: false,
+                    inheritable: false,
+                },
+            ))),
         );
         assert_eq!(xp.call_count, 1);
     }

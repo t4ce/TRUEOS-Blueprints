@@ -1348,6 +1348,9 @@ impl XpProcess {
             return self.dispatch_process_local_provider(pid, operation, esp, memory);
         }
         let action = match operation {
+            ProviderOp::CreateEventA => Some(PersonalityAction::Session(
+                SessionRequest::CreateEvent(self.create_event_request(esp, memory)?),
+            )),
             ProviderOp::CreateMutexA => {
                 let [_, attributes, initial_owner, name] = arguments::<4>(memory, esp)?;
                 let inheritable = if attributes == 0 {

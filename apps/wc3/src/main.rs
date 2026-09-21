@@ -1679,10 +1679,7 @@ struct ScanProgress {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct DwordScanWatch {
-    samples: u32,
-    last_index: Option<u32>,
-    last_progress_index: Option<u32>,
-    unchanged_heartbeats: u8,
+    last_heartbeat_index: Option<u32>,
 }
 
 #[derive(Clone, Debug)]

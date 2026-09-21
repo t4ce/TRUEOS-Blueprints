@@ -23,12 +23,12 @@ const WAR3_HOTLOOP_START: u32 = 0x0045_af60;
 const WAR3_SCAN_STEP_START: u32 = 0x0045_af54;
 const WAR3_SCAN_STEP_END: u32 = 0x0045_b010;
 const WAR3_DWORD_SCAN_INDEX: u32 = 0x0049_aa5c;
-const WAR3_DWORD_SCAN_BOUND: u32 = 0x0000_0360;
-const WAR3_DWORD_SCAN_STEP_START: u32 = 0x0045_b0a2;
-const WAR3_DWORD_SCAN_STEP_END: u32 = 0x0045_b0df;
-const WAR3_DWORD_SCAN_HEARTBEAT_STRIDE: u32 = 0x40;
-const WAR3_DWORD_SCAN_SAMPLE_STRIDE: u32 = 0x80;
-const WAR3_DWORD_SCAN_STALL_HEARTBEATS: u8 = 3;
+const WAR3_TABLE_FILL_BASE_SLOT: u32 = 0x0049_d024;
+const WAR3_TABLE_FILL_BOUND: u32 = 0x0000_2000;
+const WAR3_TABLE_FILL_VALUE: u32 = 0x0045_e2f0;
+const WAR3_TABLE_FILL_STEP_START: u32 = 0x0046_1496;
+const WAR3_TABLE_FILL_STEP_END: u32 = 0x0046_14c3;
+const WAR3_TABLE_FILL_HEARTBEAT_STRIDE: u32 = 0x100;
 
 fn war3_scan_single_step(exception: ChildException, registers: Registers) -> bool {
     exception.vector == Some(1)
@@ -36,9 +36,10 @@ fn war3_scan_single_step(exception: ChildException, registers: Registers) -> boo
         && (WAR3_SCAN_STEP_START..=WAR3_SCAN_STEP_END).contains(&registers.eip)
 }
 
-fn war3_dword_scan_single_step(exception: ChildException, registers: Registers) -> bool {
+pub(super) fn war3_dword_scan_single_step(exception: ChildException, registers: Registers) -> bool {
     exception.vector == Some(1)
-        && (WAR3_DWORD_SCAN_STEP_START..=WAR3_DWORD_SCAN_STEP_END).contains(&registers.eip)
+        && exception.debug_status.is_some_and(|dr6| dr6 & 0x4000 != 0)
+        && (WAR3_TABLE_FILL_STEP_START..=WAR3_TABLE_FILL_STEP_END).contains(&registers.eip)
 }
 
 fn quiet_war3_exception(exception: ChildException, registers: Registers) -> bool {
@@ -191,11 +192,30 @@ fn should_log_execution_sample(count: u64) -> bool {
 
 fn service_sync_request(
     session: &mut Wc3Session,
+    caller_pid: u32,
     request: SessionRequest,
     contexts: &mut [GuestContext],
     wait_deadlines: &mut HashMap<ThreadKey, RuntimeWait>,
 ) -> Result<u32, String> {
     match request {
+        SessionRequest::CreateEvent(request) => {
+            let (handle, already_exists) = session.create_event(caller_pid, request);
+            session
+                .process_mut(caller_pid)
+                .ok_or_else(|| "event process missing".to_owned())?
+                .xp
+                .set_last_error(if already_exists { 183 } else { 0 });
+            logl::log(
+                level::IMPORTANT,
+                format_args!(
+                    "WC3 CHILD EVENT CREATE pid={} handle=0x{:08x} already_exists={}",
+                    caller_pid,
+                    handle,
+                    already_exists as u8,
+                ),
+            );
+            Ok(handle)
+        }
         SessionRequest::CreateMutex { key, request } => {
             let (handle, error, existed) = match session.create_mutex(key, request) {
                 Ok((handle, existed)) => (handle, if existed { 183 } else { 0 }, existed),
@@ -547,44 +567,30 @@ fn log_war3_scan_progress(
     );
 }
 
-fn observe_war3_dword_scan(child: &mut PendingChild, eip: u32, accum_eax: u32) -> bool {
+fn observe_war3_dword_scan(child: &mut PendingChild, eip: u32) {
     let Some(index) = child_read_u32(child, WAR3_DWORD_SCAN_INDEX) else {
-        return false;
+        return;
     };
     let watch = child.dword_scan_watch.get_or_insert(DwordScanWatch {
-        samples: 0,
-        last_index: None,
-        last_progress_index: None,
-        unchanged_heartbeats: 0,
+        last_heartbeat_index: None,
     });
-    watch.samples = watch.samples.saturating_add(1);
-    let progress_heartbeat = index % WAR3_DWORD_SCAN_HEARTBEAT_STRIDE == 0
-        && watch.last_progress_index != Some(index);
-    let sample_heartbeat = watch.samples % WAR3_DWORD_SCAN_SAMPLE_STRIDE == 0;
-    if !progress_heartbeat && !sample_heartbeat {
-        return false;
+    if index % WAR3_TABLE_FILL_HEARTBEAT_STRIDE != 0
+        || watch.last_heartbeat_index == Some(index)
+    {
+        return;
     }
-    if watch.last_index == Some(index) {
-        watch.unchanged_heartbeats = watch.unchanged_heartbeats.saturating_add(1);
-    } else {
-        watch.unchanged_heartbeats = 0;
-    }
-    watch.last_index = Some(index);
-    if progress_heartbeat {
-        watch.last_progress_index = Some(index);
-    }
+    watch.last_heartbeat_index = Some(index);
+    let base = child_read_u32(child, WAR3_TABLE_FILL_BASE_SLOT);
     logl::log(
         level::IMPORTANT,
         format_args!(
-            "WC3 CHILD DWORD SCAN eip=0x{:08x} index=0x{:04x} bound=0x{:04x} accum_eax=0x{:08x} unchanged_heartbeats={}",
+            "WC3 CHILD TABLE FILL eip=0x{:08x} index=0x{:04x} bound=0x{:04x} base={} value=0x{WAR3_TABLE_FILL_VALUE:08x}",
             eip,
             index,
-            WAR3_DWORD_SCAN_BOUND,
-            accum_eax,
-            watch.unchanged_heartbeats,
+            WAR3_TABLE_FILL_BOUND,
+            base.map(|value| format!("0x{value:08x}")).unwrap_or_else(|| "-".into()),
         ),
     );
-    watch.unchanged_heartbeats >= WAR3_DWORD_SCAN_STALL_HEARTBEATS
 }
 
 fn divide_loop_progress(child: &PendingChild) -> Option<DivideLoopProgress> {
@@ -1224,20 +1230,8 @@ pub(super) async fn run_loop(
                                 restored_debug,
                             );
                         }
-                        if seh.dword_scan_single_step
-                            && observe_war3_dword_scan(
-                                child,
-                                seh.original_registers.eip,
-                                restored.eax,
-                            )
-                        {
-                            logl::log(
-                                level::IMPORTANT,
-                                format_args!(
-                                    "WC3 CHILD OPERATOR STOP reason=dword-scan-index-stalled index_slot=0x{WAR3_DWORD_SCAN_INDEX:08x} heartbeats={WAR3_DWORD_SCAN_STALL_HEARTBEATS}",
-                                ),
-                            );
-                            return Ok(());
+                        if seh.dword_scan_single_step {
+                            observe_war3_dword_scan(child, seh.original_registers.eip);
                         }
                         if !seh.quiet {
                             let raw_ecx = u32::from_le_bytes(
@@ -3376,7 +3370,8 @@ pub(super) async fn run_loop(
                         continue;
                     }
                     if matches!(operation,
-                        child_loader::ProviderOp::CreateMutexA
+                        child_loader::ProviderOp::CreateEventA
+                        | child_loader::ProviderOp::CreateMutexA
                         | child_loader::ProviderOp::ReleaseMutex
                         | child_loader::ProviderOp::CloseHandle
                         | child_loader::ProviderOp::WaitForSingleObject
@@ -3390,7 +3385,7 @@ pub(super) async fn run_loop(
                         let result = match action {
                             PersonalityAction::Return(result) => result,
                             PersonalityAction::Session(request) => service_sync_request(
-                                &mut session, request, &mut contexts, &mut wait_deadlines,
+                                &mut session, active_pid, request, &mut contexts, &mut wait_deadlines,
                             )?,
                             PersonalityAction::Block(request) => {
                                 if let Some(result) = session.poll_wait(&request).map_err(str::to_owned)? {
@@ -4860,7 +4855,7 @@ pub(super) async fn run_loop(
                     }
                     PersonalityAction::Session(request @ SessionRequest::CreateMutex { .. })
                     | PersonalityAction::Session(request @ SessionRequest::ReleaseMutex { .. }) => {
-                        service_sync_request(&mut session, request, &mut contexts, &mut wait_deadlines)?
+                        service_sync_request(&mut session, LAUNCHER_PID, request, &mut contexts, &mut wait_deadlines)?
                     }
                     PersonalityAction::Session(SessionRequest::SetEvent { pid, tid, handle }) => {
                         match session.set_event(pid, handle) {
