@@ -698,7 +698,29 @@ fn begin_child_seh_dispatch(child: &mut PendingChild, guest: &mut GuestContext, 
             ),
         );
     }
-    let context = wc3::seh::encode_x86_context(registers, exception.debug_status);
+    let debug_registers = guest
+        .context
+        .debug_registers()
+        .map_err(|error| error.to_string())?;
+    if exception.vector == Some(1) {
+        logl::log(
+            level::IMPORTANT,
+            format_args!(
+                "WC3 CHILD PRE-SEH DEBUG pid={} tid={} eip=0x{:08x} dr0=0x{:08x} dr1=0x{:08x} dr2=0x{:08x} dr3=0x{:08x} dr6=0x{:08x} dr7=0x{:08x} qualification_dr6={:?}",
+                child.pid,
+                child.tid,
+                registers.eip,
+                debug_registers.dr0,
+                debug_registers.dr1,
+                debug_registers.dr2,
+                debug_registers.dr3,
+                debug_registers.dr6,
+                debug_registers.dr7,
+                exception.debug_status,
+            ),
+        );
+    }
+    let context = wc3::seh::encode_x86_context(registers, Some(debug_registers));
     let (record, exception_code, exception_kind) = match exception.vector {
         Some(14) => {
             let linear = exception.fault_linear.ok_or("page fault linear address")?;
@@ -1057,6 +1079,26 @@ pub(super) async fn run_loop(
                         let mut bytes = [0; wc3::seh::X86_CONTEXT_BYTES];
                         if child.address_space.read(seh.context_va, &mut bytes).map_err(|error| error.to_string())? != bytes.len() { return Err("short SEH context readback".into()); }
                         let restored = wc3::seh::decode_x86_context(&bytes, seh.preserved_fs_base).map_err(str::to_owned)?;
+                        let restored_debug = wc3::seh::decode_x86_debug_registers(&bytes)
+                            .map_err(str::to_owned)?;
+                        if matches!(seh.original_registers.eip, 0x0045_af51 | 0x0045_af54 | 0x0045_af5a) {
+                            let get = |offset: usize| {
+                                u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap())
+                            };
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD SEH DEBUG RETURN eip=0x{:08x} dr0=0x{:08x} dr1=0x{:08x} dr2=0x{:08x} dr3=0x{:08x} dr6=0x{:08x} dr7=0x{:08x}",
+                                    seh.original_registers.eip,
+                                    get(0x04),
+                                    get(0x08),
+                                    get(0x0c),
+                                    get(0x10),
+                                    get(0x14),
+                                    get(0x18),
+                                ),
+                            );
+                        }
                         if matches!(seh.original_registers.eip, 0x0045_af54 | 0x0045_af5a) {
                             let stage = child_read_u8(child, 0x0049_a590);
                             let source = child_read_u32(child, 0x0049_a594);
@@ -1105,6 +1147,10 @@ pub(super) async fn run_loop(
                             ));
                         }
                         contexts[active].context.set_registers(restored).map_err(|error| error.to_string())?;
+                        contexts[active]
+                            .context
+                            .set_debug_registers(restored_debug)
+                            .map_err(|error| error.to_string())?;
                         if !seh.quiet { logl::log(level::IMPORTANT, format_args!(
                             "WC3 CHILD SEH CONTINUE pid={} tid={} old_eip=0x{:08x} new_eip=0x{:08x} old_esp=0x{:08x} new_esp=0x{:08x}",
                             active_pid, active_tid, seh.original_registers.eip, restored.eip, seh.original_registers.esp, restored.esp,

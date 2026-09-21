@@ -1,4 +1,4 @@
-use trueos::x86::Registers;
+use trueos::x86::{DebugRegisters, Registers};
 
 pub const STATUS_ACCESS_VIOLATION: u32 = 0xc000_0005;
 pub const STATUS_SINGLE_STEP: u32 = 0x8000_0004;
@@ -13,9 +13,12 @@ pub const X86_CONTEXT_FULL: u32 = 0x0001_0007;
 pub const X86_CONTEXT_DEBUG_REGISTERS: u32 = 0x0001_0010;
 pub const X86_EFLAGS_TF: u32 = 1 << 8;
 
+const DR0: usize = 4;
+const DR1: usize = 8;
+const DR2: usize = 12;
+const DR3: usize = 16;
 const DR6: usize = 20;
 const DR7: usize = 24;
-const X86_DEFAULT_DR7: u32 = 0x0000_0400;
 const EDI: usize = 156;
 const ESI: usize = 160;
 const EBX: usize = 164;
@@ -31,16 +34,23 @@ const ESP: usize = 196;
 fn put(bytes: &mut [u8], offset: usize, value: u32) { bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes()); }
 fn get(bytes: &[u8], offset: usize) -> u32 { u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap()) }
 
-pub fn encode_x86_context(registers: Registers, dr6: Option<u32>) -> [u8; X86_CONTEXT_BYTES] {
+pub fn encode_x86_context(
+    registers: Registers,
+    debug_registers: Option<DebugRegisters>,
+) -> [u8; X86_CONTEXT_BYTES] {
     let mut bytes = [0; X86_CONTEXT_BYTES];
     let mut flags = X86_CONTEXT_FULL;
-    if dr6.is_some() {
+    if debug_registers.is_some() {
         flags |= X86_CONTEXT_DEBUG_REGISTERS;
     }
     put(&mut bytes, 0, flags);
-    if let Some(dr6) = dr6 {
-        put(&mut bytes, DR6, dr6);
-        put(&mut bytes, DR7, X86_DEFAULT_DR7);
+    if let Some(debug) = debug_registers {
+        put(&mut bytes, DR0, debug.dr0);
+        put(&mut bytes, DR1, debug.dr1);
+        put(&mut bytes, DR2, debug.dr2);
+        put(&mut bytes, DR3, debug.dr3);
+        put(&mut bytes, DR6, debug.dr6);
+        put(&mut bytes, DR7, debug.dr7);
     }
     put(&mut bytes, EDI, registers.edi); put(&mut bytes, ESI, registers.esi);
     put(&mut bytes, EBX, registers.ebx); put(&mut bytes, EDX, registers.edx);
@@ -53,6 +63,22 @@ pub fn encode_x86_context(registers: Registers, dr6: Option<u32>) -> [u8; X86_CO
 pub fn decode_x86_context(bytes: &[u8; X86_CONTEXT_BYTES], fs_base: u32) -> Result<Registers, &'static str> {
     if get(bytes, 0) & X86_CONTEXT_FULL != X86_CONTEXT_FULL { return Err("SEH context flags"); }
     Ok(Registers { edi: get(bytes, EDI), esi: get(bytes, ESI), ebx: get(bytes, EBX), edx: get(bytes, EDX), ecx: get(bytes, ECX), eax: get(bytes, EAX), ebp: get(bytes, EBP), eip: get(bytes, EIP), eflags: get(bytes, EFLAGS), esp: get(bytes, ESP), fs_base, ..Registers::default() })
+}
+
+pub fn decode_x86_debug_registers(
+    bytes: &[u8; X86_CONTEXT_BYTES],
+) -> Result<DebugRegisters, &'static str> {
+    if get(bytes, 0) & X86_CONTEXT_DEBUG_REGISTERS == 0 {
+        return Err("SEH debug context flags");
+    }
+    Ok(DebugRegisters {
+        dr0: get(bytes, DR0),
+        dr1: get(bytes, DR1),
+        dr2: get(bytes, DR2),
+        dr3: get(bytes, DR3),
+        dr6: get(bytes, DR6),
+        dr7: get(bytes, DR7),
+    })
 }
 
 /// The saved CONTEXT describes the interrupted instruction, while live handler
@@ -143,9 +169,28 @@ mod tests {
 
     #[test]
     fn debug_context_carries_guest_debug_state() {
-        let context = encode_x86_context(Registers::default(), Some(0x4000));
+        let context = encode_x86_context(
+            Registers::default(),
+            Some(DebugRegisters {
+                dr0: 0x0045_af57,
+                dr1: 2,
+                dr2: 3,
+                dr3: 4,
+                dr6: 0x4000,
+                dr7: 0x403,
+            }),
+        );
         assert_eq!(get(&context, 0) & X86_CONTEXT_DEBUG_REGISTERS, X86_CONTEXT_DEBUG_REGISTERS);
-        assert_eq!(get(&context, DR6), 0x4000);
-        assert_eq!(get(&context, DR7), X86_DEFAULT_DR7);
+        assert_eq!(
+            decode_x86_debug_registers(&context).unwrap(),
+            DebugRegisters {
+                dr0: 0x0045_af57,
+                dr1: 2,
+                dr2: 3,
+                dr3: 4,
+                dr6: 0x4000,
+                dr7: 0x403,
+            },
+        );
     }
 }
