@@ -61,9 +61,10 @@ pub const STACK_BYTES: usize = 0x10_0000;
 pub const STACK_TOP: u32 = STACK_BASE + STACK_BYTES as u32;
 pub const THUNK_PAGE_BYTES: usize = 0x1000;
 /// Process state returned by GetCommandLineA.  The launcher constructs its
-/// separate `"war3.exe" ` child command line on its native stack.
+/// separate `"war3.exe" -opengl -nosound -swtnl` child command line on its
+/// native stack.
 pub const COMMAND_LINE: &[u8] = b"\"Warcraft III.exe\"\0";
-pub const CHILD_COMMAND_LINE: &[u8] = b"\"war3.exe\" \0";
+pub const CHILD_COMMAND_LINE: &[u8] = b"\"war3.exe\" -opengl -nosound -swtnl\0";
 pub const LAUNCHER_IMAGE_FILENAME: &[u8] = b"C:\\Warcraft III\\Warcraft III.exe\0";
 pub const CHILD_IMAGE_FILENAME: &[u8] = b"C:\\Warcraft III\\War3.exe\0";
 pub const XP_WINDOWS_DIRECTORY: &[u8] = b"C:\\WINDOWS\0";

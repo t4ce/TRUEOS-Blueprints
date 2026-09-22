@@ -1699,6 +1699,10 @@ mod tests_process_1 {
         assert_eq!(STACK_BASE, 0x0430_0000);
         assert_eq!(STACK_TOP, 0x0440_0000);
         assert_eq!(COMMAND_LINE, b"\"Warcraft III.exe\"\0");
+        assert_eq!(
+            CHILD_COMMAND_LINE,
+            b"\"war3.exe\" -opengl -nosound -swtnl\0"
+        );
         assert_eq!(crate::session::WINDOW_HANDLE_BASE, 0x5743_4001);
 
         // This is the hardware-observed #89 frame.  Its positions are a
