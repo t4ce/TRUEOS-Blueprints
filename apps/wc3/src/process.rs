@@ -2086,6 +2086,43 @@ impl XpProcess {
                     .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(1))
             }
+            ProviderOp::FlushFileBuffers => {
+                let [_, handle] = arguments::<2>(memory, esp)?;
+                let Some(file) = self.file_handles.get(&handle).copied() else {
+                    self.set_last_error(ERROR_INVALID_HANDLE);
+                    self.call_count = self
+                        .call_count
+                        .checked_add(1)
+                        .ok_or("call count overflow")?;
+                    return Ok(PersonalityAction::Return(0));
+                };
+                if file.access & GENERIC_WRITE == 0 {
+                    self.set_last_error(ERROR_ACCESS_DENIED);
+                    self.call_count = self
+                        .call_count
+                        .checked_add(1)
+                        .ok_or("call count overflow")?;
+                    return Ok(PersonalityAction::Return(0));
+                }
+                match file.backing {
+                    // Scratch writes update the process-local byte vector
+                    // synchronously, so there is no lower buffered layer.
+                    FileBacking::Scratch(_) => {}
+                    FileBacking::SelfImage => {
+                        self.set_last_error(ERROR_ACCESS_DENIED);
+                        self.call_count = self
+                            .call_count
+                            .checked_add(1)
+                            .ok_or("call count overflow")?;
+                        return Ok(PersonalityAction::Return(0));
+                    }
+                }
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(1))
+            }
             ProviderOp::GetWindowsDirectoryA => {
                 self.call_count = self
                     .call_count

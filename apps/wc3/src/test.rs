@@ -3891,6 +3891,7 @@ mod tests_process_1 {
         let providers = [
             "CreateFileA",
             "WriteFile",
+            "FlushFileBuffers",
             "SetFileAttributesA",
             "GetFileSize",
             "SetFilePointer",
@@ -3923,7 +3924,7 @@ mod tests_process_1 {
             write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
         }
         assert_eq!(
-            xp.dispatch_provider_for_process_typed(2, 3, 2, esp, &mut memory),
+            xp.dispatch_provider_for_process_typed(2, 3, 3, esp, &mut memory),
             Ok(PersonalityAction::Return(0))
         );
         assert_eq!(xp.last_error, ERROR_FILE_NOT_FOUND);
@@ -3968,6 +3969,13 @@ mod tests_process_1 {
         );
         assert_eq!(read_u32(&memory, bytes_transferred).unwrap(), 3);
 
+        write_u32(&mut memory, esp, 0x0046_372b).unwrap();
+        write_u32(&mut memory, esp + 4, FILE_HANDLE_BASE).unwrap();
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 2, esp, &mut memory),
+            Ok(PersonalityAction::Return(1))
+        );
+
         for (index, value) in [0x0046_3660, filename, FILE_ATTRIBUTE_TEMPORARY]
             .into_iter()
             .enumerate()
@@ -3975,7 +3983,7 @@ mod tests_process_1 {
             write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
         }
         assert_eq!(
-            xp.dispatch_provider_for_process_typed(2, 3, 2, esp, &mut memory),
+            xp.dispatch_provider_for_process_typed(2, 3, 3, esp, &mut memory),
             Ok(PersonalityAction::Return(1))
         );
 
@@ -3983,7 +3991,7 @@ mod tests_process_1 {
         write_u32(&mut memory, esp + 4, FILE_HANDLE_BASE).unwrap();
         write_u32(&mut memory, esp + 8, 0).unwrap();
         assert_eq!(
-            xp.dispatch_provider_for_process_typed(2, 3, 3, esp, &mut memory),
+            xp.dispatch_provider_for_process_typed(2, 3, 4, esp, &mut memory),
             Ok(PersonalityAction::Return(3))
         );
 
@@ -3994,7 +4002,7 @@ mod tests_process_1 {
             write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
         }
         assert_eq!(
-            xp.dispatch_provider_for_process_typed(2, 3, 4, esp, &mut memory),
+            xp.dispatch_provider_for_process_typed(2, 3, 5, esp, &mut memory),
             Ok(PersonalityAction::Return(0))
         );
 
@@ -4012,7 +4020,7 @@ mod tests_process_1 {
             write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
         }
         assert_eq!(
-            xp.dispatch_provider_for_process_typed(2, 3, 5, esp, &mut memory),
+            xp.dispatch_provider_for_process_typed(2, 3, 6, esp, &mut memory),
             Ok(PersonalityAction::Return(1))
         );
         let mut actual = [0; 3];
@@ -4022,7 +4030,7 @@ mod tests_process_1 {
         write_u32(&mut memory, esp, 0x0046_36a0).unwrap();
         write_u32(&mut memory, esp + 4, FILE_HANDLE_BASE).unwrap();
         assert_eq!(
-            xp.dispatch_provider_for_process_typed(2, 3, 6, esp, &mut memory),
+            xp.dispatch_provider_for_process_typed(2, 3, 7, esp, &mut memory),
             Ok(PersonalityAction::Return(1))
         );
         assert!(!xp.file_handles.contains_key(&FILE_HANDLE_BASE));
@@ -4497,6 +4505,7 @@ mod tests_process_1 {
             ("SetFilePointer", ProviderOp::SetFilePointer, 16),
             ("ReadFile", ProviderOp::ReadFile, 20),
             ("WriteFile", ProviderOp::WriteFile, 20),
+            ("FlushFileBuffers", ProviderOp::FlushFileBuffers, 4),
         ] {
             let provider = ProviderImport {
                 module: "kernel32.dll".into(),

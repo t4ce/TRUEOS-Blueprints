@@ -47,6 +47,7 @@ pub enum ProviderOp {
     SetFilePointer,
     ReadFile,
     WriteFile,
+    FlushFileBuffers,
     CreateEventA,
     CreateMutexA,
     ReleaseMutex,
@@ -118,7 +119,8 @@ impl ProviderOp {
             | Self::QueryPerformanceCounter
             | Self::GetLocalTime
             | Self::GetSystemTime
-            | Self::GetTimeZoneInformation => 4,
+            | Self::GetTimeZoneInformation
+            | Self::FlushFileBuffers => 4,
             Self::GetCPInfo | Self::GetWindowsDirectoryA | Self::GetSystemDirectoryA => 8,
             Self::GetProcAddress
             | Self::WaitForSingleObject
@@ -174,6 +176,7 @@ impl ProviderOp {
                 | Self::SetFilePointer
                 | Self::ReadFile
                 | Self::WriteFile
+                | Self::FlushFileBuffers
                 | Self::GetWindowsDirectoryA
                 | Self::GetSystemDirectoryA
                 | Self::GetTempPathA
@@ -226,6 +229,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "SetFilePointer" => ProviderOp::SetFilePointer,
             "ReadFile" => ProviderOp::ReadFile,
             "WriteFile" => ProviderOp::WriteFile,
+            "FlushFileBuffers" => ProviderOp::FlushFileBuffers,
             "CreateEventA" => ProviderOp::CreateEventA,
             "CreateMutexA" => ProviderOp::CreateMutexA,
             "ReleaseMutex" => ProviderOp::ReleaseMutex,
