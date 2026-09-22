@@ -41,9 +41,19 @@ pub const EXCEPTION_CONTINUE_EXECUTION: u32 = u32::MAX;
 pub const EXCEPTION_CONTINUE_SEARCH: u32 = 0;
 pub const EXCEPTION_EXECUTE_HANDLER: u32 = 1;
 const ERROR_MOD_NOT_FOUND: u32 = 126;
+const ERROR_INVALID_HANDLE: u32 = 6;
+const ERROR_INSUFFICIENT_BUFFER: u32 = 122;
 const ERROR_NO_TOKEN: u32 = 1008;
 const TOKEN_QUERY: u32 = 0x0000_0008;
 const TOKEN_HANDLE_BASE: u32 = 0x5743_9001;
+const TOKEN_GROUPS_CLASS: u32 = 2;
+const SE_GROUP_MANDATORY: u32 = 0x0000_0001;
+const SE_GROUP_ENABLED_BY_DEFAULT: u32 = 0x0000_0002;
+const SE_GROUP_ENABLED: u32 = 0x0000_0004;
+const XP_TOKEN_GROUP_ATTRIBUTES: u32 =
+    SE_GROUP_MANDATORY | SE_GROUP_ENABLED_BY_DEFAULT | SE_GROUP_ENABLED;
+const XP_EVERYONE_SID: [u8; 12] = [1, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0];
+const XP_TOKEN_GROUPS_REQUIRED: u32 = 4 + 8 + XP_EVERYONE_SID.len() as u32;
 pub const PROCESS_DATA_VA: u32 = 0x0021_1000;
 /// Historical launcher stack: 0x0430_0000..0x0440_0000.
 pub const STACK_BASE: u32 = 0x0430_0000;
@@ -1374,6 +1384,54 @@ impl XpProcess {
                     },
                 );
                 memory.write(token_out, &handle.to_le_bytes())?;
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(1))
+            }
+            ProviderOp::GetTokenInformation => {
+                let [_, token, information_class, information, information_len, return_len] =
+                    arguments::<6>(memory, esp)?;
+                let Some(token_handle) = self.token_handles.get(&token).copied() else {
+                    self.set_last_error(ERROR_INVALID_HANDLE);
+                    return Ok(PersonalityAction::Return(0));
+                };
+                if token_handle.access & TOKEN_QUERY == 0 {
+                    return Err(ProviderDispatchError::Frontier {
+                        api: "GetTokenInformation",
+                        detail: format!("token without TOKEN_QUERY handle=0x{token:08x}"),
+                    });
+                }
+                if information_class != TOKEN_GROUPS_CLASS {
+                    return Err(ProviderDispatchError::Frontier {
+                        api: "GetTokenInformation",
+                        detail: format!("unobserved information class={information_class}"),
+                    });
+                }
+                if return_len == 0 {
+                    return Err(ProviderDispatchError::Frontier {
+                        api: "GetTokenInformation",
+                        detail: "null ReturnLength".into(),
+                    });
+                }
+                memory.write(return_len, &XP_TOKEN_GROUPS_REQUIRED.to_le_bytes())?;
+                if information == 0 || information_len < XP_TOKEN_GROUPS_REQUIRED {
+                    self.set_last_error(ERROR_INSUFFICIENT_BUFFER);
+                    self.call_count = self
+                        .call_count
+                        .checked_add(1)
+                        .ok_or("call count overflow")?;
+                    return Ok(PersonalityAction::Return(0));
+                }
+
+                let sid = information
+                    .checked_add(12)
+                    .ok_or("GetTokenInformation SID address overflow")?;
+                memory.write(information, &1u32.to_le_bytes())?;
+                memory.write(information + 4, &sid.to_le_bytes())?;
+                memory.write(information + 8, &XP_TOKEN_GROUP_ATTRIBUTES.to_le_bytes())?;
+                memory.write(sid, &XP_EVERYONE_SID)?;
                 self.call_count = self
                     .call_count
                     .checked_add(1)

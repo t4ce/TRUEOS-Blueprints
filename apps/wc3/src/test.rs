@@ -3706,6 +3706,88 @@ mod tests_process_1 {
     }
 
     #[test]
+    fn child_get_token_information_reports_and_writes_the_token_groups_shape() {
+        let providers = [
+            ProviderImport {
+                module: "ADVAPI32.dll".into(),
+                symbol: ProviderSymbol::Name("OpenProcessToken".into()),
+                iat_rva: 0,
+            },
+            ProviderImport {
+                module: "ADVAPI32.dll".into(),
+                symbol: ProviderSymbol::Name("GetTokenInformation".into()),
+                iat_rva: 0,
+            },
+        ];
+        let mut xp = XpProcess::new_child();
+        xp.install_provider_surface(providers.to_vec(), Vec::new(), Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+        let token_out = esp - 4;
+        for (index, value) in [
+            0x0045_ef82,
+            CURRENT_PROCESS_PSEUDO_HANDLE,
+            TOKEN_QUERY,
+            token_out,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
+        }
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(1))
+        );
+        let token = read_u32(&memory, token_out).unwrap();
+
+        let return_len = esp - 8;
+        for (index, value) in [0x0045_efb0, token, TOKEN_GROUPS_CLASS, 0, 0, return_len]
+            .into_iter()
+            .enumerate()
+        {
+            write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
+        }
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 1, esp, &mut memory),
+            Ok(PersonalityAction::Return(0))
+        );
+        assert_eq!(read_u32(&memory, return_len).unwrap(), XP_TOKEN_GROUPS_REQUIRED);
+        assert_eq!(xp.last_error, ERROR_INSUFFICIENT_BUFFER);
+
+        let information = esp - 0x100;
+        for (index, value) in [
+            0x0045_efc3,
+            token,
+            TOKEN_GROUPS_CLASS,
+            information,
+            XP_TOKEN_GROUPS_REQUIRED,
+            return_len,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
+        }
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 1, esp, &mut memory),
+            Ok(PersonalityAction::Return(1))
+        );
+        assert_eq!(read_u32(&memory, return_len).unwrap(), XP_TOKEN_GROUPS_REQUIRED);
+        assert_eq!(read_u32(&memory, information).unwrap(), 1);
+        assert_eq!(read_u32(&memory, information + 4).unwrap(), information + 12);
+        assert_eq!(read_u32(&memory, information + 8).unwrap(), 7);
+        let mut sid = [0; XP_EVERYONE_SID.len()];
+        memory.read(information + 12, &mut sid).unwrap();
+        assert_eq!(sid, XP_EVERYONE_SID);
+        assert_eq!(xp.last_error, ERROR_INSUFFICIENT_BUFFER);
+        assert_eq!(xp.call_count, 3);
+    }
+
+    #[test]
     fn child_get_current_process_id_returns_calling_pid_without_side_effects() {
         let provider = ProviderImport {
             module: "KERNEL32.dll".into(),
@@ -3844,6 +3926,35 @@ mod tests_process_1 {
             Some(addresses[0])
         );
         assert_eq!(&bytes[8..11], &[0xc2, 0x0c, 0]);
+    }
+
+    #[test]
+    fn child_get_token_information_dynamic_export_uses_stdcall_twenty() {
+        let provider = ProviderImport {
+            module: "advapi32.dll".into(),
+            symbol: ProviderSymbol::Name("GetTokenInformation".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&provider);
+        assert_eq!(operation, ProviderOp::GetTokenInformation);
+        assert!(operation.is_modeled());
+        assert!(operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 20);
+        assert_eq!(
+            crate::child_loader::provider_thunk_kind(&provider),
+            thunk32::Kind::Stdcall(20)
+        );
+
+        let mut xp = XpProcess::new_child();
+        let (addresses, _, _, updated_from, bytes) =
+            xp.append_provider_imports(vec![provider.clone()]).unwrap();
+        assert_eq!(updated_from, 0);
+        assert_eq!(addresses, vec![thunk32::address(0).unwrap()]);
+        assert_eq!(
+            xp.provider_export_address("ADVAPI32.dll", &provider.symbol),
+            Some(addresses[0])
+        );
+        assert_eq!(&bytes[8..11], &[0xc2, 0x14, 0]);
     }
 
     #[test]

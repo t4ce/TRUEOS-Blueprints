@@ -72,6 +72,7 @@ pub enum ProviderOp {
     VirtualAlloc,
     OpenThreadToken,
     OpenProcessToken,
+    GetTokenInformation,
     RegOpenKeyExA,
     CrtMalloc,
     Unknown,
@@ -120,7 +121,10 @@ impl ProviderOp {
             Self::WideCharToMultiByte => 32,
             Self::GetModuleFileNameA | Self::HeapCreate | Self::HeapAlloc | Self::HeapFree
             | Self::CreateMutexA | Self::OpenProcessToken => 12,
-            Self::ReadProcessMemory | Self::WriteProcessMemory | Self::RegOpenKeyExA => 20,
+            Self::ReadProcessMemory
+            | Self::WriteProcessMemory
+            | Self::RegOpenKeyExA
+            | Self::GetTokenInformation => 20,
             _ => 0,
         }
     }
@@ -156,6 +160,7 @@ impl ProviderOp {
                 | Self::TimeGetTime
                 | Self::OpenThreadToken
                 | Self::OpenProcessToken
+                | Self::GetTokenInformation
         )
     }
 }
@@ -223,6 +228,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "RegOpenKeyExA" => ProviderOp::RegOpenKeyExA,
             "OpenThreadToken" => ProviderOp::OpenThreadToken,
             "OpenProcessToken" => ProviderOp::OpenProcessToken,
+            "GetTokenInformation" => ProviderOp::GetTokenInformation,
             _ => ProviderOp::Unknown,
         };
     }
