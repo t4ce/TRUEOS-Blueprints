@@ -313,6 +313,7 @@ mod tests_main_1 {
             provider_thunk_bytes: 0x1000,
             static_load_reserved: reserved,
             initterm: None,
+            load_library_call: None,
             cipow: None,
             cipow_diagnostic_logged: false,
             seh_handler_dumped: false,
@@ -412,6 +413,7 @@ mod tests_main_1 {
             provider_thunk_bytes: 0x1000,
             static_load_reserved: reserved,
             initterm: None,
+            load_library_call: None,
             cipow: None,
             cipow_diagnostic_logged: false,
             seh_handler_dumped: false,
@@ -704,6 +706,7 @@ mod tests_main_1 {
                 end: begin + 12,
                 callbacks_invoked: 0,
             }),
+            load_library_call: None,
             cipow: None,
             cipow_diagnostic_logged: false,
             seh_handler_dumped: false,
@@ -3343,6 +3346,8 @@ mod tests_process_1 {
             .unwrap();
         pid2.register_native_module("Storm.dll", "Storm.dll", 0x1500_0000)
             .unwrap();
+        pid2.register_runtime_native_module("C:\\Windows\\SIntfNT.dll", 0x2000_0000)
+            .unwrap();
         assert_eq!(pid2.loaded_module_handle("mss32.dll"), Some(0x2110_0000));
         assert_eq!(
             pid2.loaded_module_handle("C:\\Warcraft III\\Mss32.dll"),
@@ -3360,6 +3365,7 @@ mod tests_process_1 {
         for (handle, expected) in [
             (0x2110_0000, b"C:\\Warcraft III\\Mss32.dll\0".as_slice()),
             (0x1500_0000, b"C:\\Warcraft III\\Storm.dll\0".as_slice()),
+            (0x2000_0000, b"C:\\Windows\\SIntfNT.dll\0".as_slice()),
         ] {
             write_u32(&mut memory, esp + 4, handle).unwrap();
             write_u32(&mut memory, esp + 12, expected.len() as u32).unwrap();
@@ -4617,6 +4623,39 @@ mod tests_process_1 {
             ))),
         );
         assert_eq!(xp.call_count, 1);
+    }
+
+    #[test]
+    fn child_global_alloc_uses_the_win32_heap_arena_for_fixed_blocks() {
+        let provider = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("GlobalAlloc".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&provider);
+        assert_eq!(operation, ProviderOp::GlobalAlloc);
+        assert!(!operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 8);
+        let mut xp = XpProcess::new_child();
+        let (_, _, _, _, thunk_bytes) = xp.append_provider_imports(vec![provider]).unwrap();
+        assert_eq!(&thunk_bytes[8..11], &[0xc2, 8, 0]);
+
+        let zeroed = xp.alloc_global_fixed(0x40, 9).unwrap().unwrap();
+        assert_eq!(zeroed.flags, 0x40);
+        assert_eq!(zeroed.requested, 9);
+        assert_eq!(zeroed.pointer, CHILD_WIN_HEAP_BASE);
+        assert_eq!(zeroed.end, CHILD_WIN_HEAP_BASE + 16);
+        let fixed = xp.alloc_global_fixed(0, 8).unwrap().unwrap();
+        assert_eq!(fixed.pointer, zeroed.end);
+        assert_eq!(fixed.end, zeroed.end + 8);
+        assert_eq!(xp.call_count, 2);
+        assert_eq!(
+            xp.alloc_global_fixed(0x2, 8),
+            Err(ProviderDispatchError::Frontier {
+                api: "GlobalAlloc",
+                detail: "movable-memory flags=0x00000002 bytes=8".into(),
+            }),
+        );
     }
 
     #[test]

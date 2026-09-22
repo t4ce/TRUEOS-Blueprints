@@ -1622,6 +1622,7 @@ struct PendingChild {
     provider_thunk_bytes: usize,
     static_load_reserved: u32,
     initterm: Option<ChildInitterm>,
+    load_library_call: Option<ChildLoadLibraryCall>,
     cipow: Option<ChildCiPow>,
     cipow_diagnostic_logged: bool,
     seh_handler_dumped: bool,
@@ -1749,6 +1750,14 @@ struct ChildInitterm {
     callbacks_invoked: u32,
 }
 
+#[derive(Clone, Debug)]
+struct ChildLoadLibraryCall {
+    provider_resume_eip: u32,
+    provider_esp: u32,
+    native_index: usize,
+    module_handle: u32,
+}
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 enum InittermAdvance {
     CallbackScheduled,
@@ -1857,6 +1866,13 @@ fn child_execution_module(
 }
 
 fn child_execution_scope(child: &PendingChild) -> Result<String, &'static str> {
+    if let Some(call) = &child.load_library_call {
+        let module = child
+            .native_modules
+            .get(call.native_index)
+            .ok_or("runtime LoadLibrary native index")?;
+        return Ok(format!("{}:DLL_PROCESS_ATTACH", module.stored));
+    }
     match child.execution {
         ChildExecutionState::DllInitRunning { .. } => {
             let (_, module) = child_execution_module(child)?;

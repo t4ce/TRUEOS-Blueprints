@@ -97,6 +97,14 @@ fn c_string(bytes: &[u8], offset: usize) -> Result<String, &'static str> {
         .map_err(|_| "PE non-ASCII import")
 }
 
+fn import_lookup_rva(original_first_thunk: usize, first_thunk: usize) -> usize {
+    if original_first_thunk == 0 {
+        first_thunk
+    } else {
+        original_first_thunk
+    }
+}
+
 /// Parse and materialize a PE32/i386 image without applying launcher policy.
 pub fn parse(bytes: &[u8]) -> Result<PeImage, &'static str> {
     if bytes.get(..2) != Some(b"MZ") {
@@ -241,13 +249,20 @@ pub fn parse(bytes: &[u8]) -> Result<PeImage, &'static str> {
         .filter(|end| *end <= import_end)
         .is_some()
     {
-        let lookup =
+        let original_lookup =
             usize::try_from(u32_at(&image, descriptor)?).map_err(|_| "PE import lookup")?;
         let module_rva =
             usize::try_from(u32_at(&image, descriptor + 12)?).map_err(|_| "PE module RVA")?;
         let iat = usize::try_from(u32_at(&image, descriptor + 16)?).map_err(|_| "PE IAT")?;
-        if lookup == 0 && module_rva == 0 && iat == 0 {
+        // The all-zero descriptor terminates the import directory.
+        if original_lookup == 0 && module_rva == 0 && iat == 0 {
             break;
+        }
+        // IMAGE_IMPORT_DESCRIPTOR::OriginalFirstThunk may legally be zero.
+        // In that form FirstThunk contains the lookup entries until loading.
+        let lookup = import_lookup_rva(original_lookup, iat);
+        if lookup == 0 {
+            return Err("PE import lookup missing");
         }
         let module = c_string(&image, module_rva)?;
         let mut index = 0usize;
@@ -378,4 +393,15 @@ pub fn materialize(bytes: &[u8]) -> Result<Materialized, &'static str> {
         image_base: parsed.image_base,
         entry_rva: parsed.entry_rva,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::import_lookup_rva;
+
+    #[test]
+    fn pe_import_lookup_falls_back_to_first_thunk() {
+        assert_eq!(import_lookup_rva(0, 0x1234), 0x1234);
+        assert_eq!(import_lookup_rva(0x5678, 0x1234), 0x5678);
+    }
 }

@@ -2094,6 +2094,46 @@ pub(super) async fn run_loop(
                         continue;
                     }
                     if exit.registers.eip == thunk32::CHILD_CALLBACK_RETURN_AFTER_VMCALL {
+                        if let Some(pending) = child.load_library_call.take() {
+                            if exit.registers.esp != pending.provider_esp {
+                                return Err(format!(
+                                    "LoadLibrary DllMain ESP mismatch expected=0x{:08x} actual=0x{:08x}",
+                                    pending.provider_esp, exit.registers.esp
+                                ));
+                            }
+                            if exit.registers.eax == 0 {
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 CHILD LOADLIBRARY FRONTIER reason=dllmain-returned-false handle=0x{:08x}",
+                                        pending.module_handle,
+                                    ),
+                                );
+                                return Ok(());
+                            }
+                            let module = child
+                                .native_modules
+                                .get_mut(pending.native_index)
+                                .ok_or_else(|| "runtime LoadLibrary native index".to_owned())?;
+                            module.initialized = true;
+                            let stored = module.stored.clone();
+                            let mut registers = exit.registers;
+                            registers.eip = pending.provider_resume_eip;
+                            registers.esp = pending.provider_esp;
+                            registers.eax = pending.module_handle;
+                            contexts[active]
+                                .context
+                                .set_registers(registers)
+                                .map_err(|error| error.to_string())?;
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD LOADLIBRARY RETURN pid={} tid={} module={:?} handle=0x{:08x} dllmain=TRUE cleanup=4-by-thunk",
+                                    active_pid, active_tid, stored, pending.module_handle,
+                                ),
+                            );
+                            continue;
+                        }
                         if let Some(initterm) = child.initterm.as_ref() {
                             if exit.registers.esp != initterm.provider_esp {
                                 return Err(format!(
@@ -2192,6 +2232,97 @@ pub(super) async fn run_loop(
                                 registers.esp,
                             ),
                         );
+                        continue;
+                    }
+                    let is_global_alloc = matches!(
+                        &provider.symbol,
+                        child_loader::ProviderSymbol::Name(name)
+                            if provider.module.eq_ignore_ascii_case("KERNEL32.dll")
+                                && name == "GlobalAlloc"
+                    );
+                    if is_global_alloc {
+                        let frame = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            exit.registers.esp,
+                            3,
+                        )?;
+                        let flags = frame[1];
+                        let bytes = frame[2];
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD GLOBALALLOC CALL pid={} tid={} during=\"{}\" provider_id={} flags=0x{:08x} bytes={} caller_ret=0x{:08x}",
+                                active_pid,
+                                active_tid,
+                                running_module_name,
+                                provider_id,
+                                flags,
+                                bytes,
+                                frame[0],
+                            ),
+                        );
+                        let allocation = session
+                            .process_mut(active_pid)
+                            .ok_or_else(|| "child process missing".to_owned())?
+                            .xp
+                            .alloc_global_fixed(flags, bytes);
+                        let allocation = match allocation {
+                            Ok(value) => value,
+                            Err(ProviderDispatchError::Frontier { api, detail }) => {
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 CHILD PROVIDER FRONTIER pid={} tid={} during=\"{}\" provider_id={} module=\"{}\" symbol=\"GlobalAlloc\" api=\"{}\" detail={:?}",
+                                        active_pid,
+                                        active_tid,
+                                        running_module_name,
+                                        provider_id,
+                                        provider.module,
+                                        api,
+                                        detail,
+                                    ),
+                                );
+                                return Ok(());
+                            }
+                            Err(error) => return Err(format!("GlobalAlloc semantic fault: {error}")),
+                        };
+                        let pointer = if let Some(allocation) = allocation {
+                            let mapped_end = ensure_child_win_heap_mapped(child, allocation.end)?;
+                            if allocation.flags & 0x40 != 0 {
+                                let zeroes = vec![0; allocation.requested as usize];
+                                if child
+                                    .address_space
+                                    .write(allocation.pointer, &zeroes)
+                                    .map_err(|error| error.to_string())?
+                                    != zeroes.len()
+                                {
+                                    return Err("short GlobalAlloc zero write".into());
+                                }
+                            }
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD GLOBALALLOC RESULT pid={} tid={} flags=0x{:08x} requested={} pointer=0x{:08x} end=0x{:08x} mapped_end=0x{:08x} zeroed={} cleanup=8-by-thunk",
+                                    active_pid,
+                                    active_tid,
+                                    allocation.flags,
+                                    allocation.requested,
+                                    allocation.pointer,
+                                    allocation.end,
+                                    mapped_end,
+                                    u8::from(allocation.flags & 0x40 != 0),
+                                ),
+                            );
+                            allocation.pointer
+                        } else {
+                            0
+                        };
+                        let mut registers = exit.registers;
+                        registers.eax = pointer;
+                        contexts[active]
+                            .context
+                            .set_registers(registers)
+                            .map_err(|error| error.to_string())?;
                         continue;
                     }
                     let is_heap_alloc = matches!(
@@ -3789,6 +3920,12 @@ pub(super) async fn run_loop(
                             .xp
                             .scratch_file_snapshot(&requested);
                         if let Some(bytes) = scratch {
+                            if child.execution != ChildExecutionState::ImageEntryRunning {
+                                return Err(format!(
+                                    "WC3 CHILD LOADLIBRARY FRONTIER reason=outside-image-entry state={:?}",
+                                    child.execution,
+                                ));
+                            }
                             let image = pe32::parse(&bytes).map_err(|error| {
                                 format!("LoadLibraryA scratch PE {requested:?}: {error}")
                             })?;
@@ -3835,7 +3972,129 @@ pub(super) async fn run_loop(
                                     ),
                                 );
                             }
-                            return Ok(());
+                            let module_handle = image.image_base;
+                            child
+                                .address_space
+                                .map(
+                                    module_handle,
+                                    image.image.len(),
+                                    Permissions::READ | Permissions::WRITE | Permissions::EXECUTE,
+                                )
+                                .map_err(|_| {
+                                    format!(
+                                        "WC3 CHILD LOADLIBRARY FRONTIER reason=preferred-base-unavailable module={requested:?} preferred=0x{module_handle:08x} relocations={}",
+                                        image.relocations.len(),
+                                    )
+                                })?;
+                            let written = child
+                                .address_space
+                                .write(module_handle, &image.image)
+                                .map_err(|error| error.to_string())?;
+                            if written != image.image.len() {
+                                return Err("short scratch native image write".into());
+                            }
+                            let imports: Vec<_> = image
+                                .imports
+                                .iter()
+                                .map(|import| child_loader::ProviderImport {
+                                    module: import.module.clone(),
+                                    symbol: match &import.symbol {
+                                        pe32::ImportSymbol::Name(name) => {
+                                            child_loader::ProviderSymbol::Name(name.clone())
+                                        }
+                                        pe32::ImportSymbol::Ordinal(value) => {
+                                            child_loader::ProviderSymbol::Ordinal(*value)
+                                        }
+                                    },
+                                    iat_rva: import.iat_rva,
+                                })
+                                .collect();
+                            let addresses = {
+                                let process = &mut session
+                                    .process_mut(active_pid)
+                                    .ok_or_else(|| "child process missing".to_owned())?
+                                    .xp;
+                                install_child_provider_imports(child, process, imports)?
+                            };
+                            for (import, address) in image.imports.iter().zip(addresses) {
+                                let iat = module_handle
+                                    .checked_add(import.iat_rva)
+                                    .ok_or("scratch native IAT overflow")?;
+                                child
+                                    .address_space
+                                    .write(iat, &address.to_le_bytes())
+                                    .map_err(|error| error.to_string())?;
+                            }
+                            session
+                                .process_mut(active_pid)
+                                .ok_or_else(|| "child process missing".to_owned())?
+                                .xp
+                                .register_runtime_native_module(&requested, module_handle)
+                                .map_err(str::to_owned)?;
+                            let stored = requested
+                                .rsplit(['\\', '/'])
+                                .next()
+                                .unwrap_or(&requested)
+                                .to_owned();
+                            let native_index = child.native_modules.len();
+                            child.native_modules.push(PendingNativeModule {
+                                requested: requested.clone(),
+                                stored,
+                                image,
+                                initialized: false,
+                            });
+                            let entry = module_handle
+                                .checked_add(child.native_modules[native_index].image.entry_rva)
+                                .ok_or("scratch DLL entry overflow")?;
+                            let provider_esp = exit.registers.esp;
+                            let callback_esp = provider_esp
+                                .checked_sub(16)
+                                .ok_or("LoadLibrary DllMain stack underflow")?;
+                            let frame = [
+                                thunk32::CHILD_CALLBACK_RETURN_ADDRESS,
+                                module_handle,
+                                1,
+                                0,
+                            ];
+                            let mut frame_bytes = [0u8; 16];
+                            for (index, value) in frame.into_iter().enumerate() {
+                                frame_bytes[index * 4..index * 4 + 4]
+                                    .copy_from_slice(&value.to_le_bytes());
+                            }
+                            let written = child
+                                .address_space
+                                .write(callback_esp, &frame_bytes)
+                                .map_err(|error| error.to_string())?;
+                            if written != frame_bytes.len() {
+                                return Err("short LoadLibrary DllMain frame write".into());
+                            }
+                            child.load_library_call = Some(ChildLoadLibraryCall {
+                                provider_resume_eip: exit.registers.eip,
+                                provider_esp,
+                                native_index,
+                                module_handle,
+                            });
+                            let mut registers = exit.registers;
+                            registers.eip = entry;
+                            registers.esp = callback_esp;
+                            contexts[active]
+                                .context
+                                .set_registers(registers)
+                                .map_err(|error| error.to_string())?;
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD LOADLIBRARY MAP pid={} tid={} during=\"{}\" requested={:?} mapped_base=0x{:08x} relocation_delta=0 imports={} entry=0x{:08x}",
+                                    active_pid,
+                                    active_tid,
+                                    running_module_name,
+                                    requested,
+                                    module_handle,
+                                    child.native_modules[native_index].image.imports.len(),
+                                    entry,
+                                ),
+                            );
+                            continue;
                         }
                         let listing = async_fs::list_dir(b"/common/Warcraft III")
                             .await
@@ -5539,6 +5798,7 @@ pub(super) async fn run_loop(
                             provider_thunk_bytes: 0,
                             static_load_reserved: 0,
                             initterm: None,
+                            load_library_call: None,
                             cipow: None,
                             cipow_diagnostic_logged: false,
                             seh_handler_dumped: false,

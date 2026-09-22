@@ -47,6 +47,9 @@ const ERROR_FILE_EXISTS: u32 = 80;
 const ERROR_ALREADY_EXISTS: u32 = 183;
 const ERROR_INVALID_HANDLE: u32 = 6;
 const ERROR_NOT_ENOUGH_MEMORY: u32 = 8;
+const GMEM_FIXED: u32 = 0x0000;
+const GMEM_MOVEABLE: u32 = 0x0002;
+const GMEM_ZEROINIT: u32 = 0x0040;
 const ERROR_INSUFFICIENT_BUFFER: u32 = 122;
 const ERROR_NO_TOKEN: u32 = 1008;
 const TOKEN_QUERY: u32 = 0x0000_0008;
@@ -682,6 +685,14 @@ pub struct WinHeapAllocation {
     pub end: u32,
 }
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct GlobalAllocation {
+    pub flags: u32,
+    pub requested: u32,
+    pub pointer: u32,
+    pub end: u32,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProviderDispatchError {
     Unsupported,
@@ -762,6 +773,7 @@ pub struct XpProcess {
     next_heap_handle: u32,
     win_heap_next: u32,
     win_heap_allocations: HashMap<u32, WinHeapAllocation>,
+    global_allocations: HashMap<u32, GlobalAllocation>,
     crt_heap_next: u32,
     crt_allocations: HashMap<u32, u32>,
     virtual_reservations: Vec<VirtualReservation>,
@@ -908,6 +920,7 @@ impl XpProcess {
             next_heap_handle: 0x5743_0001,
             win_heap_next: CHILD_WIN_HEAP_BASE,
             win_heap_allocations: HashMap::new(),
+            global_allocations: HashMap::new(),
             crt_heap_next: 0,
             crt_allocations: HashMap::new(),
             virtual_reservations: Vec::new(),
@@ -980,6 +993,21 @@ impl XpProcess {
             handle,
             LoadedModuleKind::NativeImage,
             Some(filename),
+        )
+    }
+
+    pub fn register_runtime_native_module(
+        &mut self,
+        requested: &str,
+        handle: u32,
+    ) -> Result<(), &'static str> {
+        let stored = module_basename(requested).to_owned();
+        self.register_loaded_module(
+            requested,
+            &stored,
+            handle,
+            LoadedModuleKind::NativeImage,
+            Some(requested.to_owned()),
         )
     }
 
@@ -2570,6 +2598,56 @@ impl XpProcess {
         };
         self.win_heap_next = end;
         self.win_heap_allocations.insert(pointer, allocation);
+        self.call_count = self
+            .call_count
+            .checked_add(1)
+            .ok_or("call count overflow")?;
+        Ok(Some(allocation))
+    }
+
+    pub fn alloc_global_fixed(
+        &mut self,
+        flags: u32,
+        bytes: u32,
+    ) -> Result<Option<GlobalAllocation>, ProviderDispatchError> {
+        if flags & GMEM_MOVEABLE != 0 {
+            return Err(ProviderDispatchError::Frontier {
+                api: "GlobalAlloc",
+                detail: format!("movable-memory flags=0x{flags:08x} bytes={bytes}"),
+            });
+        }
+        if !matches!(flags, GMEM_FIXED | GMEM_ZEROINIT) {
+            return Err(ProviderDispatchError::Frontier {
+                api: "GlobalAlloc",
+                detail: format!("unobserved flags=0x{flags:08x} bytes={bytes}"),
+            });
+        }
+        if bytes == 0 {
+            return Err(ProviderDispatchError::Frontier {
+                api: "GlobalAlloc",
+                detail: format!("zero-size flags=0x{flags:08x}"),
+            });
+        }
+        let aligned = bytes
+            .checked_add(7)
+            .ok_or("GlobalAlloc size overflow")?
+            & !7;
+        let pointer = self.win_heap_next;
+        let end = pointer
+            .checked_add(aligned)
+            .ok_or("GlobalAlloc address overflow")?;
+        if end > CHILD_WIN_HEAP_LIMIT {
+            self.set_last_error(ERROR_NOT_ENOUGH_MEMORY);
+            return Ok(None);
+        }
+        let allocation = GlobalAllocation {
+            flags,
+            requested: bytes,
+            pointer,
+            end,
+        };
+        self.win_heap_next = end;
+        self.global_allocations.insert(pointer, allocation);
         self.call_count = self
             .call_count
             .checked_add(1)

@@ -69,6 +69,7 @@ pub enum ProviderOp {
     HeapCreate,
     HeapAlloc,
     HeapFree,
+    GlobalAlloc,
     InitializeCriticalSection,
     EnterCriticalSection,
     LeaveCriticalSection,
@@ -126,7 +127,8 @@ impl ProviderOp {
             | Self::WaitForSingleObject
             | Self::GetFileSize
             | Self::GetTempPathA
-            | Self::SetFileAttributesA => 8,
+            | Self::SetFileAttributesA
+            | Self::GlobalAlloc => 8,
             Self::GetStringTypeW
             | Self::RtlUnwind
             | Self::VirtualAlloc
@@ -250,6 +252,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "HeapCreate" => ProviderOp::HeapCreate,
             "HeapAlloc" => ProviderOp::HeapAlloc,
             "HeapFree" => ProviderOp::HeapFree,
+            "GlobalAlloc" => ProviderOp::GlobalAlloc,
             "InitializeCriticalSection" => ProviderOp::InitializeCriticalSection,
             "EnterCriticalSection" => ProviderOp::EnterCriticalSection,
             "LeaveCriticalSection" => ProviderOp::LeaveCriticalSection,
