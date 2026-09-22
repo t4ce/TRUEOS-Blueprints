@@ -1601,6 +1601,34 @@ impl XpProcess {
                 self.call_count = self.call_count.checked_add(1).ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(self.last_error))
             }
+            ProviderOp::CreateFileA => {
+                let [
+                    _,
+                    filename,
+                    desired_access,
+                    share_mode,
+                    security_attributes,
+                    creation_disposition,
+                    flags_and_attributes,
+                    template_file,
+                ] = arguments::<8>(memory, esp)?;
+                let path = if filename == 0 {
+                    "<null>".to_owned()
+                } else {
+                    read_c_string(memory, filename, 1024)?
+                };
+                Err(ProviderDispatchError::Frontier {
+                    api: "CreateFileA",
+                    detail: format!(
+                        "path={path:?} filename=0x{filename:08x} \\
+                         access=0x{desired_access:08x} share=0x{share_mode:08x} \\
+                         security=0x{security_attributes:08x} \\
+                         disposition=0x{creation_disposition:08x} \\
+                         flags=0x{flags_and_attributes:08x} \\
+                         template=0x{template_file:08x}"
+                    ),
+                })
+            }
             ProviderOp::GetWindowsDirectoryA => {
                 self.call_count = self
                     .call_count

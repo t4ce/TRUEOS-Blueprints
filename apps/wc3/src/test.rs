@@ -4079,6 +4079,35 @@ mod tests_process_1 {
     }
 
     #[test]
+    fn child_create_file_a_dynamic_export_uses_stdcall_twenty_eight() {
+        let provider = ProviderImport {
+            module: "kernel32.dll".into(),
+            symbol: ProviderSymbol::Name("CreateFileA".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&provider);
+        assert_eq!(operation, ProviderOp::CreateFileA);
+        assert!(operation.is_modeled());
+        assert!(operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 28);
+        assert_eq!(
+            crate::child_loader::provider_thunk_kind(&provider),
+            thunk32::Kind::Stdcall(28)
+        );
+
+        let mut xp = XpProcess::new_child();
+        let (addresses, _, _, updated_from, bytes) =
+            xp.append_provider_imports(vec![provider.clone()]).unwrap();
+        assert_eq!(updated_from, 0);
+        assert_eq!(addresses, vec![thunk32::address(0).unwrap()]);
+        assert_eq!(
+            xp.provider_export_address("KERNEL32.dll", &provider.symbol),
+            Some(addresses[0])
+        );
+        assert_eq!(&bytes[8..11], &[0xc2, 0x1c, 0]);
+    }
+
+    #[test]
     fn child_sid_dynamic_exports_use_their_win32_stdcall_cleanup() {
         for (symbol, operation, cleanup) in [
             (
