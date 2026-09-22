@@ -70,6 +70,7 @@ pub enum ProviderOp {
     HeapAlloc,
     HeapFree,
     GlobalAlloc,
+    MessageBoxA,
     InitializeCriticalSection,
     EnterCriticalSection,
     LeaveCriticalSection,
@@ -134,7 +135,8 @@ impl ProviderOp {
             | Self::VirtualAlloc
             | Self::CreateEventA
             | Self::OpenThreadToken
-            | Self::SetFilePointer => 16,
+            | Self::SetFilePointer
+            | Self::MessageBoxA => 16,
             Self::MultiByteToWideChar | Self::LCMapStringW => 24,
             Self::CreateFileA => 28,
             Self::WideCharToMultiByte => 32,
@@ -262,6 +264,12 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "RtlUnwind" => ProviderOp::RtlUnwind,
             "ExitProcess" => ProviderOp::ExitProcess,
             "VirtualAlloc" => ProviderOp::VirtualAlloc,
+            _ => ProviderOp::Unknown,
+        };
+    }
+    if import.module.eq_ignore_ascii_case("USER32.dll") {
+        return match symbol.as_str() {
+            "MessageBoxA" => ProviderOp::MessageBoxA,
             _ => ProviderOp::Unknown,
         };
     }

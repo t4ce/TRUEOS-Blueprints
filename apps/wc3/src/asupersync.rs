@@ -2234,6 +2234,61 @@ pub(super) async fn run_loop(
                         );
                         continue;
                     }
+                    let operation = child_loader::provider_op(&provider);
+                    if operation == child_loader::ProviderOp::MessageBoxA {
+                        let frame = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            exit.registers.esp,
+                            5,
+                        )?;
+
+                        let owner = frame[1];
+                        let text_ptr = frame[2];
+                        let caption_ptr = frame[3];
+                        let style = frame[4];
+
+                        let text = copy_message_box_ansi(
+                            &X86Memory(&child.address_space),
+                            text_ptr,
+                        )?;
+                        let caption = copy_message_box_ansi(
+                            &X86Memory(&child.address_space),
+                            caption_ptr,
+                        )?;
+
+                        let buttons = message_box_buttons(style)
+                            .map(|buttons| {
+                                buttons
+                                    .iter()
+                                    .map(|button| button.label)
+                                    .collect::<Vec<_>>()
+                                    .join(",")
+                            })
+                            .unwrap_or_else(|| "<unsupported>".to_owned());
+
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD MESSAGEBOXA FRONTIER pid={} tid={} during=\"{}\" provider_id={} caller_ret=0x{:08x} owner=0x{:08x} text_ptr=0x{:08x} caption_ptr=0x{:08x} text={:?} caption={:?} style=0x{:08x} button_type=0x{:x} buttons=[{}] topmost={}",
+                                active_pid,
+                                active_tid,
+                                running_module_name,
+                                provider_id,
+                                frame[0],
+                                owner,
+                                text_ptr,
+                                caption_ptr,
+                                text,
+                                caption,
+                                style,
+                                style & 0x0f,
+                                buttons,
+                                u32::from(style & 0x0004_0000 != 0),
+                            ),
+                        );
+
+                        return Ok(());
+                    }
                     let is_global_alloc = matches!(
                         &provider.symbol,
                         child_loader::ProviderSymbol::Name(name)

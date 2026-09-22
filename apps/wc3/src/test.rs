@@ -4659,6 +4659,26 @@ mod tests_process_1 {
     }
 
     #[test]
+    fn child_message_box_a_has_win32_stdcall_shape() {
+        let provider = ProviderImport {
+            module: "USER32.dll".into(),
+            symbol: ProviderSymbol::Name("MessageBoxA".into()),
+            iat_rva: 0,
+        };
+
+        let operation = provider_op(&provider);
+
+        assert_eq!(operation, ProviderOp::MessageBoxA);
+        assert!(operation.is_modeled());
+        assert!(!operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 16);
+        assert_eq!(
+            crate::child_loader::provider_thunk_kind(&provider),
+            thunk32::Kind::Stdcall(16)
+        );
+    }
+
+    #[test]
     fn child_mutex_providers_decode_real_stdcall_frames_and_last_error() {
         let providers = ["CreateMutexA", "ReleaseMutex", "CloseHandle", "WaitForSingleObject", "GetLastError"]
             .map(|symbol| ProviderImport {
