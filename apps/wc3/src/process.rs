@@ -614,7 +614,10 @@ fn is_self_image_path(path: &str) -> bool {
 }
 
 fn is_war3_scratch_path(path: &str) -> bool {
-    canonical_file_path(path) == r"c:\windows\sintf16.dll"
+    matches!(
+        canonical_file_path(path).as_str(),
+        r"c:\windows\sintf16.dll" | r"c:\windows\sintf32.dll" | r"c:\windows\sintfnt.dll"
+    )
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]

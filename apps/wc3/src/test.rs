@@ -3549,12 +3549,19 @@ mod tests_process_1 {
     }
 
     #[test]
-    fn dos_file_paths_collapse_repeated_separators() {
+    fn sintf_scratch_paths_accept_observed_variants() {
         assert_eq!(
             canonical_file_path(r"C:\\WINDOWS\\\SIntf16.dll"),
             r"c:\windows\sintf16.dll"
         );
-        assert!(is_war3_scratch_path(r"C:\\WINDOWS\\\SIntf16.dll"));
+
+        for path in [
+            r"C:\\WINDOWS\\\SIntf16.dll",
+            r"C:\\WINDOWS\\\SIntf32.dll",
+            r"C:\\WINDOWS\\\SIntfNT.dll",
+        ] {
+            assert!(is_war3_scratch_path(path), "{path}");
+        }
     }
 
     #[test]
