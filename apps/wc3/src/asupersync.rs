@@ -1796,13 +1796,15 @@ pub(super) async fn run_loop(
                         if bytes != CHILD_COMMAND_LINE {
                             return Err("child command-line backing mismatch".into());
                         }
+                        let command_line =
+                            String::from_utf8_lossy(&bytes[..bytes.len().saturating_sub(1)]);
                         if !*child_get_command_line_logged {
                             *child_get_command_line_logged = true;
                             logl::log(
                                 level::IMPORTANT,
                                 format_args!(
-                                    "WC3 CHILD GETCOMMANDLINEA RESULT pid={} tid={} pointer=0x{:08x} value=\"\\\"war3.exe\\\" \" process_private=1 stack_cleanup=none",
-                                    active_pid, active_tid, result,
+                                    "WC3 CHILD GETCOMMANDLINEA RESULT pid={} tid={} pointer=0x{:08x} value={:?} process_private=1 stack_cleanup=none",
+                                    active_pid, active_tid, result, command_line,
                                 ),
                             );
                         }
