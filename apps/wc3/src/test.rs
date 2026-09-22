@@ -4813,6 +4813,36 @@ mod tests_child_loader_1 {
     }
 
     #[test]
+    fn get_system_time_is_pure_process_stdcall_four() {
+        let import = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("GetSystemTime".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&import);
+
+        assert_eq!(operation, ProviderOp::GetSystemTime);
+        assert!(operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 4);
+        assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Stdcall(4));
+    }
+
+    #[test]
+    fn get_time_zone_information_is_pure_process_stdcall_four() {
+        let import = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("GetTimeZoneInformation".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&import);
+
+        assert_eq!(operation, ProviderOp::GetTimeZoneInformation);
+        assert!(operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 4);
+        assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Stdcall(4));
+    }
+
+    #[test]
     fn time_get_time_is_pure_process_plain_return() {
         let import = ProviderImport {
             module: "WINMM.dll".into(),

@@ -51,6 +51,8 @@ pub enum ProviderOp {
     QueryPerformanceFrequency,
     QueryPerformanceCounter,
     GetLocalTime,
+    GetSystemTime,
+    GetTimeZoneInformation,
     TimeGetTime,
     GetVersion,
     GetVersionExA,
@@ -101,7 +103,9 @@ impl ProviderOp {
             | Self::LoadLibraryA
             | Self::QueryPerformanceFrequency
             | Self::QueryPerformanceCounter
-            | Self::GetLocalTime => 4,
+            | Self::GetLocalTime
+            | Self::GetSystemTime
+            | Self::GetTimeZoneInformation => 4,
             Self::GetCPInfo | Self::GetWindowsDirectoryA | Self::GetSystemDirectoryA => 8,
             Self::GetProcAddress | Self::WaitForSingleObject => 8,
             Self::GetStringTypeW | Self::RtlUnwind | Self::VirtualAlloc | Self::CreateEventA => 16,
@@ -139,6 +143,8 @@ impl ProviderOp {
                 | Self::QueryPerformanceFrequency
                 | Self::QueryPerformanceCounter
                 | Self::GetLocalTime
+                | Self::GetSystemTime
+                | Self::GetTimeZoneInformation
                 | Self::TimeGetTime
         )
     }
@@ -181,6 +187,8 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "QueryPerformanceFrequency" => ProviderOp::QueryPerformanceFrequency,
             "QueryPerformanceCounter" => ProviderOp::QueryPerformanceCounter,
             "GetLocalTime" => ProviderOp::GetLocalTime,
+            "GetSystemTime" => ProviderOp::GetSystemTime,
+            "GetTimeZoneInformation" => ProviderOp::GetTimeZoneInformation,
             "GetVersion" => ProviderOp::GetVersion,
             "GetVersionExA" => ProviderOp::GetVersionExA,
             "WideCharToMultiByte" => ProviderOp::WideCharToMultiByte,

@@ -55,6 +55,8 @@ pub const CHILD_IMAGE_FILENAME: &[u8] = b"C:\\Warcraft III\\War3.exe\0";
 pub const XP_WINDOWS_DIRECTORY: &[u8] = b"C:\\WINDOWS\0";
 pub const XP_SYSTEM_DIRECTORY: &[u8] = b"C:\\WINDOWS\\system32\0";
 const XP_PERFORMANCE_COUNTER_FREQUENCY: u64 = 1_000_000_000;
+const TIME_ZONE_ID_UNKNOWN: u32 = 0;
+const XP_TIME_ZONE_INFORMATION_BYTES: usize = 172;
 const NANOS_PER_SECOND: u64 = 1_000_000_000;
 const SECONDS_PER_DAY: u64 = 86_400;
 
@@ -76,6 +78,19 @@ fn xp_system_time_from_unix_nanos(nanos: u64) -> [u16; 8] {
     ]
 }
 
+/// A fixed UTC `TIME_ZONE_INFORMATION`: zero bias, no daylight-saving
+/// transitions, and UTF-16 UTC names.  The exposed WC3 wall clock is UTC.
+fn xp_utc_time_zone_information() -> [u8; XP_TIME_ZONE_INFORMATION_BYTES] {
+    let mut bytes = [0; XP_TIME_ZONE_INFORMATION_BYTES];
+    for name_start in [4, 88] {
+        for (index, character) in "UTC".encode_utf16().enumerate() {
+            let offset = name_start + index * 2;
+            bytes[offset..offset + 2].copy_from_slice(&character.to_le_bytes());
+        }
+    }
+    bytes
+}
+
 #[cfg(test)]
 #[test]
 fn xp_system_time_epoch_layout() {
@@ -83,6 +98,19 @@ fn xp_system_time_epoch_layout() {
         xp_system_time_from_unix_nanos(123_000_000),
         [1970, 1, 4, 1, 0, 0, 0, 123],
     );
+}
+
+#[cfg(test)]
+#[test]
+fn xp_utc_time_zone_information_layout() {
+    let bytes = xp_utc_time_zone_information();
+
+    assert_eq!(bytes.len(), 172);
+    assert_eq!(&bytes[..4], &0i32.to_le_bytes());
+    assert_eq!(&bytes[4..12], &[b'U', 0, b'T', 0, b'C', 0, 0, 0]);
+    assert_eq!(&bytes[68..88], &[0; 20]);
+    assert_eq!(&bytes[88..96], &[b'U', 0, b'T', 0, b'C', 0, 0, 0]);
+    assert_eq!(&bytes[152..172], &[0; 20]);
 }
 
 #[cfg(target_os = "trueos")]
@@ -1365,12 +1393,23 @@ impl XpProcess {
                     self.query_performance_counter(esp, memory)?,
                 ))
             }
-            ProviderOp::GetLocalTime => {
+            ProviderOp::GetLocalTime | ProviderOp::GetSystemTime => {
                 self.call_count = self
                     .call_count
                     .checked_add(1)
                     .ok_or("call count overflow")?;
-                Ok(PersonalityAction::Return(self.get_local_time(esp, memory)?))
+                Ok(PersonalityAction::Return(
+                    self.write_current_system_time(esp, memory)?,
+                ))
+            }
+            ProviderOp::GetTimeZoneInformation => {
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(
+                    self.get_time_zone_information(esp, memory)?,
+                ))
             }
             ProviderOp::TimeGetTime => {
                 self.call_count = self
@@ -2373,13 +2412,13 @@ impl XpProcess {
         Ok(1)
     }
 
-    fn get_local_time(
+    fn write_current_system_time(
         &self,
         esp: u32,
         memory: &mut impl GuestMemory,
     ) -> Result<u32, &'static str> {
         let [_, output] = arguments::<2>(memory, esp)?;
-        let nanos = wall_clock_unix_nanos().ok_or("GetLocalTime wall clock unavailable")?;
+        let nanos = wall_clock_unix_nanos().ok_or("system time wall clock unavailable")?;
         let words = xp_system_time_from_unix_nanos(nanos);
         let mut bytes = [0u8; 16];
         for (index, word) in words.iter().enumerate() {
@@ -2387,6 +2426,16 @@ impl XpProcess {
         }
         memory.write(output, &bytes)?;
         Ok(0)
+    }
+
+    fn get_time_zone_information(
+        &self,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<u32, &'static str> {
+        let [_, output] = arguments::<2>(memory, esp)?;
+        memory.write(output, &xp_utc_time_zone_information())?;
+        Ok(TIME_ZONE_ID_UNKNOWN)
     }
 
     fn get_std_handle(&self, esp: u32, memory: &impl GuestMemory) -> Result<u32, &'static str> {
