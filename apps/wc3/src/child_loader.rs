@@ -73,6 +73,8 @@ pub enum ProviderOp {
     OpenThreadToken,
     OpenProcessToken,
     GetTokenInformation,
+    AllocateAndInitializeSid,
+    EqualSid,
     RegOpenKeyExA,
     CrtMalloc,
     Unknown,
@@ -125,6 +127,8 @@ impl ProviderOp {
             | Self::WriteProcessMemory
             | Self::RegOpenKeyExA
             | Self::GetTokenInformation => 20,
+            Self::AllocateAndInitializeSid => 44,
+            Self::EqualSid => 8,
             _ => 0,
         }
     }
@@ -161,6 +165,8 @@ impl ProviderOp {
                 | Self::OpenThreadToken
                 | Self::OpenProcessToken
                 | Self::GetTokenInformation
+                | Self::AllocateAndInitializeSid
+                | Self::EqualSid
         )
     }
 }
@@ -229,6 +235,8 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "OpenThreadToken" => ProviderOp::OpenThreadToken,
             "OpenProcessToken" => ProviderOp::OpenProcessToken,
             "GetTokenInformation" => ProviderOp::GetTokenInformation,
+            "AllocateAndInitializeSid" => ProviderOp::AllocateAndInitializeSid,
+            "EqualSid" => ProviderOp::EqualSid,
             _ => ProviderOp::Unknown,
         };
     }

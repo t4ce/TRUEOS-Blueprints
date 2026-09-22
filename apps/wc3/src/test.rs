@@ -797,6 +797,44 @@ mod tests_process_1 {
             Ok(())
         }
     }
+
+    struct ProcessMemory {
+        stack: Vec<u8>,
+        process_data: Vec<u8>,
+    }
+
+    impl GuestMemory for ProcessMemory {
+        fn read(&self, address: u32, output: &mut [u8]) -> Result<(), &'static str> {
+            let end = address.checked_add(output.len() as u32).ok_or("read")?;
+            let (base, bytes) = if address >= STACK_BASE && end <= STACK_TOP {
+                (STACK_BASE, &self.stack)
+            } else if address >= PROCESS_DATA_VA && end <= PROCESS_DATA_VA + 0x1000 {
+                (PROCESS_DATA_VA, &self.process_data)
+            } else {
+                return Err("read");
+            };
+            let offset = usize::try_from(address - base).map_err(|_| "read")?;
+            output.copy_from_slice(bytes.get(offset..offset + output.len()).ok_or("read")?);
+            Ok(())
+        }
+
+        fn write(&mut self, address: u32, input: &[u8]) -> Result<(), &'static str> {
+            let end = address.checked_add(input.len() as u32).ok_or("write")?;
+            let (base, bytes) = if address >= STACK_BASE && end <= STACK_TOP {
+                (STACK_BASE, &mut self.stack)
+            } else if address >= PROCESS_DATA_VA && end <= PROCESS_DATA_VA + 0x1000 {
+                (PROCESS_DATA_VA, &mut self.process_data)
+            } else {
+                return Err("write");
+            };
+            let offset = usize::try_from(address - base).map_err(|_| "write")?;
+            bytes
+                .get_mut(offset..offset + input.len())
+                .ok_or("write")?
+                .copy_from_slice(input);
+            Ok(())
+        }
+    }
     #[test]
     fn system_font_metric_matches_draw_text_measurement_string() {
         let text = b"Copyright \xa9 2002 Blizzard Entertainment. All Rights Reserved.";
@@ -3792,6 +3830,85 @@ mod tests_process_1 {
     }
 
     #[test]
+    fn child_allocate_and_initialize_sid_and_equal_sid_use_canonical_guest_sids() {
+        let providers = [
+            ProviderImport {
+                module: "ADVAPI32.dll".into(),
+                symbol: ProviderSymbol::Name("AllocateAndInitializeSid".into()),
+                iat_rva: 0,
+            },
+            ProviderImport {
+                module: "ADVAPI32.dll".into(),
+                symbol: ProviderSymbol::Name("EqualSid".into()),
+                iat_rva: 0,
+            },
+        ];
+        let mut xp = XpProcess::new_child();
+        xp.install_provider_surface(providers.to_vec(), Vec::new(), Vec::new());
+        let mut memory = ProcessMemory {
+            stack: vec![0; STACK_BYTES],
+            process_data: vec![0; 0x1000],
+        };
+        let esp = STACK_TOP - 0x100;
+        let authority = esp - 0x10;
+        let sid_out = esp - 0x14;
+        memory.write(authority, &[0, 0, 0, 0, 0, 5]).unwrap();
+        for (index, value) in [
+            0x0045_ef45,
+            authority,
+            2,
+            32,
+            544,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            sid_out,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
+        }
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(1))
+        );
+        let sid = read_u32(&memory, sid_out).unwrap();
+        assert_eq!(sid, PROCESS_SID_ARENA_BASE);
+        let mut bytes = [0; 16];
+        memory.read(sid, &mut bytes).unwrap();
+        assert_eq!(
+            bytes,
+            [1, 2, 0, 0, 0, 0, 0, 5, 32, 0, 0, 0, 32, 2, 0, 0]
+        );
+
+        for (index, value) in [0x0045_ef60, sid, sid].into_iter().enumerate() {
+            write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
+        }
+        assert_eq!(canonical_sid(&memory, sid).unwrap(), bytes);
+        assert_eq!(xp.equal_sid(esp, &memory), Ok(1));
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 1, esp, &mut memory),
+            Ok(PersonalityAction::Return(1)),
+            "EqualSid identical dispatch"
+        );
+
+        let different = sid + 0x40;
+        memory.write(different, &bytes).unwrap();
+        memory.write(different + 8, &33u32.to_le_bytes()).unwrap();
+        write_u32(&mut memory, esp + 8, different).unwrap();
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 1, esp, &mut memory),
+            Ok(PersonalityAction::Return(0)),
+            "EqualSid distinct dispatch"
+        );
+        assert_eq!(xp.call_count, 3);
+    }
+
+    #[test]
     fn child_get_current_process_id_returns_calling_pid_without_side_effects() {
         let provider = ProviderImport {
             module: "KERNEL32.dll".into(),
@@ -3959,6 +4076,32 @@ mod tests_process_1 {
             Some(addresses[0])
         );
         assert_eq!(&bytes[8..11], &[0xc2, 0x14, 0]);
+    }
+
+    #[test]
+    fn child_sid_dynamic_exports_use_their_win32_stdcall_cleanup() {
+        for (symbol, operation, cleanup) in [
+            (
+                "AllocateAndInitializeSid",
+                ProviderOp::AllocateAndInitializeSid,
+                44,
+            ),
+            ("EqualSid", ProviderOp::EqualSid, 8),
+        ] {
+            let provider = ProviderImport {
+                module: "advapi32.dll".into(),
+                symbol: ProviderSymbol::Name(symbol.into()),
+                iat_rva: 0,
+            };
+            assert_eq!(provider_op(&provider), operation);
+            assert!(operation.is_modeled());
+            assert!(operation.is_generic_process_local());
+            assert_eq!(operation.stack_cleanup_bytes(), cleanup);
+            assert_eq!(
+                crate::child_loader::provider_thunk_kind(&provider),
+                thunk32::Kind::Stdcall(cleanup)
+            );
+        }
     }
 
     #[test]

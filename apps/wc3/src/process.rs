@@ -42,6 +42,7 @@ pub const EXCEPTION_CONTINUE_SEARCH: u32 = 0;
 pub const EXCEPTION_EXECUTE_HANDLER: u32 = 1;
 const ERROR_MOD_NOT_FOUND: u32 = 126;
 const ERROR_INVALID_HANDLE: u32 = 6;
+const ERROR_NOT_ENOUGH_MEMORY: u32 = 8;
 const ERROR_INSUFFICIENT_BUFFER: u32 = 122;
 const ERROR_NO_TOKEN: u32 = 1008;
 const TOKEN_QUERY: u32 = 0x0000_0008;
@@ -55,6 +56,11 @@ const XP_TOKEN_GROUP_ATTRIBUTES: u32 =
 const XP_EVERYONE_SID: [u8; 12] = [1, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0];
 const XP_TOKEN_GROUPS_REQUIRED: u32 = 4 + 8 + XP_EVERYONE_SID.len() as u32;
 pub const PROCESS_DATA_VA: u32 = 0x0021_1000;
+const PROCESS_SID_ARENA_BASE: u32 = PROCESS_DATA_VA + 0x200;
+const PROCESS_SID_ARENA_LIMIT: u32 = PROCESS_DATA_VA + 0x1000;
+const SID_HEADER_BYTES: usize = 8;
+const SID_MAX_SUB_AUTHORITIES: usize = 15;
+const ALLOCATE_AND_INITIALIZE_SID_MAX_SUB_AUTHORITIES: usize = 8;
 /// Historical launcher stack: 0x0430_0000..0x0440_0000.
 pub const STACK_BASE: u32 = 0x0430_0000;
 pub const STACK_BYTES: usize = 0x10_0000;
@@ -273,6 +279,28 @@ fn arguments<const N: usize>(
         )?;
     }
     Ok(values)
+}
+
+fn canonical_sid(
+    memory: &impl GuestMemory,
+    pointer: u32,
+) -> Result<Vec<u8>, ProviderDispatchError> {
+    let mut header = [0; SID_HEADER_BYTES];
+    memory.read(pointer, &mut header)?;
+    let subauthority_count = usize::from(header[1]);
+    if subauthority_count > SID_MAX_SUB_AUTHORITIES {
+        return Err(ProviderDispatchError::Fault("EqualSid subauthority count"));
+    }
+    let length = SID_HEADER_BYTES
+        .checked_add(
+            subauthority_count
+                .checked_mul(4)
+                .ok_or(ProviderDispatchError::Fault("EqualSid length"))?,
+        )
+        .ok_or(ProviderDispatchError::Fault("EqualSid length"))?;
+    let mut sid = vec![0; length];
+    memory.read(pointer, &mut sid)?;
+    Ok(sid)
 }
 
 fn write_ansi_directory(
@@ -671,6 +699,8 @@ pub struct XpProcess {
     next_registry_handle: u32,
     token_handles: HashMap<u32, TokenHandle>,
     next_token_handle: u32,
+    sid_allocations: HashMap<u32, u32>,
+    next_sid: u32,
     last_error: u32,
     unhandled_exception_filter: u32,
     tick_ms: u32,
@@ -810,6 +840,8 @@ impl XpProcess {
             next_registry_handle: 0x5743_8001,
             token_handles: HashMap::new(),
             next_token_handle: TOKEN_HANDLE_BASE,
+            sid_allocations: HashMap::new(),
+            next_sid: PROCESS_SID_ARENA_BASE,
             last_error: 0,
             unhandled_exception_filter: 0,
             tick_ms: 0,
@@ -1198,6 +1230,62 @@ impl XpProcess {
         self.crt_allocations.remove(&pointer).is_some()
     }
 
+    fn allocate_and_initialize_sid(
+        &mut self,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
+        let frame = arguments::<12>(memory, esp)?;
+        let authority = frame[1];
+        let count = usize::try_from(frame[2])
+            .map_err(|_| ProviderDispatchError::Fault("AllocateAndInitializeSid count"))?;
+        if count > ALLOCATE_AND_INITIALIZE_SID_MAX_SUB_AUTHORITIES {
+            return Err(ProviderDispatchError::Frontier {
+                api: "AllocateAndInitializeSid",
+                detail: format!("unobserved subauthority count={count}"),
+            });
+        }
+
+        let mut sid = Vec::with_capacity(SID_HEADER_BYTES + count * 4);
+        sid.extend_from_slice(&[1, count as u8]);
+        let mut authority_bytes = [0; 6];
+        memory.read(authority, &mut authority_bytes)?;
+        sid.extend_from_slice(&authority_bytes);
+        for subauthority in &frame[3..3 + count] {
+            sid.extend_from_slice(&subauthority.to_le_bytes());
+        }
+
+        let length = u32::try_from(sid.len())
+            .map_err(|_| ProviderDispatchError::Fault("AllocateAndInitializeSid length"))?;
+        let aligned_length = length
+            .checked_add(3)
+            .ok_or(ProviderDispatchError::Fault("AllocateAndInitializeSid length"))?
+            & !3;
+        let pointer = self.next_sid;
+        let next = pointer
+            .checked_add(aligned_length)
+            .ok_or(ProviderDispatchError::Fault("AllocateAndInitializeSid arena overflow"))?;
+        if next > PROCESS_SID_ARENA_LIMIT {
+            self.set_last_error(ERROR_NOT_ENOUGH_MEMORY);
+            return Ok(0);
+        }
+
+        memory.write(pointer, &sid)?;
+        memory.write(frame[11], &pointer.to_le_bytes())?;
+        self.sid_allocations.insert(pointer, length);
+        self.next_sid = next;
+        Ok(1)
+    }
+
+    fn equal_sid(
+        &self,
+        esp: u32,
+        memory: &impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
+        let [_, first, second] = arguments::<3>(memory, esp)?;
+        Ok(u32::from(canonical_sid(memory, first)? == canonical_sid(memory, second)?))
+    }
+
     fn dispatch_process_local_provider(
         &mut self,
         pid: u32,
@@ -1438,6 +1526,22 @@ impl XpProcess {
                     .checked_add(1)
                     .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(1))
+            }
+            ProviderOp::AllocateAndInitializeSid => {
+                let result = self.allocate_and_initialize_sid(esp, memory)?;
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(result))
+            }
+            ProviderOp::EqualSid => {
+                let result = self.equal_sid(esp, memory)?;
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(result))
             }
             ProviderOp::ReadProcessMemory => {
                 let [_, process, source, destination, size, bytes_read] =
