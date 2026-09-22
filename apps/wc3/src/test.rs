@@ -302,6 +302,7 @@ mod tests_main_1 {
             pid: 2,
             tid: 3,
             image: native_module("War3.exe", 0x0040_0000, 0).image,
+            self_image_bytes: Arc::new(Vec::new()),
             native_modules: vec![
                 native_module("Storm.dll", 0x1500_0000, 0x0003_2950),
                 native_module("Mss32.dll", 0x2110_0000, 0x0002_f2e5),
@@ -402,6 +403,7 @@ mod tests_main_1 {
             pid: 2,
             tid: 3,
             image: native_module("War3.exe", 0x0040_0000, 0).image,
+            self_image_bytes: Arc::new(Vec::new()),
             native_modules: Vec::new(),
             address_space,
             crt_heap_mapped_end: CHILD_CRT_HEAP_BASE,
@@ -685,6 +687,7 @@ mod tests_main_1 {
             pid: 2,
             tid: 3,
             image: child_image,
+            self_image_bytes: Arc::new(Vec::new()),
             native_modules: vec![native_module("Storm.dll", 0x1500_0000, 0)],
             address_space,
             crt_heap_mapped_end: CHILD_CRT_HEAP_BASE,
@@ -3652,6 +3655,68 @@ mod tests_process_1 {
             Ok(PersonalityAction::Return(CURRENT_THREAD_PSEUDO_HANDLE))
         );
         assert_eq!(xp.call_count, 1);
+    }
+
+    #[test]
+    fn child_create_file_a_opens_and_closes_a_read_only_self_image_handle() {
+        let providers = [
+            ProviderImport {
+                module: "KERNEL32.dll".into(),
+                symbol: ProviderSymbol::Name("CreateFileA".into()),
+                iat_rva: 0,
+            },
+            ProviderImport {
+                module: "KERNEL32.dll".into(),
+                symbol: ProviderSymbol::Name("CloseHandle".into()),
+                iat_rva: 0,
+            },
+        ];
+        let mut xp = XpProcess::new_child();
+        xp.install_provider_surface(providers.to_vec(), Vec::new(), Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+        let filename = esp - 0x100;
+        memory.write(filename, CHILD_IMAGE_FILENAME).unwrap();
+        for (index, value) in [
+            0x0049_d380,
+            filename,
+            0x8000_0000,
+            1,
+            0,
+            3,
+            0,
+            0,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
+        }
+
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(FILE_HANDLE_BASE))
+        );
+        assert_eq!(
+            xp.file_handles.get(&FILE_HANDLE_BASE),
+            Some(&FileHandle {
+                backing: FileBacking::SelfImage,
+                cursor: 0,
+            })
+        );
+        assert!(is_self_image_path("c:/warcraft iii/war3.EXE"));
+
+        write_u32(&mut memory, esp, 0x0049_d390).unwrap();
+        write_u32(&mut memory, esp + 4, FILE_HANDLE_BASE).unwrap();
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 1, esp, &mut memory),
+            Ok(PersonalityAction::Return(1))
+        );
+        assert!(!xp.file_handles.contains_key(&FILE_HANDLE_BASE));
+        assert_eq!(xp.call_count, 2);
     }
 
     #[test]

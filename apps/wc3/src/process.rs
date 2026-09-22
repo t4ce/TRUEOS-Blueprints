@@ -47,6 +47,8 @@ const ERROR_INSUFFICIENT_BUFFER: u32 = 122;
 const ERROR_NO_TOKEN: u32 = 1008;
 const TOKEN_QUERY: u32 = 0x0000_0008;
 const TOKEN_HANDLE_BASE: u32 = 0x5743_9001;
+const FILE_HANDLE_BASE: u32 = 0x5743_b001;
+const FILE_WRITE_ACCESS_MASK: u32 = 0x5000_0116;
 const TOKEN_GROUPS_CLASS: u32 = 2;
 const SE_GROUP_MANDATORY: u32 = 0x0000_0001;
 const SE_GROUP_ENABLED_BY_DEFAULT: u32 = 0x0000_0002;
@@ -546,6 +548,21 @@ struct TokenHandle {
     access: u32,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FileBacking {
+    SelfImage,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct FileHandle {
+    backing: FileBacking,
+    cursor: u64,
+}
+
+fn is_self_image_path(path: &str) -> bool {
+    path.replace('/', "\\").eq_ignore_ascii_case("C:\\Warcraft III\\War3.exe")
+}
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct CrtAllocation {
     pub pointer: u32,
@@ -699,6 +716,8 @@ pub struct XpProcess {
     next_registry_handle: u32,
     token_handles: HashMap<u32, TokenHandle>,
     next_token_handle: u32,
+    file_handles: HashMap<u32, FileHandle>,
+    next_file_handle: u32,
     sid_allocations: HashMap<u32, u32>,
     next_sid: u32,
     last_error: u32,
@@ -840,6 +859,8 @@ impl XpProcess {
             next_registry_handle: 0x5743_8001,
             token_handles: HashMap::new(),
             next_token_handle: TOKEN_HANDLE_BASE,
+            file_handles: HashMap::new(),
+            next_file_handle: FILE_HANDLE_BASE,
             sid_allocations: HashMap::new(),
             next_sid: PROCESS_SID_ARENA_BASE,
             last_error: 0,
@@ -1612,22 +1633,68 @@ impl XpProcess {
                     flags_and_attributes,
                     template_file,
                 ] = arguments::<8>(memory, esp)?;
-                let path = if filename == 0 {
-                    "<null>".to_owned()
-                } else {
-                    read_c_string(memory, filename, 1024)?
-                };
-                Err(ProviderDispatchError::Frontier {
-                    api: "CreateFileA",
-                    detail: format!(
-                        "path={path:?} filename=0x{filename:08x} \\
-                         access=0x{desired_access:08x} share=0x{share_mode:08x} \\
-                         security=0x{security_attributes:08x} \\
-                         disposition=0x{creation_disposition:08x} \\
-                         flags=0x{flags_and_attributes:08x} \\
-                         template=0x{template_file:08x}"
-                    ),
-                })
+                if filename == 0 {
+                    return Err(ProviderDispatchError::Frontier {
+                        api: "CreateFileA",
+                        detail: "null filename".into(),
+                    });
+                }
+                let path = read_c_string(memory, filename, 1024)?;
+                if !is_self_image_path(&path) {
+                    return Err(ProviderDispatchError::Frontier {
+                        api: "CreateFileA",
+                        detail: format!(
+                            "unmodeled path={path:?} filename=0x{filename:08x} \\
+                             access=0x{desired_access:08x} share=0x{share_mode:08x} \\
+                             security=0x{security_attributes:08x} \\
+                             disposition=0x{creation_disposition:08x} \\
+                             flags=0x{flags_and_attributes:08x} \\
+                             template=0x{template_file:08x}"
+                        ),
+                    });
+                }
+                if creation_disposition != 3 {
+                    return Err(ProviderDispatchError::Frontier {
+                        api: "CreateFileA",
+                        detail: format!("self-image disposition=0x{creation_disposition:08x}"),
+                    });
+                }
+                if desired_access & FILE_WRITE_ACCESS_MASK != 0 {
+                    return Err(ProviderDispatchError::Frontier {
+                        api: "CreateFileA",
+                        detail: format!(
+                            "self-image write access=0x{desired_access:08x} \\
+                             share=0x{share_mode:08x} flags=0x{flags_and_attributes:08x}"
+                        ),
+                    });
+                }
+                if security_attributes != 0 || template_file != 0 {
+                    return Err(ProviderDispatchError::Frontier {
+                        api: "CreateFileA",
+                        detail: format!(
+                            "self-image security=0x{security_attributes:08x} \\
+                             template=0x{template_file:08x}"
+                        ),
+                    });
+                }
+
+                let handle = self.next_file_handle;
+                self.next_file_handle = self
+                    .next_file_handle
+                    .checked_add(1)
+                    .ok_or("file handle overflow")?;
+                self.file_handles.insert(
+                    handle,
+                    FileHandle {
+                        backing: FileBacking::SelfImage,
+                        cursor: 0,
+                    },
+                );
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(handle))
             }
             ProviderOp::GetWindowsDirectoryA => {
                 self.call_count = self
@@ -1747,7 +1814,9 @@ impl XpProcess {
             })),
             ProviderOp::CloseHandle => {
                 let handle = arguments::<2>(memory, esp)?[1];
-                if self.token_handles.remove(&handle).is_some() {
+                if self.token_handles.remove(&handle).is_some()
+                    || self.file_handles.remove(&handle).is_some()
+                {
                     Some(PersonalityAction::Return(1))
                 } else {
                     Some(PersonalityAction::Session(SessionRequest::CloseHandle { pid, handle }))

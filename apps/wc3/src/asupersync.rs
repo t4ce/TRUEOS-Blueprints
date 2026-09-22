@@ -4784,6 +4784,7 @@ pub(super) async fn run_loop(
                                 )
                             })?;
                         let child = pe32::parse(&child_bytes).map_err(str::to_owned)?;
+                        let child_file_bytes = Arc::new(child_bytes);
                         let created = session.create_child();
                         // CREATE_SUSPENDED was not requested.  The logical
                         // child thread is runnable, but its native entry is
@@ -4837,6 +4838,7 @@ pub(super) async fn run_loop(
                             pid: created.pid,
                             tid: created.tid,
                             image: child,
+                            self_image_bytes: child_file_bytes,
                             native_modules: Vec::new(),
                             address_space: child_address_space,
                             crt_heap_mapped_end: CHILD_CRT_HEAP_BASE,

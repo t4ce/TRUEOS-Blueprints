@@ -5,6 +5,7 @@ mod test;
 
 use std::{
     collections::{HashMap, HashSet},
+    sync::Arc,
     time::Duration,
 };
 
@@ -1602,6 +1603,10 @@ struct PendingChild {
     pid: u32,
     tid: u32,
     image: pe32::PeImage,
+    /// The exact on-disk bytes parsed to create `image`.  File APIs for the
+    /// child main image must serve this immutable snapshot, rather than issue
+    /// a second TRUEOSFS read later in execution.
+    self_image_bytes: Arc<Vec<u8>>,
     native_modules: Vec<PendingNativeModule>,
     address_space: AddressSpace,
     crt_heap_mapped_end: u32,
