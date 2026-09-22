@@ -3613,6 +3613,44 @@ mod tests_process_1 {
     }
 
     #[test]
+    fn child_open_thread_token_reports_no_impersonation_token() {
+        let provider = ProviderImport {
+            module: "ADVAPI32.dll".into(),
+            symbol: ProviderSymbol::Name("OpenThreadToken".into()),
+            iat_rva: 0,
+        };
+        let mut xp = XpProcess::new_child();
+        xp.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+        let token_out = esp - 4;
+        write_u32(&mut memory, token_out, 0xaaaa_5555).unwrap();
+        for (index, value) in [
+            0x0045_ef60,
+            CURRENT_THREAD_PSEUDO_HANDLE,
+            0x0000_0008,
+            0,
+            token_out,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
+        }
+
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(0))
+        );
+        assert_eq!(xp.last_error, 1008);
+        assert_eq!(read_u32(&memory, token_out).unwrap(), 0xaaaa_5555);
+        assert_eq!(xp.call_count, 1);
+    }
+
+    #[test]
     fn child_get_current_process_id_returns_calling_pid_without_side_effects() {
         let provider = ProviderImport {
             module: "KERNEL32.dll".into(),
@@ -3693,6 +3731,35 @@ mod tests_process_1 {
             Some(addresses[0])
         );
         assert_eq!(&bytes[..9], &[0xb8, 0, 0, 0, 0, 0x0f, 0x01, 0xc1, 0xc3]);
+    }
+
+    #[test]
+    fn child_open_thread_token_dynamic_export_uses_stdcall_sixteen() {
+        let provider = ProviderImport {
+            module: "advapi32.dll".into(),
+            symbol: ProviderSymbol::Name("OpenThreadToken".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&provider);
+        assert_eq!(operation, ProviderOp::OpenThreadToken);
+        assert!(operation.is_modeled());
+        assert!(operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 16);
+        assert_eq!(
+            crate::child_loader::provider_thunk_kind(&provider),
+            thunk32::Kind::Stdcall(16)
+        );
+
+        let mut xp = XpProcess::new_child();
+        let (addresses, _, _, updated_from, bytes) =
+            xp.append_provider_imports(vec![provider.clone()]).unwrap();
+        assert_eq!(updated_from, 0);
+        assert_eq!(addresses, vec![thunk32::address(0).unwrap()]);
+        assert_eq!(
+            xp.provider_export_address("ADVAPI32.dll", &provider.symbol),
+            Some(addresses[0])
+        );
+        assert_eq!(&bytes[8..11], &[0xc2, 0x10, 0]);
     }
 
     #[test]

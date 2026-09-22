@@ -41,6 +41,8 @@ pub const EXCEPTION_CONTINUE_EXECUTION: u32 = u32::MAX;
 pub const EXCEPTION_CONTINUE_SEARCH: u32 = 0;
 pub const EXCEPTION_EXECUTE_HANDLER: u32 = 1;
 const ERROR_MOD_NOT_FOUND: u32 = 126;
+const ERROR_NO_TOKEN: u32 = 1008;
+const TOKEN_QUERY: u32 = 0x0000_0008;
 pub const PROCESS_DATA_VA: u32 = 0x0021_1000;
 /// Historical launcher stack: 0x0430_0000..0x0440_0000.
 pub const STACK_BASE: u32 = 0x0430_0000;
@@ -1306,6 +1308,33 @@ impl XpProcess {
                     .checked_add(1)
                     .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(CURRENT_THREAD_PSEUDO_HANDLE))
+            }
+            ProviderOp::OpenThreadToken => {
+                let [_, thread, desired_access, open_as_self, _token_out] =
+                    arguments::<5>(memory, esp)?;
+                if thread != CURRENT_THREAD_PSEUDO_HANDLE {
+                    return Err(ProviderDispatchError::Frontier {
+                        api: "OpenThreadToken",
+                        detail: format!("non-current-thread handle=0x{thread:08x}"),
+                    });
+                }
+                if desired_access != TOKEN_QUERY || open_as_self != 0 {
+                    return Err(ProviderDispatchError::Frontier {
+                        api: "OpenThreadToken",
+                        detail: format!(
+                            "unobserved shape access=0x{desired_access:08x} open_as_self={open_as_self}"
+                        ),
+                    });
+                }
+
+                // The current WC3 thread has no impersonation token. On this
+                // failure path, Windows leaves the caller's output word alone.
+                self.set_last_error(ERROR_NO_TOKEN);
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(0))
             }
             ProviderOp::ReadProcessMemory => {
                 let [_, process, source, destination, size, bytes_read] =

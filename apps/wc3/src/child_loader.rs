@@ -70,6 +70,7 @@ pub enum ProviderOp {
     RtlUnwind,
     ExitProcess,
     VirtualAlloc,
+    OpenThreadToken,
     RegOpenKeyExA,
     CrtMalloc,
     Unknown,
@@ -109,7 +110,11 @@ impl ProviderOp {
             | Self::GetTimeZoneInformation => 4,
             Self::GetCPInfo | Self::GetWindowsDirectoryA | Self::GetSystemDirectoryA => 8,
             Self::GetProcAddress | Self::WaitForSingleObject => 8,
-            Self::GetStringTypeW | Self::RtlUnwind | Self::VirtualAlloc | Self::CreateEventA => 16,
+            Self::GetStringTypeW
+            | Self::RtlUnwind
+            | Self::VirtualAlloc
+            | Self::CreateEventA
+            | Self::OpenThreadToken => 16,
             Self::MultiByteToWideChar | Self::LCMapStringW => 24,
             Self::WideCharToMultiByte => 32,
             Self::GetModuleFileNameA | Self::HeapCreate | Self::HeapAlloc | Self::HeapFree
@@ -148,6 +153,7 @@ impl ProviderOp {
                 | Self::GetSystemTime
                 | Self::GetTimeZoneInformation
                 | Self::TimeGetTime
+                | Self::OpenThreadToken
         )
     }
 }
@@ -210,8 +216,12 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             _ => ProviderOp::Unknown,
         };
     }
-    if import.module.eq_ignore_ascii_case("ADVAPI32.dll") && symbol == "RegOpenKeyExA" {
-        return ProviderOp::RegOpenKeyExA;
+    if import.module.eq_ignore_ascii_case("ADVAPI32.dll") {
+        return match symbol.as_str() {
+            "RegOpenKeyExA" => ProviderOp::RegOpenKeyExA,
+            "OpenThreadToken" => ProviderOp::OpenThreadToken,
+            _ => ProviderOp::Unknown,
+        };
     }
     if import.module.eq_ignore_ascii_case("WINMM.dll") && symbol == "timeGetTime" {
         return ProviderOp::TimeGetTime;
