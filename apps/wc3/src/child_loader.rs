@@ -71,6 +71,7 @@ pub enum ProviderOp {
     ExitProcess,
     VirtualAlloc,
     OpenThreadToken,
+    OpenProcessToken,
     RegOpenKeyExA,
     CrtMalloc,
     Unknown,
@@ -118,7 +119,7 @@ impl ProviderOp {
             Self::MultiByteToWideChar | Self::LCMapStringW => 24,
             Self::WideCharToMultiByte => 32,
             Self::GetModuleFileNameA | Self::HeapCreate | Self::HeapAlloc | Self::HeapFree
-            | Self::CreateMutexA => 12,
+            | Self::CreateMutexA | Self::OpenProcessToken => 12,
             Self::ReadProcessMemory | Self::WriteProcessMemory | Self::RegOpenKeyExA => 20,
             _ => 0,
         }
@@ -154,6 +155,7 @@ impl ProviderOp {
                 | Self::GetTimeZoneInformation
                 | Self::TimeGetTime
                 | Self::OpenThreadToken
+                | Self::OpenProcessToken
         )
     }
 }
@@ -220,6 +222,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
         return match symbol.as_str() {
             "RegOpenKeyExA" => ProviderOp::RegOpenKeyExA,
             "OpenThreadToken" => ProviderOp::OpenThreadToken,
+            "OpenProcessToken" => ProviderOp::OpenProcessToken,
             _ => ProviderOp::Unknown,
         };
     }

@@ -43,6 +43,7 @@ pub const EXCEPTION_EXECUTE_HANDLER: u32 = 1;
 const ERROR_MOD_NOT_FOUND: u32 = 126;
 const ERROR_NO_TOKEN: u32 = 1008;
 const TOKEN_QUERY: u32 = 0x0000_0008;
+const TOKEN_HANDLE_BASE: u32 = 0x5743_9001;
 pub const PROCESS_DATA_VA: u32 = 0x0021_1000;
 /// Historical launcher stack: 0x0430_0000..0x0440_0000.
 pub const STACK_BASE: u32 = 0x0430_0000;
@@ -500,6 +501,12 @@ struct RegistryHandle {
     access: u32,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct TokenHandle {
+    pid: u32,
+    access: u32,
+}
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct CrtAllocation {
     pub pointer: u32,
@@ -651,6 +658,8 @@ pub struct XpProcess {
     critical_sections: HashMap<u32, (u32, u32)>,
     registry_handles: HashMap<u32, RegistryHandle>,
     next_registry_handle: u32,
+    token_handles: HashMap<u32, TokenHandle>,
+    next_token_handle: u32,
     last_error: u32,
     unhandled_exception_filter: u32,
     tick_ms: u32,
@@ -788,6 +797,8 @@ impl XpProcess {
             critical_sections: HashMap::new(),
             registry_handles: HashMap::new(),
             next_registry_handle: 0x5743_8001,
+            token_handles: HashMap::new(),
+            next_token_handle: TOKEN_HANDLE_BASE,
             last_error: 0,
             unhandled_exception_filter: 0,
             tick_ms: 0,
@@ -1336,6 +1347,39 @@ impl XpProcess {
                     .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(0))
             }
+            ProviderOp::OpenProcessToken => {
+                let [_, process, desired_access, token_out] = arguments::<4>(memory, esp)?;
+                if process != CURRENT_PROCESS_PSEUDO_HANDLE {
+                    return Err(ProviderDispatchError::Frontier {
+                        api: "OpenProcessToken",
+                        detail: format!("non-current-process handle=0x{process:08x}"),
+                    });
+                }
+                if desired_access != TOKEN_QUERY {
+                    return Err(ProviderDispatchError::Frontier {
+                        api: "OpenProcessToken",
+                        detail: format!("unobserved access=0x{desired_access:08x}"),
+                    });
+                }
+                let handle = self.next_token_handle;
+                self.next_token_handle = self
+                    .next_token_handle
+                    .checked_add(1)
+                    .ok_or("token handle overflow")?;
+                self.token_handles.insert(
+                    handle,
+                    TokenHandle {
+                        pid,
+                        access: desired_access,
+                    },
+                );
+                memory.write(token_out, &handle.to_le_bytes())?;
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(1))
+            }
             ProviderOp::ReadProcessMemory => {
                 let [_, process, source, destination, size, bytes_read] =
                     arguments::<6>(memory, esp)?;
@@ -1510,10 +1554,14 @@ impl XpProcess {
                 key: ThreadKey { pid, tid },
                 handle: arguments::<2>(memory, esp)?[1],
             })),
-            ProviderOp::CloseHandle => Some(PersonalityAction::Session(SessionRequest::CloseHandle {
-                pid,
-                handle: arguments::<2>(memory, esp)?[1],
-            })),
+            ProviderOp::CloseHandle => {
+                let handle = arguments::<2>(memory, esp)?[1];
+                if self.token_handles.remove(&handle).is_some() {
+                    Some(PersonalityAction::Return(1))
+                } else {
+                    Some(PersonalityAction::Session(SessionRequest::CloseHandle { pid, handle }))
+                }
+            }
             ProviderOp::WaitForSingleObject => {
                 let [return_address, handle, timeout] = arguments::<3>(memory, esp)?;
                 Some(PersonalityAction::Block(WaitRequest {
