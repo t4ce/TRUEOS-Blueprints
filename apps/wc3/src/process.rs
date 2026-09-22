@@ -586,11 +586,31 @@ struct FileHandle {
 }
 
 fn canonical_file_path(path: &str) -> String {
-    path.replace('/', "\\").to_ascii_lowercase()
+    let normalized = path.replace('/', "\\").to_ascii_lowercase();
+    let unc = normalized.starts_with("\\\\");
+
+    let mut canonical = String::with_capacity(normalized.len());
+    let mut previous_separator = false;
+
+    for (index, character) in normalized.chars().enumerate() {
+        if character == '\\' {
+            // Retain the leading pair for a UNC path, but collapse every
+            // other run of directory separators into one DOS separator.
+            if !previous_separator || (unc && index == 1) {
+                canonical.push('\\');
+            }
+            previous_separator = true;
+        } else {
+            canonical.push(character);
+            previous_separator = false;
+        }
+    }
+
+    canonical
 }
 
 fn is_self_image_path(path: &str) -> bool {
-    path.replace('/', "\\").eq_ignore_ascii_case("C:\\Warcraft III\\War3.exe")
+    canonical_file_path(path) == r"c:\warcraft iii\war3.exe"
 }
 
 fn is_war3_scratch_path(path: &str) -> bool {

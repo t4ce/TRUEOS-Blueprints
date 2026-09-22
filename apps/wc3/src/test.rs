@@ -3549,6 +3549,15 @@ mod tests_process_1 {
     }
 
     #[test]
+    fn dos_file_paths_collapse_repeated_separators() {
+        assert_eq!(
+            canonical_file_path(r"C:\\WINDOWS\\\SIntf16.dll"),
+            r"c:\windows\sintf16.dll"
+        );
+        assert!(is_war3_scratch_path(r"C:\\WINDOWS\\\SIntf16.dll"));
+    }
+
+    #[test]
     fn child_set_file_attributes_missing_temp_file_reports_not_found() {
         let provider = ProviderImport {
             module: "KERNEL32.dll".into(),
