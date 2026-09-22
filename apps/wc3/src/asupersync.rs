@@ -48,8 +48,34 @@ fn quiet_war3_exception(exception: ChildException, registers: Registers) -> bool
             && registers.eip == 0x0045_af51
             && exception.fault_linear == Some(0)
             && exception.error.is_some_and(|error| error & 2 != 0))
-        || war3_scan_single_step(exception, registers)
-        || war3_dword_scan_single_step(exception, registers)
+}
+
+pub(super) fn boring_war3_single_step(
+    exception: ChildException,
+    registers: Registers,
+    handler: u32,
+) -> bool {
+    exception.vector == Some(1)
+        && exception
+            .debug_status
+            .is_some_and(|dr6| dr6 & 0x0000_e00f == 0x0000_4000)
+        && registers.eip != 0
+        && handler == WAR3_DIVIDE_EXCEPTION_HANDLER
+}
+
+fn current_child_seh_handler(child: &PendingChild, fs_base: u32) -> Option<u32> {
+    let mut head = [0; 4];
+    if child.address_space.read(fs_base, &mut head).ok()? != head.len() {
+        return None;
+    }
+    let head = u32::from_le_bytes(head);
+    (head != u32::MAX)
+        .then(|| {
+            read_seh_registration(&child.address_space, head)
+                .ok()
+                .map(|registration| registration.handler)
+        })
+        .flatten()
 }
 
 fn child_image_import_at_rva(
@@ -811,7 +837,8 @@ fn begin_child_seh_dispatch(child: &mut PendingChild, guest: &mut GuestContext, 
     let registration = read_seh_registration(&child.address_space, head)?;
     let scan_single_step = war3_scan_single_step(exception, registers);
     let dword_scan_single_step = war3_dword_scan_single_step(exception, registers);
-    let quiet = quiet_war3_exception(exception, registers);
+    let boring_single_step = boring_war3_single_step(exception, registers, registration.handler);
+    let quiet = quiet_war3_exception(exception, registers) || boring_single_step;
     if !quiet && registration.handler == WAR3_DIVIDE_EXCEPTION_HANDLER && !child.seh_handler_dumped {
         child.seh_handler_dumped = true;
         let mut bytes = [0; 128];
@@ -885,7 +912,7 @@ fn begin_child_seh_dispatch(child: &mut PendingChild, guest: &mut GuestContext, 
     let frame = [thunk32::CHILD_SEH_RETURN_ADDRESS, record_va, registration.frame, context_va, 0];
     let mut bytes = [0; 20]; for (index, value) in frame.into_iter().enumerate() { bytes[index * 4..index * 4 + 4].copy_from_slice(&value.to_le_bytes()); }
     if child.address_space.write(frame_esp, &bytes).map_err(|error| error.to_string())? != bytes.len() { return Err("short SEH handler frame write".into()); }
-    child.seh = Some(ChildSehDispatch { original_registers: registers, registration: registration.frame, next_registration: registration.next, handler: registration.handler, exception_record_va: record_va, context_va, preserved_fs_base: registers.fs_base, depth: 1, quiet, scan_single_step, dword_scan_single_step });
+    child.seh = Some(ChildSehDispatch { original_registers: registers, registration: registration.frame, next_registration: registration.next, handler: registration.handler, exception_record_va: record_va, context_va, preserved_fs_base: registers.fs_base, depth: 1, quiet, boring_single_step, scan_single_step, dword_scan_single_step });
     let handler_registers = wc3::seh::exception_handler_registers(
         registers,
         registration.handler,
@@ -1202,6 +1229,42 @@ pub(super) async fn run_loop(
                         let restored = wc3::seh::decode_x86_context(&bytes, seh.preserved_fs_base).map_err(str::to_owned)?;
                         let restored_debug = wc3::seh::decode_x86_debug_registers(&bytes)
                             .map_err(str::to_owned)?;
+                        if seh.boring_single_step {
+                            let control_changed = restored.eip != seh.original_registers.eip
+                                || restored.esp != seh.original_registers.esp
+                                || ((restored.eflags ^ seh.original_registers.eflags)
+                                    & wc3::seh::X86_EFLAGS_TF) != 0;
+                            if control_changed {
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 CHILD SINGLESTEP TRANSITION old_eip=0x{:08x} new_eip=0x{:08x} old_esp=0x{:08x} new_esp=0x{:08x} old_eflags=0x{:08x} new_eflags=0x{:08x} dr6=0x{:08x} dr7=0x{:08x}",
+                                        seh.original_registers.eip,
+                                        restored.eip,
+                                        seh.original_registers.esp,
+                                        restored.esp,
+                                        seh.original_registers.eflags,
+                                        restored.eflags,
+                                        restored_debug.dr6,
+                                        restored_debug.dr7,
+                                    ),
+                                );
+                            }
+                            child.single_step_count = child.single_step_count.saturating_add(1);
+                            if child.single_step_count == 1 || child.single_step_count % 0x1000 == 0 {
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 CHILD SINGLESTEP HEARTBEAT count={} eip=0x{:08x} tf={} dr6=0x{:08x} dr7=0x{:08x}",
+                                        child.single_step_count,
+                                        restored.eip,
+                                        u32::from(restored.eflags & wc3::seh::X86_EFLAGS_TF != 0),
+                                        restored_debug.dr6,
+                                        restored_debug.dr7,
+                                    ),
+                                );
+                            }
+                        }
                         if !seh.quiet
                             && matches!(seh.original_registers.eip, 0x0045_af51 | 0x0045_af54 | 0x0045_af5a)
                         {
@@ -4786,6 +4849,7 @@ pub(super) async fn run_loop(
                             unhandled_filter_call: None,
                             repeated_null_call: None,
                             repeated_divide_fault: None,
+                            single_step_count: 0,
                             scan_progress: None,
                             scan_heartbeat_source: None,
                             dword_scan_watch: None,
@@ -6274,7 +6338,9 @@ pub(super) async fn run_loop(
                 let scope = child_execution_scope(child).map_err(str::to_owned)?;
                 let exception = decode_child_exception(exit.detail, exit.qualification);
                 let registers = exit.registers;
-                let quiet_exception = quiet_war3_exception(exception, registers);
+                let quiet_exception = quiet_war3_exception(exception, registers)
+                    || current_child_seh_handler(child, registers.fs_base)
+                        .is_some_and(|handler| boring_war3_single_step(exception, registers, handler));
                 if !quiet_exception
                     && exception.vector == Some(1)
                     && matches!(registers.eip, 0x0045_af54 | 0x0045_af5a)

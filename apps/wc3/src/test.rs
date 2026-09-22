@@ -319,6 +319,7 @@ mod tests_main_1 {
             unhandled_filter_call: None,
             repeated_null_call: None,
             repeated_divide_fault: None,
+            single_step_count: 0,
             scan_progress: None,
             scan_heartbeat_source: None,
             dword_scan_watch: None,
@@ -415,6 +416,7 @@ mod tests_main_1 {
             unhandled_filter_call: None,
             repeated_null_call: None,
             repeated_divide_fault: None,
+            single_step_count: 0,
             scan_progress: None,
             scan_heartbeat_source: None,
             dword_scan_watch: None,
@@ -515,7 +517,7 @@ mod tests_main_1 {
     }
 
     #[test]
-    fn table_fill_quiets_only_bs_single_steps_in_its_exact_range() {
+    fn table_fill_observation_recognizes_bs_single_steps_in_its_exact_range() {
         let registers = Registers {
             eip: 0x0046_14a5,
             ..Registers::default()
@@ -531,6 +533,37 @@ mod tests_main_1 {
                 eip: 0x0046_1482,
                 ..Registers::default()
             },
+        ));
+    }
+
+    #[test]
+    fn pure_bs_single_step_is_quiet_only_for_the_war3_seh_handler() {
+        let registers = Registers {
+            eip: 0x0046_14a5,
+            ..Registers::default()
+        };
+        let bs = decode_child_exception((1 << 31) | 1, 0xffff_4ff0);
+        let b0 = decode_child_exception((1 << 31) | 1, 0xffff_4001);
+
+        assert!(asupersync::boring_war3_single_step(
+            bs,
+            registers,
+            0x0045_a0c0,
+        ));
+        assert!(!asupersync::boring_war3_single_step(
+            b0,
+            registers,
+            0x0045_a0c0,
+        ));
+        assert!(!asupersync::boring_war3_single_step(
+            bs,
+            Registers::default(),
+            0x0045_a0c0,
+        ));
+        assert!(!asupersync::boring_war3_single_step(
+            bs,
+            registers,
+            0x0045_a0c1,
         ));
     }
 
@@ -673,6 +706,7 @@ mod tests_main_1 {
             unhandled_filter_call: None,
             repeated_null_call: None,
             repeated_divide_fault: None,
+            single_step_count: 0,
             scan_progress: None,
             scan_heartbeat_source: None,
             dword_scan_watch: None,

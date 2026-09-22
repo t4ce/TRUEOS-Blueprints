@@ -1616,6 +1616,7 @@ struct PendingChild {
     unhandled_filter_call: Option<ChildUnhandledFilterCall>,
     repeated_null_call: Option<NullLoopWatch>,
     repeated_divide_fault: Option<DivideLoopWatch>,
+    single_step_count: u64,
     scan_progress: Option<ScanProgress>,
     scan_heartbeat_source: Option<u32>,
     dword_scan_watch: Option<DwordScanWatch>,
@@ -1693,6 +1694,7 @@ struct ChildSehDispatch {
     preserved_fs_base: u32,
     depth: u32,
     quiet: bool,
+    boring_single_step: bool,
     scan_single_step: bool,
     dword_scan_single_step: bool,
 }
