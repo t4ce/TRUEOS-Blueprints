@@ -3549,6 +3549,51 @@ mod tests_process_1 {
     }
 
     #[test]
+    fn child_set_file_attributes_a_reaches_typed_path_frontier() {
+        let provider = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("SetFileAttributesA".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&provider);
+        assert_eq!(operation, ProviderOp::SetFileAttributesA);
+        assert!(operation.is_modeled());
+        assert!(operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 8);
+        assert_eq!(
+            crate::child_loader::provider_thunk_kind(&provider),
+            thunk32::Kind::Stdcall(8)
+        );
+
+        let mut xp = XpProcess::new_child();
+        xp.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+        let filename = esp - 0x100;
+        memory.write(filename, b"C:\\WINDOWS\\war3tmp.dll\0").unwrap();
+        for (index, value) in [0x0046_35e3, filename, 0x0000_0100]
+            .into_iter()
+            .enumerate()
+        {
+            write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
+        }
+
+        let Err(ProviderDispatchError::Frontier { api, detail }) =
+            xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory)
+        else {
+            panic!("SetFileAttributesA must remain a typed frontier");
+        };
+        assert_eq!(api, "SetFileAttributesA");
+        assert!(detail.contains("path=\"C:\\\\WINDOWS\\\\war3tmp.dll\""));
+        assert!(detail.contains(&format!("filename=0x{filename:08x}")));
+        assert!(detail.contains("attributes=0x00000100"));
+        assert_eq!(xp.call_count, 0);
+    }
+
+    #[test]
     fn child_query_performance_frequency_exposes_nanosecond_frequency() {
         let provider = ProviderImport {
             module: "KERNEL32.dll".into(),

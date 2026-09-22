@@ -1897,10 +1897,9 @@ pub(super) async fn run_loop(
                             logl::log(
                                 level::IMPORTANT,
                                 format_args!(
-                                    "WC3 CHILD OPERATOR STOP reason=table-checkpoint-created"
+                                    "WC3 CHILD TABLE CHECKPOINT CONTINUE reason=artifact-verified"
                                 ),
                             );
-                            return Ok(());
                         }
                         contexts[active].context.set_registers(restored).map_err(|error| error.to_string())?;
                         contexts[active]

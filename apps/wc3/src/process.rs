@@ -1847,6 +1847,23 @@ impl XpProcess {
                     .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(self.get_temp_path_a(esp, memory)?))
             }
+            ProviderOp::SetFileAttributesA => {
+                let [_, filename, attributes] = arguments::<3>(memory, esp)?;
+                if filename == 0 {
+                    return Err(ProviderDispatchError::Frontier {
+                        api: "SetFileAttributesA",
+                        detail: format!("filename=NULL attributes=0x{attributes:08x}"),
+                    });
+                }
+                let path = read_c_string(memory, filename, 1024)?;
+                Err(ProviderDispatchError::Frontier {
+                    api: "SetFileAttributesA",
+                    detail: format!(
+                        "path={path:?} filename=0x{filename:08x} \\
+                         attributes=0x{attributes:08x}"
+                    ),
+                })
+            }
             ProviderOp::QueryPerformanceFrequency => {
                 self.call_count = self
                     .call_count
