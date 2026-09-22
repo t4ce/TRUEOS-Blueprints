@@ -3658,11 +3658,26 @@ mod tests_process_1 {
     }
 
     #[test]
-    fn child_create_file_a_opens_and_closes_a_read_only_self_image_handle() {
+    fn child_self_image_file_supports_size_seek_read_and_close() {
         let providers = [
             ProviderImport {
                 module: "KERNEL32.dll".into(),
                 symbol: ProviderSymbol::Name("CreateFileA".into()),
+                iat_rva: 0,
+            },
+            ProviderImport {
+                module: "KERNEL32.dll".into(),
+                symbol: ProviderSymbol::Name("GetFileSize".into()),
+                iat_rva: 0,
+            },
+            ProviderImport {
+                module: "KERNEL32.dll".into(),
+                symbol: ProviderSymbol::Name("SetFilePointer".into()),
+                iat_rva: 0,
+            },
+            ProviderImport {
+                module: "KERNEL32.dll".into(),
+                symbol: ProviderSymbol::Name("ReadFile".into()),
                 iat_rva: 0,
             },
             ProviderImport {
@@ -3709,14 +3724,73 @@ mod tests_process_1 {
         );
         assert!(is_self_image_path("c:/warcraft iii/war3.EXE"));
 
+        let image = b"012345";
+        let high = esp - 0x104;
         write_u32(&mut memory, esp, 0x0049_d390).unwrap();
         write_u32(&mut memory, esp + 4, FILE_HANDLE_BASE).unwrap();
+        write_u32(&mut memory, esp + 8, high).unwrap();
         assert_eq!(
-            xp.dispatch_provider_for_process_typed(2, 3, 1, esp, &mut memory),
+            xp.dispatch_provider_for_process_typed_with_self_image(
+                2,
+                3,
+                1,
+                esp,
+                &mut memory,
+                Some(image),
+            ),
+            Ok(PersonalityAction::Return(6))
+        );
+        assert_eq!(read_u32(&memory, high).unwrap(), 0);
+
+        write_u32(&mut memory, esp, 0x0049_d3a0).unwrap();
+        write_u32(&mut memory, esp + 4, FILE_HANDLE_BASE).unwrap();
+        write_u32(&mut memory, esp + 8, 2).unwrap();
+        write_u32(&mut memory, esp + 12, 0).unwrap();
+        write_u32(&mut memory, esp + 16, FILE_BEGIN).unwrap();
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed_with_self_image(
+                2,
+                3,
+                2,
+                esp,
+                &mut memory,
+                Some(image),
+            ),
+            Ok(PersonalityAction::Return(2))
+        );
+
+        let output = esp - 0x120;
+        let bytes_read = esp - 0x108;
+        write_u32(&mut memory, esp, 0x0049_d3b0).unwrap();
+        write_u32(&mut memory, esp + 4, FILE_HANDLE_BASE).unwrap();
+        write_u32(&mut memory, esp + 8, output).unwrap();
+        write_u32(&mut memory, esp + 12, 3).unwrap();
+        write_u32(&mut memory, esp + 16, bytes_read).unwrap();
+        write_u32(&mut memory, esp + 20, 0).unwrap();
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed_with_self_image(
+                2,
+                3,
+                3,
+                esp,
+                &mut memory,
+                Some(image),
+            ),
+            Ok(PersonalityAction::Return(1))
+        );
+        let mut actual = [0; 3];
+        memory.read(output, &mut actual).unwrap();
+        assert_eq!(actual, *b"234");
+        assert_eq!(read_u32(&memory, bytes_read).unwrap(), 3);
+
+        write_u32(&mut memory, esp, 0x0049_d3c0).unwrap();
+        write_u32(&mut memory, esp + 4, FILE_HANDLE_BASE).unwrap();
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 4, esp, &mut memory),
             Ok(PersonalityAction::Return(1))
         );
         assert!(!xp.file_handles.contains_key(&FILE_HANDLE_BASE));
-        assert_eq!(xp.call_count, 2);
+        assert_eq!(xp.call_count, 5);
     }
 
     #[test]
@@ -4170,6 +4244,31 @@ mod tests_process_1 {
             Some(addresses[0])
         );
         assert_eq!(&bytes[8..11], &[0xc2, 0x1c, 0]);
+    }
+
+    #[test]
+    fn child_self_image_file_dynamic_exports_use_win32_stdcall_cleanup() {
+        for (symbol, operation, cleanup) in [
+            ("GetFileSize", ProviderOp::GetFileSize, 8),
+            ("SetFilePointer", ProviderOp::SetFilePointer, 16),
+            ("ReadFile", ProviderOp::ReadFile, 20),
+        ] {
+            let provider = ProviderImport {
+                module: "kernel32.dll".into(),
+                symbol: ProviderSymbol::Name(symbol.into()),
+                iat_rva: 0,
+            };
+            let actual = provider_op(&provider);
+            assert_eq!(actual, operation, "{symbol}");
+            assert!(actual.is_modeled(), "{symbol}");
+            assert!(actual.is_generic_process_local(), "{symbol}");
+            assert_eq!(actual.stack_cleanup_bytes(), cleanup, "{symbol}");
+            assert_eq!(
+                crate::child_loader::provider_thunk_kind(&provider),
+                thunk32::Kind::Stdcall(cleanup),
+                "{symbol}"
+            );
+        }
     }
 
     #[test]

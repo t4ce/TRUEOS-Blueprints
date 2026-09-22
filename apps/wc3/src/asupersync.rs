@@ -3522,12 +3522,13 @@ pub(super) async fn run_loop(
                                 .process_mut(active_pid)
                                 .ok_or_else(|| "child process missing".to_owned())?
                                 .xp
-                                .dispatch_provider_for_process_typed(
+                                .dispatch_provider_for_process_typed_with_self_image(
                                     active_pid,
                                     active_tid,
                                     provider_id,
                                     exit.registers.esp,
                                     &mut child_memory,
+                                    Some(child.self_image_bytes.as_slice()),
                                 )
                         };
                         match dispatch {

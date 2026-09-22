@@ -43,6 +43,9 @@ pub enum ProviderOp {
     WriteProcessMemory,
     GetLastError,
     CreateFileA,
+    GetFileSize,
+    SetFilePointer,
+    ReadFile,
     CreateEventA,
     CreateMutexA,
     ReleaseMutex,
@@ -114,12 +117,13 @@ impl ProviderOp {
             | Self::GetSystemTime
             | Self::GetTimeZoneInformation => 4,
             Self::GetCPInfo | Self::GetWindowsDirectoryA | Self::GetSystemDirectoryA => 8,
-            Self::GetProcAddress | Self::WaitForSingleObject => 8,
+            Self::GetProcAddress | Self::WaitForSingleObject | Self::GetFileSize => 8,
             Self::GetStringTypeW
             | Self::RtlUnwind
             | Self::VirtualAlloc
             | Self::CreateEventA
-            | Self::OpenThreadToken => 16,
+            | Self::OpenThreadToken
+            | Self::SetFilePointer => 16,
             Self::MultiByteToWideChar | Self::LCMapStringW => 24,
             Self::CreateFileA => 28,
             Self::WideCharToMultiByte => 32,
@@ -128,7 +132,8 @@ impl ProviderOp {
             Self::ReadProcessMemory
             | Self::WriteProcessMemory
             | Self::RegOpenKeyExA
-            | Self::GetTokenInformation => 20,
+            | Self::GetTokenInformation
+            | Self::ReadFile => 20,
             Self::AllocateAndInitializeSid => 44,
             Self::EqualSid => 8,
             _ => 0,
@@ -157,6 +162,9 @@ impl ProviderOp {
                 | Self::WriteProcessMemory
                 | Self::GetLastError
                 | Self::CreateFileA
+                | Self::GetFileSize
+                | Self::SetFilePointer
+                | Self::ReadFile
                 | Self::GetWindowsDirectoryA
                 | Self::GetSystemDirectoryA
                 | Self::QueryPerformanceFrequency
@@ -203,6 +211,9 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "WriteProcessMemory" => ProviderOp::WriteProcessMemory,
             "GetLastError" => ProviderOp::GetLastError,
             "CreateFileA" => ProviderOp::CreateFileA,
+            "GetFileSize" => ProviderOp::GetFileSize,
+            "SetFilePointer" => ProviderOp::SetFilePointer,
+            "ReadFile" => ProviderOp::ReadFile,
             "CreateEventA" => ProviderOp::CreateEventA,
             "CreateMutexA" => ProviderOp::CreateMutexA,
             "ReleaseMutex" => ProviderOp::ReleaseMutex,

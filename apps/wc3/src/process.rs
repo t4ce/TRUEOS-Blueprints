@@ -49,6 +49,9 @@ const TOKEN_QUERY: u32 = 0x0000_0008;
 const TOKEN_HANDLE_BASE: u32 = 0x5743_9001;
 const FILE_HANDLE_BASE: u32 = 0x5743_b001;
 const FILE_WRITE_ACCESS_MASK: u32 = 0x5000_0116;
+const FILE_BEGIN: u32 = 0;
+const FILE_CURRENT: u32 = 1;
+const FILE_END: u32 = 2;
 const TOKEN_GROUPS_CLASS: u32 = 2;
 const SE_GROUP_MANDATORY: u32 = 0x0000_0001;
 const SE_GROUP_ENABLED_BY_DEFAULT: u32 = 0x0000_0002;
@@ -1307,12 +1310,33 @@ impl XpProcess {
         Ok(u32::from(canonical_sid(memory, first)? == canonical_sid(memory, second)?))
     }
 
+    fn self_image_file(&self, handle: u32) -> Result<FileHandle, ProviderDispatchError> {
+        self.file_handles
+            .get(&handle)
+            .copied()
+            .filter(|file| file.backing == FileBacking::SelfImage)
+            .ok_or_else(|| ProviderDispatchError::Frontier {
+                api: "file handle",
+                detail: format!("unmodeled handle=0x{handle:08x}"),
+            })
+    }
+
+    fn self_image_bytes<'a>(
+        self_image_bytes: Option<&'a [u8]>,
+    ) -> Result<&'a [u8], ProviderDispatchError> {
+        self_image_bytes.ok_or_else(|| ProviderDispatchError::Frontier {
+            api: "self image file",
+            detail: "backing unavailable outside the child runtime".into(),
+        })
+    }
+
     fn dispatch_process_local_provider(
         &mut self,
         pid: u32,
         operation: ProviderOp,
         esp: u32,
         memory: &mut impl GuestMemory,
+        self_image_bytes: Option<&[u8]>,
     ) -> Result<PersonalityAction, ProviderDispatchError> {
         match operation {
             ProviderOp::FreeEnvironmentStringsW => {
@@ -1696,6 +1720,107 @@ impl XpProcess {
                     .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(handle))
             }
+            ProviderOp::GetFileSize => {
+                let [_, handle, high] = arguments::<3>(memory, esp)?;
+                self.self_image_file(handle)?;
+                let length = u64::try_from(Self::self_image_bytes(self_image_bytes)?.len())
+                    .map_err(|_| ProviderDispatchError::Fault("self image length"))?;
+                if high != 0 {
+                    memory.write(high, &((length >> 32) as u32).to_le_bytes())?;
+                }
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(length as u32))
+            }
+            ProviderOp::SetFilePointer => {
+                let [_, handle, distance_low, distance_high, move_method] =
+                    arguments::<5>(memory, esp)?;
+                let file = self.self_image_file(handle)?;
+                let high = if distance_high == 0 {
+                    0i64
+                } else {
+                    i64::from(i32::from_le_bytes(read_u32(memory, distance_high)?.to_le_bytes()))
+                };
+                let distance = (high << 32) + i64::from(i32::from_le_bytes(distance_low.to_le_bytes()));
+                let base = match move_method {
+                    FILE_BEGIN => 0,
+                    FILE_CURRENT => file.cursor,
+                    FILE_END => u64::try_from(Self::self_image_bytes(self_image_bytes)?.len())
+                        .map_err(|_| ProviderDispatchError::Fault("self image length"))?,
+                    _ => {
+                        return Err(ProviderDispatchError::Frontier {
+                            api: "SetFilePointer",
+                            detail: format!("unmodeled move method={move_method}"),
+                        });
+                    }
+                };
+                let cursor = if distance >= 0 {
+                    base.checked_add(distance as u64)
+                } else {
+                    base.checked_sub(distance.unsigned_abs())
+                }
+                .ok_or_else(|| ProviderDispatchError::Frontier {
+                    api: "SetFilePointer",
+                    detail: format!("cursor outside self image base={base} distance={distance}"),
+                })?;
+                if distance_high != 0 {
+                    memory.write(distance_high, &((cursor >> 32) as u32).to_le_bytes())?;
+                }
+                self.file_handles
+                    .get_mut(&handle)
+                    .ok_or("self image handle disappeared")?
+                    .cursor = cursor;
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(cursor as u32))
+            }
+            ProviderOp::ReadFile => {
+                let [_, handle, output, requested, bytes_read, overlapped] =
+                    arguments::<6>(memory, esp)?;
+                if overlapped != 0 {
+                    return Err(ProviderDispatchError::Frontier {
+                        api: "ReadFile",
+                        detail: format!("overlapped=0x{overlapped:08x}"),
+                    });
+                }
+                let file = self.self_image_file(handle)?;
+                let backing = Self::self_image_bytes(self_image_bytes)?;
+                let start = usize::try_from(file.cursor)
+                    .map_err(|_| ProviderDispatchError::Fault("self image cursor"))?;
+                let requested = usize::try_from(requested)
+                    .map_err(|_| ProviderDispatchError::Fault("ReadFile size"))?;
+                let source_start = start.min(backing.len());
+                let transferred = if start > backing.len() {
+                    0
+                } else {
+                    requested.min(backing.len() - start)
+                };
+                memory.write(
+                    output,
+                    &backing[source_start..source_start + transferred],
+                )?;
+                if bytes_read != 0 {
+                    memory.write(bytes_read, &(transferred as u32).to_le_bytes())?;
+                }
+                self.file_handles
+                    .get_mut(&handle)
+                    .ok_or("self image handle disappeared")?
+                    .cursor = file
+                    .cursor
+                    .checked_add(u64::try_from(transferred).map_err(|_| {
+                        ProviderDispatchError::Fault("ReadFile transferred length")
+                    })?)
+                    .ok_or("self image cursor overflow")?;
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(1))
+            }
             ProviderOp::GetWindowsDirectoryA => {
                 self.call_count = self
                     .call_count
@@ -1769,13 +1894,38 @@ impl XpProcess {
         esp: u32,
         memory: &mut impl GuestMemory,
     ) -> Result<PersonalityAction, ProviderDispatchError> {
+        self.dispatch_provider_for_process_typed_with_self_image(
+            pid,
+            tid,
+            provider_id,
+            esp,
+            memory,
+            None,
+        )
+    }
+
+    pub fn dispatch_provider_for_process_typed_with_self_image(
+        &mut self,
+        pid: u32,
+        tid: u32,
+        provider_id: u32,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+        self_image_bytes: Option<&[u8]>,
+    ) -> Result<PersonalityAction, ProviderDispatchError> {
         let provider = self
             .provider_import(provider_id)
             .cloned()
             .ok_or("unknown child provider import")?;
         let operation = provider_op(&provider);
         if operation.is_generic_process_local() {
-            return self.dispatch_process_local_provider(pid, operation, esp, memory);
+            return self.dispatch_process_local_provider(
+                pid,
+                operation,
+                esp,
+                memory,
+                self_image_bytes,
+            );
         }
         let action = match operation {
             ProviderOp::CreateEventA => Some(PersonalityAction::Session(
