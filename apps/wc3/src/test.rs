@@ -3549,7 +3549,7 @@ mod tests_process_1 {
     }
 
     #[test]
-    fn child_set_file_attributes_a_reaches_typed_path_frontier() {
+    fn child_set_file_attributes_missing_temp_file_reports_not_found() {
         let provider = ProviderImport {
             module: "KERNEL32.dll".into(),
             symbol: ProviderSymbol::Name("SetFileAttributesA".into()),
@@ -3573,24 +3573,20 @@ mod tests_process_1 {
         };
         let esp = STACK_TOP - 0x40;
         let filename = esp - 0x100;
-        memory.write(filename, b"C:\\WINDOWS\\war3tmp.dll\0").unwrap();
-        for (index, value) in [0x0046_35e3, filename, 0x0000_0100]
+        memory.write(filename, b"C:\\WINDOWS\\SIntf16.dll\0").unwrap();
+        for (index, value) in [0x0046_363b, filename, FILE_ATTRIBUTE_TEMPORARY]
             .into_iter()
             .enumerate()
         {
             write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
         }
 
-        let Err(ProviderDispatchError::Frontier { api, detail }) =
-            xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory)
-        else {
-            panic!("SetFileAttributesA must remain a typed frontier");
-        };
-        assert_eq!(api, "SetFileAttributesA");
-        assert!(detail.contains("path=\"C:\\\\WINDOWS\\\\war3tmp.dll\""));
-        assert!(detail.contains(&format!("filename=0x{filename:08x}")));
-        assert!(detail.contains("attributes=0x00000100"));
-        assert_eq!(xp.call_count, 0);
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(0))
+        );
+        assert_eq!(xp.last_error, ERROR_FILE_NOT_FOUND);
+        assert_eq!(xp.call_count, 1);
     }
 
     #[test]

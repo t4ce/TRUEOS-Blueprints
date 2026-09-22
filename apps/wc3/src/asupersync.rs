@@ -4110,6 +4110,34 @@ pub(super) async fn run_loop(
                             )
                         })
                         .transpose()?;
+                        let set_file_attributes = if operation
+                            == child_loader::ProviderOp::SetFileAttributesA
+                        {
+                            let frame = read_guest_words(
+                                &X86Memory(&child.address_space),
+                                exit.registers.esp,
+                                3,
+                            )?;
+                            let [_, filename, attributes] = frame.as_slice()
+                            else {
+                                unreachable!("SetFileAttributesA frame has three words")
+                            };
+                            let path = if *filename == 0 {
+                                "<null>".to_owned()
+                            } else {
+                                wc3::process::read_c_string(
+                                    &X86Memory(&child.address_space),
+                                    *filename,
+                                    1024,
+                                )
+                                .map_err(|error| {
+                                    format!("SetFileAttributesA filename: {error}")
+                                })?
+                            };
+                            Some((path, *attributes))
+                        } else {
+                            None
+                        };
                         let dispatch = {
                             let mut child_memory = X86Memory(&child.address_space);
                             session
@@ -4127,6 +4155,22 @@ pub(super) async fn run_loop(
                         };
                         match dispatch {
                             Ok(PersonalityAction::Return(result)) => {
+                                if let Some((path, attributes)) = set_file_attributes {
+                                    let last_error = session
+                                        .process(active_pid)
+                                        .ok_or_else(|| "child process missing".to_owned())?
+                                        .xp
+                                        .last_error();
+                                    logl::log(
+                                        level::IMPORTANT,
+                                        format_args!(
+                                            "WC3 CHILD SETFILEATTRIBUTESA path={path:?} attributes=0x{attributes:08x} exists={} result={} last_error={}",
+                                            u8::from(result != 0),
+                                            result,
+                                            last_error,
+                                        ),
+                                    );
+                                }
                                 if let Some(frame) = process_memory {
                                     let [_, process, first, second, size, bytes_transferred] =
                                         frame.as_slice()

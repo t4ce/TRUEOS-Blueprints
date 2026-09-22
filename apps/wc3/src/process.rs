@@ -41,6 +41,7 @@ pub const EXCEPTION_CONTINUE_EXECUTION: u32 = u32::MAX;
 pub const EXCEPTION_CONTINUE_SEARCH: u32 = 0;
 pub const EXCEPTION_EXECUTE_HANDLER: u32 = 1;
 const ERROR_MOD_NOT_FOUND: u32 = 126;
+const ERROR_FILE_NOT_FOUND: u32 = 2;
 const ERROR_INVALID_HANDLE: u32 = 6;
 const ERROR_NOT_ENOUGH_MEMORY: u32 = 8;
 const ERROR_INSUFFICIENT_BUFFER: u32 = 122;
@@ -49,6 +50,7 @@ const TOKEN_QUERY: u32 = 0x0000_0008;
 const TOKEN_HANDLE_BASE: u32 = 0x5743_9001;
 const FILE_HANDLE_BASE: u32 = 0x5743_b001;
 const FILE_WRITE_ACCESS_MASK: u32 = 0x5000_0116;
+const FILE_ATTRIBUTE_TEMPORARY: u32 = 0x0000_0100;
 const FILE_BEGIN: u32 = 0;
 const FILE_CURRENT: u32 = 1;
 const FILE_END: u32 = 2;
@@ -1856,12 +1858,18 @@ impl XpProcess {
                     });
                 }
                 let path = read_c_string(memory, filename, 1024)?;
+                let _temporary = attributes & FILE_ATTRIBUTE_TEMPORARY != 0;
+                if !self.path_exists(&path) {
+                    self.set_last_error(ERROR_FILE_NOT_FOUND);
+                    self.call_count = self
+                        .call_count
+                        .checked_add(1)
+                        .ok_or("call count overflow")?;
+                    return Ok(PersonalityAction::Return(0));
+                }
                 Err(ProviderDispatchError::Frontier {
                     api: "SetFileAttributesA",
-                    detail: format!(
-                        "path={path:?} filename=0x{filename:08x} \\
-                         attributes=0x{attributes:08x}"
-                    ),
+                    detail: format!("existing path={path:?} attributes=0x{attributes:08x}"),
                 })
             }
             ProviderOp::QueryPerformanceFrequency => {
@@ -2804,6 +2812,14 @@ impl XpProcess {
 
     pub fn set_last_error(&mut self, value: u32) {
         self.last_error = value;
+    }
+
+    pub fn last_error(&self) -> u32 {
+        self.last_error
+    }
+
+    fn path_exists(&self, path: &str) -> bool {
+        is_self_image_path(path)
     }
 
     pub fn set_unhandled_exception_filter(&mut self, filter: u32) -> u32 {
