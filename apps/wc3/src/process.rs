@@ -3147,6 +3147,12 @@ impl XpProcess {
             .is_some_and(|scratch| scratch.path == canonical)
     }
 
+    pub fn scratch_file_snapshot(&self, path: &str) -> Option<Vec<u8>> {
+        let canonical = canonical_file_path(path);
+        let id = *self.scratch_paths.get(&canonical)?;
+        self.scratch_files.get(&id).map(|file| file.bytes.clone())
+    }
+
     pub fn set_unhandled_exception_filter(&mut self, filter: u32) -> u32 {
         let previous = self.unhandled_exception_filter;
         self.unhandled_exception_filter = filter;

@@ -3783,6 +3783,60 @@ pub(super) async fn run_loop(
                             );
                             continue;
                         }
+                        let scratch = session
+                            .process(active_pid)
+                            .ok_or_else(|| "child process missing".to_owned())?
+                            .xp
+                            .scratch_file_snapshot(&requested);
+                        if let Some(bytes) = scratch {
+                            let image = pe32::parse(&bytes).map_err(|error| {
+                                format!("LoadLibraryA scratch PE {requested:?}: {error}")
+                            })?;
+                            let named_exports = image
+                                .exports
+                                .iter()
+                                .filter(|export| export.name.is_some())
+                                .count();
+                            let forwarders = image
+                                .exports
+                                .iter()
+                                .filter(|export| {
+                                    matches!(export.target, pe32::ExportTarget::Forwarder(_))
+                                })
+                                .count();
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD LOADLIBRARY SCRATCH PE pid={} tid={} requested={:?} bytes={} image_base=0x{:08x} entry_rva=0x{:08x} size_of_image=0x{:08x} sections={} imports={} exports={} named_exports={} forwarders={} relocations={}",
+                                    active_pid,
+                                    active_tid,
+                                    requested,
+                                    bytes.len(),
+                                    image.image_base,
+                                    image.entry_rva,
+                                    image.size_of_image,
+                                    image.sections.len(),
+                                    image.imports.len(),
+                                    image.exports.len(),
+                                    named_exports,
+                                    forwarders,
+                                    image.relocations.len(),
+                                ),
+                            );
+                            for (index, import) in image.imports.iter().enumerate() {
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 CHILD LOADLIBRARY SCRATCH IMPORT index={} module={:?} symbol={:?} iat_rva=0x{:08x}",
+                                        index,
+                                        import.module,
+                                        import.symbol,
+                                        import.iat_rva,
+                                    ),
+                                );
+                            }
+                            return Ok(());
+                        }
                         let listing = async_fs::list_dir(b"/common/Warcraft III")
                             .await
                             .map_err(|error| {

@@ -4050,6 +4050,10 @@ mod tests_process_1 {
         assert_eq!(scratch.path, r"c:\windows\sintf16.dll");
         assert_eq!(scratch.bytes, b"abc");
         assert_eq!(scratch.attributes, FILE_ATTRIBUTE_TEMPORARY);
+        assert_eq!(
+            xp.scratch_file_snapshot(r"C:\\WINDOWS\\\SIntf16.dll"),
+            Some(b"abc".to_vec())
+        );
     }
 
     #[test]
