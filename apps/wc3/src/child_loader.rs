@@ -38,6 +38,7 @@ pub enum ProviderOp {
     GetProcAddress,
     GetCurrentProcess,
     GetCurrentProcessId,
+    GetCurrentThread,
     ReadProcessMemory,
     WriteProcessMemory,
     GetLastError,
@@ -135,6 +136,7 @@ impl ProviderOp {
                 | Self::GetModuleHandleA
                 | Self::GetCurrentProcess
                 | Self::GetCurrentProcessId
+                | Self::GetCurrentThread
                 | Self::ReadProcessMemory
                 | Self::WriteProcessMemory
                 | Self::GetLastError
@@ -174,6 +176,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "GetProcAddress" => ProviderOp::GetProcAddress,
             "GetCurrentProcess" => ProviderOp::GetCurrentProcess,
             "GetCurrentProcessId" => ProviderOp::GetCurrentProcessId,
+            "GetCurrentThread" => ProviderOp::GetCurrentThread,
             "ReadProcessMemory" => ProviderOp::ReadProcessMemory,
             "WriteProcessMemory" => ProviderOp::WriteProcessMemory,
             "GetLastError" => ProviderOp::GetLastError,

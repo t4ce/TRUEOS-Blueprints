@@ -36,6 +36,7 @@ pub const CHILD_WIN_HEAP_BASE: u32 = 0x1400_0000;
 pub const CHILD_WIN_HEAP_LIMIT: u32 = 0x1500_0000;
 pub const PROVIDER_MODULE_HANDLE_BASE: u32 = 0x5743_a001;
 pub const CURRENT_PROCESS_PSEUDO_HANDLE: u32 = u32::MAX;
+pub const CURRENT_THREAD_PSEUDO_HANDLE: u32 = 0xffff_fffe;
 pub const EXCEPTION_CONTINUE_EXECUTION: u32 = u32::MAX;
 pub const EXCEPTION_CONTINUE_SEARCH: u32 = 0;
 pub const EXCEPTION_EXECUTE_HANDLER: u32 = 1;
@@ -1298,6 +1299,13 @@ impl XpProcess {
                     .checked_add(1)
                     .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(pid))
+            }
+            ProviderOp::GetCurrentThread => {
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(CURRENT_THREAD_PSEUDO_HANDLE))
             }
             ProviderOp::ReadProcessMemory => {
                 let [_, process, source, destination, size, bytes_read] =

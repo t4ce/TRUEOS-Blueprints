@@ -3591,6 +3591,28 @@ mod tests_process_1 {
     }
 
     #[test]
+    fn child_get_current_thread_returns_the_windows_pseudo_handle() {
+        let provider = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("GetCurrentThread".into()),
+            iat_rva: 0,
+        };
+        let mut xp = XpProcess::new_child();
+        xp.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+
+        assert_eq!(CURRENT_THREAD_PSEUDO_HANDLE, 0xffff_fffe);
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 0, STACK_TOP - 0x40, &mut memory),
+            Ok(PersonalityAction::Return(CURRENT_THREAD_PSEUDO_HANDLE))
+        );
+        assert_eq!(xp.call_count, 1);
+    }
+
+    #[test]
     fn child_get_current_process_id_returns_calling_pid_without_side_effects() {
         let provider = ProviderImport {
             module: "KERNEL32.dll".into(),
@@ -3633,6 +3655,35 @@ mod tests_process_1 {
 
         let mut xp = XpProcess::new_child();
         assert_eq!(xp.provider_export_address("KERNEL32.dll", &provider.symbol), None);
+        let (addresses, _, _, updated_from, bytes) =
+            xp.append_provider_imports(vec![provider.clone()]).unwrap();
+        assert_eq!(updated_from, 0);
+        assert_eq!(addresses, vec![thunk32::address(0).unwrap()]);
+        assert_eq!(
+            xp.provider_export_address("KERNEL32.dll", &provider.symbol),
+            Some(addresses[0])
+        );
+        assert_eq!(&bytes[..9], &[0xb8, 0, 0, 0, 0, 0x0f, 0x01, 0xc1, 0xc3]);
+    }
+
+    #[test]
+    fn child_get_current_thread_dynamic_export_has_zero_argument_return() {
+        let provider = ProviderImport {
+            module: "kernel32.dll".into(),
+            symbol: ProviderSymbol::Name("GetCurrentThread".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&provider);
+        assert_eq!(operation, ProviderOp::GetCurrentThread);
+        assert!(operation.is_modeled());
+        assert!(operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 0);
+        assert_eq!(
+            crate::child_loader::provider_thunk_kind(&provider),
+            thunk32::Kind::Return
+        );
+
+        let mut xp = XpProcess::new_child();
         let (addresses, _, _, updated_from, bytes) =
             xp.append_provider_imports(vec![provider.clone()]).unwrap();
         assert_eq!(updated_from, 0);
