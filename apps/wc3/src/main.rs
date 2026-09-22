@@ -14,7 +14,10 @@ use trueos::{
     async_fs,
     logl::level,
     ui4_scene::{self, Damage, Font, Frame, SceneTextRow, rgba},
-    x86::{AddressSpace, Context, DebugRegisters, ExitKind, Permissions, Registers},
+    x86::{
+        AddressSpace, Context, DebugRegisters, ExitKind, ExtendedState, Permissions, Registers,
+        X86_EXTENDED_STATE_BYTES,
+    },
 };
 mod asupersync;
 
@@ -57,6 +60,11 @@ const CHILD_IMAGE_ENTRY_CALLER_BYTES: usize = 0x40;
 const MESSAGE_BOX_WIDTH: u32 = 560;
 const MESSAGE_BOX_HEIGHT: u32 = 280;
 const MESSAGE_BOX_MAX_ANSI_BYTES: usize = 4096;
+const TABLE_CHECKPOINT_DIR: &[u8] = b"/common/Warcraft III/.trueos-wc3";
+const TABLE_CHECKPOINT_PATH: &[u8] = b"/common/Warcraft III/.trueos-wc3/table-fill-v1.bin";
+const TABLE_CHECKPOINT_FROM_EIP: u32 = 0x0046_14a5;
+const TABLE_CHECKPOINT_TO_EIP: u32 = 0x0046_14c5;
+const TABLE_CHECKPOINT_TABLE_BYTES: u32 = 0x8000;
 
 fn main() {
     let runtime = match tokio::runtime::Builder::new_current_thread()
@@ -1625,6 +1633,7 @@ struct PendingChild {
     scan_progress: Option<ScanProgress>,
     scan_heartbeat_source: Option<u32>,
     dword_scan_watch: Option<DwordScanWatch>,
+    table_checkpoint_capture: Option<TableCheckpointCapture>,
     loader: ChildLoaderState,
     execution: ChildExecutionState,
 }
@@ -1686,6 +1695,29 @@ struct ScanProgress {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct DwordScanWatch {
     last_heartbeat_index: Option<u32>,
+}
+
+#[derive(Clone, Debug)]
+struct CachedPage {
+    va: u32,
+    before_sha256: [u8; 32],
+    before: Vec<u8>,
+}
+
+#[derive(Clone, Debug)]
+struct TableCheckpointCapture {
+    table_base: u32,
+    before_registers: Registers,
+    before_debug_registers: DebugRegisters,
+    before_extended_state: ExtendedState,
+    pages: Vec<CachedPage>,
+    call_count: u32,
+    provider_import_count: usize,
+    session_object_count: usize,
+    process_handle_count: usize,
+    provider_thunk_bytes: usize,
+    crt_heap_mapped_end: u32,
+    win_heap_mapped_end: u32,
 }
 
 #[derive(Clone, Debug)]

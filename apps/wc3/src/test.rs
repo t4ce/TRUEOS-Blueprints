@@ -324,6 +324,7 @@ mod tests_main_1 {
             scan_progress: None,
             scan_heartbeat_source: None,
             dword_scan_watch: None,
+            table_checkpoint_capture: None,
             loader: ChildLoaderState {
                 prepared: true,
                 native_requests: Vec::new(),
@@ -422,6 +423,7 @@ mod tests_main_1 {
             scan_progress: None,
             scan_heartbeat_source: None,
             dword_scan_watch: None,
+            table_checkpoint_capture: None,
             loader: ChildLoaderState {
                 prepared: true,
                 native_requests: Vec::new(),
@@ -713,6 +715,7 @@ mod tests_main_1 {
             scan_progress: None,
             scan_heartbeat_source: None,
             dword_scan_watch: None,
+            table_checkpoint_capture: None,
             loader: ChildLoaderState {
                 prepared: true,
                 native_requests: Vec::new(),

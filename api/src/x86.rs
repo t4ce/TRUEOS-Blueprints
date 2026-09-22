@@ -14,7 +14,7 @@ use alloc::sync::Arc;
 use core::fmt;
 use core::ops::{BitOr, BitOrAssign};
 
-pub use v::vx86::{DebugRegisters, Registers};
+pub use v::vx86::{DebugRegisters, ExtendedState, Registers, X86_EXTENDED_STATE_BYTES};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Permissions(u32);
@@ -248,6 +248,16 @@ impl Context {
     pub fn set_debug_registers(&mut self, registers: DebugRegisters) -> Result<(), Error> {
         v::vx86::context_set_debug_registers(self.handle, &registers)
             .map_err(Error::from_kernel)
+    }
+
+    /// Return the logical context's complete x87/SSE/AVX state.
+    pub fn extended_state(&self) -> Result<ExtendedState, Error> {
+        v::vx86::context_extended_state(self.handle).map_err(Error::from_kernel)
+    }
+
+    /// Replace the logical context's complete x87/SSE/AVX state.
+    pub fn set_extended_state(&mut self, state: &ExtendedState) -> Result<(), Error> {
+        v::vx86::context_set_extended_state(self.handle, state).map_err(Error::from_kernel)
     }
 
     /// Admit this context to a native carrier and await its first exit.

@@ -30,6 +30,560 @@ const WAR3_TABLE_FILL_STEP_START: u32 = 0x0046_1496;
 const WAR3_TABLE_FILL_STEP_END: u32 = 0x0046_14c3;
 const WAR3_TABLE_FILL_HEARTBEAT_STRIDE: u32 = 0x100;
 
+const TABLE_CHECKPOINT_MAGIC: &[u8; 8] = b"WC3TFCP1";
+const TABLE_CHECKPOINT_VERSION: u32 = 1;
+const TABLE_CHECKPOINT_PAGE_BYTES: usize = 4096;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct TableCheckpointPage {
+    va: u32,
+    before_sha256: [u8; 32],
+    after: Option<Vec<u8>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct TableCheckpoint {
+    image_sha256: [u8; 32],
+    table_base: u32,
+    before_registers: Registers,
+    before_debug_registers: DebugRegisters,
+    before_extended_state: ExtendedState,
+    after_registers: Registers,
+    after_debug_registers: DebugRegisters,
+    after_extended_state: ExtendedState,
+    pages: Vec<TableCheckpointPage>,
+    after_single_step_count: u64,
+    after_dword_scan_watch: Option<DwordScanWatch>,
+}
+
+#[cfg(test)]
+mod table_checkpoint_tests {
+    use super::*;
+
+    #[test]
+    fn table_checkpoint_codec_rejects_tampering_and_round_trips_extended_state() {
+        let mut before_extended_state = ExtendedState {
+            mask: 0x7,
+            bytes: [0; X86_EXTENDED_STATE_BYTES],
+        };
+        before_extended_state.bytes[0] = 0x37;
+        let mut after_extended_state = before_extended_state;
+        after_extended_state.bytes[831] = 0xa5;
+        let checkpoint = TableCheckpoint {
+            image_sha256: [0x11; 32],
+            table_base: 0x1400_b810,
+            before_registers: Registers { eip: TABLE_CHECKPOINT_FROM_EIP, eflags: 0x106, ..Registers::default() },
+            before_debug_registers: DebugRegisters { dr0: 1, dr6: 0x4000, dr7: 0x403, ..DebugRegisters::default() },
+            before_extended_state,
+            after_registers: Registers { eip: TABLE_CHECKPOINT_TO_EIP, eflags: 0x106, ..Registers::default() },
+            after_debug_registers: DebugRegisters { dr0: 1, dr6: 0x4000, dr7: 0x403, ..DebugRegisters::default() },
+            after_extended_state,
+            pages: vec![
+                TableCheckpointPage { va: 0x0040_0000, before_sha256: [0x22; 32], after: None },
+                TableCheckpointPage { va: 0x1400_b000, before_sha256: [0x33; 32], after: Some(vec![0x44; TABLE_CHECKPOINT_PAGE_BYTES]) },
+            ],
+            after_single_step_count: 0x2000,
+            after_dword_scan_watch: Some(DwordScanWatch { last_heartbeat_index: Some(0x2000) }),
+        };
+        let encoded = checkpoint_encode(&checkpoint).unwrap();
+        let decoded = checkpoint_decode(&encoded).unwrap();
+        assert_eq!(decoded, checkpoint);
+
+        let mut tampered = encoded;
+        tampered[20] ^= 1;
+        assert_eq!(checkpoint_decode(&tampered), Err("table checkpoint checksum".into()));
+    }
+}
+
+fn checkpoint_sha256(bytes: &[u8]) -> [u8; 32] {
+    Sha256::digest(bytes).into()
+}
+
+fn checkpoint_read(child: &PendingChild, va: u32, bytes: &mut [u8]) -> Result<(), String> {
+    let read = child
+        .address_space
+        .read(va, bytes)
+        .map_err(|error| format!("table checkpoint read 0x{va:08x}: {error}"))?;
+    if read == bytes.len() {
+        Ok(())
+    } else {
+        Err(format!("table checkpoint short read 0x{va:08x}: {read}/{}", bytes.len()))
+    }
+}
+
+fn checkpoint_write(child: &mut PendingChild, va: u32, bytes: &[u8]) -> Result<(), String> {
+    let written = child
+        .address_space
+        .write(va, bytes)
+        .map_err(|error| format!("table checkpoint write 0x{va:08x}: {error}"))?;
+    if written == bytes.len() {
+        Ok(())
+    } else {
+        Err(format!("table checkpoint short write 0x{va:08x}: {written}/{}", bytes.len()))
+    }
+}
+
+fn checkpoint_capture_pages(
+    child: &PendingChild,
+    ranges: &[(u32, u32)],
+) -> Result<Vec<CachedPage>, String> {
+    let mut pages = std::collections::BTreeMap::new();
+    for &(start, len) in ranges {
+        let end = start
+            .checked_add(len)
+            .ok_or("table checkpoint range overflow")?;
+        let mut va = start & !0xfff;
+        let page_end = end
+            .checked_add(0xfff)
+            .ok_or("table checkpoint page range overflow")?
+            & !0xfff;
+        while va < page_end {
+            let mut before = vec![0; TABLE_CHECKPOINT_PAGE_BYTES];
+            checkpoint_read(child, va, &mut before)?;
+            pages.entry(va).or_insert_with(|| CachedPage {
+                va,
+                before_sha256: checkpoint_sha256(&before),
+                before,
+            });
+            va = va.checked_add(TABLE_CHECKPOINT_PAGE_BYTES as u32).ok_or("table checkpoint VA overflow")?;
+        }
+    }
+    Ok(pages.into_values().collect())
+}
+
+fn checkpoint_put_u32(out: &mut Vec<u8>, value: u32) {
+    out.extend_from_slice(&value.to_le_bytes());
+}
+
+fn checkpoint_put_u64(out: &mut Vec<u8>, value: u64) {
+    out.extend_from_slice(&value.to_le_bytes());
+}
+
+fn checkpoint_put_registers(out: &mut Vec<u8>, registers: Registers) {
+    for value in [
+        registers.eax,
+        registers.ebx,
+        registers.ecx,
+        registers.edx,
+        registers.esi,
+        registers.edi,
+        registers.ebp,
+        registers.esp,
+        registers.eip,
+        registers.eflags,
+        registers.fs_base,
+    ] {
+        checkpoint_put_u32(out, value);
+    }
+}
+
+fn checkpoint_put_debug_registers(out: &mut Vec<u8>, registers: DebugRegisters) {
+    for value in [
+        registers.dr0,
+        registers.dr1,
+        registers.dr2,
+        registers.dr3,
+        registers.dr6,
+        registers.dr7,
+    ] {
+        checkpoint_put_u32(out, value);
+    }
+}
+
+fn checkpoint_put_extended_state(out: &mut Vec<u8>, state: &ExtendedState) {
+    checkpoint_put_u64(out, state.mask);
+    out.extend_from_slice(&state.bytes);
+}
+
+fn checkpoint_encode(checkpoint: &TableCheckpoint) -> Result<Vec<u8>, String> {
+    let mut out = Vec::new();
+    out.extend_from_slice(TABLE_CHECKPOINT_MAGIC);
+    checkpoint_put_u32(&mut out, TABLE_CHECKPOINT_VERSION);
+    out.extend_from_slice(&checkpoint.image_sha256);
+    checkpoint_put_u32(&mut out, TABLE_CHECKPOINT_FROM_EIP);
+    checkpoint_put_u32(&mut out, TABLE_CHECKPOINT_TO_EIP);
+    checkpoint_put_u32(&mut out, checkpoint.table_base);
+    checkpoint_put_u32(&mut out, TABLE_CHECKPOINT_TABLE_BYTES);
+    checkpoint_put_registers(&mut out, checkpoint.before_registers);
+    checkpoint_put_debug_registers(&mut out, checkpoint.before_debug_registers);
+    checkpoint_put_extended_state(&mut out, &checkpoint.before_extended_state);
+    checkpoint_put_registers(&mut out, checkpoint.after_registers);
+    checkpoint_put_debug_registers(&mut out, checkpoint.after_debug_registers);
+    checkpoint_put_extended_state(&mut out, &checkpoint.after_extended_state);
+    checkpoint_put_u64(&mut out, checkpoint.after_single_step_count);
+    match checkpoint.after_dword_scan_watch {
+        Some(watch) => {
+            out.push(1);
+            checkpoint_put_u32(&mut out, watch.last_heartbeat_index.unwrap_or(u32::MAX));
+        }
+        None => out.push(0),
+    }
+    checkpoint_put_u32(
+        &mut out,
+        u32::try_from(checkpoint.pages.len()).map_err(|_| "table checkpoint page count")?,
+    );
+    for page in &checkpoint.pages {
+        checkpoint_put_u32(&mut out, page.va);
+        out.extend_from_slice(&page.before_sha256);
+        match &page.after {
+            Some(after) => {
+                if after.len() != TABLE_CHECKPOINT_PAGE_BYTES {
+                    return Err("table checkpoint changed page length".into());
+                }
+                out.push(1);
+                out.extend_from_slice(after);
+            }
+            None => out.push(0),
+        }
+    }
+    let digest = checkpoint_sha256(&out);
+    out.extend_from_slice(&digest);
+    Ok(out)
+}
+
+struct CheckpointReader<'a> {
+    bytes: &'a [u8],
+    offset: usize,
+}
+
+impl<'a> CheckpointReader<'a> {
+    fn take(&mut self, len: usize) -> Result<&'a [u8], String> {
+        let end = self.offset.checked_add(len).ok_or("table checkpoint decode overflow")?;
+        let slice = self.bytes.get(self.offset..end).ok_or("table checkpoint truncated")?;
+        self.offset = end;
+        Ok(slice)
+    }
+    fn u32(&mut self) -> Result<u32, String> {
+        Ok(u32::from_le_bytes(self.take(4)?.try_into().unwrap()))
+    }
+    fn u64(&mut self) -> Result<u64, String> {
+        Ok(u64::from_le_bytes(self.take(8)?.try_into().unwrap()))
+    }
+    fn array<const N: usize>(&mut self) -> Result<[u8; N], String> {
+        self.take(N)?
+            .try_into()
+            .map_err(|_| "table checkpoint array".to_owned())
+    }
+}
+
+fn checkpoint_get_registers(input: &mut CheckpointReader<'_>) -> Result<Registers, String> {
+    Ok(Registers {
+        eax: input.u32()?, ebx: input.u32()?, ecx: input.u32()?, edx: input.u32()?,
+        esi: input.u32()?, edi: input.u32()?, ebp: input.u32()?, esp: input.u32()?,
+        eip: input.u32()?, eflags: input.u32()?, fs_base: input.u32()?,
+        ..Registers::default()
+    })
+}
+
+fn checkpoint_get_debug_registers(input: &mut CheckpointReader<'_>) -> Result<DebugRegisters, String> {
+    Ok(DebugRegisters {
+        dr0: input.u32()?, dr1: input.u32()?, dr2: input.u32()?, dr3: input.u32()?,
+        dr6: input.u32()?, dr7: input.u32()?,
+    })
+}
+
+fn checkpoint_get_extended_state(input: &mut CheckpointReader<'_>) -> Result<ExtendedState, String> {
+    Ok(ExtendedState {
+        mask: input.u64()?,
+        bytes: input.array::<X86_EXTENDED_STATE_BYTES>()?,
+    })
+}
+
+fn checkpoint_decode(bytes: &[u8]) -> Result<TableCheckpoint, String> {
+    if bytes.len() < TABLE_CHECKPOINT_MAGIC.len() + 32 {
+        return Err("table checkpoint truncated".into());
+    }
+    let (body, trailing) = bytes.split_at(bytes.len() - 32);
+    if checkpoint_sha256(body) != <[u8; 32]>::try_from(trailing).unwrap() {
+        return Err("table checkpoint checksum".into());
+    }
+    let mut input = CheckpointReader { bytes: body, offset: 0 };
+    if input.array::<8>()? != *TABLE_CHECKPOINT_MAGIC || input.u32()? != TABLE_CHECKPOINT_VERSION {
+        return Err("table checkpoint format".into());
+    }
+    let image_sha256 = input.array::<32>()?;
+    if input.u32()? != TABLE_CHECKPOINT_FROM_EIP || input.u32()? != TABLE_CHECKPOINT_TO_EIP {
+        return Err("table checkpoint boundaries".into());
+    }
+    let table_base = input.u32()?;
+    if input.u32()? != TABLE_CHECKPOINT_TABLE_BYTES {
+        return Err("table checkpoint table bytes".into());
+    }
+    let before_registers = checkpoint_get_registers(&mut input)?;
+    let before_debug_registers = checkpoint_get_debug_registers(&mut input)?;
+    let before_extended_state = checkpoint_get_extended_state(&mut input)?;
+    let after_registers = checkpoint_get_registers(&mut input)?;
+    let after_debug_registers = checkpoint_get_debug_registers(&mut input)?;
+    let after_extended_state = checkpoint_get_extended_state(&mut input)?;
+    if before_registers.eip != TABLE_CHECKPOINT_FROM_EIP
+        || after_registers.eip != TABLE_CHECKPOINT_TO_EIP
+    {
+        return Err("table checkpoint register boundaries".into());
+    }
+    let after_single_step_count = input.u64()?;
+    let after_dword_scan_watch = match input.take(1)?[0] {
+        0 => None,
+        1 => Some(DwordScanWatch { last_heartbeat_index: match input.u32()? { u32::MAX => None, value => Some(value) } }),
+        _ => return Err("table checkpoint dword watch".into()),
+    };
+    let page_count = usize::try_from(input.u32()?).map_err(|_| "table checkpoint page count")?;
+    if page_count > 4096 {
+        return Err("table checkpoint excessive pages".into());
+    }
+    let mut pages = Vec::with_capacity(page_count);
+    for _ in 0..page_count {
+        let va = input.u32()?;
+        let before_sha256 = input.array::<32>()?;
+        let after = match input.take(1)?[0] {
+            0 => None,
+            1 => Some(input.take(TABLE_CHECKPOINT_PAGE_BYTES)?.to_vec()),
+            _ => return Err("table checkpoint changed-page marker".into()),
+        };
+        pages.push(TableCheckpointPage { va, before_sha256, after });
+    }
+    if input.offset != body.len() {
+        return Err("table checkpoint trailing body".into());
+    }
+    Ok(TableCheckpoint {
+        image_sha256, table_base, before_registers, before_debug_registers,
+        before_extended_state, after_registers, after_debug_registers,
+        after_extended_state, pages, after_single_step_count, after_dword_scan_watch,
+    })
+}
+
+fn table_checkpoint_quiescent(child: &PendingChild) -> Result<(), &'static str> {
+    if child.execution != ChildExecutionState::ImageEntryRunning {
+        return Err("execution");
+    }
+    if child.seh.is_some() {
+        return Err("pending-seh");
+    }
+    if child.unhandled_filter_call.is_some() {
+        return Err("pending-uef");
+    }
+    if child.initterm.is_some() {
+        return Err("initterm");
+    }
+    if child.cipow.is_some() {
+        return Err("cipow");
+    }
+    Ok(())
+}
+
+fn table_checkpoint_table_base(child: &PendingChild) -> Result<u32, String> {
+    child_read_u32(child, WAR3_TABLE_FILL_BASE_SLOT)
+        .filter(|base| *base != 0)
+        .ok_or_else(|| "table checkpoint table base unavailable".into())
+}
+
+fn table_checkpoint_host_state(
+    session: &Wc3Session,
+    pid: u32,
+) -> Result<(u32, usize, usize, usize), String> {
+    let process = session
+        .process(pid)
+        .ok_or_else(|| "table checkpoint child process missing".to_owned())?;
+    Ok((
+        process.xp.call_count,
+        process.xp.provider_import_count(),
+        session.objects.len(),
+        process.handles.len(),
+    ))
+}
+
+fn begin_table_checkpoint_capture(
+    child: &mut PendingChild,
+    context: &Context,
+    restored: Registers,
+    restored_debug: DebugRegisters,
+    session: &Wc3Session,
+) -> Result<(), String> {
+    table_checkpoint_quiescent(child).map_err(str::to_owned)?;
+    let (call_count, provider_import_count, session_object_count, process_handle_count) =
+        table_checkpoint_host_state(session, child.pid)?;
+    let table_base = table_checkpoint_table_base(child)?;
+    let image_bytes = u32::try_from(child.image.image.len()).map_err(|_| "table checkpoint image size")?;
+    let teb = thread_teb_va(child.tid)?;
+    let pages = checkpoint_capture_pages(
+        child,
+        &[
+            (child.image.image_base, image_bytes),
+            (PROCESS_DATA_VA, 0x1000),
+            (teb, 0x1000),
+            (STACK_BASE, STACK_BYTES as u32),
+            (table_base, TABLE_CHECKPOINT_TABLE_BYTES),
+        ],
+    )?;
+    child.table_checkpoint_capture = Some(TableCheckpointCapture {
+        table_base,
+        before_registers: restored,
+        before_debug_registers: restored_debug,
+        before_extended_state: context.extended_state().map_err(|error| error.to_string())?,
+        pages,
+        call_count,
+        provider_import_count,
+        session_object_count,
+        process_handle_count,
+        provider_thunk_bytes: child.provider_thunk_bytes,
+        crt_heap_mapped_end: child.crt_heap_mapped_end,
+        win_heap_mapped_end: child.win_heap_mapped_end,
+    });
+    logl::log(
+        level::IMPORTANT,
+        format_args!(
+            "WC3 CHILD TABLE CHECKPOINT CAPTURE entry=0x{:08x} index=0 table=0x{:08x} pages={} call_count={}",
+            restored.eip,
+            table_base,
+            child.table_checkpoint_capture.as_ref().unwrap().pages.len(),
+            call_count,
+        ),
+    );
+    Ok(())
+}
+
+async fn finish_table_checkpoint_capture(
+    child: &mut PendingChild,
+    context: &Context,
+    restored: Registers,
+    restored_debug: DebugRegisters,
+    session: &Wc3Session,
+) -> Result<(), String> {
+    table_checkpoint_quiescent(child).map_err(str::to_owned)?;
+    let capture = child
+        .table_checkpoint_capture
+        .take()
+        .ok_or_else(|| "table checkpoint capture missing".to_owned())?;
+    if child_read_u32(child, WAR3_DWORD_SCAN_INDEX) != Some(WAR3_TABLE_FILL_BOUND) {
+        return Err("table checkpoint exit index".into());
+    }
+    if table_checkpoint_table_base(child)? != capture.table_base {
+        return Err("table checkpoint table base changed".into());
+    }
+    let (call_count, provider_import_count, session_object_count, process_handle_count) =
+        table_checkpoint_host_state(session, child.pid)?;
+    if child.execution != ChildExecutionState::ImageEntryRunning
+        || call_count != capture.call_count
+        || provider_import_count != capture.provider_import_count
+        || session_object_count != capture.session_object_count
+        || process_handle_count != capture.process_handle_count
+        || child.provider_thunk_bytes != capture.provider_thunk_bytes
+        || child.crt_heap_mapped_end != capture.crt_heap_mapped_end
+        || child.win_heap_mapped_end != capture.win_heap_mapped_end
+    {
+        return Err("table checkpoint purity invariant".into());
+    }
+    let mut pages = Vec::with_capacity(capture.pages.len());
+    for page in capture.pages {
+        let mut after = vec![0; page.before.len()];
+        checkpoint_read(child, page.va, &mut after)?;
+        pages.push(TableCheckpointPage {
+            va: page.va,
+            before_sha256: page.before_sha256,
+            after: (after != page.before).then_some(after),
+        });
+    }
+    let checkpoint = TableCheckpoint {
+        image_sha256: checkpoint_sha256(child.self_image_bytes.as_slice()),
+        table_base: capture.table_base,
+        before_registers: capture.before_registers,
+        before_debug_registers: capture.before_debug_registers,
+        before_extended_state: capture.before_extended_state,
+        after_registers: restored,
+        after_debug_registers: restored_debug,
+        after_extended_state: context.extended_state().map_err(|error| error.to_string())?,
+        pages,
+        after_single_step_count: child.single_step_count,
+        after_dword_scan_watch: child.dword_scan_watch,
+    };
+    let encoded = checkpoint_encode(&checkpoint)?;
+    async_fs::create_dir_all(TABLE_CHECKPOINT_DIR)
+        .await
+        .map_err(|error| format!("create table checkpoint directory: {error}"))?;
+    async_fs::write_file(TABLE_CHECKPOINT_PATH, &encoded)
+        .await
+        .map_err(|error| format!("write table checkpoint: {error}"))?;
+    let readback = async_fs::read_file(TABLE_CHECKPOINT_PATH)
+        .await
+        .map_err(|error| format!("read back table checkpoint: {error}"))?;
+    if readback != encoded || checkpoint_decode(&readback).is_err() {
+        return Err("table checkpoint read-back verification".into());
+    }
+    let changed = checkpoint.pages.iter().filter(|page| page.after.is_some()).count();
+    logl::log(
+        level::IMPORTANT,
+        format_args!(
+            "WC3 CHILD TABLE CHECKPOINT CREATED table=0x{:08x} pages={} changed={} bytes={}",
+            checkpoint.table_base,
+            checkpoint.pages.len(),
+            changed,
+            encoded.len(),
+        ),
+    );
+    Ok(())
+}
+
+async fn try_restore_table_checkpoint(
+    child: &mut PendingChild,
+    context: &mut Context,
+    restored: &mut Registers,
+    restored_debug: &mut DebugRegisters,
+) -> Result<bool, String> {
+    let bytes = match async_fs::read_file(TABLE_CHECKPOINT_PATH).await {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            logl::log(level::IMPORTANT, format_args!("WC3 CHILD TABLE CHECKPOINT BYPASS reason=cache-unavailable error={error}"));
+            return Ok(false);
+        }
+    };
+    let checkpoint = match checkpoint_decode(&bytes) {
+        Ok(checkpoint) => checkpoint,
+        Err(reason) => {
+            logl::log(level::IMPORTANT, format_args!("WC3 CHILD TABLE CHECKPOINT BYPASS reason={reason}"));
+            return Ok(false);
+        }
+    };
+    let bypass = |reason: &str| {
+        logl::log(level::IMPORTANT, format_args!("WC3 CHILD TABLE CHECKPOINT BYPASS reason={reason}"));
+        false
+    };
+    if table_checkpoint_quiescent(child).is_err() { return Ok(bypass("not-quiescent")); }
+    if checkpoint.image_sha256 != checkpoint_sha256(child.self_image_bytes.as_slice()) { return Ok(bypass("image-sha256")); }
+    if *restored != checkpoint.before_registers { return Ok(bypass("registers")); }
+    if *restored_debug != checkpoint.before_debug_registers { return Ok(bypass("debug-registers")); }
+    if context.extended_state().map_err(|error| error.to_string())? != checkpoint.before_extended_state { return Ok(bypass("extended-state")); }
+    if table_checkpoint_table_base(child)? != checkpoint.table_base { return Ok(bypass("table-base")); }
+    for page in &checkpoint.pages {
+        let mut current = vec![0; TABLE_CHECKPOINT_PAGE_BYTES];
+        checkpoint_read(child, page.va, &mut current)?;
+        if checkpoint_sha256(&current) != page.before_sha256 {
+            return Ok(bypass("precondition-page"));
+        }
+    }
+    for page in &checkpoint.pages {
+        if let Some(after) = &page.after {
+            checkpoint_write(child, page.va, after)?;
+        }
+    }
+    *restored = checkpoint.after_registers;
+    *restored_debug = checkpoint.after_debug_registers;
+    context
+        .set_extended_state(&checkpoint.after_extended_state)
+        .map_err(|error| error.to_string())?;
+    child.single_step_count = checkpoint.after_single_step_count;
+    child.dword_scan_watch = checkpoint.after_dword_scan_watch;
+    logl::log(
+        level::IMPORTANT,
+        format_args!(
+            "WC3 CHILD TABLE CHECKPOINT HIT from=0x{:08x} to=0x{:08x} table=0x{:08x} pages={}",
+            TABLE_CHECKPOINT_FROM_EIP,
+            TABLE_CHECKPOINT_TO_EIP,
+            checkpoint.table_base,
+            checkpoint.pages.len(),
+        ),
+    );
+    Ok(true)
+}
+
 fn war3_scan_single_step(exception: ChildException, registers: Registers) -> bool {
     exception.vector == Some(1)
         && exception.debug_status == Some(0x0000_4000)
@@ -1226,9 +1780,29 @@ pub(super) async fn run_loop(
                         }
                         let mut bytes = [0; wc3::seh::X86_CONTEXT_BYTES];
                         if child.address_space.read(seh.context_va, &mut bytes).map_err(|error| error.to_string())? != bytes.len() { return Err("short SEH context readback".into()); }
-                        let restored = wc3::seh::decode_x86_context(&bytes, seh.preserved_fs_base).map_err(str::to_owned)?;
-                        let restored_debug = wc3::seh::decode_x86_debug_registers(&bytes)
+                        let mut restored = wc3::seh::decode_x86_context(&bytes, seh.preserved_fs_base).map_err(str::to_owned)?;
+                        let mut restored_debug = wc3::seh::decode_x86_debug_registers(&bytes)
                             .map_err(str::to_owned)?;
+                        if restored.eip == TABLE_CHECKPOINT_FROM_EIP
+                            && child_read_u32(child, WAR3_DWORD_SCAN_INDEX) == Some(0)
+                        {
+                            let restored_checkpoint = try_restore_table_checkpoint(
+                                child,
+                                &mut contexts[active].context,
+                                &mut restored,
+                                &mut restored_debug,
+                            )
+                            .await?;
+                            if !restored_checkpoint {
+                                begin_table_checkpoint_capture(
+                                    child,
+                                    &contexts[active].context,
+                                    restored,
+                                    restored_debug,
+                                    &session,
+                                )?;
+                            }
+                        }
                         if seh.boring_single_step {
                             let control_changed = restored.eip != seh.original_registers.eip
                                 || restored.esp != seh.original_registers.esp
@@ -1306,6 +1880,27 @@ pub(super) async fn run_loop(
                             "WC3 CHILD SEH CONTEXT RETURN pid={} tid={} context=0x{:08x} old_ecx=0x{:08x} saved_ecx=0x{:08x} restored_ecx=0x{:08x}",
                             active_pid, active_tid, seh.context_va, seh.original_registers.ecx, raw_ecx, restored.ecx,
                             ));
+                        }
+                        if restored.eip == TABLE_CHECKPOINT_TO_EIP
+                            && child_read_u32(child, WAR3_DWORD_SCAN_INDEX)
+                                == Some(WAR3_TABLE_FILL_BOUND)
+                            && child.table_checkpoint_capture.is_some()
+                        {
+                            finish_table_checkpoint_capture(
+                                child,
+                                &contexts[active].context,
+                                restored,
+                                restored_debug,
+                                &session,
+                            )
+                            .await?;
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD OPERATOR STOP reason=table-checkpoint-created"
+                                ),
+                            );
+                            return Ok(());
                         }
                         contexts[active].context.set_registers(restored).map_err(|error| error.to_string())?;
                         contexts[active]
@@ -4858,6 +5453,7 @@ pub(super) async fn run_loop(
                             scan_progress: None,
                             scan_heartbeat_source: None,
                             dword_scan_watch: None,
+                            table_checkpoint_capture: None,
                             loader: ChildLoaderState {
                                 prepared: false,
                                 native_requests: Vec::new(),

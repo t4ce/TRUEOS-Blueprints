@@ -25,9 +25,11 @@ pub const EXIT_OTHER: u32 = 255;
 
 pub use bp_abi::{
     TrueosX86DebugRegistersV1 as DebugRegisters,
+    TrueosX86ExtendedStateV1 as ExtendedState,
     TrueosX86ExitV1 as Exit,
     TrueosX86RegistersV1 as Registers,
 };
+pub const X86_EXTENDED_STATE_BYTES: usize = bp_abi::TRUEOS_X86_EXTENDED_STATE_BYTES;
 
 #[inline]
 pub fn address_space_create() -> Result<u64, i32> {
@@ -124,6 +126,18 @@ pub fn context_set_debug_registers(
     status(unsafe {
         bp_abi::trueos_cabi_x86_context_debug_registers_set_v1(handle, registers)
     })
+}
+
+#[inline]
+pub fn context_extended_state(handle: u64) -> Result<ExtendedState, i32> {
+    let mut state = ExtendedState::default();
+    status(unsafe { bp_abi::trueos_cabi_x86_context_extended_state_get_v1(handle, &mut state) })?;
+    Ok(state)
+}
+
+#[inline]
+pub fn context_set_extended_state(handle: u64, state: &ExtendedState) -> Result<(), i32> {
+    status(unsafe { bp_abi::trueos_cabi_x86_context_extended_state_set_v1(handle, state) })
 }
 
 #[inline]
