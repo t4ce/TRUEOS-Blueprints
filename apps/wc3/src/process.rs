@@ -80,6 +80,7 @@ pub const LAUNCHER_IMAGE_FILENAME: &[u8] = b"C:\\Warcraft III\\Warcraft III.exe\
 pub const CHILD_IMAGE_FILENAME: &[u8] = b"C:\\Warcraft III\\War3.exe\0";
 pub const XP_WINDOWS_DIRECTORY: &[u8] = b"C:\\WINDOWS\0";
 pub const XP_SYSTEM_DIRECTORY: &[u8] = b"C:\\WINDOWS\\system32\0";
+const XP_TEMP_DIRECTORY: &[u8] = b"C:\\WINDOWS\\\0";
 const XP_PERFORMANCE_COUNTER_FREQUENCY: u64 = 1_000_000_000;
 const TIME_ZONE_ID_UNKNOWN: u32 = 0;
 const XP_TIME_ZONE_INFORMATION_BYTES: usize = 172;
@@ -1839,6 +1840,13 @@ impl XpProcess {
                     self.get_system_directory_a(esp, memory)?,
                 ))
             }
+            ProviderOp::GetTempPathA => {
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(self.get_temp_path_a(esp, memory)?))
+            }
             ProviderOp::QueryPerformanceFrequency => {
                 self.call_count = self
                     .call_count
@@ -2885,6 +2893,27 @@ impl XpProcess {
         memory: &mut impl GuestMemory,
     ) -> Result<u32, &'static str> {
         write_ansi_directory(XP_SYSTEM_DIRECTORY, esp, memory)
+    }
+
+    fn get_temp_path_a(
+        &self,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
+        let [_, capacity, output] = arguments::<3>(memory, esp)?;
+        let required = u32::try_from(XP_TEMP_DIRECTORY.len())
+            .map_err(|_| ProviderDispatchError::Fault("GetTempPathA length"))?;
+        if capacity < required {
+            return Ok(required);
+        }
+        if output == 0 {
+            return Err(ProviderDispatchError::Frontier {
+                api: "GetTempPathA",
+                detail: format!("null output capacity={capacity}"),
+            });
+        }
+        memory.write(output, XP_TEMP_DIRECTORY)?;
+        Ok(required - 1)
     }
 
     fn query_performance_frequency(

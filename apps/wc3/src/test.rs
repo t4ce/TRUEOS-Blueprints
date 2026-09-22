@@ -3511,6 +3511,44 @@ mod tests_process_1 {
     }
 
     #[test]
+    fn child_get_temp_path_a_writes_windows_fallback() {
+        let provider = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("GetTempPathA".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&provider);
+        assert_eq!(operation, ProviderOp::GetTempPathA);
+        assert!(operation.is_modeled());
+        assert!(operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 8);
+        assert_eq!(
+            crate::child_loader::provider_thunk_kind(&provider),
+            thunk32::Kind::Stdcall(8)
+        );
+        let mut xp = XpProcess::new_child();
+        xp.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+        let output = esp - 0x100;
+        write_u32(&mut memory, esp, 0x0046_35e3).unwrap();
+        write_u32(&mut memory, esp + 4, 0x400).unwrap();
+        write_u32(&mut memory, esp + 8, output).unwrap();
+
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(11))
+        );
+        let mut actual = [0u8; 12];
+        memory.read(output, &mut actual).unwrap();
+        assert_eq!(&actual, XP_TEMP_DIRECTORY);
+        assert_eq!(xp.call_count, 1);
+    }
+
+    #[test]
     fn child_query_performance_frequency_exposes_nanosecond_frequency() {
         let provider = ProviderImport {
             module: "KERNEL32.dll".into(),
