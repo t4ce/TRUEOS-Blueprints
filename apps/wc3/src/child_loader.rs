@@ -46,6 +46,7 @@ pub enum ProviderOp {
     GetFileSize,
     SetFilePointer,
     ReadFile,
+    WriteFile,
     CreateEventA,
     CreateMutexA,
     ReleaseMutex,
@@ -139,7 +140,8 @@ impl ProviderOp {
             | Self::WriteProcessMemory
             | Self::RegOpenKeyExA
             | Self::GetTokenInformation
-            | Self::ReadFile => 20,
+            | Self::ReadFile
+            | Self::WriteFile => 20,
             Self::AllocateAndInitializeSid => 44,
             Self::EqualSid => 8,
             _ => 0,
@@ -171,6 +173,7 @@ impl ProviderOp {
                 | Self::GetFileSize
                 | Self::SetFilePointer
                 | Self::ReadFile
+                | Self::WriteFile
                 | Self::GetWindowsDirectoryA
                 | Self::GetSystemDirectoryA
                 | Self::GetTempPathA
@@ -222,6 +225,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "GetFileSize" => ProviderOp::GetFileSize,
             "SetFilePointer" => ProviderOp::SetFilePointer,
             "ReadFile" => ProviderOp::ReadFile,
+            "WriteFile" => ProviderOp::WriteFile,
             "CreateEventA" => ProviderOp::CreateEventA,
             "CreateMutexA" => ProviderOp::CreateMutexA,
             "ReleaseMutex" => ProviderOp::ReleaseMutex,

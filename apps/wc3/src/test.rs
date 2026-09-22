@@ -3802,6 +3802,8 @@ mod tests_process_1 {
             Some(&FileHandle {
                 backing: FileBacking::SelfImage,
                 cursor: 0,
+                access: GENERIC_READ,
+                share: 1,
             })
         );
         assert!(is_self_image_path("c:/warcraft iii/war3.EXE"));
@@ -3873,6 +3875,157 @@ mod tests_process_1 {
         );
         assert!(!xp.file_handles.contains_key(&FILE_HANDLE_BASE));
         assert_eq!(xp.call_count, 5);
+    }
+
+    #[test]
+    fn child_sintf16_scratch_file_is_process_local_and_mutable() {
+        let providers = [
+            "CreateFileA",
+            "WriteFile",
+            "SetFileAttributesA",
+            "GetFileSize",
+            "SetFilePointer",
+            "ReadFile",
+            "CloseHandle",
+        ]
+        .map(|symbol| ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name(symbol.into()),
+            iat_rva: 0,
+        });
+        let mut xp = XpProcess::new_child();
+        xp.install_provider_surface(providers.to_vec(), Vec::new(), Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+        let filename = esp - 0x100;
+        let input = esp - 0x120;
+        let output = esp - 0x140;
+        let bytes_transferred = esp - 0x160;
+        memory.write(filename, b"C:\\WINDOWS\\SIntf16.dll\0").unwrap();
+        memory.write(input, b"abc").unwrap();
+
+        for (index, value) in [0x0046_363b, filename, FILE_ATTRIBUTE_TEMPORARY]
+            .into_iter()
+            .enumerate()
+        {
+            write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
+        }
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 2, esp, &mut memory),
+            Ok(PersonalityAction::Return(0))
+        );
+        assert_eq!(xp.last_error, ERROR_FILE_NOT_FOUND);
+
+        for (index, value) in [
+            0x0046_3641,
+            filename,
+            GENERIC_READ | GENERIC_WRITE,
+            0,
+            0,
+            CREATE_ALWAYS,
+            0,
+            0,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
+        }
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(FILE_HANDLE_BASE))
+        );
+        assert_eq!(xp.last_error, 0);
+
+        for (index, value) in [
+            0x0046_3650,
+            FILE_HANDLE_BASE,
+            input,
+            3,
+            bytes_transferred,
+            0,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
+        }
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 1, esp, &mut memory),
+            Ok(PersonalityAction::Return(1))
+        );
+        assert_eq!(read_u32(&memory, bytes_transferred).unwrap(), 3);
+
+        for (index, value) in [0x0046_3660, filename, FILE_ATTRIBUTE_TEMPORARY]
+            .into_iter()
+            .enumerate()
+        {
+            write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
+        }
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 2, esp, &mut memory),
+            Ok(PersonalityAction::Return(1))
+        );
+
+        write_u32(&mut memory, esp, 0x0046_3670).unwrap();
+        write_u32(&mut memory, esp + 4, FILE_HANDLE_BASE).unwrap();
+        write_u32(&mut memory, esp + 8, 0).unwrap();
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 3, esp, &mut memory),
+            Ok(PersonalityAction::Return(3))
+        );
+
+        for (index, value) in [0x0046_3680, FILE_HANDLE_BASE, 0, 0, FILE_BEGIN]
+            .into_iter()
+            .enumerate()
+        {
+            write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
+        }
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 4, esp, &mut memory),
+            Ok(PersonalityAction::Return(0))
+        );
+
+        for (index, value) in [
+            0x0046_3690,
+            FILE_HANDLE_BASE,
+            output,
+            3,
+            bytes_transferred,
+            0,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
+        }
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 5, esp, &mut memory),
+            Ok(PersonalityAction::Return(1))
+        );
+        let mut actual = [0; 3];
+        memory.read(output, &mut actual).unwrap();
+        assert_eq!(actual, *b"abc");
+
+        write_u32(&mut memory, esp, 0x0046_36a0).unwrap();
+        write_u32(&mut memory, esp + 4, FILE_HANDLE_BASE).unwrap();
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 6, esp, &mut memory),
+            Ok(PersonalityAction::Return(1))
+        );
+        assert!(!xp.file_handles.contains_key(&FILE_HANDLE_BASE));
+        let scratch_id = xp
+            .scratch_paths
+            .get(r"c:\windows\sintf16.dll")
+            .copied()
+            .unwrap();
+        let scratch = xp.scratch_files.get(&scratch_id).unwrap();
+        assert_eq!(scratch.path, r"c:\windows\sintf16.dll");
+        assert_eq!(scratch.bytes, b"abc");
+        assert_eq!(scratch.attributes, FILE_ATTRIBUTE_TEMPORARY);
     }
 
     #[test]
@@ -4329,11 +4482,12 @@ mod tests_process_1 {
     }
 
     #[test]
-    fn child_self_image_file_dynamic_exports_use_win32_stdcall_cleanup() {
+    fn child_file_dynamic_exports_use_win32_stdcall_cleanup() {
         for (symbol, operation, cleanup) in [
             ("GetFileSize", ProviderOp::GetFileSize, 8),
             ("SetFilePointer", ProviderOp::SetFilePointer, 16),
             ("ReadFile", ProviderOp::ReadFile, 20),
+            ("WriteFile", ProviderOp::WriteFile, 20),
         ] {
             let provider = ProviderImport {
                 module: "kernel32.dll".into(),

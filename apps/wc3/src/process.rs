@@ -42,6 +42,9 @@ pub const EXCEPTION_CONTINUE_SEARCH: u32 = 0;
 pub const EXCEPTION_EXECUTE_HANDLER: u32 = 1;
 const ERROR_MOD_NOT_FOUND: u32 = 126;
 const ERROR_FILE_NOT_FOUND: u32 = 2;
+const ERROR_ACCESS_DENIED: u32 = 5;
+const ERROR_FILE_EXISTS: u32 = 80;
+const ERROR_ALREADY_EXISTS: u32 = 183;
 const ERROR_INVALID_HANDLE: u32 = 6;
 const ERROR_NOT_ENOUGH_MEMORY: u32 = 8;
 const ERROR_INSUFFICIENT_BUFFER: u32 = 122;
@@ -51,6 +54,13 @@ const TOKEN_HANDLE_BASE: u32 = 0x5743_9001;
 const FILE_HANDLE_BASE: u32 = 0x5743_b001;
 const FILE_WRITE_ACCESS_MASK: u32 = 0x5000_0116;
 const FILE_ATTRIBUTE_TEMPORARY: u32 = 0x0000_0100;
+const CREATE_NEW: u32 = 1;
+const CREATE_ALWAYS: u32 = 2;
+const OPEN_EXISTING: u32 = 3;
+const OPEN_ALWAYS: u32 = 4;
+const TRUNCATE_EXISTING: u32 = 5;
+const GENERIC_READ: u32 = 0x8000_0000;
+const GENERIC_WRITE: u32 = 0x4000_0000;
 const FILE_BEGIN: u32 = 0;
 const FILE_CURRENT: u32 = 1;
 const FILE_END: u32 = 2;
@@ -557,16 +567,34 @@ struct TokenHandle {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum FileBacking {
     SelfImage,
+    Scratch(u32),
+}
+
+#[derive(Clone, Debug)]
+struct ScratchFile {
+    path: String,
+    bytes: Vec<u8>,
+    attributes: u32,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct FileHandle {
     backing: FileBacking,
     cursor: u64,
+    access: u32,
+    share: u32,
+}
+
+fn canonical_file_path(path: &str) -> String {
+    path.replace('/', "\\").to_ascii_lowercase()
 }
 
 fn is_self_image_path(path: &str) -> bool {
     path.replace('/', "\\").eq_ignore_ascii_case("C:\\Warcraft III\\War3.exe")
+}
+
+fn is_war3_scratch_path(path: &str) -> bool {
+    canonical_file_path(path) == r"c:\windows\sintf16.dll"
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -724,6 +752,9 @@ pub struct XpProcess {
     next_token_handle: u32,
     file_handles: HashMap<u32, FileHandle>,
     next_file_handle: u32,
+    scratch_files: HashMap<u32, ScratchFile>,
+    scratch_paths: HashMap<String, u32>,
+    next_scratch_file: u32,
     sid_allocations: HashMap<u32, u32>,
     next_sid: u32,
     last_error: u32,
@@ -867,6 +898,9 @@ impl XpProcess {
             next_token_handle: TOKEN_HANDLE_BASE,
             file_handles: HashMap::new(),
             next_file_handle: FILE_HANDLE_BASE,
+            scratch_files: HashMap::new(),
+            scratch_paths: HashMap::new(),
+            next_scratch_file: 1,
             sid_allocations: HashMap::new(),
             next_sid: PROCESS_SID_ARENA_BASE,
             last_error: 0,
@@ -1313,15 +1347,52 @@ impl XpProcess {
         Ok(u32::from(canonical_sid(memory, first)? == canonical_sid(memory, second)?))
     }
 
-    fn self_image_file(&self, handle: u32) -> Result<FileHandle, ProviderDispatchError> {
+    fn file_handle(&self, handle: u32) -> Result<FileHandle, ProviderDispatchError> {
         self.file_handles
             .get(&handle)
             .copied()
-            .filter(|file| file.backing == FileBacking::SelfImage)
             .ok_or_else(|| ProviderDispatchError::Frontier {
                 api: "file handle",
                 detail: format!("unmodeled handle=0x{handle:08x}"),
             })
+    }
+
+    fn create_scratch_file(
+        &mut self,
+        path: String,
+        attributes: u32,
+    ) -> Result<u32, ProviderDispatchError> {
+        let id = self.next_scratch_file;
+        self.next_scratch_file = self
+            .next_scratch_file
+            .checked_add(1)
+            .ok_or("scratch file overflow")?;
+        self.scratch_paths.insert(path.clone(), id);
+        self.scratch_files.insert(
+            id,
+            ScratchFile {
+                path,
+                bytes: Vec::new(),
+                attributes,
+            },
+        );
+        Ok(id)
+    }
+
+    fn file_length(
+        &self,
+        file: FileHandle,
+        self_image_bytes: Option<&[u8]>,
+    ) -> Result<u64, ProviderDispatchError> {
+        match file.backing {
+            FileBacking::SelfImage => u64::try_from(Self::self_image_bytes(self_image_bytes)?.len())
+                .map_err(|_| ProviderDispatchError::Fault("self image length")),
+            FileBacking::Scratch(id) => self
+                .scratch_files
+                .get(&id)
+                .map(|scratch| scratch.bytes.len() as u64)
+                .ok_or(ProviderDispatchError::Fault("scratch file disappeared")),
+        }
     }
 
     fn self_image_bytes<'a>(
@@ -1667,6 +1738,102 @@ impl XpProcess {
                     });
                 }
                 let path = read_c_string(memory, filename, 1024)?;
+                if is_war3_scratch_path(&path) {
+                    if security_attributes != 0 || template_file != 0 {
+                        return Err(ProviderDispatchError::Frontier {
+                            api: "CreateFileA",
+                            detail: format!(
+                                "scratch security=0x{security_attributes:08x} \\
+                                 template=0x{template_file:08x}"
+                            ),
+                        });
+                    }
+                    let canonical = canonical_file_path(&path);
+                    let existing = self.scratch_paths.get(&canonical).copied();
+                    let file_id = match creation_disposition {
+                        CREATE_NEW => {
+                            if existing.is_some() {
+                                self.set_last_error(ERROR_FILE_EXISTS);
+                                return Ok(PersonalityAction::Return(u32::MAX));
+                            }
+                            self.create_scratch_file(canonical, flags_and_attributes)?
+                        }
+                        CREATE_ALWAYS => {
+                            if let Some(id) = existing {
+                                self.scratch_files
+                                    .get_mut(&id)
+                                    .ok_or("scratch file disappeared")?
+                                    .bytes
+                                    .clear();
+                                self.set_last_error(ERROR_ALREADY_EXISTS);
+                                id
+                            } else {
+                                self.set_last_error(0);
+                                self.create_scratch_file(canonical, flags_and_attributes)?
+                            }
+                        }
+                        OPEN_EXISTING => {
+                            let Some(id) = existing else {
+                                self.set_last_error(ERROR_FILE_NOT_FOUND);
+                                return Ok(PersonalityAction::Return(u32::MAX));
+                            };
+                            id
+                        }
+                        OPEN_ALWAYS => {
+                            if let Some(id) = existing {
+                                self.set_last_error(ERROR_ALREADY_EXISTS);
+                                id
+                            } else {
+                                self.set_last_error(0);
+                                self.create_scratch_file(canonical, flags_and_attributes)?
+                            }
+                        }
+                        TRUNCATE_EXISTING => {
+                            let Some(id) = existing else {
+                                self.set_last_error(ERROR_FILE_NOT_FOUND);
+                                return Ok(PersonalityAction::Return(u32::MAX));
+                            };
+                            if desired_access & GENERIC_WRITE == 0 {
+                                self.set_last_error(ERROR_ACCESS_DENIED);
+                                return Ok(PersonalityAction::Return(u32::MAX));
+                            }
+                            self.scratch_files
+                                .get_mut(&id)
+                                .ok_or("scratch file disappeared")?
+                                .bytes
+                                .clear();
+                            id
+                        }
+                        other => {
+                            return Err(ProviderDispatchError::Frontier {
+                                api: "CreateFileA",
+                                detail: format!(
+                                    "scratch disposition={other} access=0x{desired_access:08x} \\
+                                     share=0x{share_mode:08x} flags=0x{flags_and_attributes:08x}"
+                                ),
+                            });
+                        }
+                    };
+                    let handle = self.next_file_handle;
+                    self.next_file_handle = self
+                        .next_file_handle
+                        .checked_add(1)
+                        .ok_or("file handle overflow")?;
+                    self.file_handles.insert(
+                        handle,
+                        FileHandle {
+                            backing: FileBacking::Scratch(file_id),
+                            cursor: 0,
+                            access: desired_access,
+                            share: share_mode,
+                        },
+                    );
+                    self.call_count = self
+                        .call_count
+                        .checked_add(1)
+                        .ok_or("call count overflow")?;
+                    return Ok(PersonalityAction::Return(handle));
+                }
                 if !is_self_image_path(&path) {
                     return Err(ProviderDispatchError::Frontier {
                         api: "CreateFileA",
@@ -1715,6 +1882,8 @@ impl XpProcess {
                     FileHandle {
                         backing: FileBacking::SelfImage,
                         cursor: 0,
+                        access: desired_access,
+                        share: share_mode,
                     },
                 );
                 self.call_count = self
@@ -1725,9 +1894,8 @@ impl XpProcess {
             }
             ProviderOp::GetFileSize => {
                 let [_, handle, high] = arguments::<3>(memory, esp)?;
-                self.self_image_file(handle)?;
-                let length = u64::try_from(Self::self_image_bytes(self_image_bytes)?.len())
-                    .map_err(|_| ProviderDispatchError::Fault("self image length"))?;
+                let file = self.file_handle(handle)?;
+                let length = self.file_length(file, self_image_bytes)?;
                 if high != 0 {
                     memory.write(high, &((length >> 32) as u32).to_le_bytes())?;
                 }
@@ -1740,7 +1908,7 @@ impl XpProcess {
             ProviderOp::SetFilePointer => {
                 let [_, handle, distance_low, distance_high, move_method] =
                     arguments::<5>(memory, esp)?;
-                let file = self.self_image_file(handle)?;
+                let file = self.file_handle(handle)?;
                 let high = if distance_high == 0 {
                     0i64
                 } else {
@@ -1750,8 +1918,7 @@ impl XpProcess {
                 let base = match move_method {
                     FILE_BEGIN => 0,
                     FILE_CURRENT => file.cursor,
-                    FILE_END => u64::try_from(Self::self_image_bytes(self_image_bytes)?.len())
-                        .map_err(|_| ProviderDispatchError::Fault("self image length"))?,
+                    FILE_END => self.file_length(file, self_image_bytes)?,
                     _ => {
                         return Err(ProviderDispatchError::Frontier {
                             api: "SetFilePointer",
@@ -1790,22 +1957,48 @@ impl XpProcess {
                         detail: format!("overlapped=0x{overlapped:08x}"),
                     });
                 }
-                let file = self.self_image_file(handle)?;
-                let backing = Self::self_image_bytes(self_image_bytes)?;
+                let file = self.file_handle(handle)?;
+                if file.access & GENERIC_READ == 0 {
+                    self.set_last_error(ERROR_ACCESS_DENIED);
+                    return Ok(PersonalityAction::Return(0));
+                }
                 let start = usize::try_from(file.cursor)
-                    .map_err(|_| ProviderDispatchError::Fault("self image cursor"))?;
+                    .map_err(|_| ProviderDispatchError::Fault("file cursor"))?;
                 let requested = usize::try_from(requested)
                     .map_err(|_| ProviderDispatchError::Fault("ReadFile size"))?;
-                let source_start = start.min(backing.len());
-                let transferred = if start > backing.len() {
-                    0
-                } else {
-                    requested.min(backing.len() - start)
+                let transferred = match file.backing {
+                    FileBacking::SelfImage => {
+                        let backing = Self::self_image_bytes(self_image_bytes)?;
+                        let source_start = start.min(backing.len());
+                        let transferred = if start > backing.len() {
+                            0
+                        } else {
+                            requested.min(backing.len() - start)
+                        };
+                        memory.write(
+                            output,
+                            &backing[source_start..source_start + transferred],
+                        )?;
+                        transferred
+                    }
+                    FileBacking::Scratch(id) => {
+                        let scratch = self
+                            .scratch_files
+                            .get(&id)
+                            .ok_or("scratch file disappeared")?;
+                        let source_start = start.min(scratch.bytes.len());
+                        let transferred = if start > scratch.bytes.len() {
+                            0
+                        } else {
+                            requested.min(scratch.bytes.len() - start)
+                        };
+                        memory.write(
+                            output,
+                            &scratch.bytes[source_start..source_start + transferred],
+                        )?;
+                        transferred
+                    }
                 };
-                memory.write(
-                    output,
-                    &backing[source_start..source_start + transferred],
-                )?;
                 if bytes_read != 0 {
                     memory.write(bytes_read, &(transferred as u32).to_le_bytes())?;
                 }
@@ -1818,6 +2011,55 @@ impl XpProcess {
                         ProviderDispatchError::Fault("ReadFile transferred length")
                     })?)
                     .ok_or("self image cursor overflow")?;
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(1))
+            }
+            ProviderOp::WriteFile => {
+                let [_, handle, source, requested, bytes_written, overlapped] =
+                    arguments::<6>(memory, esp)?;
+                if overlapped != 0 {
+                    return Err(ProviderDispatchError::Frontier {
+                        api: "WriteFile",
+                        detail: format!("overlapped=0x{overlapped:08x}"),
+                    });
+                }
+                let file = self.file_handle(handle)?;
+                if file.access & GENERIC_WRITE == 0 {
+                    self.set_last_error(ERROR_ACCESS_DENIED);
+                    return Ok(PersonalityAction::Return(0));
+                }
+                let FileBacking::Scratch(file_id) = file.backing else {
+                    self.set_last_error(ERROR_ACCESS_DENIED);
+                    return Ok(PersonalityAction::Return(0));
+                };
+                let requested = usize::try_from(requested)
+                    .map_err(|_| ProviderDispatchError::Fault("WriteFile size"))?;
+                let mut input = vec![0; requested];
+                memory.read(source, &mut input)?;
+                let start = usize::try_from(file.cursor)
+                    .map_err(|_| ProviderDispatchError::Fault("WriteFile cursor"))?;
+                let end = start
+                    .checked_add(requested)
+                    .ok_or(ProviderDispatchError::Fault("WriteFile extent"))?;
+                let scratch = self
+                    .scratch_files
+                    .get_mut(&file_id)
+                    .ok_or("scratch file disappeared")?;
+                if scratch.bytes.len() < end {
+                    scratch.bytes.resize(end, 0);
+                }
+                scratch.bytes[start..end].copy_from_slice(&input);
+                self.file_handles
+                    .get_mut(&handle)
+                    .ok_or("file handle disappeared")?
+                    .cursor = end as u64;
+                if bytes_written != 0 {
+                    memory.write(bytes_written, &(requested as u32).to_le_bytes())?;
+                }
+                self.set_last_error(0);
                 self.call_count = self
                     .call_count
                     .checked_add(1)
@@ -1859,6 +2101,22 @@ impl XpProcess {
                 }
                 let path = read_c_string(memory, filename, 1024)?;
                 let _temporary = attributes & FILE_ATTRIBUTE_TEMPORARY != 0;
+                if let Some(id) = self
+                    .scratch_paths
+                    .get(&canonical_file_path(&path))
+                    .copied()
+                {
+                    self.scratch_files
+                        .get_mut(&id)
+                        .ok_or("scratch file disappeared")?
+                        .attributes = attributes;
+                    self.set_last_error(0);
+                    self.call_count = self
+                        .call_count
+                        .checked_add(1)
+                        .ok_or("call count overflow")?;
+                    return Ok(PersonalityAction::Return(1));
+                }
                 if !self.path_exists(&path) {
                     self.set_last_error(ERROR_FILE_NOT_FOUND);
                     self.call_count = self
@@ -2819,7 +3077,14 @@ impl XpProcess {
     }
 
     fn path_exists(&self, path: &str) -> bool {
-        is_self_image_path(path)
+        if is_self_image_path(path) {
+            return true;
+        }
+        let canonical = canonical_file_path(path);
+        self.scratch_paths
+            .get(&canonical)
+            .and_then(|id| self.scratch_files.get(id))
+            .is_some_and(|scratch| scratch.path == canonical)
     }
 
     pub fn set_unhandled_exception_filter(&mut self, filter: u32) -> u32 {
