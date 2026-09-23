@@ -1637,7 +1637,6 @@ struct PendingChild {
     seh_handler_dumped: bool,
     seh: Option<ChildSehDispatch>,
     unhandled_filter_call: Option<ChildUnhandledFilterCall>,
-    petite_header_write_watch: Option<PetiteHeaderWriteWatch>,
     repeated_null_call: Option<NullLoopWatch>,
     repeated_divide_fault: Option<DivideLoopWatch>,
     single_step_count: u64,
@@ -1649,12 +1648,6 @@ struct PendingChild {
     loop_checkpoint_attempted: u8,
     loader: ChildLoaderState,
     execution: ChildExecutionState,
-}
-
-#[derive(Clone, Copy, Debug)]
-struct PetiteHeaderWriteWatch {
-    slot: u8,
-    saved_debug: DebugRegisters,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
