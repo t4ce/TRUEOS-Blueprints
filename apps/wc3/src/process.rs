@@ -65,6 +65,8 @@ const TOKEN_QUERY: u32 = 0x0000_0008;
 const TOKEN_HANDLE_BASE: u32 = 0x5743_9001;
 const FILE_HANDLE_BASE: u32 = 0x5743_b001;
 const FILE_WRITE_ACCESS_MASK: u32 = 0x5000_0116;
+const INVALID_FILE_ATTRIBUTES: u32 = u32::MAX;
+const FILE_ATTRIBUTE_NORMAL: u32 = 0x0000_0080;
 const FILE_ATTRIBUTE_TEMPORARY: u32 = 0x0000_0100;
 const CREATE_NEW: u32 = 1;
 const CREATE_ALWAYS: u32 = 2;
@@ -117,6 +119,7 @@ pub const COMMAND_LINE: &[u8] = b"\"Warcraft III.exe\"\0";
 pub const CHILD_COMMAND_LINE: &[u8] = b"\"war3.exe\" -opengl -nosound -swtnl\0";
 pub const LAUNCHER_IMAGE_FILENAME: &[u8] = b"C:\\Warcraft III\\Warcraft III.exe\0";
 pub const CHILD_IMAGE_FILENAME: &[u8] = b"C:\\Warcraft III\\War3.exe\0";
+const CHILD_WORKING_DIRECTORY: &str = "C:\\Warcraft III";
 pub const XP_WINDOWS_DIRECTORY: &[u8] = b"C:\\WINDOWS\0";
 pub const XP_SYSTEM_DIRECTORY: &[u8] = b"C:\\WINDOWS\\system32\0";
 const XP_TEMP_DIRECTORY: &[u8] = b"C:\\WINDOWS\\\0";
@@ -446,6 +449,18 @@ fn crt_strstr(
         }
     }
     Err("unterminated strstr haystack")
+}
+
+fn crt_full_path(path: &str) -> Option<String> {
+    if path.is_empty() {
+        return None;
+    }
+    let path = path.replace('/', "\\");
+    if path.as_bytes().get(1) == Some(&b':') || path.starts_with("\\\\") {
+        Some(path)
+    } else {
+        Some(format!("{CHILD_WORKING_DIRECTORY}\\{path}"))
+    }
 }
 
 fn wsprintf_a(memory: &mut impl GuestMemory, esp: u32) -> Result<u32, ProviderDispatchError> {
@@ -1845,6 +1860,32 @@ impl XpProcess {
                     .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(result))
             }
+            ProviderOp::CrtFullPath => {
+                let [_, output, path, capacity] = arguments::<4>(memory, esp)?;
+                let result = if output == 0 || capacity == 0 {
+                    0
+                } else {
+                    let path = read_c_string(memory, path, 1024)?;
+                    let Some(full_path) = crt_full_path(&path) else {
+                        return Ok(PersonalityAction::Return(0));
+                    };
+                    let bytes = full_path.as_bytes();
+                    if bytes.len().checked_add(1).ok_or("fullpath length")? > capacity as usize {
+                        0
+                    } else {
+                        memory.write(output, bytes)?;
+                        memory.write(
+                            output
+                                .checked_add(u32::try_from(bytes.len()).map_err(|_| "fullpath length")?)
+                                .ok_or("fullpath output overflow")?,
+                            &[0],
+                        )?;
+                        output
+                    }
+                };
+                self.call_count = self.call_count.checked_add(1).ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(result))
+            }
             ProviderOp::FreeEnvironmentStringsW => {
                 let pointer = read_u32(
                     memory,
@@ -2575,6 +2616,36 @@ impl XpProcess {
                 // relative-path resolver.
                 self.set_last_error(0);
                 Ok(PersonalityAction::Return(1))
+            }
+            ProviderOp::GetFileAttributesA => {
+                let [_, filename] = arguments::<2>(memory, esp)?;
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                if filename == 0 {
+                    self.set_last_error(ERROR_FILE_NOT_FOUND);
+                    return Ok(PersonalityAction::Return(INVALID_FILE_ATTRIBUTES));
+                }
+                let path = read_c_string(memory, filename, 1024)?;
+                let attributes = if is_self_image_path(&path) {
+                    Some(FILE_ATTRIBUTE_NORMAL)
+                } else {
+                    self.scratch_paths
+                        .get(&canonical_file_path(&path))
+                        .and_then(|id| self.scratch_files.get(id))
+                        .map(|file| file.attributes)
+                };
+                match attributes {
+                    Some(attributes) => {
+                        self.set_last_error(0);
+                        Ok(PersonalityAction::Return(attributes))
+                    }
+                    None => {
+                        self.set_last_error(ERROR_FILE_NOT_FOUND);
+                        Ok(PersonalityAction::Return(INVALID_FILE_ATTRIBUTES))
+                    }
+                }
             }
             ProviderOp::SetFileAttributesA => {
                 let [_, filename, attributes] = arguments::<3>(memory, esp)?;

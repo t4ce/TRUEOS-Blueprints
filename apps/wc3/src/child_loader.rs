@@ -71,6 +71,7 @@ pub enum ProviderOp {
     GetSystemDirectoryA,
     GetTempPathA,
     SetCurrentDirectoryA,
+    GetFileAttributesA,
     SetFileAttributesA,
     QueryPerformanceFrequency,
     QueryPerformanceCounter,
@@ -113,6 +114,7 @@ pub enum ProviderOp {
     CrtMalloc,
     CrtStrrchr,
     CrtStrstr,
+    CrtFullPath,
     Unknown,
 }
 
@@ -150,6 +152,7 @@ impl ProviderOp {
             | Self::GetSystemTime
             | Self::GetTimeZoneInformation
             | Self::SetCurrentDirectoryA
+            | Self::GetFileAttributesA
             | Self::FlushFileBuffers => 4,
             Self::GetCPInfo | Self::GetWindowsDirectoryA | Self::GetSystemDirectoryA => 8,
             Self::GetProcAddress
@@ -190,6 +193,7 @@ impl ProviderOp {
             | Self::CrtMalloc
             | Self::CrtStrrchr
             | Self::CrtStrstr
+            | Self::CrtFullPath
             | Self::WsprintfA => 0,
             _ => 0,
         }
@@ -228,6 +232,7 @@ impl ProviderOp {
                 | Self::GetSystemDirectoryA
                 | Self::GetTempPathA
                 | Self::SetCurrentDirectoryA
+                | Self::GetFileAttributesA
                 | Self::SetFileAttributesA
                 | Self::QueryPerformanceFrequency
                 | Self::QueryPerformanceCounter
@@ -248,6 +253,7 @@ impl ProviderOp {
                 | Self::CrtOnExit
                 | Self::CrtStrrchr
                 | Self::CrtStrstr
+                | Self::CrtFullPath
                 | Self::WsprintfA
         )
     }
@@ -298,6 +304,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "GetSystemDirectoryA" => ProviderOp::GetSystemDirectoryA,
             "GetTempPathA" => ProviderOp::GetTempPathA,
             "SetCurrentDirectoryA" => ProviderOp::SetCurrentDirectoryA,
+            "GetFileAttributesA" => ProviderOp::GetFileAttributesA,
             "SetFileAttributesA" => ProviderOp::SetFileAttributesA,
             "QueryPerformanceFrequency" => ProviderOp::QueryPerformanceFrequency,
             "QueryPerformanceCounter" => ProviderOp::QueryPerformanceCounter,
@@ -357,6 +364,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "malloc" => ProviderOp::CrtMalloc,
             "strrchr" => ProviderOp::CrtStrrchr,
             "strstr" => ProviderOp::CrtStrstr,
+            "_fullpath" => ProviderOp::CrtFullPath,
             _ => ProviderOp::Unknown,
         };
     }
