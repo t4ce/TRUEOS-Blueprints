@@ -5,8 +5,6 @@ pub(super) mod loop_checkpoint;
 const ERROR_PROC_NOT_FOUND: u32 = 127;
 const EXEC_SAMPLE_PREEMPTIONS: u64 = 8;
 const MAX_SEH_CHAIN_DEPTH: u32 = 64;
-const WAR3_NULL_CALL_SLOT: u32 = 0x0049_cbec;
-const WAR3_NULL_CALL_NEIGHBORS: u32 = 0x0049_cbdc;
 const WAR3_REPEATED_NULL_CALL_SLOT: u32 = 0x0049_a960;
 const WAR3_DIVIDE_EXCEPTION_HANDLER: u32 = 0x0045_a0c0;
 const WAR3_DIVIDE_EXCEPTION_EIP: u32 = 0x0045_ae47;
@@ -430,50 +428,6 @@ fn log_null_slot_provenance(child: &PendingChild, slot: u32, runtime_value: Opti
         level::IMPORTANT,
         format_args!(
             "WC3 CHILD NULL SLOT BINDING slot=0x{slot:08x} category={category} normal_path={normal_path} reason=slot-zero-after-loader",
-        ),
-    );
-}
-
-fn log_child_entry_null_slot_check(child: &PendingChild) {
-    let mut slot_bytes = [0; 4];
-    let slot_value = (child
-        .address_space
-        .read(WAR3_NULL_CALL_SLOT, &mut slot_bytes)
-        .ok()
-        == Some(slot_bytes.len()))
-    .then(|| u32::from_le_bytes(slot_bytes));
-    let is_import = WAR3_NULL_CALL_SLOT
-        .checked_sub(child.image.image_base)
-        .is_some_and(|rva| child_image_import_at_rva(child, rva).is_some());
-    logl::log(
-        level::IMPORTANT,
-        format_args!(
-            "WC3 CHILD ENTRY SLOT CHECK slot=0x{WAR3_NULL_CALL_SLOT:08x} value={} import={}",
-            slot_value
-                .map(|value| format!("0x{value:08x}"))
-                .unwrap_or_else(|| "<unreadable>".into()),
-            u32::from(is_import),
-        ),
-    );
-    let mut table = [0; 32];
-    let words = if child
-        .address_space
-        .read(WAR3_NULL_CALL_NEIGHBORS, &mut table)
-        .ok()
-        == Some(table.len())
-    {
-        table
-            .chunks_exact(4)
-            .map(|word| format!("0x{:08x}", u32::from_le_bytes(word.try_into().unwrap())))
-            .collect::<Vec<_>>()
-            .join(",")
-    } else {
-        "<unreadable>".into()
-    };
-    logl::log(
-        level::IMPORTANT,
-        format_args!(
-            "WC3 CHILD ENTRY SLOT NEIGHBORS base=0x{WAR3_NULL_CALL_NEIGHBORS:08x} words=[{words}]",
         ),
     );
 }
@@ -1747,7 +1701,6 @@ pub(super) async fn run_loop(
                                     child.pid, child.tid, child.native_modules.len(), initialized
                                 ),
                             );
-                            log_child_entry_null_slot_check(child);
                             let (entry, frame_esp) = arm_existing_child_image_entry(
                                 child,
                                 &mut contexts[active],
@@ -2999,6 +2952,55 @@ pub(super) async fn run_loop(
                         let mut registers = exit.registers;
                         registers.eax = previous;
                         contexts[active].context.set_registers(registers).map_err(|error| error.to_string())?;
+                        continue;
+                    }
+                    let is_crt_set_app_type = matches!(
+                        &provider.symbol,
+                        child_loader::ProviderSymbol::Name(name)
+                            if provider.module.eq_ignore_ascii_case("MSVCRT.dll")
+                                && name == "__set_app_type"
+                    );
+                    if is_crt_set_app_type {
+                        let app_type = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            exit.registers.esp,
+                            2,
+                        )?[1];
+                        let mut child_memory = X86Memory(&child.address_space);
+                        let action = session
+                            .process_mut(active_pid)
+                            .ok_or_else(|| "child process missing".to_owned())?
+                            .xp
+                            .dispatch_provider_for_process(
+                                active_pid,
+                                active_tid,
+                                provider_id,
+                                exit.registers.esp,
+                                &mut child_memory,
+                            )
+                            .map_err(str::to_owned)?;
+                        let PersonalityAction::Return(return_value) = action else {
+                            return Err("__set_app_type child provider did not return".into());
+                        };
+                        let kind = match app_type {
+                            CRT_UNKNOWN_APP => "unknown",
+                            CRT_CONSOLE_APP => "console",
+                            CRT_GUI_APP => "gui",
+                            _ => "unobserved",
+                        };
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD CRT SET APP TYPE pid={} tid={} app_type={} kind={} cleanup=0-by-thunk",
+                                active_pid, active_tid, app_type, kind,
+                            ),
+                        );
+                        let mut registers = exit.registers;
+                        registers.eax = return_value;
+                        contexts[active]
+                            .context
+                            .set_registers(registers)
+                            .map_err(|error| error.to_string())?;
                         continue;
                     }
                     let is_crt_malloc = matches!(

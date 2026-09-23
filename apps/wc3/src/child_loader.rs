@@ -86,6 +86,7 @@ pub enum ProviderOp {
     AllocateAndInitializeSid,
     EqualSid,
     RegOpenKeyExA,
+    CrtSetAppType,
     CrtMalloc,
     Unknown,
 }
@@ -150,6 +151,7 @@ impl ProviderOp {
             | Self::WriteFile => 20,
             Self::AllocateAndInitializeSid => 44,
             Self::EqualSid => 8,
+            Self::CrtSetAppType | Self::CrtMalloc => 0,
             _ => 0,
         }
     }
@@ -196,6 +198,7 @@ impl ProviderOp {
                 | Self::GetTokenInformation
                 | Self::AllocateAndInitializeSid
                 | Self::EqualSid
+                | Self::CrtSetAppType
         )
     }
 }
@@ -287,8 +290,12 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
     if import.module.eq_ignore_ascii_case("WINMM.dll") && symbol == "timeGetTime" {
         return ProviderOp::TimeGetTime;
     }
-    if import.module.eq_ignore_ascii_case("MSVCRT.dll") && symbol == "malloc" {
-        return ProviderOp::CrtMalloc;
+    if import.module.eq_ignore_ascii_case("MSVCRT.dll") {
+        return match symbol.as_str() {
+            "__set_app_type" => ProviderOp::CrtSetAppType,
+            "malloc" => ProviderOp::CrtMalloc,
+            _ => ProviderOp::Unknown,
+        };
     }
     ProviderOp::Unknown
 }
