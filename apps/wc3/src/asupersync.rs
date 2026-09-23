@@ -1983,12 +1983,22 @@ pub(super) async fn run_loop(
                     }
                     if exit.registers.eip == thunk32::CHILD_CALLBACK_RETURN_AFTER_VMCALL {
                         if let Some(pending) = child.seh3_call.take() {
-                            if exit.registers.esp != pending.provider_esp {
+                            let callback_arg_bytes = match &pending.kind {
+                                ChildSeh3CallbackKind::Filter { .. } => 4u32,
+                                ChildSeh3CallbackKind::Finally { .. } => 0u32,
+                            };
+                            let expected_esp = pending
+                                .provider_esp
+                                .checked_sub(callback_arg_bytes)
+                                .ok_or("SEH3 callback expected ESP underflow")?;
+                            if exit.registers.esp != expected_esp {
                                 return Err(format!(
-                                    "SEH3 callback ESP mismatch expected=0x{:08x} actual=0x{:08x}",
-                                    pending.provider_esp, exit.registers.esp
+                                    "SEH3 callback ESP mismatch expected=0x{:08x} actual=0x{:08x} arg_bytes={}",
+                                    expected_esp, exit.registers.esp, callback_arg_bytes,
                                 ));
                             }
+                            let mut callback_return = exit.registers;
+                            callback_return.esp = pending.provider_esp;
                             let anchor = pending.frame.checked_add(0x10).ok_or("SEH3 EBP overflow")?;
                             match pending.kind {
                                 ChildSeh3CallbackKind::Finally { mut next_level, selected_level } => {
@@ -1998,7 +2008,7 @@ pub(super) async fn run_loop(
                                             if handler == 0 { return Err("SEH3 selected handler is null".into()); }
                                             let (_, selected_prev, _) = child_seh3_scope_entry(child, pending.scope, selected_level)?;
                                             write_child_u32(child, pending.frame + 0x0c, selected_prev as u32)?;
-                                            let mut registers = exit.registers;
+                                            let mut registers = callback_return;
                                             registers.eip = handler;
                                             registers.esp = pending.provider_esp;
                                             registers.ebp = anchor;
@@ -2012,16 +2022,16 @@ pub(super) async fn run_loop(
                                         next_level = previous;
                                         if filter == 0 && handler != 0 {
                                             let call = ChildSeh3Call { provider_resume_eip: pending.provider_resume_eip, provider_esp: pending.provider_esp, frame: pending.frame, scope: pending.scope, kind: ChildSeh3CallbackKind::Finally { next_level, selected_level } };
-                                            schedule_child_seh3_finally(child, &mut contexts[active], exit.registers, call, handler)?;
+                                            schedule_child_seh3_finally(child, &mut contexts[active], callback_return, call, handler)?;
                                             logl::log(level::IMPORTANT, format_args!("WC3 CHILD CRT EH3 FINALLY pid={} tid={} handler=0x{:08x}", active_pid, active_tid, handler));
                                             continue 'child_run;
                                         }
                                     }
                                 }
                                 ChildSeh3CallbackKind::Filter { level, previous, start_level } => {
-                                    let result = i32::from_le_bytes(exit.registers.eax.to_le_bytes());
+                                    let result = i32::from_le_bytes(callback_return.eax.to_le_bytes());
                                     if result == -1 {
-                                        let mut registers = exit.registers;
+                                        let mut registers = callback_return;
                                         registers.eip = pending.provider_resume_eip;
                                         registers.esp = pending.provider_esp;
                                         registers.eax = wc3::seh::DISPOSITION_CONTINUE_EXECUTION;
@@ -2032,6 +2042,13 @@ pub(super) async fn run_loop(
                                     if result != 0 && result != 1 {
                                         return Err(format!("WC3 CHILD CRT EH3 FRONTIER reason=filter-result value={}", result));
                                     }
+                                    logl::log(
+                                        level::IMPORTANT,
+                                        format_args!(
+                                            "WC3 CHILD CRT EH3 FILTER RETURN pid={} tid={} level={} result={}",
+                                            active_pid, active_tid, level, result,
+                                        ),
+                                    );
                                     let selected = if result == 1 { Some(level) } else { None };
                                     let mut current = if result == 1 { start_level } else { previous };
                                     if result == 0 {
@@ -2043,7 +2060,7 @@ pub(super) async fn run_loop(
                                                 let (_, selected_prev, handler) = child_seh3_scope_entry(child, pending.scope, selected_level)?;
                                                 if handler == 0 { return Err("SEH3 selected handler is null".into()); }
                                                 write_child_u32(child, pending.frame + 0x0c, selected_prev as u32)?;
-                                                let mut registers = exit.registers;
+                                                let mut registers = callback_return;
                                                 registers.eip = handler;
                                                 registers.esp = pending.provider_esp;
                                                 registers.ebp = anchor;
@@ -2054,7 +2071,7 @@ pub(super) async fn run_loop(
                                         }
                                         if current < 0 {
                                             if selected.is_some() { return Err("SEH3 selected level was not found".into()); }
-                                            let mut registers = exit.registers;
+                                            let mut registers = callback_return;
                                             registers.eip = pending.provider_resume_eip;
                                             registers.esp = pending.provider_esp;
                                             registers.eax = wc3::seh::DISPOSITION_CONTINUE_SEARCH;
@@ -2068,7 +2085,7 @@ pub(super) async fn run_loop(
                                             current = previous;
                                             if filter == 0 && handler != 0 {
                                                 let call = ChildSeh3Call { provider_resume_eip: pending.provider_resume_eip, provider_esp: pending.provider_esp, frame: pending.frame, scope: pending.scope, kind: ChildSeh3CallbackKind::Finally { next_level: current, selected_level } };
-                                                schedule_child_seh3_finally(child, &mut contexts[active], exit.registers, call, handler)?;
+                                                schedule_child_seh3_finally(child, &mut contexts[active], callback_return, call, handler)?;
                                                 logl::log(level::IMPORTANT, format_args!("WC3 CHILD CRT EH3 FINALLY pid={} tid={} handler=0x{:08x}", active_pid, active_tid, handler));
                                                 continue 'child_run;
                                             }
@@ -2078,7 +2095,7 @@ pub(super) async fn run_loop(
                                         current = previous;
                                         if filter != 0 {
                                             let call = ChildSeh3Call { provider_resume_eip: pending.provider_resume_eip, provider_esp: pending.provider_esp, frame: pending.frame, scope: pending.scope, kind: ChildSeh3CallbackKind::Filter { level, previous, start_level } };
-                                            schedule_child_seh3_filter(child, &mut contexts[active], exit.registers, call, filter)?;
+                                            schedule_child_seh3_filter(child, &mut contexts[active], callback_return, call, filter)?;
                                             continue 'child_run;
                                         }
                                     }
