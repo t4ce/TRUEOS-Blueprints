@@ -3,6 +3,7 @@ use trueos::x86::{DebugRegisters, Registers};
 pub const STATUS_ACCESS_VIOLATION: u32 = 0xc000_0005;
 pub const STATUS_SINGLE_STEP: u32 = 0x8000_0004;
 pub const STATUS_INTEGER_DIVIDE_BY_ZERO: u32 = 0xc000_0094;
+pub const STATUS_ILLEGAL_INSTRUCTION: u32 = 0xc000_001d;
 pub const DISPOSITION_CONTINUE_EXECUTION: u32 = 0;
 pub const DISPOSITION_CONTINUE_SEARCH: u32 = 1;
 pub const DISPOSITION_NESTED_EXCEPTION: u32 = 2;
@@ -120,6 +121,16 @@ pub fn encode_integer_divide_by_zero_exception_record(
     bytes
 }
 
+pub fn encode_illegal_instruction_exception_record(
+    eip: u32,
+) -> [u8; EXCEPTION_RECORD_BYTES] {
+    let mut bytes = [0; EXCEPTION_RECORD_BYTES];
+    put(&mut bytes, 0, STATUS_ILLEGAL_INSTRUCTION);
+    put(&mut bytes, 12, eip);
+    put(&mut bytes, 16, 0); // NumberParameters
+    bytes
+}
+
 #[cfg(test)]
 crate::wc3_seh_tests_1!();
 
@@ -147,6 +158,17 @@ mod tests {
         assert_eq!(u32::from_le_bytes(record[4..8].try_into().unwrap()), 0);
         assert_eq!(u32::from_le_bytes(record[8..12].try_into().unwrap()), 0);
         assert_eq!(u32::from_le_bytes(record[12..16].try_into().unwrap()), 0x0045_a0c0);
+        assert_eq!(u32::from_le_bytes(record[16..20].try_into().unwrap()), 0);
+    }
+
+    #[test]
+    fn illegal_instruction_record_has_no_parameters() {
+        let record = encode_illegal_instruction_exception_record(0x043f_fdb5);
+        assert_eq!(
+            u32::from_le_bytes(record[0..4].try_into().unwrap()),
+            STATUS_ILLEGAL_INSTRUCTION,
+        );
+        assert_eq!(u32::from_le_bytes(record[12..16].try_into().unwrap()), 0x043f_fdb5);
         assert_eq!(u32::from_le_bytes(record[16..20].try_into().unwrap()), 0);
     }
 

@@ -1199,6 +1199,11 @@ fn begin_child_seh_dispatch(child: &mut PendingChild, guest: &mut GuestContext, 
             wc3::seh::STATUS_INTEGER_DIVIDE_BY_ZERO,
             "integer-divide-by-zero",
         ),
+        Some(6) => (
+            wc3::seh::encode_illegal_instruction_exception_record(registers.eip),
+            wc3::seh::STATUS_ILLEGAL_INSTRUCTION,
+            "illegal-instruction",
+        ),
         _ => return Err("unsupported-exception-mapping frontier".into()),
     };
     let context_va = registers.esp.checked_sub(wc3::seh::X86_CONTEXT_BYTES as u32).ok_or("SEH context stack underflow")? & !15;
@@ -8579,6 +8584,26 @@ pub(super) async fn run_loop(
                     );
                 }
                 if !quiet_exception {
+                if exception.vector == Some(6) {
+                    if let Some(start) = registers.eip.checked_sub(16) {
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD EXCEPTION CODE BEFORE address=0x{:08x} bytes=\"{}\"",
+                                start,
+                                exception_code_window(&child.address_space, start),
+                            ),
+                        );
+                    }
+                    logl::log(
+                        level::IMPORTANT,
+                        format_args!(
+                            "WC3 CHILD EXCEPTION CODE eip=0x{:08x} bytes=\"{}\"",
+                            registers.eip,
+                            exception_code_window(&child.address_space, registers.eip),
+                        ),
+                    );
+                }
                 logl::trace!("trace-seh",
                     level::IMPORTANT,
                     format_args!(

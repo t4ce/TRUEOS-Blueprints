@@ -2303,9 +2303,9 @@ fn child_exception_name(vector: u32) -> &'static str {
 }
 
 fn exception_code_window(address_space: &AddressSpace, eip: u32) -> String {
-    let mut bytes = [0; 16];
+    let mut bytes = [0; 32];
     match address_space.read(eip, &mut bytes) {
-        Ok(16) => bytes
+        Ok(32) => bytes
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect::<Vec<_>>()
