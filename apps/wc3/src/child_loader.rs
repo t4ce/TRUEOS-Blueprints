@@ -51,6 +51,7 @@ pub enum ProviderOp {
     FreeLibrary,
     GetProcAddress,
     InterlockedExchange,
+    InterlockedIncrement,
     TlsAlloc,
     TlsSetValue,
     TlsGetValue,
@@ -61,6 +62,7 @@ pub enum ProviderOp {
     ReadProcessMemory,
     WriteProcessMemory,
     GetLastError,
+    GetTickCount,
     CreateFileA,
     GetFileSize,
     SetFilePointer,
@@ -229,7 +231,8 @@ impl ProviderOp {
                 | Self::LCMapStringW
                 | Self::GetModuleFileNameA
                 | Self::GetModuleHandleA
-                | Self::InterlockedExchange
+            | Self::InterlockedExchange
+                | Self::InterlockedIncrement
                 | Self::TlsAlloc
                 | Self::TlsSetValue
                 | Self::TlsGetValue
@@ -240,6 +243,7 @@ impl ProviderOp {
                 | Self::ReadProcessMemory
                 | Self::WriteProcessMemory
                 | Self::GetLastError
+                | Self::GetTickCount
                 | Self::DisableThreadLibraryCalls
                 | Self::CreateFileA
                 | Self::GetFileSize
@@ -304,6 +308,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "FreeLibrary" => ProviderOp::FreeLibrary,
             "GetProcAddress" => ProviderOp::GetProcAddress,
             "InterlockedExchange" => ProviderOp::InterlockedExchange,
+            "InterlockedIncrement" => ProviderOp::InterlockedIncrement,
             "TlsAlloc" => ProviderOp::TlsAlloc,
             "TlsSetValue" => ProviderOp::TlsSetValue,
             "TlsGetValue" => ProviderOp::TlsGetValue,
@@ -314,6 +319,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "ReadProcessMemory" => ProviderOp::ReadProcessMemory,
             "WriteProcessMemory" => ProviderOp::WriteProcessMemory,
             "GetLastError" => ProviderOp::GetLastError,
+            "GetTickCount" => ProviderOp::GetTickCount,
             "CreateFileA" => ProviderOp::CreateFileA,
             "GetFileSize" => ProviderOp::GetFileSize,
             "SetFilePointer" => ProviderOp::SetFilePointer,

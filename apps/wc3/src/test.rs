@@ -3030,6 +3030,42 @@ mod tests_process_1 {
     }
 
     #[test]
+    fn child_interlocked_increment_updates_dword_and_returns_new_value() {
+        let provider = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("InterlockedIncrement".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&provider);
+        assert_eq!(operation, ProviderOp::InterlockedIncrement);
+        assert!(operation.is_modeled());
+        assert!(operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 4);
+        assert_eq!(provider_thunk_kind(&provider), thunk32::Kind::Stdcall(4));
+
+        let mut xp = XpProcess::new_child();
+        xp.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+        let target = STACK_TOP - 0x100;
+        write_u32(&mut memory, target, u32::MAX).unwrap();
+        write_u32(&mut memory, esp, 0x1501_775e).unwrap();
+        write_u32(&mut memory, esp + 4, target).unwrap();
+        xp.set_last_error(0x1234_5678);
+
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(0))
+        );
+        assert_eq!(read_u32(&memory, target).unwrap(), 0);
+        assert_eq!(xp.last_error(), 0x1234_5678);
+        assert_eq!(xp.call_count, 1);
+    }
+
+    #[test]
     fn child_get_system_info_reports_one_cpu_xp_contract() {
         let provider = ProviderImport {
             module: "KERNEL32.dll".into(),
@@ -4192,6 +4228,39 @@ mod tests_process_1 {
         let after = monotonic_counter_millis();
         let PersonalityAction::Return(milliseconds) = result else {
             panic!("timeGetTime requested a runtime effect");
+        };
+        assert!(before <= milliseconds && milliseconds <= after);
+        assert_eq!(pid2.call_count, 1);
+    }
+
+    #[test]
+    fn child_get_tick_count_exposes_wrapping_monotonic_milliseconds() {
+        let provider = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("GetTickCount".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&provider);
+        assert_eq!(operation, ProviderOp::GetTickCount);
+        assert!(operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 0);
+        assert_eq!(provider_thunk_kind(&provider), thunk32::Kind::Return);
+
+        let mut pid2 = XpProcess::new_child();
+        pid2.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+        write_u32(&mut memory, esp, 0x6f00_5fb3).unwrap();
+        let before = monotonic_counter_millis();
+        let result = pid2
+            .dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory)
+            .unwrap();
+        let after = monotonic_counter_millis();
+        let PersonalityAction::Return(milliseconds) = result else {
+            panic!("GetTickCount requested a runtime effect");
         };
         assert!(before <= milliseconds && milliseconds <= after);
         assert_eq!(pid2.call_count, 1);

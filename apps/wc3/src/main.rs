@@ -270,7 +270,6 @@ async fn run() -> Result<(), String> {
     let mut default_proc_messages = HashSet::new();
     let mut frames: HashMap<u32, Frame> = HashMap::new();
     let mut window_rgba: HashMap<u32, Vec<u8>> = HashMap::new();
-    let mut blit_checkpoint_done = false;
     let mut wait_deadlines: HashMap<ThreadKey, RuntimeWait> = HashMap::new();
     let mut previous_wait_timeout: Option<(ThreadKey, u32, u32)> = None;
     let mut child_get_command_line_logged = false;
@@ -286,7 +285,6 @@ async fn run() -> Result<(), String> {
         &mut default_proc_messages,
         &mut frames,
         &mut window_rgba,
-        &mut blit_checkpoint_done,
         &mut wait_deadlines,
         &mut previous_wait_timeout,
         &mut child_get_command_line_logged,

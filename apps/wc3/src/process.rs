@@ -971,7 +971,6 @@ pub struct XpProcess {
     next_sid: u32,
     last_error: u32,
     unhandled_exception_filter: u32,
-    tick_ms: u32,
     registered_classes: HashMap<String, RegisteredClass>,
     messages: VecDeque<Message>,
     runnable_thread: Option<u32>,
@@ -1129,7 +1128,6 @@ impl XpProcess {
             next_sid: PROCESS_SID_ARENA_BASE,
             last_error: 0,
             unhandled_exception_filter: 0,
-            tick_ms: 0,
             registered_classes: HashMap::new(),
             messages: VecDeque::new(),
             runnable_thread: None,
@@ -1716,6 +1714,29 @@ impl XpProcess {
         Ok(previous)
     }
 
+    fn interlocked_increment(
+        &mut self,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
+        let [_, target] = arguments::<2>(memory, esp)?;
+        if target == 0 {
+            return Err(ProviderDispatchError::Frontier {
+                api: "InterlockedIncrement",
+                detail: "target=NULL".into(),
+            });
+        }
+        if target & 3 != 0 {
+            return Err(ProviderDispatchError::Frontier {
+                api: "InterlockedIncrement",
+                detail: format!("unaligned target=0x{target:08x}"),
+            });
+        }
+        let incremented = read_u32(memory, target)?.wrapping_add(1);
+        write_u32(memory, target, incremented)?;
+        Ok(incremented)
+    }
+
     fn get_system_info(
         &self,
         esp: u32,
@@ -1762,6 +1783,14 @@ impl XpProcess {
                     .checked_add(1)
                     .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(previous))
+            }
+            ProviderOp::InterlockedIncrement => {
+                let incremented = self.interlocked_increment(esp, memory)?;
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(incremented))
             }
             ProviderOp::TlsAlloc => {
                 let slot = self.tls_alloc()?;
@@ -2294,6 +2323,10 @@ impl XpProcess {
             ProviderOp::GetLastError => {
                 self.call_count = self.call_count.checked_add(1).ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(self.last_error))
+            }
+            ProviderOp::GetTickCount => {
+                self.call_count = self.call_count.checked_add(1).ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(monotonic_counter_millis()))
             }
             ProviderOp::DisableThreadLibraryCalls => {
                 let [_, module] = arguments::<2>(memory, esp)?;
@@ -3377,7 +3410,7 @@ impl XpProcess {
                     handle: read_u32(memory, esp + 4)?,
                 }));
             }
-            WinCall::GetTickCount => Ok(self.tick_ms),
+            WinCall::GetTickCount => Ok(monotonic_counter_millis()),
             WinCall::GetCurrentThreadId => Ok(tid),
             WinCall::GetStartupInfoA => self.get_startup_info(esp, memory),
             WinCall::GetModuleFileNameA => self.get_module_filename(esp, memory).map_err(|error| {

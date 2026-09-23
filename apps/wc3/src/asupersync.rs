@@ -1620,7 +1620,6 @@ pub(super) async fn run_loop(
     default_proc_messages: &mut HashSet<u32>,
     mut frames: &mut HashMap<u32, Frame>,
     window_rgba: &mut HashMap<u32, Vec<u8>>,
-    blit_checkpoint_done: &mut bool,
     mut wait_deadlines: &mut HashMap<ThreadKey, RuntimeWait>,
     mut previous_wait_timeout: &mut Option<(ThreadKey, u32, u32)>,
     child_get_command_line_logged: &mut bool,
@@ -5350,6 +5349,22 @@ pub(super) async fn run_loop(
                             } else {
                                 None
                             };
+                        let interlocked_increment =
+                            if operation == child_loader::ProviderOp::InterlockedIncrement {
+                                let frame = read_guest_words(
+                                    &X86Memory(&child.address_space),
+                                    exit.registers.esp,
+                                    2,
+                                )?;
+                                let old = read_guest_words(
+                                    &X86Memory(&child.address_space),
+                                    frame[1],
+                                    1,
+                                )?[0];
+                                Some((frame[1], old))
+                            } else {
+                                None
+                            };
                         let process_memory = matches!(
                             operation,
                             child_loader::ProviderOp::ReadProcessMemory
@@ -5479,6 +5494,25 @@ pub(super) async fn run_loop(
                                         ),
                                     );
                                 }
+                                if let Some((target, old)) = interlocked_increment {
+                                    let after = read_guest_words(
+                                        &X86Memory(&child.address_space),
+                                        target,
+                                        1,
+                                    )?[0];
+                                    logl::log(
+                                        level::IMPORTANT,
+                                        format_args!(
+                                            "WC3 CHILD INTERLOCKEDINCREMENT pid={} tid={} target=0x{:08x} old=0x{:08x} after=0x{:08x} eax=0x{:08x} cleanup=4-by-thunk",
+                                            active_pid,
+                                            active_tid,
+                                            target,
+                                            old,
+                                            after,
+                                            result,
+                                        ),
+                                    );
+                                }
                                 if let Some((path, attributes)) = set_file_attributes {
                                     let last_error = session
                                         .process(active_pid)
@@ -5555,6 +5589,19 @@ pub(super) async fn run_loop(
                                     }
                                 }
                                 match operation {
+                                    child_loader::ProviderOp::GetTickCount => {
+                                        let caller_return = u32::from_le_bytes(caller_ret);
+                                        let caller_module = child_pc_owner(child, caller_return)
+                                            .map(|(owner, _)| owner.to_owned())
+                                            .unwrap_or_else(|| running_module_name.clone());
+                                        logl::log(
+                                            level::IMPORTANT,
+                                            format_args!(
+                                                "WC3 CHILD GETTICKCOUNT pid={} tid={} during=\"{}\" milliseconds={}",
+                                                active_pid, active_tid, caller_module, result,
+                                            ),
+                                        );
+                                    }
                                     child_loader::ProviderOp::GetCurrentThreadId => logl::log(
                                         level::IMPORTANT,
                                         format_args!(
@@ -6708,29 +6755,6 @@ pub(super) async fn run_loop(
                                 request.hwnd, request.width, request.height, request.source_bitmap
                             ),
                         );
-                        if !*blit_checkpoint_done {
-                            while trueos::vshell::attached_read_byte().is_some() {}
-                            logl::log(
-                                level::IMPORTANT,
-                                format_args!("WC3 UI4 BLIT LIVE confirm=anykey"),
-                            );
-                            logl::log(
-                                level::IMPORTANT,
-                                format_args!("WC3 UI4 BLIT STOPPED awaiting operator input"),
-                            );
-                            let confirm = loop {
-                                trueos::vsys::poll_once();
-                                if let Some(byte) = trueos::vshell::attached_read_byte() {
-                                    break byte;
-                                }
-                                trueos::vsys::sleep_ms(8);
-                            };
-                            *blit_checkpoint_done = true;
-                            logl::log(
-                                level::IMPORTANT,
-                                format_args!("WC3 UI4 BLIT RESUME byte=0x{:02x}", confirm),
-                            );
-                        }
                         1
                     }
                     PersonalityAction::WindowText(request) => {
@@ -8694,11 +8718,11 @@ pub(super) async fn run_loop(
                                 1
                             }
                         };
-                        if count >= 3 {
+                        if count == 3 {
                             logl::log(
                                 level::IMPORTANT,
                                 format_args!(
-                                    "WC3 CHILD OPERATOR STOP reason=repeated-null-call pid={} tid={} return=0x{:08x} slot=0x{:08x} target=0x00000000 repeats={}",
+                                    "WC3 CHILD WATCH reason=repeated-null-call pid={} tid={} return=0x{:08x} slot=0x{:08x} target=0x00000000 repeats={} action=continue-seh",
                                     signature.pid,
                                     signature.tid,
                                     signature.return_address,
@@ -8706,7 +8730,6 @@ pub(super) async fn run_loop(
                                     count,
                                 ),
                             );
-                            return Ok(());
                         }
                     } else {
                         child.repeated_null_call = None;
