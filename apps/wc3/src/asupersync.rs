@@ -8032,6 +8032,43 @@ pub(super) async fn run_loop(
                         .read(ebp_base, &mut ebp_bytes)
                         .map_err(|e| e.to_string())?;
 
+                    let slot = 0x0044_b288u32;
+                    let slot_value = child_read_u32(child, slot);
+
+                    let thunk_id = if exit.registers.eax >= thunk32::THUNK_BASE {
+                        let delta = exit.registers.eax - thunk32::THUNK_BASE;
+                        let width = thunk32::THUNK_BYTES as u32;
+
+                        if delta % width == 0 {
+                            Some(delta / width)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+
+                    let provider_import = thunk_id.and_then(|id| {
+                        session
+                            .process(active_key.pid)
+                            .and_then(|process| process.xp.provider_import(id))
+                            .cloned()
+                    });
+
+                    let slot_rva = slot
+                        .checked_sub(child.image.image_base)
+                        .ok_or("401D0B slot below image base")?;
+
+                    let pe_import = child
+                        .image
+                        .imports
+                        .iter()
+                        .find(|import| import.iat_rva == slot_rva);
+
+                    let data_export = provider_import
+                        .as_ref()
+                        .and_then(child_loader::provider_data_export_address);
+
                     logl::log(
                         level::IMPORTANT,
                         format_args!(
@@ -8053,6 +8090,22 @@ pub(super) async fn run_loop(
                             stack,
                             ebp_base,
                             hex_bytes(&ebp_bytes),
+                        ),
+                    );
+                    logl::log(
+                        level::IMPORTANT,
+                        format_args!(
+                            "WC3 CHILD 401D0B PROVENANCE \
+                             slot=0x{:08x} slot_rva=0x{:08x} slot_value={:?} \
+                             thunk_id={:?} provider_import={:?} \
+                             provider_data_export={:?} pe_import={:?}",
+                            slot,
+                            slot_rva,
+                            slot_value,
+                            thunk_id,
+                            provider_import,
+                            data_export,
+                            pe_import,
                         ),
                     );
                 }

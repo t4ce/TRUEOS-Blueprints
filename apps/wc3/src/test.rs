@@ -2805,6 +2805,43 @@ mod tests_process_1 {
     }
 
     #[test]
+    fn child_crt_strrchr_returns_the_last_match_and_is_cdecl() {
+        let provider = ProviderImport {
+            module: "MSVCRT.dll".into(),
+            symbol: ProviderSymbol::Name("strrchr".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&provider);
+        assert_eq!(operation, ProviderOp::CrtStrrchr);
+        assert!(operation.is_modeled());
+        assert!(operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 0);
+        assert_eq!(
+            crate::child_loader::provider_thunk_kind(&provider),
+            thunk32::Kind::Return
+        );
+
+        let mut xp = XpProcess::new_child();
+        xp.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+        let string = STACK_TOP - 0x100;
+        memory.write(string, b"a/b/c\0").unwrap();
+        write_u32(&mut memory, esp, 0x0040_1264).unwrap();
+        write_u32(&mut memory, esp + 4, string).unwrap();
+        write_u32(&mut memory, esp + 8, b'/' as u32).unwrap();
+
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(string + 3))
+        );
+        assert_eq!(xp.call_count, 1);
+    }
+
+    #[test]
     fn child_interlocked_exchange_replaces_dword_and_returns_previous_value() {
         let provider = ProviderImport {
             module: "KERNEL32.dll".into(),

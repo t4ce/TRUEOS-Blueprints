@@ -109,6 +109,7 @@ pub enum ProviderOp {
     CrtGetMainArgs,
     CrtOnExit,
     CrtMalloc,
+    CrtStrrchr,
     Unknown,
 }
 
@@ -182,7 +183,8 @@ impl ProviderOp {
             | Self::CrtControlFp
             | Self::CrtGetMainArgs
             | Self::CrtOnExit
-            | Self::CrtMalloc => 0,
+            | Self::CrtMalloc
+            | Self::CrtStrrchr => 0,
             _ => 0,
         }
     }
@@ -237,6 +239,7 @@ impl ProviderOp {
                 | Self::CrtXcptFilter
                 | Self::CrtGetMainArgs
                 | Self::CrtOnExit
+                | Self::CrtStrrchr
         )
     }
 }
@@ -341,6 +344,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "__getmainargs" => ProviderOp::CrtGetMainArgs,
             "_onexit" => ProviderOp::CrtOnExit,
             "malloc" => ProviderOp::CrtMalloc,
+            "strrchr" => ProviderOp::CrtStrrchr,
             _ => ProviderOp::Unknown,
         };
     }

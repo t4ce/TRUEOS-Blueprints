@@ -383,6 +383,27 @@ pub fn read_c_string(
     Err("unterminated string")
 }
 
+fn crt_strrchr(
+    memory: &impl GuestMemory,
+    string: u32,
+    character: u32,
+) -> Result<u32, &'static str> {
+    let needle = character as u8;
+    let mut last = None;
+    for offset in 0..1_048_576u32 {
+        let address = string.checked_add(offset).ok_or("strrchr address overflow")?;
+        let mut byte = [0];
+        memory.read(address, &mut byte)?;
+        if byte[0] == needle {
+            last = Some(address);
+        }
+        if byte[0] == 0 {
+            return Ok(last.unwrap_or(0));
+        }
+    }
+    Err("unterminated strrchr string")
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Mapping {
     pub address: u32,
@@ -1683,6 +1704,15 @@ impl XpProcess {
                 }
                 self.crt_onexit_callbacks.push(func);
                 Ok(PersonalityAction::Return(func))
+            }
+            ProviderOp::CrtStrrchr => {
+                let [_, string, character] = arguments::<3>(memory, esp)?;
+                let result = crt_strrchr(memory, string, character)?;
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(result))
             }
             ProviderOp::FreeEnvironmentStringsW => {
                 let pointer = read_u32(
