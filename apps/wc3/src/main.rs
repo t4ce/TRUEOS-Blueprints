@@ -1764,7 +1764,18 @@ struct ChildSeh3Call {
     scope: u32,
     kind: ChildSeh3CallbackKind,
 }
-#[derive(Clone, Debug)] struct ChildUnhandledFilterCall { provider_resume_eip: u32, provider_esp: u32, filter: u32 }
+#[derive(Clone, Debug)]
+enum ChildUnhandledFilterContinuation {
+    Provider { resume_eip: u32 },
+    TerminalSeh { seh: ChildSehDispatch },
+}
+
+#[derive(Clone, Debug)]
+struct ChildUnhandledFilterCall {
+    return_esp: u32,
+    filter: u32,
+    continuation: ChildUnhandledFilterContinuation,
+}
 
 struct ChildCiPow { provider_esp: u32 }
 

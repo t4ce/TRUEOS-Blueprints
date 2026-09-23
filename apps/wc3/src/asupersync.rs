@@ -1606,11 +1606,87 @@ pub(super) async fn run_loop(
                         .ok_or_else(|| "active child address space missing".to_owned())?;
                     if exit.registers.eip == thunk32::CHILD_UEF_RETURN_AFTER_VMCALL {
                         let pending = child.unhandled_filter_call.take().ok_or("UEF return without pending filter call")?;
-                        let result = session.process(active_pid).ok_or_else(|| "child process missing".to_owned())?.xp.complete_unhandled_exception_filter(Some(exit.registers.eax)).map_err(str::to_owned)?;
-                        let mut registers = exit.registers; registers.eip = pending.provider_resume_eip; registers.esp = pending.provider_esp; registers.eax = result;
-                        contexts[active].context.set_registers(registers).map_err(|error| error.to_string())?;
-                        logl::log(level::IMPORTANT, format_args!("WC3 CHILD UEF FILTER RETURN pid={} tid={} filter=0x{:08x} filter_result=0x{:08x} uef_result=0x{:08x}", active_pid, active_tid, pending.filter, exit.registers.eax, result));
-                        continue;
+                        if exit.registers.esp != pending.return_esp {
+                            return Err(format!(
+                                "UEF callback ESP mismatch expected=0x{:08x} actual=0x{:08x}",
+                                pending.return_esp, exit.registers.esp,
+                            ));
+                        }
+                        match pending.continuation {
+                            ChildUnhandledFilterContinuation::Provider { resume_eip } => {
+                                let result = session
+                                    .process(active_pid)
+                                    .ok_or_else(|| "child process missing".to_owned())?
+                                    .xp
+                                    .complete_unhandled_exception_filter(Some(exit.registers.eax))
+                                    .map_err(str::to_owned)?;
+                                let mut registers = exit.registers;
+                                registers.eip = resume_eip;
+                                registers.esp = pending.return_esp;
+                                registers.eax = result;
+                                contexts[active]
+                                    .context
+                                    .set_registers(registers)
+                                    .map_err(|error| error.to_string())?;
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 CHILD UEF FILTER RETURN pid={} tid={} filter=0x{:08x} filter_result=0x{:08x} uef_result=0x{:08x}",
+                                        active_pid, active_tid, pending.filter, exit.registers.eax, result,
+                                    ),
+                                );
+                                continue;
+                            }
+                            ChildUnhandledFilterContinuation::TerminalSeh { seh } => {
+                                match exit.registers.eax {
+                                    wc3::seh::DISPOSITION_CONTINUE_EXECUTION => {
+                                        let mut bytes = [0; wc3::seh::X86_CONTEXT_BYTES];
+                                        if child
+                                            .address_space
+                                            .read(seh.context_va, &mut bytes)
+                                            .map_err(|error| error.to_string())?
+                                            != bytes.len()
+                                        {
+                                            return Err("short terminal UEF context read".into());
+                                        }
+                                        let restored = wc3::seh::decode_x86_context(
+                                            &bytes,
+                                            seh.preserved_fs_base,
+                                        )
+                                        .map_err(str::to_owned)?;
+                                        let restored_debug = wc3::seh::decode_x86_debug_registers(&bytes)
+                                            .map_err(str::to_owned)?;
+                                        contexts[active]
+                                            .context
+                                            .set_registers(restored)
+                                            .map_err(|error| error.to_string())?;
+                                        contexts[active]
+                                            .context
+                                            .set_debug_registers(restored_debug)
+                                            .map_err(|error| error.to_string())?;
+                                        logl::log(
+                                            level::IMPORTANT,
+                                            format_args!(
+                                                "WC3 CHILD TOPLEVEL FILTER CONTINUE pid={} tid={} old_eip=0x{:08x} new_eip=0x{:08x}",
+                                                active_pid, active_tid, seh.original_registers.eip, restored.eip,
+                                            ),
+                                        );
+                                        continue;
+                                    }
+                                    0 | 1 => {
+                                        return Err(format!(
+                                            "WC3 CHILD UNHANDLED EXCEPTION filter_result={} exception_eip=0x{:08x}",
+                                            exit.registers.eax, seh.original_registers.eip,
+                                        ));
+                                    }
+                                    value => {
+                                        return Err(format!(
+                                            "WC3 CHILD UEF FRONTIER reason=invalid-filter-result value=0x{value:08x}"
+                                        ));
+                                    }
+                                }
+                            }
+                        }
                     }
                     if exit.registers.eip == thunk32::CHILD_SEH_RETURN_AFTER_VMCALL {
                         let seh = child.seh.take().ok_or("SEH return without pending dispatch")?;
@@ -1619,7 +1695,84 @@ pub(super) async fn run_loop(
                             active_pid, active_tid, seh.registration, seh.handler, exit.registers.eax,
                             )); }
                         if exit.registers.eax == wc3::seh::DISPOSITION_CONTINUE_SEARCH {
-                            if seh.next_registration == u32::MAX || seh.next_registration == 0 {
+                            if seh.next_registration == u32::MAX {
+                                let filter = session
+                                    .process(active_pid)
+                                    .ok_or_else(|| format!("missing process {active_pid}"))?
+                                    .xp
+                                    .unhandled_exception_filter();
+                                if filter == 0 {
+                                    return Err(
+                                        "WC3 CHILD UEF FRONTIER reason=no-top-level-filter".into(),
+                                    );
+                                }
+
+                                let exception_pointers_va = seh.exception_pointers_va;
+                                let exception_pointers = [
+                                    seh.exception_record_va,
+                                    seh.context_va,
+                                ];
+                                let mut exception_pointers_bytes = [0; 8];
+                                for (index, value) in exception_pointers.into_iter().enumerate() {
+                                    exception_pointers_bytes[index * 4..index * 4 + 4]
+                                        .copy_from_slice(&value.to_le_bytes());
+                                }
+                                if child
+                                    .address_space
+                                    .write(exception_pointers_va, &exception_pointers_bytes)
+                                    .map_err(|error| error.to_string())?
+                                    != exception_pointers_bytes.len()
+                                {
+                                    return Err(
+                                        "short terminal UEF exception pointers write".into(),
+                                    );
+                                }
+
+                                let return_esp = exit.registers.esp;
+                                let callback_esp = return_esp
+                                    .checked_sub(8)
+                                    .ok_or("terminal UEF callback stack underflow")?;
+                                let callback_frame = [
+                                    thunk32::CHILD_UEF_RETURN_ADDRESS,
+                                    exception_pointers_va,
+                                ];
+                                let mut callback_frame_bytes = [0; 8];
+                                for (index, value) in callback_frame.into_iter().enumerate() {
+                                    callback_frame_bytes[index * 4..index * 4 + 4]
+                                        .copy_from_slice(&value.to_le_bytes());
+                                }
+                                if child
+                                    .address_space
+                                    .write(callback_esp, &callback_frame_bytes)
+                                    .map_err(|error| error.to_string())?
+                                    != callback_frame_bytes.len()
+                                {
+                                    return Err("short terminal UEF callback frame write".into());
+                                }
+
+                                child.unhandled_filter_call = Some(ChildUnhandledFilterCall {
+                                    return_esp,
+                                    filter,
+                                    continuation:
+                                        ChildUnhandledFilterContinuation::TerminalSeh { seh },
+                                });
+                                let mut registers = exit.registers;
+                                registers.eip = filter;
+                                registers.esp = callback_esp;
+                                contexts[active]
+                                    .context
+                                    .set_registers(registers)
+                                    .map_err(|error| error.to_string())?;
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 CHILD SEH TOPLEVEL FILTER CALL pid={} tid={} filter=0x{:08x} exception_pointers=0x{:08x}",
+                                        active_pid, active_tid, filter, exception_pointers_va,
+                                    ),
+                                );
+                                continue 'child_run;
+                            }
+                            if seh.next_registration == 0 {
                                 return Err("WC3 CHILD SEH FRONTIER reason=unhandled-next-registration".into());
                             }
                             let registration = read_seh_registration(&child.address_space, seh.next_registration)?;
@@ -4269,7 +4422,13 @@ pub(super) async fn run_loop(
                         let callback_esp = exit.registers.esp.checked_sub(8).ok_or("UEF callback stack underflow")?;
                         let frame = [thunk32::CHILD_UEF_RETURN_ADDRESS, exception_pointers]; let mut bytes=[0;8]; for (i,value) in frame.into_iter().enumerate(){bytes[i*4..i*4+4].copy_from_slice(&value.to_le_bytes());}
                         if child.address_space.write(callback_esp,&bytes).map_err(|error| error.to_string())? != 8 { return Err("short UEF callback frame write".into()); }
-                        child.unhandled_filter_call = Some(ChildUnhandledFilterCall { provider_resume_eip: exit.registers.eip, provider_esp: exit.registers.esp, filter });
+                        child.unhandled_filter_call = Some(ChildUnhandledFilterCall {
+                            return_esp: exit.registers.esp,
+                            filter,
+                            continuation: ChildUnhandledFilterContinuation::Provider {
+                                resume_eip: exit.registers.eip,
+                            },
+                        });
                         let mut registers=exit.registers; registers.eip=filter; registers.esp=callback_esp; contexts[active].context.set_registers(registers).map_err(|error| error.to_string())?;
                         logl::log(level::IMPORTANT, format_args!("WC3 CHILD UEF FILTER CALL pid={} tid={} filter=0x{:08x} filter_owner={:?} filter_rva=0x{:08x} exception_pointers=0x{:08x} provider_esp=0x{:08x} callback_esp=0x{:08x}", active_pid,active_tid,filter,owner,rva,exception_pointers,exit.registers.esp,callback_esp));
                         continue;
