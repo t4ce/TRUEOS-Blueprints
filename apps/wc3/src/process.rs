@@ -88,6 +88,11 @@ pub const CRT_ARG1_VA: u32 = PROCESS_DATA_VA + 0x89;
 pub const CRT_ARG2_VA: u32 = PROCESS_DATA_VA + 0x91;
 pub const CRT_ARG3_VA: u32 = PROCESS_DATA_VA + 0x9a;
 pub const CRT_ARGC: u32 = 4;
+const XP_MIN_APPLICATION_ADDRESS: u32 = 0x0001_0000;
+const XP_MAX_APPLICATION_ADDRESS: u32 = 0x7ffe_ffff;
+const PROCESSOR_ARCHITECTURE_INTEL: u16 = 0;
+const PROCESSOR_INTEL_PENTIUM: u32 = 586;
+const XP_PROCESSOR_LEVEL: u16 = 6;
 const PROCESS_SID_ARENA_BASE: u32 = PROCESS_DATA_VA + 0x200;
 const PROCESS_SID_ARENA_LIMIT: u32 = PROCESS_DATA_VA + 0x1000;
 const SID_HEADER_BYTES: usize = 8;
@@ -1494,6 +1499,28 @@ impl XpProcess {
         Ok(previous)
     }
 
+    fn get_system_info(
+        &self,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<u32, &'static str> {
+        let [_, output] = arguments::<2>(memory, esp)?;
+        let mut info = [0u8; 36];
+        info[0..2].copy_from_slice(&PROCESSOR_ARCHITECTURE_INTEL.to_le_bytes());
+        info[2..4].copy_from_slice(&0u16.to_le_bytes());
+        info[4..8].copy_from_slice(&XP_PAGE_SIZE.to_le_bytes());
+        info[8..12].copy_from_slice(&XP_MIN_APPLICATION_ADDRESS.to_le_bytes());
+        info[12..16].copy_from_slice(&XP_MAX_APPLICATION_ADDRESS.to_le_bytes());
+        info[16..20].copy_from_slice(&1u32.to_le_bytes());
+        info[20..24].copy_from_slice(&1u32.to_le_bytes());
+        info[24..28].copy_from_slice(&PROCESSOR_INTEL_PENTIUM.to_le_bytes());
+        info[28..32].copy_from_slice(&XP_ALLOCATION_GRANULARITY.to_le_bytes());
+        info[32..34].copy_from_slice(&XP_PROCESSOR_LEVEL.to_le_bytes());
+        info[34..36].copy_from_slice(&0u16.to_le_bytes());
+        memory.write(output, &info)?;
+        Ok(0)
+    }
+
     fn dispatch_process_local_provider(
         &mut self,
         pid: u32,
@@ -1503,6 +1530,13 @@ impl XpProcess {
         self_image_bytes: Option<&[u8]>,
     ) -> Result<PersonalityAction, ProviderDispatchError> {
         match operation {
+            ProviderOp::GetSystemInfo => {
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(self.get_system_info(esp, memory)?))
+            }
             ProviderOp::InterlockedExchange => {
                 let previous = self.interlocked_exchange(esp, memory)?;
                 self.call_count = self

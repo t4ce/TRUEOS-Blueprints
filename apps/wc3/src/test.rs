@@ -2804,6 +2804,50 @@ mod tests_process_1 {
     }
 
     #[test]
+    fn child_get_system_info_reports_one_cpu_xp_contract() {
+        let provider = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("GetSystemInfo".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&provider);
+        assert_eq!(operation, ProviderOp::GetSystemInfo);
+        assert!(operation.is_modeled());
+        assert!(operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 4);
+        assert_eq!(
+            provider_thunk_kind(&provider),
+            thunk32::Kind::Stdcall(4)
+        );
+
+        let mut xp = XpProcess::new_child();
+        xp.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+        let output = STACK_TOP - 0x100;
+        write_u32(&mut memory, esp, 0x0040_3000).unwrap();
+        write_u32(&mut memory, esp + 4, output).unwrap();
+
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(0))
+        );
+        assert_eq!(read_u16(&memory, output).unwrap(), 0);
+        assert_eq!(read_u32(&memory, output + 4).unwrap(), 0x1000);
+        assert_eq!(read_u32(&memory, output + 8).unwrap(), 0x0001_0000);
+        assert_eq!(read_u32(&memory, output + 12).unwrap(), 0x7ffe_ffff);
+        assert_eq!(read_u32(&memory, output + 16).unwrap(), 1);
+        assert_eq!(read_u32(&memory, output + 20).unwrap(), 1);
+        assert_eq!(read_u32(&memory, output + 24).unwrap(), 586);
+        assert_eq!(read_u32(&memory, output + 28).unwrap(), 0x10000);
+        assert_eq!(read_u16(&memory, output + 32).unwrap(), 6);
+        assert_eq!(xp.call_count, 1);
+    }
+
+    #[test]
     fn unsupported_child_provider_does_not_mutate_memory() {
         let provider = ProviderImport {
             module: "KERNEL32.dll".into(),

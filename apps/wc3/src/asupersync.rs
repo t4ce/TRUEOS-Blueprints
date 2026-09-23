@@ -4525,6 +4525,18 @@ pub(super) async fn run_loop(
                         };
                         match dispatch {
                             Ok(PersonalityAction::Return(result)) => {
+                                if operation == child_loader::ProviderOp::GetSystemInfo {
+                                    logl::log(
+                                        level::IMPORTANT,
+                                        format_args!(
+                                            "WC3 CHILD PROVIDER RETURN pid={} tid={} module=\"{}\" symbol=\"GetSystemInfo\" eax=0x{:08x} cleanup=4-by-thunk",
+                                            active_pid,
+                                            active_tid,
+                                            provider.module,
+                                            result,
+                                        ),
+                                    );
+                                }
                                 if let Some((target, value, old)) = interlocked_exchange {
                                     let after = read_guest_words(
                                         &X86Memory(&child.address_space),
