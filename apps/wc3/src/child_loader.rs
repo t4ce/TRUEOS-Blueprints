@@ -58,6 +58,7 @@ pub enum ProviderOp {
     TlsGetValue,
     GetCurrentProcess,
     GetCurrentProcessId,
+    GetProcessHeap,
     GetCurrentThread,
     GetCurrentThreadId,
     ReadProcessMemory,
@@ -250,6 +251,7 @@ impl ProviderOp {
                 | Self::TlsGetValue
                 | Self::GetCurrentProcess
                 | Self::GetCurrentProcessId
+                | Self::GetProcessHeap
                 | Self::GetCurrentThread
                 | Self::GetCurrentThreadId
                 | Self::ReadProcessMemory
@@ -331,6 +333,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "TlsGetValue" => ProviderOp::TlsGetValue,
             "GetCurrentProcess" => ProviderOp::GetCurrentProcess,
             "GetCurrentProcessId" => ProviderOp::GetCurrentProcessId,
+            "GetProcessHeap" => ProviderOp::GetProcessHeap,
             "GetCurrentThread" => ProviderOp::GetCurrentThread,
             "GetCurrentThreadId" => ProviderOp::GetCurrentThreadId,
             "ReadProcessMemory" => ProviderOp::ReadProcessMemory,

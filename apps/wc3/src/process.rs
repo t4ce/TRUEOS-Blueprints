@@ -65,6 +65,8 @@ const TOKEN_QUERY: u32 = 0x0000_0008;
 const TOKEN_HANDLE_BASE: u32 = 0x5743_9001;
 const FILE_HANDLE_BASE: u32 = 0x5743_b001;
 const FIND_HANDLE_BASE: u32 = 0x5743_c001;
+pub const PROCESS_HEAP_HANDLE: u32 = 0x5743_0000;
+const PRIVATE_HEAP_HANDLE_BASE: u32 = 0x5743_0001;
 const FILE_WRITE_ACCESS_MASK: u32 = 0x5000_0116;
 const INVALID_FILE_ATTRIBUTES: u32 = u32::MAX;
 const FILE_ATTRIBUTE_NORMAL: u32 = 0x0000_0080;
@@ -1211,6 +1213,15 @@ impl XpProcess {
         let image_filename = std::str::from_utf8(image.filename())
             .expect("process image filename must be ASCII")
             .trim_end_matches('\0');
+        let mut heaps = HashMap::new();
+        heaps.insert(
+            PROCESS_HEAP_HANDLE,
+            WinHeap {
+                options: 0,
+                initial_size: 0,
+                maximum_size: 0,
+            },
+        );
         let mut gdi_objects = HashMap::new();
         gdi_objects.insert(
             STOCK_MONO_BITMAP,
@@ -1263,8 +1274,8 @@ impl XpProcess {
             next_thread_handle: THREAD_HANDLE_BASE,
             heap_next: 0,
             allocations: HashMap::new(),
-            heaps: HashMap::new(),
-            next_heap_handle: 0x5743_0001,
+            heaps,
+            next_heap_handle: PRIVATE_HEAP_HANDLE_BASE,
             win_heap_next: CHILD_WIN_HEAP_BASE,
             win_heap_allocations: HashMap::new(),
             global_allocations: HashMap::new(),
@@ -2345,6 +2356,13 @@ impl XpProcess {
                     .checked_add(1)
                     .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(pid))
+            }
+            ProviderOp::GetProcessHeap => {
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(PROCESS_HEAP_HANDLE))
             }
             ProviderOp::GetCurrentThread => {
                 self.call_count = self

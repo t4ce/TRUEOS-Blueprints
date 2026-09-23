@@ -5643,6 +5643,13 @@ pub(super) async fn run_loop(
                                     }
                                 }
                                 match operation {
+                                    child_loader::ProviderOp::GetProcessHeap => logl::log(
+                                        level::IMPORTANT,
+                                        format_args!(
+                                            "WC3 CHILD GETPROCESSHEAP pid={} tid={} during=\"{}\" handle=0x{:08x}",
+                                            active_pid, active_tid, running_module_name, result,
+                                        ),
+                                    ),
                                     child_loader::ProviderOp::GetTickCount => {
                                         let caller_return = u32::from_le_bytes(caller_ret);
                                         let caller_module = child_pc_owner(child, caller_return)

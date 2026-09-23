@@ -4480,6 +4480,43 @@ mod tests_process_1 {
     }
 
     #[test]
+    fn process_starts_with_default_heap() {
+        let xp = XpProcess::new(Vec::new());
+        assert!(xp.heaps.contains_key(&PROCESS_HEAP_HANDLE));
+    }
+
+    #[test]
+    fn child_get_process_heap_returns_the_default_allocatable_heap() {
+        let provider = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("GetProcessHeap".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&provider);
+        assert_eq!(operation, ProviderOp::GetProcessHeap);
+        assert!(operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 0);
+        assert_eq!(provider_thunk_kind(&provider), thunk32::Kind::Return);
+
+        let mut xp = XpProcess::new_child();
+        xp.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory { base: STACK_BASE, bytes: vec![0; STACK_BYTES] };
+        let esp = STACK_TOP - 0x40;
+        write_u32(&mut memory, esp, 0x1501_775e).unwrap();
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(PROCESS_HEAP_HANDLE))
+        );
+
+        write_u32(&mut memory, esp, 0x1501_7760).unwrap();
+        write_u32(&mut memory, esp + 4, PROCESS_HEAP_HANDLE).unwrap();
+        write_u32(&mut memory, esp + 8, 0).unwrap();
+        write_u32(&mut memory, esp + 12, 16).unwrap();
+        let allocation = xp.alloc_win_heap(esp, &mut memory).unwrap().unwrap();
+        assert_eq!(allocation.heap, PROCESS_HEAP_HANDLE);
+    }
+
+    #[test]
     fn child_get_current_thread_returns_the_windows_pseudo_handle() {
         let provider = ProviderImport {
             module: "KERNEL32.dll".into(),
