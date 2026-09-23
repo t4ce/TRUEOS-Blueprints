@@ -5766,6 +5766,36 @@ pub(super) async fn run_loop(
                             }
                         }
                     }
+                    if matches!(
+                        &provider.symbol,
+                        child_loader::ProviderSymbol::Name(name)
+                            if provider.module.eq_ignore_ascii_case("KERNEL32.dll")
+                                && name == "FormatMessageA"
+                    ) {
+                        let frame = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            exit.registers.esp,
+                            8,
+                        )?;
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD FORMATMESSAGEA CALL pid={} tid={} during=\"{}\" provider_id={} caller_ret=0x{:08x} flags=0x{:08x} source=0x{:08x} message_id=0x{:08x} language_id=0x{:08x} buffer=0x{:08x} capacity={} arguments=0x{:08x} cleanup=28-by-thunk",
+                                active_pid,
+                                active_tid,
+                                running_module_name,
+                                provider_id,
+                                frame[0],
+                                frame[1],
+                                frame[2],
+                                frame[3],
+                                frame[4],
+                                frame[5],
+                                frame[6],
+                                frame[7],
+                            ),
+                        );
+                    }
                     logl::log(
                         level::IMPORTANT,
                         format_args!(
