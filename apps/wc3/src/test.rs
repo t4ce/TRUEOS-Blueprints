@@ -5794,6 +5794,37 @@ mod tests_process_1 {
         assert_eq!(second.pointer, CHILD_WIN_HEAP_BASE + 8);
         assert_eq!(second.pointer % 8, 0);
 
+        for (index, word) in [0x2113_24c2, pid2_heap, HEAP_GENERATE_EXCEPTIONS, 12]
+            .into_iter()
+            .enumerate()
+        {
+            write_u32(&mut memory, esp + index as u32 * 4, word).unwrap();
+        }
+        let exceptional = pid2.alloc_win_heap(esp, &memory).unwrap().unwrap();
+        assert_eq!(exceptional.flags, HEAP_GENERATE_EXCEPTIONS);
+        assert_eq!(exceptional.requested, 12);
+
+        for (index, word) in [
+            0x2113_24c2,
+            pid2_heap,
+            HEAP_GENERATE_EXCEPTIONS | HEAP_ZERO_MEMORY,
+            12,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            write_u32(&mut memory, esp + index as u32 * 4, word).unwrap();
+        }
+        assert!(pid2.alloc_win_heap(esp, &memory).unwrap().is_some());
+
+        for (index, word) in [0x2113_24c2, pid2_heap, 0x10, 12].into_iter().enumerate() {
+            write_u32(&mut memory, esp + index as u32 * 4, word).unwrap();
+        }
+        assert_eq!(
+            pid2.alloc_win_heap(esp, &memory),
+            Err("HeapAlloc flags frontier")
+        );
+
         for (index, word) in [0x2113_24c2, pid1_heap, 0, 1].into_iter().enumerate() {
             write_u32(&mut memory, esp + index as u32 * 4, word).unwrap();
         }

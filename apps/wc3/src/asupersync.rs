@@ -2819,7 +2819,7 @@ pub(super) async fn run_loop(
                         let pointer = if let Some(allocation) = allocation {
                             let mapped_end =
                                 ensure_child_win_heap_mapped(child, allocation.end)?;
-                            if allocation.flags & 0x8 != 0 {
+                            if allocation.flags & HEAP_ZERO_MEMORY != 0 {
                                 let zeroes = vec![0; allocation.requested.max(1) as usize];
                                 let written = child
                                     .address_space
@@ -2848,10 +2848,14 @@ pub(super) async fn run_loop(
                                     allocation.pointer,
                                     allocation.end,
                                     mapped_end,
-                                    (allocation.flags & 0x8 != 0) as u8,
+                                    (allocation.flags & HEAP_ZERO_MEMORY != 0) as u8,
                                 ),
                             );
                             allocation.pointer
+                        } else if flags & HEAP_GENERATE_EXCEPTIONS != 0 {
+                            return Err(format!(
+                                "WC3 CHILD HEAPALLOC FRONTIER reason=generate-exceptions-allocation-failure heap=0x{heap:08x} flags=0x{flags:08x} bytes={bytes}"
+                            ));
                         } else {
                             0
                         };

@@ -81,6 +81,11 @@ const GENERIC_WRITE: u32 = 0x4000_0000;
 const FILE_BEGIN: u32 = 0;
 const FILE_CURRENT: u32 = 1;
 const FILE_END: u32 = 2;
+pub const HEAP_NO_SERIALIZE: u32 = 0x0000_0001;
+pub const HEAP_GENERATE_EXCEPTIONS: u32 = 0x0000_0004;
+pub const HEAP_ZERO_MEMORY: u32 = 0x0000_0008;
+pub const HEAP_ALLOC_ALLOWED_FLAGS: u32 =
+    HEAP_NO_SERIALIZE | HEAP_GENERATE_EXCEPTIONS | HEAP_ZERO_MEMORY;
 const TOKEN_GROUPS_CLASS: u32 = 2;
 const SE_GROUP_MANDATORY: u32 = 0x0000_0001;
 const SE_GROUP_ENABLED_BY_DEFAULT: u32 = 0x0000_0002;
@@ -3481,7 +3486,7 @@ impl XpProcess {
             self.last_error = 6;
             return Ok(None);
         }
-        if flags & !0x0000_0009 != 0 {
+        if flags & !HEAP_ALLOC_ALLOWED_FLAGS != 0 {
             return Err("HeapAlloc flags frontier");
         }
         let logical = bytes.max(1);
