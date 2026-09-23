@@ -81,6 +81,13 @@ const XP_TOKEN_GROUPS_REQUIRED: u32 = 4 + 8 + XP_EVERYONE_SID.len() as u32;
 pub const PROCESS_DATA_VA: u32 = 0x0021_1000;
 pub const CRT_FMODE_VA: u32 = PROCESS_DATA_VA + 0x40;
 pub const CRT_COMMODE_VA: u32 = PROCESS_DATA_VA + 0x44;
+pub const CRT_ARGV_VA: u32 = PROCESS_DATA_VA + 0x60;
+pub const CRT_ENVP_VA: u32 = PROCESS_DATA_VA + 0x78;
+pub const CRT_ARG0_VA: u32 = PROCESS_DATA_VA + 0x80;
+pub const CRT_ARG1_VA: u32 = PROCESS_DATA_VA + 0x89;
+pub const CRT_ARG2_VA: u32 = PROCESS_DATA_VA + 0x91;
+pub const CRT_ARG3_VA: u32 = PROCESS_DATA_VA + 0x9a;
+pub const CRT_ARGC: u32 = 4;
 const PROCESS_SID_ARENA_BASE: u32 = PROCESS_DATA_VA + 0x200;
 const PROCESS_SID_ARENA_LIMIT: u32 = PROCESS_DATA_VA + 0x1000;
 const SID_HEADER_BYTES: usize = 8;
@@ -1499,6 +1506,43 @@ impl XpProcess {
                     .checked_add(1)
                     .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(CRT_COMMODE_VA))
+            }
+            ProviderOp::CrtGetMainArgs => {
+                let [_, argc_out, argv_out, env_out, wildcard, startup_info] =
+                    arguments::<6>(memory, esp)?;
+                if argc_out == 0 || argv_out == 0 || env_out == 0 {
+                    return Err(ProviderDispatchError::Frontier {
+                        api: "__getmainargs",
+                        detail: format!(
+                            "null output argc=0x{argc_out:08x} argv=0x{argv_out:08x} env=0x{env_out:08x}"
+                        ),
+                    });
+                }
+                if wildcard != 0 {
+                    return Err(ProviderDispatchError::Frontier {
+                        api: "__getmainargs",
+                        detail: format!("wildcard expansion={wildcard}"),
+                    });
+                }
+                if startup_info != 0 {
+                    let new_mode = read_u32(memory, startup_info)?;
+                    if new_mode != 0 {
+                        return Err(ProviderDispatchError::Frontier {
+                            api: "__getmainargs",
+                            detail: format!(
+                                "startup_info=0x{startup_info:08x} new_mode={new_mode}"
+                            ),
+                        });
+                    }
+                }
+                write_u32(memory, argc_out, CRT_ARGC)?;
+                write_u32(memory, argv_out, CRT_ARGV_VA)?;
+                write_u32(memory, env_out, CRT_ENVP_VA)?;
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(0))
             }
             ProviderOp::FreeEnvironmentStringsW => {
                 let pointer = read_u32(

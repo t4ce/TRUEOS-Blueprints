@@ -2684,6 +2684,49 @@ mod tests_process_1 {
     }
 
     #[test]
+    fn child_crt_getmainargs_populates_fixed_process_outputs() {
+        let provider = ProviderImport {
+            module: "MSVCRT.dll".into(),
+            symbol: ProviderSymbol::Name("__getmainargs".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&provider);
+        assert_eq!(operation, ProviderOp::CrtGetMainArgs);
+        assert!(operation.is_modeled());
+        assert!(operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 0);
+        assert_eq!(
+            crate::child_loader::provider_thunk_kind(&provider),
+            thunk32::Kind::Return
+        );
+
+        let mut xp = XpProcess::new_child();
+        xp.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0x5a; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+        let argc_out = esp + 0x20;
+        let argv_out = esp + 0x24;
+        let env_out = esp + 0x28;
+        write_u32(&mut memory, esp, 0x0040_1cef).unwrap();
+        write_u32(&mut memory, esp + 4, argc_out).unwrap();
+        write_u32(&mut memory, esp + 8, argv_out).unwrap();
+        write_u32(&mut memory, esp + 12, env_out).unwrap();
+        write_u32(&mut memory, esp + 16, 0).unwrap();
+        write_u32(&mut memory, esp + 20, 0).unwrap();
+
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(0))
+        );
+        assert_eq!(read_u32(&memory, argc_out).unwrap(), CRT_ARGC);
+        assert_eq!(read_u32(&memory, argv_out).unwrap(), CRT_ARGV_VA);
+        assert_eq!(read_u32(&memory, env_out).unwrap(), CRT_ENVP_VA);
+    }
+
+    #[test]
     fn unsupported_child_provider_does_not_mutate_memory() {
         let provider = ProviderImport {
             module: "KERNEL32.dll".into(),

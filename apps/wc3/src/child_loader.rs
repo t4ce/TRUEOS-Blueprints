@@ -90,6 +90,7 @@ pub enum ProviderOp {
     CrtGetFmode,
     CrtGetCommode,
     CrtControlFp,
+    CrtGetMainArgs,
     CrtMalloc,
     Unknown,
 }
@@ -158,6 +159,7 @@ impl ProviderOp {
             | Self::CrtGetFmode
             | Self::CrtGetCommode
             | Self::CrtControlFp
+            | Self::CrtGetMainArgs
             | Self::CrtMalloc => 0,
             _ => 0,
         }
@@ -208,6 +210,7 @@ impl ProviderOp {
                 | Self::CrtSetAppType
                 | Self::CrtGetFmode
                 | Self::CrtGetCommode
+                | Self::CrtGetMainArgs
         )
     }
 }
@@ -305,6 +308,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "__p__fmode" => ProviderOp::CrtGetFmode,
             "__p__commode" => ProviderOp::CrtGetCommode,
             "_controlfp" => ProviderOp::CrtControlFp,
+            "__getmainargs" => ProviderOp::CrtGetMainArgs,
             "malloc" => ProviderOp::CrtMalloc,
             _ => ProviderOp::Unknown,
         };

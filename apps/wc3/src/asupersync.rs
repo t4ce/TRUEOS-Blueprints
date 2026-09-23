@@ -3028,6 +3028,79 @@ pub(super) async fn run_loop(
                             .map_err(|error| error.to_string())?;
                         continue;
                     }
+                    let is_crt_get_main_args = matches!(
+                        &provider.symbol,
+                        child_loader::ProviderSymbol::Name(name)
+                            if provider.module.eq_ignore_ascii_case("MSVCRT.dll")
+                                && name == "__getmainargs"
+                    );
+                    if is_crt_get_main_args {
+                        let frame = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            exit.registers.esp,
+                            6,
+                        )?;
+                        let new_mode = if frame[5] == 0 {
+                            0
+                        } else {
+                            read_guest_words(
+                                &X86Memory(&child.address_space),
+                                frame[5],
+                                1,
+                            )?[0]
+                        };
+                        let mut child_memory = X86Memory(&child.address_space);
+                        let action = session
+                            .process_mut(active_pid)
+                            .ok_or_else(|| "child process missing".to_owned())?
+                            .xp
+                            .dispatch_provider_for_process(
+                                active_pid,
+                                active_tid,
+                                provider_id,
+                                exit.registers.esp,
+                                &mut child_memory,
+                            )
+                            .map_err(str::to_owned)?;
+                        let PersonalityAction::Return(return_value) = action else {
+                            return Err("__getmainargs child provider did not return".into());
+                        };
+                        let argc = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            frame[1],
+                            1,
+                        )?[0];
+                        let argv = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            frame[2],
+                            1,
+                        )?[0];
+                        let envp = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            frame[3],
+                            1,
+                        )?[0];
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD CRT GETMAINARGS pid={} tid={} argc={} argv=0x{:08x} envp=0x{:08x} wildcard={} new_mode={} cleanup=0-by-thunk",
+                                active_pid,
+                                active_tid,
+                                argc,
+                                argv,
+                                envp,
+                                frame[4],
+                                new_mode,
+                            ),
+                        );
+                        let mut registers = exit.registers;
+                        registers.eax = return_value;
+                        contexts[active]
+                            .context
+                            .set_registers(registers)
+                            .map_err(|error| error.to_string())?;
+                        continue;
+                    }
                     let is_crt_control_fp = matches!(
                         &provider.symbol,
                         child_loader::ProviderSymbol::Name(name)
@@ -5707,6 +5780,42 @@ pub(super) async fn run_loop(
                             .map_err(|error| format!("write child CRT _commode: {error}"))?;
                         if commode_written != 4 {
                             return Err("short child CRT _commode write".into());
+                        }
+                        let argv = [CRT_ARG0_VA, CRT_ARG1_VA, CRT_ARG2_VA, CRT_ARG3_VA, 0];
+                        let mut argv_bytes = [0u8; 20];
+                        for (index, pointer) in argv.into_iter().enumerate() {
+                            argv_bytes[index * 4..index * 4 + 4]
+                                .copy_from_slice(&pointer.to_le_bytes());
+                        }
+                        if child_address_space
+                            .write(CRT_ARGV_VA, &argv_bytes)
+                            .map_err(|error| format!("write child CRT argv: {error}"))?
+                            != argv_bytes.len()
+                        {
+                            return Err("short child CRT argv write".into());
+                        }
+                        for (address, value) in [
+                            (CRT_ARG0_VA, b"war3.exe\0".as_slice()),
+                            (CRT_ARG1_VA, b"-opengl\0".as_slice()),
+                            (CRT_ARG2_VA, b"-nosound\0".as_slice()),
+                            (CRT_ARG3_VA, b"-swtnl\0".as_slice()),
+                        ] {
+                            if child_address_space
+                                .write(address, value)
+                                .map_err(|error| {
+                                    format!("write child CRT argv string: {error}")
+                                })?
+                                != value.len()
+                            {
+                                return Err("short child CRT argv string write".into());
+                            }
+                        }
+                        if child_address_space
+                            .write(CRT_ENVP_VA, &[0, 0, 0, 0])
+                            .map_err(|error| format!("write child CRT envp: {error}"))?
+                            != 4
+                        {
+                            return Err("short child CRT envp write".into());
                         }
                         let environment_written = child_address_space
                             .write(ENVIRONMENT_BLOCK_VA, &[0, 0, 0, 0])
