@@ -87,6 +87,7 @@ pub enum ProviderOp {
     EqualSid,
     RegOpenKeyExA,
     CrtSetAppType,
+    CrtGetFmode,
     CrtMalloc,
     Unknown,
 }
@@ -151,7 +152,7 @@ impl ProviderOp {
             | Self::WriteFile => 20,
             Self::AllocateAndInitializeSid => 44,
             Self::EqualSid => 8,
-            Self::CrtSetAppType | Self::CrtMalloc => 0,
+            Self::CrtSetAppType | Self::CrtGetFmode | Self::CrtMalloc => 0,
             _ => 0,
         }
     }
@@ -199,6 +200,7 @@ impl ProviderOp {
                 | Self::AllocateAndInitializeSid
                 | Self::EqualSid
                 | Self::CrtSetAppType
+                | Self::CrtGetFmode
         )
     }
 }
@@ -293,6 +295,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
     if import.module.eq_ignore_ascii_case("MSVCRT.dll") {
         return match symbol.as_str() {
             "__set_app_type" => ProviderOp::CrtSetAppType,
+            "__p__fmode" => ProviderOp::CrtGetFmode,
             "malloc" => ProviderOp::CrtMalloc,
             _ => ProviderOp::Unknown,
         };

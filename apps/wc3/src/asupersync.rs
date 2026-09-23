@@ -5609,6 +5609,12 @@ pub(super) async fn run_loop(
                         if written != CHILD_COMMAND_LINE.len() {
                             return Err("short child command-line write".into());
                         }
+                        let fmode_written = child_address_space
+                            .write(CRT_FMODE_VA, &[0, 0, 0, 0])
+                            .map_err(|error| format!("write child CRT _fmode: {error}"))?;
+                        if fmode_written != 4 {
+                            return Err("short child CRT _fmode write".into());
+                        }
                         let environment_written = child_address_space
                             .write(ENVIRONMENT_BLOCK_VA, &[0, 0, 0, 0])
                             .map_err(|error| format!("write child environment block: {error}"))?;
