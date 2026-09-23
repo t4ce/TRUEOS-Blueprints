@@ -2287,6 +2287,62 @@ pub(super) async fn run_loop(
                             ),
                         );
 
+                        let sintfnt_message_box = matches!(
+                            child_pc_owner(child, frame[0]),
+                            Some((module, _)) if module.eq_ignore_ascii_case("SIntfNT.dll")
+                        );
+                        if sintfnt_message_box {
+                            let diagnostic_base = 0x2000_c0c0u32;
+                            let mut code = [0u8; 0x100];
+                            if child
+                                .address_space
+                                .read(diagnostic_base, &mut code)
+                                .ok()
+                                == Some(code.len())
+                            {
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 CHILD PETITE ERROR WINDOW base=0x{diagnostic_base:08x} bytes=\"{}\"",
+                                        diagnostic_hex_bytes(&code),
+                                    ),
+                                );
+                            } else {
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 CHILD PETITE ERROR WINDOW base=0x{diagnostic_base:08x} bytes=\"<unreadable>\"",
+                                    ),
+                                );
+                            }
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD PETITE ERROR REGS eax=0x{:08x} ebx=0x{:08x} ecx=0x{:08x} edx=0x{:08x} esi=0x{:08x} edi=0x{:08x} ebp=0x{:08x} esp=0x{:08x} eflags=0x{:08x}",
+                                    exit.registers.eax,
+                                    exit.registers.ebx,
+                                    exit.registers.ecx,
+                                    exit.registers.edx,
+                                    exit.registers.esi,
+                                    exit.registers.edi,
+                                    exit.registers.ebp,
+                                    exit.registers.esp,
+                                    exit.registers.eflags,
+                                ),
+                            );
+                            let diagnostic_stack = read_guest_words(
+                                &X86Memory(&child.address_space),
+                                exit.registers.esp,
+                                12,
+                            )?;
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD PETITE ERROR STACK words={diagnostic_stack:08x?}"
+                                ),
+                            );
+                        }
+
                         return Ok(());
                     }
                     let is_global_alloc = matches!(
@@ -3975,6 +4031,15 @@ pub(super) async fn run_loop(
                             .xp
                             .scratch_file_snapshot(&requested);
                         if let Some(bytes) = scratch {
+                            let scratch_sha256 = Sha256::digest(&bytes);
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD LOADLIBRARY SCRATCH IMAGE requested={requested:?} bytes={} sha256={}",
+                                    bytes.len(),
+                                    hex_digest(&scratch_sha256),
+                                ),
+                            );
                             if child.execution != ChildExecutionState::ImageEntryRunning {
                                 return Err(format!(
                                     "WC3 CHILD LOADLIBRARY FRONTIER reason=outside-image-entry state={:?}",
