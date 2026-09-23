@@ -887,6 +887,7 @@ struct LoadedModule {
     kind: LoadedModuleKind,
     filename: Option<String>,
     thread_library_calls_disabled: bool,
+    load_count: u32,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1088,6 +1089,7 @@ impl XpProcess {
                 kind: LoadedModuleKind::MainImage,
                 filename: Some(image_filename.to_owned()),
                 thread_library_calls_disabled: false,
+                load_count: 1,
             }],
             next_provider_module_handle: PROVIDER_MODULE_HANDLE_BASE,
             imports,
@@ -1291,6 +1293,7 @@ impl XpProcess {
             kind,
             filename,
             thread_library_calls_disabled: false,
+            load_count: 1,
         });
         Ok(())
     }
@@ -1315,6 +1318,32 @@ impl XpProcess {
             .iter()
             .find(|module| module.handle == handle)
             .map(|module| module.thread_library_calls_disabled)
+    }
+
+    pub fn retain_loaded_module(&mut self, handle: u32) -> Result<u32, &'static str> {
+        let module = self
+            .loaded_modules
+            .iter_mut()
+            .find(|module| module.handle == handle)
+            .ok_or("loaded module handle")?;
+        module.load_count = module
+            .load_count
+            .checked_add(1)
+            .ok_or("loaded module reference count overflow")?;
+        Ok(module.load_count)
+    }
+
+    pub fn release_loaded_module(&mut self, handle: u32) -> Result<u32, &'static str> {
+        let module = self
+            .loaded_modules
+            .iter_mut()
+            .find(|module| module.handle == handle)
+            .ok_or("loaded module handle")?;
+        if module.load_count == 0 {
+            return Err("loaded module reference count underflow");
+        }
+        module.load_count -= 1;
+        Ok(module.load_count)
     }
 
     pub fn provider_import(&self, id: u32) -> Option<&ProviderImport> {

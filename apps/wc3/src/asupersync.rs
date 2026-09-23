@@ -4698,6 +4698,12 @@ pub(super) async fn run_loop(
                             .xp
                             .loaded_module_handle(&requested);
                         if let Some(handle) = existing {
+                            let references = session
+                                .process_mut(active_pid)
+                                .ok_or_else(|| "child process missing".to_owned())?
+                                .xp
+                                .retain_loaded_module(handle)
+                                .map_err(str::to_owned)?;
                             let mut registers = exit.registers;
                             registers.eax = handle;
                             contexts[active]
@@ -4707,8 +4713,8 @@ pub(super) async fn run_loop(
                             logl::log(
                                 level::IMPORTANT,
                                 format_args!(
-                                    "WC3 CHILD LOADLIBRARY RETURN pid={} tid={} during=\"{}\" requested={:?} handle=0x{:08x} already_loaded=1 cleanup=4-by-thunk",
-                                    active_pid, active_tid, running_module_name, requested, handle,
+                                    "WC3 CHILD LOADLIBRARY RETURN pid={} tid={} during=\"{}\" requested={:?} handle=0x{:08x} already_loaded=1 references={} cleanup=4-by-thunk",
+                                    active_pid, active_tid, running_module_name, requested, handle, references,
                                 ),
                             );
                             continue;
@@ -5004,6 +5010,38 @@ pub(super) async fn run_loop(
                             ),
                         );
                         return Ok(());
+                    }
+                    if operation == child_loader::ProviderOp::FreeLibrary {
+                        let handle = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            exit.registers.esp,
+                            2,
+                        )?[1];
+                        let remaining = session
+                            .process_mut(active_pid)
+                            .ok_or_else(|| "child process missing".to_owned())?
+                            .xp
+                            .release_loaded_module(handle)
+                            .map_err(str::to_owned)?;
+                        if remaining == 0 {
+                            return Err(format!(
+                                "WC3 CHILD FREELIBRARY FRONTIER reason=zero-reference-unload handle=0x{handle:08x}"
+                            ));
+                        }
+                        let mut registers = exit.registers;
+                        registers.eax = 1;
+                        contexts[active]
+                            .context
+                            .set_registers(registers)
+                            .map_err(|error| error.to_string())?;
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD FREELIBRARY pid={} tid={} during={:?} handle=0x{:08x} remaining_references={} result=1 cleanup=4-by-thunk",
+                                active_pid, active_tid, running_module_name, handle, remaining,
+                            ),
+                        );
+                        continue;
                     }
                     if operation == child_loader::ProviderOp::GetProcAddress {
                         let frame = read_guest_words(

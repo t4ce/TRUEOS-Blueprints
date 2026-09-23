@@ -48,6 +48,7 @@ pub enum ProviderOp {
     GetModuleFileNameA,
     GetModuleHandleA,
     LoadLibraryA,
+    FreeLibrary,
     GetProcAddress,
     InterlockedExchange,
     TlsAlloc,
@@ -153,6 +154,7 @@ impl ProviderOp {
             | Self::CloseHandle
             | Self::GetModuleHandleA
             | Self::LoadLibraryA
+            | Self::FreeLibrary
             | Self::QueryPerformanceFrequency
             | Self::QueryPerformanceCounter
             | Self::GetLocalTime
@@ -299,6 +301,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "GetModuleFileNameA" => ProviderOp::GetModuleFileNameA,
             "GetModuleHandleA" => ProviderOp::GetModuleHandleA,
             "LoadLibraryA" => ProviderOp::LoadLibraryA,
+            "FreeLibrary" => ProviderOp::FreeLibrary,
             "GetProcAddress" => ProviderOp::GetProcAddress,
             "InterlockedExchange" => ProviderOp::InterlockedExchange,
             "TlsAlloc" => ProviderOp::TlsAlloc,
