@@ -65,11 +65,23 @@ const ERROR_RESOURCE_LANG_NOT_FOUND: u32 = 1815;
 const ERROR_MR_MID_NOT_FOUND: u32 = 317;
 const FORMAT_MESSAGE_FROM_HMODULE: u32 = 0x0000_0800;
 const RT_MESSAGETABLE: u32 = 11;
+const LANG_USER_DEFAULT: u32 = 0x0400;
+const LANG_SYSTEM_DEFAULT: u32 = 0x0800;
+const XP_USER_DEFAULT_LANGID: u32 = 0x0409;
+const XP_SYSTEM_DEFAULT_LANGID: u32 = 0x0409;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MessageResourceEncoding {
     Ansi,
     Unicode,
+}
+
+pub fn format_message_language_resolution(requested: u32) -> (u32, &'static str) {
+    match requested {
+        LANG_USER_DEFAULT => (XP_USER_DEFAULT_LANGID, "user-default"),
+        LANG_SYSTEM_DEFAULT => (XP_SYSTEM_DEFAULT_LANGID, "system-default"),
+        other => (other, "explicit"),
+    }
 }
 const ERROR_NO_TOKEN: u32 = 1008;
 const TOKEN_QUERY: u32 = 0x0000_0008;
@@ -4219,7 +4231,13 @@ impl XpProcess {
         }
 
         self.last_format_message_encoding = None;
-        let (text, encoding) = match message_table_text(memory, source, language_id, message_id) {
+        let (resolved_language_id, _) = format_message_language_resolution(language_id);
+        let (text, encoding) = match message_table_text(
+            memory,
+            source,
+            resolved_language_id,
+            message_id,
+        ) {
             Ok(value) => value,
             Err(MessageTableLookup::TypeMissing) => {
                 self.set_last_error(ERROR_RESOURCE_TYPE_NOT_FOUND);

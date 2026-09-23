@@ -862,7 +862,7 @@ mod tests_process_1 {
     }
 
     #[test]
-    fn child_format_message_a_uses_exact_language_message_table_and_stdcall() {
+    fn child_format_message_a_resolves_user_default_and_keeps_explicit_language_exact() {
         let provider = ProviderImport {
             module: "KERNEL32.dll".into(),
             symbol: ProviderSymbol::Name("FormatMessageA".into()),
@@ -889,12 +889,11 @@ mod tests_process_1 {
         write_u32(&mut memory, kind + 16, 7).unwrap();
         write_u32(&mut memory, kind + 20, 0x8000_0040).unwrap();
         let name = root + 0x40;
-        write_u16(&mut memory, name + 14, 2).unwrap();
-        // A first language exists, but FormatMessageA must not select it.
+        write_u16(&mut memory, name + 14, 1).unwrap();
+        // Storm contains a real en-US resource.  The caller requests the
+        // symbolic LANG_USER_DEFAULT, which XP resolves to en-US.
         write_u32(&mut memory, name + 16, 0x0409).unwrap();
-        write_u32(&mut memory, name + 20, 0x80).unwrap();
-        write_u32(&mut memory, name + 24, 0x0400).unwrap();
-        write_u32(&mut memory, name + 28, 0x90).unwrap();
+        write_u32(&mut memory, name + 20, 0x90).unwrap();
         write_u32(&mut memory, root + 0x90, 0x2000).unwrap();
         write_u32(&mut memory, root + 0x94, 26).unwrap();
         let data = module + 0x2000;
@@ -930,6 +929,14 @@ mod tests_process_1 {
         memory.read(buffer, &mut output).unwrap();
         assert_eq!(output, *b"OK\r\n\0");
         assert_eq!(xp.last_format_message_encoding(), Some(MessageResourceEncoding::Ansi));
+
+        // A genuine explicit language must not silently use en-US.
+        write_u32(&mut memory, esp + 4 * 4, 0x0407).unwrap();
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(0))
+        );
+        assert_eq!(xp.last_error(), ERROR_RESOURCE_LANG_NOT_FOUND);
     }
 
     #[test]

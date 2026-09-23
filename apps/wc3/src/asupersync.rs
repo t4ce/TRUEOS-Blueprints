@@ -6582,6 +6582,26 @@ pub(super) async fn run_loop(
                                                 }
                                             })
                                             .unwrap_or("none");
+                                        let (resolved_language_id, language_kind) =
+                                            wc3::process::format_message_language_resolution(
+                                                *language_id,
+                                            );
+                                        let last_error = session
+                                            .process(active_pid)
+                                            .ok_or_else(|| "child process missing".to_owned())?
+                                            .xp
+                                            .last_error();
+                                        logl::log(
+                                            level::IMPORTANT,
+                                            format_args!(
+                                                "WC3 CHILD FORMATMESSAGEA LANGUAGE pid={} tid={} requested=0x{:04x} resolved=0x{:04x} kind={}",
+                                                active_pid,
+                                                active_tid,
+                                                language_id,
+                                                resolved_language_id,
+                                                language_kind,
+                                            ),
+                                        );
                                         let text = if result == 0 {
                                             String::new()
                                         } else {
@@ -6595,7 +6615,7 @@ pub(super) async fn run_loop(
                                         logl::log(
                                             level::IMPORTANT,
                                             format_args!(
-                                                "WC3 CHILD FORMATMESSAGEA RESULT pid={} tid={} source=0x{:08x} module=\"Storm.dll\" message_id=0x{:08x} language_id=0x{:04x} resource_type=RT_MESSAGETABLE encoding={} chars={} text={:?} eax=0x{:08x} cleanup=28-by-thunk",
+                                                "WC3 CHILD FORMATMESSAGEA RESULT pid={} tid={} source=0x{:08x} module=\"Storm.dll\" message_id=0x{:08x} language_id=0x{:04x} resource_type=RT_MESSAGETABLE encoding={} chars={} text={:?} eax=0x{:08x} last_error={} cleanup=28-by-thunk",
                                                 active_pid,
                                                 active_tid,
                                                 source,
@@ -6605,6 +6625,7 @@ pub(super) async fn run_loop(
                                                 result,
                                                 text,
                                                 result,
+                                                last_error,
                                             ),
                                         );
                                     }
