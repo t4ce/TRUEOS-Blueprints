@@ -95,6 +95,7 @@ pub enum ProviderOp {
     HeapFree,
     GlobalAlloc,
     MessageBoxA,
+    LoadStringA,
     WsprintfA,
     InitializeCriticalSection,
     EnterCriticalSection,
@@ -185,7 +186,8 @@ impl ProviderOp {
             | Self::CreateEventA
             | Self::OpenThreadToken
             | Self::SetFilePointer
-            | Self::MessageBoxA => 16,
+            | Self::MessageBoxA
+            | Self::LoadStringA => 16,
             Self::MultiByteToWideChar | Self::LCMapStringW => 24,
             Self::CreateFileA => 28,
             Self::WideCharToMultiByte => 32,
@@ -285,6 +287,7 @@ impl ProviderOp {
                 | Self::CrtStrrchr
                 | Self::CrtStrstr
                 | Self::CrtFullPath
+                | Self::LoadStringA
                 | Self::WsprintfA
         )
     }
@@ -373,6 +376,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
     if import.module.eq_ignore_ascii_case("USER32.dll") {
         return match symbol.as_str() {
             "MessageBoxA" => ProviderOp::MessageBoxA,
+            "LoadStringA" => ProviderOp::LoadStringA,
             "wsprintfA" => ProviderOp::WsprintfA,
             _ => ProviderOp::Unknown,
         };

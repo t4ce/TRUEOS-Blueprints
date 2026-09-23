@@ -2952,6 +2952,21 @@ mod tests_process_1 {
     }
 
     #[test]
+    fn child_load_string_a_uses_stdcall_sixteen_and_process_dispatch() {
+        let provider = ProviderImport {
+            module: "USER32.dll".into(),
+            symbol: ProviderSymbol::Name("LoadStringA".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&provider);
+        assert_eq!(operation, ProviderOp::LoadStringA);
+        assert!(operation.is_modeled());
+        assert!(operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 16);
+        assert_eq!(provider_thunk_kind(&provider), thunk32::Kind::Stdcall(16));
+    }
+
+    #[test]
     fn child_crt_vsnprintf_formats_va_list_and_uses_legacy_truncation() {
         let provider = ProviderImport {
             module: "MSVCRT.dll".into(),

@@ -1985,6 +1985,14 @@ impl XpProcess {
                     .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(decremented))
             }
+            ProviderOp::LoadStringA => {
+                let result = self.load_string(esp, memory)?;
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(result))
+            }
             ProviderOp::TlsAlloc => {
                 let slot = self.tls_alloc()?;
                 self.call_count = self
@@ -4311,12 +4319,12 @@ impl XpProcess {
 
     fn load_string(&self, esp: u32, memory: &mut impl GuestMemory) -> Result<u32, &'static str> {
         let [_, instance, resource_id, buffer, max_chars] = arguments::<5>(memory, esp)?;
-        if instance != pe32::IMAGE_BASE || max_chars == 0 {
+        if instance == 0 || max_chars == 0 {
             return Err("unexpected LoadStringA frame");
         }
         let resource = numeric_resource(
             memory,
-            pe32::IMAGE_BASE,
+            instance,
             6,
             (resource_id >> 4)
                 .checked_add(1)
