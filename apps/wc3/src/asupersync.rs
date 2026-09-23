@@ -5419,6 +5419,37 @@ pub(super) async fn run_loop(
                         } else {
                             None
                         };
+                        if operation == child_loader::ProviderOp::FindFirstFileA {
+                            let [_, pattern, find_data] = read_guest_words(
+                                &X86Memory(&child.address_space),
+                                exit.registers.esp,
+                                3,
+                            )?[..] else {
+                                unreachable!("FindFirstFileA frame has three words")
+                            };
+                            let pattern_text = if pattern == 0 {
+                                "<null>".to_owned()
+                            } else {
+                                wc3::process::read_c_string(
+                                    &X86Memory(&child.address_space),
+                                    pattern,
+                                    1024,
+                                )
+                                .map_err(|error| format!("FindFirstFileA pattern: {error}"))?
+                            };
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD FINDFIRSTFILEA CALL pid={} tid={} during=\"{}\" pattern={:?} find_data=0x{:08x} caller_ret=0x{:08x}",
+                                    active_pid,
+                                    active_tid,
+                                    running_module_name,
+                                    pattern_text,
+                                    find_data,
+                                    u32::from_le_bytes(caller_ret),
+                                ),
+                            );
+                        }
                         let disable_thread_library_calls = if operation
                             == child_loader::ProviderOp::DisableThreadLibraryCalls
                         {

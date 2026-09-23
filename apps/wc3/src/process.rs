@@ -64,6 +64,7 @@ const ERROR_NO_TOKEN: u32 = 1008;
 const TOKEN_QUERY: u32 = 0x0000_0008;
 const TOKEN_HANDLE_BASE: u32 = 0x5743_9001;
 const FILE_HANDLE_BASE: u32 = 0x5743_b001;
+const FIND_HANDLE_BASE: u32 = 0x5743_c001;
 const FILE_WRITE_ACCESS_MASK: u32 = 0x5000_0116;
 const INVALID_FILE_ATTRIBUTES: u32 = u32::MAX;
 const FILE_ATTRIBUTE_NORMAL: u32 = 0x0000_0080;
@@ -1123,6 +1124,7 @@ pub struct XpProcess {
     next_token_handle: u32,
     file_handles: HashMap<u32, FileHandle>,
     next_file_handle: u32,
+    next_find_handle: u32,
     scratch_files: HashMap<u32, ScratchFile>,
     scratch_paths: HashMap<String, u32>,
     next_scratch_file: u32,
@@ -1280,6 +1282,7 @@ impl XpProcess {
             next_token_handle: TOKEN_HANDLE_BASE,
             file_handles: HashMap::new(),
             next_file_handle: FILE_HANDLE_BASE,
+            next_find_handle: FIND_HANDLE_BASE,
             scratch_files: HashMap::new(),
             scratch_paths: HashMap::new(),
             next_scratch_file: 1,
@@ -3039,6 +3042,44 @@ impl XpProcess {
                     api: "SetFileAttributesA",
                     detail: format!("existing path={path:?} attributes=0x{attributes:08x}"),
                 })
+            }
+            ProviderOp::FindFirstFileA => {
+                let [_, pattern, find_data] = arguments::<3>(memory, esp)?;
+                if pattern == 0 || find_data == 0 {
+                    return Err(ProviderDispatchError::Frontier {
+                        api: "FindFirstFileA",
+                        detail: format!(
+                            "null pattern=0x{pattern:08x} find_data=0x{find_data:08x}"
+                        ),
+                    });
+                }
+                let pattern = read_c_string(memory, pattern, 1024)?;
+                if !is_self_image_path(&pattern) {
+                    return Err(ProviderDispatchError::Frontier {
+                        api: "FindFirstFileA",
+                        detail: format!("unmodeled pattern={pattern:?} find_data=0x{find_data:08x}"),
+                    });
+                }
+                let image_size = self_image_bytes
+                    .map(|bytes| bytes.len() as u64)
+                    .ok_or(ProviderDispatchError::Fault("self image file backing unavailable"))?;
+                let mut data = [0u8; 320];
+                data[0..4].copy_from_slice(&FILE_ATTRIBUTE_NORMAL.to_le_bytes());
+                data[20..24].copy_from_slice(&((image_size >> 32) as u32).to_le_bytes());
+                data[24..28].copy_from_slice(&(image_size as u32).to_le_bytes());
+                data[44..53].copy_from_slice(b"War3.exe\0");
+                memory.write(find_data, &data)?;
+                let handle = self.next_find_handle;
+                self.next_find_handle = self
+                    .next_find_handle
+                    .checked_add(1)
+                    .ok_or("find handle overflow")?;
+                self.set_last_error(0);
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(handle))
             }
             ProviderOp::QueryPerformanceFrequency => {
                 self.call_count = self
