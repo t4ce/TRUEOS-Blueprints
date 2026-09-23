@@ -4494,14 +4494,48 @@ pub(super) async fn run_loop(
                             .ok_or_else(|| "child process missing".to_owned())?
                             .xp
                             .scratch_file_snapshot(&requested);
-                        if let Some(bytes) = scratch {
-                            let scratch_sha256 = Sha256::digest(&bytes);
+                        let local_image = if let Some(bytes) = scratch {
+                            let stored = requested
+                                .rsplit(['\\', '/'])
+                                .next()
+                                .unwrap_or(&requested)
+                                .to_owned();
+                            Some(("scratch", stored, bytes))
+                        } else {
+                            let listing = async_fs::list_dir(b"/common/Warcraft III")
+                                .await
+                                .map_err(|error| {
+                                    format!(
+                                        "list Warcraft III directory for LoadLibraryA: TRUEOSFS {error}"
+                                    )
+                                })?;
+                            if listing.truncated {
+                                return Err("Warcraft III directory listing truncated".into());
+                            }
+                            let stored = child_loader::resolve_file(&listing, &requested)
+                                .map_err(str::to_owned)?;
+                            if let Some(stored) = stored {
+                                let path = format!("/common/Warcraft III/{stored}");
+                                let bytes = async_fs::read_file(path.as_bytes())
+                                    .await
+                                    .map_err(|error| {
+                                        format!(
+                                            "read {path} for LoadLibraryA: TRUEOSFS error {error}"
+                                        )
+                                    })?;
+                                Some(("trueosfs", stored, bytes))
+                            } else {
+                                None
+                            }
+                        };
+                        if let Some((source, stored, bytes)) = local_image {
+                            let local_sha256 = Sha256::digest(&bytes);
                             logl::log(
                                 level::IMPORTANT,
                                 format_args!(
-                                    "WC3 CHILD LOADLIBRARY SCRATCH IMAGE requested={requested:?} bytes={} sha256={}",
+                                    "WC3 CHILD LOADLIBRARY LOCAL IMAGE source={source} requested={requested:?} stored={stored:?} bytes={} sha256={}",
                                     bytes.len(),
-                                    hex_digest(&scratch_sha256),
+                                    hex_digest(&local_sha256),
                                 ),
                             );
                             if child.execution != ChildExecutionState::ImageEntryRunning {
@@ -4511,7 +4545,7 @@ pub(super) async fn run_loop(
                                 ));
                             }
                             let image = pe32::parse(&bytes).map_err(|error| {
-                                format!("LoadLibraryA scratch PE {requested:?}: {error}")
+                                format!("LoadLibraryA {source} PE {requested:?}: {error}")
                             })?;
                             let named_exports = image
                                 .exports
@@ -4528,10 +4562,12 @@ pub(super) async fn run_loop(
                             logl::log(
                                 level::IMPORTANT,
                                 format_args!(
-                                    "WC3 CHILD LOADLIBRARY SCRATCH PE pid={} tid={} requested={:?} bytes={} image_base=0x{:08x} entry_rva=0x{:08x} size_of_image=0x{:08x} sections={} imports={} exports={} named_exports={} forwarders={} relocations={}",
+                                    "WC3 CHILD LOADLIBRARY LOCAL PE source={} pid={} tid={} requested={:?} stored={:?} bytes={} image_base=0x{:08x} entry_rva=0x{:08x} size_of_image=0x{:08x} sections={} imports={} exports={} named_exports={} forwarders={} relocations={}",
+                                    source,
                                     active_pid,
                                     active_tid,
                                     requested,
+                                    stored,
                                     bytes.len(),
                                     image.image_base,
                                     image.entry_rva,
@@ -4548,7 +4584,8 @@ pub(super) async fn run_loop(
                                 logl::log(
                                     level::IMPORTANT,
                                     format_args!(
-                                        "WC3 CHILD LOADLIBRARY SCRATCH IMPORT index={} module={:?} symbol={:?} iat_rva=0x{:08x}",
+                                        "WC3 CHILD LOADLIBRARY LOCAL IMPORT source={} index={} module={:?} symbol={:?} iat_rva=0x{:08x}",
+                                        source,
                                         index,
                                         import.module,
                                         import.symbol,
@@ -4575,7 +4612,7 @@ pub(super) async fn run_loop(
                                 .write(module_handle, &image.image)
                                 .map_err(|error| error.to_string())?;
                             if written != image.image.len() {
-                                return Err("short scratch native image write".into());
+                                return Err("short local native image write".into());
                             }
                             let imports: Vec<_> = image
                                 .imports
@@ -4603,7 +4640,7 @@ pub(super) async fn run_loop(
                             for (import, address) in image.imports.iter().zip(addresses) {
                                 let iat = module_handle
                                     .checked_add(import.iat_rva)
-                                    .ok_or("scratch native IAT overflow")?;
+                                    .ok_or("local native IAT overflow")?;
                                 child
                                     .address_space
                                     .write(iat, &address.to_le_bytes())
@@ -4615,11 +4652,6 @@ pub(super) async fn run_loop(
                                 .xp
                                 .register_runtime_native_module(&requested, module_handle)
                                 .map_err(str::to_owned)?;
-                            let stored = requested
-                                .rsplit(['\\', '/'])
-                                .next()
-                                .unwrap_or(&requested)
-                                .to_owned();
                             let native_index = child.native_modules.len();
                             child.native_modules.push(PendingNativeModule {
                                 requested: requested.clone(),
@@ -4629,7 +4661,7 @@ pub(super) async fn run_loop(
                             });
                             let entry = module_handle
                                 .checked_add(child.native_modules[native_index].image.entry_rva)
-                                .ok_or("scratch DLL entry overflow")?;
+                                .ok_or("local DLL entry overflow")?;
                             let provider_esp = exit.registers.esp;
                             let callback_esp = provider_esp
                                 .checked_sub(16)
@@ -4680,27 +4712,14 @@ pub(super) async fn run_loop(
                             );
                             continue;
                         }
-                        let listing = async_fs::list_dir(b"/common/Warcraft III")
-                            .await
-                            .map_err(|error| {
-                                format!("list Warcraft III directory for LoadLibraryA: TRUEOSFS {error}")
-                            })?;
-                        if listing.truncated {
-                            return Err("Warcraft III directory listing truncated".into());
-                        }
-                        let stored = child_loader::resolve_file(&listing, &requested)
-                            .map_err(str::to_owned)?;
-                        let kind = if stored.is_some() { "local-native" } else { "external" };
                         logl::log(
                             level::IMPORTANT,
                             format_args!(
-                                "WC3 CHILD LOADLIBRARY FRONTIER pid={} tid={} during=\"{}\" requested={:?} kind={} stored={:?} caller_ret=0x{:08x}",
+                                "WC3 CHILD LOADLIBRARY FRONTIER pid={} tid={} during=\"{}\" requested={:?} kind=external stored=None caller_ret=0x{:08x}",
                                 active_pid,
                                 active_tid,
                                 running_module_name,
                                 requested,
-                                kind,
-                                stored,
                                 u32::from_le_bytes(caller_ret),
                             ),
                         );
