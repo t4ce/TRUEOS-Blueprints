@@ -886,6 +886,7 @@ struct LoadedModule {
     handle: u32,
     kind: LoadedModuleKind,
     filename: Option<String>,
+    thread_library_calls_disabled: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1086,6 +1087,7 @@ impl XpProcess {
                 handle: pe32::IMAGE_BASE,
                 kind: LoadedModuleKind::MainImage,
                 filename: Some(image_filename.to_owned()),
+                thread_library_calls_disabled: false,
             }],
             next_provider_module_handle: PROVIDER_MODULE_HANDLE_BASE,
             imports,
@@ -1288,8 +1290,31 @@ impl XpProcess {
             handle,
             kind,
             filename,
+            thread_library_calls_disabled: false,
         });
         Ok(())
+    }
+
+    pub fn disable_thread_library_calls(&mut self, handle: u32) -> Result<u32, &'static str> {
+        self.call_count = self.call_count.checked_add(1).ok_or("call count overflow")?;
+        let Some(module) = self.loaded_modules.iter_mut().find(|module| module.handle == handle)
+        else {
+            self.set_last_error(ERROR_INVALID_HANDLE);
+            return Ok(0);
+        };
+        if module.kind != LoadedModuleKind::NativeImage {
+            self.set_last_error(ERROR_INVALID_HANDLE);
+            return Ok(0);
+        }
+        module.thread_library_calls_disabled = true;
+        Ok(1)
+    }
+
+    pub fn thread_library_calls_disabled(&self, handle: u32) -> Option<bool> {
+        self.loaded_modules
+            .iter()
+            .find(|module| module.handle == handle)
+            .map(|module| module.thread_library_calls_disabled)
     }
 
     pub fn provider_import(&self, id: u32) -> Option<&ProviderImport> {
@@ -2240,6 +2265,12 @@ impl XpProcess {
             ProviderOp::GetLastError => {
                 self.call_count = self.call_count.checked_add(1).ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(self.last_error))
+            }
+            ProviderOp::DisableThreadLibraryCalls => {
+                let [_, module] = arguments::<2>(memory, esp)?;
+                Ok(PersonalityAction::Return(
+                    self.disable_thread_library_calls(module)?,
+                ))
             }
             ProviderOp::CreateFileA => {
                 let [

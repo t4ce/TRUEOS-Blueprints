@@ -96,6 +96,7 @@ pub enum ProviderOp {
     EnterCriticalSection,
     LeaveCriticalSection,
     SetLastError,
+    DisableThreadLibraryCalls,
     SetUnhandledExceptionFilter,
     UnhandledExceptionFilter,
     RtlUnwind,
@@ -147,6 +148,7 @@ impl ProviderOp {
             | Self::GetFileType
             | Self::SetHandleCount
             | Self::SetLastError
+            | Self::DisableThreadLibraryCalls
             | Self::ReleaseMutex
             | Self::CloseHandle
             | Self::GetModuleHandleA
@@ -236,6 +238,7 @@ impl ProviderOp {
                 | Self::ReadProcessMemory
                 | Self::WriteProcessMemory
                 | Self::GetLastError
+                | Self::DisableThreadLibraryCalls
                 | Self::CreateFileA
                 | Self::GetFileSize
                 | Self::SetFilePointer
@@ -341,6 +344,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "EnterCriticalSection" => ProviderOp::EnterCriticalSection,
             "LeaveCriticalSection" => ProviderOp::LeaveCriticalSection,
             "SetLastError" => ProviderOp::SetLastError,
+            "DisableThreadLibraryCalls" => ProviderOp::DisableThreadLibraryCalls,
             "SetUnhandledExceptionFilter" => ProviderOp::SetUnhandledExceptionFilter,
             "UnhandledExceptionFilter" => ProviderOp::UnhandledExceptionFilter,
             "RtlUnwind" => ProviderOp::RtlUnwind,

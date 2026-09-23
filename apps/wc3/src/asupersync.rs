@@ -5353,6 +5353,24 @@ pub(super) async fn run_loop(
                         } else {
                             None
                         };
+                        let disable_thread_library_calls = if operation
+                            == child_loader::ProviderOp::DisableThreadLibraryCalls
+                        {
+                            let module = read_guest_words(
+                                &X86Memory(&child.address_space),
+                                exit.registers.esp,
+                                2,
+                            )?[1];
+                            let was_disabled = session
+                                .process(active_pid)
+                                .ok_or_else(|| "child process missing".to_owned())?
+                                .xp
+                                .thread_library_calls_disabled(module)
+                                .unwrap_or(false);
+                            Some((module, was_disabled))
+                        } else {
+                            None
+                        };
                         let dispatch = {
                             let mut child_memory = X86Memory(&child.address_space);
                             session
@@ -5436,6 +5454,27 @@ pub(super) async fn run_loop(
                                             u8::from(result != 0),
                                             result,
                                             last_error,
+                                        ),
+                                    );
+                                }
+                                if let Some((module, was_disabled)) = disable_thread_library_calls {
+                                    let now_disabled = session
+                                        .process(active_pid)
+                                        .ok_or_else(|| "child process missing".to_owned())?
+                                        .xp
+                                        .thread_library_calls_disabled(module)
+                                        .unwrap_or(false);
+                                    logl::log(
+                                        level::IMPORTANT,
+                                        format_args!(
+                                            "WC3 CHILD DISABLETHREADLIBRARYCALLS pid={} tid={} during={:?} module=0x{:08x} was_disabled={} now_disabled={} result={}",
+                                            active_pid,
+                                            active_tid,
+                                            running_module_name,
+                                            module,
+                                            was_disabled as u8,
+                                            now_disabled as u8,
+                                            result,
                                         ),
                                     );
                                 }
