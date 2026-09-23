@@ -91,6 +91,7 @@ pub enum ProviderOp {
     CrtSetAppType,
     CrtGetFmode,
     CrtGetCommode,
+    CrtExceptHandler3,
     CrtControlFp,
     CrtGetMainArgs,
     CrtOnExit,
@@ -163,6 +164,7 @@ impl ProviderOp {
             Self::CrtSetAppType
             | Self::CrtGetFmode
             | Self::CrtGetCommode
+            | Self::CrtExceptHandler3
             | Self::CrtControlFp
             | Self::CrtGetMainArgs
             | Self::CrtOnExit
@@ -176,6 +178,7 @@ impl ProviderOp {
             self,
             Self::FreeEnvironmentStringsW
                 | Self::GetStartupInfoA
+                | Self::GetSystemInfo
                 | Self::GetStdHandle
                 | Self::GetFileType
                 | Self::SetHandleCount
@@ -317,6 +320,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "__set_app_type" => ProviderOp::CrtSetAppType,
             "__p__fmode" => ProviderOp::CrtGetFmode,
             "__p__commode" => ProviderOp::CrtGetCommode,
+            "_except_handler3" => ProviderOp::CrtExceptHandler3,
             "_controlfp" => ProviderOp::CrtControlFp,
             "__getmainargs" => ProviderOp::CrtGetMainArgs,
             "_onexit" => ProviderOp::CrtOnExit,

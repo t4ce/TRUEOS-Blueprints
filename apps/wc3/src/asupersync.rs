@@ -1221,6 +1221,86 @@ fn begin_child_seh_dispatch(child: &mut PendingChild, guest: &mut GuestContext, 
     Ok(())
 }
 
+fn child_seh3_scope_entry(
+    child: &PendingChild,
+    scope: u32,
+    level: i32,
+) -> Result<(i32, u32, u32), String> {
+    if level < 0 {
+        return Err("SEH3 negative scope entry level".into());
+    }
+    let offset = u32::try_from(level)
+        .ok()
+        .and_then(|level| level.checked_mul(12))
+        .ok_or("SEH3 scope entry overflow")?;
+    let address = scope.checked_add(offset).ok_or("SEH3 scope address overflow")?;
+    let words = read_guest_words(&X86Memory(&child.address_space), address, 3)?;
+    Ok((i32::from_le_bytes(words[0].to_le_bytes()), words[1], words[2]))
+}
+
+fn schedule_child_seh3_filter(
+    child: &mut PendingChild,
+    context: &mut GuestContext,
+    registers: Registers,
+    call: ChildSeh3Call,
+    filter: u32,
+) -> Result<(), String> {
+    let callback_esp = call
+        .provider_esp
+        .checked_sub(8)
+        .ok_or("SEH3 filter callback stack underflow")?;
+    let pointers_va = callback_esp
+        .checked_sub(8)
+        .ok_or("SEH3 exception-pointers stack underflow")?;
+    let seh = child.seh.as_ref().ok_or("SEH3 filter without active SEH")?;
+    let pointers = [seh.exception_record_va, seh.context_va];
+    let mut pointer_bytes = [0; 8];
+    for (index, value) in pointers.into_iter().enumerate() {
+        pointer_bytes[index * 4..index * 4 + 4].copy_from_slice(&value.to_le_bytes());
+    }
+    if child.address_space.write(pointers_va, &pointer_bytes).map_err(|error| error.to_string())? != 8 {
+        return Err("short SEH3 exception-pointers write".into());
+    }
+    let frame = [thunk32::CHILD_CALLBACK_RETURN_ADDRESS, pointers_va];
+    let mut frame_bytes = [0; 8];
+    for (index, value) in frame.into_iter().enumerate() {
+        frame_bytes[index * 4..index * 4 + 4].copy_from_slice(&value.to_le_bytes());
+    }
+    if child.address_space.write(callback_esp, &frame_bytes).map_err(|error| error.to_string())? != 8 {
+        return Err("short SEH3 filter callback frame write".into());
+    }
+    child.seh3_call = Some(call);
+    let mut callback = registers;
+    callback.eip = filter;
+    callback.esp = callback_esp;
+    callback.ebp = child.seh.as_ref().unwrap().registration.checked_add(0x10).ok_or("SEH3 EBP overflow")?;
+    context.context.set_registers(callback).map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+fn schedule_child_seh3_finally(
+    child: &mut PendingChild,
+    context: &mut GuestContext,
+    registers: Registers,
+    call: ChildSeh3Call,
+    handler: u32,
+) -> Result<(), String> {
+    let callback_esp = call
+        .provider_esp
+        .checked_sub(4)
+        .ok_or("SEH3 finally callback stack underflow")?;
+    if child.address_space.write(callback_esp, &thunk32::CHILD_CALLBACK_RETURN_ADDRESS.to_le_bytes()).map_err(|error| error.to_string())? != 4 {
+        return Err("short SEH3 finally callback frame write".into());
+    }
+    child.seh3_call = Some(call);
+    let mut callback = registers;
+    callback.eip = handler;
+    callback.esp = callback_esp;
+    callback.ebp = child.seh.as_ref().unwrap().registration.checked_add(0x10).ok_or("SEH3 EBP overflow")?;
+    context.context.set_registers(callback).map_err(|error| error.to_string())?;
+    Ok(())
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum ProcSelector {
     Name(String),
@@ -1353,7 +1433,7 @@ pub(super) async fn run_loop(
     active_message_box: &mut Option<ActiveMessageBox>,
     mut active: usize,
 ) -> Result<(), String> {
-    loop {
+    'child_run: loop {
         if let Some(modal) = active_message_box.as_mut() {
             if modal.request.caller.pid != LAUNCHER_PID || modal.buttons.is_empty() {
                 return Err("invalid active MessageBoxA modal state".into());
@@ -1513,7 +1593,49 @@ pub(super) async fn run_loop(
                         if !seh.quiet { logl::log(level::IMPORTANT, format_args!(
                             "WC3 CHILD SEH RETURN pid={} tid={} registration=0x{:08x} handler=0x{:08x} disposition={}",
                             active_pid, active_tid, seh.registration, seh.handler, exit.registers.eax,
-                        )); }
+                            )); }
+                        if exit.registers.eax == wc3::seh::DISPOSITION_CONTINUE_SEARCH {
+                            if seh.next_registration == u32::MAX || seh.next_registration == 0 {
+                                return Err("WC3 CHILD SEH FRONTIER reason=unhandled-next-registration".into());
+                            }
+                            let registration = read_seh_registration(&child.address_space, seh.next_registration)?;
+                            let handler_frame = [
+                                thunk32::CHILD_SEH_RETURN_ADDRESS,
+                                seh.exception_record_va,
+                                registration.frame,
+                                seh.context_va,
+                                0,
+                            ];
+                            let mut frame_bytes = [0; 20];
+                            for (index, value) in handler_frame.into_iter().enumerate() {
+                                frame_bytes[index * 4..index * 4 + 4].copy_from_slice(&value.to_le_bytes());
+                            }
+                            if child.address_space.write(exit.registers.esp, &frame_bytes).map_err(|error| error.to_string())? != frame_bytes.len() {
+                                return Err("short continued SEH handler frame write".into());
+                            }
+                            let handler_registers = wc3::seh::exception_handler_registers(
+                                seh.original_registers,
+                                registration.handler,
+                                exit.registers.esp,
+                            );
+                            child.seh = Some(ChildSehDispatch {
+                                original_registers: seh.original_registers,
+                                registration: registration.frame,
+                                next_registration: registration.next,
+                                handler: registration.handler,
+                                exception_record_va: seh.exception_record_va,
+                                context_va: seh.context_va,
+                                preserved_fs_base: seh.preserved_fs_base,
+                                depth: seh.depth.saturating_add(1),
+                                quiet: seh.quiet,
+                                boring_single_step: seh.boring_single_step,
+                                scan_single_step: seh.scan_single_step,
+                                dword_scan_single_step: seh.dword_scan_single_step,
+                            });
+                            contexts[active].context.set_registers(handler_registers).map_err(|error| error.to_string())?;
+                            logl::log(level::IMPORTANT, format_args!("WC3 CHILD SEH CONTINUE_SEARCH pid={} tid={} registration=0x{:08x} handler=0x{:08x} disposition=1", active_pid, active_tid, registration.frame, registration.handler));
+                            continue 'child_run;
+                        }
                         if exit.registers.eax != wc3::seh::DISPOSITION_CONTINUE_EXECUTION {
                             return Err(format!("WC3 CHILD SEH FRONTIER reason=unsupported-disposition value={}", exit.registers.eax));
                         }
@@ -1835,6 +1957,108 @@ pub(super) async fn run_loop(
                         continue;
                     }
                     if exit.registers.eip == thunk32::CHILD_CALLBACK_RETURN_AFTER_VMCALL {
+                        if let Some(pending) = child.seh3_call.take() {
+                            if exit.registers.esp != pending.provider_esp {
+                                return Err(format!(
+                                    "SEH3 callback ESP mismatch expected=0x{:08x} actual=0x{:08x}",
+                                    pending.provider_esp, exit.registers.esp
+                                ));
+                            }
+                            let anchor = pending.frame.checked_add(0x10).ok_or("SEH3 EBP overflow")?;
+                            match pending.kind {
+                                ChildSeh3CallbackKind::Finally { mut next_level, selected_level } => {
+                                    loop {
+                                        if next_level == selected_level {
+                                            let (_, _, handler) = child_seh3_scope_entry(child, pending.scope, selected_level)?;
+                                            if handler == 0 { return Err("SEH3 selected handler is null".into()); }
+                                            let (_, selected_prev, _) = child_seh3_scope_entry(child, pending.scope, selected_level)?;
+                                            write_child_u32(child, pending.frame + 0x0c, selected_prev as u32)?;
+                                            let mut registers = exit.registers;
+                                            registers.eip = handler;
+                                            registers.esp = pending.provider_esp;
+                                            registers.ebp = anchor;
+                                            contexts[active].context.set_registers(registers).map_err(|error| error.to_string())?;
+                                            logl::log(level::IMPORTANT, format_args!("WC3 CHILD CRT EH3 HANDLER pid={} tid={} level={} handler=0x{:08x}", active_pid, active_tid, selected_level, handler));
+                                            continue 'child_run;
+                                        }
+                                        if next_level < 0 { return Err("SEH3 unwind reached end before selected level".into()); }
+                                        let (previous, filter, handler) = child_seh3_scope_entry(child, pending.scope, next_level)?;
+                                        write_child_u32(child, pending.frame + 0x0c, previous as u32)?;
+                                        next_level = previous;
+                                        if filter == 0 && handler != 0 {
+                                            let call = ChildSeh3Call { provider_resume_eip: pending.provider_resume_eip, provider_esp: pending.provider_esp, frame: pending.frame, scope: pending.scope, kind: ChildSeh3CallbackKind::Finally { next_level, selected_level } };
+                                            schedule_child_seh3_finally(child, &mut contexts[active], exit.registers, call, handler)?;
+                                            logl::log(level::IMPORTANT, format_args!("WC3 CHILD CRT EH3 FINALLY pid={} tid={} handler=0x{:08x}", active_pid, active_tid, handler));
+                                            continue 'child_run;
+                                        }
+                                    }
+                                }
+                                ChildSeh3CallbackKind::Filter { level, previous, start_level } => {
+                                    let result = i32::from_le_bytes(exit.registers.eax.to_le_bytes());
+                                    if result == -1 {
+                                        let mut registers = exit.registers;
+                                        registers.eip = pending.provider_resume_eip;
+                                        registers.esp = pending.provider_esp;
+                                        registers.eax = wc3::seh::DISPOSITION_CONTINUE_EXECUTION;
+                                        contexts[active].context.set_registers(registers).map_err(|error| error.to_string())?;
+                                        logl::log(level::IMPORTANT, format_args!("WC3 CHILD CRT EH3 FILTER RETURN pid={} tid={} level={} result=-1 disposition=0", active_pid, active_tid, level));
+                                        continue 'child_run;
+                                    }
+                                    if result != 0 && result != 1 {
+                                        return Err(format!("WC3 CHILD CRT EH3 FRONTIER reason=filter-result value={}", result));
+                                    }
+                                    let selected = if result == 1 { Some(level) } else { None };
+                                    let mut current = if result == 1 { start_level } else { previous };
+                                    if result == 0 {
+                                        write_child_u32(child, pending.frame + 0x0c, previous as u32)?;
+                                    }
+                                    loop {
+                                        if let Some(selected_level) = selected {
+                                            if current == selected_level {
+                                                let (_, selected_prev, handler) = child_seh3_scope_entry(child, pending.scope, selected_level)?;
+                                                if handler == 0 { return Err("SEH3 selected handler is null".into()); }
+                                                write_child_u32(child, pending.frame + 0x0c, selected_prev as u32)?;
+                                                let mut registers = exit.registers;
+                                                registers.eip = handler;
+                                                registers.esp = pending.provider_esp;
+                                                registers.ebp = anchor;
+                                                contexts[active].context.set_registers(registers).map_err(|error| error.to_string())?;
+                                                logl::log(level::IMPORTANT, format_args!("WC3 CHILD CRT EH3 HANDLER pid={} tid={} level={} handler=0x{:08x}", active_pid, active_tid, selected_level, handler));
+                                                continue 'child_run;
+                                            }
+                                        }
+                                        if current < 0 {
+                                            if selected.is_some() { return Err("SEH3 selected level was not found".into()); }
+                                            let mut registers = exit.registers;
+                                            registers.eip = pending.provider_resume_eip;
+                                            registers.esp = pending.provider_esp;
+                                            registers.eax = wc3::seh::DISPOSITION_CONTINUE_SEARCH;
+                                            contexts[active].context.set_registers(registers).map_err(|error| error.to_string())?;
+                                            logl::log(level::IMPORTANT, format_args!("WC3 CHILD CRT EH3 SEARCH pid={} tid={} disposition=1", active_pid, active_tid));
+                                            continue 'child_run;
+                                        }
+                                        let (previous, filter, handler) = child_seh3_scope_entry(child, pending.scope, current)?;
+                                        write_child_u32(child, pending.frame + 0x0c, previous as u32)?;
+                                        if let Some(selected_level) = selected {
+                                            current = previous;
+                                            if filter == 0 && handler != 0 {
+                                                let call = ChildSeh3Call { provider_resume_eip: pending.provider_resume_eip, provider_esp: pending.provider_esp, frame: pending.frame, scope: pending.scope, kind: ChildSeh3CallbackKind::Finally { next_level: current, selected_level } };
+                                                schedule_child_seh3_finally(child, &mut contexts[active], exit.registers, call, handler)?;
+                                                logl::log(level::IMPORTANT, format_args!("WC3 CHILD CRT EH3 FINALLY pid={} tid={} handler=0x{:08x}", active_pid, active_tid, handler));
+                                                continue 'child_run;
+                                            }
+                                            continue;
+                                        }
+                                        current = previous;
+                                        if filter != 0 {
+                                            let call = ChildSeh3Call { provider_resume_eip: pending.provider_resume_eip, provider_esp: pending.provider_esp, frame: pending.frame, scope: pending.scope, kind: ChildSeh3CallbackKind::Filter { level: current, previous, start_level } };
+                                            schedule_child_seh3_filter(child, &mut contexts[active], exit.registers, call, filter)?;
+                                            continue 'child_run;
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         if let Some(pending) = child.load_library_call.take() {
                             if exit.registers.esp != pending.provider_esp {
                                 return Err(format!(
@@ -3754,6 +3978,60 @@ pub(super) async fn run_loop(
                             continue;
                         }
                         return Err("no runnable context after child ExitProcess".into());
+                    }
+                    if operation == child_loader::ProviderOp::CrtExceptHandler3 {
+                        let words = read_guest_words(&X86Memory(&child.address_space), exit.registers.esp, 5)?;
+                        let return_address = words[0];
+                        let record = words[1];
+                        let frame = words[2];
+                        let context = words[3];
+                        let seh = child.seh.as_ref().ok_or("WC3 CHILD CRT EH3 FRONTIER reason=no-active-seh")?;
+                        if return_address != thunk32::CHILD_SEH_RETURN_ADDRESS
+                            || frame != seh.registration
+                            || record != seh.exception_record_va
+                            || context != seh.context_va
+                        {
+                            return Err(format!("WC3 CHILD CRT EH3 FRONTIER reason=unexpected-call-shape return=0x{return_address:08x} record=0x{record:08x} frame=0x{frame:08x} context=0x{context:08x}"));
+                        }
+                        let frame_words = read_guest_words(&X86Memory(&child.address_space), frame, 5)?;
+                        let scope = frame_words[2];
+                        let current_level = i32::from_le_bytes(frame_words[3].to_le_bytes());
+                        if current_level < -1 { return Err("WC3 CHILD CRT EH3 FRONTIER reason=invalid-try-level".into()); }
+                        if current_level >= 0 && scope == 0 { return Err("WC3 CHILD CRT EH3 FRONTIER reason=null-scope-table".into()); }
+                        if !child.seh3_diagnostic_logged {
+                            child.seh3_diagnostic_logged = true;
+                            logl::log(level::IMPORTANT, format_args!("WC3 CHILD CRT EH3 record=0x{:08x} frame=0x{:08x} context=0x{:08x} scope=0x{:08x} trylevel={}", record, frame, context, scope, current_level));
+                            let mut level_now = current_level;
+                            for _ in 0..65536 {
+                                if level_now < 0 { break; }
+                                let (previous, filter, handler) = child_seh3_scope_entry(child, scope, level_now)?;
+                                logl::log(level::IMPORTANT, format_args!("WC3 CHILD CRT EH3 SCOPE level={} prev={} filter=0x{:08x} handler=0x{:08x}", level_now, previous, filter, handler));
+                                if previous >= level_now { return Err("WC3 CHILD CRT EH3 FRONTIER reason=scope-table-loop".into()); }
+                                level_now = previous;
+                            }
+                            if level_now >= 0 { return Err("WC3 CHILD CRT EH3 FRONTIER reason=scope-table-too-deep".into()); }
+                        }
+                        let provider_resume_eip = exit.registers.eip;
+                        let provider_esp = exit.registers.esp;
+                        let mut level_now = current_level;
+                        loop {
+                            if level_now < 0 {
+                                let mut registers = exit.registers;
+                                registers.eax = wc3::seh::DISPOSITION_CONTINUE_SEARCH;
+                                contexts[active].context.set_registers(registers).map_err(|error| error.to_string())?;
+                                logl::log(level::IMPORTANT, format_args!("WC3 CHILD CRT EH3 SEARCH pid={} tid={} disposition=1", active_pid, active_tid));
+                                continue 'child_run;
+                            }
+                            let (previous, filter, handler) = child_seh3_scope_entry(child, scope, level_now)?;
+                            write_child_u32(child, frame + 0x0c, previous as u32)?;
+                            if filter != 0 {
+                                let call = ChildSeh3Call { provider_resume_eip, provider_esp, frame, scope, kind: ChildSeh3CallbackKind::Filter { level: level_now, previous, start_level: current_level } };
+                                schedule_child_seh3_filter(child, &mut contexts[active], exit.registers, call, filter)?;
+                                logl::log(level::IMPORTANT, format_args!("WC3 CHILD CRT EH3 FILTER pid={} tid={} level={} filter=0x{:08x} handler=0x{:08x}", active_pid, active_tid, level_now, filter, handler));
+                                continue 'child_run;
+                            }
+                            level_now = previous;
+                        }
                     }
                     if operation == child_loader::ProviderOp::RtlUnwind {
                         let frame = read_guest_words(
@@ -5961,7 +6239,9 @@ pub(super) async fn run_loop(
                             cipow_diagnostic_logged: false,
                             get_system_info_consumer_logged: false,
                             seh_handler_dumped: false,
+                            seh3_diagnostic_logged: false,
                             seh: None,
+                            seh3_call: None,
                             unhandled_filter_call: None,
                             repeated_null_call: None,
                             repeated_divide_fault: None,

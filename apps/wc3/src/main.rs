@@ -1638,7 +1638,9 @@ struct PendingChild {
     cipow_diagnostic_logged: bool,
     get_system_info_consumer_logged: bool,
     seh_handler_dumped: bool,
+    seh3_diagnostic_logged: bool,
     seh: Option<ChildSehDispatch>,
+    seh3_call: Option<ChildSeh3Call>,
     unhandled_filter_call: Option<ChildUnhandledFilterCall>,
     repeated_null_call: Option<NullLoopWatch>,
     repeated_divide_fault: Option<DivideLoopWatch>,
@@ -1746,6 +1748,20 @@ struct ChildSehDispatch {
     boring_single_step: bool,
     scan_single_step: bool,
     dword_scan_single_step: bool,
+}
+#[derive(Clone, Debug)]
+enum ChildSeh3CallbackKind {
+    Filter { level: i32, previous: i32, start_level: i32 },
+    Finally { next_level: i32, selected_level: i32 },
+}
+
+#[derive(Clone, Debug)]
+struct ChildSeh3Call {
+    provider_resume_eip: u32,
+    provider_esp: u32,
+    frame: u32,
+    scope: u32,
+    kind: ChildSeh3CallbackKind,
 }
 #[derive(Clone, Debug)] struct ChildUnhandledFilterCall { provider_resume_eip: u32, provider_esp: u32, filter: u32 }
 
