@@ -4448,14 +4448,19 @@ pub(super) async fn run_loop(
                         logl::log(
                             level::IMPORTANT,
                             format_args!(
-                                "WC3 CHILD CRT XCPTFILTER pid={} tid={} code=0x{:08x} xpointers=0x{:08x} record=0x{:08x} context=0x{:08x} result={} signal=SIGSEGV action=SIG_DFL",
+                                "WC3 CHILD CRT XCPTFILTER pid={} tid={} exception=0x{:08x} class={} disposition=default result={} xpointers=0x{:08x} record=0x{:08x} context=0x{:08x}",
                                 active_pid,
                                 active_tid,
                                 frame[1],
+                                if frame[1] == wc3::seh::STATUS_ILLEGAL_INSTRUCTION {
+                                    "SIGILL"
+                                } else {
+                                    "SIGSEGV"
+                                },
+                                result,
                                 xpointers,
                                 record,
                                 context,
-                                result,
                             ),
                         );
                         let mut registers = exit.registers;

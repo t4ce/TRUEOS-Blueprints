@@ -533,6 +533,165 @@ fn wsprintf_a(memory: &mut impl GuestMemory, esp: u32) -> Result<u32, ProviderDi
     u32::try_from(rendered.len()).map_err(|_| ProviderDispatchError::Fault("wsprintfA length"))
 }
 
+fn crt_vsnprintf(memory: &mut impl GuestMemory, esp: u32) -> Result<u32, ProviderDispatchError> {
+    let [_, output, count, format, va_list] = arguments::<5>(memory, esp)?;
+    if format == 0 || va_list == 0 {
+        return Err(ProviderDispatchError::Frontier {
+            api: "_vsnprintf",
+            detail: "null format or va_list".into(),
+        });
+    }
+    if count != 0 && output == 0 {
+        return Err(ProviderDispatchError::Frontier {
+            api: "_vsnprintf",
+            detail: "null output with nonzero count".into(),
+        });
+    }
+
+    let format = read_c_string(memory, format, 4096)?;
+    let mut argument_index = 0u32;
+    let mut next = || -> Result<u32, ProviderDispatchError> {
+        let address = argument_index
+            .checked_mul(4)
+            .and_then(|offset| va_list.checked_add(offset))
+            .ok_or(ProviderDispatchError::Fault("_vsnprintf va_list overflow"))?;
+        argument_index = argument_index
+            .checked_add(1)
+            .ok_or(ProviderDispatchError::Fault("_vsnprintf argument count"))?;
+        Ok(read_u32(memory, address)?)
+    };
+
+    let mut rendered = String::new();
+    let mut characters = format.chars().peekable();
+    while let Some(character) = characters.next() {
+        if character != '%' {
+            rendered.push(character);
+            continue;
+        }
+        if characters.peek() == Some(&'%') {
+            characters.next();
+            rendered.push('%');
+            continue;
+        }
+        let mut left_justify = false;
+        let mut zero_pad = false;
+        while let Some(flag) = characters.peek().copied() {
+            match flag {
+                '-' => left_justify = true,
+                '0' => zero_pad = true,
+                '+' | ' ' | '#' => {}
+                _ => break,
+            }
+            characters.next();
+        }
+        let mut width = 0usize;
+        if characters.peek() == Some(&'*') {
+            characters.next();
+            width = (next()? as i32).unsigned_abs() as usize;
+        } else {
+            while let Some(digit) = characters.peek().and_then(|value| value.to_digit(10)) {
+                characters.next();
+                width = width
+                    .checked_mul(10)
+                    .and_then(|value| value.checked_add(digit as usize))
+                    .ok_or(ProviderDispatchError::Fault("_vsnprintf width overflow"))?;
+            }
+        }
+        let mut precision = None;
+        if characters.peek() == Some(&'.') {
+            characters.next();
+            if characters.peek() == Some(&'*') {
+                characters.next();
+                precision = Some(next()? as usize);
+            } else {
+                let mut value = 0usize;
+                while let Some(digit) = characters.peek().and_then(|value| value.to_digit(10)) {
+                    characters.next();
+                    value = value
+                        .checked_mul(10)
+                        .and_then(|value| value.checked_add(digit as usize))
+                        .ok_or(ProviderDispatchError::Fault("_vsnprintf precision overflow"))?;
+                }
+                precision = Some(value);
+            }
+        }
+        while matches!(characters.peek(), Some('h' | 'l' | 'L' | 'I' | 'w')) {
+            characters.next();
+            if characters.peek() == Some(&'6') {
+                characters.next();
+                if characters.peek() == Some(&'4') {
+                    characters.next();
+                }
+            }
+        }
+        let Some(specifier) = characters.next() else {
+            return Err(ProviderDispatchError::Frontier {
+                api: "_vsnprintf",
+                detail: "trailing percent".into(),
+            });
+        };
+        let mut field = match specifier {
+            's' | 'S' => {
+                let pointer = next()?;
+                let value = if pointer == 0 {
+                    "(null)".into()
+                } else {
+                    read_c_string(memory, pointer, 4096)?
+                };
+                match precision {
+                    Some(limit) => value.chars().take(limit).collect(),
+                    None => value,
+                }
+            }
+            'c' | 'C' => char::from(next()? as u8).to_string(),
+            'd' | 'i' => (next()? as i32).to_string(),
+            'u' => next()?.to_string(),
+            'x' => format!("{:x}", next()?),
+            'X' => format!("{:X}", next()?),
+            'p' => format!("{:08x}", next()?),
+            _ => {
+                return Err(ProviderDispatchError::Frontier {
+                    api: "_vsnprintf",
+                    detail: format!("unsupported format %{specifier}"),
+                });
+            }
+        };
+        if width > field.len() {
+            let padding = width - field.len();
+            let fill = if zero_pad && !left_justify { '0' } else { ' ' };
+            let pad: String = std::iter::repeat_n(fill, padding).collect();
+            if left_justify {
+                field.push_str(&pad);
+            } else {
+                field = format!("{pad}{field}");
+            }
+        }
+        rendered.push_str(&field);
+        if rendered.len() > 65_536 {
+            return Err(ProviderDispatchError::Frontier {
+                api: "_vsnprintf",
+                detail: "rendered output exceeds 65536 bytes".into(),
+            });
+        }
+    }
+
+    let capacity = usize::try_from(count).map_err(|_| ProviderDispatchError::Fault("_vsnprintf count"))?;
+    if rendered.len() < capacity {
+        memory.write(output, rendered.as_bytes())?;
+        memory.write(
+            output
+                .checked_add(u32::try_from(rendered.len()).map_err(|_| ProviderDispatchError::Fault("_vsnprintf length"))?)
+                .ok_or(ProviderDispatchError::Fault("_vsnprintf output overflow"))?,
+            &[0],
+        )?;
+        return u32::try_from(rendered.len()).map_err(|_| ProviderDispatchError::Fault("_vsnprintf length"));
+    }
+    if capacity != 0 {
+        memory.write(output, &rendered.as_bytes()[..capacity.min(rendered.len())])?;
+    }
+    Ok(u32::MAX)
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Mapping {
     pub address: u32,
@@ -1879,7 +2038,11 @@ impl XpProcess {
                         ),
                     });
                 }
-                if exception_code != crate::seh::STATUS_ACCESS_VIOLATION {
+                if !matches!(
+                    exception_code,
+                    crate::seh::STATUS_ACCESS_VIOLATION
+                        | crate::seh::STATUS_ILLEGAL_INSTRUCTION
+                ) {
                     return Err(ProviderDispatchError::Frontier {
                         api: "_XcptFilter",
                         detail: format!(
@@ -1941,6 +2104,14 @@ impl XpProcess {
                 }
                 self.crt_onexit_callbacks.push(func);
                 Ok(PersonalityAction::Return(func))
+            }
+            ProviderOp::CrtVsnprintf => {
+                let result = crt_vsnprintf(memory, esp)?;
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(result))
             }
             ProviderOp::CrtIsDigit => {
                 let [_, character] = arguments::<2>(memory, esp)?;

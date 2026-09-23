@@ -2768,6 +2768,42 @@ mod tests_process_1 {
     }
 
     #[test]
+    fn child_crt_xcpt_filter_continues_search_for_illegal_instruction() {
+        let provider = ProviderImport {
+            module: "MSVCRT.dll".into(),
+            symbol: ProviderSymbol::Name("_XcptFilter".into()),
+            iat_rva: 0,
+        };
+        let mut xp = XpProcess::new_child();
+        xp.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0x5a; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+        let exception_pointers = esp + 0x20;
+        let record = esp + 0x28;
+        let context = esp + 0x30;
+        write_u32(&mut memory, esp, 0x0040_1d72).unwrap();
+        write_u32(
+            &mut memory,
+            esp + 4,
+            crate::seh::STATUS_ILLEGAL_INSTRUCTION,
+        )
+        .unwrap();
+        write_u32(&mut memory, esp + 8, exception_pointers).unwrap();
+        write_u32(&mut memory, exception_pointers, record).unwrap();
+        write_u32(&mut memory, exception_pointers + 4, context).unwrap();
+        write_u32(&mut memory, record, crate::seh::STATUS_ILLEGAL_INSTRUCTION).unwrap();
+
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(EXCEPTION_FILTER_CONTINUE_SEARCH))
+        );
+        assert_eq!(xp.call_count, 1);
+    }
+
+    #[test]
     fn child_crt_onexit_registers_callback_in_order_and_is_cdecl() {
         let provider = ProviderImport {
             module: "MSVCRT.dll".into(),
@@ -2913,6 +2949,54 @@ mod tests_process_1 {
             Ok(PersonalityAction::Return(9))
         );
         assert_eq!(read_c_string(&memory, output, 32), Ok("War3-12ab".into()));
+    }
+
+    #[test]
+    fn child_crt_vsnprintf_formats_va_list_and_uses_legacy_truncation() {
+        let provider = ProviderImport {
+            module: "MSVCRT.dll".into(),
+            symbol: ProviderSymbol::Name("_vsnprintf".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&provider);
+        assert_eq!(operation, ProviderOp::CrtVsnprintf);
+        assert!(operation.is_modeled());
+        assert!(operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 0);
+        assert_eq!(provider_thunk_kind(&provider), thunk32::Kind::Return);
+
+        let mut xp = XpProcess::new_child();
+        xp.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory { base: STACK_BASE, bytes: vec![0; STACK_BYTES] };
+        let esp = STACK_TOP - 0x80;
+        let output = STACK_TOP - 0x300;
+        let format = STACK_TOP - 0x200;
+        let string = STACK_TOP - 0x180;
+        let va_list = STACK_TOP - 0x140;
+        memory.write(format, b"%s-%08x\0").unwrap();
+        memory.write(string, b"War3\0").unwrap();
+        write_u32(&mut memory, va_list, string).unwrap();
+        write_u32(&mut memory, va_list + 4, 0x12ab).unwrap();
+        write_u32(&mut memory, esp, 0x1503_b37b).unwrap();
+        write_u32(&mut memory, esp + 4, output).unwrap();
+        write_u32(&mut memory, esp + 8, 32).unwrap();
+        write_u32(&mut memory, esp + 12, format).unwrap();
+        write_u32(&mut memory, esp + 16, va_list).unwrap();
+
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(13))
+        );
+        assert_eq!(read_c_string(&memory, output, 32), Ok("War3-000012ab".into()));
+
+        write_u32(&mut memory, esp + 8, 5).unwrap();
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(u32::MAX))
+        );
+        let mut truncated = [0; 5];
+        memory.read(output, &mut truncated).unwrap();
+        assert_eq!(&truncated, b"War3-");
     }
 
     #[test]
