@@ -1574,6 +1574,54 @@ impl XpProcess {
                     .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(CRT_COMMODE_VA))
             }
+            ProviderOp::CrtXcptFilter => {
+                let [_, exception_code, exception_pointers] = arguments::<3>(memory, esp)?;
+                if exception_pointers == 0 {
+                    return Err(ProviderDispatchError::Frontier {
+                        api: "_XcptFilter",
+                        detail: format!(
+                            "null exception pointers code=0x{exception_code:08x}"
+                        ),
+                    });
+                }
+                let record = read_u32(memory, exception_pointers)?;
+                let context = read_u32(
+                    memory,
+                    exception_pointers
+                        .checked_add(4)
+                        .ok_or("XcptFilter pointer overflow")?,
+                )?;
+                if record == 0 || context == 0 {
+                    return Err(ProviderDispatchError::Frontier {
+                        api: "_XcptFilter",
+                        detail: format!(
+                            "invalid exception pointers ptr=0x{exception_pointers:08x} record=0x{record:08x} context=0x{context:08x}"
+                        ),
+                    });
+                }
+                let record_code = read_u32(memory, record)?;
+                if record_code != exception_code {
+                    return Err(ProviderDispatchError::Frontier {
+                        api: "_XcptFilter",
+                        detail: format!(
+                            "code mismatch argument=0x{exception_code:08x} record=0x{record_code:08x}"
+                        ),
+                    });
+                }
+                if exception_code != crate::seh::STATUS_ACCESS_VIOLATION {
+                    return Err(ProviderDispatchError::Frontier {
+                        api: "_XcptFilter",
+                        detail: format!(
+                            "unobserved exception code=0x{exception_code:08x}"
+                        ),
+                    });
+                }
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(EXCEPTION_CONTINUE_SEARCH))
+            }
             ProviderOp::CrtGetMainArgs => {
                 let [_, argc_out, argv_out, env_out, wildcard, startup_info] =
                     arguments::<6>(memory, esp)?;

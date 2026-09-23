@@ -1742,6 +1742,7 @@ struct ChildSehDispatch {
     handler: u32,
     exception_record_va: u32,
     context_va: u32,
+    exception_pointers_va: u32,
     preserved_fs_base: u32,
     depth: u32,
     quiet: bool,

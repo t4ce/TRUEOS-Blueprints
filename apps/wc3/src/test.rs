@@ -2727,6 +2727,47 @@ mod tests_process_1 {
     }
 
     #[test]
+    fn child_crt_xcpt_filter_continues_search_for_access_violation() {
+        let provider = ProviderImport {
+            module: "MSVCRT.dll".into(),
+            symbol: ProviderSymbol::Name("_XcptFilter".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&provider);
+        assert_eq!(operation, ProviderOp::CrtXcptFilter);
+        assert!(operation.is_modeled());
+        assert!(operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 0);
+        assert_eq!(
+            crate::child_loader::provider_thunk_kind(&provider),
+            thunk32::Kind::Return
+        );
+
+        let mut xp = XpProcess::new_child();
+        xp.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0x5a; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+        let exception_pointers = esp + 0x20;
+        let record = esp + 0x28;
+        let context = esp + 0x30;
+        write_u32(&mut memory, esp, 0x0040_1d0b).unwrap();
+        write_u32(&mut memory, esp + 4, crate::seh::STATUS_ACCESS_VIOLATION).unwrap();
+        write_u32(&mut memory, esp + 8, exception_pointers).unwrap();
+        write_u32(&mut memory, exception_pointers, record).unwrap();
+        write_u32(&mut memory, exception_pointers + 4, context).unwrap();
+        write_u32(&mut memory, record, crate::seh::STATUS_ACCESS_VIOLATION).unwrap();
+
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(EXCEPTION_CONTINUE_SEARCH))
+        );
+        assert_eq!(xp.call_count, 1);
+    }
+
+    #[test]
     fn child_crt_onexit_registers_callback_in_order_and_is_cdecl() {
         let provider = ProviderImport {
             module: "MSVCRT.dll".into(),

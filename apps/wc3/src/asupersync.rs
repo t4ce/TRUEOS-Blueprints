@@ -1194,7 +1194,8 @@ fn begin_child_seh_dispatch(child: &mut PendingChild, guest: &mut GuestContext, 
         _ => return Err("unsupported-exception-mapping frontier".into()),
     };
     let context_va = registers.esp.checked_sub(wc3::seh::X86_CONTEXT_BYTES as u32).ok_or("SEH context stack underflow")? & !15;
-    let record_va = context_va.checked_sub(wc3::seh::EXCEPTION_RECORD_BYTES as u32).ok_or("SEH record stack underflow")?;
+    let exception_pointers_va = context_va.checked_sub(8).ok_or("SEH exception-pointers stack underflow")?;
+    let record_va = exception_pointers_va.checked_sub(wc3::seh::EXCEPTION_RECORD_BYTES as u32).ok_or("SEH record stack underflow")?;
     let frame_esp = record_va.checked_sub(20).ok_or("SEH call stack underflow")?;
     for (address, bytes) in [(context_va, context.as_slice()), (record_va, record.as_slice())] {
         if child.address_space.write(address, bytes).map_err(|error| error.to_string())? != bytes.len() { return Err("short SEH scratch write".into()); }
@@ -1202,7 +1203,7 @@ fn begin_child_seh_dispatch(child: &mut PendingChild, guest: &mut GuestContext, 
     let frame = [thunk32::CHILD_SEH_RETURN_ADDRESS, record_va, registration.frame, context_va, 0];
     let mut bytes = [0; 20]; for (index, value) in frame.into_iter().enumerate() { bytes[index * 4..index * 4 + 4].copy_from_slice(&value.to_le_bytes()); }
     if child.address_space.write(frame_esp, &bytes).map_err(|error| error.to_string())? != bytes.len() { return Err("short SEH handler frame write".into()); }
-    child.seh = Some(ChildSehDispatch { original_registers: registers, registration: registration.frame, next_registration: registration.next, handler: registration.handler, exception_record_va: record_va, context_va, preserved_fs_base: registers.fs_base, depth: 1, quiet, boring_single_step, scan_single_step, dword_scan_single_step });
+    child.seh = Some(ChildSehDispatch { original_registers: registers, registration: registration.frame, next_registration: registration.next, handler: registration.handler, exception_record_va: record_va, context_va, exception_pointers_va, preserved_fs_base: registers.fs_base, depth: 1, quiet, boring_single_step, scan_single_step, dword_scan_single_step });
     let handler_registers = wc3::seh::exception_handler_registers(
         registers,
         registration.handler,
@@ -1249,12 +1250,13 @@ fn schedule_child_seh3_filter(
         .provider_esp
         .checked_sub(8)
         .ok_or("SEH3 filter callback stack underflow")?;
-    let pointers_va = callback_esp
-        .checked_sub(8)
-        .ok_or("SEH3 exception-pointers stack underflow")?;
-    let (exception_record_va, context_va) = {
+    let (exception_record_va, context_va, pointers_va) = {
         let seh = child.seh.as_ref().ok_or("SEH3 filter without active SEH")?;
-        (seh.exception_record_va, seh.context_va)
+        (
+            seh.exception_record_va,
+            seh.context_va,
+            seh.exception_pointers_va,
+        )
     };
     let pointers = [exception_record_va, context_va];
     let mut pointer_bytes = [0; 8];
@@ -1647,6 +1649,7 @@ pub(super) async fn run_loop(
                                 handler: registration.handler,
                                 exception_record_va: seh.exception_record_va,
                                 context_va: seh.context_va,
+                                exception_pointers_va: seh.exception_pointers_va,
                                 preserved_fs_base: seh.preserved_fs_base,
                                 depth: seh.depth.saturating_add(1),
                                 quiet: seh.quiet,
@@ -4001,6 +4004,60 @@ pub(super) async fn run_loop(
                             continue;
                         }
                         return Err("no runnable context after child ExitProcess".into());
+                    }
+                    if operation == child_loader::ProviderOp::CrtXcptFilter {
+                        let frame = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            exit.registers.esp,
+                            3,
+                        )?;
+                        let xpointers = frame[2];
+                        let record = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            xpointers,
+                            1,
+                        )?[0];
+                        let context = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            xpointers.checked_add(4).ok_or("XcptFilter pointer overflow")?,
+                            1,
+                        )?[0];
+                        let mut child_memory = X86Memory(&child.address_space);
+                        let action = session
+                            .process_mut(active_pid)
+                            .ok_or_else(|| "child process missing".to_owned())?
+                            .xp
+                            .dispatch_provider_for_process(
+                                active_pid,
+                                active_tid,
+                                provider_id,
+                                exit.registers.esp,
+                                &mut child_memory,
+                            )
+                            .map_err(str::to_owned)?;
+                        let PersonalityAction::Return(result) = action else {
+                            return Err("_XcptFilter child provider did not return".into());
+                        };
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD CRT XCPTFILTER pid={} tid={} code=0x{:08x} xpointers=0x{:08x} record=0x{:08x} context=0x{:08x} result={} signal=SIGSEGV action=SIG_DFL",
+                                active_pid,
+                                active_tid,
+                                frame[1],
+                                xpointers,
+                                record,
+                                context,
+                                result,
+                            ),
+                        );
+                        let mut registers = exit.registers;
+                        registers.eax = result;
+                        contexts[active]
+                            .context
+                            .set_registers(registers)
+                            .map_err(|error| error.to_string())?;
+                        continue;
                     }
                     if operation == child_loader::ProviderOp::CrtExceptHandler3 {
                         let words = read_guest_words(&X86Memory(&child.address_space), exit.registers.esp, 5)?;

@@ -92,6 +92,7 @@ pub enum ProviderOp {
     CrtGetFmode,
     CrtGetCommode,
     CrtExceptHandler3,
+    CrtXcptFilter,
     CrtControlFp,
     CrtGetMainArgs,
     CrtOnExit,
@@ -165,6 +166,7 @@ impl ProviderOp {
             | Self::CrtGetFmode
             | Self::CrtGetCommode
             | Self::CrtExceptHandler3
+            | Self::CrtXcptFilter
             | Self::CrtControlFp
             | Self::CrtGetMainArgs
             | Self::CrtOnExit
@@ -220,6 +222,7 @@ impl ProviderOp {
                 | Self::CrtSetAppType
                 | Self::CrtGetFmode
                 | Self::CrtGetCommode
+                | Self::CrtXcptFilter
                 | Self::CrtGetMainArgs
                 | Self::CrtOnExit
         )
@@ -321,6 +324,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "__p__fmode" => ProviderOp::CrtGetFmode,
             "__p__commode" => ProviderOp::CrtGetCommode,
             "_except_handler3" => ProviderOp::CrtExceptHandler3,
+            "_XcptFilter" => ProviderOp::CrtXcptFilter,
             "_controlfp" => ProviderOp::CrtControlFp,
             "__getmainargs" => ProviderOp::CrtGetMainArgs,
             "_onexit" => ProviderOp::CrtOnExit,
