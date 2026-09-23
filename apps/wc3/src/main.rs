@@ -1636,6 +1636,7 @@ struct PendingChild {
     load_library_call: Option<ChildLoadLibraryCall>,
     cipow: Option<ChildCiPow>,
     cipow_diagnostic_logged: bool,
+    get_system_info_consumer_logged: bool,
     seh_handler_dumped: bool,
     seh: Option<ChildSehDispatch>,
     unhandled_filter_call: Option<ChildUnhandledFilterCall>,

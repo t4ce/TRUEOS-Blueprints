@@ -4536,6 +4536,27 @@ pub(super) async fn run_loop(
                                             result,
                                         ),
                                     );
+                                    if !child.get_system_info_consumer_logged {
+                                        let output = read_guest_words(
+                                            &X86Memory(&child.address_space),
+                                            exit.registers.esp + 4,
+                                            1,
+                                        )?[0];
+                                        let bytes = read_guest_bytes(
+                                            &X86Memory(&child.address_space),
+                                            0x0040_2a5d,
+                                            96,
+                                        )?;
+                                        child.get_system_info_consumer_logged = true;
+                                        logl::log(
+                                            level::IMPORTANT,
+                                            format_args!(
+                                                "WC3 CHILD GETSYSTEMINFO CONSUMER output=0x{:08x} return=0x00402a5d bytes=\"{}\"",
+                                                output,
+                                                diagnostic_hex_bytes(&bytes),
+                                            ),
+                                        );
+                                    }
                                 }
                                 if let Some((target, value, old)) = interlocked_exchange {
                                     let after = read_guest_words(
@@ -5938,6 +5959,7 @@ pub(super) async fn run_loop(
                             load_library_call: None,
                             cipow: None,
                             cipow_diagnostic_logged: false,
+                            get_system_info_consumer_logged: false,
                             seh_handler_dumped: false,
                             seh: None,
                             unhandled_filter_call: None,
