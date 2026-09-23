@@ -2645,6 +2645,45 @@ mod tests_process_1 {
     }
 
     #[test]
+    fn child_crt_p_commode_is_cdecl_and_returns_writable_process_slot() {
+        let provider = ProviderImport {
+            module: "MSVCRT.dll".into(),
+            symbol: ProviderSymbol::Name("__p__commode".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&provider);
+        assert_eq!(operation, ProviderOp::CrtGetCommode);
+        assert!(operation.is_modeled());
+        assert!(operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 0);
+        assert_eq!(
+            crate::child_loader::provider_thunk_kind(&provider),
+            thunk32::Kind::Return
+        );
+
+        let mut xp = XpProcess::new_child();
+        xp.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut stack = Memory {
+            base: STACK_BASE,
+            bytes: vec![0x5a; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+        write_u32(&mut stack, esp, 0x0040_1c8a).unwrap();
+
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut stack),
+            Ok(PersonalityAction::Return(CRT_COMMODE_VA))
+        );
+
+        let mut process_data = Memory {
+            base: PROCESS_DATA_VA,
+            bytes: vec![0; 0x1000],
+        };
+        write_u32(&mut process_data, CRT_COMMODE_VA, 1).unwrap();
+        assert_eq!(read_u32(&process_data, CRT_COMMODE_VA).unwrap(), 1);
+    }
+
+    #[test]
     fn unsupported_child_provider_does_not_mutate_memory() {
         let provider = ProviderImport {
             module: "KERNEL32.dll".into(),

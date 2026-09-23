@@ -88,6 +88,7 @@ pub enum ProviderOp {
     RegOpenKeyExA,
     CrtSetAppType,
     CrtGetFmode,
+    CrtGetCommode,
     CrtMalloc,
     Unknown,
 }
@@ -152,7 +153,7 @@ impl ProviderOp {
             | Self::WriteFile => 20,
             Self::AllocateAndInitializeSid => 44,
             Self::EqualSid => 8,
-            Self::CrtSetAppType | Self::CrtGetFmode | Self::CrtMalloc => 0,
+            Self::CrtSetAppType | Self::CrtGetFmode | Self::CrtGetCommode | Self::CrtMalloc => 0,
             _ => 0,
         }
     }
@@ -201,6 +202,7 @@ impl ProviderOp {
                 | Self::EqualSid
                 | Self::CrtSetAppType
                 | Self::CrtGetFmode
+                | Self::CrtGetCommode
         )
     }
 }
@@ -296,6 +298,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
         return match symbol.as_str() {
             "__set_app_type" => ProviderOp::CrtSetAppType,
             "__p__fmode" => ProviderOp::CrtGetFmode,
+            "__p__commode" => ProviderOp::CrtGetCommode,
             "malloc" => ProviderOp::CrtMalloc,
             _ => ProviderOp::Unknown,
         };

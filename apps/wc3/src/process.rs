@@ -80,6 +80,7 @@ const XP_EVERYONE_SID: [u8; 12] = [1, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0];
 const XP_TOKEN_GROUPS_REQUIRED: u32 = 4 + 8 + XP_EVERYONE_SID.len() as u32;
 pub const PROCESS_DATA_VA: u32 = 0x0021_1000;
 pub const CRT_FMODE_VA: u32 = PROCESS_DATA_VA + 0x40;
+pub const CRT_COMMODE_VA: u32 = PROCESS_DATA_VA + 0x44;
 const PROCESS_SID_ARENA_BASE: u32 = PROCESS_DATA_VA + 0x200;
 const PROCESS_SID_ARENA_LIMIT: u32 = PROCESS_DATA_VA + 0x1000;
 const SID_HEADER_BYTES: usize = 8;
@@ -1491,6 +1492,13 @@ impl XpProcess {
                     .checked_add(1)
                     .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(CRT_FMODE_VA))
+            }
+            ProviderOp::CrtGetCommode => {
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(CRT_COMMODE_VA))
             }
             ProviderOp::FreeEnvironmentStringsW => {
                 let pointer = read_u32(

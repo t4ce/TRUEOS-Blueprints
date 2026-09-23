@@ -5615,6 +5615,12 @@ pub(super) async fn run_loop(
                         if fmode_written != 4 {
                             return Err("short child CRT _fmode write".into());
                         }
+                        let commode_written = child_address_space
+                            .write(CRT_COMMODE_VA, &[0, 0, 0, 0])
+                            .map_err(|error| format!("write child CRT _commode: {error}"))?;
+                        if commode_written != 4 {
+                            return Err("short child CRT _commode write".into());
+                        }
                         let environment_written = child_address_space
                             .write(ENVIRONMENT_BLOCK_VA, &[0, 0, 0, 0])
                             .map_err(|error| format!("write child environment block: {error}"))?;
