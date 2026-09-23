@@ -2842,6 +2842,80 @@ mod tests_process_1 {
     }
 
     #[test]
+    fn child_crt_strstr_returns_the_first_substring_match_and_is_cdecl() {
+        let provider = ProviderImport {
+            module: "MSVCRT.dll".into(),
+            symbol: ProviderSymbol::Name("strstr".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&provider);
+        assert_eq!(operation, ProviderOp::CrtStrstr);
+        assert!(operation.is_modeled());
+        assert!(operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 0);
+        assert_eq!(
+            crate::child_loader::provider_thunk_kind(&provider),
+            thunk32::Kind::Return
+        );
+
+        let mut xp = XpProcess::new_child();
+        xp.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+        let haystack = STACK_TOP - 0x180;
+        let needle = STACK_TOP - 0x100;
+        memory.write(haystack, b"abc needle needle\0").unwrap();
+        memory.write(needle, b"needle\0").unwrap();
+        write_u32(&mut memory, esp, 0x1501_c1f9).unwrap();
+        write_u32(&mut memory, esp + 4, haystack).unwrap();
+        write_u32(&mut memory, esp + 8, needle).unwrap();
+
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(haystack + 4))
+        );
+        assert_eq!(xp.call_count, 1);
+    }
+
+    #[test]
+    fn child_wsprintf_a_formats_ansi_strings_and_hex_as_cdecl() {
+        let provider = ProviderImport {
+            module: "USER32.dll".into(),
+            symbol: ProviderSymbol::Name("wsprintfA".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&provider);
+        assert_eq!(operation, ProviderOp::WsprintfA);
+        assert!(operation.is_modeled());
+        assert!(operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 0);
+
+        let mut xp = XpProcess::new_child();
+        xp.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory { base: STACK_BASE, bytes: vec![0; STACK_BYTES] };
+        let esp = STACK_TOP - 0x80;
+        let output = STACK_TOP - 0x300;
+        let format = STACK_TOP - 0x200;
+        let string = STACK_TOP - 0x180;
+        memory.write(format, b"%s-%x\0").unwrap();
+        memory.write(string, b"War3\0").unwrap();
+        write_u32(&mut memory, esp, 0x1501_c23b).unwrap();
+        write_u32(&mut memory, esp + 4, output).unwrap();
+        write_u32(&mut memory, esp + 8, format).unwrap();
+        write_u32(&mut memory, esp + 12, string).unwrap();
+        write_u32(&mut memory, esp + 16, 0x12ab).unwrap();
+
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(9))
+        );
+        assert_eq!(read_c_string(&memory, output, 32), Ok("War3-12ab".into()));
+    }
+
+    #[test]
     fn child_set_current_directory_a_accepts_a_nonempty_ansi_path() {
         let provider = ProviderImport {
             module: "KERNEL32.dll".into(),

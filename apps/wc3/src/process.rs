@@ -405,6 +405,119 @@ fn crt_strrchr(
     Err("unterminated strrchr string")
 }
 
+fn crt_strstr(
+    memory: &impl GuestMemory,
+    haystack: u32,
+    needle: u32,
+) -> Result<u32, &'static str> {
+    let mut first_needle = [0];
+    memory.read(needle, &mut first_needle)?;
+    if first_needle[0] == 0 {
+        return Ok(haystack);
+    }
+
+    for haystack_offset in 0..1_048_576u32 {
+        let candidate = haystack
+            .checked_add(haystack_offset)
+            .ok_or("strstr haystack address overflow")?;
+        let mut first = [0];
+        memory.read(candidate, &mut first)?;
+        if first[0] == 0 {
+            return Ok(0);
+        }
+
+        for needle_offset in 0..1_048_576u32 {
+            let needle_address = needle
+                .checked_add(needle_offset)
+                .ok_or("strstr needle address overflow")?;
+            let mut wanted = [0];
+            memory.read(needle_address, &mut wanted)?;
+            if wanted[0] == 0 {
+                return Ok(candidate);
+            }
+            let haystack_address = candidate
+                .checked_add(needle_offset)
+                .ok_or("strstr candidate address overflow")?;
+            let mut actual = [0];
+            memory.read(haystack_address, &mut actual)?;
+            if actual[0] != wanted[0] {
+                break;
+            }
+        }
+    }
+    Err("unterminated strstr haystack")
+}
+
+fn wsprintf_a(memory: &mut impl GuestMemory, esp: u32) -> Result<u32, ProviderDispatchError> {
+    let [_, output, format] = arguments::<3>(memory, esp)?;
+    if output == 0 || format == 0 {
+        return Err(ProviderDispatchError::Frontier {
+            api: "wsprintfA",
+            detail: "null output or format".into(),
+        });
+    }
+    let format = read_c_string(memory, format, 1024)?;
+    let mut values = 0u32;
+    let mut next = || -> Result<u32, ProviderDispatchError> {
+        let offset = values
+            .checked_mul(4)
+            .and_then(|offset| esp.checked_add(12).and_then(|base| base.checked_add(offset)))
+            .ok_or(ProviderDispatchError::Fault("wsprintfA argument overflow"))?;
+        values = values.checked_add(1).ok_or(ProviderDispatchError::Fault("wsprintfA argument count"))?;
+        Ok(read_u32(memory, offset)?)
+    };
+    let mut rendered = String::new();
+    let mut characters = format.chars();
+    while let Some(character) = characters.next() {
+        if character != '%' {
+            rendered.push(character);
+            continue;
+        }
+        let Some(specifier) = characters.next() else {
+            return Err(ProviderDispatchError::Frontier {
+                api: "wsprintfA",
+                detail: "trailing percent".into(),
+            });
+        };
+        match specifier {
+            '%' => rendered.push('%'),
+            's' => {
+                let pointer = next()?;
+                if pointer == 0 {
+                    rendered.push_str("(null)");
+                } else {
+                    rendered.push_str(&read_c_string(memory, pointer, 1024)?);
+                }
+            }
+            'c' => rendered.push((next()? as u8) as char),
+            'd' | 'i' => rendered.push_str(&(next()? as i32).to_string()),
+            'u' => rendered.push_str(&next()?.to_string()),
+            'x' => rendered.push_str(&format!("{:x}", next()?)),
+            'X' => rendered.push_str(&format!("{:X}", next()?)),
+            _ => {
+                return Err(ProviderDispatchError::Frontier {
+                    api: "wsprintfA",
+                    detail: format!("unsupported format %{specifier}"),
+                });
+            }
+        }
+        if rendered.len() > 4096 {
+            return Err(ProviderDispatchError::Frontier {
+                api: "wsprintfA",
+                detail: "rendered output exceeds 4096 bytes".into(),
+            });
+        }
+    }
+    memory.write(output, rendered.as_bytes())?;
+    memory.write(
+        output
+            .checked_add(u32::try_from(rendered.len()).map_err(|_| ProviderDispatchError::Fault("wsprintfA length"))?)
+            .ok_or(ProviderDispatchError::Fault("wsprintfA output overflow"))?,
+        &[0],
+    )?;
+    u32::try_from(rendered.len()).map_err(|_| ProviderDispatchError::Fault("wsprintfA length"))
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Mapping {
     pub address: u32,
@@ -1709,6 +1822,23 @@ impl XpProcess {
             ProviderOp::CrtStrrchr => {
                 let [_, string, character] = arguments::<3>(memory, esp)?;
                 let result = crt_strrchr(memory, string, character)?;
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(result))
+            }
+            ProviderOp::CrtStrstr => {
+                let [_, haystack, needle] = arguments::<3>(memory, esp)?;
+                let result = crt_strstr(memory, haystack, needle)?;
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(result))
+            }
+            ProviderOp::WsprintfA => {
+                let result = wsprintf_a(memory, esp)?;
                 self.call_count = self
                     .call_count
                     .checked_add(1)

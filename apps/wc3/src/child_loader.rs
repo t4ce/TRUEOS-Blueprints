@@ -86,6 +86,7 @@ pub enum ProviderOp {
     HeapFree,
     GlobalAlloc,
     MessageBoxA,
+    WsprintfA,
     InitializeCriticalSection,
     EnterCriticalSection,
     LeaveCriticalSection,
@@ -111,6 +112,7 @@ pub enum ProviderOp {
     CrtOnExit,
     CrtMalloc,
     CrtStrrchr,
+    CrtStrstr,
     Unknown,
 }
 
@@ -186,7 +188,9 @@ impl ProviderOp {
             | Self::CrtGetMainArgs
             | Self::CrtOnExit
             | Self::CrtMalloc
-            | Self::CrtStrrchr => 0,
+            | Self::CrtStrrchr
+            | Self::CrtStrstr
+            | Self::WsprintfA => 0,
             _ => 0,
         }
     }
@@ -243,6 +247,8 @@ impl ProviderOp {
                 | Self::CrtGetMainArgs
                 | Self::CrtOnExit
                 | Self::CrtStrrchr
+                | Self::CrtStrstr
+                | Self::WsprintfA
         )
     }
 }
@@ -320,6 +326,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
     if import.module.eq_ignore_ascii_case("USER32.dll") {
         return match symbol.as_str() {
             "MessageBoxA" => ProviderOp::MessageBoxA,
+            "wsprintfA" => ProviderOp::WsprintfA,
             _ => ProviderOp::Unknown,
         };
     }
@@ -349,6 +356,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "_onexit" => ProviderOp::CrtOnExit,
             "malloc" => ProviderOp::CrtMalloc,
             "strrchr" => ProviderOp::CrtStrrchr,
+            "strstr" => ProviderOp::CrtStrstr,
             _ => ProviderOp::Unknown,
         };
     }
