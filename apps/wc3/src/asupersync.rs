@@ -1509,6 +1509,11 @@ fn runtime_native_export_address(
     Ok(Some((address, stored.to_owned())))
 }
 
+enum RuntimeImportBind {
+    Complete,
+    NeedNativeDependency { requested: String, stored: String },
+}
+
 fn bind_runtime_local_image_imports(
     child: &mut PendingChild,
     process: &mut XpProcess,
@@ -1516,7 +1521,7 @@ fn bind_runtime_local_image_imports(
     parent_base: u32,
     image: &pe32::PeImage,
     listing: Option<&async_fs::DirListing>,
-) -> Result<(), String> {
+) -> Result<RuntimeImportBind, String> {
     let mut native_imports = 0usize;
     let mut provider_imports = Vec::new();
     let mut classified = HashSet::new();
@@ -1544,10 +1549,11 @@ fn bind_runtime_local_image_imports(
             continue;
         }
 
-        let stored = listing
-            .map(|listing| child_loader::resolve_file(listing, &import.module))
-            .transpose()
-            .map_err(str::to_owned)?;
+        let stored = match listing {
+            Some(listing) => child_loader::resolve_file(listing, &import.module)
+                .map_err(str::to_owned)?,
+            None => None,
+        };
         if let Some(stored) = stored {
             logl::log(
                 level::IMPORTANT,
@@ -1556,10 +1562,10 @@ fn bind_runtime_local_image_imports(
                     import.module,
                 ),
             );
-            return Err(format!(
-                "WC3 CHILD RUNTIME NATIVE DEPENDENCY FRONTIER parent={parent:?} module={:?} stored={stored:?}",
-                import.module,
-            ));
+            return Ok(RuntimeImportBind::NeedNativeDependency {
+                requested: import.module.clone(),
+                stored,
+            });
         }
         if classified.insert(import.module.clone()) {
             logl::log(
@@ -1601,7 +1607,7 @@ fn bind_runtime_local_image_imports(
             image.imports.len(),
         ),
     );
-    Ok(())
+    Ok(RuntimeImportBind::Complete)
 }
 
 pub(super) async fn run_loop(
@@ -2443,10 +2449,68 @@ pub(super) async fn run_loop(
                                 .ok_or_else(|| "runtime LoadLibrary native index".to_owned())?;
                             module.initialized = true;
                             let stored = module.stored.clone();
+                            if let Some((&next_native_index, remaining_native_indices)) =
+                                pending.remaining_native_indices.split_first()
+                            {
+                                let next_module = child
+                                    .native_modules
+                                    .get(next_native_index)
+                                    .ok_or_else(|| "runtime LoadLibrary next native index".to_owned())?;
+                                let next_module_handle = next_module.image.image_base;
+                                let entry = next_module_handle
+                                    .checked_add(next_module.image.entry_rva)
+                                    .ok_or("runtime dependency DLL entry overflow")?;
+                                let callback_esp = pending
+                                    .provider_esp
+                                    .checked_sub(16)
+                                    .ok_or("runtime dependency DllMain stack underflow")?;
+                                let frame = [
+                                    thunk32::CHILD_CALLBACK_RETURN_ADDRESS,
+                                    next_module_handle,
+                                    1,
+                                    0,
+                                ];
+                                let mut frame_bytes = [0u8; 16];
+                                for (index, value) in frame.into_iter().enumerate() {
+                                    frame_bytes[index * 4..index * 4 + 4]
+                                        .copy_from_slice(&value.to_le_bytes());
+                                }
+                                if child
+                                    .address_space
+                                    .write(callback_esp, &frame_bytes)
+                                    .map_err(|error| error.to_string())?
+                                    != frame_bytes.len()
+                                {
+                                    return Err("short runtime dependency DllMain frame write".into());
+                                }
+                                child.load_library_call = Some(ChildLoadLibraryCall {
+                                    provider_resume_eip: pending.provider_resume_eip,
+                                    provider_esp: pending.provider_esp,
+                                    native_index: next_native_index,
+                                    module_handle: next_module_handle,
+                                    load_library_handle: pending.load_library_handle,
+                                    remaining_native_indices: remaining_native_indices.to_vec(),
+                                });
+                                let mut registers = exit.registers;
+                                registers.eip = entry;
+                                registers.esp = callback_esp;
+                                contexts[active]
+                                    .context
+                                    .set_registers(registers)
+                                    .map_err(|error| error.to_string())?;
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 CHILD RUNTIME NATIVE DEPENDENCY ATTACH pid={} tid={} module={:?} handle=0x{:08x}",
+                                        active_pid, active_tid, next_module.stored, next_module_handle,
+                                    ),
+                                );
+                                continue;
+                            }
                             let mut registers = exit.registers;
                             registers.eip = pending.provider_resume_eip;
                             registers.esp = pending.provider_esp;
-                            registers.eax = pending.module_handle;
+                            registers.eax = pending.load_library_handle;
                             contexts[active]
                                 .context
                                 .set_registers(registers)
@@ -2455,7 +2519,7 @@ pub(super) async fn run_loop(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD LOADLIBRARY RETURN pid={} tid={} module={:?} handle=0x{:08x} dllmain=TRUE cleanup=4-by-thunk",
-                                    active_pid, active_tid, stored, pending.module_handle,
+                                    active_pid, active_tid, stored, pending.load_library_handle,
                                 ),
                             );
                             continue;
@@ -4770,31 +4834,105 @@ pub(super) async fn run_loop(
                             if written != image.image.len() {
                                 return Err("short local native image write".into());
                             }
-                            let process = &mut session
-                                .process_mut(active_pid)
-                                .ok_or_else(|| "child process missing".to_owned())?
-                                .xp;
-                            bind_runtime_local_image_imports(
-                                child,
-                                process,
-                                &requested,
-                                module_handle,
-                                &image,
-                                listing.as_ref(),
-                            )?;
-                            session
-                                .process_mut(active_pid)
-                                .ok_or_else(|| "child process missing".to_owned())?
-                                .xp
-                                .register_runtime_native_module(&requested, module_handle)
-                                .map_err(str::to_owned)?;
-                            let native_index = child.native_modules.len();
-                            child.native_modules.push(PendingNativeModule {
-                                requested: requested.clone(),
-                                stored,
-                                image,
-                                initialized: false,
-                            });
+                            // Bind the requested image depth-first: a locally present
+                            // imported DLL must be mapped and registered before its
+                            // parent can receive real export addresses in its IAT.
+                            let mut pending_images = vec![(requested.clone(), stored, image)];
+                            let mut attach_indices = Vec::new();
+                            while let Some((parent, stored, image)) = pending_images.pop() {
+                                match bind_runtime_local_image_imports(
+                                    child,
+                                    &mut session
+                                        .process_mut(active_pid)
+                                        .ok_or_else(|| "child process missing".to_owned())?
+                                        .xp,
+                                    &parent,
+                                    image.image_base,
+                                    &image,
+                                    listing.as_ref(),
+                                )? {
+                                    RuntimeImportBind::Complete => {
+                                        session
+                                            .process_mut(active_pid)
+                                            .ok_or_else(|| "child process missing".to_owned())?
+                                            .xp
+                                            .register_runtime_native_module(&parent, image.image_base)
+                                            .map_err(str::to_owned)?;
+                                        let native_index = child.native_modules.len();
+                                        child.native_modules.push(PendingNativeModule {
+                                            requested: parent,
+                                            stored,
+                                            image,
+                                            initialized: false,
+                                        });
+                                        attach_indices.push(native_index);
+                                    }
+                                    RuntimeImportBind::NeedNativeDependency {
+                                        requested: dependency_requested,
+                                        stored: dependency_stored,
+                                    } => {
+                                        let path = format!(
+                                            "/common/Warcraft III/{dependency_stored}"
+                                        );
+                                        let bytes = async_fs::read_file(path.as_bytes())
+                                            .await
+                                            .map_err(|error| format!(
+                                                "read {path} for runtime dependency: TRUEOSFS error {error}"
+                                            ))?;
+                                        let dependency_image = pe32::parse(&bytes).map_err(|error| {
+                                            format!(
+                                                "runtime dependency PE {dependency_requested:?}: {error}"
+                                            )
+                                        })?;
+                                        child
+                                            .address_space
+                                            .map(
+                                                dependency_image.image_base,
+                                                dependency_image.image.len(),
+                                                Permissions::READ
+                                                    | Permissions::WRITE
+                                                    | Permissions::EXECUTE,
+                                            )
+                                            .map_err(|_| format!(
+                                                "WC3 CHILD RUNTIME NATIVE DEPENDENCY FRONTIER reason=preferred-base-unavailable module={dependency_requested:?} preferred=0x{:08x} relocations={}",
+                                                dependency_image.image_base,
+                                                dependency_image.relocations.len(),
+                                            ))?;
+                                        if child
+                                            .address_space
+                                            .write(dependency_image.image_base, &dependency_image.image)
+                                            .map_err(|error| error.to_string())?
+                                            != dependency_image.image.len()
+                                        {
+                                            return Err("short runtime native dependency image write".into());
+                                        }
+                                        logl::log(
+                                            level::IMPORTANT,
+                                            format_args!(
+                                                "WC3 CHILD RUNTIME NATIVE DEPENDENCY MAP parent={parent:?} requested={dependency_requested:?} stored={dependency_stored:?} base=0x{:08x} imports={} entry_rva=0x{:08x}",
+                                                dependency_image.image_base,
+                                                dependency_image.imports.len(),
+                                                dependency_image.entry_rva,
+                                            ),
+                                        );
+                                        pending_images.push((parent, stored, image));
+                                        pending_images.push((
+                                            dependency_requested,
+                                            dependency_stored,
+                                            dependency_image,
+                                        ));
+                                    }
+                                }
+                            }
+                            let native_index = *attach_indices
+                                .first()
+                                .ok_or("runtime native attach list empty")?;
+                            let module_handle = child.native_modules[native_index].image.image_base;
+                            let load_library_handle = child.native_modules
+                                .get(*attach_indices.last().ok_or("runtime native attach tail missing")?)
+                                .ok_or("runtime LoadLibrary requested module missing")?
+                                .image
+                                .image_base;
                             let entry = module_handle
                                 .checked_add(child.native_modules[native_index].image.entry_rva)
                                 .ok_or("local DLL entry overflow")?;
@@ -4825,6 +4963,8 @@ pub(super) async fn run_loop(
                                 provider_esp,
                                 native_index,
                                 module_handle,
+                                load_library_handle,
+                                remaining_native_indices: attach_indices[1..].to_vec(),
                             });
                             let mut registers = exit.registers;
                             registers.eip = entry;
@@ -4836,11 +4976,11 @@ pub(super) async fn run_loop(
                             logl::log(
                                 level::IMPORTANT,
                                 format_args!(
-                                    "WC3 CHILD LOADLIBRARY MAP pid={} tid={} during=\"{}\" requested={:?} mapped_base=0x{:08x} relocation_delta=0 imports={} entry=0x{:08x}",
+                                    "WC3 CHILD LOADLIBRARY MAP pid={} tid={} during=\"{}\" module={:?} mapped_base=0x{:08x} relocation_delta=0 imports={} entry=0x{:08x}",
                                     active_pid,
                                     active_tid,
                                     running_module_name,
-                                    requested,
+                                    child.native_modules[native_index].requested,
                                     module_handle,
                                     child.native_modules[native_index].image.imports.len(),
                                     entry,
@@ -5332,6 +5472,55 @@ pub(super) async fn run_loop(
                                         ),
                                         _ => unreachable!("process-memory operation was classified before dispatch"),
                                     }
+                                }
+                                match operation {
+                                    child_loader::ProviderOp::GetCurrentThreadId => logl::log(
+                                        level::IMPORTANT,
+                                        format_args!(
+                                            "WC3 CHILD GETCURRENTTHREADID pid={} tid={} during=\"{}\" result={}",
+                                            active_pid, active_tid, running_module_name, result,
+                                        ),
+                                    ),
+                                    child_loader::ProviderOp::TlsAlloc => logl::log(
+                                        level::IMPORTANT,
+                                        format_args!(
+                                            "WC3 CHILD TLS ALLOC pid={} tid={} during=\"{}\" slot={} result=0x{:08x}",
+                                            active_pid, active_tid, running_module_name, result, result,
+                                        ),
+                                    ),
+                                    child_loader::ProviderOp::TlsSetValue => {
+                                        let [_, slot, value] = read_guest_words(
+                                            &X86Memory(&child.address_space),
+                                            exit.registers.esp,
+                                            3,
+                                        )?[..] else {
+                                            unreachable!("TlsSetValue frame has three words")
+                                        };
+                                        logl::log(
+                                            level::IMPORTANT,
+                                            format_args!(
+                                                "WC3 CHILD TLS SET pid={} tid={} during=\"{}\" slot={} value=0x{:08x} result={}",
+                                                active_pid, active_tid, running_module_name, slot, value, result,
+                                            ),
+                                        );
+                                    }
+                                    child_loader::ProviderOp::TlsGetValue => {
+                                        let [_, slot] = read_guest_words(
+                                            &X86Memory(&child.address_space),
+                                            exit.registers.esp,
+                                            2,
+                                        )?[..] else {
+                                            unreachable!("TlsGetValue frame has two words")
+                                        };
+                                        logl::log(
+                                            level::IMPORTANT,
+                                            format_args!(
+                                                "WC3 CHILD TLS GET pid={} tid={} during=\"{}\" slot={} value=0x{:08x}",
+                                                active_pid, active_tid, running_module_name, slot, result,
+                                            ),
+                                        );
+                                    }
+                                    _ => {}
                                 }
                                 logl::trace!("trace-api",
                                     level::IMPORTANT,

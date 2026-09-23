@@ -1796,6 +1796,8 @@ struct ChildLoadLibraryCall {
     provider_esp: u32,
     native_index: usize,
     module_handle: u32,
+    load_library_handle: u32,
+    remaining_native_indices: Vec<usize>,
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]

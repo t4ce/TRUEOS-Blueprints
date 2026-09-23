@@ -50,9 +50,13 @@ pub enum ProviderOp {
     LoadLibraryA,
     GetProcAddress,
     InterlockedExchange,
+    TlsAlloc,
+    TlsSetValue,
+    TlsGetValue,
     GetCurrentProcess,
     GetCurrentProcessId,
     GetCurrentThread,
+    GetCurrentThreadId,
     ReadProcessMemory,
     WriteProcessMemory,
     GetLastError,
@@ -161,7 +165,9 @@ impl ProviderOp {
             | Self::GetTempPathA
             | Self::SetFileAttributesA
             | Self::GlobalAlloc
-            | Self::InterlockedExchange => 8,
+            | Self::InterlockedExchange
+            | Self::TlsSetValue => 8,
+            Self::TlsGetValue => 4,
             Self::GetStringTypeW
             | Self::RtlUnwind
             | Self::VirtualAlloc
@@ -194,7 +200,9 @@ impl ProviderOp {
             | Self::CrtStrrchr
             | Self::CrtStrstr
             | Self::CrtFullPath
-            | Self::WsprintfA => 0,
+            | Self::WsprintfA
+            | Self::TlsAlloc
+            | Self::GetCurrentThreadId => 0,
             _ => 0,
         }
     }
@@ -216,9 +224,13 @@ impl ProviderOp {
                 | Self::GetModuleFileNameA
                 | Self::GetModuleHandleA
                 | Self::InterlockedExchange
+                | Self::TlsAlloc
+                | Self::TlsSetValue
+                | Self::TlsGetValue
                 | Self::GetCurrentProcess
                 | Self::GetCurrentProcessId
                 | Self::GetCurrentThread
+                | Self::GetCurrentThreadId
                 | Self::ReadProcessMemory
                 | Self::WriteProcessMemory
                 | Self::GetLastError
@@ -283,9 +295,13 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "LoadLibraryA" => ProviderOp::LoadLibraryA,
             "GetProcAddress" => ProviderOp::GetProcAddress,
             "InterlockedExchange" => ProviderOp::InterlockedExchange,
+            "TlsAlloc" => ProviderOp::TlsAlloc,
+            "TlsSetValue" => ProviderOp::TlsSetValue,
+            "TlsGetValue" => ProviderOp::TlsGetValue,
             "GetCurrentProcess" => ProviderOp::GetCurrentProcess,
             "GetCurrentProcessId" => ProviderOp::GetCurrentProcessId,
             "GetCurrentThread" => ProviderOp::GetCurrentThread,
+            "GetCurrentThreadId" => ProviderOp::GetCurrentThreadId,
             "ReadProcessMemory" => ProviderOp::ReadProcessMemory,
             "WriteProcessMemory" => ProviderOp::WriteProcessMemory,
             "GetLastError" => ProviderOp::GetLastError,

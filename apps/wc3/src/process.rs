@@ -1687,6 +1687,7 @@ impl XpProcess {
     fn dispatch_process_local_provider(
         &mut self,
         pid: u32,
+        tid: u32,
         operation: ProviderOp,
         esp: u32,
         memory: &mut impl GuestMemory,
@@ -1707,6 +1708,30 @@ impl XpProcess {
                     .checked_add(1)
                     .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(previous))
+            }
+            ProviderOp::TlsAlloc => {
+                let slot = self.tls_alloc()?;
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(slot))
+            }
+            ProviderOp::TlsSetValue => {
+                let result = self.tls_set_value(tid, esp, memory)?;
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(result))
+            }
+            ProviderOp::TlsGetValue => {
+                let result = self.tls_get_value(tid, esp, memory)?;
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(result))
             }
             ProviderOp::CrtSetAppType => {
                 let [_, app_type] = arguments::<2>(memory, esp)?;
@@ -2010,6 +2035,13 @@ impl XpProcess {
                     .checked_add(1)
                     .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(CURRENT_THREAD_PSEUDO_HANDLE))
+            }
+            ProviderOp::GetCurrentThreadId => {
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(tid))
             }
             ProviderOp::OpenThreadToken => {
                 let [_, thread, desired_access, open_as_self, _token_out] =
@@ -2768,6 +2800,7 @@ impl XpProcess {
         if operation.is_generic_process_local() {
             return self.dispatch_process_local_provider(
                 pid,
+                tid,
                 operation,
                 esp,
                 memory,
