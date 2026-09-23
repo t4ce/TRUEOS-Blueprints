@@ -4,7 +4,7 @@
 //! or carrier selection. It consumes an x86 trap frame plus generic guest
 //! memory and returns the register value with which execution should resume.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use trueos::clock::UtcDateTime;
 #[cfg(target_os = "trueos")]
@@ -1125,6 +1125,7 @@ pub struct XpProcess {
     file_handles: HashMap<u32, FileHandle>,
     next_file_handle: u32,
     next_find_handle: u32,
+    find_handles: HashSet<u32>,
     scratch_files: HashMap<u32, ScratchFile>,
     scratch_paths: HashMap<String, u32>,
     next_scratch_file: u32,
@@ -1283,6 +1284,7 @@ impl XpProcess {
             file_handles: HashMap::new(),
             next_file_handle: FILE_HANDLE_BASE,
             next_find_handle: FIND_HANDLE_BASE,
+            find_handles: HashSet::new(),
             scratch_files: HashMap::new(),
             scratch_paths: HashMap::new(),
             next_scratch_file: 1,
@@ -3074,12 +3076,27 @@ impl XpProcess {
                     .next_find_handle
                     .checked_add(1)
                     .ok_or("find handle overflow")?;
+                self.find_handles.insert(handle);
                 self.set_last_error(0);
                 self.call_count = self
                     .call_count
                     .checked_add(1)
                     .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(handle))
+            }
+            ProviderOp::FindClose => {
+                let [_, handle] = arguments::<2>(memory, esp)?;
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                if self.find_handles.remove(&handle) {
+                    self.set_last_error(0);
+                    Ok(PersonalityAction::Return(1))
+                } else {
+                    self.set_last_error(ERROR_INVALID_HANDLE);
+                    Ok(PersonalityAction::Return(0))
+                }
             }
             ProviderOp::QueryPerformanceFrequency => {
                 self.call_count = self

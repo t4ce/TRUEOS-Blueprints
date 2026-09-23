@@ -82,6 +82,7 @@ pub enum ProviderOp {
     GetFileAttributesA,
     SetFileAttributesA,
     FindFirstFileA,
+    FindClose,
     QueryPerformanceFrequency,
     QueryPerformanceCounter,
     GetLocalTime,
@@ -168,6 +169,7 @@ impl ProviderOp {
             | Self::GetTimeZoneInformation
             | Self::SetCurrentDirectoryA
             | Self::GetFileAttributesA
+            | Self::FindClose
             | Self::FlushFileBuffers => 4,
             Self::GetCPInfo | Self::GetWindowsDirectoryA | Self::GetSystemDirectoryA => 8,
             Self::GetProcAddress
@@ -268,6 +270,7 @@ impl ProviderOp {
                 | Self::GetFileAttributesA
                 | Self::SetFileAttributesA
                 | Self::FindFirstFileA
+                | Self::FindClose
                 | Self::QueryPerformanceFrequency
                 | Self::QueryPerformanceCounter
                 | Self::GetLocalTime
@@ -352,6 +355,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "GetFileAttributesA" => ProviderOp::GetFileAttributesA,
             "SetFileAttributesA" => ProviderOp::SetFileAttributesA,
             "FindFirstFileA" => ProviderOp::FindFirstFileA,
+            "FindClose" => ProviderOp::FindClose,
             "QueryPerformanceFrequency" => ProviderOp::QueryPerformanceFrequency,
             "QueryPerformanceCounter" => ProviderOp::QueryPerformanceCounter,
             "GetLocalTime" => ProviderOp::GetLocalTime,
