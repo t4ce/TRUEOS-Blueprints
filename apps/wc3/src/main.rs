@@ -22,6 +22,16 @@ use trueos::{
 mod asupersync;
 
 mod logl {
+    // Gate argument evaluation as well as output (some traces inspect guest memory).
+    macro_rules! trace {
+        ($feature:literal, $level:expr, $message:expr $(,)?) => {
+            if cfg!(feature = $feature) {
+                $crate::logl::log($level, $message);
+            }
+        };
+    }
+    pub(super) use trace;
+
     #[inline]
     pub fn log(level: u8, message: core::fmt::Arguments<'_>) {
         #[cfg(not(feature = "nolog"))]

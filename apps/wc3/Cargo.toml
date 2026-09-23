@@ -15,6 +15,10 @@ bench = false
 [features]
 default = []
 nolog = []
+trace-scan = []
+trace-seh = []
+trace-api = []
+trace-all = ["trace-scan", "trace-seh", "trace-api"]
 
 [dependencies]
 sha2 = "=0.10.9"

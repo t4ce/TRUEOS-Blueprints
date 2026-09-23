@@ -1068,6 +1068,57 @@ fn diagnostic_hex_bytes(bytes: &[u8]) -> String {
         .join(" ")
 }
 
+fn log_branch_xrefs(image: &pe32::PeImage, target: u32) {
+    const IMAGE_SCN_MEM_EXECUTE: u32 = 0x2000_0000;
+
+    for section in &image.sections {
+        if section.characteristics & IMAGE_SCN_MEM_EXECUTE == 0 {
+            continue;
+        }
+        let start = section.virtual_address as usize;
+        let size = section.virtual_size.max(section.raw_size) as usize;
+        let end = start.saturating_add(size).min(image.image.len());
+        let Some(bytes) = image.image.get(start..end) else {
+            continue;
+        };
+
+        for offset in 0..bytes.len() {
+            let Some(site) = image.image_base.checked_add((start + offset) as u32) else {
+                continue;
+            };
+            let candidate = match bytes[offset] {
+                0xe8 | 0xe9 if offset + 5 <= bytes.len() => {
+                    let disp = i32::from_le_bytes(bytes[offset + 1..offset + 5].try_into().unwrap());
+                    Some((i64::from(site) + 5 + i64::from(disp)) as u32)
+                }
+                0x70..=0x7f | 0xeb | 0xe0..=0xe3 if offset + 2 <= bytes.len() => {
+                    let disp = i32::from(bytes[offset + 1] as i8);
+                    Some((i64::from(site) + 2 + i64::from(disp)) as u32)
+                }
+                0x0f
+                    if offset + 6 <= bytes.len()
+                        && (0x80..=0x8f).contains(&bytes[offset + 1]) =>
+                {
+                    let disp = i32::from_le_bytes(bytes[offset + 2..offset + 6].try_into().unwrap());
+                    Some((i64::from(site) + 6 + i64::from(disp)) as u32)
+                }
+                _ => None,
+            };
+            if candidate == Some(target) {
+                let lo = offset.saturating_sub(16);
+                let hi = (offset + 24).min(bytes.len());
+                logl::log(
+                    level::IMPORTANT,
+                    format_args!(
+                        "WC3 CHILD PETITE ERROR XREF site=0x{site:08x} target=0x{target:08x} bytes=\"{}\"",
+                        diagnostic_hex_bytes(&bytes[lo..hi]),
+                    ),
+                );
+            }
+        }
+    }
+}
+
 fn child_read_u32(child: &PendingChild, address: u32) -> Option<u32> {
     let mut bytes = [0; 4];
     (child.address_space.read(address, &mut bytes).ok()? == bytes.len())
@@ -1091,6 +1142,10 @@ fn log_war3_scan_progress(
     registers: Registers,
     debug: DebugRegisters,
 ) {
+    // Diagnostic reads only: never make guest execution depend on this observer.
+    if !cfg!(feature = "trace-scan") {
+        return;
+    }
     let progress = ScanProgress {
         stage: child_read_u8(child, WAR3_SCAN_STAGE),
         source: child_read_u32(child, WAR3_SCAN_SOURCE),
@@ -1148,6 +1203,9 @@ fn log_war3_scan_progress(
 }
 
 fn observe_war3_dword_scan(child: &mut PendingChild, eip: u32) {
+    if !cfg!(feature = "trace-scan") {
+        return;
+    }
     let Some(index) = child_read_u32(child, WAR3_DWORD_SCAN_INDEX) else {
         return;
     };
@@ -1392,7 +1450,8 @@ fn begin_child_seh_dispatch(child: &mut PendingChild, guest: &mut GuestContext, 
     let scan_single_step = war3_scan_single_step(exception, registers);
     let dword_scan_single_step = war3_dword_scan_single_step(exception, registers);
     let boring_single_step = boring_war3_single_step(exception, registers, registration.handler);
-    let quiet = quiet_war3_exception(exception, registers) || boring_single_step;
+    let quiet = !cfg!(feature = "trace-seh")
+        || quiet_war3_exception(exception, registers) || boring_single_step;
     if !quiet && registration.handler == WAR3_DIVIDE_EXCEPTION_HANDLER && !child.seh_handler_dumped {
         child.seh_handler_dumped = true;
         let mut bytes = [0; 128];
@@ -1668,7 +1727,7 @@ pub(super) async fn run_loop(
                     }
                     (context.preemption_count, context.same_page_preemptions)
                 };
-                if active_key.pid != LAUNCHER_PID
+                if cfg!(feature = "trace-scan") && active_key.pid != LAUNCHER_PID
                     && should_log_execution_sample(preemptions)
                     && pending_child
                         .as_ref()
@@ -1808,7 +1867,7 @@ pub(super) async fn run_loop(
                                 || restored.esp != seh.original_registers.esp
                                 || ((restored.eflags ^ seh.original_registers.eflags)
                                     & wc3::seh::X86_EFLAGS_TF) != 0;
-                            if control_changed {
+                            if cfg!(feature = "trace-seh") && control_changed {
                                 logl::log(
                                     level::IMPORTANT,
                                     format_args!(
@@ -2315,6 +2374,26 @@ pub(super) async fn run_loop(
                                     ),
                                 );
                             }
+                            let check_base = 0x2000_c150u32;
+                            let mut check = [0u8; 0x200];
+                            if child.address_space.read(check_base, &mut check).ok()
+                                == Some(check.len())
+                            {
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 CHILD PETITE CHECK WINDOW base=0x{check_base:08x} bytes=\"{}\"",
+                                        diagnostic_hex_bytes(&check),
+                                    ),
+                                );
+                            } else {
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 CHILD PETITE CHECK WINDOW base=0x{check_base:08x} bytes=\"<unreadable>\"",
+                                    ),
+                                );
+                            }
                             logl::log(
                                 level::IMPORTANT,
                                 format_args!(
@@ -2359,7 +2438,7 @@ pub(super) async fn run_loop(
                         )?;
                         let flags = frame[1];
                         let bytes = frame[2];
-                        logl::log(
+                        logl::trace!("trace-api",
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD GLOBALALLOC CALL pid={} tid={} during=\"{}\" provider_id={} flags=0x{:08x} bytes={} caller_ret=0x{:08x}",
@@ -2451,7 +2530,7 @@ pub(super) async fn run_loop(
                         let heap = frame[1];
                         let flags = frame[2];
                         let bytes = frame[3];
-                        logl::log(
+                        logl::trace!("trace-api",
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD HEAP ALLOC CALL pid={} tid={} during=\"{}\" provider_id={} heap=0x{:08x} flags=0x{:08x} bytes={} caller_ret=0x{:08x}",
@@ -2536,7 +2615,7 @@ pub(super) async fn run_loop(
                         let heap = frame[1];
                         let flags = frame[2];
                         let pointer = frame[3];
-                        logl::log(
+                        logl::trace!("trace-api",
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD HEAP FREE CALL pid={} tid={} during=\"{}\" provider_id={} heap=0x{:08x} flags=0x{:08x} pointer=0x{:08x} caller_ret=0x{:08x}",
@@ -2721,7 +2800,7 @@ pub(super) async fn run_loop(
                         let capacity = frame[6];
                         let default_char = frame[7];
                         let used_default_char = frame[8];
-                        logl::log(
+                        logl::trace!("trace-api",
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD WIDECHARTOMULTIBYTE CALL pid={} tid={} during=\"{}\" provider_id={} code_page={} flags=0x{:08x} source=0x{:08x} count={} output=0x{:08x} capacity={} default_char=0x{:08x} used_default_char=0x{:08x} caller_ret=0x{:08x}",
@@ -2824,7 +2903,7 @@ pub(super) async fn run_loop(
                         )?;
                         let info = frame[1];
                         let size = read_guest_words(&X86Memory(&child.address_space), info, 1)?[0];
-                        logl::log(
+                        logl::trace!("trace-api",
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD GETVERSIONEXA CALL pid={} tid={} during=\"{}\" provider_id={} info=0x{:08x} size=0x{:08x} caller_ret=0x{:08x}",
@@ -2895,7 +2974,7 @@ pub(super) async fn run_loop(
                                 && name == "GetVersion"
                     );
                     if is_get_version {
-                        logl::log(
+                        logl::trace!("trace-api",
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD PROVIDER CALL pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" provider_id={} module=\"{}\" symbol=\"GetVersion\" esp=0x{:08x} caller_ret=0x{:08x}",
@@ -2961,7 +3040,7 @@ pub(super) async fn run_loop(
                             .read(argument, &mut critical_section)
                             .map_err(|error| error.to_string())?;
                         let critical_section = u32::from_le_bytes(critical_section);
-                        logl::log(
+                        logl::trace!("trace-api",
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD PROVIDER CALL pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" provider_id={} module=\"{}\" symbol=\"InitializeCriticalSection\" esp=0x{:08x} critical_section=0x{:08x}",
@@ -3075,7 +3154,7 @@ pub(super) async fn run_loop(
                         let lock_count_before = u32::from_le_bytes(before[4..8].try_into().unwrap());
                         let recursion_before = u32::from_le_bytes(before[8..12].try_into().unwrap());
                         let owner_before = u32::from_le_bytes(before[12..16].try_into().unwrap());
-                        logl::log(
+                        logl::trace!("trace-api",
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD PROVIDER CALL pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" provider_id={} module=\"{}\" symbol=\"EnterCriticalSection\" esp=0x{:08x} critical_section=0x{:08x} caller_ret=0x{:08x} lock_count_before=0x{:08x} recursion_before={} owner_before={}",
@@ -3217,7 +3296,7 @@ pub(super) async fn run_loop(
                             .read(argument, &mut value)
                             .map_err(|error| error.to_string())?;
                         let value = u32::from_le_bytes(value);
-                        logl::log(
+                        logl::trace!("trace-api",
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD PROVIDER CALL pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" provider_id={} module=\"{}\" symbol=\"SetLastError\" esp=0x{:08x} value=0x{:08x}",
@@ -4049,6 +4128,45 @@ pub(super) async fn run_loop(
                             let image = pe32::parse(&bytes).map_err(|error| {
                                 format!("LoadLibraryA scratch PE {requested:?}: {error}")
                             })?;
+                            if requested
+                                .rsplit(['\\', '/'])
+                                .next()
+                                .is_some_and(|name| name.eq_ignore_ascii_case("SIntfNT.dll"))
+                            {
+                                let raw_end = image
+                                    .sections
+                                    .iter()
+                                    .filter_map(|section| {
+                                        section.raw_offset.checked_add(section.raw_size)
+                                    })
+                                    .max()
+                                    .unwrap_or(0);
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 CHILD PETITE GEOMETRY headers=0x{:x} file={} raw_end={} overlay={}",
+                                        image.size_of_headers,
+                                        bytes.len(),
+                                        raw_end,
+                                        bytes.len().saturating_sub(raw_end as usize),
+                                    ),
+                                );
+                                for (index, section) in image.sections.iter().enumerate() {
+                                    logl::log(
+                                        level::IMPORTANT,
+                                        format_args!(
+                                            "WC3 CHILD PETITE SECTION index={} va=0x{:08x} vsize=0x{:08x} raw=0x{:08x}+0x{:08x} chars=0x{:08x}",
+                                            index,
+                                            section.virtual_address,
+                                            section.virtual_size,
+                                            section.raw_offset,
+                                            section.raw_size,
+                                            section.characteristics,
+                                        ),
+                                    );
+                                }
+                                log_branch_xrefs(&image, 0x2000_c0ce);
+                            }
                             let named_exports = image
                                 .exports
                                 .iter()
@@ -4642,7 +4760,7 @@ pub(super) async fn run_loop(
                                         _ => unreachable!("process-memory operation was classified before dispatch"),
                                     }
                                 }
-                                logl::log(
+                                logl::trace!("trace-api",
                                     level::IMPORTANT,
                                     format_args!(
                                 "WC3 CHILD PROVIDER RETURN pid={} tid={} during=\"{}\" provider_id={} module=\"{}\" {} eax=0x{:08x} cleanup={}-by-thunk",
@@ -4799,7 +4917,7 @@ pub(super) async fn run_loop(
                     .or_insert(1);
                 let sequence = session.note();
                 let process_call = session.launcher().xp.call_count + 1;
-                logl::log(
+                logl::trace!("trace-api",
                     level::INFO,
                     format_args!(
                         "wc3[seq={sequence} p=launcher pid={} tid={} pcall={process_call} tcall={}] {}!{}",
@@ -6240,7 +6358,7 @@ pub(super) async fn run_loop(
                                     .set_registers(registers)
                                     .map_err(|error| error.to_string())?;
                                 if !repeated_wait_timeout {
-                                    logl::log(
+                                    logl::trace!("trace-api",
                                         level::INFO,
                                         format_args!(
                                             "wc3: return #{} KERNEL32.dll!WaitForSingleObject eax=0x{:08x}",
@@ -6298,14 +6416,14 @@ pub(super) async fn run_loop(
                                     request.timeout,
                                 ),
                             );
-                            logl::log(
+                            logl::trace!("trace-api",
                                 level::INFO,
                                 format_args!(
                                     "wc3: wait handle0 {}",
                                     session.describe_handle(LAUNCHER_PID, request.handles[0])
                                 ),
                             );
-                            logl::log(
+                            logl::trace!("trace-api",
                                 level::INFO,
                                 format_args!(
                                     "wc3: wait handle1 {}",
@@ -7388,7 +7506,7 @@ pub(super) async fn run_loop(
                     .set_registers(registers)
                     .map_err(|error| error.to_string())?;
                 if import.symbol != "PeekMessageA" {
-                    logl::log(
+                    logl::trace!("trace-api",
                         level::INFO,
                         format_args!(
                             "wc3: return #{} {}!{} eax=0x{result:08x}",
@@ -7437,7 +7555,7 @@ pub(super) async fn run_loop(
                     );
                 }
                 if !quiet_exception {
-                logl::log(
+                logl::trace!("trace-seh",
                     level::IMPORTANT,
                     format_args!(
                         "WC3 CHILD EXCEPTION RAW detail=0x{:08x} qualification=0x{:016x}",
@@ -7446,16 +7564,18 @@ pub(super) async fn run_loop(
                 );
                 // Preceding bytes expose the call/return or pointer-producing
                 // instruction; these are raw bytes, not instruction boundaries.
-                for distance in [32u32, 16] {
-                    if let Some(start) = registers.eip.checked_sub(distance) {
-                        logl::log(
-                            level::IMPORTANT,
-                            format_args!(
-                                "WC3 CHILD EXCEPTION CODE BEFORE address=0x{:08x} bytes=\"{}\"",
-                                start,
-                                exception_code_window(&child.address_space, start),
-                            ),
-                        );
+                if cfg!(feature = "trace-seh") {
+                    for distance in [32u32, 16] {
+                        if let Some(start) = registers.eip.checked_sub(distance) {
+                            logl::trace!("trace-seh",
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD EXCEPTION CODE BEFORE address=0x{:08x} bytes=\"{}\"",
+                                    start,
+                                    exception_code_window(&child.address_space, start),
+                                ),
+                            );
+                        }
                     }
                 }
                 logl::log(
@@ -7487,14 +7607,14 @@ pub(super) async fn run_loop(
                             .unwrap_or_else(|| "-".into()),
                     ),
                 );
-                logl::log(
+                logl::trace!("trace-seh",
                     level::IMPORTANT,
                     format_args!(
                         "WC3 CHILD EXCEPTION FAULT {}",
                         child_exception_fault_detail(exception),
                     ),
                 );
-                logl::log(
+                logl::trace!("trace-seh",
                     level::IMPORTANT,
                     format_args!(
                         "WC3 CHILD EXCEPTION REGS eax=0x{:08x} ebx=0x{:08x} ecx=0x{:08x} edx=0x{:08x} esi=0x{:08x} edi=0x{:08x} ebp=0x{:08x} esp=0x{:08x} eip=0x{:08x} eflags=0x{:08x} fs_base=0x{:08x}",
@@ -7511,7 +7631,7 @@ pub(super) async fn run_loop(
                         registers.fs_base,
                     ),
                 );
-                logl::log(
+                logl::trace!("trace-seh",
                     level::IMPORTANT,
                     format_args!(
                         "WC3 CHILD EXCEPTION CODE eip=0x{:08x} bytes=\"{}\"",
@@ -7519,7 +7639,7 @@ pub(super) async fn run_loop(
                         exception_code_window(&child.address_space, registers.eip),
                     ),
                 );
-                logl::log(
+                logl::trace!("trace-seh",
                     level::IMPORTANT,
                     format_args!(
                         "WC3 CHILD EXCEPTION STACK esp=0x{:08x} words=[redacted]",
