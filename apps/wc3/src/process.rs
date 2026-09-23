@@ -50,6 +50,7 @@ pub const CRT_CONSOLE_APP: u32 = 1;
 pub const CRT_GUI_APP: u32 = 2;
 const ERROR_MOD_NOT_FOUND: u32 = 126;
 const ERROR_FILE_NOT_FOUND: u32 = 2;
+const ERROR_PATH_NOT_FOUND: u32 = 3;
 const ERROR_ACCESS_DENIED: u32 = 5;
 const ERROR_FILE_EXISTS: u32 = 80;
 const ERROR_ALREADY_EXISTS: u32 = 183;
@@ -2428,6 +2429,22 @@ impl XpProcess {
                     .checked_add(1)
                     .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(self.get_temp_path_a(esp, memory)?))
+            }
+            ProviderOp::SetCurrentDirectoryA => {
+                let [_, directory] = arguments::<2>(memory, esp)?;
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                if directory == 0 || read_c_string(memory, directory, 1024)?.is_empty() {
+                    self.set_last_error(ERROR_PATH_NOT_FOUND);
+                    return Ok(PersonalityAction::Return(0));
+                }
+                // WC3's modeled file operations use their absolute virtual paths,
+                // so this establishes the API result without introducing a second
+                // relative-path resolver.
+                self.set_last_error(0);
+                Ok(PersonalityAction::Return(1))
             }
             ProviderOp::SetFileAttributesA => {
                 let [_, filename, attributes] = arguments::<3>(memory, esp)?;

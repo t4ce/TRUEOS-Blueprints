@@ -70,6 +70,7 @@ pub enum ProviderOp {
     GetWindowsDirectoryA,
     GetSystemDirectoryA,
     GetTempPathA,
+    SetCurrentDirectoryA,
     SetFileAttributesA,
     QueryPerformanceFrequency,
     QueryPerformanceCounter,
@@ -146,6 +147,7 @@ impl ProviderOp {
             | Self::GetLocalTime
             | Self::GetSystemTime
             | Self::GetTimeZoneInformation
+            | Self::SetCurrentDirectoryA
             | Self::FlushFileBuffers => 4,
             Self::GetCPInfo | Self::GetWindowsDirectoryA | Self::GetSystemDirectoryA => 8,
             Self::GetProcAddress
@@ -221,6 +223,7 @@ impl ProviderOp {
                 | Self::GetWindowsDirectoryA
                 | Self::GetSystemDirectoryA
                 | Self::GetTempPathA
+                | Self::SetCurrentDirectoryA
                 | Self::SetFileAttributesA
                 | Self::QueryPerformanceFrequency
                 | Self::QueryPerformanceCounter
@@ -288,6 +291,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "GetWindowsDirectoryA" => ProviderOp::GetWindowsDirectoryA,
             "GetSystemDirectoryA" => ProviderOp::GetSystemDirectoryA,
             "GetTempPathA" => ProviderOp::GetTempPathA,
+            "SetCurrentDirectoryA" => ProviderOp::SetCurrentDirectoryA,
             "SetFileAttributesA" => ProviderOp::SetFileAttributesA,
             "QueryPerformanceFrequency" => ProviderOp::QueryPerformanceFrequency,
             "QueryPerformanceCounter" => ProviderOp::QueryPerformanceCounter,
