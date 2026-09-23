@@ -7354,6 +7354,67 @@ pub(super) async fn run_loop(
                         registers.esp,
                         16,
                     )?;
+                    let args = read_guest_words(
+                        &X86Memory(&child.address_space),
+                        registers
+                            .ebp
+                            .checked_add(8)
+                            .ok_or("Petite frame arguments overflow")?,
+                        4,
+                    )?;
+                    let input_current = args[0];
+                    let output = args[1];
+                    let output_size = args[2];
+                    let descriptor_next = args[3];
+                    let input_start = input_current
+                        .checked_sub(5)
+                        .ok_or("Petite DEFLATE input underflow")?;
+                    let mut source = [0u8; 16];
+                    if child
+                        .address_space
+                        .read(input_start, &mut source)
+                        .map_err(|error| error.to_string())?
+                        != source.len()
+                    {
+                        return Err("short Petite DEFLATE source read".into());
+                    }
+                    let descriptor = descriptor_next
+                        .checked_sub(0x10)
+                        .ok_or("Petite descriptor underflow")?;
+                    let descriptor_words = read_guest_words(
+                        &X86Memory(&child.address_space),
+                        descriptor,
+                        4,
+                    )?;
+                    let call = child
+                        .load_library_call
+                        .as_ref()
+                        .ok_or("Petite probe without LoadLibrary continuation")?;
+                    let module = child
+                        .native_modules
+                        .get(call.native_index)
+                        .ok_or("Petite probe native module")?;
+                    let source_rva = input_start
+                        .checked_sub(module.image.image_base)
+                        .ok_or("Petite source below image")?;
+                    let raw_offset = if source_rva < module.image.size_of_headers {
+                        Some(source_rva)
+                    } else {
+                        module.image.sections.iter().find_map(|section| {
+                            let delta = source_rva.checked_sub(section.virtual_address)?;
+                            (delta < section.raw_size)
+                                .then(|| section.raw_offset.checked_add(delta))
+                                .flatten()
+                        })
+                    };
+                    logl::log(
+                        level::IMPORTANT,
+                        format_args!(
+                            "WC3 CHILD PETITE DEFLATE FAIL input_start=0x{input_start:08x} input_current=0x{input_current:08x} source_rva=0x{source_rva:08x} raw_offset={raw_offset:?} output=0x{output:08x} output_size={} descriptor=0x{descriptor:08x} descriptor_words={descriptor_words:08x?} source=\"{}\"",
+                            output_size,
+                            diagnostic_hex_bytes(&source),
+                        ),
+                    );
                     let code_base = PETITE_FAIL_SINK - 0x20;
                     let mut code = [0u8; 0x60];
                     child
