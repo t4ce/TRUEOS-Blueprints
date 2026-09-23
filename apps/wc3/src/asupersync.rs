@@ -33,6 +33,7 @@ const WAR3_TABLE_FILL_STEP_END: u32 = 0x0046_14c3;
 const WAR3_TABLE_FILL_HEARTBEAT_STRIDE: u32 = 0x100;
 const PETITE_FAIL_SINK: u32 = 0x2000_d186;
 const PETITE_FAIL_ORIGINAL: u8 = 0x33;
+const PETITE_HEADER_WRITE_WATCH: u32 = 0x2000_0000;
 
 const TABLE_CHECKPOINT_PAGE_BYTES: usize = 4096;
 const TABLE_BOUNDARY: wc3::checkpoint::Boundary = wc3::checkpoint::Boundary {
@@ -868,6 +869,52 @@ fn log_branch_xrefs(image: &pe32::PeImage, target: u32) {
             }
         }
     }
+}
+
+fn first_disabled_debug_slot(debug: DebugRegisters) -> Option<u8> {
+    (0..4).find(|slot| debug.dr7 & (0b11 << (slot * 2)) == 0)
+}
+
+fn set_debug_slot_address(debug: &mut DebugRegisters, slot: u8, address: u32) {
+    match slot {
+        0 => debug.dr0 = address,
+        1 => debug.dr1 = address,
+        2 => debug.dr2 = address,
+        3 => debug.dr3 = address,
+        _ => unreachable!("x86 debug register slot"),
+    }
+}
+
+fn debug_slot_address(debug: DebugRegisters, slot: u8) -> u32 {
+    match slot {
+        0 => debug.dr0,
+        1 => debug.dr1,
+        2 => debug.dr2,
+        3 => debug.dr3,
+        _ => unreachable!("x86 debug register slot"),
+    }
+}
+
+fn arm_debug_write_watch(debug: &mut DebugRegisters, slot: u8, address: u32) {
+    let enable_shift = slot * 2;
+    let control_shift = 16 + slot * 4;
+    set_debug_slot_address(debug, slot, address);
+    debug.dr7 &= !(0b11 << enable_shift);
+    debug.dr7 &= !(0b1111 << control_shift);
+    debug.dr7 |= 1 << enable_shift; // Local enable.
+    debug.dr7 |= 0b01 << control_shift; // Break on data writes; length one byte.
+}
+
+fn restore_debug_watch_slot(current: &mut DebugRegisters, saved: DebugRegisters, slot: u8) {
+    let enable_shift = slot * 2;
+    let control_shift = 16 + slot * 4;
+    let status_bit = 1 << slot;
+    set_debug_slot_address(current, slot, debug_slot_address(saved, slot));
+    current.dr7 = (current.dr7 & !(0b11 << enable_shift))
+        | (saved.dr7 & (0b11 << enable_shift));
+    current.dr7 = (current.dr7 & !(0b1111 << control_shift))
+        | (saved.dr7 & (0b1111 << control_shift));
+    current.dr6 = (current.dr6 & !status_bit) | (saved.dr6 & status_bit);
 }
 
 fn child_read_u32(child: &PendingChild, address: u32) -> Option<u32> {
@@ -4052,6 +4099,35 @@ pub(super) async fn run_loop(
                                         PETITE_FAIL_ORIGINAL,
                                     ),
                                 );
+                                let saved_debug = contexts[active]
+                                    .context
+                                    .debug_registers()
+                                    .map_err(|error| error.to_string())?;
+                                let slot = first_disabled_debug_slot(saved_debug)
+                                    .ok_or("Petite header write watch has no free debug slot")?;
+                                let mut watched_debug = saved_debug;
+                                arm_debug_write_watch(
+                                    &mut watched_debug,
+                                    slot,
+                                    PETITE_HEADER_WRITE_WATCH,
+                                );
+                                contexts[active]
+                                    .context
+                                    .set_debug_registers(watched_debug)
+                                    .map_err(|error| error.to_string())?;
+                                child.petite_header_write_watch = Some(PetiteHeaderWriteWatch {
+                                    slot,
+                                    saved_debug,
+                                });
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 CHILD PETITE HEADER WATCH ARM address=0x{PETITE_HEADER_WRITE_WATCH:08x} slot={} dr7_before=0x{:08x} dr7_armed=0x{:08x}",
+                                        slot,
+                                        saved_debug.dr7,
+                                        watched_debug.dr7,
+                                    ),
+                                );
                             }
                             session
                                 .process_mut(active_pid)
@@ -5832,6 +5908,7 @@ pub(super) async fn run_loop(
                             seh_handler_dumped: false,
                             seh: None,
                             unhandled_filter_call: None,
+                            petite_header_write_watch: None,
                             repeated_null_call: None,
                             repeated_divide_fault: None,
                             single_step_count: 0,
@@ -7319,8 +7396,89 @@ pub(super) async fn run_loop(
                 }
             }
             ExitKind::Exception if active_key.pid != LAUNCHER_PID => {
-                let exception = decode_child_exception(exit.detail, exit.qualification);
+                let mut exception = decode_child_exception(exit.detail, exit.qualification);
                 let registers = exit.registers;
+                if exception.vector == Some(1) {
+                    let child = pending_child
+                        .as_mut()
+                        .filter(|child| {
+                            child.pid == active_key.pid && child.tid == active_key.tid
+                        })
+                        .ok_or_else(|| "Petite header watch child missing".to_owned())?;
+                    if let Some(watch) = child.petite_header_write_watch {
+                        let status_bit = 1u32 << watch.slot;
+                        if exception
+                            .debug_status
+                            .is_some_and(|status| status & status_bit != 0)
+                        {
+                            let mut header = [0u8; 16];
+                            let header = if child
+                                .address_space
+                                .read(PETITE_HEADER_WRITE_WATCH, &mut header)
+                                .ok()
+                                == Some(header.len())
+                            {
+                                diagnostic_hex_bytes(&header)
+                            } else {
+                                "<unreadable>".to_owned()
+                            };
+                            let code_before = code_before_return(
+                                &child.address_space,
+                                registers.eip,
+                            )
+                            .map(|bytes| diagnostic_hex_bytes(&bytes))
+                            .unwrap_or_else(|| "<unreadable>".to_owned());
+                            let current_debug = contexts[active]
+                                .context
+                                .debug_registers()
+                                .map_err(|error| error.to_string())?;
+                            let mut restored_debug = current_debug;
+                            restore_debug_watch_slot(
+                                &mut restored_debug,
+                                watch.saved_debug,
+                                watch.slot,
+                            );
+                            let remaining_status = exception.debug_status.unwrap_or(0) & !status_bit;
+                            exception.debug_status = Some(remaining_status);
+                            child.petite_header_write_watch = None;
+                            contexts[active]
+                                .context
+                                .set_debug_registers(restored_debug)
+                                .map_err(|error| error.to_string())?;
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD PETITE HEADER WRITE address=0x{PETITE_HEADER_WRITE_WATCH:08x} slot={} eip=0x{:08x} eax=0x{:08x} ebx=0x{:08x} ecx=0x{:08x} edx=0x{:08x} esi=0x{:08x} edi=0x{:08x} ebp=0x{:08x} esp=0x{:08x} eflags=0x{:08x} qualification_dr6={:?} remaining_dr6=0x{:08x} dr7_before=0x{:08x} dr7_live=0x{:08x} dr7_restored=0x{:08x} code_before=\"{}\" header=\"{}\"",
+                                    watch.slot,
+                                    registers.eip,
+                                    registers.eax,
+                                    registers.ebx,
+                                    registers.ecx,
+                                    registers.edx,
+                                    registers.esi,
+                                    registers.edi,
+                                    registers.ebp,
+                                    registers.esp,
+                                    registers.eflags,
+                                    exception.debug_status.map(|status| status | status_bit),
+                                    remaining_status,
+                                    watch.saved_debug.dr7,
+                                    current_debug.dr7,
+                                    restored_debug.dr7,
+                                    code_before,
+                                    header,
+                                ),
+                            );
+                            if remaining_status & 0x0000_f00f == 0 {
+                                contexts[active]
+                                    .context
+                                    .set_registers(registers)
+                                    .map_err(|error| error.to_string())?;
+                                continue;
+                            }
+                        }
+                    }
+                }
                 if exception.vector == Some(3)
                     && exception.interruption_type == Some(6)
                     && registers.eip == PETITE_FAIL_SINK
