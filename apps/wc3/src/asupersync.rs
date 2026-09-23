@@ -1448,6 +1448,162 @@ fn install_child_provider_imports(
     Ok(addresses)
 }
 
+fn runtime_native_module_image<'a>(
+    child: &'a PendingChild,
+    module: &str,
+) -> Option<(&'a pe32::PeImage, &'a str)> {
+    if module.eq_ignore_ascii_case("War3.exe") {
+        return Some((&child.image, "War3.exe"));
+    }
+    child.native_modules.iter().find_map(|native| {
+        (native.stored.eq_ignore_ascii_case(module)
+            || native.requested.eq_ignore_ascii_case(module))
+        .then_some((&native.image, native.stored.as_str()))
+    })
+}
+
+fn runtime_native_export_address(
+    child: &PendingChild,
+    module: &str,
+    symbol: &pe32::ImportSymbol,
+) -> Result<Option<(u32, String)>, String> {
+    let Some((image, stored)) = runtime_native_module_image(child, module) else {
+        return Ok(None);
+    };
+    let export = match symbol {
+        pe32::ImportSymbol::Name(name) => image
+            .exports
+            .iter()
+            .find(|export| export.name.as_deref() == Some(name.as_str())),
+        pe32::ImportSymbol::Ordinal(ordinal) => image
+            .exports
+            .iter()
+            .find(|export| export.ordinal == u32::from(*ordinal)),
+    }
+    .ok_or_else(|| match symbol {
+        pe32::ImportSymbol::Name(name) => format!(
+            "WC3 CHILD RUNTIME NATIVE EXPORT MISSING module={stored:?} symbol={name:?}"
+        ),
+        pe32::ImportSymbol::Ordinal(ordinal) => format!(
+            "WC3 CHILD RUNTIME NATIVE EXPORT MISSING module={stored:?} ordinal={ordinal}"
+        ),
+    })?;
+    let pe32::ExportTarget::Rva(rva) = &export.target else {
+        let pe32::ExportTarget::Forwarder(forwarder) = &export.target else {
+            unreachable!()
+        };
+        return Err(format!(
+            "WC3 CHILD RUNTIME NATIVE EXPORT FORWARDER FRONTIER module={stored:?} forwarder={forwarder:?}"
+        ));
+    };
+    if *rva >= image.size_of_image {
+        return Err(format!(
+            "WC3 CHILD RUNTIME NATIVE EXPORT RVA OUTSIDE IMAGE module={stored:?} rva=0x{rva:08x} size=0x{:08x}",
+            image.size_of_image
+        ));
+    }
+    let address = image
+        .image_base
+        .checked_add(*rva)
+        .ok_or("runtime native export VA overflow")?;
+    Ok(Some((address, stored.to_owned())))
+}
+
+fn bind_runtime_local_image_imports(
+    child: &mut PendingChild,
+    process: &mut XpProcess,
+    parent: &str,
+    parent_base: u32,
+    image: &pe32::PeImage,
+    listing: Option<&async_fs::DirListing>,
+) -> Result<(), String> {
+    let mut native_imports = 0usize;
+    let mut provider_imports = Vec::new();
+    let mut classified = HashSet::new();
+    for import in &image.imports {
+        if let Some((address, provider)) =
+            runtime_native_export_address(child, &import.module, &import.symbol)?
+        {
+            if classified.insert(import.module.clone()) {
+                logl::log(
+                    level::IMPORTANT,
+                    format_args!(
+                        "WC3 CHILD RUNTIME IMPORT CLASSIFY parent={parent:?} module={:?} kind=already-loaded-native target={provider:?}",
+                        import.module,
+                    ),
+                );
+            }
+            let iat = parent_base
+                .checked_add(import.iat_rva)
+                .ok_or("runtime native IAT overflow")?;
+            child
+                .address_space
+                .write(iat, &address.to_le_bytes())
+                .map_err(|error| error.to_string())?;
+            native_imports += 1;
+            continue;
+        }
+
+        let stored = listing
+            .map(|listing| child_loader::resolve_file(listing, &import.module))
+            .transpose()
+            .map_err(str::to_owned)?;
+        if let Some(stored) = stored {
+            logl::log(
+                level::IMPORTANT,
+                format_args!(
+                    "WC3 CHILD RUNTIME IMPORT CLASSIFY parent={parent:?} module={:?} kind=local-native-unloaded stored={stored:?}",
+                    import.module,
+                ),
+            );
+            return Err(format!(
+                "WC3 CHILD RUNTIME NATIVE DEPENDENCY FRONTIER parent={parent:?} module={:?} stored={stored:?}",
+                import.module,
+            ));
+        }
+        if classified.insert(import.module.clone()) {
+            logl::log(
+                level::IMPORTANT,
+                format_args!(
+                    "WC3 CHILD RUNTIME IMPORT CLASSIFY parent={parent:?} module={:?} kind=external-provider",
+                    import.module,
+                ),
+            );
+        }
+        provider_imports.push(child_loader::ProviderImport {
+            module: import.module.clone(),
+            symbol: match &import.symbol {
+                pe32::ImportSymbol::Name(name) => child_loader::ProviderSymbol::Name(name.clone()),
+                pe32::ImportSymbol::Ordinal(ordinal) => {
+                    child_loader::ProviderSymbol::Ordinal(*ordinal)
+                }
+            },
+            iat_rva: import.iat_rva,
+        });
+    }
+    let provider_addresses = install_child_provider_imports(child, process, provider_imports)?;
+    for (import, address) in image.imports.iter().filter(|import| {
+        runtime_native_module_image(child, &import.module).is_none()
+    }).zip(provider_addresses) {
+        let iat = parent_base
+            .checked_add(import.iat_rva)
+            .ok_or("runtime provider IAT overflow")?;
+        child
+            .address_space
+            .write(iat, &address.to_le_bytes())
+            .map_err(|error| error.to_string())?;
+    }
+    logl::log(
+        level::IMPORTANT,
+        format_args!(
+            "WC3 CHILD RUNTIME IMPORTS READY parent={parent:?} native_imports={native_imports} provider_imports={} patched_iat={}",
+            image.imports.len() - native_imports,
+            image.imports.len(),
+        ),
+    );
+    Ok(())
+}
+
 pub(super) async fn run_loop(
     address_space: &AddressSpace,
     mut memory: X86Memory<'_>,
@@ -4500,7 +4656,7 @@ pub(super) async fn run_loop(
                                 .next()
                                 .unwrap_or(&requested)
                                 .to_owned();
-                            Some(("scratch", stored, bytes))
+                            Some(("scratch", stored, bytes, None))
                         } else {
                             let listing = async_fs::list_dir(b"/common/Warcraft III")
                                 .await
@@ -4523,12 +4679,12 @@ pub(super) async fn run_loop(
                                             "read {path} for LoadLibraryA: TRUEOSFS error {error}"
                                         )
                                     })?;
-                                Some(("trueosfs", stored, bytes))
+                                Some(("trueosfs", stored, bytes, Some(listing)))
                             } else {
                                 None
                             }
                         };
-                        if let Some((source, stored, bytes)) = local_image {
+                        if let Some((source, stored, bytes, listing)) = local_image {
                             let local_sha256 = Sha256::digest(&bytes);
                             logl::log(
                                 level::IMPORTANT,
@@ -4614,38 +4770,18 @@ pub(super) async fn run_loop(
                             if written != image.image.len() {
                                 return Err("short local native image write".into());
                             }
-                            let imports: Vec<_> = image
-                                .imports
-                                .iter()
-                                .map(|import| child_loader::ProviderImport {
-                                    module: import.module.clone(),
-                                    symbol: match &import.symbol {
-                                        pe32::ImportSymbol::Name(name) => {
-                                            child_loader::ProviderSymbol::Name(name.clone())
-                                        }
-                                        pe32::ImportSymbol::Ordinal(value) => {
-                                            child_loader::ProviderSymbol::Ordinal(*value)
-                                        }
-                                    },
-                                    iat_rva: import.iat_rva,
-                                })
-                                .collect();
-                            let addresses = {
-                                let process = &mut session
-                                    .process_mut(active_pid)
-                                    .ok_or_else(|| "child process missing".to_owned())?
-                                    .xp;
-                                install_child_provider_imports(child, process, imports)?
-                            };
-                            for (import, address) in image.imports.iter().zip(addresses) {
-                                let iat = module_handle
-                                    .checked_add(import.iat_rva)
-                                    .ok_or("local native IAT overflow")?;
-                                child
-                                    .address_space
-                                    .write(iat, &address.to_le_bytes())
-                                    .map_err(|error| error.to_string())?;
-                            }
+                            let process = &mut session
+                                .process_mut(active_pid)
+                                .ok_or_else(|| "child process missing".to_owned())?
+                                .xp;
+                            bind_runtime_local_image_imports(
+                                child,
+                                process,
+                                &requested,
+                                module_handle,
+                                &image,
+                                listing.as_ref(),
+                            )?;
                             session
                                 .process_mut(active_pid)
                                 .ok_or_else(|| "child process missing".to_owned())?
