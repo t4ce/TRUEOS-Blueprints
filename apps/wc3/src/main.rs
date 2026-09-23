@@ -16,7 +16,6 @@ use trueos::{
     ui4_scene::{self, Damage, Font, Frame, SceneTextRow, rgba},
     x86::{
         AddressSpace, Context, DebugRegisters, ExitKind, ExtendedState, Permissions, Registers,
-        X86_EXTENDED_STATE_BYTES,
     },
 };
 mod asupersync;
@@ -1645,6 +1644,8 @@ struct PendingChild {
     scan_heartbeat_source: Option<u32>,
     dword_scan_watch: Option<DwordScanWatch>,
     table_checkpoint_capture: Option<TableCheckpointCapture>,
+    loop_checkpoint_capture: Option<asupersync::loop_checkpoint::LoopCheckpointCapture>,
+    loop_checkpoint_attempted: u8,
     loader: ChildLoaderState,
     execution: ChildExecutionState,
 }
@@ -1703,10 +1704,7 @@ struct ScanProgress {
     dr7: u32,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct DwordScanWatch {
-    last_heartbeat_index: Option<u32>,
-}
+use wc3::checkpoint::DwordScanWatch;
 
 #[derive(Clone, Debug)]
 struct CachedPage {

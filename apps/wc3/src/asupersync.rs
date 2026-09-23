@@ -1,4 +1,6 @@
 use super::*;
+#[path = "loop_checkpoint.rs"]
+pub(super) mod loop_checkpoint;
 
 const ERROR_PROC_NOT_FOUND: u32 = 127;
 const EXEC_SAMPLE_PREEMPTIONS: u64 = 8;
@@ -29,70 +31,19 @@ const WAR3_TABLE_FILL_VALUE: u32 = 0x0045_e2f0;
 const WAR3_TABLE_FILL_STEP_START: u32 = 0x0046_1496;
 const WAR3_TABLE_FILL_STEP_END: u32 = 0x0046_14c3;
 const WAR3_TABLE_FILL_HEARTBEAT_STRIDE: u32 = 0x100;
+const PETITE_FAIL_SINK: u32 = 0x2000_d186;
+const PETITE_FAIL_ORIGINAL: u8 = 0x33;
 
-const TABLE_CHECKPOINT_MAGIC: &[u8; 8] = b"WC3TFCP1";
-const TABLE_CHECKPOINT_VERSION: u32 = 1;
 const TABLE_CHECKPOINT_PAGE_BYTES: usize = 4096;
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct TableCheckpointPage {
-    va: u32,
-    before_sha256: [u8; 32],
-    after: Option<Vec<u8>>,
+const TABLE_BOUNDARY: wc3::checkpoint::Boundary = wc3::checkpoint::Boundary {
+    from: TABLE_CHECKPOINT_FROM_EIP, to: TABLE_CHECKPOINT_TO_EIP, table_bytes: TABLE_CHECKPOINT_TABLE_BYTES,
+};
+use wc3::checkpoint::{TableCheckpoint, TableCheckpointPage};
+fn checkpoint_encode(checkpoint: &TableCheckpoint) -> Result<Vec<u8>, String> {
+    wc3::checkpoint::encode(checkpoint, TABLE_BOUNDARY)
 }
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct TableCheckpoint {
-    image_sha256: [u8; 32],
-    table_base: u32,
-    before_registers: Registers,
-    before_debug_registers: DebugRegisters,
-    before_extended_state: ExtendedState,
-    after_registers: Registers,
-    after_debug_registers: DebugRegisters,
-    after_extended_state: ExtendedState,
-    pages: Vec<TableCheckpointPage>,
-    after_single_step_count: u64,
-    after_dword_scan_watch: Option<DwordScanWatch>,
-}
-
-#[cfg(test)]
-mod table_checkpoint_tests {
-    use super::*;
-
-    #[test]
-    fn table_checkpoint_codec_rejects_tampering_and_round_trips_extended_state() {
-        let mut before_extended_state = ExtendedState {
-            mask: 0x7,
-            bytes: [0; X86_EXTENDED_STATE_BYTES],
-        };
-        before_extended_state.bytes[0] = 0x37;
-        let mut after_extended_state = before_extended_state;
-        after_extended_state.bytes[831] = 0xa5;
-        let checkpoint = TableCheckpoint {
-            image_sha256: [0x11; 32],
-            table_base: 0x1400_b810,
-            before_registers: Registers { eip: TABLE_CHECKPOINT_FROM_EIP, eflags: 0x106, ..Registers::default() },
-            before_debug_registers: DebugRegisters { dr0: 1, dr6: 0x4000, dr7: 0x403, ..DebugRegisters::default() },
-            before_extended_state,
-            after_registers: Registers { eip: TABLE_CHECKPOINT_TO_EIP, eflags: 0x106, ..Registers::default() },
-            after_debug_registers: DebugRegisters { dr0: 1, dr6: 0x4000, dr7: 0x403, ..DebugRegisters::default() },
-            after_extended_state,
-            pages: vec![
-                TableCheckpointPage { va: 0x0040_0000, before_sha256: [0x22; 32], after: None },
-                TableCheckpointPage { va: 0x1400_b000, before_sha256: [0x33; 32], after: Some(vec![0x44; TABLE_CHECKPOINT_PAGE_BYTES]) },
-            ],
-            after_single_step_count: 0x2000,
-            after_dword_scan_watch: Some(DwordScanWatch { last_heartbeat_index: Some(0x2000) }),
-        };
-        let encoded = checkpoint_encode(&checkpoint).unwrap();
-        let decoded = checkpoint_decode(&encoded).unwrap();
-        assert_eq!(decoded, checkpoint);
-
-        let mut tampered = encoded;
-        tampered[20] ^= 1;
-        assert_eq!(checkpoint_decode(&tampered), Err("table checkpoint checksum".into()));
-    }
+fn checkpoint_decode(bytes: &[u8]) -> Result<TableCheckpoint, String> {
+    wc3::checkpoint::decode(bytes, TABLE_BOUNDARY)
 }
 
 fn checkpoint_sha256(bytes: &[u8]) -> [u8; 32] {
@@ -149,206 +100,6 @@ fn checkpoint_capture_pages(
         }
     }
     Ok(pages.into_values().collect())
-}
-
-fn checkpoint_put_u32(out: &mut Vec<u8>, value: u32) {
-    out.extend_from_slice(&value.to_le_bytes());
-}
-
-fn checkpoint_put_u64(out: &mut Vec<u8>, value: u64) {
-    out.extend_from_slice(&value.to_le_bytes());
-}
-
-fn checkpoint_put_registers(out: &mut Vec<u8>, registers: Registers) {
-    for value in [
-        registers.eax,
-        registers.ebx,
-        registers.ecx,
-        registers.edx,
-        registers.esi,
-        registers.edi,
-        registers.ebp,
-        registers.esp,
-        registers.eip,
-        registers.eflags,
-        registers.fs_base,
-    ] {
-        checkpoint_put_u32(out, value);
-    }
-}
-
-fn checkpoint_put_debug_registers(out: &mut Vec<u8>, registers: DebugRegisters) {
-    for value in [
-        registers.dr0,
-        registers.dr1,
-        registers.dr2,
-        registers.dr3,
-        registers.dr6,
-        registers.dr7,
-    ] {
-        checkpoint_put_u32(out, value);
-    }
-}
-
-fn checkpoint_put_extended_state(out: &mut Vec<u8>, state: &ExtendedState) {
-    checkpoint_put_u64(out, state.mask);
-    out.extend_from_slice(&state.bytes);
-}
-
-fn checkpoint_encode(checkpoint: &TableCheckpoint) -> Result<Vec<u8>, String> {
-    let mut out = Vec::new();
-    out.extend_from_slice(TABLE_CHECKPOINT_MAGIC);
-    checkpoint_put_u32(&mut out, TABLE_CHECKPOINT_VERSION);
-    out.extend_from_slice(&checkpoint.image_sha256);
-    checkpoint_put_u32(&mut out, TABLE_CHECKPOINT_FROM_EIP);
-    checkpoint_put_u32(&mut out, TABLE_CHECKPOINT_TO_EIP);
-    checkpoint_put_u32(&mut out, checkpoint.table_base);
-    checkpoint_put_u32(&mut out, TABLE_CHECKPOINT_TABLE_BYTES);
-    checkpoint_put_registers(&mut out, checkpoint.before_registers);
-    checkpoint_put_debug_registers(&mut out, checkpoint.before_debug_registers);
-    checkpoint_put_extended_state(&mut out, &checkpoint.before_extended_state);
-    checkpoint_put_registers(&mut out, checkpoint.after_registers);
-    checkpoint_put_debug_registers(&mut out, checkpoint.after_debug_registers);
-    checkpoint_put_extended_state(&mut out, &checkpoint.after_extended_state);
-    checkpoint_put_u64(&mut out, checkpoint.after_single_step_count);
-    match checkpoint.after_dword_scan_watch {
-        Some(watch) => {
-            out.push(1);
-            checkpoint_put_u32(&mut out, watch.last_heartbeat_index.unwrap_or(u32::MAX));
-        }
-        None => out.push(0),
-    }
-    checkpoint_put_u32(
-        &mut out,
-        u32::try_from(checkpoint.pages.len()).map_err(|_| "table checkpoint page count")?,
-    );
-    for page in &checkpoint.pages {
-        checkpoint_put_u32(&mut out, page.va);
-        out.extend_from_slice(&page.before_sha256);
-        match &page.after {
-            Some(after) => {
-                if after.len() != TABLE_CHECKPOINT_PAGE_BYTES {
-                    return Err("table checkpoint changed page length".into());
-                }
-                out.push(1);
-                out.extend_from_slice(after);
-            }
-            None => out.push(0),
-        }
-    }
-    let digest = checkpoint_sha256(&out);
-    out.extend_from_slice(&digest);
-    Ok(out)
-}
-
-struct CheckpointReader<'a> {
-    bytes: &'a [u8],
-    offset: usize,
-}
-
-impl<'a> CheckpointReader<'a> {
-    fn take(&mut self, len: usize) -> Result<&'a [u8], String> {
-        let end = self.offset.checked_add(len).ok_or("table checkpoint decode overflow")?;
-        let slice = self.bytes.get(self.offset..end).ok_or("table checkpoint truncated")?;
-        self.offset = end;
-        Ok(slice)
-    }
-    fn u32(&mut self) -> Result<u32, String> {
-        Ok(u32::from_le_bytes(self.take(4)?.try_into().unwrap()))
-    }
-    fn u64(&mut self) -> Result<u64, String> {
-        Ok(u64::from_le_bytes(self.take(8)?.try_into().unwrap()))
-    }
-    fn array<const N: usize>(&mut self) -> Result<[u8; N], String> {
-        self.take(N)?
-            .try_into()
-            .map_err(|_| "table checkpoint array".to_owned())
-    }
-}
-
-fn checkpoint_get_registers(input: &mut CheckpointReader<'_>) -> Result<Registers, String> {
-    Ok(Registers {
-        eax: input.u32()?, ebx: input.u32()?, ecx: input.u32()?, edx: input.u32()?,
-        esi: input.u32()?, edi: input.u32()?, ebp: input.u32()?, esp: input.u32()?,
-        eip: input.u32()?, eflags: input.u32()?, fs_base: input.u32()?,
-        ..Registers::default()
-    })
-}
-
-fn checkpoint_get_debug_registers(input: &mut CheckpointReader<'_>) -> Result<DebugRegisters, String> {
-    Ok(DebugRegisters {
-        dr0: input.u32()?, dr1: input.u32()?, dr2: input.u32()?, dr3: input.u32()?,
-        dr6: input.u32()?, dr7: input.u32()?,
-    })
-}
-
-fn checkpoint_get_extended_state(input: &mut CheckpointReader<'_>) -> Result<ExtendedState, String> {
-    Ok(ExtendedState {
-        mask: input.u64()?,
-        bytes: input.array::<X86_EXTENDED_STATE_BYTES>()?,
-    })
-}
-
-fn checkpoint_decode(bytes: &[u8]) -> Result<TableCheckpoint, String> {
-    if bytes.len() < TABLE_CHECKPOINT_MAGIC.len() + 32 {
-        return Err("table checkpoint truncated".into());
-    }
-    let (body, trailing) = bytes.split_at(bytes.len() - 32);
-    if checkpoint_sha256(body) != <[u8; 32]>::try_from(trailing).unwrap() {
-        return Err("table checkpoint checksum".into());
-    }
-    let mut input = CheckpointReader { bytes: body, offset: 0 };
-    if input.array::<8>()? != *TABLE_CHECKPOINT_MAGIC || input.u32()? != TABLE_CHECKPOINT_VERSION {
-        return Err("table checkpoint format".into());
-    }
-    let image_sha256 = input.array::<32>()?;
-    if input.u32()? != TABLE_CHECKPOINT_FROM_EIP || input.u32()? != TABLE_CHECKPOINT_TO_EIP {
-        return Err("table checkpoint boundaries".into());
-    }
-    let table_base = input.u32()?;
-    if input.u32()? != TABLE_CHECKPOINT_TABLE_BYTES {
-        return Err("table checkpoint table bytes".into());
-    }
-    let before_registers = checkpoint_get_registers(&mut input)?;
-    let before_debug_registers = checkpoint_get_debug_registers(&mut input)?;
-    let before_extended_state = checkpoint_get_extended_state(&mut input)?;
-    let after_registers = checkpoint_get_registers(&mut input)?;
-    let after_debug_registers = checkpoint_get_debug_registers(&mut input)?;
-    let after_extended_state = checkpoint_get_extended_state(&mut input)?;
-    if before_registers.eip != TABLE_CHECKPOINT_FROM_EIP
-        || after_registers.eip != TABLE_CHECKPOINT_TO_EIP
-    {
-        return Err("table checkpoint register boundaries".into());
-    }
-    let after_single_step_count = input.u64()?;
-    let after_dword_scan_watch = match input.take(1)?[0] {
-        0 => None,
-        1 => Some(DwordScanWatch { last_heartbeat_index: match input.u32()? { u32::MAX => None, value => Some(value) } }),
-        _ => return Err("table checkpoint dword watch".into()),
-    };
-    let page_count = usize::try_from(input.u32()?).map_err(|_| "table checkpoint page count")?;
-    if page_count > 4096 {
-        return Err("table checkpoint excessive pages".into());
-    }
-    let mut pages = Vec::with_capacity(page_count);
-    for _ in 0..page_count {
-        let va = input.u32()?;
-        let before_sha256 = input.array::<32>()?;
-        let after = match input.take(1)?[0] {
-            0 => None,
-            1 => Some(input.take(TABLE_CHECKPOINT_PAGE_BYTES)?.to_vec()),
-            _ => return Err("table checkpoint changed-page marker".into()),
-        };
-        pages.push(TableCheckpointPage { va, before_sha256, after });
-    }
-    if input.offset != body.len() {
-        return Err("table checkpoint trailing body".into());
-    }
-    Ok(TableCheckpoint {
-        image_sha256, table_base, before_registers, before_debug_registers,
-        before_extended_state, after_registers, after_debug_registers,
-        after_extended_state, pages, after_single_step_count, after_dword_scan_watch,
-    })
 }
 
 fn table_checkpoint_quiescent(child: &PendingChild) -> Result<(), &'static str> {
@@ -1703,6 +1454,9 @@ pub(super) async fn run_loop(
             .get(active)
             .ok_or_else(|| "active guest context missing".to_owned())?
             .key();
+        if let Some(child) = pending_child.as_mut() {
+            loop_checkpoint::observe_exit(child, active_key, &exit);
+        }
         match exit.kind {
             // A transient VMCS always starts with VMLAUNCH.  Its preemption
             // timer is therefore a Blueprint scheduling boundary, not an x86
@@ -1842,6 +1596,9 @@ pub(super) async fn run_loop(
                         let mut restored = wc3::seh::decode_x86_context(&bytes, seh.preserved_fs_base).map_err(str::to_owned)?;
                         let mut restored_debug = wc3::seh::decode_x86_debug_registers(&bytes)
                             .map_err(str::to_owned)?;
+                        loop_checkpoint::boundary(
+                            child, &mut contexts[active].context, &mut restored, &mut restored_debug,
+                        ).await?;
                         if restored.eip == TABLE_CHECKPOINT_FROM_EIP
                             && child_read_u32(child, WAR3_DWORD_SCAN_INDEX) == Some(0)
                         {
@@ -4128,11 +3885,11 @@ pub(super) async fn run_loop(
                             let image = pe32::parse(&bytes).map_err(|error| {
                                 format!("LoadLibraryA scratch PE {requested:?}: {error}")
                             })?;
-                            if requested
+                            let is_sintfnt = requested
                                 .rsplit(['\\', '/'])
                                 .next()
-                                .is_some_and(|name| name.eq_ignore_ascii_case("SIntfNT.dll"))
-                            {
+                                .is_some_and(|name| name.eq_ignore_ascii_case("SIntfNT.dll"));
+                            if is_sintfnt {
                                 let raw_end = image
                                     .sections
                                     .iter()
@@ -4166,6 +3923,7 @@ pub(super) async fn run_loop(
                                     );
                                 }
                                 log_branch_xrefs(&image, 0x2000_c0ce);
+                                log_branch_xrefs(&image, PETITE_FAIL_SINK);
                             }
                             let named_exports = image
                                 .exports
@@ -4262,6 +4020,38 @@ pub(super) async fn run_loop(
                                     .address_space
                                     .write(iat, &address.to_le_bytes())
                                     .map_err(|error| error.to_string())?;
+                            }
+                            if is_sintfnt {
+                                let mut original = [0u8; 1];
+                                if child
+                                    .address_space
+                                    .read(PETITE_FAIL_SINK, &mut original)
+                                    .map_err(|error| error.to_string())?
+                                    != original.len()
+                                {
+                                    return Err("short Petite failure-probe read".into());
+                                }
+                                if original != [PETITE_FAIL_ORIGINAL] {
+                                    return Err(format!(
+                                        "Petite failure sink opcode mismatch expected={PETITE_FAIL_ORIGINAL:02x} actual={:02x}",
+                                        original[0],
+                                    ));
+                                }
+                                if child
+                                    .address_space
+                                    .write(PETITE_FAIL_SINK, &[0xcc])
+                                    .map_err(|error| error.to_string())?
+                                    != 1
+                                {
+                                    return Err("short Petite failure-probe write".into());
+                                }
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 CHILD PETITE FAIL PROBE ARM address=0x{PETITE_FAIL_SINK:08x} original=0x{:02x}",
+                                        PETITE_FAIL_ORIGINAL,
+                                    ),
+                                );
                             }
                             session
                                 .process_mut(active_pid)
@@ -6049,6 +5839,8 @@ pub(super) async fn run_loop(
                             scan_heartbeat_source: None,
                             dword_scan_watch: None,
                             table_checkpoint_capture: None,
+                            loop_checkpoint_capture: None,
+                            loop_checkpoint_attempted: 0,
                             loader: ChildLoaderState {
                                 prepared: false,
                                 native_requests: Vec::new(),
@@ -7527,13 +7319,98 @@ pub(super) async fn run_loop(
                 }
             }
             ExitKind::Exception if active_key.pid != LAUNCHER_PID => {
+                let exception = decode_child_exception(exit.detail, exit.qualification);
+                let registers = exit.registers;
+                if exception.vector == Some(3)
+                    && exception.interruption_type == Some(6)
+                    && registers.eip == PETITE_FAIL_SINK
+                {
+                    let child = pending_child
+                        .as_mut()
+                        .filter(|child| {
+                            child.pid == active_key.pid && child.tid == active_key.tid
+                        })
+                        .ok_or_else(|| "Petite probe child missing".to_owned())?;
+                    let is_sintfnt = child_pc_owner(child, registers.eip)
+                        .is_some_and(|(module, _)| module.eq_ignore_ascii_case("SIntfNT.dll"));
+                    if !is_sintfnt || child.load_library_call.is_none() {
+                        return Err("unexpected INT3 at Petite probe address".into());
+                    }
+
+                    let mut current = [0u8; 1];
+                    child
+                        .address_space
+                        .read(PETITE_FAIL_SINK, &mut current)
+                        .map_err(|error| error.to_string())?;
+                    if current != [0xcc] {
+                        return Err(format!(
+                            "Petite probe byte mismatch expected=cc actual={:02x}",
+                            current[0],
+                        ));
+                    }
+
+                    let stack = read_guest_words(
+                        &X86Memory(&child.address_space),
+                        registers.esp,
+                        16,
+                    )?;
+                    let code_base = PETITE_FAIL_SINK - 0x20;
+                    let mut code = [0u8; 0x60];
+                    child
+                        .address_space
+                        .read(code_base, &mut code)
+                        .map_err(|error| error.to_string())?;
+                    code[0x20] = PETITE_FAIL_ORIGINAL;
+                    logl::log(
+                        level::IMPORTANT,
+                        format_args!(
+                            "WC3 CHILD PETITE FAIL PROBE HIT eip=0x{:08x} eax=0x{:08x} ebx=0x{:08x} ecx=0x{:08x} edx=0x{:08x} esi=0x{:08x} edi=0x{:08x} ebp=0x{:08x} esp=0x{:08x} eflags=0x{:08x} stack={stack:08x?} code_base=0x{code_base:08x} code=\"{}\"",
+                            registers.eip,
+                            registers.eax,
+                            registers.ebx,
+                            registers.ecx,
+                            registers.edx,
+                            registers.esi,
+                            registers.edi,
+                            registers.ebp,
+                            registers.esp,
+                            registers.eflags,
+                            diagnostic_hex_bytes(&code),
+                        ),
+                    );
+
+                    let written = child
+                        .address_space
+                        .write(PETITE_FAIL_SINK, &[PETITE_FAIL_ORIGINAL])
+                        .map_err(|error| error.to_string())?;
+                    if written != 1 {
+                        return Err("short Petite probe restore".into());
+                    }
+                    let mut readback = [0u8; 1];
+                    child
+                        .address_space
+                        .read(PETITE_FAIL_SINK, &mut readback)
+                        .map_err(|error| error.to_string())?;
+                    if readback != [PETITE_FAIL_ORIGINAL] {
+                        return Err("Petite probe restore verification failed".into());
+                    }
+                    contexts[active]
+                        .context
+                        .set_registers(registers)
+                        .map_err(|error| error.to_string())?;
+                    logl::log(
+                        level::IMPORTANT,
+                        format_args!(
+                            "WC3 CHILD PETITE FAIL PROBE RESUME address=0x{PETITE_FAIL_SINK:08x} restored=0x{PETITE_FAIL_ORIGINAL:02x}"
+                        ),
+                    );
+                    continue;
+                }
                 let child = pending_child
                     .as_ref()
                     .filter(|child| child.pid == active_key.pid && child.tid == active_key.tid)
                     .ok_or_else(|| "exception child missing pending state".to_owned())?;
                 let scope = child_execution_scope(child).map_err(str::to_owned)?;
-                let exception = decode_child_exception(exit.detail, exit.qualification);
-                let registers = exit.registers;
                 let quiet_exception = quiet_war3_exception(exception, registers)
                     || current_child_seh_handler(child, registers.fs_base)
                         .is_some_and(|handler| boring_war3_single_step(exception, registers, handler));

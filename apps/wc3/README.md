@@ -21,7 +21,7 @@ The launcher image is read from
 
 ## Frontier iteration
 
-Default builds omit scan observers, execution-sample dumps, detailed SEH
+Default builds also omit scan observers, execution-sample dumps, detailed SEH
 traces, and selected repetitive API call/return traces. The trace gates run
 before argument formatting and diagnostic guest-memory reads. Guest code,
 SEH dispatch, provider validation, checkpoint validation, exception summaries,
@@ -41,10 +41,41 @@ in this app's `Cargo.toml`, then rebuild. For host checks, pass
 `--features trace-seh` (or another category) to Cargo. Diagnostic features do
 not change the table checkpoint format or its restore preconditions.
 
-Further execution acceleration has two separate paths: verified checkpoints
-for additional pure regions, or a complete session snapshot. A pure-region
-checkpoint must cover all guest inputs and writes, CPU state, and any host
-side effects; matching an instruction address or having reached it before is
-insufficient. A session snapshot must additionally restore the XP process,
-threads, handles, scheduler and external resources. Neither is implemented
-by these diagnostic switches.
+## Audited loop checkpoints
+
+Two additional execution regions now learn checkpoints on their first normal
+pass and jump to the saved exit on a matching subsequent launch:
+
+| Region | Entry | Exit (before the next operation) |
+| --- | --- | --- |
+| Decrypt scan | `0x0045af54` | `0x0045b005` |
+| Dword checksum | `0x0045b0b1` | `0x0045b0e1` |
+
+These are guest execution skips, including the repeated SEH dispatches, not
+logging switches. The first run still executes the loops. Watch for
+`LOOP CHECKPOINT CREATED`, then `LOOP CHECKPOINT HIT ... skipped_steps=...`.
+`BYPASS` or `DISCARD` means normal execution continues. The existing table-fill
+checkpoint remains separate. `replay-loops` disables the two new caches for
+comparison or investigation; it does not disable the table-fill cache.
+
+The loop and complete exception-handler bytes must match their audited hashes.
+Entry guards constrain all indirect buffers to captured image/heap ranges and
+the handler's instruction range to the loop. A checkpoint checks the complete
+CPU/debug/extended state and exact page set/hashes before writing anything.
+Captured memory includes the full image, stack (including SEH scratch), TEB,
+process-data page and committed CRT/Windows heaps. The decrypt scan's heap XOR
+and fixed `0x00470990` data writes, checksum accumulator/index writes, and the
+handler's stage/source/checksum/global writes are all inside those ranges.
+The checksum's backward increment branch at `0x0045b0a2` is part of its audited
+code even though its first entry is `0x0045b0b1`.
+
+Any other context execution, provider call, non-debug exception, or exit from
+the audited instruction region discards the capture. Storage/decode failures
+and input mismatches fall back to execution. A failure after restore writes
+begin aborts rather than running partially restored state. A code change in the
+checkpoint/dispatch/SEH source invalidates the new caches. The codec preserves
+the existing table-fill format and rejects unsorted/duplicate/unaligned pages.
+
+The later loop around `0x0046160c–0x0046162c` remains uncached: those bytes are
+decrypted at runtime, so the on-disk disassembly is not enough to audit it.
+The `sintfnt.dll` / `Corrupt Data!` frontier is unchanged.

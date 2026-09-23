@@ -13,6 +13,7 @@ mod test;
 
 pub mod assets;
 pub mod child_loader;
+pub mod checkpoint;
 pub mod imports;
 pub mod pe32;
 pub mod process;

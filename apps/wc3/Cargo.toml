@@ -15,6 +15,7 @@ bench = false
 [features]
 default = []
 nolog = []
+replay-loops = []
 trace-scan = []
 trace-seh = []
 trace-api = []
