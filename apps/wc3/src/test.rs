@@ -5735,6 +5735,52 @@ mod tests_child_loader_1 {
     }
 
     #[test]
+    fn msvcrt_acmdln_binds_as_data_without_shifting_provider_thunks() {
+        let listing = DirListing {
+            entries: vec![],
+            truncated: false,
+        };
+        let mut image = PeImage {
+            image_base: 0x400000,
+            entry_rva: 0,
+            size_of_image: 0x1000,
+            size_of_headers: 0,
+            sections: vec![],
+            imports: vec![
+                crate::pe32::ImportDescriptor {
+                    module: "MSVCRT.dll".into(),
+                    symbol: ImportSymbol::Name("_acmdln".into()),
+                    iat_rva: 0,
+                },
+                crate::pe32::ImportDescriptor {
+                    module: "MSVCRT.dll".into(),
+                    symbol: ImportSymbol::Name("malloc".into()),
+                    iat_rva: 4,
+                },
+            ],
+            relocations: vec![],
+            exports: vec![],
+            image: vec![0; 8],
+        };
+
+        let surface = prepare(&mut image, &listing).unwrap();
+
+        assert_eq!(surface.imports.len(), 2);
+        assert_eq!(
+            u32::from_le_bytes(image.image[..4].try_into().unwrap()),
+            crate::process::CRT_ACMDLN_VA
+        );
+        assert_eq!(
+            u32::from_le_bytes(image.image[4..8].try_into().unwrap()),
+            thunk32::THUNK_BASE + thunk32::THUNK_BYTES as u32
+        );
+        assert_ne!(
+            &surface.thunks[..thunk32::THUNK_BYTES],
+            &[0x90; thunk32::THUNK_BYTES]
+        );
+    }
+
+    #[test]
     fn initialize_critical_section_provider_uses_stdcall_cleanup() {
         let import = ProviderImport {
             module: "KERNEL32.dll".into(),

@@ -18,6 +18,18 @@ pub struct ProviderImport {
     pub iat_rva: u32,
 }
 
+/// External PE data exports are IAT values, not callable provider thunks.
+pub fn provider_data_export_address(import: &ProviderImport) -> Option<u32> {
+    match (&import.module[..], &import.symbol) {
+        (module, ProviderSymbol::Name(symbol))
+            if module.eq_ignore_ascii_case("MSVCRT.dll") && symbol == "_acmdln" =>
+        {
+            Some(crate::process::CRT_ACMDLN_VA)
+        }
+        _ => None,
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProviderOp {
     GetEnvironmentStringsW,
@@ -444,8 +456,10 @@ pub fn prepare(image: &mut PeImage, listing: &DirListing) -> Result<ProviderSurf
     let mut thunks = vec![0x90; thunk_len];
     for (id, import) in imports.iter().enumerate() {
         let id = u32::try_from(id).map_err(|_| "child thunk id")?;
-        let address = thunk32::address(id).ok_or("child thunk address")?;
         let iat = usize::try_from(import.iat_rva).map_err(|_| "child IAT rva")?;
+        let address = provider_data_export_address(import)
+            .or_else(|| thunk32::address(id))
+            .ok_or("child provider address")?;
         image
             .image
             .get_mut(iat..iat + 4)

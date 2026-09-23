@@ -23,6 +23,9 @@ use crate::{
     thunk32,
 };
 
+#[cfg(test)]
+use crate::child_loader::provider_thunk_kind;
+
 pub const ENTRY_VA: u32 = pe32::IMAGE_BASE + pe32::ENTRY_RVA;
 pub const TEB_VA: u32 = 0x0020_1000;
 pub const HEAP_VA: u32 = 0x0021_0000;
@@ -83,6 +86,7 @@ const XP_TOKEN_GROUPS_REQUIRED: u32 = 4 + 8 + XP_EVERYONE_SID.len() as u32;
 pub const PROCESS_DATA_VA: u32 = 0x0021_1000;
 pub const CRT_FMODE_VA: u32 = PROCESS_DATA_VA + 0x40;
 pub const CRT_COMMODE_VA: u32 = PROCESS_DATA_VA + 0x44;
+pub const CRT_ACMDLN_VA: u32 = PROCESS_DATA_VA + 0x48;
 pub const CRT_ARGV_VA: u32 = PROCESS_DATA_VA + 0x60;
 pub const CRT_ENVP_VA: u32 = PROCESS_DATA_VA + 0x78;
 pub const CRT_ARG0_VA: u32 = PROCESS_DATA_VA + 0x80;
@@ -864,15 +868,22 @@ impl XpProcess {
         module: &str,
         symbol: &ProviderSymbol,
     ) -> Option<u32> {
-        self.provider_imports
-            .iter()
-            .enumerate()
-            .find(|(_, import)| {
-                import.module.eq_ignore_ascii_case(module)
-                    && import.symbol == *symbol
-                    && provider_op(import).is_modeled()
-            })
-            .and_then(|(id, _)| thunk32::address(u32::try_from(id).ok()?))
+        let import = ProviderImport {
+            module: module.into(),
+            symbol: symbol.clone(),
+            iat_rva: 0,
+        };
+        crate::child_loader::provider_data_export_address(&import).or_else(|| {
+            self.provider_imports
+                .iter()
+                .enumerate()
+                .find(|(_, import)| {
+                    import.module.eq_ignore_ascii_case(module)
+                        && import.symbol == *symbol
+                        && provider_op(import).is_modeled()
+                })
+                .and_then(|(id, _)| thunk32::address(u32::try_from(id).ok()?))
+        })
     }
 
     pub fn new(imports: Vec<LauncherImport>) -> Self {
@@ -2913,7 +2924,9 @@ impl XpProcess {
             let id = first
                 .checked_add(u32::try_from(offset).map_err(|_| "provider id")?)
                 .ok_or("provider id")?;
-            let address = thunk32::address(id).ok_or("provider address")?;
+            let address = crate::child_loader::provider_data_export_address(&import)
+                .or_else(|| thunk32::address(id))
+                .ok_or("provider address")?;
             addresses.push(address);
             self.provider_imports.push(import);
         }

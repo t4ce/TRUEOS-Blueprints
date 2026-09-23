@@ -30,6 +30,14 @@ const WAR3_TABLE_FILL_STEP_START: u32 = 0x0046_1496;
 const WAR3_TABLE_FILL_STEP_END: u32 = 0x0046_14c3;
 const WAR3_TABLE_FILL_HEARTBEAT_STRIDE: u32 = 0x100;
 
+fn hex_bytes(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 fn msvcrt_control_from_x87(fcw: u16) -> u32 {
     let mut out = 0;
     if fcw & 0x0001 != 0 { out |= 0x0000_0010; }
@@ -4731,7 +4739,8 @@ pub(super) async fn run_loop(
                                 iat_rva: 0,
                             };
                             let operation = child_loader::provider_op(&import);
-                            if !operation.is_modeled() {
+                            let data_export = child_loader::provider_data_export_address(&import);
+                            if !operation.is_modeled() && data_export.is_none() {
                                 session
                                     .process_mut(active_pid)
                                     .ok_or_else(|| "child process missing".to_owned())?
@@ -4766,7 +4775,9 @@ pub(super) async fn run_loop(
                                 .ok_or_else(|| "child process missing".to_owned())?
                                 .xp
                                 .provider_export_address(&provider_module, &provider_symbol);
-                            let (address, source) = if let Some(address) = existing {
+                            let (address, source) = if let Some(address) = data_export {
+                                (address, "provider-data")
+                            } else if let Some(address) = existing {
                                 (address, "provider-existing")
                             } else {
                                 let addresses = {
@@ -6437,6 +6448,12 @@ pub(super) async fn run_loop(
                         if commode_written != 4 {
                             return Err("short child CRT _commode write".into());
                         }
+                        let acmdln_written = child_address_space
+                            .write(CRT_ACMDLN_VA, &PROCESS_DATA_VA.to_le_bytes())
+                            .map_err(|error| format!("write child CRT _acmdln: {error}"))?;
+                        if acmdln_written != 4 {
+                            return Err("short child CRT _acmdln write".into());
+                        }
                         let argv = [CRT_ARG0_VA, CRT_ARG1_VA, CRT_ARG2_VA, CRT_ARG3_VA, 0];
                         let mut argv_bytes = [0u8; 20];
                         for (index, pointer) in argv.into_iter().enumerate() {
@@ -7994,6 +8011,51 @@ pub(super) async fn run_loop(
                     .filter(|child| child.pid == active_key.pid && child.tid == active_key.tid)
                     .ok_or_else(|| "exception child missing pending state".to_owned())?;
                 let scope = child_execution_scope(child).map_err(str::to_owned)?;
+                if exit.registers.eip == 0x0040_1d0b {
+                    let eip = exit.registers.eip;
+
+                    let code_base = eip - 16;
+                    let mut code = [0u8; 48];
+                    child.address_space
+                        .read(code_base, &mut code)
+                        .map_err(|e| e.to_string())?;
+
+                    let stack = read_guest_words(
+                        &X86Memory(&child.address_space),
+                        exit.registers.esp,
+                        12,
+                    )?;
+
+                    let ebp_base = exit.registers.ebp.saturating_sub(0x40);
+                    let mut ebp_bytes = [0u8; 0x80];
+                    child.address_space
+                        .read(ebp_base, &mut ebp_bytes)
+                        .map_err(|e| e.to_string())?;
+
+                    logl::log(
+                        level::IMPORTANT,
+                        format_args!(
+                            "WC3 CHILD 401D0B FRONTIER \
+                             eax=0x{:08x} ebx=0x{:08x} ecx=0x{:08x} edx=0x{:08x} \
+                             esi=0x{:08x} edi=0x{:08x} ebp=0x{:08x} esp=0x{:08x} \
+                             code_base=0x{:08x} code=\"{}\" \
+                             stack={:08x?} ebp_base=0x{:08x} ebp_bytes=\"{}\"",
+                            exit.registers.eax,
+                            exit.registers.ebx,
+                            exit.registers.ecx,
+                            exit.registers.edx,
+                            exit.registers.esi,
+                            exit.registers.edi,
+                            exit.registers.ebp,
+                            exit.registers.esp,
+                            code_base,
+                            hex_bytes(&code),
+                            stack,
+                            ebp_base,
+                            hex_bytes(&ebp_bytes),
+                        ),
+                    );
+                }
                 let quiet_exception = quiet_war3_exception(exception, registers)
                     || current_child_seh_handler(child, registers.fs_base)
                         .is_some_and(|handler| boring_war3_single_step(exception, registers, handler));
