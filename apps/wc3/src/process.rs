@@ -1873,27 +1873,53 @@ impl XpProcess {
         Ok(previous)
     }
 
-    fn interlocked_increment(
+    fn interlocked_add(
         &mut self,
         esp: u32,
         memory: &mut impl GuestMemory,
-    ) -> Result<u32, ProviderDispatchError> {
+        delta: u32,
+        api: &'static str,
+    ) -> Result<(u32, u32, u32), ProviderDispatchError> {
         let [_, target] = arguments::<2>(memory, esp)?;
         if target == 0 {
             return Err(ProviderDispatchError::Frontier {
-                api: "InterlockedIncrement",
+                api,
                 detail: "target=NULL".into(),
             });
         }
         if target & 3 != 0 {
             return Err(ProviderDispatchError::Frontier {
-                api: "InterlockedIncrement",
+                api,
                 detail: format!("unaligned target=0x{target:08x}"),
             });
         }
-        let incremented = read_u32(memory, target)?.wrapping_add(1);
-        write_u32(memory, target, incremented)?;
-        Ok(incremented)
+        let before = read_u32(memory, target)?;
+        let after = before.wrapping_add(delta);
+        write_u32(memory, target, after)?;
+        Ok((target, before, after))
+    }
+
+    fn interlocked_increment(
+        &mut self,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
+        let (_, _, after) = self.interlocked_add(esp, memory, 1, "InterlockedIncrement")?;
+        Ok(after)
+    }
+
+    fn interlocked_decrement(
+        &mut self,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
+        let (_, _, after) = self.interlocked_add(
+            esp,
+            memory,
+            u32::MAX,
+            "InterlockedDecrement",
+        )?;
+        Ok(after)
     }
 
     fn get_system_info(
@@ -1950,6 +1976,14 @@ impl XpProcess {
                     .checked_add(1)
                     .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(incremented))
+            }
+            ProviderOp::InterlockedDecrement => {
+                let decremented = self.interlocked_decrement(esp, memory)?;
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(decremented))
             }
             ProviderOp::TlsAlloc => {
                 let slot = self.tls_alloc()?;

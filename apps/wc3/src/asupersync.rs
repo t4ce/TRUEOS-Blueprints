@@ -5359,22 +5359,25 @@ pub(super) async fn run_loop(
                             } else {
                                 None
                             };
-                        let interlocked_increment =
-                            if operation == child_loader::ProviderOp::InterlockedIncrement {
-                                let frame = read_guest_words(
-                                    &X86Memory(&child.address_space),
-                                    exit.registers.esp,
-                                    2,
-                                )?;
-                                let old = read_guest_words(
-                                    &X86Memory(&child.address_space),
-                                    frame[1],
-                                    1,
-                                )?[0];
-                                Some((frame[1], old))
-                            } else {
-                                None
-                            };
+                        let interlocked_add = if matches!(
+                            operation,
+                            child_loader::ProviderOp::InterlockedIncrement
+                                | child_loader::ProviderOp::InterlockedDecrement
+                        ) {
+                            let frame = read_guest_words(
+                                &X86Memory(&child.address_space),
+                                exit.registers.esp,
+                                2,
+                            )?;
+                            let old = read_guest_words(
+                                &X86Memory(&child.address_space),
+                                frame[1],
+                                1,
+                            )?[0];
+                            Some((frame[1], old))
+                        } else {
+                            None
+                        };
                         let process_memory = matches!(
                             operation,
                             child_loader::ProviderOp::ReadProcessMemory
@@ -5504,16 +5507,26 @@ pub(super) async fn run_loop(
                                         ),
                                     );
                                 }
-                                if let Some((target, old)) = interlocked_increment {
+                                if let Some((target, old)) = interlocked_add {
                                     let after = read_guest_words(
                                         &X86Memory(&child.address_space),
                                         target,
                                         1,
                                     )?[0];
+                                    let api = match operation {
+                                        child_loader::ProviderOp::InterlockedIncrement => {
+                                            "INTERLOCKEDINCREMENT"
+                                        }
+                                        child_loader::ProviderOp::InterlockedDecrement => {
+                                            "INTERLOCKEDDECREMENT"
+                                        }
+                                        _ => unreachable!("interlocked add capture has an add operation"),
+                                    };
                                     logl::log(
                                         level::IMPORTANT,
                                         format_args!(
-                                            "WC3 CHILD INTERLOCKEDINCREMENT pid={} tid={} target=0x{:08x} old=0x{:08x} after=0x{:08x} eax=0x{:08x} cleanup=4-by-thunk",
+                                            "WC3 CHILD {} pid={} tid={} target=0x{:08x} old=0x{:08x} after=0x{:08x} eax=0x{:08x} cleanup=4-by-thunk",
+                                            api,
                                             active_pid,
                                             active_tid,
                                             target,

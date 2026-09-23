@@ -52,6 +52,7 @@ pub enum ProviderOp {
     GetProcAddress,
     InterlockedExchange,
     InterlockedIncrement,
+    InterlockedDecrement,
     TlsAlloc,
     TlsSetValue,
     TlsGetValue,
@@ -174,6 +175,8 @@ impl ProviderOp {
             | Self::SetFileAttributesA
             | Self::GlobalAlloc
             | Self::InterlockedExchange
+            | Self::InterlockedIncrement
+            | Self::InterlockedDecrement
             | Self::TlsSetValue => 8,
             Self::TlsGetValue => 4,
             Self::GetStringTypeW
@@ -233,8 +236,9 @@ impl ProviderOp {
                 | Self::LCMapStringW
                 | Self::GetModuleFileNameA
                 | Self::GetModuleHandleA
-            | Self::InterlockedExchange
+                | Self::InterlockedExchange
                 | Self::InterlockedIncrement
+                | Self::InterlockedDecrement
                 | Self::TlsAlloc
                 | Self::TlsSetValue
                 | Self::TlsGetValue
@@ -312,6 +316,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "GetProcAddress" => ProviderOp::GetProcAddress,
             "InterlockedExchange" => ProviderOp::InterlockedExchange,
             "InterlockedIncrement" => ProviderOp::InterlockedIncrement,
+            "InterlockedDecrement" => ProviderOp::InterlockedDecrement,
             "TlsAlloc" => ProviderOp::TlsAlloc,
             "TlsSetValue" => ProviderOp::TlsSetValue,
             "TlsGetValue" => ProviderOp::TlsGetValue,
