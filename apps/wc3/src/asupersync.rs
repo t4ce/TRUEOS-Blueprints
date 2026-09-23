@@ -1252,8 +1252,11 @@ fn schedule_child_seh3_filter(
     let pointers_va = callback_esp
         .checked_sub(8)
         .ok_or("SEH3 exception-pointers stack underflow")?;
-    let seh = child.seh.as_ref().ok_or("SEH3 filter without active SEH")?;
-    let pointers = [seh.exception_record_va, seh.context_va];
+    let (exception_record_va, context_va) = {
+        let seh = child.seh.as_ref().ok_or("SEH3 filter without active SEH")?;
+        (seh.exception_record_va, seh.context_va)
+    };
+    let pointers = [exception_record_va, context_va];
     let mut pointer_bytes = [0; 8];
     for (index, value) in pointers.into_iter().enumerate() {
         pointer_bytes[index * 4..index * 4 + 4].copy_from_slice(&value.to_le_bytes());
@@ -1261,6 +1264,25 @@ fn schedule_child_seh3_filter(
     if child.address_space.write(pointers_va, &pointer_bytes).map_err(|error| error.to_string())? != 8 {
         return Err("short SEH3 exception-pointers write".into());
     }
+    // MSVC _except_handler3 publishes EXCEPTION_POINTERS at frame[-1].
+    // Compiler-generated filter funclets access this as [EBP-0x14].
+    let xpointers_slot = call
+        .frame
+        .checked_sub(4)
+        .ok_or("SEH3 exception-pointers slot underflow")?;
+    write_child_u32(child, xpointers_slot, pointers_va)?;
+    logl::log(
+        level::IMPORTANT,
+        format_args!(
+            "WC3 CHILD CRT EH3 FILTER FRAME frame=0x{:08x} anchor=0x{:08x} xpointers_slot=0x{:08x} xpointers=0x{:08x} record=0x{:08x} context=0x{:08x}",
+            call.frame,
+            call.frame + 0x10,
+            xpointers_slot,
+            pointers_va,
+            exception_record_va,
+            context_va,
+        ),
+    );
     let frame = [thunk32::CHILD_CALLBACK_RETURN_ADDRESS, pointers_va];
     let mut frame_bytes = [0; 8];
     for (index, value) in frame.into_iter().enumerate() {
@@ -2049,9 +2071,10 @@ pub(super) async fn run_loop(
                                             }
                                             continue;
                                         }
+                                        let level = current;
                                         current = previous;
                                         if filter != 0 {
-                                            let call = ChildSeh3Call { provider_resume_eip: pending.provider_resume_eip, provider_esp: pending.provider_esp, frame: pending.frame, scope: pending.scope, kind: ChildSeh3CallbackKind::Filter { level: current, previous, start_level } };
+                                            let call = ChildSeh3Call { provider_resume_eip: pending.provider_resume_eip, provider_esp: pending.provider_esp, frame: pending.frame, scope: pending.scope, kind: ChildSeh3CallbackKind::Filter { level, previous, start_level } };
                                             schedule_child_seh3_filter(child, &mut contexts[active], exit.registers, call, filter)?;
                                             continue 'child_run;
                                         }
