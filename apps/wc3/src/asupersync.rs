@@ -34,6 +34,12 @@ const WAR3_TABLE_FILL_HEARTBEAT_STRIDE: u32 = 0x100;
 const PETITE_FAIL_SINK: u32 = 0x2000_d186;
 const PETITE_FAIL_ORIGINAL: u8 = 0x33;
 const PETITE_HEADER_WRITE_WATCH: u32 = 0x2000_0000;
+const PETITE_DESCRIPTOR_RVA: usize = 0x0000_d648;
+const PETITE_DESCRIPTOR_RAW: usize = 0x0000_1a48;
+const PETITE_DESCRIPTOR_BYTES: usize = 0x10;
+const PETITE_DESCRIPTOR_TABLE_RVA: usize = 0x0000_d5fc;
+const PETITE_DESCRIPTOR_TABLE_RAW: usize = 0x0000_19fc;
+const PETITE_DESCRIPTOR_TABLE_BYTES: usize = 0x80;
 
 const TABLE_CHECKPOINT_PAGE_BYTES: usize = 4096;
 const TABLE_BOUNDARY: wc3::checkpoint::Boundary = wc3::checkpoint::Boundary {
@@ -3937,6 +3943,27 @@ pub(super) async fn run_loop(
                                 .next()
                                 .is_some_and(|name| name.eq_ignore_ascii_case("SIntfNT.dll"));
                             if is_sintfnt {
+                                let raw_descriptor = bytes
+                                    .get(
+                                        PETITE_DESCRIPTOR_RAW
+                                            ..PETITE_DESCRIPTOR_RAW + PETITE_DESCRIPTOR_BYTES,
+                                    )
+                                    .ok_or("Petite raw descriptor range")?;
+                                let image_descriptor = image
+                                    .image
+                                    .get(
+                                        PETITE_DESCRIPTOR_RVA
+                                            ..PETITE_DESCRIPTOR_RVA + PETITE_DESCRIPTOR_BYTES,
+                                    )
+                                    .ok_or("Petite image descriptor range")?;
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 CHILD PETITE DESCRIPTOR SOURCE raw_offset=0x{PETITE_DESCRIPTOR_RAW:08x} rva=0x{PETITE_DESCRIPTOR_RVA:08x} raw=\"{}\" image=\"{}\"",
+                                        diagnostic_hex_bytes(raw_descriptor),
+                                        diagnostic_hex_bytes(image_descriptor),
+                                    ),
+                                );
                                 let raw_end = image
                                     .sections
                                     .iter()
@@ -4069,6 +4096,55 @@ pub(super) async fn run_loop(
                                     .map_err(|error| error.to_string())?;
                             }
                             if is_sintfnt {
+                                let descriptor_table_va = module_handle
+                                    .checked_add(PETITE_DESCRIPTOR_TABLE_RVA as u32)
+                                    .ok_or("Petite descriptor table virtual address overflow")?;
+                                let mut raw = [0u8; PETITE_DESCRIPTOR_TABLE_BYTES];
+                                raw.copy_from_slice(
+                                    bytes
+                                        .get(
+                                            PETITE_DESCRIPTOR_TABLE_RAW
+                                                ..PETITE_DESCRIPTOR_TABLE_RAW
+                                                    + PETITE_DESCRIPTOR_TABLE_BYTES,
+                                        )
+                                        .ok_or("Petite raw descriptor table range")?,
+                                );
+                                let mut mapped = [0u8; PETITE_DESCRIPTOR_TABLE_BYTES];
+                                if child
+                                    .address_space
+                                    .read(descriptor_table_va, &mut mapped)
+                                    .map_err(|error| error.to_string())?
+                                    != mapped.len()
+                                {
+                                    return Err("short Petite mapped descriptor table read".into());
+                                }
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 CHILD PETITE DESCRIPTOR TABLE va=0x{descriptor_table_va:08x} raw=0x{PETITE_DESCRIPTOR_TABLE_RAW:04x} raw_bytes=\"{}\" mapped_bytes=\"{}\"",
+                                        diagnostic_hex_bytes(&raw),
+                                        diagnostic_hex_bytes(&mapped),
+                                    ),
+                                );
+                                let descriptor_va = module_handle
+                                    .checked_add(PETITE_DESCRIPTOR_RVA as u32)
+                                    .ok_or("Petite descriptor virtual address overflow")?;
+                                let mut guest_descriptor = [0u8; PETITE_DESCRIPTOR_BYTES];
+                                if child
+                                    .address_space
+                                    .read(descriptor_va, &mut guest_descriptor)
+                                    .map_err(|error| error.to_string())?
+                                    != guest_descriptor.len()
+                                {
+                                    return Err("short Petite guest descriptor read".into());
+                                }
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 CHILD PETITE DESCRIPTOR PREENTRY va=0x{descriptor_va:08x} bytes=\"{}\"",
+                                        diagnostic_hex_bytes(&guest_descriptor),
+                                    ),
+                                );
                                 let mut original = [0u8; 1];
                                 if child
                                     .address_space
