@@ -1859,6 +1859,22 @@ impl XpProcess {
                 self.crt_onexit_callbacks.push(func);
                 Ok(PersonalityAction::Return(func))
             }
+            ProviderOp::CrtIsDigit => {
+                let [_, character] = arguments::<2>(memory, esp)?;
+                // MSVCRT's _DIGIT classification bit is 0x04.  The CRT is
+                // currently in its initial C locale, where only ASCII digits
+                // have that classification.
+                let result = if (b'0' as u32..=b'9' as u32).contains(&character) {
+                    0x04
+                } else {
+                    0
+                };
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(result))
+            }
             ProviderOp::CrtStrrchr => {
                 let [_, string, character] = arguments::<3>(memory, esp)?;
                 let result = crt_strrchr(memory, string, character)?;

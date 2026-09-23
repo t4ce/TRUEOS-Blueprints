@@ -2426,13 +2426,35 @@ pub(super) async fn run_loop(
                                 }
                             }
                         }
-                        if let Some(pending) = child.load_library_call.take() {
+                        // _initterm runs inside the runtime DLL's DllMain, so its
+                        // callback owns this return before the outer loader does.
+                        if let Some(initterm) = child.initterm.as_ref() {
+                            if exit.registers.esp != initterm.provider_esp {
+                                return Err(format!(
+                                    "child _initterm callback ESP mismatch expected=0x{:08x} actual=0x{:08x}",
+                                    initterm.provider_esp, exit.registers.esp
+                                ));
+                            }
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD CRT INITTERM RETURN pid={} tid={} completed={} eax=0x{:08x}",
+                                    active_pid, active_tid, initterm.callbacks_invoked, exit.registers.eax
+                                ),
+                            );
+                            match advance_child_initterm(child, &mut contexts[active])? {
+                                InittermAdvance::CallbackScheduled | InittermAdvance::Complete => continue,
+                            }
+                        }
+                        if let Some(pending) = child.load_library_call.as_ref() {
                             if exit.registers.esp != pending.provider_esp {
                                 return Err(format!(
                                     "LoadLibrary DllMain ESP mismatch expected=0x{:08x} actual=0x{:08x}",
                                     pending.provider_esp, exit.registers.esp
                                 ));
                             }
+                        }
+                        if let Some(pending) = child.load_library_call.take() {
                             if exit.registers.eax == 0 {
                                 logl::log(
                                     level::IMPORTANT,
@@ -2523,24 +2545,6 @@ pub(super) async fn run_loop(
                                 ),
                             );
                             continue;
-                        }
-                        if let Some(initterm) = child.initterm.as_ref() {
-                            if exit.registers.esp != initterm.provider_esp {
-                                return Err(format!(
-                                    "child _initterm callback ESP mismatch expected=0x{:08x} actual=0x{:08x}",
-                                    initterm.provider_esp, exit.registers.esp
-                                ));
-                            }
-                            logl::log(
-                                level::IMPORTANT,
-                                format_args!(
-                                    "WC3 CHILD CRT INITTERM RETURN pid={} tid={} completed={} eax=0x{:08x}",
-                                    active_pid, active_tid, initterm.callbacks_invoked, exit.registers.eax
-                                ),
-                            );
-                            match advance_child_initterm(child, &mut contexts[active])? {
-                                InittermAdvance::CallbackScheduled | InittermAdvance::Complete => continue,
-                            }
                         }
                         let scope = child_execution_scope(child).map_err(str::to_owned)?;
                         logl::log(

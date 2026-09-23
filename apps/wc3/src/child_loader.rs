@@ -116,6 +116,7 @@ pub enum ProviderOp {
     CrtGetMainArgs,
     CrtOnExit,
     CrtMalloc,
+    CrtIsDigit,
     CrtStrrchr,
     CrtStrstr,
     CrtFullPath,
@@ -197,6 +198,7 @@ impl ProviderOp {
             | Self::CrtGetMainArgs
             | Self::CrtOnExit
             | Self::CrtMalloc
+            | Self::CrtIsDigit
             | Self::CrtStrrchr
             | Self::CrtStrstr
             | Self::CrtFullPath
@@ -263,6 +265,7 @@ impl ProviderOp {
                 | Self::CrtXcptFilter
                 | Self::CrtGetMainArgs
                 | Self::CrtOnExit
+                | Self::CrtIsDigit
                 | Self::CrtStrrchr
                 | Self::CrtStrstr
                 | Self::CrtFullPath
@@ -378,6 +381,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "__getmainargs" => ProviderOp::CrtGetMainArgs,
             "_onexit" => ProviderOp::CrtOnExit,
             "malloc" => ProviderOp::CrtMalloc,
+            "isdigit" => ProviderOp::CrtIsDigit,
             "strrchr" => ProviderOp::CrtStrrchr,
             "strstr" => ProviderOp::CrtStrstr,
             "_fullpath" => ProviderOp::CrtFullPath,
