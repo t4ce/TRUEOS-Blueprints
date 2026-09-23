@@ -27,6 +27,10 @@
       "path": "buildins/hyper"
     },
     {
+      "name": "backup",
+      "path": "buildins/backup"
+    },
+    {
       "name": "os",
       "path": "buildins/os"
     },
