@@ -182,10 +182,8 @@ impl ProviderOp {
             | Self::FindFirstFileA
             | Self::GlobalAlloc
             | Self::InterlockedExchange
-            | Self::InterlockedIncrement
-            | Self::InterlockedDecrement
             | Self::TlsSetValue => 8,
-            Self::TlsGetValue => 4,
+            Self::TlsGetValue | Self::InterlockedIncrement | Self::InterlockedDecrement => 4,
             Self::GetStringTypeW
             | Self::RtlUnwind
             | Self::VirtualAlloc

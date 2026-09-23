@@ -6463,11 +6463,12 @@ pub(super) async fn run_loop(
                                             "interlocked add capture has an add operation"
                                         ),
                                     };
+                                    let cleanup = operation.stack_cleanup_bytes();
                                     logl::log(
                                         level::IMPORTANT,
                                         format_args!(
-                                            "WC3 CHILD {} pid={} tid={} target=0x{:08x} old=0x{:08x} after=0x{:08x} eax=0x{:08x} cleanup=4-by-thunk",
-                                            api, active_pid, active_tid, target, old, after, result,
+                                            "WC3 CHILD {} pid={} tid={} target=0x{:08x} old=0x{:08x} after=0x{:08x} eax=0x{:08x} cleanup={}-by-thunk",
+                                            api, active_pid, active_tid, target, old, after, result, cleanup,
                                         ),
                                     );
                                 }

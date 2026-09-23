@@ -3219,6 +3219,9 @@ mod tests_process_1 {
         assert!(operation.is_generic_process_local());
         assert_eq!(operation.stack_cleanup_bytes(), 4);
         assert_eq!(provider_thunk_kind(&provider), thunk32::Kind::Stdcall(4));
+        let mut thunk = [0; thunk32::THUNK_BYTES];
+        thunk32::write(123, provider_thunk_kind(&provider), &mut thunk).unwrap();
+        assert_eq!(&thunk[8..11], &[0xc2, 0x04, 0x00]);
 
         let mut xp = XpProcess::new_child();
         xp.install_provider_surface(vec![provider], Vec::new(), Vec::new());
@@ -3255,6 +3258,9 @@ mod tests_process_1 {
         assert!(operation.is_generic_process_local());
         assert_eq!(operation.stack_cleanup_bytes(), 4);
         assert_eq!(provider_thunk_kind(&provider), thunk32::Kind::Stdcall(4));
+        let mut thunk = [0; thunk32::THUNK_BYTES];
+        thunk32::write(123, provider_thunk_kind(&provider), &mut thunk).unwrap();
+        assert_eq!(&thunk[8..11], &[0xc2, 0x04, 0x00]);
 
         let mut xp = XpProcess::new_child();
         xp.install_provider_surface(vec![provider], Vec::new(), Vec::new());
