@@ -1,0 +1,14 @@
+WC3 CHILD LOADLIBRARY LOCAL IMPORT source=trueosfs index=729 module="GDI32.dll" symbol=Name("SetTextColor") iat_rva=0x00706044
+WC3 CHILD LOADLIBRARY LOCAL IMPORT source=trueosfs index=728 module="GDI32.dll" symbol=Name("SetBkColor") iat_rva=0x00706040
+WC3 CHILD LOADLIBRARY LOCAL IMPORT source=trueosfs index=727 module="GDI32.dll" symbol=Name("GetDeviceCaps") iat_rva=0x0070603c
+WC3 CHILD LOADLIBRARY LOCAL IMPORT source=trueosfs index=726 module="GDI32.dll" symbol=Name("SetPixelFormat") iat_rva=0x00706038
+WC3 CHILD LOADLIBRARY LOCAL IMPORT source=trueosfs index=725 module="GDI32.dll" symbol=Name("TextOutW") iat_rva=0x00706034
+WC3 CHILD LOADLIBRARY LOCAL IMPORT source=trueosfs index=724 module="GDI32.dll" symbol=Name("SetDeviceGammaRamp") iat_rva=0x00706030
+WC3 CHILD LOADLIBRARY LOCAL IMPORT source=trueosfs index=723 module="GDI32.dll" symbol=Name("DescribePixelFormat") iat_rva=0x0070602c
+WC3 CHILD LOADLIBRARY LOCAL IMPORT source=trueosfs index=722 module="GDI32.dll" symbol=Name("ChoosePixelFormat") iat_rva=0x00706028
+WC3 CHILD LOADLIBRARY LOCAL IMPORT source=trueosfs index=721 module="GDI32.dll" symbol=Name("SetTextAlign") iat_rva=0x00706024
+WC3 CHILD LOADLIBRARY LOCAL IMPORT source=trueosfs index=720 module="GDI32.dll" symbol=Name("SelectObject") iat_rva=0x00706020
+WC3 CHILD LOADLIBRARY LOCAL IMPORT source=trueosfs index=719 module="GDI32.dll" symbol=Name("GetDeviceGammaRamp") iat_rva=0x0070601c
+WC3 CHILD LOADLIBRARY LOCAL IMPORT source=trueosfs index=718 module="GDI32.dll" symbol=Name("CreateFontA") iat_rva=0x00706018
+WC3 CHILD LOADLIBRARY LOCAL IMPORT source=trueosfs index=717 module="GDI32.dll" symbol=Name("GetStockObject") iat_rva=0x00706014
+WC3 CHILD LOADLIBRARY LOCAL IMPORT source=trueosfs index=716 module="GDI32.dll" symbol=Name("DeleteObject") iat_rva=0x00706010
