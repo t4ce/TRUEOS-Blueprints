@@ -56,6 +56,7 @@ enum Screen {
 }
 
 struct App {
+    backup: bool,
     disks: Vec<Disk>,
     non_replicatable_vms: Vec<NonReplicatableVm>,
     screen: Screen,
@@ -65,6 +66,7 @@ struct App {
 impl App {
     fn new(disks: Vec<Disk>, non_replicatable_vms: Vec<NonReplicatableVm>) -> Self {
         Self {
+            backup: false,
             disks,
             non_replicatable_vms,
             screen: Screen::Home,
@@ -74,7 +76,7 @@ impl App {
 
     fn item_count(&self) -> usize {
         match self.screen {
-            Screen::Home => 5,
+            Screen::Home => 6,
             Screen::Disks => self.disks.len().max(1),
             Screen::Source { .. } => 2,
             Screen::Confirm(_) => 2,
@@ -108,6 +110,7 @@ impl App {
                 false
             }
             Screen::Confirm(Action::Install { disk, .. }) => {
+                if self.backup { return Some(format!("os:backup:{}", self.disks[disk].id)); }
                 self.screen = Screen::Source { disk };
                 self.selected = 0;
                 false
@@ -129,6 +132,7 @@ impl App {
         match self.screen {
             Screen::Home => match self.selected {
                 0 => {
+                    self.backup = false;
                     self.screen = Screen::Disks;
                     self.selected = 0;
                     None
@@ -145,6 +149,12 @@ impl App {
                 }
                 3 => {
                     self.screen = Screen::Confirm(Action::Reboot);
+                    self.selected = 0;
+                    None
+                }
+                4 => {
+                    self.backup = true;
+                    self.screen = Screen::Disks;
                     self.selected = 0;
                     None
                 }
@@ -281,6 +291,10 @@ async fn run(
 ) -> io::Result<String> {
     let _terminal = TerminalGuard::enter()?;
     let mut app = App::new(disks, non_replicatable_vms);
+    if env::args().any(|arg| arg == "mode=backup") {
+        app.backup = true;
+        app.screen = Screen::Disks;
+    }
     draw(&app)?;
     lease
         .acknowledge_ready()
@@ -432,12 +446,16 @@ fn draw_home(out: &mut io::Stdout, selected: usize) -> io::Result<()> {
     row(out, selected == 1, "Live update running TRUEOS")?;
     row(out, selected == 2, "Shutdown TRUEOS")?;
     row(out, selected == 3, "Reboot TRUEOS")?;
-    row(out, selected == 4, "Return")?;
+    row(out, selected == 4, "Back up a whole disk")?;
+    row(out, selected == 5, "Return")?;
     queue!(out, Print("\r\n    Choose one operation.\r\n"))
 }
 
 fn draw_disks(out: &mut io::Stdout, app: &App) -> io::Result<()> {
-    heading(out, "INSTALL · TARGET DISK")?;
+    heading(out, if app.backup { "BACKUP · WHOLE DISK" } else { "INSTALL · TARGET DISK" })?;
+    if app.backup {
+        queue!(out, Print("    Wait up to 5 seconds for a quiet disk, then detach for encrypted backup.\r\n    Normal access returns when backup stops. Busy disks are left alone.\r\n\r\n"))?;
+    }
     if app.disks.is_empty() {
         row(out, true, "No eligible top-level disks")?;
         return Ok(());
