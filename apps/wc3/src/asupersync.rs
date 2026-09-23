@@ -2701,7 +2701,7 @@ pub(super) async fn run_loop(
                         )?;
                         let flags = frame[1];
                         let bytes = frame[2];
-                        logl::trace!("trace-api",
+                        logl::log(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD GLOBALALLOC CALL pid={} tid={} during=\"{}\" provider_id={} flags=0x{:08x} bytes={} caller_ret=0x{:08x}",
@@ -2793,7 +2793,7 @@ pub(super) async fn run_loop(
                         let heap = frame[1];
                         let flags = frame[2];
                         let bytes = frame[3];
-                        logl::trace!("trace-api",
+                        logl::log(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD HEAP ALLOC CALL pid={} tid={} during=\"{}\" provider_id={} heap=0x{:08x} flags=0x{:08x} bytes={} caller_ret=0x{:08x}",
