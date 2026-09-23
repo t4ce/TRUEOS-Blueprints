@@ -6,19 +6,19 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use trueos::clock::UtcDateTime;
 #[cfg(target_os = "trueos")]
 use trueos::clock;
+use trueos::clock::UtcDateTime;
 
 use crate::{
+    ThisToThat::{decode_cp1252, encode_cp1252},
     child_loader::{ChildProvider, ProviderImport, ProviderOp, ProviderSymbol, provider_op},
     imports::{LauncherImport, WinCall},
     pe32,
-    ThisToThat::{decode_cp1252, encode_cp1252},
     session::{
-        CreateEventRequest, CreateMutexRequest, CreateProcessRequest, CreateWindowRequest, GetExitCodeProcessRequest,
-        LoadImageRequest, PersonalityAction, SessionRequest, ThreadKey, WaitRequest,
-        WindowBlitRequest, WindowTextRequest,
+        CreateEventRequest, CreateMutexRequest, CreateProcessRequest, CreateWindowRequest,
+        GetExitCodeProcessRequest, LoadImageRequest, PersonalityAction, SessionRequest, ThreadKey,
+        WaitRequest, WindowBlitRequest, WindowTextRequest,
     },
     thunk32,
 };
@@ -60,6 +60,17 @@ const GMEM_FIXED: u32 = 0x0000;
 const GMEM_MOVEABLE: u32 = 0x0002;
 const GMEM_ZEROINIT: u32 = 0x0040;
 const ERROR_INSUFFICIENT_BUFFER: u32 = 122;
+const ERROR_RESOURCE_TYPE_NOT_FOUND: u32 = 1813;
+const ERROR_RESOURCE_LANG_NOT_FOUND: u32 = 1815;
+const ERROR_MR_MID_NOT_FOUND: u32 = 317;
+const FORMAT_MESSAGE_FROM_HMODULE: u32 = 0x0000_0800;
+const RT_MESSAGETABLE: u32 = 11;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MessageResourceEncoding {
+    Ansi,
+    Unicode,
+}
 const ERROR_NO_TOKEN: u32 = 1008;
 const TOKEN_QUERY: u32 = 0x0000_0008;
 const TOKEN_HANDLE_BASE: u32 = 0x5743_9001;
@@ -403,7 +414,9 @@ fn crt_strrchr(
     let needle = character as u8;
     let mut last = None;
     for offset in 0..1_048_576u32 {
-        let address = string.checked_add(offset).ok_or("strrchr address overflow")?;
+        let address = string
+            .checked_add(offset)
+            .ok_or("strrchr address overflow")?;
         let mut byte = [0];
         memory.read(address, &mut byte)?;
         if byte[0] == needle {
@@ -416,11 +429,7 @@ fn crt_strrchr(
     Err("unterminated strrchr string")
 }
 
-fn crt_strstr(
-    memory: &impl GuestMemory,
-    haystack: u32,
-    needle: u32,
-) -> Result<u32, &'static str> {
+fn crt_strstr(memory: &impl GuestMemory, haystack: u32, needle: u32) -> Result<u32, &'static str> {
     let mut first_needle = [0];
     memory.read(needle, &mut first_needle)?;
     if first_needle[0] == 0 {
@@ -484,9 +493,14 @@ fn wsprintf_a(memory: &mut impl GuestMemory, esp: u32) -> Result<u32, ProviderDi
     let mut next = || -> Result<u32, ProviderDispatchError> {
         let offset = values
             .checked_mul(4)
-            .and_then(|offset| esp.checked_add(12).and_then(|base| base.checked_add(offset)))
+            .and_then(|offset| {
+                esp.checked_add(12)
+                    .and_then(|base| base.checked_add(offset))
+            })
             .ok_or(ProviderDispatchError::Fault("wsprintfA argument overflow"))?;
-        values = values.checked_add(1).ok_or(ProviderDispatchError::Fault("wsprintfA argument count"))?;
+        values = values
+            .checked_add(1)
+            .ok_or(ProviderDispatchError::Fault("wsprintfA argument count"))?;
         Ok(read_u32(memory, offset)?)
     };
     let mut rendered = String::new();
@@ -534,7 +548,10 @@ fn wsprintf_a(memory: &mut impl GuestMemory, esp: u32) -> Result<u32, ProviderDi
     memory.write(output, rendered.as_bytes())?;
     memory.write(
         output
-            .checked_add(u32::try_from(rendered.len()).map_err(|_| ProviderDispatchError::Fault("wsprintfA length"))?)
+            .checked_add(
+                u32::try_from(rendered.len())
+                    .map_err(|_| ProviderDispatchError::Fault("wsprintfA length"))?,
+            )
             .ok_or(ProviderDispatchError::Fault("wsprintfA output overflow"))?,
         &[0],
     )?;
@@ -618,7 +635,9 @@ fn crt_vsnprintf(memory: &mut impl GuestMemory, esp: u32) -> Result<u32, Provide
                     value = value
                         .checked_mul(10)
                         .and_then(|value| value.checked_add(digit as usize))
-                        .ok_or(ProviderDispatchError::Fault("_vsnprintf precision overflow"))?;
+                        .ok_or(ProviderDispatchError::Fault(
+                            "_vsnprintf precision overflow",
+                        ))?;
                 }
                 precision = Some(value);
             }
@@ -683,16 +702,21 @@ fn crt_vsnprintf(memory: &mut impl GuestMemory, esp: u32) -> Result<u32, Provide
         }
     }
 
-    let capacity = usize::try_from(count).map_err(|_| ProviderDispatchError::Fault("_vsnprintf count"))?;
+    let capacity =
+        usize::try_from(count).map_err(|_| ProviderDispatchError::Fault("_vsnprintf count"))?;
     if rendered.len() < capacity {
         memory.write(output, rendered.as_bytes())?;
         memory.write(
             output
-                .checked_add(u32::try_from(rendered.len()).map_err(|_| ProviderDispatchError::Fault("_vsnprintf length"))?)
+                .checked_add(
+                    u32::try_from(rendered.len())
+                        .map_err(|_| ProviderDispatchError::Fault("_vsnprintf length"))?,
+                )
                 .ok_or(ProviderDispatchError::Fault("_vsnprintf output overflow"))?,
             &[0],
         )?;
-        return u32::try_from(rendered.len()).map_err(|_| ProviderDispatchError::Fault("_vsnprintf length"));
+        return u32::try_from(rendered.len())
+            .map_err(|_| ProviderDispatchError::Fault("_vsnprintf length"));
     }
     if capacity != 0 {
         memory.write(output, &rendered.as_bytes()[..capacity.min(rendered.len())])?;
@@ -1139,6 +1163,7 @@ pub struct XpProcess {
     sid_allocations: HashMap<u32, u32>,
     next_sid: u32,
     last_error: u32,
+    last_format_message_encoding: Option<MessageResourceEncoding>,
     unhandled_exception_filter: u32,
     registered_classes: HashMap<String, RegisteredClass>,
     messages: VecDeque<Message>,
@@ -1164,15 +1189,13 @@ impl XpProcess {
     pub fn external_provider_module_name(&self, handle: u32) -> Option<&str> {
         self.loaded_modules
             .iter()
-            .find(|module| module.handle == handle && module.kind == LoadedModuleKind::ExternalProvider)
+            .find(|module| {
+                module.handle == handle && module.kind == LoadedModuleKind::ExternalProvider
+            })
             .map(|module| module_basename(&module.stored_name))
     }
 
-    pub fn provider_thunk_address(
-        &self,
-        module: &str,
-        symbol: &ProviderSymbol,
-    ) -> Option<u32> {
+    pub fn provider_thunk_address(&self, module: &str, symbol: &ProviderSymbol) -> Option<u32> {
         self.provider_imports
             .iter()
             .position(|import| {
@@ -1183,11 +1206,7 @@ impl XpProcess {
 
     /// A dynamically callable provider export, as opposed to any static IAT
     /// trap thunk that happens to exist for an unmodeled provider import.
-    pub fn provider_export_address(
-        &self,
-        module: &str,
-        symbol: &ProviderSymbol,
-    ) -> Option<u32> {
+    pub fn provider_export_address(&self, module: &str, symbol: &ProviderSymbol) -> Option<u32> {
         let import = ProviderImport {
             module: module.into(),
             symbol: symbol.clone(),
@@ -1307,6 +1326,7 @@ impl XpProcess {
             sid_allocations: HashMap::new(),
             next_sid: PROCESS_SID_ARENA_BASE,
             last_error: 0,
+            last_format_message_encoding: None,
             unhandled_exception_filter: 0,
             registered_classes: HashMap::new(),
             messages: VecDeque::new(),
@@ -1477,8 +1497,14 @@ impl XpProcess {
     }
 
     pub fn disable_thread_library_calls(&mut self, handle: u32) -> Result<u32, &'static str> {
-        self.call_count = self.call_count.checked_add(1).ok_or("call count overflow")?;
-        let Some(module) = self.loaded_modules.iter_mut().find(|module| module.handle == handle)
+        self.call_count = self
+            .call_count
+            .checked_add(1)
+            .ok_or("call count overflow")?;
+        let Some(module) = self
+            .loaded_modules
+            .iter_mut()
+            .find(|module| module.handle == handle)
         else {
             self.set_last_error(ERROR_INVALID_HANDLE);
             return Ok(0);
@@ -1677,7 +1703,9 @@ impl XpProcess {
             reservation
                 .base
                 .checked_add(reservation.size)
-                .is_some_and(|reservation_end| address >= reservation.base && end <= reservation_end)
+                .is_some_and(|reservation_end| {
+                    address >= reservation.base && end <= reservation_end
+                })
         }) else {
             return Ok(None);
         };
@@ -1785,14 +1813,15 @@ impl XpProcess {
 
         let length = u32::try_from(sid.len())
             .map_err(|_| ProviderDispatchError::Fault("AllocateAndInitializeSid length"))?;
-        let aligned_length = length
-            .checked_add(3)
-            .ok_or(ProviderDispatchError::Fault("AllocateAndInitializeSid length"))?
-            & !3;
+        let aligned_length = length.checked_add(3).ok_or(ProviderDispatchError::Fault(
+            "AllocateAndInitializeSid length",
+        ))? & !3;
         let pointer = self.next_sid;
         let next = pointer
             .checked_add(aligned_length)
-            .ok_or(ProviderDispatchError::Fault("AllocateAndInitializeSid arena overflow"))?;
+            .ok_or(ProviderDispatchError::Fault(
+                "AllocateAndInitializeSid arena overflow",
+            ))?;
         if next > PROCESS_SID_ARENA_LIMIT {
             self.set_last_error(ERROR_NOT_ENOUGH_MEMORY);
             return Ok(0);
@@ -1805,13 +1834,11 @@ impl XpProcess {
         Ok(1)
     }
 
-    fn equal_sid(
-        &self,
-        esp: u32,
-        memory: &impl GuestMemory,
-    ) -> Result<u32, ProviderDispatchError> {
+    fn equal_sid(&self, esp: u32, memory: &impl GuestMemory) -> Result<u32, ProviderDispatchError> {
         let [_, first, second] = arguments::<3>(memory, esp)?;
-        Ok(u32::from(canonical_sid(memory, first)? == canonical_sid(memory, second)?))
+        Ok(u32::from(
+            canonical_sid(memory, first)? == canonical_sid(memory, second)?,
+        ))
     }
 
     fn file_handle(&self, handle: u32) -> Result<FileHandle, ProviderDispatchError> {
@@ -1852,8 +1879,10 @@ impl XpProcess {
         self_image_bytes: Option<&[u8]>,
     ) -> Result<u64, ProviderDispatchError> {
         match file.backing {
-            FileBacking::SelfImage => u64::try_from(Self::self_image_bytes(self_image_bytes)?.len())
-                .map_err(|_| ProviderDispatchError::Fault("self image length")),
+            FileBacking::SelfImage => {
+                u64::try_from(Self::self_image_bytes(self_image_bytes)?.len())
+                    .map_err(|_| ProviderDispatchError::Fault("self image length"))
+            }
             FileBacking::Scratch(id) => self
                 .scratch_files
                 .get(&id)
@@ -1934,12 +1963,7 @@ impl XpProcess {
         esp: u32,
         memory: &mut impl GuestMemory,
     ) -> Result<u32, ProviderDispatchError> {
-        let (_, _, after) = self.interlocked_add(
-            esp,
-            memory,
-            u32::MAX,
-            "InterlockedDecrement",
-        )?;
+        let (_, _, after) = self.interlocked_add(esp, memory, u32::MAX, "InterlockedDecrement")?;
         Ok(after)
     }
 
@@ -1980,7 +2004,9 @@ impl XpProcess {
                     .call_count
                     .checked_add(1)
                     .ok_or("call count overflow")?;
-                Ok(PersonalityAction::Return(self.get_system_info(esp, memory)?))
+                Ok(PersonalityAction::Return(
+                    self.get_system_info(esp, memory)?,
+                ))
             }
             ProviderOp::InterlockedExchange => {
                 let previous = self.interlocked_exchange(esp, memory)?;
@@ -2012,6 +2038,10 @@ impl XpProcess {
                     .call_count
                     .checked_add(1)
                     .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(result))
+            }
+            ProviderOp::FormatMessageA => {
+                let result = self.format_message_a(esp, memory)?;
                 Ok(PersonalityAction::Return(result))
             }
             ProviderOp::TlsAlloc => {
@@ -2072,9 +2102,7 @@ impl XpProcess {
                 if exception_pointers == 0 {
                     return Err(ProviderDispatchError::Frontier {
                         api: "_XcptFilter",
-                        detail: format!(
-                            "null exception pointers code=0x{exception_code:08x}"
-                        ),
+                        detail: format!("null exception pointers code=0x{exception_code:08x}"),
                     });
                 }
                 let record = read_u32(memory, exception_pointers)?;
@@ -2103,14 +2131,11 @@ impl XpProcess {
                 }
                 if !matches!(
                     exception_code,
-                    crate::seh::STATUS_ACCESS_VIOLATION
-                        | crate::seh::STATUS_ILLEGAL_INSTRUCTION
+                    crate::seh::STATUS_ACCESS_VIOLATION | crate::seh::STATUS_ILLEGAL_INSTRUCTION
                 ) {
                     return Err(ProviderDispatchError::Frontier {
                         api: "_XcptFilter",
-                        detail: format!(
-                            "unobserved exception code=0x{exception_code:08x}"
-                        ),
+                        detail: format!("unobserved exception code=0x{exception_code:08x}"),
                     });
                 }
                 self.call_count = self
@@ -2234,14 +2259,19 @@ impl XpProcess {
                         memory.write(output, bytes)?;
                         memory.write(
                             output
-                                .checked_add(u32::try_from(bytes.len()).map_err(|_| "fullpath length")?)
+                                .checked_add(
+                                    u32::try_from(bytes.len()).map_err(|_| "fullpath length")?,
+                                )
                                 .ok_or("fullpath output overflow")?,
                             &[0],
                         )?;
                         output
                     }
                 };
-                self.call_count = self.call_count.checked_add(1).ok_or("call count overflow")?;
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(result))
             }
             ProviderOp::FreeEnvironmentStringsW => {
@@ -2263,7 +2293,9 @@ impl XpProcess {
                     .call_count
                     .checked_add(1)
                     .ok_or("call count overflow")?;
-                Ok(PersonalityAction::Return(self.get_startup_info(esp, memory)?))
+                Ok(PersonalityAction::Return(
+                    self.get_startup_info(esp, memory)?,
+                ))
             }
             ProviderOp::GetStdHandle => {
                 self.call_count = self
@@ -2284,7 +2316,9 @@ impl XpProcess {
                     .call_count
                     .checked_add(1)
                     .ok_or("call count overflow")?;
-                Ok(PersonalityAction::Return(self.set_handle_count(esp, memory)?))
+                Ok(PersonalityAction::Return(
+                    self.set_handle_count(esp, memory)?,
+                ))
             }
             ProviderOp::GetACP => {
                 self.call_count = self
@@ -2305,7 +2339,9 @@ impl XpProcess {
                     .call_count
                     .checked_add(1)
                     .ok_or("call count overflow")?;
-                Ok(PersonalityAction::Return(self.get_string_type(esp, memory)?))
+                Ok(PersonalityAction::Return(
+                    self.get_string_type(esp, memory)?,
+                ))
             }
             ProviderOp::MultiByteToWideChar => {
                 self.call_count = self
@@ -2444,8 +2480,14 @@ impl XpProcess {
                 Ok(PersonalityAction::Return(1))
             }
             ProviderOp::GetTokenInformation => {
-                let [_, token, information_class, information, information_len, return_len] =
-                    arguments::<6>(memory, esp)?;
+                let [
+                    _,
+                    token,
+                    information_class,
+                    information,
+                    information_len,
+                    return_len,
+                ] = arguments::<6>(memory, esp)?;
                 let Some(token_handle) = self.token_handles.get(&token).copied() else {
                     self.set_last_error(ERROR_INVALID_HANDLE);
                     return Ok(PersonalityAction::Return(0));
@@ -2562,11 +2604,17 @@ impl XpProcess {
                 Ok(PersonalityAction::Return(1))
             }
             ProviderOp::GetLastError => {
-                self.call_count = self.call_count.checked_add(1).ok_or("call count overflow")?;
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(self.last_error))
             }
             ProviderOp::GetTickCount => {
-                self.call_count = self.call_count.checked_add(1).ok_or("call count overflow")?;
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(monotonic_counter_millis()))
             }
             ProviderOp::DisableThreadLibraryCalls => {
@@ -2767,9 +2815,12 @@ impl XpProcess {
                 let high = if distance_high == 0 {
                     0i64
                 } else {
-                    i64::from(i32::from_le_bytes(read_u32(memory, distance_high)?.to_le_bytes()))
+                    i64::from(i32::from_le_bytes(
+                        read_u32(memory, distance_high)?.to_le_bytes(),
+                    ))
                 };
-                let distance = (high << 32) + i64::from(i32::from_le_bytes(distance_low.to_le_bytes()));
+                let distance =
+                    (high << 32) + i64::from(i32::from_le_bytes(distance_low.to_le_bytes()));
                 let base = match move_method {
                     FILE_BEGIN => 0,
                     FILE_CURRENT => file.cursor,
@@ -2830,10 +2881,7 @@ impl XpProcess {
                         } else {
                             requested.min(backing.len() - start)
                         };
-                        memory.write(
-                            output,
-                            &backing[source_start..source_start + transferred],
-                        )?;
+                        memory.write(output, &backing[source_start..source_start + transferred])?;
                         transferred
                     }
                     FileBacking::Scratch(id) => {
@@ -2860,12 +2908,12 @@ impl XpProcess {
                 self.file_handles
                     .get_mut(&handle)
                     .ok_or("self image handle disappeared")?
-                    .cursor = file
-                    .cursor
-                    .checked_add(u64::try_from(transferred).map_err(|_| {
-                        ProviderDispatchError::Fault("ReadFile transferred length")
-                    })?)
-                    .ok_or("self image cursor overflow")?;
+                    .cursor =
+                    file.cursor
+                        .checked_add(u64::try_from(transferred).map_err(|_| {
+                            ProviderDispatchError::Fault("ReadFile transferred length")
+                        })?)
+                        .ok_or("self image cursor overflow")?;
                 self.call_count = self
                     .call_count
                     .checked_add(1)
@@ -2981,7 +3029,9 @@ impl XpProcess {
                     .call_count
                     .checked_add(1)
                     .ok_or("call count overflow")?;
-                Ok(PersonalityAction::Return(self.get_temp_path_a(esp, memory)?))
+                Ok(PersonalityAction::Return(
+                    self.get_temp_path_a(esp, memory)?,
+                ))
             }
             ProviderOp::SetCurrentDirectoryA => {
                 let [_, directory] = arguments::<2>(memory, esp)?;
@@ -3039,11 +3089,7 @@ impl XpProcess {
                 }
                 let path = read_c_string(memory, filename, 1024)?;
                 let _temporary = attributes & FILE_ATTRIBUTE_TEMPORARY != 0;
-                if let Some(id) = self
-                    .scratch_paths
-                    .get(&canonical_file_path(&path))
-                    .copied()
-                {
+                if let Some(id) = self.scratch_paths.get(&canonical_file_path(&path)).copied() {
                     self.scratch_files
                         .get_mut(&id)
                         .ok_or("scratch file disappeared")?
@@ -3073,21 +3119,21 @@ impl XpProcess {
                 if pattern == 0 || find_data == 0 {
                     return Err(ProviderDispatchError::Frontier {
                         api: "FindFirstFileA",
-                        detail: format!(
-                            "null pattern=0x{pattern:08x} find_data=0x{find_data:08x}"
-                        ),
+                        detail: format!("null pattern=0x{pattern:08x} find_data=0x{find_data:08x}"),
                     });
                 }
                 let pattern = read_c_string(memory, pattern, 1024)?;
                 if !is_self_image_path(&pattern) {
                     return Err(ProviderDispatchError::Frontier {
                         api: "FindFirstFileA",
-                        detail: format!("unmodeled pattern={pattern:?} find_data=0x{find_data:08x}"),
+                        detail: format!(
+                            "unmodeled pattern={pattern:?} find_data=0x{find_data:08x}"
+                        ),
                     });
                 }
-                let image_size = self_image_bytes
-                    .map(|bytes| bytes.len() as u64)
-                    .ok_or(ProviderDispatchError::Fault("self image file backing unavailable"))?;
+                let image_size = self_image_bytes.map(|bytes| bytes.len() as u64).ok_or(
+                    ProviderDispatchError::Fault("self image file backing unavailable"),
+                )?;
                 let mut data = [0u8; 320];
                 data[0..4].copy_from_slice(&FILE_ATTRIBUTE_NORMAL.to_le_bytes());
                 data[20..24].copy_from_slice(&((image_size >> 32) as u32).to_le_bytes());
@@ -3235,16 +3281,22 @@ impl XpProcess {
                 Some(PersonalityAction::Session(SessionRequest::CreateMutex {
                     key: ThreadKey { pid, tid },
                     request: CreateMutexRequest {
-                        name: if name == 0 { None } else { Some(read_c_string(memory, name, 260)?) },
+                        name: if name == 0 {
+                            None
+                        } else {
+                            Some(read_c_string(memory, name, 260)?)
+                        },
                         initial_owner: initial_owner != 0,
                         inheritable,
                     },
                 }))
             }
-            ProviderOp::ReleaseMutex => Some(PersonalityAction::Session(SessionRequest::ReleaseMutex {
-                key: ThreadKey { pid, tid },
-                handle: arguments::<2>(memory, esp)?[1],
-            })),
+            ProviderOp::ReleaseMutex => {
+                Some(PersonalityAction::Session(SessionRequest::ReleaseMutex {
+                    key: ThreadKey { pid, tid },
+                    handle: arguments::<2>(memory, esp)?[1],
+                }))
+            }
             ProviderOp::CloseHandle => {
                 let handle = arguments::<2>(memory, esp)?[1];
                 if self.token_handles.remove(&handle).is_some()
@@ -3252,7 +3304,10 @@ impl XpProcess {
                 {
                     Some(PersonalityAction::Return(1))
                 } else {
-                    Some(PersonalityAction::Session(SessionRequest::CloseHandle { pid, handle }))
+                    Some(PersonalityAction::Session(SessionRequest::CloseHandle {
+                        pid,
+                        handle,
+                    }))
                 }
             }
             ProviderOp::WaitForSingleObject => {
@@ -3270,7 +3325,10 @@ impl XpProcess {
             _ => None,
         };
         if let Some(action) = action {
-            self.call_count = self.call_count.checked_add(1).ok_or("call count overflow")?;
+            self.call_count = self
+                .call_count
+                .checked_add(1)
+                .ok_or("call count overflow")?;
             return Ok(action);
         }
         match (&provider.module[..], &provider.symbol) {
@@ -3394,11 +3452,20 @@ impl XpProcess {
                 Ok(PersonalityAction::ExitProcess(exit_code))
             }
             (module, ProviderSymbol::Name(symbol))
-                if module.eq_ignore_ascii_case("KERNEL32.dll") && symbol == "SetUnhandledExceptionFilter" =>
+                if module.eq_ignore_ascii_case("KERNEL32.dll")
+                    && symbol == "SetUnhandledExceptionFilter" =>
             {
-                let filter = read_u32(memory, esp.checked_add(4).ok_or("provider argument overflow")?)?;
-                self.call_count = self.call_count.checked_add(1).ok_or("call count overflow")?;
-                Ok(PersonalityAction::Return(self.set_unhandled_exception_filter(filter)))
+                let filter = read_u32(
+                    memory,
+                    esp.checked_add(4).ok_or("provider argument overflow")?,
+                )?;
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(
+                    self.set_unhandled_exception_filter(filter),
+                ))
             }
             (module, ProviderSymbol::Name(symbol))
                 if module.eq_ignore_ascii_case("MSVCRT.dll") && symbol == "malloc" =>
@@ -3490,10 +3557,7 @@ impl XpProcess {
             return Err("HeapAlloc flags frontier");
         }
         let logical = bytes.max(1);
-        let aligned = logical
-            .checked_add(7)
-            .ok_or("HeapAlloc size overflow")?
-            & !7;
+        let aligned = logical.checked_add(7).ok_or("HeapAlloc size overflow")? & !7;
         let pointer = self.win_heap_next;
         let end = pointer
             .checked_add(aligned)
@@ -3540,10 +3604,7 @@ impl XpProcess {
                 detail: format!("zero-size flags=0x{flags:08x}"),
             });
         }
-        let aligned = bytes
-            .checked_add(7)
-            .ok_or("GlobalAlloc size overflow")?
-            & !7;
+        let aligned = bytes.checked_add(7).ok_or("GlobalAlloc size overflow")? & !7;
         let pointer = self.win_heap_next;
         let end = pointer
             .checked_add(aligned)
@@ -3707,13 +3768,14 @@ impl XpProcess {
             WinCall::GetTickCount => Ok(monotonic_counter_millis()),
             WinCall::GetCurrentThreadId => Ok(tid),
             WinCall::GetStartupInfoA => self.get_startup_info(esp, memory),
-            WinCall::GetModuleFileNameA => self.get_module_filename(esp, memory).map_err(|error| {
-                match error {
-                    ProviderDispatchError::Unsupported => "unsupported child provider import",
-                    ProviderDispatchError::Fault(error) => error,
-                    ProviderDispatchError::Frontier { .. } => "module filename frontier",
-                }
-            }),
+            WinCall::GetModuleFileNameA => {
+                self.get_module_filename(esp, memory)
+                    .map_err(|error| match error {
+                        ProviderDispatchError::Unsupported => "unsupported child provider import",
+                        ProviderDispatchError::Fault(error) => error,
+                        ProviderDispatchError::Frontier { .. } => "module filename frontier",
+                    })
+            }
             WinCall::GetModuleHandleA => Ok(pe32::IMAGE_BASE),
             WinCall::GetStdHandle => self.get_std_handle(esp, memory),
             WinCall::GetFileType => self.get_file_type(esp, memory),
@@ -3811,14 +3873,14 @@ impl XpProcess {
             }
             WinCall::GetExitCodeProcess => {
                 let [_, handle, exit_code_pointer] = arguments::<3>(memory, esp)?;
-                return Ok(PersonalityAction::Session(SessionRequest::GetExitCodeProcess(
-                    GetExitCodeProcessRequest {
+                return Ok(PersonalityAction::Session(
+                    SessionRequest::GetExitCodeProcess(GetExitCodeProcessRequest {
                         pid,
                         tid,
                         handle,
                         exit_code_pointer,
-                    },
-                )));
+                    }),
+                ));
             }
             WinCall::WaitForMultipleObjects => {
                 let frame = self.wait_for_multiple_objects(esp, memory)?;
@@ -4120,12 +4182,106 @@ impl XpProcess {
         })
     }
 
+    fn format_message_a(
+        &mut self,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
+        let [
+            _,
+            flags,
+            source,
+            message_id,
+            language_id,
+            buffer,
+            capacity,
+            arguments,
+        ] = arguments::<8>(memory, esp)?;
+        if flags != FORMAT_MESSAGE_FROM_HMODULE {
+            return Err(ProviderDispatchError::Frontier {
+                api: "FormatMessageA",
+                detail: format!("unobserved flags=0x{flags:08x}"),
+            });
+        }
+        if source == 0 || language_id == 0 || buffer == 0 {
+            return Err(ProviderDispatchError::Frontier {
+                api: "FormatMessageA",
+                detail: format!(
+                    "invalid FROM_HMODULE frame source=0x{source:08x} language=0x{language_id:08x} buffer=0x{buffer:08x}"
+                ),
+            });
+        }
+        if arguments != 0 {
+            return Err(ProviderDispatchError::Frontier {
+                api: "FormatMessageA",
+                detail: format!("non-null argument array=0x{arguments:08x}"),
+            });
+        }
+
+        self.last_format_message_encoding = None;
+        let (text, encoding) = match message_table_text(memory, source, language_id, message_id) {
+            Ok(value) => value,
+            Err(MessageTableLookup::TypeMissing) => {
+                self.set_last_error(ERROR_RESOURCE_TYPE_NOT_FOUND);
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                return Ok(0);
+            }
+            Err(MessageTableLookup::LanguageMissing) => {
+                self.set_last_error(ERROR_RESOURCE_LANG_NOT_FOUND);
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                return Ok(0);
+            }
+            Err(MessageTableLookup::MessageMissing) => {
+                self.set_last_error(ERROR_MR_MID_NOT_FOUND);
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                return Ok(0);
+            }
+            Err(MessageTableLookup::Fault(error)) => return Err(error.into()),
+        };
+        let output = format_message_text(&text, message_id)?;
+        let required = output
+            .len()
+            .checked_add(1)
+            .ok_or("FormatMessageA output length")?;
+        if required > capacity as usize {
+            self.set_last_error(ERROR_INSUFFICIENT_BUFFER);
+            self.call_count = self
+                .call_count
+                .checked_add(1)
+                .ok_or("call count overflow")?;
+            return Ok(0);
+        }
+        let mut terminated = output;
+        terminated.push(0);
+        memory.write(buffer, &terminated)?;
+        self.last_format_message_encoding = Some(encoding);
+        self.call_count = self
+            .call_count
+            .checked_add(1)
+            .ok_or("call count overflow")?;
+        u32::try_from(terminated.len() - 1)
+            .map_err(|_| ProviderDispatchError::Fault("FormatMessageA output too long"))
+    }
+
     pub fn set_last_error(&mut self, value: u32) {
         self.last_error = value;
     }
 
     pub fn last_error(&self) -> u32 {
         self.last_error
+    }
+
+    pub fn last_format_message_encoding(&self) -> Option<MessageResourceEncoding> {
+        self.last_format_message_encoding
     }
 
     fn path_exists(&self, path: &str) -> bool {
@@ -4151,9 +4307,14 @@ impl XpProcess {
         previous
     }
 
-    pub fn unhandled_exception_filter(&self) -> u32 { self.unhandled_exception_filter }
+    pub fn unhandled_exception_filter(&self) -> u32 {
+        self.unhandled_exception_filter
+    }
 
-    pub fn complete_unhandled_exception_filter(&self, result: Option<u32>) -> Result<u32, &'static str> {
+    pub fn complete_unhandled_exception_filter(
+        &self,
+        result: Option<u32>,
+    ) -> Result<u32, &'static str> {
         match result {
             None | Some(EXCEPTION_FILTER_CONTINUE_SEARCH) => Ok(EXCEPTION_FILTER_EXECUTE_HANDLER),
             Some(EXCEPTION_FILTER_CONTINUE_EXECUTION) => Ok(EXCEPTION_FILTER_CONTINUE_EXECUTION),
@@ -4194,15 +4355,16 @@ impl XpProcess {
                     detail: format!("unknown-hmodule handle=0x{module:08x}"),
                 })?
         };
-        let filename = loaded.filename.as_ref().ok_or_else(|| {
-            ProviderDispatchError::Frontier {
+        let filename = loaded
+            .filename
+            .as_ref()
+            .ok_or_else(|| ProviderDispatchError::Frontier {
                 api: "GetModuleFileNameA",
                 detail: format!(
                     "module-filename-unmodeled handle=0x{module:08x} name={:?}",
                     loaded.stored_name,
                 ),
-            }
-        })?;
+            })?;
         let bytes = filename.as_bytes();
         let required = bytes.len().checked_add(1).ok_or("module filename length")?;
         if (capacity as usize) < required {
@@ -4327,19 +4489,11 @@ impl XpProcess {
         })
     }
 
-    fn get_file_type(
-        &self,
-        _esp: u32,
-        _memory: &impl GuestMemory,
-    ) -> Result<u32, &'static str> {
+    fn get_file_type(&self, _esp: u32, _memory: &impl GuestMemory) -> Result<u32, &'static str> {
         Ok(2)
     }
 
-    fn set_handle_count(
-        &self,
-        esp: u32,
-        memory: &impl GuestMemory,
-    ) -> Result<u32, &'static str> {
+    fn set_handle_count(&self, esp: u32, memory: &impl GuestMemory) -> Result<u32, &'static str> {
         read_u32(memory, esp + 4)
     }
 
@@ -4375,8 +4529,12 @@ impl XpProcess {
         let length = if signed_count < 0 {
             let mut length = 0u32;
             loop {
-                let offset = length.checked_mul(2).ok_or("GetStringTypeW length overflow")?;
-                let address = source.checked_add(offset).ok_or("GetStringTypeW source overflow")?;
+                let offset = length
+                    .checked_mul(2)
+                    .ok_or("GetStringTypeW length overflow")?;
+                let address = source
+                    .checked_add(offset)
+                    .ok_or("GetStringTypeW source overflow")?;
                 let value = read_u16(memory, address)?;
                 length = length
                     .checked_add(1)
@@ -4389,9 +4547,15 @@ impl XpProcess {
             count
         };
         for index in 0..length {
-            let offset = index.checked_mul(2).ok_or("GetStringTypeW length overflow")?;
-            let source_address = source.checked_add(offset).ok_or("GetStringTypeW source overflow")?;
-            let output_address = output.checked_add(offset).ok_or("GetStringTypeW output overflow")?;
+            let offset = index
+                .checked_mul(2)
+                .ok_or("GetStringTypeW length overflow")?;
+            let source_address = source
+                .checked_add(offset)
+                .ok_or("GetStringTypeW source overflow")?;
+            let output_address = output
+                .checked_add(offset)
+                .ok_or("GetStringTypeW output overflow")?;
             let class = ascii_ctype1(read_u16(memory, source_address)?);
             memory.write(output_address, &class.to_le_bytes())?;
         }
@@ -5081,11 +5245,7 @@ impl XpProcess {
         Ok(length)
     }
 
-    fn lc_map_string(
-        &self,
-        esp: u32,
-        memory: &mut impl GuestMemory,
-    ) -> Result<u32, &'static str> {
+    fn lc_map_string(&self, esp: u32, memory: &mut impl GuestMemory) -> Result<u32, &'static str> {
         let [_, _locale, flags, source, count, output, capacity] = arguments::<7>(memory, esp)?;
         let mode = lc_map_mode(flags).ok_or("unsupported LCMapStringW flags")?;
         let signed_count = count as i32;
@@ -5119,9 +5279,7 @@ impl XpProcess {
             return Ok(0);
         }
         for index in 0..length {
-            let offset = index
-                .checked_mul(2)
-                .ok_or("LCMapStringW length overflow")?;
+            let offset = index.checked_mul(2).ok_or("LCMapStringW length overflow")?;
             let source_address = source
                 .checked_add(offset)
                 .ok_or("LCMapStringW source overflow")?;
@@ -5844,6 +6002,231 @@ fn resource_first_language_data(
         return Err("resource language is a directory");
     }
     root.checked_add(child).ok_or("resource data overflow")
+}
+
+enum MessageTableLookup {
+    TypeMissing,
+    LanguageMissing,
+    MessageMissing,
+    Fault(&'static str),
+}
+
+fn resource_language_data(
+    memory: &impl GuestMemory,
+    root: u32,
+    directory: u32,
+    language_id: u32,
+) -> Result<u32, &'static str> {
+    let named = u32::from(read_u16(memory, directory + 12)?);
+    let ids = u32::from(read_u16(memory, directory + 14)?);
+    let entries = directory
+        .checked_add(16)
+        .and_then(|value| value.checked_add(named.checked_mul(8)?))
+        .ok_or("resource language entries overflow")?;
+    for index in 0..ids {
+        let entry = entries
+            .checked_add(
+                index
+                    .checked_mul(8)
+                    .ok_or("resource language entry overflow")?,
+            )
+            .ok_or("resource language entry overflow")?;
+        if read_u32(memory, entry)? != language_id {
+            continue;
+        }
+        let child = read_u32(memory, entry + 4)?;
+        if child & 0x8000_0000 != 0 {
+            return Err("resource language is a directory");
+        }
+        return root
+            .checked_add(child)
+            .ok_or("resource language data overflow");
+    }
+    Err("resource language not found")
+}
+
+fn message_table_text(
+    memory: &impl GuestMemory,
+    module_base: u32,
+    language_id: u32,
+    message_id: u32,
+) -> Result<(Vec<u8>, MessageResourceEncoding), MessageTableLookup> {
+    let pe = read_u32(memory, module_base + 0x3c).map_err(MessageTableLookup::Fault)?;
+    let optional = module_base
+        .checked_add(pe)
+        .and_then(|value| value.checked_add(24))
+        .ok_or(MessageTableLookup::Fault("message table optional offset"))?;
+    let root_rva = read_u32(memory, optional + 96 + 16).map_err(MessageTableLookup::Fault)?;
+    let resource_size = read_u32(memory, optional + 96 + 20).map_err(MessageTableLookup::Fault)?;
+    if root_rva == 0 || resource_size < 16 {
+        return Err(MessageTableLookup::TypeMissing);
+    }
+    let root = module_base
+        .checked_add(root_rva)
+        .ok_or(MessageTableLookup::Fault("message table root"))?;
+    let type_directory = match resource_directory_entry(memory, root, root, RT_MESSAGETABLE) {
+        Ok(directory) => directory,
+        Err("resource id not found") => return Err(MessageTableLookup::TypeMissing),
+        Err(error) => return Err(MessageTableLookup::Fault(error)),
+    };
+    let named =
+        u32::from(read_u16(memory, type_directory + 12).map_err(MessageTableLookup::Fault)?);
+    let ids = u32::from(read_u16(memory, type_directory + 14).map_err(MessageTableLookup::Fault)?);
+    let entries = type_directory
+        .checked_add(16)
+        .and_then(|value| value.checked_add(named.checked_mul(8)?))
+        .ok_or(MessageTableLookup::Fault("message table entries overflow"))?;
+    let mut found_language = false;
+    for index in 0..ids {
+        let entry = entries
+            .checked_add(
+                index
+                    .checked_mul(8)
+                    .ok_or(MessageTableLookup::Fault("message table entry overflow"))?,
+            )
+            .ok_or(MessageTableLookup::Fault("message table entry overflow"))?;
+        let resource_directory = read_u32(memory, entry + 4).map_err(MessageTableLookup::Fault)?;
+        if resource_directory & 0x8000_0000 == 0 {
+            return Err(MessageTableLookup::Fault("message table resource is data"));
+        }
+        let resource_directory =
+            root.checked_add(resource_directory & 0x7fff_ffff)
+                .ok_or(MessageTableLookup::Fault(
+                    "message table resource directory",
+                ))?;
+        let data_entry = match resource_language_data(memory, root, resource_directory, language_id)
+        {
+            Ok(data) => data,
+            Err("resource language not found") => continue,
+            Err(error) => return Err(MessageTableLookup::Fault(error)),
+        };
+        found_language = true;
+        let data_rva = read_u32(memory, data_entry).map_err(MessageTableLookup::Fault)?;
+        let data_size = read_u32(memory, data_entry + 4).map_err(MessageTableLookup::Fault)?;
+        let data = module_base
+            .checked_add(data_rva)
+            .ok_or(MessageTableLookup::Fault("message table data"))?;
+        if let Some(value) = message_table_entry(memory, data, data_size, message_id)
+            .map_err(MessageTableLookup::Fault)?
+        {
+            return Ok(value);
+        }
+    }
+    if found_language {
+        Err(MessageTableLookup::MessageMissing)
+    } else {
+        Err(MessageTableLookup::LanguageMissing)
+    }
+}
+
+fn message_table_entry(
+    memory: &impl GuestMemory,
+    data: u32,
+    data_size: u32,
+    message_id: u32,
+) -> Result<Option<(Vec<u8>, MessageResourceEncoding)>, &'static str> {
+    if data_size < 4 {
+        return Err("message table header truncated");
+    }
+    let blocks = read_u32(memory, data)?;
+    let block_bytes = blocks
+        .checked_mul(12)
+        .ok_or("message table blocks overflow")?;
+    if 4u32
+        .checked_add(block_bytes)
+        .ok_or("message table blocks overflow")?
+        > data_size
+    {
+        return Err("message table blocks truncated");
+    }
+    for block in 0..blocks {
+        let address = data + 4 + block * 12;
+        let low = read_u32(memory, address)?;
+        let high = read_u32(memory, address + 4)?;
+        let offset = read_u32(memory, address + 8)?;
+        if low > high || message_id < low || message_id > high || offset >= data_size {
+            continue;
+        }
+        let mut entry = data.checked_add(offset).ok_or("message entry offset")?;
+        for _ in low..message_id {
+            let relative = entry.checked_sub(data).ok_or("message entry range")?;
+            if relative.checked_add(4).ok_or("message entry range")? > data_size {
+                return Err("message entry truncated");
+            }
+            let length = u32::from(read_u16(memory, entry)?);
+            if length < 4 || relative.checked_add(length).ok_or("message entry range")? > data_size
+            {
+                return Err("message entry length");
+            }
+            entry = entry.checked_add(length).ok_or("message entry overflow")?;
+        }
+        let relative = entry.checked_sub(data).ok_or("message entry range")?;
+        if relative.checked_add(4).ok_or("message entry range")? > data_size {
+            return Err("message entry truncated");
+        }
+        let length = u32::from(read_u16(memory, entry)?);
+        let flags = read_u16(memory, entry + 2)?;
+        if length < 4 || relative.checked_add(length).ok_or("message entry range")? > data_size {
+            return Err("message entry length");
+        }
+        let text_len = usize::try_from(length - 4).map_err(|_| "message entry length")?;
+        let mut text = vec![0; text_len];
+        memory.read(entry + 4, &mut text)?;
+        if flags & 1 != 0 {
+            if text.len() % 2 != 0 {
+                return Err("unicode message entry length");
+            }
+            while text.ends_with(&[0, 0]) {
+                text.truncate(text.len() - 2);
+            }
+            let mut ansi = Vec::with_capacity(text.len() / 2);
+            for pair in text.chunks_exact(2) {
+                ansi.push(encode_cp1252(u16::from_le_bytes([pair[0], pair[1]])).unwrap_or(b'?'));
+            }
+            return Ok(Some((ansi, MessageResourceEncoding::Unicode)));
+        }
+        while text.last() == Some(&0) {
+            text.pop();
+        }
+        return Ok(Some((text, MessageResourceEncoding::Ansi)));
+    }
+    Ok(None)
+}
+
+fn format_message_text(text: &[u8], message_id: u32) -> Result<Vec<u8>, ProviderDispatchError> {
+    let mut output = Vec::with_capacity(text.len());
+    let mut index = 0;
+    while index < text.len() {
+        if text[index] != b'%' {
+            output.push(text[index]);
+            index += 1;
+            continue;
+        }
+        index += 1;
+        let Some(&escape) = text.get(index) else {
+            output.push(b'%');
+            break;
+        };
+        index += 1;
+        match escape {
+            b'0' => break,
+            b'%' => output.push(b'%'),
+            b'b' => output.push(b' '),
+            b'.' => output.push(b'.'),
+            b'!' => output.push(b'!'),
+            b'n' => output.extend_from_slice(b"\r\n"),
+            b'r' => output.push(b'\r'),
+            b't' => output.push(b'\t'),
+            b'1'..=b'9' => {
+                return Err(ProviderDispatchError::Frontier {
+                    api: "FormatMessageA",
+                    detail: format!("insert-with-null-arguments message_id=0x{message_id:08x}"),
+                });
+            }
+            other => output.push(other),
+        }
+    }
+    Ok(output)
 }
 
 fn cp1252_lower(value: u16) -> u16 {

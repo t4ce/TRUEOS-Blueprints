@@ -11,17 +11,17 @@
 #[path = "test.rs"]
 mod test;
 
+#[allow(non_snake_case)]
+pub mod ThisToThat;
 pub mod assets;
-pub mod child_loader;
 pub mod checkpoint;
+pub mod child_loader;
 pub mod imports;
 pub mod pe32;
 pub mod process;
-pub mod session;
 pub mod seh;
+pub mod session;
 pub mod thunk32;
-#[allow(non_snake_case)]
-pub mod ThisToThat;
 
 pub const LAUNCHER_PATH: &str = "/common/Warcraft III/Warcraft III.exe";
 pub const EXPECTED_SHA256: [u8; 32] = [

@@ -24,10 +24,8 @@ pub const EXIT_CANCELLED: u32 = 5;
 pub const EXIT_OTHER: u32 = 255;
 
 pub use bp_abi::{
-    TrueosX86DebugRegistersV1 as DebugRegisters,
-    TrueosX86ExtendedStateV1 as ExtendedState,
-    TrueosX86ExitV1 as Exit,
-    TrueosX86RegistersV1 as Registers,
+    TrueosX86DebugRegistersV1 as DebugRegisters, TrueosX86ExitV1 as Exit,
+    TrueosX86ExtendedStateV1 as ExtendedState, TrueosX86RegistersV1 as Registers,
 };
 pub const X86_EXTENDED_STATE_BYTES: usize = bp_abi::TRUEOS_X86_EXTENDED_STATE_BYTES;
 
@@ -119,13 +117,8 @@ pub fn context_debug_registers(handle: u64) -> Result<DebugRegisters, i32> {
 }
 
 #[inline]
-pub fn context_set_debug_registers(
-    handle: u64,
-    registers: &DebugRegisters,
-) -> Result<(), i32> {
-    status(unsafe {
-        bp_abi::trueos_cabi_x86_context_debug_registers_set_v1(handle, registers)
-    })
+pub fn context_set_debug_registers(handle: u64, registers: &DebugRegisters) -> Result<(), i32> {
+    status(unsafe { bp_abi::trueos_cabi_x86_context_debug_registers_set_v1(handle, registers) })
 }
 
 #[inline]

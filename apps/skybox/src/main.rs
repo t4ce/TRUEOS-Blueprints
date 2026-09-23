@@ -207,7 +207,10 @@ fn main() {
 
     if let Err(error) = frame.register_skybox_kernel(SKYBOX_GPU_PACKAGE) {
         status_line("skybox: GPU package registration failed");
-        logl::log(logl::level::ERROR, format_args!("skybox: package error={error:?}"));
+        logl::log(
+            logl::level::ERROR,
+            format_args!("skybox: package error={error:?}"),
+        );
     }
 
     let mut gpu_ready = frame

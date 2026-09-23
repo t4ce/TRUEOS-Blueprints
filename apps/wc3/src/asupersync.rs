@@ -40,12 +40,24 @@ fn hex_bytes(bytes: &[u8]) -> String {
 
 fn msvcrt_control_from_x87(fcw: u16) -> u32 {
     let mut out = 0;
-    if fcw & 0x0001 != 0 { out |= 0x0000_0010; }
-    if fcw & 0x0002 != 0 { out |= 0x0008_0000; }
-    if fcw & 0x0004 != 0 { out |= 0x0000_0008; }
-    if fcw & 0x0008 != 0 { out |= 0x0000_0004; }
-    if fcw & 0x0010 != 0 { out |= 0x0000_0002; }
-    if fcw & 0x0020 != 0 { out |= 0x0000_0001; }
+    if fcw & 0x0001 != 0 {
+        out |= 0x0000_0010;
+    }
+    if fcw & 0x0002 != 0 {
+        out |= 0x0008_0000;
+    }
+    if fcw & 0x0004 != 0 {
+        out |= 0x0000_0008;
+    }
+    if fcw & 0x0008 != 0 {
+        out |= 0x0000_0004;
+    }
+    if fcw & 0x0010 != 0 {
+        out |= 0x0000_0002;
+    }
+    if fcw & 0x0020 != 0 {
+        out |= 0x0000_0001;
+    }
     out |= match fcw & 0x0c00 {
         0x0000 => 0x0000_0000,
         0x0400 => 0x0000_0100,
@@ -59,13 +71,17 @@ fn msvcrt_control_from_x87(fcw: u16) -> u32 {
         0x0300 => 0x0000_0000,
         _ => 0,
     };
-    if fcw & 0x1000 != 0 { out |= 0x0004_0000; }
+    if fcw & 0x1000 != 0 {
+        out |= 0x0004_0000;
+    }
     out
 }
 
 const TABLE_CHECKPOINT_PAGE_BYTES: usize = 4096;
 const TABLE_BOUNDARY: wc3::checkpoint::Boundary = wc3::checkpoint::Boundary {
-    from: TABLE_CHECKPOINT_FROM_EIP, to: TABLE_CHECKPOINT_TO_EIP, table_bytes: TABLE_CHECKPOINT_TABLE_BYTES,
+    from: TABLE_CHECKPOINT_FROM_EIP,
+    to: TABLE_CHECKPOINT_TO_EIP,
+    table_bytes: TABLE_CHECKPOINT_TABLE_BYTES,
 };
 use wc3::checkpoint::{TableCheckpoint, TableCheckpointPage};
 fn checkpoint_encode(checkpoint: &TableCheckpoint) -> Result<Vec<u8>, String> {
@@ -87,7 +103,10 @@ fn checkpoint_read(child: &PendingChild, va: u32, bytes: &mut [u8]) -> Result<()
     if read == bytes.len() {
         Ok(())
     } else {
-        Err(format!("table checkpoint short read 0x{va:08x}: {read}/{}", bytes.len()))
+        Err(format!(
+            "table checkpoint short read 0x{va:08x}: {read}/{}",
+            bytes.len()
+        ))
     }
 }
 
@@ -99,7 +118,10 @@ fn checkpoint_write(child: &mut PendingChild, va: u32, bytes: &[u8]) -> Result<(
     if written == bytes.len() {
         Ok(())
     } else {
-        Err(format!("table checkpoint short write 0x{va:08x}: {written}/{}", bytes.len()))
+        Err(format!(
+            "table checkpoint short write 0x{va:08x}: {written}/{}",
+            bytes.len()
+        ))
     }
 }
 
@@ -125,7 +147,9 @@ fn checkpoint_capture_pages(
                 before_sha256: checkpoint_sha256(&before),
                 before,
             });
-            va = va.checked_add(TABLE_CHECKPOINT_PAGE_BYTES as u32).ok_or("table checkpoint VA overflow")?;
+            va = va
+                .checked_add(TABLE_CHECKPOINT_PAGE_BYTES as u32)
+                .ok_or("table checkpoint VA overflow")?;
         }
     }
     Ok(pages.into_values().collect())
@@ -182,7 +206,8 @@ fn begin_table_checkpoint_capture(
     let (call_count, provider_import_count, session_object_count, process_handle_count) =
         table_checkpoint_host_state(session, child.pid)?;
     let table_base = table_checkpoint_table_base(child)?;
-    let image_bytes = u32::try_from(child.image.image.len()).map_err(|_| "table checkpoint image size")?;
+    let image_bytes =
+        u32::try_from(child.image.image.len()).map_err(|_| "table checkpoint image size")?;
     let teb = thread_teb_va(child.tid)?;
     let pages = checkpoint_capture_pages(
         child,
@@ -198,7 +223,9 @@ fn begin_table_checkpoint_capture(
         table_base,
         before_registers: restored,
         before_debug_registers: restored_debug,
-        before_extended_state: context.extended_state().map_err(|error| error.to_string())?,
+        before_extended_state: context
+            .extended_state()
+            .map_err(|error| error.to_string())?,
         pages,
         call_count,
         provider_import_count,
@@ -270,7 +297,9 @@ async fn finish_table_checkpoint_capture(
         before_extended_state: capture.before_extended_state,
         after_registers: restored,
         after_debug_registers: restored_debug,
-        after_extended_state: context.extended_state().map_err(|error| error.to_string())?,
+        after_extended_state: context
+            .extended_state()
+            .map_err(|error| error.to_string())?,
         pages,
         after_single_step_count: child.single_step_count,
         after_dword_scan_watch: child.dword_scan_watch,
@@ -288,7 +317,11 @@ async fn finish_table_checkpoint_capture(
     if readback != encoded || checkpoint_decode(&readback).is_err() {
         return Err("table checkpoint read-back verification".into());
     }
-    let changed = checkpoint.pages.iter().filter(|page| page.after.is_some()).count();
+    let changed = checkpoint
+        .pages
+        .iter()
+        .filter(|page| page.after.is_some())
+        .count();
     logl::log(
         level::IMPORTANT,
         format_args!(
@@ -311,27 +344,54 @@ async fn try_restore_table_checkpoint(
     let bytes = match async_fs::read_file(TABLE_CHECKPOINT_PATH).await {
         Ok(bytes) => bytes,
         Err(error) => {
-            logl::log(level::IMPORTANT, format_args!("WC3 CHILD TABLE CHECKPOINT BYPASS reason=cache-unavailable error={error}"));
+            logl::log(
+                level::IMPORTANT,
+                format_args!(
+                    "WC3 CHILD TABLE CHECKPOINT BYPASS reason=cache-unavailable error={error}"
+                ),
+            );
             return Ok(false);
         }
     };
     let checkpoint = match checkpoint_decode(&bytes) {
         Ok(checkpoint) => checkpoint,
         Err(reason) => {
-            logl::log(level::IMPORTANT, format_args!("WC3 CHILD TABLE CHECKPOINT BYPASS reason={reason}"));
+            logl::log(
+                level::IMPORTANT,
+                format_args!("WC3 CHILD TABLE CHECKPOINT BYPASS reason={reason}"),
+            );
             return Ok(false);
         }
     };
     let bypass = |reason: &str| {
-        logl::log(level::IMPORTANT, format_args!("WC3 CHILD TABLE CHECKPOINT BYPASS reason={reason}"));
+        logl::log(
+            level::IMPORTANT,
+            format_args!("WC3 CHILD TABLE CHECKPOINT BYPASS reason={reason}"),
+        );
         false
     };
-    if table_checkpoint_quiescent(child).is_err() { return Ok(bypass("not-quiescent")); }
-    if checkpoint.image_sha256 != checkpoint_sha256(child.self_image_bytes.as_slice()) { return Ok(bypass("image-sha256")); }
-    if *restored != checkpoint.before_registers { return Ok(bypass("registers")); }
-    if *restored_debug != checkpoint.before_debug_registers { return Ok(bypass("debug-registers")); }
-    if context.extended_state().map_err(|error| error.to_string())? != checkpoint.before_extended_state { return Ok(bypass("extended-state")); }
-    if table_checkpoint_table_base(child)? != checkpoint.table_base { return Ok(bypass("table-base")); }
+    if table_checkpoint_quiescent(child).is_err() {
+        return Ok(bypass("not-quiescent"));
+    }
+    if checkpoint.image_sha256 != checkpoint_sha256(child.self_image_bytes.as_slice()) {
+        return Ok(bypass("image-sha256"));
+    }
+    if *restored != checkpoint.before_registers {
+        return Ok(bypass("registers"));
+    }
+    if *restored_debug != checkpoint.before_debug_registers {
+        return Ok(bypass("debug-registers"));
+    }
+    if context
+        .extended_state()
+        .map_err(|error| error.to_string())?
+        != checkpoint.before_extended_state
+    {
+        return Ok(bypass("extended-state"));
+    }
+    if table_checkpoint_table_base(child)? != checkpoint.table_base {
+        return Ok(bypass("table-base"));
+    }
     for page in &checkpoint.pages {
         let mut current = vec![0; TABLE_CHECKPOINT_PAGE_BYTES];
         checkpoint_read(child, page.va, &mut current)?;
@@ -412,11 +472,12 @@ fn current_child_seh_handler(child: &PendingChild, fs_base: u32) -> Option<u32> 
         .flatten()
 }
 
-fn child_image_import_at_rva(
-    child: &PendingChild,
-    rva: u32,
-) -> Option<&pe32::ImportDescriptor> {
-    child.image.imports.iter().find(|import| import.iat_rva == rva)
+fn child_image_import_at_rva(child: &PendingChild, rva: u32) -> Option<&pe32::ImportDescriptor> {
+    child
+        .image
+        .imports
+        .iter()
+        .find(|import| import.iat_rva == rva)
 }
 
 fn import_symbol_diagnostic(symbol: &pe32::ImportSymbol) -> String {
@@ -495,9 +556,7 @@ fn log_child_slot_xrefs(child: &PendingChild, slot: u32) {
     if matches == 0 {
         logl::log(
             level::IMPORTANT,
-            format_args!(
-                "WC3 CHILD SLOT XREF slot=0x{slot:08x} matches=0",
-            ),
+            format_args!("WC3 CHILD SLOT XREF slot=0x{slot:08x} matches=0",),
         );
     }
 }
@@ -525,9 +584,7 @@ fn service_sync_request(
                 level::IMPORTANT,
                 format_args!(
                     "WC3 CHILD EVENT CREATE pid={} handle=0x{:08x} already_exists={}",
-                    caller_pid,
-                    handle,
-                    already_exists as u8,
+                    caller_pid, handle, already_exists as u8,
                 ),
             );
             Ok(handle)
@@ -537,40 +594,53 @@ fn service_sync_request(
                 Ok((handle, existed)) => (handle, if existed { 183 } else { 0 }, existed),
                 Err(error) => (0, error, false),
             };
-            session.process_mut(key.pid)
+            session
+                .process_mut(key.pid)
                 .ok_or_else(|| "mutex process missing".to_owned())?
-                .xp.set_last_error(error);
-            logl::log(level::IMPORTANT, format_args!(
-                "WC3 CHILD MUTEX CREATE pid={} tid={} handle=0x{:08x} already_exists={} error={}",
-                key.pid, key.tid, handle, existed as u8, error
-            ));
+                .xp
+                .set_last_error(error);
+            logl::log(
+                level::IMPORTANT,
+                format_args!(
+                    "WC3 CHILD MUTEX CREATE pid={} tid={} handle=0x{:08x} already_exists={} error={}",
+                    key.pid, key.tid, handle, existed as u8, error
+                ),
+            );
             Ok(handle)
         }
-        SessionRequest::ReleaseMutex { key, handle } => {
-            match session.release_mutex(key, handle) {
-                Ok(woken) => {
-                    resume_completed_waiters(&woken, "release-mutex", contexts, wait_deadlines)?;
-                    logl::log(level::IMPORTANT, format_args!(
+        SessionRequest::ReleaseMutex { key, handle } => match session.release_mutex(key, handle) {
+            Ok(woken) => {
+                resume_completed_waiters(&woken, "release-mutex", contexts, wait_deadlines)?;
+                logl::log(
+                    level::IMPORTANT,
+                    format_args!(
                         "WC3 CHILD MUTEX RELEASE pid={} tid={} handle=0x{:08x} waiters_woken={} result=1",
-                        key.pid, key.tid, handle, woken.len()
-                    ));
-                    Ok(1)
-                }
-                Err(error) => {
-                    session.process_mut(key.pid)
-                        .ok_or_else(|| "mutex process missing".to_owned())?
-                        .xp.set_last_error(error);
-                    Ok(0)
-                }
+                        key.pid,
+                        key.tid,
+                        handle,
+                        woken.len()
+                    ),
+                );
+                Ok(1)
             }
-        }
+            Err(error) => {
+                session
+                    .process_mut(key.pid)
+                    .ok_or_else(|| "mutex process missing".to_owned())?
+                    .xp
+                    .set_last_error(error);
+                Ok(0)
+            }
+        },
         SessionRequest::CloseHandle { pid, handle } => {
             if session.close_handle(pid, handle) {
                 Ok(1)
             } else {
-                session.process_mut(pid)
+                session
+                    .process_mut(pid)
                     .ok_or_else(|| "CloseHandle process missing".to_owned())?
-                    .xp.set_last_error(6);
+                    .xp
+                    .set_last_error(6);
                 Ok(0)
             }
         }
@@ -642,7 +712,9 @@ fn terminate_launcher_thread(
         .xp
         .exit_thread(key.tid, exit_code)
         .map_err(str::to_owned)?;
-    let woken = session.signal_thread(key, exit_code).map_err(str::to_owned)?;
+    let woken = session
+        .signal_thread(key, exit_code)
+        .map_err(str::to_owned)?;
     wait_deadlines.remove(&key);
     thread_calls.remove(&(key.pid, key.tid));
     resume_completed_waiters(&woken, "thread-exit", contexts, wait_deadlines)?;
@@ -725,7 +797,8 @@ pub(super) fn classify_null_call_source(
     registers: Registers,
     read_word: impl Fn(u32) -> Option<u32>,
 ) -> NullCallSource {
-    let (modrm, displacement) = if let Some(instruction) = bytes.get(bytes.len().saturating_sub(2)..)
+    let (modrm, displacement) = if let Some(instruction) =
+        bytes.get(bytes.len().saturating_sub(2)..)
         && instruction.len() == 2
         && instruction[0] == 0xff
         && instruction[1] >> 6 == 3
@@ -744,7 +817,10 @@ pub(super) fn classify_null_call_source(
                 target: read_word(slot),
             };
         }
-        (modrm, i32::from_le_bytes(instruction[2..6].try_into().unwrap()))
+        (
+            modrm,
+            i32::from_le_bytes(instruction[2..6].try_into().unwrap()),
+        )
     } else if let Some(instruction) = bytes.get(bytes.len().saturating_sub(3)..)
         && instruction.len() == 3
         && instruction[0] == 0xff
@@ -845,15 +921,20 @@ fn log_war3_scan_progress(
     let previous = child.scan_progress;
     child.scan_progress = Some(progress);
     let reset = previous.is_some_and(|previous| {
-        previous.source.zip(progress.source).is_some_and(|(old, new)| new < old)
-            || previous.index.zip(progress.index).is_some_and(|(old, new)| new < old)
+        previous
+            .source
+            .zip(progress.source)
+            .is_some_and(|(old, new)| new < old)
+            || previous
+                .index
+                .zip(progress.index)
+                .is_some_and(|(old, new)| new < old)
     });
-    let debug_transition = previous.is_some_and(|previous| {
-        previous.tf != progress.tf || previous.dr7 != progress.dr7
-    });
-    let heartbeat = progress.source.is_some_and(|source| {
-        source & 0xff == 0 && child.scan_heartbeat_source != Some(source)
-    });
+    let debug_transition =
+        previous.is_some_and(|previous| previous.tf != progress.tf || previous.dr7 != progress.dr7);
+    let heartbeat = progress
+        .source
+        .is_some_and(|source| source & 0xff == 0 && child.scan_heartbeat_source != Some(source));
     if !heartbeat && !reset && !debug_transition {
         return;
     }
@@ -873,15 +954,36 @@ fn log_war3_scan_progress(
             "WC3 CHILD SCAN HEARTBEAT reason={} eip=0x{:08x} index={} source={} bound={} stage={} dr7=0x{:08x} tf={} checksum={} gate={} reset={} dr6=0x{:08x}",
             reason,
             eip,
-            progress.index.map(|value| format!("0x{value:08x}")).unwrap_or_else(|| "-".into()),
-            progress.source.map(|value| format!("0x{value:08x}")).unwrap_or_else(|| "-".into()),
-            progress.bound.map(|value| format!("0x{value:08x}")).unwrap_or_else(|| "-".into()),
-            progress.stage.map(|value| format!("0x{value:02x}")).unwrap_or_else(|| "-".into()),
+            progress
+                .index
+                .map(|value| format!("0x{value:08x}"))
+                .unwrap_or_else(|| "-".into()),
+            progress
+                .source
+                .map(|value| format!("0x{value:08x}"))
+                .unwrap_or_else(|| "-".into()),
+            progress
+                .bound
+                .map(|value| format!("0x{value:08x}"))
+                .unwrap_or_else(|| "-".into()),
+            progress
+                .stage
+                .map(|value| format!("0x{value:02x}"))
+                .unwrap_or_else(|| "-".into()),
             debug.dr7,
             u32::from(progress.tf),
-            progress.checksum.map(|value| format!("0x{value:02x}")).unwrap_or_else(|| "-".into()),
-            progress.gate.map(|value| format!("0x{value:08x}")).unwrap_or_else(|| "-".into()),
-            progress.reset.map(|value| format!("0x{value:08x}")).unwrap_or_else(|| "-".into()),
+            progress
+                .checksum
+                .map(|value| format!("0x{value:02x}"))
+                .unwrap_or_else(|| "-".into()),
+            progress
+                .gate
+                .map(|value| format!("0x{value:08x}"))
+                .unwrap_or_else(|| "-".into()),
+            progress
+                .reset
+                .map(|value| format!("0x{value:08x}"))
+                .unwrap_or_else(|| "-".into()),
             debug.dr6,
         ),
     );
@@ -897,9 +999,7 @@ fn observe_war3_dword_scan(child: &mut PendingChild, eip: u32) {
     let watch = child.dword_scan_watch.get_or_insert(DwordScanWatch {
         last_heartbeat_index: None,
     });
-    if index % WAR3_TABLE_FILL_HEARTBEAT_STRIDE != 0
-        || watch.last_heartbeat_index == Some(index)
-    {
+    if index % WAR3_TABLE_FILL_HEARTBEAT_STRIDE != 0 || watch.last_heartbeat_index == Some(index) {
         return;
     }
     watch.last_heartbeat_index = Some(index);
@@ -911,7 +1011,8 @@ fn observe_war3_dword_scan(child: &mut PendingChild, eip: u32) {
             eip,
             index,
             WAR3_TABLE_FILL_BOUND,
-            base.map(|value| format!("0x{value:08x}")).unwrap_or_else(|| "-".into()),
+            base.map(|value| format!("0x{value:08x}"))
+                .unwrap_or_else(|| "-".into()),
         ),
     );
 }
@@ -962,7 +1063,9 @@ fn log_null_call_diagnostic(
     let Some(bytes) = code_before_return(&child.address_space, return_address) else {
         logl::log(
             level::IMPORTANT,
-            format_args!("WC3 CHILD NULL CALL BYTES end=0x{return_address:08x} bytes=\"<unreadable>\""),
+            format_args!(
+                "WC3 CHILD NULL CALL BYTES end=0x{return_address:08x} bytes=\"<unreadable>\""
+            ),
         );
         return None;
     };
@@ -993,7 +1096,9 @@ fn log_null_call_diagnostic(
                 level::IMPORTANT,
                 format_args!(
                     "WC3 CHILD NULL CALL pid={pid} tid={tid} return=0x{return_address:08x} return_owner=\"{return_owner}\" return_rva=0x{return_rva:08x} kind=call-absolute-memory slot=0x{slot:08x} slot_owner=\"{slot_owner}\" slot_rva=0x{slot_rva:08x} target={}",
-                    target.map(|value| format!("0x{value:08x}")).unwrap_or_else(|| "<unreadable>".into()),
+                    target
+                        .map(|value| format!("0x{value:08x}"))
+                        .unwrap_or_else(|| "<unreadable>".into()),
                 ),
             );
             if target == Some(0) {
@@ -1008,13 +1113,20 @@ fn log_null_call_diagnostic(
                 None
             }
         }
-        NullCallSource::RegisterMemory { name, displacement, slot, target } => {
+        NullCallSource::RegisterMemory {
+            name,
+            displacement,
+            slot,
+            target,
+        } => {
             logl::log(
                 level::IMPORTANT,
                 format_args!(
                     "WC3 CHILD NULL CALL pid={pid} tid={tid} return=0x{return_address:08x} return_owner=\"{return_owner}\" return_rva=0x{return_rva:08x} kind=call-register-memory base={name} displacement=0x{:08x} slot=0x{slot:08x} target={}",
                     displacement as u32,
-                    target.map(|value| format!("0x{value:08x}")).unwrap_or_else(|| "<unreadable>".into()),
+                    target
+                        .map(|value| format!("0x{value:08x}"))
+                        .unwrap_or_else(|| "<unreadable>".into()),
                 ),
             );
             None
@@ -1032,7 +1144,11 @@ fn log_null_call_diagnostic(
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct SehRegistration { frame: u32, next: u32, handler: u32 }
+struct SehRegistration {
+    frame: u32,
+    next: u32,
+    handler: u32,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum UnwindTargetRelation {
@@ -1070,20 +1186,43 @@ pub(super) fn rtl_unwind_current_target_registers(
     Ok(resumed)
 }
 
-fn read_seh_registration(address_space: &AddressSpace, frame: u32) -> Result<SehRegistration, String> {
-    if frame == 0 || frame & 3 != 0 { return Err("invalid SEH registration frame".into()); }
+fn read_seh_registration(
+    address_space: &AddressSpace,
+    frame: u32,
+) -> Result<SehRegistration, String> {
+    if frame == 0 || frame & 3 != 0 {
+        return Err("invalid SEH registration frame".into());
+    }
     let mut bytes = [0; 8];
-    if address_space.read(frame, &mut bytes).map_err(|error| error.to_string())? != bytes.len() { return Err("short SEH registration read".into()); }
+    if address_space
+        .read(frame, &mut bytes)
+        .map_err(|error| error.to_string())?
+        != bytes.len()
+    {
+        return Err("short SEH registration read".into());
+    }
     let next = u32::from_le_bytes(bytes[..4].try_into().unwrap());
     let handler = u32::from_le_bytes(bytes[4..].try_into().unwrap());
-    if handler == 0 { return Err("SEH registration has zero handler".into()); }
-    if next == frame { return Err("SEH registration self-loop".into()); }
-    Ok(SehRegistration { frame, next, handler })
+    if handler == 0 {
+        return Err("SEH registration has zero handler".into());
+    }
+    if next == frame {
+        return Err("SEH registration self-loop".into());
+    }
+    Ok(SehRegistration {
+        frame,
+        next,
+        handler,
+    })
 }
 
 fn read_seh_chain_head(address_space: &AddressSpace, fs_base: u32) -> Result<u32, String> {
     let mut bytes = [0; 4];
-    if address_space.read(fs_base, &mut bytes).map_err(|error| error.to_string())? != bytes.len() {
+    if address_space
+        .read(fs_base, &mut bytes)
+        .map_err(|error| error.to_string())?
+        != bytes.len()
+    {
         return Err("short SEH chain head read".into());
     }
     Ok(u32::from_le_bytes(bytes))
@@ -1100,7 +1239,11 @@ fn classify_unwind_target(
     if target_frame == current_head {
         return Ok(UnwindTargetRelation::CurrentHead);
     }
-    if child.seh.as_ref().is_some_and(|seh| seh.registration == target_frame) {
+    if child
+        .seh
+        .as_ref()
+        .is_some_and(|seh| seh.registration == target_frame)
+    {
         return Ok(UnwindTargetRelation::ActiveSehRegistration);
     }
 
@@ -1125,22 +1268,44 @@ fn classify_unwind_target(
     }
 }
 
-fn begin_child_seh_dispatch(child: &mut PendingChild, guest: &mut GuestContext, exception: ChildException, registers: Registers) -> Result<(), String> {
-    if child.seh.is_some() { return Err("nested-SEH frontier".into()); }
+fn begin_child_seh_dispatch(
+    child: &mut PendingChild,
+    guest: &mut GuestContext,
+    exception: ChildException,
+    registers: Registers,
+) -> Result<(), String> {
+    if child.seh.is_some() {
+        return Err("nested-SEH frontier".into());
+    }
     let mut head = [0; 4];
-    if child.address_space.read(registers.fs_base, &mut head).map_err(|error| error.to_string())? != 4 { return Err("short SEH chain head read".into()); }
+    if child
+        .address_space
+        .read(registers.fs_base, &mut head)
+        .map_err(|error| error.to_string())?
+        != 4
+    {
+        return Err("short SEH chain head read".into());
+    }
     let head = u32::from_le_bytes(head);
-    if head == u32::MAX { return Err("unhandled-SEH-chain frontier".into()); }
+    if head == u32::MAX {
+        return Err("unhandled-SEH-chain frontier".into());
+    }
     let registration = read_seh_registration(&child.address_space, head)?;
     let scan_single_step = war3_scan_single_step(exception, registers);
     let dword_scan_single_step = war3_dword_scan_single_step(exception, registers);
     let boring_single_step = boring_war3_single_step(exception, registers, registration.handler);
     let quiet = !cfg!(feature = "trace-seh")
-        || quiet_war3_exception(exception, registers) || boring_single_step;
-    if !quiet && registration.handler == WAR3_DIVIDE_EXCEPTION_HANDLER && !child.seh_handler_dumped {
+        || quiet_war3_exception(exception, registers)
+        || boring_single_step;
+    if !quiet && registration.handler == WAR3_DIVIDE_EXCEPTION_HANDLER && !child.seh_handler_dumped
+    {
         child.seh_handler_dumped = true;
         let mut bytes = [0; 128];
-        let readable = child.address_space.read(registration.handler, &mut bytes).ok() == Some(bytes.len());
+        let readable = child
+            .address_space
+            .read(registration.handler, &mut bytes)
+            .ok()
+            == Some(bytes.len());
         logl::log(
             level::IMPORTANT,
             format_args!(
@@ -1186,7 +1351,13 @@ fn begin_child_seh_dispatch(child: &mut PendingChild, guest: &mut GuestContext, 
             (
                 wc3::seh::encode_page_fault_exception_record(registers.eip, linear, error),
                 wc3::seh::STATUS_ACCESS_VIOLATION,
-                if error & 0x10 != 0 { "execute" } else if error & 2 != 0 { "write" } else { "read" },
+                if error & 0x10 != 0 {
+                    "execute"
+                } else if error & 2 != 0 {
+                    "write"
+                } else {
+                    "read"
+                },
             )
         }
         Some(1) => (
@@ -1206,32 +1377,107 @@ fn begin_child_seh_dispatch(child: &mut PendingChild, guest: &mut GuestContext, 
         ),
         _ => return Err("unsupported-exception-mapping frontier".into()),
     };
-    let context_va = registers.esp.checked_sub(wc3::seh::X86_CONTEXT_BYTES as u32).ok_or("SEH context stack underflow")? & !15;
-    let exception_pointers_va = context_va.checked_sub(8).ok_or("SEH exception-pointers stack underflow")?;
-    let record_va = exception_pointers_va.checked_sub(wc3::seh::EXCEPTION_RECORD_BYTES as u32).ok_or("SEH record stack underflow")?;
-    let frame_esp = record_va.checked_sub(20).ok_or("SEH call stack underflow")?;
-    for (address, bytes) in [(context_va, context.as_slice()), (record_va, record.as_slice())] {
-        if child.address_space.write(address, bytes).map_err(|error| error.to_string())? != bytes.len() { return Err("short SEH scratch write".into()); }
+    let context_va = registers
+        .esp
+        .checked_sub(wc3::seh::X86_CONTEXT_BYTES as u32)
+        .ok_or("SEH context stack underflow")?
+        & !15;
+    let exception_pointers_va = context_va
+        .checked_sub(8)
+        .ok_or("SEH exception-pointers stack underflow")?;
+    let record_va = exception_pointers_va
+        .checked_sub(wc3::seh::EXCEPTION_RECORD_BYTES as u32)
+        .ok_or("SEH record stack underflow")?;
+    let frame_esp = record_va
+        .checked_sub(20)
+        .ok_or("SEH call stack underflow")?;
+    for (address, bytes) in [
+        (context_va, context.as_slice()),
+        (record_va, record.as_slice()),
+    ] {
+        if child
+            .address_space
+            .write(address, bytes)
+            .map_err(|error| error.to_string())?
+            != bytes.len()
+        {
+            return Err("short SEH scratch write".into());
+        }
     }
-    let frame = [thunk32::CHILD_SEH_RETURN_ADDRESS, record_va, registration.frame, context_va, 0];
-    let mut bytes = [0; 20]; for (index, value) in frame.into_iter().enumerate() { bytes[index * 4..index * 4 + 4].copy_from_slice(&value.to_le_bytes()); }
-    if child.address_space.write(frame_esp, &bytes).map_err(|error| error.to_string())? != bytes.len() { return Err("short SEH handler frame write".into()); }
-    child.seh = Some(ChildSehDispatch { original_registers: registers, registration: registration.frame, next_registration: registration.next, handler: registration.handler, exception_record_va: record_va, context_va, exception_pointers_va, preserved_fs_base: registers.fs_base, depth: 1, quiet, boring_single_step, scan_single_step, dword_scan_single_step });
-    let handler_registers = wc3::seh::exception_handler_registers(
-        registers,
-        registration.handler,
-        frame_esp,
-    );
-    if !quiet { logl::log(level::IMPORTANT, format_args!(
-        "WC3 CHILD SEH ENTER FLAGS interrupted=0x{:08x} saved_context=0x{:08x} handler_live=0x{:08x} tf_cleared={}",
-        registers.eflags,
-        registers.eflags,
-        handler_registers.eflags,
-        u32::from(registers.eflags & wc3::seh::X86_EFLAGS_TF != 0 && handler_registers.eflags & wc3::seh::X86_EFLAGS_TF == 0),
-    )); }
-    guest.context.set_registers(handler_registers).map_err(|error| error.to_string())?;
+    let frame = [
+        thunk32::CHILD_SEH_RETURN_ADDRESS,
+        record_va,
+        registration.frame,
+        context_va,
+        0,
+    ];
+    let mut bytes = [0; 20];
+    for (index, value) in frame.into_iter().enumerate() {
+        bytes[index * 4..index * 4 + 4].copy_from_slice(&value.to_le_bytes());
+    }
+    if child
+        .address_space
+        .write(frame_esp, &bytes)
+        .map_err(|error| error.to_string())?
+        != bytes.len()
+    {
+        return Err("short SEH handler frame write".into());
+    }
+    child.seh = Some(ChildSehDispatch {
+        original_registers: registers,
+        registration: registration.frame,
+        next_registration: registration.next,
+        handler: registration.handler,
+        exception_record_va: record_va,
+        context_va,
+        exception_pointers_va,
+        preserved_fs_base: registers.fs_base,
+        depth: 1,
+        quiet,
+        boring_single_step,
+        scan_single_step,
+        dword_scan_single_step,
+    });
+    let handler_registers =
+        wc3::seh::exception_handler_registers(registers, registration.handler, frame_esp);
+    if !quiet {
+        logl::log(
+            level::IMPORTANT,
+            format_args!(
+                "WC3 CHILD SEH ENTER FLAGS interrupted=0x{:08x} saved_context=0x{:08x} handler_live=0x{:08x} tf_cleared={}",
+                registers.eflags,
+                registers.eflags,
+                handler_registers.eflags,
+                u32::from(
+                    registers.eflags & wc3::seh::X86_EFLAGS_TF != 0
+                        && handler_registers.eflags & wc3::seh::X86_EFLAGS_TF == 0
+                ),
+            ),
+        );
+    }
+    guest
+        .context
+        .set_registers(handler_registers)
+        .map_err(|error| error.to_string())?;
     let (owner, rva) = child_pc_owner(child, registration.handler).unwrap_or(("unknown", 0));
-    if !quiet { logl::log(level::IMPORTANT, format_args!("WC3 CHILD SEH DISPATCH pid={} tid={} registration=0x{:08x} next=0x{:08x} handler=0x{:08x} handler_owner={:?} handler_rva=0x{:08x} exception=0x{:08x} address=0x{:08x} kind={}", child.pid, child.tid, registration.frame, registration.next, registration.handler, owner, rva, exception_code, registers.eip, exception_kind)); }
+    if !quiet {
+        logl::log(
+            level::IMPORTANT,
+            format_args!(
+                "WC3 CHILD SEH DISPATCH pid={} tid={} registration=0x{:08x} next=0x{:08x} handler=0x{:08x} handler_owner={:?} handler_rva=0x{:08x} exception=0x{:08x} address=0x{:08x} kind={}",
+                child.pid,
+                child.tid,
+                registration.frame,
+                registration.next,
+                registration.handler,
+                owner,
+                rva,
+                exception_code,
+                registers.eip,
+                exception_kind
+            ),
+        );
+    }
     Ok(())
 }
 
@@ -1247,9 +1493,15 @@ fn child_seh3_scope_entry(
         .ok()
         .and_then(|level| level.checked_mul(12))
         .ok_or("SEH3 scope entry overflow")?;
-    let address = scope.checked_add(offset).ok_or("SEH3 scope address overflow")?;
+    let address = scope
+        .checked_add(offset)
+        .ok_or("SEH3 scope address overflow")?;
     let words = read_guest_words(&X86Memory(&child.address_space), address, 3)?;
-    Ok((i32::from_le_bytes(words[0].to_le_bytes()), words[1], words[2]))
+    Ok((
+        i32::from_le_bytes(words[0].to_le_bytes()),
+        words[1],
+        words[2],
+    ))
 }
 
 fn schedule_child_seh3_filter(
@@ -1276,7 +1528,12 @@ fn schedule_child_seh3_filter(
     for (index, value) in pointers.into_iter().enumerate() {
         pointer_bytes[index * 4..index * 4 + 4].copy_from_slice(&value.to_le_bytes());
     }
-    if child.address_space.write(pointers_va, &pointer_bytes).map_err(|error| error.to_string())? != 8 {
+    if child
+        .address_space
+        .write(pointers_va, &pointer_bytes)
+        .map_err(|error| error.to_string())?
+        != 8
+    {
         return Err("short SEH3 exception-pointers write".into());
     }
     // MSVC _except_handler3 publishes EXCEPTION_POINTERS at frame[-1].
@@ -1303,15 +1560,29 @@ fn schedule_child_seh3_filter(
     for (index, value) in frame.into_iter().enumerate() {
         frame_bytes[index * 4..index * 4 + 4].copy_from_slice(&value.to_le_bytes());
     }
-    if child.address_space.write(callback_esp, &frame_bytes).map_err(|error| error.to_string())? != 8 {
+    if child
+        .address_space
+        .write(callback_esp, &frame_bytes)
+        .map_err(|error| error.to_string())?
+        != 8
+    {
         return Err("short SEH3 filter callback frame write".into());
     }
     child.seh3_call = Some(call);
     let mut callback = registers;
     callback.eip = filter;
     callback.esp = callback_esp;
-    callback.ebp = child.seh.as_ref().unwrap().registration.checked_add(0x10).ok_or("SEH3 EBP overflow")?;
-    context.context.set_registers(callback).map_err(|error| error.to_string())?;
+    callback.ebp = child
+        .seh
+        .as_ref()
+        .unwrap()
+        .registration
+        .checked_add(0x10)
+        .ok_or("SEH3 EBP overflow")?;
+    context
+        .context
+        .set_registers(callback)
+        .map_err(|error| error.to_string())?;
     Ok(())
 }
 
@@ -1326,15 +1597,32 @@ fn schedule_child_seh3_finally(
         .provider_esp
         .checked_sub(4)
         .ok_or("SEH3 finally callback stack underflow")?;
-    if child.address_space.write(callback_esp, &thunk32::CHILD_CALLBACK_RETURN_ADDRESS.to_le_bytes()).map_err(|error| error.to_string())? != 4 {
+    if child
+        .address_space
+        .write(
+            callback_esp,
+            &thunk32::CHILD_CALLBACK_RETURN_ADDRESS.to_le_bytes(),
+        )
+        .map_err(|error| error.to_string())?
+        != 4
+    {
         return Err("short SEH3 finally callback frame write".into());
     }
     child.seh3_call = Some(call);
     let mut callback = registers;
     callback.eip = handler;
     callback.esp = callback_esp;
-    callback.ebp = child.seh.as_ref().unwrap().registration.checked_add(0x10).ok_or("SEH3 EBP overflow")?;
-    context.context.set_registers(callback).map_err(|error| error.to_string())?;
+    callback.ebp = child
+        .seh
+        .as_ref()
+        .unwrap()
+        .registration
+        .checked_add(0x10)
+        .ok_or("SEH3 EBP overflow")?;
+    context
+        .context
+        .set_registers(callback)
+        .map_err(|error| error.to_string())?;
     Ok(())
 }
 
@@ -1486,12 +1774,12 @@ fn runtime_native_export_address(
             .find(|export| export.ordinal == u32::from(*ordinal)),
     }
     .ok_or_else(|| match symbol {
-        pe32::ImportSymbol::Name(name) => format!(
-            "WC3 CHILD RUNTIME NATIVE EXPORT MISSING module={stored:?} symbol={name:?}"
-        ),
-        pe32::ImportSymbol::Ordinal(ordinal) => format!(
-            "WC3 CHILD RUNTIME NATIVE EXPORT MISSING module={stored:?} ordinal={ordinal}"
-        ),
+        pe32::ImportSymbol::Name(name) => {
+            format!("WC3 CHILD RUNTIME NATIVE EXPORT MISSING module={stored:?} symbol={name:?}")
+        }
+        pe32::ImportSymbol::Ordinal(ordinal) => {
+            format!("WC3 CHILD RUNTIME NATIVE EXPORT MISSING module={stored:?} ordinal={ordinal}")
+        }
     })?;
     let pe32::ExportTarget::Rva(rva) = &export.target else {
         let pe32::ExportTarget::Forwarder(forwarder) = &export.target else {
@@ -1555,8 +1843,9 @@ fn bind_runtime_local_image_imports(
         }
 
         let stored = match listing {
-            Some(listing) => child_loader::resolve_file(listing, &import.module)
-                .map_err(str::to_owned)?,
+            Some(listing) => {
+                child_loader::resolve_file(listing, &import.module).map_err(str::to_owned)?
+            }
             None => None,
         };
         if let Some(stored) = stored {
@@ -1593,9 +1882,12 @@ fn bind_runtime_local_image_imports(
         });
     }
     let provider_addresses = install_child_provider_imports(child, process, provider_imports)?;
-    for (import, address) in image.imports.iter().filter(|import| {
-        runtime_native_module_image(child, &import.module).is_none()
-    }).zip(provider_addresses) {
+    for (import, address) in image
+        .imports
+        .iter()
+        .filter(|import| runtime_native_module_image(child, &import.module).is_none())
+        .zip(provider_addresses)
+    {
         let iat = parent_base
             .checked_add(import.iat_rva)
             .ok_or("runtime provider IAT overflow")?;
@@ -1685,22 +1977,24 @@ pub(super) async fn run_loop(
                     }
                     (context.preemption_count, context.same_page_preemptions)
                 };
-                if cfg!(feature = "trace-scan") && active_key.pid != LAUNCHER_PID
+                if cfg!(feature = "trace-scan")
+                    && active_key.pid != LAUNCHER_PID
                     && should_log_execution_sample(preemptions)
-                    && pending_child
-                        .as_ref()
-                        .is_some_and(|child| {
-                            child.execution == ChildExecutionState::ImageEntryRunning
-                                && !(child.scan_progress.is_some()
-                                    && (WAR3_SCAN_STEP_START..=WAR3_SCAN_STEP_END)
-                                        .contains(&exit.registers.eip))
-                        })
+                    && pending_child.as_ref().is_some_and(|child| {
+                        child.execution == ChildExecutionState::ImageEntryRunning
+                            && !(child.scan_progress.is_some()
+                                && (WAR3_SCAN_STEP_START..=WAR3_SCAN_STEP_END)
+                                    .contains(&exit.registers.eip))
+                    })
                 {
                     let child = pending_child.as_ref().unwrap();
-                    let (owner, rva) = child_pc_owner(child, exit.registers.eip)
-                        .unwrap_or(("unknown", 0));
+                    let (owner, rva) =
+                        child_pc_owner(child, exit.registers.eip).unwrap_or(("unknown", 0));
                     let mut code = [0u8; 16];
-                    let code_len = child.address_space.read(exit.registers.eip, &mut code).unwrap_or(0);
+                    let code_len = child
+                        .address_space
+                        .read(exit.registers.eip, &mut code)
+                        .unwrap_or(0);
                     let code = code[..code_len]
                         .iter()
                         .map(|byte| format!("{byte:02x}"))
@@ -1710,9 +2004,17 @@ pub(super) async fn run_loop(
                         level::IMPORTANT,
                         format_args!(
                             "WC3 CHILD EXEC SAMPLE pid={} tid={} during=\"War3.exe:ENTRY\" preemptions={} owner={:?} rva=0x{:08x} eip=0x{:08x} esp=0x{:08x} ebp=0x{:08x} eax=0x{:08x} same_page={} code={}",
-                            active_key.pid, active_key.tid, preemptions, owner, rva,
-                            exit.registers.eip, exit.registers.esp, exit.registers.ebp,
-                            exit.registers.eax, same_page, code,
+                            active_key.pid,
+                            active_key.tid,
+                            preemptions,
+                            owner,
+                            rva,
+                            exit.registers.eip,
+                            exit.registers.esp,
+                            exit.registers.ebp,
+                            exit.registers.eax,
+                            same_page,
+                            code,
                         ),
                     );
                     let scan_index = child_read_u32(child, WAR3_SCAN_INDEX);
@@ -1747,8 +2049,12 @@ pub(super) async fn run_loop(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD EXEC HOTPAGE pid={} tid={} owner={:?} page=0x{:08x} eip=0x{:08x} samples={}",
-                                active_key.pid, active_key.tid, owner,
-                                exit.registers.eip & !0xfff, exit.registers.eip, same_page,
+                                active_key.pid,
+                                active_key.tid,
+                                owner,
+                                exit.registers.eip & !0xfff,
+                                exit.registers.eip,
+                                same_page,
                             ),
                         );
                     }
@@ -1779,7 +2085,10 @@ pub(super) async fn run_loop(
                         .filter(|child| child.pid == active_pid && child.tid == active_tid)
                         .ok_or_else(|| "active child address space missing".to_owned())?;
                     if exit.registers.eip == thunk32::CHILD_UEF_RETURN_AFTER_VMCALL {
-                        let pending = child.unhandled_filter_call.take().ok_or("UEF return without pending filter call")?;
+                        let pending = child
+                            .unhandled_filter_call
+                            .take()
+                            .ok_or("UEF return without pending filter call")?;
                         if exit.registers.esp != pending.return_esp {
                             return Err(format!(
                                 "UEF callback ESP mismatch expected=0x{:08x} actual=0x{:08x}",
@@ -1806,7 +2115,11 @@ pub(super) async fn run_loop(
                                     level::IMPORTANT,
                                     format_args!(
                                         "WC3 CHILD UEF FILTER RETURN pid={} tid={} filter=0x{:08x} filter_result=0x{:08x} uef_result=0x{:08x}",
-                                        active_pid, active_tid, pending.filter, exit.registers.eax, result,
+                                        active_pid,
+                                        active_tid,
+                                        pending.filter,
+                                        exit.registers.eax,
+                                        result,
                                     ),
                                 );
                                 continue;
@@ -1828,8 +2141,9 @@ pub(super) async fn run_loop(
                                             seh.preserved_fs_base,
                                         )
                                         .map_err(str::to_owned)?;
-                                        let restored_debug = wc3::seh::decode_x86_debug_registers(&bytes)
-                                            .map_err(str::to_owned)?;
+                                        let restored_debug =
+                                            wc3::seh::decode_x86_debug_registers(&bytes)
+                                                .map_err(str::to_owned)?;
                                         contexts[active]
                                             .context
                                             .set_registers(restored)
@@ -1842,7 +2156,10 @@ pub(super) async fn run_loop(
                                             level::IMPORTANT,
                                             format_args!(
                                                 "WC3 CHILD TOPLEVEL FILTER CONTINUE pid={} tid={} filter_result=0xffffffff old_eip=0x{:08x} new_eip=0x{:08x}",
-                                                active_pid, active_tid, seh.original_registers.eip, restored.eip,
+                                                active_pid,
+                                                active_tid,
+                                                seh.original_registers.eip,
+                                                restored.eip,
                                             ),
                                         );
                                         continue;
@@ -1864,11 +2181,23 @@ pub(super) async fn run_loop(
                         }
                     }
                     if exit.registers.eip == thunk32::CHILD_SEH_RETURN_AFTER_VMCALL {
-                        let seh = child.seh.take().ok_or("SEH return without pending dispatch")?;
-                        if !seh.quiet { logl::log(level::IMPORTANT, format_args!(
-                            "WC3 CHILD SEH RETURN pid={} tid={} registration=0x{:08x} handler=0x{:08x} disposition={}",
-                            active_pid, active_tid, seh.registration, seh.handler, exit.registers.eax,
-                            )); }
+                        let seh = child
+                            .seh
+                            .take()
+                            .ok_or("SEH return without pending dispatch")?;
+                        if !seh.quiet {
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD SEH RETURN pid={} tid={} registration=0x{:08x} handler=0x{:08x} disposition={}",
+                                    active_pid,
+                                    active_tid,
+                                    seh.registration,
+                                    seh.handler,
+                                    exit.registers.eax,
+                                ),
+                            );
+                        }
                         if exit.registers.eax == wc3::seh::DISPOSITION_CONTINUE_SEARCH {
                             if seh.next_registration == u32::MAX {
                                 let filter = session
@@ -1883,10 +2212,7 @@ pub(super) async fn run_loop(
                                 }
 
                                 let exception_pointers_va = seh.exception_pointers_va;
-                                let exception_pointers = [
-                                    seh.exception_record_va,
-                                    seh.context_va,
-                                ];
+                                let exception_pointers = [seh.exception_record_va, seh.context_va];
                                 let mut exception_pointers_bytes = [0; 8];
                                 for (index, value) in exception_pointers.into_iter().enumerate() {
                                     exception_pointers_bytes[index * 4..index * 4 + 4]
@@ -1899,7 +2225,7 @@ pub(super) async fn run_loop(
                                     != exception_pointers_bytes.len()
                                 {
                                     return Err(
-                                        "short terminal UEF exception pointers write".into(),
+                                        "short terminal UEF exception pointers write".into()
                                     );
                                 }
 
@@ -1907,10 +2233,8 @@ pub(super) async fn run_loop(
                                 let callback_esp = return_esp
                                     .checked_sub(8)
                                     .ok_or("terminal UEF callback stack underflow")?;
-                                let callback_frame = [
-                                    thunk32::CHILD_UEF_RETURN_ADDRESS,
-                                    exception_pointers_va,
-                                ];
+                                let callback_frame =
+                                    [thunk32::CHILD_UEF_RETURN_ADDRESS, exception_pointers_va];
                                 let mut callback_frame_bytes = [0; 8];
                                 for (index, value) in callback_frame.into_iter().enumerate() {
                                     callback_frame_bytes[index * 4..index * 4 + 4]
@@ -1928,8 +2252,9 @@ pub(super) async fn run_loop(
                                 child.unhandled_filter_call = Some(ChildUnhandledFilterCall {
                                     return_esp,
                                     filter,
-                                    continuation:
-                                        ChildUnhandledFilterContinuation::TerminalSeh { seh },
+                                    continuation: ChildUnhandledFilterContinuation::TerminalSeh {
+                                        seh,
+                                    },
                                 });
                                 let mut registers = exit.registers;
                                 registers.eip = filter;
@@ -1948,9 +2273,13 @@ pub(super) async fn run_loop(
                                 continue 'child_run;
                             }
                             if seh.next_registration == 0 {
-                                return Err("WC3 CHILD SEH FRONTIER reason=unhandled-next-registration".into());
+                                return Err(
+                                    "WC3 CHILD SEH FRONTIER reason=unhandled-next-registration"
+                                        .into(),
+                                );
                             }
-                            let registration = read_seh_registration(&child.address_space, seh.next_registration)?;
+                            let registration =
+                                read_seh_registration(&child.address_space, seh.next_registration)?;
                             let handler_frame = [
                                 thunk32::CHILD_SEH_RETURN_ADDRESS,
                                 seh.exception_record_va,
@@ -1960,9 +2289,15 @@ pub(super) async fn run_loop(
                             ];
                             let mut frame_bytes = [0; 20];
                             for (index, value) in handler_frame.into_iter().enumerate() {
-                                frame_bytes[index * 4..index * 4 + 4].copy_from_slice(&value.to_le_bytes());
+                                frame_bytes[index * 4..index * 4 + 4]
+                                    .copy_from_slice(&value.to_le_bytes());
                             }
-                            if child.address_space.write(exit.registers.esp, &frame_bytes).map_err(|error| error.to_string())? != frame_bytes.len() {
+                            if child
+                                .address_space
+                                .write(exit.registers.esp, &frame_bytes)
+                                .map_err(|error| error.to_string())?
+                                != frame_bytes.len()
+                            {
                                 return Err("short continued SEH handler frame write".into());
                             }
                             let handler_registers = wc3::seh::exception_handler_registers(
@@ -1985,21 +2320,49 @@ pub(super) async fn run_loop(
                                 scan_single_step: seh.scan_single_step,
                                 dword_scan_single_step: seh.dword_scan_single_step,
                             });
-                            contexts[active].context.set_registers(handler_registers).map_err(|error| error.to_string())?;
-                            logl::log(level::IMPORTANT, format_args!("WC3 CHILD SEH CONTINUE_SEARCH pid={} tid={} registration=0x{:08x} handler=0x{:08x} disposition=1", active_pid, active_tid, registration.frame, registration.handler));
+                            contexts[active]
+                                .context
+                                .set_registers(handler_registers)
+                                .map_err(|error| error.to_string())?;
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD SEH CONTINUE_SEARCH pid={} tid={} registration=0x{:08x} handler=0x{:08x} disposition=1",
+                                    active_pid,
+                                    active_tid,
+                                    registration.frame,
+                                    registration.handler
+                                ),
+                            );
                             continue 'child_run;
                         }
                         if exit.registers.eax != wc3::seh::DISPOSITION_CONTINUE_EXECUTION {
-                            return Err(format!("WC3 CHILD SEH FRONTIER reason=unsupported-disposition value={}", exit.registers.eax));
+                            return Err(format!(
+                                "WC3 CHILD SEH FRONTIER reason=unsupported-disposition value={}",
+                                exit.registers.eax
+                            ));
                         }
                         let mut bytes = [0; wc3::seh::X86_CONTEXT_BYTES];
-                        if child.address_space.read(seh.context_va, &mut bytes).map_err(|error| error.to_string())? != bytes.len() { return Err("short SEH context readback".into()); }
-                        let mut restored = wc3::seh::decode_x86_context(&bytes, seh.preserved_fs_base).map_err(str::to_owned)?;
-                        let mut restored_debug = wc3::seh::decode_x86_debug_registers(&bytes)
-                            .map_err(str::to_owned)?;
+                        if child
+                            .address_space
+                            .read(seh.context_va, &mut bytes)
+                            .map_err(|error| error.to_string())?
+                            != bytes.len()
+                        {
+                            return Err("short SEH context readback".into());
+                        }
+                        let mut restored =
+                            wc3::seh::decode_x86_context(&bytes, seh.preserved_fs_base)
+                                .map_err(str::to_owned)?;
+                        let mut restored_debug =
+                            wc3::seh::decode_x86_debug_registers(&bytes).map_err(str::to_owned)?;
                         loop_checkpoint::boundary(
-                            child, &mut contexts[active].context, &mut restored, &mut restored_debug,
-                        ).await?;
+                            child,
+                            &mut contexts[active].context,
+                            &mut restored,
+                            &mut restored_debug,
+                        )
+                        .await?;
                         if restored.eip == TABLE_CHECKPOINT_FROM_EIP
                             && child_read_u32(child, WAR3_DWORD_SCAN_INDEX) == Some(0)
                         {
@@ -2024,7 +2387,8 @@ pub(super) async fn run_loop(
                             let control_changed = restored.eip != seh.original_registers.eip
                                 || restored.esp != seh.original_registers.esp
                                 || ((restored.eflags ^ seh.original_registers.eflags)
-                                    & wc3::seh::X86_EFLAGS_TF) != 0;
+                                    & wc3::seh::X86_EFLAGS_TF)
+                                    != 0;
                             if cfg!(feature = "trace-seh") && control_changed {
                                 logl::log(
                                     level::IMPORTANT,
@@ -2042,7 +2406,8 @@ pub(super) async fn run_loop(
                                 );
                             }
                             child.single_step_count = child.single_step_count.saturating_add(1);
-                            if child.single_step_count == 1 || child.single_step_count % 0x1000 == 0 {
+                            if child.single_step_count == 1 || child.single_step_count % 0x1000 == 0
+                            {
                                 logl::log(
                                     level::IMPORTANT,
                                     format_args!(
@@ -2057,7 +2422,10 @@ pub(super) async fn run_loop(
                             }
                         }
                         if !seh.quiet
-                            && matches!(seh.original_registers.eip, 0x0045_af51 | 0x0045_af54 | 0x0045_af5a)
+                            && matches!(
+                                seh.original_registers.eip,
+                                0x0045_af51 | 0x0045_af54 | 0x0045_af5a
+                            )
                         {
                             let get = |offset: usize| {
                                 u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap())
@@ -2093,10 +2461,18 @@ pub(super) async fn run_loop(
                                     .try_into()
                                     .unwrap(),
                             );
-                            logl::log(level::IMPORTANT, format_args!(
-                            "WC3 CHILD SEH CONTEXT RETURN pid={} tid={} context=0x{:08x} old_ecx=0x{:08x} saved_ecx=0x{:08x} restored_ecx=0x{:08x}",
-                            active_pid, active_tid, seh.context_va, seh.original_registers.ecx, raw_ecx, restored.ecx,
-                            ));
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD SEH CONTEXT RETURN pid={} tid={} context=0x{:08x} old_ecx=0x{:08x} saved_ecx=0x{:08x} restored_ecx=0x{:08x}",
+                                    active_pid,
+                                    active_tid,
+                                    seh.context_va,
+                                    seh.original_registers.ecx,
+                                    raw_ecx,
+                                    restored.ecx,
+                                ),
+                            );
                         }
                         if restored.eip == TABLE_CHECKPOINT_TO_EIP
                             && child_read_u32(child, WAR3_DWORD_SCAN_INDEX)
@@ -2118,15 +2494,28 @@ pub(super) async fn run_loop(
                                 ),
                             );
                         }
-                        contexts[active].context.set_registers(restored).map_err(|error| error.to_string())?;
+                        contexts[active]
+                            .context
+                            .set_registers(restored)
+                            .map_err(|error| error.to_string())?;
                         contexts[active]
                             .context
                             .set_debug_registers(restored_debug)
                             .map_err(|error| error.to_string())?;
-                        if !seh.quiet { logl::log(level::IMPORTANT, format_args!(
-                            "WC3 CHILD SEH CONTINUE pid={} tid={} old_eip=0x{:08x} new_eip=0x{:08x} old_esp=0x{:08x} new_esp=0x{:08x}",
-                            active_pid, active_tid, seh.original_registers.eip, restored.eip, seh.original_registers.esp, restored.esp,
-                        )); }
+                        if !seh.quiet {
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD SEH CONTINUE pid={} tid={} old_eip=0x{:08x} new_eip=0x{:08x} old_esp=0x{:08x} new_esp=0x{:08x}",
+                                    active_pid,
+                                    active_tid,
+                                    seh.original_registers.eip,
+                                    restored.eip,
+                                    seh.original_registers.esp,
+                                    restored.esp,
+                                ),
+                            );
+                        }
                         continue;
                     }
                     if exit.registers.eip == thunk32::CHILD_DLL_RETURN_AFTER_VMCALL {
@@ -2198,7 +2587,10 @@ pub(super) async fn run_loop(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD LOADER COMPLETE pid={} tid={} modules={} initialized={}",
-                                    child.pid, child.tid, child.native_modules.len(), initialized
+                                    child.pid,
+                                    child.tid,
+                                    child.native_modules.len(),
+                                    initialized
                                 ),
                             );
                             let (entry, frame_esp) = arm_existing_child_image_entry(
@@ -2224,7 +2616,9 @@ pub(super) async fn run_loop(
                             continue;
                         };
                         let previous_name = module_name;
-                        child.execution = ChildExecutionState::DllInitReady { native_index: next_index };
+                        child.execution = ChildExecutionState::DllInitReady {
+                            native_index: next_index,
+                        };
                         let (next_name, next_entry, frame_esp) = arm_existing_child_dll_init(
                             child,
                             &mut contexts[active],
@@ -2235,7 +2629,12 @@ pub(super) async fn run_loop(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD DLL REARM pid={} tid={} previous=\"{}\" next=\"{}\" context_reused=1 xstate_preserved=1 teb_preserved=1 entry=0x{:08x} esp=0x{:08x}",
-                                active_pid, active_tid, previous_name, next_name, next_entry, frame_esp
+                                active_pid,
+                                active_tid,
+                                previous_name,
+                                next_name,
+                                next_entry,
+                                frame_esp
                             ),
                         );
                         logl::log(
@@ -2261,7 +2660,9 @@ pub(super) async fn run_loop(
                     }
                     if exit.registers.eip == thunk32::CHILD_IMAGE_RETURN_AFTER_VMCALL {
                         if child.execution != ChildExecutionState::ImageEntryRunning {
-                            return Err("child image return outside image-entry-running state".into());
+                            return Err(
+                                "child image return outside image-entry-running state".into()
+                            );
                         }
                         logl::log(
                             level::IMPORTANT,
@@ -2284,11 +2685,25 @@ pub(super) async fn run_loop(
                         return Ok(());
                     }
                     if exit.registers.eip == thunk32::CHILD_CIPOW_SPILL_AFTER_VMCALL {
-                        let pending = child.cipow.take().ok_or_else(|| "CIPOW spill without pending state".to_owned())?;
-                        if exit.registers.esp != pending.provider_esp { return Err("CIPOW spill ESP mismatch".into()); }
-                        let exponent = read_guest_words(&X86Memory(&child.address_space), thunk32::CHILD_CIPOW_EXPONENT_ADDRESS, 2)?;
-                        let base = read_guest_words(&X86Memory(&child.address_space), thunk32::CHILD_CIPOW_BASE_ADDRESS, 2)?;
-                        let exponent = f64::from_bits((exponent[0] as u64) | ((exponent[1] as u64) << 32));
+                        let pending = child
+                            .cipow
+                            .take()
+                            .ok_or_else(|| "CIPOW spill without pending state".to_owned())?;
+                        if exit.registers.esp != pending.provider_esp {
+                            return Err("CIPOW spill ESP mismatch".into());
+                        }
+                        let exponent = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            thunk32::CHILD_CIPOW_EXPONENT_ADDRESS,
+                            2,
+                        )?;
+                        let base = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            thunk32::CHILD_CIPOW_BASE_ADDRESS,
+                            2,
+                        )?;
+                        let exponent =
+                            f64::from_bits((exponent[0] as u64) | ((exponent[1] as u64) << 32));
                         let base = f64::from_bits((base[0] as u64) | ((base[1] as u64) << 32));
                         if !child.cipow_diagnostic_logged {
                             child.cipow_diagnostic_logged = true;
@@ -2300,13 +2715,26 @@ pub(super) async fn run_loop(
                                 ),
                             );
                         }
-                        if !base.is_finite() || !exponent.is_finite() || base <= 0.0 { return Ok(()); }
+                        if !base.is_finite() || !exponent.is_finite() || base <= 0.0 {
+                            return Ok(());
+                        }
                         let result = base.powf(exponent);
-                        if !result.is_finite() { return Ok(()); }
-                        child.address_space.write(thunk32::CHILD_CIPOW_RESULT_ADDRESS, &result.to_bits().to_le_bytes()).map_err(|error| error.to_string())?;
+                        if !result.is_finite() {
+                            return Ok(());
+                        }
+                        child
+                            .address_space
+                            .write(
+                                thunk32::CHILD_CIPOW_RESULT_ADDRESS,
+                                &result.to_bits().to_le_bytes(),
+                            )
+                            .map_err(|error| error.to_string())?;
                         let mut registers = exit.registers;
                         registers.eip = thunk32::CHILD_CIPOW_RESTORE_ADDRESS;
-                        contexts[active].context.set_registers(registers).map_err(|error| error.to_string())?;
+                        contexts[active]
+                            .context
+                            .set_registers(registers)
+                            .map_err(|error| error.to_string())?;
                         continue;
                     }
                     if exit.registers.eip == thunk32::CHILD_CALLBACK_RETURN_AFTER_VMCALL {
@@ -2327,48 +2755,116 @@ pub(super) async fn run_loop(
                             }
                             let mut callback_return = exit.registers;
                             callback_return.esp = pending.provider_esp;
-                            let anchor = pending.frame.checked_add(0x10).ok_or("SEH3 EBP overflow")?;
+                            let anchor =
+                                pending.frame.checked_add(0x10).ok_or("SEH3 EBP overflow")?;
                             match pending.kind {
-                                ChildSeh3CallbackKind::Finally { mut next_level, selected_level } => {
-                                    loop {
-                                        if next_level == selected_level {
-                                            let (_, _, handler) = child_seh3_scope_entry(child, pending.scope, selected_level)?;
-                                            if handler == 0 { return Err("SEH3 selected handler is null".into()); }
-                                            let (_, selected_prev, _) = child_seh3_scope_entry(child, pending.scope, selected_level)?;
-                                            write_child_u32(child, pending.frame + 0x0c, selected_prev as u32)?;
-                                            let mut registers = callback_return;
-                                            registers.eip = handler;
-                                            registers.esp = pending.provider_esp;
-                                            registers.ebp = anchor;
-                                            contexts[active].context.set_registers(registers).map_err(|error| error.to_string())?;
-                                            logl::log(level::IMPORTANT, format_args!("WC3 CHILD CRT EH3 HANDLER pid={} tid={} level={} handler=0x{:08x}", active_pid, active_tid, selected_level, handler));
-                                            continue 'child_run;
+                                ChildSeh3CallbackKind::Finally {
+                                    mut next_level,
+                                    selected_level,
+                                } => loop {
+                                    if next_level == selected_level {
+                                        let (_, _, handler) = child_seh3_scope_entry(
+                                            child,
+                                            pending.scope,
+                                            selected_level,
+                                        )?;
+                                        if handler == 0 {
+                                            return Err("SEH3 selected handler is null".into());
                                         }
-                                        if next_level < 0 { return Err("SEH3 unwind reached end before selected level".into()); }
-                                        let (previous, filter, handler) = child_seh3_scope_entry(child, pending.scope, next_level)?;
-                                        write_child_u32(child, pending.frame + 0x0c, previous as u32)?;
-                                        next_level = previous;
-                                        if filter == 0 && handler != 0 {
-                                            let call = ChildSeh3Call { provider_resume_eip: pending.provider_resume_eip, provider_esp: pending.provider_esp, frame: pending.frame, scope: pending.scope, kind: ChildSeh3CallbackKind::Finally { next_level, selected_level } };
-                                            schedule_child_seh3_finally(child, &mut contexts[active], callback_return, call, handler)?;
-                                            logl::log(level::IMPORTANT, format_args!("WC3 CHILD CRT EH3 FINALLY pid={} tid={} handler=0x{:08x}", active_pid, active_tid, handler));
-                                            continue 'child_run;
-                                        }
+                                        let (_, selected_prev, _) = child_seh3_scope_entry(
+                                            child,
+                                            pending.scope,
+                                            selected_level,
+                                        )?;
+                                        write_child_u32(
+                                            child,
+                                            pending.frame + 0x0c,
+                                            selected_prev as u32,
+                                        )?;
+                                        let mut registers = callback_return;
+                                        registers.eip = handler;
+                                        registers.esp = pending.provider_esp;
+                                        registers.ebp = anchor;
+                                        contexts[active]
+                                            .context
+                                            .set_registers(registers)
+                                            .map_err(|error| error.to_string())?;
+                                        logl::log(
+                                            level::IMPORTANT,
+                                            format_args!(
+                                                "WC3 CHILD CRT EH3 HANDLER pid={} tid={} level={} handler=0x{:08x}",
+                                                active_pid, active_tid, selected_level, handler
+                                            ),
+                                        );
+                                        continue 'child_run;
                                     }
-                                }
-                                ChildSeh3CallbackKind::Filter { level, previous, start_level } => {
-                                    let result = i32::from_le_bytes(callback_return.eax.to_le_bytes());
+                                    if next_level < 0 {
+                                        return Err(
+                                            "SEH3 unwind reached end before selected level".into(),
+                                        );
+                                    }
+                                    let (previous, filter, handler) =
+                                        child_seh3_scope_entry(child, pending.scope, next_level)?;
+                                    write_child_u32(child, pending.frame + 0x0c, previous as u32)?;
+                                    next_level = previous;
+                                    if filter == 0 && handler != 0 {
+                                        let call = ChildSeh3Call {
+                                            provider_resume_eip: pending.provider_resume_eip,
+                                            provider_esp: pending.provider_esp,
+                                            frame: pending.frame,
+                                            scope: pending.scope,
+                                            kind: ChildSeh3CallbackKind::Finally {
+                                                next_level,
+                                                selected_level,
+                                            },
+                                        };
+                                        schedule_child_seh3_finally(
+                                            child,
+                                            &mut contexts[active],
+                                            callback_return,
+                                            call,
+                                            handler,
+                                        )?;
+                                        logl::log(
+                                            level::IMPORTANT,
+                                            format_args!(
+                                                "WC3 CHILD CRT EH3 FINALLY pid={} tid={} handler=0x{:08x}",
+                                                active_pid, active_tid, handler
+                                            ),
+                                        );
+                                        continue 'child_run;
+                                    }
+                                },
+                                ChildSeh3CallbackKind::Filter {
+                                    level,
+                                    previous,
+                                    start_level,
+                                } => {
+                                    let result =
+                                        i32::from_le_bytes(callback_return.eax.to_le_bytes());
                                     if result == -1 {
                                         let mut registers = callback_return;
                                         registers.eip = pending.provider_resume_eip;
                                         registers.esp = pending.provider_esp;
                                         registers.eax = wc3::seh::DISPOSITION_CONTINUE_EXECUTION;
-                                        contexts[active].context.set_registers(registers).map_err(|error| error.to_string())?;
-                                        logl::log(level::IMPORTANT, format_args!("WC3 CHILD CRT EH3 FILTER RETURN pid={} tid={} level={} result=-1 disposition=0", active_pid, active_tid, level));
+                                        contexts[active]
+                                            .context
+                                            .set_registers(registers)
+                                            .map_err(|error| error.to_string())?;
+                                        logl::log(
+                                            level::IMPORTANT,
+                                            format_args!(
+                                                "WC3 CHILD CRT EH3 FILTER RETURN pid={} tid={} level={} result=-1 disposition=0",
+                                                active_pid, active_tid, level
+                                            ),
+                                        );
                                         continue 'child_run;
                                     }
                                     if result != 0 && result != 1 {
-                                        return Err(format!("WC3 CHILD CRT EH3 FRONTIER reason=filter-result value={}", result));
+                                        return Err(format!(
+                                            "WC3 CHILD CRT EH3 FRONTIER reason=filter-result value={}",
+                                            result
+                                        ));
                                     }
                                     logl::log(
                                         level::IMPORTANT,
@@ -2378,43 +2874,113 @@ pub(super) async fn run_loop(
                                         ),
                                     );
                                     let selected = if result == 1 { Some(level) } else { None };
-                                    let mut current = if result == 1 { start_level } else { previous };
+                                    let mut current =
+                                        if result == 1 { start_level } else { previous };
                                     if result == 0 {
-                                        write_child_u32(child, pending.frame + 0x0c, previous as u32)?;
+                                        write_child_u32(
+                                            child,
+                                            pending.frame + 0x0c,
+                                            previous as u32,
+                                        )?;
                                     }
                                     loop {
                                         if let Some(selected_level) = selected {
                                             if current == selected_level {
-                                                let (_, selected_prev, handler) = child_seh3_scope_entry(child, pending.scope, selected_level)?;
-                                                if handler == 0 { return Err("SEH3 selected handler is null".into()); }
-                                                write_child_u32(child, pending.frame + 0x0c, selected_prev as u32)?;
+                                                let (_, selected_prev, handler) =
+                                                    child_seh3_scope_entry(
+                                                        child,
+                                                        pending.scope,
+                                                        selected_level,
+                                                    )?;
+                                                if handler == 0 {
+                                                    return Err(
+                                                        "SEH3 selected handler is null".into()
+                                                    );
+                                                }
+                                                write_child_u32(
+                                                    child,
+                                                    pending.frame + 0x0c,
+                                                    selected_prev as u32,
+                                                )?;
                                                 let mut registers = callback_return;
                                                 registers.eip = handler;
                                                 registers.esp = pending.provider_esp;
                                                 registers.ebp = anchor;
-                                                contexts[active].context.set_registers(registers).map_err(|error| error.to_string())?;
-                                                logl::log(level::IMPORTANT, format_args!("WC3 CHILD CRT EH3 HANDLER pid={} tid={} level={} handler=0x{:08x}", active_pid, active_tid, selected_level, handler));
+                                                contexts[active]
+                                                    .context
+                                                    .set_registers(registers)
+                                                    .map_err(|error| error.to_string())?;
+                                                logl::log(
+                                                    level::IMPORTANT,
+                                                    format_args!(
+                                                        "WC3 CHILD CRT EH3 HANDLER pid={} tid={} level={} handler=0x{:08x}",
+                                                        active_pid,
+                                                        active_tid,
+                                                        selected_level,
+                                                        handler
+                                                    ),
+                                                );
                                                 continue 'child_run;
                                             }
                                         }
                                         if current < 0 {
-                                            if selected.is_some() { return Err("SEH3 selected level was not found".into()); }
+                                            if selected.is_some() {
+                                                return Err(
+                                                    "SEH3 selected level was not found".into()
+                                                );
+                                            }
                                             let mut registers = callback_return;
                                             registers.eip = pending.provider_resume_eip;
                                             registers.esp = pending.provider_esp;
                                             registers.eax = wc3::seh::DISPOSITION_CONTINUE_SEARCH;
-                                            contexts[active].context.set_registers(registers).map_err(|error| error.to_string())?;
-                                            logl::log(level::IMPORTANT, format_args!("WC3 CHILD CRT EH3 SEARCH pid={} tid={} disposition=1", active_pid, active_tid));
+                                            contexts[active]
+                                                .context
+                                                .set_registers(registers)
+                                                .map_err(|error| error.to_string())?;
+                                            logl::log(
+                                                level::IMPORTANT,
+                                                format_args!(
+                                                    "WC3 CHILD CRT EH3 SEARCH pid={} tid={} disposition=1",
+                                                    active_pid, active_tid
+                                                ),
+                                            );
                                             continue 'child_run;
                                         }
-                                        let (previous, filter, handler) = child_seh3_scope_entry(child, pending.scope, current)?;
-                                        write_child_u32(child, pending.frame + 0x0c, previous as u32)?;
+                                        let (previous, filter, handler) =
+                                            child_seh3_scope_entry(child, pending.scope, current)?;
+                                        write_child_u32(
+                                            child,
+                                            pending.frame + 0x0c,
+                                            previous as u32,
+                                        )?;
                                         if let Some(selected_level) = selected {
                                             current = previous;
                                             if filter == 0 && handler != 0 {
-                                                let call = ChildSeh3Call { provider_resume_eip: pending.provider_resume_eip, provider_esp: pending.provider_esp, frame: pending.frame, scope: pending.scope, kind: ChildSeh3CallbackKind::Finally { next_level: current, selected_level } };
-                                                schedule_child_seh3_finally(child, &mut contexts[active], callback_return, call, handler)?;
-                                                logl::log(level::IMPORTANT, format_args!("WC3 CHILD CRT EH3 FINALLY pid={} tid={} handler=0x{:08x}", active_pid, active_tid, handler));
+                                                let call = ChildSeh3Call {
+                                                    provider_resume_eip: pending
+                                                        .provider_resume_eip,
+                                                    provider_esp: pending.provider_esp,
+                                                    frame: pending.frame,
+                                                    scope: pending.scope,
+                                                    kind: ChildSeh3CallbackKind::Finally {
+                                                        next_level: current,
+                                                        selected_level,
+                                                    },
+                                                };
+                                                schedule_child_seh3_finally(
+                                                    child,
+                                                    &mut contexts[active],
+                                                    callback_return,
+                                                    call,
+                                                    handler,
+                                                )?;
+                                                logl::log(
+                                                    level::IMPORTANT,
+                                                    format_args!(
+                                                        "WC3 CHILD CRT EH3 FINALLY pid={} tid={} handler=0x{:08x}",
+                                                        active_pid, active_tid, handler
+                                                    ),
+                                                );
                                                 continue 'child_run;
                                             }
                                             continue;
@@ -2422,8 +2988,24 @@ pub(super) async fn run_loop(
                                         let level = current;
                                         current = previous;
                                         if filter != 0 {
-                                            let call = ChildSeh3Call { provider_resume_eip: pending.provider_resume_eip, provider_esp: pending.provider_esp, frame: pending.frame, scope: pending.scope, kind: ChildSeh3CallbackKind::Filter { level, previous, start_level } };
-                                            schedule_child_seh3_filter(child, &mut contexts[active], callback_return, call, filter)?;
+                                            let call = ChildSeh3Call {
+                                                provider_resume_eip: pending.provider_resume_eip,
+                                                provider_esp: pending.provider_esp,
+                                                frame: pending.frame,
+                                                scope: pending.scope,
+                                                kind: ChildSeh3CallbackKind::Filter {
+                                                    level,
+                                                    previous,
+                                                    start_level,
+                                                },
+                                            };
+                                            schedule_child_seh3_filter(
+                                                child,
+                                                &mut contexts[active],
+                                                callback_return,
+                                                call,
+                                                filter,
+                                            )?;
                                             continue 'child_run;
                                         }
                                     }
@@ -2443,11 +3025,16 @@ pub(super) async fn run_loop(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD CRT INITTERM RETURN pid={} tid={} completed={} eax=0x{:08x}",
-                                    active_pid, active_tid, initterm.callbacks_invoked, exit.registers.eax
+                                    active_pid,
+                                    active_tid,
+                                    initterm.callbacks_invoked,
+                                    exit.registers.eax
                                 ),
                             );
                             match advance_child_initterm(child, &mut contexts[active])? {
-                                InittermAdvance::CallbackScheduled | InittermAdvance::Complete => continue,
+                                InittermAdvance::CallbackScheduled | InittermAdvance::Complete => {
+                                    continue;
+                                }
                             }
                         }
                         if let Some(pending) = child.load_library_call.as_ref() {
@@ -2478,10 +3065,10 @@ pub(super) async fn run_loop(
                             if let Some((&next_native_index, remaining_native_indices)) =
                                 pending.remaining_native_indices.split_first()
                             {
-                                let next_module = child
-                                    .native_modules
-                                    .get(next_native_index)
-                                    .ok_or_else(|| "runtime LoadLibrary next native index".to_owned())?;
+                                let next_module =
+                                    child.native_modules.get(next_native_index).ok_or_else(
+                                        || "runtime LoadLibrary next native index".to_owned(),
+                                    )?;
                                 let next_module_handle = next_module.image.image_base;
                                 let entry = next_module_handle
                                     .checked_add(next_module.image.entry_rva)
@@ -2507,7 +3094,9 @@ pub(super) async fn run_loop(
                                     .map_err(|error| error.to_string())?
                                     != frame_bytes.len()
                                 {
-                                    return Err("short runtime dependency DllMain frame write".into());
+                                    return Err(
+                                        "short runtime dependency DllMain frame write".into()
+                                    );
                                 }
                                 child.load_library_call = Some(ChildLoadLibraryCall {
                                     provider_resume_eip: pending.provider_resume_eip,
@@ -2528,7 +3117,10 @@ pub(super) async fn run_loop(
                                     level::IMPORTANT,
                                     format_args!(
                                         "WC3 CHILD RUNTIME NATIVE DEPENDENCY ATTACH pid={} tid={} module={:?} handle=0x{:08x}",
-                                        active_pid, active_tid, next_module.stored, next_module_handle,
+                                        active_pid,
+                                        active_tid,
+                                        next_module.stored,
+                                        next_module_handle,
                                     ),
                                 );
                                 continue;
@@ -2623,11 +3215,7 @@ pub(super) async fn run_loop(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD HEAP CREATE RESULT pid={} tid={} handle=0x{:08x} resume_eip=0x{:08x} esp=0x{:08x} cleanup=12-by-thunk",
-                                active_pid,
-                                active_tid,
-                                heap.handle,
-                                registers.eip,
-                                registers.esp,
+                                active_pid, active_tid, heap.handle, registers.eip, registers.esp,
                             ),
                         );
                         continue;
@@ -2645,14 +3233,10 @@ pub(super) async fn run_loop(
                         let caption_ptr = frame[3];
                         let style = frame[4];
 
-                        let text = copy_message_box_ansi(
-                            &X86Memory(&child.address_space),
-                            text_ptr,
-                        )?;
-                        let caption = copy_message_box_ansi(
-                            &X86Memory(&child.address_space),
-                            caption_ptr,
-                        )?;
+                        let text =
+                            copy_message_box_ansi(&X86Memory(&child.address_space), text_ptr)?;
+                        let caption =
+                            copy_message_box_ansi(&X86Memory(&child.address_space), caption_ptr)?;
 
                         let buttons = message_box_buttons(style)
                             .map(|buttons| {
@@ -2737,7 +3321,9 @@ pub(super) async fn run_loop(
                                 );
                                 return Ok(());
                             }
-                            Err(error) => return Err(format!("GlobalAlloc semantic fault: {error}")),
+                            Err(error) => {
+                                return Err(format!("GlobalAlloc semantic fault: {error}"));
+                            }
                         };
                         let pointer = if let Some(allocation) = allocation {
                             let mapped_end = ensure_child_win_heap_mapped(child, allocation.end)?;
@@ -2811,14 +3397,10 @@ pub(super) async fn run_loop(
                             .process_mut(active_pid)
                             .ok_or_else(|| "child process missing".to_owned())?
                             .xp
-                            .alloc_win_heap(
-                                exit.registers.esp,
-                                &X86Memory(&child.address_space),
-                            )
+                            .alloc_win_heap(exit.registers.esp, &X86Memory(&child.address_space))
                             .map_err(str::to_owned)?;
                         let pointer = if let Some(allocation) = allocation {
-                            let mapped_end =
-                                ensure_child_win_heap_mapped(child, allocation.end)?;
+                            let mapped_end = ensure_child_win_heap_mapped(child, allocation.end)?;
                             if allocation.flags & HEAP_ZERO_MEMORY != 0 {
                                 let zeroes = vec![0; allocation.requested.max(1) as usize];
                                 let written = child
@@ -2882,7 +3464,8 @@ pub(super) async fn run_loop(
                         let heap = frame[1];
                         let flags = frame[2];
                         let pointer = frame[3];
-                        logl::trace!("trace-api",
+                        logl::trace!(
+                            "trace-api",
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD HEAP FREE CALL pid={} tid={} during=\"{}\" provider_id={} heap=0x{:08x} flags=0x{:08x} pointer=0x{:08x} caller_ret=0x{:08x}",
@@ -3019,7 +3602,9 @@ pub(super) async fn run_loop(
                             )
                             .map_err(str::to_owned)?;
                         let PersonalityAction::Return(result) = action else {
-                            return Err("GetEnvironmentStringsW child provider did not return".into());
+                            return Err(
+                                "GetEnvironmentStringsW child provider did not return".into()
+                            );
                         };
                         if result != ENVIRONMENT_BLOCK_VA {
                             return Err("child environment pointer mismatch".into());
@@ -3030,7 +3615,9 @@ pub(super) async fn run_loop(
                             .read(result, &mut terminator)
                             .map_err(|error| error.to_string())?;
                         if terminator != [0, 0, 0, 0] {
-                            return Err("child wide environment block is not double-NUL terminated".into());
+                            return Err(
+                                "child wide environment block is not double-NUL terminated".into(),
+                            );
                         }
                         logl::log(
                             level::IMPORTANT,
@@ -3067,7 +3654,8 @@ pub(super) async fn run_loop(
                         let capacity = frame[6];
                         let default_char = frame[7];
                         let used_default_char = frame[8];
-                        logl::trace!("trace-api",
+                        logl::trace!(
+                            "trace-api",
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD WIDECHARTOMULTIBYTE CALL pid={} tid={} during=\"{}\" provider_id={} code_page={} flags=0x{:08x} source=0x{:08x} count={} output=0x{:08x} capacity={} default_char=0x{:08x} used_default_char=0x{:08x} caller_ret=0x{:08x}",
@@ -3170,7 +3758,8 @@ pub(super) async fn run_loop(
                         )?;
                         let info = frame[1];
                         let size = read_guest_words(&X86Memory(&child.address_space), info, 1)?[0];
-                        logl::trace!("trace-api",
+                        logl::trace!(
+                            "trace-api",
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD GETVERSIONEXA CALL pid={} tid={} during=\"{}\" provider_id={} info=0x{:08x} size=0x{:08x} caller_ret=0x{:08x}",
@@ -3241,7 +3830,8 @@ pub(super) async fn run_loop(
                                 && name == "GetVersion"
                     );
                     if is_get_version {
-                        logl::trace!("trace-api",
+                        logl::trace!(
+                            "trace-api",
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD PROVIDER CALL pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" provider_id={} module=\"{}\" symbol=\"GetVersion\" esp=0x{:08x} caller_ret=0x{:08x}",
@@ -3307,7 +3897,8 @@ pub(super) async fn run_loop(
                             .read(argument, &mut critical_section)
                             .map_err(|error| error.to_string())?;
                         let critical_section = u32::from_le_bytes(critical_section);
-                        logl::trace!("trace-api",
+                        logl::trace!(
+                            "trace-api",
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD PROVIDER CALL pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" provider_id={} module=\"{}\" symbol=\"InitializeCriticalSection\" esp=0x{:08x} critical_section=0x{:08x}",
@@ -3389,9 +3980,10 @@ pub(super) async fn run_loop(
                                 && name == "EnterCriticalSection"
                     );
                     if is_enter_critical_section {
-                        let argument = exit.registers.esp.checked_add(4).ok_or_else(|| {
-                            "child provider argument address overflow".to_owned()
-                        })?;
+                        let argument =
+                            exit.registers.esp.checked_add(4).ok_or_else(|| {
+                                "child provider argument address overflow".to_owned()
+                            })?;
                         let mut critical_section = [0; 4];
                         child
                             .address_space
@@ -3418,10 +4010,13 @@ pub(super) async fn run_loop(
                             .address_space
                             .read(critical_section, &mut before)
                             .map_err(|error| error.to_string())?;
-                        let lock_count_before = u32::from_le_bytes(before[4..8].try_into().unwrap());
-                        let recursion_before = u32::from_le_bytes(before[8..12].try_into().unwrap());
+                        let lock_count_before =
+                            u32::from_le_bytes(before[4..8].try_into().unwrap());
+                        let recursion_before =
+                            u32::from_le_bytes(before[8..12].try_into().unwrap());
                         let owner_before = u32::from_le_bytes(before[12..16].try_into().unwrap());
-                        logl::trace!("trace-api",
+                        logl::trace!(
+                            "trace-api",
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD PROVIDER CALL pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" provider_id={} module=\"{}\" symbol=\"EnterCriticalSection\" esp=0x{:08x} critical_section=0x{:08x} caller_ret=0x{:08x} lock_count_before=0x{:08x} recursion_before={} owner_before={}",
@@ -3492,57 +4087,101 @@ pub(super) async fn run_loop(
                                 && name == "LeaveCriticalSection"
                     );
                     if is_leave_critical_section {
-                        let argument = exit.registers.esp.checked_add(4).ok_or_else(|| {
-                            "child provider argument address overflow".to_owned()
-                        })?;
+                        let argument =
+                            exit.registers.esp.checked_add(4).ok_or_else(|| {
+                                "child provider argument address overflow".to_owned()
+                            })?;
                         let mut address = [0; 4];
-                        child.address_space.read(argument, &mut address)
+                        child
+                            .address_space
+                            .read(argument, &mut address)
                             .map_err(|error| error.to_string())?;
                         let address = u32::from_le_bytes(address);
-                        if !session.process(active_pid)
+                        if !session
+                            .process(active_pid)
                             .ok_or_else(|| "child process missing".to_owned())?
-                            .xp.has_critical_section(address)
+                            .xp
+                            .has_critical_section(address)
                         {
-                            logl::log(level::IMPORTANT, format_args!(
-                                "WC3 CHILD CRITICAL SECTION FRONTIER pid={} tid={} operation=leave reason=unknown-critical-section address=0x{:08x}",
-                                active_pid, active_tid, address
-                            ));
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD CRITICAL SECTION FRONTIER pid={} tid={} operation=leave reason=unknown-critical-section address=0x{:08x}",
+                                    active_pid, active_tid, address
+                                ),
+                            );
                             return Ok(());
                         }
                         let mut before = [0; 16];
-                        child.address_space.read(address, &mut before)
+                        child
+                            .address_space
+                            .read(address, &mut before)
                             .map_err(|error| error.to_string())?;
                         let lock_before = u32::from_le_bytes(before[4..8].try_into().unwrap());
-                        let recursion_before = u32::from_le_bytes(before[8..12].try_into().unwrap());
+                        let recursion_before =
+                            u32::from_le_bytes(before[8..12].try_into().unwrap());
                         let owner_before = u32::from_le_bytes(before[12..16].try_into().unwrap());
-                        logl::log(level::IMPORTANT, format_args!(
-                            "WC3 CHILD PROVIDER CALL pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" provider_id={} module=\"{}\" symbol=\"LeaveCriticalSection\" esp=0x{:08x} critical_section=0x{:08x} caller_ret=0x{:08x} lock_count_before=0x{:08x} recursion_before={} owner_before={}",
-                            active_pid, active_tid, running_module_name, provider_id, provider.module,
-                            exit.registers.esp, address, u32::from_le_bytes(caller_ret), lock_before,
-                            recursion_before, owner_before
-                        ));
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD PROVIDER CALL pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" provider_id={} module=\"{}\" symbol=\"LeaveCriticalSection\" esp=0x{:08x} critical_section=0x{:08x} caller_ret=0x{:08x} lock_count_before=0x{:08x} recursion_before={} owner_before={}",
+                                active_pid,
+                                active_tid,
+                                running_module_name,
+                                provider_id,
+                                provider.module,
+                                exit.registers.esp,
+                                address,
+                                u32::from_le_bytes(caller_ret),
+                                lock_before,
+                                recursion_before,
+                                owner_before
+                            ),
+                        );
                         let mut child_memory = X86Memory(&child.address_space);
-                        let action = session.process_mut(active_pid)
-                            .ok_or_else(|| "child process missing".to_owned())?.xp
-                            .dispatch_provider_for_process(active_pid, active_tid, provider_id,
-                                exit.registers.esp, &mut child_memory).map_err(str::to_owned)?;
+                        let action = session
+                            .process_mut(active_pid)
+                            .ok_or_else(|| "child process missing".to_owned())?
+                            .xp
+                            .dispatch_provider_for_process(
+                                active_pid,
+                                active_tid,
+                                provider_id,
+                                exit.registers.esp,
+                                &mut child_memory,
+                            )
+                            .map_err(str::to_owned)?;
                         let PersonalityAction::Return(value) = action else {
                             return Err("LeaveCriticalSection child provider did not return".into());
                         };
                         let mut after = [0; 16];
-                        child.address_space.read(address, &mut after)
+                        child
+                            .address_space
+                            .read(address, &mut after)
                             .map_err(|error| error.to_string())?;
                         let lock_count = u32::from_le_bytes(after[4..8].try_into().unwrap());
                         let recursion = u32::from_le_bytes(after[8..12].try_into().unwrap());
                         let owner = u32::from_le_bytes(after[12..16].try_into().unwrap());
-                        logl::log(level::IMPORTANT, format_args!(
-                            "WC3 CHILD CRITICAL SECTION LEAVE pid={} tid={} address=0x{:08x} lock_count=0x{:08x} recursion={} owner={} caller_ret=0x{:08x} resume_eip=0x{:08x} return_eax=0x{:08x}",
-                            active_pid, active_tid, address, lock_count, recursion, owner,
-                            u32::from_le_bytes(caller_ret), exit.registers.eip, value
-                        ));
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD CRITICAL SECTION LEAVE pid={} tid={} address=0x{:08x} lock_count=0x{:08x} recursion={} owner={} caller_ret=0x{:08x} resume_eip=0x{:08x} return_eax=0x{:08x}",
+                                active_pid,
+                                active_tid,
+                                address,
+                                lock_count,
+                                recursion,
+                                owner,
+                                u32::from_le_bytes(caller_ret),
+                                exit.registers.eip,
+                                value
+                            ),
+                        );
                         let mut registers = exit.registers;
                         registers.eax = value;
-                        contexts[active].context.set_registers(registers)
+                        contexts[active]
+                            .context
+                            .set_registers(registers)
                             .map_err(|error| error.to_string())?;
                         continue;
                     }
@@ -3563,7 +4202,8 @@ pub(super) async fn run_loop(
                             .read(argument, &mut value)
                             .map_err(|error| error.to_string())?;
                         let value = u32::from_le_bytes(value);
-                        logl::trace!("trace-api",
+                        logl::trace!(
+                            "trace-api",
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD PROVIDER CALL pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" provider_id={} module=\"{}\" symbol=\"SetLastError\" esp=0x{:08x} value=0x{:08x}",
@@ -3609,11 +4249,18 @@ pub(super) async fn run_loop(
                     }
                     let is_cipow = matches!(&provider.symbol, child_loader::ProviderSymbol::Name(name) if provider.module.eq_ignore_ascii_case("MSVCRT.dll") && name == "_CIpow");
                     if is_cipow {
-                        if child.cipow.is_some() { return Err("nested CIPOW".into()); }
-                        child.cipow = Some(ChildCiPow { provider_esp: exit.registers.esp });
+                        if child.cipow.is_some() {
+                            return Err("nested CIPOW".into());
+                        }
+                        child.cipow = Some(ChildCiPow {
+                            provider_esp: exit.registers.esp,
+                        });
                         let mut registers = exit.registers;
                         registers.eip = thunk32::CHILD_CIPOW_SPILL_ADDRESS;
-                        contexts[active].context.set_registers(registers).map_err(|error| error.to_string())?;
+                        contexts[active]
+                            .context
+                            .set_registers(registers)
+                            .map_err(|error| error.to_string())?;
                         continue;
                     }
                     let is_unhandled_filter = matches!(
@@ -3623,21 +4270,48 @@ pub(super) async fn run_loop(
                                 && name == "SetUnhandledExceptionFilter"
                     );
                     if is_unhandled_filter {
-                        let filter = read_guest_words(&X86Memory(&child.address_space), exit.registers.esp, 2)?[1];
+                        let filter = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            exit.registers.esp,
+                            2,
+                        )?[1];
                         let mut child_memory = X86Memory(&child.address_space);
-                        let action = session.process_mut(active_pid)
-                            .ok_or_else(|| "child process missing".to_owned())?.xp
-                            .dispatch_provider_for_process(active_pid, active_tid, provider_id, exit.registers.esp, &mut child_memory)
+                        let action = session
+                            .process_mut(active_pid)
+                            .ok_or_else(|| "child process missing".to_owned())?
+                            .xp
+                            .dispatch_provider_for_process(
+                                active_pid,
+                                active_tid,
+                                provider_id,
+                                exit.registers.esp,
+                                &mut child_memory,
+                            )
                             .map_err(str::to_owned)?;
-                        let PersonalityAction::Return(previous) = action else { return Err("SetUnhandledExceptionFilter child provider did not return".into()); };
-                        logl::log(level::IMPORTANT, format_args!(
-                            "WC3 CHILD UNHANDLED FILTER SET pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" filter=0x{:08x} previous=0x{:08x} caller_ret=0x{:08x} resume_eip=0x{:08x}",
-                            active_pid, active_tid, running_module_name, filter, previous,
-                            u32::from_le_bytes(caller_ret), exit.registers.eip
-                        ));
+                        let PersonalityAction::Return(previous) = action else {
+                            return Err(
+                                "SetUnhandledExceptionFilter child provider did not return".into(),
+                            );
+                        };
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD UNHANDLED FILTER SET pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" filter=0x{:08x} previous=0x{:08x} caller_ret=0x{:08x} resume_eip=0x{:08x}",
+                                active_pid,
+                                active_tid,
+                                running_module_name,
+                                filter,
+                                previous,
+                                u32::from_le_bytes(caller_ret),
+                                exit.registers.eip
+                            ),
+                        );
                         let mut registers = exit.registers;
                         registers.eax = previous;
-                        contexts[active].context.set_registers(registers).map_err(|error| error.to_string())?;
+                        contexts[active]
+                            .context
+                            .set_registers(registers)
+                            .map_err(|error| error.to_string())?;
                         continue;
                     }
                     let is_crt_set_app_type = matches!(
@@ -3704,11 +4378,7 @@ pub(super) async fn run_loop(
                         let new_mode = if frame[5] == 0 {
                             0
                         } else {
-                            read_guest_words(
-                                &X86Memory(&child.address_space),
-                                frame[5],
-                                1,
-                            )?[0]
+                            read_guest_words(&X86Memory(&child.address_space), frame[5], 1)?[0]
                         };
                         let mut child_memory = X86Memory(&child.address_space);
                         let action = session
@@ -3726,32 +4396,17 @@ pub(super) async fn run_loop(
                         let PersonalityAction::Return(return_value) = action else {
                             return Err("__getmainargs child provider did not return".into());
                         };
-                        let argc = read_guest_words(
-                            &X86Memory(&child.address_space),
-                            frame[1],
-                            1,
-                        )?[0];
-                        let argv = read_guest_words(
-                            &X86Memory(&child.address_space),
-                            frame[2],
-                            1,
-                        )?[0];
-                        let envp = read_guest_words(
-                            &X86Memory(&child.address_space),
-                            frame[3],
-                            1,
-                        )?[0];
+                        let argc =
+                            read_guest_words(&X86Memory(&child.address_space), frame[1], 1)?[0];
+                        let argv =
+                            read_guest_words(&X86Memory(&child.address_space), frame[2], 1)?[0];
+                        let envp =
+                            read_guest_words(&X86Memory(&child.address_space), frame[3], 1)?[0];
                         logl::log(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD CRT GETMAINARGS pid={} tid={} argc={} argv=0x{:08x} envp=0x{:08x} wildcard={} new_mode={} cleanup=0-by-thunk",
-                                active_pid,
-                                active_tid,
-                                argc,
-                                argv,
-                                envp,
-                                frame[4],
-                                new_mode,
+                                active_pid, active_tid, argc, argv, envp, frame[4], new_mode,
                             ),
                         );
                         let mut registers = exit.registers;
@@ -3798,12 +4453,7 @@ pub(super) async fn run_loop(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD CRT ONEXIT pid={} tid={} caller_ret=0x{:08x} func=0x{:08x} entries={} return_eax=0x{:08x} cleanup=0-by-thunk",
-                                active_pid,
-                                active_tid,
-                                frame[0],
-                                frame[1],
-                                entries,
-                                return_value,
+                                active_pid, active_tid, frame[0], frame[1], entries, return_value,
                             ),
                         );
                         let mut registers = exit.registers;
@@ -3842,8 +4492,7 @@ pub(super) async fn run_loop(
                             .context
                             .extended_state()
                             .map_err(|error| error.to_string())?;
-                        let before_fcw =
-                            u16::from_le_bytes(state.bytes[0..2].try_into().unwrap());
+                        let before_fcw = u16::from_le_bytes(state.bytes[0..2].try_into().unwrap());
                         let after_fcw = (before_fcw & !0x0300) | 0x0200;
                         state.bytes[0..2].copy_from_slice(&after_fcw.to_le_bytes());
                         let mut xstate_bv =
@@ -4050,7 +4699,14 @@ pub(super) async fn run_loop(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD CRT INITTERM pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" provider_id={} begin=0x{:08x} end=0x{:08x} entries={} caller_ret=0x{:08x}",
-                                active_pid, active_tid, running_module_name, provider_id, begin, end, entries, caller_ret
+                                active_pid,
+                                active_tid,
+                                running_module_name,
+                                provider_id,
+                                begin,
+                                end,
+                                entries,
+                                caller_ret
                             ),
                         );
                         child.initterm = Some(ChildInitterm {
@@ -4062,7 +4718,9 @@ pub(super) async fn run_loop(
                             callbacks_invoked: 0,
                         });
                         match advance_child_initterm(child, &mut contexts[active])? {
-                            InittermAdvance::CallbackScheduled | InittermAdvance::Complete => continue,
+                            InittermAdvance::CallbackScheduled | InittermAdvance::Complete => {
+                                continue;
+                            }
                         }
                     }
                     let is_reg_open_key_ex_a = matches!(
@@ -4177,26 +4835,26 @@ pub(super) async fn run_loop(
                             logl::log(
                                 level::IMPORTANT,
                                 format_args!(
-                                "WC3 CHILD VIRTUALALLOC FRONTIER pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" provider_id={} caller_ret=0x{:08x} address=0x{:08x} size=0x{:08x} allocation_type=0x{:08x} protect=0x{:08x}",
-                                active_pid,
-                                active_tid,
-                                running_module_name,
-                                provider_id,
-                                frame.caller_ret,
-                                frame.address,
-                                frame.size,
-                                frame.allocation_type,
-                                frame.protect,
+                                    "WC3 CHILD VIRTUALALLOC FRONTIER pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" provider_id={} caller_ret=0x{:08x} address=0x{:08x} size=0x{:08x} allocation_type=0x{:08x} protect=0x{:08x}",
+                                    active_pid,
+                                    active_tid,
+                                    running_module_name,
+                                    provider_id,
+                                    frame.caller_ret,
+                                    frame.address,
+                                    frame.size,
+                                    frame.allocation_type,
+                                    frame.protect,
                                 ),
                             );
                             logl::log(
                                 level::IMPORTANT,
                                 format_args!(
-                                "WC3 CHILD VIRTUALALLOC FLAGS commit={} reserve={} top_down={} protect_name=\"{}\"",
-                                (frame.allocation_type & 0x0000_1000 != 0) as u8,
-                                (frame.allocation_type & 0x0000_2000 != 0) as u8,
-                                (frame.allocation_type & 0x0010_0000 != 0) as u8,
-                                virtual_alloc_protect_name(frame.protect),
+                                    "WC3 CHILD VIRTUALALLOC FLAGS commit={} reserve={} top_down={} protect_name=\"{}\"",
+                                    (frame.allocation_type & 0x0000_1000 != 0) as u8,
+                                    (frame.allocation_type & 0x0000_2000 != 0) as u8,
+                                    (frame.allocation_type & 0x0010_0000 != 0) as u8,
+                                    virtual_alloc_protect_name(frame.protect),
                                 ),
                             );
                             logl::log(
@@ -4230,9 +4888,12 @@ pub(super) async fn run_loop(
                                         continue;
                                     }
                                     Err("VirtualAlloc overlapping commit") => {
-                                        logl::log(level::IMPORTANT, format_args!(
-                                            "WC3 CHILD VIRTUALALLOC FRONTIER reason=overlapping-commit"
-                                        ));
+                                        logl::log(
+                                            level::IMPORTANT,
+                                            format_args!(
+                                                "WC3 CHILD VIRTUALALLOC FRONTIER reason=overlapping-commit"
+                                            ),
+                                        );
                                         return Ok(());
                                     }
                                     Err(error) => return Err(error.into()),
@@ -4247,8 +4908,11 @@ pub(super) async fn run_loop(
                                     Permissions::READ | Permissions::WRITE,
                                 )
                                 .map_err(|error| format!("map VirtualAlloc commit: {error}"))?;
-                            let zeroes = vec![0; usize::try_from(request.size)
-                                .map_err(|_| "VirtualAlloc zero size")?];
+                            let zeroes = vec![
+                                0;
+                                usize::try_from(request.size)
+                                    .map_err(|_| "VirtualAlloc zero size")?
+                            ];
                             if child
                                 .address_space
                                 .write(request.base, &zeroes)
@@ -4262,20 +4926,45 @@ pub(super) async fn run_loop(
                                     .process_mut(active_pid)
                                     .ok_or_else(|| "child process missing".to_owned())?
                                     .xp;
-                                process.virtual_finish_commit(request).map_err(str::to_owned)?;
-                                let (reservations, reserve_next) = process.virtual_reservation_state();
-                                let (committed_ranges, committed_bytes) = process.virtual_commit_state();
-                                (reservations, reserve_next, committed_ranges, committed_bytes)
+                                process
+                                    .virtual_finish_commit(request)
+                                    .map_err(str::to_owned)?;
+                                let (reservations, reserve_next) =
+                                    process.virtual_reservation_state();
+                                let (committed_ranges, committed_bytes) =
+                                    process.virtual_commit_state();
+                                (
+                                    reservations,
+                                    reserve_next,
+                                    committed_ranges,
+                                    committed_bytes,
+                                )
                             };
-                            logl::log(level::IMPORTANT, format_args!(
-                                "WC3 CHILD VIRTUALALLOC COMMIT pid={} tid={} address=0x{:08x} requested_size=0x{:08x} commit_size=0x{:08x} reservation_base=0x{:08x} reservation_size=0x{:08x} protect=PAGE_READWRITE permissions=RW guest_mapped=1 zero_initialized=1 return_eax=0x{:08x}",
-                                active_pid, active_tid, frame.address, frame.size, request.size,
-                                request.reservation_base, request.reservation_size, request.base
-                            ));
-                            logl::log(level::IMPORTANT, format_args!(
-                                "WC3 CHILD VIRTUAL MEMORY pid={} reservations={} committed_ranges={} committed_bytes={} reserve_next=0x{:08x}",
-                                active_pid, reservations, committed_ranges, committed_bytes, reserve_next
-                            ));
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD VIRTUALALLOC COMMIT pid={} tid={} address=0x{:08x} requested_size=0x{:08x} commit_size=0x{:08x} reservation_base=0x{:08x} reservation_size=0x{:08x} protect=PAGE_READWRITE permissions=RW guest_mapped=1 zero_initialized=1 return_eax=0x{:08x}",
+                                    active_pid,
+                                    active_tid,
+                                    frame.address,
+                                    frame.size,
+                                    request.size,
+                                    request.reservation_base,
+                                    request.reservation_size,
+                                    request.base
+                                ),
+                            );
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD VIRTUAL MEMORY pid={} reservations={} committed_ranges={} committed_bytes={} reserve_next=0x{:08x}",
+                                    active_pid,
+                                    reservations,
+                                    committed_ranges,
+                                    committed_bytes,
+                                    reserve_next
+                                ),
+                            );
                             let mut registers = exit.registers;
                             registers.eax = request.base;
                             contexts[active]
@@ -4296,7 +4985,8 @@ pub(super) async fn run_loop(
                             if reservation.is_none() {
                                 process.set_last_error(8);
                             }
-                            let (reservation_count, reserve_next) = process.virtual_reservation_state();
+                            let (reservation_count, reserve_next) =
+                                process.virtual_reservation_state();
                             (reservation, reservation_count, reserve_next)
                         };
                         let result = reservation.as_ref().map(|value| value.base).unwrap_or(0);
@@ -4341,11 +5031,7 @@ pub(super) async fn run_loop(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD EXITPROCESS CALL pid={} tid={} during=\"{}\" exit_code=0x{:08x} caller_ret=0x{:08x}",
-                                active_pid,
-                                active_tid,
-                                running_module_name,
-                                exit_code,
-                                frame[0],
+                                active_pid, active_tid, running_module_name, exit_code, frame[0],
                             ),
                         );
                         let action = {
@@ -4364,7 +5050,9 @@ pub(super) async fn run_loop(
                                 .map_err(str::to_owned)?
                         };
                         let PersonalityAction::ExitProcess(dispatched_code) = action else {
-                            return Err("ExitProcess child provider returned a non-exit action".into());
+                            return Err(
+                                "ExitProcess child provider returned a non-exit action".into()
+                            );
                         };
                         if dispatched_code != exit_code {
                             return Err("ExitProcess child provider exit code mismatch".into());
@@ -4423,14 +5111,13 @@ pub(super) async fn run_loop(
                             3,
                         )?;
                         let xpointers = frame[2];
-                        let record = read_guest_words(
-                            &X86Memory(&child.address_space),
-                            xpointers,
-                            1,
-                        )?[0];
+                        let record =
+                            read_guest_words(&X86Memory(&child.address_space), xpointers, 1)?[0];
                         let context = read_guest_words(
                             &X86Memory(&child.address_space),
-                            xpointers.checked_add(4).ok_or("XcptFilter pointer overflow")?,
+                            xpointers
+                                .checked_add(4)
+                                .ok_or("XcptFilter pointer overflow")?,
                             1,
                         )?[0];
                         let mut child_memory = X86Memory(&child.address_space);
@@ -4476,36 +5163,75 @@ pub(super) async fn run_loop(
                         continue;
                     }
                     if operation == child_loader::ProviderOp::CrtExceptHandler3 {
-                        let words = read_guest_words(&X86Memory(&child.address_space), exit.registers.esp, 5)?;
+                        let words = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            exit.registers.esp,
+                            5,
+                        )?;
                         let return_address = words[0];
                         let record = words[1];
                         let frame = words[2];
                         let context = words[3];
-                        let seh = child.seh.as_ref().ok_or("WC3 CHILD CRT EH3 FRONTIER reason=no-active-seh")?;
+                        let seh = child
+                            .seh
+                            .as_ref()
+                            .ok_or("WC3 CHILD CRT EH3 FRONTIER reason=no-active-seh")?;
                         if return_address != thunk32::CHILD_SEH_RETURN_ADDRESS
                             || frame != seh.registration
                             || record != seh.exception_record_va
                             || context != seh.context_va
                         {
-                            return Err(format!("WC3 CHILD CRT EH3 FRONTIER reason=unexpected-call-shape return=0x{return_address:08x} record=0x{record:08x} frame=0x{frame:08x} context=0x{context:08x}"));
+                            return Err(format!(
+                                "WC3 CHILD CRT EH3 FRONTIER reason=unexpected-call-shape return=0x{return_address:08x} record=0x{record:08x} frame=0x{frame:08x} context=0x{context:08x}"
+                            ));
                         }
-                        let frame_words = read_guest_words(&X86Memory(&child.address_space), frame, 5)?;
+                        let frame_words =
+                            read_guest_words(&X86Memory(&child.address_space), frame, 5)?;
                         let scope = frame_words[2];
                         let current_level = i32::from_le_bytes(frame_words[3].to_le_bytes());
-                        if current_level < -1 { return Err("WC3 CHILD CRT EH3 FRONTIER reason=invalid-try-level".into()); }
-                        if current_level >= 0 && scope == 0 { return Err("WC3 CHILD CRT EH3 FRONTIER reason=null-scope-table".into()); }
+                        if current_level < -1 {
+                            return Err(
+                                "WC3 CHILD CRT EH3 FRONTIER reason=invalid-try-level".into()
+                            );
+                        }
+                        if current_level >= 0 && scope == 0 {
+                            return Err("WC3 CHILD CRT EH3 FRONTIER reason=null-scope-table".into());
+                        }
                         if !child.seh3_diagnostic_logged {
                             child.seh3_diagnostic_logged = true;
-                            logl::log(level::IMPORTANT, format_args!("WC3 CHILD CRT EH3 record=0x{:08x} frame=0x{:08x} context=0x{:08x} scope=0x{:08x} trylevel={}", record, frame, context, scope, current_level));
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD CRT EH3 record=0x{:08x} frame=0x{:08x} context=0x{:08x} scope=0x{:08x} trylevel={}",
+                                    record, frame, context, scope, current_level
+                                ),
+                            );
                             let mut level_now = current_level;
                             for _ in 0..65536 {
-                                if level_now < 0 { break; }
-                                let (previous, filter, handler) = child_seh3_scope_entry(child, scope, level_now)?;
-                                logl::log(level::IMPORTANT, format_args!("WC3 CHILD CRT EH3 SCOPE level={} prev={} filter=0x{:08x} handler=0x{:08x}", level_now, previous, filter, handler));
-                                if previous >= level_now { return Err("WC3 CHILD CRT EH3 FRONTIER reason=scope-table-loop".into()); }
+                                if level_now < 0 {
+                                    break;
+                                }
+                                let (previous, filter, handler) =
+                                    child_seh3_scope_entry(child, scope, level_now)?;
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 CHILD CRT EH3 SCOPE level={} prev={} filter=0x{:08x} handler=0x{:08x}",
+                                        level_now, previous, filter, handler
+                                    ),
+                                );
+                                if previous >= level_now {
+                                    return Err(
+                                        "WC3 CHILD CRT EH3 FRONTIER reason=scope-table-loop".into(),
+                                    );
+                                }
                                 level_now = previous;
                             }
-                            if level_now >= 0 { return Err("WC3 CHILD CRT EH3 FRONTIER reason=scope-table-too-deep".into()); }
+                            if level_now >= 0 {
+                                return Err(
+                                    "WC3 CHILD CRT EH3 FRONTIER reason=scope-table-too-deep".into(),
+                                );
+                            }
                         }
                         let provider_resume_eip = exit.registers.eip;
                         let provider_esp = exit.registers.esp;
@@ -4514,16 +5240,48 @@ pub(super) async fn run_loop(
                             if level_now < 0 {
                                 let mut registers = exit.registers;
                                 registers.eax = wc3::seh::DISPOSITION_CONTINUE_SEARCH;
-                                contexts[active].context.set_registers(registers).map_err(|error| error.to_string())?;
-                                logl::log(level::IMPORTANT, format_args!("WC3 CHILD CRT EH3 SEARCH pid={} tid={} disposition=1", active_pid, active_tid));
+                                contexts[active]
+                                    .context
+                                    .set_registers(registers)
+                                    .map_err(|error| error.to_string())?;
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 CHILD CRT EH3 SEARCH pid={} tid={} disposition=1",
+                                        active_pid, active_tid
+                                    ),
+                                );
                                 continue 'child_run;
                             }
-                            let (previous, filter, handler) = child_seh3_scope_entry(child, scope, level_now)?;
+                            let (previous, filter, handler) =
+                                child_seh3_scope_entry(child, scope, level_now)?;
                             write_child_u32(child, frame + 0x0c, previous as u32)?;
                             if filter != 0 {
-                                let call = ChildSeh3Call { provider_resume_eip, provider_esp, frame, scope, kind: ChildSeh3CallbackKind::Filter { level: level_now, previous, start_level: current_level } };
-                                schedule_child_seh3_filter(child, &mut contexts[active], exit.registers, call, filter)?;
-                                logl::log(level::IMPORTANT, format_args!("WC3 CHILD CRT EH3 FILTER pid={} tid={} level={} filter=0x{:08x} handler=0x{:08x}", active_pid, active_tid, level_now, filter, handler));
+                                let call = ChildSeh3Call {
+                                    provider_resume_eip,
+                                    provider_esp,
+                                    frame,
+                                    scope,
+                                    kind: ChildSeh3CallbackKind::Filter {
+                                        level: level_now,
+                                        previous,
+                                        start_level: current_level,
+                                    },
+                                };
+                                schedule_child_seh3_filter(
+                                    child,
+                                    &mut contexts[active],
+                                    exit.registers,
+                                    call,
+                                    filter,
+                                )?;
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 CHILD CRT EH3 FILTER pid={} tid={} level={} filter=0x{:08x} handler=0x{:08x}",
+                                        active_pid, active_tid, level_now, filter, handler
+                                    ),
+                                );
                                 continue 'child_run;
                             }
                             level_now = previous;
@@ -4540,10 +5298,8 @@ pub(super) async fn run_loop(
                         let target_ip = frame[2];
                         let exception_record = frame[3];
                         let return_value = frame[4];
-                        let current_head = read_seh_chain_head(
-                            &child.address_space,
-                            exit.registers.fs_base,
-                        )?;
+                        let current_head =
+                            read_seh_chain_head(&child.address_space, exit.registers.fs_base)?;
                         let target_relation =
                             classify_unwind_target(child, current_head, target_frame)?;
                         let target_location = (target_ip != 0)
@@ -4581,17 +5337,26 @@ pub(super) async fn run_loop(
                                 u32::from_le_bytes(header[16..20].try_into().unwrap()),
                             )
                         };
-                        let (active_registration, active_next, active_handler, active_record, active_context, active_depth) = child
+                        let (
+                            active_registration,
+                            active_next,
+                            active_handler,
+                            active_record,
+                            active_context,
+                            active_depth,
+                        ) = child
                             .seh
                             .as_ref()
-                            .map(|seh| (
-                                seh.registration,
-                                seh.next_registration,
-                                seh.handler,
-                                seh.exception_record_va,
-                                seh.context_va,
-                                seh.depth,
-                            ))
+                            .map(|seh| {
+                                (
+                                    seh.registration,
+                                    seh.next_registration,
+                                    seh.handler,
+                                    seh.exception_record_va,
+                                    seh.context_va,
+                                    seh.depth,
+                                )
+                            })
                             .unwrap_or((0, 0, 0, 0, 0, 0));
                         let active_target = child
                             .seh
@@ -4616,17 +5381,30 @@ pub(super) async fn run_loop(
                                 .context
                                 .set_registers(resumed)
                                 .map_err(|error| error.to_string())?;
-                            logl::log(level::IMPORTANT, format_args!(
-                                "WC3 CHILD RTLUNWIND CONTINUE pid={} tid={} target_frame=0x{:08x} target_ip=0x{:08x} target_owner={:?} target_rva=0x{:08x} return_value=0x{:08x} old_esp=0x{:08x} new_esp=0x{:08x} fs_head=0x{:08x} handlers_called=0 frames_popped=0",
-                                active_pid, active_tid, target_frame, target_ip, target_owner,
-                                target_rva, return_value, exit.registers.esp, resumed.esp,
-                                current_head,
-                            ));
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD RTLUNWIND CONTINUE pid={} tid={} target_frame=0x{:08x} target_ip=0x{:08x} target_owner={:?} target_rva=0x{:08x} return_value=0x{:08x} old_esp=0x{:08x} new_esp=0x{:08x} fs_head=0x{:08x} handlers_called=0 frames_popped=0",
+                                    active_pid,
+                                    active_tid,
+                                    target_frame,
+                                    target_ip,
+                                    target_owner,
+                                    target_rva,
+                                    return_value,
+                                    exit.registers.esp,
+                                    resumed.esp,
+                                    current_head,
+                                ),
+                            );
                             continue;
                         }
                         let reason = if target_frame == 0 {
                             "exit-unwind"
-                        } else if matches!(target_relation, UnwindTargetRelation::LaterRegistration(_)) {
+                        } else if matches!(
+                            target_relation,
+                            UnwindTargetRelation::LaterRegistration(_)
+                        ) {
                             "multi-frame-unwind"
                         } else if matches!(target_relation, UnwindTargetRelation::NotInChain) {
                             "invalid-target-frame"
@@ -4641,33 +5419,109 @@ pub(super) async fn run_loop(
                         } else {
                             "unsupported-current-head-shape"
                         };
-                        logl::log(level::IMPORTANT, format_args!(
-                            "WC3 CHILD RTLUNWIND FRONTIER pid={} tid={} reason={} caller_ret=0x{:08x} target_frame=0x{:08x} target_relation={} target_relation_detail={:?} target_ip=0x{:08x} target_ip_owner={:?} target_ip_rva=0x{:08x} exception_record=0x{:08x} exception_relation={} return_value=0x{:08x} fs_head=0x{:08x} active_registration=0x{:08x} active_next=0x{:08x} active_handler=0x{:08x} active_record=0x{:08x} active_context=0x{:08x} active_depth={}",
-                            active_pid, active_tid, reason, caller_ret, target_frame, target_relation.name(), target_relation,
-                            target_ip, target_owner, target_rva, exception_record,
-                            exception_relation, return_value, current_head,
-                            active_registration, active_next, active_handler, active_record,
-                            active_context, active_depth,
-                        ));
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD RTLUNWIND FRONTIER pid={} tid={} reason={} caller_ret=0x{:08x} target_frame=0x{:08x} target_relation={} target_relation_detail={:?} target_ip=0x{:08x} target_ip_owner={:?} target_ip_rva=0x{:08x} exception_record=0x{:08x} exception_relation={} return_value=0x{:08x} fs_head=0x{:08x} active_registration=0x{:08x} active_next=0x{:08x} active_handler=0x{:08x} active_record=0x{:08x} active_context=0x{:08x} active_depth={}",
+                                active_pid,
+                                active_tid,
+                                reason,
+                                caller_ret,
+                                target_frame,
+                                target_relation.name(),
+                                target_relation,
+                                target_ip,
+                                target_owner,
+                                target_rva,
+                                exception_record,
+                                exception_relation,
+                                return_value,
+                                current_head,
+                                active_registration,
+                                active_next,
+                                active_handler,
+                                active_record,
+                                active_context,
+                                active_depth,
+                            ),
+                        );
                         return Ok(());
                     }
                     if operation == child_loader::ProviderOp::UnhandledExceptionFilter {
-                        let exception_pointers = read_guest_words(&X86Memory(&child.address_space), exit.registers.esp, 2)?[1];
-                        if exception_pointers == 0 { return Err("WC3 CHILD UEF FRONTIER reason=null-exception-pointers".into()); }
+                        let exception_pointers = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            exit.registers.esp,
+                            2,
+                        )?[1];
+                        if exception_pointers == 0 {
+                            return Err(
+                                "WC3 CHILD UEF FRONTIER reason=null-exception-pointers".into()
+                            );
+                        }
                         let mut pointers = [0; 8];
-                        if child.address_space.read(exception_pointers, &mut pointers).map_err(|error| error.to_string())? != 8 { return Err("WC3 CHILD UEF FRONTIER reason=unreadable-exception-pointers".into()); }
-                        let filter = session.process(active_pid).ok_or_else(|| "child process missing".to_owned())?.xp.unhandled_exception_filter();
+                        if child
+                            .address_space
+                            .read(exception_pointers, &mut pointers)
+                            .map_err(|error| error.to_string())?
+                            != 8
+                        {
+                            return Err(
+                                "WC3 CHILD UEF FRONTIER reason=unreadable-exception-pointers"
+                                    .into(),
+                            );
+                        }
+                        let filter = session
+                            .process(active_pid)
+                            .ok_or_else(|| "child process missing".to_owned())?
+                            .xp
+                            .unhandled_exception_filter();
                         if filter == 0 {
-                            let result = session.process(active_pid).ok_or_else(|| "child process missing".to_owned())?.xp.complete_unhandled_exception_filter(None).map_err(str::to_owned)?;
-                            let mut registers = exit.registers; registers.eax = result;
-                            contexts[active].context.set_registers(registers).map_err(|error| error.to_string())?;
-                            logl::log(level::IMPORTANT, format_args!("WC3 CHILD UEF RETURN pid={} tid={} source=default filter=0x00000000 result=0x{:08x} cleanup=4-by-thunk", active_pid, active_tid, result));
+                            let result = session
+                                .process(active_pid)
+                                .ok_or_else(|| "child process missing".to_owned())?
+                                .xp
+                                .complete_unhandled_exception_filter(None)
+                                .map_err(str::to_owned)?;
+                            let mut registers = exit.registers;
+                            registers.eax = result;
+                            contexts[active]
+                                .context
+                                .set_registers(registers)
+                                .map_err(|error| error.to_string())?;
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD UEF RETURN pid={} tid={} source=default filter=0x00000000 result=0x{:08x} cleanup=4-by-thunk",
+                                    active_pid, active_tid, result
+                                ),
+                            );
                             continue;
                         }
-                        let Some((owner, rva)) = child_pc_owner(child, filter).map(|(owner, rva)| (owner.to_owned(), rva)) else { return Err(format!("WC3 CHILD UEF FRONTIER reason=unknown-filter-address filter=0x{filter:08x}")); };
-                        let callback_esp = exit.registers.esp.checked_sub(8).ok_or("UEF callback stack underflow")?;
-                        let frame = [thunk32::CHILD_UEF_RETURN_ADDRESS, exception_pointers]; let mut bytes=[0;8]; for (i,value) in frame.into_iter().enumerate(){bytes[i*4..i*4+4].copy_from_slice(&value.to_le_bytes());}
-                        if child.address_space.write(callback_esp,&bytes).map_err(|error| error.to_string())? != 8 { return Err("short UEF callback frame write".into()); }
+                        let Some((owner, rva)) = child_pc_owner(child, filter)
+                            .map(|(owner, rva)| (owner.to_owned(), rva))
+                        else {
+                            return Err(format!(
+                                "WC3 CHILD UEF FRONTIER reason=unknown-filter-address filter=0x{filter:08x}"
+                            ));
+                        };
+                        let callback_esp = exit
+                            .registers
+                            .esp
+                            .checked_sub(8)
+                            .ok_or("UEF callback stack underflow")?;
+                        let frame = [thunk32::CHILD_UEF_RETURN_ADDRESS, exception_pointers];
+                        let mut bytes = [0; 8];
+                        for (i, value) in frame.into_iter().enumerate() {
+                            bytes[i * 4..i * 4 + 4].copy_from_slice(&value.to_le_bytes());
+                        }
+                        if child
+                            .address_space
+                            .write(callback_esp, &bytes)
+                            .map_err(|error| error.to_string())?
+                            != 8
+                        {
+                            return Err("short UEF callback frame write".into());
+                        }
                         child.unhandled_filter_call = Some(ChildUnhandledFilterCall {
                             return_esp: exit.registers.esp,
                             filter,
@@ -4675,8 +5529,27 @@ pub(super) async fn run_loop(
                                 resume_eip: exit.registers.eip,
                             },
                         });
-                        let mut registers=exit.registers; registers.eip=filter; registers.esp=callback_esp; contexts[active].context.set_registers(registers).map_err(|error| error.to_string())?;
-                        logl::log(level::IMPORTANT, format_args!("WC3 CHILD UEF FILTER CALL pid={} tid={} filter=0x{:08x} filter_owner={:?} filter_rva=0x{:08x} exception_pointers=0x{:08x} provider_esp=0x{:08x} callback_esp=0x{:08x}", active_pid,active_tid,filter,owner,rva,exception_pointers,exit.registers.esp,callback_esp));
+                        let mut registers = exit.registers;
+                        registers.eip = filter;
+                        registers.esp = callback_esp;
+                        contexts[active]
+                            .context
+                            .set_registers(registers)
+                            .map_err(|error| error.to_string())?;
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD UEF FILTER CALL pid={} tid={} filter=0x{:08x} filter_owner={:?} filter_rva=0x{:08x} exception_pointers=0x{:08x} provider_esp=0x{:08x} callback_esp=0x{:08x}",
+                                active_pid,
+                                active_tid,
+                                filter,
+                                owner,
+                                rva,
+                                exception_pointers,
+                                exit.registers.esp,
+                                callback_esp
+                            ),
+                        );
                         continue;
                     }
                     if operation == child_loader::ProviderOp::LoadLibraryA {
@@ -4727,7 +5600,12 @@ pub(super) async fn run_loop(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD LOADLIBRARY RETURN pid={} tid={} during=\"{}\" requested={:?} handle=0x{:08x} already_loaded=1 references={} cleanup=4-by-thunk",
-                                    active_pid, active_tid, running_module_name, requested, handle, references,
+                                    active_pid,
+                                    active_tid,
+                                    running_module_name,
+                                    requested,
+                                    handle,
+                                    references,
                                 ),
                             );
                             continue;
@@ -4759,13 +5637,13 @@ pub(super) async fn run_loop(
                                 .map_err(str::to_owned)?;
                             if let Some(stored) = stored {
                                 let path = format!("/common/Warcraft III/{stored}");
-                                let bytes = async_fs::read_file(path.as_bytes())
-                                    .await
-                                    .map_err(|error| {
+                                let bytes = async_fs::read_file(path.as_bytes()).await.map_err(
+                                    |error| {
                                         format!(
                                             "read {path} for LoadLibraryA: TRUEOSFS error {error}"
                                         )
-                                    })?;
+                                    },
+                                )?;
                                 Some(("trueosfs", stored, bytes, Some(listing)))
                             } else {
                                 None
@@ -4828,11 +5706,7 @@ pub(super) async fn run_loop(
                                     level::IMPORTANT,
                                     format_args!(
                                         "WC3 CHILD LOADLIBRARY LOCAL IMPORT source={} index={} module={:?} symbol={:?} iat_rva=0x{:08x}",
-                                        source,
-                                        index,
-                                        import.module,
-                                        import.symbol,
-                                        import.iat_rva,
+                                        source, index, import.module, import.symbol, import.iat_rva,
                                     ),
                                 );
                             }
@@ -4879,7 +5753,10 @@ pub(super) async fn run_loop(
                                             .process_mut(active_pid)
                                             .ok_or_else(|| "child process missing".to_owned())?
                                             .xp
-                                            .register_runtime_native_module(&parent, image.image_base)
+                                            .register_runtime_native_module(
+                                                &parent,
+                                                image.image_base,
+                                            )
                                             .map_err(str::to_owned)?;
                                         let native_index = child.native_modules.len();
                                         child.native_modules.push(PendingNativeModule {
@@ -4894,9 +5771,8 @@ pub(super) async fn run_loop(
                                         requested: dependency_requested,
                                         stored: dependency_stored,
                                     } => {
-                                        let path = format!(
-                                            "/common/Warcraft III/{dependency_stored}"
-                                        );
+                                        let path =
+                                            format!("/common/Warcraft III/{dependency_stored}");
                                         let bytes = async_fs::read_file(path.as_bytes())
                                             .await
                                             .map_err(|error| format!(
@@ -4923,11 +5799,17 @@ pub(super) async fn run_loop(
                                             ))?;
                                         if child
                                             .address_space
-                                            .write(dependency_image.image_base, &dependency_image.image)
+                                            .write(
+                                                dependency_image.image_base,
+                                                &dependency_image.image,
+                                            )
                                             .map_err(|error| error.to_string())?
                                             != dependency_image.image.len()
                                         {
-                                            return Err("short runtime native dependency image write".into());
+                                            return Err(
+                                                "short runtime native dependency image write"
+                                                    .into(),
+                                            );
                                         }
                                         logl::log(
                                             level::IMPORTANT,
@@ -4951,8 +5833,13 @@ pub(super) async fn run_loop(
                                 .first()
                                 .ok_or("runtime native attach list empty")?;
                             let module_handle = child.native_modules[native_index].image.image_base;
-                            let load_library_handle = child.native_modules
-                                .get(*attach_indices.last().ok_or("runtime native attach tail missing")?)
+                            let load_library_handle = child
+                                .native_modules
+                                .get(
+                                    *attach_indices
+                                        .last()
+                                        .ok_or("runtime native attach tail missing")?,
+                                )
                                 .ok_or("runtime LoadLibrary requested module missing")?
                                 .image
                                 .image_base;
@@ -4963,12 +5850,8 @@ pub(super) async fn run_loop(
                             let callback_esp = provider_esp
                                 .checked_sub(16)
                                 .ok_or("LoadLibrary DllMain stack underflow")?;
-                            let frame = [
-                                thunk32::CHILD_CALLBACK_RETURN_ADDRESS,
-                                module_handle,
-                                1,
-                                0,
-                            ];
+                            let frame =
+                                [thunk32::CHILD_CALLBACK_RETURN_ADDRESS, module_handle, 1, 0];
                             let mut frame_bytes = [0u8; 16];
                             for (index, value) in frame.into_iter().enumerate() {
                                 frame_bytes[index * 4..index * 4 + 4]
@@ -5100,7 +5983,11 @@ pub(super) async fn run_loop(
                                     level::IMPORTANT,
                                     format_args!(
                                         "WC3 CHILD GETPROCADDRESS MISS pid={} tid={} module={:?} selector={:?} reason=provider-op-unmodeled error={}",
-                                        active_pid, active_tid, provider_module, selector, ERROR_PROC_NOT_FOUND,
+                                        active_pid,
+                                        active_tid,
+                                        provider_module,
+                                        selector,
+                                        ERROR_PROC_NOT_FOUND,
                                     ),
                                 );
                                 log_get_proc_address_continuation(
@@ -5149,7 +6036,12 @@ pub(super) async fn run_loop(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD GETPROCADDRESS RETURN pid={} tid={} module={:?} selector={:?} address=0x{:08x} source={} cleanup=8-by-thunk",
-                                    active_pid, active_tid, provider_module, selector, address, source,
+                                    active_pid,
+                                    active_tid,
+                                    provider_module,
+                                    selector,
+                                    address,
+                                    source,
                                 ),
                             );
                             log_get_proc_address_continuation(
@@ -5215,13 +6107,7 @@ pub(super) async fn run_loop(
                                 ),
                             );
                             log_get_proc_address_continuation(
-                                child,
-                                active_pid,
-                                active_tid,
-                                &module,
-                                frame[0],
-                                &selector,
-                                0,
+                                child, active_pid, active_tid, &module, frame[0], &selector, 0,
                             );
                             continue;
                         };
@@ -5237,13 +6123,7 @@ pub(super) async fn run_loop(
                                 ),
                             );
                             log_get_proc_address_continuation(
-                                child,
-                                active_pid,
-                                active_tid,
-                                &module,
-                                frame[0],
-                                &selector,
-                                0,
+                                child, active_pid, active_tid, &module, frame[0], &selector, 0,
                             );
                             return Ok(());
                         };
@@ -5268,65 +6148,92 @@ pub(super) async fn run_loop(
                             ),
                         );
                         log_get_proc_address_continuation(
-                            child,
-                            active_pid,
-                            active_tid,
-                            &module,
-                            frame[0],
-                            &selector,
-                            address,
+                            child, active_pid, active_tid, &module, frame[0], &selector, address,
                         );
                         continue;
                     }
-                    if matches!(operation,
+                    if matches!(
+                        operation,
                         child_loader::ProviderOp::CreateEventA
-                        | child_loader::ProviderOp::CreateMutexA
-                        | child_loader::ProviderOp::ReleaseMutex
-                        | child_loader::ProviderOp::CloseHandle
-                        | child_loader::ProviderOp::WaitForSingleObject
+                            | child_loader::ProviderOp::CreateMutexA
+                            | child_loader::ProviderOp::ReleaseMutex
+                            | child_loader::ProviderOp::CloseHandle
+                            | child_loader::ProviderOp::WaitForSingleObject
                     ) {
-                        let action = session.process_mut(active_pid)
+                        let action = session
+                            .process_mut(active_pid)
                             .ok_or_else(|| "child process missing".to_owned())?
-                            .xp.dispatch_provider_for_process_typed(
-                                active_pid, active_tid, provider_id, exit.registers.esp,
+                            .xp
+                            .dispatch_provider_for_process_typed(
+                                active_pid,
+                                active_tid,
+                                provider_id,
+                                exit.registers.esp,
                                 &mut X86Memory(&child.address_space),
-                            ).map_err(|error| error.to_string())?;
+                            )
+                            .map_err(|error| error.to_string())?;
                         let result = match action {
                             PersonalityAction::Return(result) => result,
                             PersonalityAction::Session(request) => service_sync_request(
-                                &mut session, active_pid, request, &mut contexts, &mut wait_deadlines,
+                                &mut session,
+                                active_pid,
+                                request,
+                                &mut contexts,
+                                &mut wait_deadlines,
                             )?,
                             PersonalityAction::Block(request) => {
-                                if let Some(result) = session.poll_wait(&request).map_err(str::to_owned)? {
-                                    logl::log(level::IMPORTANT, format_args!(
-                                        "WC3 CHILD WAIT RETURN pid={} tid={} handle=0x{:08x} result=0x{:08x}",
-                                        active_pid, active_tid, request.handles[0], result
-                                    ));
+                                if let Some(result) =
+                                    session.poll_wait(&request).map_err(str::to_owned)?
+                                {
+                                    logl::log(
+                                        level::IMPORTANT,
+                                        format_args!(
+                                            "WC3 CHILD WAIT RETURN pid={} tid={} handle=0x{:08x} result=0x{:08x}",
+                                            active_pid, active_tid, request.handles[0], result
+                                        ),
+                                    );
                                     result
                                 } else {
                                     session.block_wait(request.clone()).map_err(str::to_owned)?;
                                     if request.timeout != INFINITE {
-                                        wait_deadlines.insert(request.key, RuntimeWait {
-                                            deadline: tokio::time::Instant::now()
-                                                + Duration::from_millis(request.timeout as u64),
-                                            timeout_ms: request.timeout,
-                                            handle: request.handles[0],
-                                            resume_registers: exit.registers,
-                                        });
+                                        wait_deadlines.insert(
+                                            request.key,
+                                            RuntimeWait {
+                                                deadline: tokio::time::Instant::now()
+                                                    + Duration::from_millis(request.timeout as u64),
+                                                timeout_ms: request.timeout,
+                                                handle: request.handles[0],
+                                                resume_registers: exit.registers,
+                                            },
+                                        );
                                     }
-                                    logl::log(level::IMPORTANT, format_args!(
-                                        "WC3 CHILD WAIT BLOCK pid={} tid={} handle=0x{:08x} timeout_ms={}",
-                                        active_pid, active_tid, request.handles[0], request.timeout
-                                    ));
+                                    logl::log(
+                                        level::IMPORTANT,
+                                        format_args!(
+                                            "WC3 CHILD WAIT BLOCK pid={} tid={} handle=0x{:08x} timeout_ms={}",
+                                            active_pid,
+                                            active_tid,
+                                            request.handles[0],
+                                            request.timeout
+                                        ),
+                                    );
                                     loop {
-                                        if let Some(next) = pop_runnable_context(&mut session, &contexts) {
+                                        if let Some(next) =
+                                            pop_runnable_context(&mut session, &contexts)
+                                        {
                                             active = next;
                                             break;
                                         }
-                                        if let Some(deadline) = wait_deadlines.values().map(|wait| wait.deadline).min() {
+                                        if let Some(deadline) =
+                                            wait_deadlines.values().map(|wait| wait.deadline).min()
+                                        {
                                             tokio::time::sleep_until(deadline).await;
-                                            expire_runtime_waits(&mut session, &mut contexts,
-                                                &mut wait_deadlines, &mut previous_wait_timeout)?;
+                                            expire_runtime_waits(
+                                                &mut session,
+                                                &mut contexts,
+                                                &mut wait_deadlines,
+                                                &mut previous_wait_timeout,
+                                            )?;
                                         } else {
                                             tokio::time::sleep(Duration::from_millis(8)).await;
                                         }
@@ -5336,33 +6243,40 @@ pub(super) async fn run_loop(
                             }
                             _ => return Err("unexpected child synchronization action".into()),
                         };
-                        logl::log(level::IMPORTANT, format_args!(
-                            "WC3 CHILD SYNC RETURN pid={} tid={} {} eax=0x{:08x} cleanup={}-by-thunk",
-                            active_pid, active_tid, symbol, result, operation.stack_cleanup_bytes()
-                        ));
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD SYNC RETURN pid={} tid={} {} eax=0x{:08x} cleanup={}-by-thunk",
+                                active_pid,
+                                active_tid,
+                                symbol,
+                                result,
+                                operation.stack_cleanup_bytes()
+                            ),
+                        );
                         let mut registers = exit.registers;
                         registers.eax = result;
-                        contexts[active].context.set_registers(registers)
+                        contexts[active]
+                            .context
+                            .set_registers(registers)
                             .map_err(|error| error.to_string())?;
                         continue;
                     }
                     if operation.is_generic_process_local() {
-                        let interlocked_exchange =
-                            if operation == child_loader::ProviderOp::InterlockedExchange {
-                                let frame = read_guest_words(
-                                    &X86Memory(&child.address_space),
-                                    exit.registers.esp,
-                                    3,
-                                )?;
-                                let old = read_guest_words(
-                                    &X86Memory(&child.address_space),
-                                    frame[1],
-                                    1,
-                                )?[0];
-                                Some((frame[1], frame[2], old))
-                            } else {
-                                None
-                            };
+                        let interlocked_exchange = if operation
+                            == child_loader::ProviderOp::InterlockedExchange
+                        {
+                            let frame = read_guest_words(
+                                &X86Memory(&child.address_space),
+                                exit.registers.esp,
+                                3,
+                            )?;
+                            let old =
+                                read_guest_words(&X86Memory(&child.address_space), frame[1], 1)?[0];
+                            Some((frame[1], frame[2], old))
+                        } else {
+                            None
+                        };
                         let interlocked_add = if matches!(
                             operation,
                             child_loader::ProviderOp::InterlockedIncrement
@@ -5373,11 +6287,8 @@ pub(super) async fn run_loop(
                                 exit.registers.esp,
                                 2,
                             )?;
-                            let old = read_guest_words(
-                                &X86Memory(&child.address_space),
-                                frame[1],
-                                1,
-                            )?[0];
+                            let old =
+                                read_guest_words(&X86Memory(&child.address_space), frame[1], 1)?[0];
                             Some((frame[1], old))
                         } else {
                             None
@@ -5403,8 +6314,7 @@ pub(super) async fn run_loop(
                                 exit.registers.esp,
                                 3,
                             )?;
-                            let [_, filename, attributes] = frame.as_slice()
-                            else {
+                            let [_, filename, attributes] = frame.as_slice() else {
                                 unreachable!("SetFileAttributesA frame has three words")
                             };
                             let path = if *filename == 0 {
@@ -5415,9 +6325,7 @@ pub(super) async fn run_loop(
                                     *filename,
                                     1024,
                                 )
-                                .map_err(|error| {
-                                    format!("SetFileAttributesA filename: {error}")
-                                })?
+                                .map_err(|error| format!("SetFileAttributesA filename: {error}"))?
                             };
                             Some((path, *attributes))
                         } else {
@@ -5454,24 +6362,23 @@ pub(super) async fn run_loop(
                                 ),
                             );
                         }
-                        let disable_thread_library_calls = if operation
-                            == child_loader::ProviderOp::DisableThreadLibraryCalls
-                        {
-                            let module = read_guest_words(
-                                &X86Memory(&child.address_space),
-                                exit.registers.esp,
-                                2,
-                            )?[1];
-                            let was_disabled = session
-                                .process(active_pid)
-                                .ok_or_else(|| "child process missing".to_owned())?
-                                .xp
-                                .thread_library_calls_disabled(module)
-                                .unwrap_or(false);
-                            Some((module, was_disabled))
-                        } else {
-                            None
-                        };
+                        let disable_thread_library_calls =
+                            if operation == child_loader::ProviderOp::DisableThreadLibraryCalls {
+                                let module = read_guest_words(
+                                    &X86Memory(&child.address_space),
+                                    exit.registers.esp,
+                                    2,
+                                )?[1];
+                                let was_disabled = session
+                                    .process(active_pid)
+                                    .ok_or_else(|| "child process missing".to_owned())?
+                                    .xp
+                                    .thread_library_calls_disabled(module)
+                                    .unwrap_or(false);
+                                Some((module, was_disabled))
+                            } else {
+                                None
+                            };
                         let dispatch = {
                             let mut child_memory = X86Memory(&child.address_space);
                             session
@@ -5494,10 +6401,7 @@ pub(super) async fn run_loop(
                                         level::IMPORTANT,
                                         format_args!(
                                             "WC3 CHILD PROVIDER RETURN pid={} tid={} module=\"{}\" symbol=\"GetSystemInfo\" eax=0x{:08x} cleanup=4-by-thunk",
-                                            active_pid,
-                                            active_tid,
-                                            provider.module,
-                                            result,
+                                            active_pid, active_tid, provider.module, result,
                                         ),
                                     );
                                     if !child.get_system_info_consumer_logged {
@@ -5555,19 +6459,15 @@ pub(super) async fn run_loop(
                                         child_loader::ProviderOp::InterlockedDecrement => {
                                             "INTERLOCKEDDECREMENT"
                                         }
-                                        _ => unreachable!("interlocked add capture has an add operation"),
+                                        _ => unreachable!(
+                                            "interlocked add capture has an add operation"
+                                        ),
                                     };
                                     logl::log(
                                         level::IMPORTANT,
                                         format_args!(
                                             "WC3 CHILD {} pid={} tid={} target=0x{:08x} old=0x{:08x} after=0x{:08x} eax=0x{:08x} cleanup=4-by-thunk",
-                                            api,
-                                            active_pid,
-                                            active_tid,
-                                            target,
-                                            old,
-                                            after,
-                                            result,
+                                            api, active_pid, active_tid, target, old, after, result,
                                         ),
                                     );
                                 }
@@ -5643,10 +6543,71 @@ pub(super) async fn run_loop(
                                                 result,
                                             ),
                                         ),
-                                        _ => unreachable!("process-memory operation was classified before dispatch"),
+                                        _ => unreachable!(
+                                            "process-memory operation was classified before dispatch"
+                                        ),
                                     }
                                 }
                                 match operation {
+                                    child_loader::ProviderOp::FormatMessageA => {
+                                        let frame = read_guest_words(
+                                            &X86Memory(&child.address_space),
+                                            exit.registers.esp,
+                                            8,
+                                        )?;
+                                        let [
+                                            _,
+                                            _flags,
+                                            source,
+                                            message_id,
+                                            language_id,
+                                            buffer,
+                                            _capacity,
+                                            _arguments,
+                                        ] = frame.as_slice()
+                                        else {
+                                            unreachable!("FormatMessageA frame has eight words")
+                                        };
+                                        let encoding = session
+                                            .process(active_pid)
+                                            .ok_or_else(|| "child process missing".to_owned())?
+                                            .xp
+                                            .last_format_message_encoding()
+                                            .map(|value| match value {
+                                                wc3::process::MessageResourceEncoding::Ansi => {
+                                                    "ansi"
+                                                }
+                                                wc3::process::MessageResourceEncoding::Unicode => {
+                                                    "unicode"
+                                                }
+                                            })
+                                            .unwrap_or("none");
+                                        let text = if result == 0 {
+                                            String::new()
+                                        } else {
+                                            let bytes = read_guest_bytes(
+                                                &X86Memory(&child.address_space),
+                                                *buffer,
+                                                result as usize,
+                                            )?;
+                                            wc3::ThisToThat::cp1252_to_string(&bytes)
+                                        };
+                                        logl::log(
+                                            level::IMPORTANT,
+                                            format_args!(
+                                                "WC3 CHILD FORMATMESSAGEA RESULT pid={} tid={} source=0x{:08x} module=\"Storm.dll\" message_id=0x{:08x} language_id=0x{:04x} resource_type=RT_MESSAGETABLE encoding={} chars={} text={:?} eax=0x{:08x} cleanup=28-by-thunk",
+                                                active_pid,
+                                                active_tid,
+                                                source,
+                                                message_id,
+                                                language_id,
+                                                encoding,
+                                                result,
+                                                text,
+                                                result,
+                                            ),
+                                        );
+                                    }
                                     child_loader::ProviderOp::GetProcessHeap => logl::log(
                                         level::IMPORTANT,
                                         format_args!(
@@ -5678,7 +6639,11 @@ pub(super) async fn run_loop(
                                         level::IMPORTANT,
                                         format_args!(
                                             "WC3 CHILD TLS ALLOC pid={} tid={} during=\"{}\" slot={} result=0x{:08x}",
-                                            active_pid, active_tid, running_module_name, result, result,
+                                            active_pid,
+                                            active_tid,
+                                            running_module_name,
+                                            result,
+                                            result,
                                         ),
                                     ),
                                     child_loader::ProviderOp::TlsSetValue => {
@@ -5693,7 +6658,12 @@ pub(super) async fn run_loop(
                                             level::IMPORTANT,
                                             format_args!(
                                                 "WC3 CHILD TLS SET pid={} tid={} during=\"{}\" slot={} value=0x{:08x} result={}",
-                                                active_pid, active_tid, running_module_name, slot, value, result,
+                                                active_pid,
+                                                active_tid,
+                                                running_module_name,
+                                                slot,
+                                                value,
+                                                result,
                                             ),
                                         );
                                     }
@@ -5709,16 +6679,21 @@ pub(super) async fn run_loop(
                                             level::IMPORTANT,
                                             format_args!(
                                                 "WC3 CHILD TLS GET pid={} tid={} during=\"{}\" slot={} value=0x{:08x}",
-                                                active_pid, active_tid, running_module_name, slot, result,
+                                                active_pid,
+                                                active_tid,
+                                                running_module_name,
+                                                slot,
+                                                result,
                                             ),
                                         );
                                     }
                                     _ => {}
                                 }
-                                logl::trace!("trace-api",
+                                logl::trace!(
+                                    "trace-api",
                                     level::IMPORTANT,
                                     format_args!(
-                                "WC3 CHILD PROVIDER RETURN pid={} tid={} during=\"{}\" provider_id={} module=\"{}\" {} eax=0x{:08x} cleanup={}-by-thunk",
+                                        "WC3 CHILD PROVIDER RETURN pid={} tid={} during=\"{}\" provider_id={} module=\"{}\" {} eax=0x{:08x} cleanup={}-by-thunk",
                                         active_pid,
                                         active_tid,
                                         running_module_name,
@@ -5822,7 +6797,8 @@ pub(super) async fn run_loop(
                             exit.registers.eax,
                             thread_calls,
                             &mut wait_deadlines,
-                        )? else {
+                        )?
+                        else {
                             return Ok(());
                         };
                         active = next;
@@ -5902,7 +6878,8 @@ pub(super) async fn run_loop(
                     .or_insert(1);
                 let sequence = session.note();
                 let process_call = session.launcher().xp.call_count + 1;
-                logl::trace!("trace-api",
+                logl::trace!(
+                    "trace-api",
                     level::INFO,
                     format_args!(
                         "wc3[seq={sequence} p=launcher pid={} tid={} pcall={process_call} tcall={}] {}!{}",
@@ -6221,7 +7198,10 @@ pub(super) async fn run_loop(
                     let text = copy_message_box_ansi(&memory, frame[2])?;
                     let caption = copy_message_box_ansi(&memory, frame[3])?;
                     let buttons = message_box_buttons(frame[4]).ok_or_else(|| {
-                        format!("MessageBoxA unsupported button type=0x{:x}", frame[4] & 0x0f)
+                        format!(
+                            "MessageBoxA unsupported button type=0x{:x}",
+                            frame[4] & 0x0f
+                        )
                     })?;
                     let request = PendingMessageBox {
                         caller: active_key,
@@ -6334,11 +7314,7 @@ pub(super) async fn run_loop(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 TLSGETVALUE pid={} tid={} slot={} value=0x{:08x} result=0x{:08x}",
-                                    active_key.pid,
-                                    active_key.tid,
-                                    frame[1],
-                                    value,
-                                    value,
+                                    active_key.pid, active_key.tid, frame[1], value, value,
                                 ),
                             );
                         }
@@ -6348,9 +7324,7 @@ pub(super) async fn run_loop(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 SETLASTERROR pid={} tid={} value=0x{:08x}",
-                                    active_key.pid,
-                                    active_key.tid,
-                                    frame[1],
+                                    active_key.pid, active_key.tid, frame[1],
                                 ),
                             );
                         }
@@ -7019,9 +7993,7 @@ pub(super) async fn run_loop(
                         ] {
                             if child_address_space
                                 .write(address, value)
-                                .map_err(|error| {
-                                    format!("write child CRT argv string: {error}")
-                                })?
+                                .map_err(|error| format!("write child CRT argv string: {error}"))?
                                 != value.len()
                             {
                                 return Err("short child CRT argv string write".into());
@@ -7118,9 +8090,7 @@ pub(super) async fn run_loop(
                                     level::IMPORTANT,
                                     format_args!(
                                         "WC3 GETEXITCODEPROCESS pid={} tid={} handle=0x{:08x} target_pid=- exit_code=- result=0 error=6",
-                                        request.pid,
-                                        request.tid,
-                                        request.handle,
+                                        request.pid, request.tid, request.handle,
                                     ),
                                 );
                                 0
@@ -7130,13 +8100,23 @@ pub(super) async fn run_loop(
                     PersonalityAction::Session(SessionRequest::CreateEvent(request)) => {
                         let (handle, already_exists) = session.create_event(LAUNCHER_PID, request);
                         if handle != 0 {
-                            session.launcher_mut().xp.set_last_error(if already_exists { 183 } else { 0 });
+                            session.launcher_mut().xp.set_last_error(if already_exists {
+                                183
+                            } else {
+                                0
+                            });
                         }
                         handle
                     }
                     PersonalityAction::Session(request @ SessionRequest::CreateMutex { .. })
                     | PersonalityAction::Session(request @ SessionRequest::ReleaseMutex { .. }) => {
-                        service_sync_request(&mut session, LAUNCHER_PID, request, &mut contexts, &mut wait_deadlines)?
+                        service_sync_request(
+                            &mut session,
+                            LAUNCHER_PID,
+                            request,
+                            &mut contexts,
+                            &mut wait_deadlines,
+                        )?
                     }
                     PersonalityAction::Session(SessionRequest::SetEvent { pid, tid, handle }) => {
                         match session.set_event(pid, handle) {
@@ -7237,10 +8217,7 @@ pub(super) async fn run_loop(
                                     level::IMPORTANT,
                                     format_args!(
                                         "WC3 DESTROYWINDOW pid={} tid={} hwnd=0x{:08x} frame_present={} focused=- result=0 error=1400",
-                                        pid,
-                                        active_key.tid,
-                                        hwnd,
-                                        frame_present as u8,
+                                        pid, active_key.tid, hwnd, frame_present as u8,
                                     ),
                                 );
                                 0
@@ -7379,7 +8356,8 @@ pub(super) async fn run_loop(
                                     .set_registers(registers)
                                     .map_err(|error| error.to_string())?;
                                 if !repeated_wait_timeout {
-                                    logl::trace!("trace-api",
+                                    logl::trace!(
+                                        "trace-api",
                                         level::INFO,
                                         format_args!(
                                             "wc3: return #{} KERNEL32.dll!WaitForSingleObject eax=0x{:08x}",
@@ -7437,14 +8415,16 @@ pub(super) async fn run_loop(
                                     request.timeout,
                                 ),
                             );
-                            logl::trace!("trace-api",
+                            logl::trace!(
+                                "trace-api",
                                 level::INFO,
                                 format_args!(
                                     "wc3: wait handle0 {}",
                                     session.describe_handle(LAUNCHER_PID, request.handles[0])
                                 ),
                             );
-                            logl::trace!("trace-api",
+                            logl::trace!(
+                                "trace-api",
                                 level::INFO,
                                 format_args!(
                                     "wc3: wait handle1 {}",
@@ -7595,7 +8575,10 @@ pub(super) async fn run_loop(
                             log_child_slot_xrefs(child, WAR3_SCAN_BOUND);
                             log_child_slot_xrefs(child, WAR3_SCAN_COUNT);
                             let mut bytes = [0u8; 0xb0];
-                            if child.address_space.read(WAR3_HOTLOOP_START, &mut bytes).ok()
+                            if child
+                                .address_space
+                                .read(WAR3_HOTLOOP_START, &mut bytes)
+                                .ok()
                                 == Some(bytes.len())
                             {
                                 logl::log(
@@ -8412,7 +9395,8 @@ pub(super) async fn run_loop(
                             exit_code,
                             thread_calls,
                             &mut wait_deadlines,
-                        )? else {
+                        )?
+                        else {
                             return Ok(());
                         };
                         active = next;
@@ -8527,7 +9511,8 @@ pub(super) async fn run_loop(
                     .set_registers(registers)
                     .map_err(|error| error.to_string())?;
                 if import.symbol != "PeekMessageA" {
-                    logl::trace!("trace-api",
+                    logl::trace!(
+                        "trace-api",
                         level::INFO,
                         format_args!(
                             "wc3: return #{} {}!{} eax=0x{result:08x}",
@@ -8560,19 +9545,18 @@ pub(super) async fn run_loop(
 
                     let code_base = eip - 16;
                     let mut code = [0u8; 48];
-                    child.address_space
+                    child
+                        .address_space
                         .read(code_base, &mut code)
                         .map_err(|e| e.to_string())?;
 
-                    let stack = read_guest_words(
-                        &X86Memory(&child.address_space),
-                        exit.registers.esp,
-                        12,
-                    )?;
+                    let stack =
+                        read_guest_words(&X86Memory(&child.address_space), exit.registers.esp, 12)?;
 
                     let ebp_base = exit.registers.ebp.saturating_sub(0x40);
                     let mut ebp_bytes = [0u8; 0x80];
-                    child.address_space
+                    child
+                        .address_space
                         .read(ebp_base, &mut ebp_bytes)
                         .map_err(|e| e.to_string())?;
 
@@ -8654,8 +9638,9 @@ pub(super) async fn run_loop(
                     );
                 }
                 let quiet_exception = quiet_war3_exception(exception, registers)
-                    || current_child_seh_handler(child, registers.fs_base)
-                        .is_some_and(|handler| boring_war3_single_step(exception, registers, handler));
+                    || current_child_seh_handler(child, registers.fs_base).is_some_and(|handler| {
+                        boring_war3_single_step(exception, registers, handler)
+                    });
                 if !quiet_exception
                     && exception.vector == Some(1)
                     && matches!(registers.eip, 0x0045_af54 | 0x0045_af5a)
@@ -8666,47 +9651,14 @@ pub(super) async fn run_loop(
                         level::IMPORTANT,
                         format_args!(
                             "WC3 CHILD DB STATUS eip=0x{:08x} dr6={:?} gate_49a430={:?} reset_492614={:?}",
-                            registers.eip,
-                            exception.debug_status,
-                            gate,
-                            reset,
+                            registers.eip, exception.debug_status, gate, reset,
                         ),
                     );
                 }
                 if !quiet_exception {
-                if exception.vector == Some(6) {
-                    if let Some(start) = registers.eip.checked_sub(16) {
-                        logl::log(
-                            level::IMPORTANT,
-                            format_args!(
-                                "WC3 CHILD EXCEPTION CODE BEFORE address=0x{:08x} bytes=\"{}\"",
-                                start,
-                                exception_code_window(&child.address_space, start),
-                            ),
-                        );
-                    }
-                    logl::log(
-                        level::IMPORTANT,
-                        format_args!(
-                            "WC3 CHILD EXCEPTION CODE eip=0x{:08x} bytes=\"{}\"",
-                            registers.eip,
-                            exception_code_window(&child.address_space, registers.eip),
-                        ),
-                    );
-                }
-                logl::trace!("trace-seh",
-                    level::IMPORTANT,
-                    format_args!(
-                        "WC3 CHILD EXCEPTION RAW detail=0x{:08x} qualification=0x{:016x}",
-                        exit.detail, exit.qualification,
-                    ),
-                );
-                // Preceding bytes expose the call/return or pointer-producing
-                // instruction; these are raw bytes, not instruction boundaries.
-                if cfg!(feature = "trace-seh") {
-                    for distance in [32u32, 16] {
-                        if let Some(start) = registers.eip.checked_sub(distance) {
-                            logl::trace!("trace-seh",
+                    if exception.vector == Some(6) {
+                        if let Some(start) = registers.eip.checked_sub(16) {
+                            logl::log(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD EXCEPTION CODE BEFORE address=0x{:08x} bytes=\"{}\"",
@@ -8715,104 +9667,142 @@ pub(super) async fn run_loop(
                                 ),
                             );
                         }
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD EXCEPTION CODE eip=0x{:08x} bytes=\"{}\"",
+                                registers.eip,
+                                exception_code_window(&child.address_space, registers.eip),
+                            ),
+                        );
                     }
-                }
-                logl::log(
-                    level::IMPORTANT,
-                    format_args!(
-                        "WC3 CHILD EXCEPTION pid={} tid={} during={:?} eip=0x{:08x} esp=0x{:08x} vector={} name=\"{}\" type={} valid={} error_valid={} error={}",
-                        active_key.pid,
-                        active_key.tid,
-                        scope,
-                        registers.eip,
-                        registers.esp,
-                        exception
-                            .vector
-                            .map(|value| value.to_string())
-                            .unwrap_or_else(|| "-".into()),
-                        exception.name,
-                        exception
-                            .interruption_type
-                            .map(|value| value.to_string())
-                            .unwrap_or_else(|| "-".into()),
-                        exception.valid as u8,
-                        exception
-                            .error_valid
-                            .map(|value| (value as u8).to_string())
-                            .unwrap_or_else(|| "-".into()),
-                        exception
-                            .error
-                            .map(|value| format!("0x{value:08x}"))
-                            .unwrap_or_else(|| "-".into()),
-                    ),
-                );
-                logl::trace!("trace-seh",
-                    level::IMPORTANT,
-                    format_args!(
-                        "WC3 CHILD EXCEPTION FAULT {}",
-                        child_exception_fault_detail(exception),
-                    ),
-                );
-                logl::trace!("trace-seh",
-                    level::IMPORTANT,
-                    format_args!(
-                        "WC3 CHILD EXCEPTION REGS eax=0x{:08x} ebx=0x{:08x} ecx=0x{:08x} edx=0x{:08x} esi=0x{:08x} edi=0x{:08x} ebp=0x{:08x} esp=0x{:08x} eip=0x{:08x} eflags=0x{:08x} fs_base=0x{:08x}",
-                        registers.eax,
-                        registers.ebx,
-                        registers.ecx,
-                        registers.edx,
-                        registers.esi,
-                        registers.edi,
-                        registers.ebp,
-                        registers.esp,
-                        registers.eip,
-                        registers.eflags,
-                        registers.fs_base,
-                    ),
-                );
-                logl::trace!("trace-seh",
-                    level::IMPORTANT,
-                    format_args!(
-                        "WC3 CHILD EXCEPTION CODE eip=0x{:08x} bytes=\"{}\"",
-                        registers.eip,
-                        exception_code_window(&child.address_space, registers.eip),
-                    ),
-                );
-                logl::trace!("trace-seh",
-                    level::IMPORTANT,
-                    format_args!(
-                        "WC3 CHILD EXCEPTION STACK esp=0x{:08x} words=[redacted]",
-                        registers.esp,
-                    ),
-                );
-                if let ChildExecutionState::DllInitRunning { native_index } = child.execution {
-                    let module = child
-                        .native_modules
-                        .get(native_index)
-                        .ok_or_else(|| "child DLL exception native index".to_owned())?;
-                    if module.stored.eq_ignore_ascii_case("Storm.dll")
-                        && registers.eip == 0x1503_62ee
-                    {
-                        log_child_fault_precursor(
-                            child,
-                            module,
-                            session
-                                .process(active_key.pid)
-                                .ok_or_else(|| "faulted child process missing".to_owned())?,
+                    logl::trace!(
+                        "trace-seh",
+                        level::IMPORTANT,
+                        format_args!(
+                            "WC3 CHILD EXCEPTION RAW detail=0x{:08x} qualification=0x{:016x}",
+                            exit.detail, exit.qualification,
+                        ),
+                    );
+                    // Preceding bytes expose the call/return or pointer-producing
+                    // instruction; these are raw bytes, not instruction boundaries.
+                    if cfg!(feature = "trace-seh") {
+                        for distance in [32u32, 16] {
+                            if let Some(start) = registers.eip.checked_sub(distance) {
+                                logl::trace!(
+                                    "trace-seh",
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 CHILD EXCEPTION CODE BEFORE address=0x{:08x} bytes=\"{}\"",
+                                        start,
+                                        exception_code_window(&child.address_space, start),
+                                    ),
+                                );
+                            }
+                        }
+                    }
+                    logl::log(
+                        level::IMPORTANT,
+                        format_args!(
+                            "WC3 CHILD EXCEPTION pid={} tid={} during={:?} eip=0x{:08x} esp=0x{:08x} vector={} name=\"{}\" type={} valid={} error_valid={} error={}",
                             active_key.pid,
                             active_key.tid,
+                            scope,
+                            registers.eip,
+                            registers.esp,
+                            exception
+                                .vector
+                                .map(|value| value.to_string())
+                                .unwrap_or_else(|| "-".into()),
+                            exception.name,
+                            exception
+                                .interruption_type
+                                .map(|value| value.to_string())
+                                .unwrap_or_else(|| "-".into()),
+                            exception.valid as u8,
+                            exception
+                                .error_valid
+                                .map(|value| (value as u8).to_string())
+                                .unwrap_or_else(|| "-".into()),
+                            exception
+                                .error
+                                .map(|value| format!("0x{value:08x}"))
+                                .unwrap_or_else(|| "-".into()),
+                        ),
+                    );
+                    logl::trace!(
+                        "trace-seh",
+                        level::IMPORTANT,
+                        format_args!(
+                            "WC3 CHILD EXCEPTION FAULT {}",
+                            child_exception_fault_detail(exception),
+                        ),
+                    );
+                    logl::trace!(
+                        "trace-seh",
+                        level::IMPORTANT,
+                        format_args!(
+                            "WC3 CHILD EXCEPTION REGS eax=0x{:08x} ebx=0x{:08x} ecx=0x{:08x} edx=0x{:08x} esi=0x{:08x} edi=0x{:08x} ebp=0x{:08x} esp=0x{:08x} eip=0x{:08x} eflags=0x{:08x} fs_base=0x{:08x}",
                             registers.eax,
-                        )?;
+                            registers.ebx,
+                            registers.ecx,
+                            registers.edx,
+                            registers.esi,
+                            registers.edi,
+                            registers.ebp,
+                            registers.esp,
+                            registers.eip,
+                            registers.eflags,
+                            registers.fs_base,
+                        ),
+                    );
+                    logl::trace!(
+                        "trace-seh",
+                        level::IMPORTANT,
+                        format_args!(
+                            "WC3 CHILD EXCEPTION CODE eip=0x{:08x} bytes=\"{}\"",
+                            registers.eip,
+                            exception_code_window(&child.address_space, registers.eip),
+                        ),
+                    );
+                    logl::trace!(
+                        "trace-seh",
+                        level::IMPORTANT,
+                        format_args!(
+                            "WC3 CHILD EXCEPTION STACK esp=0x{:08x} words=[redacted]",
+                            registers.esp,
+                        ),
+                    );
+                    if let ChildExecutionState::DllInitRunning { native_index } = child.execution {
+                        let module = child
+                            .native_modules
+                            .get(native_index)
+                            .ok_or_else(|| "child DLL exception native index".to_owned())?;
+                        if module.stored.eq_ignore_ascii_case("Storm.dll")
+                            && registers.eip == 0x1503_62ee
+                        {
+                            log_child_fault_precursor(
+                                child,
+                                module,
+                                session
+                                    .process(active_key.pid)
+                                    .ok_or_else(|| "faulted child process missing".to_owned())?,
+                                active_key.pid,
+                                active_key.tid,
+                                registers.eax,
+                            )?;
+                        }
                     }
-                }
                 }
                 let null_execute = exception.vector == Some(14)
                     && registers.eip == 0
                     && exception.fault_linear == Some(0)
                     && exception.error.is_some_and(|error| error & 0x10 != 0);
-                let null_loop_signature = null_execute.then(|| {
-                    log_null_call_diagnostic(child, active_key.pid, active_key.tid, registers)
-                }).flatten();
+                let null_loop_signature = null_execute
+                    .then(|| {
+                        log_null_call_diagnostic(child, active_key.pid, active_key.tid, registers)
+                    })
+                    .flatten();
                 let child = pending_child
                     .as_mut()
                     .filter(|child| child.pid == active_key.pid && child.tid == active_key.tid)
@@ -8853,7 +9843,12 @@ pub(super) async fn run_loop(
                 if exception.vector == Some(0) {
                     let Some(progress) = divide_loop_progress(child) else {
                         child.repeated_divide_fault = None;
-                        begin_child_seh_dispatch(child, &mut contexts[active], exception, registers)?;
+                        begin_child_seh_dispatch(
+                            child,
+                            &mut contexts[active],
+                            exception,
+                            registers,
+                        )?;
                         continue;
                     };
                     let signature = DivideLoopSignature {

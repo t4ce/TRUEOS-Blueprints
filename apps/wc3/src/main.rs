@@ -14,9 +14,7 @@ use trueos::{
     async_fs,
     logl::level,
     ui4_scene::{self, Damage, Font, Frame, SceneTextRow, rgba},
-    x86::{
-        AddressSpace, Context, DebugRegisters, ExitKind, ExtendedState, Permissions, Registers,
-    },
+    x86::{AddressSpace, Context, DebugRegisters, ExitKind, ExtendedState, Permissions, Registers},
 };
 mod asupersync;
 
@@ -45,16 +43,13 @@ use wc3::{
     imports::WinCall,
     pe32,
     process::{
-        CHILD_COMMAND_LINE, CHILD_CRT_HEAP_BASE, CHILD_CRT_HEAP_LIMIT,
-        CHILD_VIRTUAL_ALLOC_BASE, CHILD_VIRTUAL_ALLOC_LIMIT, CHILD_WIN_HEAP_BASE,
-        CRT_ACMDLN_VA, CRT_ARG0_VA, CRT_ARG1_VA, CRT_ARG2_VA, CRT_ARG3_VA, CRT_ARGV_VA,
-        CRT_COMMODE_VA,
+        CHILD_COMMAND_LINE, CHILD_CRT_HEAP_BASE, CHILD_CRT_HEAP_LIMIT, CHILD_VIRTUAL_ALLOC_BASE,
+        CHILD_VIRTUAL_ALLOC_LIMIT, CHILD_WIN_HEAP_BASE, CHILD_WIN_HEAP_LIMIT, CRT_ACMDLN_VA,
+        CRT_ARG0_VA, CRT_ARG1_VA, CRT_ARG2_VA, CRT_ARG3_VA, CRT_ARGV_VA, CRT_COMMODE_VA,
         CRT_CONSOLE_APP, CRT_ENVP_VA, CRT_FMODE_VA, CRT_GUI_APP, CRT_UNKNOWN_APP,
-        CHILD_WIN_HEAP_LIMIT, ENVIRONMENT_BLOCK_VA, GuestMemory, PROCESS_DATA_VA,
-        HEAP_GENERATE_EXCEPTIONS, HEAP_ZERO_MEMORY, PreparedProcess, ProviderDispatchError,
-        STACK_BASE, STACK_BYTES, STACK_TOP, ThreadObject,
-        XP_ANSI_CODE_PAGE, XpProcess,
-        bmp_file_from_dib, dib_layout,
+        ENVIRONMENT_BLOCK_VA, GuestMemory, HEAP_GENERATE_EXCEPTIONS, HEAP_ZERO_MEMORY,
+        PROCESS_DATA_VA, PreparedProcess, ProviderDispatchError, STACK_BASE, STACK_BYTES,
+        STACK_TOP, ThreadObject, XP_ANSI_CODE_PAGE, XpProcess, bmp_file_from_dib, dib_layout,
     },
     session::{
         CompletedWait, GuestCall, LAUNCHER_PID, LAUNCHER_TID, PersonalityAction, SessionObject,
@@ -293,7 +288,6 @@ async fn run() -> Result<(), String> {
         active,
     )
     .await
-
 }
 
 const XSTATE_TEST_CODE_BASE: u32 = 0x0010_0000;
@@ -334,12 +328,21 @@ fn require_vmcall(exit: &trueos::x86::Exit, phase: &str) -> Result<(), String> {
     }
 }
 
-fn read_exact_x86(address_space: &AddressSpace, address: u32, output: &mut [u8]) -> Result<(), String> {
-    let read = address_space.read(address, output).map_err(|error| error.to_string())?;
+fn read_exact_x86(
+    address_space: &AddressSpace,
+    address: u32,
+    output: &mut [u8],
+) -> Result<(), String> {
+    let read = address_space
+        .read(address, output)
+        .map_err(|error| error.to_string())?;
     if read == output.len() {
         Ok(())
     } else {
-        Err(format!("x86 xstate self-test short read: {read}/{}", output.len()))
+        Err(format!(
+            "x86 xstate self-test short read: {read}/{}",
+            output.len()
+        ))
     }
 }
 
@@ -382,15 +385,19 @@ async fn run_x86_extended_state_self_test() -> Result<(), String> {
         .map_err(|error| error.to_string())?;
 
     let a_pattern = [
-        0x10, 0x21, 0x32, 0x43, 0x54, 0x65, 0x76, 0x87,
-        0x98, 0xa9, 0xba, 0xcb, 0xdc, 0xed, 0xfe, 0x0f,
+        0x10, 0x21, 0x32, 0x43, 0x54, 0x65, 0x76, 0x87, 0x98, 0xa9, 0xba, 0xcb, 0xdc, 0xed, 0xfe,
+        0x0f,
     ];
     let b_pattern = [
-        0xf0, 0xde, 0xbc, 0x9a, 0x78, 0x56, 0x34, 0x12,
-        0x0f, 0x1e, 0x2d, 0x3c, 0x4b, 0x5a, 0x69, 0x78,
+        0xf0, 0xde, 0xbc, 0x9a, 0x78, 0x56, 0x34, 0x12, 0x0f, 0x1e, 0x2d, 0x3c, 0x4b, 0x5a, 0x69,
+        0x78,
     ];
-    address_space.write(A_PATTERN, &a_pattern).map_err(|error| error.to_string())?;
-    address_space.write(B_PATTERN, &b_pattern).map_err(|error| error.to_string())?;
+    address_space
+        .write(A_PATTERN, &a_pattern)
+        .map_err(|error| error.to_string())?;
+    address_space
+        .write(B_PATTERN, &b_pattern)
+        .map_err(|error| error.to_string())?;
 
     let context_program = |ones: usize, pattern: u32, x87_out: u32, xmm_out: u32| {
         let mut code = Vec::new();
@@ -410,15 +417,25 @@ async fn run_x86_extended_state_self_test() -> Result<(), String> {
     };
     let a_code = context_program(2, A_PATTERN, A_X87_OUT, A_XMM_OUT);
     let b_code = context_program(3, B_PATTERN, B_X87_OUT, B_XMM_OUT);
-    address_space.write(A_CODE, &a_code).map_err(|error| error.to_string())?;
-    address_space.write(B_CODE, &b_code).map_err(|error| error.to_string())?;
+    address_space
+        .write(A_CODE, &a_code)
+        .map_err(|error| error.to_string())?;
+    address_space
+        .write(B_CODE, &b_code)
+        .map_err(|error| error.to_string())?;
     address_space
         .write(BREAKPOINT_CODE, &[0x0f, 0x01, 0xc1]) // vmcall, reached only after #DB
         .map_err(|error| error.to_string())?;
 
-    let registers = |eip| Registers { eip, eflags: 0x202, ..Registers::default() };
-    let mut a = Context::create(&address_space, registers(A_CODE)).map_err(|error| error.to_string())?;
-    let mut b = Context::create(&address_space, registers(B_CODE)).map_err(|error| error.to_string())?;
+    let registers = |eip| Registers {
+        eip,
+        eflags: 0x202,
+        ..Registers::default()
+    };
+    let mut a =
+        Context::create(&address_space, registers(A_CODE)).map_err(|error| error.to_string())?;
+    let mut b =
+        Context::create(&address_space, registers(B_CODE)).map_err(|error| error.to_string())?;
     // Arm distinct execution breakpoints at data addresses that neither
     // program executes. This makes both DR0 and DR7 carrier leakage observable
     // without perturbing either xstate program.
@@ -438,11 +455,19 @@ async fn run_x86_extended_state_self_test() -> Result<(), String> {
         dr6: 0,
         dr7: 0x402, // G0 enable.
     };
-    a.set_debug_registers(a_debug).map_err(|error| error.to_string())?;
-    b.set_debug_registers(b_debug).map_err(|error| error.to_string())?;
+    a.set_debug_registers(a_debug)
+        .map_err(|error| error.to_string())?;
+    b.set_debug_registers(b_debug)
+        .map_err(|error| error.to_string())?;
     let (a_initial, b_initial) = tokio::join!(a.run(), b.run());
-    require_vmcall(&a_initial.map_err(|error| error.to_string())?, "A initialize")?;
-    require_vmcall(&b_initial.map_err(|error| error.to_string())?, "B initialize")?;
+    require_vmcall(
+        &a_initial.map_err(|error| error.to_string())?,
+        "A initialize",
+    )?;
+    require_vmcall(
+        &b_initial.map_err(|error| error.to_string())?,
+        "B initialize",
+    )?;
     tokio::task::yield_now().await;
     // Reverse submission order while both contexts are runnable. Concurrent
     // jobs hold distinct lane leases and the allocator advances round-robin,
@@ -479,8 +504,8 @@ async fn run_x86_extended_state_self_test() -> Result<(), String> {
     // A real DR0 execute breakpoint must exit as #DB with B0 set before the
     // instruction executes. This is deliberately a generic x86 test rather
     // than a Windows/SEH behavior check.
-    let mut breakpoint =
-        Context::create(&address_space, registers(BREAKPOINT_CODE)).map_err(|error| error.to_string())?;
+    let mut breakpoint = Context::create(&address_space, registers(BREAKPOINT_CODE))
+        .map_err(|error| error.to_string())?;
     breakpoint
         .set_debug_registers(DebugRegisters {
             dr0: BREAKPOINT_CODE,
@@ -498,7 +523,9 @@ async fn run_x86_extended_state_self_test() -> Result<(), String> {
             breakpoint_exit.kind, breakpoint_exit.detail, breakpoint_exit.qualification,
         ));
     }
-    let breakpoint_debug = breakpoint.debug_registers().map_err(|error| error.to_string())?;
+    let breakpoint_debug = breakpoint
+        .debug_registers()
+        .map_err(|error| error.to_string())?;
     if breakpoint_debug.dr0 != BREAKPOINT_CODE
         || breakpoint_debug.dr7 & 0x3 != 1
         || breakpoint_debug.dr6 & 1 == 0
@@ -538,7 +565,9 @@ async fn run_x86_extended_state_self_test() -> Result<(), String> {
         (BASE, base),
         (EXPONENT, exponent),
     ] {
-        address_space.write(address, &value.to_bits().to_le_bytes()).map_err(|error| error.to_string())?;
+        address_space
+            .write(address, &value.to_bits().to_le_bytes())
+            .map_err(|error| error.to_string())?;
     }
     let mut deep_code = Vec::new();
     for address in [SENTINEL1, SENTINEL0, BASE, EXPONENT] {
@@ -555,11 +584,20 @@ async fn run_x86_extended_state_self_test() -> Result<(), String> {
     emit_fst_m64(&mut deep_code, FINAL_SENTINEL1, true);
     emit_vmcall(&mut deep_code);
     deep_code.extend_from_slice(&[0x0f, 0x0b]);
-    address_space.write(DEEP_CODE, &deep_code).map_err(|error| error.to_string())?;
-    let mut deep = Context::create(&address_space, registers(DEEP_CODE)).map_err(|error| error.to_string())?;
-    require_vmcall(&deep.run().await.map_err(|error| error.to_string())?, "deep initialize")?;
+    address_space
+        .write(DEEP_CODE, &deep_code)
+        .map_err(|error| error.to_string())?;
+    let mut deep =
+        Context::create(&address_space, registers(DEEP_CODE)).map_err(|error| error.to_string())?;
+    require_vmcall(
+        &deep.run().await.map_err(|error| error.to_string())?,
+        "deep initialize",
+    )?;
     tokio::task::yield_now().await;
-    require_vmcall(&deep.resume().await.map_err(|error| error.to_string())?, "deep spill")?;
+    require_vmcall(
+        &deep.resume().await.map_err(|error| error.to_string())?,
+        "deep spill",
+    )?;
     let mut spilled = [0; 8];
     read_exact_x86(&address_space, SPILLED_EXPONENT, &mut spilled)?;
     if u64::from_le_bytes(spilled) != exponent.to_bits() {
@@ -570,10 +608,18 @@ async fn run_x86_extended_state_self_test() -> Result<(), String> {
         return Err("x86 xstate self-test spilled base mismatch".into());
     }
     let result = base.powf(exponent);
-    address_space.write(RESULT, &result.to_bits().to_le_bytes()).map_err(|error| error.to_string())?;
-    require_vmcall(&deep.resume().await.map_err(|error| error.to_string())?, "deep restore")?;
+    address_space
+        .write(RESULT, &result.to_bits().to_le_bytes())
+        .map_err(|error| error.to_string())?;
+    require_vmcall(
+        &deep.resume().await.map_err(|error| error.to_string())?,
+        "deep restore",
+    )?;
     tokio::task::yield_now().await;
-    require_vmcall(&deep.resume().await.map_err(|error| error.to_string())?, "deep inspect")?;
+    require_vmcall(
+        &deep.resume().await.map_err(|error| error.to_string())?,
+        "deep inspect",
+    )?;
     for (address, expected, label) in [
         (FINAL_RESULT, result, "result"),
         (FINAL_SENTINEL0, sentinel0, "sentinel0"),
@@ -581,12 +627,16 @@ async fn run_x86_extended_state_self_test() -> Result<(), String> {
     ] {
         read_exact_x86(&address_space, address, &mut spilled)?;
         if u64::from_le_bytes(spilled) != expected.to_bits() {
-            return Err(format!("x86 xstate self-test deeper-stack {label} mismatch"));
+            return Err(format!(
+                "x86 xstate self-test deeper-stack {label} mismatch"
+            ));
         }
     }
     logl::log(
         level::IMPORTANT,
-        format_args!("WC3 X86 XSTATE SELFTEST PASS contexts=2 x87=pass xmm0=pass migration=debug-sidecars-pass b0=pass deeper_stack=pass"),
+        format_args!(
+            "WC3 X86 XSTATE SELFTEST PASS contexts=2 x87=pass xmm0=pass migration=debug-sidecars-pass b0=pass deeper_stack=pass"
+        ),
     );
     Ok(())
 }
@@ -660,8 +710,7 @@ fn present_window(
                 level::IMPORTANT,
                 format_args!(
                     "WC3 UI4 WINDOW RELEASE hwnd=0x{hwnd:08x} frame_dropped={} backing_dropped={}",
-                    frame_dropped as u8,
-                    backing_dropped as u8,
+                    frame_dropped as u8, backing_dropped as u8,
                 ),
             );
         }
@@ -710,7 +759,11 @@ fn message_box_buttons(style: u32) -> Option<Vec<MessageBoxButton>> {
         3 => vec![button("Yes", 6), button("No", 7), button("Cancel", 2)],
         4 => vec![button("Yes", 6), button("No", 7)],
         5 => vec![button("Retry", 4), button("Cancel", 2)],
-        6 => vec![button("Cancel", 2), button("Try Again", 10), button("Continue", 11)],
+        6 => vec![
+            button("Cancel", 2),
+            button("Try Again", 10),
+            button("Continue", 11),
+        ],
         _ => return None,
     })
 }
@@ -1195,7 +1248,11 @@ fn arm_existing_child_image_entry(
     if child.execution != ChildExecutionState::ImageEntryReady {
         return Err("child image-entry requires image-entry-ready state".into());
     }
-    if child.native_modules.iter().any(|module| !module.initialized) {
+    if child
+        .native_modules
+        .iter()
+        .any(|module| !module.initialized)
+    {
         return Err("child image-entry requires all native modules initialized".into());
     }
     let entry = child
@@ -1332,7 +1389,9 @@ fn validate_child_private_arena_range(
         .iter()
         .any(|(_, start, end)| arena.0 < *end && *start < arena.1)
     {
-        return Err(format!("{arena_name} overlaps an established child mapping"));
+        return Err(format!(
+            "{arena_name} overlaps an established child mapping"
+        ));
     }
     Ok(())
 }
@@ -1416,7 +1475,17 @@ fn child_dllonexit(
         level::IMPORTANT,
         format_args!(
             "WC3 CHILD CRT DLLONEXIT pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" provider_id={} caller_ret=0x{:08x} func=0x{:08x} start_ref=0x{:08x} end_ref=0x{:08x} start=0x{:08x} end=0x{:08x} entries={}",
-            pid, tid, during, provider_id, caller_ret, func, start_ref, end_ref, start, end, entries
+            pid,
+            tid,
+            during,
+            provider_id,
+            caller_ret,
+            func,
+            start_ref,
+            end_ref,
+            start,
+            end,
+            entries
         ),
     );
     let fail = |reason: &str| {
@@ -1515,13 +1584,26 @@ fn child_dllonexit(
         level::IMPORTANT,
         format_args!(
             "WC3 CHILD CRT DLLONEXIT RESULT pid={} tid={} func=0x{:08x} old_start=0x{:08x} old_end=0x{:08x} new_start=0x{:08x} new_end=0x{:08x} entries_before={} entries_after={} moved={} return_eax=0x{:08x}",
-            pid, tid, func, start, end, new_start, new_end, old_entries, old_entries + 1, moved as u8, func
+            pid,
+            tid,
+            func,
+            start,
+            end,
+            new_start,
+            new_end,
+            old_entries,
+            old_entries + 1,
+            moved as u8,
+            func
         ),
     );
     if let Some(mapped_end) = mapped_end {
         logl::log(
             level::IMPORTANT,
-            format_args!("WC3 CHILD CRT DLLONEXIT RESULT mapped_end=0x{:08x}", mapped_end),
+            format_args!(
+                "WC3 CHILD CRT DLLONEXIT RESULT mapped_end=0x{:08x}",
+                mapped_end
+            ),
         );
     }
     Ok(func)
@@ -1752,8 +1834,15 @@ struct ChildSehDispatch {
 }
 #[derive(Clone, Debug)]
 enum ChildSeh3CallbackKind {
-    Filter { level: i32, previous: i32, start_level: i32 },
-    Finally { next_level: i32, selected_level: i32 },
+    Filter {
+        level: i32,
+        previous: i32,
+        start_level: i32,
+    },
+    Finally {
+        next_level: i32,
+        selected_level: i32,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -1777,7 +1866,9 @@ struct ChildUnhandledFilterCall {
     continuation: ChildUnhandledFilterContinuation,
 }
 
-struct ChildCiPow { provider_esp: u32 }
+struct ChildCiPow {
+    provider_esp: u32,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ChildInitterm {
@@ -1819,39 +1910,57 @@ fn advance_child_initterm(
                 .initterm
                 .take()
                 .ok_or_else(|| "child _initterm completion state missing".to_owned())?;
-            let mut registers = context.context.registers().map_err(|error| error.to_string())?;
+            let mut registers = context
+                .context
+                .registers()
+                .map_err(|error| error.to_string())?;
             registers.eip = complete.provider_resume_eip;
             registers.esp = complete.provider_esp;
             registers.eax = 0;
-            context.context.set_registers(registers).map_err(|error| error.to_string())?;
+            context
+                .context
+                .set_registers(registers)
+                .map_err(|error| error.to_string())?;
             return Ok(InittermAdvance::Complete);
         }
         if state.cursor > state.end {
             return Err("child _initterm cursor exceeded range".into());
         }
         let slot = state.cursor;
-        state.cursor = state.cursor.checked_add(4)
+        state.cursor = state
+            .cursor
+            .checked_add(4)
             .ok_or_else(|| "child _initterm cursor overflow".to_owned())?;
         let mut target = [0; 4];
-        child.address_space.read(slot, &mut target)
+        child
+            .address_space
+            .read(slot, &mut target)
             .map_err(|error| format!("read child _initterm slot 0x{slot:08x}: {error}"))?;
         let target = u32::from_le_bytes(target);
         if target == 0 {
             continue;
         }
-        let callback_esp = state.provider_esp.checked_sub(4)
+        let callback_esp = state
+            .provider_esp
+            .checked_sub(4)
             .ok_or_else(|| "child _initterm callback stack underflow".to_owned())?;
         let callback_return = thunk32::CHILD_CALLBACK_RETURN_ADDRESS.to_le_bytes();
-        if child.address_space.write(callback_esp, &callback_return)
+        if child
+            .address_space
+            .write(callback_esp, &callback_return)
             .map_err(|error| format!("write child _initterm callback return: {error}"))?
             != callback_return.len()
         {
             return Err("short child _initterm callback return write".into());
         }
-        state.callbacks_invoked = state.callbacks_invoked.checked_add(1)
+        state.callbacks_invoked = state
+            .callbacks_invoked
+            .checked_add(1)
             .ok_or_else(|| "child _initterm callback count overflow".to_owned())?;
-        let index = slot.checked_sub(state.begin)
-            .ok_or_else(|| "child _initterm index underflow".to_owned())? / 4;
+        let index = slot
+            .checked_sub(state.begin)
+            .ok_or_else(|| "child _initterm index underflow".to_owned())?
+            / 4;
         logl::log(
             level::IMPORTANT,
             format_args!(
@@ -1859,10 +1968,16 @@ fn advance_child_initterm(
                 child.pid, child.tid, index, slot, target
             ),
         );
-        let mut registers = context.context.registers().map_err(|error| error.to_string())?;
+        let mut registers = context
+            .context
+            .registers()
+            .map_err(|error| error.to_string())?;
         registers.eip = target;
         registers.esp = callback_esp;
-        context.context.set_registers(registers).map_err(|error| error.to_string())?;
+        context
+            .context
+            .set_registers(registers)
+            .map_err(|error| error.to_string())?;
         return Ok(InittermAdvance::CallbackScheduled);
     }
 }
@@ -1897,7 +2012,9 @@ fn child_execution_module(
         | ChildExecutionState::DllInitRunning { native_index } => native_index,
         ChildExecutionState::Loader
         | ChildExecutionState::ImageEntryReady
-        | ChildExecutionState::ImageEntryRunning => return Err("child execution has no native module"),
+        | ChildExecutionState::ImageEntryRunning => {
+            return Err("child execution has no native module");
+        }
     };
     child
         .native_modules

@@ -122,9 +122,7 @@ fn transfer_chunk_len(guest_va: u32, remaining: usize) -> Result<usize, Error> {
     let page_remaining = v::vx86::PAGE_BYTES
         .checked_sub(page_offset)
         .ok_or(Error::Invalid)?;
-    Ok(remaining
-        .min(v::vx86::TRANSFER_BYTES)
-        .min(page_remaining))
+    Ok(remaining.min(v::vx86::TRANSFER_BYTES).min(page_remaining))
 }
 
 struct AddressSpaceInner {
@@ -174,12 +172,9 @@ impl AddressSpace {
                 return Err(Error::Invalid);
             }
             let end = transferred.checked_add(len).ok_or(Error::Invalid)?;
-            let read = v::vx86::address_space_read(
-                self.inner.handle,
-                address,
-                &mut out[transferred..end],
-            )
-                .map_err(Error::from_kernel)?;
+            let read =
+                v::vx86::address_space_read(self.inner.handle, address, &mut out[transferred..end])
+                    .map_err(Error::from_kernel)?;
             transferred = transferred.checked_add(read).ok_or(Error::Invalid)?;
             if read != len {
                 break;
@@ -200,12 +195,9 @@ impl AddressSpace {
                 return Err(Error::Invalid);
             }
             let end = transferred.checked_add(len).ok_or(Error::Invalid)?;
-            let written = v::vx86::address_space_write(
-                self.inner.handle,
-                address,
-                &data[transferred..end],
-            )
-                .map_err(Error::from_kernel)?;
+            let written =
+                v::vx86::address_space_write(self.inner.handle, address, &data[transferred..end])
+                    .map_err(Error::from_kernel)?;
             transferred = transferred.checked_add(written).ok_or(Error::Invalid)?;
             if written != len {
                 break;
@@ -246,8 +238,7 @@ impl Context {
 
     /// Replace the logical context's architectural debug registers.
     pub fn set_debug_registers(&mut self, registers: DebugRegisters) -> Result<(), Error> {
-        v::vx86::context_set_debug_registers(self.handle, &registers)
-            .map_err(Error::from_kernel)
+        v::vx86::context_set_debug_registers(self.handle, &registers).map_err(Error::from_kernel)
     }
 
     /// Return the logical context's complete x87/SSE/AVX state.

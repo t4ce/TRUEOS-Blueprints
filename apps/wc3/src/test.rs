@@ -862,6 +862,77 @@ mod tests_process_1 {
     }
 
     #[test]
+    fn child_format_message_a_uses_exact_language_message_table_and_stdcall() {
+        let provider = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("FormatMessageA".into()),
+            iat_rva: 0,
+        };
+        assert_eq!(provider_op(&provider), ProviderOp::FormatMessageA);
+        assert!(provider_op(&provider).is_generic_process_local());
+        assert_eq!(provider_op(&provider).stack_cleanup_bytes(), 28);
+        assert_eq!(provider_thunk_kind(&provider), thunk32::Kind::Stdcall(28));
+
+        let base = 0x0010_0000;
+        let module = base;
+        let mut memory = Memory { base, bytes: vec![0; 0x10_000] };
+        // PE optional header's resource data directory.
+        write_u32(&mut memory, module + 0x3c, 0x80).unwrap();
+        write_u32(&mut memory, module + 0x80 + 24 + 96 + 16, 0x1000).unwrap();
+        write_u32(&mut memory, module + 0x80 + 24 + 96 + 20, 0x1000).unwrap();
+        let root = module + 0x1000;
+        write_u16(&mut memory, root + 14, 1).unwrap();
+        write_u32(&mut memory, root + 16, RT_MESSAGETABLE).unwrap();
+        write_u32(&mut memory, root + 20, 0x8000_0020).unwrap();
+        let kind = root + 0x20;
+        write_u16(&mut memory, kind + 14, 1).unwrap();
+        write_u32(&mut memory, kind + 16, 7).unwrap();
+        write_u32(&mut memory, kind + 20, 0x8000_0040).unwrap();
+        let name = root + 0x40;
+        write_u16(&mut memory, name + 14, 2).unwrap();
+        // A first language exists, but FormatMessageA must not select it.
+        write_u32(&mut memory, name + 16, 0x0409).unwrap();
+        write_u32(&mut memory, name + 20, 0x80).unwrap();
+        write_u32(&mut memory, name + 24, 0x0400).unwrap();
+        write_u32(&mut memory, name + 28, 0x90).unwrap();
+        write_u32(&mut memory, root + 0x90, 0x2000).unwrap();
+        write_u32(&mut memory, root + 0x94, 26).unwrap();
+        let data = module + 0x2000;
+        write_u32(&mut memory, data, 1).unwrap();
+        write_u32(&mut memory, data + 4, 0x8510_0084).unwrap();
+        write_u32(&mut memory, data + 8, 0x8510_0084).unwrap();
+        write_u32(&mut memory, data + 12, 16).unwrap();
+        write_u16(&mut memory, data + 16, 10).unwrap();
+        write_u16(&mut memory, data + 18, 0).unwrap();
+        memory.write(data + 20, b"OK%n\0").unwrap();
+
+        let esp = base + 0x8000;
+        let buffer = base + 0x8100;
+        for (index, value) in [
+            0x0040_1c67,
+            FORMAT_MESSAGE_FROM_HMODULE,
+            module,
+            0x8510_0084,
+            0x0400,
+            buffer,
+            32,
+            0,
+        ].into_iter().enumerate() {
+            write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
+        }
+        let mut xp = XpProcess::new_child();
+        xp.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(4))
+        );
+        let mut output = [0; 5];
+        memory.read(buffer, &mut output).unwrap();
+        assert_eq!(output, *b"OK\r\n\0");
+        assert_eq!(xp.last_format_message_encoding(), Some(MessageResourceEncoding::Ansi));
+    }
+
+    #[test]
     fn proven_create_thread_is_logical_and_suspended() {
         let imports = vec![LauncherImport {
             id: 0,
@@ -5942,911 +6013,947 @@ mod tests_process_1 {
 #[macro_export]
 macro_rules! wc3_imports_tests_1 {
     () => {
-#[cfg(test)]
-mod tests_imports_1 {
-    use super::*;
+        #[cfg(test)]
+        mod tests_imports_1 {
+            use super::*;
 
-    #[test]
-    fn get_exit_code_process_is_a_kernel32_stdcall_eight_import() {
-        let import = LauncherImport {
-            id: 0,
-            module: "KERNEL32.dll".into(),
-            symbol: "GetExitCodeProcess".into(),
-            iat_rva: 0,
-        };
-        assert_eq!(WinCall::from_import(&import), WinCall::GetExitCodeProcess);
-        assert_eq!(WinCall::GetExitCodeProcess.thunk_kind(), Kind::Stdcall(8));
-        let mut bytes = [0; thunk32::THUNK_BYTES];
-        thunk32::write(0, WinCall::GetExitCodeProcess.thunk_kind(), &mut bytes).unwrap();
-        assert_eq!(&bytes[8..11], &[0xc2, 8, 0]);
-    }
+            #[test]
+            fn get_exit_code_process_is_a_kernel32_stdcall_eight_import() {
+                let import = LauncherImport {
+                    id: 0,
+                    module: "KERNEL32.dll".into(),
+                    symbol: "GetExitCodeProcess".into(),
+                    iat_rva: 0,
+                };
+                assert_eq!(WinCall::from_import(&import), WinCall::GetExitCodeProcess);
+                assert_eq!(WinCall::GetExitCodeProcess.thunk_kind(), Kind::Stdcall(8));
+                let mut bytes = [0; thunk32::THUNK_BYTES];
+                thunk32::write(0, WinCall::GetExitCodeProcess.thunk_kind(), &mut bytes).unwrap();
+                assert_eq!(&bytes[8..11], &[0xc2, 8, 0]);
+            }
 
-    #[test]
-    fn set_event_is_a_kernel32_stdcall_four_import() {
-        let import = LauncherImport {
-            id: 0,
-            module: "KERNEL32.dll".into(),
-            symbol: "SetEvent".into(),
-            iat_rva: 0,
-        };
-        assert_eq!(WinCall::from_import(&import), WinCall::SetEvent);
-        let mut bytes = [0; thunk32::THUNK_BYTES];
-        thunk32::write(0, WinCall::SetEvent.thunk_kind(), &mut bytes).unwrap();
-        assert_eq!(&bytes[8..11], &[0xc2, 4, 0]);
-    }
+            #[test]
+            fn set_event_is_a_kernel32_stdcall_four_import() {
+                let import = LauncherImport {
+                    id: 0,
+                    module: "KERNEL32.dll".into(),
+                    symbol: "SetEvent".into(),
+                    iat_rva: 0,
+                };
+                assert_eq!(WinCall::from_import(&import), WinCall::SetEvent);
+                let mut bytes = [0; thunk32::THUNK_BYTES];
+                thunk32::write(0, WinCall::SetEvent.thunk_kind(), &mut bytes).unwrap();
+                assert_eq!(&bytes[8..11], &[0xc2, 4, 0]);
+            }
 
-    #[test]
-    fn exit_thread_is_a_kernel32_stdcall_four_import() {
-        let import = LauncherImport {
-            id: 0,
-            module: "KERNEL32.dll".into(),
-            symbol: "ExitThread".into(),
-            iat_rva: 0,
-        };
-        assert_eq!(WinCall::from_import(&import), WinCall::ExitThread);
-        let mut bytes = [0; thunk32::THUNK_BYTES];
-        thunk32::write(0, WinCall::ExitThread.thunk_kind(), &mut bytes).unwrap();
-        assert_eq!(&bytes[8..11], &[0xc2, 4, 0]);
-    }
+            #[test]
+            fn exit_thread_is_a_kernel32_stdcall_four_import() {
+                let import = LauncherImport {
+                    id: 0,
+                    module: "KERNEL32.dll".into(),
+                    symbol: "ExitThread".into(),
+                    iat_rva: 0,
+                };
+                assert_eq!(WinCall::from_import(&import), WinCall::ExitThread);
+                let mut bytes = [0; thunk32::THUNK_BYTES];
+                thunk32::write(0, WinCall::ExitThread.thunk_kind(), &mut bytes).unwrap();
+                assert_eq!(&bytes[8..11], &[0xc2, 4, 0]);
+            }
 
-    #[test]
-    fn set_last_error_is_a_kernel32_stdcall_four_import() {
-        let import = LauncherImport {
-            id: 0,
-            module: "KERNEL32.dll".into(),
-            symbol: "SetLastError".into(),
-            iat_rva: 0,
-        };
-        assert_eq!(WinCall::from_import(&import), WinCall::SetLastError);
-        let mut bytes = [0; thunk32::THUNK_BYTES];
-        thunk32::write(0, WinCall::SetLastError.thunk_kind(), &mut bytes).unwrap();
-        assert_eq!(&bytes[8..11], &[0xc2, 4, 0]);
-    }
+            #[test]
+            fn set_last_error_is_a_kernel32_stdcall_four_import() {
+                let import = LauncherImport {
+                    id: 0,
+                    module: "KERNEL32.dll".into(),
+                    symbol: "SetLastError".into(),
+                    iat_rva: 0,
+                };
+                assert_eq!(WinCall::from_import(&import), WinCall::SetLastError);
+                let mut bytes = [0; thunk32::THUNK_BYTES];
+                thunk32::write(0, WinCall::SetLastError.thunk_kind(), &mut bytes).unwrap();
+                assert_eq!(&bytes[8..11], &[0xc2, 4, 0]);
+            }
 
-    #[test]
-    fn tls_get_value_is_a_kernel32_stdcall_four_import() {
-        let import = LauncherImport {
-            id: 0,
-            module: "KERNEL32.dll".into(),
-            symbol: "TlsGetValue".into(),
-            iat_rva: 0,
-        };
-        assert_eq!(WinCall::from_import(&import), WinCall::TlsGetValue);
-        let mut bytes = [0; thunk32::THUNK_BYTES];
-        thunk32::write(0, WinCall::TlsGetValue.thunk_kind(), &mut bytes).unwrap();
-        assert_eq!(&bytes[8..11], &[0xc2, 4, 0]);
-    }
+            #[test]
+            fn tls_get_value_is_a_kernel32_stdcall_four_import() {
+                let import = LauncherImport {
+                    id: 0,
+                    module: "KERNEL32.dll".into(),
+                    symbol: "TlsGetValue".into(),
+                    iat_rva: 0,
+                };
+                assert_eq!(WinCall::from_import(&import), WinCall::TlsGetValue);
+                let mut bytes = [0; thunk32::THUNK_BYTES];
+                thunk32::write(0, WinCall::TlsGetValue.thunk_kind(), &mut bytes).unwrap();
+                assert_eq!(&bytes[8..11], &[0xc2, 4, 0]);
+            }
 
-    #[test]
-    fn destroy_window_is_a_user32_stdcall_four_import() {
-        let import = LauncherImport {
-            id: 0,
-            module: "USER32.dll".into(),
-            symbol: "DestroyWindow".into(),
-            iat_rva: 0,
-        };
-        assert_eq!(WinCall::from_import(&import), WinCall::DestroyWindow);
-        let mut bytes = [0; thunk32::THUNK_BYTES];
-        thunk32::write(0, WinCall::DestroyWindow.thunk_kind(), &mut bytes).unwrap();
-        assert_eq!(&bytes[8..11], &[0xc2, 4, 0]);
-    }
-}
+            #[test]
+            fn destroy_window_is_a_user32_stdcall_four_import() {
+                let import = LauncherImport {
+                    id: 0,
+                    module: "USER32.dll".into(),
+                    symbol: "DestroyWindow".into(),
+                    iat_rva: 0,
+                };
+                assert_eq!(WinCall::from_import(&import), WinCall::DestroyWindow);
+                let mut bytes = [0; thunk32::THUNK_BYTES];
+                thunk32::write(0, WinCall::DestroyWindow.thunk_kind(), &mut bytes).unwrap();
+                assert_eq!(&bytes[8..11], &[0xc2, 4, 0]);
+            }
+        }
     };
 }
 
 #[macro_export]
 macro_rules! wc3_assets_tests_1 {
     () => {
-#[cfg(test)]
-mod tests_assets_1 {
-    use super::*;
-    use std::cell::Cell;
-    use trueos::async_fs::{DirEntry, NodeKind};
+        #[cfg(test)]
+        mod tests_assets_1 {
+            use super::*;
+            use std::cell::Cell;
+            use trueos::async_fs::{DirEntry, NodeKind};
 
-    // Any accidental guest mapping during a cache operation crosses this ABI.
-    static GUEST_MAP_CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+            // Any accidental guest mapping during a cache operation crosses this ABI.
+            static GUEST_MAP_CALLS: std::sync::atomic::AtomicUsize =
+                std::sync::atomic::AtomicUsize::new(0);
 
-    #[unsafe(no_mangle)]
-    extern "C" fn trueos_cabi_x86_address_space_map_v1(
-        _handle: u64,
-        _guest_va: u32,
-        _len: u32,
-        _permissions: u32,
-    ) -> i32 {
-        GUEST_MAP_CALLS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        -1
-    }
-
-    #[test]
-    fn synthetic_file_lengths_do_not_truncate_to_guest_width() {
-        assert_eq!(file_len(600 * 1024 * 1024), 629145600u64);
-        let large = u32::MAX as usize + 600 * 1024 * 1024;
-        assert_eq!(file_len(large), u64::from(u32::MAX) + 629145600);
-    }
-
-    fn listing() -> DirListing {
-        DirListing {
-            entries: vec![DirEntry {
-                name: "War3.MPQ".into(),
-                kind: NodeKind::File,
-            }],
-            truncated: false,
-        }
-    }
-
-    #[test]
-    fn one_read_shared_allocation_independent_cursors() {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .build()
-            .unwrap();
-        runtime.block_on(async {
-            let reads = Cell::new(0);
-            let data = vec![1, 2, 3];
-            let original = data.as_ptr();
-            let mut cache = Wc3AssetCache::default();
-            assert!(
-                cache
-                    .preload_with(&listing(), |path| {
-                        assert_eq!(path, "/common/Warcraft III/War3.MPQ");
-                        reads.set(reads.get() + 1);
-                        std::future::ready(Ok(data))
-                    })
-                    .await
-                    .unwrap()
-            );
-            assert!(
-                !cache
-                    .preload_with(&listing(), |_| {
-                        reads.set(reads.get() + 1);
-                        std::future::ready(Err("must not read twice".into()))
-                    })
-                    .await
-                    .unwrap()
-            );
-            let bytes = cache.lookup("war3.mpq").unwrap();
-            assert_eq!(bytes.as_ptr(), original);
-            for path in [
-                "War3.mpq",
-                "WAR3.MPQ",
-                ".\\war3.mpq",
-                "C:\\games\\Warcraft III\\war3.mpq",
-                "/common/Warcraft III/war3.mpq",
-            ] {
-                assert!(Arc::ptr_eq(&bytes, &cache.lookup(path).unwrap()));
+            #[unsafe(no_mangle)]
+            extern "C" fn trueos_cabi_x86_address_space_map_v1(
+                _handle: u64,
+                _guest_va: u32,
+                _len: u32,
+                _permissions: u32,
+            ) -> i32 {
+                GUEST_MAP_CALLS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                -1
             }
-            assert_eq!(reads.get(), 1);
-            assert!(cache.lookup("war3.mpq.bak").is_none());
-            assert!(cache.lookup("war3.mpq/").is_none());
-            assert_eq!(
-                cache.war3_mpq().unwrap().stored_path(),
-                "/common/Warcraft III/War3.MPQ"
-            );
-            let mut a = ResidentFileHandle::new(Arc::clone(&bytes));
-            let b = ResidentFileHandle::new(Arc::clone(&bytes));
-            a.cursor = 600 * 1024 * 1024;
-            assert_eq!(a.cursor, 629145600u64);
-            a.cursor = u64::from(u32::MAX) + 600 * 1024 * 1024;
-            assert!(a.cursor > u64::from(u32::MAX));
-            assert_eq!(b.cursor, 0);
-            assert!(Arc::ptr_eq(&a.bytes, &b.bytes));
-            let _: u64 = a.len();
-            assert_eq!(a.len(), 3);
-            let mut fresh = Wc3AssetCache::default();
-            assert!(
-                fresh
-                    .preload_with(&listing(), |_| {
-                        reads.set(reads.get() + 1);
-                        std::future::ready(Ok(vec![4]))
-                    })
-                    .await
-                    .unwrap()
-            );
-            assert_eq!(reads.get(), 2);
-            assert_eq!(GUEST_MAP_CALLS.load(std::sync::atomic::Ordering::SeqCst), 0);
-        });
-    }
 
-    #[test]
-    fn failed_read_leaves_no_resident_backing() {
-        tokio::runtime::Builder::new_current_thread()
-            .build()
-            .unwrap()
-            .block_on(async {
-                let mut cache = Wc3AssetCache::default();
-                assert_eq!(
-                    cache
-                        .preload_with(&listing(), |_| std::future::ready(Err(
-                            "out of memory".into()
-                        )))
-                        .await,
-                    Err("out of memory".into())
-                );
-                assert!(cache.lookup("war3.mpq").is_none());
-            });
-    }
-}
+            #[test]
+            fn synthetic_file_lengths_do_not_truncate_to_guest_width() {
+                assert_eq!(file_len(600 * 1024 * 1024), 629145600u64);
+                let large = u32::MAX as usize + 600 * 1024 * 1024;
+                assert_eq!(file_len(large), u64::from(u32::MAX) + 629145600);
+            }
+
+            fn listing() -> DirListing {
+                DirListing {
+                    entries: vec![DirEntry {
+                        name: "War3.MPQ".into(),
+                        kind: NodeKind::File,
+                    }],
+                    truncated: false,
+                }
+            }
+
+            #[test]
+            fn one_read_shared_allocation_independent_cursors() {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .build()
+                    .unwrap();
+                runtime.block_on(async {
+                    let reads = Cell::new(0);
+                    let data = vec![1, 2, 3];
+                    let original = data.as_ptr();
+                    let mut cache = Wc3AssetCache::default();
+                    assert!(
+                        cache
+                            .preload_with(&listing(), |path| {
+                                assert_eq!(path, "/common/Warcraft III/War3.MPQ");
+                                reads.set(reads.get() + 1);
+                                std::future::ready(Ok(data))
+                            })
+                            .await
+                            .unwrap()
+                    );
+                    assert!(
+                        !cache
+                            .preload_with(&listing(), |_| {
+                                reads.set(reads.get() + 1);
+                                std::future::ready(Err("must not read twice".into()))
+                            })
+                            .await
+                            .unwrap()
+                    );
+                    let bytes = cache.lookup("war3.mpq").unwrap();
+                    assert_eq!(bytes.as_ptr(), original);
+                    for path in [
+                        "War3.mpq",
+                        "WAR3.MPQ",
+                        ".\\war3.mpq",
+                        "C:\\games\\Warcraft III\\war3.mpq",
+                        "/common/Warcraft III/war3.mpq",
+                    ] {
+                        assert!(Arc::ptr_eq(&bytes, &cache.lookup(path).unwrap()));
+                    }
+                    assert_eq!(reads.get(), 1);
+                    assert!(cache.lookup("war3.mpq.bak").is_none());
+                    assert!(cache.lookup("war3.mpq/").is_none());
+                    assert_eq!(
+                        cache.war3_mpq().unwrap().stored_path(),
+                        "/common/Warcraft III/War3.MPQ"
+                    );
+                    let mut a = ResidentFileHandle::new(Arc::clone(&bytes));
+                    let b = ResidentFileHandle::new(Arc::clone(&bytes));
+                    a.cursor = 600 * 1024 * 1024;
+                    assert_eq!(a.cursor, 629145600u64);
+                    a.cursor = u64::from(u32::MAX) + 600 * 1024 * 1024;
+                    assert!(a.cursor > u64::from(u32::MAX));
+                    assert_eq!(b.cursor, 0);
+                    assert!(Arc::ptr_eq(&a.bytes, &b.bytes));
+                    let _: u64 = a.len();
+                    assert_eq!(a.len(), 3);
+                    let mut fresh = Wc3AssetCache::default();
+                    assert!(
+                        fresh
+                            .preload_with(&listing(), |_| {
+                                reads.set(reads.get() + 1);
+                                std::future::ready(Ok(vec![4]))
+                            })
+                            .await
+                            .unwrap()
+                    );
+                    assert_eq!(reads.get(), 2);
+                    assert_eq!(GUEST_MAP_CALLS.load(std::sync::atomic::Ordering::SeqCst), 0);
+                });
+            }
+
+            #[test]
+            fn failed_read_leaves_no_resident_backing() {
+                tokio::runtime::Builder::new_current_thread()
+                    .build()
+                    .unwrap()
+                    .block_on(async {
+                        let mut cache = Wc3AssetCache::default();
+                        assert_eq!(
+                            cache
+                                .preload_with(&listing(), |_| std::future::ready(Err(
+                                    "out of memory".into()
+                                )))
+                                .await,
+                            Err("out of memory".into())
+                        );
+                        assert!(cache.lookup("war3.mpq").is_none());
+                    });
+            }
+        }
     };
 }
 
 #[macro_export]
 macro_rules! wc3_seh_tests_1 {
     () => {
-#[cfg(test)] mod tests_seh_1 { use super::*;
- #[test] fn context_round_trips_visible_registers() { let r=Registers { eax:1,ebx:2,ecx:3,edx:4,esi:5,edi:6,ebp:7,eip:8,esp:9,eflags:10,fs_base:11,..Registers::default() }; assert_eq!(decode_x86_context(&encode_x86_context(r, None), 11).unwrap(),r); }
- #[test] fn page_fault_execute_is_access_violation() { let b=encode_page_fault_exception_record(0,0,0x10); assert_eq!(get(&b,0),STATUS_ACCESS_VIOLATION); assert_eq!(get(&b,12),0); assert_eq!(get(&b,16),2); assert_eq!(get(&b,20),8); }
-}
+        #[cfg(test)]
+        mod tests_seh_1 {
+            use super::*;
+            #[test]
+            fn context_round_trips_visible_registers() {
+                let r = Registers {
+                    eax: 1,
+                    ebx: 2,
+                    ecx: 3,
+                    edx: 4,
+                    esi: 5,
+                    edi: 6,
+                    ebp: 7,
+                    eip: 8,
+                    esp: 9,
+                    eflags: 10,
+                    fs_base: 11,
+                    ..Registers::default()
+                };
+                assert_eq!(
+                    decode_x86_context(&encode_x86_context(r, None), 11).unwrap(),
+                    r
+                );
+            }
+            #[test]
+            fn page_fault_execute_is_access_violation() {
+                let b = encode_page_fault_exception_record(0, 0, 0x10);
+                assert_eq!(get(&b, 0), STATUS_ACCESS_VIOLATION);
+                assert_eq!(get(&b, 12), 0);
+                assert_eq!(get(&b, 16), 2);
+                assert_eq!(get(&b, 20), 8);
+            }
+        }
     };
 }
 
 #[macro_export]
 macro_rules! wc3_child_loader_tests_1 {
     () => {
-#[cfg(test)]
-mod tests_child_loader_1 {
-    use super::*;
-    #[test]
-    fn local_resolution_is_ascii_case_insensitive_and_ordinals_survive() {
-        let listing = DirListing {
-            entries: vec![trueos::async_fs::DirEntry {
-                name: "Mss32.dll".into(),
-                kind: NodeKind::File,
-            }],
-            truncated: false,
-        };
-        let mut image = PeImage {
-            image_base: 0x400000,
-            entry_rva: 0,
-            size_of_image: 0x1000,
-            size_of_headers: 0,
-            sections: vec![],
-            imports: vec![
-                crate::pe32::ImportDescriptor {
-                    module: "mss32.dll".into(),
-                    symbol: ImportSymbol::Name("x".into()),
+        #[cfg(test)]
+        mod tests_child_loader_1 {
+            use super::*;
+            #[test]
+            fn local_resolution_is_ascii_case_insensitive_and_ordinals_survive() {
+                let listing = DirListing {
+                    entries: vec![trueos::async_fs::DirEntry {
+                        name: "Mss32.dll".into(),
+                        kind: NodeKind::File,
+                    }],
+                    truncated: false,
+                };
+                let mut image = PeImage {
+                    image_base: 0x400000,
+                    entry_rva: 0,
+                    size_of_image: 0x1000,
+                    size_of_headers: 0,
+                    sections: vec![],
+                    imports: vec![
+                        crate::pe32::ImportDescriptor {
+                            module: "mss32.dll".into(),
+                            symbol: ImportSymbol::Name("x".into()),
+                            iat_rva: 0,
+                        },
+                        crate::pe32::ImportDescriptor {
+                            module: "wsock32.dll".into(),
+                            symbol: ImportSymbol::Ordinal(25),
+                            iat_rva: 4,
+                        },
+                    ],
+                    relocations: vec![],
+                    exports: vec![],
+                    image: vec![0; 8],
+                };
+                let surface = prepare(&mut image, &listing).unwrap();
+                assert_eq!(surface.native[0].stored, "Mss32.dll");
+                assert_eq!(surface.imports[0].symbol, ProviderSymbol::Ordinal(25));
+                assert_eq!(u32::from_le_bytes(image.image[..4].try_into().unwrap()), 0);
+                assert_eq!(
+                    u32::from_le_bytes(image.image[4..8].try_into().unwrap()),
+                    thunk32::THUNK_BASE
+                );
+            }
+
+            #[test]
+            fn msvcrt_acmdln_binds_as_data_without_shifting_provider_thunks() {
+                let listing = DirListing {
+                    entries: vec![],
+                    truncated: false,
+                };
+                let mut image = PeImage {
+                    image_base: 0x400000,
+                    entry_rva: 0,
+                    size_of_image: 0x1000,
+                    size_of_headers: 0,
+                    sections: vec![],
+                    imports: vec![
+                        crate::pe32::ImportDescriptor {
+                            module: "MSVCRT.dll".into(),
+                            symbol: ImportSymbol::Name("_acmdln".into()),
+                            iat_rva: 0,
+                        },
+                        crate::pe32::ImportDescriptor {
+                            module: "MSVCRT.dll".into(),
+                            symbol: ImportSymbol::Name("malloc".into()),
+                            iat_rva: 4,
+                        },
+                    ],
+                    relocations: vec![],
+                    exports: vec![],
+                    image: vec![0; 8],
+                };
+
+                let surface = prepare(&mut image, &listing).unwrap();
+
+                assert_eq!(surface.imports.len(), 2);
+                assert_eq!(
+                    u32::from_le_bytes(image.image[..4].try_into().unwrap()),
+                    crate::process::CRT_ACMDLN_VA
+                );
+                assert_eq!(
+                    u32::from_le_bytes(image.image[4..8].try_into().unwrap()),
+                    thunk32::THUNK_BASE + thunk32::THUNK_BYTES as u32
+                );
+                assert_ne!(
+                    &surface.thunks[..thunk32::THUNK_BYTES],
+                    &[0x90; thunk32::THUNK_BYTES]
+                );
+            }
+
+            #[test]
+            fn initialize_critical_section_provider_uses_stdcall_cleanup() {
+                let import = ProviderImport {
+                    module: "KERNEL32.dll".into(),
+                    symbol: ProviderSymbol::Name("InitializeCriticalSection".into()),
                     iat_rva: 0,
-                },
-                crate::pe32::ImportDescriptor {
-                    module: "wsock32.dll".into(),
-                    symbol: ImportSymbol::Ordinal(25),
-                    iat_rva: 4,
-                },
-            ],
-            relocations: vec![],
-            exports: vec![],
-            image: vec![0; 8],
-        };
-        let surface = prepare(&mut image, &listing).unwrap();
-        assert_eq!(surface.native[0].stored, "Mss32.dll");
-        assert_eq!(surface.imports[0].symbol, ProviderSymbol::Ordinal(25));
-        assert_eq!(u32::from_le_bytes(image.image[..4].try_into().unwrap()), 0);
-        assert_eq!(
-            u32::from_le_bytes(image.image[4..8].try_into().unwrap()),
-            thunk32::THUNK_BASE
-        );
-    }
+                };
+                let mut bytes = [0; thunk32::THUNK_BYTES];
+                thunk32::write(403, provider_thunk_kind(&import), &mut bytes).unwrap();
+                assert_eq!(&bytes[8..11], &[0xc2, 4, 0]);
 
-    #[test]
-    fn msvcrt_acmdln_binds_as_data_without_shifting_provider_thunks() {
-        let listing = DirListing {
-            entries: vec![],
-            truncated: false,
-        };
-        let mut image = PeImage {
-            image_base: 0x400000,
-            entry_rva: 0,
-            size_of_image: 0x1000,
-            size_of_headers: 0,
-            sections: vec![],
-            imports: vec![
-                crate::pe32::ImportDescriptor {
-                    module: "MSVCRT.dll".into(),
-                    symbol: ImportSymbol::Name("_acmdln".into()),
+                let unrelated = ProviderImport {
+                    module: "KERNEL32.dll".into(),
+                    symbol: ProviderSymbol::Name("DefinitelyUnmodeled".into()),
                     iat_rva: 0,
-                },
-                crate::pe32::ImportDescriptor {
+                };
+                thunk32::write(404, provider_thunk_kind(&unrelated), &mut bytes).unwrap();
+                assert_eq!(bytes[8], 0xc3);
+            }
+
+            #[test]
+            fn enter_critical_section_provider_uses_stdcall_four() {
+                let import = ProviderImport {
+                    module: "KERNEL32.dll".into(),
+                    symbol: ProviderSymbol::Name("EnterCriticalSection".into()),
+                    iat_rva: 0,
+                };
+                let mut bytes = [0; thunk32::THUNK_BYTES];
+                thunk32::write(435, provider_thunk_kind(&import), &mut bytes).unwrap();
+                assert_eq!(&bytes[8..11], &[0xc2, 4, 0]);
+            }
+
+            #[test]
+            fn leave_critical_section_provider_uses_stdcall_four() {
+                let import = ProviderImport {
+                    module: "KERNEL32.dll".into(),
+                    symbol: ProviderSymbol::Name("LeaveCriticalSection".into()),
+                    iat_rva: 0,
+                };
+                let mut bytes = [0; thunk32::THUNK_BYTES];
+                thunk32::write(437, provider_thunk_kind(&import), &mut bytes).unwrap();
+                assert_eq!(&bytes[8..11], &[0xc2, 4, 0]);
+            }
+
+            #[test]
+            fn set_unhandled_exception_filter_provider_uses_stdcall_four() {
+                let import = ProviderImport {
+                    module: "KERNEL32.dll".into(),
+                    symbol: ProviderSymbol::Name("SetUnhandledExceptionFilter".into()),
+                    iat_rva: 0,
+                };
+                let mut bytes = [0; thunk32::THUNK_BYTES];
+                thunk32::write(409, provider_thunk_kind(&import), &mut bytes).unwrap();
+                assert_eq!(&bytes[8..11], &[0xc2, 4, 0]);
+            }
+
+            #[test]
+            fn virtual_alloc_provider_uses_stdcall_sixteen() {
+                let import = ProviderImport {
+                    module: "KERNEL32.dll".into(),
+                    symbol: ProviderSymbol::Name("VirtualAlloc".into()),
+                    iat_rva: 0,
+                };
+                let mut bytes = [0; thunk32::THUNK_BYTES];
+                thunk32::write(424, provider_thunk_kind(&import), &mut bytes).unwrap();
+                assert_eq!(&bytes[8..11], &[0xc2, 0x10, 0]);
+            }
+
+            #[test]
+            fn rtl_unwind_is_runtime_stdcall_sixteen() {
+                let import = ProviderImport {
+                    module: "KERNEL32.dll".into(),
+                    symbol: ProviderSymbol::Name("RtlUnwind".into()),
+                    iat_rva: 0,
+                };
+
+                let operation = provider_op(&import);
+
+                assert_eq!(operation, ProviderOp::RtlUnwind);
+                assert!(!operation.is_generic_process_local());
+                assert!(operation.is_modeled());
+                assert_eq!(operation.stack_cleanup_bytes(), 16);
+                assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Stdcall(16));
+            }
+
+            #[test]
+            fn exit_process_is_runtime_stdcall_four() {
+                let import = ProviderImport {
+                    module: "KERNEL32.dll".into(),
+                    symbol: ProviderSymbol::Name("ExitProcess".into()),
+                    iat_rva: 0,
+                };
+
+                let operation = provider_op(&import);
+
+                assert_eq!(operation, ProviderOp::ExitProcess);
+                assert!(operation.is_modeled());
+                assert!(!operation.is_generic_process_local());
+                assert_eq!(operation.stack_cleanup_bytes(), 4);
+                assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Stdcall(4));
+            }
+
+            #[test]
+            fn get_version_ex_a_provider_uses_stdcall_four() {
+                let import = ProviderImport {
+                    module: "KERNEL32.dll".into(),
+                    symbol: ProviderSymbol::Name("GetVersionExA".into()),
+                    iat_rva: 0,
+                };
+                let mut bytes = [0; thunk32::THUNK_BYTES];
+                thunk32::write(581, provider_thunk_kind(&import), &mut bytes).unwrap();
+                assert_eq!(&bytes[8..11], &[0xc2, 0x04, 0x00]);
+            }
+
+            #[test]
+            fn free_environment_strings_w_is_pure_process_stdcall_four() {
+                let import = ProviderImport {
+                    module: "KERNEL32.dll".into(),
+                    symbol: ProviderSymbol::Name("FreeEnvironmentStringsW".into()),
+                    iat_rva: 0,
+                };
+                let operation = provider_op(&import);
+                assert_eq!(operation, ProviderOp::FreeEnvironmentStringsW);
+                assert!(operation.is_generic_process_local());
+                assert_eq!(operation.stack_cleanup_bytes(), 4);
+                let mut bytes = [0; thunk32::THUNK_BYTES];
+                thunk32::write(613, provider_thunk_kind(&import), &mut bytes).unwrap();
+                assert_eq!(&bytes[8..11], &[0xc2, 0x04, 0x00]);
+            }
+
+            #[test]
+            fn get_startup_info_a_is_pure_process_stdcall_four() {
+                let import = ProviderImport {
+                    module: "KERNEL32.dll".into(),
+                    symbol: ProviderSymbol::Name("GetStartupInfoA".into()),
+                    iat_rva: 0,
+                };
+                let operation = provider_op(&import);
+                assert_eq!(operation, ProviderOp::GetStartupInfoA);
+                assert!(operation.is_generic_process_local());
+                assert_eq!(operation.stack_cleanup_bytes(), 4);
+                let mut bytes = [0; thunk32::THUNK_BYTES];
+                thunk32::write(627, provider_thunk_kind(&import), &mut bytes).unwrap();
+                assert_eq!(&bytes[8..11], &[0xc2, 0x04, 0x00]);
+            }
+
+            #[test]
+            fn get_std_handle_is_pure_process_stdcall_four() {
+                let import = ProviderImport {
+                    module: "KERNEL32.dll".into(),
+                    symbol: ProviderSymbol::Name("GetStdHandle".into()),
+                    iat_rva: 0,
+                };
+                let operation = provider_op(&import);
+                assert_eq!(operation, ProviderOp::GetStdHandle);
+                assert!(operation.is_generic_process_local());
+                assert_eq!(operation.stack_cleanup_bytes(), 4);
+                let mut bytes = [0; thunk32::THUNK_BYTES];
+                thunk32::write(625, provider_thunk_kind(&import), &mut bytes).unwrap();
+                assert_eq!(&bytes[8..11], &[0xc2, 0x04, 0x00]);
+            }
+
+            #[test]
+            fn get_file_type_is_pure_process_stdcall_four() {
+                let import = ProviderImport {
+                    module: "KERNEL32.dll".into(),
+                    symbol: ProviderSymbol::Name("GetFileType".into()),
+                    iat_rva: 0,
+                };
+                let operation = provider_op(&import);
+                assert_eq!(operation, ProviderOp::GetFileType);
+                assert!(operation.is_generic_process_local());
+                assert_eq!(operation.stack_cleanup_bytes(), 4);
+                let mut bytes = [0; thunk32::THUNK_BYTES];
+                thunk32::write(626, provider_thunk_kind(&import), &mut bytes).unwrap();
+                assert_eq!(&bytes[8..11], &[0xc2, 0x04, 0x00]);
+            }
+
+            #[test]
+            fn set_handle_count_is_pure_process_stdcall_four() {
+                let import = ProviderImport {
+                    module: "KERNEL32.dll".into(),
+                    symbol: ProviderSymbol::Name("SetHandleCount".into()),
+                    iat_rva: 0,
+                };
+                let operation = provider_op(&import);
+                assert_eq!(operation, ProviderOp::SetHandleCount);
+                assert!(operation.is_generic_process_local());
+                assert_eq!(operation.stack_cleanup_bytes(), 4);
+                let mut bytes = [0; thunk32::THUNK_BYTES];
+                thunk32::write(624, provider_thunk_kind(&import), &mut bytes).unwrap();
+                assert_eq!(&bytes[8..11], &[0xc2, 0x04, 0x00]);
+            }
+
+            #[test]
+            fn get_acp_is_pure_process_no_argument_provider() {
+                let import = ProviderImport {
+                    module: "KERNEL32.dll".into(),
+                    symbol: ProviderSymbol::Name("GetACP".into()),
+                    iat_rva: 0,
+                };
+                let operation = provider_op(&import);
+                assert_eq!(operation, ProviderOp::GetACP);
+                assert!(operation.is_generic_process_local());
+                assert_eq!(operation.stack_cleanup_bytes(), 0);
+                assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Return);
+                let mut bytes = [0; thunk32::THUNK_BYTES];
+                thunk32::write(640, provider_thunk_kind(&import), &mut bytes).unwrap();
+                assert_eq!(bytes[8], 0xc3);
+            }
+
+            #[test]
+            fn get_cp_info_is_pure_process_stdcall_eight() {
+                let import = ProviderImport {
+                    module: "KERNEL32.dll".into(),
+                    symbol: ProviderSymbol::Name("GetCPInfo".into()),
+                    iat_rva: 0,
+                };
+                let operation = provider_op(&import);
+                assert_eq!(operation, ProviderOp::GetCPInfo);
+                assert!(operation.is_generic_process_local());
+                assert_eq!(operation.stack_cleanup_bytes(), 8);
+                assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Stdcall(8));
+                let mut bytes = [0; thunk32::THUNK_BYTES];
+                thunk32::write(641, provider_thunk_kind(&import), &mut bytes).unwrap();
+                assert_eq!(&bytes[8..11], &[0xc2, 0x08, 0x00]);
+            }
+
+            #[test]
+            fn get_string_type_w_is_pure_process_stdcall_sixteen() {
+                let import = ProviderImport {
+                    module: "KERNEL32.dll".into(),
+                    symbol: ProviderSymbol::Name("GetStringTypeW".into()),
+                    iat_rva: 0,
+                };
+                let operation = provider_op(&import);
+                assert_eq!(operation, ProviderOp::GetStringTypeW);
+                assert!(operation.is_generic_process_local());
+                assert_eq!(operation.stack_cleanup_bytes(), 16);
+                let mut bytes = [0; thunk32::THUNK_BYTES];
+                thunk32::write(638, provider_thunk_kind(&import), &mut bytes).unwrap();
+                assert_eq!(&bytes[8..11], &[0xc2, 0x10, 0x00]);
+            }
+
+            #[test]
+            fn multi_byte_to_wide_char_is_pure_process_stdcall_twenty_four() {
+                let import = ProviderImport {
+                    module: "KERNEL32.dll".into(),
+                    symbol: ProviderSymbol::Name("MultiByteToWideChar".into()),
+                    iat_rva: 0,
+                };
+                let operation = provider_op(&import);
+                assert_eq!(operation, ProviderOp::MultiByteToWideChar);
+                assert!(operation.is_generic_process_local());
+                assert_eq!(operation.stack_cleanup_bytes(), 24);
+                let mut bytes = [0; thunk32::THUNK_BYTES];
+                thunk32::write(615, provider_thunk_kind(&import), &mut bytes).unwrap();
+                assert_eq!(&bytes[8..11], &[0xc2, 0x18, 0x00]);
+            }
+
+            #[test]
+            fn lc_map_string_w_is_pure_process_stdcall_twenty_four() {
+                let import = ProviderImport {
+                    module: "KERNEL32.dll".into(),
+                    symbol: ProviderSymbol::Name("LCMapStringW".into()),
+                    iat_rva: 0,
+                };
+                let operation = provider_op(&import);
+                assert_eq!(operation, ProviderOp::LCMapStringW);
+                assert!(operation.is_generic_process_local());
+                assert_eq!(operation.stack_cleanup_bytes(), 24);
+                let mut bytes = [0; thunk32::THUNK_BYTES];
+                thunk32::write(617, provider_thunk_kind(&import), &mut bytes).unwrap();
+                assert_eq!(&bytes[8..11], &[0xc2, 0x18, 0x00]);
+            }
+
+            #[test]
+            fn get_module_file_name_a_is_pure_process_stdcall_twelve() {
+                let import = ProviderImport {
+                    module: "KERNEL32.dll".into(),
+                    symbol: ProviderSymbol::Name("GetModuleFileNameA".into()),
+                    iat_rva: 0,
+                };
+                let operation = provider_op(&import);
+                assert_eq!(operation, ProviderOp::GetModuleFileNameA);
+                assert!(operation.is_generic_process_local());
+                assert_eq!(operation.stack_cleanup_bytes(), 12);
+                let mut bytes = [0; thunk32::THUNK_BYTES];
+                thunk32::write(642, provider_thunk_kind(&import), &mut bytes).unwrap();
+                assert_eq!(&bytes[8..11], &[0xc2, 0x0c, 0x00]);
+            }
+
+            #[test]
+            fn get_module_handle_a_is_pure_process_stdcall_four() {
+                let import = ProviderImport {
+                    module: "KERNEL32.dll".into(),
+                    symbol: ProviderSymbol::Name("GetModuleHandleA".into()),
+                    iat_rva: 0,
+                };
+                let operation = provider_op(&import);
+                assert_eq!(operation, ProviderOp::GetModuleHandleA);
+                assert!(operation.is_generic_process_local());
+                assert_eq!(operation.stack_cleanup_bytes(), 4);
+                let mut bytes = [0; thunk32::THUNK_BYTES];
+                thunk32::write(573, provider_thunk_kind(&import), &mut bytes).unwrap();
+                assert_eq!(&bytes[8..11], &[0xc2, 0x04, 0x00]);
+            }
+
+            #[test]
+            fn load_library_a_is_runtime_stdcall_four() {
+                let import = ProviderImport {
+                    module: "KERNEL32.dll".into(),
+                    symbol: ProviderSymbol::Name("LoadLibraryA".into()),
+                    iat_rva: 0,
+                };
+
+                let operation = provider_op(&import);
+
+                assert_eq!(operation, ProviderOp::LoadLibraryA);
+                assert!(!operation.is_generic_process_local());
+                assert_eq!(operation.stack_cleanup_bytes(), 4);
+                assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Stdcall(4));
+            }
+
+            #[test]
+            fn get_proc_address_is_runtime_stdcall_eight() {
+                let import = ProviderImport {
+                    module: "KERNEL32.dll".into(),
+                    symbol: ProviderSymbol::Name("GetProcAddress".into()),
+                    iat_rva: 0,
+                };
+                let operation = provider_op(&import);
+                assert_eq!(operation, ProviderOp::GetProcAddress);
+                assert!(!operation.is_generic_process_local());
+                assert_eq!(operation.stack_cleanup_bytes(), 8);
+                assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Stdcall(8));
+            }
+
+            #[test]
+            fn get_current_process_is_pure_process_plain_return() {
+                let import = ProviderImport {
+                    module: "KERNEL32.dll".into(),
+                    symbol: ProviderSymbol::Name("GetCurrentProcess".into()),
+                    iat_rva: 0,
+                };
+                let operation = provider_op(&import);
+                assert_eq!(operation, ProviderOp::GetCurrentProcess);
+                assert!(operation.is_generic_process_local());
+                assert_eq!(operation.stack_cleanup_bytes(), 0);
+                assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Return);
+                assert!(operation.is_modeled());
+                assert!(!ProviderOp::Unknown.is_modeled());
+            }
+
+            #[test]
+            fn get_windows_directory_a_is_pure_process_stdcall_eight() {
+                let import = ProviderImport {
+                    module: "KERNEL32.dll".into(),
+                    symbol: ProviderSymbol::Name("GetWindowsDirectoryA".into()),
+                    iat_rva: 0,
+                };
+                let operation = provider_op(&import);
+                assert_eq!(operation, ProviderOp::GetWindowsDirectoryA);
+                assert!(operation.is_generic_process_local());
+                assert_eq!(operation.stack_cleanup_bytes(), 8);
+                assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Stdcall(8));
+            }
+
+            #[test]
+            fn get_system_directory_a_is_pure_process_stdcall_eight() {
+                let import = ProviderImport {
+                    module: "KERNEL32.dll".into(),
+                    symbol: ProviderSymbol::Name("GetSystemDirectoryA".into()),
+                    iat_rva: 0,
+                };
+                let operation = provider_op(&import);
+                assert_eq!(operation, ProviderOp::GetSystemDirectoryA);
+                assert!(operation.is_generic_process_local());
+                assert_eq!(operation.stack_cleanup_bytes(), 8);
+                assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Stdcall(8));
+            }
+
+            #[test]
+            fn query_performance_frequency_is_pure_process_stdcall_four() {
+                let import = ProviderImport {
+                    module: "KERNEL32.dll".into(),
+                    symbol: ProviderSymbol::Name("QueryPerformanceFrequency".into()),
+                    iat_rva: 0,
+                };
+                let operation = provider_op(&import);
+                assert_eq!(operation, ProviderOp::QueryPerformanceFrequency);
+                assert!(operation.is_generic_process_local());
+                assert_eq!(operation.stack_cleanup_bytes(), 4);
+                assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Stdcall(4));
+            }
+
+            #[test]
+            fn query_performance_counter_is_pure_process_stdcall_four() {
+                let import = ProviderImport {
+                    module: "KERNEL32.dll".into(),
+                    symbol: ProviderSymbol::Name("QueryPerformanceCounter".into()),
+                    iat_rva: 0,
+                };
+                let operation = provider_op(&import);
+                assert_eq!(operation, ProviderOp::QueryPerformanceCounter);
+                assert!(operation.is_generic_process_local());
+                assert_eq!(operation.stack_cleanup_bytes(), 4);
+                assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Stdcall(4));
+            }
+
+            #[test]
+            fn get_system_time_is_pure_process_stdcall_four() {
+                let import = ProviderImport {
+                    module: "KERNEL32.dll".into(),
+                    symbol: ProviderSymbol::Name("GetSystemTime".into()),
+                    iat_rva: 0,
+                };
+                let operation = provider_op(&import);
+
+                assert_eq!(operation, ProviderOp::GetSystemTime);
+                assert!(operation.is_generic_process_local());
+                assert_eq!(operation.stack_cleanup_bytes(), 4);
+                assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Stdcall(4));
+            }
+
+            #[test]
+            fn get_time_zone_information_is_pure_process_stdcall_four() {
+                let import = ProviderImport {
+                    module: "KERNEL32.dll".into(),
+                    symbol: ProviderSymbol::Name("GetTimeZoneInformation".into()),
+                    iat_rva: 0,
+                };
+                let operation = provider_op(&import);
+
+                assert_eq!(operation, ProviderOp::GetTimeZoneInformation);
+                assert!(operation.is_generic_process_local());
+                assert_eq!(operation.stack_cleanup_bytes(), 4);
+                assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Stdcall(4));
+            }
+
+            #[test]
+            fn time_get_time_is_pure_process_plain_return() {
+                let import = ProviderImport {
+                    module: "WINMM.dll".into(),
+                    symbol: ProviderSymbol::Name("timeGetTime".into()),
+                    iat_rva: 0,
+                };
+                let operation = provider_op(&import);
+                assert_eq!(operation, ProviderOp::TimeGetTime);
+                assert!(operation.is_generic_process_local());
+                assert_eq!(operation.stack_cleanup_bytes(), 0);
+                assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Return);
+            }
+
+            #[test]
+            fn wide_char_to_multi_byte_provider_uses_stdcall_thirty_two() {
+                let import = ProviderImport {
+                    module: "KERNEL32.dll".into(),
+                    symbol: ProviderSymbol::Name("WideCharToMultiByte".into()),
+                    iat_rva: 0,
+                };
+                let mut bytes = [0; thunk32::THUNK_BYTES];
+                thunk32::write(612, provider_thunk_kind(&import), &mut bytes).unwrap();
+                assert_eq!(&bytes[8..11], &[0xc2, 0x20, 0x00]);
+            }
+
+            #[test]
+            fn heap_providers_use_stdcall_twelve() {
+                for (provider_id, symbol) in
+                    [(622, "HeapCreate"), (623, "HeapAlloc"), (624, "HeapFree")]
+                {
+                    let import = ProviderImport {
+                        module: "KERNEL32.dll".into(),
+                        symbol: ProviderSymbol::Name(symbol.into()),
+                        iat_rva: 0,
+                    };
+                    let mut bytes = [0; thunk32::THUNK_BYTES];
+                    thunk32::write(provider_id, provider_thunk_kind(&import), &mut bytes).unwrap();
+                    assert_eq!(&bytes[8..11], &[0xc2, 0x0c, 0], "{symbol}");
+                }
+            }
+
+            #[test]
+            fn set_last_error_provider_uses_stdcall_four() {
+                let import = ProviderImport {
+                    module: "KERNEL32.dll".into(),
+                    symbol: ProviderSymbol::Name("SetLastError".into()),
+                    iat_rva: 0,
+                };
+                let mut bytes = [0; thunk32::THUNK_BYTES];
+                thunk32::write(408, provider_thunk_kind(&import), &mut bytes).unwrap();
+                assert_eq!(&bytes[8..11], &[0xc2, 4, 0]);
+            }
+
+            #[test]
+            fn malloc_provider_keeps_cdecl_return_cleanup() {
+                let import = ProviderImport {
                     module: "MSVCRT.dll".into(),
-                    symbol: ImportSymbol::Name("malloc".into()),
-                    iat_rva: 4,
-                },
-            ],
-            relocations: vec![],
-            exports: vec![],
-            image: vec![0; 8],
-        };
+                    symbol: ProviderSymbol::Name("malloc".into()),
+                    iat_rva: 0,
+                };
+                let mut bytes = [0; thunk32::THUNK_BYTES];
+                thunk32::write(337, provider_thunk_kind(&import), &mut bytes).unwrap();
+                assert_eq!(bytes[8], 0xc3);
+                assert_ne!(&bytes[8..11], &[0xc2, 4, 0]);
+            }
 
-        let surface = prepare(&mut image, &listing).unwrap();
+            #[test]
+            fn initterm_provider_keeps_cdecl_return_cleanup() {
+                let import = ProviderImport {
+                    module: "MSVCRT.dll".into(),
+                    symbol: ProviderSymbol::Name("_initterm".into()),
+                    iat_rva: 0,
+                };
+                let mut bytes = [0; thunk32::THUNK_BYTES];
+                thunk32::write(338, provider_thunk_kind(&import), &mut bytes).unwrap();
+                assert_eq!(bytes[8], 0xc3);
+                assert_ne!(&bytes[8..11], &[0xc2, 8, 0]);
+            }
 
-        assert_eq!(surface.imports.len(), 2);
-        assert_eq!(
-            u32::from_le_bytes(image.image[..4].try_into().unwrap()),
-            crate::process::CRT_ACMDLN_VA
-        );
-        assert_eq!(
-            u32::from_le_bytes(image.image[4..8].try_into().unwrap()),
-            thunk32::THUNK_BASE + thunk32::THUNK_BYTES as u32
-        );
-        assert_ne!(
-            &surface.thunks[..thunk32::THUNK_BYTES],
-            &[0x90; thunk32::THUNK_BYTES]
-        );
-    }
+            #[test]
+            fn dllonexit_provider_keeps_cdecl_return_cleanup() {
+                let import = ProviderImport {
+                    module: "MSVCRT.dll".into(),
+                    symbol: ProviderSymbol::Name("__dllonexit".into()),
+                    iat_rva: 0,
+                };
+                let mut bytes = [0; thunk32::THUNK_BYTES];
+                thunk32::write(342, provider_thunk_kind(&import), &mut bytes).unwrap();
+                assert_eq!(bytes[8], 0xc3);
+                assert_ne!(&bytes[8..11], &[0xc2, 12, 0]);
+            }
 
-    #[test]
-    fn initialize_critical_section_provider_uses_stdcall_cleanup() {
-        let import = ProviderImport {
-            module: "KERNEL32.dll".into(),
-            symbol: ProviderSymbol::Name("InitializeCriticalSection".into()),
-            iat_rva: 0,
-        };
-        let mut bytes = [0; thunk32::THUNK_BYTES];
-        thunk32::write(403, provider_thunk_kind(&import), &mut bytes).unwrap();
-        assert_eq!(&bytes[8..11], &[0xc2, 4, 0]);
-
-        let unrelated = ProviderImport {
-            module: "KERNEL32.dll".into(),
-            symbol: ProviderSymbol::Name("DefinitelyUnmodeled".into()),
-            iat_rva: 0,
-        };
-        thunk32::write(404, provider_thunk_kind(&unrelated), &mut bytes).unwrap();
-        assert_eq!(bytes[8], 0xc3);
-    }
-
-    #[test]
-    fn enter_critical_section_provider_uses_stdcall_four() {
-        let import = ProviderImport {
-            module: "KERNEL32.dll".into(),
-            symbol: ProviderSymbol::Name("EnterCriticalSection".into()),
-            iat_rva: 0,
-        };
-        let mut bytes = [0; thunk32::THUNK_BYTES];
-        thunk32::write(435, provider_thunk_kind(&import), &mut bytes).unwrap();
-        assert_eq!(&bytes[8..11], &[0xc2, 4, 0]);
-    }
-
-    #[test]
-    fn leave_critical_section_provider_uses_stdcall_four() {
-        let import = ProviderImport {
-            module: "KERNEL32.dll".into(),
-            symbol: ProviderSymbol::Name("LeaveCriticalSection".into()),
-            iat_rva: 0,
-        };
-        let mut bytes = [0; thunk32::THUNK_BYTES];
-        thunk32::write(437, provider_thunk_kind(&import), &mut bytes).unwrap();
-        assert_eq!(&bytes[8..11], &[0xc2, 4, 0]);
-    }
-
-    #[test]
-    fn set_unhandled_exception_filter_provider_uses_stdcall_four() {
-        let import = ProviderImport { module: "KERNEL32.dll".into(), symbol: ProviderSymbol::Name("SetUnhandledExceptionFilter".into()), iat_rva: 0 };
-        let mut bytes = [0; thunk32::THUNK_BYTES];
-        thunk32::write(409, provider_thunk_kind(&import), &mut bytes).unwrap();
-        assert_eq!(&bytes[8..11], &[0xc2, 4, 0]);
-    }
-
-    #[test]
-    fn virtual_alloc_provider_uses_stdcall_sixteen() {
-        let import = ProviderImport {
-            module: "KERNEL32.dll".into(),
-            symbol: ProviderSymbol::Name("VirtualAlloc".into()),
-            iat_rva: 0,
-        };
-        let mut bytes = [0; thunk32::THUNK_BYTES];
-        thunk32::write(424, provider_thunk_kind(&import), &mut bytes).unwrap();
-        assert_eq!(&bytes[8..11], &[0xc2, 0x10, 0]);
-    }
-
-    #[test]
-    fn rtl_unwind_is_runtime_stdcall_sixteen() {
-        let import = ProviderImport {
-            module: "KERNEL32.dll".into(),
-            symbol: ProviderSymbol::Name("RtlUnwind".into()),
-            iat_rva: 0,
-        };
-
-        let operation = provider_op(&import);
-
-        assert_eq!(operation, ProviderOp::RtlUnwind);
-        assert!(!operation.is_generic_process_local());
-        assert!(operation.is_modeled());
-        assert_eq!(operation.stack_cleanup_bytes(), 16);
-        assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Stdcall(16));
-    }
-
-    #[test]
-    fn exit_process_is_runtime_stdcall_four() {
-        let import = ProviderImport {
-            module: "KERNEL32.dll".into(),
-            symbol: ProviderSymbol::Name("ExitProcess".into()),
-            iat_rva: 0,
-        };
-
-        let operation = provider_op(&import);
-
-        assert_eq!(operation, ProviderOp::ExitProcess);
-        assert!(operation.is_modeled());
-        assert!(!operation.is_generic_process_local());
-        assert_eq!(operation.stack_cleanup_bytes(), 4);
-        assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Stdcall(4));
-    }
-
-    #[test]
-    fn get_version_ex_a_provider_uses_stdcall_four() {
-        let import = ProviderImport {
-            module: "KERNEL32.dll".into(),
-            symbol: ProviderSymbol::Name("GetVersionExA".into()),
-            iat_rva: 0,
-        };
-        let mut bytes = [0; thunk32::THUNK_BYTES];
-        thunk32::write(581, provider_thunk_kind(&import), &mut bytes).unwrap();
-        assert_eq!(&bytes[8..11], &[0xc2, 0x04, 0x00]);
-    }
-
-    #[test]
-    fn free_environment_strings_w_is_pure_process_stdcall_four() {
-        let import = ProviderImport {
-            module: "KERNEL32.dll".into(),
-            symbol: ProviderSymbol::Name("FreeEnvironmentStringsW".into()),
-            iat_rva: 0,
-        };
-        let operation = provider_op(&import);
-        assert_eq!(operation, ProviderOp::FreeEnvironmentStringsW);
-        assert!(operation.is_generic_process_local());
-        assert_eq!(operation.stack_cleanup_bytes(), 4);
-        let mut bytes = [0; thunk32::THUNK_BYTES];
-        thunk32::write(613, provider_thunk_kind(&import), &mut bytes).unwrap();
-        assert_eq!(&bytes[8..11], &[0xc2, 0x04, 0x00]);
-    }
-
-    #[test]
-    fn get_startup_info_a_is_pure_process_stdcall_four() {
-        let import = ProviderImport {
-            module: "KERNEL32.dll".into(),
-            symbol: ProviderSymbol::Name("GetStartupInfoA".into()),
-            iat_rva: 0,
-        };
-        let operation = provider_op(&import);
-        assert_eq!(operation, ProviderOp::GetStartupInfoA);
-        assert!(operation.is_generic_process_local());
-        assert_eq!(operation.stack_cleanup_bytes(), 4);
-        let mut bytes = [0; thunk32::THUNK_BYTES];
-        thunk32::write(627, provider_thunk_kind(&import), &mut bytes).unwrap();
-        assert_eq!(&bytes[8..11], &[0xc2, 0x04, 0x00]);
-    }
-
-    #[test]
-    fn get_std_handle_is_pure_process_stdcall_four() {
-        let import = ProviderImport {
-            module: "KERNEL32.dll".into(),
-            symbol: ProviderSymbol::Name("GetStdHandle".into()),
-            iat_rva: 0,
-        };
-        let operation = provider_op(&import);
-        assert_eq!(operation, ProviderOp::GetStdHandle);
-        assert!(operation.is_generic_process_local());
-        assert_eq!(operation.stack_cleanup_bytes(), 4);
-        let mut bytes = [0; thunk32::THUNK_BYTES];
-        thunk32::write(625, provider_thunk_kind(&import), &mut bytes).unwrap();
-        assert_eq!(&bytes[8..11], &[0xc2, 0x04, 0x00]);
-    }
-
-    #[test]
-    fn get_file_type_is_pure_process_stdcall_four() {
-        let import = ProviderImport {
-            module: "KERNEL32.dll".into(),
-            symbol: ProviderSymbol::Name("GetFileType".into()),
-            iat_rva: 0,
-        };
-        let operation = provider_op(&import);
-        assert_eq!(operation, ProviderOp::GetFileType);
-        assert!(operation.is_generic_process_local());
-        assert_eq!(operation.stack_cleanup_bytes(), 4);
-        let mut bytes = [0; thunk32::THUNK_BYTES];
-        thunk32::write(626, provider_thunk_kind(&import), &mut bytes).unwrap();
-        assert_eq!(&bytes[8..11], &[0xc2, 0x04, 0x00]);
-    }
-
-    #[test]
-    fn set_handle_count_is_pure_process_stdcall_four() {
-        let import = ProviderImport {
-            module: "KERNEL32.dll".into(),
-            symbol: ProviderSymbol::Name("SetHandleCount".into()),
-            iat_rva: 0,
-        };
-        let operation = provider_op(&import);
-        assert_eq!(operation, ProviderOp::SetHandleCount);
-        assert!(operation.is_generic_process_local());
-        assert_eq!(operation.stack_cleanup_bytes(), 4);
-        let mut bytes = [0; thunk32::THUNK_BYTES];
-        thunk32::write(624, provider_thunk_kind(&import), &mut bytes).unwrap();
-        assert_eq!(&bytes[8..11], &[0xc2, 0x04, 0x00]);
-    }
-
-    #[test]
-    fn get_acp_is_pure_process_no_argument_provider() {
-        let import = ProviderImport {
-            module: "KERNEL32.dll".into(),
-            symbol: ProviderSymbol::Name("GetACP".into()),
-            iat_rva: 0,
-        };
-        let operation = provider_op(&import);
-        assert_eq!(operation, ProviderOp::GetACP);
-        assert!(operation.is_generic_process_local());
-        assert_eq!(operation.stack_cleanup_bytes(), 0);
-        assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Return);
-        let mut bytes = [0; thunk32::THUNK_BYTES];
-        thunk32::write(640, provider_thunk_kind(&import), &mut bytes).unwrap();
-        assert_eq!(bytes[8], 0xc3);
-    }
-
-    #[test]
-    fn get_cp_info_is_pure_process_stdcall_eight() {
-        let import = ProviderImport {
-            module: "KERNEL32.dll".into(),
-            symbol: ProviderSymbol::Name("GetCPInfo".into()),
-            iat_rva: 0,
-        };
-        let operation = provider_op(&import);
-        assert_eq!(operation, ProviderOp::GetCPInfo);
-        assert!(operation.is_generic_process_local());
-        assert_eq!(operation.stack_cleanup_bytes(), 8);
-        assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Stdcall(8));
-        let mut bytes = [0; thunk32::THUNK_BYTES];
-        thunk32::write(641, provider_thunk_kind(&import), &mut bytes).unwrap();
-        assert_eq!(&bytes[8..11], &[0xc2, 0x08, 0x00]);
-    }
-
-    #[test]
-    fn get_string_type_w_is_pure_process_stdcall_sixteen() {
-        let import = ProviderImport {
-            module: "KERNEL32.dll".into(),
-            symbol: ProviderSymbol::Name("GetStringTypeW".into()),
-            iat_rva: 0,
-        };
-        let operation = provider_op(&import);
-        assert_eq!(operation, ProviderOp::GetStringTypeW);
-        assert!(operation.is_generic_process_local());
-        assert_eq!(operation.stack_cleanup_bytes(), 16);
-        let mut bytes = [0; thunk32::THUNK_BYTES];
-        thunk32::write(638, provider_thunk_kind(&import), &mut bytes).unwrap();
-        assert_eq!(&bytes[8..11], &[0xc2, 0x10, 0x00]);
-    }
-
-    #[test]
-    fn multi_byte_to_wide_char_is_pure_process_stdcall_twenty_four() {
-        let import = ProviderImport {
-            module: "KERNEL32.dll".into(),
-            symbol: ProviderSymbol::Name("MultiByteToWideChar".into()),
-            iat_rva: 0,
-        };
-        let operation = provider_op(&import);
-        assert_eq!(operation, ProviderOp::MultiByteToWideChar);
-        assert!(operation.is_generic_process_local());
-        assert_eq!(operation.stack_cleanup_bytes(), 24);
-        let mut bytes = [0; thunk32::THUNK_BYTES];
-        thunk32::write(615, provider_thunk_kind(&import), &mut bytes).unwrap();
-        assert_eq!(&bytes[8..11], &[0xc2, 0x18, 0x00]);
-    }
-
-    #[test]
-    fn lc_map_string_w_is_pure_process_stdcall_twenty_four() {
-        let import = ProviderImport {
-            module: "KERNEL32.dll".into(),
-            symbol: ProviderSymbol::Name("LCMapStringW".into()),
-            iat_rva: 0,
-        };
-        let operation = provider_op(&import);
-        assert_eq!(operation, ProviderOp::LCMapStringW);
-        assert!(operation.is_generic_process_local());
-        assert_eq!(operation.stack_cleanup_bytes(), 24);
-        let mut bytes = [0; thunk32::THUNK_BYTES];
-        thunk32::write(617, provider_thunk_kind(&import), &mut bytes).unwrap();
-        assert_eq!(&bytes[8..11], &[0xc2, 0x18, 0x00]);
-    }
-
-    #[test]
-    fn get_module_file_name_a_is_pure_process_stdcall_twelve() {
-        let import = ProviderImport {
-            module: "KERNEL32.dll".into(),
-            symbol: ProviderSymbol::Name("GetModuleFileNameA".into()),
-            iat_rva: 0,
-        };
-        let operation = provider_op(&import);
-        assert_eq!(operation, ProviderOp::GetModuleFileNameA);
-        assert!(operation.is_generic_process_local());
-        assert_eq!(operation.stack_cleanup_bytes(), 12);
-        let mut bytes = [0; thunk32::THUNK_BYTES];
-        thunk32::write(642, provider_thunk_kind(&import), &mut bytes).unwrap();
-        assert_eq!(&bytes[8..11], &[0xc2, 0x0c, 0x00]);
-    }
-
-    #[test]
-    fn get_module_handle_a_is_pure_process_stdcall_four() {
-        let import = ProviderImport {
-            module: "KERNEL32.dll".into(),
-            symbol: ProviderSymbol::Name("GetModuleHandleA".into()),
-            iat_rva: 0,
-        };
-        let operation = provider_op(&import);
-        assert_eq!(operation, ProviderOp::GetModuleHandleA);
-        assert!(operation.is_generic_process_local());
-        assert_eq!(operation.stack_cleanup_bytes(), 4);
-        let mut bytes = [0; thunk32::THUNK_BYTES];
-        thunk32::write(573, provider_thunk_kind(&import), &mut bytes).unwrap();
-        assert_eq!(&bytes[8..11], &[0xc2, 0x04, 0x00]);
-    }
-
-    #[test]
-    fn load_library_a_is_runtime_stdcall_four() {
-        let import = ProviderImport {
-            module: "KERNEL32.dll".into(),
-            symbol: ProviderSymbol::Name("LoadLibraryA".into()),
-            iat_rva: 0,
-        };
-
-        let operation = provider_op(&import);
-
-        assert_eq!(operation, ProviderOp::LoadLibraryA);
-        assert!(!operation.is_generic_process_local());
-        assert_eq!(operation.stack_cleanup_bytes(), 4);
-        assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Stdcall(4));
-    }
-
-    #[test]
-    fn get_proc_address_is_runtime_stdcall_eight() {
-        let import = ProviderImport {
-            module: "KERNEL32.dll".into(),
-            symbol: ProviderSymbol::Name("GetProcAddress".into()),
-            iat_rva: 0,
-        };
-        let operation = provider_op(&import);
-        assert_eq!(operation, ProviderOp::GetProcAddress);
-        assert!(!operation.is_generic_process_local());
-        assert_eq!(operation.stack_cleanup_bytes(), 8);
-        assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Stdcall(8));
-    }
-
-    #[test]
-    fn get_current_process_is_pure_process_plain_return() {
-        let import = ProviderImport {
-            module: "KERNEL32.dll".into(),
-            symbol: ProviderSymbol::Name("GetCurrentProcess".into()),
-            iat_rva: 0,
-        };
-        let operation = provider_op(&import);
-        assert_eq!(operation, ProviderOp::GetCurrentProcess);
-        assert!(operation.is_generic_process_local());
-        assert_eq!(operation.stack_cleanup_bytes(), 0);
-        assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Return);
-        assert!(operation.is_modeled());
-        assert!(!ProviderOp::Unknown.is_modeled());
-    }
-
-    #[test]
-    fn get_windows_directory_a_is_pure_process_stdcall_eight() {
-        let import = ProviderImport {
-            module: "KERNEL32.dll".into(),
-            symbol: ProviderSymbol::Name("GetWindowsDirectoryA".into()),
-            iat_rva: 0,
-        };
-        let operation = provider_op(&import);
-        assert_eq!(operation, ProviderOp::GetWindowsDirectoryA);
-        assert!(operation.is_generic_process_local());
-        assert_eq!(operation.stack_cleanup_bytes(), 8);
-        assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Stdcall(8));
-    }
-
-    #[test]
-    fn get_system_directory_a_is_pure_process_stdcall_eight() {
-        let import = ProviderImport {
-            module: "KERNEL32.dll".into(),
-            symbol: ProviderSymbol::Name("GetSystemDirectoryA".into()),
-            iat_rva: 0,
-        };
-        let operation = provider_op(&import);
-        assert_eq!(operation, ProviderOp::GetSystemDirectoryA);
-        assert!(operation.is_generic_process_local());
-        assert_eq!(operation.stack_cleanup_bytes(), 8);
-        assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Stdcall(8));
-    }
-
-    #[test]
-    fn query_performance_frequency_is_pure_process_stdcall_four() {
-        let import = ProviderImport {
-            module: "KERNEL32.dll".into(),
-            symbol: ProviderSymbol::Name("QueryPerformanceFrequency".into()),
-            iat_rva: 0,
-        };
-        let operation = provider_op(&import);
-        assert_eq!(operation, ProviderOp::QueryPerformanceFrequency);
-        assert!(operation.is_generic_process_local());
-        assert_eq!(operation.stack_cleanup_bytes(), 4);
-        assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Stdcall(4));
-    }
-
-    #[test]
-    fn query_performance_counter_is_pure_process_stdcall_four() {
-        let import = ProviderImport {
-            module: "KERNEL32.dll".into(),
-            symbol: ProviderSymbol::Name("QueryPerformanceCounter".into()),
-            iat_rva: 0,
-        };
-        let operation = provider_op(&import);
-        assert_eq!(operation, ProviderOp::QueryPerformanceCounter);
-        assert!(operation.is_generic_process_local());
-        assert_eq!(operation.stack_cleanup_bytes(), 4);
-        assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Stdcall(4));
-    }
-
-    #[test]
-    fn get_system_time_is_pure_process_stdcall_four() {
-        let import = ProviderImport {
-            module: "KERNEL32.dll".into(),
-            symbol: ProviderSymbol::Name("GetSystemTime".into()),
-            iat_rva: 0,
-        };
-        let operation = provider_op(&import);
-
-        assert_eq!(operation, ProviderOp::GetSystemTime);
-        assert!(operation.is_generic_process_local());
-        assert_eq!(operation.stack_cleanup_bytes(), 4);
-        assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Stdcall(4));
-    }
-
-    #[test]
-    fn get_time_zone_information_is_pure_process_stdcall_four() {
-        let import = ProviderImport {
-            module: "KERNEL32.dll".into(),
-            symbol: ProviderSymbol::Name("GetTimeZoneInformation".into()),
-            iat_rva: 0,
-        };
-        let operation = provider_op(&import);
-
-        assert_eq!(operation, ProviderOp::GetTimeZoneInformation);
-        assert!(operation.is_generic_process_local());
-        assert_eq!(operation.stack_cleanup_bytes(), 4);
-        assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Stdcall(4));
-    }
-
-    #[test]
-    fn time_get_time_is_pure_process_plain_return() {
-        let import = ProviderImport {
-            module: "WINMM.dll".into(),
-            symbol: ProviderSymbol::Name("timeGetTime".into()),
-            iat_rva: 0,
-        };
-        let operation = provider_op(&import);
-        assert_eq!(operation, ProviderOp::TimeGetTime);
-        assert!(operation.is_generic_process_local());
-        assert_eq!(operation.stack_cleanup_bytes(), 0);
-        assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Return);
-    }
-
-    #[test]
-    fn wide_char_to_multi_byte_provider_uses_stdcall_thirty_two() {
-        let import = ProviderImport {
-            module: "KERNEL32.dll".into(),
-            symbol: ProviderSymbol::Name("WideCharToMultiByte".into()),
-            iat_rva: 0,
-        };
-        let mut bytes = [0; thunk32::THUNK_BYTES];
-        thunk32::write(612, provider_thunk_kind(&import), &mut bytes).unwrap();
-        assert_eq!(&bytes[8..11], &[0xc2, 0x20, 0x00]);
-    }
-
-    #[test]
-    fn heap_providers_use_stdcall_twelve() {
-        for (provider_id, symbol) in [(622, "HeapCreate"), (623, "HeapAlloc"), (624, "HeapFree")] {
-            let import = ProviderImport {
-                module: "KERNEL32.dll".into(),
-                symbol: ProviderSymbol::Name(symbol.into()),
-                iat_rva: 0,
-            };
-            let mut bytes = [0; thunk32::THUNK_BYTES];
-            thunk32::write(provider_id, provider_thunk_kind(&import), &mut bytes).unwrap();
-            assert_eq!(&bytes[8..11], &[0xc2, 0x0c, 0], "{symbol}");
+            #[test]
+            fn reg_open_key_ex_a_provider_uses_stdcall_twenty() {
+                let import = ProviderImport {
+                    module: "ADVAPI32.dll".into(),
+                    symbol: ProviderSymbol::Name("RegOpenKeyExA".into()),
+                    iat_rva: 0,
+                };
+                let mut bytes = [0; thunk32::THUNK_BYTES];
+                thunk32::write(548, provider_thunk_kind(&import), &mut bytes).unwrap();
+                assert_eq!(&bytes[8..11], &[0xc2, 20, 0]);
+            }
         }
-    }
-
-    #[test]
-    fn set_last_error_provider_uses_stdcall_four() {
-        let import = ProviderImport {
-            module: "KERNEL32.dll".into(),
-            symbol: ProviderSymbol::Name("SetLastError".into()),
-            iat_rva: 0,
-        };
-        let mut bytes = [0; thunk32::THUNK_BYTES];
-        thunk32::write(408, provider_thunk_kind(&import), &mut bytes).unwrap();
-        assert_eq!(&bytes[8..11], &[0xc2, 4, 0]);
-    }
-
-    #[test]
-    fn malloc_provider_keeps_cdecl_return_cleanup() {
-        let import = ProviderImport {
-            module: "MSVCRT.dll".into(),
-            symbol: ProviderSymbol::Name("malloc".into()),
-            iat_rva: 0,
-        };
-        let mut bytes = [0; thunk32::THUNK_BYTES];
-        thunk32::write(337, provider_thunk_kind(&import), &mut bytes).unwrap();
-        assert_eq!(bytes[8], 0xc3);
-        assert_ne!(&bytes[8..11], &[0xc2, 4, 0]);
-    }
-
-    #[test]
-    fn initterm_provider_keeps_cdecl_return_cleanup() {
-        let import = ProviderImport {
-            module: "MSVCRT.dll".into(),
-            symbol: ProviderSymbol::Name("_initterm".into()),
-            iat_rva: 0,
-        };
-        let mut bytes = [0; thunk32::THUNK_BYTES];
-        thunk32::write(338, provider_thunk_kind(&import), &mut bytes).unwrap();
-        assert_eq!(bytes[8], 0xc3);
-        assert_ne!(&bytes[8..11], &[0xc2, 8, 0]);
-    }
-
-    #[test]
-    fn dllonexit_provider_keeps_cdecl_return_cleanup() {
-        let import = ProviderImport {
-            module: "MSVCRT.dll".into(),
-            symbol: ProviderSymbol::Name("__dllonexit".into()),
-            iat_rva: 0,
-        };
-        let mut bytes = [0; thunk32::THUNK_BYTES];
-        thunk32::write(342, provider_thunk_kind(&import), &mut bytes).unwrap();
-        assert_eq!(bytes[8], 0xc3);
-        assert_ne!(&bytes[8..11], &[0xc2, 12, 0]);
-    }
-
-    #[test]
-    fn reg_open_key_ex_a_provider_uses_stdcall_twenty() {
-        let import = ProviderImport {
-            module: "ADVAPI32.dll".into(),
-            symbol: ProviderSymbol::Name("RegOpenKeyExA".into()),
-            iat_rva: 0,
-        };
-        let mut bytes = [0; thunk32::THUNK_BYTES];
-        thunk32::write(548, provider_thunk_kind(&import), &mut bytes).unwrap();
-        assert_eq!(&bytes[8..11], &[0xc2, 20, 0]);
-    }
-}
     };
 }
 
 #[macro_export]
 macro_rules! wc3_thunk32_tests_1 {
     () => {
-#[cfg(test)]
-mod tests_thunk32_1 {
-    use super::*;
-    #[test]
-    fn create_thread_has_real_stdcall_cleanup() {
-        let mut bytes = [0; THUNK_BYTES];
-        write(75, Kind::Stdcall(0x18), &mut bytes).unwrap();
-        assert_eq!(&bytes[8..11], &[0xC2, 0x18, 0]);
-    }
+        #[cfg(test)]
+        mod tests_thunk32_1 {
+            use super::*;
+            #[test]
+            fn create_thread_has_real_stdcall_cleanup() {
+                let mut bytes = [0; THUNK_BYTES];
+                write(75, Kind::Stdcall(0x18), &mut bytes).unwrap();
+                assert_eq!(&bytes[8..11], &[0xC2, 0x18, 0]);
+            }
 
-    #[test]
-    fn thread_exit_trampoline_preserves_eax_for_blueprint_exit_state() {
-        let mut page = [0x90; 0x1000];
-        install_thread_exit(&mut page).unwrap();
-        assert_eq!(
-            &page[THREAD_EXIT_OFFSET..THREAD_EXIT_OFFSET + 5],
-            &[0x0f, 0x01, 0xc1, 0x0f, 0x0b]
-        );
-    }
+            #[test]
+            fn thread_exit_trampoline_preserves_eax_for_blueprint_exit_state() {
+                let mut page = [0x90; 0x1000];
+                install_thread_exit(&mut page).unwrap();
+                assert_eq!(
+                    &page[THREAD_EXIT_OFFSET..THREAD_EXIT_OFFSET + 5],
+                    &[0x0f, 0x01, 0xc1, 0x0f, 0x0b]
+                );
+            }
 
-    #[test]
-    fn guest_return_trampoline_is_distinct_from_thread_exit() {
-        let mut page = [0x90; 0x1000];
-        install_guest_return(&mut page).unwrap();
-        assert_eq!(
-            &page[GUEST_RETURN_OFFSET..GUEST_RETURN_OFFSET + 5],
-            &[0x0f, 0x01, 0xc1, 0x0f, 0x0b]
-        );
-        assert_ne!(GUEST_RETURN_ADDRESS, THREAD_EXIT_ADDRESS);
-    }
-}
+            #[test]
+            fn guest_return_trampoline_is_distinct_from_thread_exit() {
+                let mut page = [0x90; 0x1000];
+                install_guest_return(&mut page).unwrap();
+                assert_eq!(
+                    &page[GUEST_RETURN_OFFSET..GUEST_RETURN_OFFSET + 5],
+                    &[0x0f, 0x01, 0xc1, 0x0f, 0x0b]
+                );
+                assert_ne!(GUEST_RETURN_ADDRESS, THREAD_EXIT_ADDRESS);
+            }
+        }
     };
 }
 

@@ -6,8 +6,8 @@
 
 use std::collections::{HashMap, VecDeque};
 
-use crate::process::{CreateProcessAFrame, ThreadObject, XpProcess};
 use crate::ThisToThat;
+use crate::process::{CreateProcessAFrame, ThreadObject, XpProcess};
 
 pub type Pid = u32;
 pub type Tid = u32;
@@ -651,10 +651,20 @@ pub struct CreatedChild {
 pub enum SessionRequest {
     CreateProcess(CreateProcessRequest),
     GetExitCodeProcess(GetExitCodeProcessRequest),
-    SetEvent { pid: Pid, tid: Tid, handle: u32 },
+    SetEvent {
+        pid: Pid,
+        tid: Tid,
+        handle: u32,
+    },
     CreateEvent(CreateEventRequest),
-    CreateMutex { key: ThreadKey, request: CreateMutexRequest },
-    ReleaseMutex { key: ThreadKey, handle: u32 },
+    CreateMutex {
+        key: ThreadKey,
+        request: CreateMutexRequest,
+    },
+    ReleaseMutex {
+        key: ThreadKey,
+        handle: u32,
+    },
     LoadImage(LoadImageRequest),
     CreateWindow(CreateWindowRequest),
     ShowWindow {
@@ -884,7 +894,10 @@ impl Wc3Session {
         pid: Pid,
         hwnd: u32,
     ) -> Result<DestroyWindowResult, &'static str> {
-        let window = self.windows.get(&hwnd).ok_or("DestroyWindow unknown window")?;
+        let window = self
+            .windows
+            .get(&hwnd)
+            .ok_or("DestroyWindow unknown window")?;
         if window.owner.pid != pid {
             return Err("DestroyWindow window owner mismatch");
         }
@@ -1014,7 +1027,10 @@ impl Wc3Session {
         let (object, already_exists) = if let Some(name) = request.name.as_ref() {
             if let Some(&object) = self.names.get(name) {
                 if !matches!(self.objects.get(&object), Some(SessionObject::Event(_))) {
-                    self.process_mut(pid).expect("event owner").xp.set_last_error(6);
+                    self.process_mut(pid)
+                        .expect("event owner")
+                        .xp
+                        .set_last_error(6);
                     return (0, false);
                 }
                 (object, true)
@@ -1065,7 +1081,11 @@ impl Wc3Session {
         if !self.processes.contains_key(&key.pid) {
             return Err(6);
         }
-        let existing = request.name.as_ref().and_then(|name| self.names.get(name)).copied();
+        let existing = request
+            .name
+            .as_ref()
+            .and_then(|name| self.names.get(name))
+            .copied();
         let (object, already_exists) = if let Some(object) = existing {
             if !matches!(self.objects.get(&object), Some(SessionObject::Mutex(_))) {
                 return Err(6);
@@ -1074,12 +1094,15 @@ impl Wc3Session {
         } else {
             let object = self.next_object;
             self.next_object += 1;
-            self.objects.insert(object, SessionObject::Mutex(MutexObject {
-                name: request.name.clone(),
-                owner: request.initial_owner.then_some(key),
-                recursion: u32::from(request.initial_owner),
-                abandoned: false,
-            }));
+            self.objects.insert(
+                object,
+                SessionObject::Mutex(MutexObject {
+                    name: request.name.clone(),
+                    owner: request.initial_owner.then_some(key),
+                    recursion: u32::from(request.initial_owner),
+                    abandoned: false,
+                }),
+            );
             if let Some(name) = request.name {
                 self.names.insert(name, object);
             }
@@ -1087,16 +1110,29 @@ impl Wc3Session {
         };
         let handle = self.next_event_handle;
         self.next_event_handle += 1;
-        self.process_mut(key.pid).expect("mutex owner").handles.insert(handle, HandleEntry {
-            object,
-            inheritable: request.inheritable,
-        });
+        self.process_mut(key.pid)
+            .expect("mutex owner")
+            .handles
+            .insert(
+                handle,
+                HandleEntry {
+                    object,
+                    inheritable: request.inheritable,
+                },
+            );
         Ok((handle, already_exists))
     }
 
-    pub fn release_mutex(&mut self, key: ThreadKey, handle: u32) -> Result<Vec<CompletedWait>, u32> {
-        let object = self.process(key.pid).and_then(|process| process.handles.get(&handle))
-            .ok_or(6u32)?.object;
+    pub fn release_mutex(
+        &mut self,
+        key: ThreadKey,
+        handle: u32,
+    ) -> Result<Vec<CompletedWait>, u32> {
+        let object = self
+            .process(key.pid)
+            .and_then(|process| process.handles.get(&handle))
+            .ok_or(6u32)?
+            .object;
         let Some(SessionObject::Mutex(mutex)) = self.objects.get_mut(&object) else {
             return Err(6);
         };
@@ -1124,7 +1160,10 @@ impl Wc3Session {
             _ => return true,
         };
         let still_open = self.processes.values().any(|process| {
-            process.handles.values().any(|held| held.object == entry.object)
+            process
+                .handles
+                .values()
+                .any(|held| held.object == entry.object)
         });
         if !still_open {
             if let Some(name) = name {
@@ -1256,8 +1295,13 @@ impl Wc3Session {
         self.runnable.retain(|key| key.pid != pid);
         self.blocked.retain(|key, _| key.pid != pid);
         self.abandon_mutexes(|owner| owner.pid == pid);
-        let handles: Vec<_> = self.process(pid).ok_or("ExitProcess process missing")?
-            .handles.keys().copied().collect();
+        let handles: Vec<_> = self
+            .process(pid)
+            .ok_or("ExitProcess process missing")?
+            .handles
+            .keys()
+            .copied()
+            .collect();
         for handle in handles {
             self.close_handle(pid, handle);
         }
@@ -1331,7 +1375,9 @@ impl Wc3Session {
             };
             signaled[index] = match object {
                 SessionObject::Event(event) => event.signaled,
-                SessionObject::Mutex(mutex) => mutex.owner.is_none() || mutex.owner == Some(request.key),
+                SessionObject::Mutex(mutex) => {
+                    mutex.owner.is_none() || mutex.owner == Some(request.key)
+                }
                 SessionObject::Process(process) => process.exit_code.is_some(),
                 SessionObject::Thread(thread) => thread.exit_code.is_some(),
             };
@@ -1345,7 +1391,10 @@ impl Wc3Session {
                 Some(index) => vec![index],
                 None => return Ok((request.timeout == 0).then_some(0x0000_0102)),
             }
-        } else if signaled[..request.count as usize].iter().all(|signaled| *signaled) {
+        } else if signaled[..request.count as usize]
+            .iter()
+            .all(|signaled| *signaled)
+        {
             (0..request.count as usize).collect()
         } else {
             return Ok((request.timeout == 0).then_some(0x0000_0102));
@@ -1360,10 +1409,13 @@ impl Wc3Session {
                         abandoned_index = Some(*index as u32);
                     }
                     mutex.owner = Some(request.key);
-                    mutex.recursion = mutex.recursion.checked_add(1).ok_or("mutex recursion overflow")?;
+                    mutex.recursion = mutex
+                        .recursion
+                        .checked_add(1)
+                        .ok_or("mutex recursion overflow")?;
                     mutex.abandoned = false;
                 }
-                _ => {},
+                _ => {}
             }
         }
         if let Some(index) = abandoned_index {
@@ -1396,7 +1448,10 @@ impl Wc3Session {
         };
         let kind = match object {
             SessionObject::Event(event) => format!("Event name={:?}", event.name),
-            SessionObject::Mutex(mutex) => format!("Mutex name={:?} owner={:?} recursion={}", mutex.name, mutex.owner, mutex.recursion),
+            SessionObject::Mutex(mutex) => format!(
+                "Mutex name={:?} owner={:?} recursion={}",
+                mutex.name, mutex.owner, mutex.recursion
+            ),
             SessionObject::Process(process) => format!("Process pid={}", process.pid),
             SessionObject::Thread(thread) => {
                 format!("Thread pid={} tid={}", thread.key.pid, thread.key.tid)

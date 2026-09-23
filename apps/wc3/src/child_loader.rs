@@ -64,6 +64,7 @@ pub enum ProviderOp {
     ReadProcessMemory,
     WriteProcessMemory,
     GetLastError,
+    FormatMessageA,
     GetTickCount,
     CreateFileA,
     GetFileSize,
@@ -194,10 +195,14 @@ impl ProviderOp {
             | Self::MessageBoxA
             | Self::LoadStringA => 16,
             Self::MultiByteToWideChar | Self::LCMapStringW => 24,
-            Self::CreateFileA => 28,
+            Self::CreateFileA | Self::FormatMessageA => 28,
             Self::WideCharToMultiByte => 32,
-            Self::GetModuleFileNameA | Self::HeapCreate | Self::HeapAlloc | Self::HeapFree
-            | Self::CreateMutexA | Self::OpenProcessToken => 12,
+            Self::GetModuleFileNameA
+            | Self::HeapCreate
+            | Self::HeapAlloc
+            | Self::HeapFree
+            | Self::CreateMutexA
+            | Self::OpenProcessToken => 12,
             Self::ReadProcessMemory
             | Self::WriteProcessMemory
             | Self::RegOpenKeyExA
@@ -257,6 +262,7 @@ impl ProviderOp {
                 | Self::ReadProcessMemory
                 | Self::WriteProcessMemory
                 | Self::GetLastError
+                | Self::FormatMessageA
                 | Self::GetTickCount
                 | Self::DisableThreadLibraryCalls
                 | Self::CreateFileA
@@ -339,6 +345,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "ReadProcessMemory" => ProviderOp::ReadProcessMemory,
             "WriteProcessMemory" => ProviderOp::WriteProcessMemory,
             "GetLastError" => ProviderOp::GetLastError,
+            "FormatMessageA" => ProviderOp::FormatMessageA,
             "GetTickCount" => ProviderOp::GetTickCount,
             "CreateFileA" => ProviderOp::CreateFileA,
             "GetFileSize" => ProviderOp::GetFileSize,

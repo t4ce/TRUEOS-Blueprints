@@ -224,10 +224,7 @@ impl WinCall {
             Self::BitBlt => Kind::Stdcall(36),
             Self::DeleteDC => Kind::Stdcall(4),
             Self::DeleteObject => Kind::Stdcall(4),
-            Self::TlsSetValue
-            | Self::GetClientRect
-            | Self::ShowWindow
-            | Self::GetCPInfo => {
+            Self::TlsSetValue | Self::GetClientRect | Self::ShowWindow | Self::GetCPInfo => {
                 Kind::Stdcall(8)
             }
             Self::CreateWindowExA => Kind::Stdcall(48),
