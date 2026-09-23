@@ -89,6 +89,7 @@ pub enum ProviderOp {
     CrtSetAppType,
     CrtGetFmode,
     CrtGetCommode,
+    CrtControlFp,
     CrtMalloc,
     Unknown,
 }
@@ -153,7 +154,11 @@ impl ProviderOp {
             | Self::WriteFile => 20,
             Self::AllocateAndInitializeSid => 44,
             Self::EqualSid => 8,
-            Self::CrtSetAppType | Self::CrtGetFmode | Self::CrtGetCommode | Self::CrtMalloc => 0,
+            Self::CrtSetAppType
+            | Self::CrtGetFmode
+            | Self::CrtGetCommode
+            | Self::CrtControlFp
+            | Self::CrtMalloc => 0,
             _ => 0,
         }
     }
@@ -299,6 +304,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "__set_app_type" => ProviderOp::CrtSetAppType,
             "__p__fmode" => ProviderOp::CrtGetFmode,
             "__p__commode" => ProviderOp::CrtGetCommode,
+            "_controlfp" => ProviderOp::CrtControlFp,
             "malloc" => ProviderOp::CrtMalloc,
             _ => ProviderOp::Unknown,
         };

@@ -30,6 +30,31 @@ const WAR3_TABLE_FILL_STEP_START: u32 = 0x0046_1496;
 const WAR3_TABLE_FILL_STEP_END: u32 = 0x0046_14c3;
 const WAR3_TABLE_FILL_HEARTBEAT_STRIDE: u32 = 0x100;
 
+fn msvcrt_control_from_x87(fcw: u16) -> u32 {
+    let mut out = 0;
+    if fcw & 0x0001 != 0 { out |= 0x0000_0010; }
+    if fcw & 0x0002 != 0 { out |= 0x0008_0000; }
+    if fcw & 0x0004 != 0 { out |= 0x0000_0008; }
+    if fcw & 0x0008 != 0 { out |= 0x0000_0004; }
+    if fcw & 0x0010 != 0 { out |= 0x0000_0002; }
+    if fcw & 0x0020 != 0 { out |= 0x0000_0001; }
+    out |= match fcw & 0x0c00 {
+        0x0000 => 0x0000_0000,
+        0x0400 => 0x0000_0100,
+        0x0800 => 0x0000_0200,
+        0x0c00 => 0x0000_0300,
+        _ => unreachable!(),
+    };
+    out |= match fcw & 0x0300 {
+        0x0000 => 0x0002_0000,
+        0x0200 => 0x0001_0000,
+        0x0300 => 0x0000_0000,
+        _ => 0,
+    };
+    if fcw & 0x1000 != 0 { out |= 0x0004_0000; }
+    out
+}
+
 const TABLE_CHECKPOINT_PAGE_BYTES: usize = 4096;
 const TABLE_BOUNDARY: wc3::checkpoint::Boundary = wc3::checkpoint::Boundary {
     from: TABLE_CHECKPOINT_FROM_EIP, to: TABLE_CHECKPOINT_TO_EIP, table_bytes: TABLE_CHECKPOINT_TABLE_BYTES,
@@ -3001,6 +3026,68 @@ pub(super) async fn run_loop(
                             .context
                             .set_registers(registers)
                             .map_err(|error| error.to_string())?;
+                        continue;
+                    }
+                    let is_crt_control_fp = matches!(
+                        &provider.symbol,
+                        child_loader::ProviderSymbol::Name(name)
+                            if provider.module.eq_ignore_ascii_case("MSVCRT.dll")
+                                && name == "_controlfp"
+                    );
+                    if is_crt_control_fp {
+                        let frame = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            exit.registers.esp,
+                            3,
+                        )?;
+                        let new_control = frame[1];
+                        let mask = frame[2];
+                        if new_control != 0x0001_0000 || mask != 0x0003_0000 {
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD PROVIDER FRONTIER pid={} tid={} module=\"MSVCRT.dll\" symbol=\"_controlfp\" caller_ret=0x{:08x} new=0x{:08x} mask=0x{:08x}",
+                                    active_pid, active_tid, frame[0], new_control, mask,
+                                ),
+                            );
+                            return Ok(());
+                        }
+                        let mut state = contexts[active]
+                            .context
+                            .extended_state()
+                            .map_err(|error| error.to_string())?;
+                        let before_fcw =
+                            u16::from_le_bytes(state.bytes[0..2].try_into().unwrap());
+                        let after_fcw = (before_fcw & !0x0300) | 0x0200;
+                        state.bytes[0..2].copy_from_slice(&after_fcw.to_le_bytes());
+                        let mut xstate_bv =
+                            u64::from_le_bytes(state.bytes[512..520].try_into().unwrap());
+                        xstate_bv |= 1 << 0;
+                        state.bytes[512..520].copy_from_slice(&xstate_bv.to_le_bytes());
+                        contexts[active]
+                            .context
+                            .set_extended_state(&state)
+                            .map_err(|error| error.to_string())?;
+                        let result = msvcrt_control_from_x87(after_fcw);
+                        let mut registers = exit.registers;
+                        registers.eax = result;
+                        contexts[active]
+                            .context
+                            .set_registers(registers)
+                            .map_err(|error| error.to_string())?;
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD CRT CONTROLFP pid={} tid={} new=0x{:08x} mask=0x{:08x} x87_before=0x{:04x} x87_after=0x{:04x} eax=0x{:08x} cleanup=0-by-thunk",
+                                active_pid,
+                                active_tid,
+                                new_control,
+                                mask,
+                                before_fcw,
+                                after_fcw,
+                                result,
+                            ),
+                        );
                         continue;
                     }
                     let is_crt_malloc = matches!(
