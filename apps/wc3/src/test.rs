@@ -2762,7 +2762,7 @@ mod tests_process_1 {
 
         assert_eq!(
             xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
-            Ok(PersonalityAction::Return(EXCEPTION_CONTINUE_SEARCH))
+            Ok(PersonalityAction::Return(EXCEPTION_FILTER_CONTINUE_SEARCH))
         );
         assert_eq!(xp.call_count, 1);
     }

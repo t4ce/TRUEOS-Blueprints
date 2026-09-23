@@ -37,9 +37,11 @@ pub const CHILD_WIN_HEAP_LIMIT: u32 = 0x1500_0000;
 pub const PROVIDER_MODULE_HANDLE_BASE: u32 = 0x5743_a001;
 pub const CURRENT_PROCESS_PSEUDO_HANDLE: u32 = u32::MAX;
 pub const CURRENT_THREAD_PSEUDO_HANDLE: u32 = 0xffff_fffe;
-pub const EXCEPTION_CONTINUE_EXECUTION: u32 = u32::MAX;
-pub const EXCEPTION_CONTINUE_SEARCH: u32 = 0;
-pub const EXCEPTION_EXECUTE_HANDLER: u32 = 1;
+// SetUnhandledExceptionFilter callbacks return EXCEPTION_* filter results,
+// distinct from the DISPOSITION_* values used by frame-based SEH handlers.
+pub const EXCEPTION_FILTER_CONTINUE_EXECUTION: u32 = u32::MAX;
+pub const EXCEPTION_FILTER_CONTINUE_SEARCH: u32 = 0;
+pub const EXCEPTION_FILTER_EXECUTE_HANDLER: u32 = 1;
 pub const CRT_UNKNOWN_APP: u32 = 0;
 pub const CRT_CONSOLE_APP: u32 = 1;
 pub const CRT_GUI_APP: u32 = 2;
@@ -1620,7 +1622,7 @@ impl XpProcess {
                     .call_count
                     .checked_add(1)
                     .ok_or("call count overflow")?;
-                Ok(PersonalityAction::Return(EXCEPTION_CONTINUE_SEARCH))
+                Ok(PersonalityAction::Return(EXCEPTION_FILTER_CONTINUE_SEARCH))
             }
             ProviderOp::CrtGetMainArgs => {
                 let [_, argc_out, argv_out, env_out, wildcard, startup_info] =
@@ -3456,9 +3458,9 @@ impl XpProcess {
 
     pub fn complete_unhandled_exception_filter(&self, result: Option<u32>) -> Result<u32, &'static str> {
         match result {
-            None | Some(EXCEPTION_CONTINUE_SEARCH) => Ok(EXCEPTION_EXECUTE_HANDLER),
-            Some(EXCEPTION_CONTINUE_EXECUTION) => Ok(EXCEPTION_CONTINUE_EXECUTION),
-            Some(EXCEPTION_EXECUTE_HANDLER) => Ok(EXCEPTION_EXECUTE_HANDLER),
+            None | Some(EXCEPTION_FILTER_CONTINUE_SEARCH) => Ok(EXCEPTION_FILTER_EXECUTE_HANDLER),
+            Some(EXCEPTION_FILTER_CONTINUE_EXECUTION) => Ok(EXCEPTION_FILTER_CONTINUE_EXECUTION),
+            Some(EXCEPTION_FILTER_EXECUTE_HANDLER) => Ok(EXCEPTION_FILTER_EXECUTE_HANDLER),
             Some(_) => Err("top-level exception filter result"),
         }
     }

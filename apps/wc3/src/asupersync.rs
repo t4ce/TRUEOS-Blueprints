@@ -1639,7 +1639,7 @@ pub(super) async fn run_loop(
                             }
                             ChildUnhandledFilterContinuation::TerminalSeh { seh } => {
                                 match exit.registers.eax {
-                                    wc3::seh::DISPOSITION_CONTINUE_EXECUTION => {
+                                    wc3::process::EXCEPTION_FILTER_CONTINUE_EXECUTION => {
                                         let mut bytes = [0; wc3::seh::X86_CONTEXT_BYTES];
                                         if child
                                             .address_space
@@ -1667,15 +1667,16 @@ pub(super) async fn run_loop(
                                         logl::log(
                                             level::IMPORTANT,
                                             format_args!(
-                                                "WC3 CHILD TOPLEVEL FILTER CONTINUE pid={} tid={} old_eip=0x{:08x} new_eip=0x{:08x}",
+                                                "WC3 CHILD TOPLEVEL FILTER CONTINUE pid={} tid={} filter_result=0xffffffff old_eip=0x{:08x} new_eip=0x{:08x}",
                                                 active_pid, active_tid, seh.original_registers.eip, restored.eip,
                                             ),
                                         );
                                         continue;
                                     }
-                                    0 | 1 => {
+                                    wc3::process::EXCEPTION_FILTER_CONTINUE_SEARCH
+                                    | wc3::process::EXCEPTION_FILTER_EXECUTE_HANDLER => {
                                         return Err(format!(
-                                            "WC3 CHILD UNHANDLED EXCEPTION filter_result={} exception_eip=0x{:08x}",
+                                            "WC3 CHILD UNHANDLED EXCEPTION filter_result=0x{:08x} exception_eip=0x{:08x}",
                                             exit.registers.eax, seh.original_registers.eip,
                                         ));
                                     }
