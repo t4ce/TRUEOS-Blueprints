@@ -5487,6 +5487,36 @@ mod tests_process_1 {
     }
 
     #[test]
+    fn child_reset_event_provider_is_stdcall_and_dispatches_event_handle() {
+        let provider = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("ResetEvent".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&provider);
+        assert_eq!(operation, ProviderOp::ResetEvent);
+        assert!(operation.is_modeled());
+        assert_eq!(operation.stack_cleanup_bytes(), 4);
+        let mut xp = XpProcess::new_child();
+        let (_, _, _, _, thunk_bytes) = xp.append_provider_imports(vec![provider]).unwrap();
+        assert_eq!(&thunk_bytes[8..11], &[0xc2, 4, 0]);
+
+        let mut memory = Memory { base: STACK_BASE, bytes: vec![0; STACK_BYTES] };
+        let esp = STACK_TOP - 0x40;
+        write_u32(&mut memory, esp, 0x0040_3f19).unwrap();
+        write_u32(&mut memory, esp + 4, 0x5743_2812).unwrap();
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Session(SessionRequest::ResetEvent {
+                pid: 2,
+                tid: 3,
+                handle: 0x5743_2812,
+            })),
+        );
+        assert_eq!(xp.call_count, 1);
+    }
+
+    #[test]
     fn child_global_alloc_uses_the_win32_heap_arena_for_fixed_blocks() {
         let provider = ProviderImport {
             module: "KERNEL32.dll".into(),
@@ -7447,6 +7477,31 @@ mod tests_session_1 {
         assert_eq!(
             session.set_event(LAUNCHER_PID, child.process_handle),
             Err("SetEvent handle is not an event")
+        );
+    }
+
+    #[test]
+    fn reset_event_clears_signaled_state_and_rejects_non_events() {
+        let mut session = Wc3Session::new(XpProcess::new(Vec::new()));
+        let (event, _) = session.create_event(
+            LAUNCHER_PID,
+            CreateEventRequest {
+                name: None,
+                manual_reset: true,
+                initial_state: true,
+                inheritable: false,
+            },
+        );
+        assert_eq!(session.event_state(LAUNCHER_PID, event), Some((true, true)));
+        assert_eq!(
+            session.reset_event(LAUNCHER_PID, event).unwrap(),
+            ResetEventResult { manual_reset: true, was_signaled: true },
+        );
+        assert_eq!(session.event_state(LAUNCHER_PID, event), Some((true, false)));
+        let child = session.create_child();
+        assert_eq!(
+            session.reset_event(LAUNCHER_PID, child.process_handle),
+            Err("ResetEvent handle is not an event"),
         );
     }
 

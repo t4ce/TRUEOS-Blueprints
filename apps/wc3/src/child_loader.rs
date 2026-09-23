@@ -73,6 +73,7 @@ pub enum ProviderOp {
     WriteFile,
     FlushFileBuffers,
     CreateEventA,
+    ResetEvent,
     CreateMutexA,
     ReleaseMutex,
     CloseHandle,
@@ -173,6 +174,7 @@ impl ProviderOp {
             | Self::GetFileAttributesA
             | Self::FindClose
             | Self::FlushFileBuffers => 4,
+            Self::ResetEvent => 4,
             Self::GetCPInfo | Self::GetWindowsDirectoryA | Self::GetSystemDirectoryA => 8,
             Self::GetProcAddress
             | Self::WaitForSingleObject
@@ -352,6 +354,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "WriteFile" => ProviderOp::WriteFile,
             "FlushFileBuffers" => ProviderOp::FlushFileBuffers,
             "CreateEventA" => ProviderOp::CreateEventA,
+            "ResetEvent" => ProviderOp::ResetEvent,
             "CreateMutexA" => ProviderOp::CreateMutexA,
             "ReleaseMutex" => ProviderOp::ReleaseMutex,
             "CloseHandle" => ProviderOp::CloseHandle,

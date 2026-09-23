@@ -567,6 +567,12 @@ pub struct SetEventResult {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResetEventResult {
+    pub manual_reset: bool,
+    pub was_signaled: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DestroyWindowResult {
     pub was_focused: bool,
 }
@@ -652,6 +658,11 @@ pub enum SessionRequest {
     CreateProcess(CreateProcessRequest),
     GetExitCodeProcess(GetExitCodeProcessRequest),
     SetEvent {
+        pid: Pid,
+        tid: Tid,
+        handle: u32,
+    },
+    ResetEvent {
         pid: Pid,
         tid: Tid,
         handle: u32,
@@ -1255,6 +1266,23 @@ impl Wc3Session {
             was_signaled,
             woken: self.reevaluate_blocked_waits()?,
         })
+    }
+
+    pub fn reset_event(&mut self, pid: Pid, handle: u32) -> Result<ResetEventResult, &'static str> {
+        let object = self
+            .process(pid)
+            .and_then(|process| process.handles.get(&handle))
+            .ok_or("ResetEvent invalid handle")?
+            .object;
+        let Some(SessionObject::Event(event)) = self.objects.get_mut(&object) else {
+            return Err("ResetEvent handle is not an event");
+        };
+        let result = ResetEventResult {
+            manual_reset: event.manual_reset,
+            was_signaled: event.signaled,
+        };
+        event.signaled = false;
+        Ok(result)
     }
 
     pub fn thread_exit_code(&self, key: ThreadKey) -> Option<u32> {

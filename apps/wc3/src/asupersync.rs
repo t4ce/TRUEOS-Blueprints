@@ -589,6 +589,37 @@ fn service_sync_request(
             );
             Ok(handle)
         }
+        SessionRequest::ResetEvent { pid, tid, handle } => match session.reset_event(pid, handle) {
+            Ok(outcome) => {
+                logl::log(
+                    level::IMPORTANT,
+                    format_args!(
+                        "WC3 CHILD EVENT RESET pid={} tid={} handle=0x{:08x} manual_reset={} was_signaled={} result=1",
+                        pid,
+                        tid,
+                        handle,
+                        outcome.manual_reset as u8,
+                        outcome.was_signaled as u8,
+                    ),
+                );
+                Ok(1)
+            }
+            Err(_) => {
+                session
+                    .process_mut(pid)
+                    .ok_or_else(|| "ResetEvent process missing".to_owned())?
+                    .xp
+                    .set_last_error(6);
+                logl::log(
+                    level::IMPORTANT,
+                    format_args!(
+                        "WC3 CHILD EVENT RESET pid={} tid={} handle=0x{:08x} result=0 error=6",
+                        pid, tid, handle,
+                    ),
+                );
+                Ok(0)
+            }
+        },
         SessionRequest::CreateMutex { key, request } => {
             let (handle, error, existed) = match session.create_mutex(key, request) {
                 Ok((handle, existed)) => (handle, if existed { 183 } else { 0 }, existed),
@@ -6155,6 +6186,7 @@ pub(super) async fn run_loop(
                     if matches!(
                         operation,
                         child_loader::ProviderOp::CreateEventA
+                            | child_loader::ProviderOp::ResetEvent
                             | child_loader::ProviderOp::CreateMutexA
                             | child_loader::ProviderOp::ReleaseMutex
                             | child_loader::ProviderOp::CloseHandle
@@ -8131,7 +8163,8 @@ pub(super) async fn run_loop(
                         handle
                     }
                     PersonalityAction::Session(request @ SessionRequest::CreateMutex { .. })
-                    | PersonalityAction::Session(request @ SessionRequest::ReleaseMutex { .. }) => {
+                    | PersonalityAction::Session(request @ SessionRequest::ReleaseMutex { .. })
+                    | PersonalityAction::Session(request @ SessionRequest::ResetEvent { .. }) => {
                         service_sync_request(
                             &mut session,
                             LAUNCHER_PID,

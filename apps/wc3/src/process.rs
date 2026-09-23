@@ -3272,6 +3272,11 @@ impl XpProcess {
             ProviderOp::CreateEventA => Some(PersonalityAction::Session(
                 SessionRequest::CreateEvent(self.create_event_request(esp, memory)?),
             )),
+            ProviderOp::ResetEvent => Some(PersonalityAction::Session(SessionRequest::ResetEvent {
+                pid,
+                tid,
+                handle: arguments::<2>(memory, esp)?[1],
+            })),
             ProviderOp::CreateMutexA => {
                 let [_, attributes, initial_owner, name] = arguments::<4>(memory, esp)?;
                 let inheritable = if attributes == 0 {
