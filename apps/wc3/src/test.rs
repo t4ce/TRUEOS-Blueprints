@@ -2727,6 +2727,83 @@ mod tests_process_1 {
     }
 
     #[test]
+    fn child_crt_onexit_registers_callback_in_order_and_is_cdecl() {
+        let provider = ProviderImport {
+            module: "MSVCRT.dll".into(),
+            symbol: ProviderSymbol::Name("_onexit".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&provider);
+        assert_eq!(operation, ProviderOp::CrtOnExit);
+        assert!(operation.is_modeled());
+        assert!(operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 0);
+        assert_eq!(
+            crate::child_loader::provider_thunk_kind(&provider),
+            thunk32::Kind::Return
+        );
+
+        let mut xp = XpProcess::new_child();
+        xp.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+        let func = 0x0040_1200;
+        write_u32(&mut memory, esp, 0x0040_1c09).unwrap();
+        write_u32(&mut memory, esp + 4, func).unwrap();
+
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(func))
+        );
+        assert_eq!(xp.crt_onexit_callbacks(), &[func]);
+        assert_eq!(xp.crt_onexit_count(), 1);
+        assert_eq!(xp.call_count, 1);
+    }
+
+    #[test]
+    fn child_interlocked_exchange_replaces_dword_and_returns_previous_value() {
+        let provider = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("InterlockedExchange".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&provider);
+        assert_eq!(operation, ProviderOp::InterlockedExchange);
+        assert!(operation.is_modeled());
+        assert!(operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 8);
+        assert_eq!(
+            provider_thunk_kind(&provider),
+            thunk32::Kind::Stdcall(8)
+        );
+
+        let mut xp = XpProcess::new_child();
+        xp.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+        let target = STACK_TOP - 0x100;
+        write_u32(&mut memory, target, 0x1122_3344).unwrap();
+        write_u32(&mut memory, esp, 0x0040_2939).unwrap();
+        write_u32(&mut memory, esp + 4, target).unwrap();
+        write_u32(&mut memory, esp + 8, 0xaabb_ccdd).unwrap();
+        xp.set_last_error(0x1234_5678);
+
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(0x1122_3344))
+        );
+        assert_eq!(read_u32(&memory, target).unwrap(), 0xaabb_ccdd);
+        assert_eq!(xp.last_error(), 0x1234_5678);
+        assert_eq!(xp.call_count, 1);
+    }
+
+    #[test]
     fn unsupported_child_provider_does_not_mutate_memory() {
         let provider = ProviderImport {
             module: "KERNEL32.dll".into(),

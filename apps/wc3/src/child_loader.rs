@@ -36,6 +36,7 @@ pub enum ProviderOp {
     GetModuleHandleA,
     LoadLibraryA,
     GetProcAddress,
+    InterlockedExchange,
     GetCurrentProcess,
     GetCurrentProcessId,
     GetCurrentThread,
@@ -91,6 +92,7 @@ pub enum ProviderOp {
     CrtGetCommode,
     CrtControlFp,
     CrtGetMainArgs,
+    CrtOnExit,
     CrtMalloc,
     Unknown,
 }
@@ -134,7 +136,8 @@ impl ProviderOp {
             | Self::GetFileSize
             | Self::GetTempPathA
             | Self::SetFileAttributesA
-            | Self::GlobalAlloc => 8,
+            | Self::GlobalAlloc
+            | Self::InterlockedExchange => 8,
             Self::GetStringTypeW
             | Self::RtlUnwind
             | Self::VirtualAlloc
@@ -160,6 +163,7 @@ impl ProviderOp {
             | Self::CrtGetCommode
             | Self::CrtControlFp
             | Self::CrtGetMainArgs
+            | Self::CrtOnExit
             | Self::CrtMalloc => 0,
             _ => 0,
         }
@@ -180,6 +184,7 @@ impl ProviderOp {
                 | Self::LCMapStringW
                 | Self::GetModuleFileNameA
                 | Self::GetModuleHandleA
+                | Self::InterlockedExchange
                 | Self::GetCurrentProcess
                 | Self::GetCurrentProcessId
                 | Self::GetCurrentThread
@@ -211,6 +216,7 @@ impl ProviderOp {
                 | Self::CrtGetFmode
                 | Self::CrtGetCommode
                 | Self::CrtGetMainArgs
+                | Self::CrtOnExit
         )
     }
 }
@@ -237,6 +243,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "GetModuleHandleA" => ProviderOp::GetModuleHandleA,
             "LoadLibraryA" => ProviderOp::LoadLibraryA,
             "GetProcAddress" => ProviderOp::GetProcAddress,
+            "InterlockedExchange" => ProviderOp::InterlockedExchange,
             "GetCurrentProcess" => ProviderOp::GetCurrentProcess,
             "GetCurrentProcessId" => ProviderOp::GetCurrentProcessId,
             "GetCurrentThread" => ProviderOp::GetCurrentThread,
@@ -309,6 +316,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "__p__commode" => ProviderOp::CrtGetCommode,
             "_controlfp" => ProviderOp::CrtControlFp,
             "__getmainargs" => ProviderOp::CrtGetMainArgs,
+            "_onexit" => ProviderOp::CrtOnExit,
             "malloc" => ProviderOp::CrtMalloc,
             _ => ProviderOp::Unknown,
         };

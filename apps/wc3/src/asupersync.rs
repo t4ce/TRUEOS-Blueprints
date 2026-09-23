@@ -3101,6 +3101,58 @@ pub(super) async fn run_loop(
                             .map_err(|error| error.to_string())?;
                         continue;
                     }
+                    let is_crt_onexit = matches!(
+                        &provider.symbol,
+                        child_loader::ProviderSymbol::Name(name)
+                            if provider.module.eq_ignore_ascii_case("MSVCRT.dll")
+                                && name == "_onexit"
+                    );
+                    if is_crt_onexit {
+                        let frame = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            exit.registers.esp,
+                            2,
+                        )?;
+                        let mut child_memory = X86Memory(&child.address_space);
+                        let (action, entries) = {
+                            let process = session
+                                .process_mut(active_pid)
+                                .ok_or_else(|| "child process missing".to_owned())?;
+                            let action = process
+                                .xp
+                                .dispatch_provider_for_process(
+                                    active_pid,
+                                    active_tid,
+                                    provider_id,
+                                    exit.registers.esp,
+                                    &mut child_memory,
+                                )
+                                .map_err(str::to_owned)?;
+                            (action, process.xp.crt_onexit_count())
+                        };
+                        let PersonalityAction::Return(return_value) = action else {
+                            return Err("_onexit child provider did not return".into());
+                        };
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD CRT ONEXIT pid={} tid={} caller_ret=0x{:08x} func=0x{:08x} entries={} return_eax=0x{:08x} cleanup=0-by-thunk",
+                                active_pid,
+                                active_tid,
+                                frame[0],
+                                frame[1],
+                                entries,
+                                return_value,
+                            ),
+                        );
+                        let mut registers = exit.registers;
+                        registers.eax = return_value;
+                        contexts[active]
+                            .context
+                            .set_registers(registers)
+                            .map_err(|error| error.to_string())?;
+                        continue;
+                    }
                     let is_crt_control_fp = matches!(
                         &provider.symbol,
                         child_loader::ProviderSymbol::Name(name)
@@ -4399,6 +4451,22 @@ pub(super) async fn run_loop(
                         continue;
                     }
                     if operation.is_generic_process_local() {
+                        let interlocked_exchange =
+                            if operation == child_loader::ProviderOp::InterlockedExchange {
+                                let frame = read_guest_words(
+                                    &X86Memory(&child.address_space),
+                                    exit.registers.esp,
+                                    3,
+                                )?;
+                                let old = read_guest_words(
+                                    &X86Memory(&child.address_space),
+                                    frame[1],
+                                    1,
+                                )?[0];
+                                Some((frame[1], frame[2], old))
+                            } else {
+                                None
+                            };
                         let process_memory = matches!(
                             operation,
                             child_loader::ProviderOp::ReadProcessMemory
@@ -4457,6 +4525,26 @@ pub(super) async fn run_loop(
                         };
                         match dispatch {
                             Ok(PersonalityAction::Return(result)) => {
+                                if let Some((target, value, old)) = interlocked_exchange {
+                                    let after = read_guest_words(
+                                        &X86Memory(&child.address_space),
+                                        target,
+                                        1,
+                                    )?[0];
+                                    logl::log(
+                                        level::IMPORTANT,
+                                        format_args!(
+                                            "WC3 CHILD INTERLOCKEDEXCHANGE pid={} tid={} target=0x{:08x} old=0x{:08x} value=0x{:08x} after=0x{:08x} eax=0x{:08x} cleanup=8-by-thunk",
+                                            active_pid,
+                                            active_tid,
+                                            target,
+                                            old,
+                                            value,
+                                            after,
+                                            result,
+                                        ),
+                                    );
+                                }
                                 if let Some((path, attributes)) = set_file_attributes {
                                     let last_error = session
                                         .process(active_pid)

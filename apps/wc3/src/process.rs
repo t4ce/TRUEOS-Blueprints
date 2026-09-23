@@ -788,6 +788,7 @@ pub struct XpProcess {
     global_allocations: HashMap<u32, GlobalAllocation>,
     crt_heap_next: u32,
     crt_allocations: HashMap<u32, u32>,
+    crt_onexit_callbacks: Vec<u32>,
     pub crt_app_type: u32,
     virtual_reservations: Vec<VirtualReservation>,
     virtual_reserve_next: u32,
@@ -936,6 +937,7 @@ impl XpProcess {
             global_allocations: HashMap::new(),
             crt_heap_next: 0,
             crt_allocations: HashMap::new(),
+            crt_onexit_callbacks: Vec::new(),
             crt_app_type: CRT_UNKNOWN_APP,
             virtual_reservations: Vec::new(),
             virtual_reserve_next: CHILD_VIRTUAL_ALLOC_BASE,
@@ -1469,6 +1471,29 @@ impl XpProcess {
         })
     }
 
+    fn interlocked_exchange(
+        &mut self,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
+        let [_, target, value] = arguments::<3>(memory, esp)?;
+        if target == 0 {
+            return Err(ProviderDispatchError::Frontier {
+                api: "InterlockedExchange",
+                detail: "target=NULL".into(),
+            });
+        }
+        if target & 3 != 0 {
+            return Err(ProviderDispatchError::Frontier {
+                api: "InterlockedExchange",
+                detail: format!("unaligned target=0x{target:08x} value=0x{value:08x}"),
+            });
+        }
+        let previous = read_u32(memory, target)?;
+        write_u32(memory, target, value)?;
+        Ok(previous)
+    }
+
     fn dispatch_process_local_provider(
         &mut self,
         pid: u32,
@@ -1478,6 +1503,14 @@ impl XpProcess {
         self_image_bytes: Option<&[u8]>,
     ) -> Result<PersonalityAction, ProviderDispatchError> {
         match operation {
+            ProviderOp::InterlockedExchange => {
+                let previous = self.interlocked_exchange(esp, memory)?;
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(previous))
+            }
             ProviderOp::CrtSetAppType => {
                 let [_, app_type] = arguments::<2>(memory, esp)?;
                 if !matches!(app_type, CRT_UNKNOWN_APP | CRT_CONSOLE_APP | CRT_GUI_APP) {
@@ -1543,6 +1576,18 @@ impl XpProcess {
                     .checked_add(1)
                     .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(0))
+            }
+            ProviderOp::CrtOnExit => {
+                let [_, func] = arguments::<2>(memory, esp)?;
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                if func == 0 || self.crt_onexit_callbacks.len() >= 65_536 {
+                    return Ok(PersonalityAction::Return(0));
+                }
+                self.crt_onexit_callbacks.push(func);
+                Ok(PersonalityAction::Return(func))
             }
             ProviderOp::FreeEnvironmentStringsW => {
                 let pointer = read_u32(
@@ -2611,6 +2656,14 @@ impl XpProcess {
                 ProviderDispatchError::Fault(error) => error,
                 ProviderDispatchError::Frontier { .. } => "child provider frontier",
             })
+    }
+
+    pub fn crt_onexit_count(&self) -> usize {
+        self.crt_onexit_callbacks.len()
+    }
+
+    pub fn crt_onexit_callbacks(&self) -> &[u32] {
+        &self.crt_onexit_callbacks
     }
 
     pub fn create_win_heap(
