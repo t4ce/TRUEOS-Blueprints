@@ -66,6 +66,7 @@ pub enum ProviderOp {
     GetLastError,
     FormatMessageA,
     GetTickCount,
+    Sleep,
     CreateFileA,
     GetFileSize,
     SetFilePointer,
@@ -174,7 +175,8 @@ impl ProviderOp {
             | Self::SetCurrentDirectoryA
             | Self::GetFileAttributesA
             | Self::FindClose
-            | Self::FlushFileBuffers => 4,
+            | Self::FlushFileBuffers
+            | Self::Sleep => 4,
             Self::ResetEvent => 4,
             Self::GetCPInfo | Self::GetWindowsDirectoryA | Self::GetSystemDirectoryA => 8,
             Self::GetProcAddress
@@ -266,6 +268,7 @@ impl ProviderOp {
                 | Self::GetLastError
                 | Self::FormatMessageA
                 | Self::GetTickCount
+                | Self::Sleep
                 | Self::DisableThreadLibraryCalls
                 | Self::CreateFileA
                 | Self::GetFileSize
@@ -349,6 +352,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "GetLastError" => ProviderOp::GetLastError,
             "FormatMessageA" => ProviderOp::FormatMessageA,
             "GetTickCount" => ProviderOp::GetTickCount,
+            "Sleep" => ProviderOp::Sleep,
             "CreateFileA" => ProviderOp::CreateFileA,
             "GetFileSize" => ProviderOp::GetFileSize,
             "SetFilePointer" => ProviderOp::SetFilePointer,
@@ -466,6 +470,24 @@ mod beginthreadex_tests {
         let mut bytes = [0u8; thunk32::THUNK_BYTES];
         thunk32::write(42, provider_thunk_kind(&import), &mut bytes).unwrap();
         assert_eq!(bytes[8], 0xc3);
+    }
+
+    #[test]
+    fn sleep_is_stdcall_and_has_a_single_scheduler_argument() {
+        let import = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("Sleep".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&import);
+        assert_eq!(operation, ProviderOp::Sleep);
+        assert!(operation.is_modeled());
+        assert!(operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 4);
+        assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Stdcall(4));
+        let mut bytes = [0u8; thunk32::THUNK_BYTES];
+        thunk32::write(47, provider_thunk_kind(&import), &mut bytes).unwrap();
+        assert_eq!(&bytes[8..11], &[0xc2, 0x04, 0x00]);
     }
 }
 

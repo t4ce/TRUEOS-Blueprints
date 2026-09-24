@@ -2636,6 +2636,17 @@ impl XpProcess {
                     .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(monotonic_counter_millis()))
             }
+            ProviderOp::Sleep => {
+                // Compatibility-only scheduling hint: the coordinator yields
+                // once, but does not advance or tie guest time to host time.
+                let [_, _milliseconds] = arguments::<2>(memory, esp)?;
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                // Sleep is void. The provider convention uses harmless EAX.
+                Ok(PersonalityAction::Return(0))
+            }
             ProviderOp::DisableThreadLibraryCalls => {
                 let [_, module] = arguments::<2>(memory, esp)?;
                 Ok(PersonalityAction::Return(

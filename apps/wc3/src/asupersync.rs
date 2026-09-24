@@ -6827,6 +6827,25 @@ pub(super) async fn run_loop(
                                             ),
                                         );
                                     }
+                                    child_loader::ProviderOp::Sleep => {
+                                        let [_, milliseconds] = read_guest_words(
+                                            &X86Memory(&child.address_space),
+                                            exit.registers.esp,
+                                            2,
+                                        )?[..] else {
+                                            unreachable!("Sleep frame has two words")
+                                        };
+                                        logl::log(
+                                            level::IMPORTANT,
+                                            format_args!(
+                                                "WC3 CHILD SLEEP pid={} tid={} during=\"{}\" requested_ms={} applied_delay_ms=0 effect=yield cleanup=4-by-thunk",
+                                                active_pid,
+                                                active_tid,
+                                                running_module_name,
+                                                milliseconds,
+                                            ),
+                                        );
+                                    }
                                     child_loader::ProviderOp::GetCurrentThreadId => logl::log(
                                         level::IMPORTANT,
                                         format_args!(
@@ -6909,6 +6928,9 @@ pub(super) async fn run_loop(
                                     .context
                                     .set_registers(registers)
                                     .map_err(|error| error.to_string())?;
+                                if operation == child_loader::ProviderOp::Sleep {
+                                    tokio::task::yield_now().await;
+                                }
                                 continue;
                             }
                             Ok(_) => {
