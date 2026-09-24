@@ -7355,6 +7355,17 @@ pub(super) async fn run_loop(
                         continue;
                     }
                     if operation.is_generic_process_local() {
+                        let global_memory_status = if operation
+                            == child_loader::ProviderOp::GlobalMemoryStatus
+                        {
+                            Some(read_guest_words(
+                                &X86Memory(&child.address_space),
+                                exit.registers.esp,
+                                2,
+                            )?[1])
+                        } else {
+                            None
+                        };
                         let interlocked_exchange = if operation
                             == child_loader::ProviderOp::InterlockedExchange
                         {
@@ -7766,6 +7777,25 @@ pub(super) async fn run_loop(
                                             ),
                                         );
                                     }
+                                }
+                                if let Some(buffer) = global_memory_status {
+                                    logl::log(
+                                        level::IMPORTANT,
+                                        format_args!(
+                                            "WC3 CHILD GLOBALMEMORYSTATUS pid={} tid={} buffer=0x{:08x} length=32 memory_load={} total_phys={} avail_phys={} total_pagefile={} avail_pagefile={} total_virtual={} avail_virtual={} cleanup={}-by-thunk",
+                                            active_pid,
+                                            active_tid,
+                                            buffer,
+                                            wc3::process::XP_MEMORY_LOAD,
+                                            wc3::process::XP_TOTAL_PHYS,
+                                            wc3::process::XP_AVAIL_PHYS,
+                                            wc3::process::XP_TOTAL_PAGEFILE,
+                                            wc3::process::XP_AVAIL_PAGEFILE,
+                                            wc3::process::XP_TOTAL_VIRTUAL,
+                                            wc3::process::XP_AVAIL_VIRTUAL,
+                                            operation.stack_cleanup_bytes(),
+                                        ),
+                                    );
                                 }
                                 if let Some((target, value, old)) = interlocked_exchange {
                                     let after = read_guest_words(

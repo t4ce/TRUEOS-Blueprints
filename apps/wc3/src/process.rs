@@ -209,6 +209,13 @@ pub const CRT_ARG3_VA: u32 = PROCESS_DATA_VA + 0x9a;
 pub const CRT_ARGC: u32 = 4;
 const XP_MIN_APPLICATION_ADDRESS: u32 = 0x0001_0000;
 const XP_MAX_APPLICATION_ADDRESS: u32 = 0x7ffe_ffff;
+pub const XP_MEMORY_LOAD: u32 = 25;
+pub const XP_TOTAL_PHYS: u32 = 512 * 1024 * 1024;
+pub const XP_AVAIL_PHYS: u32 = 384 * 1024 * 1024;
+pub const XP_TOTAL_PAGEFILE: u32 = 1024 * 1024 * 1024;
+pub const XP_AVAIL_PAGEFILE: u32 = 768 * 1024 * 1024;
+pub const XP_TOTAL_VIRTUAL: u32 = 0x7ffe_0000;
+pub const XP_AVAIL_VIRTUAL: u32 = 0x6000_0000;
 const PROCESSOR_ARCHITECTURE_INTEL: u16 = 0;
 const PROCESSOR_INTEL_PENTIUM: u32 = 586;
 const XP_PROCESSOR_LEVEL: u16 = 6;
@@ -2418,6 +2425,37 @@ impl XpProcess {
         Ok(0)
     }
 
+    fn global_memory_status(
+        &self,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
+        let [_, status] = arguments::<2>(memory, esp)?;
+        if status == 0 {
+            return Err(ProviderDispatchError::Frontier {
+                api: "GlobalMemoryStatus",
+                detail: "lpBuffer=NULL".into(),
+            });
+        }
+
+        let values = [
+            32u32,
+            XP_MEMORY_LOAD,
+            XP_TOTAL_PHYS,
+            XP_AVAIL_PHYS,
+            XP_TOTAL_PAGEFILE,
+            XP_AVAIL_PAGEFILE,
+            XP_TOTAL_VIRTUAL,
+            XP_AVAIL_VIRTUAL,
+        ];
+        let mut bytes = [0u8; 32];
+        for (index, value) in values.into_iter().enumerate() {
+            bytes[index * 4..index * 4 + 4].copy_from_slice(&value.to_le_bytes());
+        }
+        memory.write(status, &bytes)?;
+        Ok(0)
+    }
+
     fn dispatch_process_local_provider(
         &mut self,
         pid: u32,
@@ -2436,6 +2474,14 @@ impl XpProcess {
                 Ok(PersonalityAction::Return(
                     self.get_system_info(esp, memory)?,
                 ))
+            }
+            ProviderOp::GlobalMemoryStatus => {
+                let result = self.global_memory_status(esp, memory)?;
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(result))
             }
             ProviderOp::InterlockedExchange => {
                 let previous = self.interlocked_exchange(esp, memory)?;

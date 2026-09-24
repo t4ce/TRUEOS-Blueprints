@@ -37,6 +37,7 @@ pub enum ProviderOp {
     GetCommandLineA,
     GetStartupInfoA,
     GetSystemInfo,
+    GlobalMemoryStatus,
     GetStdHandle,
     GetFileType,
     SetHandleCount,
@@ -181,6 +182,7 @@ impl ProviderOp {
             | Self::FreeEnvironmentStringsW
             | Self::GetStartupInfoA
             | Self::GetSystemInfo
+            | Self::GlobalMemoryStatus
             | Self::GetStdHandle
             | Self::GetFileType
             | Self::SetHandleCount
@@ -288,6 +290,7 @@ impl ProviderOp {
             Self::FreeEnvironmentStringsW
                 | Self::GetStartupInfoA
                 | Self::GetSystemInfo
+                | Self::GlobalMemoryStatus
                 | Self::GetStdHandle
                 | Self::GetFileType
                 | Self::SetHandleCount
@@ -384,6 +387,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "GetCommandLineA" => ProviderOp::GetCommandLineA,
             "GetStartupInfoA" => ProviderOp::GetStartupInfoA,
             "GetSystemInfo" => ProviderOp::GetSystemInfo,
+            "GlobalMemoryStatus" => ProviderOp::GlobalMemoryStatus,
             "GetStdHandle" => ProviderOp::GetStdHandle,
             "GetFileType" => ProviderOp::GetFileType,
             "SetHandleCount" => ProviderOp::SetHandleCount,
