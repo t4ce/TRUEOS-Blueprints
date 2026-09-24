@@ -1253,6 +1253,29 @@
                         &provider.symbol,
                         child_loader::ProviderSymbol::Name(name)
                             if provider.module.eq_ignore_ascii_case("USER32.dll")
+                                && name == "ReleaseDC"
+                    ) {
+                        let frame = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            exit.registers.esp,
+                            3,
+                        )?;
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD RELEASEDC CALL pid={} tid={} hwnd=0x{:08x} hdc=0x{:08x} caller_ret=0x{:08x}",
+                                active_pid,
+                                active_tid,
+                                frame[1],
+                                frame[2],
+                                frame[0],
+                            ),
+                        );
+                    }
+                    if matches!(
+                        &provider.symbol,
+                        child_loader::ProviderSymbol::Name(name)
+                            if provider.module.eq_ignore_ascii_case("USER32.dll")
                                 && name == "SetWindowPos"
                     ) {
                         let frame = read_guest_words(
@@ -6761,6 +6784,27 @@
                                                 active_tid,
                                                 hdc,
                                                 result,
+                                            ),
+                                        );
+                                    }
+                                    child_loader::ProviderOp::ReleaseDC => {
+                                        let [_, hwnd, hdc] = read_guest_words(
+                                            &X86Memory(&child.address_space),
+                                            exit.registers.esp,
+                                            3,
+                                        )?[..]
+                                        else {
+                                            unreachable!("ReleaseDC frame has three words")
+                                        };
+                                        logl::log(
+                                            level::IMPORTANT,
+                                            format_args!(
+                                                "WC3 CHILD RELEASEDC RESULT pid={} tid={} hwnd=0x{:08x} hdc=0x{:08x} persistent=1 retained=1 result={} cleanup=8-by-thunk",
+                                                active_pid,
+                                                active_tid,
+                                                hwnd,
+                                                hdc,
+                                                if result != 0 { "TRUE" } else { "FALSE" },
                                             ),
                                         );
                                     }

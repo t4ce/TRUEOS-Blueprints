@@ -170,6 +170,7 @@ pub enum ProviderOp {
     SetWindowPos,
     ShowWindow,
     GetDC,
+    ReleaseDC,
     GetDeviceCaps,
     WglMakeCurrent,
     GlDisable,
@@ -314,6 +315,7 @@ impl ProviderOp {
             Self::SetWindowPos => 28,
             Self::ShowWindow => 8,
             Self::GetDC => 4,
+            Self::ReleaseDC => 8,
             Self::GetDeviceCaps => 8,
             Self::WglMakeCurrent => 8,
             Self::GlDisable
@@ -530,6 +532,7 @@ impl ProviderOp {
                 | Self::EnumDisplaySettingsA
                 | Self::ChangeDisplaySettingsExA
                 | Self::GetDeviceCaps
+                | Self::ReleaseDC
                 | Self::WglMakeCurrent
                 | Self::GlDisable
                 | Self::GlEnable
@@ -707,6 +710,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "SetWindowPos" => ProviderOp::SetWindowPos,
             "ShowWindow" => ProviderOp::ShowWindow,
             "GetDC" => ProviderOp::GetDC,
+            "ReleaseDC" => ProviderOp::ReleaseDC,
             "LoadImageA" => ProviderOp::LoadImageA,
             "LoadCursorA" => ProviderOp::LoadCursorA,
             "RegisterClassExA" => ProviderOp::RegisterClassExA,

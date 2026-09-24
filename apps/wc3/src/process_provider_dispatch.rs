@@ -66,6 +66,9 @@ impl XpProcess {
                     .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(result))
             }
+            ProviderOp::ReleaseDC => Ok(PersonalityAction::Return(
+                self.release_dc_static(esp, memory)?,
+            )),
             ProviderOp::WglMakeCurrent => Ok(PersonalityAction::Return(
                 self.wgl_make_current_static(esp, memory)?,
             )),

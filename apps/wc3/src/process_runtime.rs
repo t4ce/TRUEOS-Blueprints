@@ -1460,6 +1460,33 @@ impl XpProcess {
         Ok((handle, false))
     }
 
+    fn release_dc_static(
+        &self,
+        esp: u32,
+        memory: &impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
+        let [_, hwnd, hdc] = arguments::<3>(memory, esp)?;
+        match self.gdi_objects.get(&hdc) {
+            Some(GdiObject::DeviceContext(DeviceContext {
+                target: DcTarget::WindowPaint { hwnd: target },
+                ..
+            })) if *target == hwnd => Ok(1),
+            Some(GdiObject::DeviceContext(DeviceContext {
+                target: DcTarget::WindowPaint { hwnd: target },
+                ..
+            })) => Err(ProviderDispatchError::Frontier {
+                api: "ReleaseDC",
+                detail: format!(
+                    "hwnd=0x{hwnd:08x} does not match window DC target=0x{target:08x}"
+                ),
+            }),
+            _ => Err(ProviderDispatchError::Frontier {
+                api: "ReleaseDC",
+                detail: format!("hdc=0x{hdc:08x} is not a window DC"),
+            }),
+        }
+    }
+
     fn end_paint(&mut self, esp: u32, memory: &impl GuestMemory) -> Result<u32, &'static str> {
         let [_, hwnd, paint_struct] = arguments::<3>(memory, esp)?;
         if paint_struct == 0 {
