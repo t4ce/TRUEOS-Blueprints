@@ -645,6 +645,20 @@ pub struct CreateMutexRequest {
     pub inheritable: bool,
 }
 
+/// A read-only file open whose backing must be resolved by the async
+/// coordinator rather than by the process-local XP personality.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OpenFileRequest {
+    pub key: ThreadKey,
+    pub path: String,
+    pub desired_access: u32,
+    pub share_mode: u32,
+    pub security_attributes: u32,
+    pub creation_disposition: u32,
+    pub flags_and_attributes: u32,
+    pub template_file: u32,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GetExitCodeProcessRequest {
     pub pid: Pid,
@@ -764,6 +778,7 @@ pub struct GuestCall {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PersonalityAction {
     Return(u32),
+    OpenFile(OpenFileRequest),
     Session(SessionRequest),
     WindowBlit(WindowBlitRequest),
     WindowText(WindowTextRequest),

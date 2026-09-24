@@ -3364,6 +3364,90 @@ mod tests_process_1 {
     }
 
     #[test]
+    fn child_create_file_a_routes_warcraft_directory_files_to_async_open() {
+        let provider = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("CreateFileA".into()),
+            iat_rva: 0,
+        };
+        let mut xp = XpProcess::new_child();
+        xp.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory { base: STACK_BASE, bytes: vec![0; STACK_BYTES] };
+        let esp = STACK_TOP - 0x40;
+        let path = STACK_TOP - 0x100;
+        memory.write(path, b"C:\\Warcraft III\\War3X.mpq\0").unwrap();
+        for (index, value) in [
+            0x0041_08d6,
+            path,
+            GENERIC_READ,
+            1,
+            0,
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL,
+            0,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
+        }
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::OpenFile(OpenFileRequest {
+                key: ThreadKey { pid: 2, tid: 3 },
+                path: "war3x.mpq".into(),
+                desired_access: GENERIC_READ,
+                share_mode: 1,
+                security_attributes: 0,
+                creation_disposition: OPEN_EXISTING,
+                flags_and_attributes: FILE_ATTRIBUTE_NORMAL,
+                template_file: 0,
+            }))
+        );
+    }
+
+    #[test]
+    fn admitted_trueos_file_uses_resident_backing_for_size_and_read() {
+        let providers = ["GetFileSize", "ReadFile"].map(|symbol| ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name(symbol.into()),
+            iat_rva: 0,
+        });
+        let mut xp = XpProcess::new_child();
+        xp.install_provider_surface(providers.to_vec(), Vec::new(), Vec::new());
+        let handle = xp
+            .admit_trueos_file(
+                r"C:\Warcraft III\War3Patch.mpq".into(),
+                "/common/Warcraft III/War3Patch.MPQ".into(),
+                std::sync::Arc::new(b"PATCH".to_vec()),
+                GENERIC_READ,
+                1,
+            )
+            .unwrap();
+        let mut memory = Memory { base: STACK_BASE, bytes: vec![0; STACK_BYTES] };
+        let esp = STACK_TOP - 0x40;
+        let output = STACK_TOP - 0x100;
+        let read = STACK_TOP - 0x80;
+        write_u32(&mut memory, esp, 0x0041_08d6).unwrap();
+        write_u32(&mut memory, esp + 4, handle).unwrap();
+        write_u32(&mut memory, esp + 8, 0).unwrap();
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(5))
+        );
+        write_u32(&mut memory, esp + 8, output).unwrap();
+        write_u32(&mut memory, esp + 12, 5).unwrap();
+        write_u32(&mut memory, esp + 16, read).unwrap();
+        write_u32(&mut memory, esp + 20, 0).unwrap();
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 1, esp, &mut memory),
+            Ok(PersonalityAction::Return(1))
+        );
+        assert_eq!(&memory.bytes[(output - STACK_BASE) as usize..][..5], b"PATCH");
+        assert_eq!(read_u32(&memory, read).unwrap(), 5);
+    }
+
+    #[test]
     fn child_crt_memmove_preserves_both_overlap_directions_and_is_cdecl() {
         let provider = ProviderImport {
             module: "MSVCRT.dll".into(),

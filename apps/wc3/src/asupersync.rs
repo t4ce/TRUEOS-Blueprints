@@ -7398,6 +7398,75 @@ pub(super) async fn run_loop(
                                 )
                         };
                         match dispatch {
+                            Ok(PersonalityAction::OpenFile(request)) => {
+                                let listing = async_fs::list_dir(b"/common/Warcraft III")
+                                    .await
+                                    .map_err(|error| {
+                                        format!(
+                                            "list Warcraft III directory for CreateFileA: TRUEOSFS {error}"
+                                        )
+                                    })?;
+                                if listing.truncated {
+                                    return Err("Warcraft III directory listing truncated".into());
+                                }
+                                let stored = child_loader::resolve_file(&listing, &request.path)
+                                    .map_err(str::to_owned)?;
+                                let win_path = format!(r"C:\Warcraft III\{}", request.path);
+                                let result = if let Some(stored) = stored {
+                                    let trueos_path = format!("/common/Warcraft III/{stored}");
+                                    let bytes = async_fs::read_file(trueos_path.as_bytes())
+                                        .await
+                                        .map_err(|error| {
+                                            format!(
+                                                "read {trueos_path} for CreateFileA: TRUEOSFS {error}"
+                                            )
+                                        })?;
+                                    let bytes = Arc::new(bytes);
+                                    let byte_len = bytes.len();
+                                    let handle = session
+                                        .process_mut(active_pid)
+                                        .ok_or_else(|| "child process missing".to_owned())?
+                                        .xp
+                                        .admit_trueos_file(
+                                            format!(r"C:\Warcraft III\{stored}"),
+                                            trueos_path.clone(),
+                                            bytes,
+                                            request.desired_access,
+                                            request.share_mode,
+                                        )
+                                        .map_err(str::to_owned)?;
+                                    logl::log(
+                                        level::IMPORTANT,
+                                        format_args!(
+                                            "WC3 CHILD CREATEFILE TRUEOSFS pid={} tid={} win_path={:?} mount=\"C:\\Warcraft III\" trueos_dir=\"/common/Warcraft III\" stored={:?} trueos_path={:?} bytes={} disposition=OPEN_EXISTING result=0x{:08x} last_error=0",
+                                            active_pid, active_tid, win_path, stored, trueos_path,
+                                            byte_len, handle,
+                                        ),
+                                    );
+                                    handle
+                                } else {
+                                    session
+                                        .process_mut(active_pid)
+                                        .ok_or_else(|| "child process missing".to_owned())?
+                                        .xp
+                                        .set_last_error_for_thread(active_tid, ERROR_FILE_NOT_FOUND);
+                                    logl::log(
+                                        level::IMPORTANT,
+                                        format_args!(
+                                            "WC3 CHILD CREATEFILE TRUEOSFS pid={} tid={} win_path={:?} mount=\"C:\\Warcraft III\" trueos_dir=\"/common/Warcraft III\" stored=None disposition=OPEN_EXISTING result=0xffffffff last_error={}",
+                                            active_pid, active_tid, win_path, ERROR_FILE_NOT_FOUND,
+                                        ),
+                                    );
+                                    u32::MAX
+                                };
+                                let mut registers = exit.registers;
+                                registers.eax = result;
+                                contexts[active]
+                                    .context
+                                    .set_registers(registers)
+                                    .map_err(|error| error.to_string())?;
+                                continue;
+                            }
                             Ok(PersonalityAction::Return(result)) => {
                                 if operation == child_loader::ProviderOp::GetSystemInfo {
                                     logl::log(
@@ -8427,6 +8496,9 @@ pub(super) async fn run_loop(
                     })?;
                 let mut callback = None;
                 let result = match result {
+                    PersonalityAction::OpenFile(_) => {
+                        return Err("launcher requested child-only async file open".into());
+                    }
                     PersonalityAction::Return(value) => {
                         if WinCall::from_import(&import) == WinCall::TlsGetValue {
                             let frame = read_guest_words(&memory, exit.registers.esp, 2)?;

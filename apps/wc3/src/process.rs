@@ -20,7 +20,7 @@ use crate::{
     pe32,
     session::{
         CreateEventRequest, CreateMutexRequest, CreateProcessRequest, CreateWindowRequest,
-        GetExitCodeProcessRequest, LoadImageRequest, PersonalityAction, SessionRequest, ThreadKey,
+        GetExitCodeProcessRequest, LoadImageRequest, OpenFileRequest, PersonalityAction, SessionRequest, ThreadKey,
         WaitRequest, WindowBlitRequest, WindowTextRequest,
     },
     thunk32,
@@ -1089,7 +1089,16 @@ struct TokenHandle {
 enum FileBacking {
     SelfImage,
     War3Mpq,
+    TrueosFs(u32),
     Scratch(u32),
+}
+
+#[derive(Clone, Debug)]
+struct ResidentFile {
+    win_path: String,
+    trueos_path: String,
+    bytes: Arc<Vec<u8>>,
+    attributes: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -1137,6 +1146,12 @@ fn is_self_image_path(path: &str) -> bool {
 
 fn is_war3_mpq_path(path: &str) -> bool {
     canonical_file_path(path) == r"c:\warcraft iii\war3.mpq"
+}
+
+fn warcraft_drive_relative_path(path: &str) -> Option<String> {
+    canonical_file_path(path)
+        .strip_prefix(r"c:\warcraft iii\")
+        .map(str::to_owned)
 }
 
 fn is_war3_scratch_path(path: &str) -> bool {
@@ -1321,6 +1336,8 @@ pub struct XpProcess {
     next_token_handle: u32,
     file_handles: HashMap<u32, FileHandle>,
     war3_mpq_bytes: Option<Arc<Vec<u8>>>,
+    resident_files: HashMap<u32, ResidentFile>,
+    next_resident_file: u32,
     next_file_handle: u32,
     next_find_handle: u32,
     find_handles: HashSet<u32>,
@@ -1489,6 +1506,8 @@ impl XpProcess {
             next_token_handle: TOKEN_HANDLE_BASE,
             file_handles: HashMap::new(),
             war3_mpq_bytes: None,
+            resident_files: HashMap::new(),
+            next_resident_file: 1,
             next_file_handle: FILE_HANDLE_BASE,
             next_find_handle: FIND_HANDLE_BASE,
             find_handles: HashSet::new(),
@@ -1771,6 +1790,45 @@ impl XpProcess {
 
     pub fn install_war3_mpq(&mut self, bytes: Arc<Vec<u8>>) {
         self.war3_mpq_bytes = Some(bytes);
+    }
+
+    pub fn admit_trueos_file(
+        &mut self,
+        win_path: String,
+        trueos_path: String,
+        bytes: Arc<Vec<u8>>,
+        desired_access: u32,
+        share_mode: u32,
+    ) -> Result<u32, &'static str> {
+        let file_id = self.next_resident_file;
+        self.next_resident_file = self
+            .next_resident_file
+            .checked_add(1)
+            .ok_or("resident file overflow")?;
+        let handle = self.next_file_handle;
+        self.next_file_handle = self
+            .next_file_handle
+            .checked_add(1)
+            .ok_or("file handle overflow")?;
+        self.resident_files.insert(
+            file_id,
+            ResidentFile {
+                win_path,
+                trueos_path,
+                bytes,
+                attributes: FILE_ATTRIBUTE_NORMAL,
+            },
+        );
+        self.file_handles.insert(
+            handle,
+            FileHandle {
+                backing: FileBacking::TrueosFs(file_id),
+                cursor: 0,
+                access: desired_access,
+                share: share_mode,
+            },
+        );
+        Ok(handle)
     }
 
     pub fn close_registry_handle(&mut self, handle: u32) -> bool {
@@ -2172,6 +2230,11 @@ impl XpProcess {
                     api: "War3.mpq",
                     detail: "resident backing unavailable".into(),
                 }),
+            FileBacking::TrueosFs(id) => self
+                .resident_files
+                .get(&id)
+                .map(|file| file.bytes.len() as u64)
+                .ok_or(ProviderDispatchError::Fault("resident file disappeared")),
             FileBacking::Scratch(id) => self
                 .scratch_files
                 .get(&id)
@@ -3076,6 +3139,56 @@ impl XpProcess {
                         .ok_or("call count overflow")?;
                     return Ok(PersonalityAction::Return(handle));
                 }
+                if let Some(relative) = warcraft_drive_relative_path(&path)
+                    && !is_war3_mpq_path(&path)
+                    && !is_self_image_path(&path)
+                {
+                    if relative.contains('\\') {
+                        return Err(ProviderDispatchError::Frontier {
+                            api: "CreateFileA",
+                            detail: format!("nested Warcraft path={path:?}"),
+                        });
+                    }
+                    if creation_disposition != OPEN_EXISTING {
+                        return Err(ProviderDispatchError::Frontier {
+                            api: "CreateFileA",
+                            detail: format!(
+                                "Warcraft file disposition=0x{creation_disposition:08x}"
+                            ),
+                        });
+                    }
+                    if desired_access & FILE_WRITE_ACCESS_MASK != 0 {
+                        return Err(ProviderDispatchError::Frontier {
+                            api: "CreateFileA",
+                            detail: format!(
+                                "Warcraft file write access=0x{desired_access:08x}"
+                            ),
+                        });
+                    }
+                    if security_attributes != 0 || template_file != 0 {
+                        return Err(ProviderDispatchError::Frontier {
+                            api: "CreateFileA",
+                            detail: format!(
+                                "Warcraft file security=0x{security_attributes:08x} \
+                                 template=0x{template_file:08x}"
+                            ),
+                        });
+                    }
+                    self.call_count = self
+                        .call_count
+                        .checked_add(1)
+                        .ok_or("call count overflow")?;
+                    return Ok(PersonalityAction::OpenFile(OpenFileRequest {
+                        key: ThreadKey { pid, tid },
+                        path: relative,
+                        desired_access,
+                        share_mode,
+                        security_attributes,
+                        creation_disposition,
+                        flags_and_attributes,
+                        template_file,
+                    }));
+                }
                 if is_war3_mpq_path(&path) {
                     if creation_disposition != OPEN_EXISTING {
                         return Err(ProviderDispatchError::Frontier {
@@ -3286,6 +3399,23 @@ impl XpProcess {
                         memory.write(output, &backing[source_start..source_start + transferred])?;
                         transferred
                     }
+                    FileBacking::TrueosFs(id) => {
+                        let resident = self
+                            .resident_files
+                            .get(&id)
+                            .ok_or(ProviderDispatchError::Fault("resident file disappeared"))?;
+                        let source_start = start.min(resident.bytes.len());
+                        let transferred = if start > resident.bytes.len() {
+                            0
+                        } else {
+                            requested.min(resident.bytes.len() - start)
+                        };
+                        memory.write(
+                            output,
+                            &resident.bytes[source_start..source_start + transferred],
+                        )?;
+                        transferred
+                    }
                     FileBacking::Scratch(id) => {
                         let scratch = self
                             .scratch_files
@@ -3393,7 +3523,7 @@ impl XpProcess {
                     // Scratch writes update the process-local byte vector
                     // synchronously, so there is no lower buffered layer.
                     FileBacking::Scratch(_) => {}
-                    FileBacking::SelfImage | FileBacking::War3Mpq => {
+                    FileBacking::SelfImage | FileBacking::War3Mpq | FileBacking::TrueosFs(_) => {
                         self.set_last_error(ERROR_ACCESS_DENIED);
                         self.call_count = self
                             .call_count
