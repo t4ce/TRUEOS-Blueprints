@@ -67,7 +67,7 @@ pub const XP_CXICON: u32 = 32;
 pub const XP_CYICON: u32 = 32;
 pub const XP_CXCURSOR: u32 = 32;
 pub const XP_CYCURSOR: u32 = 32;
-const USER_IMAGE_HANDLE_BASE: u32 = 0x5743_9001;
+const USER_IMAGE_HANDLE_BASE: u32 = 0x5743_d001;
 pub const TRUEOS_D3D8_SUBSYSTEM_ID: u32 = 0;
 pub const TRUEOS_D3D8_REVISION: u32 = 0x04;
 pub const TRUEOS_D3D8_ADAPTER_GUID: [u8; 16] = [
@@ -1112,6 +1112,17 @@ enum UserImage {
         resource_id: u16,
         bytes: Vec<u8>,
     },
+    Cursor {
+        module: u32,
+        name: String,
+        width: u32,
+        height: u32,
+        resource_id: u16,
+        hotspot_x: u16,
+        hotspot_y: u16,
+        bytes: Vec<u8>,
+        shared: bool,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1122,6 +1133,20 @@ pub struct UserImageLoadResult {
     pub width: u32,
     pub height: u32,
     pub resource_id: u16,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UserCursorLoadResult {
+    pub handle: u32,
+    pub module: u32,
+    pub name: String,
+    pub width: u32,
+    pub height: u32,
+    pub resource_id: u16,
+    pub hotspot_x: u16,
+    pub hotspot_y: u16,
+    pub resource_bytes: usize,
+    pub shared: bool,
 }
 
 impl PreparedProcess {

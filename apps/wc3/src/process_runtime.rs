@@ -1276,6 +1276,53 @@ impl XpProcess {
         Ok(UserImageLoadResult { handle, module, name, width: XP_CXICON, height: XP_CYICON, resource_id })
     }
 
+    fn load_cursor_a(&mut self, esp: u32, memory: &impl GuestMemory) -> Result<UserCursorLoadResult, ProviderDispatchError> {
+        const RT_CURSOR: u32 = 1;
+        const RT_GROUP_CURSOR: u32 = 12;
+        let [_, module, name_ptr] = arguments::<3>(memory, esp)?;
+        if module != pe32::IMAGE_BASE || name_ptr == 0 || name_ptr & 0xffff_0000 == 0 {
+            return Err(ProviderDispatchError::Frontier {
+                api: "LoadCursorA",
+                detail: format!("unobserved module=0x{module:08x} name=0x{name_ptr:08x}"),
+            });
+        }
+        let name = read_c_string(memory, name_ptr, 256)?;
+        if let Some((handle, image)) = self.user_images.iter().find(|(_, image)| matches!(image, UserImage::Cursor { module: existing_module, name: existing_name, .. } if *existing_module == module && existing_name.eq_ignore_ascii_case(&name))) {
+            return self.cursor_load_result(*handle, image).ok_or(ProviderDispatchError::Fault("stored cursor"));
+        }
+        let group = resource_data(memory, module, ResourceKey::Id(RT_GROUP_CURSOR), ResourceKey::Name(&name))?;
+        if group.size < 6 || read_u16(memory, group.address)? != 0 || read_u16(memory, group.address + 2)? != 2 {
+            return Err(ProviderDispatchError::Fault("group cursor header"));
+        }
+        let count = u32::from(read_u16(memory, group.address + 4)?);
+        let mut selected = None;
+        for index in 0..count {
+            let entry = group.address.checked_add(6 + index * 14).ok_or(ProviderDispatchError::Fault("group cursor entry overflow"))?;
+            if entry.checked_add(14).ok_or(ProviderDispatchError::Fault("group cursor entry overflow"))? > group.address + group.size {
+                return Err(ProviderDispatchError::Fault("group cursor entry truncated"));
+            }
+            let raw_width = read_u16(memory, entry)?;
+            let raw_height = read_u16(memory, entry + 2)?;
+            let width = if raw_width == 0 { 256 } else { u32::from(raw_width) };
+            let height = if raw_height == 0 { 256 } else { u32::from(raw_height) };
+            if width == XP_CXCURSOR && height == XP_CYCURSOR {
+                selected = Some(read_u16(memory, entry + 12)?);
+                break;
+            }
+        }
+        let resource_id = selected.ok_or_else(|| ProviderDispatchError::Frontier { api: "LoadCursorA", detail: format!("cursor {name:?} has no {}x{} entry", XP_CXCURSOR, XP_CYCURSOR) })?;
+        let cursor = numeric_resource(memory, module, RT_CURSOR, u32::from(resource_id))?;
+        if cursor.size < 4 { return Err(ProviderDispatchError::Fault("cursor resource missing hotspot")); }
+        let hotspot_x = read_u16(memory, cursor.address)?;
+        let hotspot_y = read_u16(memory, cursor.address + 2)?;
+        let mut bytes = vec![0; (cursor.size - 4) as usize];
+        memory.read(cursor.address + 4, &mut bytes)?;
+        let handle = self.next_user_image_handle;
+        self.next_user_image_handle = self.next_user_image_handle.checked_add(1).ok_or(ProviderDispatchError::Fault("user image handle overflow"))?;
+        self.user_images.insert(handle, UserImage::Cursor { module, name: name.clone(), width: XP_CXCURSOR, height: XP_CYCURSOR, resource_id, hotspot_x, hotspot_y, bytes, shared: true });
+        self.user_image_cursor_result(handle).ok_or(ProviderDispatchError::Fault("stored cursor"))
+    }
+
     fn get_object_a(&self, esp: u32, memory: &mut impl GuestMemory) -> Result<u32, &'static str> {
         let [ret, handle, buffer_bytes, output] = arguments::<4>(memory, esp)?;
         let Some(GdiObject::Bitmap(bitmap)) = self.gdi_objects.get(&handle) else {
@@ -2186,7 +2233,19 @@ impl XpProcess {
                 height: *height,
                 resource_id: *resource_id,
             }),
+            UserImage::Cursor { .. } => None,
         }
+    }
+
+    fn cursor_load_result(&self, handle: u32, image: &UserImage) -> Option<UserCursorLoadResult> {
+        match image {
+            UserImage::Cursor { module, name, width, height, resource_id, hotspot_x, hotspot_y, bytes, shared } => Some(UserCursorLoadResult { handle, module: *module, name: name.clone(), width: *width, height: *height, resource_id: *resource_id, hotspot_x: *hotspot_x, hotspot_y: *hotspot_y, resource_bytes: bytes.len(), shared: *shared }),
+            _ => None,
+        }
+    }
+
+    pub fn user_image_cursor_result(&self, handle: u32) -> Option<UserCursorLoadResult> {
+        self.cursor_load_result(handle, self.user_images.get(&handle)?)
     }
 
     pub fn admit_bitmap(

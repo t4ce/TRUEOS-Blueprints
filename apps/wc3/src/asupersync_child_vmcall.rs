@@ -5932,6 +5932,30 @@
                                     }
                                 }
                                 match operation {
+                                    child_loader::ProviderOp::LoadCursorA => {
+                                        let cursor = session
+                                            .process(active_pid)
+                                            .and_then(|process| process.xp.user_image_cursor_result(result))
+                                            .ok_or_else(|| "LoadCursorA result handle missing".to_owned())?;
+                                        logl::log(
+                                            level::IMPORTANT,
+                                            format_args!(
+                                                "WC3 CHILD LOADCURSORA RESULT pid={} tid={} module={:?} name={:?} selected={}x{} cursor_resource_id={} hotspot={},{} resource_bytes={} handle=0x{:08x} shared={} result=success cleanup=8-by-thunk",
+                                                active_pid,
+                                                active_tid,
+                                                session.process(active_pid).and_then(|process| process.xp.loaded_module_name(cursor.module)).unwrap_or("<unknown>"),
+                                                cursor.name,
+                                                cursor.width,
+                                                cursor.height,
+                                                cursor.resource_id,
+                                                cursor.hotspot_x,
+                                                cursor.hotspot_y,
+                                                cursor.resource_bytes,
+                                                cursor.handle,
+                                                cursor.shared as u8,
+                                            ),
+                                        );
+                                    }
                                     child_loader::ProviderOp::LoadImageA => {
                                         let [_, module, name_ptr, image_type, cx, cy, flags] = read_guest_words(
                                             &X86Memory(&child.address_space),
