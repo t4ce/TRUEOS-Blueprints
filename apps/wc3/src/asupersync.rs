@@ -46,6 +46,9 @@ fn wc3_cpuid(leaf: u32, subleaf: u32) -> Result<[u32; 4], String> {
             0,
             (1 << 0) | (1 << 4) | (1 << 8) | (1 << 15) | (1 << 23) | (1 << 24) | (1 << 25),
         ]),
+        // Extended CPUID exists, but this PIII-style profile advertises no
+        // extended feature, brand, or address-size leaves.
+        (0x8000_0000, _) => Ok([0x8000_0000, 0, 0, 0]),
         _ => Err(format!(
             "WC3 CPUID frontier leaf=0x{leaf:08x} subleaf=0x{subleaf:08x}"
         )),
