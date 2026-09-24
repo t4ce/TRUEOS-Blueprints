@@ -1,19 +1,132 @@
-// WC3 CHILD LOADLIBRARY LOCAL IMPORT source=trueosfs index=729 module="GDI32.dll" symbol=Name("SetTextColor") iat_rva=0x00706044
-// WC3 CHILD LOADLIBRARY LOCAL IMPORT source=trueosfs index=728 module="GDI32.dll" symbol=Name("SetBkColor") iat_rva=0x00706040
-// WC3 CHILD LOADLIBRARY LOCAL IMPORT source=trueosfs index=727 module="GDI32.dll" symbol=Name("GetDeviceCaps") iat_rva=0x0070603c
-// WC3 CHILD LOADLIBRARY LOCAL IMPORT source=trueosfs index=726 module="GDI32.dll" symbol=Name("SetPixelFormat") iat_rva=0x00706038
-// WC3 CHILD LOADLIBRARY LOCAL IMPORT source=trueosfs index=725 module="GDI32.dll" symbol=Name("TextOutW") iat_rva=0x00706034
-// WC3 CHILD LOADLIBRARY LOCAL IMPORT source=trueosfs index=724 module="GDI32.dll" symbol=Name("SetDeviceGammaRamp") iat_rva=0x00706030
-// WC3 CHILD LOADLIBRARY LOCAL IMPORT source=trueosfs index=723 module="GDI32.dll" symbol=Name("DescribePixelFormat") iat_rva=0x0070602c
-// WC3 CHILD LOADLIBRARY LOCAL IMPORT source=trueosfs index=722 module="GDI32.dll" symbol=Name("ChoosePixelFormat") iat_rva=0x00706028
-// WC3 CHILD LOADLIBRARY LOCAL IMPORT source=trueosfs index=721 module="GDI32.dll" symbol=Name("SetTextAlign") iat_rva=0x00706024
-// WC3 CHILD LOADLIBRARY LOCAL IMPORT source=trueosfs index=720 module="GDI32.dll" symbol=Name("SelectObject") iat_rva=0x00706020
-// WC3 CHILD LOADLIBRARY LOCAL IMPORT source=trueosfs index=719 module="GDI32.dll" symbol=Name("GetDeviceGammaRamp") iat_rva=0x0070601c
-// WC3 CHILD LOADLIBRARY LOCAL IMPORT source=trueosfs index=718 module="GDI32.dll" symbol=Name("CreateFontA") iat_rva=0x00706018
-// WC3 CHILD LOADLIBRARY LOCAL IMPORT source=trueosfs index=717 module="GDI32.dll" symbol=Name("GetStockObject") iat_rva=0x00706014
-// WC3 CHILD LOADLIBRARY LOCAL IMPORT source=trueosfs index=716 module="GDI32.dll" symbol=Name("DeleteObject") iat_rva=0x00706010
+/* GDI32.dll
+SetTextColor         iat_rva=0x00706044
+SetBkColor           iat_rva=0x00706040
+GetDeviceCaps        iat_rva=0x0070603c
+SetPixelFormat       iat_rva=0x00706038
+TextOutW             iat_rva=0x00706034
+SetDeviceGammaRamp   iat_rva=0x00706030
+DescribePixelFormat  iat_rva=0x0070602c
+ChoosePixelFormat    iat_rva=0x00706028
+SetTextAlign         iat_rva=0x00706024
+SelectObject         iat_rva=0x00706020
+GetDeviceGammaRamp   iat_rva=0x0070601c
+CreateFontA          iat_rva=0x00706018
+GetStockObject       iat_rva=0x00706014
+DeleteObject         iat_rva=0x00706010
+*/
 
 impl XpProcess {
+    fn static_gdi_stub(&self, api: &'static str) -> Result<u32, ProviderDispatchError> {
+        Err(ProviderDispatchError::Frontier {
+            api,
+            detail: "static GDI entry has no modeled behavior yet".into(),
+        })
+    }
+
+    fn set_text_color_static(
+        &self,
+        _esp: u32,
+        _memory: &impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
+        self.static_gdi_stub("SetTextColor")
+    }
+
+    fn set_bk_color_static(
+        &self,
+        _esp: u32,
+        _memory: &impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
+        self.static_gdi_stub("SetBkColor")
+    }
+
+    fn set_pixel_format_static(
+        &self,
+        _esp: u32,
+        _memory: &impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
+        self.static_gdi_stub("SetPixelFormat")
+    }
+
+    fn text_out_w_static(
+        &self,
+        _esp: u32,
+        _memory: &impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
+        self.static_gdi_stub("TextOutW")
+    }
+
+    fn set_device_gamma_ramp_static(
+        &self,
+        _esp: u32,
+        _memory: &impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
+        self.static_gdi_stub("SetDeviceGammaRamp")
+    }
+
+    fn describe_pixel_format_static(
+        &self,
+        _esp: u32,
+        _memory: &impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
+        self.static_gdi_stub("DescribePixelFormat")
+    }
+
+    fn choose_pixel_format_static(
+        &self,
+        _esp: u32,
+        _memory: &impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
+        self.static_gdi_stub("ChoosePixelFormat")
+    }
+
+    fn set_text_align_static(
+        &self,
+        _esp: u32,
+        _memory: &impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
+        self.static_gdi_stub("SetTextAlign")
+    }
+
+    fn select_object_static(
+        &self,
+        _esp: u32,
+        _memory: &impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
+        self.static_gdi_stub("SelectObject")
+    }
+
+    fn get_device_gamma_ramp_static(
+        &self,
+        _esp: u32,
+        _memory: &impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
+        self.static_gdi_stub("GetDeviceGammaRamp")
+    }
+
+    fn create_font_a_static(
+        &self,
+        _esp: u32,
+        _memory: &impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
+        self.static_gdi_stub("CreateFontA")
+    }
+
+    fn get_stock_object_static(
+        &self,
+        _esp: u32,
+        _memory: &impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
+        self.static_gdi_stub("GetStockObject")
+    }
+
+    fn delete_object_static(
+        &self,
+        _esp: u32,
+        _memory: &impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
+        self.static_gdi_stub("DeleteObject")
+    }
+
     fn get_device_caps(
         &self,
         esp: u32,

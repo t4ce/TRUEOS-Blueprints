@@ -66,6 +66,45 @@ impl XpProcess {
                     .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(result))
             }
+            ProviderOp::SetTextColor => Ok(PersonalityAction::Return(
+                self.set_text_color_static(esp, memory)?,
+            )),
+            ProviderOp::SetBkColor => Ok(PersonalityAction::Return(
+                self.set_bk_color_static(esp, memory)?,
+            )),
+            ProviderOp::SetPixelFormat => Ok(PersonalityAction::Return(
+                self.set_pixel_format_static(esp, memory)?,
+            )),
+            ProviderOp::TextOutW => Ok(PersonalityAction::Return(
+                self.text_out_w_static(esp, memory)?,
+            )),
+            ProviderOp::SetDeviceGammaRamp => Ok(PersonalityAction::Return(
+                self.set_device_gamma_ramp_static(esp, memory)?,
+            )),
+            ProviderOp::DescribePixelFormat => Ok(PersonalityAction::Return(
+                self.describe_pixel_format_static(esp, memory)?,
+            )),
+            ProviderOp::ChoosePixelFormat => Ok(PersonalityAction::Return(
+                self.choose_pixel_format_static(esp, memory)?,
+            )),
+            ProviderOp::SetTextAlign => Ok(PersonalityAction::Return(
+                self.set_text_align_static(esp, memory)?,
+            )),
+            ProviderOp::SelectObject => Ok(PersonalityAction::Return(
+                self.select_object_static(esp, memory)?,
+            )),
+            ProviderOp::GetDeviceGammaRamp => Ok(PersonalityAction::Return(
+                self.get_device_gamma_ramp_static(esp, memory)?,
+            )),
+            ProviderOp::CreateFontA => Ok(PersonalityAction::Return(
+                self.create_font_a_static(esp, memory)?,
+            )),
+            ProviderOp::GetStockObject => Ok(PersonalityAction::Return(
+                self.get_stock_object_static(esp, memory)?,
+            )),
+            ProviderOp::DeleteObject => Ok(PersonalityAction::Return(
+                self.delete_object_static(esp, memory)?,
+            )),
             ProviderOp::LoadImageA => {
                 let result = self.load_icon_a(esp, memory)?;
                 self.call_count = self.call_count.checked_add(1).ok_or("call count overflow")?;

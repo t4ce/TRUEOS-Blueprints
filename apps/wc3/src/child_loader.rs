@@ -171,6 +171,19 @@ pub enum ProviderOp {
     ShowWindow,
     GetDC,
     GetDeviceCaps,
+    SetTextColor,
+    SetBkColor,
+    SetPixelFormat,
+    TextOutW,
+    SetDeviceGammaRamp,
+    DescribePixelFormat,
+    ChoosePixelFormat,
+    SetTextAlign,
+    SelectObject,
+    GetDeviceGammaRamp,
+    CreateFontA,
+    GetStockObject,
+    DeleteObject,
     LoadImageA,
     LoadCursorA,
     RegisterClassExA,
@@ -252,6 +265,14 @@ impl ProviderOp {
             Self::ShowWindow => 8,
             Self::GetDC => 4,
             Self::GetDeviceCaps => 8,
+            Self::SetTextColor | Self::SetBkColor | Self::SetTextAlign => 8,
+            Self::SetPixelFormat => 12,
+            Self::TextOutW => 20,
+            Self::SetDeviceGammaRamp | Self::GetDeviceGammaRamp => 8,
+            Self::DescribePixelFormat => 16,
+            Self::ChoosePixelFormat => 8,
+            Self::SelectObject | Self::DeleteObject | Self::GetStockObject => 4,
+            Self::CreateFontA => 56,
             Self::LoadImageA => 24,
             Self::LoadCursorA => 8,
             Self::RegisterClassExA => 4,
@@ -409,6 +430,19 @@ impl ProviderOp {
                 | Self::EnumDisplaySettingsA
                 | Self::ChangeDisplaySettingsExA
                 | Self::GetDeviceCaps
+                | Self::SetTextColor
+                | Self::SetBkColor
+                | Self::SetPixelFormat
+                | Self::TextOutW
+                | Self::SetDeviceGammaRamp
+                | Self::DescribePixelFormat
+                | Self::ChoosePixelFormat
+                | Self::SetTextAlign
+                | Self::SelectObject
+                | Self::GetDeviceGammaRamp
+                | Self::CreateFontA
+                | Self::GetStockObject
+                | Self::DeleteObject
                 | Self::LoadImageA
                 | Self::LoadCursorA
                 | Self::RegisterClassExA
@@ -533,6 +567,19 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
     if import.module.eq_ignore_ascii_case("GDI32.dll") {
         return match symbol.as_str() {
             "GetDeviceCaps" => ProviderOp::GetDeviceCaps,
+            "SetTextColor" => ProviderOp::SetTextColor,
+            "SetBkColor" => ProviderOp::SetBkColor,
+            "SetPixelFormat" => ProviderOp::SetPixelFormat,
+            "TextOutW" => ProviderOp::TextOutW,
+            "SetDeviceGammaRamp" => ProviderOp::SetDeviceGammaRamp,
+            "DescribePixelFormat" => ProviderOp::DescribePixelFormat,
+            "ChoosePixelFormat" => ProviderOp::ChoosePixelFormat,
+            "SetTextAlign" => ProviderOp::SetTextAlign,
+            "SelectObject" => ProviderOp::SelectObject,
+            "GetDeviceGammaRamp" => ProviderOp::GetDeviceGammaRamp,
+            "CreateFontA" => ProviderOp::CreateFontA,
+            "GetStockObject" => ProviderOp::GetStockObject,
+            "DeleteObject" => ProviderOp::DeleteObject,
             _ => ProviderOp::Unknown,
         };
     }
@@ -630,6 +677,41 @@ pub fn external_export_thunk_kind(import: &ProviderImport) -> Option<thunk32::Ki
 #[cfg(test)]
 mod beginthreadex_tests {
     use super::*;
+
+    #[test]
+    fn static_gdi_imports_have_typed_frontier_dispatch_and_abi() {
+        let entries = [
+            ("SetTextColor", ProviderOp::SetTextColor, 8),
+            ("SetBkColor", ProviderOp::SetBkColor, 8),
+            ("GetDeviceCaps", ProviderOp::GetDeviceCaps, 8),
+            ("SetPixelFormat", ProviderOp::SetPixelFormat, 12),
+            ("TextOutW", ProviderOp::TextOutW, 20),
+            ("SetDeviceGammaRamp", ProviderOp::SetDeviceGammaRamp, 8),
+            ("DescribePixelFormat", ProviderOp::DescribePixelFormat, 16),
+            ("ChoosePixelFormat", ProviderOp::ChoosePixelFormat, 8),
+            ("SetTextAlign", ProviderOp::SetTextAlign, 8),
+            ("SelectObject", ProviderOp::SelectObject, 4),
+            ("GetDeviceGammaRamp", ProviderOp::GetDeviceGammaRamp, 8),
+            ("CreateFontA", ProviderOp::CreateFontA, 56),
+            ("GetStockObject", ProviderOp::GetStockObject, 4),
+            ("DeleteObject", ProviderOp::DeleteObject, 4),
+        ];
+        for (symbol, expected, cleanup) in entries {
+            let import = ProviderImport {
+                module: "GDI32.dll".into(),
+                symbol: ProviderSymbol::Name(symbol.into()),
+                iat_rva: 0,
+            };
+            let operation = provider_op(&import);
+            assert_eq!(operation, expected, "{symbol}");
+            assert!(operation.is_generic_process_local(), "{symbol}");
+            assert_eq!(operation.stack_cleanup_bytes(), cleanup, "{symbol}");
+            assert_eq!(
+                provider_thunk_kind(&import),
+                thunk32::Kind::Stdcall(cleanup)
+            );
+        }
+    }
 
     #[test]
     fn d3d8_create8_is_an_advertised_stdcall_export() {
