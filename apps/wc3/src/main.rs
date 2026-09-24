@@ -2027,6 +2027,7 @@ struct ChildInitterm {
     cursor: u32,
     end: u32,
     callbacks_invoked: u32,
+    rust_callbacks: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -2045,6 +2046,68 @@ enum InittermAdvance {
     Complete,
 }
 
+// Child PE images are mapped RWX as a whole by map_child_image. Restrict the
+// optimization further to their declared sections: code for fetches, non-code
+// data for operands. Dynamic/stack/control mappings never qualify.
+fn initializer_image_range(child: &PendingChild, address: u32, len: usize, access: u32) -> bool {
+    let Some(end) = u32::try_from(len).ok().and_then(|len| address.checked_add(len)) else {
+        return false;
+    };
+    std::iter::once(&child.image).chain(child.native_modules.iter().map(|module| &module.image))
+        .any(|image| image.sections.iter().any(|section| {
+            let Some(start) = image.image_base.checked_add(section.virtual_address) else { return false; };
+            let Some(limit) = start.checked_add(section.virtual_size) else { return false; };
+            address >= start && end <= limit
+                && section.characteristics & access == access
+                && (access & 0x2000_0000 != 0 || section.characteristics & 0x2000_0000 == 0)
+        }))
+}
+
+fn try_rust_initializer(
+    child: &PendingChild,
+    context: &mut GuestContext,
+    target: u32,
+    callback_esp: u32,
+    registers: &mut Registers,
+) -> Result<bool, String> {
+    // Do not erase single stepping, breakpoints, alignment faults, or observable
+    // interleavings. Normal child images/stack have flat segments and RWX/RW maps.
+    if !child.parked_threads.is_empty() || registers.eflags & 0x0007_4100 != 0 {
+        return Ok(false);
+    }
+    let debug = context.context.debug_registers().map_err(|error| error.to_string())?;
+    if debug.dr7 & 0x23ff != 0 { return Ok(false); }
+    let mut trap = [0; 3];
+    if child.address_space.read(thunk32::CHILD_CALLBACK_RETURN_ADDRESS, &mut trap).ok() != Some(3)
+        || trap != [0x0f, 0x01, 0xc1]
+    { return Ok(false); }
+    let Some(effect) = wc3::initterm::plan(target, |address, output, access| {
+        let permission = match access {
+            wc3::initterm::Access::Code => 0x2000_0000,
+            wc3::initterm::Access::Data => 0x4000_0000,
+        };
+        initializer_image_range(child, address, output.len(), permission)
+            && child.address_space.read(address, output).ok() == Some(output.len())
+    }) else { return Ok(false); };
+    if let Some((destination, value)) = effect.store {
+        // A single-page kernel write validates the whole range before copying.
+        // On denial it has made no changes, so the guest can take its own fault.
+        if destination & 0xfff > 0xffc
+            || !initializer_image_range(child, destination, 4, 0xc000_0000)
+        { return Ok(false); }
+        match child.address_space.write(destination, &value.to_le_bytes()) {
+            Ok(4) => (),
+            Err(_) => return Ok(false),
+            Ok(_) => return Err("short semantic initializer write".into()),
+        }
+    }
+    if let Some(eax) = effect.eax { registers.eax = eax; }
+    registers.esp = callback_esp + 4;
+    registers.eip = thunk32::CHILD_CALLBACK_RETURN_AFTER_VMCALL;
+    context.context.set_registers(*registers).map_err(|error| error.to_string())?;
+    Ok(true)
+}
+
 fn advance_child_initterm(
     child: &mut PendingChild,
     context: &mut GuestContext,
@@ -2060,8 +2123,8 @@ fn advance_child_initterm(
                 .take()
                 .ok_or_else(|| "child _initterm completion state missing".to_owned())?;
             logl::log(level::IMPORTANT, format_args!(
-                "WC3 CHILD CRT INITTERM COMPLETE pid={} tid={} callbacks={}",
-                child.pid, child.tid, complete.callbacks_invoked,
+                "WC3 CHILD CRT INITTERM COMPLETE pid={} tid={} callbacks={} rust_callbacks={}",
+                child.pid, child.tid, complete.callbacks_invoked, complete.rust_callbacks,
             ));
             let mut registers = context
                 .context
@@ -2125,6 +2188,12 @@ fn advance_child_initterm(
             .context
             .registers()
             .map_err(|error| error.to_string())?;
+        if !cfg!(feature = "guest-initterm")
+            && try_rust_initializer(child, context, target, callback_esp, &mut registers)?
+        {
+            child.initterm.as_mut().expect("active initializer").rust_callbacks += 1;
+            continue;
+        }
         registers.eip = target;
         registers.esp = callback_esp;
         context

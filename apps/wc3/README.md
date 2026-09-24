@@ -43,8 +43,7 @@ end pointer still advances by one callback, order is unchanged, and the old
 allocation stays live until copying and pointer updates complete. If the larger
 reservation cannot fit, allocation retries with the exact required size.
 API argument frames are fetched in a single checked guest-memory read instead
-of one host crossing per word. All initializers still execute, and their
-completion count remains visible with `trace-init` disabled.
+of one host crossing per word. Initializer completion counts remain visible with `trace-init` disabled.
 
 MSVCRT `memmove` imports now jump to a cdecl x86 helper in the child control
 page. It copies directly with `REP MOVSB`, backwards for rightward overlap,
@@ -104,3 +103,26 @@ the existing table-fill format and rejects unsorted/duplicate/unaligned pages.
 The later loop around `0x0046160c–0x0046162c` remains uncached: those bytes are
 decrypted at runtime, so the on-disk disassembly is not enough to audit it.
 The `sintfnt.dll` / `Corrupt Data!` frontier is unchanged.
+
+### Simple CRT initializers in Rust
+
+The default `_initterm` path recognizes current guest code consisting of up to
+four direct jumps followed by a dword copy through EAX, an immediate dword
+store, or RET. It computes the callback's effects directly in Rust and continues
+the table in order. Inputs are read fresh; this is not a saved-state replay.
+`CRT INITTERM COMPLETE` reports `callbacks` (total) and `rust_callbacks` (the
+subset handled this way). The audited War3/Game images contain 590 candidate
+callbacks; runtime guards determine the actual count.
+
+Code must be in an executable PE section, operands in non-executable readable
+PE data, and destinations in writable PE data within one page. Stack/control
+aliases, unrecognized code, failed accesses, debug/step modes and additional
+child threads use normal guest execution. The existing return-address stack
+write is retained; EAX, other registers and flags follow the recognized x86
+instructions. Enable `guest-initterm` to force all callbacks through the guest.
+No event-pool or record-expansion replacement is included.
+
+Validation: `cargo test -p wc3 --lib --offline` and
+`python3 apps/wc3/tests/test_native_initterm.py`. The latter compares Rust results
+with native i386 execution, including flags, preserved registers, stack balance,
+source/destination aliasing, and zero through four jump wrappers.

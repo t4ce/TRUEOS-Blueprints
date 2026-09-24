@@ -37,6 +37,21 @@ const WAR3_TABLE_FILL_STEP_START: u32 = 0x0046_1496;
 const WAR3_TABLE_FILL_STEP_END: u32 = 0x0046_14c3;
 const WAR3_TABLE_FILL_HEARTBEAT_STRIDE: u32 = 0x100;
 
+fn wc3_cpuid(leaf: u32, subleaf: u32) -> Result<[u32; 4], String> {
+    match (leaf, subleaf) {
+        (0, _) => Ok([1, 0x756e_6547, 0x6c65_746e, 0x4965_6e69]),
+        (1, _) => Ok([
+            0x0000_06b1,
+            0,
+            0,
+            (1 << 0) | (1 << 4) | (1 << 8) | (1 << 15) | (1 << 23) | (1 << 24) | (1 << 25),
+        ]),
+        _ => Err(format!(
+            "WC3 CPUID frontier leaf=0x{leaf:08x} subleaf=0x{subleaf:08x}"
+        )),
+    }
+}
+
 fn hex_bytes(bytes: &[u8]) -> String {
     bytes
         .iter()
@@ -2052,6 +2067,39 @@ pub(super) async fn run_loop(
             }
         }
         match exit.kind {
+            ExitKind::Cpuid if active_key.pid != LAUNCHER_PID => {
+                let child = pending_child
+                    .as_ref()
+                    .filter(|child| child.pid == active_key.pid)
+                    .ok_or_else(|| "CPUID child missing".to_owned())?;
+                let eip = exit.registers.eip;
+                let mut opcode = [0; 2];
+                if child.address_space.read(eip, &mut opcode).map_err(|error| error.to_string())? != 2 {
+                    return Err("short CPUID opcode read".into());
+                }
+                if opcode != [0x0f, 0xa2] {
+                    return Err(format!("VM-exit reason CPUID but bytes={:02x} {:02x}", opcode[0], opcode[1]));
+                }
+                let leaf = exit.registers.eax;
+                let subleaf = exit.registers.ecx;
+                logl::log(level::IMPORTANT, format_args!(
+                    "WC3 CHILD CPUID CALL pid={} tid={} eip=0x{:08x} leaf=0x{:08x} subleaf=0x{:08x}",
+                    active_key.pid, active_key.tid, eip, leaf, subleaf,
+                ));
+                let [eax, ebx, ecx, edx] = wc3_cpuid(leaf, subleaf)?;
+                let mut registers = exit.registers;
+                registers.eax = eax;
+                registers.ebx = ebx;
+                registers.ecx = ecx;
+                registers.edx = edx;
+                registers.eip = eip.checked_add(2).ok_or("CPUID EIP overflow")?;
+                contexts[active].context.set_registers(registers).map_err(|error| error.to_string())?;
+                logl::log(level::IMPORTANT, format_args!(
+                    "WC3 CHILD CPUID RESULT pid={} tid={} leaf=0x{:08x} subleaf=0x{:08x} eax=0x{:08x} ebx=0x{:08x} ecx=0x{:08x} edx=0x{:08x} profile=xp-p3 eip=0x{:08x}->0x{:08x}",
+                    active_key.pid, active_key.tid, leaf, subleaf, eax, ebx, ecx, edx, eip, registers.eip,
+                ));
+                continue;
+            }
             // A transient VMCS always starts with VMLAUNCH.  Its preemption
             // timer is therefore a Blueprint scheduling boundary, not an x86
             // program stop: Context::resume() restores the logical context
@@ -4895,6 +4943,7 @@ pub(super) async fn run_loop(
                             cursor: begin,
                             end,
                             callbacks_invoked: 0,
+                            rust_callbacks: 0,
                         });
                         match advance_child_initterm(child, &mut contexts[active])? {
                             InittermAdvance::CallbackScheduled | InittermAdvance::Complete => {

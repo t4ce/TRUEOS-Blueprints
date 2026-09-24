@@ -17,6 +17,7 @@ pub mod assets;
 pub mod checkpoint;
 pub mod child_loader;
 pub mod imports;
+pub mod initterm;
 pub mod pe32;
 pub mod process;
 pub mod reg;

@@ -715,6 +715,7 @@ mod tests_main_1 {
                 cursor: begin,
                 end: begin + 12,
                 callbacks_invoked: 0,
+                rust_callbacks: 0,
             }),
             load_library_call: None,
             cipow: None,

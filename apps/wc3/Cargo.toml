@@ -16,6 +16,7 @@ bench = false
 default = ["trace-seh"]
 nolog = []
 host-memmove = []
+guest-initterm = []
 replay-loops = []
 trace-scan = []
 trace-seh = []
