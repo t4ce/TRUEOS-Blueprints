@@ -165,6 +165,7 @@ pub enum ProviderOp {
     D3D8Release,
     D3D8GetAdapterIdentifier,
     EnumDisplayDevicesA,
+    EnumDisplaySettingsA,
     Unknown,
 }
 
@@ -236,6 +237,7 @@ impl ProviderOp {
             | Self::MessageBoxA
             | Self::LoadStringA => 16,
             Self::D3D8GetAdapterIdentifier | Self::EnumDisplayDevicesA => 16,
+            Self::EnumDisplaySettingsA => 12,
             Self::MultiByteToWideChar | Self::LCMapStringW | Self::RegQueryValueExA => 24,
             Self::CreateThread => 24,
             Self::SetThreadPriority => 8,
@@ -386,6 +388,7 @@ impl ProviderOp {
                 | Self::D3D8Release
                 | Self::D3D8GetAdapterIdentifier
                 | Self::EnumDisplayDevicesA
+                | Self::EnumDisplaySettingsA
         )
     }
 }
@@ -492,6 +495,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "LoadStringA" => ProviderOp::LoadStringA,
             "wsprintfA" => ProviderOp::WsprintfA,
             "EnumDisplayDevicesA" => ProviderOp::EnumDisplayDevicesA,
+            "EnumDisplaySettingsA" => ProviderOp::EnumDisplaySettingsA,
             _ => ProviderOp::Unknown,
         };
     }
@@ -637,6 +641,22 @@ mod beginthreadex_tests {
         assert!(operation.is_generic_process_local());
         assert_eq!(operation.stack_cleanup_bytes(), 16);
         assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Stdcall(16));
+    }
+
+    #[test]
+    fn enum_display_settings_a_is_stdcall_and_process_local() {
+        let import = ProviderImport {
+            module: "USER32.dll".into(),
+            symbol: ProviderSymbol::Name("EnumDisplaySettingsA".into()),
+            iat_rva: 0,
+        };
+
+        let operation = provider_op(&import);
+        assert_eq!(operation, ProviderOp::EnumDisplaySettingsA);
+        assert!(operation.is_modeled());
+        assert!(operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 12);
+        assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Stdcall(12));
     }
 
     #[test]

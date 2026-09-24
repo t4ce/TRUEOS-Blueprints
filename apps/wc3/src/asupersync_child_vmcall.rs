@@ -5963,6 +5963,71 @@
                                             ),
                                         );
                                     }
+                                    child_loader::ProviderOp::EnumDisplaySettingsA => {
+                                        let [_, device_ptr, mode_num, output] = read_guest_words(
+                                            &X86Memory(&child.address_space),
+                                            exit.registers.esp,
+                                            4,
+                                        )?[..]
+                                        else {
+                                            unreachable!("EnumDisplaySettingsA frame has four words")
+                                        };
+                                        let device = if output == 0 || device_ptr == 0 {
+                                            None
+                                        } else {
+                                            Some(
+                                                wc3::process::read_c_string(
+                                                    &X86Memory(&child.address_space),
+                                                    device_ptr,
+                                                    32,
+                                                )
+                                                .map_err(|error| {
+                                                    format!("EnumDisplaySettingsA device: {error}")
+                                                })?,
+                                            )
+                                        };
+                                        let mode_kind = match mode_num {
+                                            wc3::process::ENUM_CURRENT_SETTINGS => "current",
+                                            wc3::process::ENUM_REGISTRY_SETTINGS => "registry",
+                                            0 => "enumerated",
+                                            _ => "unsupported",
+                                        };
+                                        let dm_size = (result == 1)
+                                            .then(|| {
+                                                read_guest_words(
+                                                    &X86Memory(&child.address_space),
+                                                    output + 0x24,
+                                                    1,
+                                                )
+                                            })
+                                            .transpose()?
+                                            .map(|words| words[0] & 0xffff);
+                                        let (width, height) = if result == 1 {
+                                            session
+                                                .process(active_pid)
+                                                .ok_or_else(|| "child process missing".to_owned())?
+                                                .xp
+                                                .desktop_size()
+                                        } else {
+                                            (0, 0)
+                                        };
+                                        logl::log(
+                                            level::IMPORTANT,
+                                            format_args!(
+                                                "WC3 CHILD ENUMDISPLAYSETTINGS pid={} tid={} device={:?} mode=0x{:08x} mode_kind={} output=0x{:08x} dm_size={:?} width={} height={} bpp=32 frequency=60 result={} cleanup=12-by-thunk",
+                                                active_pid,
+                                                active_tid,
+                                                device.as_deref().unwrap_or("<null>"),
+                                                mode_num,
+                                                mode_kind,
+                                                output,
+                                                dm_size,
+                                                width,
+                                                height,
+                                                result,
+                                            ),
+                                        );
+                                    }
                                     child_loader::ProviderOp::FormatMessageA => {
                                         let frame = read_guest_words(
                                             &X86Memory(&child.address_space),

@@ -51,6 +51,18 @@ pub const D3DADAPTER_IDENTIFIER8_BYTES: usize = 0x42c;
 pub const TRUEOS_D3D8_VENDOR_ID: u32 = 0x8086;
 pub const TRUEOS_D3D8_DEVICE_ID: u32 = 0xa780;
 pub const TRUEOS_DISPLAY_ADAPTER_DESCRIPTION: &str = "Intel(R) UHD Graphics 770";
+pub const ENUM_CURRENT_SETTINGS: u32 = 0xffff_ffff;
+pub const ENUM_REGISTRY_SETTINGS: u32 = 0xffff_fffe;
+pub const DM_BITSPERPEL: u32 = 0x0004_0000;
+pub const DM_PELSWIDTH: u32 = 0x0008_0000;
+pub const DM_PELSHEIGHT: u32 = 0x0010_0000;
+pub const DM_DISPLAYFLAGS: u32 = 0x0020_0000;
+pub const DM_DISPLAYFREQUENCY: u32 = 0x0040_0000;
+pub const TRUEOS_DISPLAY_FIELDS: u32 = DM_BITSPERPEL
+    | DM_PELSWIDTH
+    | DM_PELSHEIGHT
+    | DM_DISPLAYFLAGS
+    | DM_DISPLAYFREQUENCY;
 pub const TRUEOS_D3D8_SUBSYSTEM_ID: u32 = 0;
 pub const TRUEOS_D3D8_REVISION: u32 = 0x04;
 pub const TRUEOS_D3D8_ADAPTER_GUID: [u8; 16] = [
@@ -2655,6 +2667,44 @@ impl XpProcess {
             record[0xa4..0xa8].copy_from_slice(&DISPLAY_DEVICE_ACTIVE.to_le_bytes());
         }
         memory.write(output, &record)?;
+        Ok(1)
+    }
+
+    fn enum_display_settings_a(
+        &mut self,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
+        let [_, device_ptr, mode_num, output] = arguments::<4>(memory, esp)?;
+        if output == 0 {
+            return Ok(0);
+        }
+        if device_ptr != 0
+            && !read_c_string(memory, device_ptr, 32)?.eq_ignore_ascii_case(r"\\.\DISPLAY1")
+        {
+            return Ok(0);
+        }
+
+        let dm_size = read_u16(memory, output + 0x24)?;
+        if dm_size < 0x7c {
+            return Err(ProviderDispatchError::Frontier {
+                api: "EnumDisplaySettingsA",
+                detail: format!("unexpected dmSize={dm_size}"),
+            });
+        }
+        if !matches!(mode_num, ENUM_CURRENT_SETTINGS | ENUM_REGISTRY_SETTINGS | 0) {
+            return Ok(0);
+        }
+
+        let (width, height) = self.desktop_size();
+        let mut mode = vec![0u8; dm_size as usize];
+        mode[0x24..0x26].copy_from_slice(&dm_size.to_le_bytes());
+        mode[0x28..0x2c].copy_from_slice(&TRUEOS_DISPLAY_FIELDS.to_le_bytes());
+        mode[0x68..0x6c].copy_from_slice(&32u32.to_le_bytes());
+        mode[0x6c..0x70].copy_from_slice(&width.to_le_bytes());
+        mode[0x70..0x74].copy_from_slice(&height.to_le_bytes());
+        mode[0x78..0x7c].copy_from_slice(&60u32.to_le_bytes());
+        memory.write(output, &mode)?;
         Ok(1)
     }
 

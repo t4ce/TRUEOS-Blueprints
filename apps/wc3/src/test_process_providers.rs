@@ -2438,6 +2438,87 @@
     }
 
     #[test]
+    fn child_enum_display_settings_a_returns_the_inherited_trueos_mode() {
+        let provider = ProviderImport {
+            module: "USER32.dll".into(),
+            symbol: ProviderSymbol::Name("EnumDisplaySettingsA".into()),
+            iat_rva: 0,
+        };
+        let mut xp = XpProcess::new_child();
+        xp.set_desktop_size(2560, 1440);
+        xp.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory { base: STACK_BASE, bytes: vec![0; 0x2000] };
+        let esp = STACK_BASE + 0x100;
+        let output = STACK_BASE + 0x400;
+        let device = STACK_BASE + 0x700;
+        memory.write(device, b"\\\\.\\DISPLAY1\0").unwrap();
+
+        let mut call = |memory: &mut Memory, device_ptr, mode_num| {
+            for (word, value) in [0x6f0d_0300, device_ptr, mode_num, output]
+                .into_iter()
+                .enumerate()
+            {
+                write_u32(memory, esp + word as u32 * 4, value).unwrap();
+            }
+            write_u16(memory, output + 0x24, 0x9c).unwrap();
+            xp.dispatch_provider_for_process_typed(2, 3, 0, esp, memory)
+        };
+
+        assert_eq!(
+            call(&mut memory, device, ENUM_CURRENT_SETTINGS),
+            Ok(PersonalityAction::Return(1))
+        );
+        assert_eq!(read_u16(&memory, output + 0x24), Ok(0x9c));
+        assert_eq!(read_u16(&memory, output + 0x26), Ok(0));
+        assert_eq!(read_u32(&memory, output + 0x28), Ok(TRUEOS_DISPLAY_FIELDS));
+        assert_eq!(read_u32(&memory, output + 0x68), Ok(32));
+        assert_eq!(read_u32(&memory, output + 0x6c), Ok(2560));
+        assert_eq!(read_u32(&memory, output + 0x70), Ok(1440));
+        assert_eq!(read_u32(&memory, output + 0x74), Ok(0));
+        assert_eq!(read_u32(&memory, output + 0x78), Ok(60));
+
+        assert_eq!(
+            call(&mut memory, 0, ENUM_REGISTRY_SETTINGS),
+            Ok(PersonalityAction::Return(1))
+        );
+        assert_eq!(call(&mut memory, device, 0), Ok(PersonalityAction::Return(1)));
+        assert_eq!(call(&mut memory, device, 1), Ok(PersonalityAction::Return(0)));
+        memory.write(device, b"\\\\.\\UNKNOWN\0").unwrap();
+        assert_eq!(
+            call(&mut memory, device, ENUM_CURRENT_SETTINGS),
+            Ok(PersonalityAction::Return(0))
+        );
+    }
+
+    #[test]
+    fn child_enum_display_settings_a_rejects_short_dev_mode() {
+        let provider = ProviderImport {
+            module: "USER32.dll".into(),
+            symbol: ProviderSymbol::Name("EnumDisplaySettingsA".into()),
+            iat_rva: 0,
+        };
+        let mut xp = XpProcess::new_child();
+        xp.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory { base: STACK_BASE, bytes: vec![0; 0x2000] };
+        let esp = STACK_BASE + 0x100;
+        let output = STACK_BASE + 0x400;
+        for (word, value) in [0x6f0d_0300, 0, ENUM_CURRENT_SETTINGS, output]
+            .into_iter()
+            .enumerate()
+        {
+            write_u32(&mut memory, esp + word as u32 * 4, value).unwrap();
+        }
+        write_u16(&mut memory, output + 0x24, 0x7b).unwrap();
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Err(ProviderDispatchError::Frontier {
+                api: "EnumDisplaySettingsA",
+                detail: "unexpected dmSize=123".into(),
+            })
+        );
+    }
+
+    #[test]
     fn child_inherits_the_launcher_desktop_size() {
         let mut launcher = XpProcess::new(Vec::new());
         launcher.set_desktop_size(2560, 1440);
