@@ -102,6 +102,7 @@
     "superseedr",
     "webmail",
     "wc3",
+    { "name": "staticgl-triangle", "path": "apps/wc3/staticgl-triangle" },
     {
       "name": "commander",
       "path": "buildins/commander"
