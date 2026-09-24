@@ -4868,6 +4868,69 @@ mod tests_process_1 {
     }
 
     #[test]
+    fn child_war3_mpq_file_uses_resident_backing_for_size_and_read() {
+        let providers = ["CreateFileA", "GetFileSize", "ReadFile"].map(|symbol| ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name(symbol.into()),
+            iat_rva: 0,
+        });
+        let mut xp = XpProcess::new_child();
+        xp.install_provider_surface(providers.to_vec(), Vec::new(), Vec::new());
+        xp.install_war3_mpq(std::sync::Arc::new(b"MPQ!".to_vec()));
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+        let filename = esp - 0x100;
+        memory.write(filename, b"C:\\Warcraft III\\War3.mpq\0").unwrap();
+        for (index, value) in [0x0049_d380, filename, GENERIC_READ, 1, 0, OPEN_EXISTING, 0, 0]
+            .into_iter()
+            .enumerate()
+        {
+            write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
+        }
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(FILE_HANDLE_BASE))
+        );
+        assert_eq!(
+            xp.file_handles.get(&FILE_HANDLE_BASE),
+            Some(&FileHandle {
+                backing: FileBacking::War3Mpq,
+                cursor: 0,
+                access: GENERIC_READ,
+                share: 1,
+            })
+        );
+
+        write_u32(&mut memory, esp, 0x0049_d390).unwrap();
+        write_u32(&mut memory, esp + 4, FILE_HANDLE_BASE).unwrap();
+        write_u32(&mut memory, esp + 8, 0).unwrap();
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 1, esp, &mut memory),
+            Ok(PersonalityAction::Return(4))
+        );
+
+        let output = esp - 0x120;
+        let bytes_read = esp - 0x108;
+        for (index, value) in [0x0049_d3b0, FILE_HANDLE_BASE, output, 4, bytes_read, 0]
+            .into_iter()
+            .enumerate()
+        {
+            write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
+        }
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 2, esp, &mut memory),
+            Ok(PersonalityAction::Return(1))
+        );
+        let mut actual = [0; 4];
+        memory.read(output, &mut actual).unwrap();
+        assert_eq!(actual, *b"MPQ!");
+        assert_eq!(read_u32(&memory, bytes_read).unwrap(), 4);
+    }
+
+    #[test]
     fn child_sintf16_scratch_file_is_process_local_and_mutable() {
         let providers = [
             "CreateFileA",

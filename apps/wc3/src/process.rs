@@ -4,7 +4,10 @@
 //! or carrier selection. It consumes an x86 trap frame plus generic guest
 //! memory and returns the register value with which execution should resume.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::{
+    collections::{HashMap, HashSet, VecDeque},
+    sync::Arc,
+};
 
 #[cfg(target_os = "trueos")]
 use trueos::clock;
@@ -1050,6 +1053,7 @@ struct TokenHandle {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum FileBacking {
     SelfImage,
+    War3Mpq,
     Scratch(u32),
 }
 
@@ -1094,6 +1098,10 @@ fn canonical_file_path(path: &str) -> String {
 
 fn is_self_image_path(path: &str) -> bool {
     canonical_file_path(path) == r"c:\warcraft iii\war3.exe"
+}
+
+fn is_war3_mpq_path(path: &str) -> bool {
+    canonical_file_path(path) == r"c:\warcraft iii\war3.mpq"
 }
 
 fn is_war3_scratch_path(path: &str) -> bool {
@@ -1270,6 +1278,7 @@ pub struct XpProcess {
     token_handles: HashMap<u32, TokenHandle>,
     next_token_handle: u32,
     file_handles: HashMap<u32, FileHandle>,
+    war3_mpq_bytes: Option<Arc<Vec<u8>>>,
     next_file_handle: u32,
     next_find_handle: u32,
     find_handles: HashSet<u32>,
@@ -1437,6 +1446,7 @@ impl XpProcess {
             token_handles: HashMap::new(),
             next_token_handle: TOKEN_HANDLE_BASE,
             file_handles: HashMap::new(),
+            war3_mpq_bytes: None,
             next_file_handle: FILE_HANDLE_BASE,
             next_find_handle: FIND_HANDLE_BASE,
             find_handles: HashSet::new(),
@@ -1715,6 +1725,10 @@ impl XpProcess {
 
     pub fn registry_handle_node(&self, handle: u32) -> Option<crate::session::RegistryNodeId> {
         self.registry_handles.get(&handle).map(|handle| handle.node)
+    }
+
+    pub fn install_war3_mpq(&mut self, bytes: Arc<Vec<u8>>) {
+        self.war3_mpq_bytes = Some(bytes);
     }
 
     pub fn close_registry_handle(&mut self, handle: u32) -> bool {
@@ -2010,6 +2024,14 @@ impl XpProcess {
                 u64::try_from(Self::self_image_bytes(self_image_bytes)?.len())
                     .map_err(|_| ProviderDispatchError::Fault("self image length"))
             }
+            FileBacking::War3Mpq => self
+                .war3_mpq_bytes
+                .as_ref()
+                .map(|bytes| bytes.len() as u64)
+                .ok_or_else(|| ProviderDispatchError::Frontier {
+                    api: "War3.mpq",
+                    detail: "resident backing unavailable".into(),
+                }),
             FileBacking::Scratch(id) => self
                 .scratch_files
                 .get(&id)
@@ -2884,6 +2906,53 @@ impl XpProcess {
                         .ok_or("call count overflow")?;
                     return Ok(PersonalityAction::Return(handle));
                 }
+                if is_war3_mpq_path(&path) {
+                    if creation_disposition != OPEN_EXISTING {
+                        return Err(ProviderDispatchError::Frontier {
+                            api: "CreateFileA",
+                            detail: format!("War3.mpq disposition=0x{creation_disposition:08x}"),
+                        });
+                    }
+                    if desired_access & FILE_WRITE_ACCESS_MASK != 0 {
+                        return Err(ProviderDispatchError::Frontier {
+                            api: "CreateFileA",
+                            detail: format!("War3.mpq write access=0x{desired_access:08x}"),
+                        });
+                    }
+                    if security_attributes != 0 || template_file != 0 {
+                        return Err(ProviderDispatchError::Frontier {
+                            api: "CreateFileA",
+                            detail: format!(
+                                "War3.mpq security=0x{security_attributes:08x} template=0x{template_file:08x}"
+                            ),
+                        });
+                    }
+                    if self.war3_mpq_bytes.is_none() {
+                        return Err(ProviderDispatchError::Frontier {
+                            api: "CreateFileA",
+                            detail: "War3.mpq resident backing unavailable".into(),
+                        });
+                    }
+                    let handle = self.next_file_handle;
+                    self.next_file_handle = self
+                        .next_file_handle
+                        .checked_add(1)
+                        .ok_or("file handle overflow")?;
+                    self.file_handles.insert(
+                        handle,
+                        FileHandle {
+                            backing: FileBacking::War3Mpq,
+                            cursor: 0,
+                            access: desired_access,
+                            share: share_mode,
+                        },
+                    );
+                    self.call_count = self
+                        .call_count
+                        .checked_add(1)
+                        .ok_or("call count overflow")?;
+                    return Ok(PersonalityAction::Return(handle));
+                }
                 if !is_self_image_path(&path) {
                     return Err(ProviderDispatchError::Frontier {
                         api: "CreateFileA",
@@ -3031,6 +3100,22 @@ impl XpProcess {
                         memory.write(output, &backing[source_start..source_start + transferred])?;
                         transferred
                     }
+                    FileBacking::War3Mpq => {
+                        let backing = self.war3_mpq_bytes.as_deref().ok_or_else(|| {
+                            ProviderDispatchError::Frontier {
+                                api: "War3.mpq",
+                                detail: "resident backing unavailable".into(),
+                            }
+                        })?;
+                        let source_start = start.min(backing.len());
+                        let transferred = if start > backing.len() {
+                            0
+                        } else {
+                            requested.min(backing.len() - start)
+                        };
+                        memory.write(output, &backing[source_start..source_start + transferred])?;
+                        transferred
+                    }
                     FileBacking::Scratch(id) => {
                         let scratch = self
                             .scratch_files
@@ -3138,7 +3223,7 @@ impl XpProcess {
                     // Scratch writes update the process-local byte vector
                     // synchronously, so there is no lower buffered layer.
                     FileBacking::Scratch(_) => {}
-                    FileBacking::SelfImage => {
+                    FileBacking::SelfImage | FileBacking::War3Mpq => {
                         self.set_last_error(ERROR_ACCESS_DENIED);
                         self.call_count = self
                             .call_count
@@ -3304,7 +3389,9 @@ impl XpProcess {
                     return Ok(PersonalityAction::Return(INVALID_FILE_ATTRIBUTES));
                 }
                 let path = read_c_string(memory, filename, 1024)?;
-                let attributes = if is_self_image_path(&path) {
+                let attributes = if is_self_image_path(&path)
+                    || (is_war3_mpq_path(&path) && self.war3_mpq_bytes.is_some())
+                {
                     Some(FILE_ATTRIBUTE_NORMAL)
                 } else {
                     self.scratch_paths
@@ -4622,7 +4709,7 @@ impl XpProcess {
     }
 
     fn path_exists(&self, path: &str) -> bool {
-        if is_self_image_path(path) {
+        if is_self_image_path(path) || (is_war3_mpq_path(path) && self.war3_mpq_bytes.is_some()) {
             return true;
         }
         let canonical = canonical_file_path(path);

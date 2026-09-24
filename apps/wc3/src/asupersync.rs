@@ -9174,6 +9174,15 @@ pub(super) async fn run_loop(
                                     ),
                                 );
                             }
+                            let war3_mpq = session
+                                .assets
+                                .lookup("war3.mpq")
+                                .ok_or_else(|| "resident War3.mpq missing after preload".to_owned())?;
+                            session
+                                .process_mut(child.pid)
+                                .ok_or_else(|| "child process missing for War3.mpq install".to_owned())?
+                                .xp
+                                .install_war3_mpq(war3_mpq);
                             let surface = child_loader::prepare(&mut child.image, &listing)
                                 .map_err(str::to_owned)?;
                             child.loader.native_requests = surface.native.clone();
