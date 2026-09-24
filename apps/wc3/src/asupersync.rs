@@ -3086,7 +3086,7 @@ pub(super) async fn run_loop(
                                     initterm.provider_esp, exit.registers.esp
                                 ));
                             }
-                            logl::log(
+                            logl::trace!("trace-init",
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD CRT INITTERM RETURN pid={} tid={} completed={} eax=0x{:08x}",
@@ -6126,7 +6126,7 @@ pub(super) async fn run_loop(
                                 ),
                             );
                             for (index, import) in image.imports.iter().enumerate() {
-                                logl::log(
+                                logl::trace!("trace-init",
                                     level::IMPORTANT,
                                     format_args!(
                                         "WC3 CHILD LOADLIBRARY LOCAL IMPORT source={} index={} module={:?} symbol={:?} iat_rva=0x{:08x}",

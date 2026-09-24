@@ -384,6 +384,17 @@ pub trait GuestMemory {
     fn write(&mut self, address: u32, input: &[u8]) -> Result<(), &'static str>;
 }
 
+/// Fetch an API argument frame in one checked transfer across the host boundary.
+pub fn read_guest_words(memory: &impl GuestMemory, address: u32, count: usize) -> Result<Vec<u32>, String> {
+    let len = count.checked_mul(4).ok_or("guest frame size overflow")?;
+    if len == 0 { return Ok(Vec::new()); }
+    let last = u32::try_from(len - 1).map_err(|_| "guest frame size overflow")?;
+    address.checked_add(last).ok_or("guest frame address overflow")?;
+    let mut bytes = vec![0; len];
+    memory.read(address, &mut bytes).map_err(str::to_owned)?;
+    Ok(bytes.chunks_exact(4).map(|word| u32::from_le_bytes(word.try_into().unwrap())).collect())
+}
+
 fn read_u32(memory: &impl GuestMemory, address: u32) -> Result<u32, &'static str> {
     let mut bytes = [0; 4];
     memory.read(address, &mut bytes)?;
@@ -427,15 +438,13 @@ fn arguments<const N: usize>(
     memory: &impl GuestMemory,
     esp: u32,
 ) -> Result<[u32; N], &'static str> {
-    let mut values = [0; N];
-    for (index, value) in values.iter_mut().enumerate() {
-        *value = read_u32(
-            memory,
-            esp.checked_add((index as u32) * 4)
-                .ok_or("stack overflow")?,
-        )?;
-    }
-    Ok(values)
+    if N == 0 { return Ok([0; N]); }
+    let len = N.checked_mul(4).ok_or("stack overflow")?;
+    let last = u32::try_from(len - 1).map_err(|_| "stack overflow")?;
+    esp.checked_add(last).ok_or("stack overflow")?;
+    let mut bytes = [[0u8; 4]; N];
+    memory.read(esp, bytes.as_flattened_mut())?;
+    Ok(bytes.map(u32::from_le_bytes))
 }
 
 fn canonical_sid(
@@ -1921,6 +1930,30 @@ impl XpProcess {
             end: allocation.end,
             moved: allocation.pointer != old_pointer,
         }))
+    }
+
+    /// Grow an internal callback vector with spare capacity. The logical end
+    /// remains the caller's used length; it must copy only live entries and
+    /// retire the old block only after committing the guest pointers.
+    pub fn crt_grow_callback_table(
+        &mut self,
+        pointer: u32,
+        used_bytes: u32,
+        required_bytes: u32,
+    ) -> Result<Option<CrtResize>, &'static str> {
+        let capacity = self.crt_allocation_capacity(pointer).ok_or("untracked CRT callback table")?;
+        if used_bytes > capacity || required_bytes <= capacity || required_bytes < used_bytes {
+            return Err("invalid CRT callback table growth");
+        }
+        let reserve = capacity.checked_mul(2).unwrap_or(required_bytes).max(64).max(required_bytes);
+        if let Some(allocation) = self.crt_resize(pointer, used_bytes, reserve)? {
+            return Ok(Some(allocation));
+        }
+        // Spare capacity must never turn an otherwise valid append into OOM.
+        if reserve != required_bytes {
+            return self.crt_resize(pointer, used_bytes, required_bytes);
+        }
+        Ok(None)
     }
 
     pub fn retire_crt_allocation(&mut self, pointer: u32) -> bool {

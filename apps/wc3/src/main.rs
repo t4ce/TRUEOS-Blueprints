@@ -1555,7 +1555,7 @@ fn child_dllonexit(
         .filter(|bytes| bytes % 4 == 0)
         .map(|bytes| bytes / 4)
         .unwrap_or(0);
-    logl::log(
+    logl::trace!("trace-init",
         level::IMPORTANT,
         format_args!(
             "WC3 CHILD CRT DLLONEXIT pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" provider_id={} caller_ret=0x{:08x} func=0x{:08x} start_ref=0x{:08x} end_ref=0x{:08x} start=0x{:08x} end=0x{:08x} entries={}",
@@ -1621,7 +1621,7 @@ fn child_dllonexit(
         (start, new_end, false, None)
     } else {
         let Some(resize) = process
-            .crt_resize(start, used_bytes, required_bytes)
+            .crt_grow_callback_table(start, used_bytes, required_bytes)
             .map_err(str::to_owned)?
         else {
             return Ok(fail("oom"));
@@ -1664,7 +1664,7 @@ fn child_dllonexit(
             (current_mapped_end != old_mapped_end).then_some(current_mapped_end),
         )
     };
-    logl::log(
+    logl::trace!("trace-init",
         level::IMPORTANT,
         format_args!(
             "WC3 CHILD CRT DLLONEXIT RESULT pid={} tid={} func=0x{:08x} old_start=0x{:08x} old_end=0x{:08x} new_start=0x{:08x} new_end=0x{:08x} entries_before={} entries_after={} moved={} return_eax=0x{:08x}",
@@ -1682,7 +1682,7 @@ fn child_dllonexit(
         ),
     );
     if let Some(mapped_end) = mapped_end {
-        logl::log(
+        logl::trace!("trace-init",
             level::IMPORTANT,
             format_args!(
                 "WC3 CHILD CRT DLLONEXIT RESULT mapped_end=0x{:08x}",
@@ -2039,6 +2039,10 @@ fn advance_child_initterm(
                 .initterm
                 .take()
                 .ok_or_else(|| "child _initterm completion state missing".to_owned())?;
+            logl::log(level::IMPORTANT, format_args!(
+                "WC3 CHILD CRT INITTERM COMPLETE pid={} tid={} callbacks={}",
+                child.pid, child.tid, complete.callbacks_invoked,
+            ));
             let mut registers = context
                 .context
                 .registers()
@@ -2090,7 +2094,7 @@ fn advance_child_initterm(
             .checked_sub(state.begin)
             .ok_or_else(|| "child _initterm index underflow".to_owned())?
             / 4;
-        logl::log(
+        logl::trace!("trace-init",
             level::IMPORTANT,
             format_args!(
                 "WC3 CHILD CRT INITTERM CALL pid={} tid={} index={} slot=0x{:08x} target=0x{:08x}",
@@ -2541,18 +2545,7 @@ fn exception_code_window(address_space: &AddressSpace, eip: u32) -> String {
     }
 }
 
-fn read_guest_words(memory: &impl GuestMemory, esp: u32, count: usize) -> Result<Vec<u32>, String> {
-    (0..count)
-        .map(|index| {
-            let address = esp
-                .checked_add((index as u32) * 4)
-                .ok_or_else(|| "guest stack address overflow".to_owned())?;
-            let mut bytes = [0; 4];
-            memory.read(address, &mut bytes).map_err(str::to_owned)?;
-            Ok(u32::from_le_bytes(bytes))
-        })
-        .collect()
-}
+use wc3::process::read_guest_words;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 struct VirtualAllocFrame {

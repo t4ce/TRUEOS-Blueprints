@@ -2556,6 +2556,72 @@ mod tests_process_1 {
     }
 
     #[test]
+    fn guest_word_frames_use_one_read_and_reject_overflow_before_access() {
+        struct FrameMemory(std::cell::Cell<usize>);
+        impl GuestMemory for FrameMemory {
+            fn read(&self, address: u32, out: &mut [u8]) -> Result<(), &'static str> {
+                self.0.set(self.0.get() + 1);
+                if address != 0x1000 || out.len() > 16 { return Err("unmapped frame"); }
+                for (i, byte) in out.iter_mut().enumerate() { *byte = i as u8; }
+                Ok(())
+            }
+            fn write(&mut self, _: u32, _: &[u8]) -> Result<(), &'static str> { unreachable!() }
+        }
+        let memory = FrameMemory(std::cell::Cell::new(0));
+        assert_eq!(read_guest_words(&memory, 0x1000, 4).unwrap(), vec![0x03020100, 0x07060504, 0x0b0a0908, 0x0f0e0d0c]);
+        assert_eq!(memory.0.get(), 1);
+        assert!(read_guest_words(&memory, u32::MAX - 2, 1).is_err());
+        assert!(read_guest_words(&memory, 0, usize::MAX).is_err());
+        assert!(read_guest_words(&memory, u32::MAX, 0).unwrap().is_empty());
+        assert_eq!(memory.0.get(), 1);
+        assert!(read_guest_words(&memory, 0x1000, 5).is_err());
+        assert_eq!(memory.0.get(), 2);
+        assert_eq!(arguments::<4>(&memory, 0x1000).unwrap(), [0x03020100, 0x07060504, 0x0b0a0908, 0x0f0e0d0c]);
+        assert_eq!(memory.0.get(), 3);
+        assert!(arguments::<1>(&memory, u32::MAX - 2).is_err());
+        assert_eq!(arguments::<0>(&memory, u32::MAX).unwrap(), []);
+        assert_eq!(memory.0.get(), 3);
+    }
+
+    #[test]
+    fn callback_table_growth_is_linear_and_preserves_old_ownership() {
+        let mut process = XpProcess::new(Vec::new());
+        let mut pointer = process.crt_malloc(4).unwrap().unwrap().pointer;
+        let mut copied = 0;
+        let mut moves = 0;
+        for entries in 0..5000u32 {
+            let used = entries * 4;
+            if used + 4 > process.crt_allocation_capacity(pointer).unwrap() {
+                let old_capacity = process.crt_allocation_capacity(pointer);
+                let growth = process.crt_grow_callback_table(pointer, used, used + 4).unwrap().unwrap();
+                assert_eq!(growth.used_bytes, used);
+                assert!(growth.required_bytes >= used + 4);
+                assert_eq!(process.crt_allocation_capacity(pointer), old_capacity);
+                assert!(process.retire_crt_allocation(pointer));
+                pointer = growth.pointer;
+                copied += used;
+                moves += 1;
+            }
+        }
+        assert!(copied < 5000 * 4 * 2, "copied {copied} bytes");
+        assert!(moves <= 10, "moved {moves} times");
+    }
+
+    #[test]
+    fn callback_table_growth_falls_back_to_exact_size_under_pressure() {
+        let mut process = XpProcess::new(Vec::new());
+        let old = process.crt_malloc(8).unwrap().unwrap();
+        let remaining = CHILD_CRT_HEAP_LIMIT - CHILD_CRT_HEAP_BASE - 8 - 16;
+        process.crt_malloc(remaining).unwrap().unwrap();
+        let growth = process.crt_grow_callback_table(old.pointer, 8, 12).unwrap().unwrap();
+        assert_eq!(growth.required_bytes, 12);
+        assert_eq!(growth.used_bytes, 8);
+        assert_eq!(process.crt_allocation_capacity(old.pointer), Some(8));
+        assert_eq!(process.crt_allocation_capacity(growth.pointer), Some(16));
+        assert!(process.crt_malloc(1).unwrap().is_none());
+    }
+
+    #[test]
     fn child_crt_resize_preserves_old_ownership_until_commit() {
         let mut process = XpProcess::new(Vec::new());
         let old = process.crt_malloc(5).unwrap().unwrap();
@@ -6038,8 +6104,11 @@ mod tests_process_1 {
                 .unwrap(),
             PersonalityAction::Return(0x5743_0001)
         );
-        assert_eq!(pid1.heaps.len(), 1);
-        assert_eq!(pid2.heaps.len(), 1);
+        // Each process already owns its default heap in addition to HeapCreate's heap.
+        assert!(pid1.heaps.contains_key(&PROCESS_HEAP_HANDLE));
+        assert!(pid2.heaps.contains_key(&PROCESS_HEAP_HANDLE));
+        assert_eq!(pid1.heaps.len(), 2);
+        assert_eq!(pid2.heaps.len(), 2);
         assert_ne!(pid1.heaps.get(&0x5743_0001), pid2.heaps.get(&0x5743_0001));
     }
 

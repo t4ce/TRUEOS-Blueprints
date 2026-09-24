@@ -34,7 +34,17 @@ Re-enable only the diagnostics needed via Cargo features:
 - `trace-scan`: scan/table progress observers and execution samples.
 - `trace-seh`: SEH dispatch/return details, register/code dumps and step transitions.
 - `trace-api`: the gated API call/return records.
-- `trace-all`: all three categories (the previous tracing behavior).
+- `trace-init`: per-initializer calls/returns, callback-table registrations and local import dumps.
+- `trace-all`: all trace categories.
+
+CRT exit-callback tables grow geometrically instead of reallocating and copying
+the table on almost every append. Only capacity is reserved ahead: the guest
+end pointer still advances by one callback, order is unchanged, and the old
+allocation stays live until copying and pointer updates complete. If the larger
+reservation cannot fit, allocation retries with the exact required size.
+API argument frames are fetched in a single checked guest-memory read instead
+of one host crossing per word. All initializers still execute, and their
+completion count remains visible with `trace-init` disabled.
 
 For the normal Blueprint workflow, add the desired features to `default = []`
 in this app's `Cargo.toml`, then rebuild. For host checks, pass

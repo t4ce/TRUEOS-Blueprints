@@ -19,7 +19,8 @@ replay-loops = []
 trace-scan = []
 trace-seh = []
 trace-api = []
-trace-all = ["trace-scan", "trace-seh", "trace-api"]
+trace-init = []
+trace-all = ["trace-scan", "trace-seh", "trace-api", "trace-init"]
 
 [dependencies]
 sha2 = "=0.10.9"
