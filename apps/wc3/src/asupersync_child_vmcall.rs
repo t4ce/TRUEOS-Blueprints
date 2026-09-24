@@ -1184,6 +1184,34 @@
                         &provider.symbol,
                         child_loader::ProviderSymbol::Name(name)
                             if provider.module.eq_ignore_ascii_case("USER32.dll")
+                                && name == "SetWindowPos"
+                    ) {
+                        let frame = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            exit.registers.esp,
+                            8,
+                        )?;
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD SETWINDOWPOS CALL pid={} tid={} hwnd=0x{:08x} insert_after=0x{:08x} x={} y={} width={} height={} flags=0x{:08x} caller_ret=0x{:08x}",
+                                active_pid,
+                                active_tid,
+                                frame[1],
+                                frame[2],
+                                frame[3] as i32,
+                                frame[4] as i32,
+                                frame[5],
+                                frame[6],
+                                frame[7],
+                                frame[0],
+                            ),
+                        );
+                    }
+                    if matches!(
+                        &provider.symbol,
+                        child_loader::ProviderSymbol::Name(name)
+                            if provider.module.eq_ignore_ascii_case("USER32.dll")
                                 && name == "ChangeDisplaySettingsExA"
                     ) {
                         let frame = read_guest_words(
@@ -6392,6 +6420,38 @@
                                                 width,
                                                 height,
                                                 result,
+                                            ),
+                                        );
+                                    }
+                                    child_loader::ProviderOp::ChangeDisplaySettingsExA => {
+                                        let [_, device_ptr, _devmode, _hwnd, flags, _lparam] = read_guest_words(
+                                            &X86Memory(&child.address_space),
+                                            exit.registers.esp,
+                                            6,
+                                        )?[..]
+                                        else {
+                                            unreachable!("ChangeDisplaySettingsExA frame has six words")
+                                        };
+                                        let device = wc3::process::read_c_string(
+                                            &X86Memory(&child.address_space),
+                                            device_ptr,
+                                            32,
+                                        )?;
+                                        let (width, height) = session
+                                            .process(active_pid)
+                                            .ok_or_else(|| "child process missing".to_owned())?
+                                            .xp
+                                            .desktop_size();
+                                        logl::log(
+                                            level::IMPORTANT,
+                                            format_args!(
+                                                "WC3 CHILD CHANGEDISPLAYSETTINGSEXA RESULT pid={} tid={} device={:?} mode={}x{}x32@60 flags={} mode_change=none-current-mode ui4_frame_unchanged=1 result=DISP_CHANGE_SUCCESSFUL cleanup=20-by-thunk",
+                                                active_pid,
+                                                active_tid,
+                                                device,
+                                                width,
+                                                height,
+                                                if flags == 0x0000_0004 { "CDS_FULLSCREEN" } else { "UNKNOWN" },
                                             ),
                                         );
                                     }

@@ -166,6 +166,7 @@ pub enum ProviderOp {
     D3D8GetAdapterIdentifier,
     EnumDisplayDevicesA,
     EnumDisplaySettingsA,
+    ChangeDisplaySettingsExA,
     LoadImageA,
     LoadCursorA,
     RegisterClassExA,
@@ -242,6 +243,7 @@ impl ProviderOp {
             | Self::LoadStringA => 16,
             Self::D3D8GetAdapterIdentifier | Self::EnumDisplayDevicesA => 16,
             Self::EnumDisplaySettingsA => 12,
+            Self::ChangeDisplaySettingsExA => 20,
             Self::LoadImageA => 24,
             Self::LoadCursorA => 8,
             Self::RegisterClassExA => 4,
@@ -397,6 +399,7 @@ impl ProviderOp {
                 | Self::D3D8GetAdapterIdentifier
                 | Self::EnumDisplayDevicesA
                 | Self::EnumDisplaySettingsA
+                | Self::ChangeDisplaySettingsExA
                 | Self::LoadImageA
                 | Self::LoadCursorA
                 | Self::RegisterClassExA
@@ -507,6 +510,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "wsprintfA" => ProviderOp::WsprintfA,
             "EnumDisplayDevicesA" => ProviderOp::EnumDisplayDevicesA,
             "EnumDisplaySettingsA" => ProviderOp::EnumDisplaySettingsA,
+            "ChangeDisplaySettingsExA" => ProviderOp::ChangeDisplaySettingsExA,
             "LoadImageA" => ProviderOp::LoadImageA,
             "LoadCursorA" => ProviderOp::LoadCursorA,
             "RegisterClassExA" => ProviderOp::RegisterClassExA,

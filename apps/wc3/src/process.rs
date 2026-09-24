@@ -2772,6 +2772,66 @@ impl XpProcess {
         Ok(1)
     }
 
+    fn change_display_settings_ex_a(
+        &self,
+        esp: u32,
+        memory: &impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
+        const CDS_FULLSCREEN: u32 = 0x0000_0004;
+        const DISP_CHANGE_SUCCESSFUL: u32 = 0;
+
+        let [_, device_ptr, devmode, hwnd, flags, lparam] = arguments::<6>(memory, esp)?;
+        if device_ptr == 0 {
+            return Err(ProviderDispatchError::Frontier {
+                api: "ChangeDisplaySettingsExA",
+                detail: "null device unobserved".into(),
+            });
+        }
+        let device = read_c_string(memory, device_ptr, 32)?;
+        if !device.eq_ignore_ascii_case(r"\\.\DISPLAY1")
+            || hwnd != 0
+            || flags != CDS_FULLSCREEN
+            || lparam != 0
+            || devmode == 0
+        {
+            return Err(ProviderDispatchError::Frontier {
+                api: "ChangeDisplaySettingsExA",
+                detail: format!(
+                    "device={device:?} devmode=0x{devmode:08x} hwnd=0x{hwnd:08x} flags=0x{flags:08x} lparam=0x{lparam:08x}"
+                ),
+            });
+        }
+
+        let dm_size = read_u16(memory, devmode + 0x24)?;
+        let dm_extra = read_u16(memory, devmode + 0x26)?;
+        let dm_fields = read_u32(memory, devmode + 0x28)?;
+        let bpp = read_u32(memory, devmode + 0x68)?;
+        let width = read_u32(memory, devmode + 0x6c)?;
+        let height = read_u32(memory, devmode + 0x70)?;
+        let display_flags = read_u32(memory, devmode + 0x74)?;
+        let frequency = read_u32(memory, devmode + 0x78)?;
+        let (current_width, current_height) = self.desktop_size();
+
+        if dm_size != 156
+            || dm_extra != 0
+            || dm_fields != TRUEOS_DISPLAY_FIELDS
+            || bpp != 32
+            || width != current_width
+            || height != current_height
+            || display_flags != 0
+            || frequency != 60
+        {
+            return Err(ProviderDispatchError::Frontier {
+                api: "ChangeDisplaySettingsExA",
+                detail: format!(
+                    "unobserved mode size={dm_size} extra={dm_extra} fields=0x{dm_fields:08x} {width}x{height}x{bpp}@{frequency} display_flags=0x{display_flags:08x}"
+                ),
+            });
+        }
+
+        Ok(DISP_CHANGE_SUCCESSFUL)
+    }
+
     fn d3d8_release(
         &mut self,
         esp: u32,
