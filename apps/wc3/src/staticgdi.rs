@@ -15,6 +15,35 @@ GetStockObject       iat_rva=0x00706014
 DeleteObject         iat_rva=0x00706010
 */
 
+const TRUEOS_GL_PIXEL_FORMAT: u32 = 1;
+const PIXELFORMATDESCRIPTOR_BYTES: usize = 40;
+
+fn trueos_gl_pixel_format_descriptor(copied_bytes: u16) -> [u8; PIXELFORMATDESCRIPTOR_BYTES] {
+    const PFD_DOUBLEBUFFER: u32 = 0x0000_0001;
+    const PFD_DRAW_TO_WINDOW: u32 = 0x0000_0004;
+    const PFD_SUPPORT_OPENGL: u32 = 0x0000_0020;
+
+    let mut pfd = [0u8; PIXELFORMATDESCRIPTOR_BYTES];
+    pfd[0..2].copy_from_slice(&copied_bytes.to_le_bytes());
+    pfd[2..4].copy_from_slice(&1u16.to_le_bytes());
+    pfd[4..8].copy_from_slice(
+        &(PFD_DOUBLEBUFFER | PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL).to_le_bytes(),
+    );
+    pfd[8] = 0;
+    pfd[9] = 32;
+    pfd[10] = 8;
+    pfd[11] = 16;
+    pfd[12] = 8;
+    pfd[13] = 8;
+    pfd[14] = 8;
+    pfd[15] = 0;
+    pfd[16] = 8;
+    pfd[17] = 24;
+    pfd[23] = 24;
+    pfd[26] = 0;
+    pfd
+}
+
 impl XpProcess {
     fn static_gdi_stub(&self, api: &'static str) -> Result<u32, ProviderDispatchError> {
         Err(ProviderDispatchError::Frontier {
@@ -65,18 +94,95 @@ impl XpProcess {
 
     fn describe_pixel_format_static(
         &self,
-        _esp: u32,
-        _memory: &impl GuestMemory,
+        esp: u32,
+        memory: &mut impl GuestMemory,
     ) -> Result<u32, ProviderDispatchError> {
-        self.static_gdi_stub("DescribePixelFormat")
+        let [_, hdc, format, nbytes, output] = arguments::<5>(memory, esp)?;
+        let Some(GdiObject::DeviceContext(DeviceContext {
+            target: DcTarget::WindowPaint { .. },
+            ..
+        })) = self.gdi_objects.get(&hdc)
+        else {
+            return Err(ProviderDispatchError::Frontier {
+                api: "DescribePixelFormat",
+                detail: format!("hdc=0x{hdc:08x} is not a window DC"),
+            });
+        };
+
+        if format != TRUEOS_GL_PIXEL_FORMAT {
+            return Err(ProviderDispatchError::Frontier {
+                api: "DescribePixelFormat",
+                detail: format!("unobserved format index={format}"),
+            });
+        }
+
+        if output != 0 {
+            let copied = nbytes.min(PIXELFORMATDESCRIPTOR_BYTES as u32) as usize;
+            let pfd = trueos_gl_pixel_format_descriptor(copied as u16);
+            memory.write(output, &pfd[..copied])?;
+        }
+
+        Ok(TRUEOS_GL_PIXEL_FORMAT)
     }
 
     fn choose_pixel_format_static(
         &self,
-        _esp: u32,
-        _memory: &impl GuestMemory,
+        esp: u32,
+        memory: &impl GuestMemory,
     ) -> Result<u32, ProviderDispatchError> {
-        self.static_gdi_stub("ChoosePixelFormat")
+        const PFD_DOUBLEBUFFER: u32 = 0x0000_0001;
+        const PFD_DRAW_TO_WINDOW: u32 = 0x0000_0004;
+        const PFD_SUPPORT_OPENGL: u32 = 0x0000_0020;
+        const PFD_TYPE_RGBA: u8 = 0;
+        const PFD_MAIN_PLANE: u8 = 0;
+
+        let [_, hdc, pfd] = arguments::<3>(memory, esp)?;
+        let Some(GdiObject::DeviceContext(DeviceContext {
+            target: DcTarget::WindowPaint { .. },
+            ..
+        })) = self.gdi_objects.get(&hdc)
+        else {
+            return Err(ProviderDispatchError::Frontier {
+                api: "ChoosePixelFormat",
+                detail: format!("hdc=0x{hdc:08x} is not a window DC"),
+            });
+        };
+        if pfd == 0 {
+            return Ok(0);
+        }
+
+        let size = read_u16(memory, pfd)?;
+        let version = read_u16(memory, pfd + 2)?;
+        let flags = read_u32(memory, pfd + 4)?;
+        let mut fields = [0u8; 20];
+        memory.read(pfd + 8, &mut fields)?;
+        let pixel_type = fields[0];
+        let color_bits = fields[1];
+        let depth_bits = fields[15];
+        let stencil_bits = fields[16];
+        let aux_buffers = fields[17];
+        let layer_type = fields[18];
+        let required_flags = PFD_DOUBLEBUFFER | PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL;
+
+        if size != 40
+            || version != 1
+            || flags & required_flags != required_flags
+            || pixel_type != PFD_TYPE_RGBA
+            || color_bits > 32
+            || depth_bits > 24
+            || stencil_bits != 0
+            || aux_buffers != 0
+            || layer_type != PFD_MAIN_PLANE
+        {
+            return Err(ProviderDispatchError::Frontier {
+                api: "ChoosePixelFormat",
+                detail: format!(
+                    "unsupported PFD size={size} version={version} flags=0x{flags:08x} type={pixel_type} color={color_bits} depth={depth_bits} stencil={stencil_bits} aux={aux_buffers} layer={layer_type}"
+                ),
+            });
+        }
+
+        Ok(TRUEOS_GL_PIXEL_FORMAT)
     }
 
     fn set_text_align_static(
