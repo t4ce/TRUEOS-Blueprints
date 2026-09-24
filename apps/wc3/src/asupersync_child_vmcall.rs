@@ -1297,6 +1297,46 @@
                     if matches!(
                         &provider.symbol,
                         child_loader::ProviderSymbol::Name(name)
+                            if provider.module.eq_ignore_ascii_case("MSVCRT.dll")
+                                && name == "sscanf"
+                    ) {
+                        let frame = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            exit.registers.esp,
+                            8,
+                        )?;
+                        let input = wc3::process::read_c_string(
+                            &X86Memory(&child.address_space),
+                            frame[1],
+                            256,
+                        )?;
+                        let format = wc3::process::read_c_string(
+                            &X86Memory(&child.address_space),
+                            frame[2],
+                            256,
+                        )?;
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD SSCANF CALL pid={} tid={} input_ptr=0x{:08x} input={:?} format_ptr=0x{:08x} format={:?} args=[0x{:08x},0x{:08x},0x{:08x},0x{:08x},0x{:08x}] caller_ret=0x{:08x}",
+                                active_pid,
+                                active_tid,
+                                frame[1],
+                                input,
+                                frame[2],
+                                format,
+                                frame[3],
+                                frame[4],
+                                frame[5],
+                                frame[6],
+                                frame[7],
+                                frame[0],
+                            ),
+                        );
+                    }
+                    if matches!(
+                        &provider.symbol,
+                        child_loader::ProviderSymbol::Name(name)
                             if provider.module.eq_ignore_ascii_case("USER32.dll")
                                 && name == "ReleaseDC"
                     ) {
@@ -6872,6 +6912,26 @@
                                                 hglrc,
                                                 active_tid,
                                                 if result != 0 { "TRUE" } else { "FALSE" },
+                                            ),
+                                        );
+                                    }
+                                    child_loader::ProviderOp::GlGetString => {
+                                        let [_, name] = read_guest_words(
+                                            &X86Memory(&child.address_space),
+                                            exit.registers.esp,
+                                            2,
+                                        )?[..]
+                                        else {
+                                            unreachable!("glGetString frame has two words")
+                                        };
+                                        logl::log(
+                                            level::IMPORTANT,
+                                            format_args!(
+                                                "WC3 CHILD GLGETSTRING RESULT pid={} tid={} name={} value=\"1.1 TRUEOS\" pointer=0x{:08x} result=success cleanup=4-by-thunk",
+                                                active_pid,
+                                                active_tid,
+                                                if name == 0x0000_1f02 { "GL_VERSION" } else { "UNKNOWN" },
+                                                result,
                                             ),
                                         );
                                     }

@@ -135,7 +135,7 @@ impl XpProcess {
                 self.wgl_get_proc_address_static(esp, memory)?,
             )),
             ProviderOp::GlGetString => Ok(PersonalityAction::Return(
-                self.gl_get_string_static(esp, memory)?,
+                self.gl_get_string_static(tid, esp, memory)?,
             )),
             ProviderOp::WglCreateContext => Ok(PersonalityAction::Return(
                 self.wgl_create_context_static(esp, memory)?,

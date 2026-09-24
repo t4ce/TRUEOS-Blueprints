@@ -65,6 +65,10 @@ macro_rules! static_gl_stubs {
     };
 }
 
+const GL_VERSION: u32 = 0x0000_1f02;
+const GL_VERSION_STRING_VA: u32 = PROCESS_DATA_VA + 0x180;
+const GL_VERSION_STRING: &[u8] = b"1.1 TRUEOS\0";
+
 impl XpProcess {
     fn static_gl_stub(&self, api: &'static str) -> Result<u32, ProviderDispatchError> {
         Err(ProviderDispatchError::Frontier {
@@ -85,7 +89,6 @@ impl XpProcess {
         gl_tex_geni_static => "glTexGeni", gl_light_modelfv_static => "glLightModelfv",
         gl_materialfv_static => "glMaterialfv", gl_polygon_offset_static => "glPolygonOffset",
         gl_get_integerv_static => "glGetIntegerv", wgl_get_proc_address_static => "wglGetProcAddress",
-        gl_get_string_static => "glGetString",
         wgl_delete_context_static => "wglDeleteContext", gl_delete_textures_static => "glDeleteTextures",
         gl_tex_sub_image_2d_static => "glTexSubImage2D", gl_tex_image_2d_static => "glTexImage2D",
         gl_pixel_storei_static => "glPixelStorei", gl_tex_parameteri_static => "glTexParameteri",
@@ -100,6 +103,41 @@ impl XpProcess {
         gl_read_buffer_static => "glReadBuffer", wgl_swap_layer_buffers_static => "wglSwapLayerBuffers",
         gl_lightf_static => "glLightf",
     );
+
+    fn gl_get_string_static(
+        &self,
+        tid: u32,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
+        let [_, name] = arguments::<2>(memory, esp)?;
+        let runtime = self.gl_runtime.as_ref().ok_or_else(|| ProviderDispatchError::Frontier {
+            api: "glGetString",
+            detail: format!("tid={tid} has no GL runtime"),
+        })?;
+        let (hglrc, context) = runtime
+            .contexts
+            .iter()
+            .find(|(_, context)| context.current_tid == Some(tid))
+            .ok_or_else(|| ProviderDispatchError::Frontier {
+                api: "glGetString",
+                detail: format!("tid={tid} has no current HGLRC"),
+            })?;
+
+        match name {
+            GL_VERSION => {
+                memory.write(GL_VERSION_STRING_VA, GL_VERSION_STRING)?;
+                Ok(GL_VERSION_STRING_VA)
+            }
+            _ => Err(ProviderDispatchError::Frontier {
+                api: "glGetString",
+                detail: format!(
+                    "tid={tid} hglrc=0x{hglrc:08x} hwnd=0x{:08x} unobserved name=0x{name:08x}",
+                    context.hwnd,
+                ),
+            }),
+        }
+    }
 
     fn wgl_make_current_static(
         &mut self,
