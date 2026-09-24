@@ -333,6 +333,19 @@ fn ranges_overlap(destination: u32, source: u32, count: u32) -> bool {
     destination < source_end && source < destination_end
 }
 
+const MSVCRT_EM_INVALID: u32 = 0x0000_0010;
+const MSVCRT_EM_DENORMAL: u32 = 0x0008_0000;
+const MSVCRT_EM_ZERODIVIDE: u32 = 0x0000_0008;
+const MSVCRT_EM_OVERFLOW: u32 = 0x0000_0004;
+const MSVCRT_EM_UNDERFLOW: u32 = 0x0000_0002;
+const MSVCRT_EM_INEXACT: u32 = 0x0000_0001;
+const MSVCRT_MCW_RC: u32 = 0x0000_0300;
+const MSVCRT_MCW_PC: u32 = 0x0003_0000;
+const MSVCRT_MCW_IC: u32 = 0x0004_0000;
+const MSVCRT_MCW_EM: u32 = 0x0008_001f;
+const MSVCRT_X87_CONTROL_MASK: u32 =
+    MSVCRT_MCW_EM | MSVCRT_MCW_RC | MSVCRT_MCW_PC | MSVCRT_MCW_IC;
+
 fn msvcrt_control_from_x87(fcw: u16) -> u32 {
     let mut out = 0;
     if fcw & 0x0001 != 0 {
@@ -370,6 +383,37 @@ fn msvcrt_control_from_x87(fcw: u16) -> u32 {
         out |= 0x0004_0000;
     }
     out
+}
+
+/// Apply the MSVCRT abstract control word to x87 while retaining unrelated
+/// native control-word bits.
+fn x87_control_from_msvcrt(original_fcw: u16, control: u32) -> u16 {
+    let mut fcw = original_fcw & !0x1f3f;
+
+    if control & MSVCRT_EM_INVALID != 0 { fcw |= 1 << 0; }
+    if control & MSVCRT_EM_DENORMAL != 0 { fcw |= 1 << 1; }
+    if control & MSVCRT_EM_ZERODIVIDE != 0 { fcw |= 1 << 2; }
+    if control & MSVCRT_EM_OVERFLOW != 0 { fcw |= 1 << 3; }
+    if control & MSVCRT_EM_UNDERFLOW != 0 { fcw |= 1 << 4; }
+    if control & MSVCRT_EM_INEXACT != 0 { fcw |= 1 << 5; }
+
+    fcw |= match control & MSVCRT_MCW_PC {
+        0x0002_0000 => 0x0000, // _PC_24
+        0x0001_0000 => 0x0200, // _PC_53
+        0x0000_0000 => 0x0300, // _PC_64
+        _ => 0x0300,
+    };
+    fcw |= match control & MSVCRT_MCW_RC {
+        0x0000_0000 => 0x0000, // nearest
+        0x0000_0100 => 0x0400, // down
+        0x0000_0200 => 0x0800, // up
+        0x0000_0300 => 0x0c00, // chop
+        _ => unreachable!(),
+    };
+    if control & MSVCRT_MCW_IC != 0 {
+        fcw |= 0x1000; // affine
+    }
+    fcw
 }
 
 /// Translate the x87 sticky exception flags into MSVCRT's `_SW_*` layout.
@@ -5057,13 +5101,11 @@ pub(super) async fn run_loop(
                             .map_err(|error| error.to_string())?;
                         continue;
                     }
-                    let is_crt_control_fp = matches!(
-                        &provider.symbol,
-                        child_loader::ProviderSymbol::Name(name)
-                            if provider.module.eq_ignore_ascii_case("MSVCRT.dll")
-                                && name == "_controlfp"
-                    );
-                    if is_crt_control_fp {
+                    if matches!(
+                        operation,
+                        child_loader::ProviderOp::CrtControlFp
+                            | child_loader::ProviderOp::CrtControl87
+                    ) {
                         let frame = read_guest_words(
                             &X86Memory(&child.address_space),
                             exit.registers.esp,
@@ -5071,22 +5113,21 @@ pub(super) async fn run_loop(
                         )?;
                         let new_control = frame[1];
                         let mask = frame[2];
-                        if new_control != 0x0001_0000 || mask != 0x0003_0000 {
-                            logl::log(
-                                level::IMPORTANT,
-                                format_args!(
-                                    "WC3 CHILD PROVIDER FRONTIER pid={} tid={} module=\"MSVCRT.dll\" symbol=\"_controlfp\" caller_ret=0x{:08x} new=0x{:08x} mask=0x{:08x}",
-                                    active_pid, active_tid, frame[0], new_control, mask,
-                                ),
-                            );
-                            return Ok(());
-                        }
                         let mut state = contexts[active]
                             .context
                             .extended_state()
                             .map_err(|error| error.to_string())?;
                         let before_fcw = u16::from_le_bytes(state.bytes[0..2].try_into().unwrap());
-                        let after_fcw = (before_fcw & !0x0300) | 0x0200;
+                        let old_control = msvcrt_control_from_x87(before_fcw);
+                        let supported_mask = if operation == child_loader::ProviderOp::CrtControlFp {
+                            MSVCRT_X87_CONTROL_MASK & !MSVCRT_EM_DENORMAL
+                        } else {
+                            MSVCRT_X87_CONTROL_MASK
+                        };
+                        let effective_mask = mask & supported_mask;
+                        let updated_control =
+                            (old_control & !effective_mask) | (new_control & effective_mask);
+                        let after_fcw = x87_control_from_msvcrt(before_fcw, updated_control);
                         state.bytes[0..2].copy_from_slice(&after_fcw.to_le_bytes());
                         let mut xstate_bv =
                             u64::from_le_bytes(state.bytes[512..520].try_into().unwrap());
@@ -5096,9 +5137,8 @@ pub(super) async fn run_loop(
                             .context
                             .set_extended_state(&state)
                             .map_err(|error| error.to_string())?;
-                        let result = msvcrt_control_from_x87(after_fcw);
                         let mut registers = exit.registers;
-                        registers.eax = result;
+                        registers.eax = updated_control;
                         contexts[active]
                             .context
                             .set_registers(registers)
@@ -5106,50 +5146,19 @@ pub(super) async fn run_loop(
                         logl::log(
                             level::IMPORTANT,
                             format_args!(
-                                "WC3 CHILD CRT CONTROLFP pid={} tid={} new=0x{:08x} mask=0x{:08x} x87_before=0x{:04x} x87_after=0x{:04x} eax=0x{:08x} cleanup=0-by-thunk",
+                                "WC3 CHILD CRT {} pid={} tid={} new=0x{:08x} mask=0x{:08x} effective_mask=0x{:08x} x87_before=0x{:04x} x87_after=0x{:04x} eax=0x{:08x} cleanup=0-by-thunk",
+                                if operation == child_loader::ProviderOp::CrtControlFp { "CONTROLFP" } else { "CONTROL87" },
                                 active_pid,
                                 active_tid,
                                 new_control,
                                 mask,
+                                effective_mask,
                                 before_fcw,
                                 after_fcw,
-                                result,
+                                updated_control,
                             ),
                         );
                         continue;
-                    }
-                    let is_crt_control_87 = matches!(
-                        &provider.symbol,
-                        child_loader::ProviderSymbol::Name(name)
-                            if provider.module.eq_ignore_ascii_case("MSVCRT.dll")
-                                && name == "_control87"
-                    );
-                    if is_crt_control_87 {
-                        let frame = read_guest_words(
-                            &X86Memory(&child.address_space),
-                            exit.registers.esp,
-                            3,
-                        )?;
-                        let state = contexts[active]
-                            .context
-                            .extended_state()
-                            .map_err(|error| error.to_string())?;
-                        let fcw = u16::from_le_bytes(state.bytes[0..2].try_into().unwrap());
-                        let fsw = u16::from_le_bytes(state.bytes[2..4].try_into().unwrap());
-                        logl::log(
-                            level::IMPORTANT,
-                            format_args!(
-                                "WC3 CHILD CRT CONTROL87 CALL pid={} tid={} caller_ret=0x{:08x} new=0x{:08x} mask=0x{:08x} x87_control=0x{:04x} x87_status=0x{:04x} cleanup=0-by-thunk",
-                                active_pid,
-                                active_tid,
-                                frame[0],
-                                frame[1],
-                                frame[2],
-                                fcw,
-                                fsw,
-                            ),
-                        );
-                        return Ok(());
                     }
                     let is_crt_clear_fp = matches!(
                         &provider.symbol,
@@ -11884,5 +11893,38 @@ pub(super) async fn run_loop(
                 ));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod control_word_tests {
+    use super::*;
+
+    #[test]
+    fn control87_round_trips_the_observed_x87_environment() {
+        let before_fcw = 0x027f;
+        let old_control = msvcrt_control_from_x87(before_fcw);
+        assert_eq!(old_control, 0x0009_001f);
+
+        let mask = 0x000f_ffff;
+        let effective_mask = mask & MSVCRT_X87_CONTROL_MASK;
+        assert_eq!(effective_mask, 0x000f_031f);
+
+        let updated_control =
+            (old_control & !effective_mask) | (0x0009_001f & effective_mask);
+        assert_eq!(updated_control, old_control);
+        assert_eq!(x87_control_from_msvcrt(before_fcw, updated_control), before_fcw);
+    }
+
+    #[test]
+    fn controlfp_does_not_change_the_denormal_mask() {
+        let before_fcw = 0x027d;
+        let old_control = msvcrt_control_from_x87(before_fcw);
+        let requested = old_control | MSVCRT_EM_DENORMAL;
+        let effective_mask = MSVCRT_X87_CONTROL_MASK & !MSVCRT_EM_DENORMAL;
+        let updated_control = (old_control & !effective_mask) | (requested & effective_mask);
+
+        assert_eq!(updated_control & MSVCRT_EM_DENORMAL, 0);
+        assert_eq!(x87_control_from_msvcrt(before_fcw, updated_control) & 0x0002, 0);
     }
 }

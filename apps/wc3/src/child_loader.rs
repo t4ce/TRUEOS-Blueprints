@@ -137,6 +137,7 @@ pub enum ProviderOp {
     CrtExceptHandler3,
     CrtXcptFilter,
     CrtControlFp,
+    CrtControl87,
     CrtClearFp,
     CrtGetMainArgs,
     CrtOnExit,
@@ -258,6 +259,7 @@ impl ProviderOp {
             | Self::CrtExceptHandler3
             | Self::CrtXcptFilter
             | Self::CrtControlFp
+            | Self::CrtControl87
             | Self::CrtClearFp
             | Self::CrtGetMainArgs
             | Self::CrtOnExit
@@ -508,6 +510,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "_except_handler3" => ProviderOp::CrtExceptHandler3,
             "_XcptFilter" => ProviderOp::CrtXcptFilter,
             "_controlfp" => ProviderOp::CrtControlFp,
+            "_control87" => ProviderOp::CrtControl87,
             "_clearfp" => ProviderOp::CrtClearFp,
             "__getmainargs" => ProviderOp::CrtGetMainArgs,
             "_onexit" => ProviderOp::CrtOnExit,
@@ -597,6 +600,22 @@ mod beginthreadex_tests {
 
         let operation = provider_op(&import);
         assert_eq!(operation, ProviderOp::CrtClearFp);
+        assert!(operation.is_modeled());
+        assert!(!operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 0);
+        assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Return);
+    }
+
+    #[test]
+    fn crt_control87_is_cdecl_and_context_owned() {
+        let import = ProviderImport {
+            module: "MSVCRT.dll".into(),
+            symbol: ProviderSymbol::Name("_control87".into()),
+            iat_rva: 0,
+        };
+
+        let operation = provider_op(&import);
+        assert_eq!(operation, ProviderOp::CrtControl87);
         assert!(operation.is_modeled());
         assert!(!operation.is_generic_process_local());
         assert_eq!(operation.stack_cleanup_bytes(), 0);
