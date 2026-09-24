@@ -3540,6 +3540,213 @@ mod tests_process_1 {
     }
 
     #[test]
+    fn child_crt_atol_is_cdecl_and_clamps_signed_32_bit_values() {
+        let provider = ProviderImport {
+            module: "MSVCRT.dll".into(),
+            symbol: ProviderSymbol::Name("atol".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&provider);
+        assert_eq!(operation, ProviderOp::CrtAtol);
+        assert!(operation.is_modeled());
+        assert!(operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 0);
+        assert_eq!(
+            crate::child_loader::provider_thunk_kind(&provider),
+            thunk32::Kind::Return
+        );
+        let mut thunk = [0u8; thunk32::THUNK_BYTES];
+        thunk32::write(343, crate::child_loader::provider_thunk_kind(&provider), &mut thunk)
+            .unwrap();
+        assert_eq!(&thunk[..9], &[0xb8, 0x57, 0x01, 0, 0, 0x0f, 0x01, 0xc1, 0xc3]);
+
+        let mut xp = XpProcess::new_child();
+        xp.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+        let input = STACK_TOP - 0x200;
+        write_u32(&mut memory, esp, 0x6f00_2bef).unwrap();
+        write_u32(&mut memory, esp + 4, input).unwrap();
+
+        for (text, expected) in [
+            (b" \t+2147483647tail\0".as_slice(), 0x7fff_ffff),
+            (b"-2147483648\0", 0x8000_0000),
+            (b"2147483648\0", 0x7fff_ffff),
+            (b"-2147483649\0", 0x8000_0000),
+            (b"not a number\0", 0),
+        ] {
+            memory.write(input, text).unwrap();
+            assert_eq!(
+                xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+                Ok(PersonalityAction::Return(expected))
+            );
+        }
+        assert_eq!(xp.call_count, 5);
+    }
+
+    #[test]
+    fn child_crt_srand_is_cdecl_and_sets_the_process_rng_seed() {
+        let provider = ProviderImport {
+            module: "MSVCRT.dll".into(),
+            symbol: ProviderSymbol::Name("srand".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&provider);
+        assert_eq!(operation, ProviderOp::CrtSrand);
+        assert!(operation.is_modeled());
+        assert!(operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 0);
+        assert_eq!(
+            crate::child_loader::provider_thunk_kind(&provider),
+            thunk32::Kind::Return
+        );
+
+        let mut xp = XpProcess::new_child();
+        assert_eq!(xp.crt_rng_seed(), 1);
+        xp.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+        write_u32(&mut memory, esp, 0x6f29_bf82).unwrap();
+        write_u32(&mut memory, esp + 4, 0x1234_5678).unwrap();
+
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(0))
+        );
+        assert_eq!(xp.crt_rng_seed(), 0x1234_5678);
+        assert_eq!(xp.call_count, 1);
+    }
+
+    #[test]
+    fn child_crt_rand_consumes_the_srand_seed_with_msvcrt_lcg() {
+        let srand = ProviderImport {
+            module: "MSVCRT.dll".into(),
+            symbol: ProviderSymbol::Name("srand".into()),
+            iat_rva: 0,
+        };
+        let rand = ProviderImport {
+            module: "MSVCRT.dll".into(),
+            symbol: ProviderSymbol::Name("rand".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&rand);
+        assert_eq!(operation, ProviderOp::CrtRand);
+        assert!(operation.is_modeled());
+        assert!(operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 0);
+        assert_eq!(
+            crate::child_loader::provider_thunk_kind(&rand),
+            thunk32::Kind::Return
+        );
+        let mut thunk = [0u8; thunk32::THUNK_BYTES];
+        thunk32::write(813, crate::child_loader::provider_thunk_kind(&rand), &mut thunk)
+            .unwrap();
+        assert_eq!(&thunk[8..9], &[0xc3]);
+
+        let mut xp = XpProcess::new_child();
+        xp.install_provider_surface(vec![srand, rand], Vec::new(), Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+        write_u32(&mut memory, esp, 0x6f29_bf82).unwrap();
+        write_u32(&mut memory, esp + 4, 0x150b).unwrap();
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(0))
+        );
+
+        write_u32(&mut memory, esp, 0x6f29_bf96).unwrap();
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 1, esp, &mut memory),
+            Ok(PersonalityAction::Return(17_630))
+        );
+        assert_eq!(xp.crt_rng_seed(), 0x44de_4ba2);
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 1, esp, &mut memory),
+            Ok(PersonalityAction::Return(8_328))
+        );
+        assert_eq!(xp.crt_rng_seed(), 0x2088_c3dd);
+        assert_eq!(xp.call_count, 3);
+    }
+
+    #[test]
+    fn child_static_string_crt_exports_are_cdecl_and_mutate_or_compare_ansi_bytes() {
+        for (symbol, operation) in [
+            ("strncpy", ProviderOp::CrtStrncpy),
+            ("strpbrk", ProviderOp::CrtStrpbrk),
+            ("_strlwr", ProviderOp::CrtStrlwr),
+            ("_strupr", ProviderOp::CrtStrupr),
+            ("strncmp", ProviderOp::CrtStrncmp),
+            ("_stricmp", ProviderOp::CrtStricmp),
+        ] {
+            let provider = ProviderImport {
+                module: "MSVCRT.dll".into(),
+                symbol: ProviderSymbol::Name(symbol.into()),
+                iat_rva: 0,
+            };
+            assert_eq!(provider_op(&provider), operation, "{symbol}");
+            assert!(operation.is_modeled(), "{symbol}");
+            assert!(operation.is_generic_process_local(), "{symbol}");
+            assert_eq!(operation.stack_cleanup_bytes(), 0, "{symbol}");
+            assert_eq!(crate::child_loader::provider_thunk_kind(&provider), thunk32::Kind::Return);
+        }
+
+        let providers = ["strncpy", "strpbrk", "_strlwr", "_strupr", "strncmp", "_stricmp"]
+            .map(|symbol| ProviderImport {
+                module: "MSVCRT.dll".into(),
+                symbol: ProviderSymbol::Name(symbol.into()),
+                iat_rva: 0,
+            });
+        let mut xp = XpProcess::new_child();
+        xp.install_provider_surface(providers.to_vec(), Vec::new(), Vec::new());
+        let mut memory = Memory { base: STACK_BASE, bytes: vec![0; STACK_BYTES] };
+        let esp = STACK_TOP - 0x40;
+        let left = STACK_TOP - 0x200;
+        let right = STACK_TOP - 0x180;
+        let output = STACK_TOP - 0x100;
+        write_u32(&mut memory, esp, 0x6f00_0001).unwrap();
+
+        memory.write(right, b"Ab\0").unwrap();
+        write_u32(&mut memory, esp + 4, output).unwrap();
+        write_u32(&mut memory, esp + 8, right).unwrap();
+        write_u32(&mut memory, esp + 12, 5).unwrap();
+        assert_eq!(xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory), Ok(PersonalityAction::Return(output)));
+        let mut copied = [0; 5];
+        memory.read(output, &mut copied).unwrap();
+        assert_eq!(&copied, b"Ab\0\0\0");
+
+        memory.write(left, b"AbC!\0").unwrap();
+        write_u32(&mut memory, esp + 4, left).unwrap();
+        assert_eq!(xp.dispatch_provider_for_process_typed(2, 3, 2, esp, &mut memory), Ok(PersonalityAction::Return(left)));
+        assert_eq!(xp.dispatch_provider_for_process_typed(2, 3, 3, esp, &mut memory), Ok(PersonalityAction::Return(left)));
+        let mut transformed = [0; 5];
+        memory.read(left, &mut transformed).unwrap();
+        assert_eq!(&transformed, b"ABC!\0");
+
+        memory.write(left, b"Alpha\0").unwrap();
+        memory.write(right, b"ALPz\0").unwrap();
+        write_u32(&mut memory, esp + 4, left).unwrap();
+        write_u32(&mut memory, esp + 8, right).unwrap();
+        write_u32(&mut memory, esp + 12, 3).unwrap();
+        assert_eq!(xp.dispatch_provider_for_process_typed(2, 3, 4, esp, &mut memory), Ok(PersonalityAction::Return(32)));
+        assert_eq!(xp.dispatch_provider_for_process_typed(2, 3, 5, esp, &mut memory), Ok(PersonalityAction::Return((-18i32) as u32)));
+
+        memory.write(left, b"abcde\0").unwrap();
+        memory.write(right, b"xzdc\0").unwrap();
+        write_u32(&mut memory, esp + 4, left).unwrap();
+        write_u32(&mut memory, esp + 8, right).unwrap();
+        assert_eq!(xp.dispatch_provider_for_process_typed(2, 3, 1, esp, &mut memory), Ok(PersonalityAction::Return(left + 2)));
+    }
+
+    #[test]
     fn child_wsprintf_a_formats_ansi_strings_and_hex_as_cdecl() {
         let provider = ProviderImport {
             module: "USER32.dll".into(),

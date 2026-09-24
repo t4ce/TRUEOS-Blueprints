@@ -22,6 +22,7 @@ pub mod process;
 pub mod reg;
 pub mod seh;
 pub mod session;
+pub mod staticstr;
 pub mod thunk32;
 
 pub const LAUNCHER_PATH: &str = "/common/Warcraft III/Warcraft III.exe";

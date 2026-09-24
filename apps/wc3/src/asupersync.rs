@@ -7228,6 +7228,34 @@ pub(super) async fn run_loop(
                         } else {
                             None
                         };
+                        let crt_atol = if operation == child_loader::ProviderOp::CrtAtol {
+                            let string = read_guest_words(
+                                &X86Memory(&child.address_space),
+                                exit.registers.esp,
+                                2,
+                            )?[1];
+                            Some(
+                                wc3::process::crt_atol(
+                                    &X86Memory(&child.address_space),
+                                    string,
+                                )
+                                .map_err(|error| format!("atol input: {error}"))?,
+                            )
+                        } else {
+                            None
+                        };
+                        let crt_srand = if operation == child_loader::ProviderOp::CrtSrand {
+                            Some(
+                                read_guest_words(
+                                    &X86Memory(&child.address_space),
+                                    exit.registers.esp,
+                                    2,
+                                )?[1],
+                            )
+                        } else {
+                            None
+                        };
+                        let crt_rand = operation == child_loader::ProviderOp::CrtRand;
                         let get_volume_information = if operation
                             == child_loader::ProviderOp::GetVolumeInformationA
                         {
@@ -7599,6 +7627,43 @@ pub(super) async fn run_loop(
                                         format_args!(
                                             "WC3 CHILD CRT TOUPPER pid={} tid={} character=0x{:08x} result=0x{:08x} cleanup=0-by-thunk",
                                             active_pid, active_tid, character, result,
+                                        ),
+                                    );
+                                }
+                                if let Some((_, overflow, input)) = crt_atol {
+                                    logl::log(
+                                        level::IMPORTANT,
+                                        format_args!(
+                                            "WC3 CHILD CRT ATOL pid={} tid={} input={:?} result={} eax=0x{:08x} overflow={} cleanup=0-by-thunk",
+                                            active_pid,
+                                            active_tid,
+                                            input,
+                                            result as i32,
+                                            result,
+                                            overflow as u8,
+                                        ),
+                                    );
+                                }
+                                if let Some(seed) = crt_srand {
+                                    logl::log(
+                                        level::IMPORTANT,
+                                        format_args!(
+                                            "WC3 CHILD CRT SRAND pid={} tid={} seed=0x{:08x} cleanup=0-by-thunk",
+                                            active_pid, active_tid, seed,
+                                        ),
+                                    );
+                                }
+                                if crt_rand {
+                                    let state = session
+                                        .process(active_pid)
+                                        .ok_or_else(|| "child process missing".to_owned())?
+                                        .xp
+                                        .crt_rng_seed();
+                                    logl::log(
+                                        level::IMPORTANT,
+                                        format_args!(
+                                            "WC3 CHILD CRT RAND pid={} tid={} result={} eax=0x{:08x} state=0x{:08x} cleanup=0-by-thunk",
+                                            active_pid, active_tid, result, result, state,
                                         ),
                                     );
                                 }

@@ -143,6 +143,15 @@ pub enum ProviderOp {
     CrtMemmove,
     CrtIsDigit,
     CrtToUpper,
+    CrtAtol,
+    CrtRand,
+    CrtSrand,
+    CrtStrncpy,
+    CrtStrpbrk,
+    CrtStrlwr,
+    CrtStrupr,
+    CrtStrncmp,
+    CrtStricmp,
     CrtStrrchr,
     CrtStrstr,
     CrtStrnicmp,
@@ -250,6 +259,15 @@ impl ProviderOp {
             | Self::CrtMemmove
             | Self::CrtIsDigit
             | Self::CrtToUpper
+            | Self::CrtAtol
+            | Self::CrtRand
+            | Self::CrtSrand
+            | Self::CrtStrncpy
+            | Self::CrtStrpbrk
+            | Self::CrtStrlwr
+            | Self::CrtStrupr
+            | Self::CrtStrncmp
+            | Self::CrtStricmp
             | Self::CrtStrrchr
             | Self::CrtStrstr
             | Self::CrtStrnicmp
@@ -334,6 +352,15 @@ impl ProviderOp {
                 | Self::CrtMemmove
                 | Self::CrtIsDigit
                 | Self::CrtToUpper
+                | Self::CrtAtol
+                | Self::CrtRand
+                | Self::CrtSrand
+                | Self::CrtStrncpy
+                | Self::CrtStrpbrk
+                | Self::CrtStrlwr
+                | Self::CrtStrupr
+                | Self::CrtStrncmp
+                | Self::CrtStricmp
                 | Self::CrtStrrchr
                 | Self::CrtStrstr
                 | Self::CrtStrnicmp
@@ -478,6 +505,15 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "memmove" => ProviderOp::CrtMemmove,
             "isdigit" => ProviderOp::CrtIsDigit,
             "toupper" => ProviderOp::CrtToUpper,
+            "atol" => ProviderOp::CrtAtol,
+            "rand" => ProviderOp::CrtRand,
+            "srand" => ProviderOp::CrtSrand,
+            "strncpy" => ProviderOp::CrtStrncpy,
+            "strpbrk" => ProviderOp::CrtStrpbrk,
+            "_strlwr" => ProviderOp::CrtStrlwr,
+            "_strupr" => ProviderOp::CrtStrupr,
+            "strncmp" => ProviderOp::CrtStrncmp,
+            "_stricmp" => ProviderOp::CrtStricmp,
             "strrchr" => ProviderOp::CrtStrrchr,
             "strstr" => ProviderOp::CrtStrstr,
             "_strnicmp" => ProviderOp::CrtStrnicmp,

@@ -23,6 +23,7 @@ use crate::{
         GetExitCodeProcessRequest, LoadImageRequest, OpenFileRequest, PersonalityAction, SessionRequest, ThreadKey,
         WaitRequest, WindowBlitRequest, WindowTextRequest,
     },
+    staticstr,
     thunk32,
 };
 
@@ -505,66 +506,146 @@ pub fn read_c_string(
     Err("unterminated string")
 }
 
+fn read_c_bytes(
+    memory: &impl GuestMemory,
+    address: u32,
+) -> Result<Vec<u8>, ProviderDispatchError> {
+    let mut bytes = Vec::new();
+    for offset in 0..staticstr::MAX_C_STRING {
+        let mut byte = [0];
+        memory.read(
+            address
+                .checked_add(u32::try_from(offset).map_err(|_| ProviderDispatchError::Fault("string offset"))?)
+                .ok_or(ProviderDispatchError::Fault("string overflow"))?,
+            &mut byte,
+        )?;
+        bytes.push(byte[0]);
+        if byte[0] == 0 {
+            return Ok(bytes);
+        }
+    }
+    Err(ProviderDispatchError::Fault("unterminated string"))
+}
+
+fn crt_strncpy(
+    memory: &mut impl GuestMemory,
+    destination: u32,
+    source: u32,
+    count: u32,
+) -> Result<u32, ProviderDispatchError> {
+    let count = usize::try_from(count).map_err(|_| ProviderDispatchError::Fault("strncpy count"))?;
+    if count > staticstr::MAX_C_STRING {
+        return Err(ProviderDispatchError::Frontier { api: "strncpy", detail: "count exceeds compatibility bound".into() });
+    }
+    let mut output = vec![0; count];
+    let mut terminated = false;
+    for (offset, byte) in output.iter_mut().enumerate() {
+        if !terminated {
+            memory.read(
+                source
+                    .checked_add(u32::try_from(offset).map_err(|_| ProviderDispatchError::Fault("strncpy offset"))?)
+                    .ok_or(ProviderDispatchError::Fault("strncpy source overflow"))?,
+                core::slice::from_mut(byte),
+            )?;
+            terminated = *byte == 0;
+        }
+    }
+    memory.write(destination, &output)?;
+    Ok(destination)
+}
+
+fn crt_strcase(
+    memory: &mut impl GuestMemory,
+    string: u32,
+    upper: bool,
+) -> Result<u32, ProviderDispatchError> {
+    let mut bytes = read_c_bytes(memory, string)?;
+    if upper { staticstr::upper_in_place(&mut bytes) } else { staticstr::lower_in_place(&mut bytes) };
+    memory.write(string, &bytes)?;
+    Ok(string)
+}
+
+pub fn crt_atol(
+    memory: &impl GuestMemory,
+    string_ptr: u32,
+) -> Result<(u32, bool, String), ProviderDispatchError> {
+    if string_ptr == 0 {
+        return Err(ProviderDispatchError::Frontier {
+            api: "atol",
+            detail: "str=NULL".into(),
+        });
+    }
+
+    let text = read_c_string(memory, string_ptr, 256)?;
+    let bytes = text.as_bytes();
+    let mut at = 0usize;
+    while matches!(bytes.get(at), Some(b' ' | b'\t')) {
+        at += 1;
+    }
+
+    let negative = match bytes.get(at) {
+        Some(b'-') => {
+            at += 1;
+            true
+        }
+        Some(b'+') => {
+            at += 1;
+            false
+        }
+        _ => false,
+    };
+    let limit = if negative { 0x8000_0000u64 } else { 0x7fff_ffffu64 };
+    let mut any = false;
+    let mut magnitude = 0u64;
+    let mut overflow = false;
+
+    while let Some(&byte) = bytes.get(at) {
+        if !byte.is_ascii_digit() {
+            break;
+        }
+        any = true;
+        magnitude = magnitude
+            .saturating_mul(10)
+            .saturating_add(u64::from(byte - b'0'));
+        if magnitude > limit {
+            overflow = true;
+            magnitude = limit;
+        }
+        at += 1;
+    }
+
+    let value = if !any {
+        0i32
+    } else if negative {
+        if magnitude == 0x8000_0000 {
+            i32::MIN
+        } else {
+            -(magnitude as i32)
+        }
+    } else {
+        magnitude as i32
+    };
+    Ok((value as u32, overflow, text))
+}
+
 fn crt_strrchr(
     memory: &impl GuestMemory,
     string: u32,
     character: u32,
 ) -> Result<u32, &'static str> {
-    let needle = character as u8;
-    let mut last = None;
-    for offset in 0..1_048_576u32 {
-        let address = string
-            .checked_add(offset)
-            .ok_or("strrchr address overflow")?;
-        let mut byte = [0];
-        memory.read(address, &mut byte)?;
-        if byte[0] == needle {
-            last = Some(address);
-        }
-        if byte[0] == 0 {
-            return Ok(last.unwrap_or(0));
-        }
-    }
-    Err("unterminated strrchr string")
+    let bytes = read_c_bytes(memory, string).map_err(|_| "strrchr string")?;
+    staticstr::rchr(&bytes, character as u8)
+        .map(|offset| string + u32::try_from(offset).expect("bounded string offset"))
+        .ok_or("strrchr not found")
+        .or(Ok(0))
 }
 
 fn crt_strstr(memory: &impl GuestMemory, haystack: u32, needle: u32) -> Result<u32, &'static str> {
-    let mut first_needle = [0];
-    memory.read(needle, &mut first_needle)?;
-    if first_needle[0] == 0 {
-        return Ok(haystack);
-    }
-
-    for haystack_offset in 0..1_048_576u32 {
-        let candidate = haystack
-            .checked_add(haystack_offset)
-            .ok_or("strstr haystack address overflow")?;
-        let mut first = [0];
-        memory.read(candidate, &mut first)?;
-        if first[0] == 0 {
-            return Ok(0);
-        }
-
-        for needle_offset in 0..1_048_576u32 {
-            let needle_address = needle
-                .checked_add(needle_offset)
-                .ok_or("strstr needle address overflow")?;
-            let mut wanted = [0];
-            memory.read(needle_address, &mut wanted)?;
-            if wanted[0] == 0 {
-                return Ok(candidate);
-            }
-            let haystack_address = candidate
-                .checked_add(needle_offset)
-                .ok_or("strstr candidate address overflow")?;
-            let mut actual = [0];
-            memory.read(haystack_address, &mut actual)?;
-            if actual[0] != wanted[0] {
-                break;
-            }
-        }
-    }
-    Err("unterminated strstr haystack")
+    let haystack_bytes = read_c_bytes(memory, haystack).map_err(|_| "strstr haystack")?;
+    let needle_bytes = read_c_bytes(memory, needle).map_err(|_| "strstr needle")?;
+    Ok(staticstr::find(&haystack_bytes, &needle_bytes)
+        .map(|offset| haystack + u32::try_from(offset).expect("bounded string offset"))
+        .unwrap_or(0))
 }
 
 fn crt_strnicmp(
@@ -576,24 +657,12 @@ fn crt_strnicmp(
     // MSVCRT compares unsigned ANSI bytes after locale case-folding. The XP
     // personality is CP1252, including its handful of non-ASCII case pairs.
     let fold = |byte: u8| encode_cp1252(cp1252_lower(decode_cp1252(byte))).unwrap_or(byte);
-    for offset in 0..count.min(1_048_576) {
-        let left_address = left.checked_add(offset).ok_or("strnicmp left address overflow")?;
-        let right_address = right
-            .checked_add(offset)
-            .ok_or("strnicmp right address overflow")?;
-        let mut left_byte = [0];
-        let mut right_byte = [0];
-        memory.read(left_address, &mut left_byte)?;
-        memory.read(right_address, &mut right_byte)?;
-        let difference = i32::from(fold(left_byte[0])) - i32::from(fold(right_byte[0]));
-        if difference != 0 || left_byte[0] == 0 {
-            return Ok(difference as u32);
-        }
-    }
     if count > 1_048_576 {
         return Err("strnicmp comparison exceeds compatibility bound");
     }
-    Ok(0)
+    let left = read_c_bytes(memory, left).map_err(|_| "strnicmp left")?;
+    let right = read_c_bytes(memory, right).map_err(|_| "strnicmp right")?;
+    Ok(staticstr::compare_with(&left, &right, Some(count as usize), fold) as u32)
 }
 
 fn crt_memmove(
@@ -1325,6 +1394,7 @@ pub struct XpProcess {
     crt_allocations: HashMap<u32, u32>,
     crt_onexit_callbacks: Vec<u32>,
     pub crt_app_type: u32,
+    crt_rng_seed: u32,
     virtual_reservations: Vec<VirtualReservation>,
     virtual_reserve_next: u32,
     tls_allocated: [bool; 64],
@@ -1495,6 +1565,9 @@ impl XpProcess {
             crt_allocations: HashMap::new(),
             crt_onexit_callbacks: Vec::new(),
             crt_app_type: CRT_UNKNOWN_APP,
+            // MSVCRT's process-wide rand stream starts from seed one until
+            // srand supplies the deterministic seed consumed by rand.
+            crt_rng_seed: 1,
             virtual_reservations: Vec::new(),
             virtual_reserve_next: CHILD_VIRTUAL_ALLOC_BASE,
             tls_allocated: [false; 64],
@@ -1535,6 +1608,10 @@ impl XpProcess {
 
     pub fn import(&self, id: u32) -> Option<&LauncherImport> {
         self.imports.get(id as usize)
+    }
+
+    pub const fn crt_rng_seed(&self) -> u32 {
+        self.crt_rng_seed
     }
 
     pub fn install_provider_surface(
@@ -2597,6 +2674,80 @@ impl XpProcess {
                     .call_count
                     .checked_add(1)
                     .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(result))
+            }
+            ProviderOp::CrtAtol => {
+                let [_, string] = arguments::<2>(memory, esp)?;
+                let (result, _, _) = crt_atol(memory, string)?;
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(result))
+            }
+            ProviderOp::CrtRand => {
+                // MSVCRT's process-global rand stream: holdrand =
+                // holdrand * 214013 + 2531011, then expose its high 15 bits.
+                self.crt_rng_seed = self
+                    .crt_rng_seed
+                    .wrapping_mul(214_013)
+                    .wrapping_add(2_531_011);
+                let result = (self.crt_rng_seed >> 16) & 0x7fff;
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(result))
+            }
+            ProviderOp::CrtSrand => {
+                let [_, seed] = arguments::<2>(memory, esp)?;
+                self.crt_rng_seed = seed;
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(0))
+            }
+            ProviderOp::CrtStrncpy => {
+                let [_, destination, source, count] = arguments::<4>(memory, esp)?;
+                let result = crt_strncpy(memory, destination, source, count)?;
+                self.call_count = self.call_count.checked_add(1).ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(result))
+            }
+            ProviderOp::CrtStrpbrk => {
+                let [_, haystack, accept] = arguments::<3>(memory, esp)?;
+                let haystack_bytes = read_c_bytes(memory, haystack)?;
+                let accept_bytes = read_c_bytes(memory, accept)?;
+                let result = staticstr::pbrk(&haystack_bytes, &accept_bytes)
+                    .map(|offset| {
+                        haystack
+                            .checked_add(u32::try_from(offset).expect("bounded string offset"))
+                            .expect("bounded string address")
+                    })
+                    .unwrap_or(0);
+                self.call_count = self.call_count.checked_add(1).ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(result))
+            }
+            ProviderOp::CrtStrlwr | ProviderOp::CrtStrupr => {
+                let [_, string] = arguments::<2>(memory, esp)?;
+                let result = crt_strcase(memory, string, operation == ProviderOp::CrtStrupr)?;
+                self.call_count = self.call_count.checked_add(1).ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(result))
+            }
+            ProviderOp::CrtStrncmp => {
+                let [_, left, right, count] = arguments::<4>(memory, esp)?;
+                let left = read_c_bytes(memory, left)?;
+                let right = read_c_bytes(memory, right)?;
+                let result = staticstr::compare(&left, &right, Some(count as usize), false) as u32;
+                self.call_count = self.call_count.checked_add(1).ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(result))
+            }
+            ProviderOp::CrtStricmp => {
+                let [_, left, right] = arguments::<3>(memory, esp)?;
+                let left = read_c_bytes(memory, left)?;
+                let right = read_c_bytes(memory, right)?;
+                let result = staticstr::compare(&left, &right, None, true) as u32;
+                self.call_count = self.call_count.checked_add(1).ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(result))
             }
             ProviderOp::CrtStrrchr => {
