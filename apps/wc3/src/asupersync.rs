@@ -5595,6 +5595,53 @@ pub(super) async fn run_loop(
                         continue;
                     }
                     let operation = child_loader::provider_op(&provider);
+                    if operation == child_loader::ProviderOp::CreateThread {
+                        let frame = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            exit.registers.esp,
+                            7,
+                        )?;
+                        let [caller_ret, security, stack_size, start, argument, flags, tid_ptr] =
+                            <[u32; 7]>::try_from(frame).map_err(|_| "CreateThread frame")?;
+                        if security != 0 || flags != 0 || start == 0 {
+                            return Err(format!(
+                                "CreateThread argument frontier security=0x{security:08x} flags=0x{flags:08x} start=0x{start:08x}"
+                            ));
+                        }
+                        let (guest, key, handle) = create_child_guest_thread(
+                            child,
+                            &mut session,
+                            stack_size,
+                            start,
+                            argument,
+                        )?;
+                        if tid_ptr != 0
+                            && child
+                                .address_space
+                                .write(tid_ptr, &key.tid.to_le_bytes())
+                                .map_err(|error| error.to_string())?
+                                != 4
+                        {
+                            return Err("short CreateThread TID write".into());
+                        }
+                        contexts.push(guest);
+                        session.enqueue(key);
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD CREATETHREAD pid={} caller_tid={} tid={} handle=0x{:08x} start=0x{:08x} parameter=0x{:08x} stack_size={} flags=0x{:08x} tid_ptr=0x{:08x} caller_ret=0x{:08x} cleanup=24-by-thunk",
+                                active_pid, active_tid, key.tid, handle, start, argument,
+                                stack_size, flags, tid_ptr, caller_ret,
+                            ),
+                        );
+                        let mut registers = exit.registers;
+                        registers.eax = handle;
+                        contexts[active]
+                            .context
+                            .set_registers(registers)
+                            .map_err(|error| error.to_string())?;
+                        continue;
+                    }
                     if operation == child_loader::ProviderOp::CrtBeginThreadEx {
                         let frame = read_guest_words(
                             &X86Memory(&child.address_space),
@@ -5608,20 +5655,13 @@ pub(super) async fn run_loop(
                                 "_beginthreadex argument frontier security=0x{security:08x} flags=0x{flags:08x} start=0x{start:08x}"
                             ));
                         }
-                        let proposed_tid = session.next_tid;
-                        let guest = create_child_runtime_context(
+                        let (guest, key, handle) = create_child_guest_thread(
                             child,
-                            proposed_tid,
+                            &mut session,
                             stack_size,
                             start,
                             argument,
                         )?;
-                        let (key, handle) = session
-                            .create_child_thread(active_pid)
-                            .map_err(str::to_owned)?;
-                        if key.tid != proposed_tid {
-                            return Err("_beginthreadex TID reservation changed".into());
-                        }
                         if tid_ptr != 0 {
                             if child
                                 .address_space

@@ -3216,6 +3216,27 @@ mod tests_process_1 {
     }
 
     #[test]
+    fn child_create_thread_is_stdcall_with_six_arguments() {
+        let provider = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("CreateThread".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&provider);
+        assert_eq!(operation, ProviderOp::CreateThread);
+        assert!(operation.is_modeled());
+        assert!(!operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 24);
+        assert_eq!(
+            crate::child_loader::provider_thunk_kind(&provider),
+            thunk32::Kind::Stdcall(24)
+        );
+        let mut thunk = [0u8; thunk32::THUNK_BYTES];
+        thunk32::write(378, thunk32::Kind::Stdcall(24), &mut thunk).unwrap();
+        assert_eq!(&thunk[8..11], &[0xc2, 0x18, 0]);
+    }
+
+    #[test]
     fn child_crt_memmove_preserves_both_overlap_directions_and_is_cdecl() {
         let provider = ProviderImport {
             module: "MSVCRT.dll".into(),

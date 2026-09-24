@@ -1246,6 +1246,30 @@ fn create_child_runtime_context(
     })
 }
 
+fn create_child_guest_thread(
+    child: &PendingChild,
+    session: &mut Wc3Session,
+    stack_size: u32,
+    start_address: u32,
+    parameter: u32,
+) -> Result<(GuestContext, ThreadKey, u32), String> {
+    let proposed_tid = session.next_tid;
+    let guest = create_child_runtime_context(
+        child,
+        proposed_tid,
+        stack_size,
+        start_address,
+        parameter,
+    )?;
+    let (key, handle) = session
+        .create_child_thread(child.pid)
+        .map_err(str::to_owned)?;
+    if key.tid != proposed_tid {
+        return Err("child thread TID reservation changed".into());
+    }
+    Ok((guest, key, handle))
+}
+
 fn arm_existing_child_dll_init(
     child: &mut PendingChild,
     guest: &mut GuestContext,
