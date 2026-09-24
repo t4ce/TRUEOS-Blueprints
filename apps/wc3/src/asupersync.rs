@@ -5118,6 +5118,39 @@ pub(super) async fn run_loop(
                         );
                         continue;
                     }
+                    let is_crt_control_87 = matches!(
+                        &provider.symbol,
+                        child_loader::ProviderSymbol::Name(name)
+                            if provider.module.eq_ignore_ascii_case("MSVCRT.dll")
+                                && name == "_control87"
+                    );
+                    if is_crt_control_87 {
+                        let frame = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            exit.registers.esp,
+                            3,
+                        )?;
+                        let state = contexts[active]
+                            .context
+                            .extended_state()
+                            .map_err(|error| error.to_string())?;
+                        let fcw = u16::from_le_bytes(state.bytes[0..2].try_into().unwrap());
+                        let fsw = u16::from_le_bytes(state.bytes[2..4].try_into().unwrap());
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD CRT CONTROL87 CALL pid={} tid={} caller_ret=0x{:08x} new=0x{:08x} mask=0x{:08x} x87_control=0x{:04x} x87_status=0x{:04x} cleanup=0-by-thunk",
+                                active_pid,
+                                active_tid,
+                                frame[0],
+                                frame[1],
+                                frame[2],
+                                fcw,
+                                fsw,
+                            ),
+                        );
+                        return Ok(());
+                    }
                     let is_crt_clear_fp = matches!(
                         &provider.symbol,
                         child_loader::ProviderSymbol::Name(name)
