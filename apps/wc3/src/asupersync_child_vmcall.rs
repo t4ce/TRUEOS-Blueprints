@@ -6924,13 +6924,28 @@
                                         else {
                                             unreachable!("glGetString frame has two words")
                                         };
+                                        let name_label = match name {
+                                            0x0000_1f02 => "GL_VERSION",
+                                            0x0000_1f03 => "GL_EXTENSIONS",
+                                            _ => "UNKNOWN",
+                                        };
+                                        let value = if result != 0 {
+                                            wc3::process::read_c_string(
+                                                &X86Memory(&child.address_space),
+                                                result,
+                                                4096,
+                                            )?
+                                        } else {
+                                            "<null>".into()
+                                        };
                                         logl::log(
                                             level::IMPORTANT,
                                             format_args!(
-                                                "WC3 CHILD GLGETSTRING RESULT pid={} tid={} name={} value=\"1.1 TRUEOS\" pointer=0x{:08x} result=success cleanup=4-by-thunk",
+                                                "WC3 CHILD GLGETSTRING RESULT pid={} tid={} name={} value={:?} pointer=0x{:08x} result=success cleanup=4-by-thunk",
                                                 active_pid,
                                                 active_tid,
-                                                if name == 0x0000_1f02 { "GL_VERSION" } else { "UNKNOWN" },
+                                                name_label,
+                                                value,
                                                 result,
                                             ),
                                         );

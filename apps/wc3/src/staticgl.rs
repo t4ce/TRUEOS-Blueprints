@@ -66,8 +66,11 @@ macro_rules! static_gl_stubs {
 }
 
 const GL_VERSION: u32 = 0x0000_1f02;
+const GL_EXTENSIONS: u32 = 0x0000_1f03;
 const GL_VERSION_STRING_VA: u32 = PROCESS_DATA_VA + 0x180;
 const GL_VERSION_STRING: &[u8] = b"1.1 TRUEOS\0";
+const GL_EXTENSIONS_STRING_VA: u32 = PROCESS_DATA_VA + 0x190;
+const GL_EXTENSIONS_STRING: &[u8] = b"\0";
 
 impl XpProcess {
     fn static_gl_stub(&self, api: &'static str) -> Result<u32, ProviderDispatchError> {
@@ -128,6 +131,10 @@ impl XpProcess {
             GL_VERSION => {
                 memory.write(GL_VERSION_STRING_VA, GL_VERSION_STRING)?;
                 Ok(GL_VERSION_STRING_VA)
+            }
+            GL_EXTENSIONS => {
+                memory.write(GL_EXTENSIONS_STRING_VA, GL_EXTENSIONS_STRING)?;
+                Ok(GL_EXTENSIONS_STRING_VA)
             }
             _ => Err(ProviderDispatchError::Frontier {
                 api: "glGetString",
