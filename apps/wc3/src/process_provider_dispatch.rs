@@ -66,56 +66,152 @@ impl XpProcess {
                     .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(result))
             }
-            ProviderOp::WglMakeCurrent => Ok(PersonalityAction::Return(self.wgl_make_current_static(esp, memory)?)),
-            ProviderOp::GlDisable => Ok(PersonalityAction::Return(self.gl_disable_static(esp, memory)?)),
-            ProviderOp::GlEnable => Ok(PersonalityAction::Return(self.gl_enable_static(esp, memory)?)),
-            ProviderOp::GlLightfv => Ok(PersonalityAction::Return(self.gl_lightfv_static(esp, memory)?)),
-            ProviderOp::GlFogfv => Ok(PersonalityAction::Return(self.gl_fogfv_static(esp, memory)?)),
+            ProviderOp::WglMakeCurrent => Ok(PersonalityAction::Return(
+                self.wgl_make_current_static(esp, memory)?,
+            )),
+            ProviderOp::GlDisable => Ok(PersonalityAction::Return(
+                self.gl_disable_static(esp, memory)?,
+            )),
+            ProviderOp::GlEnable => Ok(PersonalityAction::Return(
+                self.gl_enable_static(esp, memory)?,
+            )),
+            ProviderOp::GlLightfv => Ok(PersonalityAction::Return(
+                self.gl_lightfv_static(esp, memory)?,
+            )),
+            ProviderOp::GlFogfv => Ok(PersonalityAction::Return(
+                self.gl_fogfv_static(esp, memory)?,
+            )),
             ProviderOp::GlFogf => Ok(PersonalityAction::Return(self.gl_fogf_static(esp, memory)?)),
             ProviderOp::GlFogi => Ok(PersonalityAction::Return(self.gl_fogi_static(esp, memory)?)),
-            ProviderOp::GlDrawBuffer => Ok(PersonalityAction::Return(self.gl_draw_buffer_static(esp, memory)?)),
-            ProviderOp::GlDepthFunc => Ok(PersonalityAction::Return(self.gl_depth_func_static(esp, memory)?)),
-            ProviderOp::GlAlphaFunc => Ok(PersonalityAction::Return(self.gl_alpha_func_static(esp, memory)?)),
-            ProviderOp::GlBlendFunc => Ok(PersonalityAction::Return(self.gl_blend_func_static(esp, memory)?)),
-            ProviderOp::GlEnableClientState => Ok(PersonalityAction::Return(self.gl_enable_client_state_static(esp, memory)?)),
-            ProviderOp::GlTexEnvi => Ok(PersonalityAction::Return(self.gl_tex_envi_static(esp, memory)?)),
-            ProviderOp::GlBindTexture => Ok(PersonalityAction::Return(self.gl_bind_texture_static(esp, memory)?)),
-            ProviderOp::GlDisableClientState => Ok(PersonalityAction::Return(self.gl_disable_client_state_static(esp, memory)?)),
-            ProviderOp::GlDepthMask => Ok(PersonalityAction::Return(self.gl_depth_mask_static(esp, memory)?)),
-            ProviderOp::GlColorMaterial => Ok(PersonalityAction::Return(self.gl_color_material_static(esp, memory)?)),
-            ProviderOp::GlTexGeni => Ok(PersonalityAction::Return(self.gl_tex_geni_static(esp, memory)?)),
-            ProviderOp::GlLightModelfv => Ok(PersonalityAction::Return(self.gl_light_modelfv_static(esp, memory)?)),
-            ProviderOp::GlMaterialfv => Ok(PersonalityAction::Return(self.gl_materialfv_static(esp, memory)?)),
-            ProviderOp::GlPolygonOffset => Ok(PersonalityAction::Return(self.gl_polygon_offset_static(esp, memory)?)),
-            ProviderOp::GlGetIntegerv => Ok(PersonalityAction::Return(self.gl_get_integerv_static(esp, memory)?)),
-            ProviderOp::WglGetProcAddress => Ok(PersonalityAction::Return(self.wgl_get_proc_address_static(esp, memory)?)),
-            ProviderOp::GlGetString => Ok(PersonalityAction::Return(self.gl_get_string_static(esp, memory)?)),
-            ProviderOp::WglCreateContext => Ok(PersonalityAction::Return(self.wgl_create_context_static(esp, memory)?)),
-            ProviderOp::WglDeleteContext => Ok(PersonalityAction::Return(self.wgl_delete_context_static(esp, memory)?)),
-            ProviderOp::GlDeleteTextures => Ok(PersonalityAction::Return(self.gl_delete_textures_static(esp, memory)?)),
-            ProviderOp::GlTexSubImage2D => Ok(PersonalityAction::Return(self.gl_tex_sub_image_2d_static(esp, memory)?)),
-            ProviderOp::GlTexImage2D => Ok(PersonalityAction::Return(self.gl_tex_image_2d_static(esp, memory)?)),
-            ProviderOp::GlPixelStorei => Ok(PersonalityAction::Return(self.gl_pixel_storei_static(esp, memory)?)),
-            ProviderOp::GlTexParameteri => Ok(PersonalityAction::Return(self.gl_tex_parameteri_static(esp, memory)?)),
-            ProviderOp::GlGenTextures => Ok(PersonalityAction::Return(self.gl_gen_textures_static(esp, memory)?)),
-            ProviderOp::GlNormal3fv => Ok(PersonalityAction::Return(self.gl_normal_3fv_static(esp, memory)?)),
-            ProviderOp::GlNormalPointer => Ok(PersonalityAction::Return(self.gl_normal_pointer_static(esp, memory)?)),
-            ProviderOp::GlVertexPointer => Ok(PersonalityAction::Return(self.gl_vertex_pointer_static(esp, memory)?)),
-            ProviderOp::GlColorPointer => Ok(PersonalityAction::Return(self.gl_color_pointer_static(esp, memory)?)),
-            ProviderOp::GlTexCoordPointer => Ok(PersonalityAction::Return(self.gl_tex_coord_pointer_static(esp, memory)?)),
-            ProviderOp::GlFinish => Ok(PersonalityAction::Return(self.gl_finish_static(esp, memory)?)),
-            ProviderOp::GlDrawElements => Ok(PersonalityAction::Return(self.gl_draw_elements_static(esp, memory)?)),
-            ProviderOp::GlLoadMatrixf => Ok(PersonalityAction::Return(self.gl_load_matrixf_static(esp, memory)?)),
-            ProviderOp::GlMatrixMode => Ok(PersonalityAction::Return(self.gl_matrix_mode_static(esp, memory)?)),
-            ProviderOp::GlScissor => Ok(PersonalityAction::Return(self.gl_scissor_static(esp, memory)?)),
-            ProviderOp::GlDepthRange => Ok(PersonalityAction::Return(self.gl_depth_range_static(esp, memory)?)),
-            ProviderOp::GlViewport => Ok(PersonalityAction::Return(self.gl_viewport_static(esp, memory)?)),
-            ProviderOp::GlClear => Ok(PersonalityAction::Return(self.gl_clear_static(esp, memory)?)),
-            ProviderOp::GlClearColor => Ok(PersonalityAction::Return(self.gl_clear_color_static(esp, memory)?)),
-            ProviderOp::GlReadPixels => Ok(PersonalityAction::Return(self.gl_read_pixels_static(esp, memory)?)),
-            ProviderOp::GlReadBuffer => Ok(PersonalityAction::Return(self.gl_read_buffer_static(esp, memory)?)),
-            ProviderOp::WglSwapLayerBuffers => Ok(PersonalityAction::Return(self.wgl_swap_layer_buffers_static(esp, memory)?)),
-            ProviderOp::GlLightf => Ok(PersonalityAction::Return(self.gl_lightf_static(esp, memory)?)),
+            ProviderOp::GlDrawBuffer => Ok(PersonalityAction::Return(
+                self.gl_draw_buffer_static(esp, memory)?,
+            )),
+            ProviderOp::GlDepthFunc => Ok(PersonalityAction::Return(
+                self.gl_depth_func_static(esp, memory)?,
+            )),
+            ProviderOp::GlAlphaFunc => Ok(PersonalityAction::Return(
+                self.gl_alpha_func_static(esp, memory)?,
+            )),
+            ProviderOp::GlBlendFunc => Ok(PersonalityAction::Return(
+                self.gl_blend_func_static(esp, memory)?,
+            )),
+            ProviderOp::GlEnableClientState => Ok(PersonalityAction::Return(
+                self.gl_enable_client_state_static(esp, memory)?,
+            )),
+            ProviderOp::GlTexEnvi => Ok(PersonalityAction::Return(
+                self.gl_tex_envi_static(esp, memory)?,
+            )),
+            ProviderOp::GlBindTexture => Ok(PersonalityAction::Return(
+                self.gl_bind_texture_static(esp, memory)?,
+            )),
+            ProviderOp::GlDisableClientState => Ok(PersonalityAction::Return(
+                self.gl_disable_client_state_static(esp, memory)?,
+            )),
+            ProviderOp::GlDepthMask => Ok(PersonalityAction::Return(
+                self.gl_depth_mask_static(esp, memory)?,
+            )),
+            ProviderOp::GlColorMaterial => Ok(PersonalityAction::Return(
+                self.gl_color_material_static(esp, memory)?,
+            )),
+            ProviderOp::GlTexGeni => Ok(PersonalityAction::Return(
+                self.gl_tex_geni_static(esp, memory)?,
+            )),
+            ProviderOp::GlLightModelfv => Ok(PersonalityAction::Return(
+                self.gl_light_modelfv_static(esp, memory)?,
+            )),
+            ProviderOp::GlMaterialfv => Ok(PersonalityAction::Return(
+                self.gl_materialfv_static(esp, memory)?,
+            )),
+            ProviderOp::GlPolygonOffset => Ok(PersonalityAction::Return(
+                self.gl_polygon_offset_static(esp, memory)?,
+            )),
+            ProviderOp::GlGetIntegerv => Ok(PersonalityAction::Return(
+                self.gl_get_integerv_static(esp, memory)?,
+            )),
+            ProviderOp::WglGetProcAddress => Ok(PersonalityAction::Return(
+                self.wgl_get_proc_address_static(esp, memory)?,
+            )),
+            ProviderOp::GlGetString => Ok(PersonalityAction::Return(
+                self.gl_get_string_static(esp, memory)?,
+            )),
+            ProviderOp::WglCreateContext => Ok(PersonalityAction::Return(
+                self.wgl_create_context_static(esp, memory)?,
+            )),
+            ProviderOp::WglDeleteContext => Ok(PersonalityAction::Return(
+                self.wgl_delete_context_static(esp, memory)?,
+            )),
+            ProviderOp::GlDeleteTextures => Ok(PersonalityAction::Return(
+                self.gl_delete_textures_static(esp, memory)?,
+            )),
+            ProviderOp::GlTexSubImage2D => Ok(PersonalityAction::Return(
+                self.gl_tex_sub_image_2d_static(esp, memory)?,
+            )),
+            ProviderOp::GlTexImage2D => Ok(PersonalityAction::Return(
+                self.gl_tex_image_2d_static(esp, memory)?,
+            )),
+            ProviderOp::GlPixelStorei => Ok(PersonalityAction::Return(
+                self.gl_pixel_storei_static(esp, memory)?,
+            )),
+            ProviderOp::GlTexParameteri => Ok(PersonalityAction::Return(
+                self.gl_tex_parameteri_static(esp, memory)?,
+            )),
+            ProviderOp::GlGenTextures => Ok(PersonalityAction::Return(
+                self.gl_gen_textures_static(esp, memory)?,
+            )),
+            ProviderOp::GlNormal3fv => Ok(PersonalityAction::Return(
+                self.gl_normal_3fv_static(esp, memory)?,
+            )),
+            ProviderOp::GlNormalPointer => Ok(PersonalityAction::Return(
+                self.gl_normal_pointer_static(esp, memory)?,
+            )),
+            ProviderOp::GlVertexPointer => Ok(PersonalityAction::Return(
+                self.gl_vertex_pointer_static(esp, memory)?,
+            )),
+            ProviderOp::GlColorPointer => Ok(PersonalityAction::Return(
+                self.gl_color_pointer_static(esp, memory)?,
+            )),
+            ProviderOp::GlTexCoordPointer => Ok(PersonalityAction::Return(
+                self.gl_tex_coord_pointer_static(esp, memory)?,
+            )),
+            ProviderOp::GlFinish => Ok(PersonalityAction::Return(
+                self.gl_finish_static(esp, memory)?,
+            )),
+            ProviderOp::GlDrawElements => Ok(PersonalityAction::Return(
+                self.gl_draw_elements_static(esp, memory)?,
+            )),
+            ProviderOp::GlLoadMatrixf => Ok(PersonalityAction::Return(
+                self.gl_load_matrixf_static(esp, memory)?,
+            )),
+            ProviderOp::GlMatrixMode => Ok(PersonalityAction::Return(
+                self.gl_matrix_mode_static(esp, memory)?,
+            )),
+            ProviderOp::GlScissor => Ok(PersonalityAction::Return(
+                self.gl_scissor_static(esp, memory)?,
+            )),
+            ProviderOp::GlDepthRange => Ok(PersonalityAction::Return(
+                self.gl_depth_range_static(esp, memory)?,
+            )),
+            ProviderOp::GlViewport => Ok(PersonalityAction::Return(
+                self.gl_viewport_static(esp, memory)?,
+            )),
+            ProviderOp::GlClear => Ok(PersonalityAction::Return(
+                self.gl_clear_static(esp, memory)?,
+            )),
+            ProviderOp::GlClearColor => Ok(PersonalityAction::Return(
+                self.gl_clear_color_static(esp, memory)?,
+            )),
+            ProviderOp::GlReadPixels => Ok(PersonalityAction::Return(
+                self.gl_read_pixels_static(esp, memory)?,
+            )),
+            ProviderOp::GlReadBuffer => Ok(PersonalityAction::Return(
+                self.gl_read_buffer_static(esp, memory)?,
+            )),
+            ProviderOp::WglSwapLayerBuffers => Ok(PersonalityAction::Return(
+                self.wgl_swap_layer_buffers_static(esp, memory)?,
+            )),
+            ProviderOp::GlLightf => Ok(PersonalityAction::Return(
+                self.gl_lightf_static(esp, memory)?,
+            )),
             ProviderOp::SetTextColor => Ok(PersonalityAction::Return(
                 self.set_text_color_static(esp, memory)?,
             )),
@@ -157,17 +253,26 @@ impl XpProcess {
             )),
             ProviderOp::LoadImageA => {
                 let result = self.load_icon_a(esp, memory)?;
-                self.call_count = self.call_count.checked_add(1).ok_or("call count overflow")?;
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(result.handle))
             }
             ProviderOp::LoadCursorA => {
                 let result = self.load_cursor_a(esp, memory)?;
-                self.call_count = self.call_count.checked_add(1).ok_or("call count overflow")?;
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(result.handle))
             }
             ProviderOp::RegisterClassExA => {
                 let result = self.register_class_ex_a(esp, memory)?;
-                self.call_count = self.call_count.checked_add(1).ok_or("call count overflow")?;
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(result))
             }
             ProviderOp::D3D8Release => {
@@ -452,7 +557,10 @@ impl XpProcess {
             ProviderOp::CrtStrncpy => {
                 let [_, destination, source, count] = arguments::<4>(memory, esp)?;
                 let result = crt_strncpy(memory, destination, source, count)?;
-                self.call_count = self.call_count.checked_add(1).ok_or("call count overflow")?;
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(result))
             }
             ProviderOp::CrtStrpbrk => {
@@ -466,13 +574,19 @@ impl XpProcess {
                             .expect("bounded string address")
                     })
                     .unwrap_or(0);
-                self.call_count = self.call_count.checked_add(1).ok_or("call count overflow")?;
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(result))
             }
             ProviderOp::CrtStrlwr | ProviderOp::CrtStrupr => {
                 let [_, string] = arguments::<2>(memory, esp)?;
                 let result = crt_strcase(memory, string, operation == ProviderOp::CrtStrupr)?;
-                self.call_count = self.call_count.checked_add(1).ok_or("call count overflow")?;
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(result))
             }
             ProviderOp::CrtStrncmp => {
@@ -480,7 +594,10 @@ impl XpProcess {
                 let left = read_c_bytes(memory, left)?;
                 let right = read_c_bytes(memory, right)?;
                 let result = staticstr::compare(&left, &right, Some(count as usize), false) as u32;
-                self.call_count = self.call_count.checked_add(1).ok_or("call count overflow")?;
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(result))
             }
             ProviderOp::CrtStricmp => {
@@ -488,7 +605,10 @@ impl XpProcess {
                 let left = read_c_bytes(memory, left)?;
                 let right = read_c_bytes(memory, right)?;
                 let result = staticstr::compare(&left, &right, None, true) as u32;
-                self.call_count = self.call_count.checked_add(1).ok_or("call count overflow")?;
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(result))
             }
             ProviderOp::CrtStrrchr => {
@@ -1052,9 +1172,7 @@ impl XpProcess {
                     if desired_access & FILE_WRITE_ACCESS_MASK != 0 {
                         return Err(ProviderDispatchError::Frontier {
                             api: "CreateFileA",
-                            detail: format!(
-                                "Warcraft file write access=0x{desired_access:08x}"
-                            ),
+                            detail: format!("Warcraft file write access=0x{desired_access:08x}"),
                         });
                     }
                     if security_attributes != 0 || template_file != 0 {
@@ -1548,7 +1666,11 @@ impl XpProcess {
                         ),
                     });
                 }
-                write_u32(memory, sectors_per_cluster_ptr, geometry.sectors_per_cluster)?;
+                write_u32(
+                    memory,
+                    sectors_per_cluster_ptr,
+                    geometry.sectors_per_cluster,
+                )?;
                 write_u32(memory, bytes_per_sector_ptr, geometry.bytes_per_sector)?;
                 write_u32(memory, free_clusters_ptr, geometry.free_clusters)?;
                 write_u32(memory, total_clusters_ptr, geometry.total_clusters)?;
@@ -1804,11 +1926,11 @@ impl XpProcess {
             ProviderOp::CreateEventA => Some(PersonalityAction::Session(
                 SessionRequest::CreateEvent(self.create_event_request(esp, memory)?),
             )),
-            ProviderOp::CreateWindowExA => Some(PersonalityAction::Session(
-                SessionRequest::CreateWindow(
+            ProviderOp::CreateWindowExA => {
+                Some(PersonalityAction::Session(SessionRequest::CreateWindow(
                     self.create_window_request(esp, memory, ThreadKey { pid, tid })?,
-                ),
-            )),
+                )))
+            }
             ProviderOp::SetWindowPos => {
                 let [_, hwnd, insert_after, x, y, width, height, flags] =
                     arguments::<8>(memory, esp)?;
@@ -1842,11 +1964,13 @@ impl XpProcess {
                 tid,
                 handle: arguments::<2>(memory, esp)?[1],
             })),
-            ProviderOp::ResetEvent => Some(PersonalityAction::Session(SessionRequest::ResetEvent {
-                pid,
-                tid,
-                handle: arguments::<2>(memory, esp)?[1],
-            })),
+            ProviderOp::ResetEvent => {
+                Some(PersonalityAction::Session(SessionRequest::ResetEvent {
+                    pid,
+                    tid,
+                    handle: arguments::<2>(memory, esp)?[1],
+                }))
+            }
             ProviderOp::CreateMutexA => {
                 let [_, attributes, initial_owner, name] = arguments::<4>(memory, esp)?;
                 let inheritable = if attributes == 0 {
@@ -2111,5 +2235,4 @@ impl XpProcess {
                 ProviderDispatchError::Frontier { .. } => "child provider frontier",
             })
     }
-
 }

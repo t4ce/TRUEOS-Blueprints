@@ -316,21 +316,51 @@ impl ProviderOp {
             Self::GetDC => 4,
             Self::GetDeviceCaps => 8,
             Self::WglMakeCurrent => 8,
-            Self::GlDisable | Self::GlEnable | Self::GlDrawBuffer | Self::GlDepthFunc
-            | Self::GlEnableClientState | Self::GlDisableClientState | Self::GlDepthMask
-            | Self::GlGetString | Self::WglGetProcAddress | Self::WglCreateContext
-            | Self::WglDeleteContext | Self::GlNormal3fv | Self::GlLoadMatrixf
-            | Self::GlMatrixMode | Self::GlClear | Self::GlReadBuffer => 4,
-            Self::GlLightfv | Self::GlTexEnvi | Self::GlTexGeni | Self::GlMaterialfv
-            | Self::GlTexParameteri | Self::GlNormalPointer | Self::GlLightf => 12,
-            Self::GlFogfv | Self::GlFogf | Self::GlFogi | Self::GlAlphaFunc
-            | Self::GlBlendFunc | Self::GlBindTexture | Self::GlColorMaterial
-            | Self::GlLightModelfv | Self::GlPolygonOffset | Self::GlGetIntegerv
-            | Self::GlDeleteTextures | Self::GlPixelStorei | Self::GlGenTextures
+            Self::GlDisable
+            | Self::GlEnable
+            | Self::GlDrawBuffer
+            | Self::GlDepthFunc
+            | Self::GlEnableClientState
+            | Self::GlDisableClientState
+            | Self::GlDepthMask
+            | Self::GlGetString
+            | Self::WglGetProcAddress
+            | Self::WglCreateContext
+            | Self::WglDeleteContext
+            | Self::GlNormal3fv
+            | Self::GlLoadMatrixf
+            | Self::GlMatrixMode
+            | Self::GlClear
+            | Self::GlReadBuffer => 4,
+            Self::GlLightfv
+            | Self::GlTexEnvi
+            | Self::GlTexGeni
+            | Self::GlMaterialfv
+            | Self::GlTexParameteri
+            | Self::GlNormalPointer
+            | Self::GlLightf => 12,
+            Self::GlFogfv
+            | Self::GlFogf
+            | Self::GlFogi
+            | Self::GlAlphaFunc
+            | Self::GlBlendFunc
+            | Self::GlBindTexture
+            | Self::GlColorMaterial
+            | Self::GlLightModelfv
+            | Self::GlPolygonOffset
+            | Self::GlGetIntegerv
+            | Self::GlDeleteTextures
+            | Self::GlPixelStorei
+            | Self::GlGenTextures
             | Self::WglSwapLayerBuffers => 8,
             Self::GlTexSubImage2D | Self::GlTexImage2D => 36,
-            Self::GlVertexPointer | Self::GlColorPointer | Self::GlTexCoordPointer
-            | Self::GlDrawElements | Self::GlDepthRange | Self::GlScissor | Self::GlViewport
+            Self::GlVertexPointer
+            | Self::GlColorPointer
+            | Self::GlTexCoordPointer
+            | Self::GlDrawElements
+            | Self::GlDepthRange
+            | Self::GlScissor
+            | Self::GlViewport
             | Self::GlClearColor => 16,
             Self::GlFinish => 0,
             Self::GlReadPixels => 28,
@@ -706,30 +736,54 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
     if import.module.eq_ignore_ascii_case("OPENGL32.dll") {
         return match symbol.as_str() {
             "wglMakeCurrent" => ProviderOp::WglMakeCurrent,
-            "glDisable" => ProviderOp::GlDisable, "glEnable" => ProviderOp::GlEnable,
-            "glLightfv" => ProviderOp::GlLightfv, "glFogfv" => ProviderOp::GlFogfv,
-            "glFogf" => ProviderOp::GlFogf, "glFogi" => ProviderOp::GlFogi,
-            "glDrawBuffer" => ProviderOp::GlDrawBuffer, "glDepthFunc" => ProviderOp::GlDepthFunc,
-            "glAlphaFunc" => ProviderOp::GlAlphaFunc, "glBlendFunc" => ProviderOp::GlBlendFunc,
-            "glEnableClientState" => ProviderOp::GlEnableClientState, "glTexEnvi" => ProviderOp::GlTexEnvi,
-            "glBindTexture" => ProviderOp::GlBindTexture, "glDisableClientState" => ProviderOp::GlDisableClientState,
-            "glDepthMask" => ProviderOp::GlDepthMask, "glColorMaterial" => ProviderOp::GlColorMaterial,
-            "glTexGeni" => ProviderOp::GlTexGeni, "glLightModelfv" => ProviderOp::GlLightModelfv,
-            "glMaterialfv" => ProviderOp::GlMaterialfv, "glPolygonOffset" => ProviderOp::GlPolygonOffset,
-            "glGetIntegerv" => ProviderOp::GlGetIntegerv, "wglGetProcAddress" => ProviderOp::WglGetProcAddress,
-            "glGetString" => ProviderOp::GlGetString, "wglCreateContext" => ProviderOp::WglCreateContext,
-            "wglDeleteContext" => ProviderOp::WglDeleteContext, "glDeleteTextures" => ProviderOp::GlDeleteTextures,
-            "glTexSubImage2D" => ProviderOp::GlTexSubImage2D, "glTexImage2D" => ProviderOp::GlTexImage2D,
-            "glPixelStorei" => ProviderOp::GlPixelStorei, "glTexParameteri" => ProviderOp::GlTexParameteri,
-            "glGenTextures" => ProviderOp::GlGenTextures, "glNormal3fv" => ProviderOp::GlNormal3fv,
-            "glNormalPointer" => ProviderOp::GlNormalPointer, "glVertexPointer" => ProviderOp::GlVertexPointer,
-            "glColorPointer" => ProviderOp::GlColorPointer, "glTexCoordPointer" => ProviderOp::GlTexCoordPointer,
-            "glFinish" => ProviderOp::GlFinish, "glDrawElements" => ProviderOp::GlDrawElements,
-            "glLoadMatrixf" => ProviderOp::GlLoadMatrixf, "glMatrixMode" => ProviderOp::GlMatrixMode,
-            "glScissor" => ProviderOp::GlScissor, "glDepthRange" => ProviderOp::GlDepthRange,
-            "glViewport" => ProviderOp::GlViewport, "glClear" => ProviderOp::GlClear,
-            "glClearColor" => ProviderOp::GlClearColor, "glReadPixels" => ProviderOp::GlReadPixels,
-            "glReadBuffer" => ProviderOp::GlReadBuffer, "wglSwapLayerBuffers" => ProviderOp::WglSwapLayerBuffers,
+            "glDisable" => ProviderOp::GlDisable,
+            "glEnable" => ProviderOp::GlEnable,
+            "glLightfv" => ProviderOp::GlLightfv,
+            "glFogfv" => ProviderOp::GlFogfv,
+            "glFogf" => ProviderOp::GlFogf,
+            "glFogi" => ProviderOp::GlFogi,
+            "glDrawBuffer" => ProviderOp::GlDrawBuffer,
+            "glDepthFunc" => ProviderOp::GlDepthFunc,
+            "glAlphaFunc" => ProviderOp::GlAlphaFunc,
+            "glBlendFunc" => ProviderOp::GlBlendFunc,
+            "glEnableClientState" => ProviderOp::GlEnableClientState,
+            "glTexEnvi" => ProviderOp::GlTexEnvi,
+            "glBindTexture" => ProviderOp::GlBindTexture,
+            "glDisableClientState" => ProviderOp::GlDisableClientState,
+            "glDepthMask" => ProviderOp::GlDepthMask,
+            "glColorMaterial" => ProviderOp::GlColorMaterial,
+            "glTexGeni" => ProviderOp::GlTexGeni,
+            "glLightModelfv" => ProviderOp::GlLightModelfv,
+            "glMaterialfv" => ProviderOp::GlMaterialfv,
+            "glPolygonOffset" => ProviderOp::GlPolygonOffset,
+            "glGetIntegerv" => ProviderOp::GlGetIntegerv,
+            "wglGetProcAddress" => ProviderOp::WglGetProcAddress,
+            "glGetString" => ProviderOp::GlGetString,
+            "wglCreateContext" => ProviderOp::WglCreateContext,
+            "wglDeleteContext" => ProviderOp::WglDeleteContext,
+            "glDeleteTextures" => ProviderOp::GlDeleteTextures,
+            "glTexSubImage2D" => ProviderOp::GlTexSubImage2D,
+            "glTexImage2D" => ProviderOp::GlTexImage2D,
+            "glPixelStorei" => ProviderOp::GlPixelStorei,
+            "glTexParameteri" => ProviderOp::GlTexParameteri,
+            "glGenTextures" => ProviderOp::GlGenTextures,
+            "glNormal3fv" => ProviderOp::GlNormal3fv,
+            "glNormalPointer" => ProviderOp::GlNormalPointer,
+            "glVertexPointer" => ProviderOp::GlVertexPointer,
+            "glColorPointer" => ProviderOp::GlColorPointer,
+            "glTexCoordPointer" => ProviderOp::GlTexCoordPointer,
+            "glFinish" => ProviderOp::GlFinish,
+            "glDrawElements" => ProviderOp::GlDrawElements,
+            "glLoadMatrixf" => ProviderOp::GlLoadMatrixf,
+            "glMatrixMode" => ProviderOp::GlMatrixMode,
+            "glScissor" => ProviderOp::GlScissor,
+            "glDepthRange" => ProviderOp::GlDepthRange,
+            "glViewport" => ProviderOp::GlViewport,
+            "glClear" => ProviderOp::GlClear,
+            "glClearColor" => ProviderOp::GlClearColor,
+            "glReadPixels" => ProviderOp::GlReadPixels,
+            "glReadBuffer" => ProviderOp::GlReadBuffer,
+            "wglSwapLayerBuffers" => ProviderOp::WglSwapLayerBuffers,
             "glLightf" => ProviderOp::GlLightf,
             _ => ProviderOp::Unknown,
         };
@@ -865,6 +919,78 @@ mod beginthreadex_tests {
     }
 
     #[test]
+    fn static_gl_imports_have_typed_frontier_dispatch_and_abi() {
+        let entries = [
+            ("wglMakeCurrent", 8),
+            ("glDisable", 4),
+            ("glEnable", 4),
+            ("glLightfv", 12),
+            ("glFogfv", 8),
+            ("glFogf", 8),
+            ("glFogi", 8),
+            ("glDrawBuffer", 4),
+            ("glDepthFunc", 4),
+            ("glAlphaFunc", 8),
+            ("glBlendFunc", 8),
+            ("glEnableClientState", 4),
+            ("glTexEnvi", 12),
+            ("glBindTexture", 8),
+            ("glDisableClientState", 4),
+            ("glDepthMask", 4),
+            ("glColorMaterial", 8),
+            ("glTexGeni", 12),
+            ("glLightModelfv", 8),
+            ("glMaterialfv", 12),
+            ("glPolygonOffset", 8),
+            ("glGetIntegerv", 8),
+            ("wglGetProcAddress", 4),
+            ("glGetString", 4),
+            ("wglCreateContext", 4),
+            ("wglDeleteContext", 4),
+            ("glDeleteTextures", 8),
+            ("glTexSubImage2D", 36),
+            ("glTexImage2D", 36),
+            ("glPixelStorei", 8),
+            ("glTexParameteri", 12),
+            ("glGenTextures", 8),
+            ("glNormal3fv", 4),
+            ("glNormalPointer", 12),
+            ("glVertexPointer", 16),
+            ("glColorPointer", 16),
+            ("glTexCoordPointer", 16),
+            ("glFinish", 0),
+            ("glDrawElements", 16),
+            ("glLoadMatrixf", 4),
+            ("glMatrixMode", 4),
+            ("glScissor", 16),
+            ("glDepthRange", 16),
+            ("glViewport", 16),
+            ("glClear", 4),
+            ("glClearColor", 16),
+            ("glReadPixels", 28),
+            ("glReadBuffer", 4),
+            ("wglSwapLayerBuffers", 8),
+            ("glLightf", 12),
+        ];
+        for (symbol, cleanup) in entries {
+            let import = ProviderImport {
+                module: "OPENGL32.dll".into(),
+                symbol: ProviderSymbol::Name(symbol.into()),
+                iat_rva: 0,
+            };
+            let operation = provider_op(&import);
+            assert_ne!(operation, ProviderOp::Unknown, "{symbol}");
+            assert!(operation.is_generic_process_local(), "{symbol}");
+            assert_eq!(operation.stack_cleanup_bytes(), cleanup, "{symbol}");
+            assert_eq!(
+                provider_thunk_kind(&import),
+                thunk32::Kind::Stdcall(cleanup),
+                "{symbol}",
+            );
+        }
+    }
+
+    #[test]
     fn d3d8_create8_is_an_advertised_stdcall_export() {
         let import = ProviderImport {
             module: "d3d8.dll".into(),
@@ -874,10 +1000,18 @@ mod beginthreadex_tests {
 
         assert_eq!(provider_op(&import), ProviderOp::Direct3DCreate8);
         assert!(provider_op(&import).is_modeled());
-        assert_eq!(external_export_thunk_kind(&import), Some(thunk32::Kind::Stdcall(4)));
+        assert_eq!(
+            external_export_thunk_kind(&import),
+            Some(thunk32::Kind::Stdcall(4))
+        );
 
         let mut bytes = [0u8; thunk32::THUNK_BYTES];
-        thunk32::write(123, external_export_thunk_kind(&import).unwrap(), &mut bytes).unwrap();
+        thunk32::write(
+            123,
+            external_export_thunk_kind(&import).unwrap(),
+            &mut bytes,
+        )
+        .unwrap();
         assert_eq!(&bytes[8..11], &[0xc2, 0x04, 0x00]);
     }
 
