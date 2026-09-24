@@ -480,6 +480,35 @@ fn crt_strstr(memory: &impl GuestMemory, haystack: u32, needle: u32) -> Result<u
     Err("unterminated strstr haystack")
 }
 
+fn crt_strnicmp(
+    memory: &impl GuestMemory,
+    left: u32,
+    right: u32,
+    count: u32,
+) -> Result<u32, &'static str> {
+    // MSVCRT compares unsigned ANSI bytes after locale case-folding. The XP
+    // personality is CP1252, including its handful of non-ASCII case pairs.
+    let fold = |byte: u8| encode_cp1252(cp1252_lower(decode_cp1252(byte))).unwrap_or(byte);
+    for offset in 0..count.min(1_048_576) {
+        let left_address = left.checked_add(offset).ok_or("strnicmp left address overflow")?;
+        let right_address = right
+            .checked_add(offset)
+            .ok_or("strnicmp right address overflow")?;
+        let mut left_byte = [0];
+        let mut right_byte = [0];
+        memory.read(left_address, &mut left_byte)?;
+        memory.read(right_address, &mut right_byte)?;
+        let difference = i32::from(fold(left_byte[0])) - i32::from(fold(right_byte[0]));
+        if difference != 0 || left_byte[0] == 0 {
+            return Ok(difference as u32);
+        }
+    }
+    if count > 1_048_576 {
+        return Err("strnicmp comparison exceeds compatibility bound");
+    }
+    Ok(0)
+}
+
 fn crt_full_path(path: &str) -> Option<String> {
     if path.is_empty() {
         return None;
@@ -2248,6 +2277,15 @@ impl XpProcess {
             ProviderOp::CrtStrstr => {
                 let [_, haystack, needle] = arguments::<3>(memory, esp)?;
                 let result = crt_strstr(memory, haystack, needle)?;
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(result))
+            }
+            ProviderOp::CrtStrnicmp => {
+                let [_, left, right, count] = arguments::<4>(memory, esp)?;
+                let result = crt_strnicmp(memory, left, right, count)?;
                 self.call_count = self
                     .call_count
                     .checked_add(1)

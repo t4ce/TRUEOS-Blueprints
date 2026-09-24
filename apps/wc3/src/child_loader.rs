@@ -132,6 +132,7 @@ pub enum ProviderOp {
     CrtIsDigit,
     CrtStrrchr,
     CrtStrstr,
+    CrtStrnicmp,
     CrtFullPath,
     CrtBeginThreadEx,
     Unknown,
@@ -227,6 +228,7 @@ impl ProviderOp {
             | Self::CrtIsDigit
             | Self::CrtStrrchr
             | Self::CrtStrstr
+            | Self::CrtStrnicmp
             | Self::CrtFullPath
             | Self::CrtBeginThreadEx
             | Self::WsprintfA
@@ -305,6 +307,7 @@ impl ProviderOp {
                 | Self::CrtIsDigit
                 | Self::CrtStrrchr
                 | Self::CrtStrstr
+                | Self::CrtStrnicmp
                 | Self::CrtFullPath
                 | Self::LoadStringA
                 | Self::WsprintfA
@@ -435,6 +438,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "isdigit" => ProviderOp::CrtIsDigit,
             "strrchr" => ProviderOp::CrtStrrchr,
             "strstr" => ProviderOp::CrtStrstr,
+            "_strnicmp" => ProviderOp::CrtStrnicmp,
             "_fullpath" => ProviderOp::CrtFullPath,
             "_beginthreadex" => ProviderOp::CrtBeginThreadEx,
             _ => ProviderOp::Unknown,

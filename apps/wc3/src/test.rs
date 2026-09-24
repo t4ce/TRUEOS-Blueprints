@@ -3051,6 +3051,57 @@ mod tests_process_1 {
     }
 
     #[test]
+    fn child_crt_strnicmp_is_bounded_case_insensitive_and_cdecl() {
+        let provider = ProviderImport {
+            module: "MSVCRT.dll".into(),
+            symbol: ProviderSymbol::Name("_strnicmp".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&provider);
+        assert_eq!(operation, ProviderOp::CrtStrnicmp);
+        assert!(operation.is_modeled());
+        assert!(operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 0);
+        assert_eq!(
+            crate::child_loader::provider_thunk_kind(&provider),
+            thunk32::Kind::Return
+        );
+
+        let mut xp = XpProcess::new_child();
+        xp.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+        let left = STACK_TOP - 0x180;
+        let right = STACK_TOP - 0x100;
+        memory.write(left, b"AbCz\0").unwrap();
+        memory.write(right, b"aBcQ\0").unwrap();
+        write_u32(&mut memory, esp, 0x1500_bbff).unwrap();
+        write_u32(&mut memory, esp + 4, left).unwrap();
+        write_u32(&mut memory, esp + 8, right).unwrap();
+        write_u32(&mut memory, esp + 12, 3).unwrap();
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(0))
+        );
+
+        write_u32(&mut memory, esp + 12, 4).unwrap();
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(9))
+        );
+        memory.write(left, b"A\0").unwrap();
+        memory.write(right, b"b\0").unwrap();
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(u32::MAX))
+        );
+        assert_eq!(xp.call_count, 3);
+    }
+
+    #[test]
     fn child_wsprintf_a_formats_ansi_strings_and_hex_as_cdecl() {
         let provider = ProviderImport {
             module: "USER32.dll".into(),
