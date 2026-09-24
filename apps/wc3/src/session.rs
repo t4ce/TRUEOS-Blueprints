@@ -574,9 +574,6 @@ pub enum WindowPresentation {
         width: u32,
         height: u32,
     },
-    Hide {
-        hwnd: u32,
-    },
     Destroy {
         hwnd: u32,
     },
@@ -1019,6 +1016,14 @@ impl Wc3Session {
             .next_window_handle
             .checked_add(1)
             .ok_or("HWND overflow")?;
+        let requested_visible = request.style & 0x1000_0000 != 0;
+        let presentation = WindowPresentation::Show {
+            hwnd,
+            x: request.x,
+            y: request.y,
+            width: request.width,
+            height: request.height,
+        };
         self.windows.insert(
             hwnd,
             WindowObject {
@@ -1039,31 +1044,21 @@ impl Wc3Session {
                 menu: request.menu,
                 instance: request.instance,
                 param: request.param,
-                visible: request.style & 0x1000_0000 != 0,
+                visible: requested_visible,
                 paint_pending: false,
             },
         );
+        self.window_presentation = Some(presentation);
         Ok(hwnd)
     }
 
     pub fn show_window(&mut self, hwnd: u32, show: u32) -> Result<u32, &'static str> {
         let window = self.windows.get_mut(&hwnd).ok_or("unknown window")?;
         let old = window.visible;
-        let visible = show != 0;
-        window.visible = visible;
-        window.paint_pending = visible;
-        if old != visible {
-            self.window_presentation = Some(if visible {
-                WindowPresentation::Show {
-                    hwnd,
-                    x: window.x,
-                    y: window.y,
-                    width: window.width,
-                    height: window.height,
-                }
-            } else {
-                WindowPresentation::Hide { hwnd }
-            });
+        let requested_visible = show != 0;
+        window.visible = requested_visible;
+        if requested_visible {
+            window.paint_pending = true;
         }
         Ok(old as u32)
     }

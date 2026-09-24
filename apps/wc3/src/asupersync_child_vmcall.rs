@@ -5260,14 +5260,18 @@
                             return Err("CreateWindowExA produced unexpected action".into());
                         };
                         let hwnd = session.create_window(request).map_err(str::to_owned)?;
+                        if let Some(presentation) = session.take_window_presentation() {
+                            present_window(presentation, &mut frames, window_rgba, &session)?;
+                        }
                         let window = session
                             .windows
                             .get(&hwnd)
                             .ok_or("created child window missing")?;
+                        let ui4_frame = frames.contains_key(&hwnd);
                         logl::log(
                             level::IMPORTANT,
                             format_args!(
-                                "WC3 CHILD CREATEWINDOWEXA RESULT pid={} tid={} hwnd=0x{:08x} class={:?} title={:?} wndproc=0x{:08x} icon=0x{:08x} cursor=0x{:08x} parent=0x{:08x} geometry={},{} {}x{} visible={} ui4_frame=0 result=success cleanup=48-by-thunk",
+                                "WC3 CHILD CREATEWINDOWEXA RESULT pid={} tid={} hwnd=0x{:08x} class={:?} title={:?} wndproc=0x{:08x} icon=0x{:08x} cursor=0x{:08x} parent=0x{:08x} geometry={},{} {}x{} win32_visible={} ui4_frame={} ui4_policy=always-visible result=success cleanup=48-by-thunk",
                                 active_pid,
                                 active_tid,
                                 hwnd,
@@ -5282,6 +5286,7 @@
                                 window.width,
                                 window.height,
                                 window.visible as u8,
+                                ui4_frame as u8,
                             ),
                         );
                         let mut registers = exit.registers;

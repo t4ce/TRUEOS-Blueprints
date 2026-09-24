@@ -1404,7 +1404,19 @@
                         pid: _,
                         hwnd,
                         show,
-                    }) => session.show_window(hwnd, show).map_err(str::to_owned)?,
+                    }) => {
+                        let result = session.show_window(hwnd, show).map_err(str::to_owned)?;
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 SHOWWINDOW hwnd=0x{:08x} requested_visible={} ui4_visible={} presentation_action=ignored",
+                                hwnd,
+                                (show != 0) as u8,
+                                frames.contains_key(&hwnd) as u8,
+                            ),
+                        );
+                        result
+                    }
                     PersonalityAction::Session(SessionRequest::DestroyWindow { pid, hwnd }) => {
                         let frame_present = frames.contains_key(&hwnd);
                         match session.destroy_window(pid, hwnd) {

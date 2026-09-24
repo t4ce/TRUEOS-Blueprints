@@ -698,15 +698,6 @@ fn present_window(
             );
             frames.insert(hwnd, opened);
         }
-        WindowPresentation::Hide { hwnd } => {
-            frames.remove(&hwnd);
-            if hwnd == WINDOW_HANDLE_BASE {
-                logl::log(
-                    level::IMPORTANT,
-                    format_args!("WC3 UI4 ROOT CLOSE hwnd=0x{:08x}", hwnd),
-                );
-            }
-        }
         WindowPresentation::Destroy { hwnd } => {
             let frame_dropped = frames.remove(&hwnd).is_some();
             let backing_dropped = window_rgba.remove(&hwnd).is_some();
