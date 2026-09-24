@@ -84,6 +84,7 @@ pub enum ProviderOp {
     GetTempPathA,
     GetDriveTypeA,
     GetVolumeInformationA,
+    GetDiskFreeSpaceA,
     SetCurrentDirectoryA,
     GetFileAttributesA,
     SetFileAttributesA,
@@ -217,6 +218,7 @@ impl ProviderOp {
             Self::ReadProcessMemory
             | Self::WriteProcessMemory
             | Self::RegOpenKeyExA
+            | Self::GetDiskFreeSpaceA
             | Self::GetTokenInformation
             | Self::ReadFile
             | Self::WriteFile => 20,
@@ -290,6 +292,7 @@ impl ProviderOp {
                 | Self::GetTempPathA
                 | Self::GetDriveTypeA
                 | Self::GetVolumeInformationA
+                | Self::GetDiskFreeSpaceA
                 | Self::SetCurrentDirectoryA
                 | Self::GetFileAttributesA
                 | Self::SetFileAttributesA
@@ -382,6 +385,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "GetTempPathA" => ProviderOp::GetTempPathA,
             "GetDriveTypeA" => ProviderOp::GetDriveTypeA,
             "GetVolumeInformationA" => ProviderOp::GetVolumeInformationA,
+            "GetDiskFreeSpaceA" => ProviderOp::GetDiskFreeSpaceA,
             "SetCurrentDirectoryA" => ProviderOp::SetCurrentDirectoryA,
             "GetFileAttributesA" => ProviderOp::GetFileAttributesA,
             "SetFileAttributesA" => ProviderOp::SetFileAttributesA,
@@ -535,6 +539,21 @@ mod beginthreadex_tests {
         assert!(operation.is_generic_process_local());
         assert_eq!(operation.stack_cleanup_bytes(), 32);
         assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Stdcall(32));
+    }
+
+    #[test]
+    fn get_disk_free_space_a_is_stdcall_and_process_local() {
+        let import = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("GetDiskFreeSpaceA".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&import);
+        assert_eq!(operation, ProviderOp::GetDiskFreeSpaceA);
+        assert!(operation.is_modeled());
+        assert!(operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 20);
+        assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Stdcall(20));
     }
 
     #[test]

@@ -56,6 +56,22 @@ pub const XP_C_MAX_COMPONENT: u32 = 255;
 pub const XP_C_FS_FLAGS: u32 = FILE_CASE_PRESERVED_NAMES;
 pub const XP_C_VOLUME_NAME: &str = "";
 pub const XP_C_FILE_SYSTEM_NAME: &str = "TRUEOSFS";
+pub const XP_C_DISK_BYTES: u64 = 10 * 1024 * 1024 * 1024;
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct XpDiskGeometry {
+    pub sectors_per_cluster: u32,
+    pub bytes_per_sector: u32,
+    pub free_clusters: u32,
+    pub total_clusters: u32,
+}
+
+pub const XP_C_DISK_GEOMETRY: XpDiskGeometry = XpDiskGeometry {
+    sectors_per_cluster: 8,
+    bytes_per_sector: 512,
+    free_clusters: 2_621_440,
+    total_clusters: 2_621_440,
+};
 const ERROR_MOD_NOT_FOUND: u32 = 126;
 const ERROR_FILE_NOT_FOUND: u32 = 2;
 const ERROR_PATH_NOT_FOUND: u32 = 3;
@@ -110,6 +126,10 @@ pub fn xp_volume_exists(root: Option<&str>) -> bool {
         None => true,
         Some(root) => root.replace('/', "\\").eq_ignore_ascii_case("C:\\"),
     }
+}
+
+pub fn xp_disk_geometry(root: Option<&str>) -> Option<XpDiskGeometry> {
+    xp_volume_exists(root).then_some(XP_C_DISK_GEOMETRY)
 }
 
 fn write_optional_ansi(
@@ -3217,6 +3237,44 @@ impl XpProcess {
                     XP_C_FILE_SYSTEM_NAME,
                     "GetVolumeInformationA filesystem name",
                 )?;
+                Ok(PersonalityAction::Return(1))
+            }
+            ProviderOp::GetDiskFreeSpaceA => {
+                let [
+                    _,
+                    root_ptr,
+                    sectors_per_cluster_ptr,
+                    bytes_per_sector_ptr,
+                    free_clusters_ptr,
+                    total_clusters_ptr,
+                ] = arguments::<6>(memory, esp)?;
+                let root = (root_ptr != 0)
+                    .then(|| read_c_string(memory, root_ptr, 1024))
+                    .transpose()?;
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                let Some(geometry) = xp_disk_geometry(root.as_deref()) else {
+                    self.set_last_error(ERROR_PATH_NOT_FOUND);
+                    return Ok(PersonalityAction::Return(0));
+                };
+                if sectors_per_cluster_ptr == 0
+                    || bytes_per_sector_ptr == 0
+                    || free_clusters_ptr == 0
+                    || total_clusters_ptr == 0
+                {
+                    return Err(ProviderDispatchError::Frontier {
+                        api: "GetDiskFreeSpaceA",
+                        detail: format!(
+                            "null output sectors=0x{sectors_per_cluster_ptr:08x} bytes=0x{bytes_per_sector_ptr:08x} free=0x{free_clusters_ptr:08x} total=0x{total_clusters_ptr:08x}"
+                        ),
+                    });
+                }
+                write_u32(memory, sectors_per_cluster_ptr, geometry.sectors_per_cluster)?;
+                write_u32(memory, bytes_per_sector_ptr, geometry.bytes_per_sector)?;
+                write_u32(memory, free_clusters_ptr, geometry.free_clusters)?;
+                write_u32(memory, total_clusters_ptr, geometry.total_clusters)?;
                 Ok(PersonalityAction::Return(1))
             }
             ProviderOp::SetCurrentDirectoryA => {

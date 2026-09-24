@@ -7256,6 +7256,19 @@ mod tests_session_1 {
     }
 
     #[test]
+    fn xp_virtual_disk_has_a_ten_gib_soft_cap() {
+        let geometry = crate::process::xp_disk_geometry(Some("C:\\")).unwrap();
+        assert_eq!(geometry, crate::process::XP_C_DISK_GEOMETRY);
+        assert_eq!(
+            u64::from(geometry.total_clusters)
+                * u64::from(geometry.sectors_per_cluster)
+                * u64::from(geometry.bytes_per_sector),
+            crate::process::XP_C_DISK_BYTES
+        );
+        assert!(crate::process::xp_disk_geometry(Some("D:\\")).is_none());
+    }
+
+    #[test]
     fn registry_index_scans_utf16_crlf_giant_ignored_value_and_final_key() {
         let mut fixture = vec![0xff, 0xfe];
         fixture.extend(

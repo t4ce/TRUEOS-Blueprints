@@ -6798,6 +6798,55 @@ pub(super) async fn run_loop(
                         } else {
                             None
                         };
+                        let get_disk_free_space = if operation
+                            == child_loader::ProviderOp::GetDiskFreeSpaceA
+                        {
+                            let frame = read_guest_words(
+                                &X86Memory(&child.address_space),
+                                exit.registers.esp,
+                                6,
+                            )?;
+                            let [
+                                _,
+                                root_ptr,
+                                sectors_per_cluster,
+                                bytes_per_sector,
+                                free_clusters,
+                                total_clusters,
+                            ] = frame.as_slice()
+                            else {
+                                unreachable!("GetDiskFreeSpaceA frame has six words")
+                            };
+                            let root = if *root_ptr == 0 {
+                                None
+                            } else {
+                                Some(
+                                    wc3::process::read_c_string(
+                                        &X86Memory(&child.address_space),
+                                        *root_ptr,
+                                        1024,
+                                    )
+                                    .map_err(|error| format!("GetDiskFreeSpaceA root: {error}"))?,
+                                )
+                            };
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD GETDISKFREESPACEA CALL pid={} tid={} root={:?} sectors_per_cluster=0x{:08x} bytes_per_sector=0x{:08x} free_clusters=0x{:08x} total_clusters=0x{:08x} caller_ret=0x{:08x}",
+                                    active_pid,
+                                    active_tid,
+                                    root.as_deref().unwrap_or("<current-directory>"),
+                                    sectors_per_cluster,
+                                    bytes_per_sector,
+                                    free_clusters,
+                                    total_clusters,
+                                    u32::from_le_bytes(caller_ret),
+                                ),
+                            );
+                            Some(root)
+                        } else {
+                            None
+                        };
                         if operation == child_loader::ProviderOp::FindFirstFileA {
                             let [_, pattern, find_data] = read_guest_words(
                                 &X86Memory(&child.address_space),
@@ -6984,6 +7033,22 @@ pub(super) async fn run_loop(
                                             wc3::process::XP_C_MAX_COMPONENT,
                                             wc3::process::XP_C_FS_FLAGS,
                                             wc3::process::XP_C_FILE_SYSTEM_NAME,
+                                            result,
+                                        ),
+                                    );
+                                }
+                                if let Some(root) = get_disk_free_space {
+                                    let geometry = wc3::process::XP_C_DISK_GEOMETRY;
+                                    logl::log(
+                                        level::IMPORTANT,
+                                        format_args!(
+                                            "WC3 CHILD GETDISKFREESPACEA RESULT root={:?} sectors_per_cluster={} bytes_per_sector={} free_clusters={} total_clusters={} capacity_bytes={} result={} cleanup=20-by-thunk",
+                                            root.as_deref().unwrap_or("<current-directory>"),
+                                            geometry.sectors_per_cluster,
+                                            geometry.bytes_per_sector,
+                                            geometry.free_clusters,
+                                            geometry.total_clusters,
+                                            wc3::process::XP_C_DISK_BYTES,
                                             result,
                                         ),
                                     );
