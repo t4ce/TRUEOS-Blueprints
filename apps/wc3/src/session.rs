@@ -1008,7 +1008,10 @@ impl Wc3Session {
     }
 
     pub fn create_window(&mut self, request: CreateWindowRequest) -> Result<u32, &'static str> {
-        if request.parent != DESKTOP_HWND && !self.windows.contains_key(&request.parent) {
+        if request.parent != 0
+            && request.parent != DESKTOP_HWND
+            && !self.windows.contains_key(&request.parent)
+        {
             return Err("unknown window parent");
         }
         let hwnd = self.next_window_handle;

@@ -1699,6 +1699,11 @@ impl XpProcess {
             ProviderOp::CreateEventA => Some(PersonalityAction::Session(
                 SessionRequest::CreateEvent(self.create_event_request(esp, memory)?),
             )),
+            ProviderOp::CreateWindowExA => Some(PersonalityAction::Session(
+                SessionRequest::CreateWindow(
+                    self.create_window_request(esp, memory, ThreadKey { pid, tid })?,
+                ),
+            )),
             ProviderOp::SetEvent => Some(PersonalityAction::Session(SessionRequest::SetEvent {
                 pid,
                 tid,
