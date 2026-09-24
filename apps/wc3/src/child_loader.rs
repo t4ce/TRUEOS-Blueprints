@@ -137,6 +137,7 @@ pub enum ProviderOp {
     CrtExceptHandler3,
     CrtXcptFilter,
     CrtControlFp,
+    CrtClearFp,
     CrtGetMainArgs,
     CrtOnExit,
     CrtVsnprintf,
@@ -159,6 +160,7 @@ pub enum ProviderOp {
     CrtStrnicmp,
     CrtFullPath,
     CrtBeginThreadEx,
+    Direct3DCreate8,
     Unknown,
 }
 
@@ -204,7 +206,8 @@ impl ProviderOp {
             | Self::FlushFileBuffers
             | Self::Sleep
             | Self::GetDriveTypeA
-            | Self::RegCloseKey => 4,
+            | Self::RegCloseKey
+            | Self::Direct3DCreate8 => 4,
             Self::GetVolumeInformationA => 32,
             Self::SetEvent | Self::ResetEvent => 4,
             Self::GetCPInfo | Self::GetWindowsDirectoryA | Self::GetSystemDirectoryA => 8,
@@ -255,6 +258,7 @@ impl ProviderOp {
             | Self::CrtExceptHandler3
             | Self::CrtXcptFilter
             | Self::CrtControlFp
+            | Self::CrtClearFp
             | Self::CrtGetMainArgs
             | Self::CrtOnExit
             | Self::CrtVsnprintf
@@ -504,6 +508,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "_except_handler3" => ProviderOp::CrtExceptHandler3,
             "_XcptFilter" => ProviderOp::CrtXcptFilter,
             "_controlfp" => ProviderOp::CrtControlFp,
+            "_clearfp" => ProviderOp::CrtClearFp,
             "__getmainargs" => ProviderOp::CrtGetMainArgs,
             "_onexit" => ProviderOp::CrtOnExit,
             "_vsnprintf" => ProviderOp::CrtVsnprintf,
@@ -528,6 +533,9 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "_beginthreadex" => ProviderOp::CrtBeginThreadEx,
             _ => ProviderOp::Unknown,
         };
+    }
+    if import.module.eq_ignore_ascii_case("d3d8.dll") && symbol == "Direct3DCreate8" {
+        return ProviderOp::Direct3DCreate8;
     }
     ProviderOp::Unknown
 }
@@ -563,19 +571,36 @@ mod beginthreadex_tests {
     use super::*;
 
     #[test]
-    fn d3d8_create8_is_an_advertised_unmodeled_stdcall_export() {
+    fn d3d8_create8_is_an_advertised_stdcall_export() {
         let import = ProviderImport {
             module: "d3d8.dll".into(),
             symbol: ProviderSymbol::Name("Direct3DCreate8".into()),
             iat_rva: 0,
         };
 
-        assert_eq!(provider_op(&import), ProviderOp::Unknown);
+        assert_eq!(provider_op(&import), ProviderOp::Direct3DCreate8);
+        assert!(provider_op(&import).is_modeled());
         assert_eq!(external_export_thunk_kind(&import), Some(thunk32::Kind::Stdcall(4)));
 
         let mut bytes = [0u8; thunk32::THUNK_BYTES];
         thunk32::write(123, external_export_thunk_kind(&import).unwrap(), &mut bytes).unwrap();
         assert_eq!(&bytes[8..11], &[0xc2, 0x04, 0x00]);
+    }
+
+    #[test]
+    fn crt_clearfp_is_cdecl_and_context_owned() {
+        let import = ProviderImport {
+            module: "MSVCRT.dll".into(),
+            symbol: ProviderSymbol::Name("_clearfp".into()),
+            iat_rva: 0,
+        };
+
+        let operation = provider_op(&import);
+        assert_eq!(operation, ProviderOp::CrtClearFp);
+        assert!(operation.is_modeled());
+        assert!(!operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 0);
+        assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Return);
     }
 
     #[test]

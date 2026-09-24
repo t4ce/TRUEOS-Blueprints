@@ -9,6 +9,25 @@ const ERROR_INVALID_HANDLE: u32 = 6;
 const ERROR_INVALID_PARAMETER: u32 = 87;
 const ERROR_MORE_DATA: u32 = 234;
 const ERROR_INVALID_ADDRESS: u32 = 487;
+const D3D_SDK_VERSION: u32 = 220;
+const D3D8_METHODS: [&str; 16] = [
+    "IDirect3D8::QueryInterface",
+    "IDirect3D8::AddRef",
+    "IDirect3D8::Release",
+    "IDirect3D8::RegisterSoftwareDevice",
+    "IDirect3D8::GetAdapterCount",
+    "IDirect3D8::GetAdapterIdentifier",
+    "IDirect3D8::GetAdapterModeCount",
+    "IDirect3D8::EnumAdapterModes",
+    "IDirect3D8::GetAdapterDisplayMode",
+    "IDirect3D8::CheckDeviceType",
+    "IDirect3D8::CheckDeviceFormat",
+    "IDirect3D8::CheckDeviceMultiSampleType",
+    "IDirect3D8::CheckDepthStencilMatch",
+    "IDirect3D8::GetDeviceCaps",
+    "IDirect3D8::GetAdapterMonitor",
+    "IDirect3D8::CreateDevice",
+];
 const MEM_RELEASE: u32 = 0x0000_8000;
 const EXEC_SAMPLE_PREEMPTIONS: u64 = 8;
 const MAX_SEH_CHAIN_DEPTH: u32 = 64;
@@ -349,6 +368,30 @@ fn msvcrt_control_from_x87(fcw: u16) -> u32 {
     };
     if fcw & 0x1000 != 0 {
         out |= 0x0004_0000;
+    }
+    out
+}
+
+/// Translate the x87 sticky exception flags into MSVCRT's `_SW_*` layout.
+fn msvcrt_status_from_x87(fsw: u16) -> u32 {
+    let mut out = 0;
+    if fsw & 0x0001 != 0 {
+        out |= 0x0000_0010; // _SW_INVALID
+    }
+    if fsw & 0x0002 != 0 {
+        out |= 0x0008_0000; // _SW_DENORMAL
+    }
+    if fsw & 0x0004 != 0 {
+        out |= 0x0000_0008; // _SW_ZERODIVIDE
+    }
+    if fsw & 0x0008 != 0 {
+        out |= 0x0000_0004; // _SW_OVERFLOW
+    }
+    if fsw & 0x0010 != 0 {
+        out |= 0x0000_0002; // _SW_UNDERFLOW
+    }
+    if fsw & 0x0020 != 0 {
+        out |= 0x0000_0001; // _SW_INEXACT
     }
     out
 }
@@ -2086,6 +2129,53 @@ fn install_child_provider_imports(
             .map_err(|error| error.to_string())?;
     }
     Ok(addresses)
+}
+
+/// Install the one stable guest-visible `IDirect3D8` object.  Its methods are
+/// observation thunks: the first COM call is deliberately the next frontier.
+fn install_child_d3d8_object(
+    child: &mut PendingChild,
+    process: &mut XpProcess,
+) -> Result<(), String> {
+    let imports = D3D8_METHODS.map(|symbol| child_loader::ProviderImport {
+        module: "d3d8.dll".into(),
+        symbol: child_loader::ProviderSymbol::Name(symbol.into()),
+        iat_rva: 0,
+    });
+    let existing = imports
+        .iter()
+        .map(|import| process.provider_thunk_address(&import.module, &import.symbol))
+        .collect::<Option<Vec<_>>>();
+    let addresses = match existing {
+        Some(addresses) => addresses,
+        None => install_child_provider_imports(child, process, imports.to_vec())?,
+    };
+
+    for (slot, address) in addresses.into_iter().enumerate() {
+        let slot_address = thunk32::CHILD_D3D8_VTABLE_ADDRESS
+            .checked_add(u32::try_from(slot).map_err(|_| "D3D8 vtable slot")? * 4)
+            .ok_or("D3D8 vtable address overflow")?;
+        if child
+            .address_space
+            .write(slot_address, &address.to_le_bytes())
+            .map_err(|error| format!("write D3D8 vtable: {error}"))?
+            != 4
+        {
+            return Err("short D3D8 vtable write".into());
+        }
+    }
+    if child
+        .address_space
+        .write(
+            thunk32::CHILD_D3D8_OBJECT_ADDRESS,
+            &thunk32::CHILD_D3D8_VTABLE_ADDRESS.to_le_bytes(),
+        )
+        .map_err(|error| format!("write D3D8 object: {error}"))?
+        != 4
+    {
+        return Err("short D3D8 object write".into());
+    }
+    Ok(())
 }
 
 fn runtime_native_module_image<'a>(
@@ -5028,6 +5118,57 @@ pub(super) async fn run_loop(
                         );
                         continue;
                     }
+                    let is_crt_clear_fp = matches!(
+                        &provider.symbol,
+                        child_loader::ProviderSymbol::Name(name)
+                            if provider.module.eq_ignore_ascii_case("MSVCRT.dll")
+                                && name == "_clearfp"
+                    );
+                    if is_crt_clear_fp {
+                        let caller_ret = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            exit.registers.esp,
+                            1,
+                        )?[0];
+                        let mut state = contexts[active]
+                            .context
+                            .extended_state()
+                            .map_err(|error| error.to_string())?;
+                        let before_fsw = u16::from_le_bytes(state.bytes[2..4].try_into().unwrap());
+                        // FNCLEx clears x87 exception flags, the exception and
+                        // stack-fault summaries, and the busy bit.  It leaves
+                        // the condition-code and TOP fields intact.
+                        let after_fsw = before_fsw & !0x80ff;
+                        state.bytes[2..4].copy_from_slice(&after_fsw.to_le_bytes());
+                        let mut xstate_bv =
+                            u64::from_le_bytes(state.bytes[512..520].try_into().unwrap());
+                        xstate_bv |= 1 << 0;
+                        state.bytes[512..520].copy_from_slice(&xstate_bv.to_le_bytes());
+                        contexts[active]
+                            .context
+                            .set_extended_state(&state)
+                            .map_err(|error| error.to_string())?;
+                        let result = msvcrt_status_from_x87(before_fsw);
+                        let mut registers = exit.registers;
+                        registers.eax = result;
+                        contexts[active]
+                            .context
+                            .set_registers(registers)
+                            .map_err(|error| error.to_string())?;
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD CRT CLEARFP pid={} tid={} caller_ret=0x{:08x} x87_before=0x{:04x} x87_after=0x{:04x} eax=0x{:08x} cleanup=0-by-thunk",
+                                active_pid,
+                                active_tid,
+                                caller_ret,
+                                before_fsw,
+                                after_fsw,
+                                result,
+                            ),
+                        );
+                        continue;
+                    }
                     let is_crt_ftol = matches!(
                         &provider.symbol,
                         child_loader::ProviderSymbol::Name(name)
@@ -7383,6 +7524,47 @@ pub(super) async fn run_loop(
                         );
                         continue;
                     }
+                    if operation == child_loader::ProviderOp::Direct3DCreate8 {
+                        let [caller_ret, sdk_version] = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            exit.registers.esp,
+                            2,
+                        )?[..]
+                        else {
+                            unreachable!("Direct3DCreate8 frame has two words")
+                        };
+                        let result = if sdk_version == D3D_SDK_VERSION {
+                            let process = &mut session
+                                .process_mut(active_pid)
+                                .ok_or_else(|| "child process missing".to_owned())?
+                                .xp;
+                            install_child_d3d8_object(child, process)?;
+                            thunk32::CHILD_D3D8_OBJECT_ADDRESS
+                        } else {
+                            0
+                        };
+                        let mut registers = exit.registers;
+                        registers.eax = result;
+                        contexts[active]
+                            .context
+                            .set_registers(registers)
+                            .map_err(|error| error.to_string())?;
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD D3D8 CREATE pid={} tid={} sdk_version={} object=0x{:08x} vtable=0x{:08x} methods={} result=0x{:08x} caller_ret=0x{:08x} cleanup=4-by-thunk",
+                                active_pid,
+                                active_tid,
+                                sdk_version,
+                                thunk32::CHILD_D3D8_OBJECT_ADDRESS,
+                                thunk32::CHILD_D3D8_VTABLE_ADDRESS,
+                                D3D8_METHODS.len(),
+                                result,
+                                caller_ret,
+                            ),
+                        );
+                        continue;
+                    }
                     if matches!(
                         operation,
                         child_loader::ProviderOp::CreateEventA
@@ -8402,36 +8584,7 @@ pub(super) async fn run_loop(
                             Ok(_) => {
                                 return Err("pure child provider requested a runtime effect".into());
                             }
-                            Err(ProviderDispatchError::Unsupported) => {
-                                if provider.module.eq_ignore_ascii_case("d3d8.dll")
-                                    && matches!(
-                                        &provider.symbol,
-                                        child_loader::ProviderSymbol::Name(symbol)
-                                            if symbol == "Direct3DCreate8"
-                                    )
-                                {
-                                    let [caller_ret, sdk_version] = read_guest_words(
-                                        &X86Memory(&child.address_space),
-                                        exit.registers.esp,
-                                        2,
-                                    )?[..]
-                                    else {
-                                        unreachable!("Direct3DCreate8 frame has two words")
-                                    };
-                                    logl::log(
-                                        level::IMPORTANT,
-                                        format_args!(
-                                            "WC3 CHILD D3D8 DIRECT3DCREATE8 CALL pid={} tid={} during=\"{}\" provider_id={} caller_ret=0x{:08x} sdk_version={} cleanup=4-by-thunk",
-                                            active_pid,
-                                            active_tid,
-                                            running_module_name,
-                                            provider_id,
-                                            caller_ret,
-                                            sdk_version,
-                                        ),
-                                    );
-                                }
-                            }
+                            Err(ProviderDispatchError::Unsupported) => {}
                             Err(ProviderDispatchError::Fault(error)) => {
                                 return Err(format!("child provider semantic fault: {error}"));
                             }
