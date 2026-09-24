@@ -1982,9 +1982,30 @@ impl XpProcess {
                 cursor: read_u32(memory, structure + 24)?,
                 background: read_u32(memory, structure + 28)?,
                 menu_name,
+                icon_sm: 0,
             },
         );
         Ok(atom as u32)
+    }
+
+    fn register_class_ex_a(&mut self, esp: u32, memory: &impl GuestMemory) -> Result<u32, ProviderDispatchError> {
+        let [_, structure] = arguments::<2>(memory, esp)?;
+        if structure == 0 { return Ok(0); }
+        let cb_size = read_u32(memory, structure)?;
+        if cb_size != 48 {
+            return Err(ProviderDispatchError::Frontier { api: "RegisterClassExA", detail: format!("cbSize={cb_size}") });
+        }
+        let class_name = read_c_string(memory, read_u32(memory, structure + 40)?, 256)?;
+        let menu_ptr = read_u32(memory, structure + 36)?;
+        let menu_name = if menu_ptr == 0 || menu_ptr >> 16 == 0 { None } else { Some(read_c_string(memory, menu_ptr, 256)?) };
+        let atom = self.registered_classes.len() as u16 + 1;
+        self.registered_classes.insert(class_name.clone(), RegisteredClass {
+            atom, name: class_name, style: read_u32(memory, structure + 4)?, wndproc: read_u32(memory, structure + 8)?,
+            cls_extra: read_u32(memory, structure + 12)? as i32, wnd_extra: read_u32(memory, structure + 16)? as i32,
+            instance: read_u32(memory, structure + 20)?, icon: read_u32(memory, structure + 24)?, cursor: read_u32(memory, structure + 28)?,
+            background: read_u32(memory, structure + 32)?, menu_name, icon_sm: read_u32(memory, structure + 44)?,
+        });
+        Ok(u32::from(atom))
     }
     fn get_client_rect(
         &self,
@@ -2109,6 +2130,9 @@ impl XpProcess {
             owner,
             class,
             wndproc: registered.wndproc,
+            class_icon: registered.icon,
+            class_cursor: registered.cursor,
+            class_icon_sm: registered.icon_sm,
             title,
             ex_style: a[1],
             style: a[4],

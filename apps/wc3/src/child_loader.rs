@@ -168,6 +168,7 @@ pub enum ProviderOp {
     EnumDisplaySettingsA,
     LoadImageA,
     LoadCursorA,
+    RegisterClassExA,
     Unknown,
 }
 
@@ -242,6 +243,7 @@ impl ProviderOp {
             Self::EnumDisplaySettingsA => 12,
             Self::LoadImageA => 24,
             Self::LoadCursorA => 8,
+            Self::RegisterClassExA => 4,
             Self::MultiByteToWideChar | Self::LCMapStringW | Self::RegQueryValueExA => 24,
             Self::CreateThread => 24,
             Self::SetThreadPriority => 8,
@@ -395,6 +397,7 @@ impl ProviderOp {
                 | Self::EnumDisplaySettingsA
                 | Self::LoadImageA
                 | Self::LoadCursorA
+                | Self::RegisterClassExA
         )
     }
 }
@@ -504,6 +507,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "EnumDisplaySettingsA" => ProviderOp::EnumDisplaySettingsA,
             "LoadImageA" => ProviderOp::LoadImageA,
             "LoadCursorA" => ProviderOp::LoadCursorA,
+            "RegisterClassExA" => ProviderOp::RegisterClassExA,
             _ => ProviderOp::Unknown,
         };
     }

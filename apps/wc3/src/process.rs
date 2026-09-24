@@ -1222,6 +1222,7 @@ struct RegisteredClass {
     cursor: u32,
     background: u32,
     menu_name: Option<String>,
+    icon_sm: u32,
 }
 
 #[derive(Clone, Debug)]
