@@ -1574,6 +1574,7 @@ struct WglContext {
     hwnd: u32,
     pixel_format: u32,
     current_tid: Option<u32>,
+    matrix_mode: u32,
 }
 
 struct GlRuntime {

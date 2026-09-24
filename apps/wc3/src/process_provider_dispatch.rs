@@ -186,7 +186,7 @@ impl XpProcess {
                 self.gl_load_matrixf_static(esp, memory)?,
             )),
             ProviderOp::GlMatrixMode => Ok(PersonalityAction::Return(
-                self.gl_matrix_mode_static(esp, memory)?,
+                self.gl_matrix_mode_static(tid, esp, memory)?,
             )),
             ProviderOp::GlScissor => Ok(PersonalityAction::Return(
                 self.gl_scissor_static(esp, memory)?,

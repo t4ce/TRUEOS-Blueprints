@@ -6979,6 +6979,39 @@
                                             ),
                                         );
                                     }
+                                    child_loader::ProviderOp::GlMatrixMode => {
+                                        let [_, mode] = read_guest_words(
+                                            &X86Memory(&child.address_space),
+                                            exit.registers.esp,
+                                            2,
+                                        )?[..]
+                                        else {
+                                            unreachable!("glMatrixMode frame has two words")
+                                        };
+                                        let (hglrc, _hwnd, current_mode) = session
+                                            .process(active_pid)
+                                            .ok_or_else(|| "child process missing".to_owned())?
+                                            .xp
+                                            .gl_context_diagnostic(active_tid)
+                                            .ok_or_else(|| "current GL context missing after glMatrixMode".to_owned())?;
+                                        let mode_name = match mode {
+                                            0x0000_1700 => "GL_MODELVIEW",
+                                            0x0000_1701 => "GL_PROJECTION",
+                                            0x0000_1702 => "GL_TEXTURE",
+                                            _ => "UNKNOWN",
+                                        };
+                                        logl::log(
+                                            level::IMPORTANT,
+                                            format_args!(
+                                                "WC3 CHILD GLMATRIXMODE RESULT pid={} tid={} hglrc=0x{:08x} mode={} stored_mode=0x{:08x} ui4_surface=not-acquired result=void cleanup=4-by-thunk",
+                                                active_pid,
+                                                active_tid,
+                                                hglrc,
+                                                mode_name,
+                                                current_mode,
+                                            ),
+                                        );
+                                    }
                                     child_loader::ProviderOp::CrtSscanf => {
                                         let [_, input, format, major, minor] = read_guest_words(
                                             &X86Memory(&child.address_space),

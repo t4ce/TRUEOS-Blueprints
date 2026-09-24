@@ -6,21 +6,21 @@ glLightfv           iat_rva=0x007061c8
 glFogfv             iat_rva=0x007061cc
 glFogf              iat_rva=0x007061d0
 glFogi              iat_rva=0x007061d4
-glDrawBuffer  iat_rva=0x007061d8
-glDepthFunc  iat_rva=0x007061dc
-glAlphaFunc  iat_rva=0x007061e0
-glBlendFunc  iat_rva=0x007061e4
+glDrawBuffer        iat_rva=0x007061d8
+glDepthFunc         iat_rva=0x007061dc
+glAlphaFunc         iat_rva=0x007061e0
+glBlendFunc         iat_rva=0x007061e4
 glEnableClientState  iat_rva=0x007061e8
-glTexEnvi  iat_rva=0x007061ec
-glBindTexture  iat_rva=0x007061f0
-glDisableClientState  iat_rva=0x007061f4
-glDepthMask  iat_rva=0x007061f8
-glColorMaterial  iat_rva=0x007061fc
-glTexGeni  iat_rva=0x00706200
-glLightModelfv  iat_rva=0x00706204
-glMaterialfv  iat_rva=0x00706208
-glPolygonOffset  iat_rva=0x0070620c
-glGetIntegerv  iat_rva=0x00706210
+glTexEnvi               iat_rva=0x007061ec
+glBindTexture           iat_rva=0x007061f0
+glDisableClientState    iat_rva=0x007061f4
+glDepthMask             iat_rva=0x007061f8
+glColorMaterial         iat_rva=0x007061fc
+glTexGeni               iat_rva=0x00706200
+glLightModelfv          iat_rva=0x00706204
+glMaterialfv            iat_rva=0x00706208
+glPolygonOffset         iat_rva=0x0070620c
+glGetIntegerv           iat_rva=0x00706210
 wglGetProcAddress  iat_rva=0x00706214
 glGetString  iat_rva=0x00706218
 wglCreateContext  iat_rva=0x0070621c
@@ -67,12 +67,21 @@ macro_rules! static_gl_stubs {
 
 const GL_VERSION: u32 = 0x0000_1f02;
 const GL_EXTENSIONS: u32 = 0x0000_1f03;
+const GL_MODELVIEW: u32 = 0x0000_1700;
+const GL_PROJECTION: u32 = 0x0000_1701;
+const GL_TEXTURE: u32 = 0x0000_1702;
 const GL_VERSION_STRING_VA: u32 = PROCESS_DATA_VA + 0x180;
 const GL_VERSION_STRING: &[u8] = b"1.1 TRUEOS\0";
 const GL_EXTENSIONS_STRING_VA: u32 = PROCESS_DATA_VA + 0x190;
 const GL_EXTENSIONS_STRING: &[u8] = b"\0";
 
 impl XpProcess {
+    pub fn gl_context_diagnostic(&self, tid: u32) -> Option<(u32, u32, u32)> {
+        self.gl_runtime.as_ref()?.contexts.iter().find_map(|(hglrc, context)| {
+            (context.current_tid == Some(tid)).then_some((*hglrc, context.hwnd, context.matrix_mode))
+        })
+    }
+
     fn static_gl_stub(&self, api: &'static str) -> Result<u32, ProviderDispatchError> {
         Err(ProviderDispatchError::Frontier {
             api,
@@ -99,13 +108,42 @@ impl XpProcess {
         gl_normal_pointer_static => "glNormalPointer", gl_vertex_pointer_static => "glVertexPointer",
         gl_color_pointer_static => "glColorPointer", gl_tex_coord_pointer_static => "glTexCoordPointer",
         gl_finish_static => "glFinish", gl_draw_elements_static => "glDrawElements",
-        gl_load_matrixf_static => "glLoadMatrixf", gl_matrix_mode_static => "glMatrixMode",
+        gl_load_matrixf_static => "glLoadMatrixf",
         gl_scissor_static => "glScissor", gl_depth_range_static => "glDepthRange",
         gl_viewport_static => "glViewport", gl_clear_static => "glClear",
         gl_clear_color_static => "glClearColor", gl_read_pixels_static => "glReadPixels",
         gl_read_buffer_static => "glReadBuffer", wgl_swap_layer_buffers_static => "wglSwapLayerBuffers",
         gl_lightf_static => "glLightf",
     );
+
+    fn gl_matrix_mode_static(
+        &mut self,
+        tid: u32,
+        esp: u32,
+        memory: &impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
+        let [_, mode] = arguments::<2>(memory, esp)?;
+        if !matches!(mode, GL_MODELVIEW | GL_PROJECTION | GL_TEXTURE) {
+            return Err(ProviderDispatchError::Frontier {
+                api: "glMatrixMode",
+                detail: format!("tid={tid} unobserved mode=0x{mode:08x}"),
+            });
+        }
+        let runtime = self.gl_runtime.as_mut().ok_or_else(|| ProviderDispatchError::Frontier {
+            api: "glMatrixMode",
+            detail: format!("tid={tid} has no GL runtime"),
+        })?;
+        let (_, context) = runtime
+            .contexts
+            .iter_mut()
+            .find(|(_, context)| context.current_tid == Some(tid))
+            .ok_or_else(|| ProviderDispatchError::Frontier {
+                api: "glMatrixMode",
+                detail: format!("tid={tid} has no current HGLRC"),
+            })?;
+        context.matrix_mode = mode;
+        Ok(0)
+    }
 
     fn gl_get_string_static(
         &self,
@@ -298,6 +336,7 @@ impl XpProcess {
                 hwnd,
                 pixel_format,
                 current_tid: None,
+                matrix_mode: GL_MODELVIEW,
             },
         );
         Ok(hglrc)
