@@ -116,6 +116,7 @@ pub enum ProviderOp {
     RtlUnwind,
     ExitProcess,
     VirtualAlloc,
+    VirtualFree,
     OpenThreadToken,
     OpenProcessToken,
     GetTokenInformation,
@@ -214,7 +215,8 @@ impl ProviderOp {
             | Self::HeapAlloc
             | Self::HeapFree
             | Self::CreateMutexA
-            | Self::OpenProcessToken => 12,
+            | Self::OpenProcessToken
+            | Self::VirtualFree => 12,
             Self::ReadProcessMemory
             | Self::WriteProcessMemory
             | Self::RegOpenKeyExA
@@ -413,6 +415,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "RtlUnwind" => ProviderOp::RtlUnwind,
             "ExitProcess" => ProviderOp::ExitProcess,
             "VirtualAlloc" => ProviderOp::VirtualAlloc,
+            "VirtualFree" => ProviderOp::VirtualFree,
             _ => ProviderOp::Unknown,
         };
     }

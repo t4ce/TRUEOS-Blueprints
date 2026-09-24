@@ -6664,6 +6664,24 @@ macro_rules! wc3_child_loader_tests_1 {
             }
 
             #[test]
+            fn virtual_free_provider_uses_stdcall_twelve_and_is_not_generic() {
+                let import = ProviderImport {
+                    module: "KERNEL32.dll".into(),
+                    symbol: ProviderSymbol::Name("VirtualFree".into()),
+                    iat_rva: 0,
+                };
+                let operation = provider_op(&import);
+                assert_eq!(operation, ProviderOp::VirtualFree);
+                assert!(operation.is_modeled());
+                assert!(!operation.is_generic_process_local());
+                assert_eq!(operation.stack_cleanup_bytes(), 12);
+                assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Stdcall(12));
+                let mut bytes = [0; thunk32::THUNK_BYTES];
+                thunk32::write(425, provider_thunk_kind(&import), &mut bytes).unwrap();
+                assert_eq!(&bytes[8..11], &[0xc2, 0x0c, 0]);
+            }
+
+            #[test]
             fn rtl_unwind_is_runtime_stdcall_sixteen() {
                 let import = ProviderImport {
                     module: "KERNEL32.dll".into(),

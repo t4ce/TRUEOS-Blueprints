@@ -5347,6 +5347,47 @@ pub(super) async fn run_loop(
                             .map_err(|error| error.to_string())?;
                         continue;
                     }
+                    let is_virtual_free = matches!(
+                        &provider.symbol,
+                        child_loader::ProviderSymbol::Name(name)
+                            if provider.module.eq_ignore_ascii_case("KERNEL32.dll")
+                                && name == "VirtualFree"
+                    );
+                    if is_virtual_free {
+                        let frame = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            exit.registers.esp,
+                            4,
+                        )?;
+                        let [frame_caller_ret, address, size, free_type] =
+                            <[u32; 4]>::try_from(frame).map_err(|_| "VirtualFree frame")?;
+                        if frame_caller_ret != u32::from_le_bytes(caller_ret) {
+                            return Err("VirtualFree caller return mismatch".into());
+                        }
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD VIRTUALFREE CALL pid={} tid={} during=\"{}\" provider_id={} address=0x{:08x} size=0x{:08x} free_type=0x{:08x} mem_decommit={} mem_release={} caller_ret=0x{:08x} cleanup=12-by-thunk",
+                                active_pid,
+                                active_tid,
+                                running_module_name,
+                                provider_id,
+                                address,
+                                size,
+                                free_type,
+                                (free_type & 0x0000_4000 != 0) as u8,
+                                (free_type & 0x0000_8000 != 0) as u8,
+                                frame_caller_ret,
+                            ),
+                        );
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD VIRTUALFREE FRONTIER reason=observed-shape-not-yet-admitted"
+                            ),
+                        );
+                        return Ok(());
+                    }
                     let operation = child_loader::provider_op(&provider);
                     if operation == child_loader::ProviderOp::CrtBeginThreadEx {
                         let frame = read_guest_words(
