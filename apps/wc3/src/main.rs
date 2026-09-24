@@ -2462,6 +2462,16 @@ struct RegOpenKeyExAFrame {
     result_ptr: u32,
 }
 
+struct RegQueryValueExAFrame {
+    caller_ret: u32,
+    hkey: u32,
+    value_name: Option<String>,
+    reserved: u32,
+    type_ptr: u32,
+    data_ptr: u32,
+    size_ptr: u32,
+}
+
 fn registry_root_name(hkey: u32) -> String {
     match hkey {
         0x8000_0000 => "HKEY_CLASSES_ROOT".into(),
@@ -2578,6 +2588,27 @@ fn decode_reg_open_key_ex_a(
         options: frame[3],
         sam: frame[4],
         result_ptr: frame[5],
+    })
+}
+
+fn decode_reg_query_value_ex_a(
+    memory: &impl GuestMemory,
+    esp: u32,
+) -> Result<RegQueryValueExAFrame, String> {
+    let frame = read_guest_words(memory, esp, 7)?;
+    let value_name = if frame[2] == 0 {
+        None
+    } else {
+        Some(diagnostic_ansi_string(memory, frame[2])?)
+    };
+    Ok(RegQueryValueExAFrame {
+        caller_ret: frame[0],
+        hkey: frame[1],
+        value_name,
+        reserved: frame[3],
+        type_ptr: frame[4],
+        data_ptr: frame[5],
+        size_ptr: frame[6],
     })
 }
 

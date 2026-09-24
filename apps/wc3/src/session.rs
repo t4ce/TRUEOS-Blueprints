@@ -222,6 +222,10 @@ impl RegistryImage {
         self.loaded_values.contains_key(&node)
     }
 
+    pub fn value(&self, node: RegistryNodeId, name: &str) -> Option<&RegistryValue> {
+        self.loaded_values.get(&node)?.get(&canonical(name))
+    }
+
     fn find(&self, root: u32, path: &str) -> Option<RegistryNodeId> {
         let hash = hash_query(path, self.encoding);
         let first = self

@@ -119,6 +119,7 @@ pub enum ProviderOp {
     AllocateAndInitializeSid,
     EqualSid,
     RegOpenKeyExA,
+    RegQueryValueExA,
     CrtSetAppType,
     CrtGetFmode,
     CrtGetCommode,
@@ -198,7 +199,7 @@ impl ProviderOp {
             | Self::SetFilePointer
             | Self::MessageBoxA
             | Self::LoadStringA => 16,
-            Self::MultiByteToWideChar | Self::LCMapStringW => 24,
+            Self::MultiByteToWideChar | Self::LCMapStringW | Self::RegQueryValueExA => 24,
             Self::CreateFileA | Self::FormatMessageA => 28,
             Self::WideCharToMultiByte => 32,
             Self::GetModuleFileNameA
@@ -412,6 +413,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
     if import.module.eq_ignore_ascii_case("ADVAPI32.dll") {
         return match symbol.as_str() {
             "RegOpenKeyExA" => ProviderOp::RegOpenKeyExA,
+            "RegQueryValueExA" => ProviderOp::RegQueryValueExA,
             "OpenThreadToken" => ProviderOp::OpenThreadToken,
             "OpenProcessToken" => ProviderOp::OpenProcessToken,
             "GetTokenInformation" => ProviderOp::GetTokenInformation,
@@ -492,6 +494,24 @@ mod beginthreadex_tests {
         let mut bytes = [0u8; thunk32::THUNK_BYTES];
         thunk32::write(47, provider_thunk_kind(&import), &mut bytes).unwrap();
         assert_eq!(&bytes[8..11], &[0xc2, 0x04, 0x00]);
+    }
+
+    #[test]
+    fn reg_query_value_ex_a_has_six_stdcall_arguments() {
+        let import = ProviderImport {
+            module: "ADVAPI32.dll".into(),
+            symbol: ProviderSymbol::Name("RegQueryValueExA".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&import);
+        assert_eq!(operation, ProviderOp::RegQueryValueExA);
+        assert!(operation.is_modeled());
+        assert!(!operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 24);
+        assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Stdcall(24));
+        let mut bytes = [0u8; thunk32::THUNK_BYTES];
+        thunk32::write(542, provider_thunk_kind(&import), &mut bytes).unwrap();
+        assert_eq!(&bytes[8..11], &[0xc2, 0x18, 0x00]);
     }
 }
 

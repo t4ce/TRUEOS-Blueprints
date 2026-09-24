@@ -4918,6 +4918,70 @@ pub(super) async fn run_loop(
                             .map_err(|error| error.to_string())?;
                         continue;
                     }
+                    let is_reg_query_value_ex_a = matches!(
+                        &provider.symbol,
+                        child_loader::ProviderSymbol::Name(name)
+                            if provider.module.eq_ignore_ascii_case("ADVAPI32.dll")
+                                && name == "RegQueryValueExA"
+                    );
+                    if is_reg_query_value_ex_a {
+                        let child_memory = X86Memory(&child.address_space);
+                        let frame = decode_reg_query_value_ex_a(&child_memory, exit.registers.esp)?;
+                        if frame.caller_ret != u32::from_le_bytes(caller_ret) {
+                            return Err("RegQueryValueExA caller return mismatch".into());
+                        }
+                        let input_capacity = (frame.size_ptr != 0)
+                            .then(|| read_guest_words(&child_memory, frame.size_ptr, 1))
+                            .transpose()?
+                            .map(|words| words[0]);
+                        let handle_node = session
+                            .process(active_pid)
+                            .and_then(|process| process.xp.registry_handle_node(frame.hkey));
+                        ensure_registry_loaded(&mut session).await?;
+                        let (node, loaded_before, value) = match &mut session.registry {
+                            wc3::session::RegistryState::Ready(registry) => {
+                                let node = registry.root(frame.hkey).or(handle_node);
+                                let loaded_before = node.is_some_and(|node| registry.values_loaded(node));
+                                let value = if let Some(node) = node {
+                                    registry.ensure_values_loaded(node).map_err(str::to_owned)?;
+                                    registry.value(node, frame.value_name.as_deref().unwrap_or(""))
+                                        .map(|value| (value.ty, value.bytes.len()))
+                                } else {
+                                    None
+                                };
+                                (node, loaded_before, value)
+                            }
+                            wc3::session::RegistryState::Unloaded => {
+                                return Err("registry remained unloaded".into());
+                            }
+                        };
+                        let value_name = frame.value_name.as_deref().unwrap_or("");
+                        let (value_type, value_bytes) = value
+                            .map(|(ty, bytes)| (format!("0x{ty:08x}"), bytes.to_string()))
+                            .unwrap_or_else(|| ("-".into(), "-".into()));
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD REGISTRY QUERY CALL pid={} tid={} hkey=0x{:08x} node={} value_name={:?} reserved=0x{:08x} type_ptr=0x{:08x} data_ptr=0x{:08x} size_ptr=0x{:08x} input_capacity={} values_loaded_before={} backing_value={} backing_type={} backing_bytes={} caller_ret=0x{:08x} cleanup=24-by-thunk",
+                                active_pid,
+                                active_tid,
+                                frame.hkey,
+                                node.map(|node| format!("0x{node:08x}")).unwrap_or_else(|| "-".into()),
+                                value_name,
+                                frame.reserved,
+                                frame.type_ptr,
+                                frame.data_ptr,
+                                frame.size_ptr,
+                                input_capacity.map(|value| value.to_string()).unwrap_or_else(|| "-".into()),
+                                loaded_before as u8,
+                                value.is_some() as u8,
+                                value_type,
+                                value_bytes,
+                                frame.caller_ret,
+                            ),
+                        );
+                        return Ok(());
+                    }
                     let is_virtual_alloc = matches!(
                         &provider.symbol,
                         child_loader::ProviderSymbol::Name(name)
