@@ -44,6 +44,17 @@ pub const CHILD_WIN_HEAP_LIMIT: u32 = 0x1500_0000;
 pub const PROVIDER_MODULE_HANDLE_BASE: u32 = 0x5743_a001;
 pub const CURRENT_PROCESS_PSEUDO_HANDLE: u32 = u32::MAX;
 pub const CURRENT_THREAD_PSEUDO_HANDLE: u32 = 0xffff_fffe;
+pub const D3D_OK: u32 = 0;
+pub const D3DERR_INVALIDCALL: u32 = 0x8876_086c;
+pub const D3DENUM_NO_WHQL_LEVEL: u32 = 0x0000_0002;
+pub const D3DADAPTER_IDENTIFIER8_BYTES: usize = 0x42c;
+pub const TRUEOS_D3D8_VENDOR_ID: u32 = 0x8086;
+pub const TRUEOS_D3D8_DEVICE_ID: u32 = 0xa780;
+pub const TRUEOS_D3D8_SUBSYSTEM_ID: u32 = 0;
+pub const TRUEOS_D3D8_REVISION: u32 = 0x04;
+pub const TRUEOS_D3D8_ADAPTER_GUID: [u8; 16] = [
+    b'T', b'R', b'U', b'E', b'O', b'S', b'D', b'3', b'D', b'8', 0x80, 0xa7, 0x86, 0x80, 0x04, 0,
+];
 // SetUnhandledExceptionFilter callbacks return EXCEPTION_* filter results,
 // distinct from the DISPOSITION_* values used by frame-based SEH handlers.
 pub const EXCEPTION_FILTER_CONTINUE_EXECUTION: u32 = u32::MAX;
@@ -2500,6 +2511,41 @@ impl XpProcess {
         Ok(0)
     }
 
+    fn d3d8_get_adapter_identifier(
+        &mut self,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
+        let [_, this, adapter, flags, output] = arguments::<5>(memory, esp)?;
+        if this != thunk32::CHILD_D3D8_OBJECT_ADDRESS {
+            return Err(ProviderDispatchError::Frontier {
+                api: "IDirect3D8::GetAdapterIdentifier",
+                detail: format!("this=0x{this:08x}"),
+            });
+        }
+        if output == 0 {
+            return Ok(D3DERR_INVALIDCALL);
+        }
+        if adapter != 0 {
+            memory.write(output, &[0; D3DADAPTER_IDENTIFIER8_BYTES])?;
+            return Ok(D3DERR_INVALIDCALL);
+        }
+        if flags & !D3DENUM_NO_WHQL_LEVEL != 0 {
+            return Ok(D3DERR_INVALIDCALL);
+        }
+
+        let mut identifier = [0u8; D3DADAPTER_IDENTIFIER8_BYTES];
+        identifier[0..12].copy_from_slice(b"trueos-d3d8\0");
+        identifier[0x200..0x21a].copy_from_slice(b"Intel(R) UHD Graphics 770\0");
+        identifier[0x408..0x40c].copy_from_slice(&TRUEOS_D3D8_VENDOR_ID.to_le_bytes());
+        identifier[0x40c..0x410].copy_from_slice(&TRUEOS_D3D8_DEVICE_ID.to_le_bytes());
+        identifier[0x410..0x414].copy_from_slice(&TRUEOS_D3D8_SUBSYSTEM_ID.to_le_bytes());
+        identifier[0x414..0x418].copy_from_slice(&TRUEOS_D3D8_REVISION.to_le_bytes());
+        identifier[0x418..0x428].copy_from_slice(&TRUEOS_D3D8_ADAPTER_GUID);
+        memory.write(output, &identifier)?;
+        Ok(D3D_OK)
+    }
+
     fn dispatch_process_local_provider(
         &mut self,
         pid: u32,
@@ -2521,6 +2567,14 @@ impl XpProcess {
             }
             ProviderOp::GlobalMemoryStatus => {
                 let result = self.global_memory_status(esp, memory)?;
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(result))
+            }
+            ProviderOp::D3D8GetAdapterIdentifier => {
+                let result = self.d3d8_get_adapter_identifier(esp, memory)?;
                 self.call_count = self
                     .call_count
                     .checked_add(1)

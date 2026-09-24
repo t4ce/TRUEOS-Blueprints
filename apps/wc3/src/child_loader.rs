@@ -162,6 +162,7 @@ pub enum ProviderOp {
     CrtFullPath,
     CrtBeginThreadEx,
     Direct3DCreate8,
+    D3D8GetAdapterIdentifier,
     Unknown,
 }
 
@@ -231,6 +232,7 @@ impl ProviderOp {
             | Self::SetFilePointer
             | Self::MessageBoxA
             | Self::LoadStringA => 16,
+            Self::D3D8GetAdapterIdentifier => 16,
             Self::MultiByteToWideChar | Self::LCMapStringW | Self::RegQueryValueExA => 24,
             Self::CreateThread => 24,
             Self::SetThreadPriority => 8,
@@ -378,6 +380,7 @@ impl ProviderOp {
                 | Self::CrtFullPath
                 | Self::LoadStringA
                 | Self::WsprintfA
+                | Self::D3D8GetAdapterIdentifier
         )
     }
 }
@@ -540,6 +543,11 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
     if import.module.eq_ignore_ascii_case("d3d8.dll") && symbol == "Direct3DCreate8" {
         return ProviderOp::Direct3DCreate8;
     }
+    if import.module.eq_ignore_ascii_case("d3d8.dll")
+        && symbol == "IDirect3D8::GetAdapterIdentifier"
+    {
+        return ProviderOp::D3D8GetAdapterIdentifier;
+    }
     ProviderOp::Unknown
 }
 
@@ -588,6 +596,22 @@ mod beginthreadex_tests {
         let mut bytes = [0u8; thunk32::THUNK_BYTES];
         thunk32::write(123, external_export_thunk_kind(&import).unwrap(), &mut bytes).unwrap();
         assert_eq!(&bytes[8..11], &[0xc2, 0x04, 0x00]);
+    }
+
+    #[test]
+    fn d3d8_get_adapter_identifier_is_stdcall_and_process_local() {
+        let import = ProviderImport {
+            module: "d3d8.dll".into(),
+            symbol: ProviderSymbol::Name("IDirect3D8::GetAdapterIdentifier".into()),
+            iat_rva: 0,
+        };
+
+        let operation = provider_op(&import);
+        assert_eq!(operation, ProviderOp::D3D8GetAdapterIdentifier);
+        assert!(operation.is_modeled());
+        assert!(operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 16);
+        assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Stdcall(16));
     }
 
     #[test]

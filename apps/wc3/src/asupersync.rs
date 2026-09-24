@@ -8417,6 +8417,33 @@ pub(super) async fn run_loop(
                                     }
                                 }
                                 match operation {
+                                    child_loader::ProviderOp::D3D8GetAdapterIdentifier => {
+                                        let [_, this, adapter, flags, output] = read_guest_words(
+                                            &X86Memory(&child.address_space),
+                                            exit.registers.esp,
+                                            5,
+                                        )?[..]
+                                        else {
+                                            unreachable!("D3D8 GetAdapterIdentifier frame has five words")
+                                        };
+                                        logl::log(
+                                            level::IMPORTANT,
+                                            format_args!(
+                                                "WC3 CHILD D3D8 GETADAPTERIDENTIFIER pid={} tid={} this=0x{:08x} adapter={} flags=0x{:08x} output=0x{:08x} vendor=0x{:04x} device=0x{:04x} subsys=0x{:08x} revision=0x{:02x} description=\"Intel(R) UHD Graphics 770\" result=0x{:08x} cleanup=16-by-thunk",
+                                                active_pid,
+                                                active_tid,
+                                                this,
+                                                adapter,
+                                                flags,
+                                                output,
+                                                wc3::process::TRUEOS_D3D8_VENDOR_ID,
+                                                wc3::process::TRUEOS_D3D8_DEVICE_ID,
+                                                wc3::process::TRUEOS_D3D8_SUBSYSTEM_ID,
+                                                wc3::process::TRUEOS_D3D8_REVISION,
+                                                result,
+                                            ),
+                                        );
+                                    }
                                     child_loader::ProviderOp::FormatMessageA => {
                                         let frame = read_guest_words(
                                             &X86Memory(&child.address_space),

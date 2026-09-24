@@ -4996,6 +4996,58 @@ mod tests_process_1 {
     }
 
     #[test]
+    fn child_d3d8_get_adapter_identifier_returns_the_trueos_adapter_snapshot() {
+        let provider = ProviderImport {
+            module: "d3d8.dll".into(),
+            symbol: ProviderSymbol::Name("IDirect3D8::GetAdapterIdentifier".into()),
+            iat_rva: 0,
+        };
+        let mut xp = XpProcess::new_child();
+        xp.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; 0x2000],
+        };
+        let esp = STACK_BASE + 0x100;
+        let output = STACK_BASE + 0x400;
+        for (index, value) in [
+            0x6f0d_0300,
+            thunk32::CHILD_D3D8_OBJECT_ADDRESS,
+            0,
+            D3DENUM_NO_WHQL_LEVEL,
+            output,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            memory
+                .write(esp + index as u32 * 4, &value.to_le_bytes())
+                .unwrap();
+        }
+
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(D3D_OK))
+        );
+        let mut identifier = [0u8; D3DADAPTER_IDENTIFIER8_BYTES];
+        memory.read(output, &mut identifier).unwrap();
+        assert_eq!(&identifier[..12], b"trueos-d3d8\0");
+        assert_eq!(&identifier[0x200..0x21a], b"Intel(R) UHD Graphics 770\0");
+        assert_eq!(
+            u32::from_le_bytes(identifier[0x408..0x40c].try_into().unwrap()),
+            TRUEOS_D3D8_VENDOR_ID
+        );
+        assert_eq!(
+            u32::from_le_bytes(identifier[0x40c..0x410].try_into().unwrap()),
+            TRUEOS_D3D8_DEVICE_ID
+        );
+        assert_eq!(
+            u32::from_le_bytes(identifier[0x414..0x418].try_into().unwrap()),
+            TRUEOS_D3D8_REVISION
+        );
+    }
+
+    #[test]
     fn child_get_module_file_name_a_reports_native_module_paths() {
         let provider = ProviderImport {
             module: "KERNEL32.dll".into(),
