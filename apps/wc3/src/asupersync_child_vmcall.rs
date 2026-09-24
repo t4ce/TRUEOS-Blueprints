@@ -4725,31 +4725,56 @@
                             exit.registers.esp,
                             2,
                         )?[1];
-                        let remaining = session
+                        let release = session
                             .process_mut(active_pid)
                             .ok_or_else(|| "child process missing".to_owned())?
                             .xp
                             .release_loaded_module(handle)
                             .map_err(str::to_owned)?;
-                        if remaining == 0 {
-                            return Err(format!(
-                                "WC3 CHILD FREELIBRARY FRONTIER reason=zero-reference-unload handle=0x{handle:08x}"
-                            ));
+                        match release {
+                            wc3::process::ModuleRelease::Retained { remaining } => {
+                                let mut registers = exit.registers;
+                                registers.eax = 1;
+                                contexts[active]
+                                    .context
+                                    .set_registers(registers)
+                                    .map_err(|error| error.to_string())?;
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 CHILD FREELIBRARY pid={} tid={} during={:?} handle=0x{:08x} remaining_references={} unloaded=0 result=1 cleanup=4-by-thunk",
+                                        active_pid, active_tid, running_module_name, handle, remaining,
+                                    ),
+                                );
+                                continue;
+                            }
+                            wc3::process::ModuleRelease::ExternalProviderUnloaded { module } => {
+                                let mut registers = exit.registers;
+                                registers.eax = 1;
+                                contexts[active]
+                                    .context
+                                    .set_registers(registers)
+                                    .map_err(|error| error.to_string())?;
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 CHILD FREELIBRARY pid={} tid={} during={:?} module={:?} handle=0x{:08x} remaining_references=0 unloaded=1 kind=external-provider result=1 cleanup=4-by-thunk",
+                                        active_pid, active_tid, running_module_name, module, handle,
+                                    ),
+                                );
+                                continue;
+                            }
+                            wc3::process::ModuleRelease::NativeUnloadRequired { module } => {
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 CHILD FREELIBRARY FRONTIER reason=native-zero-reference-unload module={:?} handle=0x{:08x}",
+                                        module, handle,
+                                    ),
+                                );
+                                return Ok(());
+                            }
                         }
-                        let mut registers = exit.registers;
-                        registers.eax = 1;
-                        contexts[active]
-                            .context
-                            .set_registers(registers)
-                            .map_err(|error| error.to_string())?;
-                        logl::log(
-                            level::IMPORTANT,
-                            format_args!(
-                                "WC3 CHILD FREELIBRARY pid={} tid={} during={:?} handle=0x{:08x} remaining_references={} result=1 cleanup=4-by-thunk",
-                                active_pid, active_tid, running_module_name, handle, remaining,
-                            ),
-                        );
-                        continue;
                     }
                     if operation == child_loader::ProviderOp::GetProcAddress {
                         let frame = read_guest_words(

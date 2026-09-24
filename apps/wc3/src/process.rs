@@ -1359,6 +1359,18 @@ enum LoadedModuleKind {
     ExternalProvider,
 }
 
+/// The semantic result of one successful `FreeLibrary` reference release.
+///
+/// Native images remain registered at their final reference until guest
+/// detach/unmap behavior is modeled; external personality providers can be
+/// removed immediately because TRUEOS owns their implementation lifetime.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ModuleRelease {
+    Retained { remaining: u32 },
+    ExternalProviderUnloaded { module: String },
+    NativeUnloadRequired { module: String },
+}
+
 fn module_basename(name: &str) -> &str {
     name.rsplit(['\\', '/']).next().unwrap_or(name)
 }
@@ -1886,17 +1898,35 @@ impl XpProcess {
         Ok(module.load_count)
     }
 
-    pub fn release_loaded_module(&mut self, handle: u32) -> Result<u32, &'static str> {
-        let module = self
+    pub fn release_loaded_module(&mut self, handle: u32) -> Result<ModuleRelease, &'static str> {
+        let index = self
             .loaded_modules
-            .iter_mut()
-            .find(|module| module.handle == handle)
+            .iter()
+            .position(|module| module.handle == handle)
             .ok_or("loaded module handle")?;
+        let module = &self.loaded_modules[index];
         if module.load_count == 0 {
             return Err("loaded module reference count underflow");
         }
-        module.load_count -= 1;
-        Ok(module.load_count)
+        if module.load_count > 1 {
+            self.loaded_modules[index].load_count -= 1;
+            return Ok(ModuleRelease::Retained {
+                remaining: self.loaded_modules[index].load_count,
+            });
+        }
+
+        match module.kind {
+            LoadedModuleKind::ExternalProvider => {
+                let module = self.loaded_modules.remove(index);
+                Ok(ModuleRelease::ExternalProviderUnloaded {
+                    module: module.stored_name,
+                })
+            }
+            LoadedModuleKind::NativeImage => Ok(ModuleRelease::NativeUnloadRequired {
+                module: module.stored_name.clone(),
+            }),
+            LoadedModuleKind::MainImage => Err("cannot FreeLibrary main image"),
+        }
     }
 
     pub fn provider_import(&self, id: u32) -> Option<&ProviderImport> {

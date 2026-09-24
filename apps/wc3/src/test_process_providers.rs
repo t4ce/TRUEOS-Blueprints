@@ -2256,6 +2256,44 @@
     }
 
     #[test]
+    fn child_runtime_external_provider_unloads_at_its_final_reference() {
+        let mut xp = XpProcess::new_child();
+        let (handle, references, already_loaded) =
+            xp.load_runtime_external_provider("d3d8.dll").unwrap();
+        assert_eq!(references, 1);
+        assert!(!already_loaded);
+
+        assert_eq!(
+            xp.release_loaded_module(handle),
+            Ok(ModuleRelease::ExternalProviderUnloaded {
+                module: "d3d8.dll".into(),
+            })
+        );
+        assert_eq!(xp.loaded_module_handle("d3d8.dll"), None);
+
+        let (handle2, references2, already_loaded2) =
+            xp.load_runtime_external_provider("d3d8.dll").unwrap();
+        assert_eq!(references2, 1);
+        assert!(!already_loaded2);
+        assert_ne!(handle2, handle);
+    }
+
+    #[test]
+    fn child_runtime_native_module_final_release_remains_registered() {
+        let mut xp = XpProcess::new_child();
+        xp.register_runtime_native_module("Storm.dll", 0x1500_0000)
+            .unwrap();
+
+        assert_eq!(
+            xp.release_loaded_module(0x1500_0000),
+            Ok(ModuleRelease::NativeUnloadRequired {
+                module: "Storm.dll".into(),
+            })
+        );
+        assert_eq!(xp.loaded_module_handle("Storm.dll"), Some(0x1500_0000));
+    }
+
+    #[test]
     fn child_d3d8_get_adapter_identifier_returns_the_trueos_adapter_snapshot() {
         let provider = ProviderImport {
             module: "d3d8.dll".into(),
