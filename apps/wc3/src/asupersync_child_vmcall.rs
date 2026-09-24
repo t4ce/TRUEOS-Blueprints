@@ -1215,6 +1215,59 @@
                             ),
                         );
                     }
+                    if matches!(
+                        &provider.symbol,
+                        child_loader::ProviderSymbol::Name(name)
+                            if provider.module.eq_ignore_ascii_case("USER32.dll")
+                                && name == "CreateWindowExA"
+                    ) {
+                        let a = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            exit.registers.esp,
+                            13,
+                        )?;
+                        let class = if a[2] != 0 && a[2] >> 16 != 0 {
+                            Some(wc3::process::read_c_string(
+                                &X86Memory(&child.address_space),
+                                a[2],
+                                256,
+                            )?)
+                        } else {
+                            None
+                        };
+                        let title = if a[3] != 0 {
+                            Some(wc3::process::read_c_string(
+                                &X86Memory(&child.address_space),
+                                a[3],
+                                256,
+                            )?)
+                        } else {
+                            None
+                        };
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD CREATEWINDOWEXA CALL pid={} tid={} ex_style=0x{:08x} class_ptr=0x{:08x} class={:?} title_ptr=0x{:08x} title={:?} style=0x{:08x} x={} y={} width={} height={} parent=0x{:08x} menu=0x{:08x} instance=0x{:08x} param=0x{:08x} caller_ret=0x{:08x}",
+                                active_pid,
+                                active_tid,
+                                a[1],
+                                a[2],
+                                class,
+                                a[3],
+                                title,
+                                a[4],
+                                a[5] as i32,
+                                a[6] as i32,
+                                a[7],
+                                a[8],
+                                a[9],
+                                a[10],
+                                a[11],
+                                a[12],
+                                a[0],
+                            ),
+                        );
+                    }
                     let is_heap_create = matches!(
                         &provider.symbol,
                         child_loader::ProviderSymbol::Name(name)
