@@ -1446,6 +1446,16 @@
                         );
                         1
                     }
+                    PersonalityAction::Session(SessionRequest::GetDC { pid, hwnd }) => {
+                        session.validate_window_dc(pid, hwnd).map_err(str::to_owned)?;
+                        session
+                            .process_mut(pid)
+                            .ok_or_else(|| "GetDC process missing".to_owned())?
+                            .xp
+                            .get_window_dc(hwnd)
+                            .map_err(str::to_owned)?
+                            .0
+                    }
                     PersonalityAction::Session(SessionRequest::ShowWindow {
                         pid: _,
                         hwnd,

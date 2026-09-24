@@ -1736,6 +1736,10 @@ impl XpProcess {
                     show,
                 }))
             }
+            ProviderOp::GetDC => Some(PersonalityAction::Session(SessionRequest::GetDC {
+                pid,
+                hwnd: arguments::<2>(memory, esp)?[1],
+            })),
             ProviderOp::SetEvent => Some(PersonalityAction::Session(SessionRequest::SetEvent {
                 pid,
                 tid,

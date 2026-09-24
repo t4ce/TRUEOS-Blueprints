@@ -1434,6 +1434,32 @@ impl XpProcess {
         Ok(handle)
     }
 
+    pub fn get_window_dc(&mut self, hwnd: u32) -> Result<(u32, bool), &'static str> {
+        if let Some(handle) = self.window_dcs.get(&hwnd).copied() {
+            return Ok((handle, true));
+        }
+        let handle = self.next_gdi_handle;
+        self.next_gdi_handle = self
+            .next_gdi_handle
+            .checked_add(1)
+            .ok_or("GDI handle overflow")?;
+        self.gdi_objects.insert(
+            handle,
+            GdiObject::DeviceContext(DeviceContext {
+                compatible_with: DcCompatibility::Display,
+                target: DcTarget::WindowPaint { hwnd },
+                selected_palette: STOCK_DEFAULT_PALETTE,
+                palette_force_background: false,
+                realized_palette: None,
+                text_color: 0,
+                bk_color: 0x00ff_ffff,
+                bk_mode: OPAQUE,
+            }),
+        );
+        self.window_dcs.insert(hwnd, handle);
+        Ok((handle, false))
+    }
+
     fn end_paint(&mut self, esp: u32, memory: &impl GuestMemory) -> Result<u32, &'static str> {
         let [_, hwnd, paint_struct] = arguments::<3>(memory, esp)?;
         if paint_struct == 0 {

@@ -769,6 +769,10 @@ pub enum SessionRequest {
     LoadImage(LoadImageRequest),
     CreateWindow(CreateWindowRequest),
     SetWindowPos(SetWindowPosRequest),
+    GetDC {
+        pid: Pid,
+        hwnd: u32,
+    },
     ShowWindow {
         pid: Pid,
         hwnd: u32,
@@ -1175,6 +1179,14 @@ impl Wc3Session {
             return Err("BeginPaint window owner mismatch");
         }
         Ok((window.width, window.height))
+    }
+
+    pub fn validate_window_dc(&self, pid: Pid, hwnd: u32) -> Result<(), &'static str> {
+        let window = self.windows.get(&hwnd).ok_or("GetDC unknown window")?;
+        if window.owner.pid != pid {
+            return Err("GetDC window owner mismatch");
+        }
+        Ok(())
     }
 
     pub fn set_focus(&mut self, hwnd: u32) -> Result<u32, &'static str> {

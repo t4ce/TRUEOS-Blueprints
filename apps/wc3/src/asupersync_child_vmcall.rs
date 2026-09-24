@@ -5439,6 +5439,49 @@
                             .map_err(|error| error.to_string())?;
                         continue;
                     }
+                    if operation == child_loader::ProviderOp::GetDC {
+                        let action = session
+                            .process_mut(active_pid)
+                            .ok_or_else(|| "child process missing".to_owned())?
+                            .xp
+                            .dispatch_provider_for_process_typed(
+                                active_pid,
+                                active_tid,
+                                provider_id,
+                                exit.registers.esp,
+                                &mut X86Memory(&child.address_space),
+                            )
+                            .map_err(|error| error.to_string())?;
+                        let PersonalityAction::Session(SessionRequest::GetDC { pid, hwnd }) = action
+                        else {
+                            return Err("GetDC produced unexpected action".into());
+                        };
+                        session.validate_window_dc(pid, hwnd).map_err(str::to_owned)?;
+                        let (hdc, reused) = session
+                            .process_mut(pid)
+                            .ok_or_else(|| "GetDC process missing".to_owned())?
+                            .xp
+                            .get_window_dc(hwnd)
+                            .map_err(str::to_owned)?;
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD GETDC RESULT pid={} tid={} hwnd=0x{:08x} hdc=0x{:08x} persistent=1 reused={} target=window result=success cleanup=4-by-thunk",
+                                active_pid,
+                                active_tid,
+                                hwnd,
+                                hdc,
+                                reused as u8,
+                            ),
+                        );
+                        let mut registers = exit.registers;
+                        registers.eax = hdc;
+                        contexts[active]
+                            .context
+                            .set_registers(registers)
+                            .map_err(|error| error.to_string())?;
+                        continue;
+                    }
                     if matches!(
                         operation,
                         child_loader::ProviderOp::CreateEventA
