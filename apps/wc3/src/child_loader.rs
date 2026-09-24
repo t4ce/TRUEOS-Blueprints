@@ -171,6 +171,56 @@ pub enum ProviderOp {
     ShowWindow,
     GetDC,
     GetDeviceCaps,
+    WglMakeCurrent,
+    GlDisable,
+    GlEnable,
+    GlLightfv,
+    GlFogfv,
+    GlFogf,
+    GlFogi,
+    GlDrawBuffer,
+    GlDepthFunc,
+    GlAlphaFunc,
+    GlBlendFunc,
+    GlEnableClientState,
+    GlTexEnvi,
+    GlBindTexture,
+    GlDisableClientState,
+    GlDepthMask,
+    GlColorMaterial,
+    GlTexGeni,
+    GlLightModelfv,
+    GlMaterialfv,
+    GlPolygonOffset,
+    GlGetIntegerv,
+    WglGetProcAddress,
+    GlGetString,
+    WglCreateContext,
+    WglDeleteContext,
+    GlDeleteTextures,
+    GlTexSubImage2D,
+    GlTexImage2D,
+    GlPixelStorei,
+    GlTexParameteri,
+    GlGenTextures,
+    GlNormal3fv,
+    GlNormalPointer,
+    GlVertexPointer,
+    GlColorPointer,
+    GlTexCoordPointer,
+    GlFinish,
+    GlDrawElements,
+    GlLoadMatrixf,
+    GlMatrixMode,
+    GlScissor,
+    GlDepthRange,
+    GlViewport,
+    GlClear,
+    GlClearColor,
+    GlReadPixels,
+    GlReadBuffer,
+    WglSwapLayerBuffers,
+    GlLightf,
     SetTextColor,
     SetBkColor,
     SetPixelFormat,
@@ -265,6 +315,25 @@ impl ProviderOp {
             Self::ShowWindow => 8,
             Self::GetDC => 4,
             Self::GetDeviceCaps => 8,
+            Self::WglMakeCurrent => 8,
+            Self::GlDisable | Self::GlEnable | Self::GlDrawBuffer | Self::GlDepthFunc
+            | Self::GlEnableClientState | Self::GlDisableClientState | Self::GlDepthMask
+            | Self::GlGetString | Self::WglGetProcAddress | Self::WglCreateContext
+            | Self::WglDeleteContext | Self::GlNormal3fv | Self::GlLoadMatrixf
+            | Self::GlMatrixMode | Self::GlClear | Self::GlReadBuffer => 4,
+            Self::GlLightfv | Self::GlTexEnvi | Self::GlTexGeni | Self::GlMaterialfv
+            | Self::GlTexParameteri | Self::GlNormalPointer | Self::GlLightf => 12,
+            Self::GlFogfv | Self::GlFogf | Self::GlFogi | Self::GlAlphaFunc
+            | Self::GlBlendFunc | Self::GlBindTexture | Self::GlColorMaterial
+            | Self::GlLightModelfv | Self::GlPolygonOffset | Self::GlGetIntegerv
+            | Self::GlDeleteTextures | Self::GlPixelStorei | Self::GlGenTextures
+            | Self::WglSwapLayerBuffers => 8,
+            Self::GlTexSubImage2D | Self::GlTexImage2D => 36,
+            Self::GlVertexPointer | Self::GlColorPointer | Self::GlTexCoordPointer
+            | Self::GlDrawElements | Self::GlDepthRange | Self::GlScissor | Self::GlViewport
+            | Self::GlClearColor => 16,
+            Self::GlFinish => 0,
+            Self::GlReadPixels => 28,
             Self::SetTextColor | Self::SetBkColor | Self::SetTextAlign => 8,
             Self::SetPixelFormat => 12,
             Self::TextOutW => 20,
@@ -431,6 +500,56 @@ impl ProviderOp {
                 | Self::EnumDisplaySettingsA
                 | Self::ChangeDisplaySettingsExA
                 | Self::GetDeviceCaps
+                | Self::WglMakeCurrent
+                | Self::GlDisable
+                | Self::GlEnable
+                | Self::GlLightfv
+                | Self::GlFogfv
+                | Self::GlFogf
+                | Self::GlFogi
+                | Self::GlDrawBuffer
+                | Self::GlDepthFunc
+                | Self::GlAlphaFunc
+                | Self::GlBlendFunc
+                | Self::GlEnableClientState
+                | Self::GlTexEnvi
+                | Self::GlBindTexture
+                | Self::GlDisableClientState
+                | Self::GlDepthMask
+                | Self::GlColorMaterial
+                | Self::GlTexGeni
+                | Self::GlLightModelfv
+                | Self::GlMaterialfv
+                | Self::GlPolygonOffset
+                | Self::GlGetIntegerv
+                | Self::WglGetProcAddress
+                | Self::GlGetString
+                | Self::WglCreateContext
+                | Self::WglDeleteContext
+                | Self::GlDeleteTextures
+                | Self::GlTexSubImage2D
+                | Self::GlTexImage2D
+                | Self::GlPixelStorei
+                | Self::GlTexParameteri
+                | Self::GlGenTextures
+                | Self::GlNormal3fv
+                | Self::GlNormalPointer
+                | Self::GlVertexPointer
+                | Self::GlColorPointer
+                | Self::GlTexCoordPointer
+                | Self::GlFinish
+                | Self::GlDrawElements
+                | Self::GlLoadMatrixf
+                | Self::GlMatrixMode
+                | Self::GlScissor
+                | Self::GlDepthRange
+                | Self::GlViewport
+                | Self::GlClear
+                | Self::GlClearColor
+                | Self::GlReadPixels
+                | Self::GlReadBuffer
+                | Self::WglSwapLayerBuffers
+                | Self::GlLightf
                 | Self::SetTextColor
                 | Self::SetBkColor
                 | Self::SetPixelFormat
@@ -581,6 +700,37 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "CreateFontA" => ProviderOp::CreateFontA,
             "GetStockObject" => ProviderOp::GetStockObject,
             "DeleteObject" => ProviderOp::DeleteObject,
+            _ => ProviderOp::Unknown,
+        };
+    }
+    if import.module.eq_ignore_ascii_case("OPENGL32.dll") {
+        return match symbol.as_str() {
+            "wglMakeCurrent" => ProviderOp::WglMakeCurrent,
+            "glDisable" => ProviderOp::GlDisable, "glEnable" => ProviderOp::GlEnable,
+            "glLightfv" => ProviderOp::GlLightfv, "glFogfv" => ProviderOp::GlFogfv,
+            "glFogf" => ProviderOp::GlFogf, "glFogi" => ProviderOp::GlFogi,
+            "glDrawBuffer" => ProviderOp::GlDrawBuffer, "glDepthFunc" => ProviderOp::GlDepthFunc,
+            "glAlphaFunc" => ProviderOp::GlAlphaFunc, "glBlendFunc" => ProviderOp::GlBlendFunc,
+            "glEnableClientState" => ProviderOp::GlEnableClientState, "glTexEnvi" => ProviderOp::GlTexEnvi,
+            "glBindTexture" => ProviderOp::GlBindTexture, "glDisableClientState" => ProviderOp::GlDisableClientState,
+            "glDepthMask" => ProviderOp::GlDepthMask, "glColorMaterial" => ProviderOp::GlColorMaterial,
+            "glTexGeni" => ProviderOp::GlTexGeni, "glLightModelfv" => ProviderOp::GlLightModelfv,
+            "glMaterialfv" => ProviderOp::GlMaterialfv, "glPolygonOffset" => ProviderOp::GlPolygonOffset,
+            "glGetIntegerv" => ProviderOp::GlGetIntegerv, "wglGetProcAddress" => ProviderOp::WglGetProcAddress,
+            "glGetString" => ProviderOp::GlGetString, "wglCreateContext" => ProviderOp::WglCreateContext,
+            "wglDeleteContext" => ProviderOp::WglDeleteContext, "glDeleteTextures" => ProviderOp::GlDeleteTextures,
+            "glTexSubImage2D" => ProviderOp::GlTexSubImage2D, "glTexImage2D" => ProviderOp::GlTexImage2D,
+            "glPixelStorei" => ProviderOp::GlPixelStorei, "glTexParameteri" => ProviderOp::GlTexParameteri,
+            "glGenTextures" => ProviderOp::GlGenTextures, "glNormal3fv" => ProviderOp::GlNormal3fv,
+            "glNormalPointer" => ProviderOp::GlNormalPointer, "glVertexPointer" => ProviderOp::GlVertexPointer,
+            "glColorPointer" => ProviderOp::GlColorPointer, "glTexCoordPointer" => ProviderOp::GlTexCoordPointer,
+            "glFinish" => ProviderOp::GlFinish, "glDrawElements" => ProviderOp::GlDrawElements,
+            "glLoadMatrixf" => ProviderOp::GlLoadMatrixf, "glMatrixMode" => ProviderOp::GlMatrixMode,
+            "glScissor" => ProviderOp::GlScissor, "glDepthRange" => ProviderOp::GlDepthRange,
+            "glViewport" => ProviderOp::GlViewport, "glClear" => ProviderOp::GlClear,
+            "glClearColor" => ProviderOp::GlClearColor, "glReadPixels" => ProviderOp::GlReadPixels,
+            "glReadBuffer" => ProviderOp::GlReadBuffer, "wglSwapLayerBuffers" => ProviderOp::WglSwapLayerBuffers,
+            "glLightf" => ProviderOp::GlLightf,
             _ => ProviderOp::Unknown,
         };
     }
