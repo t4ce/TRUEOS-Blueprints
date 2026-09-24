@@ -12,6 +12,18 @@ const ERROR_INVALID_ADDRESS: u32 = 487;
 const MEM_RELEASE: u32 = 0x0000_8000;
 const EXEC_SAMPLE_PREEMPTIONS: u64 = 8;
 const MAX_SEH_CHAIN_DEPTH: u32 = 64;
+const STORM_EXPAND_BEGIN: u32 = 0x1501_d5a9;
+const STORM_EXPAND_TRAP: u32 = 0x1501_d5e0;
+const STORM_EXPAND_AFTER_TRAP: u32 = STORM_EXPAND_TRAP + 3;
+const STORM_EXPAND_TAIL: u32 = 0x1501_d61e;
+const STORM_EXPAND_SIGNATURE: [u8; 32] = [
+    0xbf, 0x85, 0x0f, 0xb4, 0x4f, 0x64, 0x5f, 0xcc,
+    0x7f, 0x8b, 0xe7, 0x7c, 0xaf, 0xf7, 0x71, 0xf9,
+    0xa9, 0x0b, 0x38, 0x46, 0x29, 0x04, 0xd5, 0xe5,
+    0xdf, 0x62, 0xc1, 0xb3, 0xb9, 0x58, 0xc4, 0xdc,
+];
+const STORM_EXPAND_ORIGINAL: [u8; 3] = [0x8b, 0x45, 0xf8];
+
 const WAR3_EVENT_POOL_BEGIN: u32 = 0x0040_29a0;
 const WAR3_EVENT_POOL_TRAP: u32 = 0x0040_29e0;
 const WAR3_EVENT_POOL_AFTER_TRAP: u32 = WAR3_EVENT_POOL_TRAP + 3;
@@ -173,6 +185,93 @@ fn complete_war3_event_pool(
     registers.eip = WAR3_EVENT_POOL_TAIL;
     context.context.set_registers(registers).map_err(|error| error.to_string())?;
     logl::log(level::IMPORTANT, format_args!("WC3 EVENT POOL RUST COMPLETE pid={} tid={} events=2048 next_handle=0x{:08x}", child.pid, child.tid, session.next_event_handle));
+    Ok(true)
+}
+
+fn install_storm_record_expand_trap(address_space: &AddressSpace) -> Result<bool, String> {
+    if cfg!(feature = "guest-record-expand") { return Ok(false); }
+    let mut code = [0u8; (STORM_EXPAND_TAIL + 3 - STORM_EXPAND_BEGIN) as usize];
+    if address_space.read(STORM_EXPAND_BEGIN, &mut code).ok() != Some(code.len())
+        || Sha256::digest(code).as_slice() != STORM_EXPAND_SIGNATURE
+    { return Ok(false); }
+    if address_space.write(STORM_EXPAND_TRAP, &[0x0f, 0x01, 0xc1]).ok() != Some(3) {
+        return Err("install Storm record expansion trap failed".into());
+    }
+    logl::log(level::IMPORTANT, format_args!("WC3 RECORD EXPAND RUST ARMED eip=0x{STORM_EXPAND_TRAP:08x}"));
+    Ok(true)
+}
+
+fn complete_storm_record_expand(
+    child: &PendingChild,
+    session: &Wc3Session,
+    context: &mut GuestContext,
+    mut registers: Registers,
+) -> Result<bool, String> {
+    if child.address_space.write(STORM_EXPAND_TRAP, &STORM_EXPAND_ORIGINAL).ok() != Some(3) {
+        return Err("restore Storm record expansion instruction failed".into());
+    }
+    registers.eip = STORM_EXPAND_TRAP;
+    let module = child.native_modules.iter().find(|module| module.stored.eq_ignore_ascii_case("Storm.dll"));
+    let expected = module.and_then(|module| module.image.image.get(
+        (STORM_EXPAND_BEGIN - module.image.image_base) as usize
+            ..(STORM_EXPAND_TAIL + 3 - module.image.image_base) as usize
+    ));
+    let mut live = [0u8; (STORM_EXPAND_TAIL + 3 - STORM_EXPAND_BEGIN) as usize];
+    let debug = context.context.debug_registers().map_err(|error| error.to_string())?;
+    let frame = registers.ebp;
+    let metadata = read_event_pool_word(child, registers.ebx.wrapping_add(0x138));
+    let count = metadata.and_then(|metadata| read_event_pool_word(child, metadata.wrapping_add(0x1c)));
+    let base = read_event_pool_word(child, registers.ebx.wrapping_add(0x13c));
+    let plan = count.zip(base).and_then(|(count, base)| {
+        if !(2..=65_536).contains(&count) { return None; }
+        let last = count.checked_sub(1)?;
+        let source_end = base.checked_add(count.checked_mul(16)?)?;
+        let output_end = base.checked_add(count.checked_mul(44)?)?;
+        let expected_source = base.checked_add(last.checked_mul(16)?)?;
+        let expected_destination = base.checked_add(last.checked_mul(44)?)?;
+        let reservation = session.process(child.pid)?.xp.virtual_reservation_containing(base, output_end - base)?;
+        let committed = reservation.committed.iter().any(|commit| {
+            commit.base <= base && commit.base.checked_add(commit.size).is_some_and(|end| end >= output_end)
+        });
+        (committed && source_end <= output_end
+            && registers.edi == expected_destination
+            && registers.esi == expected_destination.checked_add(36)?
+            && read_event_pool_word(child, frame.wrapping_sub(4)) == Some(count)
+            && read_event_pool_word(child, frame.wrapping_sub(8)) == Some(expected_source)
+            && read_event_pool_word(child, frame.wrapping_sub(12)) == Some(last))
+            .then_some((count as usize, base, source_end, output_end))
+    });
+    let eligible = child.parked_threads.is_empty()
+        && registers.eflags & 0x0007_4500 == 0 // TF, DF, NT, RF, VM, AC
+        && debug.dr7 & 0x23ff == 0
+        && frame >= STACK_BASE + 0x40 && frame < STACK_TOP - 8
+        && child.address_space.read(STORM_EXPAND_BEGIN, &mut live).ok() == Some(live.len())
+        && expected == Some(live.as_slice());
+    let Some((count, base, source_end, output_end)) = plan.filter(|_| eligible) else {
+        context.context.set_registers(registers).map_err(|error| error.to_string())?;
+        logl::log(level::IMPORTANT, format_args!("WC3 RECORD EXPAND RUST BYPASS reason=state-or-code-mismatch"));
+        return Ok(false);
+    };
+    let mut source = vec![0u8; (source_end - base) as usize];
+    if child.address_space.read(base, &mut source).ok() != Some(source.len()) {
+        context.context.set_registers(registers).map_err(|error| error.to_string())?;
+        return Ok(false);
+    }
+    let output = wc3::record_expand::build(&source, count)
+        .ok_or("Storm record expansion builder rejected guarded count")?;
+    if child.address_space.write(base + 44, &output).ok() != Some(output.len()) {
+        return Err("Storm record expansion output write failed".into());
+    }
+    write_event_pool_word(child, frame - 8, base)?;
+    write_event_pool_word(child, frame - 12, 0)?;
+    registers.eax = 0;
+    registers.ecx = base;
+    registers.edi = base;
+    registers.esi = base + 36;
+    registers.eflags = (registers.eflags & !0x8d5) | 0x44;
+    registers.eip = STORM_EXPAND_TAIL;
+    context.context.set_registers(registers).map_err(|error| error.to_string())?;
+    logl::log(level::IMPORTANT, format_args!("WC3 RECORD EXPAND RUST COMPLETE pid={} tid={} records={} input_bytes={} output_bytes={} output_end=0x{:08x}", child.pid, child.tid, count - 1, source.len(), output.len(), output_end));
     Ok(true)
 }
 
@@ -2372,6 +2471,10 @@ pub(super) async fn run_loop(
                         .as_mut()
                         .filter(|child| child.pid == active_pid)
                         .ok_or_else(|| "active child address space missing".to_owned())?;
+                    if exit.registers.eip == STORM_EXPAND_AFTER_TRAP {
+                        complete_storm_record_expand(child, &session, &mut contexts[active], exit.registers)?;
+                        continue;
+                    }
                     if exit.registers.eip == WAR3_EVENT_POOL_AFTER_TRAP {
                         complete_war3_event_pool(child, &mut session, &mut contexts[active], exit.registers)?;
                         continue;
@@ -6706,6 +6809,35 @@ pub(super) async fn run_loop(
                             );
                             continue;
                         }
+                        if wc3::process::is_system_provider_module(&requested) {
+                            let (handle, references, already_loaded) = session
+                                .process_mut(active_pid)
+                                .ok_or_else(|| "child process missing".to_owned())?
+                                .xp
+                                .load_runtime_external_provider(&requested)
+                                .map_err(str::to_owned)?;
+                            let mut registers = exit.registers;
+                            registers.eax = handle;
+                            contexts[active]
+                                .context
+                                .set_registers(registers)
+                                .map_err(|error| error.to_string())?;
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD LOADLIBRARY PROVIDER pid={} tid={} during=\"{}\" requested={:?} handle=0x{:08x} already_loaded={} references={} caller_ret=0x{:08x} cleanup=4-by-thunk",
+                                    active_pid,
+                                    active_tid,
+                                    running_module_name,
+                                    requested,
+                                    handle,
+                                    already_loaded as u8,
+                                    references,
+                                    u32::from_le_bytes(caller_ret),
+                                ),
+                            );
+                            continue;
+                        }
                         let scratch = session
                             .process(active_pid)
                             .ok_or_else(|| "child process missing".to_owned())?
@@ -6826,6 +6958,9 @@ pub(super) async fn run_loop(
                                 .map_err(|error| error.to_string())?;
                             if written != image.image.len() {
                                 return Err("short local native image write".into());
+                            }
+                            if stored.eq_ignore_ascii_case("Storm.dll") {
+                                install_storm_record_expand_trap(&child.address_space)?;
                             }
                             // Bind the requested image depth-first: a locally present
                             // imported DLL must be mapped and registered before its
@@ -10224,6 +10359,9 @@ pub(super) async fn run_loop(
                                 .map_err(|error| error.to_string())?;
                             if written != image.image.len() {
                                 return Err("short native image write".into());
+                            }
+                            if native.stored.eq_ignore_ascii_case("Storm.dll") {
+                                install_storm_record_expand_trap(&child.address_space)?;
                             }
                             let storm_imports: Vec<_> = image
                                 .imports

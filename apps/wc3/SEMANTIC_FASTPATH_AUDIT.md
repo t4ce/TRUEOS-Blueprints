@@ -4,7 +4,7 @@ Audit date: 2026-09-24. Candidate 2 below (the simple initializer templates, opt
 summary) is now implemented with runtime guards in `src/initterm.rs` and
 `advance_child_initterm`. Candidate 1, the event pool, is now implemented in `src/event_pool.rs` and
 `asupersync.rs` with a code signature and state guards. The record-expansion
-candidate remains an assessment. No physical
+candidate has also been implemented. No physical
 timing measurement has been made.
 
 Evidence: the last War3 initializer sequence in
@@ -83,19 +83,22 @@ including overlap with stack/code and changed input values. There are 4,130
 callbacks across Storm, War3 and Game in this trace; this count does not measure
 how much wall-clock time the 590 simple ones consume.
 
-## 3. Replace the record-expansion operation
+## 3. Replace the record-expansion operation — implemented
 
-The earlier measured move sequence has 21,516 copies of 16 bytes, source stride
-16 and destination stride 44. One contiguous memmove cannot express it. A Rust
-record-expansion operation can: preserve the 16-byte payload copies and the
-surrounding constructor's writes into the other 28 bytes of each record.
+The old 21,516-move log covers two runs; each run has 10,758 moves. Storm.dll
+`0x1501d5e0..0x1501d61e` owns the loop. It reads input records 1..10,758
+backwards from a compact 16-byte array, writes their 16-byte payloads to
+44-byte slots, then zeroes each slot's remaining 28 bytes. Record zero has
+special initialization after the loop. The allocation and source share a base;
+backward order protects unread compact records from the expanding output.
 
-The native memmove helper already removes per-copy provider exits. A whole
-operation replacement would additionally remove the guest loop and surrounding
-per-record work. It requires identifying and disassembling the caller, proving
-the complete 44-byte layout, preserving alias/order behavior, and checking
-allocation, registration and failure effects. The move trace alone does not
-establish that contract. Keep this behind the first two candidates.
+`src/record_expand.rs` now constructs those records from a fresh snapshot of
+the compact input. `asupersync.rs` verifies Storm code, the live CPU/stack and
+buffer reservation, then writes the expanded bytes and resumes at the original
+first-record setup. A failed guard restores the guest instruction and runs the
+old loop. `guest-record-expand` forces that reference path. The exact 62-byte
+Storm loop was also run natively in i386 with a deterministic memmove stub and
+compared against the Rust output for small and observed counts.
 
 ## Activation rule
 
@@ -106,4 +109,4 @@ input states; do not infer equivalence merely from reaching the same frontier.
 Keep a feature switch for reference execution and aggregate fast-path counts.
 The simple initializer templates and event pool are enabled by default.
 `guest-initterm` and `guest-event-pool` restore the respective guest paths.
-Record expansion remains unchanged.
+`guest-record-expand` restores the Storm loop as well.

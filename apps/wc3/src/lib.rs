@@ -22,6 +22,7 @@ pub mod initterm;
 pub mod pe32;
 pub mod process;
 pub mod reg;
+pub mod record_expand;
 pub mod seh;
 pub mod session;
 pub mod staticstr;

@@ -1356,6 +1356,28 @@ fn module_names_match(left: &str, right: &str) -> bool {
     module_basename(left).eq_ignore_ascii_case(module_basename(right))
 }
 
+/// DLLs supplied by the XP personality rather than by the Warcraft install.
+///
+/// This deliberately remains a closed set: a missing application DLL must not
+/// become a successful system load merely because it has a `.dll` suffix.
+pub fn is_system_provider_module(module: &str) -> bool {
+    matches!(
+        module_basename(module).to_ascii_lowercase().as_str(),
+        "kernel32.dll"
+            | "user32.dll"
+            | "gdi32.dll"
+            | "advapi32.dll"
+            | "winmm.dll"
+            | "msvcrt.dll"
+            | "ole32.dll"
+            | "imm32.dll"
+            | "comdlg32.dll"
+            | "comctl32.dll"
+            | "opengl32.dll"
+            | "d3d8.dll"
+    )
+}
+
 impl ProcessImage {
     const fn filename(self) -> &'static [u8] {
         match self {
@@ -1461,6 +1483,25 @@ impl XpProcess {
                 module.handle == handle && module.kind == LoadedModuleKind::ExternalProvider
             })
             .map(|module| module_basename(&module.stored_name))
+    }
+
+    /// Admit a system DLL that was discovered through LoadLibraryA at runtime.
+    /// Existing modules retain their reference count; a newly admitted module
+    /// begins with the one reference owned by this call.
+    pub fn load_runtime_external_provider(
+        &mut self,
+        module: &str,
+    ) -> Result<(u32, u32, bool), &'static str> {
+        if let Some(handle) = self.loaded_module_handle(module) {
+            let references = self.retain_loaded_module(handle)?;
+            return Ok((handle, references, true));
+        }
+
+        self.register_external_provider_module(module)?;
+        let handle = self
+            .loaded_module_handle(module)
+            .ok_or("registered external provider missing")?;
+        Ok((handle, 1, false))
     }
 
     pub fn provider_thunk_address(&self, module: &str, symbol: &ProviderSymbol) -> Option<u32> {

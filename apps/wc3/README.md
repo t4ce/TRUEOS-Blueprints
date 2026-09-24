@@ -143,3 +143,25 @@ original loop for comparison. This feature does not need a saved checkpoint.
 `python3 apps/wc3/tests/test_native_event_pool.py` executes the original pool
 loop as i386 code with a deterministic CreateEvent stub and compares every
 output byte and the final CPU state with the Rust table builder.
+
+### Storm record expansion in Rust
+
+Storm.dll's verified loop at `0x1501d5e0` expands compact 16-byte records
+in place into 44-byte records. In the measured run it has 10,759 input
+records, so 10,758 repeated moves. The Blueprint now reads the compact input
+once, builds the expanded records in Rust (16 bytes from each input record
+followed by 28 zero bytes), writes the output in one guest-memory operation,
+and resumes at `0x1501d61e`. Storm still executes its special first-record
+setup and later relocation work. The previous log's 21,516 moves came from
+two runs of this 10,758-move loop.
+
+The current Storm code is verified before installing a one-time VM trap. At
+that trap, code, registers, stack locals, debug state, and the committed guest
+allocation are checked; a mismatch restores the original instruction and
+executes the guest loop. `WC3 RECORD EXPAND RUST COMPLETE` reports activation.
+Enable `guest-record-expand` to keep the original loop for comparison. This
+runs independently of the existing native `memmove` helper.
+
+`python3 apps/wc3/tests/test_native_record_expand.py` executes the audited
+Storm loop as i386 code and compares its output and ending CPU state to Rust
+for 2, 3, 17, and 10,759 input records.

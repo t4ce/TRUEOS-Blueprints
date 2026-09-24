@@ -4975,6 +4975,27 @@ mod tests_process_1 {
     }
 
     #[test]
+    fn child_runtime_system_provider_load_retains_d3d8_without_admitting_app_dlls() {
+        assert!(is_system_provider_module("d3d8.dll"));
+        assert!(is_system_provider_module("C:\\Windows\\System32\\D3D8.DLL"));
+        assert!(!is_system_provider_module("War3Patch.dll"));
+
+        let mut xp = XpProcess::new_child();
+        let (handle, references, already_loaded) =
+            xp.load_runtime_external_provider("d3d8.dll").unwrap();
+        assert_eq!(references, 1);
+        assert!(!already_loaded);
+        assert_eq!(xp.external_provider_module_name(handle), Some("d3d8.dll"));
+
+        let (retained, references, already_loaded) = xp
+            .load_runtime_external_provider("C:\\Windows\\System32\\D3D8.DLL")
+            .unwrap();
+        assert_eq!(retained, handle);
+        assert_eq!(references, 2);
+        assert!(already_loaded);
+    }
+
+    #[test]
     fn child_get_module_file_name_a_reports_native_module_paths() {
         let provider = ProviderImport {
             module: "KERNEL32.dll".into(),
