@@ -1206,6 +1206,30 @@
                     if matches!(
                         &provider.symbol,
                         child_loader::ProviderSymbol::Name(name)
+                            if provider.module.eq_ignore_ascii_case("GDI32.dll")
+                                && name == "SetPixelFormat"
+                    ) {
+                        let frame = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            exit.registers.esp,
+                            4,
+                        )?;
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD SETPIXELFORMAT CALL pid={} tid={} hdc=0x{:08x} format={} ppfd=0x{:08x} caller_ret=0x{:08x}",
+                                active_pid,
+                                active_tid,
+                                frame[1],
+                                frame[2],
+                                frame[3],
+                                frame[0],
+                            ),
+                        );
+                    }
+                    if matches!(
+                        &provider.symbol,
+                        child_loader::ProviderSymbol::Name(name)
                             if provider.module.eq_ignore_ascii_case("USER32.dll")
                                 && name == "SetWindowPos"
                     ) {
@@ -6672,6 +6696,29 @@
                                                 index,
                                                 capability,
                                                 result,
+                                            ),
+                                        );
+                                    }
+                                    child_loader::ProviderOp::SetPixelFormat => {
+                                        let [_, hdc, format, ppfd] = read_guest_words(
+                                            &X86Memory(&child.address_space),
+                                            exit.registers.esp,
+                                            4,
+                                        )?[..]
+                                        else {
+                                            unreachable!("SetPixelFormat frame has four words")
+                                        };
+                                        logl::log(
+                                            level::IMPORTANT,
+                                            format_args!(
+                                                "WC3 CHILD SETPIXELFORMAT RESULT pid={} tid={} hdc=0x{:08x} format={} ppfd=0x{:08x} window_format={} result={} cleanup=12-by-thunk",
+                                                active_pid,
+                                                active_tid,
+                                                hdc,
+                                                format,
+                                                ppfd,
+                                                format,
+                                                if result != 0 { "TRUE" } else { "FALSE" },
                                             ),
                                         );
                                     }

@@ -69,11 +69,51 @@ impl XpProcess {
     }
 
     fn set_pixel_format_static(
-        &self,
-        _esp: u32,
-        _memory: &impl GuestMemory,
+        &mut self,
+        esp: u32,
+        memory: &impl GuestMemory,
     ) -> Result<u32, ProviderDispatchError> {
-        self.static_gdi_stub("SetPixelFormat")
+        let [_, hdc, format, pfd] = arguments::<4>(memory, esp)?;
+        let hwnd = match self.gdi_objects.get(&hdc) {
+            Some(GdiObject::DeviceContext(DeviceContext {
+                target: DcTarget::WindowPaint { hwnd },
+                ..
+            })) => *hwnd,
+            _ => {
+                return Err(ProviderDispatchError::Frontier {
+                    api: "SetPixelFormat",
+                    detail: format!("hdc=0x{hdc:08x} is not a window DC"),
+                });
+            }
+        };
+
+        if format != TRUEOS_GL_PIXEL_FORMAT {
+            return Err(ProviderDispatchError::Frontier {
+                api: "SetPixelFormat",
+                detail: format!("hwnd=0x{hwnd:08x} unsupported format={format}"),
+            });
+        }
+        if pfd == 0 {
+            return Err(ProviderDispatchError::Frontier {
+                api: "SetPixelFormat",
+                detail: format!("hwnd=0x{hwnd:08x} format={format} null ppfd"),
+            });
+        }
+
+        if let Some(existing) = self.window_pixel_formats.get(&hwnd).copied() {
+            if existing == format {
+                return Ok(0);
+            }
+            return Err(ProviderDispatchError::Frontier {
+                api: "SetPixelFormat",
+                detail: format!(
+                    "hwnd=0x{hwnd:08x} already has format={existing}, requested={format}"
+                ),
+            });
+        }
+
+        self.window_pixel_formats.insert(hwnd, format);
+        Ok(1)
     }
 
     fn text_out_w_static(
