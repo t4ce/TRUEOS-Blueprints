@@ -136,6 +136,7 @@ pub enum ProviderOp {
     CrtVsnprintf,
     CrtMalloc,
     CrtIsDigit,
+    CrtToUpper,
     CrtStrrchr,
     CrtStrstr,
     CrtStrnicmp,
@@ -237,6 +238,7 @@ impl ProviderOp {
             | Self::CrtVsnprintf
             | Self::CrtMalloc
             | Self::CrtIsDigit
+            | Self::CrtToUpper
             | Self::CrtStrrchr
             | Self::CrtStrstr
             | Self::CrtStrnicmp
@@ -319,6 +321,7 @@ impl ProviderOp {
                 | Self::CrtOnExit
                 | Self::CrtVsnprintf
                 | Self::CrtIsDigit
+                | Self::CrtToUpper
                 | Self::CrtStrrchr
                 | Self::CrtStrstr
                 | Self::CrtStrnicmp
@@ -456,6 +459,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "_vsnprintf" => ProviderOp::CrtVsnprintf,
             "malloc" => ProviderOp::CrtMalloc,
             "isdigit" => ProviderOp::CrtIsDigit,
+            "toupper" => ProviderOp::CrtToUpper,
             "strrchr" => ProviderOp::CrtStrrchr,
             "strstr" => ProviderOp::CrtStrstr,
             "_strnicmp" => ProviderOp::CrtStrnicmp,

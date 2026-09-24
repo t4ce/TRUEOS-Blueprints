@@ -1158,6 +1158,13 @@ pub struct VirtualCommitRequest {
     pub size: u32,
 }
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct VirtualNullCommitRequest {
+    pub base: u32,
+    pub size: u32,
+    pub next_reserve: u32,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct WinHeap {
     options: u32,
@@ -1844,6 +1851,60 @@ impl XpProcess {
             .cloned()
     }
 
+    pub fn virtual_prepare_null_commit(
+        &self,
+        requested: u32,
+    ) -> Result<Option<VirtualNullCommitRequest>, &'static str> {
+        if requested == 0 {
+            return Err("VirtualAlloc zero-size null commit");
+        }
+        let size = requested
+            .checked_add(XP_PAGE_SIZE - 1)
+            .ok_or("VirtualAlloc null commit size overflow")?
+            & !(XP_PAGE_SIZE - 1);
+        let base = self.virtual_reserve_next;
+        if base % XP_ALLOCATION_GRANULARITY != 0 {
+            return Err("VirtualAlloc allocation cursor alignment");
+        }
+        let end = base
+            .checked_add(size)
+            .ok_or("VirtualAlloc null commit address overflow")?;
+        if end > CHILD_VIRTUAL_ALLOC_LIMIT {
+            return Ok(None);
+        }
+        let next_reserve = end
+            .checked_add(XP_ALLOCATION_GRANULARITY - 1)
+            .ok_or("VirtualAlloc next allocation overflow")?
+            & !(XP_ALLOCATION_GRANULARITY - 1);
+        if next_reserve > CHILD_VIRTUAL_ALLOC_LIMIT {
+            return Ok(None);
+        }
+        Ok(Some(VirtualNullCommitRequest {
+            base,
+            size,
+            next_reserve,
+        }))
+    }
+
+    pub fn virtual_finish_null_commit(
+        &mut self,
+        request: VirtualNullCommitRequest,
+    ) -> Result<(), &'static str> {
+        if self.virtual_reserve_next != request.base {
+            return Err("VirtualAlloc allocation cursor changed");
+        }
+        self.virtual_reservations.push(VirtualReservation {
+            base: request.base,
+            size: request.size,
+            committed: vec![VirtualCommit {
+                base: request.base,
+                size: request.size,
+            }],
+        });
+        self.virtual_reserve_next = request.next_reserve;
+        Ok(())
+    }
+
     pub fn virtual_finish_release(&mut self, base: u32, size: u32) -> Result<(), &'static str> {
         let index = self
             .virtual_reservations
@@ -2412,6 +2473,27 @@ impl XpProcess {
                     0x04
                 } else {
                     0
+                };
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(result))
+            }
+            ProviderOp::CrtToUpper => {
+                let [_, character] = arguments::<2>(memory, esp)?;
+                let result = match character {
+                    value @ 0x61..=0x7a => value - 0x20,
+                    u32::MAX => u32::MAX,
+                    0x00..=0xff => character,
+                    other => {
+                        return Err(ProviderDispatchError::Frontier {
+                            api: "toupper",
+                            detail: format!(
+                                "character outside unsigned-char/EOF domain=0x{other:08x}"
+                            ),
+                        });
+                    }
                 };
                 self.call_count = self
                     .call_count

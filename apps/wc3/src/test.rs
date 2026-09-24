@@ -2721,6 +2721,23 @@ mod tests_process_1 {
     }
 
     #[test]
+    fn child_virtual_null_commit_page_rounds_but_advances_cursor_to_64k() {
+        let mut process = XpProcess::new(Vec::new());
+        process.virtual_reserve_null(0x80000).unwrap().unwrap();
+        assert_eq!(process.virtual_reservation_state().1, 0x0608_0000);
+
+        let request = process.virtual_prepare_null_commit(0x80010).unwrap().unwrap();
+        assert_eq!(request.base, 0x0608_0000);
+        assert_eq!(request.size, 0x0008_1000);
+        assert_eq!(request.next_reserve, 0x0611_0000);
+        process.virtual_finish_null_commit(request).unwrap();
+
+        assert_eq!(process.virtual_reservation_at(request.base).unwrap().size, request.size);
+        assert_eq!(process.virtual_commit_state(), (1, request.size));
+        assert_eq!(process.virtual_reservation_state().1, request.next_reserve);
+    }
+
+    #[test]
     fn appended_provider_updates_the_existing_thunk_page_tail() {
         let mut xp = XpProcess::new(Vec::new());
         let existing = (0..337)
@@ -3196,6 +3213,47 @@ mod tests_process_1 {
             Ok(PersonalityAction::Return(u32::MAX))
         );
         assert_eq!(xp.call_count, 3);
+    }
+
+    #[test]
+    fn child_crt_toupper_uses_initial_c_locale_and_is_cdecl() {
+        let provider = ProviderImport {
+            module: "MSVCRT.dll".into(),
+            symbol: ProviderSymbol::Name("toupper".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&provider);
+        assert_eq!(operation, ProviderOp::CrtToUpper);
+        assert!(operation.is_modeled());
+        assert!(operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 0);
+        assert_eq!(
+            crate::child_loader::provider_thunk_kind(&provider),
+            thunk32::Kind::Return
+        );
+
+        let mut xp = XpProcess::new_child();
+        xp.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+        write_u32(&mut memory, esp, 0x1501_d409).unwrap();
+
+        for (character, expected) in [
+            (b'q' as u32, b'Q' as u32),
+            (b'Q' as u32, b'Q' as u32),
+            (b'/' as u32, b'/' as u32),
+            (u32::MAX, u32::MAX),
+        ] {
+            write_u32(&mut memory, esp + 4, character).unwrap();
+            assert_eq!(
+                xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+                Ok(PersonalityAction::Return(expected))
+            );
+        }
+        assert_eq!(xp.call_count, 4);
     }
 
     #[test]

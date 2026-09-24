@@ -5161,7 +5161,11 @@ pub(super) async fn run_loop(
                             && frame.size != 0
                             && frame.allocation_type == 0x0000_1000
                             && frame.protect == 0x04;
-                        if !supported_reserve && !supported_commit {
+                        let supported_null_commit = frame.address == 0
+                            && frame.size != 0
+                            && frame.allocation_type == 0x0000_1000
+                            && frame.protect == 0x04;
+                        if !supported_reserve && !supported_commit && !supported_null_commit {
                             logl::log(
                                 level::IMPORTANT,
                                 format_args!(
@@ -5194,6 +5198,94 @@ pub(super) async fn run_loop(
                                 ),
                             );
                             return Ok(());
+                        }
+                        if supported_null_commit {
+                            let request = session
+                                .process(active_pid)
+                                .ok_or_else(|| "child process missing".to_owned())?
+                                .xp
+                                .virtual_prepare_null_commit(frame.size)
+                                .map_err(str::to_owned)?;
+                            let Some(request) = request else {
+                                session
+                                    .process_mut(active_pid)
+                                    .ok_or_else(|| "child process missing".to_owned())?
+                                    .xp
+                                    .set_last_error_for_thread(active_tid, 8);
+                                let mut registers = exit.registers;
+                                registers.eax = 0;
+                                contexts[active]
+                                    .context
+                                    .set_registers(registers)
+                                    .map_err(|error| error.to_string())?;
+                                continue;
+                            };
+                            child
+                                .address_space
+                                .map(
+                                    request.base,
+                                    usize::try_from(request.size)
+                                        .map_err(|_| "VirtualAlloc null commit size")?,
+                                    Permissions::READ | Permissions::WRITE,
+                                )
+                                .map_err(|error| {
+                                    format!("map VirtualAlloc null commit: {error}")
+                                })?;
+                            let zeroes = vec![
+                                0;
+                                usize::try_from(request.size)
+                                    .map_err(|_| "VirtualAlloc null commit zero size")?
+                            ];
+                            if child
+                                .address_space
+                                .write(request.base, &zeroes)
+                                .map_err(|error| error.to_string())?
+                                != zeroes.len()
+                            {
+                                return Err("short VirtualAlloc null commit initialization".into());
+                            }
+                            let (reservations, reserve_next, committed_ranges, committed_bytes) = {
+                                let process = &mut session
+                                    .process_mut(active_pid)
+                                    .ok_or_else(|| "child process missing".to_owned())?
+                                    .xp;
+                                process
+                                    .virtual_finish_null_commit(request)
+                                    .map_err(str::to_owned)?;
+                                let (reservations, reserve_next) = process.virtual_reservation_state();
+                                let (committed_ranges, committed_bytes) = process.virtual_commit_state();
+                                (reservations, reserve_next, committed_ranges, committed_bytes)
+                            };
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD VIRTUALALLOC NULL COMMIT pid={} tid={} requested_size=0x{:08x} region_size=0x{:08x} allocation_base=0x{:08x} protect=PAGE_READWRITE permissions=RW guest_mapped=1 zero_initialized=1 return_eax=0x{:08x}",
+                                    active_pid,
+                                    active_tid,
+                                    frame.size,
+                                    request.size,
+                                    request.base,
+                                    request.base,
+                                ),
+                            );
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD VIRTUAL MEMORY pid={} reservations={} committed_ranges={} committed_bytes={} reserve_next=0x{:08x}",
+                                    active_pid,
+                                    reservations,
+                                    committed_ranges,
+                                    committed_bytes,
+                                    reserve_next,
+                                ),
+                            );
+                            let mut registers = exit.registers;
+                            registers.eax = request.base;
+                            contexts[active]
+                                .context
+                                .set_registers(registers)
+                                .map_err(|error| error.to_string())?;
+                            continue;
                         }
                         if supported_commit {
                             let request = {
@@ -6883,6 +6975,17 @@ pub(super) async fn run_loop(
                         } else {
                             None
                         };
+                        let crt_toupper = if operation == child_loader::ProviderOp::CrtToUpper {
+                            Some(
+                                read_guest_words(
+                                    &X86Memory(&child.address_space),
+                                    exit.registers.esp,
+                                    2,
+                                )?[1],
+                            )
+                        } else {
+                            None
+                        };
                         let get_volume_information = if operation
                             == child_loader::ProviderOp::GetVolumeInformationA
                         {
@@ -7161,6 +7264,15 @@ pub(super) async fn run_loop(
                                             root.as_deref().unwrap_or("<current-directory>"),
                                             result,
                                             kind,
+                                        ),
+                                    );
+                                }
+                                if let Some(character) = crt_toupper {
+                                    logl::log(
+                                        level::IMPORTANT,
+                                        format_args!(
+                                            "WC3 CHILD CRT TOUPPER pid={} tid={} character=0x{:08x} result=0x{:08x} cleanup=0-by-thunk",
+                                            active_pid, active_tid, character, result,
                                         ),
                                     );
                                 }
