@@ -1728,6 +1728,14 @@ impl XpProcess {
                     },
                 )))
             }
+            ProviderOp::ShowWindow => {
+                let [_, hwnd, show] = arguments::<3>(memory, esp)?;
+                Some(PersonalityAction::Session(SessionRequest::ShowWindow {
+                    pid,
+                    hwnd,
+                    show,
+                }))
+            }
             ProviderOp::SetEvent => Some(PersonalityAction::Session(SessionRequest::SetEvent {
                 pid,
                 tid,

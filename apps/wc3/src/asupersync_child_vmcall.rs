@@ -5396,6 +5396,49 @@
                             .map_err(|error| error.to_string())?;
                         continue;
                     }
+                    if operation == child_loader::ProviderOp::ShowWindow {
+                        let action = session
+                            .process_mut(active_pid)
+                            .ok_or_else(|| "child process missing".to_owned())?
+                            .xp
+                            .dispatch_provider_for_process_typed(
+                                active_pid,
+                                active_tid,
+                                provider_id,
+                                exit.registers.esp,
+                                &mut X86Memory(&child.address_space),
+                            )
+                            .map_err(|error| error.to_string())?;
+                        let PersonalityAction::Session(SessionRequest::ShowWindow {
+                            pid: _,
+                            hwnd,
+                            show,
+                        }) = action
+                        else {
+                            return Err("ShowWindow produced unexpected action".into());
+                        };
+                        let result = session.show_window(hwnd, show).map_err(str::to_owned)?;
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD SHOWWINDOW pid={} tid={} hwnd=0x{:08x} requested_visible={} previous_visible={} ui4_visible={} presentation_action=ignored result={} cleanup=8-by-thunk",
+                                active_pid,
+                                active_tid,
+                                hwnd,
+                                (show != 0) as u8,
+                                result,
+                                frames.contains_key(&hwnd) as u8,
+                                result,
+                            ),
+                        );
+                        let mut registers = exit.registers;
+                        registers.eax = result;
+                        contexts[active]
+                            .context
+                            .set_registers(registers)
+                            .map_err(|error| error.to_string())?;
+                        continue;
+                    }
                     if matches!(
                         operation,
                         child_loader::ProviderOp::CreateEventA
