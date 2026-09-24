@@ -1304,7 +1304,9 @@ impl XpProcess {
             let raw_width = read_u16(memory, entry)?;
             let raw_height = read_u16(memory, entry + 2)?;
             let width = if raw_width == 0 { 256 } else { u32::from(raw_width) };
-            let height = if raw_height == 0 { 256 } else { u32::from(raw_height) };
+            // A cursor group's stored bitmap height includes its AND mask;
+            // selection uses the visible half-height.
+            let height = if raw_height == 0 { 256 } else { u32::from(raw_height) / 2 };
             if width == XP_CXCURSOR && height == XP_CYCURSOR {
                 selected = Some(read_u16(memory, entry + 12)?);
                 break;

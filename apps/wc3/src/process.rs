@@ -2988,6 +2988,10 @@ enum ResourceKey<'a> {
     Name(&'a str),
 }
 
+fn resource_name_matches(stored: &str, requested: &str) -> bool {
+    stored.eq_ignore_ascii_case(requested)
+}
+
 fn numeric_resource(
     memory: &impl GuestMemory,
     module_base: u32,
@@ -3064,7 +3068,10 @@ fn resource_directory_entry(
                     for offset in 0..length {
                         units.push(read_u16(memory, address + 2 + (offset as u32) * 2)?);
                     }
-                    String::from_utf16(&units).map_err(|_| "resource name UTF-16")? == name
+                    resource_name_matches(
+                        &String::from_utf16(&units).map_err(|_| "resource name UTF-16")?,
+                        name,
+                    )
                 }
             }
         };
