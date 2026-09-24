@@ -1180,6 +1180,41 @@
                             ),
                         );
                     }
+                    if matches!(
+                        &provider.symbol,
+                        child_loader::ProviderSymbol::Name(name)
+                            if provider.module.eq_ignore_ascii_case("USER32.dll")
+                                && name == "LoadCursorA"
+                    ) {
+                        let frame = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            exit.registers.esp,
+                            3,
+                        )?;
+                        let resolved = if frame[2] & 0xffff_0000 == 0 {
+                            format!("system-id={}", frame[2] & 0xffff)
+                        } else {
+                            let name = wc3::process::read_c_string(
+                                &X86Memory(&child.address_space),
+                                frame[2],
+                                256,
+                            )
+                            .map_err(|error| format!("LoadCursorA name: {error}"))?;
+                            format!("resource-name={name:?}")
+                        };
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD LOADCURSORA pid={} tid={} module=0x{:08x} name=0x{:08x} caller_ret=0x{:08x} resolved={}",
+                                active_pid,
+                                active_tid,
+                                frame[1],
+                                frame[2],
+                                frame[0],
+                                resolved,
+                            ),
+                        );
+                    }
                     let is_heap_create = matches!(
                         &provider.symbol,
                         child_loader::ProviderSymbol::Name(name)
