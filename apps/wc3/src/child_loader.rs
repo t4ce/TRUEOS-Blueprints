@@ -132,6 +132,7 @@ pub enum ProviderOp {
     CrtStrrchr,
     CrtStrstr,
     CrtFullPath,
+    CrtBeginThreadEx,
     Unknown,
 }
 
@@ -225,6 +226,7 @@ impl ProviderOp {
             | Self::CrtStrrchr
             | Self::CrtStrstr
             | Self::CrtFullPath
+            | Self::CrtBeginThreadEx
             | Self::WsprintfA
             | Self::TlsAlloc
             | Self::GetCurrentThreadId => 0,
@@ -430,6 +432,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "strrchr" => ProviderOp::CrtStrrchr,
             "strstr" => ProviderOp::CrtStrstr,
             "_fullpath" => ProviderOp::CrtFullPath,
+            "_beginthreadex" => ProviderOp::CrtBeginThreadEx,
             _ => ProviderOp::Unknown,
         };
     }
@@ -440,6 +443,29 @@ pub fn provider_thunk_kind(import: &ProviderImport) -> thunk32::Kind {
     match provider_op(import).stack_cleanup_bytes() {
         0 => thunk32::Kind::Return,
         bytes => thunk32::Kind::Stdcall(bytes),
+    }
+}
+
+#[cfg(test)]
+mod beginthreadex_tests {
+    use super::*;
+
+    #[test]
+    fn beginthreadex_is_cdecl() {
+        let import = ProviderImport {
+            module: "MSVCRT.dll".into(),
+            symbol: ProviderSymbol::Name("_beginthreadex".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&import);
+        assert_eq!(operation, ProviderOp::CrtBeginThreadEx);
+        assert!(operation.is_modeled());
+        assert!(!operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 0);
+        assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Return);
+        let mut bytes = [0u8; thunk32::THUNK_BYTES];
+        thunk32::write(42, provider_thunk_kind(&import), &mut bytes).unwrap();
+        assert_eq!(bytes[8], 0xc3);
     }
 }
 

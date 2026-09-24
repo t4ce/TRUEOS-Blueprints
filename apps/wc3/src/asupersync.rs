@@ -197,7 +197,7 @@ fn table_checkpoint_host_state(
 
 fn begin_table_checkpoint_capture(
     child: &mut PendingChild,
-    context: &Context,
+    context: &GuestThreadContext,
     restored: Registers,
     restored_debug: DebugRegisters,
     session: &Wc3Session,
@@ -250,7 +250,7 @@ fn begin_table_checkpoint_capture(
 
 async fn finish_table_checkpoint_capture(
     child: &mut PendingChild,
-    context: &Context,
+    context: &GuestThreadContext,
     restored: Registers,
     restored_debug: DebugRegisters,
     session: &Wc3Session,
@@ -337,7 +337,7 @@ async fn finish_table_checkpoint_capture(
 
 async fn try_restore_table_checkpoint(
     child: &mut PendingChild,
-    context: &mut Context,
+    context: &mut GuestThreadContext,
     restored: &mut Registers,
     restored_debug: &mut DebugRegisters,
 ) -> Result<bool, String> {
@@ -568,6 +568,7 @@ fn should_log_execution_sample(count: u64) -> bool {
 fn service_sync_request(
     session: &mut Wc3Session,
     caller_pid: u32,
+    caller_tid: u32,
     request: SessionRequest,
     contexts: &mut [GuestContext],
     wait_deadlines: &mut HashMap<ThreadKey, RuntimeWait>,
@@ -579,7 +580,7 @@ fn service_sync_request(
                 .process_mut(caller_pid)
                 .ok_or_else(|| "event process missing".to_owned())?
                 .xp
-                .set_last_error(if already_exists { 183 } else { 0 });
+                .set_last_error_for_thread(caller_tid, if handle == 0 { 6 } else if already_exists { 183 } else { 0 });
             logl::log(
                 level::IMPORTANT,
                 format_args!(
@@ -609,7 +610,7 @@ fn service_sync_request(
                     .process_mut(pid)
                     .ok_or_else(|| "ResetEvent process missing".to_owned())?
                     .xp
-                    .set_last_error(6);
+                    .set_last_error_for_thread(tid, 6);
                 logl::log(
                     level::IMPORTANT,
                     format_args!(
@@ -629,7 +630,7 @@ fn service_sync_request(
                 .process_mut(key.pid)
                 .ok_or_else(|| "mutex process missing".to_owned())?
                 .xp
-                .set_last_error(error);
+                .set_last_error_for_thread(key.tid, error);
             logl::log(
                 level::IMPORTANT,
                 format_args!(
@@ -659,7 +660,7 @@ fn service_sync_request(
                     .process_mut(key.pid)
                     .ok_or_else(|| "mutex process missing".to_owned())?
                     .xp
-                    .set_last_error(error);
+                    .set_last_error_for_thread(key.tid, error);
                 Ok(0)
             }
         },
@@ -671,7 +672,7 @@ fn service_sync_request(
                     .process_mut(pid)
                     .ok_or_else(|| "CloseHandle process missing".to_owned())?
                     .xp
-                    .set_last_error(6);
+                    .set_last_error_for_thread(caller_tid, 6);
                 Ok(0)
             }
         }
@@ -1342,7 +1343,7 @@ fn begin_child_seh_dispatch(
             format_args!(
                 "WC3 CHILD SEH HANDLER DUMP pid={} tid={} handler=0x{:08x} bytes=\"{}\"",
                 child.pid,
-                child.tid,
+                guest.tid,
                 registration.handler,
                 if readable {
                     diagnostic_hex_bytes(&bytes)
@@ -1362,7 +1363,7 @@ fn begin_child_seh_dispatch(
             format_args!(
                 "WC3 CHILD PRE-SEH DEBUG pid={} tid={} eip=0x{:08x} dr0=0x{:08x} dr1=0x{:08x} dr2=0x{:08x} dr3=0x{:08x} dr6=0x{:08x} dr7=0x{:08x} qualification_dr6={:?}",
                 child.pid,
-                child.tid,
+                guest.tid,
                 registers.eip,
                 debug_registers.dr0,
                 debug_registers.dr1,
@@ -1497,7 +1498,7 @@ fn begin_child_seh_dispatch(
             format_args!(
                 "WC3 CHILD SEH DISPATCH pid={} tid={} registration=0x{:08x} next=0x{:08x} handler=0x{:08x} handler_owner={:?} handler_rva=0x{:08x} exception=0x{:08x} address=0x{:08x} kind={}",
                 child.pid,
-                child.tid,
+                guest.tid,
                 registration.frame,
                 registration.next,
                 registration.handler,
@@ -1955,6 +1956,11 @@ pub(super) async fn run_loop(
     mut active: usize,
 ) -> Result<(), String> {
     'child_run: loop {
+        if let Some(child) = pending_child.as_mut() {
+            if contexts[active].pid == child.pid {
+                child.activate_thread(contexts[active].tid);
+            }
+        }
         if let Some(modal) = active_message_box.as_mut() {
             if modal.request.caller.pid != LAUNCHER_PID || modal.buttons.is_empty() {
                 return Err("invalid active MessageBoxA modal state".into());
@@ -1982,7 +1988,9 @@ pub(super) async fn run_loop(
             .ok_or_else(|| "active guest context missing".to_owned())?
             .key();
         if let Some(child) = pending_child.as_mut() {
-            loop_checkpoint::observe_exit(child, active_key, &exit);
+            if active_key.tid == child.tid {
+                loop_checkpoint::observe_exit(child, active_key, &exit);
+            }
         }
         match exit.kind {
             // A transient VMCS always starts with VMLAUNCH.  Its preemption
@@ -2113,7 +2121,7 @@ pub(super) async fn run_loop(
                 if active_pid != LAUNCHER_PID {
                     let child = pending_child
                         .as_mut()
-                        .filter(|child| child.pid == active_pid && child.tid == active_tid)
+                        .filter(|child| child.pid == active_pid)
                         .ok_or_else(|| "active child address space missing".to_owned())?;
                     if exit.registers.eip == thunk32::CHILD_UEF_RETURN_AFTER_VMCALL {
                         let pending = child
@@ -2705,15 +2713,36 @@ pub(super) async fn run_loop(
                         return Ok(());
                     }
                     if exit.registers.eip == thunk32::CHILD_THREAD_EXIT_AFTER_VMCALL {
-                        let scope = child_execution_scope(child).map_err(str::to_owned)?;
+                        if active_tid == child.tid {
+                            return Err("child primary thread returned through worker exit".into());
+                        }
+                        let exit_code = exit.registers.eax;
+                        let key = active_key;
+                        child.activate_thread(child.tid);
+                        child.parked_threads.remove(&active_tid);
+                        contexts.remove(active);
+                        let woken = session
+                            .signal_thread(key, exit_code)
+                            .map_err(str::to_owned)?;
+                        wait_deadlines.remove(&key);
+                        resume_completed_waiters(
+                            &woken,
+                            "child-thread-exit",
+                            &mut contexts,
+                            &mut wait_deadlines,
+                        )?;
                         logl::log(
                             level::IMPORTANT,
                             format_args!(
-                                "WC3 CHILD CONTROL FRONTIER pid={} tid={} during=\"{}\" kind=thread-exit",
-                                active_pid, active_tid, scope
+                                "WC3 CHILD THREAD EXIT pid={} tid={} exit_code=0x{:08x} waiters_woken={}",
+                                active_pid, active_tid, exit_code, woken.len(),
                             ),
                         );
-                        return Ok(());
+                        if let Some(next) = pop_runnable_context(&mut session, &contexts) {
+                            active = next;
+                            continue;
+                        }
+                        return Err("child thread exited with no runnable guest".into());
                     }
                     if exit.registers.eip == thunk32::CHILD_CIPOW_SPILL_AFTER_VMCALL {
                         let pending = child
@@ -4064,6 +4093,28 @@ pub(super) async fn run_loop(
                                 owner_before,
                             ),
                         );
+                        if owner_before != 0 && owner_before != active_tid {
+                            session
+                                .block_critical_section(CriticalSectionWait {
+                                    key: active_key,
+                                    address: critical_section,
+                                    provider_id,
+                                    esp: exit.registers.esp,
+                                })
+                                .map_err(str::to_owned)?;
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD CRITICAL SECTION BLOCK pid={} tid={} address=0x{:08x} owner={}",
+                                    active_pid, active_tid, critical_section, owner_before,
+                                ),
+                            );
+                            if let Some(next) = pop_runnable_context(&mut session, &contexts) {
+                                active = next;
+                                continue;
+                            }
+                            return Err("critical section deadlock: no runnable guest".into());
+                        }
                         let mut child_memory = X86Memory(&child.address_space);
                         let action = session
                             .process_mut(active_pid)
@@ -4193,6 +4244,44 @@ pub(super) async fn run_loop(
                         let lock_count = u32::from_le_bytes(after[4..8].try_into().unwrap());
                         let recursion = u32::from_le_bytes(after[8..12].try_into().unwrap());
                         let owner = u32::from_le_bytes(after[12..16].try_into().unwrap());
+                        if owner == 0 {
+                            if let Some(wait) = session.take_critical_waiter(active_pid, address) {
+                                let acquired = session
+                                    .process_mut(active_pid)
+                                    .ok_or_else(|| "child process missing".to_owned())?
+                                    .xp
+                                    .dispatch_provider_for_process(
+                                        active_pid,
+                                        wait.key.tid,
+                                        wait.provider_id,
+                                        wait.esp,
+                                        &mut X86Memory(&child.address_space),
+                                    )
+                                    .map_err(str::to_owned)?;
+                                let PersonalityAction::Return(acquired) = acquired else {
+                                    return Err("critical section waiter did not acquire".into());
+                                };
+                                let index = context_index(&contexts, wait.key)
+                                    .ok_or("critical section waiter context missing")?;
+                                let mut resumed = contexts[index]
+                                    .context
+                                    .registers()
+                                    .map_err(|error| error.to_string())?;
+                                resumed.eax = acquired;
+                                contexts[index]
+                                    .context
+                                    .set_registers(resumed)
+                                    .map_err(|error| error.to_string())?;
+                                session.enqueue(wait.key);
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 CHILD CRITICAL SECTION WAKE pid={} tid={} address=0x{:08x} previous_owner={}",
+                                        active_pid, wait.key.tid, address, active_tid,
+                                    ),
+                                );
+                            }
+                        }
                         logl::log(
                             level::IMPORTANT,
                             format_args!(
@@ -4845,7 +4934,7 @@ pub(super) async fn run_loop(
                                 .process_mut(active_pid)
                                 .ok_or_else(|| "child process missing".to_owned())?
                                 .xp
-                                .set_last_error(87);
+                                .set_last_error_for_thread(active_tid, 87);
                             let mut registers = exit.registers;
                             registers.eax = 0;
                             contexts[active]
@@ -4909,7 +4998,7 @@ pub(super) async fn run_loop(
                                             .process_mut(active_pid)
                                             .ok_or_else(|| "child process missing".to_owned())?
                                             .xp
-                                            .set_last_error(487);
+                                            .set_last_error_for_thread(active_tid, 487);
                                         let mut registers = exit.registers;
                                         registers.eax = 0;
                                         contexts[active]
@@ -5014,7 +5103,7 @@ pub(super) async fn run_loop(
                                 Err(_) => None,
                             };
                             if reservation.is_none() {
-                                process.set_last_error(8);
+                                process.set_last_error_for_thread(active_tid, 8);
                             }
                             let (reservation_count, reserve_next) =
                                 process.virtual_reservation_state();
@@ -5051,6 +5140,61 @@ pub(super) async fn run_loop(
                         continue;
                     }
                     let operation = child_loader::provider_op(&provider);
+                    if operation == child_loader::ProviderOp::CrtBeginThreadEx {
+                        let frame = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            exit.registers.esp,
+                            7,
+                        )?;
+                        let [caller_ret, security, stack_size, start, argument, flags, tid_ptr] =
+                            <[u32; 7]>::try_from(frame).map_err(|_| "_beginthreadex frame")?;
+                        if security != 0 || flags != 0 || start == 0 {
+                            return Err(format!(
+                                "_beginthreadex argument frontier security=0x{security:08x} flags=0x{flags:08x} start=0x{start:08x}"
+                            ));
+                        }
+                        let proposed_tid = session.next_tid;
+                        let guest = create_child_runtime_context(
+                            child,
+                            proposed_tid,
+                            stack_size,
+                            start,
+                            argument,
+                        )?;
+                        let (key, handle) = session
+                            .create_child_thread(active_pid)
+                            .map_err(str::to_owned)?;
+                        if key.tid != proposed_tid {
+                            return Err("_beginthreadex TID reservation changed".into());
+                        }
+                        if tid_ptr != 0 {
+                            if child
+                                .address_space
+                                .write(tid_ptr, &key.tid.to_le_bytes())
+                                .map_err(|error| error.to_string())?
+                                != 4
+                            {
+                                return Err("short _beginthreadex TID write".into());
+                            }
+                        }
+                        contexts.push(guest);
+                        session.enqueue(key);
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD CRT BEGINTHREADEX pid={} caller_tid={} tid={} handle=0x{:08x} start=0x{:08x} argument=0x{:08x} stack_size={} flags=0x{:08x} tid_ptr=0x{:08x} caller_ret=0x{:08x} cleanup=0-by-thunk",
+                                active_pid, active_tid, key.tid, handle, start, argument,
+                                stack_size, flags, tid_ptr, caller_ret,
+                            ),
+                        );
+                        let mut registers = exit.registers;
+                        registers.eax = handle;
+                        contexts[active]
+                            .context
+                            .set_registers(registers)
+                            .map_err(|error| error.to_string())?;
+                        continue;
+                    }
                     if operation == child_loader::ProviderOp::ExitProcess {
                         let frame = read_guest_words(
                             &X86Memory(&child.address_space),
@@ -6009,7 +6153,7 @@ pub(super) async fn run_loop(
                                     .process_mut(active_pid)
                                     .ok_or_else(|| "child process missing".to_owned())?
                                     .xp
-                                    .set_last_error(ERROR_PROC_NOT_FOUND);
+                                    .set_last_error_for_thread(active_tid, ERROR_PROC_NOT_FOUND);
                                 logl::log(
                                     level::IMPORTANT,
                                     format_args!(
@@ -6123,7 +6267,7 @@ pub(super) async fn run_loop(
                                 .process_mut(active_pid)
                                 .ok_or_else(|| "child process missing".to_owned())?
                                 .xp
-                                .set_last_error(ERROR_PROC_NOT_FOUND);
+                                .set_last_error_for_thread(active_tid, ERROR_PROC_NOT_FOUND);
                             let mut registers = exit.registers;
                             registers.eax = 0;
                             contexts[active]
@@ -6209,6 +6353,7 @@ pub(super) async fn run_loop(
                             PersonalityAction::Session(request) => service_sync_request(
                                 &mut session,
                                 active_pid,
+                                active_tid,
                                 request,
                                 &mut contexts,
                                 &mut wait_deadlines,
@@ -8069,6 +8214,8 @@ pub(super) async fn run_loop(
                         *pending_child = Some(PendingChild {
                             pid: created.pid,
                             tid: created.tid,
+                            active_thread_tid: created.tid,
+                            parked_threads: HashMap::new(),
                             image: child,
                             self_image_bytes: child_file_bytes,
                             native_modules: Vec::new(),
@@ -8139,7 +8286,7 @@ pub(super) async fn run_loop(
                                     .process_mut(request.pid)
                                     .ok_or_else(|| "GetExitCodeProcess caller missing".to_owned())?
                                     .xp
-                                    .set_last_error(6);
+                                    .set_last_error_for_thread(active_key.tid, 6);
                                 logl::log(
                                     level::IMPORTANT,
                                     format_args!(
@@ -8153,13 +8300,10 @@ pub(super) async fn run_loop(
                     }
                     PersonalityAction::Session(SessionRequest::CreateEvent(request)) => {
                         let (handle, already_exists) = session.create_event(LAUNCHER_PID, request);
-                        if handle != 0 {
-                            session.launcher_mut().xp.set_last_error(if already_exists {
-                                183
-                            } else {
-                                0
-                            });
-                        }
+                        session.launcher_mut().xp.set_last_error_for_thread(
+                            active_key.tid,
+                            if handle == 0 { 6 } else if already_exists { 183 } else { 0 },
+                        );
                         handle
                     }
                     PersonalityAction::Session(request @ SessionRequest::CreateMutex { .. })
@@ -8168,6 +8312,7 @@ pub(super) async fn run_loop(
                         service_sync_request(
                             &mut session,
                             LAUNCHER_PID,
+                            active_key.tid,
                             request,
                             &mut contexts,
                             &mut wait_deadlines,
@@ -8202,7 +8347,7 @@ pub(super) async fn run_loop(
                                     .process_mut(pid)
                                     .ok_or_else(|| "SetEvent caller missing".to_owned())?
                                     .xp
-                                    .set_last_error(6);
+                                    .set_last_error_for_thread(active_key.tid, 6);
                                 logl::log(
                                     level::IMPORTANT,
                                     format_args!(
@@ -8267,7 +8412,7 @@ pub(super) async fn run_loop(
                                     .process_mut(pid)
                                     .ok_or_else(|| "DestroyWindow caller missing".to_owned())?
                                     .xp
-                                    .set_last_error(1400);
+                                    .set_last_error_for_thread(active_key.tid, 1400);
                                 logl::log(
                                     level::IMPORTANT,
                                     format_args!(
@@ -8330,7 +8475,7 @@ pub(super) async fn run_loop(
                         if session.close_handle(pid, handle) {
                             1
                         } else {
-                            session.launcher_mut().xp.set_last_error(6);
+                            session.launcher_mut().xp.set_last_error_for_thread(active_key.tid, 6);
                             0
                         }
                     }
@@ -9592,7 +9737,7 @@ pub(super) async fn run_loop(
                 let registers = exit.registers;
                 let child = pending_child
                     .as_ref()
-                    .filter(|child| child.pid == active_key.pid && child.tid == active_key.tid)
+                    .filter(|child| child.pid == active_key.pid)
                     .ok_or_else(|| "exception child missing pending state".to_owned())?;
                 let scope = child_execution_scope(child).map_err(str::to_owned)?;
                 if exit.registers.eip == 0x0040_1d0b {
@@ -9860,7 +10005,7 @@ pub(super) async fn run_loop(
                     .flatten();
                 let child = pending_child
                     .as_mut()
-                    .filter(|child| child.pid == active_key.pid && child.tid == active_key.tid)
+                    .filter(|child| child.pid == active_key.pid)
                     .ok_or_else(|| "exception child missing mutable pending state".to_owned())?;
                 if null_execute {
                     if let Some(signature) = null_loop_signature {
@@ -9962,7 +10107,7 @@ pub(super) async fn run_loop(
                 if active_key.pid != LAUNCHER_PID {
                     let child = pending_child
                         .as_ref()
-                        .filter(|child| child.pid == active_key.pid && child.tid == active_key.tid)
+                        .filter(|child| child.pid == active_key.pid)
                         .ok_or_else(|| "halted child missing pending state".to_owned())?;
                     let scope = child_execution_scope(child).map_err(str::to_owned)?;
                     logl::log(
@@ -9996,7 +10141,7 @@ pub(super) async fn run_loop(
                 if active_key.pid != LAUNCHER_PID {
                     let child = pending_child
                         .as_ref()
-                        .filter(|child| child.pid == active_key.pid && child.tid == active_key.tid)
+                        .filter(|child| child.pid == active_key.pid)
                         .ok_or_else(|| "faulted child missing pending state".to_owned())?;
                     let scope = child_execution_scope(child).map_err(str::to_owned)?;
                     logl::log(

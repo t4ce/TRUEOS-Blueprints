@@ -168,7 +168,7 @@ fn discard(child: &mut PendingChild, reason: &str) {
 
 pub(super) async fn boundary(
     child: &mut PendingChild,
-    context: &mut Context,
+    context: &mut GuestThreadContext,
     registers: &mut Registers,
     debug: &mut DebugRegisters,
 ) -> Result<(), String> {
@@ -307,7 +307,7 @@ pub(super) async fn boundary(
 
 async fn finish(
     child: &PendingChild,
-    context: &Context,
+    context: &GuestThreadContext,
     registers: Registers,
     debug: DebugRegisters,
     capture: LoopCheckpointCapture,

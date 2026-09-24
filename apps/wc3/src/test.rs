@@ -301,6 +301,8 @@ mod tests_main_1 {
         let mut child = PendingChild {
             pid: 2,
             tid: 3,
+            active_thread_tid: 3,
+            parked_threads: HashMap::new(),
             image: native_module("War3.exe", 0x0040_0000, 0).image,
             self_image_bytes: Arc::new(Vec::new()),
             native_modules: vec![
@@ -406,6 +408,8 @@ mod tests_main_1 {
         let mut child = PendingChild {
             pid: 2,
             tid: 3,
+            active_thread_tid: 3,
+            parked_threads: HashMap::new(),
             image: native_module("War3.exe", 0x0040_0000, 0).image,
             self_image_bytes: Arc::new(Vec::new()),
             native_modules: Vec::new(),
@@ -694,6 +698,8 @@ mod tests_main_1 {
         let mut child = PendingChild {
             pid: 2,
             tid: 3,
+            active_thread_tid: 3,
+            parked_threads: HashMap::new(),
             image: child_image,
             self_image_bytes: Arc::new(Vec::new()),
             native_modules: vec![native_module("Storm.dll", 0x1500_0000, 0)],
@@ -2481,6 +2487,56 @@ mod tests_process_1 {
             .unwrap();
         assert_eq!(pid1.last_error, 0xfeed_face);
         assert_eq!(pid2.last_error, 0x1234_5678);
+    }
+
+    #[test]
+    fn child_last_error_and_tls_get_value_are_isolated_by_guest_thread() {
+        let imports = ["SetLastError", "GetLastError", "TlsGetValue"]
+            .into_iter()
+            .map(|symbol| ProviderImport {
+                module: "KERNEL32.dll".into(),
+                symbol: ProviderSymbol::Name(symbol.into()),
+                iat_rva: 0,
+            })
+            .collect();
+        let mut xp = XpProcess::new_child();
+        xp.install_provider_surface(imports, Vec::new(), Vec::new());
+        let slot = xp.tls_alloc().unwrap();
+        xp.tls_values.insert((4, slot), 0x4444_0000);
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+        write_u32(&mut memory, esp, 0x0040_1234).unwrap();
+
+        // Each SetLastError provider call updates only its calling guest TID.
+        write_u32(&mut memory, esp + 4, 0x3333_0000).unwrap();
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(0))
+        );
+        write_u32(&mut memory, esp + 4, 0x4444_0000).unwrap();
+        xp.dispatch_provider_for_process_typed(2, 4, 0, esp, &mut memory)
+            .unwrap();
+
+        // TID 4's successful TlsGetValue clears only TID 4's LastError.
+        write_u32(&mut memory, esp + 4, slot).unwrap();
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 4, 2, esp, &mut memory),
+            Ok(PersonalityAction::Return(0x4444_0000))
+        );
+
+        assert_eq!(xp.last_error_for_thread(3), 0x3333_0000);
+        assert_eq!(xp.last_error_for_thread(4), 0);
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 1, esp, &mut memory),
+            Ok(PersonalityAction::Return(0x3333_0000))
+        );
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 4, 1, esp, &mut memory),
+            Ok(PersonalityAction::Return(0))
+        );
     }
 
     #[test]

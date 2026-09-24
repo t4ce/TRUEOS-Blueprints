@@ -17,6 +17,9 @@ use trueos::{
     x86::{AddressSpace, Context, DebugRegisters, ExitKind, ExtendedState, Permissions, Registers},
 };
 mod asupersync;
+mod guest_actor;
+
+use guest_actor::GuestThreadContext;
 
 mod logl {
     // Gate argument evaluation as well as output (some traces inspect guest memory).
@@ -52,7 +55,7 @@ use wc3::{
         STACK_TOP, ThreadObject, XP_ANSI_CODE_PAGE, XpProcess, bmp_file_from_dib, dib_layout,
     },
     session::{
-        CompletedWait, GuestCall, LAUNCHER_PID, LAUNCHER_TID, PersonalityAction, SessionObject,
+        CompletedWait, CriticalSectionWait, GuestCall, LAUNCHER_PID, LAUNCHER_TID, PersonalityAction, SessionObject,
         SessionRequest, ThreadKey, WINDOW_HANDLE_BASE, Wc3Session, WindowPresentation,
     },
     thunk32,
@@ -254,7 +257,7 @@ async fn run() -> Result<(), String> {
     let mut contexts = vec![GuestContext {
         pid: LAUNCHER_PID,
         tid: LAUNCHER_TID,
-        context,
+        context: GuestThreadContext::spawn(context)?,
         started: false,
         continuation: None,
         preemption_count: 0,
@@ -721,7 +724,7 @@ fn present_window(
 struct GuestContext {
     pid: u32,
     tid: u32,
-    context: Context,
+    context: GuestThreadContext,
     started: bool,
     continuation: Option<GuestContinuation>,
     preemption_count: u64,
@@ -1022,7 +1025,7 @@ fn create_thread_context(
     Ok(GuestContext {
         pid: LAUNCHER_PID,
         tid: thread.tid,
-        context,
+        context: GuestThreadContext::spawn(context)?,
         started: false,
         continuation: None,
         preemption_count: 0,
@@ -1153,7 +1156,88 @@ fn create_child_primary_context(
     Ok(GuestContext {
         pid: child.pid,
         tid: child.tid,
-        context,
+        context: GuestThreadContext::spawn(context)?,
+        started: false,
+        continuation: None,
+        preemption_count: 0,
+        last_preemption_page: 0,
+        same_page_preemptions: 0,
+    })
+}
+
+fn create_child_runtime_context(
+    child: &PendingChild,
+    tid: u32,
+    stack_size: u32,
+    start_address: u32,
+    parameter: u32,
+) -> Result<GuestContext, String> {
+    if child.execution != ChildExecutionState::ImageEntryRunning {
+        return Err("child thread requires image-entry execution".into());
+    }
+    let stack_bytes = (if stack_size == 0 {
+        STACK_BYTES as u32
+    } else {
+        stack_size.max(0x1000)
+    })
+        .checked_add(0xfff)
+        .ok_or("child thread stack size overflow")?
+        & !0xfff;
+    if stack_bytes > STACK_BYTES as u32 {
+        return Err("child thread stack size frontier".into());
+    }
+    let stack_top = STACK_BASE
+        .checked_sub(tid.checked_mul(0x0010_0000).ok_or("child thread stack index")?)
+        .ok_or("child thread stack address")?;
+    let stack_base = stack_top
+        .checked_sub(stack_bytes)
+        .ok_or("child thread stack address")?;
+    let teb = thread_teb_va(tid)?;
+    child
+        .address_space
+        .map(teb, 0x1000, Permissions::READ | Permissions::WRITE)
+        .map_err(|error| format!("map child thread TEB: {error}"))?;
+    if child
+        .address_space
+        .write(teb, &u32::MAX.to_le_bytes())
+        .map_err(|error| error.to_string())?
+        != 4
+    {
+        return Err("short child thread TEB write".into());
+    }
+    child
+        .address_space
+        .map(
+            stack_base,
+            stack_bytes as usize,
+            Permissions::READ | Permissions::WRITE,
+        )
+        .map_err(|error| format!("map child thread stack: {error}"))?;
+    let esp = stack_top - 8;
+    let mut frame = [0u8; 8];
+    frame[..4].copy_from_slice(&thunk32::CHILD_THREAD_EXIT_ADDRESS.to_le_bytes());
+    frame[4..].copy_from_slice(&parameter.to_le_bytes());
+    if child
+        .address_space
+        .write(esp, &frame)
+        .map_err(|error| error.to_string())?
+        != frame.len()
+    {
+        return Err("short child thread entry frame write".into());
+    }
+    let registers = Registers {
+        eip: start_address,
+        esp,
+        eflags: 0x202,
+        fs_base: teb,
+        ..Registers::default()
+    };
+    let context = Context::create(&child.address_space, registers)
+        .map_err(|error| error.to_string())?;
+    Ok(GuestContext {
+        pid: child.pid,
+        tid,
+        context: GuestThreadContext::spawn(context)?,
         started: false,
         continuation: None,
         preemption_count: 0,
@@ -1703,6 +1787,8 @@ fn thread_teb_va(tid: u32) -> Result<u32, String> {
 struct PendingChild {
     pid: u32,
     tid: u32,
+    active_thread_tid: u32,
+    parked_threads: HashMap<u32, ChildThreadRuntime>,
     image: pe32::PeImage,
     /// The exact on-disk bytes parsed to create `image`.  File APIs for the
     /// child main image must serve this immutable snapshot, rather than issue
@@ -1735,6 +1821,49 @@ struct PendingChild {
     loop_checkpoint_attempted: u8,
     loader: ChildLoaderState,
     execution: ChildExecutionState,
+}
+
+#[derive(Default)]
+struct ChildThreadRuntime {
+    cipow: Option<ChildCiPow>,
+    seh_handler_dumped: bool,
+    seh3_diagnostic_logged: bool,
+    seh: Option<ChildSehDispatch>,
+    seh3_call: Option<ChildSeh3Call>,
+    unhandled_filter_call: Option<ChildUnhandledFilterCall>,
+    repeated_null_call: Option<NullLoopWatch>,
+    repeated_divide_fault: Option<DivideLoopWatch>,
+}
+
+impl PendingChild {
+    /// Existing dispatch code uses these fields as the currently admitted
+    /// thread's scratch state. Swap them at the serialized scheduler boundary.
+    fn activate_thread(&mut self, tid: u32) {
+        if self.active_thread_tid == tid {
+            return;
+        }
+        let previous = ChildThreadRuntime {
+            cipow: self.cipow.take(),
+            seh_handler_dumped: std::mem::take(&mut self.seh_handler_dumped),
+            seh3_diagnostic_logged: std::mem::take(&mut self.seh3_diagnostic_logged),
+            seh: self.seh.take(),
+            seh3_call: self.seh3_call.take(),
+            unhandled_filter_call: self.unhandled_filter_call.take(),
+            repeated_null_call: self.repeated_null_call.take(),
+            repeated_divide_fault: self.repeated_divide_fault.take(),
+        };
+        self.parked_threads.insert(self.active_thread_tid, previous);
+        let next = self.parked_threads.remove(&tid).unwrap_or_default();
+        self.cipow = next.cipow;
+        self.seh_handler_dumped = next.seh_handler_dumped;
+        self.seh3_diagnostic_logged = next.seh3_diagnostic_logged;
+        self.seh = next.seh;
+        self.seh3_call = next.seh3_call;
+        self.unhandled_filter_call = next.unhandled_filter_call;
+        self.repeated_null_call = next.repeated_null_call;
+        self.repeated_divide_fault = next.repeated_divide_fault;
+        self.active_thread_tid = tid;
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

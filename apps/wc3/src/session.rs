@@ -553,6 +553,14 @@ pub struct WaitRequest {
     pub timeout: u32,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CriticalSectionWait {
+    pub key: ThreadKey,
+    pub address: u32,
+    pub provider_id: u32,
+    pub esp: u32,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CompletedWait {
     pub request: WaitRequest,
@@ -741,6 +749,7 @@ pub struct Wc3Session {
     pub focused_window: Option<u32>,
     pub runnable: VecDeque<ThreadKey>,
     pub blocked: HashMap<ThreadKey, WaitRequest>,
+    pub critical_waiters: VecDeque<CriticalSectionWait>,
     pub next_pid: Pid,
     pub next_tid: Tid,
     pub next_object: ObjectId,
@@ -777,6 +786,7 @@ impl Wc3Session {
                 tid: LAUNCHER_TID,
             }]),
             blocked: HashMap::new(),
+            critical_waiters: VecDeque::new(),
             next_pid: 2,
             next_tid: 2,
             next_object: 1,
@@ -797,6 +807,22 @@ impl Wc3Session {
 
     pub fn defer_wait(&mut self, request: WaitRequest) {
         self.blocked.insert(request.key, request);
+    }
+
+    pub fn block_critical_section(&mut self, wait: CriticalSectionWait) -> Result<(), &'static str> {
+        if self.critical_waiters.iter().any(|entry| entry.key == wait.key) {
+            return Err("thread already blocked on a critical section");
+        }
+        self.critical_waiters.push_back(wait);
+        Ok(())
+    }
+
+    pub fn take_critical_waiter(&mut self, pid: Pid, address: u32) -> Option<CriticalSectionWait> {
+        let index = self
+            .critical_waiters
+            .iter()
+            .position(|wait| wait.key.pid == pid && wait.address == address)?;
+        self.critical_waiters.remove(index)
     }
 
     pub fn note(&mut self) -> u64 {
@@ -1034,14 +1060,45 @@ impl Wc3Session {
         object
     }
 
+    /// Create a child-process thread object without starting guest execution.
+    /// The coordinator prepares its stack/TEB before calling this method and
+    /// enqueues it only after both the context and session object exist.
+    pub fn create_child_thread(&mut self, pid: Pid) -> Result<(ThreadKey, u32), &'static str> {
+        if pid == LAUNCHER_PID || !self.processes.contains_key(&pid) {
+            return Err("child thread requires a live child process");
+        }
+        let tid = self.next_tid;
+        let handle = self.next_thread_handle;
+        let object = self.next_object;
+        let next_tid = tid.checked_add(1).ok_or("thread ID overflow")?;
+        let next_handle = handle.checked_add(1).ok_or("thread handle overflow")?;
+        let next_object = object.checked_add(1).ok_or("thread object overflow")?;
+        let key = ThreadKey { pid, tid };
+        self.next_tid = next_tid;
+        self.next_thread_handle = next_handle;
+        self.next_object = next_object;
+        self.objects.insert(
+            object,
+            SessionObject::Thread(ThreadSessionObject {
+                key,
+                exit_code: None,
+            }),
+        );
+        self.process_mut(pid).expect("validated child process").handles.insert(
+            handle,
+            HandleEntry {
+                object,
+                inheritable: false,
+            },
+        );
+        Ok((key, handle))
+    }
+
     pub fn create_event(&mut self, pid: Pid, request: CreateEventRequest) -> (u32, bool) {
         let (object, already_exists) = if let Some(name) = request.name.as_ref() {
             if let Some(&object) = self.names.get(name) {
                 if !matches!(self.objects.get(&object), Some(SessionObject::Event(_))) {
-                    self.process_mut(pid)
-                        .expect("event owner")
-                        .xp
-                        .set_last_error(6);
+                    // The caller has the guest TID and records ERROR_INVALID_HANDLE.
                     return (0, false);
                 }
                 (object, true)
@@ -1202,6 +1259,9 @@ impl Wc3Session {
         if !found {
             return Err("ExitThread thread object missing");
         }
+        self.runnable.retain(|queued| *queued != key);
+        self.blocked.remove(&key);
+        self.critical_waiters.retain(|wait| wait.key != key);
         self.abandon_mutexes(|owner| owner == key);
         self.reevaluate_blocked_waits()
     }
@@ -1322,6 +1382,7 @@ impl Wc3Session {
 
         self.runnable.retain(|key| key.pid != pid);
         self.blocked.retain(|key, _| key.pid != pid);
+        self.critical_waiters.retain(|wait| wait.key.pid != pid);
         self.abandon_mutexes(|owner| owner.pid == pid);
         let handles: Vec<_> = self
             .process(pid)
@@ -1390,7 +1451,7 @@ impl Wc3Session {
                 self.process_mut(request.key.pid)
                     .ok_or("wait process missing")?
                     .xp
-                    .set_last_error(6);
+                    .set_last_error_for_thread(request.key.tid, 6);
                 return Ok(Some(u32::MAX));
             };
             objects[index] = entry.object;
@@ -1398,7 +1459,7 @@ impl Wc3Session {
                 self.process_mut(request.key.pid)
                     .ok_or("wait process missing")?
                     .xp
-                    .set_last_error(6);
+                    .set_last_error_for_thread(request.key.tid, 6);
                 return Ok(Some(u32::MAX));
             };
             signaled[index] = match object {
@@ -1486,5 +1547,73 @@ impl Wc3Session {
             }
         };
         format!("object_id={} {}", entry.object, kind)
+    }
+}
+
+#[cfg(test)]
+mod child_thread_tests {
+    use super::*;
+
+    #[test]
+    fn child_thread_handle_is_registered_but_not_runnable_until_enqueued() {
+        let mut session = Wc3Session::new(XpProcess::new(Vec::new()));
+        let child = session.create_child();
+        let (key, handle) = session.create_child_thread(child.pid).unwrap();
+        assert_eq!(key.pid, child.pid);
+        assert_ne!(key.tid, child.tid);
+        assert!(!session.runnable.contains(&key));
+        let entry = session.process(child.pid).unwrap().handles.get(&handle).unwrap();
+        assert!(matches!(session.objects.get(&entry.object), Some(SessionObject::Thread(thread)) if thread.key == key && thread.exit_code.is_none()));
+        session.enqueue(key);
+        assert!(session.runnable.contains(&key));
+        session.signal_thread(key, 7).unwrap();
+        assert!(!session.runnable.contains(&key));
+        assert_eq!(session.thread_exit_code(key), Some(7));
+    }
+
+    #[test]
+    fn critical_section_waiters_are_fifo_and_removed_on_thread_exit() {
+        let mut session = Wc3Session::new(XpProcess::new(Vec::new()));
+        let child = session.create_child();
+        let (first, _) = session.create_child_thread(child.pid).unwrap();
+        let (second, _) = session.create_child_thread(child.pid).unwrap();
+        for key in [first, second] {
+            session
+                .block_critical_section(CriticalSectionWait {
+                    key,
+                    address: 0x1234,
+                    provider_id: 7,
+                    esp: 0x4321,
+                })
+                .unwrap();
+        }
+        assert_eq!(session.take_critical_waiter(child.pid, 0x1234).unwrap().key, first);
+        session.signal_thread(second, 0).unwrap();
+        assert!(session.take_critical_waiter(child.pid, 0x1234).is_none());
+    }
+
+    #[test]
+    fn invalid_wait_sets_only_calling_threads_last_error() {
+        let mut session = Wc3Session::new(XpProcess::new(Vec::new()));
+        let child = session.create_child();
+        let (other, _) = session.create_child_thread(child.pid).unwrap();
+        session
+            .process_mut(child.pid)
+            .unwrap()
+            .xp
+            .set_last_error_for_thread(other.tid, 42);
+        let wait = WaitRequest {
+            key: ThreadKey { pid: child.pid, tid: child.tid },
+            return_address: 0,
+            count: 1,
+            handles_pointer: 0,
+            handles: [0xdead_beef, 0],
+            wait_all: 0,
+            timeout: 0,
+        };
+        assert_eq!(session.poll_wait(&wait), Ok(Some(u32::MAX)));
+        let xp = &session.process(child.pid).unwrap().xp;
+        assert_eq!(xp.last_error_for_thread(child.tid), 6);
+        assert_eq!(xp.last_error_for_thread(other.tid), 42);
     }
 }

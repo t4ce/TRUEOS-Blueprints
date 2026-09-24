@@ -1174,7 +1174,11 @@ pub struct XpProcess {
     next_scratch_file: u32,
     sid_allocations: HashMap<u32, u32>,
     next_sid: u32,
+    /// Compatibility mirror for callers of the original process-wide API.
     last_error: u32,
+    last_errors: HashMap<u32, u32>,
+    active_last_error_tid: Option<u32>,
+    last_error_compat_tid: Option<u32>,
     last_format_message_encoding: Option<MessageResourceEncoding>,
     unhandled_exception_filter: u32,
     registered_classes: HashMap<String, RegisteredClass>,
@@ -1338,6 +1342,9 @@ impl XpProcess {
             sid_allocations: HashMap::new(),
             next_sid: PROCESS_SID_ARENA_BASE,
             last_error: 0,
+            last_errors: HashMap::new(),
+            active_last_error_tid: None,
+            last_error_compat_tid: None,
             last_format_message_encoding: None,
             unhandled_exception_filter: 0,
             registered_classes: HashMap::new(),
@@ -2620,7 +2627,7 @@ impl XpProcess {
                     .call_count
                     .checked_add(1)
                     .ok_or("call count overflow")?;
-                Ok(PersonalityAction::Return(self.last_error))
+                Ok(PersonalityAction::Return(self.last_error_for_thread(tid)))
             }
             ProviderOp::GetTickCount => {
                 self.call_count = self
@@ -3253,6 +3260,27 @@ impl XpProcess {
         memory: &mut impl GuestMemory,
         self_image_bytes: Option<&[u8]>,
     ) -> Result<PersonalityAction, ProviderDispatchError> {
+        self.with_active_last_error_tid(tid, |process| {
+            process.dispatch_provider_for_process_typed_with_self_image_active(
+                pid,
+                tid,
+                provider_id,
+                esp,
+                memory,
+                self_image_bytes,
+            )
+        })
+    }
+
+    fn dispatch_provider_for_process_typed_with_self_image_active(
+        &mut self,
+        pid: u32,
+        tid: u32,
+        provider_id: u32,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+        self_image_bytes: Option<&[u8]>,
+    ) -> Result<PersonalityAction, ProviderDispatchError> {
         let provider = self
             .provider_import(provider_id)
             .cloned()
@@ -3567,7 +3595,7 @@ impl XpProcess {
     ) -> Result<Option<WinHeapAllocation>, &'static str> {
         let [_, heap, flags, bytes] = arguments::<4>(memory, esp)?;
         if !self.heaps.contains_key(&heap) {
-            self.last_error = 6;
+            self.set_last_error(6);
             return Ok(None);
         }
         if flags & !HEAP_ALLOC_ALLOWED_FLAGS != 0 {
@@ -3655,11 +3683,11 @@ impl XpProcess {
             return Err("HeapFree flags frontier");
         }
         let Some(allocation) = self.win_heap_allocations.get(&pointer).copied() else {
-            self.last_error = 6;
+            self.set_last_error(6);
             return Ok(None);
         };
         if allocation.heap != heap {
-            self.last_error = 6;
+            self.set_last_error(6);
             return Ok(None);
         }
         self.win_heap_allocations.remove(&pointer);
@@ -3737,6 +3765,19 @@ impl XpProcess {
         esp: u32,
         memory: &mut impl GuestMemory,
     ) -> Result<PersonalityAction, &'static str> {
+        self.with_active_last_error_tid(tid, |process| {
+            process.dispatch_for_process_active(pid, tid, import_id, esp, memory)
+        })
+    }
+
+    fn dispatch_for_process_active(
+        &mut self,
+        pid: u32,
+        tid: u32,
+        import_id: u32,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<PersonalityAction, &'static str> {
         let import = self
             .import(import_id)
             .cloned()
@@ -3770,7 +3811,7 @@ impl XpProcess {
                     handle: read_u32(memory, esp + 4)?,
                 }));
             }
-            WinCall::GetLastError => Ok(self.last_error),
+            WinCall::GetLastError => Ok(self.last_error_for_thread(tid)),
             WinCall::SetLastError => {
                 let value = read_u32(memory, esp + 4)?;
                 self.set_last_error(value);
@@ -4133,13 +4174,13 @@ impl XpProcess {
     ) -> Result<u32, &'static str> {
         let [_, slot] = arguments::<2>(memory, esp)?;
         if slot as usize >= self.tls_allocated.len() {
-            self.last_error = 87;
+            self.set_last_error_for_thread(tid, 87);
             return Ok(0);
         }
         let value = self.tls_values.get(&(tid, slot)).copied().unwrap_or(0);
         // A successful TlsGetValue explicitly clears LastError so callers can
         // distinguish an empty TLS slot from a failed lookup.
-        self.last_error = 0;
+        self.set_last_error_for_thread(tid, 0);
         Ok(value)
     }
 
@@ -4169,7 +4210,7 @@ impl XpProcess {
     fn heap_free(&mut self, esp: u32, memory: &impl GuestMemory) -> Result<u32, &'static str> {
         let [_, heap, flags, pointer] = arguments::<4>(memory, esp)?;
         if heap != 0x5743_0001 || flags != 0 || self.allocations.remove(&pointer).is_none() {
-            self.last_error = 6;
+            self.set_last_error(6);
             return Ok(0);
         }
         Ok(1)
@@ -4296,11 +4337,59 @@ impl XpProcess {
     }
 
     pub fn set_last_error(&mut self, value: u32) {
-        self.last_error = value;
+        if let Some(tid) = self.active_last_error_tid {
+            self.set_last_error_for_thread(tid, value);
+        } else if let Some(tid) = self.last_error_compat_tid {
+            self.set_last_error_for_thread(tid, value);
+        } else {
+            self.last_error = value;
+        }
     }
 
     pub fn last_error(&self) -> u32 {
-        self.last_error
+        self.active_last_error_tid
+            .map(|tid| self.last_error_for_thread(tid))
+            .or_else(|| {
+                self.last_error_compat_tid
+                    .map(|tid| self.last_error_for_thread(tid))
+            })
+            .unwrap_or(self.last_error)
+    }
+
+    pub fn set_last_error_for_thread(&mut self, tid: u32, value: u32) {
+        self.last_errors.insert(tid, value);
+        self.last_error = value;
+        self.last_error_compat_tid = Some(tid);
+    }
+
+    pub fn last_error_for_thread(&self, tid: u32) -> u32 {
+        self.last_errors.get(&tid).copied().unwrap_or_else(|| {
+            if self.last_errors.is_empty() {
+                self.last_error
+            } else {
+                0
+            }
+        })
+    }
+
+    fn with_active_last_error_tid<R>(
+        &mut self,
+        tid: u32,
+        operation: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        if !self.last_errors.contains_key(&tid) {
+            let initial = if self.last_errors.is_empty() {
+                self.last_error
+            } else {
+                0
+            };
+            self.last_errors.insert(tid, initial);
+        }
+        let previous_tid = self.active_last_error_tid.replace(tid);
+        let result = operation(self);
+        self.active_last_error_tid = previous_tid;
+        self.last_error_compat_tid = Some(tid);
+        result
     }
 
     pub fn last_format_message_encoding(&self) -> Option<MessageResourceEncoding> {
@@ -4416,7 +4505,7 @@ impl XpProcess {
         if let Some(handle) = self.loaded_module_handle(&requested) {
             return Ok(handle);
         }
-        self.last_error = ERROR_MOD_NOT_FOUND;
+        self.set_last_error(ERROR_MOD_NOT_FOUND);
         Ok(0)
     }
 
