@@ -1,0 +1,2317 @@
+impl XpProcess {
+    pub fn crt_onexit_count(&self) -> usize {
+        self.crt_onexit_callbacks.len()
+    }
+
+    pub fn crt_onexit_callbacks(&self) -> &[u32] {
+        &self.crt_onexit_callbacks
+    }
+
+    pub fn create_win_heap(
+        &mut self,
+        esp: u32,
+        memory: &impl GuestMemory,
+    ) -> Result<HeapCreateResult, &'static str> {
+        let [_, options, initial_size, maximum_size] = arguments::<4>(memory, esp)?;
+        let handle = self.next_heap_handle;
+        self.next_heap_handle = self
+            .next_heap_handle
+            .checked_add(1)
+            .ok_or("HeapCreate handle overflow")?;
+        self.heaps.insert(
+            handle,
+            WinHeap {
+                options,
+                initial_size,
+                maximum_size,
+            },
+        );
+        self.call_count = self
+            .call_count
+            .checked_add(1)
+            .ok_or("call count overflow")?;
+        Ok(HeapCreateResult {
+            options,
+            initial_size,
+            maximum_size,
+            handle,
+        })
+    }
+
+    pub fn alloc_win_heap(
+        &mut self,
+        esp: u32,
+        memory: &impl GuestMemory,
+    ) -> Result<Option<WinHeapAllocation>, &'static str> {
+        let [_, heap, flags, bytes] = arguments::<4>(memory, esp)?;
+        if !self.heaps.contains_key(&heap) {
+            self.set_last_error(6);
+            return Ok(None);
+        }
+        if flags & !HEAP_ALLOC_ALLOWED_FLAGS != 0 {
+            return Err("HeapAlloc flags frontier");
+        }
+        let logical = bytes.max(1);
+        let aligned = logical.checked_add(7).ok_or("HeapAlloc size overflow")? & !7;
+        let pointer = self.win_heap_next;
+        let end = pointer
+            .checked_add(aligned)
+            .ok_or("HeapAlloc address overflow")?;
+        if end > CHILD_WIN_HEAP_LIMIT {
+            return Ok(None);
+        }
+        let allocation = WinHeapAllocation {
+            heap,
+            flags,
+            requested: bytes,
+            pointer,
+            end,
+        };
+        self.win_heap_next = end;
+        self.win_heap_allocations.insert(pointer, allocation);
+        self.call_count = self
+            .call_count
+            .checked_add(1)
+            .ok_or("call count overflow")?;
+        Ok(Some(allocation))
+    }
+
+    pub fn alloc_global_fixed(
+        &mut self,
+        flags: u32,
+        bytes: u32,
+    ) -> Result<Option<GlobalAllocation>, ProviderDispatchError> {
+        if flags & GMEM_MOVEABLE != 0 {
+            return Err(ProviderDispatchError::Frontier {
+                api: "GlobalAlloc",
+                detail: format!("movable-memory flags=0x{flags:08x} bytes={bytes}"),
+            });
+        }
+        if !matches!(flags, GMEM_FIXED | GMEM_ZEROINIT) {
+            return Err(ProviderDispatchError::Frontier {
+                api: "GlobalAlloc",
+                detail: format!("unobserved flags=0x{flags:08x} bytes={bytes}"),
+            });
+        }
+        if bytes == 0 {
+            return Err(ProviderDispatchError::Frontier {
+                api: "GlobalAlloc",
+                detail: format!("zero-size flags=0x{flags:08x}"),
+            });
+        }
+        let aligned = bytes.checked_add(7).ok_or("GlobalAlloc size overflow")? & !7;
+        let pointer = self.win_heap_next;
+        let end = pointer
+            .checked_add(aligned)
+            .ok_or("GlobalAlloc address overflow")?;
+        if end > CHILD_WIN_HEAP_LIMIT {
+            self.set_last_error(ERROR_NOT_ENOUGH_MEMORY);
+            return Ok(None);
+        }
+        let allocation = GlobalAllocation {
+            flags,
+            requested: bytes,
+            pointer,
+            end,
+        };
+        self.win_heap_next = end;
+        self.global_allocations.insert(pointer, allocation);
+        self.call_count = self
+            .call_count
+            .checked_add(1)
+            .ok_or("call count overflow")?;
+        Ok(Some(allocation))
+    }
+
+    pub fn free_win_heap(
+        &mut self,
+        esp: u32,
+        memory: &impl GuestMemory,
+    ) -> Result<Option<WinHeapAllocation>, &'static str> {
+        let [_, heap, flags, pointer] = arguments::<4>(memory, esp)?;
+        if flags != 0 {
+            return Err("HeapFree flags frontier");
+        }
+        let Some(allocation) = self.win_heap_allocations.get(&pointer).copied() else {
+            self.set_last_error(6);
+            return Ok(None);
+        };
+        if allocation.heap != heap {
+            self.set_last_error(6);
+            return Ok(None);
+        }
+        self.win_heap_allocations.remove(&pointer);
+        self.call_count = self
+            .call_count
+            .checked_add(1)
+            .ok_or("call count overflow")?;
+        Ok(Some(allocation))
+    }
+
+    pub fn append_provider_imports(
+        &mut self,
+        imports: Vec<ProviderImport>,
+    ) -> Result<(Vec<u32>, usize, usize, usize, Vec<u8>), &'static str> {
+        self.register_external_provider_imports(&imports)?;
+        let old_bytes = self.provider_thunks.len();
+        let first = u32::try_from(self.provider_imports.len()).map_err(|_| "provider id")?;
+        let updated_from = usize::try_from(first)
+            .map_err(|_| "provider thunk offset")?
+            .checked_mul(thunk32::THUNK_BYTES)
+            .ok_or("provider thunk offset")?;
+        let mut addresses = Vec::with_capacity(imports.len());
+        for (offset, import) in imports.into_iter().enumerate() {
+            let id = first
+                .checked_add(u32::try_from(offset).map_err(|_| "provider id")?)
+                .ok_or("provider id")?;
+            let address = crate::child_loader::provider_data_export_address(&import)
+                .or_else(|| thunk32::address(id))
+                .ok_or("provider address")?;
+            addresses.push(address);
+            self.provider_imports.push(import);
+        }
+        let required = self
+            .provider_imports
+            .len()
+            .checked_mul(thunk32::THUNK_BYTES)
+            .ok_or("provider bytes")?;
+        let new_bytes = required.checked_add(0xfff).ok_or("provider page")? & !0xfff;
+        self.provider_thunks.resize(new_bytes, 0x90);
+        for (offset, _) in addresses.iter().enumerate() {
+            let id = first + offset as u32;
+            let start = id as usize * thunk32::THUNK_BYTES;
+            let import = self.provider_import(id).ok_or("provider import")?;
+            thunk32::write(
+                id,
+                crate::child_loader::external_export_thunk_kind(import)
+                    .unwrap_or_else(|| crate::child_loader::provider_thunk_kind(import)),
+                &mut self.provider_thunks[start..start + thunk32::THUNK_BYTES],
+            )?;
+        }
+        Ok((
+            addresses,
+            old_bytes,
+            new_bytes,
+            updated_from,
+            self.provider_thunks[updated_from..].to_vec(),
+        ))
+    }
+
+    /// Handle one import VMCALL and return the value for EAX.
+    pub fn dispatch(
+        &mut self,
+        tid: u32,
+        import_id: u32,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<PersonalityAction, &'static str> {
+        self.dispatch_for_process(1, tid, import_id, esp, memory)
+    }
+
+    pub fn dispatch_for_process(
+        &mut self,
+        pid: u32,
+        tid: u32,
+        import_id: u32,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<PersonalityAction, &'static str> {
+        self.with_active_last_error_tid(tid, |process| {
+            process.dispatch_for_process_active(pid, tid, import_id, esp, memory)
+        })
+    }
+
+    fn dispatch_for_process_active(
+        &mut self,
+        pid: u32,
+        tid: u32,
+        import_id: u32,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<PersonalityAction, &'static str> {
+        let import = self
+            .import(import_id)
+            .cloned()
+            .ok_or("invalid WC3 import id")?;
+        self.call_count = self
+            .call_count
+            .checked_add(1)
+            .ok_or("call count overflow")?;
+        let call = WinCall::from_import(&import);
+        let value = match call {
+            WinCall::GetVersion => Ok(WINDOWS_XP_GET_VERSION),
+            WinCall::HeapCreate => Ok(0x5743_0001),
+            WinCall::GetVersionExA => self.get_version_ex(esp, memory),
+            WinCall::InitializeCriticalSection => self.initialize_critical_section(esp, memory),
+            WinCall::EnterCriticalSection => self.enter_critical_section(tid, esp, memory),
+            WinCall::LeaveCriticalSection => self.leave_critical_section(tid, esp, memory),
+            WinCall::TlsAlloc => self.tls_alloc(),
+            WinCall::TlsSetValue => self.tls_set_value(tid, esp, memory),
+            WinCall::TlsGetValue => self.tls_get_value(tid, esp, memory),
+            WinCall::HeapAlloc => self.heap_alloc(esp, memory),
+            WinCall::HeapFree => self.heap_free(esp, memory),
+            WinCall::CreateEventA => {
+                return Ok(PersonalityAction::Session(SessionRequest::CreateEvent(
+                    self.create_event_request(esp, memory)?,
+                )));
+            }
+            WinCall::SetEvent => {
+                return Ok(PersonalityAction::Session(SessionRequest::SetEvent {
+                    pid,
+                    tid,
+                    handle: read_u32(memory, esp + 4)?,
+                }));
+            }
+            WinCall::GetLastError => Ok(self.last_error_for_thread(tid)),
+            WinCall::SetLastError => {
+                let value = read_u32(memory, esp + 4)?;
+                self.set_last_error(value);
+                Ok(0)
+            }
+            WinCall::CloseHandle => {
+                return Ok(PersonalityAction::Session(SessionRequest::CloseHandle {
+                    pid,
+                    handle: read_u32(memory, esp + 4)?,
+                }));
+            }
+            WinCall::GetTickCount => Ok(monotonic_counter_millis()),
+            WinCall::GetCurrentThreadId => Ok(tid),
+            WinCall::GetStartupInfoA => self.get_startup_info(esp, memory),
+            WinCall::GetModuleFileNameA => {
+                self.get_module_filename(esp, memory)
+                    .map_err(|error| match error {
+                        ProviderDispatchError::Unsupported => "unsupported child provider import",
+                        ProviderDispatchError::Fault(error) => error,
+                        ProviderDispatchError::Frontier { .. } => "module filename frontier",
+                    })
+            }
+            WinCall::GetModuleHandleA => Ok(pe32::IMAGE_BASE),
+            WinCall::GetStdHandle => self.get_std_handle(esp, memory),
+            WinCall::GetFileType => self.get_file_type(esp, memory),
+            WinCall::SetHandleCount => self.set_handle_count(esp, memory),
+            WinCall::GetCommandLineA => Ok(PROCESS_DATA_VA),
+            WinCall::GetEnvironmentStringsW => Ok(0),
+            WinCall::GetEnvironmentStringsA => Ok(ENVIRONMENT_BLOCK_VA),
+            WinCall::FreeEnvironmentStringsA => Ok(1),
+            WinCall::GetACP => Ok(self.get_acp()),
+            WinCall::GetCPInfo => self.get_cp_info(esp, memory),
+            WinCall::GetStringTypeW => self.get_string_type(esp, memory),
+            WinCall::MultiByteToWideChar => self.multi_byte_to_wide(esp, memory),
+            WinCall::WideCharToMultiByte => self.wide_to_multi_byte(esp, memory),
+            WinCall::LCMapStringW => self.lc_map_string(esp, memory),
+            WinCall::RegisterClassA => self.register_class(esp, memory),
+            WinCall::GetDesktopWindow => Ok(DESKTOP_HWND),
+            WinCall::GetClientRect => self.get_client_rect(esp, memory),
+            WinCall::CreateWindowExA => {
+                return Ok(PersonalityAction::Session(SessionRequest::CreateWindow(
+                    self.create_window_request(esp, memory, ThreadKey { pid, tid })?,
+                )));
+            }
+            WinCall::ShowWindow => {
+                let [_, hwnd, show] = arguments::<3>(memory, esp)?;
+                return Ok(PersonalityAction::Session(SessionRequest::ShowWindow {
+                    pid,
+                    hwnd,
+                    show,
+                }));
+            }
+            WinCall::DestroyWindow => {
+                return Ok(PersonalityAction::Session(SessionRequest::DestroyWindow {
+                    pid,
+                    hwnd: read_u32(memory, esp + 4)?,
+                }));
+            }
+            WinCall::UpdateWindow => {
+                let hwnd = read_u32(memory, esp + 4)?;
+                return Ok(PersonalityAction::Session(SessionRequest::UpdateWindow {
+                    pid,
+                    hwnd,
+                }));
+            }
+            WinCall::PeekMessageA => self.peek_message(esp, memory),
+            WinCall::SetFocus => {
+                let hwnd = read_u32(memory, esp + 4)?;
+                return Ok(PersonalityAction::Session(SessionRequest::SetFocus {
+                    pid,
+                    hwnd,
+                }));
+            }
+            WinCall::DefWindowProcA => self.def_window_proc(esp, memory),
+            WinCall::DrawTextA => return self.draw_text_a(esp, memory),
+            WinCall::MessageBoxA => return Err("MessageBoxA requires runtime modal dispatch"),
+            WinCall::BeginPaint => {
+                let [_, hwnd, paint_struct] = arguments::<3>(memory, esp)?;
+                return Ok(PersonalityAction::Session(SessionRequest::BeginPaint {
+                    pid,
+                    hwnd,
+                    paint_struct,
+                }));
+            }
+            WinCall::EndPaint => self.end_paint(esp, memory),
+            WinCall::LoadStringA => self.load_string(esp, memory),
+            WinCall::LoadImageA => {
+                return Ok(PersonalityAction::Session(SessionRequest::LoadImage(
+                    self.load_image_request(esp, memory)?,
+                )));
+            }
+            WinCall::GetObjectA => self.get_object_a(esp, memory),
+            WinCall::CreateCompatibleDC => self.create_compatible_dc(esp, memory),
+            WinCall::SelectObject => self.select_object(esp, memory),
+            WinCall::GetDIBColorTable => self.get_dib_color_table(esp, memory),
+            WinCall::CreatePalette => self.create_palette(esp, memory),
+            WinCall::SelectPalette => self.select_palette(esp, memory),
+            WinCall::RealizePalette => self.realize_palette(esp, memory),
+            WinCall::SetTextColor => self.set_text_color(esp, memory),
+            WinCall::SetBkColor => self.set_bk_color(esp, memory),
+            WinCall::SetBkMode => self.set_bk_mode(esp, memory),
+            WinCall::BitBlt => return self.bit_blt(esp, memory),
+            WinCall::DeleteDC => self.delete_dc(esp, memory),
+            WinCall::DeleteObject => self.delete_object(esp, memory),
+            WinCall::CreateThread => self.create_thread(esp, memory),
+            WinCall::ExitThread => {
+                let [_, exit_code] = arguments::<2>(memory, esp)?;
+                return Ok(PersonalityAction::ExitThread(exit_code));
+            }
+            WinCall::ResumeThread => self.resume_thread(esp, memory),
+            WinCall::CreateProcessA => {
+                return Ok(PersonalityAction::Session(SessionRequest::CreateProcess(
+                    CreateProcessRequest {
+                        frame: self.create_process_a(esp, memory)?,
+                    },
+                )));
+            }
+            WinCall::GetExitCodeProcess => {
+                let [_, handle, exit_code_pointer] = arguments::<3>(memory, esp)?;
+                return Ok(PersonalityAction::Session(
+                    SessionRequest::GetExitCodeProcess(GetExitCodeProcessRequest {
+                        pid,
+                        tid,
+                        handle,
+                        exit_code_pointer,
+                    }),
+                ));
+            }
+            WinCall::WaitForMultipleObjects => {
+                let frame = self.wait_for_multiple_objects(esp, memory)?;
+                return Ok(PersonalityAction::Block(WaitRequest {
+                    key: ThreadKey { pid, tid },
+                    return_address: frame.return_address,
+                    count: frame.count,
+                    handles_pointer: frame.handles_pointer,
+                    handles: frame.handles,
+                    wait_all: frame.wait_all,
+                    timeout: frame.timeout,
+                }));
+            }
+            WinCall::WaitForSingleObject => {
+                let [ret, handle, timeout] = arguments::<3>(memory, esp)?;
+                return Ok(PersonalityAction::Block(WaitRequest {
+                    key: ThreadKey { pid, tid },
+                    return_address: ret,
+                    count: 1,
+                    handles_pointer: 0,
+                    handles: [handle, 0],
+                    wait_all: 0,
+                    timeout,
+                }));
+            }
+            WinCall::Unsupported => Err("unsupported launcher import"),
+        }?;
+        Ok(PersonalityAction::Return(value))
+    }
+
+    fn create_process_a(
+        &self,
+        esp: u32,
+        memory: &impl GuestMemory,
+    ) -> Result<CreateProcessAFrame, &'static str> {
+        let [
+            ret,
+            application_name,
+            command_line,
+            process_attributes,
+            thread_attributes,
+            inherit_handles,
+            creation_flags,
+            environment,
+            current_directory,
+            startup_info,
+            process_information,
+        ] = arguments::<11>(memory, esp)?;
+        if ret != 0x0040_12E0
+            || application_name != 0
+            || read_c_string(memory, command_line, 64)? != "\"war3.exe\" "
+            || process_attributes != 0
+            || thread_attributes != 0
+            || inherit_handles != 1
+            || creation_flags != 0
+            || environment != 0
+            || current_directory != 0
+            || startup_info == 0
+            || process_information == 0
+        {
+            return Err("unexpected CreateProcessA frame");
+        }
+        // These are launcher-local output structures, not the STARTUPINFOA
+        // synthesized by GetStartupInfoA.  At #89 both are pristine zeroed
+        // storage, including STARTUPINFOA.cb.
+        let mut startup_info_bytes = [0u8; 68];
+        memory.read(startup_info, &mut startup_info_bytes)?;
+        let mut process_information_bytes = [0u8; 16];
+        memory.read(process_information, &mut process_information_bytes)?;
+        if startup_info_bytes != [0; 68] || process_information_bytes != [0; 16] {
+            return Err("unexpected CreateProcessA output storage");
+        }
+        Ok(CreateProcessAFrame {
+            return_address: ret,
+            application_name,
+            command_line,
+            process_attributes,
+            thread_attributes,
+            inherit_handles,
+            creation_flags,
+            environment,
+            current_directory,
+            startup_info,
+            process_information,
+        })
+    }
+
+    pub fn wait_for_multiple_objects(
+        &self,
+        esp: u32,
+        memory: &impl GuestMemory,
+    ) -> Result<WaitForMultipleObjectsFrame, &'static str> {
+        let [ret, count, handles_pointer, wait_all, timeout] = arguments::<5>(memory, esp)?;
+        let mut handles = [0; 2];
+        if handles_pointer != 0 && count <= 1024 {
+            handles[0] = read_u32(memory, handles_pointer)?;
+            if count >= 2 {
+                handles[1] = read_u32(
+                    memory,
+                    handles_pointer
+                        .checked_add(4)
+                        .ok_or("handles pointer overflow")?,
+                )?;
+            }
+        }
+        Ok(WaitForMultipleObjectsFrame {
+            return_address: ret,
+            count,
+            handles_pointer,
+            handles,
+            wait_all,
+            timeout,
+        })
+    }
+
+    fn get_version_ex(
+        &mut self,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<u32, &'static str> {
+        let [_, output] = arguments::<2>(memory, esp)?;
+        let size = read_u32(memory, output)?;
+        if !matches!(size, OSVERSIONINFOA_SIZE | OSVERSIONINFOEXA_SIZE) {
+            return Err("GetVersionExA structure size");
+        }
+        let mut info = [0; OSVERSIONINFOEXA_SIZE as usize];
+        for (offset, value) in [(0, size), (4, 5), (8, 1), (12, 2600), (16, 2)] {
+            info[offset..offset + 4].copy_from_slice(&u32::to_le_bytes(value));
+        }
+        if size == OSVERSIONINFOEXA_SIZE {
+            info[0x94..0x96].copy_from_slice(&0u16.to_le_bytes());
+            info[0x96..0x98].copy_from_slice(&0u16.to_le_bytes());
+            info[0x98..0x9a].copy_from_slice(&0u16.to_le_bytes());
+            info[0x9a] = VER_NT_WORKSTATION;
+        }
+        memory.write(output, &info[..size as usize])?;
+        Ok(1)
+    }
+
+    fn initialize_critical_section(
+        &mut self,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<u32, &'static str> {
+        let [_, address] = arguments::<2>(memory, esp)?;
+        let mut bytes = [0; 0x18];
+        bytes[4..8].copy_from_slice(&u32::MAX.to_le_bytes());
+        memory.write(address, &bytes)?;
+        self.critical_sections.insert(address, (0, 0));
+        Ok(0)
+    }
+
+    fn enter_critical_section(
+        &mut self,
+        tid: u32,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<u32, &'static str> {
+        let [_, address] = arguments::<2>(memory, esp)?;
+        let entry = self
+            .critical_sections
+            .get_mut(&address)
+            .ok_or("unknown critical section")?;
+        if entry.0 != 0 && entry.0 != tid {
+            return Err("critical section contention");
+        }
+        entry.0 = tid;
+        entry.1 = entry
+            .1
+            .checked_add(1)
+            .ok_or("critical recursion overflow")?;
+        write_u32(memory, address + 4, entry.1 - 1)?;
+        write_u32(memory, address + 8, entry.1)?;
+        write_u32(memory, address + 12, entry.0)?;
+        Ok(0)
+    }
+
+    fn leave_critical_section(
+        &mut self,
+        tid: u32,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<u32, &'static str> {
+        let [_, address] = arguments::<2>(memory, esp)?;
+        let entry = self
+            .critical_sections
+            .get_mut(&address)
+            .ok_or("unknown critical section")?;
+        if entry.0 != tid || entry.1 == 0 {
+            return Err("critical section owner");
+        }
+        entry.1 -= 1;
+        if entry.1 == 0 {
+            entry.0 = 0;
+        }
+        write_u32(
+            memory,
+            address + 4,
+            if entry.1 == 0 { u32::MAX } else { entry.1 - 1 },
+        )?;
+        write_u32(memory, address + 8, entry.1)?;
+        write_u32(memory, address + 12, entry.0)?;
+        Ok(0)
+    }
+
+    fn tls_alloc(&mut self) -> Result<u32, &'static str> {
+        let slot = self
+            .tls_allocated
+            .iter()
+            .position(|used| !used)
+            .ok_or("TLS slots exhausted")?;
+        self.tls_allocated[slot] = true;
+        Ok(slot as u32)
+    }
+
+    fn tls_set_value(
+        &mut self,
+        tid: u32,
+        esp: u32,
+        memory: &impl GuestMemory,
+    ) -> Result<u32, &'static str> {
+        let [_, slot, value] = arguments::<3>(memory, esp)?;
+        if !self
+            .tls_allocated
+            .get(slot as usize)
+            .copied()
+            .unwrap_or(false)
+        {
+            return Err("TLS slot not allocated");
+        }
+        self.tls_values.insert((tid, slot), value);
+        Ok(1)
+    }
+
+    fn tls_get_value(
+        &mut self,
+        tid: u32,
+        esp: u32,
+        memory: &impl GuestMemory,
+    ) -> Result<u32, &'static str> {
+        let [_, slot] = arguments::<2>(memory, esp)?;
+        if slot as usize >= self.tls_allocated.len() {
+            self.set_last_error_for_thread(tid, 87);
+            return Ok(0);
+        }
+        let value = self.tls_values.get(&(tid, slot)).copied().unwrap_or(0);
+        // A successful TlsGetValue explicitly clears LastError so callers can
+        // distinguish an empty TLS slot from a failed lookup.
+        self.set_last_error_for_thread(tid, 0);
+        Ok(value)
+    }
+
+    fn heap_alloc(&mut self, esp: u32, memory: &mut impl GuestMemory) -> Result<u32, &'static str> {
+        let [_, heap, flags, bytes] = arguments::<4>(memory, esp)?;
+        if heap != 0x5743_0001 || bytes == 0 {
+            return Err("HeapAlloc frame");
+        }
+        let aligned = bytes.checked_add(7).ok_or("heap overflow")? & !7;
+        let pointer = HEAP_VA.checked_add(self.heap_next).ok_or("heap overflow")?;
+        if self
+            .heap_next
+            .checked_add(aligned)
+            .filter(|end| *end <= 0x1000)
+            .is_none()
+        {
+            return Err("launcher heap exhausted");
+        }
+        self.heap_next += aligned;
+        self.allocations.insert(pointer, bytes);
+        if flags & 8 != 0 {
+            memory.write(pointer, &vec![0; bytes as usize])?;
+        }
+        Ok(pointer)
+    }
+
+    fn heap_free(&mut self, esp: u32, memory: &impl GuestMemory) -> Result<u32, &'static str> {
+        let [_, heap, flags, pointer] = arguments::<4>(memory, esp)?;
+        if heap != 0x5743_0001 || flags != 0 || self.allocations.remove(&pointer).is_none() {
+            self.set_last_error(6);
+            return Ok(0);
+        }
+        Ok(1)
+    }
+
+    fn create_event_request(
+        &self,
+        esp: u32,
+        memory: &impl GuestMemory,
+    ) -> Result<CreateEventRequest, &'static str> {
+        let [_, attributes, manual_reset, initial, name] = arguments::<5>(memory, esp)?;
+        let inheritable = if attributes == 0 {
+            false
+        } else {
+            read_u32(memory, attributes + 8)? != 0
+        };
+        let name = if name == 0 {
+            None
+        } else {
+            Some(read_c_string(memory, name, 260)?)
+        };
+        Ok(CreateEventRequest {
+            name,
+            manual_reset: manual_reset != 0,
+            initial_state: initial != 0,
+            inheritable,
+        })
+    }
+
+    fn format_message_a(
+        &mut self,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
+        let [
+            _,
+            flags,
+            source,
+            message_id,
+            language_id,
+            buffer,
+            capacity,
+            arguments,
+        ] = arguments::<8>(memory, esp)?;
+        if flags != FORMAT_MESSAGE_FROM_HMODULE {
+            return Err(ProviderDispatchError::Frontier {
+                api: "FormatMessageA",
+                detail: format!("unobserved flags=0x{flags:08x}"),
+            });
+        }
+        if source == 0 || language_id == 0 || buffer == 0 {
+            return Err(ProviderDispatchError::Frontier {
+                api: "FormatMessageA",
+                detail: format!(
+                    "invalid FROM_HMODULE frame source=0x{source:08x} language=0x{language_id:08x} buffer=0x{buffer:08x}"
+                ),
+            });
+        }
+        if arguments != 0 {
+            return Err(ProviderDispatchError::Frontier {
+                api: "FormatMessageA",
+                detail: format!("non-null argument array=0x{arguments:08x}"),
+            });
+        }
+
+        self.last_format_message_encoding = None;
+        let (resolved_language_id, _) = format_message_language_resolution(language_id);
+        let (text, encoding) = match message_table_text(
+            memory,
+            source,
+            resolved_language_id,
+            message_id,
+        ) {
+            Ok(value) => value,
+            Err(MessageTableLookup::TypeMissing) => {
+                self.set_last_error(ERROR_RESOURCE_TYPE_NOT_FOUND);
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                return Ok(0);
+            }
+            Err(MessageTableLookup::LanguageMissing) => {
+                self.set_last_error(ERROR_RESOURCE_LANG_NOT_FOUND);
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                return Ok(0);
+            }
+            Err(MessageTableLookup::MessageMissing) => {
+                self.set_last_error(ERROR_MR_MID_NOT_FOUND);
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                return Ok(0);
+            }
+            Err(MessageTableLookup::Fault(error)) => return Err(error.into()),
+        };
+        let output = format_message_text(&text, message_id)?;
+        let required = output
+            .len()
+            .checked_add(1)
+            .ok_or("FormatMessageA output length")?;
+        if required > capacity as usize {
+            self.set_last_error(ERROR_INSUFFICIENT_BUFFER);
+            self.call_count = self
+                .call_count
+                .checked_add(1)
+                .ok_or("call count overflow")?;
+            return Ok(0);
+        }
+        let mut terminated = output;
+        terminated.push(0);
+        memory.write(buffer, &terminated)?;
+        self.last_format_message_encoding = Some(encoding);
+        self.call_count = self
+            .call_count
+            .checked_add(1)
+            .ok_or("call count overflow")?;
+        u32::try_from(terminated.len() - 1)
+            .map_err(|_| ProviderDispatchError::Fault("FormatMessageA output too long"))
+    }
+
+    pub fn set_last_error(&mut self, value: u32) {
+        if let Some(tid) = self.active_last_error_tid {
+            self.set_last_error_for_thread(tid, value);
+        } else if let Some(tid) = self.last_error_compat_tid {
+            self.set_last_error_for_thread(tid, value);
+        } else {
+            self.last_error = value;
+        }
+    }
+
+    pub fn last_error(&self) -> u32 {
+        self.active_last_error_tid
+            .map(|tid| self.last_error_for_thread(tid))
+            .or_else(|| {
+                self.last_error_compat_tid
+                    .map(|tid| self.last_error_for_thread(tid))
+            })
+            .unwrap_or(self.last_error)
+    }
+
+    pub fn set_last_error_for_thread(&mut self, tid: u32, value: u32) {
+        self.last_errors.insert(tid, value);
+        self.last_error = value;
+        self.last_error_compat_tid = Some(tid);
+    }
+
+    pub fn last_error_for_thread(&self, tid: u32) -> u32 {
+        self.last_errors.get(&tid).copied().unwrap_or_else(|| {
+            if self.last_errors.is_empty() {
+                self.last_error
+            } else {
+                0
+            }
+        })
+    }
+
+    fn with_active_last_error_tid<R>(
+        &mut self,
+        tid: u32,
+        operation: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        if !self.last_errors.contains_key(&tid) {
+            let initial = if self.last_errors.is_empty() {
+                self.last_error
+            } else {
+                0
+            };
+            self.last_errors.insert(tid, initial);
+        }
+        let previous_tid = self.active_last_error_tid.replace(tid);
+        let result = operation(self);
+        self.active_last_error_tid = previous_tid;
+        self.last_error_compat_tid = Some(tid);
+        result
+    }
+
+    pub fn last_format_message_encoding(&self) -> Option<MessageResourceEncoding> {
+        self.last_format_message_encoding
+    }
+
+    fn path_exists(&self, path: &str) -> bool {
+        if is_self_image_path(path) || (is_war3_mpq_path(path) && self.war3_mpq_bytes.is_some()) {
+            return true;
+        }
+        let canonical = canonical_file_path(path);
+        self.scratch_paths
+            .get(&canonical)
+            .and_then(|id| self.scratch_files.get(id))
+            .is_some_and(|scratch| scratch.path == canonical)
+    }
+
+    pub fn scratch_file_snapshot(&self, path: &str) -> Option<Vec<u8>> {
+        let canonical = canonical_file_path(path);
+        let id = *self.scratch_paths.get(&canonical)?;
+        self.scratch_files.get(&id).map(|file| file.bytes.clone())
+    }
+
+    pub fn set_unhandled_exception_filter(&mut self, filter: u32) -> u32 {
+        let previous = self.unhandled_exception_filter;
+        self.unhandled_exception_filter = filter;
+        previous
+    }
+
+    pub fn unhandled_exception_filter(&self) -> u32 {
+        self.unhandled_exception_filter
+    }
+
+    pub fn complete_unhandled_exception_filter(
+        &self,
+        result: Option<u32>,
+    ) -> Result<u32, &'static str> {
+        match result {
+            None | Some(EXCEPTION_FILTER_CONTINUE_SEARCH) => Ok(EXCEPTION_FILTER_EXECUTE_HANDLER),
+            Some(EXCEPTION_FILTER_CONTINUE_EXECUTION) => Ok(EXCEPTION_FILTER_CONTINUE_EXECUTION),
+            Some(EXCEPTION_FILTER_EXECUTE_HANDLER) => Ok(EXCEPTION_FILTER_EXECUTE_HANDLER),
+            Some(_) => Err("top-level exception filter result"),
+        }
+    }
+
+    fn get_startup_info(
+        &self,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<u32, &'static str> {
+        let output = read_u32(memory, esp + 4)?;
+        let mut bytes = [0; 0x44];
+        bytes[..4].copy_from_slice(&0x44u32.to_le_bytes());
+        memory.write(output, &bytes)?;
+        Ok(0)
+    }
+
+    fn get_module_filename(
+        &self,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
+        let [_, module, output, capacity] = arguments::<4>(memory, esp)?;
+        let loaded = if module == 0 {
+            self.loaded_modules
+                .iter()
+                .find(|loaded| loaded.kind == LoadedModuleKind::MainImage)
+                .ok_or("main image module missing")?
+        } else {
+            self.loaded_modules
+                .iter()
+                .find(|loaded| loaded.handle == module)
+                .ok_or_else(|| ProviderDispatchError::Frontier {
+                    api: "GetModuleFileNameA",
+                    detail: format!("unknown-hmodule handle=0x{module:08x}"),
+                })?
+        };
+        let filename = loaded
+            .filename
+            .as_ref()
+            .ok_or_else(|| ProviderDispatchError::Frontier {
+                api: "GetModuleFileNameA",
+                detail: format!(
+                    "module-filename-unmodeled handle=0x{module:08x} name={:?}",
+                    loaded.stored_name,
+                ),
+            })?;
+        let bytes = filename.as_bytes();
+        let required = bytes.len().checked_add(1).ok_or("module filename length")?;
+        if (capacity as usize) < required {
+            return Err("module filename buffer".into());
+        }
+        memory.write(output, bytes)?;
+        memory.write(
+            output
+                .checked_add(bytes.len() as u32)
+                .ok_or("module filename output overflow")?,
+            &[0],
+        )?;
+        Ok(bytes.len() as u32)
+    }
+
+    fn get_module_handle_a(
+        &mut self,
+        esp: u32,
+        memory: &impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
+        let [_, module_name] = arguments::<2>(memory, esp)?;
+        if module_name == 0 {
+            return Ok(pe32::IMAGE_BASE);
+        }
+        let requested = read_c_string(memory, module_name, 260)?;
+        if let Some(handle) = self.loaded_module_handle(&requested) {
+            return Ok(handle);
+        }
+        self.set_last_error(ERROR_MOD_NOT_FOUND);
+        Ok(0)
+    }
+
+    fn get_windows_directory_a(
+        &self,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<u32, &'static str> {
+        write_ansi_directory(XP_WINDOWS_DIRECTORY, esp, memory)
+    }
+
+    fn get_system_directory_a(
+        &self,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<u32, &'static str> {
+        write_ansi_directory(XP_SYSTEM_DIRECTORY, esp, memory)
+    }
+
+    fn get_temp_path_a(
+        &self,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
+        let [_, capacity, output] = arguments::<3>(memory, esp)?;
+        let required = u32::try_from(XP_TEMP_DIRECTORY.len())
+            .map_err(|_| ProviderDispatchError::Fault("GetTempPathA length"))?;
+        if capacity < required {
+            return Ok(required);
+        }
+        if output == 0 {
+            return Err(ProviderDispatchError::Frontier {
+                api: "GetTempPathA",
+                detail: format!("null output capacity={capacity}"),
+            });
+        }
+        memory.write(output, XP_TEMP_DIRECTORY)?;
+        Ok(required - 1)
+    }
+
+    fn query_performance_frequency(
+        &self,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<u32, &'static str> {
+        let [_, output] = arguments::<2>(memory, esp)?;
+        memory.write(output, &XP_PERFORMANCE_COUNTER_FREQUENCY.to_le_bytes())?;
+        Ok(1)
+    }
+
+    fn query_performance_counter(
+        &self,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<u32, &'static str> {
+        let [_, output] = arguments::<2>(memory, esp)?;
+        memory.write(output, &monotonic_counter_nanos().to_le_bytes())?;
+        Ok(1)
+    }
+
+    fn write_current_system_time(
+        &self,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<u32, &'static str> {
+        let [_, output] = arguments::<2>(memory, esp)?;
+        let nanos = wall_clock_unix_nanos().ok_or("system time wall clock unavailable")?;
+        let words = xp_system_time_from_unix_nanos(nanos);
+        let mut bytes = [0u8; 16];
+        for (index, word) in words.iter().enumerate() {
+            bytes[index * 2..index * 2 + 2].copy_from_slice(&word.to_le_bytes());
+        }
+        memory.write(output, &bytes)?;
+        Ok(0)
+    }
+
+    fn get_time_zone_information(
+        &self,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<u32, &'static str> {
+        let [_, output] = arguments::<2>(memory, esp)?;
+        memory.write(output, &xp_utc_time_zone_information())?;
+        Ok(TIME_ZONE_ID_UNKNOWN)
+    }
+
+    fn get_std_handle(&self, esp: u32, memory: &impl GuestMemory) -> Result<u32, &'static str> {
+        Ok(match read_u32(memory, esp + 4)? as i32 {
+            -10 => 0x5743_1001,
+            -11 => 0x5743_1002,
+            -12 => 0x5743_1003,
+            _ => u32::MAX,
+        })
+    }
+
+    fn get_file_type(&self, _esp: u32, _memory: &impl GuestMemory) -> Result<u32, &'static str> {
+        Ok(2)
+    }
+
+    fn set_handle_count(&self, esp: u32, memory: &impl GuestMemory) -> Result<u32, &'static str> {
+        read_u32(memory, esp + 4)
+    }
+
+    fn get_acp(&self) -> u32 {
+        XP_ANSI_CODE_PAGE
+    }
+
+    fn get_cp_info(&self, esp: u32, memory: &mut impl GuestMemory) -> Result<u32, &'static str> {
+        let [_, code_page, output] = arguments::<3>(memory, esp)?;
+        if code_page != XP_ANSI_CODE_PAGE {
+            return Err("unsupported code page");
+        }
+        let mut info = [0; 0x14];
+        info[..4].copy_from_slice(&1u32.to_le_bytes());
+        info[4] = b'?';
+        memory.write(output, &info)?;
+        Ok(1)
+    }
+
+    fn get_string_type(
+        &self,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<u32, &'static str> {
+        let [_, info_type, source, count, output] = arguments::<5>(memory, esp)?;
+        if info_type != CT_CTYPE1 {
+            return Err("unsupported character info type");
+        }
+        if source == output {
+            return Err("GetStringTypeW aliased buffers");
+        }
+        let signed_count = count as i32;
+        let length = if signed_count < 0 {
+            let mut length = 0u32;
+            loop {
+                let offset = length
+                    .checked_mul(2)
+                    .ok_or("GetStringTypeW length overflow")?;
+                let address = source
+                    .checked_add(offset)
+                    .ok_or("GetStringTypeW source overflow")?;
+                let value = read_u16(memory, address)?;
+                length = length
+                    .checked_add(1)
+                    .ok_or("GetStringTypeW length overflow")?;
+                if value == 0 {
+                    break length;
+                }
+            }
+        } else {
+            count
+        };
+        for index in 0..length {
+            let offset = index
+                .checked_mul(2)
+                .ok_or("GetStringTypeW length overflow")?;
+            let source_address = source
+                .checked_add(offset)
+                .ok_or("GetStringTypeW source overflow")?;
+            let output_address = output
+                .checked_add(offset)
+                .ok_or("GetStringTypeW output overflow")?;
+            let class = ascii_ctype1(read_u16(memory, source_address)?);
+            memory.write(output_address, &class.to_le_bytes())?;
+        }
+        Ok(1)
+    }
+
+    fn load_string(&self, esp: u32, memory: &mut impl GuestMemory) -> Result<u32, &'static str> {
+        let [_, instance, resource_id, buffer, max_chars] = arguments::<5>(memory, esp)?;
+        if instance == 0 || max_chars == 0 {
+            return Err("unexpected LoadStringA frame");
+        }
+        let resource = numeric_resource(
+            memory,
+            instance,
+            6,
+            (resource_id >> 4)
+                .checked_add(1)
+                .ok_or("resource block id")?,
+        )?;
+        let data = resource.address;
+        let data_size = resource.size;
+        let data_end = data.checked_add(data_size).ok_or("resource data range")?;
+        let slot = resource_id & 0x0f;
+        let mut cursor = data;
+        for index in 0..16 {
+            let length = u32::from(read_u16(memory, cursor)?);
+            cursor += 2;
+            let end = cursor
+                .checked_add(length.checked_mul(2).ok_or("resource string overflow")?)
+                .ok_or("resource string overflow")?;
+            if end > data_end {
+                return Err("resource string outside block");
+            }
+            if index == slot {
+                let copied = length.min(max_chars - 1);
+                let mut output = Vec::with_capacity(copied as usize + 1);
+                for character in 0..copied {
+                    output.push(
+                        encode_cp1252(read_u16(memory, cursor + character * 2)?).unwrap_or(b'?'),
+                    );
+                }
+                output.push(0);
+                memory.write(buffer, &output)?;
+                return Ok(copied);
+            }
+            cursor = end;
+        }
+        Err("resource string slot missing")
+    }
+
+    fn load_image_request(
+        &self,
+        esp: u32,
+        memory: &impl GuestMemory,
+    ) -> Result<LoadImageRequest, &'static str> {
+        let [ret, module, name, image_type, cx, cy, flags] = arguments::<7>(memory, esp)?;
+        if module != pe32::IMAGE_BASE
+            || name & 0xffff_0000 != 0
+            || image_type != 0
+            || cx != 0
+            || cy != 0
+            || flags != 0x2000
+        {
+            return Err("unexpected LoadImageA frame");
+        }
+        let resource_id = name & 0xffff;
+        let resource = numeric_resource(memory, pe32::IMAGE_BASE, 2, resource_id)?;
+        if resource.size < 40 {
+            return Err("bitmap resource header truncated");
+        }
+        let header_size = read_u32(memory, resource.address)?;
+        if !matches!(header_size, 40 | 108 | 124) || header_size > resource.size {
+            return Err("bitmap header unsupported");
+        }
+        let width = read_i32(memory, resource.address + 4)?;
+        let height = read_i32(memory, resource.address + 8)?;
+        let planes = read_u16(memory, resource.address + 12)?;
+        let bit_count = read_u16(memory, resource.address + 14)?;
+        let compression = read_u32(memory, resource.address + 16)?;
+        let size_image = read_u32(memory, resource.address + 20)?;
+        let clr_used = read_u32(memory, resource.address + 32)?;
+        if width == 0 || height == 0 || planes != 1 {
+            return Err("bitmap dimensions or planes invalid");
+        }
+        let mut dib = vec![0; resource.size as usize];
+        for (index, byte) in dib.iter_mut().enumerate() {
+            let mut value = [0];
+            memory.read(resource.address + index as u32, &mut value)?;
+            *byte = value[0];
+        }
+        let _ = ret;
+        Ok(LoadImageRequest {
+            resource_id,
+            dib,
+            width,
+            height,
+            planes,
+            bit_count,
+            compression,
+            size_image,
+            clr_used,
+        })
+    }
+
+    fn get_object_a(&self, esp: u32, memory: &mut impl GuestMemory) -> Result<u32, &'static str> {
+        let [ret, handle, buffer_bytes, output] = arguments::<4>(memory, esp)?;
+        let Some(GdiObject::Bitmap(bitmap)) = self.gdi_objects.get(&handle) else {
+            return Ok(0);
+        };
+        let required = 24u32;
+        if output == 0 {
+            return Ok(required);
+        }
+        if buffer_bytes < required {
+            return Ok(0);
+        }
+        write_u32(memory, output, 0)?;
+        write_u32(memory, output + 4, bitmap.width as u32)?;
+        write_u32(memory, output + 8, bitmap.height.unsigned_abs())?;
+        write_u32(memory, output + 12, bitmap.row_stride)?;
+        memory.write(output + 16, &bitmap.planes.to_le_bytes())?;
+        memory.write(output + 18, &bitmap.bit_count.to_le_bytes())?;
+        write_u32(memory, output + 20, bitmap.bits_va)?;
+        let _ = ret;
+        Ok(required)
+    }
+
+    fn create_compatible_dc(
+        &mut self,
+        esp: u32,
+        memory: &impl GuestMemory,
+    ) -> Result<u32, &'static str> {
+        let [ret, source_dc] = arguments::<2>(memory, esp)?;
+        let compatibility = if source_dc == 0 {
+            DcCompatibility::Display
+        } else {
+            match self.gdi_objects.get(&source_dc) {
+                Some(GdiObject::DeviceContext(dc)) => dc.compatible_with,
+                Some(_) => return Err("CreateCompatibleDC source is not a device context"),
+                None => return Err("unknown CreateCompatibleDC source DC"),
+            }
+        };
+        let handle = self.next_gdi_handle;
+        self.next_gdi_handle = self
+            .next_gdi_handle
+            .checked_add(1)
+            .ok_or("GDI handle overflow")?;
+        self.gdi_objects.insert(
+            handle,
+            GdiObject::DeviceContext(DeviceContext {
+                compatible_with: compatibility,
+                target: DcTarget::Memory {
+                    selected_bitmap: STOCK_MONO_BITMAP,
+                },
+                selected_palette: STOCK_DEFAULT_PALETTE,
+                palette_force_background: false,
+                realized_palette: None,
+                text_color: 0,
+                bk_color: 0x00ff_ffff,
+                bk_mode: OPAQUE,
+            }),
+        );
+        let _ = ret;
+        Ok(handle)
+    }
+
+    pub fn begin_paint(
+        &mut self,
+        hwnd: u32,
+        paint_struct: u32,
+        width: u32,
+        height: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<u32, &'static str> {
+        if self.active_paints.contains_key(&paint_struct) {
+            return Err("BeginPaint PAINTSTRUCT already active");
+        }
+        let handle = self.next_gdi_handle;
+        self.next_gdi_handle = self
+            .next_gdi_handle
+            .checked_add(1)
+            .ok_or("GDI handle overflow")?;
+        self.gdi_objects.insert(
+            handle,
+            GdiObject::DeviceContext(DeviceContext {
+                compatible_with: DcCompatibility::Display,
+                target: DcTarget::WindowPaint { hwnd },
+                selected_palette: STOCK_DEFAULT_PALETTE,
+                palette_force_background: false,
+                realized_palette: None,
+                text_color: 0,
+                bk_color: 0x00ff_ffff,
+                bk_mode: OPAQUE,
+            }),
+        );
+        memory.write(paint_struct, &[0; 64])?;
+        for (offset, value) in [
+            (0, handle),
+            (4, 0),
+            (8, 0),
+            (12, 0),
+            (16, width),
+            (20, height),
+            (24, 0),
+            (28, 0),
+        ] {
+            write_u32(memory, paint_struct + offset, value)?;
+        }
+        self.active_paints
+            .insert(paint_struct, ActivePaint { hwnd, hdc: handle });
+        Ok(handle)
+    }
+
+    fn end_paint(&mut self, esp: u32, memory: &impl GuestMemory) -> Result<u32, &'static str> {
+        let [_, hwnd, paint_struct] = arguments::<3>(memory, esp)?;
+        if paint_struct == 0 {
+            return Ok(0);
+        }
+        let Some(active) = self.active_paints.get(&paint_struct).copied() else {
+            return Ok(0);
+        };
+        if active.hwnd != hwnd || read_u32(memory, paint_struct)? != active.hdc {
+            return Ok(0);
+        }
+        let valid_window_dc = matches!(
+            self.gdi_objects.get(&active.hdc),
+            Some(GdiObject::DeviceContext(DeviceContext {
+                target: DcTarget::WindowPaint { hwnd: target_hwnd },
+                ..
+            })) if *target_hwnd == hwnd
+        );
+        if !valid_window_dc {
+            return Ok(0);
+        }
+        self.active_paints.remove(&paint_struct);
+        self.gdi_objects.remove(&active.hdc);
+        Ok(1)
+    }
+
+    fn select_object(&mut self, esp: u32, memory: &impl GuestMemory) -> Result<u32, &'static str> {
+        let [ret, hdc, object] = arguments::<3>(memory, esp)?;
+        let stock = match self.gdi_objects.get(&object) {
+            Some(GdiObject::Bitmap(bitmap)) => bitmap.stock,
+            Some(GdiObject::DeviceContext(_)) => return Err("SelectObject requires bitmap"),
+            Some(GdiObject::Palette(_)) => return Err("SelectObject requires bitmap"),
+            None => return Err("SelectObject unknown bitmap"),
+        };
+        let old = match self.gdi_objects.get(&hdc) {
+            Some(GdiObject::DeviceContext(DeviceContext {
+                target: DcTarget::Memory { selected_bitmap },
+                ..
+            })) => *selected_bitmap,
+            Some(GdiObject::DeviceContext(_)) => {
+                return Err("SelectObject requires memory device context");
+            }
+            Some(GdiObject::Bitmap(_)) => return Err("SelectObject requires device context"),
+            Some(GdiObject::Palette(_)) => return Err("SelectObject requires device context"),
+            None => return Err("SelectObject unknown device context"),
+        };
+        if !stock
+            && self.gdi_objects.iter().any(|(handle, value)| {
+                *handle != hdc
+                    && matches!(
+                        value,
+                        GdiObject::DeviceContext(DeviceContext { target: DcTarget::Memory { selected_bitmap }, .. }) if *selected_bitmap == object
+                    )
+            })
+        {
+            return Err("bitmap already selected into another device context");
+        }
+        let Some(GdiObject::DeviceContext(dc)) = self.gdi_objects.get_mut(&hdc) else {
+            return Err("SelectObject unknown device context");
+        };
+        let DcTarget::Memory { selected_bitmap } = &mut dc.target else {
+            return Err("SelectObject requires memory device context");
+        };
+        *selected_bitmap = object;
+        let _ = ret;
+        Ok(old)
+    }
+
+    fn get_dib_color_table(
+        &self,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<u32, &'static str> {
+        let [ret, hdc, start, count, output] = arguments::<5>(memory, esp)?;
+        if count == 0 || output == 0 {
+            return Ok(0);
+        }
+        let selected = match self.gdi_objects.get(&hdc) {
+            Some(GdiObject::DeviceContext(DeviceContext {
+                target: DcTarget::Memory { selected_bitmap },
+                ..
+            })) => *selected_bitmap,
+            _ => return Ok(0),
+        };
+        let palette = match self.gdi_objects.get(&selected) {
+            Some(GdiObject::Bitmap(bitmap)) if !bitmap.palette.is_empty() => &bitmap.palette,
+            _ => return Ok(0),
+        };
+        let start = start as usize;
+        if start >= palette.len() {
+            return Ok(0);
+        }
+        let copied = (count as usize).min(palette.len() - start);
+        for (index, entry) in palette[start..start + copied].iter().enumerate() {
+            let address = output
+                .checked_add(
+                    (index as u32)
+                        .checked_mul(4)
+                        .ok_or("palette output overflow")?,
+                )
+                .ok_or("palette output overflow")?;
+            memory.write(address, entry)?;
+        }
+        let _ = ret;
+        Ok(copied as u32)
+    }
+
+    fn create_palette(&mut self, esp: u32, memory: &impl GuestMemory) -> Result<u32, &'static str> {
+        let [ret, log_palette] = arguments::<2>(memory, esp)?;
+        let allocation = self
+            .allocations
+            .get(&log_palette)
+            .copied()
+            .ok_or("CreatePalette requires live heap allocation")?;
+        let version = read_u16(memory, log_palette)?;
+        let count = read_u16(memory, log_palette + 2)?;
+        if count == 0 || count > 256 {
+            return Err("CreatePalette entry count unsupported");
+        }
+        let required = 4usize
+            .checked_add(
+                usize::from(count)
+                    .checked_mul(4)
+                    .ok_or("palette size overflow")?,
+            )
+            .ok_or("palette size overflow")?;
+        if required > allocation as usize {
+            return Err("CreatePalette palette exceeds heap allocation");
+        }
+        let mut entries = Vec::with_capacity(count as usize);
+        for index in 0..count as u32 {
+            let address = log_palette
+                .checked_add(4 + index * 4)
+                .ok_or("palette address overflow")?;
+            entries.push(PaletteEntry {
+                red: read_byte(memory, address)?,
+                green: read_byte(memory, address + 1)?,
+                blue: read_byte(memory, address + 2)?,
+                flags: read_byte(memory, address + 3)?,
+            });
+        }
+        let handle = self.next_gdi_handle;
+        self.next_gdi_handle = self
+            .next_gdi_handle
+            .checked_add(1)
+            .ok_or("GDI handle overflow")?;
+        self.gdi_objects.insert(
+            handle,
+            GdiObject::Palette(PaletteObject {
+                version,
+                entries,
+                stock: false,
+            }),
+        );
+        let _ = ret;
+        Ok(handle)
+    }
+
+    fn select_palette(&mut self, esp: u32, memory: &impl GuestMemory) -> Result<u32, &'static str> {
+        let [ret, hdc, hpalette, force_background] = arguments::<4>(memory, esp)?;
+        if !matches!(self.gdi_objects.get(&hpalette), Some(GdiObject::Palette(_))) {
+            return Ok(0);
+        }
+        let old = match self.gdi_objects.get(&hdc) {
+            Some(GdiObject::DeviceContext(dc)) => dc.selected_palette,
+            _ => return Ok(0),
+        };
+        let Some(GdiObject::DeviceContext(dc)) = self.gdi_objects.get_mut(&hdc) else {
+            return Ok(0);
+        };
+        dc.selected_palette = hpalette;
+        dc.palette_force_background = force_background != 0;
+        dc.realized_palette = None;
+        let _ = ret;
+        Ok(old)
+    }
+
+    fn realize_palette(
+        &mut self,
+        esp: u32,
+        memory: &impl GuestMemory,
+    ) -> Result<u32, &'static str> {
+        let [ret, hdc] = arguments::<2>(memory, esp)?;
+        let (selected_palette, already_realized) = match self.gdi_objects.get(&hdc) {
+            Some(GdiObject::DeviceContext(dc)) => (
+                dc.selected_palette,
+                dc.realized_palette == Some(dc.selected_palette),
+            ),
+            _ => return Ok(u32::MAX),
+        };
+        let entry_count = match self.gdi_objects.get(&selected_palette) {
+            Some(GdiObject::Palette(palette)) => palette.entries.len(),
+            _ => return Ok(u32::MAX),
+        };
+        if already_realized {
+            return Ok(0);
+        }
+        let Some(GdiObject::DeviceContext(dc)) = self.gdi_objects.get_mut(&hdc) else {
+            return Ok(u32::MAX);
+        };
+        dc.realized_palette = Some(selected_palette);
+        let _ = ret;
+        u32::try_from(entry_count).map_err(|_| "palette entry count overflow")
+    }
+
+    fn set_text_color(&mut self, esp: u32, memory: &impl GuestMemory) -> Result<u32, &'static str> {
+        let [ret, hdc, color] = arguments::<3>(memory, esp)?;
+        let Some(GdiObject::DeviceContext(dc)) = self.gdi_objects.get_mut(&hdc) else {
+            return Ok(u32::MAX);
+        };
+        let old = dc.text_color;
+        dc.text_color = color & 0x00ff_ffff;
+        let _ = ret;
+        Ok(old)
+    }
+
+    fn set_bk_color(&mut self, esp: u32, memory: &impl GuestMemory) -> Result<u32, &'static str> {
+        let [ret, hdc, color] = arguments::<3>(memory, esp)?;
+        let Some(GdiObject::DeviceContext(dc)) = self.gdi_objects.get_mut(&hdc) else {
+            return Ok(u32::MAX);
+        };
+        let old = dc.bk_color;
+        dc.bk_color = color & 0x00ff_ffff;
+        let _ = ret;
+        Ok(old)
+    }
+
+    fn set_bk_mode(&mut self, esp: u32, memory: &impl GuestMemory) -> Result<u32, &'static str> {
+        let [_, hdc, mode] = arguments::<3>(memory, esp)?;
+        if !matches!(mode, TRANSPARENT | OPAQUE) {
+            return Ok(0);
+        }
+        let Some(GdiObject::DeviceContext(dc)) = self.gdi_objects.get_mut(&hdc) else {
+            return Ok(0);
+        };
+        let old = dc.bk_mode;
+        dc.bk_mode = mode;
+        Ok(old)
+    }
+
+    fn bit_blt(
+        &self,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<PersonalityAction, &'static str> {
+        let [
+            ret,
+            hdc_dst,
+            x,
+            y,
+            width,
+            height,
+            hdc_src,
+            x_src,
+            y_src,
+            rop,
+        ] = arguments::<10>(memory, esp)?;
+        if rop != 0x00cc_0020 {
+            return Err("unsupported BitBlt raster operation");
+        }
+        if x != 0 || y != 0 || x_src != 0 || y_src != 0 || width == 0 || height == 0 {
+            return Err("unsupported BitBlt coordinates or dimensions");
+        }
+        let hwnd = match self.gdi_objects.get(&hdc_dst) {
+            Some(GdiObject::DeviceContext(dc)) => match &dc.target {
+                DcTarget::WindowPaint { hwnd } => {
+                    if dc.realized_palette != Some(dc.selected_palette) {
+                        return Err("BitBlt destination palette is not realized");
+                    }
+                    *hwnd
+                }
+                DcTarget::Memory { .. } => return Err("BitBlt destination is not window paint DC"),
+            },
+            _ => return Err("BitBlt unknown destination DC"),
+        };
+        let bitmap_handle = match self.gdi_objects.get(&hdc_src) {
+            Some(GdiObject::DeviceContext(DeviceContext {
+                target: DcTarget::Memory { selected_bitmap },
+                ..
+            })) => *selected_bitmap,
+            Some(GdiObject::DeviceContext(_)) => return Err("BitBlt source is not memory DC"),
+            _ => return Err("BitBlt unknown source DC"),
+        };
+        let bitmap = match self.gdi_objects.get(&bitmap_handle) {
+            Some(GdiObject::Bitmap(bitmap)) => bitmap.clone(),
+            _ => return Err("BitBlt source selection is not bitmap"),
+        };
+        if bitmap.planes != 1
+            || bitmap.bit_count != 8
+            || bitmap.compression != 0
+            || bitmap.width <= 0
+            || bitmap.height == 0
+            || width > bitmap.width as u32
+            || height > bitmap.height.unsigned_abs()
+            || bitmap.palette.len() > 256
+        {
+            return Err("unsupported BitBlt bitmap shape");
+        }
+        let pixels = (width as usize)
+            .checked_mul(height as usize)
+            .and_then(|value| value.checked_mul(4))
+            .ok_or("BitBlt RGBA size overflow")?;
+        let mut rgba = vec![0; pixels];
+        let mut row = vec![0; bitmap.row_stride as usize];
+        for logical_y in 0..height as usize {
+            let physical_y = if bitmap.height > 0 {
+                bitmap.height as usize - 1 - logical_y
+            } else {
+                logical_y
+            };
+            let source = bitmap
+                .bits_va
+                .checked_add(
+                    u32::try_from(
+                        physical_y
+                            .checked_mul(bitmap.row_stride as usize)
+                            .ok_or("BitBlt source row overflow")?,
+                    )
+                    .map_err(|_| "BitBlt source row overflow")?,
+                )
+                .ok_or("BitBlt source address overflow")?;
+            memory.read(source, &mut row)?;
+            for logical_x in 0..width as usize {
+                let index = row[logical_x] as usize;
+                let entry = *bitmap
+                    .palette
+                    .get(index)
+                    .ok_or("BitBlt palette index out of range")?;
+                let destination = (logical_y * width as usize + logical_x) * 4;
+                rgba[destination..destination + 4]
+                    .copy_from_slice(&[entry[2], entry[1], entry[0], 255]);
+            }
+        }
+        let _ = ret;
+        Ok(PersonalityAction::WindowBlit(WindowBlitRequest {
+            dst_hdc: hdc_dst,
+            hwnd,
+            dst_x: x,
+            dst_y: y,
+            width,
+            height,
+            rgba,
+            source_bitmap: bitmap_handle,
+            src_hdc: hdc_src,
+            bits_va: bitmap.bits_va,
+            bottom_up: bitmap.height > 0,
+        }))
+    }
+
+    fn delete_dc(&mut self, esp: u32, memory: &impl GuestMemory) -> Result<u32, &'static str> {
+        let [ret, hdc] = arguments::<2>(memory, esp)?;
+        let is_dc = matches!(
+            self.gdi_objects.get(&hdc),
+            Some(GdiObject::DeviceContext(DeviceContext {
+                target: DcTarget::Memory { .. },
+                ..
+            }))
+        );
+        if is_dc {
+            self.gdi_objects.remove(&hdc);
+            let _ = ret;
+            return Ok(1);
+        }
+        let _ = ret;
+        Ok(0)
+    }
+
+    fn delete_object(&mut self, esp: u32, memory: &impl GuestMemory) -> Result<u32, &'static str> {
+        let [ret, object] = arguments::<2>(memory, esp)?;
+        let Some(value) = self.gdi_objects.get(&object) else {
+            let _ = ret;
+            return Ok(0);
+        };
+        match value {
+            GdiObject::DeviceContext(_) => Ok(0),
+            GdiObject::Bitmap(bitmap) => {
+                if bitmap.stock
+                    || self.gdi_objects.iter().any(|(handle, value)| {
+                        *handle != object
+                            && matches!(
+                                value,
+                                GdiObject::DeviceContext(DeviceContext { target: DcTarget::Memory { selected_bitmap }, .. }) if *selected_bitmap == object
+                            )
+                    })
+                {
+                    return Ok(0);
+                }
+                self.gdi_objects.remove(&object);
+                Ok(1)
+            }
+            GdiObject::Palette(_) => {
+                if self.gdi_objects.get(&object).is_some_and(|value| {
+                    matches!(value, GdiObject::Palette(PaletteObject { stock: true, .. }))
+                }) || self.gdi_objects.values().any(|value| {
+                    matches!(
+                        value,
+                        GdiObject::DeviceContext(DeviceContext { selected_palette, .. })
+                            if *selected_palette == object
+                    )
+                }) {
+                    return Ok(0);
+                }
+                self.gdi_objects.remove(&object);
+                Ok(1)
+            }
+        }
+    }
+
+    fn multi_byte_to_wide(
+        &self,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<u32, &'static str> {
+        let [_, cp, _, source, count, output, capacity] = arguments::<7>(memory, esp)?;
+        if cp != 0 && cp != XP_ANSI_CODE_PAGE {
+            return Err("unsupported code page");
+        }
+        let bytes = if count == u32::MAX {
+            read_c_string(memory, source, 4096)?
+                .into_bytes()
+                .into_iter()
+                .chain([0])
+                .collect::<Vec<_>>()
+        } else {
+            let mut v = vec![0; count as usize];
+            memory.read(source, &mut v)?;
+            v
+        };
+        if output == 0 {
+            return Ok(bytes.len() as u32);
+        }
+        if capacity < bytes.len() as u32 {
+            return Ok(0);
+        }
+        for (index, byte) in bytes.iter().enumerate() {
+            memory.write(
+                output + (index as u32) * 2,
+                &decode_cp1252(*byte).to_le_bytes(),
+            )?;
+        }
+        Ok(bytes.len() as u32)
+    }
+
+    fn wide_to_multi_byte(
+        &self,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<u32, &'static str> {
+        let [_, cp, _, source, count, output, capacity, _, _] = arguments::<9>(memory, esp)?;
+        if cp != 0 && cp != XP_ANSI_CODE_PAGE {
+            return Err("unsupported code page");
+        }
+        let length = if count == u32::MAX {
+            let mut n = 0;
+            loop {
+                if read_u16(memory, source + n * 2)? == 0 {
+                    break n + 1;
+                }
+                n += 1;
+            }
+        } else {
+            count
+        };
+        if output == 0 {
+            return Ok(length);
+        }
+        if capacity < length {
+            return Ok(0);
+        }
+        for index in 0..length {
+            let value = read_u16(memory, source + index * 2)?;
+            memory.write(output + index, &[encode_cp1252(value).unwrap_or(b'?')])?;
+        }
+        Ok(length)
+    }
+
+    fn lc_map_string(&self, esp: u32, memory: &mut impl GuestMemory) -> Result<u32, &'static str> {
+        let [_, _locale, flags, source, count, output, capacity] = arguments::<7>(memory, esp)?;
+        let mode = lc_map_mode(flags).ok_or("unsupported LCMapStringW flags")?;
+        let signed_count = count as i32;
+        if signed_count == 0 {
+            return Err("LCMapStringW zero source length");
+        }
+        let length = if signed_count < 0 {
+            let mut length = 0u32;
+            loop {
+                let offset = length
+                    .checked_mul(2)
+                    .ok_or("LCMapStringW length overflow")?;
+                let address = source
+                    .checked_add(offset)
+                    .ok_or("LCMapStringW source overflow")?;
+                let value = read_u16(memory, address)?;
+                length = length
+                    .checked_add(1)
+                    .ok_or("LCMapStringW length overflow")?;
+                if value == 0 {
+                    break length;
+                }
+            }
+        } else {
+            count
+        };
+        if capacity == 0 {
+            return Ok(length);
+        }
+        if output == 0 || capacity < length {
+            return Ok(0);
+        }
+        for index in 0..length {
+            let offset = index.checked_mul(2).ok_or("LCMapStringW length overflow")?;
+            let source_address = source
+                .checked_add(offset)
+                .ok_or("LCMapStringW source overflow")?;
+            let output_address = output
+                .checked_add(offset)
+                .ok_or("LCMapStringW output overflow")?;
+            let mapped = lc_map_scalar(read_u16(memory, source_address)?, mode);
+            memory.write(output_address, &mapped.to_le_bytes())?;
+        }
+        Ok(length)
+    }
+
+    fn register_class(&mut self, esp: u32, memory: &impl GuestMemory) -> Result<u32, &'static str> {
+        let structure = read_u32(memory, esp + 4)?;
+        let name_ptr = read_u32(memory, structure + 36)?;
+        let name = read_c_string(memory, name_ptr, 256)?;
+        let menu_ptr = read_u32(memory, structure + 32)?;
+        let menu_name = if menu_ptr == 0 || menu_ptr >> 16 == 0 {
+            None
+        } else {
+            Some(read_c_string(memory, menu_ptr, 256)?)
+        };
+        let atom = self.registered_classes.len() as u16 + 1;
+        self.registered_classes.insert(
+            name.clone(),
+            RegisteredClass {
+                atom,
+                name,
+                style: read_u32(memory, structure)?,
+                wndproc: read_u32(memory, structure + 4)?,
+                cls_extra: read_u32(memory, structure + 8)? as i32,
+                wnd_extra: read_u32(memory, structure + 12)? as i32,
+                instance: read_u32(memory, structure + 16)?,
+                icon: read_u32(memory, structure + 20)?,
+                cursor: read_u32(memory, structure + 24)?,
+                background: read_u32(memory, structure + 28)?,
+                menu_name,
+            },
+        );
+        Ok(atom as u32)
+    }
+    fn get_client_rect(
+        &self,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<u32, &'static str> {
+        let [_, hwnd, out] = arguments::<3>(memory, esp)?;
+        if hwnd != DESKTOP_HWND {
+            return Err("unknown desktop");
+        }
+        for (o, v) in [
+            (0, 0u32),
+            (4, 0),
+            (8, self.desktop_size.0),
+            (12, self.desktop_size.1),
+        ] {
+            write_u32(memory, out + o, v)?;
+        }
+        Ok(1)
+    }
+
+    fn def_window_proc(&self, esp: u32, memory: &impl GuestMemory) -> Result<u32, &'static str> {
+        let [_, _, _, _, _] = arguments::<5>(memory, esp)?;
+        Ok(0)
+    }
+
+    fn draw_text_a(
+        &self,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<PersonalityAction, &'static str> {
+        let [ret, hdc, text_ptr, count_raw, rect_ptr, format] = arguments::<6>(memory, esp)?;
+        let _ = ret;
+        if (count_raw as i32) < 0 {
+            return Err("DrawTextA count=-1 unsupported");
+        }
+        if !matches!(
+            self.gdi_objects.get(&hdc),
+            Some(GdiObject::DeviceContext(_))
+        ) {
+            return Err("DrawTextA unknown device context");
+        }
+        if format != 0x0000_0411 && format != 0x0000_0011 {
+            return Err("DrawTextA format unsupported");
+        }
+        if rect_ptr == 0 {
+            return Err("DrawTextA requires RECT");
+        }
+        let mut bytes = vec![0; count_raw as usize];
+        memory.read(text_ptr, &mut bytes)?;
+        let mut text = String::with_capacity(bytes.len());
+        for byte in &bytes {
+            let codepoint = decode_cp1252(*byte) as u32;
+            let character = char::from_u32(codepoint).ok_or("DrawTextA CP1252 decode")?;
+            text.push(character);
+        }
+        let measured_width = bytes
+            .iter()
+            .map(|byte| system_font_advance_cp1252(*byte).ok_or("DrawTextA character unsupported"))
+            .try_fold(0u32, |total, advance| {
+                total
+                    .checked_add(advance?)
+                    .ok_or("DrawTextA width overflow")
+            })?;
+        let left = read_i32(memory, rect_ptr)?;
+        let top = read_i32(memory, rect_ptr + 4)?;
+        let right = read_i32(memory, rect_ptr + 8)?;
+        let _bottom = read_i32(memory, rect_ptr + 12)?;
+        let available_width = right.checked_sub(left).ok_or("DrawTextA RECT overflow")?;
+        if measured_width > u32::try_from(available_width).map_err(|_| "DrawTextA RECT width")? {
+            return Err("DrawTextA word wrap frontier");
+        }
+        if format == 0x0000_0411 {
+            write_u32(
+                memory,
+                rect_ptr + 8,
+                left.checked_add(measured_width as i32)
+                    .ok_or("DrawTextA right overflow")? as u32,
+            )?;
+            write_u32(
+                memory,
+                rect_ptr + 12,
+                top.checked_add(16).ok_or("DrawTextA bottom overflow")? as u32,
+            )?;
+            return Ok(PersonalityAction::Return(16));
+        }
+
+        let (hwnd, colorref) = match self.gdi_objects.get(&hdc) {
+            Some(GdiObject::DeviceContext(dc)) => match &dc.target {
+                DcTarget::WindowPaint { hwnd } => (*hwnd, dc.text_color),
+                DcTarget::Memory { .. } => return Err("DrawTextA target is memory DC"),
+            },
+            _ => return Err("DrawTextA unknown device context"),
+        };
+        Ok(PersonalityAction::WindowText(WindowTextRequest {
+            hwnd,
+            hdc,
+            text,
+            rect: [left, top, right, read_i32(memory, rect_ptr + 12)?],
+            colorref,
+            height: 16,
+        }))
+    }
+
+    fn create_window_request(
+        &self,
+        esp: u32,
+        memory: &impl GuestMemory,
+        owner: ThreadKey,
+    ) -> Result<CreateWindowRequest, &'static str> {
+        let a = arguments::<13>(memory, esp)?;
+        if a[7] == 0 || a[8] == 0 || (a[11] != 0 && a[11] != pe32::IMAGE_BASE) {
+            return Err("unexpected CreateWindowExA frame");
+        }
+        let class = read_c_string(memory, a[2], 256)?;
+        let registered = self
+            .registered_classes
+            .get(&class)
+            .ok_or("unregistered class")?;
+        let title = read_c_string(memory, a[3], 256)?;
+        Ok(CreateWindowRequest {
+            owner,
+            class,
+            wndproc: registered.wndproc,
+            title,
+            ex_style: a[1],
+            style: a[4],
+            x: a[5] as i32,
+            y: a[6] as i32,
+            width: a[7],
+            height: a[8],
+            parent: a[9],
+            menu: a[10],
+            instance: a[11],
+            param: a[12],
+        })
+    }
+    fn peek_message(
+        &mut self,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<u32, &'static str> {
+        let [_, out, hwnd, min, max, flags] = arguments::<6>(memory, esp)?;
+        let pos = self.messages.iter().position(|m| {
+            (hwnd == 0 || m.hwnd == hwnd)
+                && ((min == 0 && max == 0) || (m.message >= min && m.message <= max))
+        });
+        let Some(pos) = pos else { return Ok(0) };
+        let m = if flags & 1 != 0 {
+            self.messages.remove(pos).unwrap()
+        } else {
+            self.messages[pos].clone()
+        };
+        for (o, v) in [
+            (0, m.hwnd),
+            (4, m.message),
+            (8, m.wparam),
+            (12, m.lparam),
+            (16, m.time),
+            (20, m.x as u32),
+            (24, m.y as u32),
+        ] {
+            write_u32(memory, out + o, v)?;
+        }
+        Ok(1)
+    }
+
+    fn create_thread(
+        &mut self,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<u32, &'static str> {
+        let [ret, attrs, stack, start, parameter, flags, tid_ptr] = arguments::<7>(memory, esp)?;
+        let frame = CreateThreadFrame {
+            return_address: ret,
+            thread_attributes: attrs,
+            stack_size: stack,
+            start_address: start,
+            parameter,
+            creation_flags: flags,
+            thread_id_pointer: tid_ptr,
+        };
+        frame.validate_launcher_checkpoint()?;
+        let tid = self.next_tid;
+        let handle = self.next_thread_handle;
+        self.next_tid += 1;
+        self.next_thread_handle += 1;
+        self.threads.push(ThreadObject {
+            handle,
+            tid,
+            start_address: start,
+            parameter,
+            requested_stack_size: stack,
+            suspend_count: u32::from(flags & CREATE_SUSPENDED != 0),
+            exit_code: None,
+            open: true,
+        });
+        write_u32(memory, tid_ptr, tid)?;
+        Ok(handle)
+    }
+
+    fn resume_thread(&mut self, esp: u32, memory: &impl GuestMemory) -> Result<u32, &'static str> {
+        let handle = read_u32(memory, esp + 4)?;
+        let thread = self
+            .threads
+            .iter_mut()
+            .find(|thread| thread.open && thread.handle == handle)
+            .ok_or("ResumeThread unknown handle")?;
+        let old = thread.suspend_count;
+        if old != 0 {
+            thread.suspend_count -= 1;
+        }
+        if old == 1 {
+            self.runnable_thread = Some(thread.tid);
+        }
+        Ok(old)
+    }
+
+    pub fn take_runnable_thread(&mut self) -> Option<ThreadObject> {
+        let tid = self.runnable_thread.take()?;
+        self.threads
+            .iter()
+            .find(|thread| thread.tid == tid)
+            .cloned()
+    }
+
+    /// The launcher checkpoint deliberately keeps the resumed worker runnable
+    /// but unexecuted. This is observable at CreateProcessA #89.
+    pub fn deferred_runnable_tid(&self) -> Option<u32> {
+        self.runnable_thread
+    }
+
+    pub fn set_desktop_size(&mut self, width: u32, height: u32) {
+        self.desktop_size = (width, height);
+    }
+
+    pub fn admit_bitmap(
+        &mut self,
+        request: LoadImageRequest,
+        decoded_rgba: Vec<u8>,
+        bits_va: u32,
+        layout: DibLayout,
+    ) -> Result<u32, &'static str> {
+        if decoded_rgba.is_empty() || decoded_rgba.len() % 4 != 0 {
+            return Err("decoded bitmap is not canonical RGBA8");
+        }
+        let handle = self.next_gdi_handle;
+        self.next_gdi_handle = self
+            .next_gdi_handle
+            .checked_add(1)
+            .ok_or("GDI handle overflow")?;
+        self.gdi_objects.insert(
+            handle,
+            GdiObject::Bitmap(BitmapObject {
+                resource_id: request.resource_id,
+                width: request.width,
+                height: request.height,
+                planes: request.planes,
+                bit_count: request.bit_count,
+                compression: request.compression,
+                size_image: request.size_image,
+                clr_used: request.clr_used,
+                dib: request.dib,
+                decoded_rgba,
+                palette: layout.palette,
+                bits_va,
+                bits_len: layout.bits_len,
+                row_stride: layout.row_stride as u32,
+                pixel_offset: layout.pixel_offset,
+                stock: false,
+            }),
+        );
+        Ok(handle)
+    }
+
+    pub fn allocate_gdi_bits(&mut self, bits_len: usize) -> Result<u32, &'static str> {
+        let pages = bits_len
+            .checked_add(0xfff)
+            .ok_or("DIB allocation overflow")?
+            & !0xfff;
+        let va = self.next_gdi_dib_va;
+        self.next_gdi_dib_va = va
+            .checked_add(u32::try_from(pages).map_err(|_| "DIB allocation too large")?)
+            .ok_or("DIB VA overflow")?;
+        Ok(va)
+    }
+
+    pub fn bitmap_info(&self, handle: u32) -> Option<BitmapDiagnostic> {
+        match self.gdi_objects.get(&handle)? {
+            GdiObject::Bitmap(bitmap) => Some(BitmapDiagnostic {
+                resource_id: bitmap.resource_id,
+                width: bitmap.width,
+                height: bitmap.height,
+                planes: bitmap.planes,
+                bit_count: bitmap.bit_count,
+                compression: bitmap.compression,
+                size_image: bitmap.size_image,
+                clr_used: bitmap.clr_used,
+                dib_bytes: bitmap.dib.len(),
+                rgba: bitmap.decoded_rgba.clone(),
+                bits_va: bitmap.bits_va,
+                bits_len: bitmap.bits_len,
+                row_stride: bitmap.row_stride,
+            }),
+            GdiObject::DeviceContext(_) => None,
+            GdiObject::Palette(_) => None,
+        }
+    }
+
+    pub fn compatible_dc_info(&self, handle: u32) -> Option<(u32, i32, i32, u16)> {
+        match self.gdi_objects.get(&handle)? {
+            GdiObject::DeviceContext(dc) => match (&dc.compatible_with, &dc.target) {
+                (DcCompatibility::Display, DcTarget::Memory { selected_bitmap }) => {
+                    Some((*selected_bitmap, 1, 1, 1))
+                }
+                (_, DcTarget::WindowPaint { .. }) => None,
+            },
+            GdiObject::Bitmap(_) => None,
+            GdiObject::Palette(_) => None,
+        }
+    }
+
+    pub fn dc_target(&self, handle: u32) -> Option<Option<u32>> {
+        match self.gdi_objects.get(&handle)? {
+            GdiObject::DeviceContext(DeviceContext {
+                target: DcTarget::Memory { .. },
+                ..
+            }) => Some(None),
+            GdiObject::DeviceContext(DeviceContext {
+                target: DcTarget::WindowPaint { hwnd },
+                ..
+            }) => Some(Some(*hwnd)),
+            _ => None,
+        }
+    }
+
+    pub fn selected_bitmap(&self, handle: u32) -> Option<u32> {
+        match self.gdi_objects.get(&handle)? {
+            GdiObject::DeviceContext(DeviceContext {
+                target: DcTarget::Memory { selected_bitmap },
+                ..
+            }) => Some(*selected_bitmap),
+            GdiObject::DeviceContext(_) => None,
+            GdiObject::Bitmap(_) => None,
+            GdiObject::Palette(_) => None,
+        }
+    }
+
+    pub fn selected_palette(&self, handle: u32) -> Option<u32> {
+        match self.gdi_objects.get(&handle)? {
+            GdiObject::DeviceContext(dc) => Some(dc.selected_palette),
+            _ => None,
+        }
+    }
+
+    pub fn realized_palette(&self, handle: u32) -> Option<Option<u32>> {
+        match self.gdi_objects.get(&handle)? {
+            GdiObject::DeviceContext(dc) => Some(dc.realized_palette),
+            _ => None,
+        }
+    }
+
+    pub fn text_color(&self, handle: u32) -> Option<u32> {
+        match self.gdi_objects.get(&handle) {
+            Some(GdiObject::DeviceContext(dc)) => Some(dc.text_color),
+            _ => None,
+        }
+    }
+
+    pub fn text_state(&self, handle: u32) -> Option<(u32, u32, u32)> {
+        match self.gdi_objects.get(&handle) {
+            Some(GdiObject::DeviceContext(dc)) => Some((dc.text_color, dc.bk_color, dc.bk_mode)),
+            _ => None,
+        }
+    }
+
+    pub fn palette_entries(&self, handle: u32) -> Option<usize> {
+        match self.gdi_objects.get(&handle)? {
+            GdiObject::Palette(palette) => Some(palette.entries.len()),
+            _ => None,
+        }
+    }
+
+    pub fn bitmap_selected_in_dc(&self, bitmap: u32) -> bool {
+        self.gdi_objects.values().any(
+            |value| matches!(value, GdiObject::DeviceContext(DeviceContext { target: DcTarget::Memory { selected_bitmap }, .. }) if *selected_bitmap == bitmap),
+        )
+    }
+
+    pub fn bitmap_stock(&self, handle: u32) -> Option<bool> {
+        match self.gdi_objects.get(&handle)? {
+            GdiObject::Bitmap(bitmap) => Some(bitmap.stock),
+            _ => None,
+        }
+    }
+
+    pub fn gdi_live(&self, handle: u32) -> bool {
+        self.gdi_objects.contains_key(&handle)
+    }
+
+    pub fn active_paint_count(&self) -> usize {
+        self.active_paints.len()
+    }
+
+    pub fn allocation_size(&self, pointer: u32) -> Option<u32> {
+        self.allocations.get(&pointer).copied()
+    }
+
+    pub fn palette_info(&self, handle: u32) -> Option<(u16, usize)> {
+        match self.gdi_objects.get(&handle)? {
+            GdiObject::Palette(palette) => Some((palette.version, palette.entries.len())),
+            _ => None,
+        }
+    }
+
+    pub fn exit_thread(&mut self, tid: u32, exit_code: u32) -> Result<(), &'static str> {
+        let thread = self
+            .threads
+            .iter_mut()
+            .find(|thread| thread.tid == tid)
+            .ok_or("ExitThread unknown thread")?;
+        thread.exit_code = Some(exit_code);
+        Ok(())
+    }
+}
