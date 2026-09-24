@@ -1834,6 +1834,26 @@ impl XpProcess {
         (self.virtual_reservations.len(), self.virtual_reserve_next)
     }
 
+    pub fn virtual_prepare_release(&self, address: u32, size: u32) -> Option<VirtualReservation> {
+        if size != 0 {
+            return None;
+        }
+        self.virtual_reservations
+            .iter()
+            .find(|reservation| reservation.base == address)
+            .cloned()
+    }
+
+    pub fn virtual_finish_release(&mut self, base: u32, size: u32) -> Result<(), &'static str> {
+        let index = self
+            .virtual_reservations
+            .iter()
+            .position(|reservation| reservation.base == base && reservation.size == size)
+            .ok_or("VirtualFree reservation disappeared")?;
+        self.virtual_reservations.remove(index);
+        Ok(())
+    }
+
     pub fn virtual_prepare_commit(
         &self,
         address: u32,

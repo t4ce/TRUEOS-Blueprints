@@ -8,6 +8,8 @@ const ERROR_FILE_NOT_FOUND: u32 = 2;
 const ERROR_INVALID_HANDLE: u32 = 6;
 const ERROR_INVALID_PARAMETER: u32 = 87;
 const ERROR_MORE_DATA: u32 = 234;
+const ERROR_INVALID_ADDRESS: u32 = 487;
+const MEM_RELEASE: u32 = 0x0000_8000;
 const EXEC_SAMPLE_PREEMPTIONS: u64 = 8;
 const MAX_SEH_CHAIN_DEPTH: u32 = 64;
 const WAR3_REPEATED_NULL_CALL_SLOT: u32 = 0x0049_a960;
@@ -5380,13 +5382,112 @@ pub(super) async fn run_loop(
                                 frame_caller_ret,
                             ),
                         );
+                        if free_type != MEM_RELEASE {
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD VIRTUALFREE FRONTIER reason=unsupported-free-type address=0x{address:08x} size=0x{size:08x} free_type=0x{free_type:08x}"
+                                ),
+                            );
+                            return Ok(());
+                        }
+                        if size != 0 {
+                            session
+                                .process_mut(active_pid)
+                                .ok_or_else(|| "child process missing".to_owned())?
+                                .xp
+                                .set_last_error_for_thread(active_tid, ERROR_INVALID_ADDRESS);
+                            let mut registers = exit.registers;
+                            registers.eax = 0;
+                            contexts[active]
+                                .context
+                                .set_registers(registers)
+                                .map_err(|error| error.to_string())?;
+                            continue;
+                        }
+                        let reservation = session
+                            .process(active_pid)
+                            .ok_or_else(|| "child process missing".to_owned())?
+                            .xp
+                            .virtual_prepare_release(address, size);
+                        let Some(reservation) = reservation else {
+                            session
+                                .process_mut(active_pid)
+                                .ok_or_else(|| "child process missing".to_owned())?
+                                .xp
+                                .set_last_error_for_thread(active_tid, ERROR_INVALID_ADDRESS);
+                            let mut registers = exit.registers;
+                            registers.eax = 0;
+                            contexts[active]
+                                .context
+                                .set_registers(registers)
+                                .map_err(|error| error.to_string())?;
+                            continue;
+                        };
+                        let committed_ranges = reservation.committed.len();
+                        let committed_bytes = reservation
+                            .committed
+                            .iter()
+                            .try_fold(0u32, |total, commit| total.checked_add(commit.size))
+                            .ok_or("VirtualFree committed size overflow")?;
+                        for commit in &reservation.committed {
+                            child
+                                .address_space
+                                .unmap(
+                                    commit.base,
+                                    usize::try_from(commit.size)
+                                        .map_err(|_| "VirtualFree committed size")?,
+                                )
+                                .map_err(|error| {
+                                    format!(
+                                        "VirtualFree unmap base=0x{:08x} size=0x{:08x}: {error}",
+                                        commit.base, commit.size
+                                    )
+                                })?;
+                        }
+                        let (reservations, reserve_next, remaining_ranges, remaining_bytes) = {
+                            let process = &mut session
+                                .process_mut(active_pid)
+                                .ok_or_else(|| "child process missing".to_owned())?
+                                .xp;
+                            process
+                                .virtual_finish_release(reservation.base, reservation.size)
+                                .map_err(str::to_owned)?;
+                            let (reservations, reserve_next) = process.virtual_reservation_state();
+                            let (remaining_ranges, remaining_bytes) = process.virtual_commit_state();
+                            (reservations, reserve_next, remaining_ranges, remaining_bytes)
+                        };
                         logl::log(
                             level::IMPORTANT,
                             format_args!(
-                                "WC3 CHILD VIRTUALFREE FRONTIER reason=observed-shape-not-yet-admitted"
+                                "WC3 CHILD VIRTUALFREE RELEASE pid={} tid={} base=0x{:08x} reservation_size=0x{:08x} committed_ranges={} committed_bytes={} unmapped_bytes={} result=1 cleanup=12-by-thunk",
+                                active_pid,
+                                active_tid,
+                                reservation.base,
+                                reservation.size,
+                                committed_ranges,
+                                committed_bytes,
+                                committed_bytes,
                             ),
                         );
-                        return Ok(());
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD VIRTUAL MEMORY pid={} reservations={} committed_ranges={} committed_bytes={} reserve_next=0x{:08x}",
+                                active_pid,
+                                reservations,
+                                remaining_ranges,
+                                remaining_bytes,
+                                reserve_next,
+                            ),
+                        );
+                        let mut registers = exit.registers;
+                        registers.eax = 1;
+                        contexts[active]
+                            .context
+                            .set_registers(registers)
+                            .map_err(|error| error.to_string())?;
+                        continue;
                     }
                     let operation = child_loader::provider_op(&provider);
                     if operation == child_loader::ProviderOp::CrtBeginThreadEx {

@@ -2690,6 +2690,37 @@ mod tests_process_1 {
     }
 
     #[test]
+    fn child_virtual_release_retires_only_an_exact_zero_size_reservation() {
+        let mut process = XpProcess::new(Vec::new());
+        let reservation = process.virtual_reserve_null(0x10000).unwrap().unwrap();
+        let first = process
+            .virtual_prepare_commit(reservation.base, XP_PAGE_SIZE)
+            .unwrap()
+            .unwrap();
+        process.virtual_finish_commit(first).unwrap();
+        let second = process
+            .virtual_prepare_commit(reservation.base + XP_PAGE_SIZE, XP_PAGE_SIZE)
+            .unwrap()
+            .unwrap();
+        process.virtual_finish_commit(second).unwrap();
+        let reserve_next = process.virtual_reservation_state().1;
+
+        assert!(process
+            .virtual_prepare_release(reservation.base, XP_PAGE_SIZE)
+            .is_none());
+        let prepared = process.virtual_prepare_release(reservation.base, 0).unwrap();
+        assert_eq!(prepared.committed.len(), 2);
+        assert_eq!(prepared.committed.iter().map(|commit| commit.size).sum::<u32>(), 0x2000);
+        process
+            .virtual_finish_release(prepared.base, prepared.size)
+            .unwrap();
+
+        assert!(process.virtual_reservation_at(reservation.base).is_none());
+        assert_eq!(process.virtual_commit_state(), (0, 0));
+        assert_eq!(process.virtual_reservation_state(), (0, reserve_next));
+    }
+
+    #[test]
     fn appended_provider_updates_the_existing_thunk_page_tail() {
         let mut xp = XpProcess::new(Vec::new());
         let existing = (0..337)
