@@ -1230,6 +1230,52 @@ impl XpProcess {
         })
     }
 
+    fn load_icon_a(
+        &mut self,
+        esp: u32,
+        memory: &impl GuestMemory,
+    ) -> Result<UserImageLoadResult, ProviderDispatchError> {
+        const IMAGE_ICON: u32 = 1;
+        const LR_DEFAULTSIZE: u32 = 0x40;
+        const RT_ICON: u32 = 3;
+        const RT_GROUP_ICON: u32 = 14;
+        let [_, module, name_ptr, image_type, cx, cy, flags] = arguments::<7>(memory, esp)?;
+        if module != pe32::IMAGE_BASE || image_type != IMAGE_ICON || cx != 0 || cy != 0 || flags != LR_DEFAULTSIZE {
+            return Err(ProviderDispatchError::Frontier { api: "LoadImageA", detail: format!("module=0x{module:08x} name=0x{name_ptr:08x} type={image_type} cx={cx} cy={cy} flags=0x{flags:08x}") });
+        }
+        if name_ptr == 0 || name_ptr & 0xffff_0000 == 0 {
+            return Err(ProviderDispatchError::Frontier { api: "LoadImageA", detail: format!("unobserved icon name=0x{name_ptr:08x}") });
+        }
+        let name = read_c_string(memory, name_ptr, 256)?;
+        let group = resource_data(memory, module, ResourceKey::Id(RT_GROUP_ICON), ResourceKey::Name(&name))?;
+        if group.size < 6 || read_u16(memory, group.address)? != 0 || read_u16(memory, group.address + 2)? != 1 {
+            return Err(ProviderDispatchError::Fault("group icon header"));
+        }
+        let entries = u32::from(read_u16(memory, group.address + 4)?);
+        let mut icon_id = None;
+        for index in 0..entries {
+            let offset = group.address.checked_add(6 + index * 14).ok_or(ProviderDispatchError::Fault("group icon entry overflow"))?;
+            if offset.checked_add(14).ok_or(ProviderDispatchError::Fault("group icon entry overflow"))? > group.address + group.size {
+                return Err(ProviderDispatchError::Fault("group icon entry truncated"));
+            }
+            if read_byte(memory, offset)? == XP_CXICON as u8 && read_byte(memory, offset + 1)? == XP_CYICON as u8 {
+                icon_id = Some(read_u16(memory, offset + 12)?);
+                break;
+            }
+        }
+        let resource_id = icon_id.ok_or(ProviderDispatchError::Frontier {
+            api: "LoadImageA",
+            detail: format!("group icon {name:?} has no {}x{} entry", XP_CXICON, XP_CYICON),
+        })?;
+        let icon = numeric_resource(memory, module, RT_ICON, u32::from(resource_id))?;
+        let mut bytes = vec![0; icon.size as usize];
+        memory.read(icon.address, &mut bytes)?;
+        let handle = self.next_user_image_handle;
+        self.next_user_image_handle = self.next_user_image_handle.checked_add(1).ok_or(ProviderDispatchError::Fault("user image handle overflow"))?;
+        self.user_images.insert(handle, UserImage::Icon { module, name: name.clone(), width: XP_CXICON, height: XP_CYICON, resource_id, bytes });
+        Ok(UserImageLoadResult { handle, module, name, width: XP_CXICON, height: XP_CYICON, resource_id })
+    }
+
     fn get_object_a(&self, esp: u32, memory: &mut impl GuestMemory) -> Result<u32, &'static str> {
         let [ret, handle, buffer_bytes, output] = arguments::<4>(memory, esp)?;
         let Some(GdiObject::Bitmap(bitmap)) = self.gdi_objects.get(&handle) else {
@@ -2128,6 +2174,19 @@ impl XpProcess {
 
     pub fn desktop_size(&self) -> (u32, u32) {
         self.desktop_size
+    }
+
+    pub fn user_image_load_result(&self, handle: u32) -> Option<UserImageLoadResult> {
+        match self.user_images.get(&handle)? {
+            UserImage::Icon { module, name, width, height, resource_id, .. } => Some(UserImageLoadResult {
+                handle,
+                module: *module,
+                name: name.clone(),
+                width: *width,
+                height: *height,
+                resource_id: *resource_id,
+            }),
+        }
     }
 
     pub fn admit_bitmap(

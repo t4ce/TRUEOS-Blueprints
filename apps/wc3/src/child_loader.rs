@@ -166,6 +166,7 @@ pub enum ProviderOp {
     D3D8GetAdapterIdentifier,
     EnumDisplayDevicesA,
     EnumDisplaySettingsA,
+    LoadImageA,
     Unknown,
 }
 
@@ -238,6 +239,7 @@ impl ProviderOp {
             | Self::LoadStringA => 16,
             Self::D3D8GetAdapterIdentifier | Self::EnumDisplayDevicesA => 16,
             Self::EnumDisplaySettingsA => 12,
+            Self::LoadImageA => 24,
             Self::MultiByteToWideChar | Self::LCMapStringW | Self::RegQueryValueExA => 24,
             Self::CreateThread => 24,
             Self::SetThreadPriority => 8,
@@ -389,6 +391,7 @@ impl ProviderOp {
                 | Self::D3D8GetAdapterIdentifier
                 | Self::EnumDisplayDevicesA
                 | Self::EnumDisplaySettingsA
+                | Self::LoadImageA
         )
     }
 }
@@ -496,6 +499,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "wsprintfA" => ProviderOp::WsprintfA,
             "EnumDisplayDevicesA" => ProviderOp::EnumDisplayDevicesA,
             "EnumDisplaySettingsA" => ProviderOp::EnumDisplaySettingsA,
+            "LoadImageA" => ProviderOp::LoadImageA,
             _ => ProviderOp::Unknown,
         };
     }

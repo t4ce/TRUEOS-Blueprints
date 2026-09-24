@@ -63,6 +63,11 @@ pub const TRUEOS_DISPLAY_FIELDS: u32 = DM_BITSPERPEL
     | DM_PELSHEIGHT
     | DM_DISPLAYFLAGS
     | DM_DISPLAYFREQUENCY;
+pub const XP_CXICON: u32 = 32;
+pub const XP_CYICON: u32 = 32;
+pub const XP_CXCURSOR: u32 = 32;
+pub const XP_CYCURSOR: u32 = 32;
+const USER_IMAGE_HANDLE_BASE: u32 = 0x5743_9001;
 pub const TRUEOS_D3D8_SUBSYSTEM_ID: u32 = 0;
 pub const TRUEOS_D3D8_REVISION: u32 = 0x04;
 pub const TRUEOS_D3D8_ADAPTER_GUID: [u8; 16] = [
@@ -1097,6 +1102,28 @@ enum GdiObject {
     Palette(PaletteObject),
 }
 
+#[derive(Clone, Debug)]
+enum UserImage {
+    Icon {
+        module: u32,
+        name: String,
+        width: u32,
+        height: u32,
+        resource_id: u16,
+        bytes: Vec<u8>,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UserImageLoadResult {
+    pub handle: u32,
+    pub module: u32,
+    pub name: String,
+    pub width: u32,
+    pub height: u32,
+    pub resource_id: u16,
+}
+
 impl PreparedProcess {
     pub fn new(mut materialized: pe32::Materialized) -> Result<Self, &'static str> {
         let mut thunks = vec![0; THUNK_PAGE_BYTES];
@@ -1507,6 +1534,8 @@ pub struct XpProcess {
     active_paints: HashMap<u32, ActivePaint>,
     next_gdi_handle: u32,
     next_gdi_dib_va: u32,
+    user_images: HashMap<u32, UserImage>,
+    next_user_image_handle: u32,
 }
 
 impl XpProcess {
@@ -1518,6 +1547,13 @@ impl XpProcess {
                     || module_names_match(&module.stored_name, requested)
             })
             .map(|module| module.handle)
+    }
+
+    pub fn loaded_module_name(&self, handle: u32) -> Option<&str> {
+        self.loaded_modules
+            .iter()
+            .find(|module| module.handle == handle)
+            .map(|module| module_basename(&module.stored_name))
     }
 
     pub fn external_provider_module_name(&self, handle: u32) -> Option<&str> {
@@ -1699,6 +1735,8 @@ impl XpProcess {
             active_paints: HashMap::new(),
             next_gdi_handle: GDI_HANDLE_BASE,
             next_gdi_dib_va: GDI_DIB_BASE,
+            user_images: HashMap::new(),
+            next_user_image_handle: USER_IMAGE_HANDLE_BASE,
         }
     }
 
@@ -2920,11 +2958,30 @@ struct ResourceData {
     size: u32,
 }
 
+enum ResourceKey<'a> {
+    Id(u32),
+    Name(&'a str),
+}
+
 fn numeric_resource(
     memory: &impl GuestMemory,
     module_base: u32,
     type_id: u32,
     resource_id: u32,
+) -> Result<ResourceData, &'static str> {
+    resource_data(
+        memory,
+        module_base,
+        ResourceKey::Id(type_id),
+        ResourceKey::Id(resource_id),
+    )
+}
+
+fn resource_data(
+    memory: &impl GuestMemory,
+    module_base: u32,
+    type_key: ResourceKey<'_>,
+    resource_key: ResourceKey<'_>,
 ) -> Result<ResourceData, &'static str> {
     let pe = read_u32(memory, module_base + 0x3c)?;
     let optional = module_base
@@ -2937,8 +2994,8 @@ fn numeric_resource(
         return Err("resource directory range");
     }
     let root = module_base.checked_add(root_rva).ok_or("resource root")?;
-    let type_directory = resource_directory_entry(memory, root, root, type_id)?;
-    let resource_directory = resource_directory_entry(memory, root, type_directory, resource_id)?;
+    let type_directory = resource_directory_entry(memory, root, root, type_key)?;
+    let resource_directory = resource_directory_entry(memory, root, type_directory, resource_key)?;
     let data_entry = resource_first_language_data(memory, root, resource_directory)?;
     let data_rva = read_u32(memory, data_entry)?;
     let data_size = read_u32(memory, data_entry + 4)?;
@@ -2952,28 +3009,50 @@ fn resource_directory_entry(
     memory: &impl GuestMemory,
     root: u32,
     directory: u32,
-    wanted: u32,
+    wanted: ResourceKey<'_>,
 ) -> Result<u32, &'static str> {
     let named = u32::from(read_u16(memory, directory + 12)?);
     let ids = u32::from(read_u16(memory, directory + 14)?);
-    let entries = directory
-        .checked_add(16)
-        .and_then(|value| value.checked_add(named * 8))
-        .ok_or("resource entries overflow")?;
-    for index in 0..ids {
-        let entry = entries + index * 8;
-        if read_u32(memory, entry)? != wanted {
+    let entries = directory.checked_add(16).ok_or("resource entries overflow")?;
+    let count = match wanted {
+        ResourceKey::Id(_) => ids,
+        ResourceKey::Name(_) => named,
+    };
+    let start = match wanted {
+        ResourceKey::Id(_) => named,
+        ResourceKey::Name(_) => 0,
+    };
+    for index in 0..count {
+        let entry = entries
+            .checked_add((start + index).checked_mul(8).ok_or("resource entry overflow")?)
+            .ok_or("resource entry overflow")?;
+        let key = read_u32(memory, entry)?;
+        let matches = match wanted {
+            ResourceKey::Id(id) => key == id,
+            ResourceKey::Name(name) => {
+                if key & 0x8000_0000 == 0 {
+                    false
+                } else {
+                    let address = root.checked_add(key & 0x7fff_ffff).ok_or("resource name overflow")?;
+                    let length = usize::from(read_u16(memory, address)?);
+                    let mut units = Vec::with_capacity(length);
+                    for offset in 0..length {
+                        units.push(read_u16(memory, address + 2 + (offset as u32) * 2)?);
+                    }
+                    String::from_utf16(&units).map_err(|_| "resource name UTF-16")? == name
+                }
+            }
+        };
+        if !matches {
             continue;
         }
         let child = read_u32(memory, entry + 4)?;
         if child & 0x8000_0000 == 0 {
             return Err("resource entry is not a directory");
         }
-        return root
-            .checked_add(child & 0x7fff_ffff)
-            .ok_or("resource directory overflow");
+        return root.checked_add(child & 0x7fff_ffff).ok_or("resource directory overflow");
     }
-    Err("resource id not found")
+    Err("resource key not found")
 }
 fn resource_first_language_data(
     memory: &impl GuestMemory,
@@ -3055,7 +3134,7 @@ fn message_table_text(
     let root = module_base
         .checked_add(root_rva)
         .ok_or(MessageTableLookup::Fault("message table root"))?;
-    let type_directory = match resource_directory_entry(memory, root, root, RT_MESSAGETABLE) {
+    let type_directory = match resource_directory_entry(memory, root, root, ResourceKey::Id(RT_MESSAGETABLE)) {
         Ok(directory) => directory,
         Err("resource id not found") => return Err(MessageTableLookup::TypeMissing),
         Err(error) => return Err(MessageTableLookup::Fault(error)),

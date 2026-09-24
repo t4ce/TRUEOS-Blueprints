@@ -1135,18 +1135,47 @@
                             exit.registers.esp,
                             7,
                         )?;
+                        let module_name = session
+                            .process(active_pid)
+                            .and_then(|process| process.xp.loaded_module_name(frame[1]))
+                            .unwrap_or("<unknown>");
+                        let name = if frame[2] & 0xffff_0000 == 0 {
+                            format!("MAKEINTRESOURCE({})", frame[2] & 0xffff)
+                        } else {
+                            wc3::process::read_c_string(
+                                &X86Memory(&child.address_space),
+                                frame[2],
+                                256,
+                            )
+                            .map_err(|error| format!("LoadImageA name: {error}"))?
+                        };
+                        let type_name = match frame[3] {
+                            0 => "IMAGE_BITMAP",
+                            1 => "IMAGE_ICON",
+                            2 => "IMAGE_CURSOR",
+                            _ => "UNKNOWN",
+                        };
+                        let flags_name = if frame[6] == 0x40 {
+                            "LR_DEFAULTSIZE"
+                        } else {
+                            "UNKNOWN"
+                        };
                         logl::log(
                             level::IMPORTANT,
                             format_args!(
-                                "WC3 CHILD LOADIMAGEA pid={} tid={} module=0x{:08x} name=0x{:08x} type={} cx={} cy={} flags=0x{:08x} caller_ret=0x{:08x}",
+                                "WC3 CHILD LOADIMAGEA pid={} tid={} module=0x{:08x} module_name={:?} name_ptr=0x{:08x} name={:?} type={} type_name={} cx={} cy={} flags=0x{:08x} flags_name={} caller_ret=0x{:08x}",
                                 active_pid,
                                 active_tid,
                                 frame[1],
+                                module_name,
                                 frame[2],
+                                name,
                                 frame[3],
+                                type_name,
                                 frame[4],
                                 frame[5],
                                 frame[6],
+                                flags_name,
                                 frame[0],
                             ),
                         );
@@ -5868,6 +5897,35 @@
                                     }
                                 }
                                 match operation {
+                                    child_loader::ProviderOp::LoadImageA => {
+                                        let [_, module, name_ptr, image_type, cx, cy, flags] = read_guest_words(
+                                            &X86Memory(&child.address_space),
+                                            exit.registers.esp,
+                                            7,
+                                        )?[..]
+                                        else {
+                                            unreachable!("LoadImageA frame has seven words")
+                                        };
+                                        let image = session
+                                            .process(active_pid)
+                                            .and_then(|process| process.xp.user_image_load_result(result))
+                                            .ok_or_else(|| "LoadImageA result handle missing".to_owned())?;
+                                        logl::log(
+                                            level::IMPORTANT,
+                                            format_args!(
+                                                "WC3 CHILD LOADIMAGEA RESULT pid={} tid={} module={:?} name={:?} type=IMAGE_ICON requested=default selected={}x{} image_resource_id={} handle=0x{:08x} result=success cleanup=24-by-thunk",
+                                                active_pid,
+                                                active_tid,
+                                                session.process(active_pid).and_then(|process| process.xp.loaded_module_name(module)).unwrap_or("<unknown>"),
+                                                image.name,
+                                                image.width,
+                                                image.height,
+                                                image.resource_id,
+                                                result,
+                                            ),
+                                        );
+                                        let _ = (name_ptr, image_type, cx, cy, flags);
+                                    }
                                     child_loader::ProviderOp::D3D8Release => {
                                         let [caller_ret, this] = read_guest_words(
                                             &X86Memory(&child.address_space),
