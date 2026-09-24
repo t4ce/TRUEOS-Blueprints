@@ -7202,7 +7202,7 @@ mod tests_session_1 {
     #[test]
     fn design_time_allow_local_files_is_present_and_explicitly_zero() {
         let value = crate::reg::lookup(
-            crate::reg::HKEY_CURRENT_USER,
+            crate::reg::HKEY_LOCAL_MACHINE,
             "software\\BLIZZARD entertainment\\warcraft iii",
             "ALLOW LOCAL FILES",
         )
@@ -7210,6 +7210,12 @@ mod tests_session_1 {
 
         assert_eq!(value.ty, crate::reg::REG_DWORD);
         assert_eq!(value.bytes, [0, 0, 0, 0]);
+        assert!(crate::reg::lookup(
+            crate::reg::HKEY_CURRENT_USER,
+            "Software\\Blizzard Entertainment\\Warcraft III",
+            "Allow Local Files",
+        )
+        .is_none());
     }
 
     #[test]

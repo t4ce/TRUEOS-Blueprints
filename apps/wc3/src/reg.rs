@@ -4,6 +4,7 @@
 use crate::process::GuestMemory;
 
 pub const HKEY_CURRENT_USER: u32 = 0x8000_0001;
+pub const HKEY_LOCAL_MACHINE: u32 = 0x8000_0002;
 pub const REG_DWORD: u32 = 4;
 
 pub struct OpenKeyExAFrame {
@@ -29,7 +30,7 @@ pub fn format_root_name(hkey: u32) -> String {
     match hkey {
         0x8000_0000 => "HKEY_CLASSES_ROOT".into(),
         HKEY_CURRENT_USER => "HKEY_CURRENT_USER".into(),
-        0x8000_0002 => "HKEY_LOCAL_MACHINE".into(),
+        HKEY_LOCAL_MACHINE => "HKEY_LOCAL_MACHINE".into(),
         0x8000_0003 => "HKEY_USERS".into(),
         0x8000_0005 => "HKEY_CURRENT_CONFIG".into(),
         _ => format!("0x{hkey:08x}"),
@@ -39,7 +40,7 @@ pub fn format_root_name(hkey: u32) -> String {
 pub const fn is_predefined_root(hkey: u32) -> bool {
     matches!(
         hkey,
-        0x8000_0000 | HKEY_CURRENT_USER | 0x8000_0002 | 0x8000_0003 | 0x8000_0005
+        0x8000_0000 | HKEY_CURRENT_USER | HKEY_LOCAL_MACHINE | 0x8000_0003 | 0x8000_0005
     )
 }
 
@@ -119,7 +120,7 @@ pub struct Definition {
 }
 
 const ALLOW_LOCAL_FILES: Definition = Definition {
-    root: HKEY_CURRENT_USER,
+    root: HKEY_LOCAL_MACHINE,
     key_path: "Software\\Blizzard Entertainment\\Warcraft III",
     value_name: "Allow Local Files",
     ty: REG_DWORD,
