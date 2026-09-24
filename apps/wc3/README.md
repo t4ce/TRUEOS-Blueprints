@@ -126,3 +126,20 @@ Validation: `cargo test -p wc3 --lib --offline` and
 `python3 apps/wc3/tests/test_native_initterm.py`. The latter compares Rust results
 with native i386 execution, including flags, preserved registers, stack balance,
 source/destination aliasing, and zero through four jump wrappers.
+
+### Event pool construction in Rust
+
+For the audited War3.exe pool loop at `0x004029e0`, the Blueprint checks the
+current guest code, substitutes one three-byte VM exit, and restores the
+original instruction at the exit. If the running frame or code differs, the
+original loop executes. The Rust path allocates the same 2,048 unnamed event
+objects in order, with automatic reset in bank zero and manual reset in bank
+one. It writes the handle and generation arrays at their original addresses,
+including the 4 KiB gap between generation banks, and resumes at `0x00402a47`.
+The following GetSystemInfo and dynamic-symbol work remains guest code.
+`WC3 EVENT POOL RUST COMPLETE` reports use; `guest-event-pool` forces the
+original loop for comparison. This feature does not need a saved checkpoint.
+
+`python3 apps/wc3/tests/test_native_event_pool.py` executes the original pool
+loop as i386 code with a deterministic CreateEvent stub and compares every
+output byte and the final CPU state with the Rust table builder.

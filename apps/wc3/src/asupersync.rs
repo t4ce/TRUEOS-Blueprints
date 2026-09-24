@@ -12,6 +12,20 @@ const ERROR_INVALID_ADDRESS: u32 = 487;
 const MEM_RELEASE: u32 = 0x0000_8000;
 const EXEC_SAMPLE_PREEMPTIONS: u64 = 8;
 const MAX_SEH_CHAIN_DEPTH: u32 = 64;
+const WAR3_EVENT_POOL_BEGIN: u32 = 0x0040_29a0;
+const WAR3_EVENT_POOL_TRAP: u32 = 0x0040_29e0;
+const WAR3_EVENT_POOL_AFTER_TRAP: u32 = WAR3_EVENT_POOL_TRAP + 3;
+const WAR3_EVENT_POOL_TAIL: u32 = 0x0040_2a47;
+const WAR3_EVENT_POOL_ORIGINAL: [u8; 3] = [0x8b, 0x4d, 0xf0];
+const WAR3_EVENT_POOL_SIGNATURE: [u8; 32] = [
+    0x61, 0xa6, 0x2f, 0x92, 0x31, 0x93, 0x26, 0x48,
+    0x6b, 0xe6, 0x58, 0x5a, 0x7e, 0xb4, 0x21, 0x03,
+    0x46, 0xbe, 0xcd, 0x33, 0xc0, 0x04, 0x39, 0x79,
+    0xb9, 0xc3, 0xb8, 0x58, 0x8b, 0xd5, 0xe5, 0xa1,
+];
+const WAR3_EVENT_POOL_HANDLES: u32 = 0x0045_70b8;
+const WAR3_EVENT_POOL_GENERATIONS: u32 = 0x0045_90b8;
+
 const WAR3_REPEATED_NULL_CALL_SLOT: u32 = 0x0049_a960;
 const WAR3_DIVIDE_EXCEPTION_HANDLER: u32 = 0x0045_a0c0;
 const WAR3_DIVIDE_EXCEPTION_EIP: u32 = 0x0045_ae47;
@@ -36,6 +50,131 @@ const WAR3_TABLE_FILL_VALUE: u32 = 0x0045_e2f0;
 const WAR3_TABLE_FILL_STEP_START: u32 = 0x0046_1496;
 const WAR3_TABLE_FILL_STEP_END: u32 = 0x0046_14c3;
 const WAR3_TABLE_FILL_HEARTBEAT_STRIDE: u32 = 0x100;
+
+// Patch one verified three-byte instruction to a VM exit. The original is
+// restored at the exit before any semantic decision, so a failed guard resumes
+// the unmodified guest loop. The match is against the prepared guest image,
+// after import resolution, rather than the older checked-in game installation.
+fn install_war3_event_pool_trap(child: &PendingChild) -> Result<bool, String> {
+    if cfg!(feature = "guest-event-pool") { return Ok(false); }
+    let mut code = [0u8; (WAR3_EVENT_POOL_TAIL - WAR3_EVENT_POOL_BEGIN) as usize];
+    if child.address_space.read(WAR3_EVENT_POOL_BEGIN, &mut code).ok() != Some(code.len())
+        || Sha256::digest(code).as_slice() != WAR3_EVENT_POOL_SIGNATURE
+    { return Ok(false); }
+    if child.address_space.write(WAR3_EVENT_POOL_TRAP, &[0x0f, 0x01, 0xc1]).ok() != Some(3) {
+        return Err("install War3 event pool trap failed".into());
+    }
+    logl::log(level::IMPORTANT, format_args!("WC3 EVENT POOL RUST ARMED eip=0x{WAR3_EVENT_POOL_TRAP:08x}"));
+    Ok(true)
+}
+
+fn read_event_pool_word(child: &PendingChild, address: u32) -> Option<u32> {
+    let mut bytes = [0u8; 4];
+    (child.address_space.read(address, &mut bytes).ok() == Some(4))
+        .then(|| u32::from_le_bytes(bytes))
+}
+
+fn write_event_pool_word(child: &PendingChild, address: u32, value: u32) -> Result<(), String> {
+    if child.address_space.write(address, &value.to_le_bytes()).ok() != Some(4) {
+        return Err(format!("War3 event pool write failed at 0x{address:08x}"));
+    }
+    Ok(())
+}
+
+fn complete_war3_event_pool(
+    child: &PendingChild,
+    session: &mut Wc3Session,
+    context: &mut GuestContext,
+    mut registers: Registers,
+) -> Result<bool, String> {
+    let original = WAR3_EVENT_POOL_ORIGINAL;
+    if child.address_space.write(WAR3_EVENT_POOL_TRAP, &original).ok() != Some(3) {
+        return Err("restore War3 event pool instruction failed".into());
+    }
+    registers.eip = WAR3_EVENT_POOL_TRAP;
+    let mut live = [0u8; (WAR3_EVENT_POOL_TAIL - WAR3_EVENT_POOL_BEGIN) as usize];
+    let expected = child.image.image.get(
+        (WAR3_EVENT_POOL_BEGIN - child.image.image_base) as usize
+            ..(WAR3_EVENT_POOL_TAIL - child.image.image_base) as usize
+    );
+    let debug = context.context.debug_registers().map_err(|error| error.to_string())?;
+    let frame = registers.ebp;
+    let eligible = child.initterm.is_some()
+        && child.parked_threads.is_empty()
+        && registers.eflags & 0x0007_4500 == 0 // TF, DF, NT, RF, VM, AC
+        && debug.dr7 & 0x23ff == 0
+        && registers.esi == WAR3_EVENT_POOL_HANDLES
+        && registers.ebx == WAR3_EVENT_POOL_GENERATIONS
+        && registers.edi == 0x0020_0000
+        && registers.eax == 0
+        && registers.esp == frame.wrapping_sub(0x40)
+        && frame >= STACK_BASE + 0x40
+        && frame < STACK_TOP - 8
+        && read_event_pool_word(child, frame.wrapping_add(4)) == Some(0x0040_2988)
+        && read_event_pool_word(child, frame.wrapping_sub(4)) == Some(0)
+        && read_event_pool_word(child, frame.wrapping_sub(8)) == Some(WAR3_EVENT_POOL_GENERATIONS)
+        && read_event_pool_word(child, frame.wrapping_sub(0x10)) == Some(0)
+        && read_event_pool_word(child, frame.wrapping_sub(0x0c)) == Some(0x400)
+        && child.address_space.read(WAR3_EVENT_POOL_BEGIN, &mut live).ok() == Some(live.len())
+        && expected == Some(live.as_slice())
+        && session.next_event_handle.checked_add(2048).is_some();
+    if !eligible {
+        context.context.set_registers(registers).map_err(|error| error.to_string())?;
+        logl::log(level::IMPORTANT, format_args!("WC3 EVENT POOL RUST BYPASS reason=state-or-code-mismatch"));
+        return Ok(false);
+    }
+    // Image maps are RWX throughout this region. Confirm every page before
+    // creating real session objects; no guest thread can observe an intermediate
+    // state because the child is stopped at the trap.
+    for page in ((WAR3_EVENT_POOL_HANDLES & !0xfff)..0x0045_d000).step_by(0x1000) {
+        let mut probe = [0u8; 4];
+        if child.address_space.read(page, &mut probe).ok() != Some(4) {
+            context.context.set_registers(registers).map_err(|error| error.to_string())?;
+            return Ok(false);
+        }
+    }
+    let tables = wc3::event_pool::build(|manual_reset| {
+        let (handle, already_exists) = session.create_event(child.pid, wc3::session::CreateEventRequest {
+            name: None,
+            manual_reset,
+            initial_state: false,
+            inheritable: false,
+        });
+        if already_exists { 0 } else { handle }
+    }).map_err(str::to_owned)?;
+    for bank in 0..2u32 {
+        write_event_pool_word(child, 0x0045_70ac + bank * 4, 0x7ff)?;
+        write_event_pool_word(child, 0x0045_709c + bank * 4, 0x3ff)?;
+        write_event_pool_word(child, 0x0045_70a4 + bank * 4, 0x400)?;
+    }
+    let handles = &tables.handles;
+    let generations = &tables.generations;
+    if child.address_space.write(WAR3_EVENT_POOL_HANDLES, &handles).ok() != Some(handles.len()) {
+        return Err("War3 event pool handles write failed".into());
+    }
+    for (bank, generation) in generations.iter().enumerate() {
+        let address = WAR3_EVENT_POOL_GENERATIONS + bank as u32 * 0x2000;
+        if child.address_space.write(address, generation).ok() != Some(generation.len()) {
+            return Err(format!("War3 event pool generation write failed bank={bank}"));
+        }
+    }
+    session.process_mut(child.pid).ok_or("War3 event owner missing")?.xp
+        .set_last_error_for_thread(child.tid, 0);
+    write_event_pool_word(child, frame.wrapping_sub(4), 2)?;
+    write_event_pool_word(child, frame.wrapping_sub(8), 0x0045_d0b8)?;
+    write_event_pool_word(child, frame.wrapping_sub(0x10), 1)?;
+    write_event_pool_word(child, frame.wrapping_sub(0x0c), 0)?;
+    registers.eax = 0x0045_d0b8;
+    registers.ebx = 0x0045_c0b8;
+    registers.ecx = 1;
+    registers.esi = WAR3_EVENT_POOL_GENERATIONS;
+    registers.edi = 0x8020_0000;
+    registers.eflags = (registers.eflags & !0x8d5) | 0x44; // final CMP: equality
+    registers.eip = WAR3_EVENT_POOL_TAIL;
+    context.context.set_registers(registers).map_err(|error| error.to_string())?;
+    logl::log(level::IMPORTANT, format_args!("WC3 EVENT POOL RUST COMPLETE pid={} tid={} events=2048 next_handle=0x{:08x}", child.pid, child.tid, session.next_event_handle));
+    Ok(true)
+}
 
 fn wc3_cpuid(leaf: u32, subleaf: u32) -> Result<[u32; 4], String> {
     match (leaf, subleaf) {
@@ -2233,6 +2372,10 @@ pub(super) async fn run_loop(
                         .as_mut()
                         .filter(|child| child.pid == active_pid)
                         .ok_or_else(|| "active child address space missing".to_owned())?;
+                    if exit.registers.eip == WAR3_EVENT_POOL_AFTER_TRAP {
+                        complete_war3_event_pool(child, &mut session, &mut contexts[active], exit.registers)?;
+                        continue;
+                    }
                     if exit.registers.eip == thunk32::CHILD_UEF_RETURN_AFTER_VMCALL {
                         let pending = child
                             .unhandled_filter_call
@@ -4751,6 +4894,52 @@ pub(super) async fn run_loop(
                                 before_fcw,
                                 after_fcw,
                                 result,
+                            ),
+                        );
+                        continue;
+                    }
+                    let is_crt_ftol = matches!(
+                        &provider.symbol,
+                        child_loader::ProviderSymbol::Name(name)
+                            if provider.module.eq_ignore_ascii_case("MSVCRT.dll")
+                                && name == "_ftol"
+                    );
+                    if is_crt_ftol {
+                        let caller_ret = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            exit.registers.esp,
+                            1,
+                        )?[0];
+                        let mut state = contexts[active]
+                            .context
+                            .extended_state()
+                            .map_err(|error| error.to_string())?;
+                        let result = wc3::ThisToThat::x87_ftol(&mut state.bytes);
+                        let mut xstate_bv =
+                            u64::from_le_bytes(state.bytes[512..520].try_into().unwrap());
+                        xstate_bv |= 1 << 0;
+                        state.bytes[512..520].copy_from_slice(&xstate_bv.to_le_bytes());
+                        contexts[active]
+                            .context
+                            .set_extended_state(&state)
+                            .map_err(|error| error.to_string())?;
+                        let mut registers = exit.registers;
+                        registers.eax = result as u32;
+                        registers.edx = (result >> 32) as u32;
+                        contexts[active]
+                            .context
+                            .set_registers(registers)
+                            .map_err(|error| error.to_string())?;
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD CRT FTOL pid={} tid={} caller_ret=0x{:08x} result={} eax=0x{:08x} edx=0x{:08x} cleanup=0-by-thunk",
+                                active_pid,
+                                active_tid,
+                                caller_ret,
+                                result,
+                                result as u32,
+                                (result >> 32) as u32,
                             ),
                         );
                         continue;
@@ -9888,6 +10077,7 @@ pub(super) async fn run_loop(
                             child.loader.native_requests = surface.native.clone();
                             child.loader.prepared = true;
                             map_child_image(&child.address_space, &child.image)?;
+                            install_war3_event_pool_trap(child)?;
                             log_child_slot_xrefs(child, WAR3_REPEATED_NULL_CALL_SLOT);
                             log_child_slot_xrefs(child, WAR3_SCAN_INDEX);
                             log_child_slot_xrefs(child, WAR3_SCAN_SOURCE);

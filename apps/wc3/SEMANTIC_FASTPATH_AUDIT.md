@@ -2,7 +2,9 @@
 
 Audit date: 2026-09-24. Candidate 2 below (the simple initializer templates, option 1 in the user
 summary) is now implemented with runtime guards in `src/initterm.rs` and
-`advance_child_initterm`. The other candidates remain assessments. No physical
+`advance_child_initterm`. Candidate 1, the event pool, is now implemented in `src/event_pool.rs` and
+`asupersync.rs` with a code signature and state guards. The record-expansion
+candidate remains an assessment. No physical
 timing measurement has been made.
 
 Evidence: the last War3 initializer sequence in
@@ -102,5 +104,6 @@ signature or precondition mismatch, run the original guest code before making
 any fast-path changes. Compare the reference and replacement from identical
 input states; do not infer equivalence merely from reaching the same frontier.
 Keep a feature switch for reference execution and aggregate fast-path counts.
-Only the simple initializer templates have been enabled; `guest-initterm`
-restores reference execution. Event pools and record expansion are unchanged.
+The simple initializer templates and event pool are enabled by default.
+`guest-initterm` and `guest-event-pool` restore the respective guest paths.
+Record expansion remains unchanged.

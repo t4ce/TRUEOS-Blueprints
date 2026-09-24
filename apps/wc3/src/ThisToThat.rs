@@ -84,5 +84,112 @@ pub(crate) fn decode_span(bytes: &[u8], utf16le: bool) -> Result<String, &'stati
             .map(|pair| u16::from_le_bytes([pair[0], pair[1]])),
     )
     .map(|unit| unit.map_err(|_| "registry UTF-16"))
-    .collect()
+        .collect()
+}
+
+/// Run MSVCRT's x86 `_ftol` conversion against an FXSAVE-compatible x87 image.
+///
+/// `_ftol` takes no C arguments.  It truncates `ST(0)` toward zero, returns the
+/// resulting signed 64-bit integer, and consumes that x87 stack value.  The
+/// helper deliberately does not inherit the current x87 rounding mode: this is
+/// the CRT helper's ANSI-C conversion contract.
+pub fn x87_ftol(state: &mut [u8]) -> i64 {
+    const FCW: usize = 0;
+    const FSW: usize = 2;
+    const FTW: usize = 4;
+    const ST_SPACE: usize = 32;
+    const ST_BYTES: usize = 16;
+    const X87_INVALID: u16 = 1 << 0;
+    const X87_STACK_FAULT: u16 = 1 << 6;
+
+    let mut status = u16::from_le_bytes(state[FSW..FSW + 2].try_into().unwrap());
+    let top = ((status >> 11) & 7) as usize;
+    let mut tags = state[FTW];
+
+    // An empty register is an x87 stack underflow.  The default masked x87
+    // behavior stores the integer-indefinite value and advances TOP.
+    let empty = tags & (1 << top) == 0;
+    let value = if empty {
+        status |= X87_INVALID | X87_STACK_FAULT;
+        i64::MIN
+    } else {
+        let offset = ST_SPACE + top * ST_BYTES;
+        let significand = u64::from_le_bytes(state[offset..offset + 8].try_into().unwrap());
+        let exponent_word = u16::from_le_bytes(state[offset + 8..offset + 10].try_into().unwrap());
+        let negative = exponent_word & 0x8000 != 0;
+        let exponent = exponent_word & 0x7fff;
+
+        // FISTP qword stores the x87 integer-indefinite value for NaNs,
+        // infinities, malformed encodings, and values beyond i64.
+        let magnitude = if exponent == 0 {
+            Some(0u128)
+        } else if exponent == 0x7fff || significand & (1 << 63) == 0 {
+            None
+        } else {
+            let unbiased = i32::from(exponent) - 16_383;
+            if unbiased < 0 {
+                Some(0)
+            } else if unbiased <= 63 {
+                Some(u128::from(significand >> (63 - unbiased)))
+            } else {
+                let shift = u32::try_from(unbiased - 63).unwrap();
+                significand.checked_shl(shift).map(u128::from)
+            }
+        };
+
+        match magnitude {
+            Some(magnitude) if (!negative && magnitude <= i64::MAX as u128) => magnitude as i64,
+            Some(magnitude) if negative && magnitude <= (1u128 << 63) => {
+                if magnitude == 1u128 << 63 {
+                    i64::MIN
+                } else {
+                    -(magnitude as i64)
+                }
+            }
+            _ => {
+                status |= X87_INVALID;
+                i64::MIN
+            }
+        }
+    };
+
+    tags &= !(1 << top);
+    state[FTW] = tags;
+    status = (status & !(7 << 11)) | (((top as u16 + 1) & 7) << 11);
+    state[FSW..FSW + 2].copy_from_slice(&status.to_le_bytes());
+    let _ = FCW; // Documents the FXSAVE layout: `_ftol` ignores FCW rounding.
+    value
+}
+
+#[cfg(test)]
+mod tests {
+    use super::x87_ftol;
+
+    fn state_with_st0(significand: u64, exponent_word: u16) -> [u8; 832] {
+        let mut state = [0u8; 832];
+        state[4] = 1; // abridged tag word: physical ST(0) is nonempty
+        state[32..40].copy_from_slice(&significand.to_le_bytes());
+        state[40..42].copy_from_slice(&exponent_word.to_le_bytes());
+        state
+    }
+
+    #[test]
+    fn ftol_truncates_toward_zero_and_pops_st0() {
+        // 1.5 and -1.5 in x87's explicit-integer-bit extended format.
+        let mut positive = state_with_st0(0xc000_0000_0000_0000, 0x3fff);
+        assert_eq!(x87_ftol(&mut positive), 1);
+        assert_eq!(positive[4] & 1, 0);
+        assert_eq!((u16::from_le_bytes(positive[2..4].try_into().unwrap()) >> 11) & 7, 1);
+
+        let mut negative = state_with_st0(0xc000_0000_0000_0000, 0xbfff);
+        assert_eq!(x87_ftol(&mut negative), -1);
+        assert_eq!(negative[4] & 1, 0);
+    }
+
+    #[test]
+    fn ftol_returns_integer_indefinite_for_nan() {
+        let mut state = state_with_st0(0xc000_0000_0000_0000, 0x7fff);
+        assert_eq!(x87_ftol(&mut state), i64::MIN);
+        assert_ne!(u16::from_le_bytes(state[2..4].try_into().unwrap()) & 1, 0);
+    }
 }

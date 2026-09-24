@@ -3589,6 +3589,28 @@ mod tests_process_1 {
     }
 
     #[test]
+    fn child_crt_ftol_is_cdecl_and_emits_a_plain_return_thunk() {
+        let provider = ProviderImport {
+            module: "MSVCRT.dll".into(),
+            symbol: ProviderSymbol::Name("_ftol".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&provider);
+        assert_eq!(operation, ProviderOp::CrtFtol);
+        assert!(operation.is_modeled());
+        assert_eq!(operation.stack_cleanup_bytes(), 0);
+        assert!(!operation.is_generic_process_local());
+        assert_eq!(
+            crate::child_loader::provider_thunk_kind(&provider),
+            thunk32::Kind::Return
+        );
+        let mut thunk = [0u8; thunk32::THUNK_BYTES];
+        thunk32::write(825, crate::child_loader::provider_thunk_kind(&provider), &mut thunk)
+            .unwrap();
+        assert_eq!(&thunk[..9], &[0xb8, 0x39, 0x03, 0, 0, 0x0f, 0x01, 0xc1, 0xc3]);
+    }
+
+    #[test]
     fn child_crt_srand_is_cdecl_and_sets_the_process_rng_seed() {
         let provider = ProviderImport {
             module: "MSVCRT.dll".into(),
