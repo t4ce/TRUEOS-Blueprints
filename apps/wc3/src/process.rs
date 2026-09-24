@@ -3782,6 +3782,11 @@ impl XpProcess {
             ProviderOp::CreateEventA => Some(PersonalityAction::Session(
                 SessionRequest::CreateEvent(self.create_event_request(esp, memory)?),
             )),
+            ProviderOp::SetEvent => Some(PersonalityAction::Session(SessionRequest::SetEvent {
+                pid,
+                tid,
+                handle: arguments::<2>(memory, esp)?[1],
+            })),
             ProviderOp::ResetEvent => Some(PersonalityAction::Session(SessionRequest::ResetEvent {
                 pid,
                 tid,
@@ -3847,6 +3852,27 @@ impl XpProcess {
                     handles: [handle, 0],
                     wait_all: 0,
                     timeout,
+                }))
+            }
+            ProviderOp::WaitForMultipleObjects => {
+                let frame = self.wait_for_multiple_objects(esp, memory)?;
+                if frame.count > 2 {
+                    return Err(ProviderDispatchError::Frontier {
+                        api: "WaitForMultipleObjects",
+                        detail: format!(
+                            "count={} wait_all={} timeout=0x{:08x}",
+                            frame.count, frame.wait_all, frame.timeout
+                        ),
+                    });
+                }
+                Some(PersonalityAction::Block(WaitRequest {
+                    key: ThreadKey { pid, tid },
+                    return_address: frame.return_address,
+                    count: frame.count,
+                    handles_pointer: frame.handles_pointer,
+                    handles: frame.handles,
+                    wait_all: frame.wait_all,
+                    timeout: frame.timeout,
                 }))
             }
             _ => None,
@@ -4508,7 +4534,7 @@ impl XpProcess {
         })
     }
 
-    fn wait_for_multiple_objects(
+    pub fn wait_for_multiple_objects(
         &self,
         esp: u32,
         memory: &impl GuestMemory,

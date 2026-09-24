@@ -3279,6 +3279,91 @@ mod tests_process_1 {
     }
 
     #[test]
+    fn child_wait_for_multiple_objects_blocks_with_two_handles_and_is_stdcall() {
+        let provider = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("WaitForMultipleObjects".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&provider);
+        assert_eq!(operation, ProviderOp::WaitForMultipleObjects);
+        assert!(operation.is_modeled());
+        assert!(!operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 16);
+        assert_eq!(
+            crate::child_loader::provider_thunk_kind(&provider),
+            thunk32::Kind::Stdcall(16)
+        );
+        let mut thunk = [0u8; thunk32::THUNK_BYTES];
+        thunk32::write(90, thunk32::Kind::Stdcall(16), &mut thunk).unwrap();
+        assert_eq!(&thunk[8..11], &[0xc2, 0x10, 0]);
+
+        let mut xp = XpProcess::new_child();
+        xp.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory { base: STACK_BASE, bytes: vec![0; STACK_BYTES] };
+        let esp = STACK_TOP - 0x40;
+        let handles = STACK_TOP - 0x100;
+        for (index, value) in [0x0041_08d6, 2, handles, 0, u32::MAX].into_iter().enumerate() {
+            write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
+        }
+        write_u32(&mut memory, handles, 0x5743_2812).unwrap();
+        write_u32(&mut memory, handles + 4, 0x5743_3504).unwrap();
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 4, 0, esp, &mut memory),
+            Ok(PersonalityAction::Block(WaitRequest {
+                key: ThreadKey { pid: 2, tid: 4 },
+                return_address: 0x0041_08d6,
+                count: 2,
+                handles_pointer: handles,
+                handles: [0x5743_2812, 0x5743_3504],
+                wait_all: 0,
+                timeout: u32::MAX,
+            }))
+        );
+        write_u32(&mut memory, esp + 4, 3).unwrap();
+        assert!(matches!(
+            xp.dispatch_provider_for_process_typed(2, 4, 0, esp, &mut memory),
+            Err(ProviderDispatchError::Frontier { api: "WaitForMultipleObjects", .. })
+        ));
+    }
+
+    #[test]
+    fn child_set_event_is_stdcall_and_routes_to_the_session() {
+        let provider = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("SetEvent".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&provider);
+        assert_eq!(operation, ProviderOp::SetEvent);
+        assert!(operation.is_modeled());
+        assert!(!operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 4);
+        assert_eq!(
+            crate::child_loader::provider_thunk_kind(&provider),
+            thunk32::Kind::Stdcall(4)
+        );
+        let mut thunk = [0u8; thunk32::THUNK_BYTES];
+        thunk32::write(25, thunk32::Kind::Stdcall(4), &mut thunk).unwrap();
+        assert_eq!(&thunk[8..11], &[0xc2, 0x04, 0]);
+
+        let mut xp = XpProcess::new_child();
+        xp.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory { base: STACK_BASE, bytes: vec![0; STACK_BYTES] };
+        let esp = STACK_TOP - 0x40;
+        write_u32(&mut memory, esp, 0x0040_3f19).unwrap();
+        write_u32(&mut memory, esp + 4, 0x5743_2812).unwrap();
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Session(SessionRequest::SetEvent {
+                pid: 2,
+                tid: 3,
+                handle: 0x5743_2812,
+            }))
+        );
+    }
+
+    #[test]
     fn child_crt_memmove_preserves_both_overlap_directions_and_is_cdecl() {
         let provider = ProviderImport {
             module: "MSVCRT.dll".into(),

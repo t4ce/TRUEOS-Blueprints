@@ -610,6 +610,45 @@ fn service_sync_request(
             );
             Ok(handle)
         }
+        SessionRequest::SetEvent { pid, tid, handle } => match session.set_event(pid, handle) {
+            Ok(outcome) => {
+                let waiters_woken = outcome.woken.len();
+                resume_completed_waiters(
+                    &outcome.woken,
+                    "set-event",
+                    contexts,
+                    wait_deadlines,
+                )?;
+                logl::log(
+                    level::IMPORTANT,
+                    format_args!(
+                        "WC3 CHILD EVENT SET pid={} tid={} handle=0x{:08x} manual_reset={} was_signaled={} waiters_woken={} result=1",
+                        pid,
+                        tid,
+                        handle,
+                        outcome.manual_reset as u8,
+                        outcome.was_signaled as u8,
+                        waiters_woken,
+                    ),
+                );
+                Ok(1)
+            }
+            Err(_) => {
+                session
+                    .process_mut(pid)
+                    .ok_or_else(|| "SetEvent process missing".to_owned())?
+                    .xp
+                    .set_last_error_for_thread(tid, 6);
+                logl::log(
+                    level::IMPORTANT,
+                    format_args!(
+                        "WC3 CHILD EVENT SET pid={} tid={} handle=0x{:08x} result=0 error=6",
+                        pid, tid, handle,
+                    ),
+                );
+                Ok(0)
+            }
+        },
         SessionRequest::ResetEvent { pid, tid, handle } => match session.reset_event(pid, handle) {
             Ok(outcome) => {
                 logl::log(
@@ -6944,12 +6983,16 @@ pub(super) async fn run_loop(
                     if matches!(
                         operation,
                         child_loader::ProviderOp::CreateEventA
+                            | child_loader::ProviderOp::SetEvent
                             | child_loader::ProviderOp::ResetEvent
                             | child_loader::ProviderOp::CreateMutexA
                             | child_loader::ProviderOp::ReleaseMutex
                             | child_loader::ProviderOp::CloseHandle
                             | child_loader::ProviderOp::WaitForSingleObject
+                            | child_loader::ProviderOp::WaitForMultipleObjects
                     ) {
+                        let is_multiple_wait = operation
+                            == child_loader::ProviderOp::WaitForMultipleObjects;
                         let action = session
                             .process_mut(active_pid)
                             .ok_or_else(|| "child process missing".to_owned())?
@@ -6973,14 +7016,27 @@ pub(super) async fn run_loop(
                                 &mut wait_deadlines,
                             )?,
                             PersonalityAction::Block(request) => {
+                                if is_multiple_wait {
+                                    logl::log(
+                                        level::IMPORTANT,
+                                        format_args!(
+                                            "WC3 CHILD WAIT MULTIPLE CALL pid={} tid={} count={} handles_ptr=0x{:08x} handle0=0x{:08x} handle1=0x{:08x} wait_all={} timeout=0x{:08x} caller_ret=0x{:08x}",
+                                            active_pid, active_tid, request.count,
+                                            request.handles_pointer, request.handles[0],
+                                            request.handles[1], request.wait_all, request.timeout,
+                                            request.return_address,
+                                        ),
+                                    );
+                                }
                                 if let Some(result) =
                                     session.poll_wait(&request).map_err(str::to_owned)?
                                 {
                                     logl::log(
                                         level::IMPORTANT,
                                         format_args!(
-                                            "WC3 CHILD WAIT RETURN pid={} tid={} handle=0x{:08x} result=0x{:08x}",
-                                            active_pid, active_tid, request.handles[0], result
+                                            "WC3 CHILD WAIT {}RETURN pid={} tid={} handle0=0x{:08x} handle1=0x{:08x} result=0x{:08x}",
+                                            if is_multiple_wait { "MULTIPLE " } else { "" },
+                                            active_pid, active_tid, request.handles[0], request.handles[1], result
                                         ),
                                     );
                                     result
@@ -7001,10 +7057,14 @@ pub(super) async fn run_loop(
                                     logl::log(
                                         level::IMPORTANT,
                                         format_args!(
-                                            "WC3 CHILD WAIT BLOCK pid={} tid={} handle=0x{:08x} timeout_ms={}",
+                                            "WC3 CHILD WAIT {}BLOCK pid={} tid={} count={} handle0=0x{:08x} handle1=0x{:08x} wait_all={} timeout_ms={}",
+                                            if is_multiple_wait { "MULTIPLE " } else { "" },
                                             active_pid,
                                             active_tid,
+                                            request.count,
                                             request.handles[0],
+                                            request.handles[1],
+                                            request.wait_all,
                                             request.timeout
                                         ),
                                     );

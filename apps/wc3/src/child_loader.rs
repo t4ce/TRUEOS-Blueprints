@@ -77,11 +77,13 @@ pub enum ProviderOp {
     WriteFile,
     FlushFileBuffers,
     CreateEventA,
+    SetEvent,
     ResetEvent,
     CreateMutexA,
     ReleaseMutex,
     CloseHandle,
     WaitForSingleObject,
+    WaitForMultipleObjects,
     GetWindowsDirectoryA,
     GetSystemDirectoryA,
     GetTempPathA,
@@ -192,7 +194,7 @@ impl ProviderOp {
             | Self::GetDriveTypeA
             | Self::RegCloseKey => 4,
             Self::GetVolumeInformationA => 32,
-            Self::ResetEvent => 4,
+            Self::SetEvent | Self::ResetEvent => 4,
             Self::GetCPInfo | Self::GetWindowsDirectoryA | Self::GetSystemDirectoryA => 8,
             Self::GetProcAddress
             | Self::WaitForSingleObject
@@ -203,6 +205,7 @@ impl ProviderOp {
             | Self::GlobalAlloc
             | Self::InterlockedExchange
             | Self::TlsSetValue => 8,
+            Self::WaitForMultipleObjects => 16,
             Self::TlsGetValue | Self::InterlockedIncrement | Self::InterlockedDecrement => 4,
             Self::GetStringTypeW
             | Self::RtlUnwind
@@ -392,11 +395,13 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "WriteFile" => ProviderOp::WriteFile,
             "FlushFileBuffers" => ProviderOp::FlushFileBuffers,
             "CreateEventA" => ProviderOp::CreateEventA,
+            "SetEvent" => ProviderOp::SetEvent,
             "ResetEvent" => ProviderOp::ResetEvent,
             "CreateMutexA" => ProviderOp::CreateMutexA,
             "ReleaseMutex" => ProviderOp::ReleaseMutex,
             "CloseHandle" => ProviderOp::CloseHandle,
             "WaitForSingleObject" => ProviderOp::WaitForSingleObject,
+            "WaitForMultipleObjects" => ProviderOp::WaitForMultipleObjects,
             "GetWindowsDirectoryA" => ProviderOp::GetWindowsDirectoryA,
             "GetSystemDirectoryA" => ProviderOp::GetSystemDirectoryA,
             "GetTempPathA" => ProviderOp::GetTempPathA,
