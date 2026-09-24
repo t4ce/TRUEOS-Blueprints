@@ -596,6 +596,32 @@ fn crt_strnicmp(
     Ok(0)
 }
 
+fn crt_memmove(
+    memory: &mut impl GuestMemory,
+    destination: u32,
+    source: u32,
+    count: u32,
+) -> Result<u32, ProviderDispatchError> {
+    if count == 0 || destination == source {
+        return Ok(destination);
+    }
+    let length = usize::try_from(count).map_err(|_| ProviderDispatchError::Fault("memmove count"))?;
+    source
+        .checked_add(count - 1)
+        .ok_or(ProviderDispatchError::Fault("memmove source overflow"))?;
+    destination
+        .checked_add(count - 1)
+        .ok_or(ProviderDispatchError::Fault("memmove destination overflow"))?;
+    let mut bytes = Vec::new();
+    bytes
+        .try_reserve_exact(length)
+        .map_err(|_| ProviderDispatchError::Fault("memmove allocation"))?;
+    bytes.resize(length, 0);
+    memory.read(source, &mut bytes)?;
+    memory.write(destination, &bytes)?;
+    Ok(destination)
+}
+
 fn crt_full_path(path: &str) -> Option<String> {
     if path.is_empty() {
         return None;
@@ -2458,6 +2484,15 @@ impl XpProcess {
             }
             ProviderOp::CrtVsnprintf => {
                 let result = crt_vsnprintf(memory, esp)?;
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(result))
+            }
+            ProviderOp::CrtMemmove => {
+                let [_, destination, source, count] = arguments::<4>(memory, esp)?;
+                let result = crt_memmove(memory, destination, source, count)?;
                 self.call_count = self
                     .call_count
                     .checked_add(1)

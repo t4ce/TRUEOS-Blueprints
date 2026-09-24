@@ -45,6 +45,19 @@ fn hex_bytes(bytes: &[u8]) -> String {
         .join(" ")
 }
 
+fn ranges_overlap(destination: u32, source: u32, count: u32) -> bool {
+    if count == 0 {
+        return false;
+    }
+    let Some(destination_end) = destination.checked_add(count) else {
+        return true;
+    };
+    let Some(source_end) = source.checked_add(count) else {
+        return true;
+    };
+    destination < source_end && source < destination_end
+}
+
 fn msvcrt_control_from_x87(fcw: u16) -> u32 {
     let mut out = 0;
     if fcw & 0x0001 != 0 {
@@ -6912,6 +6925,16 @@ pub(super) async fn run_loop(
                         } else {
                             None
                         };
+                        let crt_memmove = if operation == child_loader::ProviderOp::CrtMemmove {
+                            let frame = read_guest_words(
+                                &X86Memory(&child.address_space),
+                                exit.registers.esp,
+                                4,
+                            )?;
+                            Some((frame[1], frame[2], frame[3]))
+                        } else {
+                            None
+                        };
                         let process_memory = matches!(
                             operation,
                             child_loader::ProviderOp::ReadProcessMemory
@@ -7230,6 +7253,21 @@ pub(super) async fn run_loop(
                                         format_args!(
                                             "WC3 CHILD {} pid={} tid={} target=0x{:08x} old=0x{:08x} after=0x{:08x} eax=0x{:08x} cleanup={}-by-thunk",
                                             api, active_pid, active_tid, target, old, after, result, cleanup,
+                                        ),
+                                    );
+                                }
+                                if let Some((destination, source, count)) = crt_memmove {
+                                    logl::log(
+                                        level::IMPORTANT,
+                                        format_args!(
+                                            "WC3 CHILD CRT MEMMOVE pid={} tid={} destination=0x{:08x} source=0x{:08x} count={} overlap={} return_eax=0x{:08x} cleanup=0-by-thunk",
+                                            active_pid,
+                                            active_tid,
+                                            destination,
+                                            source,
+                                            count,
+                                            ranges_overlap(destination, source, count) as u8,
+                                            result,
                                         ),
                                     );
                                 }
