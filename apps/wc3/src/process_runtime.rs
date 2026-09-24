@@ -2126,6 +2126,10 @@ impl XpProcess {
         self.desktop_size = (width, height);
     }
 
+    pub fn desktop_size(&self) -> (u32, u32) {
+        self.desktop_size
+    }
+
     pub fn admit_bitmap(
         &mut self,
         request: LoadImageRequest,

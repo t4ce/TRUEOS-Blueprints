@@ -34,6 +34,14 @@ impl XpProcess {
                     .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(result))
             }
+            ProviderOp::EnumDisplayDevicesA => {
+                let result = self.enum_display_devices_a(esp, memory)?;
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(result))
+            }
             ProviderOp::D3D8Release => {
                 let result = self.d3d8_release(esp, memory)?;
                 self.call_count = self

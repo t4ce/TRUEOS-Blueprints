@@ -164,6 +164,7 @@ pub enum ProviderOp {
     Direct3DCreate8,
     D3D8Release,
     D3D8GetAdapterIdentifier,
+    EnumDisplayDevicesA,
     Unknown,
 }
 
@@ -234,7 +235,7 @@ impl ProviderOp {
             | Self::SetFilePointer
             | Self::MessageBoxA
             | Self::LoadStringA => 16,
-            Self::D3D8GetAdapterIdentifier => 16,
+            Self::D3D8GetAdapterIdentifier | Self::EnumDisplayDevicesA => 16,
             Self::MultiByteToWideChar | Self::LCMapStringW | Self::RegQueryValueExA => 24,
             Self::CreateThread => 24,
             Self::SetThreadPriority => 8,
@@ -384,6 +385,7 @@ impl ProviderOp {
                 | Self::WsprintfA
                 | Self::D3D8Release
                 | Self::D3D8GetAdapterIdentifier
+                | Self::EnumDisplayDevicesA
         )
     }
 }
@@ -489,6 +491,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "MessageBoxA" => ProviderOp::MessageBoxA,
             "LoadStringA" => ProviderOp::LoadStringA,
             "wsprintfA" => ProviderOp::WsprintfA,
+            "EnumDisplayDevicesA" => ProviderOp::EnumDisplayDevicesA,
             _ => ProviderOp::Unknown,
         };
     }
@@ -614,6 +617,22 @@ mod beginthreadex_tests {
 
         let operation = provider_op(&import);
         assert_eq!(operation, ProviderOp::D3D8GetAdapterIdentifier);
+        assert!(operation.is_modeled());
+        assert!(operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 16);
+        assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Stdcall(16));
+    }
+
+    #[test]
+    fn enum_display_devices_a_is_stdcall_and_process_local() {
+        let import = ProviderImport {
+            module: "USER32.dll".into(),
+            symbol: ProviderSymbol::Name("EnumDisplayDevicesA".into()),
+            iat_rva: 0,
+        };
+
+        let operation = provider_op(&import);
+        assert_eq!(operation, ProviderOp::EnumDisplayDevicesA);
         assert!(operation.is_modeled());
         assert!(operation.is_generic_process_local());
         assert_eq!(operation.stack_cleanup_bytes(), 16);

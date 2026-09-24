@@ -50,6 +50,7 @@ pub const D3DENUM_NO_WHQL_LEVEL: u32 = 0x0000_0002;
 pub const D3DADAPTER_IDENTIFIER8_BYTES: usize = 0x42c;
 pub const TRUEOS_D3D8_VENDOR_ID: u32 = 0x8086;
 pub const TRUEOS_D3D8_DEVICE_ID: u32 = 0xa780;
+pub const TRUEOS_DISPLAY_ADAPTER_DESCRIPTION: &str = "Intel(R) UHD Graphics 770";
 pub const TRUEOS_D3D8_SUBSYSTEM_ID: u32 = 0;
 pub const TRUEOS_D3D8_REVISION: u32 = 0x04;
 pub const TRUEOS_D3D8_ADAPTER_GUID: [u8; 16] = [
@@ -503,6 +504,13 @@ fn write_ansi_directory(
     }
     memory.write(output, path)?;
     Ok(required - 1)
+}
+
+fn write_fixed_ansi(record: &mut [u8], offset: usize, capacity: usize, value: &str) {
+    let destination = &mut record[offset..offset + capacity];
+    let bytes = value.as_bytes();
+    let length = bytes.len().min(capacity.saturating_sub(1));
+    destination[..length].copy_from_slice(&bytes[..length]);
 }
 
 pub fn read_c_string(
@@ -2582,7 +2590,8 @@ impl XpProcess {
 
         let mut identifier = [0u8; D3DADAPTER_IDENTIFIER8_BYTES];
         identifier[0..12].copy_from_slice(b"trueos-d3d8\0");
-        identifier[0x200..0x21a].copy_from_slice(b"Intel(R) UHD Graphics 770\0");
+        let description = TRUEOS_DISPLAY_ADAPTER_DESCRIPTION.as_bytes();
+        identifier[0x200..0x200 + description.len()].copy_from_slice(description);
         identifier[0x408..0x40c].copy_from_slice(&TRUEOS_D3D8_VENDOR_ID.to_le_bytes());
         identifier[0x40c..0x410].copy_from_slice(&TRUEOS_D3D8_DEVICE_ID.to_le_bytes());
         identifier[0x410..0x414].copy_from_slice(&TRUEOS_D3D8_SUBSYSTEM_ID.to_le_bytes());
@@ -2590,6 +2599,63 @@ impl XpProcess {
         identifier[0x418..0x428].copy_from_slice(&TRUEOS_D3D8_ADAPTER_GUID);
         memory.write(output, &identifier)?;
         Ok(D3D_OK)
+    }
+
+    fn enum_display_devices_a(
+        &mut self,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
+        const DISPLAY_DEVICEA_BYTES: u32 = 0x1a8;
+        const DISPLAY_DEVICE_ATTACHED_TO_DESKTOP: u32 = 0x0000_0001;
+        const DISPLAY_DEVICE_PRIMARY_DEVICE: u32 = 0x0000_0004;
+        const DISPLAY_DEVICE_ACTIVE: u32 = 0x0000_0001;
+
+        let [_, device_ptr, index, output, flags] = arguments::<5>(memory, esp)?;
+        if output == 0 {
+            return Ok(0);
+        }
+        let cb = read_u32(memory, output)?;
+        if cb != DISPLAY_DEVICEA_BYTES {
+            return Err(ProviderDispatchError::Frontier {
+                api: "EnumDisplayDevicesA",
+                detail: format!("unexpected cb={cb}"),
+            });
+        }
+        if flags != 0 {
+            return Err(ProviderDispatchError::Frontier {
+                api: "EnumDisplayDevicesA",
+                detail: format!("unobserved flags=0x{flags:08x}"),
+            });
+        }
+
+        let mut record = [0u8; DISPLAY_DEVICEA_BYTES as usize];
+        record[..4].copy_from_slice(&DISPLAY_DEVICEA_BYTES.to_le_bytes());
+        if device_ptr == 0 {
+            if index != 0 {
+                return Ok(0);
+            }
+            write_fixed_ansi(&mut record, 0x04, 32, r"\\.\DISPLAY1");
+            write_fixed_ansi(
+                &mut record,
+                0x24,
+                128,
+                TRUEOS_DISPLAY_ADAPTER_DESCRIPTION,
+            );
+            record[0xa4..0xa8].copy_from_slice(
+                &(DISPLAY_DEVICE_ATTACHED_TO_DESKTOP | DISPLAY_DEVICE_PRIMARY_DEVICE).to_le_bytes(),
+            );
+        } else {
+            let device = read_c_string(memory, device_ptr, 32)?;
+            if !device.eq_ignore_ascii_case(r"\\.\DISPLAY1") || index != 0 {
+                return Ok(0);
+            }
+            write_fixed_ansi(&mut record, 0x04, 32, r"\\.\DISPLAY1\Monitor0");
+            write_fixed_ansi(&mut record, 0x24, 128, "TRUEOS UI4 Display");
+            record[0xa4..0xa8].copy_from_slice(&DISPLAY_DEVICE_ACTIVE.to_le_bytes());
+        }
+        memory.write(output, &record)?;
+        Ok(1)
     }
 
     fn d3d8_release(

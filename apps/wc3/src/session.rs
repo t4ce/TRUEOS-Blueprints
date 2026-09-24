@@ -1145,7 +1145,9 @@ impl Wc3Session {
                 inheritable: false,
             },
         );
+        let desktop_size = self.launcher().xp.desktop_size();
         let mut xp = XpProcess::new_child();
+        xp.set_desktop_size(desktop_size.0, desktop_size.1);
         let registry_base = 0x5743_8001u32.saturating_add(pid.saturating_mul(0x100));
         xp.set_registry_handle_base(registry_base)
             .expect("new process has no registry handles");
