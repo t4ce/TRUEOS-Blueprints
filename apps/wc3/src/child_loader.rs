@@ -542,9 +542,41 @@ pub fn provider_thunk_kind(import: &ProviderImport) -> thunk32::Kind {
     }
 }
 
+/// ABI contracts for exports which exist in an external provider even though
+/// their behavior has not yet been modeled.  `GetProcAddress` must expose
+/// these independently of [`ProviderOp`], so guest control flow reaches the
+/// real API frontier rather than a fabricated missing-export branch.
+pub fn external_export_thunk_kind(import: &ProviderImport) -> Option<thunk32::Kind> {
+    match (&import.module[..], &import.symbol) {
+        (module, ProviderSymbol::Name(symbol))
+            if module.eq_ignore_ascii_case("d3d8.dll") && symbol == "Direct3DCreate8" =>
+        {
+            Some(thunk32::Kind::Stdcall(4))
+        }
+        _ if provider_op(import).is_modeled() => Some(provider_thunk_kind(import)),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod beginthreadex_tests {
     use super::*;
+
+    #[test]
+    fn d3d8_create8_is_an_advertised_unmodeled_stdcall_export() {
+        let import = ProviderImport {
+            module: "d3d8.dll".into(),
+            symbol: ProviderSymbol::Name("Direct3DCreate8".into()),
+            iat_rva: 0,
+        };
+
+        assert_eq!(provider_op(&import), ProviderOp::Unknown);
+        assert_eq!(external_export_thunk_kind(&import), Some(thunk32::Kind::Stdcall(4)));
+
+        let mut bytes = [0u8; thunk32::THUNK_BYTES];
+        thunk32::write(123, external_export_thunk_kind(&import).unwrap(), &mut bytes).unwrap();
+        assert_eq!(&bytes[8..11], &[0xc2, 0x04, 0x00]);
+    }
 
     #[test]
     fn beginthreadex_is_cdecl() {
@@ -760,7 +792,7 @@ pub fn prepare(image: &mut PeImage, listing: &DirListing) -> Result<ProviderSurf
         let offset = usize::try_from(id).map_err(|_| "child thunk offset")? * thunk32::THUNK_BYTES;
         thunk32::write(
             id,
-            provider_thunk_kind(import),
+            external_export_thunk_kind(import).unwrap_or_else(|| provider_thunk_kind(import)),
             &mut thunks[offset..offset + thunk32::THUNK_BYTES],
         )?;
     }

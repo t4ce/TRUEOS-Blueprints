@@ -1513,8 +1513,8 @@ impl XpProcess {
             .and_then(|id| thunk32::address(u32::try_from(id).ok()?))
     }
 
-    /// A dynamically callable provider export, as opposed to any static IAT
-    /// trap thunk that happens to exist for an unmodeled provider import.
+    /// A dynamically callable provider export, whether its behavior is
+    /// modeled or it has an explicit external ABI contract.
     pub fn provider_export_address(&self, module: &str, symbol: &ProviderSymbol) -> Option<u32> {
         let import = ProviderImport {
             module: module.into(),
@@ -1528,7 +1528,7 @@ impl XpProcess {
                 .find(|(_, import)| {
                     import.module.eq_ignore_ascii_case(module)
                         && import.symbol == *symbol
-                        && provider_op(import).is_modeled()
+                        && crate::child_loader::external_export_thunk_kind(import).is_some()
                 })
                 .and_then(|(id, _)| thunk32::address(u32::try_from(id).ok()?))
         })
@@ -4612,7 +4612,8 @@ impl XpProcess {
             let import = self.provider_import(id).ok_or("provider import")?;
             thunk32::write(
                 id,
-                crate::child_loader::provider_thunk_kind(import),
+                crate::child_loader::external_export_thunk_kind(import)
+                    .unwrap_or_else(|| crate::child_loader::provider_thunk_kind(import)),
                 &mut self.provider_thunks[start..start + thunk32::THUNK_BYTES],
             )?;
         }

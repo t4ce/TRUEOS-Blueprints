@@ -7202,9 +7202,9 @@ pub(super) async fn run_loop(
                                 symbol: provider_symbol.clone(),
                                 iat_rva: 0,
                             };
-                            let operation = child_loader::provider_op(&import);
                             let data_export = child_loader::provider_data_export_address(&import);
-                            if !operation.is_modeled() && data_export.is_none() {
+                            let export_kind = child_loader::external_export_thunk_kind(&import);
+                            if export_kind.is_none() && data_export.is_none() {
                                 session
                                     .process_mut(active_pid)
                                     .ok_or_else(|| "child process missing".to_owned())?
@@ -7213,7 +7213,7 @@ pub(super) async fn run_loop(
                                 logl::log(
                                     level::IMPORTANT,
                                     format_args!(
-                                        "WC3 CHILD GETPROCADDRESS MISS pid={} tid={} module={:?} selector={:?} reason=provider-op-unmodeled error={}",
+                                        "WC3 CHILD GETPROCADDRESS MISS pid={} tid={} module={:?} selector={:?} reason=export-absent error={}",
                                         active_pid,
                                         active_tid,
                                         provider_module,
@@ -8402,7 +8402,36 @@ pub(super) async fn run_loop(
                             Ok(_) => {
                                 return Err("pure child provider requested a runtime effect".into());
                             }
-                            Err(ProviderDispatchError::Unsupported) => {}
+                            Err(ProviderDispatchError::Unsupported) => {
+                                if provider.module.eq_ignore_ascii_case("d3d8.dll")
+                                    && matches!(
+                                        &provider.symbol,
+                                        child_loader::ProviderSymbol::Name(symbol)
+                                            if symbol == "Direct3DCreate8"
+                                    )
+                                {
+                                    let [caller_ret, sdk_version] = read_guest_words(
+                                        &X86Memory(&child.address_space),
+                                        exit.registers.esp,
+                                        2,
+                                    )?[..]
+                                    else {
+                                        unreachable!("Direct3DCreate8 frame has two words")
+                                    };
+                                    logl::log(
+                                        level::IMPORTANT,
+                                        format_args!(
+                                            "WC3 CHILD D3D8 DIRECT3DCREATE8 CALL pid={} tid={} during=\"{}\" provider_id={} caller_ret=0x{:08x} sdk_version={} cleanup=4-by-thunk",
+                                            active_pid,
+                                            active_tid,
+                                            running_module_name,
+                                            provider_id,
+                                            caller_ret,
+                                            sdk_version,
+                                        ),
+                                    );
+                                }
+                            }
                             Err(ProviderDispatchError::Fault(error)) => {
                                 return Err(format!("child provider semantic fault: {error}"));
                             }
