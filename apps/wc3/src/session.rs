@@ -1045,7 +1045,7 @@ impl Wc3Session {
                 instance: request.instance,
                 param: request.param,
                 visible: requested_visible,
-                paint_pending: false,
+                paint_pending: true,
             },
         );
         self.window_presentation = Some(presentation);
@@ -1093,8 +1093,8 @@ impl Wc3Session {
 
     pub fn begin_paint_window(&self, pid: Pid, hwnd: u32) -> Result<(u32, u32), &'static str> {
         let window = self.windows.get(&hwnd).ok_or("unknown paint window")?;
-        if window.owner.pid != pid || !window.visible {
-            return Err("BeginPaint requires visible owned window");
+        if window.owner.pid != pid {
+            return Err("BeginPaint window owner mismatch");
         }
         Ok((window.width, window.height))
     }
