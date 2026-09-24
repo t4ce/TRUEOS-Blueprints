@@ -3250,7 +3250,7 @@ mod tests_process_1 {
         assert_eq!(operation.stack_cleanup_bytes(), 0);
         assert_eq!(
             crate::child_loader::provider_thunk_kind(&provider),
-            thunk32::Kind::Return
+            if cfg!(feature = "host-memmove") { thunk32::Kind::Return } else { thunk32::Kind::Memmove }
         );
 
         let mut xp = XpProcess::new_child();

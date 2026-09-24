@@ -15,6 +15,7 @@ bench = false
 [features]
 default = ["trace-seh"]
 nolog = []
+host-memmove = []
 replay-loops = []
 trace-scan = []
 trace-seh = []

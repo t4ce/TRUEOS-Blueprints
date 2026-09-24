@@ -31,8 +31,27 @@ pub const CHILD_CIPOW_RESULT_ADDRESS: u32 = CHILD_CONTROL_BASE + CHILD_CIPOW_RES
 pub const CHILD_CIPOW_RESTORE_OFFSET: usize = 0x120;
 pub const CHILD_CIPOW_RESTORE_ADDRESS: u32 = CHILD_CONTROL_BASE + CHILD_CIPOW_RESTORE_OFFSET as u32;
 pub const CHILD_CIPOW_SPILL_AFTER_VMCALL: u32 = CHILD_CIPOW_SPILL_ADDRESS + 15;
+pub const CHILD_MEMMOVE_OFFSET: usize = 0x300;
+pub const CHILD_MEMMOVE_ADDRESS: u32 = CHILD_CONTROL_BASE + CHILD_MEMMOVE_OFFSET as u32;
+
+
+// Cdecl memmove: save EFLAGS/ESI/EDI; read dst/src/len at ESP+16/+20/+24;
+// no-op for zero length or identical pointers; reject 32-bit range wrap;
+// REP MOVSB forward unless dst lies inside the source range, then backward.
+// Restore the incoming flags (including DF), nonvolatile registers, and stack;
+// return the destination in EAX. Unmapped/protected memory faults normally.
+const CHILD_MEMMOVE_CODE: &[u8] = &[
+    0x9c, 0x56, 0x57, 0x8b, 0x44, 0x24, 0x10, 0x8b, 0x74, 0x24, 0x14, 0x8b,
+    0x4c, 0x24, 0x18, 0x89, 0xc7, 0x85, 0xc9, 0x74, 0x2a, 0x39, 0xf7, 0x74,
+    0x26, 0x8d, 0x51, 0xff, 0x01, 0xf2, 0x72, 0x23, 0x8d, 0x51, 0xff, 0x01,
+    0xfa, 0x72, 0x1c, 0xfc, 0x39, 0xf7, 0x76, 0x11, 0x89, 0xfa, 0x29, 0xf2,
+    0x39, 0xca, 0x73, 0x09, 0x8d, 0x74, 0x0e, 0xff, 0x8d, 0x7c, 0x0f, 0xff,
+    0xfd, 0xf3, 0xa4, 0x5f, 0x5e, 0x9d, 0xc3, 0x0f, 0x0b,
+];
 
 pub fn install_child_controls(output: &mut [u8]) -> Result<(), &'static str> {
+    output.get_mut(CHILD_MEMMOVE_OFFSET..CHILD_MEMMOVE_OFFSET + CHILD_MEMMOVE_CODE.len())
+        .ok_or("memmove helper range")?.copy_from_slice(CHILD_MEMMOVE_CODE);
     for offset in [0usize, 0x10, 0x20, 0x30, 0x40, 0x50] {
         let trap = output
             .get_mut(offset..offset + 5)
@@ -80,6 +99,8 @@ pub enum Kind {
     Stop,
     Return,
     Stdcall(u8),
+    /// Cdecl guest-native memory move; no provider trap or temporary buffer.
+    Memmove,
 }
 
 pub fn write(import_id: u32, kind: Kind, output: &mut [u8]) -> Result<(), &'static str> {
@@ -87,6 +108,13 @@ pub fn write(import_id: u32, kind: Kind, output: &mut [u8]) -> Result<(), &'stat
         return Err("wc3 thunk buffer too small");
     }
     output[..THUNK_BYTES].fill(0x90);
+    if kind == Kind::Memmove {
+        let next = address(import_id).and_then(|address| address.checked_add(5))
+            .ok_or("memmove thunk address overflow")?;
+        output[0] = 0xe9;
+        output[1..5].copy_from_slice(&CHILD_MEMMOVE_ADDRESS.wrapping_sub(next).to_le_bytes());
+        return Ok(());
+    }
     output[..8].copy_from_slice(&[
         0xB8,
         import_id as u8,
@@ -98,6 +126,7 @@ pub fn write(import_id: u32, kind: Kind, output: &mut [u8]) -> Result<(), &'stat
         0xC1,
     ]);
     match kind {
+        Kind::Memmove => unreachable!(),
         Kind::Return => output[8] = 0xC3,
         Kind::Stdcall(bytes) => {
             output[8] = 0xC2;

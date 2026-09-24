@@ -46,6 +46,21 @@ API argument frames are fetched in a single checked guest-memory read instead
 of one host crossing per word. All initializers still execute, and their
 completion count remains visible with `trace-init` disabled.
 
+MSVCRT `memmove` imports now jump to a cdecl x86 helper in the child control
+page. It copies directly with `REP MOVSB`, backwards for rightward overlap,
+returns the destination, and preserves nonvolatile registers and incoming flags.
+Zero-size and identical-pointer calls remain no-ops; wrapping ranges trap and
+unmapped/protected accesses use the normal guest-fault path. This avoids a
+provider exit, a temporary allocation, and guest-to-host-to-guest transfers per
+move. Individual moves remain ordered: the observed 16-byte source / 44-byte
+destination stride expansion cannot be replaced by one contiguous copy.
+
+Enable `host-memmove` to restore the Rust provider and its per-call diagnostics.
+Native moves are absent from host provider call counters/logs. The existing
+callback-table relocation copy is separate and still uses host transfers.
+`python3 apps/wc3/tests/test_native_memmove.py` executes the emitted helper and
+import thunk in a freestanding i386 test executable on Linux.
+
 For the normal Blueprint workflow, add the desired features to `default = []`
 in this app's `Cargo.toml`, then rebuild. For host checks, pass
 `--features trace-seh` (or another category) to Cargo. Diagnostic features do

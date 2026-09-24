@@ -479,6 +479,9 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
 }
 
 pub fn provider_thunk_kind(import: &ProviderImport) -> thunk32::Kind {
+    if provider_op(import) == ProviderOp::CrtMemmove && !cfg!(feature = "host-memmove") {
+        return thunk32::Kind::Memmove;
+    }
     match provider_op(import).stack_cleanup_bytes() {
         0 => thunk32::Kind::Return,
         bytes => thunk32::Kind::Stdcall(bytes),
