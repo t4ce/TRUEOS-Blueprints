@@ -52,7 +52,8 @@ use wc3::{
         CRT_CONSOLE_APP, CRT_ENVP_VA, CRT_FMODE_VA, CRT_GUI_APP, CRT_UNKNOWN_APP,
         ENVIRONMENT_BLOCK_VA, GuestMemory, HEAP_GENERATE_EXCEPTIONS, HEAP_ZERO_MEMORY,
         PROCESS_DATA_VA, PreparedProcess, ProviderDispatchError, STACK_BASE, STACK_BYTES,
-        STACK_TOP, ThreadObject, XP_ANSI_CODE_PAGE, XpProcess, bmp_file_from_dib, dib_layout,
+        STACK_TOP, ThreadObject, XP_ANSI_CODE_PAGE, XpProcess, OSVERSIONINFOA_SIZE,
+        OSVERSIONINFOEXA_SIZE, VER_NT_WORKSTATION, bmp_file_from_dib, dib_layout,
     },
     session::{
         CompletedWait, CriticalSectionWait, GuestCall, LAUNCHER_PID, LAUNCHER_TID, PersonalityAction, SessionObject,

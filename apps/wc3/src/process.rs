@@ -52,6 +52,9 @@ pub const EXCEPTION_FILTER_EXECUTE_HANDLER: u32 = 1;
 pub const CRT_UNKNOWN_APP: u32 = 0;
 pub const CRT_CONSOLE_APP: u32 = 1;
 pub const CRT_GUI_APP: u32 = 2;
+pub const OSVERSIONINFOA_SIZE: u32 = 0x94;
+pub const OSVERSIONINFOEXA_SIZE: u32 = 0x9c;
+pub const VER_NT_WORKSTATION: u8 = 1;
 pub const DRIVE_NO_ROOT_DIR: u32 = 1;
 pub const DRIVE_FIXED: u32 = 3;
 pub const FILE_CASE_PRESERVED_NAMES: u32 = 0x0000_0002;
@@ -4895,14 +4898,21 @@ impl XpProcess {
         memory: &mut impl GuestMemory,
     ) -> Result<u32, &'static str> {
         let [_, output] = arguments::<2>(memory, esp)?;
-        if read_u32(memory, output)? != 0x94 {
+        let size = read_u32(memory, output)?;
+        if !matches!(size, OSVERSIONINFOA_SIZE | OSVERSIONINFOEXA_SIZE) {
             return Err("GetVersionExA structure size");
         }
-        let mut info = [0; 0x94];
-        for (offset, value) in [(0, 0x94), (4, 5), (8, 1), (12, 2600), (16, 2)] {
+        let mut info = [0; OSVERSIONINFOEXA_SIZE as usize];
+        for (offset, value) in [(0, size), (4, 5), (8, 1), (12, 2600), (16, 2)] {
             info[offset..offset + 4].copy_from_slice(&u32::to_le_bytes(value));
         }
-        memory.write(output, &info)?;
+        if size == OSVERSIONINFOEXA_SIZE {
+            info[0x94..0x96].copy_from_slice(&0u16.to_le_bytes());
+            info[0x96..0x98].copy_from_slice(&0u16.to_le_bytes());
+            info[0x98..0x9a].copy_from_slice(&0u16.to_le_bytes());
+            info[0x9a] = VER_NT_WORKSTATION;
+        }
+        memory.write(output, &info[..size as usize])?;
         Ok(1)
     }
 

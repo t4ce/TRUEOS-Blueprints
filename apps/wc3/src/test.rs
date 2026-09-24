@@ -4251,6 +4251,41 @@ mod tests_process_1 {
     }
 
     #[test]
+    fn child_get_version_ex_a_accepts_the_extended_xp_structure() {
+        let provider = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("GetVersionExA".into()),
+            iat_rva: 0,
+        };
+        let mut pid2 = XpProcess::new(Vec::new());
+        pid2.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+        let info = STACK_TOP - 0x100;
+        write_u32(&mut memory, esp, 0x2113_1a58).unwrap();
+        write_u32(&mut memory, esp + 4, info).unwrap();
+        write_u32(&mut memory, info, OSVERSIONINFOEXA_SIZE).unwrap();
+        assert_eq!(
+            pid2.dispatch_provider_for_process(2, 3, 0, esp, &mut memory)
+                .unwrap(),
+            PersonalityAction::Return(1)
+        );
+        assert_eq!(
+            [0, 4, 8, 12, 16]
+                .map(|offset| read_u32(&memory, info + offset).unwrap()),
+            [OSVERSIONINFOEXA_SIZE, 5, 1, 2600, 2]
+        );
+        assert_eq!(read_u16(&memory, info + 0x94).unwrap(), 0);
+        assert_eq!(read_u16(&memory, info + 0x96).unwrap(), 0);
+        assert_eq!(read_u16(&memory, info + 0x98).unwrap(), 0);
+        assert_eq!(memory.bytes[(info + 0x9a - STACK_BASE) as usize], VER_NT_WORKSTATION);
+        assert_eq!(memory.bytes[(info + 0x9b - STACK_BASE) as usize], 0);
+    }
+
+    #[test]
     fn child_get_command_line_a_returns_the_process_data_va() {
         let provider = ProviderImport {
             module: "KERNEL32.dll".into(),

@@ -4085,7 +4085,7 @@ pub(super) async fn run_loop(
                                 u32::from_le_bytes(caller_ret),
                             ),
                         );
-                        if size != 0x94 {
+                        if !matches!(size, OSVERSIONINFOA_SIZE | OSVERSIONINFOEXA_SIZE) {
                             logl::log(
                                 level::IMPORTANT,
                                 format_args!(
@@ -4112,8 +4112,30 @@ pub(super) async fn run_loop(
                             return Err("GetVersionExA child provider did not return".into());
                         };
                         let version = read_guest_words(&X86Memory(&child.address_space), info, 5)?;
-                        if result != 1 || version != [0x94, 5, 1, 2600, 2] {
+                        if result != 1 || version != [size, 5, 1, 2600, 2] {
                             return Err("GetVersionExA child result verification failed".into());
+                        }
+                        let mut version_tail = [0; 8];
+                        if size == OSVERSIONINFOEXA_SIZE {
+                            if child
+                                .address_space
+                                .read(info + OSVERSIONINFOA_SIZE, &mut version_tail)
+                                .map_err(|error| error.to_string())?
+                                != version_tail.len()
+                            {
+                                return Err("short OSVERSIONINFOEXA tail read".into());
+                            }
+                            let service_pack_major = u16::from_le_bytes(version_tail[0..2].try_into().unwrap());
+                            let service_pack_minor = u16::from_le_bytes(version_tail[2..4].try_into().unwrap());
+                            let suite_mask = u16::from_le_bytes(version_tail[4..6].try_into().unwrap());
+                            if service_pack_major != 0
+                                || service_pack_minor != 0
+                                || suite_mask != 0
+                                || version_tail[6] != VER_NT_WORKSTATION
+                                || version_tail[7] != 0
+                            {
+                                return Err("GetVersionExA extended result verification failed".into());
+                            }
                         }
                         let mut registers = exit.registers;
                         registers.eax = result;
@@ -4124,14 +4146,19 @@ pub(super) async fn run_loop(
                         logl::log(
                             level::IMPORTANT,
                             format_args!(
-                                "WC3 CHILD GETVERSIONEXA RESULT pid={} tid={} eax={} major={} minor={} build={} platform={} cleanup=4-by-thunk",
+                                "WC3 CHILD GETVERSIONEXA RESULT pid={} tid={} size=0x{:08x} eax={} major={} minor={} build={} platform={} service_pack={}.{} suite=0x{:04x} product_type={} cleanup=4-by-thunk",
                                 active_pid,
                                 active_tid,
+                                size,
                                 result,
                                 version[1],
                                 version[2],
                                 version[3],
                                 version[4],
+                                u16::from_le_bytes(version_tail[0..2].try_into().unwrap()),
+                                u16::from_le_bytes(version_tail[2..4].try_into().unwrap()),
+                                u16::from_le_bytes(version_tail[4..6].try_into().unwrap()),
+                                version_tail[6],
                             ),
                         );
                         continue;
