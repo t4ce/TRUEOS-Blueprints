@@ -1124,6 +1124,33 @@
                             format!("ordinal={}", ordinal)
                         }
                     };
+                    if matches!(
+                        &provider.symbol,
+                        child_loader::ProviderSymbol::Name(name)
+                            if provider.module.eq_ignore_ascii_case("USER32.dll")
+                                && name == "LoadImageA"
+                    ) {
+                        let frame = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            exit.registers.esp,
+                            7,
+                        )?;
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD LOADIMAGEA pid={} tid={} module=0x{:08x} name=0x{:08x} type={} cx={} cy={} flags=0x{:08x} caller_ret=0x{:08x}",
+                                active_pid,
+                                active_tid,
+                                frame[1],
+                                frame[2],
+                                frame[3],
+                                frame[4],
+                                frame[5],
+                                frame[6],
+                                frame[0],
+                            ),
+                        );
+                    }
                     let is_heap_create = matches!(
                         &provider.symbol,
                         child_loader::ProviderSymbol::Name(name)
