@@ -69,6 +69,7 @@ pub enum ProviderOp {
     Sleep,
     CreateThread,
     SetThreadPriority,
+    GetThreadPriority,
     CreateFileA,
     GetFileSize,
     SetFilePointer,
@@ -214,6 +215,7 @@ impl ProviderOp {
             Self::MultiByteToWideChar | Self::LCMapStringW | Self::RegQueryValueExA => 24,
             Self::CreateThread => 24,
             Self::SetThreadPriority => 8,
+            Self::GetThreadPriority => 4,
             Self::CreateFileA | Self::FormatMessageA => 28,
             Self::WideCharToMultiByte => 32,
             Self::GetModuleFileNameA
@@ -382,6 +384,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "Sleep" => ProviderOp::Sleep,
             "CreateThread" => ProviderOp::CreateThread,
             "SetThreadPriority" => ProviderOp::SetThreadPriority,
+            "GetThreadPriority" => ProviderOp::GetThreadPriority,
             "CreateFileA" => ProviderOp::CreateFileA,
             "GetFileSize" => ProviderOp::GetFileSize,
             "SetFilePointer" => ProviderOp::SetFilePointer,

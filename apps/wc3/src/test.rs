@@ -3258,6 +3258,27 @@ mod tests_process_1 {
     }
 
     #[test]
+    fn child_get_thread_priority_is_stdcall_with_one_argument() {
+        let provider = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("GetThreadPriority".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&provider);
+        assert_eq!(operation, ProviderOp::GetThreadPriority);
+        assert!(operation.is_modeled());
+        assert!(!operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 4);
+        assert_eq!(
+            crate::child_loader::provider_thunk_kind(&provider),
+            thunk32::Kind::Stdcall(4)
+        );
+        let mut thunk = [0u8; thunk32::THUNK_BYTES];
+        thunk32::write(343, thunk32::Kind::Stdcall(4), &mut thunk).unwrap();
+        assert_eq!(&thunk[8..11], &[0xc2, 0x04, 0]);
+    }
+
+    #[test]
     fn child_crt_memmove_preserves_both_overlap_directions_and_is_cdecl() {
         let provider = ProviderImport {
             module: "MSVCRT.dll".into(),
@@ -8242,8 +8263,14 @@ mod tests_session_1 {
             session.set_thread_priority(first, crate::process::CURRENT_THREAD_PSEUDO_HANDLE, -1),
             Ok((first, 0, 7))
         );
+        assert_eq!(
+            session.get_thread_priority(first, crate::process::CURRENT_THREAD_PSEUDO_HANDLE),
+            Ok((first, -1, 7))
+        );
+        assert_eq!(session.get_thread_priority(first, second_handle), Ok((second, 2, 10)));
         assert_eq!(session.set_thread_priority(first, first_handle, 3), Err(87));
         assert_eq!(session.set_thread_priority(first, 0x1234_5678, 0), Err(6));
+        assert_eq!(session.get_thread_priority(first, 0x1234_5678), Err(6));
 
         session.enqueue(first);
         session.enqueue(second);

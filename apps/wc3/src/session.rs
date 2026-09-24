@@ -873,6 +873,21 @@ impl Wc3Session {
         })
     }
 
+    fn resolve_thread_key(&self, caller: ThreadKey, handle: u32) -> Result<ThreadKey, u32> {
+        if handle == CURRENT_THREAD_PSEUDO_HANDLE {
+            return Ok(caller);
+        }
+        let object = self
+            .process(caller.pid)
+            .and_then(|process| process.handles.get(&handle))
+            .ok_or(6u32)?
+            .object;
+        let Some(SessionObject::Thread(thread)) = self.objects.get(&object) else {
+            return Err(6);
+        };
+        Ok(thread.key)
+    }
+
     pub fn set_thread_priority(
         &mut self,
         caller: ThreadKey,
@@ -880,19 +895,7 @@ impl Wc3Session {
         priority: i32,
     ) -> Result<(ThreadKey, i32, u8), u32> {
         let base = normal_class_base_priority(priority).ok_or(87u32)?;
-        let target = if handle == CURRENT_THREAD_PSEUDO_HANDLE {
-            caller
-        } else {
-            let object = self
-                .process(caller.pid)
-                .and_then(|process| process.handles.get(&handle))
-                .ok_or(6u32)?
-                .object;
-            let Some(SessionObject::Thread(thread)) = self.objects.get(&object) else {
-                return Err(6);
-            };
-            thread.key
-        };
+        let target = self.resolve_thread_key(caller, handle)?;
         let thread = self.objects.values_mut().find_map(|object| match object {
             SessionObject::Thread(thread) if thread.key == target => Some(thread),
             _ => None,
@@ -900,6 +903,21 @@ impl Wc3Session {
         let old = thread.priority_level;
         thread.priority_level = priority;
         Ok((target, old, base))
+    }
+
+    pub fn get_thread_priority(
+        &self,
+        caller: ThreadKey,
+        handle: u32,
+    ) -> Result<(ThreadKey, i32, u8), u32> {
+        let target = self.resolve_thread_key(caller, handle)?;
+        let thread = self.objects.values().find_map(|object| match object {
+            SessionObject::Thread(thread) if thread.key == target => Some(thread),
+            _ => None,
+        }).ok_or(6u32)?;
+        let level = thread.priority_level;
+        let base = normal_class_base_priority(level).ok_or(87u32)?;
+        Ok((target, level, base))
     }
 
     pub fn defer_wait(&mut self, request: WaitRequest) {

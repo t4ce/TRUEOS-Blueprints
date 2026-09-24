@@ -5642,6 +5642,53 @@ pub(super) async fn run_loop(
                             .map_err(|error| error.to_string())?;
                         continue;
                     }
+                    if operation == child_loader::ProviderOp::GetThreadPriority {
+                        let frame = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            exit.registers.esp,
+                            2,
+                        )?;
+                        let [caller_ret, handle] =
+                            <[u32; 2]>::try_from(frame).map_err(|_| "GetThreadPriority frame")?;
+                        let mut registers = exit.registers;
+                        match session.get_thread_priority(active_key, handle) {
+                            Ok((target, priority, base)) => {
+                                registers.eax = priority as u32;
+                                contexts[active]
+                                    .context
+                                    .set_registers(registers)
+                                    .map_err(|error| error.to_string())?;
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 CHILD GETTHREADPRIORITY pid={} caller_tid={} handle=0x{:08x} target_tid={} priority={} base_priority={} result=0x{:08x} caller_ret=0x{:08x} cleanup=4-by-thunk",
+                                        active_pid, active_tid, handle, target.tid, priority,
+                                        base, priority as u32, caller_ret,
+                                    ),
+                                );
+                            }
+                            Err(error) => {
+                                session
+                                    .process_mut(active_pid)
+                                    .ok_or_else(|| "child process missing".to_owned())?
+                                    .xp
+                                    .set_last_error_for_thread(active_tid, error);
+                                registers.eax = 0x7fff_ffff;
+                                contexts[active]
+                                    .context
+                                    .set_registers(registers)
+                                    .map_err(|error| error.to_string())?;
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 CHILD GETTHREADPRIORITY pid={} caller_tid={} handle=0x{:08x} result=THREAD_PRIORITY_ERROR_RETURN last_error={} caller_ret=0x{:08x} cleanup=4-by-thunk",
+                                        active_pid, active_tid, handle, error, caller_ret,
+                                    ),
+                                );
+                            }
+                        }
+                        continue;
+                    }
                     if operation == child_loader::ProviderOp::SetThreadPriority {
                         let frame = read_guest_words(
                             &X86Memory(&child.address_space),
