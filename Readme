@@ -1,1 +1,9 @@
-#Userspace of TrueOS §
+# Userspace of TrueOS
+
+This repository contains TrueOS userspace applications and their blueprints.
+
+## Collaborative commits
+
+When a change is made together, credit each collaborator with a
+`Co-authored-by: Name <email>` trailer in the commit message that lands on
+`main`.
