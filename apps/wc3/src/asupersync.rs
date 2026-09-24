@@ -5642,6 +5642,78 @@ pub(super) async fn run_loop(
                             .map_err(|error| error.to_string())?;
                         continue;
                     }
+                    if operation == child_loader::ProviderOp::SetThreadPriority {
+                        let frame = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            exit.registers.esp,
+                            3,
+                        )?;
+                        let [caller_ret, handle, priority] =
+                            <[u32; 3]>::try_from(frame).map_err(|_| "SetThreadPriority frame")?;
+                        let result = session.set_thread_priority(
+                            active_key,
+                            handle,
+                            priority as i32,
+                        );
+                        let mut registers = exit.registers;
+                        let preempt = match result {
+                            Ok((target, old, base)) => {
+                                registers.eax = 1;
+                                contexts[active]
+                                    .context
+                                    .set_registers(registers)
+                                    .map_err(|error| error.to_string())?;
+                                let current_priority = session.thread_base_priority(active_key).unwrap_or(8);
+                                let best_runnable_priority = session
+                                    .runnable
+                                    .iter()
+                                    .copied()
+                                    .filter(|key| context_index(&contexts, *key).is_some())
+                                    .filter_map(|key| session.thread_base_priority(key))
+                                    .max()
+                                    .unwrap_or(0);
+                                let preempt = best_runnable_priority > current_priority;
+                                if preempt {
+                                    session.enqueue(active_key);
+                                    active = pop_runnable_context(&mut session, &contexts)
+                                        .ok_or_else(|| "priority preemption lost runnable context".to_owned())?;
+                                }
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 CHILD SETTHREADPRIORITY pid={} caller_tid={} handle=0x{:08x} target_tid={} priority={} old_priority={} base_priority={} result=1 preempt={} caller_ret=0x{:08x} cleanup=8-by-thunk",
+                                        active_pid, active_tid, handle, target.tid, priority as i32,
+                                        old, base, preempt as u8, caller_ret,
+                                    ),
+                                );
+                                preempt
+                            }
+                            Err(error) => {
+                                session
+                                    .process_mut(active_pid)
+                                    .ok_or_else(|| "child process missing".to_owned())?
+                                    .xp
+                                    .set_last_error_for_thread(active_tid, error);
+                                registers.eax = 0;
+                                contexts[active]
+                                    .context
+                                    .set_registers(registers)
+                                    .map_err(|error| error.to_string())?;
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 CHILD SETTHREADPRIORITY pid={} caller_tid={} handle=0x{:08x} priority={} result=0 last_error={} caller_ret=0x{:08x} cleanup=8-by-thunk",
+                                        active_pid, active_tid, handle, priority as i32, error, caller_ret,
+                                    ),
+                                );
+                                false
+                            }
+                        };
+                        if preempt {
+                            tokio::task::yield_now().await;
+                        }
+                        continue;
+                    }
                     if operation == child_loader::ProviderOp::CrtBeginThreadEx {
                         let frame = read_guest_words(
                             &X86Memory(&child.address_space),

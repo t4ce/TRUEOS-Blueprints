@@ -3237,6 +3237,27 @@ mod tests_process_1 {
     }
 
     #[test]
+    fn child_set_thread_priority_is_stdcall_with_two_arguments() {
+        let provider = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("SetThreadPriority".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&provider);
+        assert_eq!(operation, ProviderOp::SetThreadPriority);
+        assert!(operation.is_modeled());
+        assert!(!operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 8);
+        assert_eq!(
+            crate::child_loader::provider_thunk_kind(&provider),
+            thunk32::Kind::Stdcall(8)
+        );
+        let mut thunk = [0u8; thunk32::THUNK_BYTES];
+        thunk32::write(378, thunk32::Kind::Stdcall(8), &mut thunk).unwrap();
+        assert_eq!(&thunk[8..11], &[0xc2, 0x08, 0]);
+    }
+
+    #[test]
     fn child_crt_memmove_preserves_both_overlap_directions_and_is_cdecl() {
         let provider = ProviderImport {
             module: "MSVCRT.dll".into(),
@@ -8201,6 +8222,41 @@ mod tests_session_1 {
                 .filter(|queued| **queued == key)
                 .count(),
             1
+        );
+    }
+
+    #[test]
+    fn thread_priority_uses_normal_class_bases_and_round_robins_equals() {
+        let mut session = Wc3Session::new(XpProcess::new(Vec::new()));
+        let child = session.create_child();
+        let (first, first_handle) = session.create_child_thread(child.pid).unwrap();
+        let (second, second_handle) = session.create_child_thread(child.pid).unwrap();
+
+        assert_eq!(session.thread_base_priority(first), Some(8));
+        assert_eq!(
+            session.set_thread_priority(first, second_handle, 2),
+            Ok((second, 0, 10))
+        );
+        assert_eq!(session.thread_base_priority(second), Some(10));
+        assert_eq!(
+            session.set_thread_priority(first, crate::process::CURRENT_THREAD_PSEUDO_HANDLE, -1),
+            Ok((first, 0, 7))
+        );
+        assert_eq!(session.set_thread_priority(first, first_handle, 3), Err(87));
+        assert_eq!(session.set_thread_priority(first, 0x1234_5678, 0), Err(6));
+
+        session.enqueue(first);
+        session.enqueue(second);
+        assert_eq!(
+            session.take_highest_runnable(|key| key.pid == child.pid),
+            Some(second)
+        );
+
+        assert_eq!(session.set_thread_priority(first, second_handle, -1), Ok((second, 2, 7)));
+        session.enqueue(second);
+        assert_eq!(
+            session.take_highest_runnable(|key| key.pid == child.pid),
+            Some(first)
         );
     }
 }

@@ -947,11 +947,7 @@ fn context_index(contexts: &[GuestContext], key: ThreadKey) -> Option<usize> {
 }
 
 fn pop_runnable_context(session: &mut Wc3Session, contexts: &[GuestContext]) -> Option<usize> {
-    let queue_index = session
-        .runnable
-        .iter()
-        .position(|key| context_index(contexts, *key).is_some())?;
-    let key = session.runnable.remove(queue_index)?;
+    let key = session.take_highest_runnable(|key| context_index(contexts, key).is_some())?;
     context_index(contexts, key)
 }
 

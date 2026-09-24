@@ -7,7 +7,7 @@
 use std::collections::{HashMap, VecDeque};
 
 use crate::ThisToThat;
-use crate::process::{CreateProcessAFrame, ThreadObject, XpProcess};
+use crate::process::{CURRENT_THREAD_PSEUDO_HANDLE, CreateProcessAFrame, ThreadObject, XpProcess};
 
 pub type Pid = u32;
 pub type Tid = u32;
@@ -18,6 +18,20 @@ pub const PROCESS_HANDLE_BASE: u32 = 0x5743_6001;
 pub const THREAD_HANDLE_BASE: u32 = 0x5743_5001;
 pub const WINDOW_HANDLE_BASE: u32 = 0x5743_4001;
 pub const DESKTOP_HWND: u32 = 0x5743_3000;
+
+/// XP base priorities for NORMAL_PRIORITY_CLASS.
+pub const fn normal_class_base_priority(priority: i32) -> Option<u8> {
+    match priority {
+        -15 => Some(1), // THREAD_PRIORITY_IDLE
+        -2 => Some(6),  // THREAD_PRIORITY_LOWEST
+        -1 => Some(7),  // THREAD_PRIORITY_BELOW_NORMAL
+        0 => Some(8),   // THREAD_PRIORITY_NORMAL
+        1 => Some(9),   // THREAD_PRIORITY_ABOVE_NORMAL
+        2 => Some(10),  // THREAD_PRIORITY_HIGHEST
+        15 => Some(15), // THREAD_PRIORITY_TIME_CRITICAL
+        _ => None,
+    }
+}
 
 pub type RegistryNodeId = u32;
 
@@ -495,6 +509,8 @@ pub struct ProcessObject {
 pub struct ThreadSessionObject {
     pub key: ThreadKey,
     pub exit_code: Option<u32>,
+    /// Win32 THREAD_PRIORITY_* level. The XP NORMAL_PRIORITY_CLASS base is 8.
+    pub priority_level: i32,
 }
 
 #[derive(Clone, Debug)]
@@ -829,6 +845,63 @@ impl Wc3Session {
         }
     }
 
+    /// Removes the highest-base-priority runnable thread accepted by `available`.
+    /// Equal priorities retain queue order, giving round-robin behavior.
+    pub fn take_highest_runnable(
+        &mut self,
+        mut available: impl FnMut(ThreadKey) -> bool,
+    ) -> Option<ThreadKey> {
+        let mut best: Option<(usize, u8)> = None;
+        for (index, key) in self.runnable.iter().copied().enumerate() {
+            if !available(key) {
+                continue;
+            }
+            let priority = self.thread_base_priority(key).unwrap_or(8);
+            if best.is_none_or(|(_, current)| priority > current) {
+                best = Some((index, priority));
+            }
+        }
+        self.runnable.remove(best?.0)
+    }
+
+    pub fn thread_base_priority(&self, key: ThreadKey) -> Option<u8> {
+        self.objects.values().find_map(|object| match object {
+            SessionObject::Thread(thread) if thread.key == key => {
+                normal_class_base_priority(thread.priority_level)
+            }
+            _ => None,
+        })
+    }
+
+    pub fn set_thread_priority(
+        &mut self,
+        caller: ThreadKey,
+        handle: u32,
+        priority: i32,
+    ) -> Result<(ThreadKey, i32, u8), u32> {
+        let base = normal_class_base_priority(priority).ok_or(87u32)?;
+        let target = if handle == CURRENT_THREAD_PSEUDO_HANDLE {
+            caller
+        } else {
+            let object = self
+                .process(caller.pid)
+                .and_then(|process| process.handles.get(&handle))
+                .ok_or(6u32)?
+                .object;
+            let Some(SessionObject::Thread(thread)) = self.objects.get(&object) else {
+                return Err(6);
+            };
+            thread.key
+        };
+        let thread = self.objects.values_mut().find_map(|object| match object {
+            SessionObject::Thread(thread) if thread.key == target => Some(thread),
+            _ => None,
+        }).ok_or(6u32)?;
+        let old = thread.priority_level;
+        thread.priority_level = priority;
+        Ok((target, old, base))
+    }
+
     pub fn defer_wait(&mut self, request: WaitRequest) {
         self.blocked.insert(request.key, request);
     }
@@ -1018,6 +1091,7 @@ impl Wc3Session {
             SessionObject::Thread(ThreadSessionObject {
                 key: ThreadKey { pid, tid },
                 exit_code: None,
+                priority_level: 0,
             }),
         );
         let process_handle = self.next_process_handle;
@@ -1068,6 +1142,7 @@ impl Wc3Session {
             SessionObject::Thread(ThreadSessionObject {
                 key: ThreadKey { pid, tid },
                 exit_code: None,
+                priority_level: 0,
             }),
         );
         if let Some(process) = self.process_mut(pid) {
@@ -1106,6 +1181,7 @@ impl Wc3Session {
             SessionObject::Thread(ThreadSessionObject {
                 key,
                 exit_code: None,
+                priority_level: 0,
             }),
         );
         self.process_mut(pid).expect("validated child process").handles.insert(
