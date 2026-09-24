@@ -86,7 +86,7 @@ impl XpProcess {
         gl_tex_geni_static => "glTexGeni", gl_light_modelfv_static => "glLightModelfv",
         gl_materialfv_static => "glMaterialfv", gl_polygon_offset_static => "glPolygonOffset",
         gl_get_integerv_static => "glGetIntegerv", wgl_get_proc_address_static => "wglGetProcAddress",
-        gl_get_string_static => "glGetString", wgl_create_context_static => "wglCreateContext",
+        gl_get_string_static => "glGetString",
         wgl_delete_context_static => "wglDeleteContext", gl_delete_textures_static => "glDeleteTextures",
         gl_tex_sub_image_2d_static => "glTexSubImage2D", gl_tex_image_2d_static => "glTexImage2D",
         gl_pixel_storei_static => "glPixelStorei", gl_tex_parameteri_static => "glTexParameteri",
@@ -101,4 +101,77 @@ impl XpProcess {
         gl_read_buffer_static => "glReadBuffer", wgl_swap_layer_buffers_static => "wglSwapLayerBuffers",
         gl_lightf_static => "glLightf",
     );
+
+    fn wgl_create_context_static(
+        &mut self,
+        esp: u32,
+        memory: &impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
+        let [_, hdc] = arguments::<2>(memory, esp)?;
+        let hwnd = match self.gdi_objects.get(&hdc) {
+            Some(GdiObject::DeviceContext(DeviceContext {
+                target: DcTarget::WindowPaint { hwnd },
+                ..
+            })) => *hwnd,
+            _ => {
+                return Err(ProviderDispatchError::Frontier {
+                    api: "wglCreateContext",
+                    detail: format!("hdc=0x{hdc:08x} is not a window DC"),
+                });
+            }
+        };
+        let pixel_format = self.window_pixel_formats.get(&hwnd).copied().ok_or_else(|| {
+            ProviderDispatchError::Frontier {
+                api: "wglCreateContext",
+                detail: format!("hwnd=0x{hwnd:08x} has no pixel format"),
+            }
+        })?;
+        if pixel_format != TRUEOS_GL_PIXEL_FORMAT {
+            return Err(ProviderDispatchError::Frontier {
+                api: "wglCreateContext",
+                detail: format!("hwnd=0x{hwnd:08x} unsupported pixel format={pixel_format}"),
+            });
+        }
+
+        if self.gl_runtime.is_none() {
+            let device = Device::open(Capabilities::DEFAULT.union(Capabilities::PRESENT))
+                .map_err(|code| ProviderDispatchError::Frontier {
+                    api: "wglCreateContext",
+                    detail: format!("vgpu device open failed code={code}"),
+                })?;
+            let queue = match device.create_queue(QueueClass::Render) {
+                Ok(queue) => queue,
+                Err(code) => {
+                    let _ = device.close();
+                    return Err(ProviderDispatchError::Frontier {
+                        api: "wglCreateContext",
+                        detail: format!("vgpu render queue create failed code={code}"),
+                    });
+                }
+            };
+            self.gl_runtime = Some(GlRuntime {
+                device,
+                queue,
+                contexts: HashMap::new(),
+                next_context: HGLRC_HANDLE_BASE,
+            });
+        }
+
+        let runtime = self.gl_runtime.as_mut().ok_or("GL runtime missing")?;
+        let hglrc = runtime.next_context;
+        runtime.next_context = runtime
+            .next_context
+            .checked_add(1)
+            .ok_or("HGLRC handle overflow")?;
+        runtime.contexts.insert(
+            hglrc,
+            WglContext {
+                hdc,
+                hwnd,
+                pixel_format,
+                current_tid: None,
+            },
+        );
+        Ok(hglrc)
+    }
 }

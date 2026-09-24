@@ -12,6 +12,7 @@ use std::{
 #[cfg(target_os = "trueos")]
 use trueos::clock;
 use trueos::clock::UtcDateTime;
+use trueos::vgpu::{Capabilities, Device, Queue, QueueClass};
 
 use crate::{
     ThisToThat::{decode_cp1252, encode_cp1252},
@@ -68,6 +69,7 @@ pub const XP_CYICON: u32 = 32;
 pub const XP_CXCURSOR: u32 = 32;
 pub const XP_CYCURSOR: u32 = 32;
 const USER_IMAGE_HANDLE_BASE: u32 = 0x5743_d001;
+const HGLRC_HANDLE_BASE: u32 = 0x5743_e001;
 pub const TRUEOS_D3D8_SUBSYSTEM_ID: u32 = 0;
 pub const TRUEOS_D3D8_REVISION: u32 = 0x04;
 pub const TRUEOS_D3D8_ADAPTER_GUID: [u8; 16] = [
@@ -1560,10 +1562,25 @@ pub struct XpProcess {
     active_paints: HashMap<u32, ActivePaint>,
     window_dcs: HashMap<u32, u32>,
     window_pixel_formats: HashMap<u32, u32>,
+    gl_runtime: Option<GlRuntime>,
     next_gdi_handle: u32,
     next_gdi_dib_va: u32,
     user_images: HashMap<u32, UserImage>,
     next_user_image_handle: u32,
+}
+
+struct WglContext {
+    hdc: u32,
+    hwnd: u32,
+    pixel_format: u32,
+    current_tid: Option<u32>,
+}
+
+struct GlRuntime {
+    device: Device,
+    queue: Queue,
+    contexts: HashMap<u32, WglContext>,
+    next_context: u32,
 }
 
 impl XpProcess {
@@ -1763,6 +1780,7 @@ impl XpProcess {
             active_paints: HashMap::new(),
             window_dcs: HashMap::new(),
             window_pixel_formats: HashMap::new(),
+            gl_runtime: None,
             next_gdi_handle: GDI_HANDLE_BASE,
             next_gdi_dib_va: GDI_DIB_BASE,
             user_images: HashMap::new(),

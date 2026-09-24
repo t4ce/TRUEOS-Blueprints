@@ -1230,6 +1230,28 @@
                     if matches!(
                         &provider.symbol,
                         child_loader::ProviderSymbol::Name(name)
+                            if provider.module.eq_ignore_ascii_case("OPENGL32.dll")
+                                && name == "wglCreateContext"
+                    ) {
+                        let frame = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            exit.registers.esp,
+                            2,
+                        )?;
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD WGLCREATECONTEXT CALL pid={} tid={} hdc=0x{:08x} caller_ret=0x{:08x}",
+                                active_pid,
+                                active_tid,
+                                frame[1],
+                                frame[0],
+                            ),
+                        );
+                    }
+                    if matches!(
+                        &provider.symbol,
+                        child_loader::ProviderSymbol::Name(name)
                             if provider.module.eq_ignore_ascii_case("USER32.dll")
                                 && name == "SetWindowPos"
                     ) {
@@ -6719,6 +6741,26 @@
                                                 ppfd,
                                                 format,
                                                 if result != 0 { "TRUE" } else { "FALSE" },
+                                            ),
+                                        );
+                                    }
+                                    child_loader::ProviderOp::WglCreateContext => {
+                                        let [_, hdc] = read_guest_words(
+                                            &X86Memory(&child.address_space),
+                                            exit.registers.esp,
+                                            2,
+                                        )?[..]
+                                        else {
+                                            unreachable!("wglCreateContext frame has two words")
+                                        };
+                                        logl::log(
+                                            level::IMPORTANT,
+                                            format_args!(
+                                                "WC3 CHILD WGLCREATECONTEXT RESULT pid={} tid={} hdc=0x{:08x} hglrc=0x{:08x} vgpu_device=opened render_queue=created ui4_surface=not-acquired current=0 result=success cleanup=4-by-thunk",
+                                                active_pid,
+                                                active_tid,
+                                                hdc,
+                                                result,
                                             ),
                                         );
                                     }
