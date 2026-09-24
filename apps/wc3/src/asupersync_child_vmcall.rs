@@ -1297,6 +1297,35 @@
                     if matches!(
                         &provider.symbol,
                         child_loader::ProviderSymbol::Name(name)
+                            if provider.module.eq_ignore_ascii_case("OPENGL32.dll")
+                                && name == "glMatrixMode"
+                    ) {
+                        let frame = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            exit.registers.esp,
+                            2,
+                        )?;
+                        let mode_name = match frame[1] {
+                            0x0000_1700 => "GL_MODELVIEW",
+                            0x0000_1701 => "GL_PROJECTION",
+                            0x0000_1702 => "GL_TEXTURE",
+                            _ => "UNKNOWN",
+                        };
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD GLMATRIXMODE CALL pid={} tid={} mode=0x{:08x} mode_name={} caller_ret=0x{:08x}",
+                                active_pid,
+                                active_tid,
+                                frame[1],
+                                mode_name,
+                                frame[0],
+                            ),
+                        );
+                    }
+                    if matches!(
+                        &provider.symbol,
+                        child_loader::ProviderSymbol::Name(name)
                             if provider.module.eq_ignore_ascii_case("MSVCRT.dll")
                                 && name == "sscanf"
                     ) {
