@@ -7248,6 +7248,14 @@ mod tests_session_1 {
     }
 
     #[test]
+    fn xp_virtual_volume_exists_only_on_c() {
+        assert!(crate::process::xp_volume_exists(None));
+        assert!(crate::process::xp_volume_exists(Some("c:/")));
+        assert!(!crate::process::xp_volume_exists(Some("D:\\")));
+        assert!(!crate::process::xp_volume_exists(Some("")));
+    }
+
+    #[test]
     fn registry_index_scans_utf16_crlf_giant_ignored_value_and_final_key() {
         let mut fixture = vec![0xff, 0xfe];
         fixture.extend(

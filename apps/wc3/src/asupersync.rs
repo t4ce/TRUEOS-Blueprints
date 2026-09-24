@@ -6741,6 +6741,63 @@ pub(super) async fn run_loop(
                         } else {
                             None
                         };
+                        let get_volume_information = if operation
+                            == child_loader::ProviderOp::GetVolumeInformationA
+                        {
+                            let frame = read_guest_words(
+                                &X86Memory(&child.address_space),
+                                exit.registers.esp,
+                                9,
+                            )?;
+                            let [
+                                _,
+                                root_ptr,
+                                volume_name,
+                                volume_cap,
+                                serial,
+                                max_component,
+                                fs_flags,
+                                fs_name,
+                                fs_name_cap,
+                            ] = frame.as_slice()
+                            else {
+                                unreachable!("GetVolumeInformationA frame has nine words")
+                            };
+                            let root = if *root_ptr == 0 {
+                                None
+                            } else {
+                                Some(
+                                    wc3::process::read_c_string(
+                                        &X86Memory(&child.address_space),
+                                        *root_ptr,
+                                        1024,
+                                    )
+                                    .map_err(|error| {
+                                        format!("GetVolumeInformationA root: {error}")
+                                    })?,
+                                )
+                            };
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD GETVOLUMEINFORMATIONA CALL pid={} tid={} root={:?} volume_name=0x{:08x} volume_cap={} serial=0x{:08x} max_component=0x{:08x} fs_flags=0x{:08x} fs_name=0x{:08x} fs_name_cap={} caller_ret=0x{:08x}",
+                                    active_pid,
+                                    active_tid,
+                                    root.as_deref().unwrap_or("<current-directory>"),
+                                    volume_name,
+                                    volume_cap,
+                                    serial,
+                                    max_component,
+                                    fs_flags,
+                                    fs_name,
+                                    fs_name_cap,
+                                    u32::from_le_bytes(caller_ret),
+                                ),
+                            );
+                            Some(root)
+                        } else {
+                            None
+                        };
                         if operation == child_loader::ProviderOp::FindFirstFileA {
                             let [_, pattern, find_data] = read_guest_words(
                                 &X86Memory(&child.address_space),
@@ -6913,6 +6970,21 @@ pub(super) async fn run_loop(
                                             root.as_deref().unwrap_or("<current-directory>"),
                                             result,
                                             kind,
+                                        ),
+                                    );
+                                }
+                                if let Some(root) = get_volume_information {
+                                    logl::log(
+                                        level::IMPORTANT,
+                                        format_args!(
+                                            "WC3 CHILD GETVOLUMEINFORMATIONA RESULT root={:?} volume={:?} serial=0x{:08x} max_component={} fs_flags=0x{:08x} fs={:?} result={} cleanup=32-by-thunk",
+                                            root.as_deref().unwrap_or("<current-directory>"),
+                                            wc3::process::XP_C_VOLUME_NAME,
+                                            wc3::process::XP_C_VOLUME_SERIAL,
+                                            wc3::process::XP_C_MAX_COMPONENT,
+                                            wc3::process::XP_C_FS_FLAGS,
+                                            wc3::process::XP_C_FILE_SYSTEM_NAME,
+                                            result,
                                         ),
                                     );
                                 }

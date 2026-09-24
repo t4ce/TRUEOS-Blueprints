@@ -50,6 +50,12 @@ pub const CRT_CONSOLE_APP: u32 = 1;
 pub const CRT_GUI_APP: u32 = 2;
 pub const DRIVE_NO_ROOT_DIR: u32 = 1;
 pub const DRIVE_FIXED: u32 = 3;
+pub const FILE_CASE_PRESERVED_NAMES: u32 = 0x0000_0002;
+pub const XP_C_VOLUME_SERIAL: u32 = 0x5743_C001;
+pub const XP_C_MAX_COMPONENT: u32 = 255;
+pub const XP_C_FS_FLAGS: u32 = FILE_CASE_PRESERVED_NAMES;
+pub const XP_C_VOLUME_NAME: &str = "";
+pub const XP_C_FILE_SYSTEM_NAME: &str = "TRUEOSFS";
 const ERROR_MOD_NOT_FOUND: u32 = 126;
 const ERROR_FILE_NOT_FOUND: u32 = 2;
 const ERROR_PATH_NOT_FOUND: u32 = 3;
@@ -97,6 +103,40 @@ pub fn xp_drive_type(root: Option<&str>) -> u32 {
     } else {
         DRIVE_NO_ROOT_DIR
     }
+}
+
+pub fn xp_volume_exists(root: Option<&str>) -> bool {
+    match root {
+        None => true,
+        Some(root) => root.replace('/', "\\").eq_ignore_ascii_case("C:\\"),
+    }
+}
+
+fn write_optional_ansi(
+    memory: &mut impl GuestMemory,
+    pointer: u32,
+    capacity: u32,
+    text: &str,
+    api: &'static str,
+) -> Result<(), ProviderDispatchError> {
+    if pointer == 0 {
+        return Ok(());
+    }
+    let required = text.len() + 1;
+    if (capacity as usize) < required {
+        return Err(ProviderDispatchError::Frontier {
+            api,
+            detail: format!("buffer too small capacity={capacity} required={required}"),
+        });
+    }
+    memory.write(pointer, text.as_bytes())?;
+    memory.write(
+        pointer
+            .checked_add(text.len() as u32)
+            .ok_or(ProviderDispatchError::Fault("volume string overflow"))?,
+        &[0],
+    )?;
+    Ok(())
 }
 const ERROR_NO_TOKEN: u32 = 1008;
 const TOKEN_QUERY: u32 = 0x0000_0008;
@@ -3130,6 +3170,54 @@ impl XpProcess {
                     .checked_add(1)
                     .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(xp_drive_type(root.as_deref())))
+            }
+            ProviderOp::GetVolumeInformationA => {
+                let [
+                    _,
+                    root_ptr,
+                    volume_name_ptr,
+                    volume_name_cap,
+                    serial_ptr,
+                    max_component_ptr,
+                    fs_flags_ptr,
+                    fs_name_ptr,
+                    fs_name_cap,
+                ] = arguments::<9>(memory, esp)?;
+                let root = (root_ptr != 0)
+                    .then(|| read_c_string(memory, root_ptr, 1024))
+                    .transpose()?;
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                if !xp_volume_exists(root.as_deref()) {
+                    self.set_last_error(ERROR_PATH_NOT_FOUND);
+                    return Ok(PersonalityAction::Return(0));
+                }
+                write_optional_ansi(
+                    memory,
+                    volume_name_ptr,
+                    volume_name_cap,
+                    XP_C_VOLUME_NAME,
+                    "GetVolumeInformationA volume name",
+                )?;
+                if serial_ptr != 0 {
+                    write_u32(memory, serial_ptr, XP_C_VOLUME_SERIAL)?;
+                }
+                if max_component_ptr != 0 {
+                    write_u32(memory, max_component_ptr, XP_C_MAX_COMPONENT)?;
+                }
+                if fs_flags_ptr != 0 {
+                    write_u32(memory, fs_flags_ptr, XP_C_FS_FLAGS)?;
+                }
+                write_optional_ansi(
+                    memory,
+                    fs_name_ptr,
+                    fs_name_cap,
+                    XP_C_FILE_SYSTEM_NAME,
+                    "GetVolumeInformationA filesystem name",
+                )?;
+                Ok(PersonalityAction::Return(1))
             }
             ProviderOp::SetCurrentDirectoryA => {
                 let [_, directory] = arguments::<2>(memory, esp)?;
