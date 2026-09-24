@@ -1184,6 +1184,73 @@
                         &provider.symbol,
                         child_loader::ProviderSymbol::Name(name)
                             if provider.module.eq_ignore_ascii_case("USER32.dll")
+                                && name == "ChangeDisplaySettingsExA"
+                    ) {
+                        let frame = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            exit.registers.esp,
+                            6,
+                        )?;
+                        let device = if frame[1] == 0 {
+                            None
+                        } else {
+                            Some(wc3::process::read_c_string(
+                                &X86Memory(&child.address_space),
+                                frame[1],
+                                32,
+                            )?)
+                        };
+                        let mode = if frame[2] == 0 {
+                            None
+                        } else {
+                            let size_extra = read_guest_words(
+                                &X86Memory(&child.address_space),
+                                frame[2] + 0x24,
+                                1,
+                            )?[0];
+                            let dm_size = size_extra & 0xffff;
+                            let dm_driver_extra = size_extra >> 16;
+                            let dm_fields = read_guest_words(
+                                &X86Memory(&child.address_space),
+                                frame[2] + 0x28,
+                                1,
+                            )?[0];
+                            let values = read_guest_words(
+                                &X86Memory(&child.address_space),
+                                frame[2] + 0x68,
+                                5,
+                            )?;
+                            Some((
+                                dm_size,
+                                dm_driver_extra,
+                                dm_fields,
+                                values[0],
+                                values[1],
+                                values[2],
+                                values[3],
+                                values[4],
+                            ))
+                        };
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD CHANGEDISPLAYSETTINGSEXA pid={} tid={} device={:?} devmode=0x{:08x} mode={:?} hwnd=0x{:08x} flags=0x{:08x} lparam=0x{:08x} caller_ret=0x{:08x}",
+                                active_pid,
+                                active_tid,
+                                device.as_deref().unwrap_or("<null>"),
+                                frame[2],
+                                mode,
+                                frame[3],
+                                frame[4],
+                                frame[5],
+                                frame[0],
+                            ),
+                        );
+                    }
+                    if matches!(
+                        &provider.symbol,
+                        child_loader::ProviderSymbol::Name(name)
+                            if provider.module.eq_ignore_ascii_case("USER32.dll")
                                 && name == "LoadCursorA"
                     ) {
                         let frame = read_guest_words(
