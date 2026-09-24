@@ -170,6 +170,7 @@ pub enum ProviderOp {
     SetWindowPos,
     ShowWindow,
     GetDC,
+    GetDeviceCaps,
     LoadImageA,
     LoadCursorA,
     RegisterClassExA,
@@ -250,6 +251,7 @@ impl ProviderOp {
             Self::SetWindowPos => 28,
             Self::ShowWindow => 8,
             Self::GetDC => 4,
+            Self::GetDeviceCaps => 8,
             Self::LoadImageA => 24,
             Self::LoadCursorA => 8,
             Self::RegisterClassExA => 4,
@@ -406,6 +408,7 @@ impl ProviderOp {
                 | Self::EnumDisplayDevicesA
                 | Self::EnumDisplaySettingsA
                 | Self::ChangeDisplaySettingsExA
+                | Self::GetDeviceCaps
                 | Self::LoadImageA
                 | Self::LoadCursorA
                 | Self::RegisterClassExA
@@ -524,6 +527,12 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "LoadCursorA" => ProviderOp::LoadCursorA,
             "RegisterClassExA" => ProviderOp::RegisterClassExA,
             "CreateWindowExA" => ProviderOp::CreateWindowExA,
+            _ => ProviderOp::Unknown,
+        };
+    }
+    if import.module.eq_ignore_ascii_case("GDI32.dll") {
+        return match symbol.as_str() {
+            "GetDeviceCaps" => ProviderOp::GetDeviceCaps,
             _ => ProviderOp::Unknown,
         };
     }

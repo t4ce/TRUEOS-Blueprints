@@ -2861,6 +2861,7 @@ impl XpProcess {
 
 include!("process_provider_dispatch.rs");
 include!("process_runtime.rs");
+include!("staticgdi.rs");
 
 
 #[derive(Clone, Debug, Eq, PartialEq)]

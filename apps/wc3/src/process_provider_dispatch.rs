@@ -58,6 +58,14 @@ impl XpProcess {
                     .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(result))
             }
+            ProviderOp::GetDeviceCaps => {
+                let result = self.get_device_caps(esp, memory)?;
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(result))
+            }
             ProviderOp::LoadImageA => {
                 let result = self.load_icon_a(esp, memory)?;
                 self.call_count = self.call_count.checked_add(1).ok_or("call count overflow")?;

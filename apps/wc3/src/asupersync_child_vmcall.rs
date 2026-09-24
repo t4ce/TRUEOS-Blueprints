@@ -1183,6 +1183,29 @@
                     if matches!(
                         &provider.symbol,
                         child_loader::ProviderSymbol::Name(name)
+                            if provider.module.eq_ignore_ascii_case("GDI32.dll")
+                                && name == "GetDeviceCaps"
+                    ) {
+                        let frame = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            exit.registers.esp,
+                            3,
+                        )?;
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD GETDEVICECAPS CALL pid={} tid={} hdc=0x{:08x} index={} caller_ret=0x{:08x}",
+                                active_pid,
+                                active_tid,
+                                frame[1],
+                                frame[2],
+                                frame[0],
+                            ),
+                        );
+                    }
+                    if matches!(
+                        &provider.symbol,
+                        child_loader::ProviderSymbol::Name(name)
                             if provider.module.eq_ignore_ascii_case("USER32.dll")
                                 && name == "SetWindowPos"
                     ) {
@@ -6609,6 +6632,46 @@
                                                 width,
                                                 height,
                                                 if flags == 0x0000_0004 { "CDS_FULLSCREEN" } else { "UNKNOWN" },
+                                            ),
+                                        );
+                                    }
+                                    child_loader::ProviderOp::GetDeviceCaps => {
+                                        let [_, hdc, index] = read_guest_words(
+                                            &X86Memory(&child.address_space),
+                                            exit.registers.esp,
+                                            3,
+                                        )?[..]
+                                        else {
+                                            unreachable!("GetDeviceCaps frame has three words")
+                                        };
+                                        let capability = match index {
+                                            2 => "TECHNOLOGY",
+                                            8 => "HORZRES",
+                                            10 => "VERTRES",
+                                            12 => "BITSPIXEL",
+                                            14 => "PLANES",
+                                            24 => "NUMCOLORS",
+                                            38 => "RASTERCAPS",
+                                            88 => "LOGPIXELSX",
+                                            90 => "LOGPIXELSY",
+                                            104 => "SIZEPALETTE",
+                                            106 => "NUMRESERVED",
+                                            108 => "COLORRES",
+                                            116 => "VREFRESH",
+                                            117 => "DESKTOPVERTRES",
+                                            118 => "DESKTOPHORZRES",
+                                            _ => "UNKNOWN",
+                                        };
+                                        logl::log(
+                                            level::IMPORTANT,
+                                            format_args!(
+                                                "WC3 CHILD GETDEVICECAPS RESULT pid={} tid={} hdc=0x{:08x} index={} capability={} result=0x{:08x} cleanup=8-by-thunk",
+                                                active_pid,
+                                                active_tid,
+                                                hdc,
+                                                index,
+                                                capability,
+                                                result,
                                             ),
                                         );
                                     }
