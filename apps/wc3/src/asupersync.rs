@@ -7581,6 +7581,7 @@ pub(super) async fn run_loop(
                                 .ok_or_else(|| "child process missing".to_owned())?
                                 .xp;
                             install_child_d3d8_object(child, process)?;
+                            process.retain_d3d8_object().map_err(str::to_owned)?;
                             thunk32::CHILD_D3D8_OBJECT_ADDRESS
                         } else {
                             0
@@ -8417,6 +8418,33 @@ pub(super) async fn run_loop(
                                     }
                                 }
                                 match operation {
+                                    child_loader::ProviderOp::D3D8Release => {
+                                        let [caller_ret, this] = read_guest_words(
+                                            &X86Memory(&child.address_space),
+                                            exit.registers.esp,
+                                            2,
+                                        )?[..]
+                                        else {
+                                            unreachable!("D3D8 Release frame has two words")
+                                        };
+                                        let references_after = result;
+                                        let references_before = references_after
+                                            .checked_add(1)
+                                            .expect("successful D3D8 Release has a prior reference");
+                                        logl::log(
+                                            level::IMPORTANT,
+                                            format_args!(
+                                                "WC3 CHILD D3D8 RELEASE pid={} tid={} this=0x{:08x} references_before={} references_after={} result={} caller_ret=0x{:08x} cleanup=4-by-thunk",
+                                                active_pid,
+                                                active_tid,
+                                                this,
+                                                references_before,
+                                                references_after,
+                                                result,
+                                                caller_ret,
+                                            ),
+                                        );
+                                    }
                                     child_loader::ProviderOp::D3D8GetAdapterIdentifier => {
                                         let [_, this, adapter, flags, output] = read_guest_words(
                                             &X86Memory(&child.address_space),

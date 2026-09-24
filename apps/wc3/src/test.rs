@@ -5048,6 +5048,32 @@ mod tests_process_1 {
     }
 
     #[test]
+    fn child_d3d8_release_returns_post_decrement_reference_count() {
+        let provider = ProviderImport {
+            module: "d3d8.dll".into(),
+            symbol: ProviderSymbol::Name("IDirect3D8::Release".into()),
+            iat_rva: 0,
+        };
+        let mut xp = XpProcess::new_child();
+        xp.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        assert_eq!(xp.retain_d3d8_object(), Ok(1));
+
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; 0x2000],
+        };
+        let esp = STACK_BASE + 0x100;
+        write_u32(&mut memory, esp, 0x6f0d_02d2).unwrap();
+        write_u32(&mut memory, esp + 4, thunk32::CHILD_D3D8_OBJECT_ADDRESS).unwrap();
+
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(0))
+        );
+        assert_eq!(xp.d3d8_ref_count(), 0);
+    }
+
+    #[test]
     fn child_get_module_file_name_a_reports_native_module_paths() {
         let provider = ProviderImport {
             module: "KERNEL32.dll".into(),

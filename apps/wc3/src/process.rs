@@ -1438,6 +1438,7 @@ pub struct XpProcess {
     crt_onexit_callbacks: Vec<u32>,
     pub crt_app_type: u32,
     crt_rng_seed: u32,
+    d3d8_ref_count: u32,
     virtual_reservations: Vec<VirtualReservation>,
     virtual_reserve_next: u32,
     tls_allocated: [bool; 64],
@@ -1630,6 +1631,7 @@ impl XpProcess {
             // MSVCRT's process-wide rand stream starts from seed one until
             // srand supplies the deterministic seed consumed by rand.
             crt_rng_seed: 1,
+            d3d8_ref_count: 0,
             virtual_reservations: Vec::new(),
             virtual_reserve_next: CHILD_VIRTUAL_ALLOC_BASE,
             tls_allocated: [false; 64],
@@ -1674,6 +1676,20 @@ impl XpProcess {
 
     pub const fn crt_rng_seed(&self) -> u32 {
         self.crt_rng_seed
+    }
+
+    pub const fn d3d8_ref_count(&self) -> u32 {
+        self.d3d8_ref_count
+    }
+
+    /// The compact compatibility D3D8 model exposes one stable guest object.
+    /// Each Direct3DCreate8 success retains that object for its caller.
+    pub fn retain_d3d8_object(&mut self) -> Result<u32, &'static str> {
+        self.d3d8_ref_count = self
+            .d3d8_ref_count
+            .checked_add(1)
+            .ok_or("D3D8 reference count overflow")?;
+        Ok(self.d3d8_ref_count)
     }
 
     pub fn install_provider_surface(
@@ -2546,6 +2562,29 @@ impl XpProcess {
         Ok(D3D_OK)
     }
 
+    fn d3d8_release(
+        &mut self,
+        esp: u32,
+        memory: &impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
+        let [_, this] = arguments::<2>(memory, esp)?;
+        if this != thunk32::CHILD_D3D8_OBJECT_ADDRESS {
+            return Err(ProviderDispatchError::Frontier {
+                api: "IDirect3D8::Release",
+                detail: format!("this=0x{this:08x}"),
+            });
+        }
+        if self.d3d8_ref_count == 0 {
+            return Err(ProviderDispatchError::Frontier {
+                api: "IDirect3D8::Release",
+                detail: "release with zero references".into(),
+            });
+        }
+
+        self.d3d8_ref_count -= 1;
+        Ok(self.d3d8_ref_count)
+    }
+
     fn dispatch_process_local_provider(
         &mut self,
         pid: u32,
@@ -2575,6 +2614,14 @@ impl XpProcess {
             }
             ProviderOp::D3D8GetAdapterIdentifier => {
                 let result = self.d3d8_get_adapter_identifier(esp, memory)?;
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(result))
+            }
+            ProviderOp::D3D8Release => {
+                let result = self.d3d8_release(esp, memory)?;
                 self.call_count = self
                     .call_count
                     .checked_add(1)
