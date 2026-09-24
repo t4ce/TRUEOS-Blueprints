@@ -1252,6 +1252,51 @@
                     if matches!(
                         &provider.symbol,
                         child_loader::ProviderSymbol::Name(name)
+                            if provider.module.eq_ignore_ascii_case("OPENGL32.dll")
+                                && name == "wglMakeCurrent"
+                    ) {
+                        let frame = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            exit.registers.esp,
+                            3,
+                        )?;
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD WGLMAKECURRENT CALL pid={} tid={} hdc=0x{:08x} hglrc=0x{:08x} caller_ret=0x{:08x}",
+                                active_pid,
+                                active_tid,
+                                frame[1],
+                                frame[2],
+                                frame[0],
+                            ),
+                        );
+                    }
+                    if matches!(
+                        &provider.symbol,
+                        child_loader::ProviderSymbol::Name(name)
+                            if provider.module.eq_ignore_ascii_case("OPENGL32.dll")
+                                && name == "glGetString"
+                    ) {
+                        let frame = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            exit.registers.esp,
+                            2,
+                        )?;
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD GLGETSTRING CALL pid={} tid={} name=0x{:08x} caller_ret=0x{:08x}",
+                                active_pid,
+                                active_tid,
+                                frame[1],
+                                frame[0],
+                            ),
+                        );
+                    }
+                    if matches!(
+                        &provider.symbol,
+                        child_loader::ProviderSymbol::Name(name)
                             if provider.module.eq_ignore_ascii_case("USER32.dll")
                                 && name == "ReleaseDC"
                     ) {
@@ -6804,6 +6849,28 @@
                                                 active_tid,
                                                 hwnd,
                                                 hdc,
+                                                if result != 0 { "TRUE" } else { "FALSE" },
+                                            ),
+                                        );
+                                    }
+                                    child_loader::ProviderOp::WglMakeCurrent => {
+                                        let [_, hdc, hglrc] = read_guest_words(
+                                            &X86Memory(&child.address_space),
+                                            exit.registers.esp,
+                                            3,
+                                        )?[..]
+                                        else {
+                                            unreachable!("wglMakeCurrent frame has three words")
+                                        };
+                                        logl::log(
+                                            level::IMPORTANT,
+                                            format_args!(
+                                                "WC3 CHILD WGLMAKECURRENT RESULT pid={} tid={} hdc=0x{:08x} hglrc=0x{:08x} pixel_format=1 current_tid={} ui4_surface=not-acquired result={} cleanup=8-by-thunk",
+                                                active_pid,
+                                                active_tid,
+                                                hdc,
+                                                hglrc,
+                                                active_tid,
                                                 if result != 0 { "TRUE" } else { "FALSE" },
                                             ),
                                         );

@@ -74,7 +74,6 @@ impl XpProcess {
     }
 
     static_gl_stubs!(
-        wgl_make_current_static => "wglMakeCurrent",
         gl_disable_static => "glDisable", gl_enable_static => "glEnable",
         gl_lightfv_static => "glLightfv", gl_fogfv_static => "glFogfv",
         gl_fogf_static => "glFogf", gl_fogi_static => "glFogi",
@@ -101,6 +100,90 @@ impl XpProcess {
         gl_read_buffer_static => "glReadBuffer", wgl_swap_layer_buffers_static => "wglSwapLayerBuffers",
         gl_lightf_static => "glLightf",
     );
+
+    fn wgl_make_current_static(
+        &mut self,
+        tid: u32,
+        esp: u32,
+        memory: &impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
+        let [_, hdc, hglrc] = arguments::<3>(memory, esp)?;
+
+        if hglrc == 0 {
+            if let Some(runtime) = self.gl_runtime.as_mut() {
+                for context in runtime.contexts.values_mut() {
+                    if context.current_tid == Some(tid) {
+                        context.current_tid = None;
+                    }
+                }
+            }
+            return Ok(1);
+        }
+
+        let hwnd = match self.gdi_objects.get(&hdc) {
+            Some(GdiObject::DeviceContext(DeviceContext {
+                target: DcTarget::WindowPaint { hwnd },
+                ..
+            })) => *hwnd,
+            _ => {
+                return Err(ProviderDispatchError::Frontier {
+                    api: "wglMakeCurrent",
+                    detail: format!("tid={tid} hdc=0x{hdc:08x} is not a window DC"),
+                });
+            }
+        };
+        let pixel_format = self.window_pixel_formats.get(&hwnd).copied().ok_or_else(|| {
+            ProviderDispatchError::Frontier {
+                api: "wglMakeCurrent",
+                detail: format!("tid={tid} hwnd=0x{hwnd:08x} has no pixel format"),
+            }
+        })?;
+        let runtime = self.gl_runtime.as_mut().ok_or_else(|| {
+            ProviderDispatchError::Frontier {
+                api: "wglMakeCurrent",
+                detail: format!("tid={tid} hglrc=0x{hglrc:08x} but GL runtime is absent"),
+            }
+        })?;
+        let target = runtime.contexts.get(&hglrc).ok_or_else(|| {
+            ProviderDispatchError::Frontier {
+                api: "wglMakeCurrent",
+                detail: format!("tid={tid} unknown hglrc=0x{hglrc:08x}"),
+            }
+        })?;
+        if target.pixel_format != pixel_format {
+            return Err(ProviderDispatchError::Frontier {
+                api: "wglMakeCurrent",
+                detail: format!(
+                    "tid={tid} hglrc=0x{hglrc:08x} context_format={} target_format={} hwnd=0x{hwnd:08x}",
+                    target.pixel_format, pixel_format,
+                ),
+            });
+        }
+        if let Some(owner_tid) = target.current_tid {
+            if owner_tid != tid {
+                return Err(ProviderDispatchError::Frontier {
+                    api: "wglMakeCurrent",
+                    detail: format!(
+                        "hglrc=0x{hglrc:08x} already current on tid={owner_tid}, requested_tid={tid}"
+                    ),
+                });
+            }
+        }
+
+        for (handle, context) in &mut runtime.contexts {
+            if *handle != hglrc && context.current_tid == Some(tid) {
+                context.current_tid = None;
+            }
+        }
+        let target = runtime
+            .contexts
+            .get_mut(&hglrc)
+            .expect("validated HGLRC disappeared");
+        target.hdc = hdc;
+        target.hwnd = hwnd;
+        target.current_tid = Some(tid);
+        Ok(1)
+    }
 
     fn wgl_create_context_static(
         &mut self,

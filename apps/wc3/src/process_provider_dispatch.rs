@@ -70,7 +70,7 @@ impl XpProcess {
                 self.release_dc_static(esp, memory)?,
             )),
             ProviderOp::WglMakeCurrent => Ok(PersonalityAction::Return(
-                self.wgl_make_current_static(esp, memory)?,
+                self.wgl_make_current_static(tid, esp, memory)?,
             )),
             ProviderOp::GlDisable => Ok(PersonalityAction::Return(
                 self.gl_disable_static(esp, memory)?,
