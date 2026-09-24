@@ -6129,14 +6129,17 @@
                             } else {
                                 None
                             };
-                        let gl_draw_frame = if operation == child_loader::ProviderOp::GlDrawElements {
+                        let gl_needs_frame = operation == child_loader::ProviderOp::GlDrawElements
+                            || (operation == child_loader::ProviderOp::GlClear
+                                && read_guest_words(&X86Memory(&child.address_space), exit.registers.esp, 2)?[1] & 0x0000_4000 != 0);
+                        let gl_draw_frame = if gl_needs_frame {
                             let (_hglrc, hwnd, _mode) = session.process(active_pid)
                                 .ok_or_else(|| "GL process missing".to_owned())?
                                 .xp.gl_context_diagnostic(active_tid)
-                                .ok_or_else(|| "glDrawElements has no current context".to_owned())?;
+                                .ok_or_else(|| "GL call has no current context".to_owned())?;
                             let frame = frames.get_mut(&hwnd)
-                                .ok_or_else(|| format!("glDrawElements hwnd=0x{hwnd:08x} has no UI4 frame"))?;
-                            frame.begin_gpu_frame().map_err(|error| format!("glDrawElements begin UI4 frame: {error:?}"))?;
+                                .ok_or_else(|| format!("GL call hwnd=0x{hwnd:08x} has no UI4 frame"))?;
+                            frame.begin_gpu_frame().map_err(|error| format!("GL begin UI4 frame: {error:?}"))?;
                             let window_id = frame.window_id();
                             session.process_mut(active_pid)
                                 .ok_or_else(|| "GL process missing".to_owned())?
@@ -6237,7 +6240,7 @@
                                     frames.get_mut(&hwnd)
                                         .ok_or_else(|| "GL UI4 frame missing".to_owned())?
                                         .publish(Damage::full(window.width, window.height))
-                                        .map_err(|error| format!("glDrawElements publish UI4 frame: {error:?}"))?;
+                                        .map_err(|error| format!("GL publish UI4 frame: {error:?}"))?;
                                 }
                                 if operation == child_loader::ProviderOp::GetSystemInfo {
                                     logl::log(

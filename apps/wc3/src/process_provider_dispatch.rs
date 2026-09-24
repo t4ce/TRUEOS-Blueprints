@@ -210,7 +210,7 @@ impl XpProcess {
                 self.gl_read_buffer_static(esp, memory)?,
             )),
             ProviderOp::WglSwapLayerBuffers => Ok(PersonalityAction::Return(
-                self.wgl_swap_layer_buffers_static(esp, memory)?,
+                self.wgl_swap_layer_buffers_static(tid, esp, memory)?,
             )),
             ProviderOp::GlLightf => Ok(PersonalityAction::Return(
                 self.gl_lightf_static(esp, memory)?,

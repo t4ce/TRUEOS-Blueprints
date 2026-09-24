@@ -1,10 +1,27 @@
-fn gl_array_component(memory: &impl GuestMemory, pointer: GlArrayPointer, index: u32, component: u32) -> Result<f32, ProviderDispatchError> {
+fn gl_array_component(
+    memory: &impl GuestMemory,
+    pointer: GlArrayPointer,
+    index: u32,
+    component: u32,
+) -> Result<f32, ProviderDispatchError> {
     let item_bytes = if pointer.kind == GL_FLOAT { 4 } else { 1 };
-    let stride = if pointer.stride == 0 { pointer.size * item_bytes } else { pointer.stride };
-    let offset = index.checked_mul(stride)
-        .and_then(|offset| component.checked_mul(item_bytes).and_then(|component| offset.checked_add(component)))
+    let stride = if pointer.stride == 0 {
+        pointer.size * item_bytes
+    } else {
+        pointer.stride
+    };
+    let offset = index
+        .checked_mul(stride)
+        .and_then(|offset| {
+            component
+                .checked_mul(item_bytes)
+                .and_then(|component| offset.checked_add(component))
+        })
         .ok_or("GL array offset overflow")?;
-    let address = pointer.address.checked_add(offset).ok_or("GL array address overflow")?;
+    let address = pointer
+        .address
+        .checked_add(offset)
+        .ok_or("GL array address overflow")?;
     if pointer.kind == GL_FLOAT {
         let mut bytes = [0u8; 4];
         memory.read(address, &mut bytes)?;
@@ -17,7 +34,11 @@ fn gl_array_component(memory: &impl GuestMemory, pointer: GlArrayPointer, index:
 }
 
 fn gl_transform(matrix: &[f32; 16], point: [f32; 4]) -> [f32; 4] {
-    core::array::from_fn(|row| (0..4).map(|column| matrix[column * 4 + row] * point[column]).sum())
+    core::array::from_fn(|row| {
+        (0..4)
+            .map(|column| matrix[column * 4 + row] * point[column])
+            .sum()
+    })
 }
 
 fn gl_rgba8(color: [f32; 4]) -> u32 {
@@ -109,18 +130,24 @@ const GL_UNSIGNED_SHORT: u32 = 0x1403;
 const GL_UNSIGNED_INT: u32 = 0x1405;
 const GL_TRIANGLES: u32 = 0x0004;
 const GL_COLOR_BUFFER_BIT: u32 = 0x0000_4000;
+const GL_DEPTH_BUFFER_BIT: u32 = 0x0000_0100;
 const GL_IDENTITY_MATRIX: [f32; 16] = [
-    1.0, 0.0, 0.0, 0.0,
-    0.0, 1.0, 0.0, 0.0,
-    0.0, 0.0, 1.0, 0.0,
-    0.0, 0.0, 0.0, 1.0,
+    1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
 ];
 
 impl XpProcess {
     pub fn gl_context_diagnostic(&self, tid: u32) -> Option<(u32, u32, u32)> {
-        self.gl_runtime.as_ref()?.contexts.iter().find_map(|(hglrc, context)| {
-            (context.current_tid == Some(tid)).then_some((*hglrc, context.hwnd, context.matrix_mode))
-        })
+        self.gl_runtime
+            .as_ref()?
+            .contexts
+            .iter()
+            .find_map(|(hglrc, context)| {
+                (context.current_tid == Some(tid)).then_some((
+                    *hglrc,
+                    context.hwnd,
+                    context.matrix_mode,
+                ))
+            })
     }
 
     fn static_gl_stub(&self, api: &'static str) -> Result<u32, ProviderDispatchError> {
@@ -152,121 +179,277 @@ impl XpProcess {
         gl_scissor_static => "glScissor", gl_depth_range_static => "glDepthRange",
 
         gl_read_pixels_static => "glReadPixels",
-        gl_read_buffer_static => "glReadBuffer", wgl_swap_layer_buffers_static => "wglSwapLayerBuffers",
+        gl_read_buffer_static => "glReadBuffer",
         gl_lightf_static => "glLightf",
     );
 
     pub fn bind_gl_ui4_window(&mut self, hwnd: u32, window_id: u32) {
         if let Some(runtime) = self.gl_runtime.as_mut() {
-            for context in runtime.contexts.values_mut().filter(|context| context.hwnd == hwnd) {
+            for context in runtime
+                .contexts
+                .values_mut()
+                .filter(|context| context.hwnd == hwnd)
+            {
                 context.ui4_window_id = Some(window_id);
             }
         }
     }
 
-    fn gl_context_mut(&mut self, tid: u32, api: &'static str) -> Result<&mut WglContext, ProviderDispatchError> {
-        self.gl_runtime.as_mut()
-            .and_then(|runtime| runtime.contexts.values_mut().find(|context| context.current_tid == Some(tid)))
+    fn gl_context_mut(
+        &mut self,
+        tid: u32,
+        api: &'static str,
+    ) -> Result<&mut WglContext, ProviderDispatchError> {
+        self.gl_runtime
+            .as_mut()
+            .and_then(|runtime| {
+                runtime
+                    .contexts
+                    .values_mut()
+                    .find(|context| context.current_tid == Some(tid))
+            })
             .ok_or_else(|| ProviderDispatchError::Frontier {
                 api,
                 detail: format!("tid={tid} has no current HGLRC"),
             })
     }
 
-    fn gl_client_state_static(&mut self, tid: u32, esp: u32, memory: &impl GuestMemory, enabled: bool) -> Result<u32, ProviderDispatchError> {
+    fn gl_client_state_static(
+        &mut self,
+        tid: u32,
+        esp: u32,
+        memory: &impl GuestMemory,
+        enabled: bool,
+    ) -> Result<u32, ProviderDispatchError> {
         let [_, array] = arguments::<2>(memory, esp)?;
-        let api = if enabled { "glEnableClientState" } else { "glDisableClientState" };
+        let api = if enabled {
+            "glEnableClientState"
+        } else {
+            "glDisableClientState"
+        };
         let context = self.gl_context_mut(tid, api)?;
         match array {
             GL_VERTEX_ARRAY => context.vertex_array_enabled = enabled,
             GL_COLOR_ARRAY => context.color_array_enabled = enabled,
-            _ => return Err(ProviderDispatchError::Frontier { api, detail: format!("array=0x{array:08x} unsupported") }),
+            _ => {
+                return Err(ProviderDispatchError::Frontier {
+                    api,
+                    detail: format!("array=0x{array:08x} unsupported"),
+                });
+            }
         }
         Ok(0)
     }
 
-    fn gl_enable_client_state_static(&mut self, tid: u32, esp: u32, memory: &impl GuestMemory) -> Result<u32, ProviderDispatchError> {
+    fn gl_enable_client_state_static(
+        &mut self,
+        tid: u32,
+        esp: u32,
+        memory: &impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
         self.gl_client_state_static(tid, esp, memory, true)
     }
 
-    fn gl_disable_client_state_static(&mut self, tid: u32, esp: u32, memory: &impl GuestMemory) -> Result<u32, ProviderDispatchError> {
+    fn gl_disable_client_state_static(
+        &mut self,
+        tid: u32,
+        esp: u32,
+        memory: &impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
         self.gl_client_state_static(tid, esp, memory, false)
     }
 
-    fn gl_array_pointer_static(&mut self, tid: u32, esp: u32, memory: &impl GuestMemory, color: bool) -> Result<u32, ProviderDispatchError> {
+    fn gl_array_pointer_static(
+        &mut self,
+        tid: u32,
+        esp: u32,
+        memory: &impl GuestMemory,
+        color: bool,
+    ) -> Result<u32, ProviderDispatchError> {
         let [_, size, kind, stride, address] = arguments::<5>(memory, esp)?;
-        let api = if color { "glColorPointer" } else { "glVertexPointer" };
-        let valid = if color { matches!(size, 3 | 4) && matches!(kind, GL_FLOAT | GL_UNSIGNED_BYTE) }
-                    else { matches!(size, 2..=4) && kind == GL_FLOAT };
+        let api = if color {
+            "glColorPointer"
+        } else {
+            "glVertexPointer"
+        };
+        let valid = if color {
+            matches!(size, 3 | 4) && matches!(kind, GL_FLOAT | GL_UNSIGNED_BYTE)
+        } else {
+            matches!(size, 2..=4) && kind == GL_FLOAT
+        };
         if !valid || stride > 4096 {
-            return Err(ProviderDispatchError::Frontier { api, detail: format!("size={size} type=0x{kind:04x} stride={stride} unsupported") });
+            return Err(ProviderDispatchError::Frontier {
+                api,
+                detail: format!("size={size} type=0x{kind:04x} stride={stride} unsupported"),
+            });
         }
-        let pointer = GlArrayPointer { size, kind, stride, address };
+        let pointer = GlArrayPointer {
+            size,
+            kind,
+            stride,
+            address,
+        };
         let context = self.gl_context_mut(tid, api)?;
-        if color { context.color_pointer = Some(pointer); } else { context.vertex_pointer = Some(pointer); }
+        if color {
+            context.color_pointer = Some(pointer);
+        } else {
+            context.vertex_pointer = Some(pointer);
+        }
         Ok(0)
     }
 
-    fn gl_vertex_pointer_static(&mut self, tid: u32, esp: u32, memory: &impl GuestMemory) -> Result<u32, ProviderDispatchError> {
+    fn gl_vertex_pointer_static(
+        &mut self,
+        tid: u32,
+        esp: u32,
+        memory: &impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
         self.gl_array_pointer_static(tid, esp, memory, false)
     }
 
-    fn gl_color_pointer_static(&mut self, tid: u32, esp: u32, memory: &impl GuestMemory) -> Result<u32, ProviderDispatchError> {
+    fn gl_color_pointer_static(
+        &mut self,
+        tid: u32,
+        esp: u32,
+        memory: &impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
         self.gl_array_pointer_static(tid, esp, memory, true)
     }
 
-    fn gl_viewport_static(&mut self, tid: u32, esp: u32, memory: &impl GuestMemory) -> Result<u32, ProviderDispatchError> {
+    fn gl_viewport_static(
+        &mut self,
+        tid: u32,
+        esp: u32,
+        memory: &impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
         let [_, x, y, width, height] = arguments::<5>(memory, esp)?;
-        self.gl_context_mut(tid, "glViewport")?.viewport = [x as i32, y as i32, width as i32, height as i32];
+        self.gl_context_mut(tid, "glViewport")?.viewport =
+            [x as i32, y as i32, width as i32, height as i32];
         Ok(0)
     }
 
-    fn gl_clear_color_static(&mut self, tid: u32, esp: u32, memory: &impl GuestMemory) -> Result<u32, ProviderDispatchError> {
+    fn gl_clear_color_static(
+        &mut self,
+        tid: u32,
+        esp: u32,
+        memory: &impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
         let [_, r, g, b, a] = arguments::<5>(memory, esp)?;
-        self.gl_context_mut(tid, "glClearColor")?.clear_color = [r, g, b, a].map(|bits| f32::from_bits(bits).clamp(0.0, 1.0));
+        self.gl_context_mut(tid, "glClearColor")?.clear_color =
+            [r, g, b, a].map(|bits| f32::from_bits(bits).clamp(0.0, 1.0));
         Ok(0)
     }
 
-    fn gl_clear_static(&mut self, tid: u32, esp: u32, memory: &impl GuestMemory) -> Result<u32, ProviderDispatchError> {
+    fn gl_clear_static(
+        &mut self,
+        tid: u32,
+        esp: u32,
+        memory: &impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
         let [_, mask] = arguments::<2>(memory, esp)?;
-        if mask & !GL_COLOR_BUFFER_BIT != 0 {
-            return Err(ProviderDispatchError::Frontier { api: "glClear", detail: format!("mask=0x{mask:08x} unsupported") });
+        if mask & !(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT) != 0 {
+            return Err(ProviderDispatchError::Frontier {
+                api: "glClear",
+                detail: format!("mask=0x{mask:08x} unsupported"),
+            });
         }
-        let context = self.gl_context_mut(tid, "glClear")?;
         if mask & GL_COLOR_BUFFER_BIT != 0 {
-            context.clear_pending = true;
+            let context = self.gl_context_mut(tid, "glClear")?;
+            let window_id =
+                context
+                    .ui4_window_id
+                    .ok_or_else(|| ProviderDispatchError::Frontier {
+                        api: "glClear",
+                        detail: format!("hwnd=0x{:08x} has no UI4 frame", context.hwnd),
+                    })?;
+            let color = gl_rgba8(context.clear_color);
+            let runtime = self.gl_runtime.as_mut().ok_or("GL runtime missing")?;
+            let surface = runtime
+                .device
+                .acquire_ui4_surface(window_id)
+                .map_err(|code| ProviderDispatchError::Frontier {
+                    api: "glClear",
+                    detail: format!("UI4 surface acquire failed window_id={window_id} code={code}"),
+                })?;
+            let point = runtime
+                .device
+                .submit_ui4_clear(runtime.queue, surface, color)
+                .map_err(|code| ProviderDispatchError::Frontier {
+                    api: "glClear",
+                    detail: format!("clear submit failed code={code}"),
+                })?;
+            runtime
+                .device
+                .wait(runtime.queue, point.value)
+                .map_err(|code| ProviderDispatchError::Frontier {
+                    api: "glClear",
+                    detail: format!("clear wait failed code={code}"),
+                })?;
         }
         Ok(0)
     }
 
-    fn gl_draw_elements_static(&mut self, tid: u32, esp: u32, memory: &impl GuestMemory) -> Result<u32, ProviderDispatchError> {
+    fn gl_draw_elements_static(
+        &mut self,
+        tid: u32,
+        esp: u32,
+        memory: &impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
         let [_, mode, count, index_kind, indices] = arguments::<5>(memory, esp)?;
-        if mode != GL_TRIANGLES || count != 3 || !matches!(index_kind, GL_UNSIGNED_SHORT | GL_UNSIGNED_INT) {
+        if mode != GL_TRIANGLES
+            || count != 3
+            || !matches!(index_kind, GL_UNSIGNED_SHORT | GL_UNSIGNED_INT)
+        {
             return Err(ProviderDispatchError::Frontier {
                 api: "glDrawElements",
-                detail: format!("mode=0x{mode:04x} count={count} index_type=0x{index_kind:04x} unsupported"),
+                detail: format!(
+                    "mode=0x{mode:04x} count={count} index_type=0x{index_kind:04x} unsupported"
+                ),
             });
         }
         let context = self.gl_context_mut(tid, "glDrawElements")?;
         if !context.vertex_array_enabled || !context.color_array_enabled {
-            return Err(ProviderDispatchError::Frontier { api: "glDrawElements", detail: "vertex/color arrays must be enabled".into() });
+            return Err(ProviderDispatchError::Frontier {
+                api: "glDrawElements",
+                detail: "vertex/color arrays must be enabled".into(),
+            });
         }
-        let vertex_pointer = context.vertex_pointer.ok_or_else(|| ProviderDispatchError::Frontier {
-            api: "glDrawElements", detail: "vertex pointer missing".into(),
-        })?;
-        let color_pointer = context.color_pointer.ok_or_else(|| ProviderDispatchError::Frontier {
-            api: "glDrawElements", detail: "color pointer missing".into(),
-        })?;
-        let window_id = context.ui4_window_id.ok_or_else(|| ProviderDispatchError::Frontier {
-            api: "glDrawElements", detail: format!("hwnd=0x{:08x} has no UI4 frame", context.hwnd),
-        })?;
+        let vertex_pointer =
+            context
+                .vertex_pointer
+                .ok_or_else(|| ProviderDispatchError::Frontier {
+                    api: "glDrawElements",
+                    detail: "vertex pointer missing".into(),
+                })?;
+        let color_pointer =
+            context
+                .color_pointer
+                .ok_or_else(|| ProviderDispatchError::Frontier {
+                    api: "glDrawElements",
+                    detail: "color pointer missing".into(),
+                })?;
+        let window_id = context
+            .ui4_window_id
+            .ok_or_else(|| ProviderDispatchError::Frontier {
+                api: "glDrawElements",
+                detail: format!("hwnd=0x{:08x} has no UI4 frame", context.hwnd),
+            })?;
         let modelview = context.modelview_matrix;
         let projection = context.projection_matrix;
         let clear_rgba8_srgb = gl_rgba8(context.clear_color);
-        let mut vertices = [staticgl_triangle::Vertex { position: [0.0; 3], color: [0.0; 4] }; 3];
+        let mut vertices = [staticgl_triangle::Vertex {
+            position: [0.0; 3],
+            color: [0.0; 4],
+        }; 3];
         for (triangle_index, vertex) in vertices.iter_mut().enumerate() {
-            let byte_count = if index_kind == GL_UNSIGNED_SHORT { 2 } else { 4 };
-            let index_address = indices.checked_add(triangle_index as u32 * byte_count).ok_or("GL index address overflow")?;
+            let byte_count = if index_kind == GL_UNSIGNED_SHORT {
+                2
+            } else {
+                4
+            };
+            let index_address = indices
+                .checked_add(triangle_index as u32 * byte_count)
+                .ok_or("GL index address overflow")?;
             let index = if index_kind == GL_UNSIGNED_SHORT {
                 let mut bytes = [0u8; 2];
                 memory.read(index_address, &mut bytes)?;
@@ -275,33 +458,88 @@ impl XpProcess {
                 read_u32(memory, index_address)?
             };
             let mut point = [0.0, 0.0, 0.0, 1.0];
-            for component in 0..vertex_pointer.size { point[component as usize] = gl_array_component(memory, vertex_pointer, index, component)?; }
+            for component in 0..vertex_pointer.size {
+                point[component as usize] =
+                    gl_array_component(memory, vertex_pointer, index, component)?;
+            }
             let point = gl_transform(&projection, gl_transform(&modelview, point));
             if point[3] == 0.0 || !point.iter().all(|component| component.is_finite()) {
-                return Err(ProviderDispatchError::Frontier { api: "glDrawElements", detail: "nonfinite or zero-w clip position".into() });
+                return Err(ProviderDispatchError::Frontier {
+                    api: "glDrawElements",
+                    detail: "nonfinite or zero-w clip position".into(),
+                });
             }
-            vertex.position = [point[0] / point[3], point[1] / point[3], point[2] / point[3]];
+            vertex.position = [
+                point[0] / point[3],
+                point[1] / point[3],
+                point[2] / point[3],
+            ];
             vertex.color = [1.0; 4];
-            for component in 0..color_pointer.size { vertex.color[component as usize] = gl_array_component(memory, color_pointer, index, component)?; }
+            for component in 0..color_pointer.size {
+                vertex.color[component as usize] =
+                    gl_array_component(memory, color_pointer, index, component)?;
+            }
         }
         let runtime = self.gl_runtime.as_mut().ok_or("GL runtime missing")?;
         if runtime.triangle_renderer.is_none() {
-            runtime.triangle_renderer = Some(staticgl_triangle::TriangleRenderer::new(runtime.device).map_err(|code| ProviderDispatchError::Frontier {
-                api: "glDrawElements", detail: format!("triangle pipeline create failed code={code}"),
-            })?);
+            runtime.triangle_renderer = Some(
+                staticgl_triangle::TriangleRenderer::new(runtime.device).map_err(|code| {
+                    ProviderDispatchError::Frontier {
+                        api: "glDrawElements",
+                        detail: format!("triangle pipeline create failed code={code}"),
+                    }
+                })?,
+            );
         }
-        let surface = runtime.device.acquire_ui4_surface(window_id).map_err(|code| ProviderDispatchError::Frontier {
-            api: "glDrawElements", detail: format!("UI4 surface acquire failed window_id={window_id} code={code}"),
-        })?;
-        let point = runtime.triangle_renderer.as_ref().unwrap().draw(runtime.queue, surface, &vertices, clear_rgba8_srgb)
-            .map_err(|code| ProviderDispatchError::Frontier { api: "glDrawElements", detail: format!("triangle submit failed code={code}") })?;
-        runtime.device.wait(runtime.queue, point.value).map_err(|code| ProviderDispatchError::Frontier {
-            api: "glDrawElements", detail: format!("triangle wait failed code={code}"),
-        })?;
+        let surface = runtime
+            .device
+            .acquire_ui4_surface(window_id)
+            .map_err(|code| ProviderDispatchError::Frontier {
+                api: "glDrawElements",
+                detail: format!("UI4 surface acquire failed window_id={window_id} code={code}"),
+            })?;
+        let point = runtime
+            .triangle_renderer
+            .as_ref()
+            .unwrap()
+            .draw(runtime.queue, surface, &vertices, clear_rgba8_srgb)
+            .map_err(|code| ProviderDispatchError::Frontier {
+                api: "glDrawElements",
+                detail: format!("triangle submit failed code={code}"),
+            })?;
+        runtime
+            .device
+            .wait(runtime.queue, point.value)
+            .map_err(|code| ProviderDispatchError::Frontier {
+                api: "glDrawElements",
+                detail: format!("triangle wait failed code={code}"),
+            })?;
         Ok(0)
     }
 
-    fn gl_finish_static(&mut self, _esp: u32, _memory: &impl GuestMemory) -> Result<u32, ProviderDispatchError> {
+    fn wgl_swap_layer_buffers_static(
+        &mut self,
+        tid: u32,
+        esp: u32,
+        memory: &impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
+        let [_, hdc, planes] = arguments::<3>(memory, esp)?;
+        let context = self.gl_context_mut(tid, "wglSwapLayerBuffers")?;
+        if context.hdc != hdc || planes != 1 {
+            return Err(ProviderDispatchError::Frontier {
+                api: "wglSwapLayerBuffers",
+                detail: format!("tid={tid} hdc=0x{hdc:08x} planes=0x{planes:08x} unsupported"),
+            });
+        }
+        // Each modeled clear/draw already submitted, waited, and published its UI4 frame.
+        Ok(1)
+    }
+
+    fn gl_finish_static(
+        &mut self,
+        _esp: u32,
+        _memory: &impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
         // glDrawElements waits for its submitted timeline point before returning.
         Ok(0)
     }
@@ -319,11 +557,16 @@ impl XpProcess {
         for (slot, word) in matrix.iter_mut().zip(bytes.chunks_exact(4)) {
             *slot = f32::from_le_bytes(word.try_into().unwrap());
         }
-        let runtime = self.gl_runtime.as_mut().ok_or_else(|| ProviderDispatchError::Frontier {
-            api: "glLoadMatrixf",
-            detail: format!("tid={tid} has no GL runtime"),
-        })?;
-        let (_, context) = runtime.contexts.iter_mut()
+        let runtime = self
+            .gl_runtime
+            .as_mut()
+            .ok_or_else(|| ProviderDispatchError::Frontier {
+                api: "glLoadMatrixf",
+                detail: format!("tid={tid} has no GL runtime"),
+            })?;
+        let (_, context) = runtime
+            .contexts
+            .iter_mut()
             .find(|(_, context)| context.current_tid == Some(tid))
             .ok_or_else(|| ProviderDispatchError::Frontier {
                 api: "glLoadMatrixf",
@@ -333,10 +576,12 @@ impl XpProcess {
             GL_MODELVIEW => context.modelview_matrix = matrix,
             GL_PROJECTION => context.projection_matrix = matrix,
             GL_TEXTURE => context.texture_matrix = matrix,
-            mode => return Err(ProviderDispatchError::Frontier {
-                api: "glLoadMatrixf",
-                detail: format!("tid={tid} invalid matrix mode=0x{mode:08x}"),
-            }),
+            mode => {
+                return Err(ProviderDispatchError::Frontier {
+                    api: "glLoadMatrixf",
+                    detail: format!("tid={tid} invalid matrix mode=0x{mode:08x}"),
+                });
+            }
         }
         Ok(0)
     }
@@ -354,10 +599,13 @@ impl XpProcess {
                 detail: format!("tid={tid} unobserved mode=0x{mode:08x}"),
             });
         }
-        let runtime = self.gl_runtime.as_mut().ok_or_else(|| ProviderDispatchError::Frontier {
-            api: "glMatrixMode",
-            detail: format!("tid={tid} has no GL runtime"),
-        })?;
+        let runtime = self
+            .gl_runtime
+            .as_mut()
+            .ok_or_else(|| ProviderDispatchError::Frontier {
+                api: "glMatrixMode",
+                detail: format!("tid={tid} has no GL runtime"),
+            })?;
         let (_, context) = runtime
             .contexts
             .iter_mut()
@@ -377,10 +625,13 @@ impl XpProcess {
         memory: &mut impl GuestMemory,
     ) -> Result<u32, ProviderDispatchError> {
         let [_, name] = arguments::<2>(memory, esp)?;
-        let runtime = self.gl_runtime.as_ref().ok_or_else(|| ProviderDispatchError::Frontier {
-            api: "glGetString",
-            detail: format!("tid={tid} has no GL runtime"),
-        })?;
+        let runtime = self
+            .gl_runtime
+            .as_ref()
+            .ok_or_else(|| ProviderDispatchError::Frontier {
+                api: "glGetString",
+                detail: format!("tid={tid} has no GL runtime"),
+            })?;
         let (hglrc, context) = runtime
             .contexts
             .iter()
@@ -440,24 +691,29 @@ impl XpProcess {
                 });
             }
         };
-        let pixel_format = self.window_pixel_formats.get(&hwnd).copied().ok_or_else(|| {
-            ProviderDispatchError::Frontier {
+        let pixel_format = self
+            .window_pixel_formats
+            .get(&hwnd)
+            .copied()
+            .ok_or_else(|| ProviderDispatchError::Frontier {
                 api: "wglMakeCurrent",
                 detail: format!("tid={tid} hwnd=0x{hwnd:08x} has no pixel format"),
-            }
-        })?;
-        let runtime = self.gl_runtime.as_mut().ok_or_else(|| {
-            ProviderDispatchError::Frontier {
+            })?;
+        let runtime = self
+            .gl_runtime
+            .as_mut()
+            .ok_or_else(|| ProviderDispatchError::Frontier {
                 api: "wglMakeCurrent",
                 detail: format!("tid={tid} hglrc=0x{hglrc:08x} but GL runtime is absent"),
-            }
-        })?;
-        let target = runtime.contexts.get(&hglrc).ok_or_else(|| {
-            ProviderDispatchError::Frontier {
-                api: "wglMakeCurrent",
-                detail: format!("tid={tid} unknown hglrc=0x{hglrc:08x}"),
-            }
-        })?;
+            })?;
+        let target =
+            runtime
+                .contexts
+                .get(&hglrc)
+                .ok_or_else(|| ProviderDispatchError::Frontier {
+                    api: "wglMakeCurrent",
+                    detail: format!("tid={tid} unknown hglrc=0x{hglrc:08x}"),
+                })?;
         if target.pixel_format != pixel_format {
             return Err(ProviderDispatchError::Frontier {
                 api: "wglMakeCurrent",
@@ -511,12 +767,14 @@ impl XpProcess {
                 });
             }
         };
-        let pixel_format = self.window_pixel_formats.get(&hwnd).copied().ok_or_else(|| {
-            ProviderDispatchError::Frontier {
+        let pixel_format = self
+            .window_pixel_formats
+            .get(&hwnd)
+            .copied()
+            .ok_or_else(|| ProviderDispatchError::Frontier {
                 api: "wglCreateContext",
                 detail: format!("hwnd=0x{hwnd:08x} has no pixel format"),
-            }
-        })?;
+            })?;
         if pixel_format != TRUEOS_GL_PIXEL_FORMAT {
             return Err(ProviderDispatchError::Frontier {
                 api: "wglCreateContext",
@@ -525,11 +783,12 @@ impl XpProcess {
         }
 
         if self.gl_runtime.is_none() {
-            let device = Device::open(Capabilities::DEFAULT.union(Capabilities::PRESENT))
-                .map_err(|code| ProviderDispatchError::Frontier {
+            let device = Device::open(Capabilities::DEFAULT.union(Capabilities::PRESENT)).map_err(
+                |code| ProviderDispatchError::Frontier {
                     api: "wglCreateContext",
                     detail: format!("vgpu device open failed code={code}"),
-                })?;
+                },
+            )?;
             let queue = match device.create_queue(QueueClass::Render) {
                 Ok(queue) => queue,
                 Err(code) => {
@@ -569,7 +828,6 @@ impl XpProcess {
                 ui4_window_id: None,
                 viewport: [0, 0, 0, 0],
                 clear_color: [0.0, 0.0, 0.0, 0.0],
-                clear_pending: false,
                 vertex_array_enabled: false,
                 color_array_enabled: false,
                 vertex_pointer: None,
@@ -588,12 +846,19 @@ mod staticgl_triangle_tests {
     impl GuestMemory for TestMemory {
         fn read(&self, address: u32, output: &mut [u8]) -> Result<(), &'static str> {
             let start = address as usize;
-            output.copy_from_slice(self.0.get(start..start + output.len()).ok_or("bad GL read")?);
+            output.copy_from_slice(
+                self.0
+                    .get(start..start + output.len())
+                    .ok_or("bad GL read")?,
+            );
             Ok(())
         }
         fn write(&mut self, address: u32, input: &[u8]) -> Result<(), &'static str> {
             let start = address as usize;
-            self.0.get_mut(start..start + input.len()).ok_or("bad GL write")?.copy_from_slice(input);
+            self.0
+                .get_mut(start..start + input.len())
+                .ok_or("bad GL write")?
+                .copy_from_slice(input);
             Ok(())
         }
     }
@@ -605,20 +870,37 @@ mod staticgl_triangle_tests {
             (-0.75f32, -0.5f32, 0.0f32, [255, 0, 0, 255]),
             (0.75, -0.5, 0.0, [0, 255, 0, 255]),
             (0.0, 0.75, 0.0, [0, 0, 255, 255]),
-        ].into_iter().enumerate() {
+        ]
+        .into_iter()
+        .enumerate()
+        {
             let base = index * 20;
             for (component, value) in [x, y, z].into_iter().enumerate() {
-                memory.0[base + component * 4..base + component * 4 + 4].copy_from_slice(&value.to_le_bytes());
+                memory.0[base + component * 4..base + component * 4 + 4]
+                    .copy_from_slice(&value.to_le_bytes());
             }
             memory.0[base + 12..base + 16].copy_from_slice(&color);
         }
-        let positions = GlArrayPointer { size: 3, kind: GL_FLOAT, stride: 20, address: 0 };
-        let colors = GlArrayPointer { size: 4, kind: GL_UNSIGNED_BYTE, stride: 20, address: 12 };
+        let positions = GlArrayPointer {
+            size: 3,
+            kind: GL_FLOAT,
+            stride: 20,
+            address: 0,
+        };
+        let colors = GlArrayPointer {
+            size: 4,
+            kind: GL_UNSIGNED_BYTE,
+            stride: 20,
+            address: 12,
+        };
         assert_eq!(gl_array_component(&memory, positions, 1, 0).unwrap(), 0.75);
         assert_eq!(gl_array_component(&memory, positions, 2, 1).unwrap(), 0.75);
         assert_eq!(gl_array_component(&memory, colors, 0, 0).unwrap(), 1.0);
         assert_eq!(gl_array_component(&memory, colors, 1, 1).unwrap(), 1.0);
         assert_eq!(gl_array_component(&memory, colors, 2, 2).unwrap(), 1.0);
-        assert_eq!(gl_transform(&GL_IDENTITY_MATRIX, [0.25, -0.5, 0.0, 1.0]), [0.25, -0.5, 0.0, 1.0]);
+        assert_eq!(
+            gl_transform(&GL_IDENTITY_MATRIX, [0.25, -0.5, 0.0, 1.0]),
+            [0.25, -0.5, 0.0, 1.0]
+        );
     }
 }

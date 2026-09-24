@@ -1581,7 +1581,6 @@ struct WglContext {
     ui4_window_id: Option<u32>,
     viewport: [i32; 4],
     clear_color: [f32; 4],
-    clear_pending: bool,
     vertex_array_enabled: bool,
     color_array_enabled: bool,
     vertex_pointer: Option<GlArrayPointer>,
