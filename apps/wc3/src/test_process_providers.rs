@@ -2346,6 +2346,107 @@
     }
 
     #[test]
+    fn child_enum_display_devices_a_returns_trueos_adapter_and_monitor() {
+        let provider = ProviderImport {
+            module: "USER32.dll".into(),
+            symbol: ProviderSymbol::Name("EnumDisplayDevicesA".into()),
+            iat_rva: 0,
+        };
+        let mut xp = XpProcess::new_child();
+        xp.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; 0x2000],
+        };
+        let esp = STACK_BASE + 0x100;
+        let output = STACK_BASE + 0x400;
+        let device = STACK_BASE + 0x700;
+        write_u32(&mut memory, output, 0x1a8).unwrap();
+
+        let mut call = |memory: &mut Memory, device_ptr, index, flags| {
+            for (word, value) in [0x6f0d_0300, device_ptr, index, output, flags]
+                .into_iter()
+                .enumerate()
+            {
+                write_u32(memory, esp + word as u32 * 4, value).unwrap();
+            }
+            xp.dispatch_provider_for_process_typed(2, 3, 0, esp, memory)
+        };
+
+        assert_eq!(call(&mut memory, 0, 0, 0), Ok(PersonalityAction::Return(1)));
+        assert_eq!(read_c_string(&memory, output + 0x04, 32), Ok(r"\\.\DISPLAY1".into()));
+        assert_eq!(
+            read_c_string(&memory, output + 0x24, 128),
+            Ok(TRUEOS_DISPLAY_ADAPTER_DESCRIPTION.into())
+        );
+        assert_eq!(read_u32(&memory, output + 0xa4), Ok(0x0000_0005));
+        assert!(memory.bytes[(output - STACK_BASE) as usize + 0xa8..(output - STACK_BASE) as usize + 0x1a8]
+            .iter()
+            .all(|byte| *byte == 0));
+
+        memory.write(device, b"\\\\.\\DISPLAY1\0").unwrap();
+        write_u32(&mut memory, output, 0x1a8).unwrap();
+        assert_eq!(call(&mut memory, device, 0, 0), Ok(PersonalityAction::Return(1)));
+        assert_eq!(
+            read_c_string(&memory, output + 0x04, 32),
+            Ok(r"\\.\DISPLAY1\Monitor0".into())
+        );
+        assert_eq!(read_c_string(&memory, output + 0x24, 128), Ok("TRUEOS UI4 Display".into()));
+        assert_eq!(read_u32(&memory, output + 0xa4), Ok(1));
+
+        write_u32(&mut memory, output, 0x1a8).unwrap();
+        assert_eq!(call(&mut memory, 0, 1, 0), Ok(PersonalityAction::Return(0)));
+        write_u32(&mut memory, output, 0x1a8).unwrap();
+        assert_eq!(call(&mut memory, device, 1, 0), Ok(PersonalityAction::Return(0)));
+        memory.write(device, b"\\\\.\\UNKNOWN\0").unwrap();
+        write_u32(&mut memory, output, 0x1a8).unwrap();
+        assert_eq!(call(&mut memory, device, 0, 0), Ok(PersonalityAction::Return(0)));
+    }
+
+    #[test]
+    fn child_enum_display_devices_a_rejects_unobserved_frames() {
+        let provider = ProviderImport {
+            module: "USER32.dll".into(),
+            symbol: ProviderSymbol::Name("EnumDisplayDevicesA".into()),
+            iat_rva: 0,
+        };
+        let mut xp = XpProcess::new_child();
+        xp.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory { base: STACK_BASE, bytes: vec![0; 0x2000] };
+        let esp = STACK_BASE + 0x100;
+        let output = STACK_BASE + 0x400;
+        for (word, value) in [0x6f0d_0300, 0, 0, output, 0].into_iter().enumerate() {
+            write_u32(&mut memory, esp + word as u32 * 4, value).unwrap();
+        }
+        write_u32(&mut memory, output, 0).unwrap();
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Err(ProviderDispatchError::Frontier {
+                api: "EnumDisplayDevicesA",
+                detail: "unexpected cb=0".into(),
+            })
+        );
+        write_u32(&mut memory, output, 0x1a8).unwrap();
+        write_u32(&mut memory, esp + 16, 1).unwrap();
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Err(ProviderDispatchError::Frontier {
+                api: "EnumDisplayDevicesA",
+                detail: "unobserved flags=0x00000001".into(),
+            })
+        );
+    }
+
+    #[test]
+    fn child_inherits_the_launcher_desktop_size() {
+        let mut launcher = XpProcess::new(Vec::new());
+        launcher.set_desktop_size(2560, 1440);
+        let mut session = crate::session::Wc3Session::new(launcher);
+        let child = session.create_child();
+        assert_eq!(session.process(child.pid).unwrap().xp.desktop_size(), (2560, 1440));
+    }
+
+    #[test]
     fn child_d3d8_release_returns_post_decrement_reference_count() {
         let provider = ProviderImport {
             module: "d3d8.dll".into(),

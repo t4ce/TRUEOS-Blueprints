@@ -5895,6 +5895,74 @@
                                             ),
                                         );
                                     }
+                                    child_loader::ProviderOp::EnumDisplayDevicesA => {
+                                        let [_, device_ptr, index, output, flags] = read_guest_words(
+                                            &X86Memory(&child.address_space),
+                                            exit.registers.esp,
+                                            5,
+                                        )?[..]
+                                        else {
+                                            unreachable!("EnumDisplayDevicesA frame has five words")
+                                        };
+                                        // A null output buffer returns FALSE before the provider
+                                        // dereferences lpDevice, so preserve that ABI behavior in
+                                        // diagnostics as well.
+                                        let device = if output == 0 || device_ptr == 0 {
+                                            None
+                                        } else {
+                                            Some(
+                                                wc3::process::read_c_string(
+                                                    &X86Memory(&child.address_space),
+                                                    device_ptr,
+                                                    32,
+                                                )
+                                                .map_err(|error| {
+                                                    format!("EnumDisplayDevicesA device: {error}")
+                                                })?,
+                                            )
+                                        };
+                                        let (kind, name, state) = match (result, device.as_deref()) {
+                                            (1, None) => (
+                                                "adapter",
+                                                r"\\.\DISPLAY1",
+                                                0x0000_0005u32,
+                                            ),
+                                            (1, Some(name))
+                                                if name.eq_ignore_ascii_case(r"\\.\DISPLAY1") => (
+                                                "monitor",
+                                                r"\\.\DISPLAY1\Monitor0",
+                                                0x0000_0001,
+                                            ),
+                                            _ => ("none", "", 0),
+                                        };
+                                        let cb = (output != 0)
+                                            .then(|| {
+                                                read_guest_words(
+                                                    &X86Memory(&child.address_space),
+                                                    output,
+                                                    1,
+                                                )
+                                            })
+                                            .transpose()?
+                                            .map(|words| words[0]);
+                                        logl::log(
+                                            level::IMPORTANT,
+                                            format_args!(
+                                                "WC3 CHILD ENUMDISPLAYDEVICES pid={} tid={} device={:?} index={} output=0x{:08x} cb={:?} flags=0x{:08x} kind={} name={:?} state=0x{:08x} result={} cleanup=16-by-thunk",
+                                                active_pid,
+                                                active_tid,
+                                                device.as_deref().unwrap_or("<null>"),
+                                                index,
+                                                output,
+                                                cb,
+                                                flags,
+                                                kind,
+                                                name,
+                                                state,
+                                                result,
+                                            ),
+                                        );
+                                    }
                                     child_loader::ProviderOp::FormatMessageA => {
                                         let frame = read_guest_words(
                                             &X86Memory(&child.address_space),
