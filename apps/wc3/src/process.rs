@@ -1642,6 +1642,10 @@ impl XpProcess {
         self.registry_handles.get(&handle).map(|handle| handle.node)
     }
 
+    pub fn close_registry_handle(&mut self, handle: u32) -> bool {
+        self.registry_handles.remove(&handle).is_some()
+    }
+
     pub fn has_critical_section(&self, address: u32) -> bool {
         self.critical_sections.contains_key(&address)
     }

@@ -3,6 +3,11 @@ use super::*;
 pub(super) mod loop_checkpoint;
 
 const ERROR_PROC_NOT_FOUND: u32 = 127;
+const ERROR_SUCCESS: u32 = 0;
+const ERROR_FILE_NOT_FOUND: u32 = 2;
+const ERROR_INVALID_HANDLE: u32 = 6;
+const ERROR_INVALID_PARAMETER: u32 = 87;
+const ERROR_MORE_DATA: u32 = 234;
 const EXEC_SAMPLE_PREEMPTIONS: u64 = 8;
 const MAX_SEH_CHAIN_DEPTH: u32 = 64;
 const WAR3_REPEATED_NULL_CALL_SLOT: u32 = 0x0049_a960;
@@ -4851,7 +4856,7 @@ pub(super) async fn run_loop(
                     );
                     if is_reg_open_key_ex_a {
                         let child_memory = X86Memory(&child.address_space);
-                        let frame = decode_reg_open_key_ex_a(&child_memory, exit.registers.esp)?;
+                        let frame = wc3::reg::decode_open_key_ex_a(&child_memory, exit.registers.esp)?;
                         if frame.caller_ret != u32::from_le_bytes(caller_ret) {
                             return Err("RegOpenKeyExA caller return mismatch".into());
                         }
@@ -4862,7 +4867,7 @@ pub(super) async fn run_loop(
                                 "WC3 CHILD REGISTRY OPEN pid={} tid={} root=\"{}\" subkey=[redacted] subkey_bytes={} sam=0x{:08x}",
                                 active_pid,
                                 active_tid,
-                                registry_root_name(frame.hkey),
+                                wc3::reg::format_root_name(frame.hkey),
                                 subkey.len(),
                                 frame.sam
                             ),
@@ -4926,7 +4931,7 @@ pub(super) async fn run_loop(
                     );
                     if is_reg_query_value_ex_a {
                         let child_memory = X86Memory(&child.address_space);
-                        let frame = decode_reg_query_value_ex_a(&child_memory, exit.registers.esp)?;
+                        let frame = wc3::reg::decode_query_value_ex_a(&child_memory, exit.registers.esp)?;
                         if frame.caller_ret != u32::from_le_bytes(caller_ret) {
                             return Err("RegQueryValueExA caller return mismatch".into());
                         }
@@ -4938,18 +4943,31 @@ pub(super) async fn run_loop(
                             .process(active_pid)
                             .and_then(|process| process.xp.registry_handle_node(frame.hkey));
                         ensure_registry_loaded(&mut session).await?;
-                        let (node, loaded_before, value) = match &mut session.registry {
+                        let (node, key_path, loaded_before, value, value_source) = match &mut session.registry {
                             wc3::session::RegistryState::Ready(registry) => {
                                 let node = registry.root(frame.hkey).or(handle_node);
-                                let loaded_before = node.is_some_and(|node| registry.values_loaded(node));
-                                let value = if let Some(node) = node {
+                                let key_path = node.and_then(|node| registry.key_identity(node));
+                                let loaded_before =
+                                    node.is_some_and(|node| registry.values_loaded(node));
+                                let design_value = key_path.as_ref().and_then(|(root, path)| {
+                                    wc3::reg::lookup(
+                                        *root,
+                                        path,
+                                        frame.value_name.as_deref().unwrap_or(""),
+                                    )
+                                });
+                                let (value, value_source) = if let Some(value) = design_value {
+                                    (Some((value.ty, value.bytes.to_vec())), "design")
+                                } else if let Some(node) = node {
                                     registry.ensure_values_loaded(node).map_err(str::to_owned)?;
-                                    registry.value(node, frame.value_name.as_deref().unwrap_or(""))
-                                        .map(|value| (value.ty, value.bytes.len()))
+                                    let value = registry
+                                        .value(node, frame.value_name.as_deref().unwrap_or(""))
+                                        .map(|value| (value.ty, value.bytes.clone()));
+                                    (value, "backing")
                                 } else {
-                                    None
+                                    (None, "absent")
                                 };
-                                (node, loaded_before, value)
+                                (node, key_path, loaded_before, value, value_source)
                             }
                             wc3::session::RegistryState::Unloaded => {
                                 return Err("registry remained unloaded".into());
@@ -4957,16 +4975,18 @@ pub(super) async fn run_loop(
                         };
                         let value_name = frame.value_name.as_deref().unwrap_or("");
                         let (value_type, value_bytes) = value
-                            .map(|(ty, bytes)| (format!("0x{ty:08x}"), bytes.to_string()))
+                            .as_ref()
+                            .map(|(ty, bytes)| (format!("0x{ty:08x}"), bytes.len().to_string()))
                             .unwrap_or_else(|| ("-".into(), "-".into()));
                         logl::log(
                             level::IMPORTANT,
                             format_args!(
-                                "WC3 CHILD REGISTRY QUERY CALL pid={} tid={} hkey=0x{:08x} node={} value_name={:?} reserved=0x{:08x} type_ptr=0x{:08x} data_ptr=0x{:08x} size_ptr=0x{:08x} input_capacity={} values_loaded_before={} backing_value={} backing_type={} backing_bytes={} caller_ret=0x{:08x} cleanup=24-by-thunk",
+                                "WC3 CHILD REGISTRY QUERY CALL pid={} tid={} hkey=0x{:08x} node={} key_path={:?} value_name={:?} reserved=0x{:08x} type_ptr=0x{:08x} data_ptr=0x{:08x} size_ptr=0x{:08x} input_capacity={} values_loaded_before={} source={} present={} value_type={} value_bytes={} caller_ret=0x{:08x} cleanup=24-by-thunk",
                                 active_pid,
                                 active_tid,
                                 frame.hkey,
                                 node.map(|node| format!("0x{node:08x}")).unwrap_or_else(|| "-".into()),
+                                key_path.as_ref().map(|(_, path)| path.as_str()).unwrap_or("-"),
                                 value_name,
                                 frame.reserved,
                                 frame.type_ptr,
@@ -4974,13 +4994,137 @@ pub(super) async fn run_loop(
                                 frame.size_ptr,
                                 input_capacity.map(|value| value.to_string()).unwrap_or_else(|| "-".into()),
                                 loaded_before as u8,
+                                value_source,
                                 value.is_some() as u8,
                                 value_type,
                                 value_bytes,
                                 frame.caller_ret,
                             ),
                         );
-                        return Ok(());
+                        let result = if frame.reserved != 0 {
+                            ERROR_INVALID_PARAMETER
+                        } else if node.is_none() {
+                            ERROR_INVALID_HANDLE
+                        } else if value.is_none() {
+                            ERROR_FILE_NOT_FOUND
+                        } else {
+                            let (ty, bytes) = value.as_ref().unwrap();
+                            let required = u32::try_from(bytes.len())
+                                .map_err(|_| "registry value size overflow")?;
+                            if frame.type_ptr != 0 {
+                                child
+                                    .address_space
+                                    .write(frame.type_ptr, &ty.to_le_bytes())
+                                    .map_err(|error| error.to_string())?;
+                            }
+                            if frame.data_ptr != 0 && frame.size_ptr == 0 {
+                                ERROR_INVALID_PARAMETER
+                            } else {
+                                if frame.size_ptr != 0 {
+                                    child
+                                        .address_space
+                                        .write(frame.size_ptr, &required.to_le_bytes())
+                                        .map_err(|error| error.to_string())?;
+                                }
+                                if frame.data_ptr == 0 {
+                                    ERROR_SUCCESS
+                                } else if input_capacity.unwrap_or(0) < required {
+                                    ERROR_MORE_DATA
+                                } else {
+                                    child
+                                        .address_space
+                                        .write(frame.data_ptr, bytes)
+                                        .map_err(|error| error.to_string())?;
+                                    ERROR_SUCCESS
+                                }
+                            }
+                        };
+                        let (result_type, required, dword) = value
+                            .as_ref()
+                            .map(|(ty, bytes)| {
+                                let kind = match *ty {
+                                    3 => "REG_BINARY",
+                                    4 => "REG_DWORD",
+                                    _ => "REG_UNKNOWN",
+                                };
+                                let dword = (*ty == 4 && bytes.len() == 4).then(|| {
+                                    u32::from_le_bytes(bytes[..4].try_into().unwrap())
+                                });
+                                (kind, bytes.len(), dword)
+                            })
+                            .unwrap_or(("-", 0, None));
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD REGISTRY QUERY RESULT pid={} tid={} hkey=0x{:08x} value_name={:?} source={} present={} type={} required={} capacity={} dword={} result={} cleanup=24-by-thunk",
+                                active_pid,
+                                active_tid,
+                                frame.hkey,
+                                value_name,
+                                value_source,
+                                value.is_some() as u8,
+                                result_type,
+                                required,
+                                input_capacity.map(|value| value.to_string()).unwrap_or_else(|| "-".into()),
+                                dword.map(|value| format!("0x{value:08x}")).unwrap_or_else(|| "-".into()),
+                                result,
+                            ),
+                        );
+                        let mut registers = exit.registers;
+                        registers.eax = result;
+                        contexts[active]
+                            .context
+                            .set_registers(registers)
+                            .map_err(|error| error.to_string())?;
+                        continue;
+                    }
+                    let is_reg_close_key = matches!(
+                        &provider.symbol,
+                        child_loader::ProviderSymbol::Name(name)
+                            if provider.module.eq_ignore_ascii_case("ADVAPI32.dll")
+                                && name == "RegCloseKey"
+                    );
+                    if is_reg_close_key {
+                        let child_memory = X86Memory(&child.address_space);
+                        let frame = read_guest_words(&child_memory, exit.registers.esp, 2)?;
+                        let frame_caller_ret = frame[0];
+                        let hkey = frame[1];
+                        if frame_caller_ret != u32::from_le_bytes(caller_ret) {
+                            return Err("RegCloseKey caller return mismatch".into());
+                        }
+                        let predefined = wc3::reg::is_predefined_root(hkey);
+                        let closed = if predefined {
+                            false
+                        } else {
+                            session
+                                .process_mut(active_pid)
+                                .ok_or_else(|| "child process missing".to_owned())?
+                                .xp
+                                .close_registry_handle(hkey)
+                        };
+                        let result = if predefined || closed {
+                            ERROR_SUCCESS
+                        } else {
+                            ERROR_INVALID_HANDLE
+                        };
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD REGISTRY CLOSE RESULT pid={} tid={} hkey=0x{:08x} kind={} result={} cleanup=4-by-thunk",
+                                active_pid,
+                                active_tid,
+                                hkey,
+                                if predefined { "predefined" } else { "opened" },
+                                result,
+                            ),
+                        );
+                        let mut registers = exit.registers;
+                        registers.eax = result;
+                        contexts[active]
+                            .context
+                            .set_registers(registers)
+                            .map_err(|error| error.to_string())?;
+                        continue;
                     }
                     let is_virtual_alloc = matches!(
                         &provider.symbol,

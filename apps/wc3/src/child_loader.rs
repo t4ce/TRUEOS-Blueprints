@@ -120,6 +120,7 @@ pub enum ProviderOp {
     EqualSid,
     RegOpenKeyExA,
     RegQueryValueExA,
+    RegCloseKey,
     CrtSetAppType,
     CrtGetFmode,
     CrtGetCommode,
@@ -178,7 +179,8 @@ impl ProviderOp {
             | Self::GetFileAttributesA
             | Self::FindClose
             | Self::FlushFileBuffers
-            | Self::Sleep => 4,
+            | Self::Sleep
+            | Self::RegCloseKey => 4,
             Self::ResetEvent => 4,
             Self::GetCPInfo | Self::GetWindowsDirectoryA | Self::GetSystemDirectoryA => 8,
             Self::GetProcAddress
@@ -414,6 +416,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
         return match symbol.as_str() {
             "RegOpenKeyExA" => ProviderOp::RegOpenKeyExA,
             "RegQueryValueExA" => ProviderOp::RegQueryValueExA,
+            "RegCloseKey" => ProviderOp::RegCloseKey,
             "OpenThreadToken" => ProviderOp::OpenThreadToken,
             "OpenProcessToken" => ProviderOp::OpenProcessToken,
             "GetTokenInformation" => ProviderOp::GetTokenInformation,

@@ -19,6 +19,7 @@ pub mod child_loader;
 pub mod imports;
 pub mod pe32;
 pub mod process;
+pub mod reg;
 pub mod seh;
 pub mod session;
 pub mod thunk32;

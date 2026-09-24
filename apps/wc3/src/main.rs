@@ -2453,36 +2453,6 @@ fn log_child_handles(session: &Wc3Session, pid: u32) {
 
 struct X86Memory<'a>(&'a AddressSpace);
 
-struct RegOpenKeyExAFrame {
-    caller_ret: u32,
-    hkey: u32,
-    subkey: Option<String>,
-    options: u32,
-    sam: u32,
-    result_ptr: u32,
-}
-
-struct RegQueryValueExAFrame {
-    caller_ret: u32,
-    hkey: u32,
-    value_name: Option<String>,
-    reserved: u32,
-    type_ptr: u32,
-    data_ptr: u32,
-    size_ptr: u32,
-}
-
-fn registry_root_name(hkey: u32) -> String {
-    match hkey {
-        0x8000_0000 => "HKEY_CLASSES_ROOT".into(),
-        0x8000_0001 => "HKEY_CURRENT_USER".into(),
-        0x8000_0002 => "HKEY_LOCAL_MACHINE".into(),
-        0x8000_0003 => "HKEY_USERS".into(),
-        0x8000_0005 => "HKEY_CURRENT_CONFIG".into(),
-        _ => format!("0x{hkey:08x}"),
-    }
-}
-
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 struct ChildException {
     vector: Option<u32>,
@@ -2569,47 +2539,6 @@ fn exception_code_window(address_space: &AddressSpace, eip: u32) -> String {
             .join(" "),
         _ => "<unreadable>".into(),
     }
-}
-
-fn decode_reg_open_key_ex_a(
-    memory: &impl GuestMemory,
-    esp: u32,
-) -> Result<RegOpenKeyExAFrame, String> {
-    let frame = read_guest_words(memory, esp, 6)?;
-    let subkey = if frame[2] == 0 {
-        None
-    } else {
-        Some(diagnostic_ansi_string(memory, frame[2])?)
-    };
-    Ok(RegOpenKeyExAFrame {
-        caller_ret: frame[0],
-        hkey: frame[1],
-        subkey,
-        options: frame[3],
-        sam: frame[4],
-        result_ptr: frame[5],
-    })
-}
-
-fn decode_reg_query_value_ex_a(
-    memory: &impl GuestMemory,
-    esp: u32,
-) -> Result<RegQueryValueExAFrame, String> {
-    let frame = read_guest_words(memory, esp, 7)?;
-    let value_name = if frame[2] == 0 {
-        None
-    } else {
-        Some(diagnostic_ansi_string(memory, frame[2])?)
-    };
-    Ok(RegQueryValueExAFrame {
-        caller_ret: frame[0],
-        hkey: frame[1],
-        value_name,
-        reserved: frame[3],
-        type_ptr: frame[4],
-        data_ptr: frame[5],
-        size_ptr: frame[6],
-    })
 }
 
 fn read_guest_words(memory: &impl GuestMemory, esp: u32, count: usize) -> Result<Vec<u32>, String> {

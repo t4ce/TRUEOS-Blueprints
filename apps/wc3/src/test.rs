@@ -6156,6 +6156,16 @@ mod tests_process_1 {
         assert_eq!(pid1.registry_handles.len(), 1);
         assert_eq!(pid2.registry_handles.len(), 1);
     }
+
+    #[test]
+    fn registry_close_removes_only_the_opened_handle() {
+        let mut xp = XpProcess::new(Vec::new());
+        let handle = xp.open_registry_key(7, 0x0002_0019).unwrap();
+
+        assert!(xp.close_registry_handle(handle));
+        assert_eq!(xp.registry_handle_node(handle), None);
+        assert!(!xp.close_registry_handle(handle));
+    }
 }
     };
 }
@@ -7066,6 +7076,21 @@ macro_rules! wc3_child_loader_tests_1 {
                 thunk32::write(548, provider_thunk_kind(&import), &mut bytes).unwrap();
                 assert_eq!(&bytes[8..11], &[0xc2, 20, 0]);
             }
+
+            #[test]
+            fn reg_close_key_provider_uses_stdcall_four() {
+                let import = ProviderImport {
+                    module: "ADVAPI32.dll".into(),
+                    symbol: ProviderSymbol::Name("RegCloseKey".into()),
+                    iat_rva: 0,
+                };
+                let operation = provider_op(&import);
+                assert_eq!(operation, ProviderOp::RegCloseKey);
+                assert!(operation.is_modeled());
+                assert!(!operation.is_generic_process_local());
+                assert_eq!(operation.stack_cleanup_bytes(), 4);
+                assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Stdcall(4));
+            }
         }
     };
 }
@@ -7156,6 +7181,45 @@ mod tests_session_1 {
         image.ensure_values_loaded(internal).unwrap();
         assert!(image.values_loaded(internal));
         assert!(!image.values_loaded(a));
+    }
+
+    #[test]
+    fn registry_lazy_values_decode_dword_as_little_endian_reg_dword() {
+        let fixture = b"[HKEY_CURRENT_USER\\Software\\Blizzard Entertainment\\Internal]\n\"Allow Local Files\"=dword:00000001\n";
+        let mut image = RegistryImage::parse(fixture).unwrap();
+        let hkcu = image.root(HKEY_CURRENT_USER).unwrap();
+        let internal = image
+            .child_path(hkcu, "software\\blizzard entertainment\\internal")
+            .unwrap();
+
+        assert!(!image.values_loaded(internal));
+        image.ensure_values_loaded(internal).unwrap();
+        let value = image.value(internal, "ALLOW LOCAL FILES").unwrap();
+        assert_eq!(value.ty, 4);
+        assert_eq!(value.bytes, [1, 0, 0, 0]);
+    }
+
+    #[test]
+    fn design_time_allow_local_files_is_present_and_explicitly_zero() {
+        let value = crate::reg::lookup(
+            crate::reg::HKEY_CURRENT_USER,
+            "software\\BLIZZARD entertainment\\warcraft iii",
+            "ALLOW LOCAL FILES",
+        )
+        .unwrap();
+
+        assert_eq!(value.ty, crate::reg::REG_DWORD);
+        assert_eq!(value.bytes, [0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn registry_root_helpers_classify_and_format_predefined_keys() {
+        assert!(crate::reg::is_predefined_root(crate::reg::HKEY_CURRENT_USER));
+        assert!(!crate::reg::is_predefined_root(0x5743_8201));
+        assert_eq!(
+            crate::reg::format_root_name(crate::reg::HKEY_CURRENT_USER),
+            "HKEY_CURRENT_USER"
+        );
     }
 
     #[test]

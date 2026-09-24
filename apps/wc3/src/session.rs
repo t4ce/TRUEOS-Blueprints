@@ -226,6 +226,14 @@ impl RegistryImage {
         self.loaded_values.get(&node)?.get(&canonical(name))
     }
 
+    pub fn key_identity(&self, node: RegistryNodeId) -> Option<(u32, String)> {
+        if let Some(root) = root_from_node(node) {
+            return Some((root, String::new()));
+        }
+        let entry = *self.entries.get(node as usize)?;
+        Some((entry.root, self.decode_tail(entry)?))
+    }
+
     fn find(&self, root: u32, path: &str) -> Option<RegistryNodeId> {
         let hash = hash_query(path, self.encoding);
         let first = self
@@ -270,6 +278,18 @@ impl RegistryImage {
                 } else {
                     unquote(name)?
                 };
+                if let Some(hex) = data.strip_prefix("dword:") {
+                    let value = u32::from_str_radix(hex.trim(), 16)
+                        .map_err(|_| "registry dword")?;
+                    values.insert(
+                        canonical(&name),
+                        RegistryValue {
+                            ty: 4,
+                            bytes: value.to_le_bytes().to_vec(),
+                        },
+                    );
+                    continue;
+                }
                 if let Some(hex) = data.strip_prefix("hex:") {
                     let bytes = hex
                         .split(',')
