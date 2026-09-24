@@ -147,6 +147,7 @@ pub enum ProviderOp {
     CrtIsDigit,
     CrtToUpper,
     CrtAtol,
+    CrtSscanf,
     CrtFtol,
     CrtRand,
     CrtSrand,
@@ -417,6 +418,7 @@ impl ProviderOp {
             | Self::CrtIsDigit
             | Self::CrtToUpper
             | Self::CrtAtol
+            | Self::CrtSscanf
             | Self::CrtFtol
             | Self::CrtRand
             | Self::CrtSrand
@@ -512,6 +514,7 @@ impl ProviderOp {
                 | Self::CrtIsDigit
                 | Self::CrtToUpper
                 | Self::CrtAtol
+                | Self::CrtSscanf
                 | Self::CrtRand
                 | Self::CrtSrand
                 | Self::CrtStrncpy
@@ -826,6 +829,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "isdigit" => ProviderOp::CrtIsDigit,
             "toupper" => ProviderOp::CrtToUpper,
             "atol" => ProviderOp::CrtAtol,
+            "sscanf" => ProviderOp::CrtSscanf,
             "_ftol" => ProviderOp::CrtFtol,
             "rand" => ProviderOp::CrtRand,
             "srand" => ProviderOp::CrtSrand,

@@ -6935,6 +6935,29 @@
                                             ),
                                         );
                                     }
+                                    child_loader::ProviderOp::CrtSscanf => {
+                                        let [_, input, format, major, minor] = read_guest_words(
+                                            &X86Memory(&child.address_space),
+                                            exit.registers.esp,
+                                            5,
+                                        )?[..]
+                                        else {
+                                            unreachable!("sscanf frame has five words")
+                                        };
+                                        logl::log(
+                                            level::IMPORTANT,
+                                            format_args!(
+                                                "WC3 CHILD SSCANF RESULT pid={} tid={} input=0x{:08x} format=0x{:08x} major=0x{:08x} minor=0x{:08x} assignments={} cleanup=0-by-thunk",
+                                                active_pid,
+                                                active_tid,
+                                                input,
+                                                format,
+                                                major,
+                                                minor,
+                                                result,
+                                            ),
+                                        );
+                                    }
                                     child_loader::ProviderOp::FormatMessageA => {
                                         let frame = read_guest_words(
                                             &X86Memory(&child.address_space),

@@ -534,6 +534,30 @@ impl XpProcess {
                     .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(result))
             }
+            ProviderOp::CrtSscanf => {
+                let [_, input_ptr, format_ptr, major_ptr, minor_ptr] = arguments::<5>(memory, esp)?;
+                let input = read_c_string(memory, input_ptr, 256)?;
+                let format = read_c_string(memory, format_ptr, 64)?;
+                if input != "1.1 TRUEOS"
+                    || format != "%d.%d"
+                    || major_ptr == 0
+                    || minor_ptr == 0
+                {
+                    return Err(ProviderDispatchError::Frontier {
+                        api: "sscanf",
+                        detail: format!(
+                            "input={input:?} format={format:?} major=0x{major_ptr:08x} minor=0x{minor_ptr:08x}"
+                        ),
+                    });
+                }
+                write_u32(memory, major_ptr, 1)?;
+                write_u32(memory, minor_ptr, 1)?;
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(2))
+            }
             ProviderOp::CrtRand => {
                 // MSVCRT's process-global rand stream: holdrand =
                 // holdrand * 214013 + 2531011, then expose its high 15 bits.
