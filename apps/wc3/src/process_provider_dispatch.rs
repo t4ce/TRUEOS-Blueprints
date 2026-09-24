@@ -1712,6 +1712,22 @@ impl XpProcess {
                     self.create_window_request(esp, memory, ThreadKey { pid, tid })?,
                 ),
             )),
+            ProviderOp::SetWindowPos => {
+                let [_, hwnd, insert_after, x, y, width, height, flags] =
+                    arguments::<8>(memory, esp)?;
+                Some(PersonalityAction::Session(SessionRequest::SetWindowPos(
+                    SetWindowPosRequest {
+                        pid,
+                        hwnd,
+                        insert_after,
+                        x: x as i32,
+                        y: y as i32,
+                        width,
+                        height,
+                        flags,
+                    },
+                )))
+            }
             ProviderOp::SetEvent => Some(PersonalityAction::Session(SessionRequest::SetEvent {
                 pid,
                 tid,

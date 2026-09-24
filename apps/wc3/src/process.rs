@@ -20,8 +20,8 @@ use crate::{
     pe32,
     session::{
         CreateEventRequest, CreateMutexRequest, CreateProcessRequest, CreateWindowRequest,
-        GetExitCodeProcessRequest, LoadImageRequest, OpenFileRequest, PersonalityAction, SessionRequest, ThreadKey,
-        WaitRequest, WindowBlitRequest, WindowTextRequest,
+        GetExitCodeProcessRequest, LoadImageRequest, OpenFileRequest, PersonalityAction, SessionRequest,
+        SetWindowPosRequest, ThreadKey, WaitRequest, WindowBlitRequest, WindowTextRequest,
     },
     staticstr,
     thunk32,

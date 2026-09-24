@@ -566,6 +566,31 @@ pub struct CreateWindowRequest {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SetWindowPosRequest {
+    pub pid: Pid,
+    pub hwnd: u32,
+    pub insert_after: u32,
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+    pub flags: u32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SetWindowPosResult {
+    pub old_x: i32,
+    pub old_y: i32,
+    pub old_width: u32,
+    pub old_height: u32,
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+    pub win32_visible: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum WindowPresentation {
     Show {
         hwnd: u32,
@@ -743,6 +768,7 @@ pub enum SessionRequest {
     },
     LoadImage(LoadImageRequest),
     CreateWindow(CreateWindowRequest),
+    SetWindowPos(SetWindowPosRequest),
     ShowWindow {
         pid: Pid,
         hwnd: u32,
@@ -1061,6 +1087,58 @@ impl Wc3Session {
             window.paint_pending = true;
         }
         Ok(old as u32)
+    }
+
+    pub fn set_window_pos(
+        &mut self,
+        request: SetWindowPosRequest,
+    ) -> Result<SetWindowPosResult, &'static str> {
+        const SWP_NOSIZE: u32 = 0x0001;
+        const SWP_NOMOVE: u32 = 0x0002;
+        const SWP_SHOWWINDOW: u32 = 0x0040;
+        const SWP_HIDEWINDOW: u32 = 0x0080;
+
+        if request.insert_after != 0 {
+            return Err("SetWindowPos unobserved insert-after");
+        }
+        let window = self
+            .windows
+            .get_mut(&request.hwnd)
+            .ok_or("SetWindowPos unknown window")?;
+        if window.owner.pid != request.pid {
+            return Err("SetWindowPos window owner mismatch");
+        }
+
+        let old_x = window.x;
+        let old_y = window.y;
+        let old_width = window.width;
+        let old_height = window.height;
+        if request.flags & SWP_NOMOVE == 0 {
+            window.x = request.x;
+            window.y = request.y;
+        }
+        if request.flags & SWP_NOSIZE == 0 {
+            window.width = request.width;
+            window.height = request.height;
+        }
+        if request.flags & SWP_SHOWWINDOW != 0 {
+            window.visible = true;
+        }
+        if request.flags & SWP_HIDEWINDOW != 0 {
+            window.visible = false;
+        }
+
+        Ok(SetWindowPosResult {
+            old_x,
+            old_y,
+            old_width,
+            old_height,
+            x: window.x,
+            y: window.y,
+            width: window.width,
+            height: window.height,
+            win32_visible: window.visible,
+        })
     }
 
     pub fn destroy_window(

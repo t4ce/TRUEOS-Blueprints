@@ -1400,6 +1400,52 @@
                         );
                         hwnd
                     }
+                    PersonalityAction::Session(SessionRequest::SetWindowPos(request)) => {
+                        let hwnd = request.hwnd;
+                        let insert_after = request.insert_after;
+                        let result = session.set_window_pos(request).map_err(str::to_owned)?;
+                        let position_changed = result.old_x != result.x || result.old_y != result.y;
+                        let size_changed = result.old_width != result.width
+                            || result.old_height != result.height;
+                        if position_changed || size_changed {
+                            let frame = frames
+                                .get_mut(&hwnd)
+                                .ok_or("SetWindowPos UI4 frame missing")?;
+                            if position_changed {
+                                frame
+                                    .set_position(result.x, result.y)
+                                    .map_err(|error| format!("move WC3 UI4 window: {error:?}"))?;
+                            }
+                            if size_changed {
+                                frame
+                                    .resize(result.width, result.height)
+                                    .map_err(|error| format!("resize WC3 UI4 window: {error:?}"))?;
+                            }
+                        }
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 SETWINDOWPOS hwnd=0x{:08x} old={},{} {}x{} applied={},{} {}x{} move_changed={} size_changed={} insert_after={} ui4_zorder_action=none ui4_position_changed={} ui4_size_changed={} ui4_visible={} win32_visible={} result=TRUE",
+                                hwnd,
+                                result.old_x,
+                                result.old_y,
+                                result.old_width,
+                                result.old_height,
+                                result.x,
+                                result.y,
+                                result.width,
+                                result.height,
+                                position_changed as u8,
+                                size_changed as u8,
+                                if insert_after == 0 { "HWND_TOP" } else { "unobserved" },
+                                position_changed as u8,
+                                size_changed as u8,
+                                frames.contains_key(&hwnd) as u8,
+                                result.win32_visible as u8,
+                            ),
+                        );
+                        1
+                    }
                     PersonalityAction::Session(SessionRequest::ShowWindow {
                         pid: _,
                         hwnd,
