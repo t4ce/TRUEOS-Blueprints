@@ -99,7 +99,7 @@ impl XpProcess {
                 self.gl_blend_func_static(esp, memory)?,
             )),
             ProviderOp::GlEnableClientState => Ok(PersonalityAction::Return(
-                self.gl_enable_client_state_static(esp, memory)?,
+                self.gl_enable_client_state_static(tid, esp, memory)?,
             )),
             ProviderOp::GlTexEnvi => Ok(PersonalityAction::Return(
                 self.gl_tex_envi_static(esp, memory)?,
@@ -108,7 +108,7 @@ impl XpProcess {
                 self.gl_bind_texture_static(esp, memory)?,
             )),
             ProviderOp::GlDisableClientState => Ok(PersonalityAction::Return(
-                self.gl_disable_client_state_static(esp, memory)?,
+                self.gl_disable_client_state_static(tid, esp, memory)?,
             )),
             ProviderOp::GlDepthMask => Ok(PersonalityAction::Return(
                 self.gl_depth_mask_static(esp, memory)?,
@@ -168,10 +168,10 @@ impl XpProcess {
                 self.gl_normal_pointer_static(esp, memory)?,
             )),
             ProviderOp::GlVertexPointer => Ok(PersonalityAction::Return(
-                self.gl_vertex_pointer_static(esp, memory)?,
+                self.gl_vertex_pointer_static(tid, esp, memory)?,
             )),
             ProviderOp::GlColorPointer => Ok(PersonalityAction::Return(
-                self.gl_color_pointer_static(esp, memory)?,
+                self.gl_color_pointer_static(tid, esp, memory)?,
             )),
             ProviderOp::GlTexCoordPointer => Ok(PersonalityAction::Return(
                 self.gl_tex_coord_pointer_static(esp, memory)?,
@@ -180,10 +180,10 @@ impl XpProcess {
                 self.gl_finish_static(esp, memory)?,
             )),
             ProviderOp::GlDrawElements => Ok(PersonalityAction::Return(
-                self.gl_draw_elements_static(esp, memory)?,
+                self.gl_draw_elements_static(tid, esp, memory)?,
             )),
             ProviderOp::GlLoadMatrixf => Ok(PersonalityAction::Return(
-                self.gl_load_matrixf_static(esp, memory)?,
+                self.gl_load_matrixf_static(tid, esp, memory)?,
             )),
             ProviderOp::GlMatrixMode => Ok(PersonalityAction::Return(
                 self.gl_matrix_mode_static(tid, esp, memory)?,
@@ -195,13 +195,13 @@ impl XpProcess {
                 self.gl_depth_range_static(esp, memory)?,
             )),
             ProviderOp::GlViewport => Ok(PersonalityAction::Return(
-                self.gl_viewport_static(esp, memory)?,
+                self.gl_viewport_static(tid, esp, memory)?,
             )),
             ProviderOp::GlClear => Ok(PersonalityAction::Return(
-                self.gl_clear_static(esp, memory)?,
+                self.gl_clear_static(tid, esp, memory)?,
             )),
             ProviderOp::GlClearColor => Ok(PersonalityAction::Return(
-                self.gl_clear_color_static(esp, memory)?,
+                self.gl_clear_color_static(tid, esp, memory)?,
             )),
             ProviderOp::GlReadPixels => Ok(PersonalityAction::Return(
                 self.gl_read_pixels_static(esp, memory)?,

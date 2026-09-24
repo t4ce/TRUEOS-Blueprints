@@ -27,6 +27,7 @@ trace-init = []
 trace-all = ["trace-scan", "trace-seh", "trace-api", "trace-init"]
 
 [dependencies]
+staticgl-triangle = { path = "staticgl-triangle" }
 sha2 = "=0.10.9"
 tokio = { workspace = true, features = ["rt", "sync", "time"] }
 trueos = { path = "../../api", features = ["tokio-runtime", "ui4-scene", "wc3-x86"] }

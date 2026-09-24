@@ -1575,6 +1575,25 @@ struct WglContext {
     pixel_format: u32,
     current_tid: Option<u32>,
     matrix_mode: u32,
+    modelview_matrix: [f32; 16],
+    projection_matrix: [f32; 16],
+    texture_matrix: [f32; 16],
+    ui4_window_id: Option<u32>,
+    viewport: [i32; 4],
+    clear_color: [f32; 4],
+    clear_pending: bool,
+    vertex_array_enabled: bool,
+    color_array_enabled: bool,
+    vertex_pointer: Option<GlArrayPointer>,
+    color_pointer: Option<GlArrayPointer>,
+}
+
+#[derive(Clone, Copy)]
+struct GlArrayPointer {
+    size: u32,
+    kind: u32,
+    stride: u32,
+    address: u32,
 }
 
 struct GlRuntime {
@@ -1582,6 +1601,7 @@ struct GlRuntime {
     queue: Queue,
     contexts: HashMap<u32, WglContext>,
     next_context: u32,
+    triangle_renderer: Option<staticgl_triangle::TriangleRenderer>,
 }
 
 impl XpProcess {

@@ -52,6 +52,7 @@ members = [
     "probes/tokio_stack",
     "apps/webmail",
     "apps/wc3",
+    "apps/wc3/staticgl-triangle",
     "probes/wls",
 ]
 exclude = [
