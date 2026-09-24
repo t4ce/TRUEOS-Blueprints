@@ -6716,6 +6716,31 @@ pub(super) async fn run_loop(
                         } else {
                             None
                         };
+                        let get_drive_type_root = if operation
+                            == child_loader::ProviderOp::GetDriveTypeA
+                        {
+                            let [_, root_ptr] = read_guest_words(
+                                &X86Memory(&child.address_space),
+                                exit.registers.esp,
+                                2,
+                            )?[..] else {
+                                unreachable!("GetDriveTypeA frame has two words")
+                            };
+                            Some(if root_ptr == 0 {
+                                None
+                            } else {
+                                Some(
+                                    wc3::process::read_c_string(
+                                        &X86Memory(&child.address_space),
+                                        root_ptr,
+                                        1024,
+                                    )
+                                    .map_err(|error| format!("GetDriveTypeA root: {error}"))?,
+                                )
+                            })
+                        } else {
+                            None
+                        };
                         if operation == child_loader::ProviderOp::FindFirstFileA {
                             let [_, pattern, find_data] = read_guest_words(
                                 &X86Memory(&child.address_space),
@@ -6870,6 +6895,24 @@ pub(super) async fn run_loop(
                                             u8::from(result != 0),
                                             result,
                                             last_error,
+                                        ),
+                                    );
+                                }
+                                if let Some(root) = get_drive_type_root {
+                                    let kind = match result {
+                                        wc3::process::DRIVE_FIXED => "DRIVE_FIXED",
+                                        wc3::process::DRIVE_NO_ROOT_DIR => "DRIVE_NO_ROOT_DIR",
+                                        _ => "UNKNOWN",
+                                    };
+                                    logl::log(
+                                        level::IMPORTANT,
+                                        format_args!(
+                                            "WC3 CHILD GETDRIVETYPEA pid={} tid={} root={:?} result={} kind={} cleanup=4-by-thunk",
+                                            active_pid,
+                                            active_tid,
+                                            root.as_deref().unwrap_or("<current-directory>"),
+                                            result,
+                                            kind,
                                         ),
                                     );
                                 }

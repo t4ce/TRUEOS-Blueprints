@@ -7223,6 +7223,25 @@ mod tests_session_1 {
     }
 
     #[test]
+    fn xp_virtual_drive_topology_is_c_fixed_only() {
+        assert_eq!(crate::process::xp_drive_type(None), crate::process::DRIVE_FIXED);
+        assert_eq!(crate::process::xp_drive_type(Some("C:\\")), crate::process::DRIVE_FIXED);
+        assert_eq!(crate::process::xp_drive_type(Some("c:/")), crate::process::DRIVE_FIXED);
+        assert_eq!(
+            crate::process::xp_drive_type(Some("D:\\")),
+            crate::process::DRIVE_NO_ROOT_DIR
+        );
+        assert_eq!(
+            crate::process::xp_drive_type(Some("A:\\")),
+            crate::process::DRIVE_NO_ROOT_DIR
+        );
+        assert_eq!(
+            crate::process::xp_drive_type(Some("")),
+            crate::process::DRIVE_NO_ROOT_DIR
+        );
+    }
+
+    #[test]
     fn registry_index_scans_utf16_crlf_giant_ignored_value_and_final_key() {
         let mut fixture = vec![0xff, 0xfe];
         fixture.extend(

@@ -48,6 +48,8 @@ pub const EXCEPTION_FILTER_EXECUTE_HANDLER: u32 = 1;
 pub const CRT_UNKNOWN_APP: u32 = 0;
 pub const CRT_CONSOLE_APP: u32 = 1;
 pub const CRT_GUI_APP: u32 = 2;
+pub const DRIVE_NO_ROOT_DIR: u32 = 1;
+pub const DRIVE_FIXED: u32 = 3;
 const ERROR_MOD_NOT_FOUND: u32 = 126;
 const ERROR_FILE_NOT_FOUND: u32 = 2;
 const ERROR_PATH_NOT_FOUND: u32 = 3;
@@ -81,6 +83,19 @@ pub fn format_message_language_resolution(requested: u32) -> (u32, &'static str)
         LANG_USER_DEFAULT => (XP_USER_DEFAULT_LANGID, "user-default"),
         LANG_SYSTEM_DEFAULT => (XP_SYSTEM_DEFAULT_LANGID, "system-default"),
         other => (other, "explicit"),
+    }
+}
+
+pub fn xp_drive_type(root: Option<&str>) -> u32 {
+    let Some(root) = root else {
+        // The modeled current directory is C:\\Warcraft III.
+        return DRIVE_FIXED;
+    };
+    let normalized = root.replace('/', "\\");
+    if normalized.eq_ignore_ascii_case("C:\\") {
+        DRIVE_FIXED
+    } else {
+        DRIVE_NO_ROOT_DIR
     }
 }
 const ERROR_NO_TOKEN: u32 = 1008;
@@ -3104,6 +3119,17 @@ impl XpProcess {
                 Ok(PersonalityAction::Return(
                     self.get_temp_path_a(esp, memory)?,
                 ))
+            }
+            ProviderOp::GetDriveTypeA => {
+                let [_, root_ptr] = arguments::<2>(memory, esp)?;
+                let root = (root_ptr != 0)
+                    .then(|| read_c_string(memory, root_ptr, 1024))
+                    .transpose()?;
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(xp_drive_type(root.as_deref())))
             }
             ProviderOp::SetCurrentDirectoryA => {
                 let [_, directory] = arguments::<2>(memory, esp)?;
