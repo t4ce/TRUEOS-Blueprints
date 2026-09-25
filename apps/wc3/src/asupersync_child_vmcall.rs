@@ -6418,6 +6418,33 @@
                             .map_err(|error| error.to_string())?;
                         continue;
                     }
+                    if operation == child_loader::ProviderOp::FillRect {
+                        let action = session
+                            .process_mut(active_pid)
+                            .ok_or_else(|| "FillRect process missing".to_owned())?
+                            .xp
+                            .dispatch_provider_for_process_typed(
+                                active_pid,
+                                active_tid,
+                                provider_id,
+                                exit.registers.esp,
+                                &mut X86Memory(&child.address_space),
+                            )
+                            .map_err(|error| error.to_string())?;
+                        let PersonalityAction::WindowFillRect(request) = action else {
+                            return Err("FillRect produced unexpected action".into());
+                        };
+                        paint_window_fill_rect(&request, &mut frames, window_rgba)?;
+                        logl::log(level::IMPORTANT, format_args!(
+                            "WC3 CHILD FILLRECT pid={} tid={} hwnd=0x{:08x} hdc=0x{:08x} rect={:?} result=1 cleanup=12-by-thunk",
+                            active_pid, active_tid, request.hwnd, request.hdc, request.rect,
+                        ));
+                        let mut registers = exit.registers;
+                        registers.eax = 1;
+                        contexts[active].context.set_registers(registers)
+                            .map_err(|error| error.to_string())?;
+                        continue;
+                    }
                     if operation.is_generic_process_local() {
                         let global_memory_status = if operation
                             == child_loader::ProviderOp::GlobalMemoryStatus

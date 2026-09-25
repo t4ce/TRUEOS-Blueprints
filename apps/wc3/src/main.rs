@@ -645,6 +645,49 @@ async fn run_x86_extended_state_self_test() -> Result<(), String> {
     Ok(())
 }
 
+fn paint_window_fill_rect(
+    request: &wc3::session::WindowFillRectRequest,
+    frames: &mut HashMap<u32, Frame>,
+    window_rgba: &mut HashMap<u32, Vec<u8>>,
+) -> Result<(), String> {
+    let frame = frames.get_mut(&request.hwnd)
+        .ok_or_else(|| "FillRect destination frame missing".to_owned())?;
+    let width = frame.width() as usize;
+    let height = frame.height() as usize;
+    let expected = width.checked_mul(height)
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or_else(|| "FillRect frame size overflow".to_owned())?;
+    let backing = window_rgba.entry(request.hwnd).or_insert_with(|| {
+        let mut pixels = vec![0; expected];
+        for alpha in pixels[3..].iter_mut().step_by(4) { *alpha = 255; }
+        pixels
+    });
+    if backing.len() != expected {
+        return Err("FillRect window backing size mismatch".into());
+    }
+    let left = request.rect[0].max(0).min(width as i32) as usize;
+    let top = request.rect[1].max(0).min(height as i32) as usize;
+    let right = request.rect[2].max(0).min(width as i32) as usize;
+    let bottom = request.rect[3].max(0).min(height as i32) as usize;
+    if left < right && top < bottom {
+        for y in top..bottom {
+            for x in left..right {
+                let offset = (y * width + x) * 4;
+                backing[offset..offset + 4].copy_from_slice(&request.rgba);
+            }
+        }
+        frame.begin(rgba(0, 0, 0, 255))
+            .and_then(|()| frame.write_opaque_rgba8(backing))
+            .and_then(|()| frame.publish(Damage::full(frame.width(), frame.height())))
+            .map_err(|error| format!("publish WC3 FillRect: {error:?}"))?;
+    }
+    logl::log(level::IMPORTANT, format_args!(
+        "WC3 UI4 FILLRECT hwnd=0x{:08x} hdc=0x{:08x} rect={:?} published={}",
+        request.hwnd, request.hdc, request.rect, u8::from(left < right && top < bottom),
+    ));
+    Ok(())
+}
+
 fn present_window(
     request: WindowPresentation,
     frames: &mut HashMap<u32, Frame>,
