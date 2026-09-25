@@ -1254,7 +1254,7 @@
         let esp = STACK_TOP - 0x80;
         let wsadata = STACK_TOP - 0x800;
         write_u32(&mut memory, esp, 0x6f00_0000).unwrap();
-        write_u32(&mut memory, esp + 4, 0x0101).unwrap();
+        write_u32(&mut memory, esp + 4, 0x0202).unwrap();
         write_u32(&mut memory, esp + 8, wsadata).unwrap();
 
         assert_eq!(
@@ -1263,11 +1263,11 @@
         );
         let mut data = [0u8; 400];
         memory.read(wsadata, &mut data).unwrap();
-        assert_eq!(&data[0..2], &0x0101u16.to_le_bytes());
-        assert_eq!(&data[2..4], &0x0101u16.to_le_bytes());
+        assert_eq!(&data[0..2], &0x0202u16.to_le_bytes());
+        assert_eq!(&data[2..4], &0x0202u16.to_le_bytes());
         assert_eq!(
-            &data[4..4 + b"TRUEOS Winsock 1.1 compatibility\0".len()],
-            b"TRUEOS Winsock 1.1 compatibility\0"
+            &data[4..4 + b"TRUEOS Winsock 2.2 compatibility\0".len()],
+            b"TRUEOS Winsock 2.2 compatibility\0"
         );
         assert_eq!(&data[390..400], &[0; 10]);
         assert_eq!(xp.call_count, 1);
@@ -2384,6 +2384,8 @@
     fn child_runtime_system_provider_load_retains_d3d8_without_admitting_app_dlls() {
         assert!(is_system_provider_module("d3d8.dll"));
         assert!(is_system_provider_module("C:\\Windows\\System32\\D3D8.DLL"));
+        assert!(is_system_provider_module("wsock32.dll"));
+        assert!(is_system_provider_module("C:\\Windows\\System32\\MSWSOCK.DLL"));
         assert!(!is_system_provider_module("War3Patch.dll"));
 
         let mut xp = XpProcess::new_child();

@@ -1686,6 +1686,8 @@ pub fn is_system_provider_module(module: &str) -> bool {
             | "advapi32.dll"
             | "winmm.dll"
             | "msvcrt.dll"
+            | "wsock32.dll"
+            | "mswsock.dll"
             | "ole32.dll"
             | "imm32.dll"
             | "comdlg32.dll"

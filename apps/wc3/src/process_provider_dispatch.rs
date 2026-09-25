@@ -1181,6 +1181,7 @@ impl XpProcess {
                 let [_, requested, wsadata] = arguments::<3>(memory, esp)?;
                 const WSAVERNOTSUPPORTED: u32 = 10092;
                 const WSAEFAULT: u32 = 10014;
+                const WINSOCK_2_2: u16 = 0x0202;
 
                 if wsadata == 0 {
                     return Ok(PersonalityAction::Return(WSAEFAULT));
@@ -1188,8 +1189,7 @@ impl XpProcess {
 
                 let requested = requested as u16;
                 let negotiated = match requested {
-                    0x0100 => 0x0100u16,
-                    value if value >= 0x0101 => 0x0101u16,
+                    0x0100 | 0x0101 | 0x0200 | 0x0201 | 0x0202 => requested,
                     _ => return Ok(PersonalityAction::Return(WSAVERNOTSUPPORTED)),
                 };
 
@@ -1198,10 +1198,10 @@ impl XpProcess {
                 // lpVendorInfo pointer. This remains an offline personality.
                 let mut data = [0u8; 400];
                 data[0..2].copy_from_slice(&negotiated.to_le_bytes());
-                data[2..4].copy_from_slice(&0x0101u16.to_le_bytes());
-                let description = b"TRUEOS Winsock 1.1 compatibility\0";
+                data[2..4].copy_from_slice(&WINSOCK_2_2.to_le_bytes());
+                let description = b"TRUEOS Winsock 2.2 compatibility\0";
                 data[4..4 + description.len()].copy_from_slice(description);
-                let status = b"Running\0";
+                let status = b"Running - no network interfaces\0";
                 data[261..261 + status.len()].copy_from_slice(status);
                 // iMaxSockets, iMaxUdpDg, and lpVendorInfo deliberately stay
                 // zero: successful Winsock initialization grants no transport.
@@ -1216,7 +1216,7 @@ impl XpProcess {
                     format_args!(
                         "WC3 CHILD WSASTARTUP pid={pid} tid={tid} \\
                          requested=0x{requested:04x} negotiated=0x{negotiated:04x} \\
-                         high=0x0101 transport=offline trueos_network=0 \\
+                         high=0x0202 transport=offline interfaces=0 trueos_network=0 \\
                          result=0 cleanup=8-by-thunk"
                     ),
                 );
