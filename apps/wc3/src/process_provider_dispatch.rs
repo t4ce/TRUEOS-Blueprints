@@ -1870,6 +1870,15 @@ impl XpProcess {
                     self.write_current_system_time(esp, memory)?,
                 ))
             }
+            ProviderOp::SystemTimeToFileTime => {
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(
+                    self.system_time_to_file_time(pid, tid, esp, memory)?,
+                ))
+            }
             ProviderOp::GetTimeZoneInformation => {
                 self.call_count = self
                     .call_count
@@ -1996,6 +2005,21 @@ impl XpProcess {
                     pid,
                     hwnd,
                     output,
+                }))
+            }
+            ProviderOp::SetWindowTextA => {
+                let [_, hwnd, text_ptr] = arguments::<3>(memory, esp)?;
+                if text_ptr == 0 {
+                    return Err(ProviderDispatchError::Frontier {
+                        api: "SetWindowTextA",
+                        detail: format!("hwnd=0x{hwnd:08x} null text pointer"),
+                    });
+                }
+                let text = read_c_string(memory, text_ptr, 1024)?;
+                Some(PersonalityAction::Session(SessionRequest::SetWindowText {
+                    pid,
+                    hwnd,
+                    text,
                 }))
             }
             ProviderOp::GetDC => Some(PersonalityAction::Session(SessionRequest::GetDC {

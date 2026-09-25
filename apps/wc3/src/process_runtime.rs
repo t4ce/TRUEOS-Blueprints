@@ -1040,6 +1040,63 @@ impl XpProcess {
         Ok(0)
     }
 
+    fn system_time_to_file_time(
+        &mut self,
+        pid: u32,
+        tid: u32,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
+        let [_, input, output] = arguments::<3>(memory, esp)?;
+        if input == 0 || output == 0 {
+            return Err(ProviderDispatchError::Frontier {
+                api: "SystemTimeToFileTime",
+                detail: format!("input=0x{input:08x} output=0x{output:08x}"),
+            });
+        }
+
+        let mut system_time = [0u16; 8];
+        for (index, word) in system_time.iter_mut().enumerate() {
+            *word = read_u16(memory, input + (index as u32) * 2)?;
+        }
+
+        let Some(filetime) = xp_filetime_from_system_time(system_time) else {
+            return Err(ProviderDispatchError::Frontier {
+                api: "SystemTimeToFileTime",
+                detail: format!(
+                    "invalid SYSTEMTIME year={} month={} dow={} day={} {:02}:{:02}:{:02}.{:03}",
+                    system_time[0],
+                    system_time[1],
+                    system_time[2],
+                    system_time[3],
+                    system_time[4],
+                    system_time[5],
+                    system_time[6],
+                    system_time[7],
+                ),
+            });
+        };
+
+        memory.write(output, &filetime.to_le_bytes())?;
+        logl::log(
+            level::IMPORTANT,
+            format_args!(
+                "WC3 CHILD SYSTEMTIMETOFILETIME RESULT pid={pid} tid={tid} input=0x{input:08x} system={:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03} day_of_week={} output=0x{output:08x} filetime=0x{filetime:016x} low=0x{:08x} high=0x{:08x} result=1 cleanup=8-by-thunk",
+                system_time[0],
+                system_time[1],
+                system_time[3],
+                system_time[4],
+                system_time[5],
+                system_time[6],
+                system_time[7],
+                system_time[2],
+                filetime as u32,
+                (filetime >> 32) as u32,
+            ),
+        );
+        Ok(1)
+    }
+
     fn get_time_zone_information(
         &self,
         esp: u32,

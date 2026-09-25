@@ -5929,6 +5929,52 @@
                             .map_err(|error| error.to_string())?;
                         continue;
                     }
+                    if operation == child_loader::ProviderOp::SetWindowTextA {
+                        let action = session
+                            .process_mut(active_pid)
+                            .ok_or_else(|| "child process missing".to_owned())?
+                            .xp
+                            .dispatch_provider_for_process_typed(
+                                active_pid,
+                                active_tid,
+                                provider_id,
+                                exit.registers.esp,
+                                &mut X86Memory(&child.address_space),
+                            )
+                            .map_err(|error| error.to_string())?;
+                        let PersonalityAction::Session(SessionRequest::SetWindowText {
+                            pid,
+                            hwnd,
+                            text,
+                        }) = action
+                        else {
+                            return Err("SetWindowTextA produced unexpected action".into());
+                        };
+                        let new_title = text.clone();
+                        let (previous, changed) = session
+                            .set_window_text(pid, hwnd, text)
+                            .map_err(str::to_owned)?;
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD SETWINDOWTEXTA RESULT pid={} tid={} hwnd=0x{:08x} previous={:?} new={:?} changed={} ui4_frame={} ui4_title_action=none result=TRUE cleanup=8-by-thunk",
+                                active_pid,
+                                active_tid,
+                                hwnd,
+                                previous,
+                                new_title,
+                                changed as u8,
+                                frames.contains_key(&hwnd) as u8,
+                            ),
+                        );
+                        let mut registers = exit.registers;
+                        registers.eax = 1;
+                        contexts[active]
+                            .context
+                            .set_registers(registers)
+                            .map_err(|error| error.to_string())?;
+                        continue;
+                    }
                     if operation == child_loader::ProviderOp::GetDC {
                         let action = session
                             .process_mut(active_pid)

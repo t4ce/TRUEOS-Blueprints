@@ -774,6 +774,11 @@ pub enum SessionRequest {
         hwnd: u32,
         output: u32,
     },
+    SetWindowText {
+        pid: Pid,
+        hwnd: u32,
+        text: String,
+    },
     GetDC {
         pid: Pid,
         hwnd: u32,
@@ -1161,6 +1166,25 @@ impl Wc3Session {
             .and_then(|value| i32::try_from(value).ok())
             .ok_or("GetWindowRect bottom overflow")?;
         Ok([window.x, window.y, right, bottom])
+    }
+
+    pub fn set_window_text(
+        &mut self,
+        pid: Pid,
+        hwnd: u32,
+        text: String,
+    ) -> Result<(String, bool), &'static str> {
+        let window = self
+            .windows
+            .get_mut(&hwnd)
+            .ok_or("SetWindowTextA unknown window")?;
+        if window.owner.pid != pid {
+            return Err("SetWindowTextA window owner mismatch");
+        }
+
+        let changed = window.title != text;
+        let previous = core::mem::replace(&mut window.title, text);
+        Ok((previous, changed))
     }
 
     pub fn destroy_window(

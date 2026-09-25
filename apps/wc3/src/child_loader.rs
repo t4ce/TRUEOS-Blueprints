@@ -100,6 +100,7 @@ pub enum ProviderOp {
     QueryPerformanceCounter,
     GetLocalTime,
     GetSystemTime,
+    SystemTimeToFileTime,
     GetTimeZoneInformation,
     TimeGetTime,
     GetVersion,
@@ -172,6 +173,7 @@ pub enum ProviderOp {
     ShowWindow,
     SetFocus,
     GetWindowRect,
+    SetWindowTextA,
     ClipCursor,
     GetDC,
     ReleaseDC,
@@ -293,7 +295,10 @@ impl ProviderOp {
             | Self::D3D8Release => 4,
             Self::GetVolumeInformationA => 32,
             Self::SetEvent | Self::ResetEvent => 4,
-            Self::GetCPInfo | Self::GetWindowsDirectoryA | Self::GetSystemDirectoryA => 8,
+            Self::GetCPInfo
+            | Self::GetWindowsDirectoryA
+            | Self::GetSystemDirectoryA
+            | Self::SystemTimeToFileTime => 8,
             Self::GetProcAddress
             | Self::WaitForSingleObject
             | Self::GetFileSize
@@ -320,6 +325,7 @@ impl ProviderOp {
             Self::ShowWindow => 8,
             Self::SetFocus => 4,
             Self::GetWindowRect => 8,
+            Self::SetWindowTextA => 8,
             Self::ClipCursor => 4,
             Self::GetDC => 4,
             Self::ReleaseDC => 8,
@@ -502,6 +508,7 @@ impl ProviderOp {
                 | Self::QueryPerformanceCounter
                 | Self::GetLocalTime
                 | Self::GetSystemTime
+                | Self::SystemTimeToFileTime
                 | Self::GetTimeZoneInformation
                 | Self::TimeGetTime
                 | Self::OpenThreadToken
@@ -687,6 +694,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "QueryPerformanceCounter" => ProviderOp::QueryPerformanceCounter,
             "GetLocalTime" => ProviderOp::GetLocalTime,
             "GetSystemTime" => ProviderOp::GetSystemTime,
+            "SystemTimeToFileTime" => ProviderOp::SystemTimeToFileTime,
             "GetTimeZoneInformation" => ProviderOp::GetTimeZoneInformation,
             "GetVersion" => ProviderOp::GetVersion,
             "GetVersionExA" => ProviderOp::GetVersionExA,
@@ -721,6 +729,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "ShowWindow" => ProviderOp::ShowWindow,
             "SetFocus" => ProviderOp::SetFocus,
             "GetWindowRect" => ProviderOp::GetWindowRect,
+            "SetWindowTextA" => ProviderOp::SetWindowTextA,
             "ClipCursor" => ProviderOp::ClipCursor,
             "GetDC" => ProviderOp::GetDC,
             "ReleaseDC" => ProviderOp::ReleaseDC,

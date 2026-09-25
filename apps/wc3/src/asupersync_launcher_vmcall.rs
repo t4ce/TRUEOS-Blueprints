@@ -1465,6 +1465,14 @@
 
                         1
                     }
+                    PersonalityAction::Session(SessionRequest::SetWindowText {
+                        pid,
+                        hwnd,
+                        text,
+                    }) => {
+                        session.set_window_text(pid, hwnd, text).map_err(str::to_owned)?;
+                        1
+                    }
                     PersonalityAction::Session(SessionRequest::GetDC { pid, hwnd }) => {
                         session.validate_window_dc(pid, hwnd).map_err(str::to_owned)?;
                         session

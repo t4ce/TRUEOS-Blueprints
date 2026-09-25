@@ -299,6 +299,64 @@ fn xp_system_time_from_unix_nanos(nanos: u64) -> [u16; 8] {
     ]
 }
 
+fn xp_is_leap_year(year: u32) -> bool {
+    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
+}
+
+fn xp_days_in_month(year: u32, month: u32) -> Option<u32> {
+    Some(match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if xp_is_leap_year(year) => 29,
+        2 => 28,
+        _ => return None,
+    })
+}
+
+fn xp_filetime_from_system_time(st: [u16; 8]) -> Option<u64> {
+    let year = u32::from(st[0]);
+    let month = u32::from(st[1]);
+    // st[2] is wDayOfWeek, which SystemTimeToFileTime ignores.
+    let day = u32::from(st[3]);
+    let hour = u32::from(st[4]);
+    let minute = u32::from(st[5]);
+    let second = u32::from(st[6]);
+    let millis = u32::from(st[7]);
+
+    if !(1601..=30827).contains(&year)
+        || hour > 23
+        || minute > 59
+        || second > 59
+        || millis > 999
+    {
+        return None;
+    }
+
+    let days_this_month = xp_days_in_month(year, month)?;
+    if day == 0 || day > days_this_month {
+        return None;
+    }
+
+    let mut days = 0u64;
+    for current_year in 1601..year {
+        days += if xp_is_leap_year(current_year) { 366 } else { 365 };
+    }
+    for current_month in 1..month {
+        days += u64::from(xp_days_in_month(year, current_month)?);
+    }
+    days += u64::from(day - 1);
+
+    let seconds = days
+        .checked_mul(SECONDS_PER_DAY)?
+        .checked_add(u64::from(hour) * 3_600)?
+        .checked_add(u64::from(minute) * 60)?
+        .checked_add(u64::from(second))?;
+
+    seconds
+        .checked_mul(10_000_000)?
+        .checked_add(u64::from(millis) * 10_000)
+}
+
 /// A fixed UTC `TIME_ZONE_INFORMATION`: zero bias, no daylight-saving
 /// transitions, and UTF-16 UTC names.  The exposed WC3 wall clock is UTC.
 fn xp_utc_time_zone_information() -> [u8; XP_TIME_ZONE_INFORMATION_BYTES] {
@@ -319,6 +377,21 @@ fn xp_system_time_epoch_layout() {
         xp_system_time_from_unix_nanos(123_000_000),
         [1970, 1, 4, 1, 0, 0, 0, 123],
     );
+}
+
+#[cfg(test)]
+#[test]
+fn xp_filetime_from_system_time_converts_valid_calendar_times() {
+    assert_eq!(
+        xp_filetime_from_system_time([1601, 1, 0, 1, 0, 0, 0, 0]),
+        Some(0),
+    );
+    assert_eq!(
+        xp_filetime_from_system_time([1970, 1, 4, 1, 0, 0, 0, 0]),
+        Some(116_444_736_000_000_000),
+    );
+    assert!(xp_filetime_from_system_time([2000, 2, 0, 29, 0, 0, 0, 0]).is_some());
+    assert!(xp_filetime_from_system_time([1900, 2, 0, 29, 0, 0, 0, 0]).is_none());
 }
 
 #[cfg(test)]
