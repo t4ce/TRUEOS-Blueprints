@@ -1986,6 +1986,14 @@ impl XpProcess {
                 pid,
                 hwnd: arguments::<2>(memory, esp)?[1],
             })),
+            ProviderOp::GetWindowRect => {
+                let [_, hwnd, output] = arguments::<3>(memory, esp)?;
+                Some(PersonalityAction::Session(SessionRequest::GetWindowRect {
+                    pid,
+                    hwnd,
+                    output,
+                }))
+            }
             ProviderOp::GetDC => Some(PersonalityAction::Session(SessionRequest::GetDC {
                 pid,
                 hwnd: arguments::<2>(memory, esp)?[1],

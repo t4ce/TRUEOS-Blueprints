@@ -769,6 +769,11 @@ pub enum SessionRequest {
     LoadImage(LoadImageRequest),
     CreateWindow(CreateWindowRequest),
     SetWindowPos(SetWindowPosRequest),
+    GetWindowRect {
+        pid: Pid,
+        hwnd: u32,
+        output: u32,
+    },
     GetDC {
         pid: Pid,
         hwnd: u32,
@@ -1143,6 +1148,19 @@ impl Wc3Session {
             height: window.height,
             win32_visible: window.visible,
         })
+    }
+
+    pub fn window_rect(&self, hwnd: u32) -> Result<[i32; 4], &'static str> {
+        let window = self.windows.get(&hwnd).ok_or("GetWindowRect unknown window")?;
+        let right = i64::from(window.x)
+            .checked_add(i64::from(window.width))
+            .and_then(|value| i32::try_from(value).ok())
+            .ok_or("GetWindowRect right overflow")?;
+        let bottom = i64::from(window.y)
+            .checked_add(i64::from(window.height))
+            .and_then(|value| i32::try_from(value).ok())
+            .ok_or("GetWindowRect bottom overflow")?;
+        Ok([window.x, window.y, right, bottom])
     }
 
     pub fn destroy_window(
