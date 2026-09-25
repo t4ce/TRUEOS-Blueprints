@@ -1891,75 +1891,6 @@
                         let allocation = match allocation {
                             Ok(value) => value,
                             Err(ProviderDispatchError::Frontier { api, detail }) => {
-                                if provider.module.eq_ignore_ascii_case("OPENGL32.dll") {
-                                    if let child_loader::ProviderSymbol::Name(name) = &provider.symbol {
-                                        if let Some(signature) = wc3::gl_signatures::signature(name) {
-                                            match wc3::gl_signatures::decode_call(
-                                                signature,
-                                                &X86Memory(&child.address_space),
-                                                exit.registers.esp,
-                                            ) {
-                                                Ok(call) => {
-                                                    logl::log(
-                                                        level::IMPORTANT,
-                                                        format_args!(
-                                                            "WC3 CHILD GL SIGNATURE pid={} tid={} symbol={} arguments={} caller_ret=0x{:08x} disposition={:?}",
-                                                            active_pid,
-                                                            active_tid,
-                                                            signature.symbol,
-                                                            call.description,
-                                                            u32::from_le_bytes(caller_ret),
-                                                            signature.effect,
-                                                        ),
-                                                    );
-                                                    if signature.effect == wc3::gl_signatures::GlEffect::NoteWrite
-                                                        && !call.description.contains("<null>")
-                                                    {
-                                                        let noted = session
-                                                            .process_mut(active_pid)
-                                                            .ok_or_else(|| "child process missing".to_owned())?
-                                                            .xp
-                                                            .note_gl_write(
-                                                                active_tid,
-                                                                signature.symbol,
-                                                                call.words,
-                                                                call.description,
-                                                            );
-                                                        if let Ok((hglrc, note_count)) = noted {
-                                                            logl::log(
-                                                                level::IMPORTANT,
-                                                                format_args!(
-                                                                    "WC3 CHILD GL WRITE NOTE pid={} tid={} hglrc=0x{:08x} symbol={} notes={} modeled=0 source_frontier={:?} result=void cleanup={}-by-thunk",
-                                                                    active_pid,
-                                                                    active_tid,
-                                                                    hglrc,
-                                                                    signature.symbol,
-                                                                    note_count,
-                                                                    detail,
-                                                                    operation.stack_cleanup_bytes(),
-                                                                ),
-                                                            );
-                                                            let mut registers = exit.registers;
-                                                            registers.eax = 0;
-                                                            contexts[active]
-                                                                .context
-                                                                .set_registers(registers)
-                                                                .map_err(|error| error.to_string())?;
-                                                            continue;
-                                                        }
-                                                    }
-                                                }
-                                                Err(error) => logl::log(
-                                                    level::IMPORTANT,
-                                                    format_args!(
-                                                        "WC3 CHILD GL SIGNATURE DECODE pid={} tid={} symbol={} error={:?}",
-                                                        active_pid, active_tid, signature.symbol, error,
-                                                    ),
-                                                ),
-                                            }
-                                        }
-                                    }
-                                }
                                 logl::log(
                                     level::IMPORTANT,
                                     format_args!(
@@ -7634,6 +7565,75 @@
                                 return Err(format!("child provider semantic fault: {error}"));
                             }
                             Err(ProviderDispatchError::Frontier { api, detail }) => {
+                                if provider.module.eq_ignore_ascii_case("OPENGL32.dll") {
+                                    if let child_loader::ProviderSymbol::Name(name) = &provider.symbol {
+                                        if let Some(signature) = wc3::gl_signatures::signature(name) {
+                                            match wc3::gl_signatures::decode_call(
+                                                signature,
+                                                &X86Memory(&child.address_space),
+                                                exit.registers.esp,
+                                            ) {
+                                                Ok(call) => {
+                                                    logl::log(
+                                                        level::IMPORTANT,
+                                                        format_args!(
+                                                            "WC3 CHILD GL SIGNATURE pid={} tid={} symbol={} arguments={} caller_ret=0x{:08x} disposition={:?}",
+                                                            active_pid,
+                                                            active_tid,
+                                                            signature.symbol,
+                                                            call.description,
+                                                            u32::from_le_bytes(caller_ret),
+                                                            signature.effect,
+                                                        ),
+                                                    );
+                                                    if signature.effect == wc3::gl_signatures::GlEffect::NoteWrite
+                                                        && !call.description.contains("<null>")
+                                                    {
+                                                        let noted = session
+                                                            .process_mut(active_pid)
+                                                            .ok_or_else(|| "child process missing".to_owned())?
+                                                            .xp
+                                                            .note_gl_write(
+                                                                active_tid,
+                                                                signature.symbol,
+                                                                call.words,
+                                                                call.description,
+                                                            );
+                                                        if let Ok((hglrc, note_count)) = noted {
+                                                            logl::log(
+                                                                level::IMPORTANT,
+                                                                format_args!(
+                                                                    "WC3 CHILD GL WRITE NOTE pid={} tid={} hglrc=0x{:08x} symbol={} notes={} modeled=0 source_frontier={:?} result=void cleanup={}-by-thunk",
+                                                                    active_pid,
+                                                                    active_tid,
+                                                                    hglrc,
+                                                                    signature.symbol,
+                                                                    note_count,
+                                                                    detail,
+                                                                    operation.stack_cleanup_bytes(),
+                                                                ),
+                                                            );
+                                                            let mut registers = exit.registers;
+                                                            registers.eax = 0;
+                                                            contexts[active]
+                                                                .context
+                                                                .set_registers(registers)
+                                                                .map_err(|error| error.to_string())?;
+                                                            continue;
+                                                        }
+                                                    }
+                                                }
+                                                Err(error) => logl::log(
+                                                    level::IMPORTANT,
+                                                    format_args!(
+                                                        "WC3 CHILD GL SIGNATURE DECODE pid={} tid={} symbol={} error={:?}",
+                                                        active_pid, active_tid, signature.symbol, error,
+                                                    ),
+                                                ),
+                                            }
+                                        }
+                                    }
+                                }
                                 logl::log(
                                     level::IMPORTANT,
                                     format_args!(
