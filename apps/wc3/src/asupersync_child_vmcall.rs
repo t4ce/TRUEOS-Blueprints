@@ -1127,6 +1127,44 @@
                     if matches!(
                         &provider.symbol,
                         child_loader::ProviderSymbol::Name(name)
+                            if provider.module.eq_ignore_ascii_case("KERNEL32.dll")
+                                && name == "OpenEventA"
+                    ) {
+                        let frame = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            exit.registers.esp,
+                            4,
+                        )?;
+                        let name = if frame[3] == 0 {
+                            None
+                        } else {
+                            Some(
+                                wc3::process::read_c_string(
+                                    &X86Memory(&child.address_space),
+                                    frame[3],
+                                    256,
+                                )
+                                .map_err(|error| format!("OpenEventA name: {error}"))?,
+                            )
+                        };
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD OPENEVENTA CALL pid={} tid={} desired_access=0x{:08x} inherit_handle=0x{:08x} inheritable={} name_ptr=0x{:08x} name={:?} caller_ret=0x{:08x}",
+                                active_pid,
+                                active_tid,
+                                frame[1],
+                                frame[2],
+                                (frame[2] != 0) as u8,
+                                frame[3],
+                                name,
+                                frame[0],
+                            ),
+                        );
+                    }
+                    if matches!(
+                        &provider.symbol,
+                        child_loader::ProviderSymbol::Name(name)
                             if provider.module.eq_ignore_ascii_case("USER32.dll")
                                 && name == "LoadImageA"
                     ) {
