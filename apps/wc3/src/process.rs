@@ -1137,6 +1137,22 @@ fn crt_vsnprintf(memory: &mut impl GuestMemory, esp: u32) -> Result<u32, Provide
             'x' => format!("{:x}", next()?),
             'X' => format!("{:X}", next()?),
             'p' => format!("{:08x}", next()?),
+            'f' => {
+                // x86 MSVC varargs promote float to a 64-bit double. va_list
+                // is DWORD-addressed on the guest stack, low word first.
+                let low = next()?;
+                let high = next()?;
+                let bits = u64::from(low) | (u64::from(high) << 32);
+                let value = f64::from_bits(bits);
+                let precision = precision.unwrap_or(6);
+                if precision > 1024 {
+                    return Err(ProviderDispatchError::Frontier {
+                        api: "_vsnprintf",
+                        detail: format!("unsupported %f precision {precision}"),
+                    });
+                }
+                format!("{:.*}", precision, value)
+            }
             _ => {
                 return Err(ProviderDispatchError::Frontier {
                     api: "_vsnprintf",

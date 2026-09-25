@@ -1176,6 +1176,45 @@
     }
 
     #[test]
+    fn child_crt_vsnprintf_formats_double_and_advances_va_list_by_eight() {
+        let provider = ProviderImport {
+            module: "MSVCRT.dll".into(),
+            symbol: ProviderSymbol::Name("_vsnprintf".into()),
+            iat_rva: 0,
+        };
+        let mut xp = XpProcess::new_child();
+        xp.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x80;
+        let output = STACK_TOP - 0x300;
+        let format = STACK_TOP - 0x200;
+        let va_list = STACK_TOP - 0x140;
+        memory.write(format, b"%.2f/%08x\0").unwrap();
+
+        let bits = 12.5f64.to_bits();
+        write_u32(&mut memory, va_list, bits as u32).unwrap();
+        write_u32(&mut memory, va_list + 4, (bits >> 32) as u32).unwrap();
+        write_u32(&mut memory, va_list + 8, 0x12ab).unwrap();
+        write_u32(&mut memory, esp, 0x1503_b37b).unwrap();
+        write_u32(&mut memory, esp + 4, output).unwrap();
+        write_u32(&mut memory, esp + 8, 64).unwrap();
+        write_u32(&mut memory, esp + 12, format).unwrap();
+        write_u32(&mut memory, esp + 16, va_list).unwrap();
+
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(14))
+        );
+        assert_eq!(
+            read_c_string(&memory, output, 64),
+            Ok("12.50/000012ab".into())
+        );
+    }
+
+    #[test]
     fn child_set_current_directory_a_accepts_a_nonempty_ansi_path() {
         let provider = ProviderImport {
             module: "KERNEL32.dll".into(),
