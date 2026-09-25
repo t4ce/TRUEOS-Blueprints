@@ -5942,6 +5942,53 @@
                             .map_err(|error| error.to_string())?;
                         continue;
                     }
+                    if operation == child_loader::ProviderOp::SetForegroundWindow {
+                        let action = session
+                            .process_mut(active_pid)
+                            .ok_or_else(|| "child process missing".to_owned())?
+                            .xp
+                            .dispatch_provider_for_process_typed(
+                                active_pid,
+                                active_tid,
+                                provider_id,
+                                exit.registers.esp,
+                                &mut X86Memory(&child.address_space),
+                            )
+                            .map_err(|error| error.to_string())?;
+                        let PersonalityAction::Session(
+                            SessionRequest::SetForegroundWindow { caller, hwnd },
+                        ) = action
+                        else {
+                            return Err("SetForegroundWindow produced unexpected action".into());
+                        };
+                        let (previous, owner) = session
+                            .set_foreground_window(caller, hwnd)
+                            .map_err(str::to_owned)?;
+                        let base = session.thread_base_priority(owner).unwrap_or(8);
+                        let effective = session.thread_effective_priority(owner).unwrap_or(base);
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD SETFOREGROUNDWINDOW pid={} tid={} hwnd=0x{:08x} previous=0x{:08x} owner=pid{}/tid{} base_priority={} foreground_boost={} effective_priority={} focused=1 result=1 cleanup=4-by-thunk",
+                                active_pid,
+                                active_tid,
+                                hwnd,
+                                previous.unwrap_or(0),
+                                owner.pid,
+                                owner.tid,
+                                base,
+                                (effective != base) as u8,
+                                effective,
+                            ),
+                        );
+                        let mut registers = exit.registers;
+                        registers.eax = 1;
+                        contexts[active]
+                            .context
+                            .set_registers(registers)
+                            .map_err(|error| error.to_string())?;
+                        continue;
+                    }
                     if operation == child_loader::ProviderOp::GetWindowRect {
                         let action = session
                             .process_mut(active_pid)

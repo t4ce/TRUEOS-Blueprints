@@ -1594,6 +1594,13 @@
                     PersonalityAction::Session(SessionRequest::SetFocus { pid: _, hwnd }) => {
                         session.set_focus(hwnd).map_err(str::to_owned)?
                     }
+                    PersonalityAction::Session(SessionRequest::SetForegroundWindow {
+                        caller,
+                        hwnd,
+                    }) => {
+                        session.set_foreground_window(caller, hwnd).map_err(str::to_owned)?;
+                        1
+                    }
                     PersonalityAction::Session(SessionRequest::CloseHandle { pid, handle }) => {
                         if session.close_handle(pid, handle) {
                             1

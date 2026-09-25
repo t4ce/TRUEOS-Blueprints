@@ -820,6 +820,10 @@ pub enum SessionRequest {
         pid: Pid,
         hwnd: u32,
     },
+    SetForegroundWindow {
+        caller: ThreadKey,
+        hwnd: u32,
+    },
     BeginPaint {
         pid: Pid,
         hwnd: u32,
@@ -866,6 +870,7 @@ pub struct Wc3Session {
     pub names: HashMap<String, ObjectId>,
     pub windows: HashMap<u32, WindowObject>,
     pub focused_window: Option<u32>,
+    pub foreground_window: Option<u32>,
     pub runnable: VecDeque<ThreadKey>,
     pub blocked: HashMap<ThreadKey, WaitRequest>,
     pub critical_waiters: VecDeque<CriticalSectionWait>,
@@ -900,6 +905,7 @@ impl Wc3Session {
             names: HashMap::new(),
             windows: HashMap::new(),
             focused_window: None,
+            foreground_window: None,
             runnable: VecDeque::from([ThreadKey {
                 pid: LAUNCHER_PID,
                 tid: LAUNCHER_TID,
@@ -924,7 +930,7 @@ impl Wc3Session {
         }
     }
 
-    /// Removes the highest-base-priority runnable thread accepted by `available`.
+    /// Removes the highest-effective-priority runnable thread accepted by `available`.
     /// Equal priorities retain queue order, giving round-robin behavior.
     pub fn take_highest_runnable(
         &mut self,
@@ -935,7 +941,7 @@ impl Wc3Session {
             if !available(key) {
                 continue;
             }
-            let priority = self.thread_base_priority(key).unwrap_or(8);
+            let priority = self.thread_effective_priority(key).unwrap_or(8);
             if best.is_none_or(|(_, current)| priority > current) {
                 best = Some((index, priority));
             }
@@ -950,6 +956,19 @@ impl Wc3Session {
             }
             _ => None,
         })
+    }
+
+    pub fn thread_effective_priority(&self, key: ThreadKey) -> Option<u8> {
+        let base = self.thread_base_priority(key)?;
+        let foreground_owner = self
+            .foreground_window
+            .and_then(|hwnd| self.windows.get(&hwnd))
+            .map(|window| window.owner);
+        if foreground_owner == Some(key) {
+            Some(base.saturating_add(1).min(15))
+        } else {
+            Some(base)
+        }
     }
 
     fn resolve_thread_key(&self, caller: ThreadKey, handle: u32) -> Result<ThreadKey, u32> {
@@ -1256,6 +1275,9 @@ impl Wc3Session {
         if was_focused {
             self.focused_window = None;
         }
+        if self.foreground_window == Some(hwnd) {
+            self.foreground_window = None;
+        }
         self.window_presentation = Some(WindowPresentation::Destroy { hwnd });
         Ok(DestroyWindowResult { was_focused })
     }
@@ -1288,6 +1310,28 @@ impl Wc3Session {
             return Err("unknown window");
         }
         Ok(self.focused_window.replace(hwnd).unwrap_or(0))
+    }
+
+    pub fn set_foreground_window(
+        &mut self,
+        caller: ThreadKey,
+        hwnd: u32,
+    ) -> Result<(Option<u32>, ThreadKey), &'static str> {
+        let window = self
+            .windows
+            .get(&hwnd)
+            .ok_or("SetForegroundWindow unknown window")?;
+        if window.owner.pid != caller.pid {
+            return Err("SetForegroundWindow cross-process frontier");
+        }
+        if window.parent != 0 {
+            return Err("SetForegroundWindow child-window frontier");
+        }
+
+        let owner = window.owner;
+        let previous = self.foreground_window.replace(hwnd);
+        self.focused_window = Some(hwnd);
+        Ok((previous, owner))
     }
 
     pub fn take_window_presentation(&mut self) -> Option<WindowPresentation> {

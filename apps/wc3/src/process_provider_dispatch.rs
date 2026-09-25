@@ -2109,6 +2109,15 @@ impl XpProcess {
                 pid,
                 hwnd: arguments::<2>(memory, esp)?[1],
             })),
+            ProviderOp::SetForegroundWindow => {
+                let [_, hwnd] = arguments::<2>(memory, esp)?;
+                Some(PersonalityAction::Session(
+                    SessionRequest::SetForegroundWindow {
+                        caller: ThreadKey { pid, tid },
+                        hwnd,
+                    },
+                ))
+            }
             ProviderOp::GetWindowRect => {
                 let [_, hwnd, output] = arguments::<3>(memory, esp)?;
                 Some(PersonalityAction::Session(SessionRequest::GetWindowRect {
