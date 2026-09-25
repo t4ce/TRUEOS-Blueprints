@@ -1394,6 +1394,10 @@ fn is_self_image_path(path: &str) -> bool {
     canonical_file_path(path) == r"c:\warcraft iii\war3.exe"
 }
 
+fn is_war3_pre_cache_search(path: &str) -> bool {
+    canonical_file_path(path) == r"c:\warcraft iii\filecache\*.pre"
+}
+
 fn is_war3_mpq_path(path: &str) -> bool {
     canonical_file_path(path) == r"c:\warcraft iii\war3.mpq"
 }

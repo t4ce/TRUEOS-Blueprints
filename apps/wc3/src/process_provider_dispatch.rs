@@ -1799,6 +1799,20 @@ impl XpProcess {
                     });
                 }
                 let pattern = read_c_string(memory, pattern, 1024)?;
+                if is_war3_pre_cache_search(&pattern) {
+                    self.set_last_error(ERROR_FILE_NOT_FOUND);
+                    self.call_count = self
+                        .call_count
+                        .checked_add(1)
+                        .ok_or("call count overflow")?;
+                    logl::log(
+                        level::IMPORTANT,
+                        format_args!(
+                            "WC3 CHILD FINDFIRSTFILEA RESULT pid={pid} tid={tid} pattern={pattern:?} virtual_directory=FileCache matches=0 handle=INVALID_HANDLE_VALUE last_error=ERROR_FILE_NOT_FOUND find_data_written=0 cleanup=8-by-thunk",
+                        ),
+                    );
+                    return Ok(PersonalityAction::Return(u32::MAX));
+                }
                 if !is_self_image_path(&pattern) {
                     return Err(ProviderDispatchError::Frontier {
                         api: "FindFirstFileA",
@@ -1812,8 +1826,8 @@ impl XpProcess {
                 )?;
                 let mut data = [0u8; 320];
                 data[0..4].copy_from_slice(&FILE_ATTRIBUTE_NORMAL.to_le_bytes());
-                data[20..24].copy_from_slice(&((image_size >> 32) as u32).to_le_bytes());
-                data[24..28].copy_from_slice(&(image_size as u32).to_le_bytes());
+                data[28..32].copy_from_slice(&((image_size >> 32) as u32).to_le_bytes());
+                data[32..36].copy_from_slice(&(image_size as u32).to_le_bytes());
                 data[44..53].copy_from_slice(b"War3.exe\0");
                 memory.write(find_data, &data)?;
                 let handle = self.next_find_handle;
