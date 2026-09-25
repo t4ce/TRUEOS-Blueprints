@@ -79,7 +79,7 @@ impl XpProcess {
                 self.gl_enable_static(esp, memory)?,
             )),
             ProviderOp::GlLightfv => Ok(PersonalityAction::Return(
-                self.gl_lightfv_static(esp, memory)?,
+                self.gl_lightfv_static(tid, esp, memory)?,
             )),
             ProviderOp::GlFogfv => Ok(PersonalityAction::Return(
                 self.gl_fogfv_static(esp, memory)?,

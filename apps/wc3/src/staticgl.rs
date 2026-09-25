@@ -129,6 +129,8 @@ const GL_UNSIGNED_BYTE: u32 = 0x1401;
 const GL_UNSIGNED_SHORT: u32 = 0x1403;
 const GL_UNSIGNED_INT: u32 = 0x1405;
 const GL_LIGHT_MODEL_AMBIENT: u32 = 0x0000_0b53;
+const GL_LIGHT0: u32 = 0x0000_4000;
+const GL_SPECULAR: u32 = 0x0000_1202;
 const GL_TRIANGLES: u32 = 0x0004;
 const GL_COLOR_BUFFER_BIT: u32 = 0x0000_4000;
 const GL_DEPTH_BUFFER_BIT: u32 = 0x0000_0100;
@@ -157,6 +159,12 @@ impl XpProcess {
         })
     }
 
+    pub fn gl_light0_specular_diagnostic(&self, tid: u32) -> Option<(u32, [f32; 4])> {
+        self.gl_runtime.as_ref()?.contexts.iter().find_map(|(hglrc, context)| {
+            (context.current_tid == Some(tid)).then_some((*hglrc, context.light0_specular))
+        })
+    }
+
     fn static_gl_stub(&self, api: &'static str) -> Result<u32, ProviderDispatchError> {
         Err(ProviderDispatchError::Frontier {
             api,
@@ -166,7 +174,7 @@ impl XpProcess {
 
     static_gl_stubs!(
         gl_disable_static => "glDisable", gl_enable_static => "glEnable",
-        gl_lightfv_static => "glLightfv", gl_fogfv_static => "glFogfv",
+        gl_fogfv_static => "glFogfv",
         gl_fogf_static => "glFogf", gl_fogi_static => "glFogi",
         gl_draw_buffer_static => "glDrawBuffer", gl_depth_func_static => "glDepthFunc",
         gl_alpha_func_static => "glAlphaFunc", gl_blend_func_static => "glBlendFunc",
@@ -248,6 +256,38 @@ impl XpProcess {
         });
         self.gl_context_mut(tid, "glLightModelfv")?
             .light_model_ambient = values;
+        Ok(0)
+    }
+
+    fn gl_lightfv_static(
+        &mut self,
+        tid: u32,
+        esp: u32,
+        memory: &impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
+        let [_, light, pname, params] = arguments::<4>(memory, esp)?;
+        if params == 0 {
+            return Err(ProviderDispatchError::Frontier {
+                api: "glLightfv",
+                detail: format!(
+                    "tid={tid} light=0x{light:08x} pname=0x{pname:08x} null params"
+                ),
+            });
+        }
+        if light != GL_LIGHT0 || pname != GL_SPECULAR {
+            return Err(ProviderDispatchError::Frontier {
+                api: "glLightfv",
+                detail: format!(
+                    "tid={tid} unobserved light=0x{light:08x} pname=0x{pname:08x} params=0x{params:08x}"
+                ),
+            });
+        }
+        let mut raw = [0u8; 16];
+        memory.read(params, &mut raw)?;
+        let values = core::array::from_fn::<f32, 4, _>(|index| {
+            f32::from_le_bytes(raw[index * 4..index * 4 + 4].try_into().unwrap())
+        });
+        self.gl_context_mut(tid, "glLightfv")?.light0_specular = values;
         Ok(0)
     }
 
@@ -863,6 +903,7 @@ impl XpProcess {
                 projection_matrix: GL_IDENTITY_MATRIX,
                 texture_matrix: GL_IDENTITY_MATRIX,
                 light_model_ambient: [0.2, 0.2, 0.2, 1.0],
+                light0_specular: [1.0, 1.0, 1.0, 1.0],
                 ui4_window_id: None,
                 viewport: [0, 0, 0, 0],
                 clear_color: [0.0, 0.0, 0.0, 0.0],
