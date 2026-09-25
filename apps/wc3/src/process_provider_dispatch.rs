@@ -634,6 +634,25 @@ impl XpProcess {
                     .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(result))
             }
+            ProviderOp::CrtStrtol => {
+                let [_, input, end_ptr, base] = arguments::<4>(memory, esp)?;
+                let (result, consumed) = crt_strtol(memory, input, end_ptr, base)?;
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                logl::log(
+                    level::IMPORTANT,
+                    format_args!(
+                        "WC3 CHILD CRT STRTOL pid={pid} tid={tid} \\
+                         input=0x{input:08x} end_ptr=0x{end_ptr:08x} \\
+                         base={base} consumed={consumed} \\
+                         result=0x{result:08x} signed={} cleanup=0-by-thunk",
+                        result as i32,
+                    ),
+                );
+                Ok(PersonalityAction::Return(result))
+            }
             ProviderOp::CrtSscanf => {
                 let [_, input_ptr, format_ptr, major_ptr, minor_ptr] = arguments::<5>(memory, esp)?;
                 let input = read_c_string(memory, input_ptr, 256)?;

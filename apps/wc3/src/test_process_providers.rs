@@ -857,6 +857,46 @@
     }
 
     #[test]
+    fn child_crt_strtol_autodetects_hex_and_writes_end_pointer() {
+        let provider = ProviderImport {
+            module: "MSVCRT.dll".into(),
+            symbol: ProviderSymbol::Name("strtol".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&provider);
+        assert_eq!(operation, ProviderOp::CrtStrtol);
+        assert!(operation.is_modeled());
+        assert!(operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 0);
+        assert_eq!(
+            crate::child_loader::provider_thunk_kind(&provider),
+            thunk32::Kind::Return
+        );
+
+        let mut xp = XpProcess::new_child();
+        xp.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x40;
+        let input = STACK_TOP - 0x200;
+        let end = STACK_TOP - 0x80;
+        memory.write(input, b"0x00000409tail\0").unwrap();
+        write_u32(&mut memory, esp, 0x6f04_6336).unwrap();
+        write_u32(&mut memory, esp + 4, input).unwrap();
+        write_u32(&mut memory, esp + 8, end).unwrap();
+        write_u32(&mut memory, esp + 12, 0).unwrap();
+
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(0x409))
+        );
+        assert_eq!(read_u32(&memory, end).unwrap(), input + 10);
+        assert_eq!(xp.call_count, 1);
+    }
+
+    #[test]
     fn child_crt_ftol_is_cdecl_and_emits_a_plain_return_thunk() {
         let provider = ProviderImport {
             module: "MSVCRT.dll".into(),

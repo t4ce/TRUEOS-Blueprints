@@ -763,6 +763,112 @@ pub fn crt_atol(
     Ok((value as u32, overflow, text))
 }
 
+fn crt_strtol(
+    memory: &mut impl GuestMemory,
+    input_ptr: u32,
+    end_ptr: u32,
+    base: u32,
+) -> Result<(u32, u32), ProviderDispatchError> {
+    if input_ptr == 0 {
+        return Err(ProviderDispatchError::Frontier {
+            api: "strtol",
+            detail: "input=NULL".into(),
+        });
+    }
+    if base != 0 && !(2..=36).contains(&base) {
+        return Err(ProviderDispatchError::Frontier {
+            api: "strtol",
+            detail: format!("unsupported base={base}"),
+        });
+    }
+
+    let text = read_c_string(memory, input_ptr, 256)?;
+    let bytes = text.as_bytes();
+    let mut at = 0usize;
+    while matches!(
+        bytes.get(at),
+        Some(b' ' | b'\t' | b'\n' | b'\r' | 0x0b | 0x0c)
+    ) {
+        at += 1;
+    }
+
+    let negative = match bytes.get(at) {
+        Some(b'-') => {
+            at += 1;
+            true
+        }
+        Some(b'+') => {
+            at += 1;
+            false
+        }
+        _ => false,
+    };
+
+    let mut radix = base;
+    if radix == 0 {
+        if bytes.get(at) == Some(&b'0') {
+            if matches!(bytes.get(at + 1), Some(b'x' | b'X')) {
+                radix = 16;
+                at += 2;
+            } else {
+                radix = 8;
+            }
+        } else {
+            radix = 10;
+        }
+    } else if radix == 16
+        && bytes.get(at) == Some(&b'0')
+        && matches!(bytes.get(at + 1), Some(b'x' | b'X'))
+    {
+        at += 2;
+    }
+
+    let digits_start = at;
+    let limit = if negative { 0x8000_0000u64 } else { 0x7fff_ffffu64 };
+    let mut magnitude = 0u64;
+    while let Some(&byte) = bytes.get(at) {
+        let digit = match byte {
+            b'0'..=b'9' => u32::from(byte - b'0'),
+            b'a'..=b'z' => u32::from(byte - b'a') + 10,
+            b'A'..=b'Z' => u32::from(byte - b'A') + 10,
+            _ => break,
+        };
+        if digit >= radix {
+            break;
+        }
+        magnitude = magnitude
+            .saturating_mul(u64::from(radix))
+            .saturating_add(u64::from(digit))
+            .min(limit);
+        at += 1;
+    }
+
+    let any = at != digits_start;
+    if end_ptr != 0 {
+        let end = if any {
+            input_ptr
+                .checked_add(at as u32)
+                .ok_or(ProviderDispatchError::Fault("strtol end pointer overflow"))?
+        } else {
+            input_ptr
+        };
+        memory.write(end_ptr, &end.to_le_bytes())?;
+    }
+
+    let value = if !any {
+        0
+    } else if negative {
+        if magnitude == 0x8000_0000 {
+            i32::MIN as u32
+        } else {
+            (-(magnitude as i32)) as u32
+        }
+    } else {
+        magnitude as u32
+    };
+    Ok((value, at as u32))
+}
+
 fn crt_strrchr(
     memory: &impl GuestMemory,
     string: u32,

@@ -151,6 +151,7 @@ pub enum ProviderOp {
     CrtIsMbcSpace,
     CrtToUpper,
     CrtAtol,
+    CrtStrtol,
     CrtSscanf,
     CrtFtol,
     CrtRand,
@@ -454,6 +455,7 @@ impl ProviderOp {
             | Self::CrtIsMbcSpace
             | Self::CrtToUpper
             | Self::CrtAtol
+            | Self::CrtStrtol
             | Self::CrtSscanf
             | Self::CrtFtol
             | Self::CrtRand
@@ -552,6 +554,7 @@ impl ProviderOp {
                 | Self::CrtIsMbcSpace
                 | Self::CrtToUpper
                 | Self::CrtAtol
+                | Self::CrtStrtol
                 | Self::CrtSscanf
                 | Self::CrtRand
                 | Self::CrtSrand
@@ -894,6 +897,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "_ismbcspace" => ProviderOp::CrtIsMbcSpace,
             "toupper" => ProviderOp::CrtToUpper,
             "atol" => ProviderOp::CrtAtol,
+            "strtol" => ProviderOp::CrtStrtol,
             "sscanf" => ProviderOp::CrtSscanf,
             "_ftol" => ProviderOp::CrtFtol,
             "rand" => ProviderOp::CrtRand,
