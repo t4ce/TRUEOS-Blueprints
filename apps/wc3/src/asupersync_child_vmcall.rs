@@ -7180,20 +7180,51 @@
                                         );
                                     }
                                     child_loader::ProviderOp::GlLightfv => {
-                                        let (hglrc, specular) = session
+                                        let [_, _light, pname, params] = read_guest_words(
+                                            &X86Memory(&child.address_space),
+                                            exit.registers.esp,
+                                            4,
+                                        )?[..]
+                                        else {
+                                            unreachable!("glLightfv frame has four words")
+                                        };
+                                        let mut raw = [0u8; 16];
+                                        X86Memory(&child.address_space).read(params, &mut raw)?;
+                                        let source = core::array::from_fn::<f32, 4, _>(|index| {
+                                            f32::from_le_bytes(
+                                                raw[index * 4..index * 4 + 4].try_into().unwrap(),
+                                            )
+                                        });
+                                        let process = &session
                                             .process(active_pid)
                                             .ok_or_else(|| "child process missing".to_owned())?
-                                            .xp
-                                            .gl_light0_specular_diagnostic(active_tid)
-                                            .ok_or_else(|| "current GL context missing after glLightfv".to_owned())?;
+                                            .xp;
+                                        let (hglrc, stored, pname_name, modelview_applied) = match pname {
+                                            0x0000_1202 => {
+                                                let (hglrc, stored) = process
+                                                    .gl_light0_specular_diagnostic(active_tid)
+                                                    .ok_or_else(|| "current GL context missing after glLightfv".to_owned())?;
+                                                (hglrc, stored, "GL_SPECULAR", 0)
+                                            }
+                                            0x0000_1203 => {
+                                                let (hglrc, stored) = process
+                                                    .gl_light0_position_eye_diagnostic(active_tid)
+                                                    .ok_or_else(|| "current GL context missing after glLightfv".to_owned())?;
+                                                (hglrc, stored, "GL_POSITION", 1)
+                                            }
+                                            _ => return Err("unexpected glLightfv pname after dispatch".into()),
+                                        };
                                         logl::log(
                                             level::IMPORTANT,
                                             format_args!(
-                                                "WC3 CHILD GLLIGHTFV RESULT pid={} tid={} hglrc=0x{:08x} light=GL_LIGHT0 pname=GL_SPECULAR stored={:?} result=void cleanup=12-by-thunk",
+                                                "WC3 CHILD GLLIGHTFV RESULT pid={} tid={} hglrc=0x{:08x} light=GL_LIGHT0 pname={} source={:?} stored={:?} modelview_applied={} result=void cleanup=12-by-thunk",
                                                 active_pid,
                                                 active_tid,
                                                 hglrc,
-                                                specular,
+                                                pname_name,
+                                                source,
+                                                stored,
+                                                modelview_applied,
                                             ),
                                         );
                                     }

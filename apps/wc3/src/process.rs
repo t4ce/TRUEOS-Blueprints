@@ -1580,6 +1580,7 @@ struct WglContext {
     texture_matrix: [f32; 16],
     light_model_ambient: [f32; 4],
     light0_specular: [f32; 4],
+    light0_position_eye: [f32; 4],
     ui4_window_id: Option<u32>,
     viewport: [i32; 4],
     clear_color: [f32; 4],
