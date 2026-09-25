@@ -953,6 +953,49 @@ fn service_sync_request(
             );
             Ok(handle)
         }
+        SessionRequest::OpenEvent {
+            key,
+            desired_access,
+            inheritable,
+            name,
+        } => match session.open_event(key, &name, inheritable) {
+            Ok((handle, object)) => {
+                logl::log(
+                    level::IMPORTANT,
+                    format_args!(
+                        "WC3 CHILD OPENEVENTA RESULT pid={} tid={} desired_access=0x{:08x} access=EVENT_MODIFY_STATE inheritable={} name={:?} object={} handle=0x{:08x} result=success last_error=unchanged cleanup=12-by-thunk",
+                        key.pid,
+                        key.tid,
+                        desired_access,
+                        inheritable as u8,
+                        name,
+                        object,
+                        handle,
+                    ),
+                );
+                Ok(handle)
+            }
+            Err(error) => {
+                session
+                    .process_mut(key.pid)
+                    .ok_or_else(|| "OpenEventA process missing".to_owned())?
+                    .xp
+                    .set_last_error_for_thread(key.tid, error);
+                logl::log(
+                    level::IMPORTANT,
+                    format_args!(
+                        "WC3 CHILD OPENEVENTA RESULT pid={} tid={} desired_access=0x{:08x} inheritable={} name={:?} handle=NULL result=failure error={}",
+                        key.pid,
+                        key.tid,
+                        desired_access,
+                        inheritable as u8,
+                        name,
+                        error,
+                    ),
+                );
+                Ok(0)
+            }
+        },
         SessionRequest::SetEvent { pid, tid, handle } => match session.set_event(pid, handle) {
             Ok(outcome) => {
                 let waiters_woken = outcome.woken.len();

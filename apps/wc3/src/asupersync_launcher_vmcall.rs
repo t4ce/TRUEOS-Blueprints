@@ -1323,6 +1323,7 @@
                     }
                     PersonalityAction::Session(request @ SessionRequest::CreateMutex { .. })
                     | PersonalityAction::Session(request @ SessionRequest::ReleaseMutex { .. })
+                    | PersonalityAction::Session(request @ SessionRequest::OpenEvent { .. })
                     | PersonalityAction::Session(request @ SessionRequest::ResetEvent { .. }) => {
                         service_sync_request(
                             &mut session,

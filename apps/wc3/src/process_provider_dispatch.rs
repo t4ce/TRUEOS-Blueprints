@@ -1980,6 +1980,31 @@ impl XpProcess {
             ProviderOp::CreateEventA => Some(PersonalityAction::Session(
                 SessionRequest::CreateEvent(self.create_event_request(esp, memory)?),
             )),
+            ProviderOp::OpenEventA => {
+                const EVENT_MODIFY_STATE: u32 = 0x0000_0002;
+
+                let [_, desired_access, inherit_handle, name_ptr] =
+                    arguments::<4>(memory, esp)?;
+                if name_ptr == 0 {
+                    return Err(ProviderDispatchError::Frontier {
+                        api: "OpenEventA",
+                        detail: "null event name unobserved".into(),
+                    });
+                }
+                if desired_access != EVENT_MODIFY_STATE {
+                    return Err(ProviderDispatchError::Frontier {
+                        api: "OpenEventA",
+                        detail: format!("unobserved desired_access=0x{desired_access:08x}"),
+                    });
+                }
+                let name = read_c_string(memory, name_ptr, 260)?;
+                Some(PersonalityAction::Session(SessionRequest::OpenEvent {
+                    key: ThreadKey { pid, tid },
+                    desired_access,
+                    inheritable: inherit_handle != 0,
+                    name,
+                }))
+            }
             ProviderOp::CreateWindowExA => {
                 Some(PersonalityAction::Session(SessionRequest::CreateWindow(
                     self.create_window_request(esp, memory, ThreadKey { pid, tid })?,

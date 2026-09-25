@@ -759,6 +759,12 @@ pub enum SessionRequest {
         handle: u32,
     },
     CreateEvent(CreateEventRequest),
+    OpenEvent {
+        key: ThreadKey,
+        desired_access: u32,
+        inheritable: bool,
+        name: String,
+    },
     CreateMutex {
         key: ThreadKey,
         request: CreateMutexRequest,
@@ -1442,6 +1448,43 @@ impl Wc3Session {
             },
         );
         (handle, already_exists)
+    }
+
+    pub fn open_event(
+        &mut self,
+        key: ThreadKey,
+        name: &str,
+        inheritable: bool,
+    ) -> Result<(u32, ObjectId), u32> {
+        const ERROR_FILE_NOT_FOUND: u32 = 2;
+        const ERROR_INVALID_HANDLE: u32 = 6;
+
+        if !self.processes.contains_key(&key.pid) {
+            return Err(ERROR_INVALID_HANDLE);
+        }
+        let Some(&object) = self.names.get(name) else {
+            return Err(ERROR_FILE_NOT_FOUND);
+        };
+        if !matches!(self.objects.get(&object), Some(SessionObject::Event(_))) {
+            return Err(ERROR_INVALID_HANDLE);
+        }
+
+        let handle = self.next_event_handle;
+        self.next_event_handle = self
+            .next_event_handle
+            .checked_add(1)
+            .ok_or(ERROR_INVALID_HANDLE)?;
+        self.process_mut(key.pid)
+            .expect("validated OpenEventA process")
+            .handles
+            .insert(
+                handle,
+                HandleEntry {
+                    object,
+                    inheritable,
+                },
+            );
+        Ok((handle, object))
     }
 
     pub fn create_mutex(

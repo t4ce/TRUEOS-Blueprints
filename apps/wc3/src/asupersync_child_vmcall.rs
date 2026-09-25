@@ -6102,6 +6102,7 @@
                     if matches!(
                         operation,
                         child_loader::ProviderOp::CreateEventA
+                            | child_loader::ProviderOp::OpenEventA
                             | child_loader::ProviderOp::SetEvent
                             | child_loader::ProviderOp::ResetEvent
                             | child_loader::ProviderOp::CreateMutexA

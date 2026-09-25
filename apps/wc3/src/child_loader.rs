@@ -78,6 +78,7 @@ pub enum ProviderOp {
     WriteFile,
     FlushFileBuffers,
     CreateEventA,
+    OpenEventA,
     SetEvent,
     ResetEvent,
     CreateMutexA,
@@ -319,6 +320,7 @@ impl ProviderOp {
             | Self::SetFilePointer
             | Self::MessageBoxA
             | Self::LoadStringA => 16,
+            Self::OpenEventA => 12,
             Self::D3D8GetAdapterIdentifier | Self::EnumDisplayDevicesA => 16,
             Self::EnumDisplaySettingsA => 12,
             Self::ChangeDisplaySettingsExA => 20,
@@ -674,6 +676,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "WriteFile" => ProviderOp::WriteFile,
             "FlushFileBuffers" => ProviderOp::FlushFileBuffers,
             "CreateEventA" => ProviderOp::CreateEventA,
+            "OpenEventA" => ProviderOp::OpenEventA,
             "SetEvent" => ProviderOp::SetEvent,
             "ResetEvent" => ProviderOp::ResetEvent,
             "CreateMutexA" => ProviderOp::CreateMutexA,
