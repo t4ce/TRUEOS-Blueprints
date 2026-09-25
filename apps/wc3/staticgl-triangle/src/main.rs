@@ -43,7 +43,7 @@ fn run() -> Result<(), i32> {
         },
     ];
 
-    loop {
+    {
         frame.begin_gpu_frame().map_err(|_| vgpu::ERR_IO)?;
         let surface = device.acquire_ui4_surface(frame.window_id())?;
         let point = renderer.draw(queue, surface, &vertices, CLEAR)?;
@@ -51,6 +51,8 @@ fn run() -> Result<(), i32> {
         frame
             .publish(Damage::full(WIDTH, HEIGHT))
             .map_err(|_| vgpu::ERR_IO)?;
-        vsys::sleep_ms(16);
+    }
+    loop {
+        vsys::sleep_ms(1000);
     }
 }

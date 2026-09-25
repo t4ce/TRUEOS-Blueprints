@@ -1,22 +1,22 @@
 # Static GL Triangle
 
-This opt-in Blueprint draws one RGB triangle into a basic UI4 frame through
-the authenticated vGPU indexed-triangle path. Its `staticgl_triangle` library
-is also the rendering helper used by the WC3 static OpenGL provider.
+This opt-in Blueprint opens a basic UI4 frame and renders an RGB triangle from
+three position and color vertices. Its `staticgl_triangle` library is also the
+renderer used by the WC3 static OpenGL provider.
 
-Build this Blueprint independently with:
+Build and publish it through the normal Blueprint workflow:
 
 ```sh
-TRUEOS_BLUEPRINT_SKIP_APPS_PUBLISH=1 cargo bp apps/wc3/staticgl-triangle
+cargo bp staticgl-triangle
 ```
 
-The build writes `dist/staticgl-triangle.bp` without publishing it. Launch that
-artifact through the usual local Blueprint workflow. It opens a 640x480 streaming UI4 frame,
-acquires a vGPU surface, draws red/green/blue vertex colors, waits for the
-submission, and publishes the frame.
+The current authenticated single indexed-draw shader uses a fixed green
+fragment color. The helper instead subdivides the three colored vertices into
+144 small triangles, computes a color for each, and submits them together
+through the authenticated immediate-RGBA indexed-batch path. This gives a
+visible red, green, and blue gradient on the existing vGPU runtime. It is a
+bounded approximation of per-fragment color interpolation.
 
-`TriangleRenderer::new(device)` creates the position-plus-RGBA shader pipeline
-and an index buffer for indices `[0, 1, 2]`. `draw(queue, surface, vertices,
-clear_rgba8_srgb)` uploads exactly three `Vertex { position, color }` records
-and consumes the acquired surface with a triangle-list submission. The caller
-waits for the returned `TimelinePoint` and publishes the UI4 frame.
+The demo draws once, waits for the vGPU timeline, publishes its 640×480 UI4
+frame, and keeps that frame open. The caller of `TriangleRenderer::draw` owns
+the UI4 frame, vGPU device and queue, and acquired surface.
