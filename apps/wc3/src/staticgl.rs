@@ -130,6 +130,7 @@ const GL_UNSIGNED_SHORT: u32 = 0x1403;
 const GL_UNSIGNED_INT: u32 = 0x1405;
 const GL_LIGHT_MODEL_AMBIENT: u32 = 0x0000_0b53;
 const GL_LIGHT0: u32 = 0x0000_4000;
+const GL_AMBIENT: u32 = 0x0000_1200;
 const GL_SPECULAR: u32 = 0x0000_1202;
 const GL_POSITION: u32 = 0x0000_1203;
 const GL_TRIANGLES: u32 = 0x0004;
@@ -163,6 +164,12 @@ impl XpProcess {
     pub fn gl_light0_specular_diagnostic(&self, tid: u32) -> Option<(u32, [f32; 4])> {
         self.gl_runtime.as_ref()?.contexts.iter().find_map(|(hglrc, context)| {
             (context.current_tid == Some(tid)).then_some((*hglrc, context.light0_specular))
+        })
+    }
+
+    pub fn gl_light0_ambient_diagnostic(&self, tid: u32) -> Option<(u32, [f32; 4])> {
+        self.gl_runtime.as_ref()?.contexts.iter().find_map(|(hglrc, context)| {
+            (context.current_tid == Some(tid)).then_some((*hglrc, context.light0_ambient))
         })
     }
 
@@ -319,6 +326,7 @@ impl XpProcess {
         });
         let context = self.gl_context_mut(tid, "glLightfv")?;
         match pname {
+            GL_AMBIENT => context.light0_ambient = values,
             GL_SPECULAR => context.light0_specular = values,
             GL_POSITION => {
                 context.light0_position_eye = gl_transform(&context.modelview_matrix, values);
@@ -948,6 +956,7 @@ impl XpProcess {
                 texture_matrix: GL_IDENTITY_MATRIX,
                 light_model_ambient: [0.2, 0.2, 0.2, 1.0],
                 light0_specular: [1.0, 1.0, 1.0, 1.0],
+                light0_ambient: [0.0, 0.0, 0.0, 1.0],
                 light0_position_eye: [0.0, 0.0, 1.0, 0.0],
                 light0_enabled: false,
                 ui4_window_id: None,

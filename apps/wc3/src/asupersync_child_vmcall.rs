@@ -7270,6 +7270,12 @@
                                             .ok_or_else(|| "child process missing".to_owned())?
                                             .xp;
                                         let (hglrc, stored, pname_name, modelview_applied) = match pname {
+                                            0x0000_1200 => {
+                                                let (hglrc, stored) = process
+                                                    .gl_light0_ambient_diagnostic(active_tid)
+                                                    .ok_or_else(|| "current GL context missing after glLightfv".to_owned())?;
+                                                (hglrc, stored, "GL_AMBIENT", 0)
+                                            }
                                             0x0000_1202 => {
                                                 let (hglrc, stored) = process
                                                     .gl_light0_specular_diagnostic(active_tid)
