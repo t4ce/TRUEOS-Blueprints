@@ -292,10 +292,21 @@ impl XpProcess {
 
     fn get_stock_object_static(
         &self,
-        _esp: u32,
-        _memory: &impl GuestMemory,
+        esp: u32,
+        memory: &impl GuestMemory,
     ) -> Result<u32, ProviderDispatchError> {
-        self.static_gdi_stub("GetStockObject")
+        const BLACK_BRUSH: u32 = 4;
+        const DEFAULT_PALETTE: u32 = 15;
+
+        let [_, object] = arguments::<2>(memory, esp)?;
+        match object {
+            BLACK_BRUSH => Ok(STOCK_BLACK_BRUSH),
+            DEFAULT_PALETTE => Ok(STOCK_DEFAULT_PALETTE),
+            _ => Err(ProviderDispatchError::Frontier {
+                api: "GetStockObject",
+                detail: format!("stock_index={object}"),
+            }),
+        }
     }
 
     fn delete_object_static(

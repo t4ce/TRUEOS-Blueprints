@@ -252,9 +252,26 @@ impl XpProcess {
             ProviderOp::CreateFontA => Ok(PersonalityAction::Return(
                 self.create_font_a_static(esp, memory)?,
             )),
-            ProviderOp::GetStockObject => Ok(PersonalityAction::Return(
-                self.get_stock_object_static(esp, memory)?,
-            )),
+            ProviderOp::GetStockObject => {
+                let [_, object] = arguments::<2>(memory, esp)?;
+                let handle = self.get_stock_object_static(esp, memory)?;
+                logl::log(
+                    level::IMPORTANT,
+                    format_args!(
+                        "WC3 CHILD GETSTOCKOBJECT pid={} tid={} index={} name={} handle=0x{:08x} stock=1 cleanup=4-by-thunk",
+                        pid,
+                        tid,
+                        object,
+                        match object {
+                            4 => "BLACK_BRUSH",
+                            15 => "DEFAULT_PALETTE",
+                            _ => "UNKNOWN",
+                        },
+                        handle,
+                    ),
+                );
+                Ok(PersonalityAction::Return(handle))
+            }
             ProviderOp::DeleteObject => Ok(PersonalityAction::Return(
                 self.delete_object_static(esp, memory)?,
             )),
