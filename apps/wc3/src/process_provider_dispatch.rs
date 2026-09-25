@@ -2021,6 +2021,12 @@ impl XpProcess {
                     output,
                 }))
             }
+            ProviderOp::ImmAssociateContext => {
+                let [_, hwnd, himc] = arguments::<3>(memory, esp)?;
+                Some(PersonalityAction::Session(
+                    SessionRequest::ImmAssociateContext { pid, hwnd, himc },
+                ))
+            }
             ProviderOp::SetWindowTextA => {
                 let [_, hwnd, text_ptr] = arguments::<3>(memory, esp)?;
                 if text_ptr == 0 {

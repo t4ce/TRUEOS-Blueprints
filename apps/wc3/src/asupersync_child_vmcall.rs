@@ -5929,6 +5929,49 @@
                             .map_err(|error| error.to_string())?;
                         continue;
                     }
+                    if operation == child_loader::ProviderOp::ImmAssociateContext {
+                        let action = session
+                            .process_mut(active_pid)
+                            .ok_or_else(|| "child process missing".to_owned())?
+                            .xp
+                            .dispatch_provider_for_process_typed(
+                                active_pid,
+                                active_tid,
+                                provider_id,
+                                exit.registers.esp,
+                                &mut X86Memory(&child.address_space),
+                            )
+                            .map_err(|error| error.to_string())?;
+                        let PersonalityAction::Session(SessionRequest::ImmAssociateContext {
+                            pid,
+                            hwnd,
+                            himc,
+                        }) = action
+                        else {
+                            return Err("ImmAssociateContext produced unexpected action".into());
+                        };
+                        let previous = session
+                            .imm_associate_context(pid, hwnd, himc)
+                            .map_err(str::to_owned)?;
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD IMMASSOCIATECONTEXT RESULT pid={} tid={} hwnd=0x{:08x} himc=0x{:08x} previous=0x{:08x} ime_policy=disabled keyboard_layouts=de+en ui4_input_action=none cleanup=8-by-thunk",
+                                active_pid,
+                                active_tid,
+                                hwnd,
+                                himc,
+                                previous,
+                            ),
+                        );
+                        let mut registers = exit.registers;
+                        registers.eax = previous;
+                        contexts[active]
+                            .context
+                            .set_registers(registers)
+                            .map_err(|error| error.to_string())?;
+                        continue;
+                    }
                     if operation == child_loader::ProviderOp::SetWindowTextA {
                         let action = session
                             .process_mut(active_pid)

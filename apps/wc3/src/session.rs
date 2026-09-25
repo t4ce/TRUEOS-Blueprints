@@ -540,6 +540,7 @@ pub struct WindowObject {
     pub menu: u32,
     pub instance: u32,
     pub param: u32,
+    pub imm_context: u32,
     pub visible: bool,
     pub paint_pending: bool,
 }
@@ -773,6 +774,11 @@ pub enum SessionRequest {
         pid: Pid,
         hwnd: u32,
         output: u32,
+    },
+    ImmAssociateContext {
+        pid: Pid,
+        hwnd: u32,
+        himc: u32,
     },
     SetWindowText {
         pid: Pid,
@@ -1084,6 +1090,7 @@ impl Wc3Session {
                 menu: request.menu,
                 instance: request.instance,
                 param: request.param,
+                imm_context: 0,
                 visible: requested_visible,
                 paint_pending: true,
             },
@@ -1166,6 +1173,28 @@ impl Wc3Session {
             .and_then(|value| i32::try_from(value).ok())
             .ok_or("GetWindowRect bottom overflow")?;
         Ok([window.x, window.y, right, bottom])
+    }
+
+    pub fn imm_associate_context(
+        &mut self,
+        pid: Pid,
+        hwnd: u32,
+        himc: u32,
+    ) -> Result<u32, &'static str> {
+        let window = self
+            .windows
+            .get_mut(&hwnd)
+            .ok_or("ImmAssociateContext unknown window")?;
+        if window.owner.pid != pid {
+            return Err("ImmAssociateContext window owner mismatch");
+        }
+        if himc != 0 {
+            return Err("ImmAssociateContext nonzero HIMC unobserved");
+        }
+
+        let previous = window.imm_context;
+        window.imm_context = 0;
+        Ok(previous)
     }
 
     pub fn set_window_text(

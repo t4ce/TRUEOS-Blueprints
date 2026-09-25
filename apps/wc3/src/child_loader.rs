@@ -173,6 +173,7 @@ pub enum ProviderOp {
     ShowWindow,
     SetFocus,
     GetWindowRect,
+    ImmAssociateContext,
     SetWindowTextA,
     ClipCursor,
     GetDC,
@@ -325,6 +326,7 @@ impl ProviderOp {
             Self::ShowWindow => 8,
             Self::SetFocus => 4,
             Self::GetWindowRect => 8,
+            Self::ImmAssociateContext => 8,
             Self::SetWindowTextA => 8,
             Self::ClipCursor => 4,
             Self::GetDC => 4,
@@ -737,6 +739,12 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "LoadCursorA" => ProviderOp::LoadCursorA,
             "RegisterClassExA" => ProviderOp::RegisterClassExA,
             "CreateWindowExA" => ProviderOp::CreateWindowExA,
+            _ => ProviderOp::Unknown,
+        };
+    }
+    if import.module.eq_ignore_ascii_case("IMM32.dll") {
+        return match symbol.as_str() {
+            "ImmAssociateContext" => ProviderOp::ImmAssociateContext,
             _ => ProviderOp::Unknown,
         };
     }
