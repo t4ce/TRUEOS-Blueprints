@@ -179,6 +179,8 @@ pub enum ProviderOp {
     ImmAssociateContext,
     SetWindowTextA,
     ClipCursor,
+    BeginPaint,
+    EndPaint,
     GetDC,
     ReleaseDC,
     GetDeviceCaps,
@@ -336,6 +338,7 @@ impl ProviderOp {
             Self::ImmAssociateContext => 8,
             Self::SetWindowTextA => 8,
             Self::ClipCursor => 4,
+            Self::BeginPaint | Self::EndPaint => 8,
             Self::GetDC => 4,
             Self::ReleaseDC => 8,
             Self::GetDeviceCaps => 8,
@@ -627,6 +630,7 @@ impl ProviderOp {
                 | Self::RegisterClassExA
                 | Self::GetDesktopWindow
                 | Self::ClipCursor
+                | Self::EndPaint
         )
     }
 }
@@ -745,6 +749,8 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "GetWindowRect" => ProviderOp::GetWindowRect,
             "SetWindowTextA" => ProviderOp::SetWindowTextA,
             "ClipCursor" => ProviderOp::ClipCursor,
+            "BeginPaint" => ProviderOp::BeginPaint,
+            "EndPaint" => ProviderOp::EndPaint,
             "GetDC" => ProviderOp::GetDC,
             "ReleaseDC" => ProviderOp::ReleaseDC,
             "LoadImageA" => ProviderOp::LoadImageA,

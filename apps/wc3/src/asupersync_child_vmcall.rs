@@ -6092,6 +6092,66 @@
                             .map_err(|error| error.to_string())?;
                         continue;
                     }
+                    if operation == child_loader::ProviderOp::BeginPaint {
+                        let action = session
+                            .process_mut(active_pid)
+                            .ok_or_else(|| "child process missing".to_owned())?
+                            .xp
+                            .dispatch_provider_for_process_typed(
+                                active_pid,
+                                active_tid,
+                                provider_id,
+                                exit.registers.esp,
+                                &mut X86Memory(&child.address_space),
+                            )
+                            .map_err(|error| error.to_string())?;
+                        let PersonalityAction::Session(SessionRequest::BeginPaint {
+                            pid,
+                            hwnd,
+                            paint_struct,
+                        }) = action
+                        else {
+                            return Err("BeginPaint produced unexpected action".into());
+                        };
+                        let (width, height) = session
+                            .begin_paint_window(pid, hwnd)
+                            .map_err(str::to_owned)?;
+                        let hdc = session
+                            .process_mut(pid)
+                            .ok_or("BeginPaint process missing")?
+                            .xp
+                            .begin_paint(
+                                hwnd,
+                                paint_struct,
+                                width,
+                                height,
+                                &mut X86Memory(&child.address_space),
+                            )
+                            .map_err(str::to_owned)?;
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD BEGINPAINT pid={} tid={} hwnd=0x{:08x} ps=0x{:08x} hdc=0x{:08x} target=WINDOW_PAINT client={}x{} rcPaint=[0,0,{},{}] erase=0 result=0x{:08x} cleanup=8-by-thunk",
+                                active_pid,
+                                active_tid,
+                                hwnd,
+                                paint_struct,
+                                hdc,
+                                width,
+                                height,
+                                width,
+                                height,
+                                hdc,
+                            ),
+                        );
+                        let mut registers = exit.registers;
+                        registers.eax = hdc;
+                        contexts[active]
+                            .context
+                            .set_registers(registers)
+                            .map_err(|error| error.to_string())?;
+                        continue;
+                    }
                     if operation == child_loader::ProviderOp::ImmAssociateContext {
                         let action = session
                             .process_mut(active_pid)
@@ -7531,6 +7591,38 @@
                                                 hwnd,
                                                 hdc,
                                                 if result != 0 { "TRUE" } else { "FALSE" },
+                                            ),
+                                        );
+                                    }
+                                    child_loader::ProviderOp::EndPaint => {
+                                        let [_, hwnd, paint_struct] = read_guest_words(
+                                            &X86Memory(&child.address_space),
+                                            exit.registers.esp,
+                                            3,
+                                        )?[..]
+                                        else {
+                                            unreachable!("EndPaint frame has three words")
+                                        };
+                                        let hdc = if paint_struct == 0 {
+                                            0
+                                        } else {
+                                            read_guest_words(
+                                                &X86Memory(&child.address_space),
+                                                paint_struct,
+                                                1,
+                                            )?[0]
+                                        };
+                                        logl::log(
+                                            level::IMPORTANT,
+                                            format_args!(
+                                                "WC3 CHILD ENDPAINT pid={} tid={} hwnd=0x{:08x} ps=0x{:08x} hdc=0x{:08x} target=WINDOW_PAINT retired={} result={} cleanup=8-by-thunk",
+                                                active_pid,
+                                                active_tid,
+                                                hwnd,
+                                                paint_struct,
+                                                hdc,
+                                                result as u8,
+                                                result,
                                             ),
                                         );
                                     }

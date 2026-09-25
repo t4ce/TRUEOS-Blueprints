@@ -304,6 +304,16 @@ impl XpProcess {
                     .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(result))
             }
+            ProviderOp::EndPaint => {
+                let result = self
+                    .end_paint(esp, memory)
+                    .map_err(ProviderDispatchError::Fault)?;
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(result))
+            }
             ProviderOp::GetDesktopWindow => {
                 self.call_count = self
                     .call_count
@@ -2069,6 +2079,14 @@ impl XpProcess {
                     hwnd: arguments::<2>(memory, esp)?[1],
                 },
             )),
+            ProviderOp::BeginPaint => {
+                let [_, hwnd, paint_struct] = arguments::<3>(memory, esp)?;
+                Some(PersonalityAction::Session(SessionRequest::BeginPaint {
+                    pid,
+                    hwnd,
+                    paint_struct,
+                }))
+            }
             ProviderOp::SetFocus => Some(PersonalityAction::Session(SessionRequest::SetFocus {
                 pid,
                 hwnd: arguments::<2>(memory, esp)?[1],
