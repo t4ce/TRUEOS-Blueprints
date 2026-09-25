@@ -1169,6 +1169,14 @@ impl Wc3Session {
     }
 
     pub fn window_rect(&self, hwnd: u32) -> Result<[i32; 4], &'static str> {
+        if hwnd == DESKTOP_HWND {
+            let (width, height) = self.launcher().xp.desktop_size();
+            let right = i32::try_from(width).map_err(|_| "GetWindowRect desktop width overflow")?;
+            let bottom =
+                i32::try_from(height).map_err(|_| "GetWindowRect desktop height overflow")?;
+            return Ok([0, 0, right, bottom]);
+        }
+
         let window = self.windows.get(&hwnd).ok_or("GetWindowRect unknown window")?;
         let right = i64::from(window.x)
             .checked_add(i64::from(window.width))

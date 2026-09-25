@@ -173,6 +173,7 @@ pub enum ProviderOp {
     SetWindowPos,
     ShowWindow,
     SetFocus,
+    GetDesktopWindow,
     GetWindowRect,
     ImmAssociateContext,
     SetWindowTextA,
@@ -328,6 +329,7 @@ impl ProviderOp {
             Self::SetWindowPos => 28,
             Self::ShowWindow => 8,
             Self::SetFocus => 4,
+            Self::GetDesktopWindow => 0,
             Self::GetWindowRect => 8,
             Self::ImmAssociateContext => 8,
             Self::SetWindowTextA => 8,
@@ -621,6 +623,7 @@ impl ProviderOp {
                 | Self::LoadCursorA
                 | Self::RegisterClassA
                 | Self::RegisterClassExA
+                | Self::GetDesktopWindow
                 | Self::ClipCursor
         )
     }
@@ -735,6 +738,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "SetWindowPos" => ProviderOp::SetWindowPos,
             "ShowWindow" => ProviderOp::ShowWindow,
             "SetFocus" => ProviderOp::SetFocus,
+            "GetDesktopWindow" => ProviderOp::GetDesktopWindow,
             "GetWindowRect" => ProviderOp::GetWindowRect,
             "SetWindowTextA" => ProviderOp::SetWindowTextA,
             "ClipCursor" => ProviderOp::ClipCursor,

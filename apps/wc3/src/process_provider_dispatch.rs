@@ -304,6 +304,13 @@ impl XpProcess {
                     .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(result))
             }
+            ProviderOp::GetDesktopWindow => {
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(DESKTOP_HWND))
+            }
             ProviderOp::D3D8Release => {
                 let result = self.d3d8_release(esp, memory)?;
                 self.call_count = self
