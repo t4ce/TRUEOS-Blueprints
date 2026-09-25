@@ -1326,6 +1326,64 @@
                     if matches!(
                         &provider.symbol,
                         child_loader::ProviderSymbol::Name(name)
+                            if provider.module.eq_ignore_ascii_case("OPENGL32.dll")
+                                && name == "glLightModelfv"
+                    ) {
+                        let frame = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            exit.registers.esp,
+                            3,
+                        )?;
+                        let pname = frame[1];
+                        let params = frame[2];
+                        let pname_name = match pname {
+                            0x0000_0b51 => "GL_LIGHT_MODEL_LOCAL_VIEWER",
+                            0x0000_0b52 => "GL_LIGHT_MODEL_TWO_SIDE",
+                            0x0000_0b53 => "GL_LIGHT_MODEL_AMBIENT",
+                            _ => "UNKNOWN",
+                        };
+                        let mut first = [0u8; 4];
+                        X86Memory(&child.address_space).read(params, &mut first)?;
+                        let p0 = f32::from_le_bytes(first);
+
+                        if pname == 0x0000_0b53 {
+                            let mut raw = [0u8; 16];
+                            X86Memory(&child.address_space).read(params, &mut raw)?;
+                            let values = core::array::from_fn::<f32, 4, _>(|i| {
+                                f32::from_le_bytes(raw[i * 4..i * 4 + 4].try_into().unwrap())
+                            });
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD GLLIGHTMODELFV CALL pid={} tid={} pname=0x{:08x} pname_name={} params=0x{:08x} values={:?} caller_ret=0x{:08x}",
+                                    active_pid,
+                                    active_tid,
+                                    pname,
+                                    pname_name,
+                                    params,
+                                    values,
+                                    frame[0],
+                                ),
+                            );
+                        } else {
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD GLLIGHTMODELFV CALL pid={} tid={} pname=0x{:08x} pname_name={} params=0x{:08x} value={} caller_ret=0x{:08x}",
+                                    active_pid,
+                                    active_tid,
+                                    pname,
+                                    pname_name,
+                                    params,
+                                    p0,
+                                    frame[0],
+                                ),
+                            );
+                        }
+                    }
+                    if matches!(
+                        &provider.symbol,
+                        child_loader::ProviderSymbol::Name(name)
                             if provider.module.eq_ignore_ascii_case("MSVCRT.dll")
                                 && name == "sscanf"
                     ) {
