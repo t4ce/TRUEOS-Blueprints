@@ -120,7 +120,7 @@ impl XpProcess {
                 self.gl_tex_geni_static(esp, memory)?,
             )),
             ProviderOp::GlLightModelfv => Ok(PersonalityAction::Return(
-                self.gl_light_modelfv_static(esp, memory)?,
+                self.gl_light_modelfv_static(tid, esp, memory)?,
             )),
             ProviderOp::GlMaterialfv => Ok(PersonalityAction::Return(
                 self.gl_materialfv_static(esp, memory)?,

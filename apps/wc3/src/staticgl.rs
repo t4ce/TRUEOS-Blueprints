@@ -128,6 +128,7 @@ const GL_FLOAT: u32 = 0x1406;
 const GL_UNSIGNED_BYTE: u32 = 0x1401;
 const GL_UNSIGNED_SHORT: u32 = 0x1403;
 const GL_UNSIGNED_INT: u32 = 0x1405;
+const GL_LIGHT_MODEL_AMBIENT: u32 = 0x0000_0b53;
 const GL_TRIANGLES: u32 = 0x0004;
 const GL_COLOR_BUFFER_BIT: u32 = 0x0000_4000;
 const GL_DEPTH_BUFFER_BIT: u32 = 0x0000_0100;
@@ -166,7 +167,7 @@ impl XpProcess {
         gl_tex_envi_static => "glTexEnvi",
         gl_bind_texture_static => "glBindTexture",
         gl_depth_mask_static => "glDepthMask", gl_color_material_static => "glColorMaterial",
-        gl_tex_geni_static => "glTexGeni", gl_light_modelfv_static => "glLightModelfv",
+        gl_tex_geni_static => "glTexGeni",
         gl_materialfv_static => "glMaterialfv", gl_polygon_offset_static => "glPolygonOffset",
         gl_get_integerv_static => "glGetIntegerv", wgl_get_proc_address_static => "wglGetProcAddress",
         wgl_delete_context_static => "wglDeleteContext", gl_delete_textures_static => "glDeleteTextures",
@@ -212,6 +213,36 @@ impl XpProcess {
                 api,
                 detail: format!("tid={tid} has no current HGLRC"),
             })
+    }
+
+    fn gl_light_modelfv_static(
+        &mut self,
+        tid: u32,
+        esp: u32,
+        memory: &impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
+        let [_, pname, params] = arguments::<3>(memory, esp)?;
+        if params == 0 {
+            return Err(ProviderDispatchError::Frontier {
+                api: "glLightModelfv",
+                detail: format!("tid={tid} null params pname=0x{pname:08x}"),
+            });
+        }
+        if pname != GL_LIGHT_MODEL_AMBIENT {
+            return Err(ProviderDispatchError::Frontier {
+                api: "glLightModelfv",
+                detail: format!("tid={tid} unobserved pname=0x{pname:08x} params=0x{params:08x}"),
+            });
+        }
+
+        let mut raw = [0u8; 16];
+        memory.read(params, &mut raw)?;
+        let values = core::array::from_fn::<f32, 4, _>(|index| {
+            f32::from_le_bytes(raw[index * 4..index * 4 + 4].try_into().unwrap())
+        });
+        self.gl_context_mut(tid, "glLightModelfv")?
+            .light_model_ambient = values;
+        Ok(0)
     }
 
     fn gl_client_state_static(
@@ -825,6 +856,7 @@ impl XpProcess {
                 modelview_matrix: GL_IDENTITY_MATRIX,
                 projection_matrix: GL_IDENTITY_MATRIX,
                 texture_matrix: GL_IDENTITY_MATRIX,
+                light_model_ambient: [0.2, 0.2, 0.2, 1.0],
                 ui4_window_id: None,
                 viewport: [0, 0, 0, 0],
                 clear_color: [0.0, 0.0, 0.0, 0.0],
