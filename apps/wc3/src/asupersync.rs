@@ -1109,6 +1109,36 @@ fn service_sync_request(
                 Ok(0)
             }
         },
+        SessionRequest::CreateIoCompletionPort {
+            caller,
+            concurrency,
+        } => match session.create_io_completion_port(caller, concurrency) {
+            Ok((handle, object)) => {
+                logl::log(
+                    level::IMPORTANT,
+                    format_args!(
+                        "WC3 CHILD CREATEIOCOMPLETIONPORT RESULT \\
+                         pid={} tid={} handle=0x{:08x} object={} concurrency={} \\
+                         queue_depth=0 associations=0 transport=offline \\
+                         trueos_network=0 result=success cleanup=16-by-thunk",
+                        caller.pid,
+                        caller.tid,
+                        handle,
+                        object,
+                        concurrency,
+                    ),
+                );
+                Ok(handle)
+            }
+            Err(error) => {
+                session
+                    .process_mut(caller.pid)
+                    .ok_or_else(|| "IOCP process missing".to_owned())?
+                    .xp
+                    .set_last_error_for_thread(caller.tid, error);
+                Ok(0)
+            }
+        },
         SessionRequest::CloseHandle { pid, handle } => {
             if session.close_handle(pid, handle) {
                 Ok(1)

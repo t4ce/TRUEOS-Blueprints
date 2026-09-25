@@ -2581,6 +2581,7 @@ fn log_child_handles(session: &Wc3Session, pid: u32) {
             Some(SessionObject::Mutex(_)) => "mutex",
             Some(SessionObject::Process(_)) => "process",
             Some(SessionObject::Thread(_)) => "thread",
+            Some(SessionObject::IoCompletionPort(_)) => "io-completion-port",
             None => "unknown",
         };
         logl::log(

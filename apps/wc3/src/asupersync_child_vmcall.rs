@@ -6603,6 +6603,9 @@
                             }
                             Some(SessionObject::Event(_)) => ("event", "-".into()),
                             Some(SessionObject::Mutex(_)) => ("mutex", "-".into()),
+                            Some(SessionObject::IoCompletionPort(_)) => {
+                                ("io-completion-port", "-".into())
+                            }
                             None => return Err("DuplicateHandle object disappeared".into()),
                         };
                         logl::log(
@@ -6634,6 +6637,7 @@
                             | child_loader::ProviderOp::OpenEventA
                             | child_loader::ProviderOp::SetEvent
                             | child_loader::ProviderOp::ResetEvent
+                            | child_loader::ProviderOp::CreateIoCompletionPort
                             | child_loader::ProviderOp::CreateMutexA
                             | child_loader::ProviderOp::ReleaseMutex
                             | child_loader::ProviderOp::CloseHandle

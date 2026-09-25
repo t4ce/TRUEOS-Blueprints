@@ -516,12 +516,27 @@ pub struct ThreadSessionObject {
     pub priority_level: i32,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct IoCompletionPacket {
+    pub bytes_transferred: u32,
+    pub completion_key: u32,
+    pub overlapped: u32,
+}
+
+#[derive(Clone, Debug)]
+pub struct IoCompletionPortObject {
+    pub owner_pid: Pid,
+    pub concurrency: u32,
+    pub packets: VecDeque<IoCompletionPacket>,
+}
+
 #[derive(Clone, Debug)]
 pub enum SessionObject {
     Event(EventObject),
     Mutex(MutexObject),
     Process(ProcessObject),
     Thread(ThreadSessionObject),
+    IoCompletionPort(IoCompletionPortObject),
 }
 
 #[derive(Clone, Debug)]
@@ -804,6 +819,10 @@ pub enum SessionRequest {
     ReleaseMutex {
         key: ThreadKey,
         handle: u32,
+    },
+    CreateIoCompletionPort {
+        caller: ThreadKey,
+        concurrency: u32,
     },
     LoadImage(LoadImageRequest),
     CreateWindow(CreateWindowRequest),
@@ -1099,6 +1118,7 @@ impl Wc3Session {
                 self.next_event_handle = handle.checked_add(1).ok_or(6u32)?;
                 handle
             }
+            Some(SessionObject::IoCompletionPort(_)) => return Err(6),
             None => return Err(6),
         };
         self.process_mut(target_pid)
@@ -1117,6 +1137,39 @@ impl Wc3Session {
             source_pid,
             target_pid,
         })
+    }
+
+    pub fn create_io_completion_port(
+        &mut self,
+        caller: ThreadKey,
+        concurrency: u32,
+    ) -> Result<(u32, ObjectId), u32> {
+        if !self.processes.contains_key(&caller.pid) {
+            return Err(6);
+        }
+        let object = self.next_object;
+        self.next_object = object.checked_add(1).ok_or(6u32)?;
+        self.objects.insert(
+            object,
+            SessionObject::IoCompletionPort(IoCompletionPortObject {
+                owner_pid: caller.pid,
+                concurrency,
+                packets: VecDeque::new(),
+            }),
+        );
+        let handle = self.next_event_handle;
+        self.next_event_handle = handle.checked_add(1).ok_or(6u32)?;
+        self.process_mut(caller.pid)
+            .ok_or(6u32)?
+            .handles
+            .insert(
+                handle,
+                HandleEntry {
+                    object,
+                    inheritable: false,
+                },
+            );
+        Ok((handle, object))
     }
 
     pub fn set_thread_priority(
@@ -1789,6 +1842,7 @@ impl Wc3Session {
         let name = match self.objects.get(&entry.object) {
             Some(SessionObject::Event(event)) => event.name.clone(),
             Some(SessionObject::Mutex(mutex)) => mutex.name.clone(),
+            Some(SessionObject::IoCompletionPort(_)) => None,
             _ => return true,
         };
         let still_open = self.processes.values().any(|process| {
@@ -2044,6 +2098,9 @@ impl Wc3Session {
                 }
                 SessionObject::Process(process) => process.exit_code.is_some(),
                 SessionObject::Thread(thread) => thread.exit_code.is_some(),
+                SessionObject::IoCompletionPort(_) => {
+                    return Err("Wait* on IO completion port unobserved");
+                }
             };
         }
 
@@ -2120,6 +2177,12 @@ impl Wc3Session {
             SessionObject::Thread(thread) => {
                 format!("Thread pid={} tid={}", thread.key.pid, thread.key.tid)
             }
+            SessionObject::IoCompletionPort(port) => format!(
+                "IoCompletionPort owner_pid={} concurrency={} queue_depth={}",
+                port.owner_pid,
+                port.concurrency,
+                port.packets.len(),
+            ),
         };
         format!("object_id={} {}", entry.object, kind)
     }

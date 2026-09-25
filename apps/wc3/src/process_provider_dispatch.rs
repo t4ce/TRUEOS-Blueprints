@@ -2151,6 +2151,35 @@ impl XpProcess {
             ProviderOp::CreateEventA => Some(PersonalityAction::Session(
                 SessionRequest::CreateEvent(self.create_event_request(esp, memory)?),
             )),
+            ProviderOp::CreateIoCompletionPort => {
+                let [_, file_handle, existing_port, completion_key, concurrency] =
+                    arguments::<5>(memory, esp)?;
+                logl::log(
+                    level::IMPORTANT,
+                    format_args!(
+                        "WC3 CHILD CREATEIOCOMPLETIONPORT CALL pid={pid} tid={tid} \\
+                         file=0x{file_handle:08x} existing=0x{existing_port:08x} \\
+                         key=0x{completion_key:08x} concurrency={concurrency} \\
+                         transport=offline trueos_network=0 cleanup=16-by-thunk"
+                    ),
+                );
+                if file_handle != u32::MAX || existing_port != 0 {
+                    return Err(ProviderDispatchError::Frontier {
+                        api: "CreateIoCompletionPort",
+                        detail: format!(
+                            "association unobserved file=0x{file_handle:08x} \\
+                             existing=0x{existing_port:08x} \\
+                             key=0x{completion_key:08x} concurrency={concurrency}"
+                        ),
+                    });
+                }
+                Some(PersonalityAction::Session(
+                    SessionRequest::CreateIoCompletionPort {
+                        caller: ThreadKey { pid, tid },
+                        concurrency,
+                    },
+                ))
+            }
             ProviderOp::OpenEventA => {
                 const EVENT_MODIFY_STATE: u32 = 0x0000_0002;
 
