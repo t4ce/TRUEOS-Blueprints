@@ -2090,6 +2090,12 @@ impl XpProcess {
                     show,
                 }))
             }
+            ProviderOp::DestroyWindow => Some(PersonalityAction::Session(
+                SessionRequest::DestroyWindow {
+                    pid,
+                    hwnd: arguments::<2>(memory, esp)?[1],
+                },
+            )),
             ProviderOp::UpdateWindow => Some(PersonalityAction::Session(
                 SessionRequest::UpdateWindow {
                     pid,

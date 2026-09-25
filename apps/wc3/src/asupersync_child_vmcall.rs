@@ -6097,6 +6097,77 @@
                             .map_err(|error| error.to_string())?;
                         continue;
                     }
+                    if operation == child_loader::ProviderOp::DestroyWindow {
+                        let action = session
+                            .process_mut(active_pid)
+                            .ok_or_else(|| "child process missing".to_owned())?
+                            .xp
+                            .dispatch_provider_for_process_typed(
+                                active_pid,
+                                active_tid,
+                                provider_id,
+                                exit.registers.esp,
+                                &mut X86Memory(&child.address_space),
+                            )
+                            .map_err(|error| error.to_string())?;
+                        let PersonalityAction::Session(SessionRequest::DestroyWindow {
+                            pid,
+                            hwnd,
+                        }) = action
+                        else {
+                            return Err("DestroyWindow produced unexpected action".into());
+                        };
+                        let frame_present = frames.contains_key(&hwnd);
+                        let result = match session.destroy_window(pid, hwnd) {
+                            Ok(destroyed) => {
+                                if let Some(presentation) = session.take_window_presentation() {
+                                    present_window(
+                                        presentation,
+                                        &mut frames,
+                                        window_rgba,
+                                        &session,
+                                    )?;
+                                }
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 CHILD DESTROYWINDOW RESULT pid={} tid={} hwnd=0x{:08x} frame_present={} ui4_frame=closed focused={} result=TRUE cleanup=4-by-thunk",
+                                        active_pid,
+                                        active_tid,
+                                        hwnd,
+                                        frame_present as u8,
+                                        destroyed.was_focused as u8,
+                                    ),
+                                );
+                                1
+                            }
+                            Err(_) => {
+                                session
+                                    .process_mut(pid)
+                                    .ok_or("DestroyWindow caller missing")?
+                                    .xp
+                                    .set_last_error_for_thread(active_tid, 1400);
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 CHILD DESTROYWINDOW RESULT pid={} tid={} hwnd=0x{:08x} frame_present={} ui4_frame=unchanged focused=- result=FALSE error=1400 cleanup=4-by-thunk",
+                                        active_pid,
+                                        active_tid,
+                                        hwnd,
+                                        frame_present as u8,
+                                    ),
+                                );
+                                0
+                            }
+                        };
+                        let mut registers = exit.registers;
+                        registers.eax = result;
+                        contexts[active]
+                            .context
+                            .set_registers(registers)
+                            .map_err(|error| error.to_string())?;
+                        continue;
+                    }
                     if operation == child_loader::ProviderOp::UpdateWindow {
                         let provider_resume_eip = exit.registers.eip;
                         let provider_esp = exit.registers.esp;
