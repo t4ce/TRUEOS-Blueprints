@@ -372,6 +372,10 @@ impl XpProcess {
                 let [_, exit_code] = arguments::<2>(memory, esp)?;
                 return Ok(PersonalityAction::ExitThread(exit_code));
             }
+            WinCall::ExitProcess => {
+                let [_, exit_code] = arguments::<2>(memory, esp)?;
+                return Ok(PersonalityAction::ExitProcess(exit_code));
+            }
             WinCall::ResumeThread => self.resume_thread(esp, memory),
             WinCall::CreateProcessA => {
                 return Ok(PersonalityAction::Session(SessionRequest::CreateProcess(

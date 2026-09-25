@@ -888,6 +888,7 @@ pub struct Wc3Process {
     pub pid: Pid,
     pub xp: XpProcess,
     pub handles: HashMap<u32, HandleEntry>,
+    pub exit_code: Option<u32>,
 }
 
 pub struct Wc3Session {
@@ -924,6 +925,7 @@ impl Wc3Session {
                 pid,
                 xp,
                 handles: HashMap::new(),
+                exit_code: None,
             },
         );
         Self {
@@ -1546,6 +1548,7 @@ impl Wc3Session {
                 pid,
                 xp,
                 handles: HashMap::new(),
+                exit_code: None,
             },
         );
         CreatedChild {
@@ -1840,10 +1843,7 @@ impl Wc3Session {
     }
 
     pub fn process_exit_code(&self, pid: Pid) -> Option<u32> {
-        self.objects.values().find_map(|object| match object {
-            SessionObject::Process(process) if process.pid == pid => process.exit_code,
-            _ => None,
-        })
+        self.process(pid).and_then(|process| process.exit_code)
     }
 
     /// Resolve a process handle in the caller's handle table.  The result is
@@ -1937,14 +1937,28 @@ impl Wc3Session {
                 _ => {}
             }
         }
-        if !found_process_object {
+        if !found_process_object && pid != LAUNCHER_PID {
             return Err("ExitProcess process object missing");
         }
+
+        let process = self.process_mut(pid).ok_or("ExitProcess process missing")?;
+        if process.exit_code.is_some() {
+            return Err("ExitProcess process already terminated");
+        }
+        process.exit_code = Some(exit_code);
 
         self.runnable.retain(|key| key.pid != pid);
         self.blocked.retain(|key, _| key.pid != pid);
         self.critical_waiters.retain(|wait| wait.key.pid != pid);
         self.abandon_mutexes(|owner| owner.pid == pid);
+        let windows: Vec<_> = self
+            .windows
+            .iter()
+            .filter_map(|(&hwnd, window)| (window.owner.pid == pid).then_some(hwnd))
+            .collect();
+        for hwnd in windows {
+            self.destroy_window(pid, hwnd)?;
+        }
         let handles: Vec<_> = self
             .process(pid)
             .ok_or("ExitProcess process missing")?

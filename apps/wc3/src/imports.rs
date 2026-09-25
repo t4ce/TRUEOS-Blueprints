@@ -62,6 +62,7 @@ pub enum WinCall {
     DeleteObject,
     CreateThread,
     ExitThread,
+    ExitProcess,
     ResumeThread,
     GetStdHandle,
     GetFileType,
@@ -150,6 +151,7 @@ impl WinCall {
             "DeleteObject" if import.module.eq_ignore_ascii_case("GDI32.dll") => Self::DeleteObject,
             "CreateThread" if kernel => Self::CreateThread,
             "ExitThread" if kernel => Self::ExitThread,
+            "ExitProcess" if kernel => Self::ExitProcess,
             "ResumeThread" if kernel => Self::ResumeThread,
             "GetStdHandle" if kernel => Self::GetStdHandle,
             "GetFileType" if kernel => Self::GetFileType,
@@ -187,6 +189,7 @@ impl WinCall {
             | Self::UpdateWindow
             | Self::SetFocus
             | Self::ExitThread
+            | Self::ExitProcess
             | Self::ResumeThread
             | Self::GetStdHandle
             | Self::GetFileType
