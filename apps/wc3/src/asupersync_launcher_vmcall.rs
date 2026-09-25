@@ -2768,13 +2768,45 @@
                         active = next;
                         continue;
                     }
-                    PersonalityAction::ExitProcess(_) => {
-                        if contexts[active].tid != LAUNCHER_TID {
-                            return Ok(());
+                    PersonalityAction::ExitProcess(exit_code) => {
+                        let exiting_pid = contexts[active].pid;
+                        let destroyed_windows = session
+                            .windows
+                            .values()
+                            .filter(|window| window.owner.pid == exiting_pid)
+                            .count();
+                        let woken = session
+                            .terminate_process(exiting_pid, exit_code)
+                            .map_err(str::to_owned)?;
+                        resume_completed_waiters(
+                            &woken,
+                            "process-exit",
+                            &mut contexts,
+                            &mut wait_deadlines,
+                        )?;
+                        contexts.retain(|context| context.pid != exiting_pid);
+                        wait_deadlines.retain(|key, _| key.pid != exiting_pid);
+                        thread_calls.retain(|(pid, _), _| *pid != exiting_pid);
+                        if let Some(presentation) = session.take_window_presentation() {
+                            present_window(presentation, &mut frames, window_rgba, &session)?;
                         }
-                        return Err(
-                            "wc3: ExitProcess action is not wired into the launcher loop".into(),
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 PROCESS EXIT pid={} exit_code=0x{:08x} \\
+                                 contexts_removed=all windows_destroyed={} waiters_woken={} \\
+                                 child_processes_preserved=1",
+                                exiting_pid,
+                                exit_code,
+                                destroyed_windows,
+                                woken.len(),
+                            ),
                         );
+                        let Some(next) = pop_runnable_context(&mut session, &contexts) else {
+                            return Ok(());
+                        };
+                        active = next;
+                        continue;
                     }
                 };
                 if let Some((frame, input)) =
