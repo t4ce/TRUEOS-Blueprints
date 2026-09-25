@@ -12,6 +12,7 @@ use std::{
 #[cfg(target_os = "trueos")]
 use trueos::clock;
 use trueos::clock::UtcDateTime;
+use trueos::logl::{self, level};
 use trueos::vgpu::{Capabilities, Device, Queue, QueueClass};
 
 use crate::{
@@ -402,6 +403,17 @@ const TRANSPARENT: u32 = 1;
 const OPAQUE: u32 = 2;
 const GDI_DIB_BASE: u32 = 0x0500_0000;
 pub const ENVIRONMENT_BLOCK_VA: u32 = PROCESS_DATA_VA + 0x100;
+
+fn identity_gamma_ramp() -> [u16; 3 * 256] {
+    let mut ramp = [0u16; 3 * 256];
+    for channel in 0..3 {
+        for index in 0..256 {
+            let byte = index as u16;
+            ramp[channel * 256 + index] = (byte << 8) | byte;
+        }
+    }
+    ramp
+}
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 enum LcMapMode {
@@ -1562,6 +1574,7 @@ pub struct XpProcess {
     active_paints: HashMap<u32, ActivePaint>,
     window_dcs: HashMap<u32, u32>,
     window_pixel_formats: HashMap<u32, u32>,
+    gamma_ramp: [u16; 3 * 256],
     gl_runtime: Option<GlRuntime>,
     next_gdi_handle: u32,
     next_gdi_dib_va: u32,
@@ -1813,6 +1826,7 @@ impl XpProcess {
             active_paints: HashMap::new(),
             window_dcs: HashMap::new(),
             window_pixel_formats: HashMap::new(),
+            gamma_ramp: identity_gamma_ramp(),
             gl_runtime: None,
             next_gdi_handle: GDI_HANDLE_BASE,
             next_gdi_dib_va: GDI_DIB_BASE,

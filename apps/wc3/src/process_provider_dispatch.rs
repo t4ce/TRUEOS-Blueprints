@@ -1982,6 +1982,10 @@ impl XpProcess {
                     show,
                 }))
             }
+            ProviderOp::SetFocus => Some(PersonalityAction::Session(SessionRequest::SetFocus {
+                pid,
+                hwnd: arguments::<2>(memory, esp)?[1],
+            })),
             ProviderOp::GetDC => Some(PersonalityAction::Session(SessionRequest::GetDC {
                 pid,
                 hwnd: arguments::<2>(memory, esp)?[1],

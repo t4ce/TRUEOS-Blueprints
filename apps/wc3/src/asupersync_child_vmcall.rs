@@ -5837,6 +5837,43 @@
                             .map_err(|error| error.to_string())?;
                         continue;
                     }
+                    if operation == child_loader::ProviderOp::SetFocus {
+                        let action = session
+                            .process_mut(active_pid)
+                            .ok_or_else(|| "child process missing".to_owned())?
+                            .xp
+                            .dispatch_provider_for_process_typed(
+                                active_pid,
+                                active_tid,
+                                provider_id,
+                                exit.registers.esp,
+                                &mut X86Memory(&child.address_space),
+                            )
+                            .map_err(|error| error.to_string())?;
+                        let PersonalityAction::Session(SessionRequest::SetFocus { pid: _, hwnd }) = action
+                        else {
+                            return Err("SetFocus produced unexpected action".into());
+                        };
+                        let previous = session.set_focus(hwnd).map_err(str::to_owned)?;
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD SETFOCUS pid={} tid={} hwnd=0x{:08x} previous=0x{:08x} compositor_focus=unchanged result=0x{:08x} cleanup=4-by-thunk",
+                                active_pid,
+                                active_tid,
+                                hwnd,
+                                previous,
+                                previous,
+                            ),
+                        );
+                        let mut registers = exit.registers;
+                        registers.eax = previous;
+                        contexts[active]
+                            .context
+                            .set_registers(registers)
+                            .map_err(|error| error.to_string())?;
+                        continue;
+                    }
                     if operation == child_loader::ProviderOp::GetDC {
                         let action = session
                             .process_mut(active_pid)

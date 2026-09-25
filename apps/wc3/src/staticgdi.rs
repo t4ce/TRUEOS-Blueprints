@@ -243,10 +243,43 @@ impl XpProcess {
 
     fn get_device_gamma_ramp_static(
         &self,
-        _esp: u32,
-        _memory: &impl GuestMemory,
+        esp: u32,
+        memory: &mut impl GuestMemory,
     ) -> Result<u32, ProviderDispatchError> {
-        self.static_gdi_stub("GetDeviceGammaRamp")
+        let [_, hdc, output] = arguments::<3>(memory, esp)?;
+        let hwnd = match self.gdi_objects.get(&hdc) {
+            Some(GdiObject::DeviceContext(DeviceContext {
+                target: DcTarget::WindowPaint { hwnd },
+                ..
+            })) => *hwnd,
+            _ => {
+                return Err(ProviderDispatchError::Frontier {
+                    api: "GetDeviceGammaRamp",
+                    detail: format!("hdc=0x{hdc:08x} is not an observed display/window DC"),
+                });
+            }
+        };
+        if output == 0 {
+            return Ok(0);
+        }
+
+        let mut bytes = [0u8; 3 * 256 * 2];
+        for (index, value) in self.gamma_ramp.iter().copied().enumerate() {
+            let encoded = value.to_le_bytes();
+            bytes[index * 2] = encoded[0];
+            bytes[index * 2 + 1] = encoded[1];
+        }
+        memory.write(output, &bytes)?;
+        logl::log(
+            level::IMPORTANT,
+            format_args!(
+                "WC3 CHILD GETDEVICEGAMMARAMP RESULT hwnd=0x{hwnd:08x} hdc=0x{hdc:08x} output=0x{output:08x} entries=256 channels=3 first=0x{:04x} middle=0x{:04x} last=0x{:04x} result=1 cleanup=8-by-thunk",
+                self.gamma_ramp[0],
+                self.gamma_ramp[128],
+                self.gamma_ramp[255],
+            ),
+        );
+        Ok(1)
     }
 
     fn create_font_a_static(
