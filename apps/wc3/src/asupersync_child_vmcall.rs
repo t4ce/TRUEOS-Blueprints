@@ -1148,6 +1148,23 @@
                         .address_space
                         .read(exit.registers.esp, &mut caller_ret)
                         .map_err(|error| error.to_string())?;
+                    if provider.module.eq_ignore_ascii_case("OPENGL32.dll") {
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD OPENGL CALL pid={} tid={} during=\"{}\" \
+                                 provider_id={} symbol={:?} caller_ret=0x{:08x} \
+                                 cleanup={}-by-thunk",
+                                active_pid,
+                                active_tid,
+                                running_module_name,
+                                provider_id,
+                                provider.symbol,
+                                u32::from_le_bytes(caller_ret),
+                                child_loader::provider_op(&provider).stack_cleanup_bytes(),
+                            ),
+                        );
+                    }
                     if cfg!(feature = "trace-api") && matches!(
                         &provider.symbol,
                         child_loader::ProviderSymbol::Name(name)
