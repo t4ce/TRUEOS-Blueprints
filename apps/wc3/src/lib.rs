@@ -17,6 +17,7 @@ pub mod assets;
 pub mod checkpoint;
 pub mod child_loader;
 pub mod event_pool;
+pub mod gl_signatures;
 pub mod imports;
 pub mod initterm;
 pub mod pe32;

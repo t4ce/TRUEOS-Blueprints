@@ -1591,6 +1591,13 @@ struct WglContext {
     color_array_enabled: bool,
     vertex_pointer: Option<GlArrayPointer>,
     color_pointer: Option<GlArrayPointer>,
+    observed_writes: VecDeque<GlWriteNote>,
+}
+
+struct GlWriteNote {
+    symbol: &'static str,
+    arguments: Vec<u32>,
+    description: String,
 }
 
 #[derive(Clone, Copy)]

@@ -142,6 +142,38 @@ const GL_IDENTITY_MATRIX: [f32; 16] = [
 ];
 
 impl XpProcess {
+    pub fn note_gl_write(
+        &mut self,
+        tid: u32,
+        symbol: &'static str,
+        arguments: Vec<u32>,
+        description: String,
+    ) -> Result<(u32, usize), ProviderDispatchError> {
+        let runtime = self.gl_runtime.as_mut().ok_or_else(|| ProviderDispatchError::Frontier {
+            api: "OpenGL note",
+            detail: format!("tid={tid} has no GL runtime"),
+        })?;
+        let (hglrc, context) = runtime
+            .contexts
+            .iter_mut()
+            .find(|(_, context)| context.current_tid == Some(tid))
+            .ok_or_else(|| ProviderDispatchError::Frontier {
+                api: "OpenGL note",
+                detail: format!("tid={tid} has no current HGLRC"),
+            })?;
+        // A bounded journal of guest writes, not a claim that the renderer
+        // already interprets every recorded setting.
+        if context.observed_writes.len() == 256 {
+            context.observed_writes.pop_front();
+        }
+        context.observed_writes.push_back(GlWriteNote {
+            symbol,
+            arguments,
+            description,
+        });
+        Ok((*hglrc, context.observed_writes.len()))
+    }
+
     pub fn gl_context_diagnostic(&self, tid: u32) -> Option<(u32, u32, u32)> {
         self.gl_runtime
             .as_ref()?
@@ -975,6 +1007,7 @@ impl XpProcess {
                 color_array_enabled: false,
                 vertex_pointer: None,
                 color_pointer: None,
+                observed_writes: VecDeque::new(),
             },
         );
         Ok(hglrc)
