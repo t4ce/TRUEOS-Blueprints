@@ -282,6 +282,28 @@ impl XpProcess {
                     .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(result))
             }
+            ProviderOp::RegisterClassA => {
+                let [_, structure] = arguments::<2>(memory, esp)?;
+                if structure == 0 {
+                    return Err(ProviderDispatchError::Frontier {
+                        api: "RegisterClassA",
+                        detail: "null WNDCLASSA unobserved".into(),
+                    });
+                }
+                let name = read_c_string(memory, read_u32(memory, structure + 36)?, 256)?;
+                if self.registered_classes.contains_key(&name) {
+                    return Err(ProviderDispatchError::Frontier {
+                        api: "RegisterClassA",
+                        detail: format!("duplicate class name={name:?}"),
+                    });
+                }
+                let result = self.register_class(esp, memory)?;
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(result))
+            }
             ProviderOp::D3D8Release => {
                 let result = self.d3d8_release(esp, memory)?;
                 self.call_count = self

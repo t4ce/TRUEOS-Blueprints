@@ -6937,6 +6937,54 @@
                                     }
                                 }
                                 match operation {
+                                    child_loader::ProviderOp::RegisterClassA if result != 0 => {
+                                        let [_, structure] = read_guest_words(
+                                            &X86Memory(&child.address_space),
+                                            exit.registers.esp,
+                                            2,
+                                        )?[..]
+                                        else {
+                                            unreachable!("RegisterClassA frame has two words")
+                                        };
+                                        let fields = read_guest_words(
+                                            &X86Memory(&child.address_space),
+                                            structure,
+                                            10,
+                                        )?;
+                                        let class = wc3::process::read_c_string(
+                                            &X86Memory(&child.address_space),
+                                            fields[9],
+                                            256,
+                                        )?;
+                                        let menu = if fields[8] == 0 || fields[8] >> 16 == 0 {
+                                            None
+                                        } else {
+                                            Some(wc3::process::read_c_string(
+                                                &X86Memory(&child.address_space),
+                                                fields[8],
+                                                256,
+                                            )?)
+                                        };
+                                        logl::log(
+                                            level::IMPORTANT,
+                                            format_args!(
+                                                "WC3 CHILD REGISTERCLASSA RESULT pid={} tid={} class={:?} style=0x{:08x} wndproc=0x{:08x} cls_extra={} wnd_extra={} instance=0x{:08x} icon=0x{:08x} cursor=0x{:08x} background=0x{:08x} menu={:?} atom={} result=success cleanup=4-by-thunk",
+                                                active_pid,
+                                                active_tid,
+                                                class,
+                                                fields[0],
+                                                fields[1],
+                                                fields[2] as i32,
+                                                fields[3] as i32,
+                                                fields[4],
+                                                fields[5],
+                                                fields[6],
+                                                fields[7],
+                                                menu,
+                                                result,
+                                            ),
+                                        );
+                                    }
                                     child_loader::ProviderOp::RegisterClassExA if result != 0 => {
                                         let [_, structure] = read_guest_words(
                                             &X86Memory(&child.address_space),
