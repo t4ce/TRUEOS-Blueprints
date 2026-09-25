@@ -1424,6 +1424,70 @@
                     if matches!(
                         &provider.symbol,
                         child_loader::ProviderSymbol::Name(name)
+                            if provider.module.eq_ignore_ascii_case("OPENGL32.dll")
+                                && name == "glLightfv"
+                    ) {
+                        let frame = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            exit.registers.esp,
+                            4,
+                        )?;
+                        let light = frame[1];
+                        let pname = frame[2];
+                        let params = frame[3];
+                        let light_name = match light {
+                            0x4000 => "GL_LIGHT0",
+                            0x4001 => "GL_LIGHT1",
+                            0x4002 => "GL_LIGHT2",
+                            0x4003 => "GL_LIGHT3",
+                            0x4004 => "GL_LIGHT4",
+                            0x4005 => "GL_LIGHT5",
+                            0x4006 => "GL_LIGHT6",
+                            0x4007 => "GL_LIGHT7",
+                            _ => "UNKNOWN",
+                        };
+                        let (pname_name, count) = match pname {
+                            0x1200 => ("GL_AMBIENT", 4),
+                            0x1201 => ("GL_DIFFUSE", 4),
+                            0x1202 => ("GL_SPECULAR", 4),
+                            0x1203 => ("GL_POSITION", 4),
+                            0x1204 => ("GL_SPOT_DIRECTION", 3),
+                            0x1205 => ("GL_SPOT_EXPONENT", 1),
+                            0x1206 => ("GL_SPOT_CUTOFF", 1),
+                            0x1207 => ("GL_CONSTANT_ATTENUATION", 1),
+                            0x1208 => ("GL_LINEAR_ATTENUATION", 1),
+                            0x1209 => ("GL_QUADRATIC_ATTENUATION", 1),
+                            _ => ("UNKNOWN", 1),
+                        };
+                        let mut values = [0.0f32; 4];
+                        for (index, value) in values[..count].iter_mut().enumerate() {
+                            let mut raw = [0u8; 4];
+                            X86Memory(&child.address_space).read(
+                                params + (index as u32) * 4,
+                                &mut raw,
+                            )?;
+                            *value = f32::from_le_bytes(raw);
+                        }
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD GLLIGHTFV CALL pid={} tid={} light=0x{:08x} light_name={} pname=0x{:08x} pname_name={} params=0x{:08x} values={:?} count={} caller_ret=0x{:08x}",
+                                active_pid,
+                                active_tid,
+                                light,
+                                light_name,
+                                pname,
+                                pname_name,
+                                params,
+                                &values[..count],
+                                count,
+                                frame[0],
+                            ),
+                        );
+                    }
+                    if matches!(
+                        &provider.symbol,
+                        child_loader::ProviderSymbol::Name(name)
                             if provider.module.eq_ignore_ascii_case("USER32.dll")
                                 && name == "ReleaseDC"
                     ) {
