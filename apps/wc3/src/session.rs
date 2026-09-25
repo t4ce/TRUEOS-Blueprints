@@ -7,7 +7,10 @@
 use std::collections::{HashMap, VecDeque};
 
 use crate::ThisToThat;
-use crate::process::{CURRENT_THREAD_PSEUDO_HANDLE, CreateProcessAFrame, ThreadObject, XpProcess};
+use crate::process::{
+    CURRENT_PROCESS_PSEUDO_HANDLE, CURRENT_THREAD_PSEUDO_HANDLE, CreateProcessAFrame,
+    ThreadObject, XpProcess,
+};
 
 pub type Pid = u32;
 pub type Tid = u32;
@@ -612,6 +615,26 @@ pub struct HandleEntry {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DuplicateHandleRequest {
+    pub caller: ThreadKey,
+    pub source_process: u32,
+    pub source_handle: u32,
+    pub target_process: u32,
+    pub target_out: u32,
+    pub desired_access: u32,
+    pub inherit: bool,
+    pub options: u32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DuplicateHandleResult {
+    pub handle: u32,
+    pub object: ObjectId,
+    pub source_pid: Pid,
+    pub target_pid: Pid,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WaitRequest {
     pub key: ThreadKey,
     pub return_address: u32,
@@ -773,6 +796,7 @@ pub enum SessionRequest {
         inheritable: bool,
         name: String,
     },
+    DuplicateHandle(DuplicateHandleRequest),
     CreateMutex {
         key: ThreadKey,
         request: CreateMutexRequest,
@@ -990,6 +1014,107 @@ impl Wc3Session {
             return Err(6);
         };
         Ok(thread.key)
+    }
+
+    fn resolve_process_handle(&self, caller_pid: Pid, handle: u32) -> Result<Pid, u32> {
+        if handle == CURRENT_PROCESS_PSEUDO_HANDLE {
+            return Ok(caller_pid);
+        }
+        let object = self
+            .process(caller_pid)
+            .and_then(|process| process.handles.get(&handle))
+            .ok_or(6u32)?
+            .object;
+        let Some(SessionObject::Process(process)) = self.objects.get(&object) else {
+            return Err(6);
+        };
+        Ok(process.pid)
+    }
+
+    fn duplicate_source_object(
+        &self,
+        caller: ThreadKey,
+        source_pid: Pid,
+        source_handle: u32,
+    ) -> Result<ObjectId, u32> {
+        if source_handle == CURRENT_THREAD_PSEUDO_HANDLE {
+            if source_pid != caller.pid {
+                return Err(6);
+            }
+            return self
+                .objects
+                .iter()
+                .find_map(|(id, object)| match object {
+                    SessionObject::Thread(thread) if thread.key == caller => Some(*id),
+                    _ => None,
+                })
+                .ok_or(6);
+        }
+        if source_handle == CURRENT_PROCESS_PSEUDO_HANDLE {
+            if source_pid != caller.pid {
+                return Err(6);
+            }
+            return self
+                .objects
+                .iter()
+                .find_map(|(id, object)| match object {
+                    SessionObject::Process(process) if process.pid == caller.pid => Some(*id),
+                    _ => None,
+                })
+                .ok_or(6);
+        }
+        self.process(source_pid)
+            .and_then(|process| process.handles.get(&source_handle))
+            .map(|entry| entry.object)
+            .ok_or(6)
+    }
+
+    pub fn duplicate_handle(
+        &mut self,
+        request: DuplicateHandleRequest,
+    ) -> Result<DuplicateHandleResult, u32> {
+        const DUPLICATE_SAME_ACCESS: u32 = 0x0000_0002;
+
+        if request.options != DUPLICATE_SAME_ACCESS {
+            return Err(87);
+        }
+        let source_pid = self.resolve_process_handle(request.caller.pid, request.source_process)?;
+        let target_pid = self.resolve_process_handle(request.caller.pid, request.target_process)?;
+        let object = self.duplicate_source_object(request.caller, source_pid, request.source_handle)?;
+        let handle = match self.objects.get(&object) {
+            Some(SessionObject::Thread(_)) => {
+                let handle = self.next_thread_handle;
+                self.next_thread_handle = handle.checked_add(1).ok_or(6u32)?;
+                handle
+            }
+            Some(SessionObject::Process(_)) => {
+                let handle = self.next_process_handle;
+                self.next_process_handle = handle.checked_add(1).ok_or(6u32)?;
+                handle
+            }
+            Some(SessionObject::Event(_) | SessionObject::Mutex(_)) => {
+                let handle = self.next_event_handle;
+                self.next_event_handle = handle.checked_add(1).ok_or(6u32)?;
+                handle
+            }
+            None => return Err(6),
+        };
+        self.process_mut(target_pid)
+            .ok_or(6u32)?
+            .handles
+            .insert(
+                handle,
+                HandleEntry {
+                    object,
+                    inheritable: request.inherit,
+                },
+            );
+        Ok(DuplicateHandleResult {
+            handle,
+            object,
+            source_pid,
+            target_pid,
+        })
     }
 
     pub fn set_thread_priority(

@@ -22,6 +22,7 @@ use crate::{
     pe32,
     session::{
         CreateEventRequest, CreateMutexRequest, CreateProcessRequest, CreateWindowRequest,
+        DuplicateHandleRequest,
         GetExitCodeProcessRequest, LoadImageRequest, OpenFileRequest, PersonalityAction, SessionRequest,
         SetWindowPosRequest, ThreadKey, WaitRequest, WindowBlitRequest, WindowFillRectRequest, WindowTextRequest,
     },

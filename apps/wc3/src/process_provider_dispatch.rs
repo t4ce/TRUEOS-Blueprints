@@ -1,3 +1,26 @@
+fn crt_ismbcspace(character: u32) -> u32 {
+    // MSVCRT's _SPACE classification bit.  The CP1252 personality exposes
+    // only the documented ASCII whitespace members here; in particular,
+    // non-breaking space and values outside a byte do not classify as space.
+    if character == 0x20 || (0x09..=0x0d).contains(&character) {
+        0x08
+    } else {
+        0
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn crt_ismbcspace_classifies_only_ascii_crt_whitespace() {
+    for character in [0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x20] {
+        assert_eq!(crt_ismbcspace(character), 0x08, "0x{character:04x}");
+    }
+
+    for character in [0, 8, 0x0e, 0x1f, 0x21, 0xa0, 0x8140] {
+        assert_eq!(crt_ismbcspace(character), 0, "0x{character:04x}");
+    }
+}
+
 impl XpProcess {
     fn dispatch_process_local_provider(
         &mut self,
@@ -562,6 +585,23 @@ impl XpProcess {
                     .call_count
                     .checked_add(1)
                     .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(result))
+            }
+            ProviderOp::CrtIsMbcSpace => {
+                let [_, character] = arguments::<2>(memory, esp)?;
+                let result = crt_ismbcspace(character);
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                logl::log(
+                    level::IMPORTANT,
+                    format_args!(
+                        "WC3 CHILD CRT ISMBCSPACE pid={pid} tid={tid} \\
+                         character=0x{character:08x} result=0x{result:08x} \\
+                         cleanup=0-by-thunk"
+                    ),
+                );
                 Ok(PersonalityAction::Return(result))
             }
             ProviderOp::CrtToUpper => {
@@ -2060,6 +2100,30 @@ impl XpProcess {
                     inheritable: inherit_handle != 0,
                     name,
                 }))
+            }
+            ProviderOp::DuplicateHandle => {
+                let [
+                    _,
+                    source_process,
+                    source_handle,
+                    target_process,
+                    target_out,
+                    desired_access,
+                    inherit,
+                    options,
+                ] = arguments::<8>(memory, esp)?;
+                Some(PersonalityAction::Session(SessionRequest::DuplicateHandle(
+                    DuplicateHandleRequest {
+                        caller: ThreadKey { pid, tid },
+                        source_process,
+                        source_handle,
+                        target_process,
+                        target_out,
+                        desired_access,
+                        inherit: inherit != 0,
+                        options,
+                    },
+                )))
             }
             ProviderOp::CreateWindowExA => {
                 Some(PersonalityAction::Session(SessionRequest::CreateWindow(

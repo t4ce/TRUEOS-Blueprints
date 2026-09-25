@@ -1339,6 +1339,25 @@
                             &mut wait_deadlines,
                         )?
                     }
+                    PersonalityAction::Session(SessionRequest::DuplicateHandle(request)) => {
+                        let target_out = request.target_out;
+                        let caller = request.caller;
+                        match session.duplicate_handle(request) {
+                            Ok(duplicated) if duplicated.target_pid == caller.pid => {
+                                memory.write(target_out, &duplicated.handle.to_le_bytes())?;
+                                1
+                            }
+                            Ok(_) => return Err("DuplicateHandle cross-process target unsupported".into()),
+                            Err(error) => {
+                                session
+                                    .process_mut(caller.pid)
+                                    .ok_or("DuplicateHandle caller missing")?
+                                    .xp
+                                    .set_last_error_for_thread(caller.tid, error);
+                                0
+                            }
+                        }
+                    }
                     PersonalityAction::Session(SessionRequest::SetEvent { pid, tid, handle }) => {
                         match session.set_event(pid, handle) {
                             Ok(outcome) => {

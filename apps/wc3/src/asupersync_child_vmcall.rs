@@ -6455,6 +6455,119 @@
                             .map_err(|error| error.to_string())?;
                         continue;
                     }
+                    if operation == child_loader::ProviderOp::DuplicateHandle {
+                        let frame = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            exit.registers.esp,
+                            8,
+                        )?;
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD DUPLICATEHANDLE CALL pid={} tid={} source_process=0x{:08x} source_handle=0x{:08x} target_process=0x{:08x} target_out=0x{:08x} desired_access=0x{:08x} inherit={} options=0x{:08x} caller_ret=0x{:08x}",
+                                active_pid,
+                                active_tid,
+                                frame[1],
+                                frame[2],
+                                frame[3],
+                                frame[4],
+                                frame[5],
+                                frame[6],
+                                frame[7],
+                                frame[0],
+                            ),
+                        );
+                        let action = session
+                            .process_mut(active_pid)
+                            .ok_or_else(|| "child process missing".to_owned())?
+                            .xp
+                            .dispatch_provider_for_process_typed(
+                                active_pid,
+                                active_tid,
+                                provider_id,
+                                exit.registers.esp,
+                                &mut X86Memory(&child.address_space),
+                            )
+                            .map_err(|error| error.to_string())?;
+                        let PersonalityAction::Session(SessionRequest::DuplicateHandle(request)) = action
+                        else {
+                            return Err("DuplicateHandle produced unexpected action".into());
+                        };
+                        if request.target_process != 0xffff_ffff {
+                            return Err(format!(
+                                "DuplicateHandle target process frontier=0x{:08x}",
+                                request.target_process,
+                            ));
+                        }
+                        let target_out = request.target_out;
+                        let duplicated = match session.duplicate_handle(request) {
+                            Ok(duplicated) => duplicated,
+                            Err(error) => {
+                                session
+                                    .process_mut(active_pid)
+                                    .ok_or_else(|| "DuplicateHandle caller missing".to_owned())?
+                                    .xp
+                                    .set_last_error_for_thread(active_tid, error);
+                                let mut registers = exit.registers;
+                                registers.eax = 0;
+                                contexts[active]
+                                    .context
+                                    .set_registers(registers)
+                                    .map_err(|error| error.to_string())?;
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 CHILD DUPLICATEHANDLE RESULT pid={} tid={} result=0 error={} cleanup=28-by-thunk",
+                                        active_pid, active_tid, error,
+                                    ),
+                                );
+                                continue;
+                            }
+                        };
+                        if duplicated.target_pid != active_pid {
+                            return Err(format!(
+                                "DuplicateHandle target pid={} is not active pid={active_pid}",
+                                duplicated.target_pid,
+                            ));
+                        }
+                        X86Memory(&child.address_space)
+                            .write(target_out, &duplicated.handle.to_le_bytes())
+                            .map_err(|error| error.to_string())?;
+                        let (object_kind, object_owner) = match session.objects.get(&duplicated.object) {
+                            Some(SessionObject::Thread(thread)) => (
+                                "thread",
+                                format!("pid{}/tid{}", thread.key.pid, thread.key.tid),
+                            ),
+                            Some(SessionObject::Process(process)) => {
+                                ("process", format!("pid{}", process.pid))
+                            }
+                            Some(SessionObject::Event(_)) => ("event", "-".into()),
+                            Some(SessionObject::Mutex(_)) => ("mutex", "-".into()),
+                            None => return Err("DuplicateHandle object disappeared".into()),
+                        };
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD DUPLICATEHANDLE RESULT pid={} tid={} source_process=pid{} source_handle=0x{:08x} target_process=pid{} target_handle=0x{:08x} inherit={} same_access=1 same_object=1 object_kind={} object_owner={} result=1 cleanup=28-by-thunk",
+                                active_pid,
+                                active_tid,
+                                duplicated.source_pid,
+                                frame[2],
+                                duplicated.target_pid,
+                                duplicated.handle,
+                                frame[6] as u8,
+                                object_kind,
+                                object_owner,
+                            ),
+                        );
+                        let mut registers = exit.registers;
+                        registers.eax = 1;
+                        contexts[active]
+                            .context
+                            .set_registers(registers)
+                            .map_err(|error| error.to_string())?;
+                        continue;
+                    }
                     if matches!(
                         operation,
                         child_loader::ProviderOp::CreateEventA

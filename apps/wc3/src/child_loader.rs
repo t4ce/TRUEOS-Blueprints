@@ -77,6 +77,7 @@ pub enum ProviderOp {
     ReadFile,
     WriteFile,
     FlushFileBuffers,
+    DuplicateHandle,
     CreateEventA,
     OpenEventA,
     SetEvent,
@@ -147,6 +148,7 @@ pub enum ProviderOp {
     CrtMalloc,
     CrtMemmove,
     CrtIsDigit,
+    CrtIsMbcSpace,
     CrtToUpper,
     CrtAtol,
     CrtSscanf,
@@ -305,6 +307,7 @@ impl ProviderOp {
             | Self::Direct3DCreate8
             | Self::D3D8Release => 4,
             Self::GetVolumeInformationA => 32,
+            Self::DuplicateHandle => 28,
             Self::SetEvent | Self::ResetEvent => 4,
             Self::GetCPInfo
             | Self::GetWindowsDirectoryA
@@ -448,6 +451,7 @@ impl ProviderOp {
             | Self::CrtMalloc
             | Self::CrtMemmove
             | Self::CrtIsDigit
+            | Self::CrtIsMbcSpace
             | Self::CrtToUpper
             | Self::CrtAtol
             | Self::CrtSscanf
@@ -545,6 +549,7 @@ impl ProviderOp {
                 | Self::CrtVsnprintf
                 | Self::CrtMemmove
                 | Self::CrtIsDigit
+                | Self::CrtIsMbcSpace
                 | Self::CrtToUpper
                 | Self::CrtAtol
                 | Self::CrtSscanf
@@ -694,6 +699,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "ReadFile" => ProviderOp::ReadFile,
             "WriteFile" => ProviderOp::WriteFile,
             "FlushFileBuffers" => ProviderOp::FlushFileBuffers,
+            "DuplicateHandle" => ProviderOp::DuplicateHandle,
             "CreateEventA" => ProviderOp::CreateEventA,
             "OpenEventA" => ProviderOp::OpenEventA,
             "SetEvent" => ProviderOp::SetEvent,
@@ -885,6 +891,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "malloc" => ProviderOp::CrtMalloc,
             "memmove" => ProviderOp::CrtMemmove,
             "isdigit" => ProviderOp::CrtIsDigit,
+            "_ismbcspace" => ProviderOp::CrtIsMbcSpace,
             "toupper" => ProviderOp::CrtToUpper,
             "atol" => ProviderOp::CrtAtol,
             "sscanf" => ProviderOp::CrtSscanf,
