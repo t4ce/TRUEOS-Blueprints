@@ -2180,6 +2180,30 @@ impl XpProcess {
                     },
                 ))
             }
+            ProviderOp::GetQueuedCompletionStatus => {
+                let [_, port, bytes_out, completion_key_out, overlapped_out, timeout] =
+                    arguments::<6>(memory, esp)?;
+                if bytes_out == 0 || completion_key_out == 0 || overlapped_out == 0 {
+                    return Err(ProviderDispatchError::Frontier {
+                        api: "GetQueuedCompletionStatus",
+                        detail: format!(
+                            "port=0x{port:08x} bytes_out=0x{bytes_out:08x} \
+                             completion_key_out=0x{completion_key_out:08x} \
+                             overlapped_out=0x{overlapped_out:08x} timeout=0x{timeout:08x}"
+                        ),
+                    });
+                }
+                Some(PersonalityAction::IoCompletionWait(
+                    GetQueuedCompletionStatusRequest {
+                        key: ThreadKey { pid, tid },
+                        port,
+                        bytes_out,
+                        completion_key_out,
+                        overlapped_out,
+                        timeout,
+                    },
+                ))
+            }
             ProviderOp::OpenEventA => {
                 const EVENT_MODIFY_STATE: u32 = 0x0000_0002;
 

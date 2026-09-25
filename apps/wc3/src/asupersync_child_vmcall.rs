@@ -6638,6 +6638,7 @@
                             | child_loader::ProviderOp::SetEvent
                             | child_loader::ProviderOp::ResetEvent
                             | child_loader::ProviderOp::CreateIoCompletionPort
+                            | child_loader::ProviderOp::GetQueuedCompletionStatus
                             | child_loader::ProviderOp::CreateMutexA
                             | child_loader::ProviderOp::ReleaseMutex
                             | child_loader::ProviderOp::CloseHandle
@@ -6668,6 +6669,120 @@
                                 &mut contexts,
                                 &mut wait_deadlines,
                             )?,
+                            PersonalityAction::IoCompletionWait(request) => {
+                                const ERROR_INVALID_HANDLE: u32 = 6;
+                                const WAIT_TIMEOUT_ERROR: u32 = 258;
+
+                                logl::log(
+                                    level::IMPORTANT,
+                                    format_args!(
+                                        "WC3 CHILD GETQUEUEDCOMPLETIONSTATUS CALL \\
+                                         pid={} tid={} port=0x{:08x} \\
+                                         bytes_out=0x{:08x} key_out=0x{:08x} \\
+                                         overlapped_out=0x{:08x} timeout=0x{:08x}",
+                                        request.key.pid,
+                                        request.key.tid,
+                                        request.port,
+                                        request.bytes_out,
+                                        request.completion_key_out,
+                                        request.overlapped_out,
+                                        request.timeout,
+                                    ),
+                                );
+
+                                match session.take_io_completion_packet(request.key, request.port) {
+                                    Err(_) => {
+                                        session
+                                            .process_mut(request.key.pid)
+                                            .ok_or_else(|| "GQCS process missing".to_owned())?
+                                            .xp
+                                            .set_last_error_for_thread(
+                                                request.key.tid,
+                                                ERROR_INVALID_HANDLE,
+                                            );
+                                        write_child_u32(child, request.overlapped_out, 0)?;
+                                        0
+                                    }
+                                    Ok(Some(packet)) => {
+                                        write_child_u32(
+                                            child,
+                                            request.bytes_out,
+                                            packet.bytes_transferred,
+                                        )?;
+                                        write_child_u32(
+                                            child,
+                                            request.completion_key_out,
+                                            packet.completion_key,
+                                        )?;
+                                        write_child_u32(
+                                            child,
+                                            request.overlapped_out,
+                                            packet.overlapped,
+                                        )?;
+                                        1
+                                    }
+                                    Ok(None) if request.timeout == 0 => {
+                                        write_child_u32(child, request.overlapped_out, 0)?;
+                                        session
+                                            .process_mut(request.key.pid)
+                                            .ok_or_else(|| "GQCS process missing".to_owned())?
+                                            .xp
+                                            .set_last_error_for_thread(
+                                                request.key.tid,
+                                                WAIT_TIMEOUT_ERROR,
+                                            );
+                                        0
+                                    }
+                                    Ok(None) if request.timeout == INFINITE => {
+                                        session
+                                            .block_io_completion(request.clone())
+                                            .map_err(str::to_owned)?;
+                                        logl::log(
+                                            level::IMPORTANT,
+                                            format_args!(
+                                                "WC3 CHILD IOCP BLOCK pid={} tid={} \\
+                                                 port=0x{:08x} timeout=INFINITE queue_depth=0 \\
+                                                 transport=offline",
+                                                request.key.pid,
+                                                request.key.tid,
+                                                request.port,
+                                            ),
+                                        );
+                                        loop {
+                                            if let Some(next) =
+                                                pop_runnable_context(&mut session, &contexts)
+                                            {
+                                                active = next;
+                                                break;
+                                            }
+                                            if let Some(deadline) =
+                                                wait_deadlines.values().map(|wait| wait.deadline).min()
+                                            {
+                                                tokio::time::sleep_until(deadline).await;
+                                                expire_runtime_waits(
+                                                    &mut session,
+                                                    &mut contexts,
+                                                    &mut wait_deadlines,
+                                                    &mut previous_wait_timeout,
+                                                )?;
+                                            } else {
+                                                tokio::time::sleep(Duration::from_millis(8)).await;
+                                            }
+                                        }
+                                        continue;
+                                    }
+                                    Ok(None) => {
+                                        return Err(format!(
+                                            "GetQueuedCompletionStatus finite-timeout frontier \\
+                                             pid={} tid={} port=0x{:08x} timeout={}",
+                                            request.key.pid,
+                                            request.key.tid,
+                                            request.port,
+                                            request.timeout,
+                                        ));
+                                    }
+                                }
+                            }
                             PersonalityAction::Block(request) => {
                                 if is_multiple_wait {
                                     logl::log(

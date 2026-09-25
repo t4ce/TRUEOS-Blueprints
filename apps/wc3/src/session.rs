@@ -791,6 +791,16 @@ pub struct CreatedChild {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GetQueuedCompletionStatusRequest {
+    pub key: ThreadKey,
+    pub port: u32,
+    pub bytes_out: u32,
+    pub completion_key_out: u32,
+    pub overlapped_out: u32,
+    pub timeout: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SessionRequest {
     CreateProcess(CreateProcessRequest),
     GetExitCodeProcess(GetExitCodeProcessRequest),
@@ -898,6 +908,7 @@ pub enum PersonalityAction {
     WindowFillRect(WindowFillRectRequest),
     WindowText(WindowTextRequest),
     Block(WaitRequest),
+    IoCompletionWait(GetQueuedCompletionStatusRequest),
     CallGuest(GuestCall),
     ExitThread(u32),
     ExitProcess(u32),
@@ -922,6 +933,7 @@ pub struct Wc3Session {
     pub active_windows: HashMap<ThreadKey, u32>,
     pub runnable: VecDeque<ThreadKey>,
     pub blocked: HashMap<ThreadKey, WaitRequest>,
+    pub iocp_waiters: HashMap<ThreadKey, GetQueuedCompletionStatusRequest>,
     pub critical_waiters: VecDeque<CriticalSectionWait>,
     pub next_pid: Pid,
     pub next_tid: Tid,
@@ -962,6 +974,7 @@ impl Wc3Session {
                 tid: LAUNCHER_TID,
             }]),
             blocked: HashMap::new(),
+            iocp_waiters: HashMap::new(),
             critical_waiters: VecDeque::new(),
             next_pid: 2,
             next_tid: 2,
@@ -1170,6 +1183,26 @@ impl Wc3Session {
                 },
             );
         Ok((handle, object))
+    }
+
+    pub fn take_io_completion_packet(
+        &mut self,
+        key: ThreadKey,
+        handle: u32,
+    ) -> Result<Option<IoCompletionPacket>, u32> {
+        let object = self
+            .process(key.pid)
+            .and_then(|process| process.handles.get(&handle))
+            .ok_or(6u32)?
+            .object;
+        let SessionObject::IoCompletionPort(port) = self.objects.get_mut(&object).ok_or(6u32)?
+        else {
+            return Err(6);
+        };
+        if port.owner_pid != key.pid {
+            return Err(6);
+        }
+        Ok(port.packets.pop_front())
     }
 
     pub fn set_thread_priority(
@@ -1879,6 +1912,7 @@ impl Wc3Session {
         }
         self.runnable.retain(|queued| *queued != key);
         self.blocked.remove(&key);
+        self.iocp_waiters.remove(&key);
         self.critical_waiters.retain(|wait| wait.key != key);
         self.abandon_mutexes(|owner| owner == key);
         self.reevaluate_blocked_waits()
@@ -2003,6 +2037,7 @@ impl Wc3Session {
 
         self.runnable.retain(|key| key.pid != pid);
         self.blocked.retain(|key, _| key.pid != pid);
+        self.iocp_waiters.retain(|key, _| key.pid != pid);
         self.critical_waiters.retain(|wait| wait.key.pid != pid);
         self.abandon_mutexes(|owner| owner.pid == pid);
         let windows: Vec<_> = self
@@ -2052,6 +2087,18 @@ impl Wc3Session {
         }
         self.runnable.retain(|key| *key != request.key);
         self.blocked.insert(request.key, request);
+        Ok(())
+    }
+
+    pub fn block_io_completion(
+        &mut self,
+        request: GetQueuedCompletionStatusRequest,
+    ) -> Result<(), &'static str> {
+        if self.iocp_waiters.contains_key(&request.key) {
+            return Err("GetQueuedCompletionStatus already blocked");
+        }
+        self.runnable.retain(|key| *key != request.key);
+        self.iocp_waiters.insert(request.key, request);
         Ok(())
     }
 

@@ -1340,6 +1340,9 @@
                             &mut wait_deadlines,
                         )?
                     }
+                    PersonalityAction::IoCompletionWait(_) => {
+                        return Err("launcher GetQueuedCompletionStatus unsupported".into());
+                    }
                     PersonalityAction::Session(SessionRequest::DuplicateHandle(request)) => {
                         let target_out = request.target_out;
                         let caller = request.caller;
