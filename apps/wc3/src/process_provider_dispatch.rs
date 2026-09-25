@@ -763,6 +763,15 @@ impl XpProcess {
                     .call_count
                     .checked_add(1)
                     .ok_or("call count overflow")?;
+                logl::log(
+                    level::IMPORTANT,
+                    format_args!(
+                        "WC3 CHILD CRT STRNICMP pid={pid} tid={tid} \\
+                         left=0x{left:08x} right=0x{right:08x} \\
+                         count=0x{count:08x} result=0x{result:08x} \\
+                         cleanup=0-by-thunk"
+                    ),
+                );
                 Ok(PersonalityAction::Return(result))
             }
             ProviderOp::WsprintfA => {

@@ -792,9 +792,6 @@ fn crt_strnicmp(
     // MSVCRT compares unsigned ANSI bytes after locale case-folding. The XP
     // personality is CP1252, including its handful of non-ASCII case pairs.
     let fold = |byte: u8| encode_cp1252(cp1252_lower(decode_cp1252(byte))).unwrap_or(byte);
-    if count > 1_048_576 {
-        return Err("strnicmp comparison exceeds compatibility bound");
-    }
     let left = read_c_bytes(memory, left).map_err(|_| "strnicmp left")?;
     let right = read_c_bytes(memory, right).map_err(|_| "strnicmp right")?;
     Ok(staticstr::compare_with(&left, &right, Some(count as usize), fold) as u32)

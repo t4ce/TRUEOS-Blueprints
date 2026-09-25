@@ -473,7 +473,15 @@
             xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
             Ok(PersonalityAction::Return(u32::MAX))
         );
-        assert_eq!(xp.call_count, 3);
+
+        memory.write(left, b"Warcraft III\0").unwrap();
+        memory.write(right, b"WARCRAFT III\0").unwrap();
+        write_u32(&mut memory, esp + 12, u32::MAX).unwrap();
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(0))
+        );
+        assert_eq!(xp.call_count, 4);
     }
 
     #[test]

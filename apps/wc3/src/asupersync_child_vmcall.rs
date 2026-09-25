@@ -1157,6 +1157,42 @@
                     if matches!(
                         &provider.symbol,
                         child_loader::ProviderSymbol::Name(name)
+                            if provider.module.eq_ignore_ascii_case("MSVCRT.dll")
+                                && name == "strtol"
+                    ) {
+                        let frame = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            exit.registers.esp,
+                            4,
+                        )?;
+                        let input = if frame[1] == 0 {
+                            None
+                        } else {
+                            Some(wc3::process::read_c_string(
+                                &X86Memory(&child.address_space),
+                                frame[1],
+                                256,
+                            )?)
+                        };
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD CRT STRTOL CALL pid={} tid={} \\
+                                 input_ptr=0x{:08x} input={:?} end_ptr=0x{:08x} \\
+                                 base={} caller_ret=0x{:08x} cleanup=0-by-thunk",
+                                active_pid,
+                                active_tid,
+                                frame[1],
+                                input,
+                                frame[2],
+                                frame[3] as i32,
+                                frame[0],
+                            ),
+                        );
+                    }
+                    if matches!(
+                        &provider.symbol,
+                        child_loader::ProviderSymbol::Name(name)
                             if provider.module.eq_ignore_ascii_case("KERNEL32.dll")
                                 && name == "OpenEventA"
                     ) {
