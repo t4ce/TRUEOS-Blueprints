@@ -1148,6 +1148,30 @@
                         .address_space
                         .read(exit.registers.esp, &mut caller_ret)
                         .map_err(|error| error.to_string())?;
+                    let provider_symbol = match &provider.symbol {
+                        child_loader::ProviderSymbol::Name(name) => name.clone(),
+                        child_loader::ProviderSymbol::Ordinal(ordinal) => format!("#{ordinal}"),
+                    };
+                    let last_execution = GuestThreadContext::last_execution_diagnostic();
+                    logl::log(
+                        level::IMPORTANT,
+                        format_args!(
+                            "WC3 PROVIDER ENTRY seq={} pid={} tid={} provider_id={} module=\"{}\" symbol=\"{}\" eip=0x{:08x} esp=0x{:08x} caller_ret=0x{:08x}",
+                            last_execution.sequence,
+                            active_pid,
+                            active_tid,
+                            provider_id,
+                            provider.module,
+                            provider_symbol,
+                            exit.registers.eip,
+                            exit.registers.esp,
+                            u32::from_le_bytes(caller_ret),
+                        ),
+                    );
+                    contexts[active].context.set_execution_provenance(
+                        format!("{}!{}", provider.module, provider_symbol),
+                        u32::from_le_bytes(caller_ret),
+                    );
                     if provider.module.eq_ignore_ascii_case("OPENGL32.dll") {
                         logl::log(
                             level::IMPORTANT,

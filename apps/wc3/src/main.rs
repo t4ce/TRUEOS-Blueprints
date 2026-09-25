@@ -93,7 +93,14 @@ fn main() {
         }
     };
     if let Err(error) = runtime.block_on(run()) {
-        logl::log(level::ERROR, format_args!("wc3: {error}"));
+        let execution = GuestThreadContext::last_execution_diagnostic();
+        logl::log(
+            level::ERROR,
+            format_args!(
+                "wc3: {error} last_exec_seq={} last_stage={:?} pid={} tid={}",
+                execution.sequence, execution.stage, execution.pid, execution.tid,
+            ),
+        );
     }
 }
 
@@ -258,7 +265,7 @@ async fn run() -> Result<(), String> {
     let mut contexts = vec![GuestContext {
         pid: LAUNCHER_PID,
         tid: LAUNCHER_TID,
-        context: GuestThreadContext::spawn(context)?,
+        context: GuestThreadContext::spawn(context, LAUNCHER_PID, LAUNCHER_TID)?,
         started: false,
         continuation: None,
         preemption_count: 0,
@@ -275,7 +282,7 @@ async fn run() -> Result<(), String> {
     let mut child_get_command_line_logged = false;
     let mut active_message_box = None;
     let mut active = 0usize;
-    asupersync::run_loop(
+    let outcome = asupersync::run_loop(
         &address_space,
         memory,
         &mut session,
@@ -291,7 +298,30 @@ async fn run() -> Result<(), String> {
         &mut active_message_box,
         active,
     )
-    .await
+    .await;
+    let execution = GuestThreadContext::last_execution_diagnostic();
+    let live_processes = session
+        .processes
+        .values()
+        .filter(|process| process.exit_code.is_none())
+        .count();
+    let frames: Vec<_> = frames
+        .iter()
+        .map(|(hwnd, frame)| format!("0x{hwnd:08x}->{}", frame.window_id()))
+        .collect();
+    logl::log(
+        level::IMPORTANT,
+        format_args!(
+            "WC3 SESSION RETURN outcome={:?} last_exec_seq={} last_stage={:?} live_processes={} contexts={} frames={:?}",
+            outcome,
+            execution.sequence,
+            execution.stage,
+            live_processes,
+            contexts.len(),
+            frames,
+        ),
+    );
+    outcome
 }
 
 const XSTATE_TEST_CODE_BASE: u32 = 0x0010_0000;
@@ -1056,7 +1086,7 @@ fn create_thread_context(
     Ok(GuestContext {
         pid: LAUNCHER_PID,
         tid: thread.tid,
-        context: GuestThreadContext::spawn(context)?,
+        context: GuestThreadContext::spawn(context, LAUNCHER_PID, thread.tid)?,
         started: false,
         continuation: None,
         preemption_count: 0,
@@ -1187,7 +1217,7 @@ fn create_child_primary_context(
     Ok(GuestContext {
         pid: child.pid,
         tid: child.tid,
-        context: GuestThreadContext::spawn(context)?,
+        context: GuestThreadContext::spawn(context, child.pid, child.tid)?,
         started: false,
         continuation: None,
         preemption_count: 0,
@@ -1268,7 +1298,7 @@ fn create_child_runtime_context(
     Ok(GuestContext {
         pid: child.pid,
         tid,
-        context: GuestThreadContext::spawn(context)?,
+        context: GuestThreadContext::spawn(context, child.pid, tid)?,
         started: false,
         continuation: None,
         preemption_count: 0,
