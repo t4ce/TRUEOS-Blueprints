@@ -7233,6 +7233,42 @@
                                             ),
                                         );
                                     }
+                                    child_loader::ProviderOp::ClipCursor => {
+                                        let [_, rect_ptr] = read_guest_words(
+                                            &X86Memory(&child.address_space),
+                                            exit.registers.esp,
+                                            2,
+                                        )?[..]
+                                        else {
+                                            unreachable!("ClipCursor frame has two words")
+                                        };
+                                        let rect = if rect_ptr == 0 {
+                                            None
+                                        } else {
+                                            let words = read_guest_words(
+                                                &X86Memory(&child.address_space),
+                                                rect_ptr,
+                                                4,
+                                            )?;
+                                            Some([
+                                                words[0] as i32,
+                                                words[1] as i32,
+                                                words[2] as i32,
+                                                words[3] as i32,
+                                            ])
+                                        };
+                                        logl::log(
+                                            level::IMPORTANT,
+                                            format_args!(
+                                                "WC3 CHILD CLIPCURSOR RESULT pid={} tid={} rect_ptr=0x{:08x} rect={:?} trueos_cursor_action=ignored result={} cleanup=4-by-thunk",
+                                                active_pid,
+                                                active_tid,
+                                                rect_ptr,
+                                                rect,
+                                                if result != 0 { "TRUE" } else { "FALSE" },
+                                            ),
+                                        );
+                                    }
                                     child_loader::ProviderOp::WglMakeCurrent => {
                                         let [_, hdc, hglrc] = read_guest_words(
                                             &X86Memory(&child.address_space),

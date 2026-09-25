@@ -58,6 +58,10 @@ impl XpProcess {
                     .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(result))
             }
+            ProviderOp::ClipCursor => {
+                let [_return_address, _rect] = arguments::<2>(memory, esp)?;
+                Ok(PersonalityAction::Return(1))
+            }
             ProviderOp::GetDeviceCaps => {
                 let result = self.get_device_caps(esp, memory)?;
                 self.call_count = self

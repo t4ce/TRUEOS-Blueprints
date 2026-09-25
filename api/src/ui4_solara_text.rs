@@ -1023,6 +1023,15 @@ impl Frame {
         })
     }
 
+    /// Round this frame's visible edge and hit region. `0` is rectangular;
+    /// `1000` is a circle for square frames or a capsule for wide frames.
+    /// The arc stays proportional when this frame is resized.
+    pub fn set_arc(&mut self, arc: u16) -> Result<(), Error> {
+        status(unsafe {
+            v::bp_abi::trueos_cabi_ui4_scene_frame_set_arc(self.window_id, u32::from(arc))
+        })
+    }
+
     /// Set the primary display's opaque hardware backdrop, beneath all planes.
     /// This is shared display state (currently Pipe A), not this frame's fill.
     /// The last writer wins, including UI4's color picker, and closing this

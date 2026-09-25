@@ -172,6 +172,7 @@ pub enum ProviderOp {
     ShowWindow,
     SetFocus,
     GetWindowRect,
+    ClipCursor,
     GetDC,
     ReleaseDC,
     GetDeviceCaps,
@@ -319,6 +320,7 @@ impl ProviderOp {
             Self::ShowWindow => 8,
             Self::SetFocus => 4,
             Self::GetWindowRect => 8,
+            Self::ClipCursor => 4,
             Self::GetDC => 4,
             Self::ReleaseDC => 8,
             Self::GetDeviceCaps => 8,
@@ -606,6 +608,7 @@ impl ProviderOp {
                 | Self::LoadImageA
                 | Self::LoadCursorA
                 | Self::RegisterClassExA
+                | Self::ClipCursor
         )
     }
 }
@@ -718,6 +721,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "ShowWindow" => ProviderOp::ShowWindow,
             "SetFocus" => ProviderOp::SetFocus,
             "GetWindowRect" => ProviderOp::GetWindowRect,
+            "ClipCursor" => ProviderOp::ClipCursor,
             "GetDC" => ProviderOp::GetDC,
             "ReleaseDC" => ProviderOp::ReleaseDC,
             "LoadImageA" => ProviderOp::LoadImageA,
