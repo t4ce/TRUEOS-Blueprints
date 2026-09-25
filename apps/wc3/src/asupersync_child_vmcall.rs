@@ -2795,7 +2795,8 @@
                         let lock_count = u32::from_le_bytes(after[4..8].try_into().unwrap());
                         let recursion = u32::from_le_bytes(after[8..12].try_into().unwrap());
                         let owner = u32::from_le_bytes(after[12..16].try_into().unwrap());
-                        logl::log(
+                        logl::trace!(
+                            "trace-api",
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD CRITICAL SECTION ENTER pid={} tid={} address=0x{:08x} lock_count=0x{:08x} recursion={} owner={} caller_ret=0x{:08x} resume_eip=0x{:08x} return_eax=0x{:08x}",
@@ -2859,7 +2860,8 @@
                         let recursion_before =
                             u32::from_le_bytes(before[8..12].try_into().unwrap());
                         let owner_before = u32::from_le_bytes(before[12..16].try_into().unwrap());
-                        logl::log(
+                        logl::trace!(
+                            "trace-api",
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD PROVIDER CALL pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" provider_id={} module=\"{}\" symbol=\"LeaveCriticalSection\" esp=0x{:08x} critical_section=0x{:08x} caller_ret=0x{:08x} lock_count_before=0x{:08x} recursion_before={} owner_before={}",
@@ -2938,7 +2940,8 @@
                                 );
                             }
                         }
-                        logl::log(
+                        logl::trace!(
+                            "trace-api",
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD CRITICAL SECTION LEAVE pid={} tid={} address=0x{:08x} lock_count=0x{:08x} recursion={} owner={} caller_ret=0x{:08x} resume_eip=0x{:08x} return_eax=0x{:08x}",
@@ -4001,7 +4004,8 @@
                                 let (committed_ranges, committed_bytes) = process.virtual_commit_state();
                                 (reservations, reserve_next, committed_ranges, committed_bytes)
                             };
-                            logl::log(
+                            logl::trace!(
+                                "trace-api",
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD VIRTUALALLOC NULL COMMIT pid={} tid={} requested_size=0x{:08x} region_size=0x{:08x} allocation_base=0x{:08x} protect=PAGE_READWRITE permissions=RW guest_mapped=1 zero_initialized=1 return_eax=0x{:08x}",
@@ -4013,7 +4017,8 @@
                                     request.base,
                                 ),
                             );
-                            logl::log(
+                            logl::trace!(
+                                "trace-api",
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD VIRTUAL MEMORY pid={} reservations={} committed_ranges={} committed_bytes={} reserve_next=0x{:08x}",
@@ -4107,7 +4112,8 @@
                                     committed_bytes,
                                 )
                             };
-                            logl::log(
+                            logl::trace!(
+                                "trace-api",
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD VIRTUALALLOC COMMIT pid={} tid={} address=0x{:08x} requested_size=0x{:08x} commit_size=0x{:08x} reservation_base=0x{:08x} reservation_size=0x{:08x} protect=PAGE_READWRITE permissions=RW guest_mapped=1 zero_initialized=1 return_eax=0x{:08x}",
@@ -4121,7 +4127,8 @@
                                     request.base
                                 ),
                             );
-                            logl::log(
+                            logl::trace!(
+                                "trace-api",
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD VIRTUAL MEMORY pid={} reservations={} committed_ranges={} committed_bytes={} reserve_next=0x{:08x}",
@@ -4158,7 +4165,8 @@
                         };
                         let result = reservation.as_ref().map(|value| value.base).unwrap_or(0);
                         if let Some(reservation) = reservation {
-                            logl::log(
+                            logl::trace!(
+                                "trace-api",
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD VIRTUALALLOC RESERVE pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" requested_address=0x00000000 requested_size=0x{:08x} reserved_base=0x{:08x} reserved_size=0x{:08x} allocation_type=MEM_RESERVE protect=PAGE_NOACCESS committed=0 guest_mapped=0",
@@ -4170,7 +4178,8 @@
                                     reservation.size,
                                 ),
                             );
-                            logl::log(
+                            logl::trace!(
+                                "trace-api",
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD VIRTUAL MEMORY pid={} reservations={} reserve_next=0x{:08x}",
@@ -4203,7 +4212,8 @@
                         if frame_caller_ret != u32::from_le_bytes(caller_ret) {
                             return Err("VirtualFree caller return mismatch".into());
                         }
-                        logl::log(
+                        logl::trace!(
+                            "trace-api",
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD VIRTUALFREE CALL pid={} tid={} during=\"{}\" provider_id={} address=0x{:08x} size=0x{:08x} free_type=0x{:08x} mem_decommit={} mem_release={} caller_ret=0x{:08x} cleanup=12-by-thunk",
@@ -4294,7 +4304,8 @@
                             let (remaining_ranges, remaining_bytes) = process.virtual_commit_state();
                             (reservations, reserve_next, remaining_ranges, remaining_bytes)
                         };
-                        logl::log(
+                        logl::trace!(
+                            "trace-api",
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD VIRTUALFREE RELEASE pid={} tid={} base=0x{:08x} reservation_size=0x{:08x} committed_ranges={} committed_bytes={} unmapped_bytes={} result=1 cleanup=12-by-thunk",
@@ -4307,7 +4318,8 @@
                                 committed_bytes,
                             ),
                         );
-                        logl::log(
+                        logl::trace!(
+                            "trace-api",
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD VIRTUAL MEMORY pid={} reservations={} committed_ranges={} committed_bytes={} reserve_next=0x{:08x}",
@@ -7331,7 +7343,8 @@
                                     );
                                 }
                                 if let Some(character) = crt_toupper {
-                                    logl::log(
+                                    logl::trace!(
+                                        "trace-api",
                                         level::IMPORTANT,
                                         format_args!(
                                             "WC3 CHILD CRT TOUPPER pid={} tid={} character=0x{:08x} result=0x{:08x} cleanup=0-by-thunk",
@@ -8311,7 +8324,8 @@
                                         let caller_module = child_pc_owner(child, caller_return)
                                             .map(|(owner, _)| owner.to_owned())
                                             .unwrap_or_else(|| running_module_name.clone());
-                                        logl::log(
+                                        logl::trace!(
+                                            "trace-api",
                                             level::IMPORTANT,
                                             format_args!(
                                                 "WC3 CHILD GETTICKCOUNT pid={} tid={} during=\"{}\" milliseconds={}",

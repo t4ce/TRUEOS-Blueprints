@@ -2523,35 +2523,35 @@ pub(super) async fn run_loop(
             // program stop: Context::resume() restores the logical context
             // into a fresh VMCS on whichever Tokio carrier runs next.
             ExitKind::Other if exit.detail == 52 => {
-                let (preemptions, same_page) = {
-                    let context = contexts
-                        .get_mut(active)
-                        .ok_or_else(|| "active guest context missing".to_owned())?;
-                    context.preemption_count = context
-                        .preemption_count
-                        .checked_add(1)
-                        .ok_or_else(|| "preemption count overflow".to_owned())?;
-                    let page = exit.registers.eip & !0xfff;
-                    if context.last_preemption_page == page {
-                        context.same_page_preemptions =
-                            context.same_page_preemptions.saturating_add(1);
-                    } else {
-                        context.last_preemption_page = page;
-                        context.same_page_preemptions = 1;
-                    }
-                    (context.preemption_count, context.same_page_preemptions)
-                };
-                if cfg!(feature = "trace-scan")
-                    && active_key.pid != LAUNCHER_PID
-                    && should_log_execution_sample(preemptions)
-                    && pending_child.as_ref().is_some_and(|child| {
-                        child.execution == ChildExecutionState::ImageEntryRunning
-                            && !(child.scan_progress.is_some()
-                                && (WAR3_SCAN_STEP_START..=WAR3_SCAN_STEP_END)
-                                    .contains(&exit.registers.eip))
-                    })
-                {
-                    let child = pending_child.as_ref().unwrap();
+                if cfg!(feature = "trace-scan") {
+                    let (preemptions, same_page) = {
+                        let context = contexts
+                            .get_mut(active)
+                            .ok_or_else(|| "active guest context missing".to_owned())?;
+                        context.preemption_count = context
+                            .preemption_count
+                            .checked_add(1)
+                            .ok_or_else(|| "preemption count overflow".to_owned())?;
+                        let page = exit.registers.eip & !0xfff;
+                        if context.last_preemption_page == page {
+                            context.same_page_preemptions =
+                                context.same_page_preemptions.saturating_add(1);
+                        } else {
+                            context.last_preemption_page = page;
+                            context.same_page_preemptions = 1;
+                        }
+                        (context.preemption_count, context.same_page_preemptions)
+                    };
+                    if active_key.pid != LAUNCHER_PID
+                        && should_log_execution_sample(preemptions)
+                        && pending_child.as_ref().is_some_and(|child| {
+                            child.execution == ChildExecutionState::ImageEntryRunning
+                                && !(child.scan_progress.is_some()
+                                    && (WAR3_SCAN_STEP_START..=WAR3_SCAN_STEP_END)
+                                        .contains(&exit.registers.eip))
+                        })
+                    {
+                        let child = pending_child.as_ref().unwrap();
                     let (owner, rva) =
                         child_pc_owner(child, exit.registers.eip).unwrap_or(("unknown", 0));
                     let mut code = [0u8; 16];
@@ -2608,19 +2608,20 @@ pub(super) async fn run_loop(
                             exit.registers.eflags,
                         ),
                     );
-                    if same_page == 1024 {
-                        logl::log(
-                            level::IMPORTANT,
-                            format_args!(
-                                "WC3 CHILD EXEC HOTPAGE pid={} tid={} owner={:?} page=0x{:08x} eip=0x{:08x} samples={}",
-                                active_key.pid,
-                                active_key.tid,
-                                owner,
-                                exit.registers.eip & !0xfff,
-                                exit.registers.eip,
-                                same_page,
-                            ),
-                        );
+                        if same_page == 1024 {
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD EXEC HOTPAGE pid={} tid={} owner={:?} page=0x{:08x} eip=0x{:08x} samples={}",
+                                    active_key.pid,
+                                    active_key.tid,
+                                    owner,
+                                    exit.registers.eip & !0xfff,
+                                    exit.registers.eip,
+                                    same_page,
+                                ),
+                            );
+                        }
                     }
                 }
                 expire_runtime_waits(
