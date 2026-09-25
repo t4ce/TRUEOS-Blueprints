@@ -23,7 +23,7 @@ use crate::{
     session::{
         CreateEventRequest, CreateMutexRequest, CreateProcessRequest, CreateWindowRequest,
         GetExitCodeProcessRequest, LoadImageRequest, OpenFileRequest, PersonalityAction, SessionRequest,
-        SetWindowPosRequest, ThreadKey, WaitRequest, WindowBlitRequest, WindowTextRequest,
+        SetWindowPosRequest, ThreadKey, WaitRequest, WindowBlitRequest, WindowFillRectRequest, WindowTextRequest,
     },
     staticstr,
     thunk32,

@@ -735,6 +735,14 @@ pub struct WindowTextRequest {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WindowFillRectRequest {
+    pub hwnd: u32,
+    pub hdc: u32,
+    pub rect: [i32; 4],
+    pub rgba: [u8; 4],
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CreatedChild {
     pub pid: Pid,
     pub tid: Tid,
@@ -836,6 +844,7 @@ pub enum PersonalityAction {
     OpenFile(OpenFileRequest),
     Session(SessionRequest),
     WindowBlit(WindowBlitRequest),
+    WindowFillRect(WindowFillRectRequest),
     WindowText(WindowTextRequest),
     Block(WaitRequest),
     CallGuest(GuestCall),

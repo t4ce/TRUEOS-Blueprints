@@ -2104,6 +2104,7 @@ impl XpProcess {
                     paint_struct,
                 }))
             }
+            ProviderOp::FillRect => Some(self.fill_rect_static(esp, memory)?),
             ProviderOp::SetFocus => Some(PersonalityAction::Session(SessionRequest::SetFocus {
                 pid,
                 hwnd: arguments::<2>(memory, esp)?[1],

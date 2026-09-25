@@ -180,6 +180,7 @@ pub enum ProviderOp {
     SetWindowTextA,
     ClipCursor,
     BeginPaint,
+    FillRect,
     EndPaint,
     GetDC,
     ReleaseDC,
@@ -339,6 +340,7 @@ impl ProviderOp {
             Self::SetWindowTextA => 8,
             Self::ClipCursor => 4,
             Self::BeginPaint | Self::EndPaint => 8,
+            Self::FillRect => 12,
             Self::GetDC => 4,
             Self::ReleaseDC => 8,
             Self::GetDeviceCaps => 8,
@@ -750,6 +752,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "SetWindowTextA" => ProviderOp::SetWindowTextA,
             "ClipCursor" => ProviderOp::ClipCursor,
             "BeginPaint" => ProviderOp::BeginPaint,
+            "FillRect" => ProviderOp::FillRect,
             "EndPaint" => ProviderOp::EndPaint,
             "GetDC" => ProviderOp::GetDC,
             "ReleaseDC" => ProviderOp::ReleaseDC,
@@ -936,6 +939,18 @@ pub fn external_export_thunk_kind(import: &ProviderImport) -> Option<thunk32::Ki
 #[cfg(test)]
 mod beginthreadex_tests {
     use super::*;
+
+    #[test]
+    fn user32_fill_rect_has_stdcall_abi() {
+        let import = ProviderImport {
+            module: "USER32.dll".into(),
+            symbol: ProviderSymbol::Name("FillRect".into()),
+            iat_rva: 0,
+        };
+        assert_eq!(provider_op(&import), ProviderOp::FillRect);
+        assert_eq!(provider_op(&import).stack_cleanup_bytes(), 12);
+        assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Stdcall(12));
+    }
 
     #[test]
     fn static_gdi_imports_have_typed_frontier_dispatch_and_abi() {

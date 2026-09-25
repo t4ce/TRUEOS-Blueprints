@@ -45,6 +45,39 @@ fn trueos_gl_pixel_format_descriptor(copied_bytes: u16) -> [u8; PIXELFORMATDESCR
 }
 
 impl XpProcess {
+    fn fill_rect_static(
+        &self,
+        esp: u32,
+        memory: &impl GuestMemory,
+    ) -> Result<PersonalityAction, ProviderDispatchError> {
+        let [_, hdc, rect_ptr, brush] = arguments::<4>(memory, esp)?;
+        let hwnd = match self.gdi_objects.get(&hdc) {
+            Some(GdiObject::DeviceContext(DeviceContext {
+                target: DcTarget::WindowPaint { hwnd },
+                ..
+            })) => *hwnd,
+            _ => return Err(ProviderDispatchError::Frontier {
+                api: "FillRect",
+                detail: format!("unsupported hdc=0x{hdc:08x}"),
+            }),
+        };
+        if brush != STOCK_BLACK_BRUSH {
+            return Err(ProviderDispatchError::Frontier {
+                api: "FillRect",
+                detail: format!("unsupported brush=0x{brush:08x}"),
+            });
+        }
+        if rect_ptr == 0 { return Ok(PersonalityAction::Return(0)); }
+        let rect = [
+            read_i32(memory, rect_ptr)?,
+            read_i32(memory, rect_ptr + 4)?,
+            read_i32(memory, rect_ptr + 8)?,
+            read_i32(memory, rect_ptr + 12)?,
+        ];
+        Ok(PersonalityAction::WindowFillRect(WindowFillRectRequest {
+            hwnd, hdc, rect, rgba: [0, 0, 0, 255],
+        }))
+    }
     fn static_gdi_stub(&self, api: &'static str) -> Result<u32, ProviderDispatchError> {
         Err(ProviderDispatchError::Frontier {
             api,
