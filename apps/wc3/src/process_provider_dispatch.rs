@@ -641,16 +641,18 @@ impl XpProcess {
                     .call_count
                     .checked_add(1)
                     .ok_or("call count overflow")?;
-                logl::log(
-                    level::IMPORTANT,
-                    format_args!(
-                        "WC3 CHILD CRT STRTOL pid={pid} tid={tid} \\
-                         input=0x{input:08x} end_ptr=0x{end_ptr:08x} \\
-                         base={base} consumed={consumed} \\
-                         result=0x{result:08x} signed={} cleanup=0-by-thunk",
-                        result as i32,
-                    ),
-                );
+                if cfg!(feature = "trace-api") {
+                    logl::log(
+                        level::IMPORTANT,
+                        format_args!(
+                            "WC3 CHILD CRT STRTOL pid={pid} tid={tid} \\
+                             input=0x{input:08x} end_ptr=0x{end_ptr:08x} \\
+                             base={base} consumed={consumed} \\
+                             result=0x{result:08x} signed={} cleanup=0-by-thunk",
+                            result as i32,
+                        ),
+                    );
+                }
                 Ok(PersonalityAction::Return(result))
             }
             ProviderOp::CrtSscanf => {
@@ -1174,6 +1176,51 @@ impl XpProcess {
                     .checked_add(1)
                     .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(monotonic_counter_millis()))
+            }
+            ProviderOp::WsaStartup => {
+                let [_, requested, wsadata] = arguments::<3>(memory, esp)?;
+                const WSAVERNOTSUPPORTED: u32 = 10092;
+                const WSAEFAULT: u32 = 10014;
+
+                if wsadata == 0 {
+                    return Ok(PersonalityAction::Return(WSAEFAULT));
+                }
+
+                let requested = requested as u16;
+                let negotiated = match requested {
+                    0x0100 => 0x0100u16,
+                    value if value >= 0x0101 => 0x0101u16,
+                    _ => return Ok(PersonalityAction::Return(WSAVERNOTSUPPORTED)),
+                };
+
+                // 32-bit WSADATA: two version words, 257-byte description,
+                // 129-byte status, two capacity words, alignment, and the
+                // lpVendorInfo pointer. This remains an offline personality.
+                let mut data = [0u8; 400];
+                data[0..2].copy_from_slice(&negotiated.to_le_bytes());
+                data[2..4].copy_from_slice(&0x0101u16.to_le_bytes());
+                let description = b"TRUEOS Winsock 1.1 compatibility\0";
+                data[4..4 + description.len()].copy_from_slice(description);
+                let status = b"Running\0";
+                data[261..261 + status.len()].copy_from_slice(status);
+                // iMaxSockets, iMaxUdpDg, and lpVendorInfo deliberately stay
+                // zero: successful Winsock initialization grants no transport.
+                memory.write(wsadata, &data)?;
+
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                logl::log(
+                    level::IMPORTANT,
+                    format_args!(
+                        "WC3 CHILD WSASTARTUP pid={pid} tid={tid} \\
+                         requested=0x{requested:04x} negotiated=0x{negotiated:04x} \\
+                         high=0x0101 transport=offline trueos_network=0 \\
+                         result=0 cleanup=8-by-thunk"
+                    ),
+                );
+                Ok(PersonalityAction::Return(0))
             }
             ProviderOp::Sleep => {
                 // Compatibility-only scheduling hint: the coordinator yields

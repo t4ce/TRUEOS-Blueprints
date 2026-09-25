@@ -29,6 +29,12 @@ single-step heartbeats, and frontier/error reporting still run. This reduces
 instrumentation overhead; it does not skip guest instructions or restore a
 whole session.
 
+The current hot-path gate also covers per-call `_ftol`, `rand`, `strtol`,
+`TlsGetValue`, registry-open, critical-section-init, and synchronization-return
+diagnostics. With `trace-api` disabled, their diagnostic-only guest reads,
+string allocations, and formatting are skipped. Exact octal `strtol("0")`
+calls use a two-byte parser shortcut; other inputs retain the general parser.
+
 Re-enable only the diagnostics needed via Cargo features:
 
 - `trace-scan`: scan/table progress observers and execution samples.

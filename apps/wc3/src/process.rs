@@ -782,6 +782,15 @@ fn crt_strtol(
         });
     }
 
+    // The observed octal-zero call repeats while loading the game data. A
+    // two-byte exact match avoids a String allocation and the general parser.
+    if base == 8 && end_ptr == 0 {
+        let mut zero = [0; 2];
+        if memory.read(input_ptr, &mut zero).is_ok() && zero == [b'0', 0] {
+            return Ok((0, 1));
+        }
+    }
+
     let text = read_c_string(memory, input_ptr, 256)?;
     let bytes = text.as_bytes();
     let mut at = 0usize;

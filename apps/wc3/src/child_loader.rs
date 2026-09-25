@@ -67,6 +67,7 @@ pub enum ProviderOp {
     GetLastError,
     FormatMessageA,
     GetTickCount,
+    WsaStartup,
     Sleep,
     CreateThread,
     SetThreadPriority,
@@ -404,6 +405,7 @@ impl ProviderOp {
             Self::GlFinish => 0,
             Self::GlReadPixels => 28,
             Self::SetTextColor | Self::SetBkColor | Self::SetTextAlign => 8,
+            Self::WsaStartup => 8,
             Self::SetPixelFormat => 12,
             Self::TextOutW => 20,
             Self::SetDeviceGammaRamp | Self::GetDeviceGammaRamp => 8,
@@ -511,6 +513,7 @@ impl ProviderOp {
                 | Self::GetLastError
                 | Self::FormatMessageA
                 | Self::GetTickCount
+                | Self::WsaStartup
                 | Self::Sleep
                 | Self::DisableThreadLibraryCalls
                 | Self::CreateFileA
@@ -652,6 +655,12 @@ impl ProviderOp {
 }
 
 pub fn provider_op(import: &ProviderImport) -> ProviderOp {
+    if import.module.eq_ignore_ascii_case("WSOCK32.dll") {
+        return match &import.symbol {
+            ProviderSymbol::Ordinal(115) => ProviderOp::WsaStartup,
+            _ => ProviderOp::Unknown,
+        };
+    }
     let ProviderSymbol::Name(symbol) = &import.symbol else {
         return ProviderOp::Unknown;
     };

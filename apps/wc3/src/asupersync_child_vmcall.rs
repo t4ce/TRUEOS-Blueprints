@@ -1148,13 +1148,7 @@
                         .address_space
                         .read(exit.registers.esp, &mut caller_ret)
                         .map_err(|error| error.to_string())?;
-                    let symbol = match &provider.symbol {
-                        child_loader::ProviderSymbol::Name(name) => format!("symbol=\"{}\"", name),
-                        child_loader::ProviderSymbol::Ordinal(ordinal) => {
-                            format!("ordinal={}", ordinal)
-                        }
-                    };
-                    if matches!(
+                    if cfg!(feature = "trace-api") && matches!(
                         &provider.symbol,
                         child_loader::ProviderSymbol::Name(name)
                             if provider.module.eq_ignore_ascii_case("MSVCRT.dll")
@@ -1174,7 +1168,8 @@
                                 256,
                             )?)
                         };
-                        logl::log(
+                        logl::trace!(
+                            "trace-api",
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD CRT STRTOL CALL pid={} tid={} \\
@@ -2670,7 +2665,8 @@
                                 "child critical-section initialization verification failed".into(),
                             );
                         }
-                        logl::log(
+                        logl::trace!(
+                            "trace-api",
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD CRITICAL SECTION INIT pid={} address=0x{:08x} lock_count=0xffffffff recursion=0 owner=0 caller_ret=0x{:08x} resume_eip=0x{:08x} return_eax=0x{:08x}",
@@ -3360,11 +3356,15 @@
                                 && name == "_ftol"
                     );
                     if is_crt_ftol {
-                        let caller_ret = read_guest_words(
-                            &X86Memory(&child.address_space),
-                            exit.registers.esp,
-                            1,
-                        )?[0];
+                        let diagnostic_caller_ret = if cfg!(feature = "trace-api") {
+                            Some(read_guest_words(
+                                &X86Memory(&child.address_space),
+                                exit.registers.esp,
+                                1,
+                            )?[0])
+                        } else {
+                            None
+                        };
                         let mut state = contexts[active]
                             .context
                             .extended_state()
@@ -3385,20 +3385,30 @@
                             .context
                             .set_registers(registers)
                             .map_err(|error| error.to_string())?;
-                        logl::log(
-                            level::IMPORTANT,
-                            format_args!(
-                                "WC3 CHILD CRT FTOL pid={} tid={} caller_ret=0x{:08x} result={} eax=0x{:08x} edx=0x{:08x} cleanup=0-by-thunk",
-                                active_pid,
-                                active_tid,
-                                caller_ret,
-                                result,
-                                result as u32,
-                                (result >> 32) as u32,
-                            ),
-                        );
+                        if let Some(caller_ret) = diagnostic_caller_ret {
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD CRT FTOL pid={} tid={} caller_ret=0x{:08x} result={} eax=0x{:08x} edx=0x{:08x} cleanup=0-by-thunk",
+                                    active_pid,
+                                    active_tid,
+                                    caller_ret,
+                                    result,
+                                    result as u32,
+                                    (result >> 32) as u32,
+                                ),
+                            );
+                        }
                         continue;
                     }
+                    // Render names only for diagnostics; the common modeled
+                    // provider path does not need an allocated String.
+                    let symbol = || match &provider.symbol {
+                        child_loader::ProviderSymbol::Name(name) => format!("symbol=\"{}\"", name),
+                        child_loader::ProviderSymbol::Ordinal(ordinal) => {
+                            format!("ordinal={}", ordinal)
+                        }
+                    };
                     let is_crt_malloc = matches!(
                         &provider.symbol,
                         child_loader::ProviderSymbol::Name(name)
@@ -3611,7 +3621,8 @@
                             return Err("RegOpenKeyExA caller return mismatch".into());
                         }
                         let subkey = frame.subkey.as_deref().unwrap_or("");
-                        logl::log(
+                        logl::trace!(
+                            "trace-api",
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD REGISTRY OPEN pid={} tid={} root=\"{}\" subkey=[redacted] subkey_bytes={} sam=0x{:08x}",
@@ -3653,7 +3664,8 @@
                         } else {
                             (2u32, None)
                         };
-                        logl::log(
+                        logl::trace!(
+                            "trace-api",
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD REGISTRY OPEN RESULT pid={} exists={} result={} handle={}",
@@ -6731,13 +6743,14 @@
                             }
                             _ => return Err("unexpected child synchronization action".into()),
                         };
-                        logl::log(
+                        logl::trace!(
+                            "trace-api",
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD SYNC RETURN pid={} tid={} {} eax=0x{:08x} cleanup={}-by-thunk",
                                 active_pid,
                                 active_tid,
-                                symbol,
+                                symbol(),
                                 result,
                                 operation.stack_cleanup_bytes()
                             ),
@@ -7375,13 +7388,14 @@
                                         ),
                                     );
                                 }
-                                if crt_rand {
+                                if cfg!(feature = "trace-api") && crt_rand {
                                     let state = session
                                         .process(active_pid)
                                         .ok_or_else(|| "child process missing".to_owned())?
                                         .xp
                                         .crt_rng_seed();
-                                    logl::log(
+                                    logl::trace!(
+                                        "trace-api",
                                         level::IMPORTANT,
                                         format_args!(
                                             "WC3 CHILD CRT RAND pid={} tid={} result={} eax=0x{:08x} state=0x{:08x} cleanup=0-by-thunk",
@@ -8391,7 +8405,7 @@
                                             ),
                                         );
                                     }
-                                    child_loader::ProviderOp::TlsGetValue => {
+                                    child_loader::ProviderOp::TlsGetValue if cfg!(feature = "trace-api") => {
                                         let [_, slot] = read_guest_words(
                                             &X86Memory(&child.address_space),
                                             exit.registers.esp,
@@ -8399,7 +8413,8 @@
                                         )?[..] else {
                                             unreachable!("TlsGetValue frame has two words")
                                         };
-                                        logl::log(
+                                        logl::trace!(
+                                            "trace-api",
                                             level::IMPORTANT,
                                             format_args!(
                                                 "WC3 CHILD TLS GET pid={} tid={} during=\"{}\" slot={} value=0x{:08x}",
@@ -8423,7 +8438,7 @@
                                         running_module_name,
                                         provider_id,
                                         provider.module,
-                                        symbol,
+                                        symbol(),
                                         result,
                                         operation.stack_cleanup_bytes(),
                                     ),
@@ -8525,7 +8540,7 @@
                                         running_module_name,
                                         provider_id,
                                         provider.module,
-                                        symbol,
+                                        symbol(),
                                         exit.registers.eip,
                                         exit.registers.esp,
                                         u32::from_le_bytes(caller_ret),
@@ -8576,7 +8591,7 @@
                             running_module_name,
                             provider_id,
                             provider.module,
-                            symbol,
+                            symbol(),
                             exit.registers.eip,
                             exit.registers.esp,
                             u32::from_le_bytes(caller_ret)

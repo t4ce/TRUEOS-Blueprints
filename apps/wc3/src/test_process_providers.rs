@@ -897,6 +897,23 @@
     }
 
     #[test]
+    fn child_crt_strtol_octal_zero_fastpath_matches_general_parser() {
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let input = STACK_TOP - 0x200;
+        let end = STACK_TOP - 0x80;
+        memory.write(input, b"0\0").unwrap();
+        assert_eq!(crt_strtol(&mut memory, input, 0, 8), Ok((0, 1)));
+        assert_eq!(crt_strtol(&mut memory, input, end, 8), Ok((0, 1)));
+        assert_eq!(read_u32(&memory, end).unwrap(), input + 1);
+
+        memory.write(input, b"07\0").unwrap();
+        assert_eq!(crt_strtol(&mut memory, input, 0, 8), Ok((7, 2)));
+    }
+
+    #[test]
     fn child_crt_ftol_is_cdecl_and_emits_a_plain_return_thunk() {
         let provider = ProviderImport {
             module: "MSVCRT.dll".into(),
@@ -1212,6 +1229,48 @@
             read_c_string(&memory, output, 64),
             Ok("12.50/000012ab".into())
         );
+    }
+
+    #[test]
+    fn child_wsastartup_ordinal_115_initializes_an_offline_wsadata() {
+        let provider = ProviderImport {
+            module: "WSOCK32.dll".into(),
+            symbol: ProviderSymbol::Ordinal(115),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&provider);
+        assert_eq!(operation, ProviderOp::WsaStartup);
+        assert!(operation.is_modeled());
+        assert!(operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 8);
+        assert_eq!(provider_thunk_kind(&provider), thunk32::Kind::Stdcall(8));
+
+        let mut xp = XpProcess::new_child();
+        xp.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = STACK_TOP - 0x80;
+        let wsadata = STACK_TOP - 0x800;
+        write_u32(&mut memory, esp, 0x6f00_0000).unwrap();
+        write_u32(&mut memory, esp + 4, 0x0101).unwrap();
+        write_u32(&mut memory, esp + 8, wsadata).unwrap();
+
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(0))
+        );
+        let mut data = [0u8; 400];
+        memory.read(wsadata, &mut data).unwrap();
+        assert_eq!(&data[0..2], &0x0101u16.to_le_bytes());
+        assert_eq!(&data[2..4], &0x0101u16.to_le_bytes());
+        assert_eq!(
+            &data[4..4 + b"TRUEOS Winsock 1.1 compatibility\0".len()],
+            b"TRUEOS Winsock 1.1 compatibility\0"
+        );
+        assert_eq!(&data[390..400], &[0; 10]);
+        assert_eq!(xp.call_count, 1);
     }
 
     #[test]
