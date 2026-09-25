@@ -1488,6 +1488,76 @@
                     if matches!(
                         &provider.symbol,
                         child_loader::ProviderSymbol::Name(name)
+                            if provider.module.eq_ignore_ascii_case("OPENGL32.dll")
+                                && name == "glDisable"
+                    ) {
+                        let frame = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            exit.registers.esp,
+                            2,
+                        )?;
+                        let cap_name = match frame[1] {
+                            0x0b44 => "GL_CULL_FACE",
+                            0x0b50 => "GL_LIGHTING",
+                            0x0b57 => "GL_COLOR_MATERIAL",
+                            0x0b60 => "GL_FOG",
+                            0x0b71 => "GL_DEPTH_TEST",
+                            0x0ba1 => "GL_NORMALIZE",
+                            0x0bc0 => "GL_ALPHA_TEST",
+                            0x0bd0 => "GL_DITHER",
+                            0x0be2 => "GL_BLEND",
+                            0x0c11 => "GL_SCISSOR_TEST",
+                            0x0de1 => "GL_TEXTURE_2D",
+                            0x4000 => "GL_LIGHT0",
+                            0x4001 => "GL_LIGHT1",
+                            0x8037 => "GL_POLYGON_OFFSET_FILL",
+                            _ => "UNKNOWN",
+                        };
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD GLDISABLE CALL pid={} tid={} cap=0x{:08x} cap_name={} caller_ret=0x{:08x}",
+                                active_pid,
+                                active_tid,
+                                frame[1],
+                                cap_name,
+                                frame[0],
+                            ),
+                        );
+                    }
+                    if matches!(
+                        &provider.symbol,
+                        child_loader::ProviderSymbol::Name(name)
+                            if provider.module.eq_ignore_ascii_case("OPENGL32.dll")
+                                && name == "glLoadMatrixf"
+                    ) {
+                        let frame = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            exit.registers.esp,
+                            2,
+                        )?;
+                        let mut raw = [0u8; 64];
+                        X86Memory(&child.address_space).read(frame[1], &mut raw)?;
+                        let matrix = core::array::from_fn::<f32, 16, _>(|index| {
+                            f32::from_le_bytes(
+                                raw[index * 4..index * 4 + 4].try_into().unwrap(),
+                            )
+                        });
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD GLLOADMATRIXF CALL pid={} tid={} matrix=0x{:08x} values={:?} caller_ret=0x{:08x}",
+                                active_pid,
+                                active_tid,
+                                frame[1],
+                                matrix,
+                                frame[0],
+                            ),
+                        );
+                    }
+                    if matches!(
+                        &provider.symbol,
+                        child_loader::ProviderSymbol::Name(name)
                             if provider.module.eq_ignore_ascii_case("USER32.dll")
                                 && name == "ReleaseDC"
                     ) {
@@ -7225,6 +7295,24 @@
                                                 source,
                                                 stored,
                                                 modelview_applied,
+                                            ),
+                                        );
+                                    }
+                                    child_loader::ProviderOp::GlDisable => {
+                                        let (hglrc, enabled) = session
+                                            .process(active_pid)
+                                            .ok_or_else(|| "child process missing".to_owned())?
+                                            .xp
+                                            .gl_light0_enabled_diagnostic(active_tid)
+                                            .ok_or_else(|| "current GL context missing after glDisable".to_owned())?;
+                                        logl::log(
+                                            level::IMPORTANT,
+                                            format_args!(
+                                                "WC3 CHILD GLDISABLE RESULT pid={} tid={} hglrc=0x{:08x} cap=GL_LIGHT0 previous_enabled=0 enabled={} light_parameters_preserved=1 result=void cleanup=4-by-thunk",
+                                                active_pid,
+                                                active_tid,
+                                                hglrc,
+                                                enabled as u8,
                                             ),
                                         );
                                     }

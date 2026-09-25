@@ -172,6 +172,12 @@ impl XpProcess {
         })
     }
 
+    pub fn gl_light0_enabled_diagnostic(&self, tid: u32) -> Option<(u32, bool)> {
+        self.gl_runtime.as_ref()?.contexts.iter().find_map(|(hglrc, context)| {
+            (context.current_tid == Some(tid)).then_some((*hglrc, context.light0_enabled))
+        })
+    }
+
     fn static_gl_stub(&self, api: &'static str) -> Result<u32, ProviderDispatchError> {
         Err(ProviderDispatchError::Frontier {
             api,
@@ -180,7 +186,7 @@ impl XpProcess {
     }
 
     static_gl_stubs!(
-        gl_disable_static => "glDisable", gl_enable_static => "glEnable",
+        gl_enable_static => "glEnable",
         gl_fogfv_static => "glFogfv",
         gl_fogf_static => "glFogf", gl_fogi_static => "glFogi",
         gl_draw_buffer_static => "glDrawBuffer", gl_depth_func_static => "glDepthFunc",
@@ -234,6 +240,23 @@ impl XpProcess {
                 api,
                 detail: format!("tid={tid} has no current HGLRC"),
             })
+    }
+
+    fn gl_disable_static(
+        &mut self,
+        tid: u32,
+        esp: u32,
+        memory: &impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
+        let [_, cap] = arguments::<2>(memory, esp)?;
+        if cap != GL_LIGHT0 {
+            return Err(ProviderDispatchError::Frontier {
+                api: "glDisable",
+                detail: format!("tid={tid} unobserved cap=0x{cap:08x}"),
+            });
+        }
+        self.gl_context_mut(tid, "glDisable")?.light0_enabled = false;
+        Ok(0)
     }
 
     fn gl_light_modelfv_static(
@@ -926,6 +949,7 @@ impl XpProcess {
                 light_model_ambient: [0.2, 0.2, 0.2, 1.0],
                 light0_specular: [1.0, 1.0, 1.0, 1.0],
                 light0_position_eye: [0.0, 0.0, 1.0, 0.0],
+                light0_enabled: false,
                 ui4_window_id: None,
                 viewport: [0, 0, 0, 0],
                 clear_color: [0.0, 0.0, 0.0, 0.0],
