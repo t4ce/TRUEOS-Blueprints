@@ -2386,6 +2386,8 @@
         assert!(is_system_provider_module("C:\\Windows\\System32\\D3D8.DLL"));
         assert!(is_system_provider_module("wsock32.dll"));
         assert!(is_system_provider_module("C:\\Windows\\System32\\MSWSOCK.DLL"));
+        assert!(is_system_provider_module("ws2_32.dll"));
+        assert!(is_system_provider_module("C:\\Windows\\System32\\WS2_32.DLL"));
         assert!(!is_system_provider_module("War3Patch.dll"));
 
         let mut xp = XpProcess::new_child();

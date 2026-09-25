@@ -1688,6 +1688,7 @@ pub fn is_system_provider_module(module: &str) -> bool {
             | "msvcrt.dll"
             | "wsock32.dll"
             | "mswsock.dll"
+            | "ws2_32.dll"
             | "ole32.dll"
             | "imm32.dll"
             | "comdlg32.dll"
