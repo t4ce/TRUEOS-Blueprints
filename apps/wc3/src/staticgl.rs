@@ -151,6 +151,12 @@ impl XpProcess {
             })
     }
 
+    pub fn gl_light_model_ambient_diagnostic(&self, tid: u32) -> Option<(u32, [f32; 4])> {
+        self.gl_runtime.as_ref()?.contexts.iter().find_map(|(hglrc, context)| {
+            (context.current_tid == Some(tid)).then_some((*hglrc, context.light_model_ambient))
+        })
+    }
+
     fn static_gl_stub(&self, api: &'static str) -> Result<u32, ProviderDispatchError> {
         Err(ProviderDispatchError::Frontier {
             api,

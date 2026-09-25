@@ -7097,6 +7097,24 @@
                                             ),
                                         );
                                     }
+                                    child_loader::ProviderOp::GlLightModelfv => {
+                                        let (hglrc, ambient) = session
+                                            .process(active_pid)
+                                            .ok_or_else(|| "child process missing".to_owned())?
+                                            .xp
+                                            .gl_light_model_ambient_diagnostic(active_tid)
+                                            .ok_or_else(|| "current GL context missing after glLightModelfv".to_owned())?;
+                                        logl::log(
+                                            level::IMPORTANT,
+                                            format_args!(
+                                                "WC3 CHILD GLLIGHTMODELFV RESULT pid={} tid={} hglrc=0x{:08x} pname=GL_LIGHT_MODEL_AMBIENT stored={:?} result=void cleanup=8-by-thunk",
+                                                active_pid,
+                                                active_tid,
+                                                hglrc,
+                                                ambient,
+                                            ),
+                                        );
+                                    }
                                     child_loader::ProviderOp::CrtSscanf => {
                                         let [_, input, format, major, minor] = read_guest_words(
                                             &X86Memory(&child.address_space),
