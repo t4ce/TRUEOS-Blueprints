@@ -1241,6 +1241,7 @@
                             static_load_reserved: 0,
                             initterm: None,
                             load_library_call: None,
+                            window_callback: None,
                             cipow: None,
                             cipow_diagnostic_logged: false,
                             get_system_info_consumer_logged: false,

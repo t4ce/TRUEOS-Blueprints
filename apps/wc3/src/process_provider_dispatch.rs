@@ -2063,6 +2063,12 @@ impl XpProcess {
                     show,
                 }))
             }
+            ProviderOp::UpdateWindow => Some(PersonalityAction::Session(
+                SessionRequest::UpdateWindow {
+                    pid,
+                    hwnd: arguments::<2>(memory, esp)?[1],
+                },
+            )),
             ProviderOp::SetFocus => Some(PersonalityAction::Session(SessionRequest::SetFocus {
                 pid,
                 hwnd: arguments::<2>(memory, esp)?[1],

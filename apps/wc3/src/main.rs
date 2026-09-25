@@ -1814,6 +1814,7 @@ struct PendingChild {
     static_load_reserved: u32,
     initterm: Option<ChildInitterm>,
     load_library_call: Option<ChildLoadLibraryCall>,
+    window_callback: Option<ChildWindowCallback>,
     cipow: Option<ChildCiPow>,
     cipow_diagnostic_logged: bool,
     get_system_info_consumer_logged: bool,
@@ -1843,6 +1844,7 @@ struct ChildThreadRuntime {
     seh: Option<ChildSehDispatch>,
     seh3_call: Option<ChildSeh3Call>,
     unhandled_filter_call: Option<ChildUnhandledFilterCall>,
+    window_callback: Option<ChildWindowCallback>,
     repeated_null_call: Option<NullLoopWatch>,
     repeated_divide_fault: Option<DivideLoopWatch>,
 }
@@ -1861,6 +1863,7 @@ impl PendingChild {
             seh: self.seh.take(),
             seh3_call: self.seh3_call.take(),
             unhandled_filter_call: self.unhandled_filter_call.take(),
+            window_callback: self.window_callback.take(),
             repeated_null_call: self.repeated_null_call.take(),
             repeated_divide_fault: self.repeated_divide_fault.take(),
         };
@@ -1872,6 +1875,7 @@ impl PendingChild {
         self.seh = next.seh;
         self.seh3_call = next.seh3_call;
         self.unhandled_filter_call = next.unhandled_filter_call;
+        self.window_callback = next.window_callback;
         self.repeated_null_call = next.repeated_null_call;
         self.repeated_divide_fault = next.repeated_divide_fault;
         self.active_thread_tid = tid;
@@ -2030,6 +2034,16 @@ struct ChildLoadLibraryCall {
     module_handle: u32,
     load_library_handle: u32,
     remaining_native_indices: Vec<usize>,
+}
+
+#[derive(Clone, Debug)]
+struct ChildWindowCallback {
+    provider_resume_eip: u32,
+    provider_esp: u32,
+    hwnd: u32,
+    wndproc: u32,
+    message: u32,
+    completion_eax: u32,
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]

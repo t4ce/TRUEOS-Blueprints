@@ -686,6 +686,36 @@
                         continue;
                     }
                     if exit.registers.eip == thunk32::CHILD_CALLBACK_RETURN_AFTER_VMCALL {
+                        if let Some(pending) = child.window_callback.take() {
+                            if exit.registers.esp != pending.provider_esp {
+                                return Err(format!(
+                                    "UpdateWindow callback ESP mismatch expected=0x{:08x} actual=0x{:08x}",
+                                    pending.provider_esp, exit.registers.esp,
+                                ));
+                            }
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD CALL_GUEST RETURN pid={} tid={} reason=UpdateWindow/WM_PAINT hwnd=0x{:08x} wndproc=0x{:08x} message=0x{:08x} wndproc_eax=0x{:08x} updatewindow_eax=0x{:08x}",
+                                    active_pid,
+                                    active_tid,
+                                    pending.hwnd,
+                                    pending.wndproc,
+                                    pending.message,
+                                    exit.registers.eax,
+                                    pending.completion_eax,
+                                ),
+                            );
+                            let mut registers = exit.registers;
+                            registers.eip = pending.provider_resume_eip;
+                            registers.esp = pending.provider_esp;
+                            registers.eax = pending.completion_eax;
+                            contexts[active]
+                                .context
+                                .set_registers(registers)
+                                .map_err(|error| error.to_string())?;
+                            continue;
+                        }
                         if let Some(pending) = child.seh3_call.take() {
                             let callback_arg_bytes = match &pending.kind {
                                 ChildSeh3CallbackKind::Filter { .. } => 4u32,
@@ -5961,6 +5991,101 @@
                         );
                         let mut registers = exit.registers;
                         registers.eax = 1;
+                        contexts[active]
+                            .context
+                            .set_registers(registers)
+                            .map_err(|error| error.to_string())?;
+                        continue;
+                    }
+                    if operation == child_loader::ProviderOp::UpdateWindow {
+                        let provider_resume_eip = exit.registers.eip;
+                        let provider_esp = exit.registers.esp;
+                        let action = session
+                            .process_mut(active_pid)
+                            .ok_or_else(|| "child process missing".to_owned())?
+                            .xp
+                            .dispatch_provider_for_process_typed(
+                                active_pid,
+                                active_tid,
+                                provider_id,
+                                provider_esp,
+                                &mut X86Memory(&child.address_space),
+                            )
+                            .map_err(|error| error.to_string())?;
+                        let PersonalityAction::Session(SessionRequest::UpdateWindow {
+                            pid: _,
+                            hwnd,
+                        }) = action
+                        else {
+                            return Err("UpdateWindow produced unexpected action".into());
+                        };
+                        let pending = session.update_window(hwnd).map_err(str::to_owned)?;
+                        if pending == 0 {
+                            logl::log(
+                                level::IMPORTANT,
+                                format_args!(
+                                    "WC3 CHILD UPDATEWINDOW RESULT pid={} tid={} hwnd=0x{:08x} paint_pending=0 callback=none result=0 cleanup=4-by-thunk",
+                                    active_pid, active_tid, hwnd,
+                                ),
+                            );
+                            let mut registers = exit.registers;
+                            registers.eax = 0;
+                            contexts[active]
+                                .context
+                                .set_registers(registers)
+                                .map_err(|error| error.to_string())?;
+                            continue;
+                        }
+
+                        let wndproc = session
+                            .windows
+                            .get(&hwnd)
+                            .ok_or("UpdateWindow window disappeared")?
+                            .wndproc;
+                        let callback_esp = provider_esp
+                            .checked_sub(20)
+                            .ok_or("UpdateWindow callback stack underflow")?;
+                        let frame = [
+                            thunk32::CHILD_CALLBACK_RETURN_ADDRESS,
+                            hwnd,
+                            0x000f,
+                            0,
+                            0,
+                        ];
+                        let mut frame_bytes = [0u8; 20];
+                        for (index, value) in frame.into_iter().enumerate() {
+                            frame_bytes[index * 4..index * 4 + 4]
+                                .copy_from_slice(&value.to_le_bytes());
+                        }
+                        if child
+                            .address_space
+                            .write(callback_esp, &frame_bytes)
+                            .map_err(|error| error.to_string())?
+                            != frame_bytes.len()
+                        {
+                            return Err("short UpdateWindow callback frame write".into());
+                        }
+                        if child.window_callback.is_some() {
+                            return Err("UpdateWindow callback already pending".into());
+                        }
+                        child.window_callback = Some(ChildWindowCallback {
+                            provider_resume_eip,
+                            provider_esp,
+                            hwnd,
+                            wndproc,
+                            message: 0x000f,
+                            completion_eax: 1,
+                        });
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD CALL_GUEST pid={} tid={} reason=UpdateWindow/WM_PAINT hwnd=0x{:08x} wndproc=0x{:08x} message=0x0000000f wparam=0x00000000 lparam=0x00000000",
+                                active_pid, active_tid, hwnd, wndproc,
+                            ),
+                        );
+                        let mut registers = exit.registers;
+                        registers.eip = wndproc;
+                        registers.esp = callback_esp;
                         contexts[active]
                             .context
                             .set_registers(registers)
