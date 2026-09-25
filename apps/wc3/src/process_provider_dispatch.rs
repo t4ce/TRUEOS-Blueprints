@@ -2118,6 +2118,13 @@ impl XpProcess {
                     },
                 ))
             }
+            ProviderOp::SetActiveWindow => {
+                let [_, hwnd] = arguments::<2>(memory, esp)?;
+                Some(PersonalityAction::Session(SessionRequest::SetActiveWindow {
+                    caller: ThreadKey { pid, tid },
+                    hwnd,
+                }))
+            }
             ProviderOp::GetWindowRect => {
                 let [_, hwnd, output] = arguments::<3>(memory, esp)?;
                 Some(PersonalityAction::Session(SessionRequest::GetWindowRect {

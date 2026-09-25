@@ -824,6 +824,10 @@ pub enum SessionRequest {
         caller: ThreadKey,
         hwnd: u32,
     },
+    SetActiveWindow {
+        caller: ThreadKey,
+        hwnd: u32,
+    },
     BeginPaint {
         pid: Pid,
         hwnd: u32,
@@ -871,6 +875,7 @@ pub struct Wc3Session {
     pub windows: HashMap<u32, WindowObject>,
     pub focused_window: Option<u32>,
     pub foreground_window: Option<u32>,
+    pub active_windows: HashMap<ThreadKey, u32>,
     pub runnable: VecDeque<ThreadKey>,
     pub blocked: HashMap<ThreadKey, WaitRequest>,
     pub critical_waiters: VecDeque<CriticalSectionWait>,
@@ -906,6 +911,7 @@ impl Wc3Session {
             windows: HashMap::new(),
             focused_window: None,
             foreground_window: None,
+            active_windows: HashMap::new(),
             runnable: VecDeque::from([ThreadKey {
                 pid: LAUNCHER_PID,
                 tid: LAUNCHER_TID,
@@ -1278,6 +1284,7 @@ impl Wc3Session {
         if self.foreground_window == Some(hwnd) {
             self.foreground_window = None;
         }
+        self.active_windows.retain(|_, active| *active != hwnd);
         self.window_presentation = Some(WindowPresentation::Destroy { hwnd });
         Ok(DestroyWindowResult { was_focused })
     }
@@ -1332,6 +1339,28 @@ impl Wc3Session {
         let previous = self.foreground_window.replace(hwnd);
         self.focused_window = Some(hwnd);
         Ok((previous, owner))
+    }
+
+    pub fn set_active_window(
+        &mut self,
+        caller: ThreadKey,
+        hwnd: u32,
+    ) -> Result<u32, &'static str> {
+        let previous = self.active_windows.get(&caller).copied().unwrap_or(0);
+        let window = self
+            .windows
+            .get(&hwnd)
+            .ok_or("SetActiveWindow unknown window")?;
+        if window.parent != 0 {
+            return Err("SetActiveWindow non-top-level frontier");
+        }
+
+        if window.owner == caller {
+            self.active_windows.insert(caller, hwnd);
+        } else {
+            self.active_windows.remove(&caller);
+        }
+        Ok(previous)
     }
 
     pub fn take_window_presentation(&mut self) -> Option<WindowPresentation> {

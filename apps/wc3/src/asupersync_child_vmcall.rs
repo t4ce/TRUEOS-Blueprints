@@ -5989,6 +5989,59 @@
                             .map_err(|error| error.to_string())?;
                         continue;
                     }
+                    if operation == child_loader::ProviderOp::SetActiveWindow {
+                        let action = session
+                            .process_mut(active_pid)
+                            .ok_or_else(|| "child process missing".to_owned())?
+                            .xp
+                            .dispatch_provider_for_process_typed(
+                                active_pid,
+                                active_tid,
+                                provider_id,
+                                exit.registers.esp,
+                                &mut X86Memory(&child.address_space),
+                            )
+                            .map_err(|error| error.to_string())?;
+                        let PersonalityAction::Session(SessionRequest::SetActiveWindow {
+                            caller,
+                            hwnd,
+                        }) = action
+                        else {
+                            return Err("SetActiveWindow produced unexpected action".into());
+                        };
+                        let previous = session
+                            .set_active_window(caller, hwnd)
+                            .map_err(str::to_owned)?;
+                        let owner = session
+                            .windows
+                            .get(&hwnd)
+                            .ok_or("SetActiveWindow window disappeared")?
+                            .owner;
+                        let active_window = session.active_windows.get(&caller).copied().unwrap_or(0);
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD SETACTIVEWINDOW pid={} tid={} hwnd=0x{:08x} owner=pid{}/tid{} previous=0x{:08x} active=0x{:08x} foreground=0x{:08x} focused=0x{:08x} scheduler_change=0 result=0x{:08x} cleanup=4-by-thunk",
+                                active_pid,
+                                active_tid,
+                                hwnd,
+                                owner.pid,
+                                owner.tid,
+                                previous,
+                                active_window,
+                                session.foreground_window.unwrap_or(0),
+                                session.focused_window.unwrap_or(0),
+                                previous,
+                            ),
+                        );
+                        let mut registers = exit.registers;
+                        registers.eax = previous;
+                        contexts[active]
+                            .context
+                            .set_registers(registers)
+                            .map_err(|error| error.to_string())?;
+                        continue;
+                    }
                     if operation == child_loader::ProviderOp::GetWindowRect {
                         let action = session
                             .process_mut(active_pid)
