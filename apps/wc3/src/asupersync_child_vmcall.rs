@@ -6894,16 +6894,19 @@
                                 &mut X86Memory(&child.address_space),
                             )
                             .map_err(|error| error.to_string())?;
-                        let result = match action {
-                            PersonalityAction::Return(result) => result,
-                            PersonalityAction::Session(request) => service_sync_request(
-                                &mut session,
-                                active_pid,
-                                active_tid,
-                                request,
-                                &mut contexts,
-                                &mut wait_deadlines,
-                            )?,
+                        let (result, zero_wait_handle) = match action {
+                            PersonalityAction::Return(result) => (result, None),
+                            PersonalityAction::Session(request) => (
+                                service_sync_request(
+                                    &mut session,
+                                    active_pid,
+                                    active_tid,
+                                    request,
+                                    &mut contexts,
+                                    &mut wait_deadlines,
+                                )?,
+                                None,
+                            ),
                             PersonalityAction::IoCompletionWait(request) => {
                                 const ERROR_INVALID_HANDLE: u32 = 6;
                                 const WAIT_TIMEOUT_ERROR: u32 = 258;
@@ -6925,7 +6928,7 @@
                                     ),
                                 );
 
-                                match session.take_io_completion_packet(request.key, request.port) {
+                                let result = match session.take_io_completion_packet(request.key, request.port) {
                                     Err(_) => {
                                         session
                                             .process_mut(request.key.pid)
@@ -7016,7 +7019,8 @@
                                             request.timeout,
                                         ));
                                     }
-                                }
+                                };
+                                (result, None)
                             }
                             PersonalityAction::Block(request) => {
                                 if is_multiple_wait {
@@ -7031,20 +7035,22 @@
                                         ),
                                     );
                                 }
-                                if let Some(result) =
+                                let (result, zero_wait_handle) = if let Some(result) =
                                     session.poll_wait(&request).map_err(str::to_owned)?
                                 {
                                     // Keep every signal/error, but sample empty zero-timeout
                                     // polls. The guest still checks the real event every time.
                                     use core::sync::atomic::{AtomicU64, Ordering};
                                     static EMPTY_WAIT_POLLS: AtomicU64 = AtomicU64::new(0);
-                                    let empty_poll = result == 0x102 && request.timeout == 0;
-                                    let poll_count = if empty_poll {
+                                    let zero_wait_handle =
+                                        (result == WAIT_TIMEOUT && request.timeout == 0)
+                                            .then_some(request.handles[0]);
+                                    let poll_count = if zero_wait_handle.is_some() {
                                         EMPTY_WAIT_POLLS.fetch_add(1, Ordering::Relaxed) + 1
                                     } else {
                                         0
                                     };
-                                    if !empty_poll || cfg!(feature = "trace-api")
+                                    if zero_wait_handle.is_none() || cfg!(feature = "trace-api")
                                         || poll_count <= 4 || poll_count % 1024 == 0
                                     {
                                         logl::log(
@@ -7057,7 +7063,7 @@
                                             ),
                                         );
                                     }
-                                    result
+                                    (result, zero_wait_handle)
                                 } else {
                                     session.block_wait(request.clone()).map_err(str::to_owned)?;
                                     if request.timeout != INFINITE {
@@ -7108,7 +7114,8 @@
                                         }
                                     }
                                     continue;
-                                }
+                                };
+                                (result, zero_wait_handle)
                             }
                             _ => return Err("unexpected child synchronization action".into()),
                         };
@@ -7130,6 +7137,37 @@
                             .context
                             .set_registers(registers)
                             .map_err(|error| error.to_string())?;
+                        if let Some(handle) = zero_wait_handle {
+                            // The caller has already received its immediate
+                            // WAIT_TIMEOUT. Treat a tight polling loop as a
+                            // scheduler safepoint so it cannot monopolize the
+                            // serialized x86 executor.
+                            tokio::task::yield_now().await;
+                            expire_runtime_waits(
+                                &mut session,
+                                &mut contexts,
+                                &mut wait_deadlines,
+                                &mut previous_wait_timeout,
+                            )?;
+                            session.enqueue(active_key);
+                            if let Some(next) = pop_runnable_context(&mut session, &contexts) {
+                                if next != active {
+                                    let next_key = contexts[next].key();
+                                    logl::log(
+                                        level::IMPORTANT,
+                                        format_args!(
+                                            "WC3 CHILD ZERO-WAIT SCHEDULE from=pid{}/tid{} handle=0x{:08x} result=WAIT_TIMEOUT to=pid{}/tid{} reason=zero-timeout-safepoint",
+                                            active_pid,
+                                            active_tid,
+                                            handle,
+                                            next_key.pid,
+                                            next_key.tid,
+                                        ),
+                                    );
+                                }
+                                active = next;
+                            }
+                        }
                         continue;
                     }
                     if operation == child_loader::ProviderOp::FillRect {
