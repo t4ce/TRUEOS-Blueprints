@@ -731,13 +731,14 @@ fn crt_strcase(
     Ok(string)
 }
 
-pub fn crt_atol(
+pub fn crt_parse_decimal_i32(
     memory: &impl GuestMemory,
     string_ptr: u32,
+    api: &'static str,
 ) -> Result<(u32, bool, String), ProviderDispatchError> {
     if string_ptr == 0 {
         return Err(ProviderDispatchError::Frontier {
-            api: "atol",
+            api,
             detail: "str=NULL".into(),
         });
     }

@@ -153,6 +153,7 @@ pub enum ProviderOp {
     CrtIsDigit,
     CrtIsMbcSpace,
     CrtToUpper,
+    CrtAtoi,
     CrtAtol,
     CrtStrtol,
     CrtSscanf,
@@ -460,6 +461,7 @@ impl ProviderOp {
             | Self::CrtIsDigit
             | Self::CrtIsMbcSpace
             | Self::CrtToUpper
+            | Self::CrtAtoi
             | Self::CrtAtol
             | Self::CrtStrtol
             | Self::CrtSscanf
@@ -560,6 +562,7 @@ impl ProviderOp {
                 | Self::CrtIsDigit
                 | Self::CrtIsMbcSpace
                 | Self::CrtToUpper
+                | Self::CrtAtoi
                 | Self::CrtAtol
                 | Self::CrtStrtol
                 | Self::CrtSscanf
@@ -910,6 +913,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "isdigit" => ProviderOp::CrtIsDigit,
             "_ismbcspace" => ProviderOp::CrtIsMbcSpace,
             "toupper" => ProviderOp::CrtToUpper,
+            "atoi" => ProviderOp::CrtAtoi,
             "atol" => ProviderOp::CrtAtol,
             "strtol" => ProviderOp::CrtStrtol,
             "sscanf" => ProviderOp::CrtSscanf,

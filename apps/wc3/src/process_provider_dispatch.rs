@@ -622,9 +622,10 @@ impl XpProcess {
                     .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(result))
             }
-            ProviderOp::CrtAtol => {
+            ProviderOp::CrtAtoi | ProviderOp::CrtAtol => {
                 let [_, string] = arguments::<2>(memory, esp)?;
-                let (result, _, _) = crt_atol(memory, string)?;
+                let api = if operation == ProviderOp::CrtAtoi { "atoi" } else { "atol" };
+                let (result, _, _) = crt_parse_decimal_i32(memory, string, api)?;
                 self.call_count = self
                     .call_count
                     .checked_add(1)

@@ -7146,16 +7146,20 @@
                         } else {
                             None
                         };
-                        let crt_atol = if operation == child_loader::ProviderOp::CrtAtol {
+                        let crt_decimal = if matches!(
+                            operation,
+                            child_loader::ProviderOp::CrtAtoi | child_loader::ProviderOp::CrtAtol
+                        ) {
                             let string = read_guest_words(
                                 &X86Memory(&child.address_space),
                                 exit.registers.esp,
                                 2,
                             )?[1];
                             Some(
-                                wc3::process::crt_atol(
+                                wc3::process::crt_parse_decimal_i32(
                                     &X86Memory(&child.address_space),
                                     string,
+                                    if operation == child_loader::ProviderOp::CrtAtoi { "atoi" } else { "atol" },
                                 )
                                 .map_err(|error| format!("atol input: {error}"))?,
                             )
@@ -7595,11 +7599,17 @@
                                         ),
                                     );
                                 }
-                                if let Some((_, overflow, input)) = crt_atol {
+                                if let Some((_, overflow, input)) = crt_decimal {
+                                    let api = if operation == child_loader::ProviderOp::CrtAtoi {
+                                        "ATOI"
+                                    } else {
+                                        "ATOL"
+                                    };
                                     logl::log(
                                         level::IMPORTANT,
                                         format_args!(
-                                            "WC3 CHILD CRT ATOL pid={} tid={} input={:?} result={} eax=0x{:08x} overflow={} cleanup=0-by-thunk",
+                                            "WC3 CHILD CRT {} pid={} tid={} input={:?} result={} eax=0x{:08x} overflow={} cleanup=0-by-thunk",
+                                            api,
                                             active_pid,
                                             active_tid,
                                             input,
