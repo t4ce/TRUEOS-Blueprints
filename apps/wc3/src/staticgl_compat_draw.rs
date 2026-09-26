@@ -341,6 +341,46 @@ fn gl_rasterize_elements(
     Ok((stats, vertices.len()))
 }
 
+fn gl_present_strip_pixels(rgba: &[u8], width: u32, height: u32, top: u32, rows: u32) -> Vec<u8> {
+    let stride = width as usize * 4;
+    let mut pixels = Vec::with_capacity(stride * rows as usize);
+    for y in top..top + rows {
+        let start = (height - 1 - y) as usize * stride;
+        for p in rgba[start..start + stride].chunks_exact(4) {
+            pixels.extend_from_slice(&[p[0], p[1], p[2], 255]);
+        }
+    }
+    pixels
+}
+
+fn gl_present_strip_vertices(
+    height: u32,
+    top: u32,
+    rows: u32,
+) -> [staticgl_triangle::textured::TexturedVertex; 4] {
+    use staticgl_triangle::textured::TexturedVertex as V;
+    let upper = 1.0 - 2.0 * top as f32 / height as f32;
+    let lower = 1.0 - 2.0 * (top + rows) as f32 / height as f32;
+    [
+        V {
+            position: [-1., lower, 0.],
+            uv: [0., 1.],
+        },
+        V {
+            position: [1., lower, 0.],
+            uv: [1., 1.],
+        },
+        V {
+            position: [1., upper, 0.],
+            uv: [1., 0.],
+        },
+        V {
+            position: [-1., upper, 0.],
+            uv: [0., 0.],
+        },
+    ]
+}
+
 impl XpProcess {
     fn wgl_get_proc_address_static(
         &self,
@@ -552,73 +592,86 @@ impl XpProcess {
         let frame = c.raster_frame.as_ref().unwrap();
         let width = frame.width;
         let height = frame.height;
-        // UI4 is opaque. Retain real framebuffer alpha for later guest blending/readback.
-        let mut pixels = Vec::with_capacity(frame.rgba.len());
-        for row in frame.rgba.chunks_exact(width as usize * 4).rev() {
-            for p in row.chunks_exact(4) {
-                pixels.extend_from_slice(&[p[0], p[1], p[2], 255]);
-            }
-        }
-        let nonblack = pixels
+        let nonblack = frame
+            .rgba
             .chunks_exact(4)
-            .filter(|p| p[0] != 0 || p[1] != 0 || p[2] != 0)
+            .filter(|p| p[..3] != [0, 0, 0])
             .count();
         let window_id = c.ui4_window_id.ok_or("GL UI4 frame missing")?;
-        let surface = runtime
-            .device
-            .acquire_ui4_surface(window_id)
-            .map_err(|e| gl_texture_error(API, format!("surface acquire failed {e}")))?;
-        if [surface.info().width, surface.info().height] != [width, height] {
-            return Err(gl_texture_error(API, "drawable/surface size mismatch"));
-        }
         if runtime.textured_renderer.is_none() {
             runtime.textured_renderer = Some(
                 staticgl_triangle::textured::TexturedRenderer::new(runtime.device)
                     .map_err(|e| gl_texture_error(API, format!("pipeline failed {e}")))?,
             );
         }
-        use staticgl_triangle::textured::TexturedVertex as V;
-        let vertices = [
-            V {
-                position: [-1.0, -1.0, 0.0],
-                uv: [0.0, 1.0],
-            },
-            V {
-                position: [1.0, -1.0, 0.0],
-                uv: [1.0, 1.0],
-            },
-            V {
-                position: [1.0, 1.0, 0.0],
-                uv: [1.0, 0.0],
-            },
-            V {
-                position: [-1.0, 1.0, 0.0],
-                uv: [0.0, 0.0],
-            },
-        ];
-        let point = runtime
-            .textured_renderer
-            .as_mut()
-            .unwrap()
-            .draw(
-                runtime.queue,
-                surface,
-                &vertices,
-                &[0, 1, 2, 0, 2, 3],
-                &pixels,
-                width,
-                height,
-                0xff000000,
-            )
-            .map_err(|e| gl_texture_error(API, format!("frame submit failed {e}")))?;
-        runtime
-            .device
-            .wait(runtime.queue, point.value)
-            .map_err(|e| gl_texture_error(API, format!("frame wait failed {e}")))?;
+        // The broker needs both the upload buffer and a resident sampler copy.
+        // Keep both bounded; do not allocate two full-resolution textures.
+        let mut strips = 0;
+        for top in (0..height).step_by(256) {
+            let rows = (height - top).min(256);
+            let pixels = gl_present_strip_pixels(&frame.rgba, width, height, top, rows);
+            let surface = runtime.device.acquire_ui4_surface(window_id).map_err(|e| {
+                gl_texture_error(API, format!("surface acquire failed strip={top} rc={e}"))
+            })?;
+            let info = surface.info();
+            if [info.width, info.height] != [width, height] {
+                return Err(gl_texture_error(API, "drawable/surface size mismatch"));
+            }
+            if top == 0 {
+                logl::log(
+                    level::IMPORTANT,
+                    format_args!(
+                        "WC3 GL PRESENT BEGIN tid={tid} reason={reason} hwnd=0x{:08x} ui4_window={window_id} drawable={width}x{height} surface_pitch={} strip_rows=256 upload_bytes={} accounting={:?}",
+                        c.hwnd,
+                        info.pitch,
+                        pixels.len(),
+                        runtime.device.info()
+                    ),
+                );
+            }
+            let renderer = runtime.textured_renderer.as_mut().unwrap();
+            let vertices = gl_present_strip_vertices(height, top, rows);
+            let result = if top == 0 {
+                renderer.draw(
+                    runtime.queue,
+                    surface,
+                    &vertices,
+                    &[0, 1, 2, 0, 2, 3],
+                    &pixels,
+                    width,
+                    rows,
+                    0xff000000,
+                )
+            } else {
+                renderer.draw_over(
+                    runtime.queue,
+                    surface,
+                    &vertices,
+                    &[0, 1, 2, 0, 2, 3],
+                    &pixels,
+                    width,
+                    rows,
+                )
+            };
+            let point = result.map_err(|rc| {
+                let detail = format!("frame publication failed strip_top={top} rows={rows} rc={rc} stage={:?} accounting={:?}", renderer.last_failure(), runtime.device.info());
+                logl::log(level::IMPORTANT, format_args!("WC3 GL PRESENT FAIL {detail}"));
+                gl_texture_error(API, detail)
+            })?;
+            // Each submission consumes its surface lease. Wait before reusing
+            // upload storage, then reacquire the same unpublished UI4 frame.
+            runtime
+                .device
+                .wait(runtime.queue, point.value)
+                .map_err(|e| {
+                    gl_texture_error(API, format!("frame wait failed strip={top} rc={e}"))
+                })?;
+            strips += 1;
+        }
         logl::log(
             level::IMPORTANT,
             format_args!(
-                "WC3 GL FRAME PRESENT tid={tid} reason={reason} draws={} size={width}x{height} nonblack_pixels={nonblack} raster=rust-fixed gpu=completed",
+                "WC3 GL FRAME PRESENT tid={tid} reason={reason} draws={} size={width}x{height} strips={strips} nonblack_pixels={nonblack} raster=rust-fixed gpu=completed",
                 c.draw_count
             ),
         );

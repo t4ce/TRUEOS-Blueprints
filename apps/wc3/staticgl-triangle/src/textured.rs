@@ -28,7 +28,16 @@ const NEAREST_REPEAT: u32 = vgpu::SAMPLER_ADDRESS_U_REPEAT | vgpu::SAMPLER_ADDRE
 /// `draw_over` continues an already rendered UI4 frame in painter order. The
 /// caller must wait for the prior returned timeline point before resizing,
 /// re-uploading, destroying this renderer, or reusing its buffers.
+#[derive(Clone, Copy, Debug)]
+pub struct DrawFailure {
+    pub stage: &'static str,
+    pub bytes: usize,
+    pub reused: bool,
+    pub rc: i32,
+}
+
 pub struct TexturedRenderer {
+    last_failure: Option<DrawFailure>,
     device: Device,
     shader: ShaderModule,
     pipeline: RenderPipeline,
@@ -50,12 +59,35 @@ impl TexturedRenderer {
             }
         };
         Ok(Self {
+            last_failure: None,
             device,
             shader,
             pipeline,
             vertices: None,
             indices: None,
             texture: None,
+        })
+    }
+
+    pub fn last_failure(&self) -> Option<DrawFailure> {
+        self.last_failure
+    }
+
+    fn stage<T>(
+        &mut self,
+        result: Result<T, i32>,
+        stage: &'static str,
+        bytes: usize,
+        reused: bool,
+    ) -> Result<T, i32> {
+        result.map_err(|rc| {
+            self.last_failure = Some(DrawFailure {
+                stage,
+                bytes,
+                reused,
+                rc,
+            });
+            rc
         })
     }
 
@@ -118,6 +150,7 @@ impl TexturedRenderer {
         clear_rgba8_srgb: u32,
         load_color: bool,
     ) -> Result<TimelinePoint, i32> {
+        self.last_failure = None;
         let texture_bytes = texture_byte_len(width, height)?;
         if rgba8.len() != texture_bytes
             || indices.len() < 3
@@ -132,16 +165,31 @@ impl TexturedRenderer {
         }
         let vertex_bytes = bytes_of_slice(vertices);
         let index_bytes = bytes_of_slice(indices);
-        let vertex_buffer = self.ensure_vertices(vertex_bytes.len())?;
-        let index_buffer = self.ensure_indices(index_bytes.len())?;
-        let texture_buffer = self.ensure_texture(texture_bytes)?;
-        if self.device.write_buffer(vertex_buffer, 0, vertex_bytes)? != vertex_bytes.len()
-            || self.device.write_buffer(index_buffer, 0, index_bytes)? != index_bytes.len()
-            || self.device.write_buffer(texture_buffer, 0, rgba8)? != rgba8.len()
-        {
-            return Err(vgpu::ERR_IO);
+        let vertex_reused = self.vertices.is_some_and(|(_, n)| n >= vertex_bytes.len());
+        let result = self.ensure_vertices(vertex_bytes.len());
+        let vertex_buffer =
+            self.stage(result, "ensure-vertices", vertex_bytes.len(), vertex_reused)?;
+        let index_reused = self.indices.is_some_and(|(_, n)| n >= index_bytes.len());
+        let result = self.ensure_indices(index_bytes.len());
+        let index_buffer = self.stage(result, "ensure-indices", index_bytes.len(), index_reused)?;
+        let texture_reused = self.texture.is_some_and(|(_, n)| n >= texture_bytes);
+        let result = self.ensure_texture(texture_bytes);
+        let texture_buffer = self.stage(result, "ensure-texture", texture_bytes, texture_reused)?;
+        for (stage, buffer, data, reused) in [
+            ("write-vertices", vertex_buffer, vertex_bytes, vertex_reused),
+            ("write-indices", index_buffer, index_bytes, index_reused),
+            ("write-texture", texture_buffer, rgba8, texture_reused),
+        ] {
+            let result = self.device.write_buffer(buffer, 0, data).and_then(|n| {
+                if n == data.len() {
+                    Ok(())
+                } else {
+                    Err(vgpu::ERR_IO)
+                }
+            });
+            self.stage(result, stage, data.len(), reused)?;
         }
-        self.device.submit_ui4_indexed(
+        let result = self.device.submit_ui4_indexed(
             queue,
             surface,
             self.pipeline,
@@ -163,7 +211,8 @@ impl TexturedRenderer {
                 },
                 ..Default::default()
             },
-        )
+        );
+        self.stage(result, "submit-ui4-indexed", texture_bytes, texture_reused)
     }
 
     fn ensure_vertices(&mut self, bytes: usize) -> Result<Buffer, i32> {

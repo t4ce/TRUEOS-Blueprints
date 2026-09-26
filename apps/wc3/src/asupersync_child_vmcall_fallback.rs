@@ -1376,83 +1376,19 @@
                                         );
                                     }
                                     child_loader::ProviderOp::GlLightfv => {
-                                        let [_, _light, pname, params] = read_guest_words(
-                                            &X86Memory(&child.address_space),
-                                            exit.registers.esp,
-                                            4,
-                                        )?[..]
-                                        else {
-                                            unreachable!("glLightfv frame has four words")
-                                        };
-                                        let mut raw = [0u8; 16];
-                                        X86Memory(&child.address_space).read(params, &mut raw)?;
-                                        let source = core::array::from_fn::<f32, 4, _>(|index| {
-                                            f32::from_le_bytes(
-                                                raw[index * 4..index * 4 + 4].try_into().unwrap(),
-                                            )
-                                        });
-                                        let process = &session
-                                            .process(active_pid)
-                                            .ok_or_else(|| "child process missing".to_owned())?
-                                            .xp;
-                                        let (hglrc, stored, pname_name, modelview_applied) = match pname {
-                                            0x0000_1200 => {
-                                                let (hglrc, stored) = process
-                                                    .gl_light0_ambient_diagnostic(active_tid)
-                                                    .ok_or_else(|| "current GL context missing after glLightfv".to_owned())?;
-                                                (hglrc, stored, "GL_AMBIENT", 0)
-                                            }
-                                            0x0000_1201 => {
-                                                let (hglrc, stored) = process
-                                                    .gl_light0_diffuse_diagnostic(active_tid)
-                                                    .ok_or_else(|| "current GL context missing after glLightfv".to_owned())?;
-                                                (hglrc, stored, "GL_DIFFUSE", 0)
-                                            }
-                                            0x0000_1202 => {
-                                                let (hglrc, stored) = process
-                                                    .gl_light0_specular_diagnostic(active_tid)
-                                                    .ok_or_else(|| "current GL context missing after glLightfv".to_owned())?;
-                                                (hglrc, stored, "GL_SPECULAR", 0)
-                                            }
-                                            0x0000_1203 => {
-                                                let (hglrc, stored) = process
-                                                    .gl_light0_position_eye_diagnostic(active_tid)
-                                                    .ok_or_else(|| "current GL context missing after glLightfv".to_owned())?;
-                                                (hglrc, stored, "GL_POSITION", 1)
-                                            }
-                                            _ => return Err("unexpected glLightfv pname after dispatch".into()),
-                                        };
-                                        logl::log(
-                                            level::IMPORTANT,
-                                            format_args!(
-                                                "WC3 CHILD GLLIGHTFV RESULT pid={} tid={} hglrc=0x{:08x} light=GL_LIGHT0 pname={} source={:?} stored={:?} modelview_applied={} result=void cleanup=12-by-thunk",
-                                                active_pid,
-                                                active_tid,
-                                                hglrc,
-                                                pname_name,
-                                                source,
-                                                stored,
-                                                modelview_applied,
-                                            ),
-                                        );
+                                        let args = read_guest_words(&X86Memory(&child.address_space), exit.registers.esp, 4)?;
+                                        let (light, pname) = (args[1], args[2]);
+                                        let stored = session.process(active_pid).ok_or("child process missing")?.xp.gl_light_diagnostic(active_tid, light, pname);
+                                        logl::log(level::IMPORTANT, format_args!(
+                                            "WC3 CHILD GLLIGHTFV RESULT pid={} tid={} light=0x{:08x} pname=0x{:08x} stored={:?} result=void cleanup=12-by-thunk",
+                                            active_pid, active_tid, light, pname, stored));
                                     }
                                     child_loader::ProviderOp::GlDisable => {
-                                        let (hglrc, enabled) = session
-                                            .process(active_pid)
-                                            .ok_or_else(|| "child process missing".to_owned())?
-                                            .xp
-                                            .gl_light0_enabled_diagnostic(active_tid)
-                                            .ok_or_else(|| "current GL context missing after glDisable".to_owned())?;
-                                        logl::log(
-                                            level::IMPORTANT,
-                                            format_args!(
-                                                "WC3 CHILD GLDISABLE RESULT pid={} tid={} hglrc=0x{:08x} cap=GL_LIGHT0 previous_enabled=0 enabled={} light_parameters_preserved=1 result=void cleanup=4-by-thunk",
-                                                active_pid,
-                                                active_tid,
-                                                hglrc,
-                                                enabled as u8,
-                                            ),
-                                        );
+                                        let cap = read_guest_words(&X86Memory(&child.address_space), exit.registers.esp, 2)?[1];
+                                        let stored = session.process(active_pid).ok_or("child process missing")?.xp.gl_cap_diagnostic(active_tid, cap);
+                                        logl::log(level::IMPORTANT, format_args!(
+                                            "WC3 CHILD GLDISABLE RESULT pid={} tid={} cap=0x{:08x} stored={:?} result=void cleanup=4-by-thunk",
+                                            active_pid, active_tid, cap, stored));
                                     }
                                     child_loader::ProviderOp::CrtSscanf => {
                                         let [_, input, format, major, minor] = read_guest_words(

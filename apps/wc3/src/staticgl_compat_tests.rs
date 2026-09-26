@@ -197,3 +197,64 @@ fn disabled_lighting_uses_client_color_even_after_light_state_writes() {
     assert_eq!(vertices[0].color, [1.; 4]);
     assert_eq!(vertices[0].clip[3], 2.);
 }
+
+#[test]
+fn strip_publication_preserves_rows_edges_and_partial_last_strip() {
+    let (width, height) = (4u32, 513u32);
+    let source: Vec<u8> = (0..height)
+        .flat_map(|y| (0..width).flat_map(move |x| [x as u8, y as u8, (y >> 8) as u8, 17]))
+        .collect();
+    let mut frame = raster::Frame::new(width, height).unwrap();
+    let state = raster::RasterState {
+        viewport: [0, 0, width as i32, height as i32],
+        tex_env: raster::TexEnvMode::Replace,
+        ..Default::default()
+    };
+    let mut written = 0;
+    for top in (0..height).step_by(256) {
+        let rows = (height - top).min(256);
+        let pixels = gl_present_strip_pixels(&source, width, height, top, rows);
+        assert_eq!(pixels.len(), width as usize * rows as usize * 4);
+        let levels = [raster::TextureLevel {
+            width,
+            height: rows,
+            rgba: &pixels,
+        }];
+        let texture = raster::TextureView {
+            levels: &levels,
+            format: raster::TextureFormat::Rgba,
+            wrap_s: raster::Wrap::Repeat,
+            wrap_t: raster::Wrap::Repeat,
+            min_filter: raster::Filter::Nearest,
+            mag_filter: raster::Filter::Nearest,
+        };
+        let vertices = gl_present_strip_vertices(height, top, rows).map(|v| raster::ClipVertex {
+            clip: [v.position[0], v.position[1], 0., 1.],
+            color: [1.; 4],
+            uv: [v.uv[0], v.uv[1], 0., 1.],
+            fog: 0.,
+        });
+        written += frame
+            .draw_triangles(&vertices, &[0, 1, 2, 0, 2, 3], &state, Some(&texture))
+            .unwrap()
+            .shaded_pixels;
+    }
+    assert_eq!(written, u64::from(width) * u64::from(height));
+    for (expected, actual) in source.chunks_exact(4).zip(frame.rgba.chunks_exact(4)) {
+        assert_eq!(&expected[..3], &actual[..3]);
+        assert_eq!(expected[3], 17); // Presentation must not modify GL alpha.
+        assert_eq!(actual[3], 255);
+    }
+}
+
+#[test]
+fn fullscreen_publication_budget_includes_resident_sampler_copy() {
+    let page = |n: u64| (n + 4095) & !4095;
+    let surface = page(2560 * 1440 * 4);
+    let full_upload = page(2560 * 1440 * 4);
+    let geometry = page(80) + page(24);
+    let quota = 32 * 1024 * 1024;
+    assert!(surface + 2 * full_upload + geometry > quota);
+    let strip = page(2560 * 256 * 4);
+    assert!(surface + 2 * strip + geometry < quota);
+}

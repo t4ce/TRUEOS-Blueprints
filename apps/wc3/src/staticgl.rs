@@ -187,6 +187,37 @@ impl XpProcess {
             })
     }
 
+    pub fn gl_light_diagnostic(&self, tid: u32, light: u32, pname: u32) -> Option<(u32, Vec<f32>)> {
+        let (hglrc, c) = self
+            .gl_runtime
+            .as_ref()?
+            .contexts
+            .iter()
+            .find(|(_, c)| c.current_tid == Some(tid))?;
+        let l = c.fixed.lights.get(light.checked_sub(0x4000)? as usize)?;
+        let values = match pname {
+            0x1200 => l.ambient.to_vec(),
+            0x1201 => l.diffuse.to_vec(),
+            0x1202 => l.specular.to_vec(),
+            0x1203 => l.position_eye.to_vec(),
+            0x1204 => l.spot_direction_eye.to_vec(),
+            0x1205 => vec![l.spot_exponent],
+            0x1206 => vec![l.spot_cutoff],
+            0x1207..=0x1209 => vec![l.attenuation[(pname - 0x1207) as usize]],
+            _ => return None,
+        };
+        Some((*hglrc, values))
+    }
+    pub fn gl_cap_diagnostic(&self, tid: u32, cap: u32) -> Option<(u32, bool)> {
+        self.gl_runtime
+            .as_ref()?
+            .contexts
+            .iter()
+            .find_map(|(h, c)| {
+                (c.current_tid == Some(tid)).then_some((*h, c.fixed.is_enabled(cap)))
+            })
+    }
+
     pub fn gl_light0_specular_diagnostic(&self, tid: u32) -> Option<(u32, [f32; 4])> {
         self.gl_runtime
             .as_ref()?

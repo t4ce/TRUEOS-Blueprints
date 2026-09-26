@@ -6,7 +6,18 @@ the old persistent `glLightf` blocker alone would not render those semantics.
 
 The provider now consumes that state through a Rust fixed-function rasterizer.
 Color/depth live with each HGLRC; the final image is submitted through the existing
-sampled vGPU shader and UI4 presentation path. No vGPU ABI extension or RF01 kernel
+sampled vGPU shader and UI4 presentation path. Publication uses horizontal strips
+of at most 256 rows: the first clears the target, subsequent strips preserve color,
+and each GPU completion precedes buffer reuse and reacquisition of the same
+unpublished surface. UI4 publishes only after all strips complete.
+
+The broker creates a resident sampler copy in addition to the upload buffer.
+At 2560x1440, a surface plus two full-size textures require about 42.19 MiB,
+exceeding the 32 MiB guest quota. The strip path needs about 19.07 MiB for the
+surface, upload, resident copy and page-rounded vertex/index buffers. Resolution
+and the quota are unchanged. `WC3 GL PRESENT BEGIN` reports device accounting;
+`WC3 GL PRESENT FAIL` retains the failing allocation/upload/submission stage and
+original errno. A kernel diagnostic also preserves the symbolic submission error. No vGPU ABI extension or RF01 kernel
 deployment is part of this patch. Software shading prioritizes compatibility;
 this is not yet a GPU-speed game renderer.
 

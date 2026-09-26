@@ -119,3 +119,11 @@ extern "C" fn trueos_cabi_vgpu_close(device: u64) -> i32 {
 extern "C" fn trueos_cabi_vgpu_ui4_surface_discard(device: u64, surface: u64) -> i32 {
     panic!("GPU ABI called by host-only process test: trueos_cabi_vgpu_ui4_surface_discard");
 }
+
+#[unsafe(no_mangle)]
+extern "C" fn trueos_cabi_vgpu_device_info(
+    _device: u64,
+    _info: *mut trueos::vgpu::DeviceInfo,
+) -> i32 {
+    panic!("GPU ABI called by host-only process test: trueos_cabi_vgpu_device_info");
+}
