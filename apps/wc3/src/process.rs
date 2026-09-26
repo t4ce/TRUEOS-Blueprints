@@ -1508,6 +1508,7 @@ struct Message {
 
 const WM_PAINT: u32 = 0x000f;
 const WM_QUIT: u32 = 0x0012;
+const WM_SIZE: u32 = 0x0005;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct RegistryHandle {
@@ -1949,6 +1950,28 @@ impl XpProcess {
             x: 0,
             y: 0,
         });
+    }
+
+    pub fn queue_window_size(
+        &mut self,
+        hwnd: u32,
+        width: u32,
+        height: u32,
+    ) -> Result<(), &'static str> {
+        if width > u32::from(u16::MAX) || height > u32::from(u16::MAX) {
+            return Err("WM_SIZE dimensions exceed packed client size");
+        }
+
+        self.messages.push_back(Message {
+            hwnd,
+            message: WM_SIZE,
+            wparam: 0, // SIZE_RESTORED
+            lparam: (height << 16) | width,
+            time: monotonic_counter_millis(),
+            x: 0,
+            y: 0,
+        });
+        Ok(())
     }
 
     pub fn clear_window_paint(&mut self, hwnd: u32) {

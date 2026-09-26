@@ -1818,6 +1818,31 @@ macro_rules! wc3_thunk32_tests_1 {
                     CHILD_CEIL_ADDRESS,
                 );
             }
+
+            #[test]
+            fn floor_uses_a_guest_native_cdecl_x87_thunk() {
+                let mut page = [0x90; 0x1000];
+                install_child_controls(&mut page).unwrap();
+                assert_eq!(
+                    &page[CHILD_FLOOR_OFFSET..CHILD_FLOOR_OFFSET + 40],
+                    &[
+                        0x83, 0xec, 0x04, 0xd9, 0x3c, 0x24, 0x66, 0x8b,
+                        0x04, 0x24, 0x66, 0x25, 0xff, 0xf3, 0x66, 0x0d,
+                        0x00, 0x04, 0x66, 0x89, 0x44, 0x24, 0x02, 0xd9,
+                        0x6c, 0x24, 0x02, 0xdd, 0x44, 0x24, 0x08, 0xd9,
+                        0xfc, 0xd9, 0x2c, 0x24, 0x83, 0xc4, 0x04, 0xc3,
+                    ]
+                );
+
+                let mut thunk = [0; THUNK_BYTES];
+                write(75, Kind::Floor, &mut thunk).unwrap();
+                assert_eq!(thunk[0], 0xe9);
+                let displacement = i32::from_le_bytes(thunk[1..5].try_into().unwrap());
+                assert_eq!(
+                    address(75).unwrap().wrapping_add(5).wrapping_add_signed(displacement),
+                    CHILD_FLOOR_ADDRESS,
+                );
+            }
         }
     };
 }

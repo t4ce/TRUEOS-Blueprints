@@ -51,6 +51,8 @@ pub const CHILD_QSORT_DWORD_ADDRESS: u32 =
     CHILD_CONTROL_BASE + CHILD_QSORT_DWORD_OFFSET as u32;
 pub const CHILD_CEIL_OFFSET: usize = 0x900;
 pub const CHILD_CEIL_ADDRESS: u32 = CHILD_CONTROL_BASE + CHILD_CEIL_OFFSET as u32;
+pub const CHILD_FLOOR_OFFSET: usize = 0x940;
+pub const CHILD_FLOOR_ADDRESS: u32 = CHILD_CONTROL_BASE + CHILD_FLOOR_OFFSET as u32;
 
 // Guard a NUL-terminated ASCII string within the Rust parser's 256-byte bound,
 // then parse 1..9 leading digits. All other cases restore the original stack,
@@ -182,6 +184,25 @@ const CHILD_CEIL_CODE: &[u8] = &[
     0xc3,
 ];
 
+// Cdecl floor(double): retain the caller's x87 control word, temporarily use
+// round-toward-negative-infinity for FRNDINT, then restore it. The rounded
+// double remains in ST(0), and RET intentionally leaves the eight-byte
+// argument for the cdecl caller to remove.
+const CHILD_FLOOR_CODE: &[u8] = &[
+    0x83, 0xec, 0x04,
+    0xd9, 0x3c, 0x24,
+    0x66, 0x8b, 0x04, 0x24,
+    0x66, 0x25, 0xff, 0xf3,
+    0x66, 0x0d, 0x00, 0x04,
+    0x66, 0x89, 0x44, 0x24, 0x02,
+    0xd9, 0x6c, 0x24, 0x02,
+    0xdd, 0x44, 0x24, 0x08,
+    0xd9, 0xfc,
+    0xd9, 0x2c, 0x24,
+    0x83, 0xc4, 0x04,
+    0xc3,
+];
+
 pub fn install_child_controls(output: &mut [u8]) -> Result<(), &'static str> {
     output.get_mut(CHILD_DECIMAL_OFFSET..CHILD_DECIMAL_OFFSET + CHILD_DECIMAL_CODE.len())
         .ok_or("decimal helper range")?.copy_from_slice(CHILD_DECIMAL_CODE);
@@ -208,6 +229,10 @@ pub fn install_child_controls(output: &mut [u8]) -> Result<(), &'static str> {
         .get_mut(CHILD_CEIL_OFFSET..CHILD_CEIL_OFFSET + CHILD_CEIL_CODE.len())
         .ok_or("ceil helper range")?
         .copy_from_slice(CHILD_CEIL_CODE);
+    output
+        .get_mut(CHILD_FLOOR_OFFSET..CHILD_FLOOR_OFFSET + CHILD_FLOOR_CODE.len())
+        .ok_or("floor helper range")?
+        .copy_from_slice(CHILD_FLOOR_CODE);
     for offset in [0usize, 0x10, 0x20, 0x30, 0x40, 0x50] {
         let trap = output
             .get_mut(offset..offset + 5)
@@ -259,6 +284,8 @@ pub enum Kind {
     Memmove,
     /// Cdecl guest-native x87 ceil(double); result remains in ST(0).
     Ceil,
+    /// Cdecl guest-native x87 floor(double); result remains in ST(0).
+    Floor,
     /// Cdecl guest-native unsigned byte comparison.
     Strncmp,
     /// CP1252 case-insensitive bounded guest-native comparison.
@@ -291,12 +318,13 @@ pub fn write(import_id: u32, kind: Kind, output: &mut [u8]) -> Result<(), &'stat
         output[6..10].copy_from_slice(&target.wrapping_sub(next).to_le_bytes());
         return Ok(());
     }
-    if matches!(kind, Kind::Memmove | Kind::Strncmp | Kind::Strnicmp | Kind::Ceil) {
+    if matches!(kind, Kind::Memmove | Kind::Strncmp | Kind::Strnicmp | Kind::Ceil | Kind::Floor) {
         let target = match kind {
             Kind::Memmove => CHILD_MEMMOVE_ADDRESS,
             Kind::Strncmp => CHILD_STRNCMP_ADDRESS,
             Kind::Strnicmp => CHILD_STRNICMP_ADDRESS,
             Kind::Ceil => CHILD_CEIL_ADDRESS,
+            Kind::Floor => CHILD_FLOOR_ADDRESS,
             _ => unreachable!(),
         };
         let next = address(import_id).and_then(|address| address.checked_add(5))
@@ -316,7 +344,7 @@ pub fn write(import_id: u32, kind: Kind, output: &mut [u8]) -> Result<(), &'stat
         0xC1,
     ]);
     match kind {
-        Kind::Memmove | Kind::Ceil | Kind::Strncmp | Kind::Strnicmp | Kind::ToUpper | Kind::Decimal | Kind::QsortDword => unreachable!(),
+        Kind::Memmove | Kind::Ceil | Kind::Floor | Kind::Strncmp | Kind::Strnicmp | Kind::ToUpper | Kind::Decimal | Kind::QsortDword => unreachable!(),
         Kind::Return => output[8] = 0xC3,
         Kind::Stdcall(bytes) => {
             output[8] = 0xC2;

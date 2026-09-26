@@ -771,6 +771,33 @@ impl XpProcess {
                 );
                 Ok(PersonalityAction::Return(result))
             }
+            ProviderOp::CrtIswSpace => {
+                let [_, raw_character] = arguments::<2>(memory, esp)?;
+                let character = raw_character as u16;
+                let result = match character {
+                    0xffff => 0,
+                    0x0000..=0x00ff => u32::from(ascii_ctype1(character) & C1_SPACE),
+                    other => {
+                        return Err(ProviderDispatchError::Frontier {
+                            api: "iswspace",
+                            detail: format!(
+                                "wide character classification unmodeled U+{other:04X} raw=0x{raw_character:08x}"
+                            ),
+                        });
+                    }
+                };
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                logl::log(
+                    level::IMPORTANT,
+                    format_args!(
+                        "WC3 CHILD CRT ISWSPACE pid={pid} tid={tid} raw=0x{raw_character:08x} character=U+{character:04X} result=0x{result:08x} cleanup=0-by-thunk"
+                    ),
+                );
+                Ok(PersonalityAction::Return(result))
+            }
             ProviderOp::CrtToUpper => {
                 let [_, character] = arguments::<2>(memory, esp)?;
                 let result = match character {

@@ -152,8 +152,10 @@ pub enum ProviderOp {
     CrtMalloc,
     CrtMemmove,
     CrtCeil,
+    CrtFloor,
     CrtIsDigit,
     CrtIsMbcSpace,
+    CrtIswSpace,
     CrtToUpper,
     CrtAtoi,
     CrtAtol,
@@ -477,8 +479,10 @@ impl ProviderOp {
             | Self::CrtMalloc
             | Self::CrtMemmove
             | Self::CrtCeil
+            | Self::CrtFloor
             | Self::CrtIsDigit
             | Self::CrtIsMbcSpace
+            | Self::CrtIswSpace
             | Self::CrtToUpper
             | Self::CrtAtoi
             | Self::CrtAtol
@@ -582,8 +586,10 @@ impl ProviderOp {
                 | Self::CrtVsnprintf
                 | Self::CrtMemmove
                 | Self::CrtCeil
+                | Self::CrtFloor
                 | Self::CrtIsDigit
                 | Self::CrtIsMbcSpace
+                | Self::CrtIswSpace
                 | Self::CrtToUpper
                 | Self::CrtAtoi
                 | Self::CrtAtol
@@ -946,8 +952,10 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "malloc" => ProviderOp::CrtMalloc,
             "memmove" => ProviderOp::CrtMemmove,
             "ceil" => ProviderOp::CrtCeil,
+            "floor" => ProviderOp::CrtFloor,
             "isdigit" => ProviderOp::CrtIsDigit,
             "_ismbcspace" => ProviderOp::CrtIsMbcSpace,
+            "iswspace" => ProviderOp::CrtIswSpace,
             "toupper" => ProviderOp::CrtToUpper,
             "atoi" => ProviderOp::CrtAtoi,
             "atol" => ProviderOp::CrtAtol,
@@ -988,6 +996,9 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
 pub fn provider_thunk_kind(import: &ProviderImport) -> thunk32::Kind {
     if provider_op(import) == ProviderOp::CrtCeil {
         return thunk32::Kind::Ceil;
+    }
+    if provider_op(import) == ProviderOp::CrtFloor {
+        return thunk32::Kind::Floor;
     }
     if matches!(provider_op(import), ProviderOp::CrtAtoi | ProviderOp::CrtAtol)
         && !cfg!(feature = "host-decimal") {
@@ -1292,6 +1303,22 @@ mod beginthreadex_tests {
         assert!(operation.is_generic_process_local());
         assert_eq!(operation.stack_cleanup_bytes(), 0);
         assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Ceil);
+    }
+
+    #[test]
+    fn crt_floor_is_cdecl_and_guest_native() {
+        let import = ProviderImport {
+            module: "MSVCRT.dll".into(),
+            symbol: ProviderSymbol::Name("floor".into()),
+            iat_rva: 0,
+        };
+
+        let operation = provider_op(&import);
+        assert_eq!(operation, ProviderOp::CrtFloor);
+        assert!(operation.is_modeled());
+        assert!(operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 0);
+        assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Floor);
     }
 
     #[test]

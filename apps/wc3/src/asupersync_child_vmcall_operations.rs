@@ -1564,7 +1564,16 @@
                         };
                         let hwnd = request.hwnd;
                         let insert_after = request.insert_after;
+                        let size_requested = request.flags & 0x0001 == 0; // SWP_NOSIZE
                         let result = session.set_window_pos(request).map_err(str::to_owned)?;
+                        if size_requested {
+                            session
+                                .process_mut(active_pid)
+                                .ok_or_else(|| "SetWindowPos process missing".to_owned())?
+                                .xp
+                                .queue_window_size(hwnd, result.width, result.height)
+                                .map_err(str::to_owned)?;
+                        }
                         let position_changed = result.old_x != result.x || result.old_y != result.y;
                         let size_changed = result.old_width != result.width
                             || result.old_height != result.height;
@@ -1586,7 +1595,7 @@
                         logl::log(
                             level::IMPORTANT,
                             format_args!(
-                                "WC3 CHILD SETWINDOWPOS RESULT pid={} tid={} hwnd=0x{:08x} old={},{} {}x{} requested={} applied={},{} {}x{} move_changed={} size_changed={} insert_after={} ui4_zorder_action=none ui4_position_changed={} ui4_size_changed={} ui4_visible={} win32_visible={} result=TRUE cleanup=28-by-thunk",
+                                "WC3 CHILD SETWINDOWPOS RESULT pid={} tid={} hwnd=0x{:08x} old={},{} {}x{} requested={} applied={},{} {}x{} move_changed={} size_changed={} guest_size_requested={} wm_size_queued={} insert_after={} ui4_zorder_action=none ui4_position_changed={} ui4_size_changed={} ui4_visible={} win32_visible={} result=TRUE cleanup=28-by-thunk",
                                 active_pid,
                                 active_tid,
                                 hwnd,
@@ -1601,6 +1610,8 @@
                                 result.height,
                                 position_changed as u8,
                                 size_changed as u8,
+                                size_requested as u8,
+                                size_requested as u8,
                                 if insert_after == 0 { "HWND_TOP" } else { "unobserved" },
                                 position_changed as u8,
                                 size_changed as u8,
