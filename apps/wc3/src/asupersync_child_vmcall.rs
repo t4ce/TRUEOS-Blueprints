@@ -4481,7 +4481,7 @@
                                     .context
                                     .set_registers(registers)
                                     .map_err(|error| error.to_string())?;
-                                logl::log(
+                                logl::trace!("trace-api",
                                     level::IMPORTANT,
                                     format_args!(
                                         "WC3 CHILD GETTHREADPRIORITY pid={} caller_tid={} handle=0x{:08x} target_tid={} priority={} base_priority={} result=0x{:08x} caller_ret=0x{:08x} cleanup=4-by-thunk",
@@ -6887,14 +6887,29 @@
                                 if let Some(result) =
                                     session.poll_wait(&request).map_err(str::to_owned)?
                                 {
-                                    logl::log(
-                                        level::IMPORTANT,
-                                        format_args!(
-                                            "WC3 CHILD WAIT {}RETURN pid={} tid={} handle0=0x{:08x} handle1=0x{:08x} result=0x{:08x}",
-                                            if is_multiple_wait { "MULTIPLE " } else { "" },
-                                            active_pid, active_tid, request.handles[0], request.handles[1], result
-                                        ),
-                                    );
+                                    // Keep every signal/error, but sample empty zero-timeout
+                                    // polls. The guest still checks the real event every time.
+                                    use core::sync::atomic::{AtomicU64, Ordering};
+                                    static EMPTY_WAIT_POLLS: AtomicU64 = AtomicU64::new(0);
+                                    let empty_poll = result == 0x102 && request.timeout == 0;
+                                    let poll_count = if empty_poll {
+                                        EMPTY_WAIT_POLLS.fetch_add(1, Ordering::Relaxed) + 1
+                                    } else {
+                                        0
+                                    };
+                                    if !empty_poll || cfg!(feature = "trace-api")
+                                        || poll_count <= 4 || poll_count % 1024 == 0
+                                    {
+                                        logl::log(
+                                            level::IMPORTANT,
+                                            format_args!(
+                                                "WC3 CHILD WAIT {}RETURN pid={} tid={} handle0=0x{:08x} handle1=0x{:08x} result=0x{:08x} timeout_ms={} caller_ret=0x{:08x} empty_poll_count={}",
+                                                if is_multiple_wait { "MULTIPLE " } else { "" },
+                                                active_pid, active_tid, request.handles[0], request.handles[1], result,
+                                                request.timeout, request.return_address, poll_count,
+                                            ),
+                                        );
+                                    }
                                     result
                                 } else {
                                     session.block_wait(request.clone()).map_err(str::to_owned)?;
@@ -8268,7 +8283,7 @@
                                             ),
                                         );
                                     }
-                                    child_loader::ProviderOp::ClipCursor => {
+                                    child_loader::ProviderOp::ClipCursor if cfg!(feature = "trace-api") || result == 0 => {
                                         let [_, rect_ptr] = read_guest_words(
                                             &X86Memory(&child.address_space),
                                             exit.registers.esp,
@@ -8667,7 +8682,7 @@
                                             result,
                                         ),
                                     ),
-                                    child_loader::ProviderOp::TlsSetValue => {
+                                    child_loader::ProviderOp::TlsSetValue if cfg!(feature = "trace-api") || result == 0 => {
                                         let [_, slot, value] = read_guest_words(
                                             &X86Memory(&child.address_space),
                                             exit.registers.esp,

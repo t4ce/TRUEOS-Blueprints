@@ -493,17 +493,19 @@ impl XpProcess {
                 Ok(PersonalityAction::Return(result))
             }
             ProviderOp::PeekMessageA => {
-                let [_, out, hwnd, min, max, flags] = arguments::<6>(memory, esp)?;
                 let result = self
                     .peek_message(esp, memory)
                     .map_err(ProviderDispatchError::Fault)?;
-                logl::log(
-                    level::IMPORTANT,
-                    format_args!(
-                        "WC3 CHILD PEEKMESSAGEA pid={pid} tid={tid} output=0x{out:08x} hwnd=0x{hwnd:08x} min=0x{min:08x} max=0x{max:08x} flags=0x{flags:08x} remove={} result={result} cleanup=20-by-thunk",
-                        flags & 1 != 0,
-                    ),
-                );
+                if result != 0 || cfg!(feature = "trace-api") {
+                    let [_, out, hwnd, min, max, flags] = arguments::<6>(memory, esp)?;
+                    logl::log(
+                        level::IMPORTANT,
+                        format_args!(
+                            "WC3 CHILD PEEKMESSAGEA pid={pid} tid={tid} output=0x{out:08x} hwnd=0x{hwnd:08x} min=0x{min:08x} max=0x{max:08x} flags=0x{flags:08x} remove={} result={result} cleanup=20-by-thunk",
+                            flags & 1 != 0,
+                        ),
+                    );
+                }
                 self.call_count = self
                     .call_count
                     .checked_add(1)

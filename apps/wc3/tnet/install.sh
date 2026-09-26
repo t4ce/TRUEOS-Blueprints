@@ -163,6 +163,7 @@ logged runuser -u w3box -- "$BUILT/sbin/bnetd" -v
 say 'Installing services and preserving existing account data'
 if systemctl is-active --quiet w3box; then logged systemctl stop w3box; fi
 install -d -m 0755 "$PREFIX/app" "$PREFIX/templates" "$PREFIX/pvpgn" "$PREFIX/pvpgn/etc" "$PREFIX/pvpgn/var"
+chmod 0755 "$PREFIX"
 cp -a "$HERE/app/." "$PREFIX/app/"
 for directory in bin sbin share; do
   if [[ -d "$BUILT/$directory" ]]; then

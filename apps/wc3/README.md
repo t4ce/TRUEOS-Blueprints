@@ -35,6 +35,15 @@ diagnostics. With `trace-api` disabled, their diagnostic-only guest reads,
 string allocations, and formatting are skipped. Exact octal `strtol("0")`
 calls use a two-byte parser shortcut; other inputs retain the general parser.
 
+The idle message loop also gates empty `PeekMessageA`, successful
+`GetThreadPriority`, `TlsSetValue`, and `ClipCursor` diagnostics behind
+`trace-api`, including diagnostic-only guest-memory reads. Messages found,
+failures, and signaled waits remain visible. Empty zero-timeout waits log the
+first four polls and every 1024th poll thereafter, with a cumulative counter,
+timeout, and caller address; `trace-api` restores every poll. This counter is
+shared across the child wait callsite. Event polling, TLS writes, message
+delivery, and scheduling are unchanged; this does not unblock offline IOCP.
+
 Re-enable only the diagnostics needed via Cargo features:
 
 - `trace-scan`: scan/table progress observers and execution samples.
