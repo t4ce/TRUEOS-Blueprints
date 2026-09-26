@@ -155,6 +155,7 @@ pub enum ProviderOp {
     CrtToUpper,
     CrtAtoi,
     CrtAtol,
+    CrtQsort,
     CrtStrtol,
     CrtSscanf,
     CrtFtol,
@@ -463,6 +464,7 @@ impl ProviderOp {
             | Self::CrtToUpper
             | Self::CrtAtoi
             | Self::CrtAtol
+            | Self::CrtQsort
             | Self::CrtStrtol
             | Self::CrtSscanf
             | Self::CrtFtol
@@ -564,6 +566,7 @@ impl ProviderOp {
                 | Self::CrtToUpper
                 | Self::CrtAtoi
                 | Self::CrtAtol
+                | Self::CrtQsort
                 | Self::CrtStrtol
                 | Self::CrtSscanf
                 | Self::CrtRand
@@ -915,6 +918,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "toupper" => ProviderOp::CrtToUpper,
             "atoi" => ProviderOp::CrtAtoi,
             "atol" => ProviderOp::CrtAtol,
+            "qsort" => ProviderOp::CrtQsort,
             "strtol" => ProviderOp::CrtStrtol,
             "sscanf" => ProviderOp::CrtSscanf,
             "_ftol" => ProviderOp::CrtFtol,

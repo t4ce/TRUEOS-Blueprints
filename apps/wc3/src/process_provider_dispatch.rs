@@ -632,6 +632,41 @@ impl XpProcess {
                     .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(result))
             }
+            ProviderOp::CrtQsort => {
+                let [caller_ret, base, count, size, comparator] = arguments::<5>(memory, esp)?;
+                if count > 1 {
+                    return Err(ProviderDispatchError::Frontier {
+                        api: "qsort",
+                        detail: format!(
+                            "nontrivial sort base=0x{base:08x} count={count} size={size} \
+                             comparator=0x{comparator:08x} caller_ret=0x{caller_ret:08x}"
+                        ),
+                    });
+                }
+                if base == 0 || size == 0 || comparator == 0 {
+                    return Err(ProviderDispatchError::Frontier {
+                        api: "qsort",
+                        detail: format!(
+                            "unobserved trivial parameters base=0x{base:08x} count={count} \
+                             size={size} comparator=0x{comparator:08x}"
+                        ),
+                    });
+                }
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                logl::log(
+                    level::IMPORTANT,
+                    format_args!(
+                        "WC3 CHILD CRT QSORT RESULT pid={pid} tid={tid} \
+                         base=0x{base:08x} count={count} size={size} \
+                         comparator=0x{comparator:08x} \
+                         action=no-op comparator_calls=0 cleanup=0-by-thunk"
+                    ),
+                );
+                Ok(PersonalityAction::Return(0))
+            }
             ProviderOp::CrtStrtol => {
                 let [_, input, end_ptr, base] = arguments::<4>(memory, esp)?;
                 let (result, consumed) = crt_strtol(memory, input, end_ptr, base)?;
