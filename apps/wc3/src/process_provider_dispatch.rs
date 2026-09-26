@@ -514,15 +514,12 @@ impl XpProcess {
             }
             ProviderOp::GetMessageA => {
                 let [_, out, hwnd, min, max] = arguments::<5>(memory, esp)?;
-                let result = self
-                    .get_message_a(esp, memory)
-                    .map_err(ProviderDispatchError::Fault)?;
-                let delivered_hwnd = read_u32(memory, out)?;
-                let delivered_message = read_u32(memory, out + 4)?;
+                let result = self.get_message_a(esp, memory)?;
+                let message = read_u32(memory, out + 4)?;
                 logl::log(
                     level::IMPORTANT,
                     format_args!(
-                        "WC3 CHILD GETMESSAGEA pid={pid} tid={tid} output=0x{out:08x} hwnd_filter=0x{hwnd:08x} min=0x{min:08x} max=0x{max:08x} delivered_hwnd=0x{delivered_hwnd:08x} message=0x{delivered_message:08x} result=0x{result:08x} cleanup=16-by-thunk"
+                        "WC3 CHILD GETMESSAGEA pid={pid} tid={tid} output=0x{out:08x} hwnd=0x{hwnd:08x} min=0x{min:08x} max=0x{max:08x} message=0x{message:08x} result={result} removed=1 cleanup=16-by-thunk"
                     ),
                 );
                 self.call_count = self

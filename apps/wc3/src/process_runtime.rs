@@ -2285,11 +2285,9 @@ impl XpProcess {
         memory: &mut impl GuestMemory,
     ) -> Result<u32, &'static str> {
         let [_, out, hwnd, min, max, flags] = arguments::<6>(memory, esp)?;
-        let pos = self.messages.iter().position(|m| {
-            (hwnd == 0 || m.hwnd == hwnd)
-                && ((min == 0 && max == 0) || (m.message >= min && m.message <= max))
-        });
-        let Some(pos) = pos else { return Ok(0) };
+        let Some(pos) = self.find_message(hwnd, min, max) else {
+            return Ok(0);
+        };
         let m = if flags & 1 != 0 {
             self.messages.remove(pos).unwrap()
         } else {
@@ -2303,34 +2301,34 @@ impl XpProcess {
         &mut self,
         esp: u32,
         memory: &mut impl GuestMemory,
-    ) -> Result<u32, &'static str> {
+    ) -> Result<u32, ProviderDispatchError> {
         let [_, out, hwnd, min, max] = arguments::<5>(memory, esp)?;
         if out == 0 {
-            return Err("GetMessageA null output");
+            return Err(ProviderDispatchError::Frontier {
+                api: "GetMessageA",
+                detail: "null lpMsg".into(),
+            });
         }
-        let pos = self.messages.iter().position(|message| {
-            message.message == WM_QUIT
-                || ((hwnd == 0 || message.hwnd == hwnd)
-                    && ((min == 0 && max == 0)
-                        || (message.message >= min && message.message <= max)))
-        });
+        let pos = self.find_message(hwnd, min, max);
         let Some(pos) = pos else {
-            return Err("GetMessageA empty queue would block");
+            return Err(ProviderDispatchError::Frontier {
+                api: "GetMessageA",
+                detail: format!(
+                    "empty matching queue requires blocking hwnd=0x{hwnd:08x} min=0x{min:08x} max=0x{max:08x}"
+                ),
+            });
         };
-        let message = self.messages[pos].clone();
-        Self::write_message(memory, out, &message)?;
+        let message = self.messages.remove(pos).unwrap();
+        Self::write_message(memory, out, &message).map_err(ProviderDispatchError::Fault)?;
+        Ok((message.message != WM_QUIT) as u32)
+    }
 
-        match message.message {
-            WM_QUIT => {
-                self.messages.remove(pos);
-                Ok(0)
-            }
-            WM_PAINT => Ok(1),
-            _ => {
-                self.messages.remove(pos);
-                Ok(1)
-            }
-        }
+    fn find_message(&self, hwnd: u32, min: u32, max: u32) -> Option<usize> {
+        self.messages.iter().position(|message| {
+            (hwnd == 0 || message.hwnd == hwnd)
+                && ((min == 0 && max == 0)
+                    || (message.message >= min && message.message <= max))
+        })
     }
 
     fn write_message(

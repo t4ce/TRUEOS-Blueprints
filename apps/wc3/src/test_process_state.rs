@@ -261,13 +261,18 @@
     }
 
     #[test]
-    fn child_get_message_a_retrieves_but_does_not_remove_window_paint() {
-        let provider = ProviderImport {
+    fn child_get_message_a_removes_window_paint_after_nonremoving_peek() {
+        let get_provider = ProviderImport {
             module: "USER32.dll".into(),
             symbol: ProviderSymbol::Name("GetMessageA".into()),
             iat_rva: 0,
         };
-        let operation = provider_op(&provider);
+        let peek_provider = ProviderImport {
+            module: "USER32.dll".into(),
+            symbol: ProviderSymbol::Name("PeekMessageA".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&get_provider);
         assert_eq!(operation, ProviderOp::GetMessageA);
         assert!(operation.is_modeled());
         assert!(operation.is_generic_process_local());
@@ -285,17 +290,25 @@
             write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
         }
         let mut xp = XpProcess::new_child();
-        xp.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        xp.install_provider_surface(vec![get_provider, peek_provider], Vec::new(), Vec::new());
         xp.queue_window_paint(0x5743_4003);
 
-        for _ in 0..2 {
-            assert_eq!(
-                xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
-                Ok(PersonalityAction::Return(1))
-            );
-            assert_eq!(read_u32(&memory, output).unwrap(), 0x5743_4003);
-            assert_eq!(read_u32(&memory, output + 4).unwrap(), 0x000f);
-        }
+        // Peek with PM_NOREMOVE leaves the paint message ready for GetMessage.
+        write_u32(&mut memory, esp + 5 * 4, 0).unwrap();
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 1, esp, &mut memory),
+            Ok(PersonalityAction::Return(1))
+        );
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(1))
+        );
+        assert_eq!(read_u32(&memory, output).unwrap(), 0x5743_4003);
+        assert_eq!(read_u32(&memory, output + 4).unwrap(), 0x000f);
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 1, esp, &mut memory),
+            Ok(PersonalityAction::Return(0))
+        );
     }
 
     #[test]
