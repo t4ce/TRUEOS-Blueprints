@@ -492,6 +492,24 @@ impl XpProcess {
                 let result = self.format_message_a(esp, memory)?;
                 Ok(PersonalityAction::Return(result))
             }
+            ProviderOp::PeekMessageA => {
+                let [_, out, hwnd, min, max, flags] = arguments::<6>(memory, esp)?;
+                let result = self
+                    .peek_message(esp, memory)
+                    .map_err(ProviderDispatchError::Fault)?;
+                logl::log(
+                    level::IMPORTANT,
+                    format_args!(
+                        "WC3 CHILD PEEKMESSAGEA pid={pid} tid={tid} output=0x{out:08x} hwnd=0x{hwnd:08x} min=0x{min:08x} max=0x{max:08x} flags=0x{flags:08x} remove={} result={result} cleanup=20-by-thunk",
+                        flags & 1 != 0,
+                    ),
+                );
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(result))
+            }
             ProviderOp::TlsAlloc => {
                 let slot = self.tls_alloc()?;
                 self.call_count = self

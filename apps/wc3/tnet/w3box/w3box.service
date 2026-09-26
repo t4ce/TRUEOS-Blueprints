@@ -1,0 +1,38 @@
+[Unit]
+Description=W3Box Warcraft III private realm and local control panel
+After=network.target
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=w3box
+Group=w3box
+WorkingDirectory=/opt/w3box
+Environment=PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 /opt/w3box/app/server.py
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=45
+KillMode=mixed
+RuntimeDirectory=w3box
+RuntimeDirectoryMode=0700
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/w3box /run/w3box
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+CapabilityBoundingSet=
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

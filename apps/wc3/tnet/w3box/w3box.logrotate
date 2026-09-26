@@ -1,0 +1,11 @@
+/var/lib/w3box/var/bnetd.log /var/lib/w3box/var/process.log {
+    su w3box w3box
+    daily
+    maxsize 10M
+    rotate 7
+    missingok
+    notifempty
+    copytruncate
+    compress
+    delaycompress
+}

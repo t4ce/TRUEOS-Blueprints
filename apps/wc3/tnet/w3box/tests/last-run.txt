@@ -1,0 +1,47 @@
+test_atomic_write (test_w3box.ConfigTests.test_atomic_write) ... ok
+test_config_policy (test_w3box.ConfigTests.test_config_policy) ... ok
+test_duplicate_config_keys_removed (test_w3box.ConfigTests.test_duplicate_config_keys_removed) ... ok
+test_exact_version_only (test_w3box.ConfigTests.test_exact_version_only) ... ok
+test_gateway_script_is_personalized (test_w3box.ConfigTests.test_gateway_script_is_personalized) ... ok
+test_initialization_preserves_password_and_accounts (test_w3box.ConfigTests.test_initialization_preserves_password_and_accounts) ... ok
+test_manual_nat_rules_survive (test_w3box.ConfigTests.test_manual_nat_rules_survive) ... ok
+test_missing_version_fails (test_w3box.ConfigTests.test_missing_version_fails) ... ok
+test_password_file_permissions (test_w3box.ConfigTests.test_password_file_permissions) ... ok
+test_password_good_bad (test_w3box.ConfigTests.test_password_good_bad) ... ok
+test_password_minimum (test_w3box.ConfigTests.test_password_minimum) ... ok
+test_reject_bad_hosts (test_w3box.ConfigTests.test_reject_bad_hosts) ... ok
+test_reject_injected_server_name (test_w3box.ConfigTests.test_reject_injected_server_name) ... ok
+test_reject_unknown_settings (test_w3box.ConfigTests.test_reject_unknown_settings) ... ok
+test_reject_wrong_types (test_w3box.ConfigTests.test_reject_wrong_types) ... ok
+test_valid_hosts (test_w3box.ConfigTests.test_valid_hosts) ... ok
+test_authenticated_status (test_w3box.HTTPTests.test_authenticated_status) ... ok
+test_cross_origin_login_denied (test_w3box.HTTPTests.test_cross_origin_login_denied) ... ok
+test_dns_rebinding_host_denied (test_w3box.HTTPTests.test_dns_rebinding_host_denied) ... ok
+test_gateway_download (test_w3box.HTTPTests.test_gateway_download) ... ok
+test_get_cannot_mutate (test_w3box.HTTPTests.test_get_cannot_mutate) ... ok
+test_invalid_settings_rejected (test_w3box.HTTPTests.test_invalid_settings_rejected) ... ok
+test_login_throttle (test_w3box.HTTPTests.test_login_throttle) ... ok
+test_logout_revokes_cookie (test_w3box.HTTPTests.test_logout_revokes_cookie) ... ok
+test_missing_csrf_denied (test_w3box.HTTPTests.test_missing_csrf_denied) ... ok
+test_static_page_and_security_headers (test_w3box.HTTPTests.test_static_page_and_security_headers) ... ok
+test_successful_login_secure_cookie (test_w3box.HTTPTests.test_successful_login_secure_cookie) ... ok
+test_unauthenticated_status_denied (test_w3box.HTTPTests.test_unauthenticated_status_denied) ... ok
+test_web_cannot_reset_password (test_w3box.HTTPTests.test_web_cannot_reset_password) ... ok
+test_arbitrary_command_rejected (test_w3box.ProcessTests.test_arbitrary_command_rejected) ... ok
+test_backup_flushes_and_restarts (test_w3box.ProcessTests.test_backup_flushes_and_restarts) ... ok
+test_bad_configuration_does_not_stop_running_server (test_w3box.ProcessTests.test_bad_configuration_does_not_stop_running_server) ... ok
+test_configuration_update_restarts_running_server (test_w3box.ProcessTests.test_configuration_update_restarts_running_server) ... ok
+test_crash_is_restarted (test_w3box.ProcessTests.test_crash_is_restarted) ... PvPGN exited with code -9. Inspect logs.
+ok
+test_local_doctor_passes_fixture_checks (test_w3box.ProcessTests.test_local_doctor_passes_fixture_checks) ... ok
+test_password_change_revokes_sessions (test_w3box.ProcessTests.test_password_change_revokes_sessions) ... ok
+test_repeated_failure_stops_restart_loop (test_w3box.ProcessTests.test_repeated_failure_stops_restart_loop) ... ok
+test_restart_replaces_child (test_w3box.ProcessTests.test_restart_replaces_child) ... ok
+test_start_and_child_owned_ports (test_w3box.ProcessTests.test_start_and_child_owned_ports) ... ok
+test_stop_persists_and_flushes (test_w3box.ProcessTests.test_stop_persists_and_flushes) ... ok
+test_stopped_server_stays_stopped_on_config_change (test_w3box.ProcessTests.test_stopped_server_stays_stopped_on_config_change) ... ok
+
+----------------------------------------------------------------------
+Ran 41 tests in 26.066s
+
+OK

@@ -1,0 +1,14 @@
+{
+  "name": "W3Box",
+  "version": "0.1.0",
+  "date": "2026-09-25",
+  "target_client": "Warcraft III Reign of Chaos 1.21b (Windows IX86)",
+  "target_os": "Ubuntu 22.04 or newer with running systemd; native build not tested",
+  "pvpgn_commit": "9cd173f4e02ba3d9f8f15a67ca308b5eb78723e4",
+  "runtime": "Native PvPGN plus Python 3 standard library",
+  "offline": false,
+  "pvpgn_source_bundled": false,
+  "windows_loader_bundled": false,
+  "control_unit_tests_passed": 41,
+  "real_warcraft_login_tested": false
+}
