@@ -46,6 +46,8 @@ pub const CHILD_STRNICMP_ADDRESS: u32 = CHILD_CONTROL_BASE + CHILD_STRNICMP_OFFS
 const CHILD_CP1252_FOLD_OFFSET: usize = 0x700;
 pub const CHILD_DECIMAL_OFFSET: usize = 0x600;
 pub const CHILD_DECIMAL_ADDRESS: u32 = CHILD_CONTROL_BASE + CHILD_DECIMAL_OFFSET as u32;
+pub const CHILD_QSORT2_OFFSET: usize = 0x800;
+pub const CHILD_QSORT2_ADDRESS: u32 = CHILD_CONTROL_BASE + CHILD_QSORT2_OFFSET as u32;
 
 // Guard a NUL-terminated ASCII string within the Rust parser's 256-byte bound,
 // then parse 1..9 leading digits. All other cases restore the original stack,
@@ -118,6 +120,23 @@ const CHILD_MEMMOVE_CODE: &[u8] = &[
     0xfd, 0xf3, 0xa4, 0x5f, 0x5e, 0x9d, 0xc3, 0x0f, 0x0b,
 ];
 
+// Cdecl qsort fast path for the observed two DWORD elements.  It calls the
+// guest comparator exactly once and swaps only when it returns a positive
+// value.  Every other shape retains EAX (the provider id) and falls back to
+// the typed Rust frontier through VMCALL.
+//
+// Original frame: return, base, count, size, comparator.  ESI and EDI are
+// callee-saved across both this helper and the guest comparator.
+const CHILD_QSORT2_CODE: &[u8] = &[
+    0x83, 0x7c, 0x24, 0x08, 0x01, 0x76, 0x41, 0x83, 0x7c, 0x24, 0x08, 0x02,
+    0x75, 0x3b, 0x83, 0x7c, 0x24, 0x0c, 0x04, 0x75, 0x34, 0x83, 0x7c, 0x24,
+    0x04, 0x00, 0x74, 0x2d, 0x83, 0x7c, 0x24, 0x10, 0x00, 0x74, 0x26, 0x56,
+    0x57, 0x8b, 0x74, 0x24, 0x0c, 0x8b, 0x7c, 0x24, 0x18, 0x8d, 0x56, 0x04,
+    0x52, 0x56, 0xff, 0xd7, 0x83, 0xc4, 0x08, 0x85, 0xc0, 0x7e, 0x0a, 0x8b,
+    0x0e, 0x8b, 0x56, 0x04, 0x89, 0x16, 0x89, 0x4e, 0x04, 0x5f, 0x5e, 0xc3,
+    0xc3, 0x0f, 0x01, 0xc1, 0xc3,
+];
+
 pub fn install_child_controls(output: &mut [u8]) -> Result<(), &'static str> {
     output.get_mut(CHILD_DECIMAL_OFFSET..CHILD_DECIMAL_OFFSET + CHILD_DECIMAL_CODE.len())
         .ok_or("decimal helper range")?.copy_from_slice(CHILD_DECIMAL_CODE);
@@ -133,6 +152,8 @@ pub fn install_child_controls(output: &mut [u8]) -> Result<(), &'static str> {
         .ok_or("strncmp helper range")?.copy_from_slice(CHILD_STRNCMP_CODE);
     output.get_mut(CHILD_MEMMOVE_OFFSET..CHILD_MEMMOVE_OFFSET + CHILD_MEMMOVE_CODE.len())
         .ok_or("memmove helper range")?.copy_from_slice(CHILD_MEMMOVE_CODE);
+    output.get_mut(CHILD_QSORT2_OFFSET..CHILD_QSORT2_OFFSET + CHILD_QSORT2_CODE.len())
+        .ok_or("qsort2 helper range")?.copy_from_slice(CHILD_QSORT2_CODE);
     for offset in [0usize, 0x10, 0x20, 0x30, 0x40, 0x50] {
         let trap = output
             .get_mut(offset..offset + 5)
@@ -190,6 +211,8 @@ pub enum Kind {
     ToUpper,
     /// Short unsigned decimal prefix, otherwise fall back to the Rust provider.
     Decimal,
+    /// Observed two-DWORD qsort, with a guest comparator and provider fallback.
+    Qsort2,
 }
 
 pub fn write(import_id: u32, kind: Kind, output: &mut [u8]) -> Result<(), &'static str> {
@@ -197,8 +220,13 @@ pub fn write(import_id: u32, kind: Kind, output: &mut [u8]) -> Result<(), &'stat
         return Err("wc3 thunk buffer too small");
     }
     output[..THUNK_BYTES].fill(0x90);
-    if matches!(kind, Kind::ToUpper | Kind::Decimal) {
-        let target = if kind == Kind::ToUpper { CHILD_TOUPPER_ADDRESS } else { CHILD_DECIMAL_ADDRESS };
+    if matches!(kind, Kind::ToUpper | Kind::Decimal | Kind::Qsort2) {
+        let target = match kind {
+            Kind::ToUpper => CHILD_TOUPPER_ADDRESS,
+            Kind::Decimal => CHILD_DECIMAL_ADDRESS,
+            Kind::Qsort2 => CHILD_QSORT2_ADDRESS,
+            _ => unreachable!(),
+        };
         let next = address(import_id).and_then(|address| address.checked_add(10))
             .ok_or("toupper thunk address overflow")?;
         output[0] = 0xb8;
@@ -230,7 +258,7 @@ pub fn write(import_id: u32, kind: Kind, output: &mut [u8]) -> Result<(), &'stat
         0xC1,
     ]);
     match kind {
-        Kind::Memmove | Kind::Strncmp | Kind::Strnicmp | Kind::ToUpper | Kind::Decimal => unreachable!(),
+        Kind::Memmove | Kind::Strncmp | Kind::Strnicmp | Kind::ToUpper | Kind::Decimal | Kind::Qsort2 => unreachable!(),
         Kind::Return => output[8] = 0xC3,
         Kind::Stdcall(bytes) => {
             output[8] = 0xC2;

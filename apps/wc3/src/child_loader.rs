@@ -957,6 +957,9 @@ pub fn provider_thunk_kind(import: &ProviderImport) -> thunk32::Kind {
         && !cfg!(feature = "host-decimal") {
         return thunk32::Kind::Decimal;
     }
+    if provider_op(import) == ProviderOp::CrtQsort && !cfg!(feature = "host-qsort") {
+        return thunk32::Kind::Qsort2;
+    }
     if provider_op(import) == ProviderOp::CrtStrnicmp && !cfg!(feature = "host-strnicmp") {
         return thunk32::Kind::Strnicmp;
     }

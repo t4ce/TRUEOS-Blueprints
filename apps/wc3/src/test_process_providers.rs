@@ -864,6 +864,42 @@
     }
 
     #[test]
+    fn child_crt_qsort_uses_the_guest_two_dword_helper() {
+        let provider = ProviderImport {
+            module: "MSVCRT.dll".into(),
+            symbol: ProviderSymbol::Name("qsort".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&provider);
+        assert_eq!(operation, ProviderOp::CrtQsort);
+        assert!(operation.is_modeled());
+        assert!(operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 0);
+        assert_eq!(
+            crate::child_loader::provider_thunk_kind(&provider),
+            if cfg!(feature = "host-qsort") {
+                thunk32::Kind::Return
+            } else {
+                thunk32::Kind::Qsort2
+            }
+        );
+
+        let mut thunk = [0u8; thunk32::THUNK_BYTES];
+        thunk32::write(347, crate::child_loader::provider_thunk_kind(&provider), &mut thunk)
+            .unwrap();
+        if cfg!(feature = "host-qsort") {
+            assert_eq!(&thunk[8..9], &[0xc3]);
+        } else {
+            assert_eq!(&thunk[..6], &[0xb8, 0x5b, 0x01, 0, 0, 0xe9]);
+            let relative = u32::from_le_bytes(thunk[6..10].try_into().unwrap());
+            assert_eq!(
+                (thunk32::address(347).unwrap() + 10).wrapping_add(relative),
+                thunk32::CHILD_QSORT2_ADDRESS,
+            );
+        }
+    }
+
+    #[test]
     fn child_crt_strtol_autodetects_hex_and_writes_end_pointer() {
         let provider = ProviderImport {
             module: "MSVCRT.dll".into(),
