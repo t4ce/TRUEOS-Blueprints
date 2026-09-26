@@ -3,6 +3,31 @@
 // from software rendering receipts.
 use crate::staticgl_raster as raster;
 
+const GL_TRIANGLE_STRIP: u32 = 0x0005;
+
+fn gl_assemble_triangles(mode: u32, mut indices: Vec<u32>) -> Result<Vec<u32>, &'static str> {
+    match mode {
+        GL_TRIANGLES => {
+            // GL ignores an incomplete final primitive.
+            indices.truncate(indices.len() / 3 * 3);
+            Ok(indices)
+        }
+        GL_TRIANGLE_STRIP => {
+            let mut triangles = Vec::with_capacity(indices.len().saturating_sub(2) * 3);
+            for (n, tri) in indices.windows(3).enumerate() {
+                // Preserve facing and the final vertex. Degenerates still advance parity.
+                if n % 2 == 0 {
+                    triangles.extend_from_slice(tri);
+                } else {
+                    triangles.extend_from_slice(&[tri[1], tri[0], tri[2]]);
+                }
+            }
+            Ok(triangles)
+        }
+        _ => Err("unsupported indexed primitive topology"),
+    }
+}
+
 fn gl_read_array(
     memory: &impl GuestMemory,
     pointer: GlArrayPointer,
@@ -521,17 +546,16 @@ impl XpProcess {
     ) -> Result<u32, ProviderDispatchError> {
         const API: &str = "glDrawElements";
         let [_, mode, count, kind, address] = arguments::<5>(memory, esp)?;
-        if mode != GL_TRIANGLES
+        if !matches!(mode, GL_TRIANGLES | GL_TRIANGLE_STRIP)
             || count > 1_000_000
-            || count % 3 != 0
             || !matches!(kind, GL_UNSIGNED_SHORT | GL_UNSIGNED_INT | GL_UNSIGNED_BYTE)
         {
             return Err(gl_texture_error(
                 API,
-                format!("unsupported triangle list mode={mode} count={count} type=0x{kind:x}"),
+                format!("unsupported indexed draw mode={mode} count={count} type=0x{kind:x}"),
             ));
         }
-        if count == 0 {
+        if count < 3 {
             self.gl_context_mut(tid, API)?;
             return Ok(0);
         }
@@ -555,6 +579,7 @@ impl XpProcess {
                 _ => u32::from_le_bytes(b.try_into().unwrap()),
             })
             .collect();
+        let guest_indices = gl_assemble_triangles(mode, guest_indices)?;
         let c = self.gl_context_mut(tid, API)?;
         let (stats, vertex_count) = gl_rasterize_elements(c, memory, &guest_indices)?;
         c.draw_count += 1;
@@ -563,7 +588,7 @@ impl XpProcess {
             logl::log(
                 level::IMPORTANT,
                 format_args!(
-                    "WC3 GL RASTER DRAW tid={tid} draw={} indices={count} vertices={} triangles={} pixels={} viewport={:?} scissor={:?} enabled=0x{:x} texture={} renderer=rust-fixed",
+                    "WC3 GL RASTER DRAW tid={tid} draw={} mode=0x{mode:04x} indices={count} vertices={} triangles={} pixels={} viewport={:?} scissor={:?} enabled=0x{:x} texture={} renderer=rust-fixed",
                     c.draw_count,
                     vertex_count,
                     stats.clipped_triangles,

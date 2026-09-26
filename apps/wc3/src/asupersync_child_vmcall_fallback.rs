@@ -314,7 +314,7 @@
                         let gl_needs_frame = operation == child_loader::ProviderOp::WglSwapLayerBuffers
                             || (operation == child_loader::ProviderOp::GlDrawElements
                                 && session.process(active_pid).is_some_and(|p|p.xp.gl_preview_pending(active_tid))
-                                && read_guest_words(&X86Memory(&child.address_space), exit.registers.esp, 3)?[2] != 0);
+                                && read_guest_words(&X86Memory(&child.address_space), exit.registers.esp, 3)?[2] >= 3);
                         let gl_draw_frame = if gl_needs_frame {
                             let (_hglrc, hwnd, _mode) = session.process(active_pid)
                                 .ok_or_else(|| "GL process missing".to_owned())?

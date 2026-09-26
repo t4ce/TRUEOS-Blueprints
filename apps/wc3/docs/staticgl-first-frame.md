@@ -51,7 +51,9 @@ the guest's viewport or scissor.
 ## Bounds and known boundaries
 
 The raster frame permits 4,147,200 pixels (including 2560x1440). Indexed triangle
-lists permit up to one million indices. Complete mip chains are required when
+lists and strips permit up to one million input indices. Strips expand into
+triangles with alternating winding, retaining parity across degenerates.
+Incomplete final primitives generate no triangle. Complete mip chains are required when
 selected by the minification filter. Invalid guest reads or incomplete texture
 state fail before drawing. An initial color/depth allocation is deterministic
 black/1.0; normal subsequent clears obey the guest's scissor and depth mask.

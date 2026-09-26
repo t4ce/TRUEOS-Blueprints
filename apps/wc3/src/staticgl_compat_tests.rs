@@ -258,3 +258,48 @@ fn fullscreen_publication_budget_includes_resident_sampler_copy() {
     let strip = page(2560 * 256 * 4);
     assert!(surface + 2 * strip + geometry < quota);
 }
+
+#[test]
+fn triangle_strip_quad_preserves_both_faces_with_backface_culling() {
+    let indices = gl_assemble_triangles(GL_TRIANGLE_STRIP, vec![0, 1, 2, 3]).unwrap();
+    assert_eq!(indices, [0, 1, 2, 2, 1, 3]);
+    let vertices = [[-1., -1.], [1., -1.], [-1., 1.], [1., 1.]].map(|p| raster::ClipVertex {
+        clip: [p[0], p[1], 0., 1.],
+        color: [1.; 4],
+        uv: [0., 0., 0., 1.],
+        fog: 0.,
+    });
+    let mut frame = raster::Frame::new(8, 8).unwrap();
+    let state = raster::RasterState {
+        viewport: [0, 0, 8, 8],
+        cull: raster::Cull::Back,
+        ..Default::default()
+    };
+    let stats = frame
+        .draw_triangles(&vertices, &indices, &state, None)
+        .unwrap();
+    assert_eq!(stats.shaded_pixels, 64);
+    assert!(frame.rgba.iter().all(|b| *b == 255));
+}
+
+#[test]
+fn strip_degenerates_keep_parity_and_short_primitives_are_empty() {
+    assert_eq!(
+        gl_assemble_triangles(GL_TRIANGLE_STRIP, vec![0, 1, 2, 2, 3, 4]).unwrap(),
+        [0, 1, 2, 2, 1, 2, 2, 2, 3, 3, 2, 4]
+    );
+    for mode in [GL_TRIANGLES, GL_TRIANGLE_STRIP] {
+        for count in 0..3 {
+            assert!(
+                gl_assemble_triangles(mode, vec![9; count])
+                    .unwrap()
+                    .is_empty()
+            );
+        }
+    }
+    assert_eq!(
+        gl_assemble_triangles(GL_TRIANGLES, vec![0, 1, 2, 3, 4]).unwrap(),
+        [0, 1, 2]
+    );
+    assert!(gl_assemble_triangles(1, vec![0, 1, 2]).is_err());
+}
