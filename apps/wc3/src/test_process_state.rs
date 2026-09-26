@@ -261,6 +261,44 @@
     }
 
     #[test]
+    fn child_get_message_a_retrieves_but_does_not_remove_window_paint() {
+        let provider = ProviderImport {
+            module: "USER32.dll".into(),
+            symbol: ProviderSymbol::Name("GetMessageA".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&provider);
+        assert_eq!(operation, ProviderOp::GetMessageA);
+        assert!(operation.is_modeled());
+        assert!(operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 16);
+        assert_eq!(provider_thunk_kind(&provider), thunk32::Kind::Stdcall(16));
+
+        let base = 0x0010_0000;
+        let output = base + 0x500;
+        let esp = base + 0x400;
+        let mut memory = Memory { base, bytes: vec![0; 0x1000] };
+        for (index, value) in [0x0040_1c67, output, 0, 0, 0]
+            .into_iter()
+            .enumerate()
+        {
+            write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
+        }
+        let mut xp = XpProcess::new_child();
+        xp.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        xp.queue_window_paint(0x5743_4003);
+
+        for _ in 0..2 {
+            assert_eq!(
+                xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+                Ok(PersonalityAction::Return(1))
+            );
+            assert_eq!(read_u32(&memory, output).unwrap(), 0x5743_4003);
+            assert_eq!(read_u32(&memory, output + 4).unwrap(), 0x000f);
+        }
+    }
+
+    #[test]
     fn proven_create_thread_is_logical_and_suspended() {
         let imports = vec![LauncherImport {
             id: 0,

@@ -1507,6 +1507,7 @@ struct Message {
 }
 
 const WM_PAINT: u32 = 0x000f;
+const WM_QUIT: u32 = 0x0012;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct RegistryHandle {

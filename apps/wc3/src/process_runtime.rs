@@ -2295,18 +2295,61 @@ impl XpProcess {
         } else {
             self.messages[pos].clone()
         };
+        Self::write_message(memory, out, &m)?;
+        Ok(1)
+    }
+
+    fn get_message_a(
+        &mut self,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<u32, &'static str> {
+        let [_, out, hwnd, min, max] = arguments::<5>(memory, esp)?;
+        if out == 0 {
+            return Err("GetMessageA null output");
+        }
+        let pos = self.messages.iter().position(|message| {
+            message.message == WM_QUIT
+                || ((hwnd == 0 || message.hwnd == hwnd)
+                    && ((min == 0 && max == 0)
+                        || (message.message >= min && message.message <= max)))
+        });
+        let Some(pos) = pos else {
+            return Err("GetMessageA empty queue would block");
+        };
+        let message = self.messages[pos].clone();
+        Self::write_message(memory, out, &message)?;
+
+        match message.message {
+            WM_QUIT => {
+                self.messages.remove(pos);
+                Ok(0)
+            }
+            WM_PAINT => Ok(1),
+            _ => {
+                self.messages.remove(pos);
+                Ok(1)
+            }
+        }
+    }
+
+    fn write_message(
+        memory: &mut impl GuestMemory,
+        out: u32,
+        message: &Message,
+    ) -> Result<(), &'static str> {
         for (o, v) in [
-            (0, m.hwnd),
-            (4, m.message),
-            (8, m.wparam),
-            (12, m.lparam),
-            (16, m.time),
-            (20, m.x as u32),
-            (24, m.y as u32),
+            (0, message.hwnd),
+            (4, message.message),
+            (8, message.wparam),
+            (12, message.lparam),
+            (16, message.time),
+            (20, message.x as u32),
+            (24, message.y as u32),
         ] {
             write_u32(memory, out + o, v)?;
         }
-        Ok(1)
+        Ok(())
     }
 
     fn create_thread(
