@@ -198,7 +198,10 @@ install -m 0644 "$SRC/LICENSE" "$PREFIX/PVPGN-LICENSE"
 install -m 0644 "$HERE/README.md" "$PREFIX/README.md"
 chown -R root:root "$PREFIX/app" "$PREFIX/templates"
 for directory in bin sbin share; do
-  if [[ -d "$PREFIX/pvpgn/$directory" ]]; then chown -R root:root "$PREFIX/pvpgn/$directory"; fi
+  if [[ -d "$PREFIX/pvpgn/$directory" ]]; then
+    chown -R root:root "$PREFIX/pvpgn/$directory"
+    find "$PREFIX/pvpgn/$directory" -type d -exec chmod 755 {} +
+  fi
 done
 find "$PREFIX/app" "$PREFIX/templates" -type d -exec chmod 755 {} +
 find "$PREFIX/app" "$PREFIX/templates" -type f -exec chmod 644 {} +

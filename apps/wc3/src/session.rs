@@ -1336,6 +1336,7 @@ impl Wc3Session {
             .checked_add(1)
             .ok_or("HWND overflow")?;
         let requested_visible = request.style & 0x1000_0000 != 0;
+        let owner = request.owner;
         let presentation = WindowPresentation::Show {
             hwnd,
             x: request.x,
@@ -1368,6 +1369,11 @@ impl Wc3Session {
                 paint_pending: true,
             },
         );
+        self.processes
+            .get_mut(&owner.pid)
+            .ok_or("window owner process missing")?
+            .xp
+            .queue_window_paint(hwnd);
         self.window_presentation = Some(presentation);
         Ok(hwnd)
     }
@@ -1511,6 +1517,11 @@ impl Wc3Session {
         }
         let was_focused = self.focused_window == Some(hwnd);
         self.windows.remove(&hwnd);
+        self.processes
+            .get_mut(&pid)
+            .ok_or("DestroyWindow owner process missing")?
+            .xp
+            .clear_window_paint(hwnd);
         if was_focused {
             self.focused_window = None;
         }
@@ -1523,18 +1534,38 @@ impl Wc3Session {
     }
 
     pub fn update_window(&mut self, hwnd: u32) -> Result<u32, &'static str> {
-        let window = self.windows.get_mut(&hwnd).ok_or("unknown window")?;
-        let pending = window.paint_pending;
-        window.paint_pending = false;
+        let (pid, pending) = {
+            let window = self.windows.get_mut(&hwnd).ok_or("unknown window")?;
+            let pending = window.paint_pending;
+            window.paint_pending = false;
+            (window.owner.pid, pending)
+        };
+        self.processes
+            .get_mut(&pid)
+            .ok_or("UpdateWindow owner process missing")?
+            .xp
+            .clear_window_paint(hwnd);
         Ok(pending as u32)
     }
 
-    pub fn begin_paint_window(&self, pid: Pid, hwnd: u32) -> Result<(u32, u32), &'static str> {
-        let window = self.windows.get(&hwnd).ok_or("unknown paint window")?;
-        if window.owner.pid != pid {
-            return Err("BeginPaint window owner mismatch");
-        }
-        Ok((window.width, window.height))
+    pub fn begin_paint_window(&mut self, pid: Pid, hwnd: u32) -> Result<(u32, u32), &'static str> {
+        let (width, height) = {
+            let window = self.windows.get(&hwnd).ok_or("unknown paint window")?;
+            if window.owner.pid != pid {
+                return Err("BeginPaint window owner mismatch");
+            }
+            (window.width, window.height)
+        };
+        self.windows
+            .get_mut(&hwnd)
+            .ok_or("unknown paint window")?
+            .paint_pending = false;
+        self.processes
+            .get_mut(&pid)
+            .ok_or("BeginPaint owner process missing")?
+            .xp
+            .clear_window_paint(hwnd);
+        Ok((width, height))
     }
 
     pub fn validate_window_dc(&self, pid: Pid, hwnd: u32) -> Result<(), &'static str> {

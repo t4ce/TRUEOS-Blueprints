@@ -1506,6 +1506,8 @@ struct Message {
     y: i32,
 }
 
+const WM_PAINT: u32 = 0x000f;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct RegistryHandle {
     node: crate::session::RegistryNodeId,
@@ -1919,6 +1921,31 @@ struct GlRuntime {
 }
 
 impl XpProcess {
+    pub fn queue_window_paint(&mut self, hwnd: u32) {
+        if self
+            .messages
+            .iter()
+            .any(|message| message.hwnd == hwnd && message.message == WM_PAINT)
+        {
+            return;
+        }
+
+        self.messages.push_back(Message {
+            hwnd,
+            message: WM_PAINT,
+            wparam: 0,
+            lparam: 0,
+            time: monotonic_counter_millis(),
+            x: 0,
+            y: 0,
+        });
+    }
+
+    pub fn clear_window_paint(&mut self, hwnd: u32) {
+        self.messages
+            .retain(|message| !(message.hwnd == hwnd && message.message == WM_PAINT));
+    }
+
     pub fn loaded_module_handle(&self, requested: &str) -> Option<u32> {
         self.loaded_modules
             .iter()
