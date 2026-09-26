@@ -2359,6 +2359,10 @@ impl XpProcess {
         self.desktop_size = (width, height);
     }
 
+    pub fn set_map_catalog_paths(&mut self, paths: Vec<String>) {
+        self.map_catalog_paths = paths;
+    }
+
     pub fn desktop_size(&self) -> (u32, u32) {
         self.desktop_size
     }

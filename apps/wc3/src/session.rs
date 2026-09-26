@@ -1643,8 +1643,14 @@ impl Wc3Session {
             },
         );
         let desktop_size = self.launcher().xp.desktop_size();
+        let map_catalog_paths = self
+            .maps
+            .as_ref()
+            .map(|catalog| catalog.paths.clone())
+            .unwrap_or_default();
         let mut xp = XpProcess::new_child();
         xp.set_desktop_size(desktop_size.0, desktop_size.1);
+        xp.set_map_catalog_paths(map_catalog_paths);
         let registry_base = 0x5743_8001u32.saturating_add(pid.saturating_mul(0x100));
         xp.set_registry_handle_base(registry_base)
             .expect("new process has no registry handles");

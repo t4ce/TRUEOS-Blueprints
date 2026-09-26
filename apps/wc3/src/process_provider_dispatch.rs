@@ -21,6 +21,96 @@ fn crt_ismbcspace_classifies_only_ascii_crt_whitespace() {
     }
 }
 
+#[derive(Clone, Debug)]
+struct MapFindQuery {
+    folder: Vec<String>,
+    mask: String,
+}
+
+fn path_components(path: &str) -> Vec<&str> {
+    path.split(['\\', '/'])
+        .filter(|part| !part.is_empty())
+        .collect()
+}
+
+fn parse_maps_find_pattern(pattern: &str) -> Option<MapFindQuery> {
+    let parts = path_components(pattern);
+    if parts.len() < 4
+        || !parts[0].eq_ignore_ascii_case("C:")
+        || !parts[1].eq_ignore_ascii_case("Warcraft III")
+        || !parts[2].eq_ignore_ascii_case("Maps")
+    {
+        return None;
+    }
+    let mask = (*parts.last()?).to_owned();
+    (mask == "*").then(|| MapFindQuery {
+        folder: parts[3..parts.len() - 1]
+            .iter()
+            .map(|part| (*part).to_owned())
+            .collect(),
+        mask,
+    })
+}
+
+fn prefix_eq_ignore_ascii_case(parts: &[&str], prefix: &[String]) -> bool {
+    parts.len() >= prefix.len()
+        && parts
+            .iter()
+            .zip(prefix)
+            .all(|(part, wanted)| part.eq_ignore_ascii_case(wanted))
+}
+
+fn map_find_entries(paths: &[String], query: &MapFindQuery) -> Vec<FindEntry> {
+    let mut entries = Vec::new();
+    for stored in paths {
+        let parts = path_components(stored);
+        if !prefix_eq_ignore_ascii_case(&parts, &query.folder)
+            || parts.len() <= query.folder.len()
+        {
+            continue;
+        }
+        let child = parts[query.folder.len()];
+        let attributes = if parts.len() == query.folder.len() + 1 {
+            FILE_ATTRIBUTE_NORMAL
+        } else {
+            FILE_ATTRIBUTE_DIRECTORY
+        };
+        if !entries
+            .iter()
+            .any(|entry: &FindEntry| entry.name.eq_ignore_ascii_case(child))
+        {
+            entries.push(FindEntry {
+                name: child.to_owned(),
+                attributes,
+                size: 0,
+            });
+        }
+    }
+    entries
+}
+
+fn write_find_data_a(
+    memory: &mut impl GuestMemory,
+    output: u32,
+    entry: &FindEntry,
+) -> Result<(), ProviderDispatchError> {
+    let mut data = [0u8; 320];
+    data[0..4].copy_from_slice(&entry.attributes.to_le_bytes());
+    data[28..32].copy_from_slice(&((entry.size >> 32) as u32).to_le_bytes());
+    data[32..36].copy_from_slice(&(entry.size as u32).to_le_bytes());
+    let name = entry.name.as_bytes();
+    if name.len() >= 260 {
+        return Err(ProviderDispatchError::Frontier {
+            api: "FindFirstFileA",
+            detail: format!("WIN32_FIND_DATA filename too long {:?}", entry.name),
+        });
+    }
+    data[44..44 + name.len()].copy_from_slice(name);
+    data[44 + name.len()] = 0;
+    memory.write(output, &data)?;
+    Ok(())
+}
+
 impl XpProcess {
     fn dispatch_process_local_provider(
         &mut self,
@@ -2016,6 +2106,51 @@ impl XpProcess {
                     });
                 }
                 let pattern = read_c_string(memory, pattern, 1024)?;
+                if let Some(query) = parse_maps_find_pattern(&pattern) {
+                    let entries = map_find_entries(&self.map_catalog_paths, &query);
+                    if entries.is_empty() {
+                        self.set_last_error(ERROR_FILE_NOT_FOUND);
+                        self.call_count = self
+                            .call_count
+                            .checked_add(1)
+                            .ok_or("call count overflow")?;
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD FINDFIRSTFILEA RESULT pid={pid} tid={tid} pattern={pattern:?} virtual_directory=Maps matches=0 handle=INVALID_HANDLE_VALUE last_error=ERROR_FILE_NOT_FOUND"
+                            ),
+                        );
+                        return Ok(PersonalityAction::Return(u32::MAX));
+                    }
+
+                    write_find_data_a(memory, find_data, &entries[0])?;
+                    let handle = self.next_find_handle;
+                    self.next_find_handle = self
+                        .next_find_handle
+                        .checked_add(1)
+                        .ok_or("find handle overflow")?;
+                    let first_name = entries[0].name.clone();
+                    let count = entries.len();
+                    self.find_handles.insert(
+                        handle,
+                        FindState {
+                            entries,
+                            next_index: 1,
+                        },
+                    );
+                    self.set_last_error(0);
+                    self.call_count = self
+                        .call_count
+                        .checked_add(1)
+                        .ok_or("call count overflow")?;
+                    logl::log(
+                        level::IMPORTANT,
+                        format_args!(
+                            "WC3 CHILD FINDFIRSTFILEA RESULT pid={pid} tid={tid} pattern={pattern:?} virtual_directory=Maps matches={count} first={first_name:?} handle=0x{handle:08x} result=success"
+                        ),
+                    );
+                    return Ok(PersonalityAction::Return(handle));
+                }
                 if is_war3_pre_cache_search(&pattern) {
                     self.set_last_error(ERROR_FILE_NOT_FOUND);
                     self.call_count = self
@@ -2041,18 +2176,24 @@ impl XpProcess {
                 let image_size = self_image_bytes.map(|bytes| bytes.len() as u64).ok_or(
                     ProviderDispatchError::Fault("self image file backing unavailable"),
                 )?;
-                let mut data = [0u8; 320];
-                data[0..4].copy_from_slice(&FILE_ATTRIBUTE_NORMAL.to_le_bytes());
-                data[28..32].copy_from_slice(&((image_size >> 32) as u32).to_le_bytes());
-                data[32..36].copy_from_slice(&(image_size as u32).to_le_bytes());
-                data[44..53].copy_from_slice(b"War3.exe\0");
-                memory.write(find_data, &data)?;
+                let entry = FindEntry {
+                    name: "War3.exe".into(),
+                    attributes: FILE_ATTRIBUTE_NORMAL,
+                    size: image_size,
+                };
+                write_find_data_a(memory, find_data, &entry)?;
                 let handle = self.next_find_handle;
                 self.next_find_handle = self
                     .next_find_handle
                     .checked_add(1)
                     .ok_or("find handle overflow")?;
-                self.find_handles.insert(handle);
+                self.find_handles.insert(
+                    handle,
+                    FindState {
+                        entries: vec![entry],
+                        next_index: 1,
+                    },
+                );
                 self.set_last_error(0);
                 self.call_count = self
                     .call_count
@@ -2060,13 +2201,49 @@ impl XpProcess {
                     .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(handle))
             }
+            ProviderOp::FindNextFileA => {
+                let [_, handle, find_data] = arguments::<3>(memory, esp)?;
+                if find_data == 0 {
+                    return Err(ProviderDispatchError::Frontier {
+                        api: "FindNextFileA",
+                        detail: "null find_data".into(),
+                    });
+                }
+                let entry = {
+                    let Some(state) = self.find_handles.get_mut(&handle) else {
+                        self.set_last_error(ERROR_INVALID_HANDLE);
+                        return Ok(PersonalityAction::Return(0));
+                    };
+                    if state.next_index >= state.entries.len() {
+                        self.set_last_error(ERROR_NO_MORE_FILES);
+                        return Ok(PersonalityAction::Return(0));
+                    }
+                    let entry = state.entries[state.next_index].clone();
+                    state.next_index += 1;
+                    entry
+                };
+                write_find_data_a(memory, find_data, &entry)?;
+                self.set_last_error(0);
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                logl::log(
+                    level::IMPORTANT,
+                    format_args!(
+                        "WC3 CHILD FINDNEXTFILEA pid={pid} tid={tid} handle=0x{handle:08x} name={:?} attributes=0x{:08x} result=1",
+                        entry.name, entry.attributes,
+                    ),
+                );
+                Ok(PersonalityAction::Return(1))
+            }
             ProviderOp::FindClose => {
                 let [_, handle] = arguments::<2>(memory, esp)?;
                 self.call_count = self
                     .call_count
                     .checked_add(1)
                     .ok_or("call count overflow")?;
-                if self.find_handles.remove(&handle) {
+                if self.find_handles.remove(&handle).is_some() {
                     self.set_last_error(0);
                     Ok(PersonalityAction::Return(1))
                 } else {

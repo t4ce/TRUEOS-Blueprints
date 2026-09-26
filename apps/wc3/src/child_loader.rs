@@ -100,6 +100,7 @@ pub enum ProviderOp {
     GetFileAttributesA,
     SetFileAttributesA,
     FindFirstFileA,
+    FindNextFileA,
     FindClose,
     QueryPerformanceFrequency,
     QueryPerformanceCounter,
@@ -325,6 +326,7 @@ impl ProviderOp {
             | Self::GetTempPathA
             | Self::SetFileAttributesA
             | Self::FindFirstFileA
+            | Self::FindNextFileA
             | Self::GlobalAlloc
             | Self::InterlockedExchange
             | Self::TlsSetValue => 8,
@@ -540,6 +542,7 @@ impl ProviderOp {
                 | Self::GetFileAttributesA
                 | Self::SetFileAttributesA
                 | Self::FindFirstFileA
+                | Self::FindNextFileA
                 | Self::FindClose
                 | Self::QueryPerformanceFrequency
                 | Self::QueryPerformanceCounter
@@ -742,6 +745,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "GetFileAttributesA" => ProviderOp::GetFileAttributesA,
             "SetFileAttributesA" => ProviderOp::SetFileAttributesA,
             "FindFirstFileA" => ProviderOp::FindFirstFileA,
+            "FindNextFileA" => ProviderOp::FindNextFileA,
             "FindClose" => ProviderOp::FindClose,
             "QueryPerformanceFrequency" => ProviderOp::QueryPerformanceFrequency,
             "QueryPerformanceCounter" => ProviderOp::QueryPerformanceCounter,

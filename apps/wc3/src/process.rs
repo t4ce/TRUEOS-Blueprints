@@ -114,6 +114,7 @@ pub const XP_C_DISK_GEOMETRY: XpDiskGeometry = XpDiskGeometry {
 };
 const ERROR_MOD_NOT_FOUND: u32 = 126;
 const ERROR_FILE_NOT_FOUND: u32 = 2;
+const ERROR_NO_MORE_FILES: u32 = 18;
 const ERROR_PATH_NOT_FOUND: u32 = 3;
 const ERROR_ACCESS_DENIED: u32 = 5;
 const ERROR_FILE_EXISTS: u32 = 80;
@@ -208,6 +209,7 @@ const PRIVATE_HEAP_HANDLE_BASE: u32 = 0x5743_0001;
 const FILE_WRITE_ACCESS_MASK: u32 = 0x5000_0116;
 const INVALID_FILE_ATTRIBUTES: u32 = u32::MAX;
 const FILE_ATTRIBUTE_NORMAL: u32 = 0x0000_0080;
+const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x0000_0010;
 const FILE_ATTRIBUTE_TEMPORARY: u32 = 0x0000_0100;
 const CREATE_NEW: u32 = 1;
 const CREATE_ALWAYS: u32 = 2;
@@ -1520,6 +1522,19 @@ struct ScratchFile {
     attributes: u32,
 }
 
+#[derive(Clone, Debug)]
+struct FindEntry {
+    name: String,
+    attributes: u32,
+    size: u64,
+}
+
+#[derive(Clone, Debug)]
+struct FindState {
+    entries: Vec<FindEntry>,
+    next_index: usize,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct FileHandle {
     backing: FileBacking,
@@ -1796,7 +1811,8 @@ pub struct XpProcess {
     next_resident_file: u32,
     next_file_handle: u32,
     next_find_handle: u32,
-    find_handles: HashSet<u32>,
+    find_handles: HashMap<u32, FindState>,
+    map_catalog_paths: Vec<String>,
     scratch_files: HashMap<u32, ScratchFile>,
     scratch_paths: HashMap<String, u32>,
     next_scratch_file: u32,
@@ -2054,7 +2070,8 @@ impl XpProcess {
             next_resident_file: 1,
             next_file_handle: FILE_HANDLE_BASE,
             next_find_handle: FIND_HANDLE_BASE,
-            find_handles: HashSet::new(),
+            find_handles: HashMap::new(),
+            map_catalog_paths: Vec::new(),
             scratch_files: HashMap::new(),
             scratch_paths: HashMap::new(),
             next_scratch_file: 1,

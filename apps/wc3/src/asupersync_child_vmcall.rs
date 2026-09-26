@@ -6990,26 +6990,33 @@
                             )
                             .map_err(|error| error.to_string())?;
                         let result = match action {
-                            PersonalityAction::WindowGammaRamp(request) => match frames.get_mut(&request.hwnd) {
-                                Some(frame) => match frame.set_display_gamma_ramp(&request.ramp) {
-                                    Ok(()) => {
-                                        session.process_mut(request.pid)
-                                            .ok_or_else(|| "SetDeviceGammaRamp process missing".to_owned())?
-                                            .xp.commit_gamma_ramp(request.ramp);
+                            PersonalityAction::WindowGammaRamp(request) => {
+                                if let Some(frame) = frames.get(&request.hwnd) {
+                                    // Acknowledge the guest request without changing the shared
+                                    // display LUT or our last-applied gamma state. Retain the
+                                    // complete requested table in bounded log records for diagnosis.
+                                    logl::log(level::IMPORTANT, format_args!(
+                                        "WC3 CHILD SETDEVICEGAMMARAMP REQUEST pid={} tid={} hwnd=0x{:08x} hdc=0x{:08x} ui4_window={} entries=256xRGB16 policy=log-only programmed=0 result=1 cleanup=8-by-thunk",
+                                        active_pid, active_tid, request.hwnd, request.hdc, frame.window_id(),
+                                    ));
+                                    for (channel, values) in ["red", "green", "blue"].into_iter()
+                                        .zip(request.ramp.chunks_exact(256)) {
                                         logl::log(level::IMPORTANT, format_args!(
-                                            "WC3 CHILD SETDEVICEGAMMARAMP RESULT pid={} tid={} hwnd=0x{:08x} hdc=0x{:08x} ui4_window={} entries=256xRGB16 hardware=pipe-a-precision-gamma programmed=1 result=1 cleanup=8-by-thunk",
-                                            active_pid, active_tid, request.hwnd, request.hdc, frame.window_id(),
+                                            "WC3 GAMMA REQUEST channel={} min={} max={} first={} middle={} last={}",
+                                            channel, values.iter().min().unwrap(), values.iter().max().unwrap(),
+                                            values[0], values[128], values[255],
                                         ));
-                                        1
+                                        for (chunk, values) in values.chunks_exact(16).enumerate() {
+                                            logl::log(level::IMPORTANT, format_args!(
+                                                "WC3 GAMMA REQUEST channel={} start={} values={:?}",
+                                                channel, chunk * 16, values,
+                                            ));
+                                        }
                                     }
-                                    Err(error) => {
-                                        logl::log(level::IMPORTANT, format_args!(
-                                            "WC3 UI4 GAMMA APPLY FAILED hwnd=0x{:08x} error={error:?}", request.hwnd,
-                                        ));
-                                        0
-                                    }
-                                },
-                                None => 0,
+                                    1
+                                } else {
+                                    0
+                                }
                             },
                             PersonalityAction::Return(result) => result,
                             _ => return Err("SetDeviceGammaRamp produced unexpected action".into()),
