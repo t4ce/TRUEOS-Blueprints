@@ -1,7 +1,0 @@
-{
-  "supervisor_runs_unprivileged": true,
-  "child_uid": "65534\t65534\t65534\t65534",
-  "cli_settings_and_restart": true,
-  "cli_doctor": true,
-  "cli_stop_start": true
-}
