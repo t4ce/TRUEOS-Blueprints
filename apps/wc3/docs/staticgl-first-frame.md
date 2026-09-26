@@ -40,9 +40,10 @@ the guest's viewport or scissor.
 - `WC3 GL FRAME PRESENT ... reason=first-draw-preview ... gpu=completed`:
   the first draw's current buffer completed the sampled GPU submission. This is
   a preview, not proof the guest completed its frame.
-- The same receipt with `reason=swap` follows the guest's swap call. `reason=finish`
-  follows `glFinish`; `reason=clear` publishes a color clear. `draws` is cumulative
-  for the context, and `nonblack_pixels` describes the submitted image.
+- The same receipt with `reason=swap` follows the guest's swap call. `glFinish`
+  synchronizes already-submitted work but does not acquire or publish another UI4
+  producer frame. `draws` is cumulative for the context, and `nonblack_pixels`
+  describes the submitted image.
 - UI4 publication occurs after successful provider return. A GPU completion
   receipt alone does not prove physical scanout; check the visible window and
   any subsequent UI4 error as well.

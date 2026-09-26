@@ -311,12 +311,10 @@
                             } else {
                                 None
                             };
-                        let gl_needs_frame = matches!(operation, child_loader::ProviderOp::WglSwapLayerBuffers|child_loader::ProviderOp::GlFinish)
+                        let gl_needs_frame = operation == child_loader::ProviderOp::WglSwapLayerBuffers
                             || (operation == child_loader::ProviderOp::GlDrawElements
                                 && session.process(active_pid).is_some_and(|p|p.xp.gl_preview_pending(active_tid))
-                                && read_guest_words(&X86Memory(&child.address_space), exit.registers.esp, 3)?[2] != 0)
-                            || (operation == child_loader::ProviderOp::GlClear
-                                && read_guest_words(&X86Memory(&child.address_space), exit.registers.esp, 2)?[1] & 0x0000_4000 != 0);
+                                && read_guest_words(&X86Memory(&child.address_space), exit.registers.esp, 3)?[2] != 0);
                         let gl_draw_frame = if gl_needs_frame {
                             let (_hglrc, hwnd, _mode) = session.process(active_pid)
                                 .ok_or_else(|| "GL process missing".to_owned())?
@@ -325,7 +323,42 @@
                             let dimensions=session.windows.get(&hwnd).map(|w|(w.width,w.height)).ok_or("GL window missing")?;
                             let frame = frames.get_mut(&hwnd)
                                 .ok_or_else(|| format!("GL call hwnd=0x{hwnd:08x} has no UI4 frame"))?;
-                            frame.begin_gpu_frame().map_err(|error| format!("GL begin UI4 frame: {error:?}"))?;
+                            let mut busy_polls = 0u32;
+                            loop {
+                                match frame.begin_gpu_frame() {
+                                    Ok(()) => {
+                                        if busy_polls != 0 {
+                                            logl::log(
+                                                level::IMPORTANT,
+                                                format_args!(
+                                                    "WC3 GL UI4 PRODUCER RETIRED hwnd=0x{hwnd:08x} polls={busy_polls} action=resume-swap"
+                                                ),
+                                            );
+                                        }
+                                        break;
+                                    }
+                                    Err(ui4_scene::Error::Busy) => {
+                                        busy_polls = busy_polls.saturating_add(1);
+                                        if busy_polls == 1 || busy_polls % 1024 == 0 {
+                                            logl::log(
+                                                level::IMPORTANT,
+                                                format_args!(
+                                                    "WC3 GL UI4 PRODUCER BUSY hwnd=0x{hwnd:08x} polls={busy_polls} action=wait-surflive-retirement"
+                                                ),
+                                            );
+                                        }
+                                        // A WGL swap may block until UI4 retires the previous
+                                        // producer buffer. Poll the compositor; never overwrite
+                                        // or bypass the outstanding SURFLIVE/read lease.
+                                        trueos::vsys::poll_once();
+                                        tokio::task::yield_now().await;
+                                        trueos::vsys::sleep_ms(1);
+                                    }
+                                    Err(error) => {
+                                        return Err(format!("GL begin UI4 frame: {error:?}"));
+                                    }
+                                }
+                            }
                             let window_id = frame.window_id();
                             session.process_mut(active_pid)
                                 .ok_or_else(|| "GL process missing".to_owned())?

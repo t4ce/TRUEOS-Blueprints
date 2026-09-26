@@ -446,9 +446,6 @@ impl XpProcess {
             (mask & GL_DEPTH_BUFFER_BIT != 0 && c.fixed.depth_mask).then_some(1.0),
             scissor,
         );
-        if mask & GL_COLOR_BUFFER_BIT != 0 {
-            self.gl_present_raster(tid, "clear")?;
-        }
         Ok(0)
     }
 
@@ -482,11 +479,13 @@ impl XpProcess {
 
     fn gl_finish_static(
         &mut self,
-        tid: u32,
+        _tid: u32,
         _esp: u32,
         _memory: &impl GuestMemory,
     ) -> Result<u32, ProviderDispatchError> {
-        self.gl_present_raster(tid, "finish")?;
+        // UI4 submission/presentation occurs at the guest's WGL swap boundary.
+        // The swap path already waits for every strip completion, so Finish has
+        // no additional owned work to submit or producer frame to acquire.
         Ok(0)
     }
 
