@@ -2885,13 +2885,27 @@
                             .map_err(|error| error.to_string())?;
                         let result = match action {
                             PersonalityAction::WindowGammaRamp(request) => {
-                                if let Some(frame) = frames.get(&request.hwnd) {
-                                    // Acknowledge the guest request without changing the shared
-                                    // display LUT or our last-applied gamma state. Retain the
-                                    // complete requested table in bounded log records for diagnosis.
+                                if let Some(frame) = frames.get_mut(&request.hwnd) {
+                                    // The LUT is shared with UI4 and Spirit. Refuse curves that
+                                    // can make most of the desktop effectively black, while still
+                                    // acknowledging the guest's request.
+                                    let safe = request.ramp.chunks_exact(256).all(|channel| {
+                                        channel[0] == 0
+                                            && channel[255] == u16::MAX
+                                            && channel.windows(2).all(|pair| pair[0] <= pair[1])
+                                            && channel.iter().enumerate().all(|(index, &value)| {
+                                                u32::from(value) >= (index as u32 * 257) / 4
+                                            })
+                                    });
+                                    let programmed = safe && frame.set_display_gamma_ramp(&request.ramp).is_ok();
+                                    if programmed {
+                                        session.process_mut(request.pid)
+                                            .ok_or_else(|| "SetDeviceGammaRamp process missing".to_owned())?
+                                            .xp.commit_gamma_ramp(request.ramp);
+                                    }
                                     logl::log(level::IMPORTANT, format_args!(
-                                        "WC3 CHILD SETDEVICEGAMMARAMP REQUEST pid={} tid={} hwnd=0x{:08x} hdc=0x{:08x} ui4_window={} entries=256xRGB16 policy=log-only programmed=0 result=1 cleanup=8-by-thunk",
-                                        active_pid, active_tid, request.hwnd, request.hdc, frame.window_id(),
+                                        "WC3 CHILD SETDEVICEGAMMARAMP REQUEST pid={} tid={} hwnd=0x{:08x} hdc=0x{:08x} ui4_window={} entries=256xRGB16 policy=guarded programmed={} result=1 cleanup=8-by-thunk",
+                                        active_pid, active_tid, request.hwnd, request.hdc, frame.window_id(), programmed as u8,
                                     ));
                                     for (channel, values) in ["red", "green", "blue"].into_iter()
                                         .zip(request.ramp.chunks_exact(256)) {
