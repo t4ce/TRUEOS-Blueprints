@@ -49,12 +49,16 @@ impl Phase {
     }
 }
 
-/// Default handling for creation, paint, and the scalar size notification.
+/// Default handling for creation, paint, size, and routed input notifications.
 /// Other messages remain an explicit frontier until their semantics are added.
 pub fn default_proc_result(message: u32) -> Option<u32> {
     match message {
         0x81 => Some(1),
-        1 | 2 | 5 | 0x82 | 0x83 | 0xf => Some(0),
+        1 | 2 | 5 | 0x82 | 0x83 | 0xf
+        // WM_KEYDOWN, WM_KEYUP, WM_CHAR, WM_SYSKEYDOWN, WM_SYSKEYUP.
+        | 0x100..=0x105
+        // WM_MOUSEMOVE through WM_MOUSEWHEEL for the UI4-routed pointer.
+        | 0x200..=0x20a => Some(0),
         _ => None,
     }
 }
@@ -172,6 +176,8 @@ mod tests {
         assert_eq!(Phase::NcDestroy.advance(99), Advance::Complete(false));
         assert_eq!(default_proc_result(0x81), Some(1));
         assert_eq!(default_proc_result(5), Some(0));
+        assert_eq!(default_proc_result(0x200), Some(0));
+        assert_eq!(default_proc_result(0x100), Some(0));
         assert_eq!(default_proc_result(0x1234), None);
     }
 
