@@ -25,12 +25,7 @@ impl XpProcess {
             return Ok(0);
         }
         let c = self.gl_context_mut(tid, API)?;
-        if let Some(symbol) = c.textured_draw_blocker {
-            return Err(gl_texture_error(
-                API,
-                format!("textured draw depends on unmodeled state write {symbol}"),
-            ));
-        }
+        if c.fixed.enabled != 0 { return Err(gl_texture_error(API, "native sampled subset requires state-free draw")); }
         let image = gl_texture_draw_image(&c.textures)?;
         if !c.vertex_array_enabled || !c.textures.coord_array_enabled {
             return Err(gl_texture_error(

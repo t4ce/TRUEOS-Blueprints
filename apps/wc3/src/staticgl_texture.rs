@@ -577,26 +577,7 @@ impl XpProcess {
         });
         Ok(0)
     }
-    fn gl_enable_static(
-        &mut self,
-        tid: u32,
-        esp: u32,
-        memory: &impl GuestMemory,
-    ) -> Result<u32, ProviderDispatchError> {
-        let [_, cap] = arguments::<2>(memory, esp)?;
-        let context = self.gl_context_mut(tid, "glEnable")?;
-        match cap {
-            GL_TEXTURE_2D => context.textures.enabled = true,
-            GL_LIGHT0 => context.light0_enabled = true,
-            _ => {
-                return Err(gl_texture_error(
-                    "glEnable",
-                    format!("unmodeled cap=0x{cap:x}"),
-                ));
-            }
-        }
-        Ok(0)
-    }
+
     fn gl_get_integerv_static(
         &mut self,
         tid: u32,

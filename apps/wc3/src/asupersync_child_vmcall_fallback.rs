@@ -311,7 +311,9 @@
                             } else {
                                 None
                             };
-                        let gl_needs_frame = operation == child_loader::ProviderOp::GlDrawElements
+                        let gl_needs_frame = matches!(operation, child_loader::ProviderOp::WglSwapLayerBuffers|child_loader::ProviderOp::GlFinish)
+                            || (operation == child_loader::ProviderOp::GlDrawElements
+                                && session.process(active_pid).is_some_and(|p|p.xp.gl_preview_pending(active_tid)))
                             || (operation == child_loader::ProviderOp::GlClear
                                 && read_guest_words(&X86Memory(&child.address_space), exit.registers.esp, 2)?[1] & 0x0000_4000 != 0);
                         let gl_draw_frame = if gl_needs_frame {
@@ -319,13 +321,14 @@
                                 .ok_or_else(|| "GL process missing".to_owned())?
                                 .xp.gl_context_diagnostic(active_tid)
                                 .ok_or_else(|| "GL call has no current context".to_owned())?;
+                            let dimensions=session.windows.get(&hwnd).map(|w|(w.width,w.height)).ok_or("GL window missing")?;
                             let frame = frames.get_mut(&hwnd)
                                 .ok_or_else(|| format!("GL call hwnd=0x{hwnd:08x} has no UI4 frame"))?;
                             frame.begin_gpu_frame().map_err(|error| format!("GL begin UI4 frame: {error:?}"))?;
                             let window_id = frame.window_id();
                             session.process_mut(active_pid)
                                 .ok_or_else(|| "GL process missing".to_owned())?
-                                .xp.bind_gl_ui4_window(hwnd, window_id);
+                                .xp.bind_gl_ui4_window(hwnd, window_id, dimensions.0, dimensions.1);
                             Some(hwnd)
                         } else {
                             None
@@ -416,6 +419,14 @@
                                 continue;
                             }
                             Ok(PersonalityAction::Return(result)) => {
+                                if operation == child_loader::ProviderOp::WglMakeCurrent && result != 0 {
+                                    if let Some((_,hwnd,_))=session.process(active_pid).and_then(|p|p.xp.gl_context_diagnostic(active_tid)) {
+                                        if let (Some(window),Some(frame))=(session.windows.get(&hwnd),frames.get(&hwnd)) {
+                                            let (width,height,window_id)=(window.width,window.height,frame.window_id());
+                                            session.process_mut(active_pid).ok_or("GL process missing")?.xp.bind_gl_ui4_window(hwnd,window_id,width,height);
+                                        }
+                                    }
+                                }
                                 if let Some(hwnd) = gl_draw_frame {
                                     let window = session.windows.get(&hwnd)
                                         .ok_or_else(|| "GL window missing".to_owned())?;

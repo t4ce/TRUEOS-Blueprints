@@ -206,21 +206,21 @@ impl XpProcess {
                 self.gl_lightfv_static(tid, esp, memory)?,
             )),
             ProviderOp::GlFogfv => Ok(PersonalityAction::Return(
-                self.gl_fogfv_static(esp, memory)?,
+                self.gl_fogfv_static(tid, esp, memory)?,
             )),
-            ProviderOp::GlFogf => Ok(PersonalityAction::Return(self.gl_fogf_static(esp, memory)?)),
-            ProviderOp::GlFogi => Ok(PersonalityAction::Return(self.gl_fogi_static(esp, memory)?)),
+            ProviderOp::GlFogf => Ok(PersonalityAction::Return(self.gl_fogf_static(tid, esp, memory)?)),
+            ProviderOp::GlFogi => Ok(PersonalityAction::Return(self.gl_fogi_static(tid, esp, memory)?)),
             ProviderOp::GlDrawBuffer => Ok(PersonalityAction::Return(
-                self.gl_draw_buffer_static(esp, memory)?,
+                self.gl_draw_buffer_static(tid, esp, memory)?,
             )),
             ProviderOp::GlDepthFunc => Ok(PersonalityAction::Return(
-                self.gl_depth_func_static(esp, memory)?,
+                self.gl_depth_func_static(tid, esp, memory)?,
             )),
             ProviderOp::GlAlphaFunc => Ok(PersonalityAction::Return(
-                self.gl_alpha_func_static(esp, memory)?,
+                self.gl_alpha_func_static(tid, esp, memory)?,
             )),
             ProviderOp::GlBlendFunc => Ok(PersonalityAction::Return(
-                self.gl_blend_func_static(esp, memory)?,
+                self.gl_blend_func_static(tid, esp, memory)?,
             )),
             ProviderOp::GlEnableClientState => Ok(PersonalityAction::Return(
                 self.gl_enable_client_state_static(tid, esp, memory)?,
@@ -235,22 +235,22 @@ impl XpProcess {
                 self.gl_disable_client_state_static(tid, esp, memory)?,
             )),
             ProviderOp::GlDepthMask => Ok(PersonalityAction::Return(
-                self.gl_depth_mask_static(esp, memory)?,
+                self.gl_depth_mask_static(tid, esp, memory)?,
             )),
             ProviderOp::GlColorMaterial => Ok(PersonalityAction::Return(
-                self.gl_color_material_static(esp, memory)?,
+                self.gl_color_material_static(tid, esp, memory)?,
             )),
             ProviderOp::GlTexGeni => Ok(PersonalityAction::Return(
-                self.gl_tex_geni_static(esp, memory)?,
+                self.gl_tex_geni_static(tid, esp, memory)?,
             )),
             ProviderOp::GlLightModelfv => Ok(PersonalityAction::Return(
                 self.gl_light_modelfv_static(tid, esp, memory)?,
             )),
             ProviderOp::GlMaterialfv => Ok(PersonalityAction::Return(
-                self.gl_materialfv_static(esp, memory)?,
+                self.gl_materialfv_static(tid, esp, memory)?,
             )),
             ProviderOp::GlPolygonOffset => Ok(PersonalityAction::Return(
-                self.gl_polygon_offset_static(esp, memory)?,
+                self.gl_polygon_offset_static(tid, esp, memory)?,
             )),
             ProviderOp::GlGetIntegerv => Ok(PersonalityAction::Return(
                 self.gl_get_integerv_static(tid, esp, memory)?,
@@ -286,10 +286,10 @@ impl XpProcess {
                 self.gl_gen_textures_static(tid, esp, memory)?,
             )),
             ProviderOp::GlNormal3fv => Ok(PersonalityAction::Return(
-                self.gl_normal_3fv_static(esp, memory)?,
+                self.gl_normal_3fv_static(tid, esp, memory)?,
             )),
             ProviderOp::GlNormalPointer => Ok(PersonalityAction::Return(
-                self.gl_normal_pointer_static(esp, memory)?,
+                self.gl_normal_pointer_static(tid, esp, memory)?,
             )),
             ProviderOp::GlVertexPointer => Ok(PersonalityAction::Return(
                 self.gl_vertex_pointer_static(tid, esp, memory)?,
@@ -301,7 +301,7 @@ impl XpProcess {
                 self.gl_tex_coord_pointer_static(tid, esp, memory)?,
             )),
             ProviderOp::GlFinish => Ok(PersonalityAction::Return(
-                self.gl_finish_static(esp, memory)?,
+                self.gl_finish_static(tid, esp, memory)?,
             )),
             ProviderOp::GlDrawElements => Ok(PersonalityAction::Return(
                 self.gl_draw_elements_static(tid, esp, memory)?,
@@ -313,10 +313,10 @@ impl XpProcess {
                 self.gl_matrix_mode_static(tid, esp, memory)?,
             )),
             ProviderOp::GlScissor => Ok(PersonalityAction::Return(
-                self.gl_scissor_static(esp, memory)?,
+                self.gl_scissor_static(tid, esp, memory)?,
             )),
             ProviderOp::GlDepthRange => Ok(PersonalityAction::Return(
-                self.gl_depth_range_static(esp, memory)?,
+                self.gl_depth_range_static(tid, esp, memory)?,
             )),
             ProviderOp::GlViewport => Ok(PersonalityAction::Return(
                 self.gl_viewport_static(tid, esp, memory)?,
@@ -337,7 +337,7 @@ impl XpProcess {
                 self.wgl_swap_layer_buffers_static(tid, esp, memory)?,
             )),
             ProviderOp::GlLightf => Ok(PersonalityAction::Return(
-                self.gl_lightf_static(esp, memory)?,
+                self.gl_lightf_static(tid, esp, memory)?,
             )),
             ProviderOp::SetTextColor => Ok(PersonalityAction::Return(
                 self.set_text_color_static(esp, memory)?,

@@ -161,7 +161,6 @@ impl XpProcess {
                 api: "OpenGL note",
                 detail: format!("tid={tid} has no current HGLRC"),
             })?;
-        context.textured_draw_blocker.get_or_insert(symbol);
         // A bounded journal of guest writes, not a claim that the renderer
         // already interprets every recorded setting.
         if context.observed_writes.len() == 256 {
@@ -233,32 +232,13 @@ impl XpProcess {
     }
 
     static_gl_stubs!(
-
-        gl_fogfv_static => "glFogfv",
-        gl_fogf_static => "glFogf", gl_fogi_static => "glFogi",
-        gl_draw_buffer_static => "glDrawBuffer", gl_depth_func_static => "glDepthFunc",
-        gl_alpha_func_static => "glAlphaFunc", gl_blend_func_static => "glBlendFunc",
-
-
-        gl_depth_mask_static => "glDepthMask", gl_color_material_static => "glColorMaterial",
-        gl_tex_geni_static => "glTexGeni",
-        gl_materialfv_static => "glMaterialfv", gl_polygon_offset_static => "glPolygonOffset",
-         wgl_get_proc_address_static => "wglGetProcAddress",
+        wgl_get_proc_address_static => "wglGetProcAddress",
         wgl_delete_context_static => "wglDeleteContext",
-
-
-         gl_normal_3fv_static => "glNormal3fv",
-        gl_normal_pointer_static => "glNormalPointer",
-
-
-        gl_scissor_static => "glScissor", gl_depth_range_static => "glDepthRange",
-
         gl_read_pixels_static => "glReadPixels",
         gl_read_buffer_static => "glReadBuffer",
-        gl_lightf_static => "glLightf",
     );
 
-    pub fn bind_gl_ui4_window(&mut self, hwnd: u32, window_id: u32) {
+    pub fn bind_gl_ui4_window(&mut self, hwnd: u32, window_id: u32, width:u32, height:u32) {
         if let Some(runtime) = self.gl_runtime.as_mut() {
             for context in runtime
                 .contexts
@@ -266,6 +246,9 @@ impl XpProcess {
                 .filter(|context| context.hwnd == hwnd)
             {
                 context.ui4_window_id = Some(window_id);
+                context.drawable_size=[width,height];
+                if !context.viewport_set {context.viewport=[0,0,width as i32,height as i32];}
+                if !context.fixed.scissor_set {context.fixed.scissor=[0,0,width as i32,height as i32];}
             }
         }
     }
@@ -289,131 +272,14 @@ impl XpProcess {
             })
     }
 
-    fn gl_disable_static(
-        &mut self,
-        tid: u32,
-        esp: u32,
-        memory: &impl GuestMemory,
-    ) -> Result<u32, ProviderDispatchError> {
-        let [_, cap] = arguments::<2>(memory, esp)?;
-        if cap == GL_TEXTURE_2D {
-            self.gl_context_mut(tid, "glDisable")?.textures.enabled = false;
-            return Ok(0);
-        }
-        if cap != GL_LIGHT0 {
-            return Err(ProviderDispatchError::Frontier {
-                api: "glDisable",
-                detail: format!("tid={tid} unobserved cap=0x{cap:08x}"),
-            });
-        }
-        self.gl_context_mut(tid, "glDisable")?.light0_enabled = false;
-        Ok(0)
-    }
 
-    fn gl_light_modelfv_static(
-        &mut self,
-        tid: u32,
-        esp: u32,
-        memory: &impl GuestMemory,
-    ) -> Result<u32, ProviderDispatchError> {
-        let [_, pname, params] = arguments::<3>(memory, esp)?;
-        if params == 0 {
-            return Err(ProviderDispatchError::Frontier {
-                api: "glLightModelfv",
-                detail: format!("tid={tid} null params pname=0x{pname:08x}"),
-            });
-        }
-        if pname != GL_LIGHT_MODEL_AMBIENT {
-            return Err(ProviderDispatchError::Frontier {
-                api: "glLightModelfv",
-                detail: format!("tid={tid} unobserved pname=0x{pname:08x} params=0x{params:08x}"),
-            });
-        }
 
-        let mut raw = [0u8; 16];
-        memory.read(params, &mut raw)?;
-        let values = core::array::from_fn::<f32, 4, _>(|index| {
-            f32::from_le_bytes(raw[index * 4..index * 4 + 4].try_into().unwrap())
-        });
-        self.gl_context_mut(tid, "glLightModelfv")?
-            .light_model_ambient = values;
-        Ok(0)
-    }
 
-    fn gl_lightfv_static(
-        &mut self,
-        tid: u32,
-        esp: u32,
-        memory: &impl GuestMemory,
-    ) -> Result<u32, ProviderDispatchError> {
-        let [_, light, pname, params] = arguments::<4>(memory, esp)?;
-        if params == 0 {
-            return Err(ProviderDispatchError::Frontier {
-                api: "glLightfv",
-                detail: format!(
-                    "tid={tid} light=0x{light:08x} pname=0x{pname:08x} null params"
-                ),
-            });
-        }
-        if light != GL_LIGHT0 {
-            return Err(ProviderDispatchError::Frontier {
-                api: "glLightfv",
-                detail: format!(
-                    "tid={tid} unobserved light=0x{light:08x} pname=0x{pname:08x} params=0x{params:08x}"
-                ),
-            });
-        }
-        let mut raw = [0u8; 16];
-        memory.read(params, &mut raw)?;
-        let values = core::array::from_fn::<f32, 4, _>(|index| {
-            f32::from_le_bytes(raw[index * 4..index * 4 + 4].try_into().unwrap())
-        });
-        let context = self.gl_context_mut(tid, "glLightfv")?;
-        match pname {
-            GL_AMBIENT => context.light0_ambient = values,
-            GL_DIFFUSE => context.light0_diffuse = values,
-            GL_SPECULAR => context.light0_specular = values,
-            GL_POSITION => {
-                context.light0_position_eye = gl_transform(&context.modelview_matrix, values);
-            }
-            _ => {
-                return Err(ProviderDispatchError::Frontier {
-                    api: "glLightfv",
-                    detail: format!(
-                        "tid={tid} light=GL_LIGHT0 unobserved pname=0x{pname:08x} params=0x{params:08x}"
-                    ),
-                });
-            }
-        }
-        Ok(0)
-    }
 
-    fn gl_client_state_static(
-        &mut self,
-        tid: u32,
-        esp: u32,
-        memory: &impl GuestMemory,
-        enabled: bool,
-    ) -> Result<u32, ProviderDispatchError> {
-        let [_, array] = arguments::<2>(memory, esp)?;
-        let api = if enabled {
-            "glEnableClientState"
-        } else {
-            "glDisableClientState"
-        };
-        let context = self.gl_context_mut(tid, api)?;
-        match array {
-            GL_VERTEX_ARRAY => context.vertex_array_enabled = enabled,
-            GL_COLOR_ARRAY => context.color_array_enabled = enabled,
-            GL_TEXTURE_COORD_ARRAY => context.textures.coord_array_enabled = enabled,
-            _ => {
-                return Err(ProviderDispatchError::Frontier {
-                    api,
-                    detail: format!("array=0x{array:08x} unsupported"),
-                });
-            }
-        }
-        Ok(0)
+
+
+    fn gl_client_state_static(&mut self, tid: u32, esp: u32, memory: &impl GuestMemory, enabled: bool) -> Result<u32, ProviderDispatchError> {
+        self.gl_fixed_client_state_static(tid, esp, memory, enabled)
     }
 
     fn gl_enable_client_state_static(
@@ -491,16 +357,11 @@ impl XpProcess {
         self.gl_array_pointer_static(tid, esp, memory, true)
     }
 
-    fn gl_viewport_static(
-        &mut self,
-        tid: u32,
-        esp: u32,
-        memory: &impl GuestMemory,
-    ) -> Result<u32, ProviderDispatchError> {
-        let [_, x, y, width, height] = arguments::<5>(memory, esp)?;
-        self.gl_context_mut(tid, "glViewport")?.viewport =
-            [x as i32, y as i32, width as i32, height as i32];
-        Ok(0)
+    fn gl_viewport_static(&mut self,tid:u32,esp:u32,memory:&impl GuestMemory)->Result<u32,ProviderDispatchError>{
+        let [_,x,y,w,h]=arguments::<5>(memory,esp)?;
+        let c=self.gl_context_mut(tid,"glViewport")?;
+        if (w as i32)<0 || (h as i32)<0 {c.fixed.set_error(0x501);return Ok(0);}
+        c.viewport=[x as i32,y as i32,w as i32,h as i32];c.viewport_set=true;Ok(0)
     }
 
     fn gl_clear_color_static(
@@ -515,211 +376,34 @@ impl XpProcess {
         Ok(0)
     }
 
-    fn gl_clear_static(
-        &mut self,
-        tid: u32,
-        esp: u32,
-        memory: &impl GuestMemory,
-    ) -> Result<u32, ProviderDispatchError> {
-        let [_, mask] = arguments::<2>(memory, esp)?;
-        if mask & !(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT) != 0 {
-            return Err(ProviderDispatchError::Frontier {
-                api: "glClear",
-                detail: format!("mask=0x{mask:08x} unsupported"),
-            });
-        }
-        if mask & GL_COLOR_BUFFER_BIT != 0 {
-            let context = self.gl_context_mut(tid, "glClear")?;
-            let window_id =
-                context
-                    .ui4_window_id
-                    .ok_or_else(|| ProviderDispatchError::Frontier {
-                        api: "glClear",
-                        detail: format!("hwnd=0x{:08x} has no UI4 frame", context.hwnd),
-                    })?;
-            let color = gl_rgba8(context.clear_color);
-            let runtime = self.gl_runtime.as_mut().ok_or("GL runtime missing")?;
-            let surface = runtime
-                .device
-                .acquire_ui4_surface(window_id)
-                .map_err(|code| ProviderDispatchError::Frontier {
-                    api: "glClear",
-                    detail: format!("UI4 surface acquire failed window_id={window_id} code={code}"),
-                })?;
-            let point = runtime
-                .device
-                .submit_ui4_clear(runtime.queue, surface, color)
-                .map_err(|code| ProviderDispatchError::Frontier {
-                    api: "glClear",
-                    detail: format!("clear submit failed code={code}"),
-                })?;
-            runtime
-                .device
-                .wait(runtime.queue, point.value)
-                .map_err(|code| ProviderDispatchError::Frontier {
-                    api: "glClear",
-                    detail: format!("clear wait failed code={code}"),
-                })?;
-        }
+    fn gl_clear_static(&mut self, tid:u32, esp:u32, memory:&impl GuestMemory)->Result<u32,ProviderDispatchError>{
+        let [_,mask]=arguments::<2>(memory,esp)?;
+        if mask & !(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT)!=0 {return Err(gl_texture_error("glClear",format!("unsupported mask0x{mask:x}")));}
+        let c=self.gl_context_mut(tid,"glClear")?;
+        Self::gl_ensure_raster(c)?;
+        let scissor=if c.fixed.is_enabled(0xc11){Some(c.fixed.scissor)}else{None};
+        c.raster_frame.as_mut().unwrap().clear(
+            (mask&GL_COLOR_BUFFER_BIT!=0).then(||gl_rgba8(c.clear_color).to_le_bytes()),
+            (mask&GL_DEPTH_BUFFER_BIT!=0 && c.fixed.depth_mask).then_some(1.0),scissor);
+        if mask&GL_COLOR_BUFFER_BIT!=0 {self.gl_present_raster(tid,"clear")?;}
         Ok(0)
     }
 
-    fn gl_draw_elements_static(
-        &mut self,
-        tid: u32,
-        esp: u32,
-        memory: &impl GuestMemory,
-    ) -> Result<u32, ProviderDispatchError> {
-        let [_, mode, count, index_kind, indices] = arguments::<5>(memory, esp)?;
-        if self.gl_context_mut(tid, "glDrawElements")?.textures.enabled {
-            return self.gl_draw_textured_static(tid, mode, count, index_kind, indices, memory);
-        }
-        if mode != GL_TRIANGLES
-            || count != 3
-            || !matches!(index_kind, GL_UNSIGNED_SHORT | GL_UNSIGNED_INT)
-        {
-            return Err(ProviderDispatchError::Frontier {
-                api: "glDrawElements",
-                detail: format!(
-                    "mode=0x{mode:04x} count={count} index_type=0x{index_kind:04x} unsupported"
-                ),
-            });
-        }
-        let context = self.gl_context_mut(tid, "glDrawElements")?;
-        if !context.vertex_array_enabled || !context.color_array_enabled {
-            return Err(ProviderDispatchError::Frontier {
-                api: "glDrawElements",
-                detail: "vertex/color arrays must be enabled".into(),
-            });
-        }
-        let vertex_pointer =
-            context
-                .vertex_pointer
-                .ok_or_else(|| ProviderDispatchError::Frontier {
-                    api: "glDrawElements",
-                    detail: "vertex pointer missing".into(),
-                })?;
-        let color_pointer =
-            context
-                .color_pointer
-                .ok_or_else(|| ProviderDispatchError::Frontier {
-                    api: "glDrawElements",
-                    detail: "color pointer missing".into(),
-                })?;
-        let window_id = context
-            .ui4_window_id
-            .ok_or_else(|| ProviderDispatchError::Frontier {
-                api: "glDrawElements",
-                detail: format!("hwnd=0x{:08x} has no UI4 frame", context.hwnd),
-            })?;
-        let modelview = context.modelview_matrix;
-        let projection = context.projection_matrix;
-        let clear_rgba8_srgb = gl_rgba8(context.clear_color);
-        let mut vertices = [staticgl_triangle::Vertex {
-            position: [0.0; 3],
-            color: [0.0; 4],
-        }; 3];
-        for (triangle_index, vertex) in vertices.iter_mut().enumerate() {
-            let byte_count = if index_kind == GL_UNSIGNED_SHORT {
-                2
-            } else {
-                4
-            };
-            let index_address = indices
-                .checked_add(triangle_index as u32 * byte_count)
-                .ok_or("GL index address overflow")?;
-            let index = if index_kind == GL_UNSIGNED_SHORT {
-                let mut bytes = [0u8; 2];
-                memory.read(index_address, &mut bytes)?;
-                u32::from(u16::from_le_bytes(bytes))
-            } else {
-                read_u32(memory, index_address)?
-            };
-            let mut point = [0.0, 0.0, 0.0, 1.0];
-            for component in 0..vertex_pointer.size {
-                point[component as usize] =
-                    gl_array_component(memory, vertex_pointer, index, component)?;
-            }
-            let point = gl_transform(&projection, gl_transform(&modelview, point));
-            if point[3] == 0.0 || !point.iter().all(|component| component.is_finite()) {
-                return Err(ProviderDispatchError::Frontier {
-                    api: "glDrawElements",
-                    detail: "nonfinite or zero-w clip position".into(),
-                });
-            }
-            vertex.position = [
-                point[0] / point[3],
-                point[1] / point[3],
-                point[2] / point[3],
-            ];
-            vertex.color = [1.0; 4];
-            for component in 0..color_pointer.size {
-                vertex.color[component as usize] =
-                    gl_array_component(memory, color_pointer, index, component)?;
-            }
-        }
-        let runtime = self.gl_runtime.as_mut().ok_or("GL runtime missing")?;
-        if runtime.triangle_renderer.is_none() {
-            runtime.triangle_renderer = Some(
-                staticgl_triangle::TriangleRenderer::new(runtime.device).map_err(|code| {
-                    ProviderDispatchError::Frontier {
-                        api: "glDrawElements",
-                        detail: format!("triangle pipeline create failed code={code}"),
-                    }
-                })?,
-            );
-        }
-        let surface = runtime
-            .device
-            .acquire_ui4_surface(window_id)
-            .map_err(|code| ProviderDispatchError::Frontier {
-                api: "glDrawElements",
-                detail: format!("UI4 surface acquire failed window_id={window_id} code={code}"),
-            })?;
-        let point = runtime
-            .triangle_renderer
-            .as_ref()
-            .unwrap()
-            .draw(runtime.queue, surface, &vertices, clear_rgba8_srgb)
-            .map_err(|code| ProviderDispatchError::Frontier {
-                api: "glDrawElements",
-                detail: format!("triangle submit failed code={code}"),
-            })?;
-        runtime
-            .device
-            .wait(runtime.queue, point.value)
-            .map_err(|code| ProviderDispatchError::Frontier {
-                api: "glDrawElements",
-                detail: format!("triangle wait failed code={code}"),
-            })?;
-        Ok(0)
+    fn gl_draw_elements_static(&mut self, tid:u32, esp:u32, memory:&impl GuestMemory)->Result<u32,ProviderDispatchError>{
+        self.gl_draw_compat_static(tid,esp,memory)
     }
 
-    fn wgl_swap_layer_buffers_static(
-        &mut self,
-        tid: u32,
-        esp: u32,
-        memory: &impl GuestMemory,
-    ) -> Result<u32, ProviderDispatchError> {
-        let [_, hdc, planes] = arguments::<3>(memory, esp)?;
-        let context = self.gl_context_mut(tid, "wglSwapLayerBuffers")?;
-        if context.hdc != hdc || planes != 1 {
-            return Err(ProviderDispatchError::Frontier {
-                api: "wglSwapLayerBuffers",
-                detail: format!("tid={tid} hdc=0x{hdc:08x} planes=0x{planes:08x} unsupported"),
-            });
-        }
-        // Each modeled clear/draw already submitted, waited, and published its UI4 frame.
+    fn wgl_swap_layer_buffers_static(&mut self,tid:u32,esp:u32,memory:&impl GuestMemory)->Result<u32,ProviderDispatchError>{
+        let [_,hdc,planes]=arguments::<3>(memory,esp)?;
+        let c=self.gl_context_mut(tid,"wglSwapLayerBuffers")?;
+        if c.hdc!=hdc || planes!=1 {return Err(gl_texture_error("wglSwapLayerBuffers","unsupported DC/planes"));}
+        c.swap_count+=1;
+        self.gl_present_raster(tid,"swap")?;
         Ok(1)
     }
 
-    fn gl_finish_static(
-        &mut self,
-        _esp: u32,
-        _memory: &impl GuestMemory,
-    ) -> Result<u32, ProviderDispatchError> {
-        // glDrawElements waits for its submitted timeline point before returning.
-        Ok(0)
+    fn gl_finish_static(&mut self,tid:u32,_esp:u32,_memory:&impl GuestMemory)->Result<u32,ProviderDispatchError>{
+        self.gl_present_raster(tid,"finish")?; Ok(0)
     }
 
     fn gl_load_matrixf_static(
@@ -1019,7 +703,12 @@ impl XpProcess {
                 color_pointer: None,
                 textures: GlTextures::default(),
                 observed_writes: VecDeque::new(),
-                textured_draw_blocker: None,
+                fixed: GlFixedState::default(),
+                raster_frame: None,
+                drawable_size: [0, 0],
+                viewport_set: false,
+                draw_count: 0,
+                swap_count: 0,
             },
         );
         Ok(hglrc)

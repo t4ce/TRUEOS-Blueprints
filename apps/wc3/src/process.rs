@@ -1899,8 +1899,12 @@ struct WglContext {
     color_pointer: Option<GlArrayPointer>,
     textures: GlTextures,
     observed_writes: VecDeque<GlWriteNote>,
-    // Unlike the bounded journal, this cannot forget an unmodeled write.
-    textured_draw_blocker: Option<&'static str>,
+    fixed: GlFixedState,
+    raster_frame: Option<crate::staticgl_raster::GlRasterFrame>,
+    drawable_size: [u32; 2],
+    viewport_set: bool,
+    draw_count: u64,
+    swap_count: u64,
 }
 
 struct GlWriteNote {
@@ -1909,7 +1913,7 @@ struct GlWriteNote {
     description: String,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 struct GlArrayPointer {
     size: u32,
     kind: u32,
@@ -3291,6 +3295,9 @@ include!("staticgdi.rs");
 include!("staticgl.rs");
 include!("staticgl_texture.rs");
 include!("staticgl_textured_draw.rs");
+include!("staticgl_fixed.rs");
+include!("staticgl_vertex.rs");
+include!("staticgl_compat_draw.rs");
 
 
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -84,7 +84,7 @@ pub(crate) fn decode_span(bytes: &[u8], utf16le: bool) -> Result<String, &'stati
             .map(|pair| u16::from_le_bytes([pair[0], pair[1]])),
     )
     .map(|unit| unit.map_err(|_| "registry UTF-16"))
-        .collect()
+    .collect()
 }
 
 /// Run MSVCRT's x86 `_ftol` conversion against an FXSAVE-compatible x87 image.
@@ -113,7 +113,11 @@ pub fn x87_ftol(state: &mut [u8]) -> i64 {
         status |= X87_INVALID | X87_STACK_FAULT;
         i64::MIN
     } else {
-        let offset = ST_SPACE + top * ST_BYTES;
+        // FXSAVE stores the data fields in logical ST(0)..ST(7) order, while
+        // its abridged tag word is in physical R0..R7 order. `top` therefore
+        // selects the FTW bit above, but ST(0)'s value is always the first
+        // data field.
+        let offset = ST_SPACE;
         let significand = u64::from_le_bytes(state[offset..offset + 8].try_into().unwrap());
         let exponent_word = u16::from_le_bytes(state[offset + 8..offset + 10].try_into().unwrap());
         let negative = exponent_word & 0x8000 != 0;
@@ -132,8 +136,9 @@ pub fn x87_ftol(state: &mut [u8]) -> i64 {
             } else if unbiased <= 63 {
                 Some(u128::from(significand >> (63 - unbiased)))
             } else {
-                let shift = u32::try_from(unbiased - 63).unwrap();
-                significand.checked_shl(shift).map(u128::from)
+                // Every finite value with an unbiased exponent above 63 is
+                // outside the signed 64-bit range, so avoid a wide shift.
+                None
             }
         };
 
@@ -154,6 +159,11 @@ pub fn x87_ftol(state: &mut [u8]) -> i64 {
     };
 
     tags &= !(1 << top);
+    // After popping ST(0), the next logical value becomes ST(0). The FXSAVE
+    // data area is in logical stack order, so shift its remaining entries up
+    // one slot before advancing TOP. The final field is now empty/undefined.
+    state.copy_within(ST_SPACE + ST_BYTES..ST_SPACE + 8 * ST_BYTES, ST_SPACE);
+    state[ST_SPACE + 7 * ST_BYTES..ST_SPACE + 8 * ST_BYTES].fill(0);
     state[FTW] = tags;
     status = (status & !(7 << 11)) | (((top as u16 + 1) & 7) << 11);
     state[FSW..FSW + 2].copy_from_slice(&status.to_le_bytes());
@@ -179,7 +189,10 @@ mod tests {
         let mut positive = state_with_st0(0xc000_0000_0000_0000, 0x3fff);
         assert_eq!(x87_ftol(&mut positive), 1);
         assert_eq!(positive[4] & 1, 0);
-        assert_eq!((u16::from_le_bytes(positive[2..4].try_into().unwrap()) >> 11) & 7, 1);
+        assert_eq!(
+            (u16::from_le_bytes(positive[2..4].try_into().unwrap()) >> 11) & 7,
+            1
+        );
 
         let mut negative = state_with_st0(0xc000_0000_0000_0000, 0xbfff);
         assert_eq!(x87_ftol(&mut negative), -1);
@@ -191,5 +204,93 @@ mod tests {
         let mut state = state_with_st0(0xc000_0000_0000_0000, 0x7fff);
         assert_eq!(x87_ftol(&mut state), i64::MIN);
         assert_ne!(u16::from_le_bytes(state[2..4].try_into().unwrap()) & 1, 0);
+    }
+
+    #[test]
+    fn ftol_returns_integer_indefinite_when_left_shift_would_overflow() {
+        // 2^128 would wrap to zero if the extended significand were shifted
+        // into u128 without checking the result's width.
+        let mut state = state_with_st0(0x8000_0000_0000_0000, 0x407f);
+        assert_eq!(x87_ftol(&mut state), i64::MIN);
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn ftol_nonzero_top_matches_native_conversion_and_pop() {
+        use std::arch::asm;
+
+        #[repr(align(16))]
+        struct FxState([u8; 832]);
+
+        struct Restore(FxState);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                unsafe {
+                    asm!("fxrstor [{}]", in(reg) self.0.0.as_ptr(), options(nostack, preserves_flags));
+                }
+            }
+        }
+
+        let mut original = FxState([0; 832]);
+        let mut image = FxState([0; 832]);
+        let mut native_first = 0i64;
+        let mut native_second = 0i64;
+        let mut native_third = 0i64;
+        let mut restored_second = 0i64;
+        let mut restored_third = 0i64;
+        let values = [-31.75f64, 22.75f64, 1.75f64];
+        let truncate = 0x0f7fu16;
+        let _restore = unsafe {
+            asm!("fxsave [{}]", in(reg) original.0.as_mut_ptr(), options(nostack, preserves_flags));
+            Restore(original)
+        };
+
+        unsafe {
+            asm!(
+                "fninit",
+                "fldcw word ptr [{truncate}]",
+                "fld qword ptr [{v0}]",
+                "fld qword ptr [{v1}]",
+                "fld qword ptr [{v2}]",
+                "fxsave [{image}]",
+                "fistp qword ptr [{first}]",
+                "fistp qword ptr [{second}]",
+                "fistp qword ptr [{third}]",
+                truncate = in(reg) &truncate,
+                v0 = in(reg) &values[0],
+                v1 = in(reg) &values[1],
+                v2 = in(reg) &values[2],
+                image = in(reg) image.0.as_mut_ptr(),
+                first = in(reg) &mut native_first,
+                second = in(reg) &mut native_second,
+                third = in(reg) &mut native_third,
+                options(nostack),
+            );
+        }
+
+        // The three pushes leave TOP=5, so this exercises FTW physical-index
+        // lookup and the logical ST(0) data slot at the same time.
+        assert_eq!(
+            (u16::from_le_bytes(image.0[2..4].try_into().unwrap()) >> 11) & 7,
+            5
+        );
+        assert_eq!(native_first, 1);
+        assert_eq!(native_second, 22);
+        assert_eq!(native_third, -31);
+        assert_eq!(x87_ftol(&mut image.0), native_first);
+
+        unsafe {
+            asm!(
+                "fxrstor [{image}]",
+                "fistp qword ptr [{second}]",
+                "fistp qword ptr [{third}]",
+                image = in(reg) image.0.as_ptr(),
+                second = in(reg) &mut restored_second,
+                third = in(reg) &mut restored_third,
+                options(nostack),
+            );
+        }
+        assert_eq!(restored_second, native_second);
+        assert_eq!(restored_third, native_third);
     }
 }
