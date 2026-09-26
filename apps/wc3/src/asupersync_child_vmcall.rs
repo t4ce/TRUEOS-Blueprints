@@ -663,20 +663,45 @@
                                 ),
                             );
                         }
-                        if !base.is_finite() || !exponent.is_finite() || base <= 0.0 {
-                            return Ok(());
+                        let caller_ret = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            pending.provider_esp,
+                            1,
+                        )?[0];
+                        let sequence = GuestThreadContext::last_execution_diagnostic().sequence;
+                        if !base.is_finite() || !exponent.is_finite() {
+                            return Err(format!(
+                                "WC3 CHILD CRT CIPOW FRONTIER seq={sequence} pid={active_pid} tid={active_tid} \
+                                 caller_ret=0x{caller_ret:08x} base={base:?} base_bits=0x{:016x} \
+                                 exponent={exponent:?} exponent_bits=0x{:016x} \
+                                 reason=nonfinite-operands-unmodeled",
+                                base.to_bits(),
+                                exponent.to_bits(),
+                            ));
                         }
                         let result = base.powf(exponent);
                         if !result.is_finite() {
-                            return Ok(());
+                            return Err(format!(
+                                "WC3 CHILD CRT CIPOW FRONTIER seq={sequence} pid={active_pid} tid={active_tid} \
+                                 caller_ret=0x{caller_ret:08x} base={base:?} base_bits=0x{:016x} \
+                                 exponent={exponent:?} exponent_bits=0x{:016x} \
+                                 result={result:?} result_bits=0x{:016x} \
+                                 reason=exceptional-math-result-unmodeled",
+                                base.to_bits(),
+                                exponent.to_bits(),
+                                result.to_bits(),
+                            ));
                         }
-                        child
+                        let written = child
                             .address_space
                             .write(
                                 thunk32::CHILD_CIPOW_RESULT_ADDRESS,
                                 &result.to_bits().to_le_bytes(),
                             )
                             .map_err(|error| error.to_string())?;
+                        if written != 8 {
+                            return Err("short CIPOW result write".into());
+                        }
                         let mut registers = exit.registers;
                         registers.eip = thunk32::CHILD_CIPOW_RESTORE_ADDRESS;
                         contexts[active]

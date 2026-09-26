@@ -300,6 +300,10 @@ async fn run() -> Result<(), String> {
     )
     .await;
     let execution = GuestThreadContext::last_execution_diagnostic();
+    let last_registers = contexts
+        .iter()
+        .find(|context| context.pid == execution.pid && context.tid == execution.tid)
+        .and_then(|context| context.context.registers().ok());
     let live_processes = session
         .processes
         .values()
@@ -312,10 +316,18 @@ async fn run() -> Result<(), String> {
     logl::log(
         level::IMPORTANT,
         format_args!(
-            "WC3 SESSION RETURN outcome={:?} last_exec_seq={} last_stage={:?} live_processes={} contexts={} frames={:?}",
+            "WC3 SESSION RETURN outcome={:?} last_exec_seq={} last_stage={:?} last_pid={} last_tid={} last_eip={} last_esp={} live_processes={} contexts={} frames={:?}",
             outcome,
             execution.sequence,
             execution.stage,
+            execution.pid,
+            execution.tid,
+            last_registers
+                .map(|registers| format!("0x{:08x}", registers.eip))
+                .unwrap_or_else(|| "<unavailable>".into()),
+            last_registers
+                .map(|registers| format!("0x{:08x}", registers.esp))
+                .unwrap_or_else(|| "<unavailable>".into()),
             live_processes,
             contexts.len(),
             frames,
