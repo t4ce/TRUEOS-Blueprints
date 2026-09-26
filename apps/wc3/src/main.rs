@@ -2243,10 +2243,26 @@ struct ChildLoadLibraryCall {
 struct ChildWindowCallback {
     provider_resume_eip: u32,
     provider_esp: u32,
+    reason: &'static str,
+    return_policy: WindowCallbackReturn,
     hwnd: u32,
     wndproc: u32,
     message: u32,
-    completion_eax: u32,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum WindowCallbackReturn {
+    Fixed(u32),
+    WndProc,
+}
+
+impl WindowCallbackReturn {
+    fn api_result(self, wndproc_eax: u32) -> u32 {
+        match self {
+            Self::Fixed(value) => value,
+            Self::WndProc => wndproc_eax,
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]

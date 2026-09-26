@@ -268,6 +268,8 @@ pub enum ProviderOp {
     CreateWindowExA,
     PeekMessageA,
     GetMessageA,
+    TranslateMessage,
+    DispatchMessageA,
     Unknown,
 }
 
@@ -431,6 +433,8 @@ impl ProviderOp {
             Self::CreateWindowExA => 48,
             Self::PeekMessageA => 20,
             Self::GetMessageA => 16,
+            Self::TranslateMessage => 4,
+            Self::DispatchMessageA => 4,
             Self::MultiByteToWideChar | Self::LCMapStringW | Self::RegQueryValueExA => 24,
             Self::CreateThread => 24,
             Self::SetThreadPriority => 8,
@@ -668,6 +672,7 @@ impl ProviderOp {
                 | Self::RegisterClassExA
                 | Self::PeekMessageA
                 | Self::GetMessageA
+                | Self::TranslateMessage
                 | Self::GetDesktopWindow
                 | Self::ClipCursor
                 | Self::EndPaint
@@ -814,6 +819,8 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "CreateWindowExA" => ProviderOp::CreateWindowExA,
             "PeekMessageA" => ProviderOp::PeekMessageA,
             "GetMessageA" => ProviderOp::GetMessageA,
+            "TranslateMessage" => ProviderOp::TranslateMessage,
+            "DispatchMessageA" => ProviderOp::DispatchMessageA,
             _ => ProviderOp::Unknown,
         };
     }

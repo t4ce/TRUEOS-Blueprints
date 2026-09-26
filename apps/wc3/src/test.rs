@@ -2614,6 +2614,18 @@ fn design_time_allow_local_files_is_present_and_explicitly_zero() {
             Some(first)
         );
     }
+
+    #[test]
+    fn window_callback_return_policy_preserves_wndproc_lresult_for_dispatch() {
+        assert_eq!(
+            WindowCallbackReturn::Fixed(1).api_result(0x1234_5678),
+            1
+        );
+        assert_eq!(
+            WindowCallbackReturn::WndProc.api_result(0x1234_5678),
+            0x1234_5678
+        );
+    }
 }
 
 #[test]

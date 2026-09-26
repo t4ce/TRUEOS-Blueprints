@@ -714,27 +714,31 @@
                         if let Some(pending) = child.window_callback.take() {
                             if exit.registers.esp != pending.provider_esp {
                                 return Err(format!(
-                                    "UpdateWindow callback ESP mismatch expected=0x{:08x} actual=0x{:08x}",
+                                    "{} callback ESP mismatch expected=0x{:08x} actual=0x{:08x}",
+                                    pending.reason,
                                     pending.provider_esp, exit.registers.esp,
                                 ));
                             }
+                            let wndproc_eax = exit.registers.eax;
+                            let api_eax = pending.return_policy.api_result(wndproc_eax);
                             logl::log(
                                 level::IMPORTANT,
                                 format_args!(
-                                    "WC3 CHILD CALL_GUEST RETURN pid={} tid={} reason=UpdateWindow/WM_PAINT hwnd=0x{:08x} wndproc=0x{:08x} message=0x{:08x} wndproc_eax=0x{:08x} updatewindow_eax=0x{:08x}",
+                                    "WC3 CHILD CALL_GUEST RETURN pid={} tid={} reason={} hwnd=0x{:08x} wndproc=0x{:08x} message=0x{:08x} wndproc_eax=0x{:08x} api_eax=0x{:08x}",
                                     active_pid,
                                     active_tid,
+                                    pending.reason,
                                     pending.hwnd,
                                     pending.wndproc,
                                     pending.message,
-                                    exit.registers.eax,
-                                    pending.completion_eax,
+                                    wndproc_eax,
+                                    api_eax,
                                 ),
                             );
                             let mut registers = exit.registers;
                             registers.eip = pending.provider_resume_eip;
                             registers.esp = pending.provider_esp;
-                            registers.eax = pending.completion_eax;
+                            registers.eax = api_eax;
                             contexts[active]
                                 .context
                                 .set_registers(registers)
@@ -6390,16 +6394,104 @@
                         child.window_callback = Some(ChildWindowCallback {
                             provider_resume_eip,
                             provider_esp,
+                            reason: "UpdateWindow/WM_PAINT",
+                            return_policy: WindowCallbackReturn::Fixed(1),
                             hwnd,
                             wndproc,
                             message: 0x000f,
-                            completion_eax: 1,
                         });
                         logl::log(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD CALL_GUEST pid={} tid={} reason=UpdateWindow/WM_PAINT hwnd=0x{:08x} wndproc=0x{:08x} message=0x0000000f wparam=0x00000000 lparam=0x00000000",
                                 active_pid, active_tid, hwnd, wndproc,
+                            ),
+                        );
+                        let mut registers = exit.registers;
+                        registers.eip = wndproc;
+                        registers.esp = callback_esp;
+                        contexts[active]
+                            .context
+                            .set_registers(registers)
+                            .map_err(|error| error.to_string())?;
+                        continue;
+                    }
+                    if operation == child_loader::ProviderOp::DispatchMessageA {
+                        let provider_resume_eip = exit.registers.eip;
+                        let provider_esp = exit.registers.esp;
+                        let frame = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            provider_esp,
+                            2,
+                        )?;
+                        let message_ptr = frame[1];
+                        if message_ptr == 0 {
+                            return Err("DispatchMessageA null MSG pointer".into());
+                        }
+                        let message_words = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            message_ptr,
+                            4,
+                        )?;
+                        let hwnd = message_words[0];
+                        let message = message_words[1];
+                        let wparam = message_words[2];
+                        let lparam = message_words[3];
+                        let window = session
+                            .windows
+                            .get(&hwnd)
+                            .ok_or("DispatchMessageA unknown window")?;
+                        if window.owner.pid != active_pid {
+                            return Err("DispatchMessageA window owner mismatch".into());
+                        }
+                        let wndproc = window.wndproc;
+                        let callback_esp = provider_esp
+                            .checked_sub(20)
+                            .ok_or("DispatchMessageA callback stack underflow")?;
+                        let callback_frame = [
+                            thunk32::CHILD_CALLBACK_RETURN_ADDRESS,
+                            hwnd,
+                            message,
+                            wparam,
+                            lparam,
+                        ];
+                        let mut callback_bytes = [0u8; 20];
+                        for (index, value) in callback_frame.into_iter().enumerate() {
+                            callback_bytes[index * 4..index * 4 + 4]
+                                .copy_from_slice(&value.to_le_bytes());
+                        }
+                        if child
+                            .address_space
+                            .write(callback_esp, &callback_bytes)
+                            .map_err(|error| error.to_string())?
+                            != callback_bytes.len()
+                        {
+                            return Err("short DispatchMessageA callback frame write".into());
+                        }
+                        if child.window_callback.is_some() {
+                            return Err("DispatchMessageA callback already pending".into());
+                        }
+                        child.window_callback = Some(ChildWindowCallback {
+                            provider_resume_eip,
+                            provider_esp,
+                            reason: "DispatchMessageA",
+                            return_policy: WindowCallbackReturn::WndProc,
+                            hwnd,
+                            wndproc,
+                            message,
+                        });
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD CALL_GUEST pid={} tid={} reason=DispatchMessageA hwnd=0x{:08x} wndproc=0x{:08x} message=0x{:08x} wparam=0x{:08x} lparam=0x{:08x} caller_ret=0x{:08x}",
+                                active_pid,
+                                active_tid,
+                                hwnd,
+                                wndproc,
+                                message,
+                                wparam,
+                                lparam,
+                                frame[0],
                             ),
                         );
                         let mut registers = exit.registers;

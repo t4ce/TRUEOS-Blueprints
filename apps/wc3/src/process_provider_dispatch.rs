@@ -528,6 +528,43 @@ impl XpProcess {
                     .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(result))
             }
+            ProviderOp::TranslateMessage => {
+                const WM_KEYDOWN: u32 = 0x0100;
+                const WM_KEYUP: u32 = 0x0101;
+                const WM_SYSKEYDOWN: u32 = 0x0104;
+                const WM_SYSKEYUP: u32 = 0x0105;
+
+                let [_, message_ptr] = arguments::<2>(memory, esp)?;
+                if message_ptr == 0 {
+                    return Err(ProviderDispatchError::Frontier {
+                        api: "TranslateMessage",
+                        detail: "null MSG pointer".into(),
+                    });
+                }
+                let hwnd = read_u32(memory, message_ptr)?;
+                let message = read_u32(memory, message_ptr + 4)?;
+                let wparam = read_u32(memory, message_ptr + 8)?;
+                let lparam = read_u32(memory, message_ptr + 12)?;
+                if matches!(message, WM_KEYDOWN | WM_KEYUP | WM_SYSKEYDOWN | WM_SYSKEYUP) {
+                    return Err(ProviderDispatchError::Frontier {
+                        api: "TranslateMessage",
+                        detail: format!(
+                            "keyboard translation unmodeled hwnd=0x{hwnd:08x} message=0x{message:04x} wparam=0x{wparam:08x} lparam=0x{lparam:08x}"
+                        ),
+                    });
+                }
+                logl::log(
+                    level::IMPORTANT,
+                    format_args!(
+                        "WC3 CHILD TRANSLATEMESSAGE pid={pid} tid={tid} msg=0x{message_ptr:08x} hwnd=0x{hwnd:08x} message=0x{message:08x} wparam=0x{wparam:08x} lparam=0x{lparam:08x} translated=0 result=0 cleanup=4-by-thunk"
+                    ),
+                );
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(0))
+            }
             ProviderOp::TlsAlloc => {
                 let slot = self.tls_alloc()?;
                 self.call_count = self

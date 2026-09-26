@@ -312,6 +312,47 @@
     }
 
     #[test]
+    fn child_translate_message_a_leaves_paint_message_untouched() {
+        let provider = ProviderImport {
+            module: "USER32.dll".into(),
+            symbol: ProviderSymbol::Name("TranslateMessage".into()),
+            iat_rva: 0,
+        };
+        let operation = provider_op(&provider);
+        assert_eq!(operation, ProviderOp::TranslateMessage);
+        assert!(operation.is_modeled());
+        assert!(operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 4);
+        assert_eq!(provider_thunk_kind(&provider), thunk32::Kind::Stdcall(4));
+
+        let base = 0x0010_0000;
+        let message = base + 0x500;
+        let esp = base + 0x400;
+        let mut memory = Memory { base, bytes: vec![0; 0x1000] };
+        for (offset, value) in [
+            (0, 0x5743_4003),
+            (4, 0x000f),
+            (8, 0),
+            (12, 0),
+        ] {
+            write_u32(&mut memory, message + offset, value).unwrap();
+        }
+        write_u32(&mut memory, esp, 0x0040_1c67).unwrap();
+        write_u32(&mut memory, esp + 4, message).unwrap();
+        let mut xp = XpProcess::new_child();
+        xp.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(0))
+        );
+        assert_eq!(read_u32(&memory, message).unwrap(), 0x5743_4003);
+        assert_eq!(read_u32(&memory, message + 4).unwrap(), 0x000f);
+        assert_eq!(read_u32(&memory, message + 8).unwrap(), 0);
+        assert_eq!(read_u32(&memory, message + 12).unwrap(), 0);
+    }
+
+    #[test]
     fn proven_create_thread_is_logical_and_suspended() {
         let imports = vec![LauncherImport {
             id: 0,
