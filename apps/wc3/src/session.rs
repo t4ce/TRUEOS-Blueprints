@@ -1632,6 +1632,93 @@ impl Wc3Session {
         Ok(self.focused_window.replace(hwnd).unwrap_or(0))
     }
 
+    pub fn route_ui4_pointer_input(
+        &mut self,
+        hwnd: u32,
+        screen_x: u32,
+        screen_y: u32,
+        local_x: i32,
+        local_y: i32,
+        buttons_down: u32,
+        buttons_pressed: u32,
+        buttons_released: u32,
+        wheel: i16,
+    ) -> Result<(), &'static str> {
+        let owner = self.windows.get(&hwnd).ok_or("UI4 pointer unknown window")?.owner;
+        self.focused_window = Some(hwnd);
+        self.foreground_window = Some(hwnd);
+        self.active_windows.insert(owner, hwnd);
+        self.processes
+            .get_mut(&owner.pid)
+            .ok_or("UI4 pointer owner process missing")?
+            .xp
+            .queue_ui4_pointer_input(
+                hwnd,
+                screen_x,
+                screen_y,
+                local_x,
+                local_y,
+                buttons_down,
+                buttons_pressed,
+                buttons_released,
+                wheel,
+            );
+        Ok(())
+    }
+
+    pub fn route_ui4_cursor_position(
+        &mut self,
+        hwnd: u32,
+        x: i32,
+        y: i32,
+    ) -> Result<(), &'static str> {
+        let owner = self.windows.get(&hwnd).ok_or("UI4 cursor unknown window")?.owner;
+        self.processes
+            .get_mut(&owner.pid)
+            .ok_or("UI4 cursor owner process missing")?
+            .xp
+            .set_cursor_position(x, y);
+        Ok(())
+    }
+
+    pub fn route_ui4_key_input(
+        &mut self,
+        hwnd: u32,
+        key_code: u16,
+        pressed: bool,
+        time: u32,
+    ) -> Result<(), &'static str> {
+        let owner = self.windows.get(&hwnd).ok_or("UI4 key unknown window")?.owner;
+        self.focused_window = Some(hwnd);
+        self.foreground_window = Some(hwnd);
+        self.active_windows.insert(owner, hwnd);
+        self.processes
+            .get_mut(&owner.pid)
+            .ok_or("UI4 key owner process missing")?
+            .xp
+            .queue_ui4_key_input(hwnd, key_code, pressed, time);
+        Ok(())
+    }
+
+    pub fn route_ui4_text_input(
+        &mut self,
+        hwnd: u32,
+        codepoint: u32,
+        pressed: bool,
+        time: u32,
+    ) -> Result<(), &'static str> {
+        let owner = self.windows.get(&hwnd).ok_or("UI4 text unknown window")?.owner;
+        self.focused_window = Some(hwnd);
+        self.foreground_window = Some(hwnd);
+        self.active_windows.insert(owner, hwnd);
+        self.processes
+            .get_mut(&owner.pid)
+            .ok_or("UI4 text owner process missing")?
+            .xp
+            .queue_ui4_text_input(hwnd, codepoint, pressed, time);
+        Ok(())
+    }
+
     pub fn set_foreground_window(
         &mut self,
         caller: ThreadKey,

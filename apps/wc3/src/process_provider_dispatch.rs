@@ -455,6 +455,23 @@ impl XpProcess {
                     .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(DESKTOP_HWND))
             }
+            ProviderOp::GetCursorPos => {
+                let result = self.get_cursor_pos(esp, memory)?;
+                let [_, output] = arguments::<2>(memory, esp)?;
+                logl::log(
+                    level::IMPORTANT,
+                    format_args!(
+                        "WC3 CHILD GETCURSORPOS RESULT pid={pid} tid={tid} output=0x{output:08x} x={} y={} result={result} cleanup=4-by-thunk",
+                        self.cursor_position.0,
+                        self.cursor_position.1,
+                    ),
+                );
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(result))
+            }
             ProviderOp::D3D8Release => {
                 let result = self.d3d8_release(esp, memory)?;
                 self.call_count = self

@@ -577,6 +577,28 @@
                         &provider.symbol,
                         child_loader::ProviderSymbol::Name(name)
                             if provider.module.eq_ignore_ascii_case("USER32.dll")
+                                && name == "GetCursorPos"
+                    ) {
+                        let frame = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            exit.registers.esp,
+                            2,
+                        )?;
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD GETCURSORPOS CALL pid={} tid={} output=0x{:08x} caller_ret=0x{:08x}",
+                                active_pid,
+                                active_tid,
+                                frame[1],
+                                frame[0],
+                            ),
+                        );
+                    }
+                    if matches!(
+                        &provider.symbol,
+                        child_loader::ProviderSymbol::Name(name)
+                            if provider.module.eq_ignore_ascii_case("USER32.dll")
                                 && name == "ChangeDisplaySettingsExA"
                     ) {
                         let frame = read_guest_words(

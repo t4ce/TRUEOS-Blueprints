@@ -2281,6 +2281,22 @@ impl XpProcess {
     }
     pub fn pending_message_count(&self) -> usize { self.messages.len() }
 
+    fn get_cursor_pos(
+        &self,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
+        let [_, output] = arguments::<2>(memory, esp)?;
+        if output == 0 {
+            return Ok(0);
+        }
+        write_u32(memory, output, self.cursor_position.0 as u32)
+            .map_err(ProviderDispatchError::Fault)?;
+        write_u32(memory, output + 4, self.cursor_position.1 as u32)
+            .map_err(ProviderDispatchError::Fault)?;
+        Ok(1)
+    }
+
     fn peek_message(
         &mut self,
         esp: u32,

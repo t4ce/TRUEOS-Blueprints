@@ -1509,6 +1509,44 @@ struct Message {
 const WM_PAINT: u32 = 0x000f;
 const WM_QUIT: u32 = 0x0012;
 const WM_SIZE: u32 = 0x0005;
+const WM_KEYDOWN: u32 = 0x0100;
+const WM_KEYUP: u32 = 0x0101;
+const WM_CHAR: u32 = 0x0102;
+const WM_MOUSEMOVE: u32 = 0x0200;
+const WM_LBUTTONDOWN: u32 = 0x0201;
+const WM_LBUTTONUP: u32 = 0x0202;
+const WM_RBUTTONDOWN: u32 = 0x0204;
+const WM_RBUTTONUP: u32 = 0x0205;
+const WM_MBUTTONDOWN: u32 = 0x0207;
+const WM_MBUTTONUP: u32 = 0x0208;
+const WM_MOUSEWHEEL: u32 = 0x020a;
+
+fn pack_mouse_coordinates(x: i32, y: i32) -> u32 {
+    u32::from(x as u16) | (u32::from(y as u16) << 16)
+}
+
+fn ui4_virtual_key(key_code: u16) -> Option<u32> {
+    Some(match key_code {
+        1 => 0x08, // VK_BACK
+        2 => 0x09, // VK_TAB
+        3 => 0x0d, // VK_RETURN
+        4 => 0x1b, // VK_ESCAPE
+        5 => 0x20, // VK_SPACE
+        6 => 0x2e, // VK_DELETE
+        7 => 0x2d, // VK_INSERT
+        8 => 0x24, // VK_HOME
+        9 => 0x23, // VK_END
+        10 => 0x21, // VK_PRIOR
+        11 => 0x22, // VK_NEXT
+        12 => 0x26, // VK_UP
+        13 => 0x28, // VK_DOWN
+        14 => 0x25, // VK_LEFT
+        15 => 0x27, // VK_RIGHT
+        16 => 0x5b, // VK_LWIN / TRUEOS start key
+        101..=112 => 0x70 + u32::from(key_code - 101), // VK_F1..VK_F12
+        _ => return None,
+    })
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct RegistryHandle {
@@ -1861,6 +1899,7 @@ pub struct XpProcess {
     unhandled_exception_filter: u32,
     registered_classes: HashMap<String, RegisteredClass>,
     messages: VecDeque<Message>,
+    cursor_position: (i32, i32),
     runnable_thread: Option<u32>,
     desktop_size: (u32, u32),
     gdi_objects: HashMap<u32, GdiObject>,
@@ -1980,6 +2019,128 @@ impl XpProcess {
             y: 0,
         });
         Ok(())
+    }
+
+    pub fn queue_ui4_pointer_input(
+        &mut self,
+        hwnd: u32,
+        screen_x: u32,
+        screen_y: u32,
+        local_x: i32,
+        local_y: i32,
+        buttons_down: u32,
+        buttons_pressed: u32,
+        buttons_released: u32,
+        wheel: i16,
+    ) {
+        let screen_x = screen_x.min(i32::MAX as u32) as i32;
+        let screen_y = screen_y.min(i32::MAX as u32) as i32;
+        self.set_cursor_position(screen_x, screen_y);
+
+        let button_state = (buttons_down & 0x1)
+            | ((buttons_down & 0x2) >> 0)
+            | ((buttons_down & 0x4) << 2);
+        let local_lparam = pack_mouse_coordinates(local_x, local_y);
+        let time = monotonic_counter_millis();
+
+        if buttons_pressed == 0 && buttons_released == 0 && wheel == 0 {
+            if let Some(message) = self.messages.back_mut()
+                && message.hwnd == hwnd
+                && message.message == WM_MOUSEMOVE
+            {
+                message.wparam = button_state;
+                message.lparam = local_lparam;
+                message.time = time;
+                message.x = screen_x;
+                message.y = screen_y;
+                return;
+            }
+        }
+
+        self.messages.push_back(Message {
+            hwnd,
+            message: WM_MOUSEMOVE,
+            wparam: button_state,
+            lparam: local_lparam,
+            time,
+            x: screen_x,
+            y: screen_y,
+        });
+
+        for (button, down, up) in [
+            (0x1, WM_LBUTTONDOWN, WM_LBUTTONUP),
+            (0x2, WM_RBUTTONDOWN, WM_RBUTTONUP),
+            (0x4, WM_MBUTTONDOWN, WM_MBUTTONUP),
+        ] {
+            if buttons_pressed & button != 0 {
+                self.messages.push_back(Message {
+                    hwnd,
+                    message: down,
+                    wparam: button_state,
+                    lparam: local_lparam,
+                    time,
+                    x: screen_x,
+                    y: screen_y,
+                });
+            }
+            if buttons_released & button != 0 {
+                self.messages.push_back(Message {
+                    hwnd,
+                    message: up,
+                    wparam: button_state,
+                    lparam: local_lparam,
+                    time,
+                    x: screen_x,
+                    y: screen_y,
+                });
+            }
+        }
+
+        if wheel != 0 {
+            self.messages.push_back(Message {
+                hwnd,
+                message: WM_MOUSEWHEEL,
+                wparam: button_state | ((wheel as u16 as u32) << 16),
+                lparam: pack_mouse_coordinates(screen_x, screen_y),
+                time,
+                x: screen_x,
+                y: screen_y,
+            });
+        }
+    }
+
+    pub fn queue_ui4_key_input(&mut self, hwnd: u32, key_code: u16, pressed: bool, time: u32) {
+        let Some(virtual_key) = ui4_virtual_key(key_code) else {
+            return;
+        };
+        self.messages.push_back(Message {
+            hwnd,
+            message: if pressed { WM_KEYDOWN } else { WM_KEYUP },
+            wparam: virtual_key,
+            lparam: if pressed { 1 } else { 0xc000_0001 },
+            time,
+            x: self.cursor_position.0,
+            y: self.cursor_position.1,
+        });
+    }
+
+    pub fn queue_ui4_text_input(&mut self, hwnd: u32, codepoint: u32, pressed: bool, time: u32) {
+        if !pressed || codepoint > 0xff {
+            return;
+        }
+        self.messages.push_back(Message {
+            hwnd,
+            message: WM_CHAR,
+            wparam: codepoint,
+            lparam: 1,
+            time,
+            x: self.cursor_position.0,
+            y: self.cursor_position.1,
+        });
+    }
+
+    pub fn set_cursor_position(&mut self, x: i32, y: i32) {
+        self.cursor_position = (x, y);
     }
 
     pub fn clear_window_paint(&mut self, hwnd: u32) {
@@ -2183,6 +2344,7 @@ impl XpProcess {
             unhandled_exception_filter: 0,
             registered_classes: HashMap::new(),
             messages: VecDeque::new(),
+            cursor_position: (0, 0),
             runnable_thread: None,
             desktop_size: (1920, 1080),
             gdi_objects,

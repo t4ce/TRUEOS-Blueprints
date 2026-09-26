@@ -268,6 +268,7 @@ pub enum ProviderOp {
     DeleteObject,
     LoadImageA,
     LoadCursorA,
+    GetCursorPos,
     RegisterClassA,
     RegisterClassExA,
     CreateWindowExA,
@@ -437,6 +438,7 @@ impl ProviderOp {
             Self::CreateFontA => 56,
             Self::LoadImageA => 24,
             Self::LoadCursorA => 8,
+            Self::GetCursorPos => 4,
             Self::RegisterClassA | Self::RegisterClassExA => 4,
             Self::CreateWindowExA => 48,
             Self::PeekMessageA => 20,
@@ -681,6 +683,7 @@ impl ProviderOp {
                 | Self::DeleteObject
                 | Self::LoadImageA
                 | Self::LoadCursorA
+                | Self::GetCursorPos
                 | Self::RegisterClassA
                 | Self::RegisterClassExA
                 | Self::PeekMessageA
@@ -830,6 +833,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "ReleaseDC" => ProviderOp::ReleaseDC,
             "LoadImageA" => ProviderOp::LoadImageA,
             "LoadCursorA" => ProviderOp::LoadCursorA,
+            "GetCursorPos" => ProviderOp::GetCursorPos,
             "RegisterClassA" => ProviderOp::RegisterClassA,
             "RegisterClassExA" => ProviderOp::RegisterClassExA,
             "CreateWindowExA" => ProviderOp::CreateWindowExA,

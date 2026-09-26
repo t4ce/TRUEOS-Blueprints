@@ -11,7 +11,7 @@ use std::{
 
 use sha2::{Digest, Sha256};
 use trueos::{
-    async_fs,
+    async_fs, hid, input,
     logl::level,
     ui4_scene::{self, Damage, Font, Frame, SceneTextRow, rgba},
     x86::{AddressSpace, Context, DebugRegisters, ExitKind, ExtendedState, Permissions, Registers},
