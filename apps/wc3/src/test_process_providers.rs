@@ -439,7 +439,7 @@
         assert_eq!(operation.stack_cleanup_bytes(), 0);
         assert_eq!(
             crate::child_loader::provider_thunk_kind(&provider),
-            thunk32::Kind::Return
+            if cfg!(feature = "host-strnicmp") { thunk32::Kind::Return } else { thunk32::Kind::Strnicmp }
         );
 
         let mut xp = XpProcess::new_child();
@@ -822,12 +822,19 @@
         assert_eq!(operation.stack_cleanup_bytes(), 0);
         assert_eq!(
             crate::child_loader::provider_thunk_kind(&provider),
-            thunk32::Kind::Return
+            if cfg!(feature = "host-decimal") { thunk32::Kind::Return } else { thunk32::Kind::Decimal }
         );
         let mut thunk = [0u8; thunk32::THUNK_BYTES];
         thunk32::write(343, crate::child_loader::provider_thunk_kind(&provider), &mut thunk)
             .unwrap();
-        assert_eq!(&thunk[..9], &[0xb8, 0x57, 0x01, 0, 0, 0x0f, 0x01, 0xc1, 0xc3]);
+        if cfg!(feature = "host-decimal") {
+            assert_eq!(&thunk[..9], &[0xb8, 0x57, 0x01, 0, 0, 0x0f, 0x01, 0xc1, 0xc3]);
+        } else {
+            assert_eq!(&thunk[..6], &[0xb8, 0x57, 0x01, 0, 0, 0xe9]);
+            let relative = u32::from_le_bytes(thunk[6..10].try_into().unwrap());
+            assert_eq!((thunk32::address(343).unwrap() + 10).wrapping_add(relative),
+                thunk32::CHILD_DECIMAL_ADDRESS);
+        }
 
         let mut xp = XpProcess::new_child();
         xp.install_provider_surface(vec![provider], Vec::new(), Vec::new());

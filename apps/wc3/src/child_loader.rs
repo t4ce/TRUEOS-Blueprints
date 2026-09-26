@@ -949,6 +949,10 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
 }
 
 pub fn provider_thunk_kind(import: &ProviderImport) -> thunk32::Kind {
+    if matches!(provider_op(import), ProviderOp::CrtAtoi | ProviderOp::CrtAtol)
+        && !cfg!(feature = "host-decimal") {
+        return thunk32::Kind::Decimal;
+    }
     if provider_op(import) == ProviderOp::CrtStrnicmp && !cfg!(feature = "host-strnicmp") {
         return thunk32::Kind::Strnicmp;
     }

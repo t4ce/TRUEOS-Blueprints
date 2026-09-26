@@ -78,6 +78,22 @@ execute the emitted thunks on Linux IA32. The latter substitutes RET at the
 fallback VMCALL to check its provider id, stack, and register state; actual
 fallback dispatch still needs a carrier run.
 
+`_strnicmp` now uses a native bounded byte comparison with the personality's
+CP1252 folding table, including accented case pairs. It stops at the first
+mismatch, NUL, or count limit instead of fetching both complete strings through
+the host. `host-strnicmp` restores the Rust implementation; its per-call logging
+is gated by `trace-api`.
+
+`atoi`/`atol` handle 1–9 leading unsigned decimal digits natively after checking
+that the full input is ASCII and NUL-terminated within 256 bytes. Suffixes such
+as `;K1` are accepted. Other inputs return to the complete Rust parser, retaining
+its sign, whitespace, overflow, and invalid-input handling. `host-decimal`
+restores the Rust path for every call. Normal runs also omit the duplicate parse
+that was used solely to format decimal-call diagnostics. Native calls are absent
+from host provider counters. `tests/test_native_strnicmp.py` and
+`tests/test_native_decimal.py` exercise the emitted helpers and ABI; the decimal
+test substitutes RET for fallback VMCALL to inspect the restored dispatch state.
+
 For the normal Blueprint workflow, add the desired features to `default = []`
 in this app's `Cargo.toml`, then rebuild. For host checks, pass
 `--features trace-seh` (or another category) to Cargo. Diagnostic features do

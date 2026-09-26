@@ -44,6 +44,23 @@ pub const CHILD_TOUPPER_ADDRESS: u32 = CHILD_CONTROL_BASE + CHILD_TOUPPER_OFFSET
 pub const CHILD_STRNICMP_OFFSET: usize = 0x580;
 pub const CHILD_STRNICMP_ADDRESS: u32 = CHILD_CONTROL_BASE + CHILD_STRNICMP_OFFSET as u32;
 const CHILD_CP1252_FOLD_OFFSET: usize = 0x700;
+pub const CHILD_DECIMAL_OFFSET: usize = 0x600;
+pub const CHILD_DECIMAL_ADDRESS: u32 = CHILD_CONTROL_BASE + CHILD_DECIMAL_OFFSET as u32;
+
+// Guard a NUL-terminated ASCII string within the Rust parser's 256-byte bound,
+// then parse 1..9 leading digits. All other cases restore the original stack,
+// flags and provider id before VMCALL into the complete Rust parser.
+const CHILD_DECIMAL_CODE: &[u8] = &[
+    0x9c, 0x56, 0x53, 0x50, 0x8b, 0x74, 0x24, 0x14, 0x85, 0xf6, 0x74, 0x4e,
+    0x89, 0xf2, 0x81, 0xc2, 0xff, 0x00, 0x00, 0x00, 0x72, 0x44, 0x31, 0xc9,
+    0x0f, 0xb6, 0x14, 0x0e, 0x85, 0xd2, 0x74, 0x10, 0x83, 0xfa, 0x7f, 0x77,
+    0x35, 0x41, 0x81, 0xf9, 0x00, 0x01, 0x00, 0x00, 0x72, 0xea, 0xeb, 0x2a,
+    0x31, 0xdb, 0x31, 0xc9, 0x0f, 0xb6, 0x14, 0x0e, 0x83, 0xea, 0x30, 0x83,
+    0xfa, 0x09, 0x77, 0x0d, 0x83, 0xf9, 0x09, 0x73, 0x15, 0x6b, 0xdb, 0x0a,
+    0x01, 0xd3, 0x41, 0xeb, 0xe7, 0x85, 0xc9, 0x74, 0x09, 0x89, 0xd8, 0x83,
+    0xc4, 0x04, 0x5b, 0x5e, 0x9d, 0xc3, 0x58, 0x5b, 0x5e, 0x9d, 0x0f, 0x01,
+    0xc1, 0xc3,
+];
 
 // Same bounded byte loop as strncmp, with two CP1252 table loads before
 // subtraction. The absolute table operands below are CHILD_CONTROL_BASE+0x700.
@@ -102,6 +119,8 @@ const CHILD_MEMMOVE_CODE: &[u8] = &[
 ];
 
 pub fn install_child_controls(output: &mut [u8]) -> Result<(), &'static str> {
+    output.get_mut(CHILD_DECIMAL_OFFSET..CHILD_DECIMAL_OFFSET + CHILD_DECIMAL_CODE.len())
+        .ok_or("decimal helper range")?.copy_from_slice(CHILD_DECIMAL_CODE);
     output.get_mut(CHILD_STRNICMP_OFFSET..CHILD_STRNICMP_OFFSET + CHILD_STRNICMP_CODE.len())
         .ok_or("strnicmp helper range")?.copy_from_slice(CHILD_STRNICMP_CODE);
     for (byte, entry) in output.get_mut(CHILD_CP1252_FOLD_OFFSET..CHILD_CP1252_FOLD_OFFSET + 256)
@@ -169,6 +188,8 @@ pub enum Kind {
     Strnicmp,
     /// Initial C locale conversion, with provider fallback for invalid inputs.
     ToUpper,
+    /// Short unsigned decimal prefix, otherwise fall back to the Rust provider.
+    Decimal,
 }
 
 pub fn write(import_id: u32, kind: Kind, output: &mut [u8]) -> Result<(), &'static str> {
@@ -176,13 +197,14 @@ pub fn write(import_id: u32, kind: Kind, output: &mut [u8]) -> Result<(), &'stat
         return Err("wc3 thunk buffer too small");
     }
     output[..THUNK_BYTES].fill(0x90);
-    if kind == Kind::ToUpper {
+    if matches!(kind, Kind::ToUpper | Kind::Decimal) {
+        let target = if kind == Kind::ToUpper { CHILD_TOUPPER_ADDRESS } else { CHILD_DECIMAL_ADDRESS };
         let next = address(import_id).and_then(|address| address.checked_add(10))
             .ok_or("toupper thunk address overflow")?;
         output[0] = 0xb8;
         output[1..5].copy_from_slice(&import_id.to_le_bytes());
         output[5] = 0xe9;
-        output[6..10].copy_from_slice(&CHILD_TOUPPER_ADDRESS.wrapping_sub(next).to_le_bytes());
+        output[6..10].copy_from_slice(&target.wrapping_sub(next).to_le_bytes());
         return Ok(());
     }
     if matches!(kind, Kind::Memmove | Kind::Strncmp | Kind::Strnicmp) {
@@ -208,7 +230,7 @@ pub fn write(import_id: u32, kind: Kind, output: &mut [u8]) -> Result<(), &'stat
         0xC1,
     ]);
     match kind {
-        Kind::Memmove | Kind::Strncmp | Kind::Strnicmp | Kind::ToUpper => unreachable!(),
+        Kind::Memmove | Kind::Strncmp | Kind::Strnicmp | Kind::ToUpper | Kind::Decimal => unreachable!(),
         Kind::Return => output[8] = 0xC3,
         Kind::Stdcall(bytes) => {
             output[8] = 0xC2;
