@@ -846,6 +846,11 @@ pub enum SessionRequest {
     LoadImage(LoadImageRequest),
     CreateWindow(CreateWindowRequest),
     SetWindowPos(SetWindowPosRequest),
+    ScreenToClient {
+        pid: Pid,
+        hwnd: u32,
+        point: u32,
+    },
     GetWindowRect {
         pid: Pid,
         hwnd: u32,
@@ -1630,6 +1635,20 @@ impl Wc3Session {
             return Err("unknown window");
         }
         Ok(self.focused_window.replace(hwnd).unwrap_or(0))
+    }
+
+    pub fn screen_to_client(
+        &self,
+        pid: Pid,
+        hwnd: u32,
+        x: i32,
+        y: i32,
+    ) -> Result<(i32, i32), &'static str> {
+        let window = self.windows.get(&hwnd).ok_or("ScreenToClient unknown window")?;
+        if window.owner.pid != pid {
+            return Err("ScreenToClient window owner mismatch");
+        }
+        Ok((x.wrapping_sub(window.x), y.wrapping_sub(window.y)))
     }
 
     pub fn route_ui4_pointer_input(

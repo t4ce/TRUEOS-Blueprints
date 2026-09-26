@@ -2616,6 +2616,20 @@ impl XpProcess {
                     },
                 )))
             }
+            ProviderOp::ScreenToClient => {
+                let [_, hwnd, point] = arguments::<3>(memory, esp)?;
+                if point == 0 {
+                    return Err(ProviderDispatchError::Frontier {
+                        api: "ScreenToClient",
+                        detail: "null POINT".into(),
+                    });
+                }
+                Some(PersonalityAction::Session(SessionRequest::ScreenToClient {
+                    pid,
+                    hwnd,
+                    point,
+                }))
+            }
             ProviderOp::ShowWindow => {
                 let [_, hwnd, show] = arguments::<3>(memory, esp)?;
                 Some(PersonalityAction::Session(SessionRequest::ShowWindow {

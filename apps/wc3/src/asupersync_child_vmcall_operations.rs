@@ -1627,6 +1627,70 @@
                             .map_err(|error| error.to_string())?;
                         continue;
                     }
+                    if operation == child_loader::ProviderOp::ScreenToClient {
+                        let action = session
+                            .process_mut(active_pid)
+                            .ok_or_else(|| "child process missing".to_owned())?
+                            .xp
+                            .dispatch_provider_for_process_typed(
+                                active_pid,
+                                active_tid,
+                                provider_id,
+                                exit.registers.esp,
+                                &mut X86Memory(&child.address_space),
+                            )
+                            .map_err(|error| error.to_string())?;
+                        let PersonalityAction::Session(SessionRequest::ScreenToClient {
+                            pid,
+                            hwnd,
+                            point,
+                        }) = action
+                        else {
+                            return Err("ScreenToClient produced unexpected action".into());
+                        };
+                        let values = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            point,
+                            2,
+                        )?;
+                        let screen_x = values[0] as i32;
+                        let screen_y = values[1] as i32;
+                        let (client_x, client_y) = session
+                            .screen_to_client(pid, hwnd, screen_x, screen_y)
+                            .map_err(str::to_owned)?;
+                        let mut point_bytes = [0u8; 8];
+                        point_bytes[..4].copy_from_slice(&(client_x as u32).to_le_bytes());
+                        point_bytes[4..].copy_from_slice(&(client_y as u32).to_le_bytes());
+                        if child
+                            .address_space
+                            .write(point, &point_bytes)
+                            .map_err(|error| error.to_string())?
+                            != point_bytes.len()
+                        {
+                            return Err("short ScreenToClient POINT write".into());
+                        }
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD SCREENTOCLIENT RESULT pid={} tid={} hwnd=0x{:08x} point=0x{:08x} screen={},{} client={},{} result=TRUE cleanup=8-by-thunk",
+                                active_pid,
+                                active_tid,
+                                hwnd,
+                                point,
+                                screen_x,
+                                screen_y,
+                                client_x,
+                                client_y,
+                            ),
+                        );
+                        let mut registers = exit.registers;
+                        registers.eax = 1;
+                        contexts[active]
+                            .context
+                            .set_registers(registers)
+                            .map_err(|error| error.to_string())?;
+                        continue;
+                    }
                     if operation == child_loader::ProviderOp::ShowWindow {
                         let action = session
                             .process_mut(active_pid)
