@@ -1,4 +1,4 @@
-//! On-demand observation at coordinator stops; never changes guest state.
+//! Observation and explicitly requested notification experiments at coordinator stops.
 use super::*;
 use wc3::debug_command::{Command, Lines};
 
@@ -20,7 +20,7 @@ impl DebugShell {
         contexts: &[GuestContext],
         child: Option<&PendingChild>,
         launcher: &AddressSpace,
-        session: &Wc3Session,
+        session: &mut Wc3Session,
         active: ThreadKey,
         preempted: bool,
     ) {
@@ -115,16 +115,26 @@ fn execute(
     contexts: &[GuestContext],
     child: Option<&PendingChild>,
     launcher: &AddressSpace,
-    session: &Wc3Session,
+    session: &mut Wc3Session,
     active: ThreadKey,
 ) -> Result<(), String> {
     match command {
         Command::Help => logl::log(
             level::IMPORTANT,
             format_args!(
-                "WC3 DEBUG HELP: debug state | debug regs PID TID | debug mem PID ADDRESS BYTES(1..256) | debug stack PID TID WORDS(1..64) | debug object PID HANDLE; numbers decimal or 0xhex; read-only stopped-state snapshots"
+                "WC3 DEBUG HELP: debug state | debug regs PID TID | debug mem PID ADDRESS BYTES(1..256) | debug stack PID TID WORDS(1..64) | debug object PID HANDLE | debug post PID HWND MESSAGE WPARAM LPARAM (explicit queued notification experiment); numbers decimal or 0xhex"
             ),
         ),
+        Command::Post { pid, hwnd, message, wparam, lparam } => {
+            let window = session.windows.get(&hwnd).ok_or("unknown live window")?;
+            if window.owner.pid != pid { return Err("window belongs to a different process".into()); }
+            let owner = window.owner;
+            let process = session.process_mut(pid).ok_or("unknown process")?;
+            if process.exit_code.is_some() { return Err("process has exited".into()); }
+            process.xp.debug_post_window_message(hwnd, message, wparam, lparam)?;
+            logl::log(level::IMPORTANT, format_args!(
+                "WC3 DEBUG POST QUEUED pid={pid} tid={} hwnd=0x{hwnd:08x} message=0x{message:04x} wparam=0x{wparam:08x} lparam=0x{lparam:08x} delivery=guest-message-pump experiment=true", owner.tid));
+        }
         Command::State => {
             logl::log(
                 level::IMPORTANT,

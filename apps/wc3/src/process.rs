@@ -1922,6 +1922,15 @@ struct GlRuntime {
 }
 
 impl XpProcess {
+    /// Explicit diagnostic notification, consumed by the normal guest message pump.
+    /// Queuing is not synchronous SendMessage and does not force thread wakeups.
+    pub fn debug_post_window_message(&mut self, hwnd: u32, message: u32, wparam: u32, lparam: u32) -> Result<(), &'static str> {
+        if self.messages.len() >= 64 { return Err("diagnostic message queue limit reached"); }
+        self.messages.push_back(Message { hwnd, message, wparam, lparam,
+            time: monotonic_counter_millis(), x: 0, y: 0 });
+        Ok(())
+    }
+
     pub fn queue_window_paint(&mut self, hwnd: u32) {
         if self
             .messages

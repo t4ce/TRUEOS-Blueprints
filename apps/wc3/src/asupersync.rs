@@ -2511,7 +2511,7 @@ pub(super) async fn run_loop(
             .get(active)
             .ok_or_else(|| "active guest context missing".to_owned())?
             .key();
-        debug_shell.poll(&contexts, pending_child.as_ref(), address_space, &session, active_key,
+        debug_shell.poll(&contexts, pending_child.as_ref(), address_space, &mut session, active_key,
             exit.kind == ExitKind::Other && exit.detail == 52);
         if let Some(child) = pending_child.as_mut() {
             if active_key.tid == child.tid {

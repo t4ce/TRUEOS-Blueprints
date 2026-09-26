@@ -1,8 +1,9 @@
-//! Bounded, read-only commands for the WC3 Blueprint command channel.
+//! Bounded observation and explicit window-notification experiments.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Command {
     Help,
     State,
+    Post { pid: u32, hwnd: u32, message: u32, wparam: u32, lparam: u32 },
     Registers {
         pid: u32,
         tid: u32,
@@ -34,6 +35,20 @@ pub fn parse(line: &str) -> Result<Command, &'static str> {
     Ok(match words.as_slice() {
         ["debug"] | ["debug", "help"] => Command::Help,
         ["debug", "state"] => Command::State,
+        ["debug", "post", pid, hwnd, message, wparam, lparam] => {
+            let (message, wparam, lparam) = (number(message)?, number(wparam)?, number(lparam)?);
+            // Scalar-only window notifications. Never interpret arbitrary guest
+            // pointers, replay creation, or deliver close/destroy in this probe.
+            let valid = match message {
+                0x0005 => wparam <= 2 && lparam & 0xffff != 0 && lparam >> 16 != 0,
+                0x0006 => wparam & 0xffff <= 2 && wparam >> 16 <= 1 && lparam == 0,
+                0x0007 | 0x0008 => wparam == 0 && lparam == 0,
+                0x0018 | 0x001c | 0x0086 => wparam <= 1 && lparam == 0,
+                _ => false,
+            };
+            if !valid { return Err("post accepts only SIZE, ACTIVATE, SETFOCUS, KILLFOCUS, SHOWWINDOW, ACTIVATEAPP, NCACTIVATE with bounded scalar payloads"); }
+            Command::Post { pid: number(pid)?, hwnd: number(hwnd)?, message, wparam, lparam }
+        }
         ["debug", "regs", pid, tid] => Command::Registers {
             pid: number(pid)?,
             tid: number(tid)?,
@@ -108,7 +123,7 @@ impl Lines {
 mod tests {
     use super::*;
     #[test]
-    fn bounds_and_no_mutation_commands() {
+    fn observation_bounds() {
         assert_eq!(
             parse("debug mem 2 0x444480 256"),
             Ok(Command::Memory {
@@ -127,6 +142,23 @@ mod tests {
         ] {
             assert!(parse(s).is_err(), "{s}");
         }
+    }
+    #[test]
+    fn notification_probe_rejects_pointer_and_lifecycle_messages() {
+        assert_eq!(parse("debug post 2 0x57434003 6 1 0"),
+            Ok(Command::Post { pid: 2, hwnd: 0x57434003, message: 6, wparam: 1, lparam: 0 }));
+        assert!(parse("debug post 2 0x57434003 5 0 0x04380780").is_ok());
+        for command in [
+            "debug post 2 1 1 0 0", // CREATESTRUCT pointer
+            "debug post 2 1 2 0 0", // destruction
+            "debug post 2 1 16 0 0", // close
+            "debug post 2 1 0x83 0 0", // RECT pointer
+            "debug post 2 1 6 3 0", // invalid activation value
+            "debug post 2 1 6 1 0x1234", // unvalidated foreign window
+            "debug post 2 1 5 0 0", // zero dimensions
+            "debug post 2 1 0x1c 2 0", // non-BOOL
+            "debug post 2 1 0x100 1 0", // keyboard excluded
+        ] { assert!(parse(command).is_err(), "{command}"); }
     }
     #[test]
     fn fragmented_lines_crlf_and_overflow_recovery() {
