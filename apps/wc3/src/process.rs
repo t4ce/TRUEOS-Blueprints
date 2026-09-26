@@ -1735,6 +1735,17 @@ fn module_basename(name: &str) -> &str {
     name.rsplit(['\\', '/']).next().unwrap_or(name)
 }
 
+/// Apply LoadLibraryA's default `.dll` extension at the API boundary.
+/// A trailing dot explicitly suppresses the default extension.
+pub fn load_library_module_name(requested: &str) -> String {
+    let basename = module_basename(requested);
+    if basename.is_empty() || basename.ends_with('.') || basename.contains('.') {
+        requested.to_owned()
+    } else {
+        format!("{requested}.dll")
+    }
+}
+
 fn module_names_match(left: &str, right: &str) -> bool {
     module_basename(left).eq_ignore_ascii_case(module_basename(right))
 }

@@ -5190,11 +5190,28 @@
                             260,
                         )
                         .map_err(|error| format!("LoadLibraryA module name: {error}"))?;
+                        let resolved = wc3::process::load_library_module_name(&requested);
+                        let normalization = if resolved == requested {
+                            "unchanged"
+                        } else {
+                            "default-dll-extension"
+                        };
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD LOADLIBRARY NORMALIZE pid={} tid={} requested={:?} resolved={:?} reason={}",
+                                active_pid,
+                                active_tid,
+                                requested,
+                                resolved,
+                                normalization,
+                            ),
+                        );
                         let existing = session
                             .process(active_pid)
                             .ok_or_else(|| "child process missing".to_owned())?
                             .xp
-                            .loaded_module_handle(&requested);
+                            .loaded_module_handle(&resolved);
                         if let Some(handle) = existing {
                             let references = session
                                 .process_mut(active_pid)
@@ -5211,23 +5228,24 @@
                             logl::log(
                                 level::IMPORTANT,
                                 format_args!(
-                                    "WC3 CHILD LOADLIBRARY RETURN pid={} tid={} during=\"{}\" requested={:?} handle=0x{:08x} already_loaded=1 references={} cleanup=4-by-thunk",
+                                    "WC3 CHILD LOADLIBRARY RETURN pid={} tid={} during=\"{}\" requested={:?} resolved={:?} handle=0x{:08x} already_loaded=1 references={} cleanup=4-by-thunk",
                                     active_pid,
                                     active_tid,
                                     running_module_name,
                                     requested,
+                                    resolved,
                                     handle,
                                     references,
                                 ),
                             );
                             continue;
                         }
-                        if wc3::process::is_system_provider_module(&requested) {
+                        if wc3::process::is_system_provider_module(&resolved) {
                             let (handle, references, already_loaded) = session
                                 .process_mut(active_pid)
                                 .ok_or_else(|| "child process missing".to_owned())?
                                 .xp
-                                .load_runtime_external_provider(&requested)
+                                .load_runtime_external_provider(&resolved)
                                 .map_err(str::to_owned)?;
                             let mut registers = exit.registers;
                             registers.eax = handle;
@@ -5238,11 +5256,12 @@
                             logl::log(
                                 level::IMPORTANT,
                                 format_args!(
-                                    "WC3 CHILD LOADLIBRARY PROVIDER pid={} tid={} during=\"{}\" requested={:?} handle=0x{:08x} already_loaded={} references={} caller_ret=0x{:08x} cleanup=4-by-thunk",
+                                    "WC3 CHILD LOADLIBRARY PROVIDER pid={} tid={} during=\"{}\" requested={:?} resolved={:?} handle=0x{:08x} already_loaded={} references={} caller_ret=0x{:08x} cleanup=4-by-thunk",
                                     active_pid,
                                     active_tid,
                                     running_module_name,
                                     requested,
+                                    resolved,
                                     handle,
                                     already_loaded as u8,
                                     references,
@@ -5255,9 +5274,9 @@
                             .process(active_pid)
                             .ok_or_else(|| "child process missing".to_owned())?
                             .xp
-                            .scratch_file_snapshot(&requested);
+                            .scratch_file_snapshot(&resolved);
                         let local_image = if let Some(bytes) = scratch {
-                            let stored = requested
+                            let stored = resolved
                                 .rsplit(['\\', '/'])
                                 .next()
                                 .unwrap_or(&requested)
@@ -5274,7 +5293,7 @@
                             if listing.truncated {
                                 return Err("Warcraft III directory listing truncated".into());
                             }
-                            let stored = child_loader::resolve_file(&listing, &requested)
+                            let stored = child_loader::resolve_file(&listing, &resolved)
                                 .map_err(str::to_owned)?;
                             if let Some(stored) = stored {
                                 let path = format!("/common/Warcraft III/{stored}");
@@ -5295,7 +5314,7 @@
                             logl::log(
                                 level::IMPORTANT,
                                 format_args!(
-                                    "WC3 CHILD LOADLIBRARY LOCAL IMAGE source={source} requested={requested:?} stored={stored:?} bytes={} sha256={}",
+                                    "WC3 CHILD LOADLIBRARY LOCAL IMAGE source={source} requested={requested:?} resolved={resolved:?} stored={stored:?} bytes={} sha256={}",
                                     bytes.len(),
                                     hex_digest(&local_sha256),
                                 ),
@@ -5307,7 +5326,7 @@
                                 ));
                             }
                             let image = pe32::parse(&bytes).map_err(|error| {
-                                format!("LoadLibraryA {source} PE {requested:?}: {error}")
+                                format!("LoadLibraryA {source} PE {resolved:?}: {error}")
                             })?;
                             let named_exports = image
                                 .exports
@@ -5324,11 +5343,12 @@
                             logl::log(
                                 level::IMPORTANT,
                                 format_args!(
-                                    "WC3 CHILD LOADLIBRARY LOCAL PE source={} pid={} tid={} requested={:?} stored={:?} bytes={} image_base=0x{:08x} entry_rva=0x{:08x} size_of_image=0x{:08x} sections={} imports={} exports={} named_exports={} forwarders={} relocations={}",
+                                    "WC3 CHILD LOADLIBRARY LOCAL PE source={} pid={} tid={} requested={:?} resolved={:?} stored={:?} bytes={} image_base=0x{:08x} entry_rva=0x{:08x} size_of_image=0x{:08x} sections={} imports={} exports={} named_exports={} forwarders={} relocations={}",
                                     source,
                                     active_pid,
                                     active_tid,
                                     requested,
+                                    resolved,
                                     stored,
                                     bytes.len(),
                                     image.image_base,
@@ -5361,7 +5381,7 @@
                                 )
                                 .map_err(|_| {
                                     format!(
-                                        "WC3 CHILD LOADLIBRARY FRONTIER reason=preferred-base-unavailable module={requested:?} preferred=0x{module_handle:08x} relocations={}",
+                                        "WC3 CHILD LOADLIBRARY FRONTIER reason=preferred-base-unavailable module={resolved:?} preferred=0x{module_handle:08x} relocations={}",
                                         image.relocations.len(),
                                     )
                                 })?;
@@ -5378,7 +5398,7 @@
                             // Bind the requested image depth-first: a locally present
                             // imported DLL must be mapped and registered before its
                             // parent can receive real export addresses in its IAT.
-                            let mut pending_images = vec![(requested.clone(), stored, image)];
+                            let mut pending_images = vec![(resolved.clone(), stored, image)];
                             let mut attach_indices = Vec::new();
                             while let Some((parent, stored, image)) = pending_images.pop() {
                                 match bind_runtime_local_image_imports(
@@ -5541,11 +5561,12 @@
                         logl::log(
                             level::IMPORTANT,
                             format_args!(
-                                "WC3 CHILD LOADLIBRARY FRONTIER pid={} tid={} during=\"{}\" requested={:?} kind=external stored=None caller_ret=0x{:08x}",
+                                "WC3 CHILD LOADLIBRARY FRONTIER pid={} tid={} during=\"{}\" requested={:?} resolved={:?} kind=external stored=None caller_ret=0x{:08x}",
                                 active_pid,
                                 active_tid,
                                 running_module_name,
                                 requested,
+                                resolved,
                                 u32::from_le_bytes(caller_ret),
                             ),
                         );

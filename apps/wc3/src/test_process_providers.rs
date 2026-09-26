@@ -2452,6 +2452,18 @@
     }
 
     #[test]
+    fn load_library_normalizes_extension_before_existing_module_lookup() {
+        assert_eq!(load_library_module_name("user32"), "user32.dll");
+        assert_eq!(load_library_module_name("USER32.DLL"), "USER32.DLL");
+        assert_eq!(load_library_module_name("user32."), "user32.");
+
+        let mut xp = XpProcess::new_child();
+        let (user32, _, _) = xp.load_runtime_external_provider("USER32.dll").unwrap();
+        let normalized = load_library_module_name("user32");
+        assert_eq!(xp.loaded_module_handle(&normalized), Some(user32));
+    }
+
+    #[test]
     fn child_runtime_external_provider_unloads_at_its_final_reference() {
         let mut xp = XpProcess::new_child();
         let (handle, references, already_loaded) =
