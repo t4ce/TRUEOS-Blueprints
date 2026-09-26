@@ -689,6 +689,37 @@ fn crt_strncpy(
     Ok(destination)
 }
 
+fn crt_strncmp_bounded(
+    memory: &impl GuestMemory,
+    left: u32,
+    right: u32,
+    count: u32,
+) -> Result<(u32, u32, Vec<u8>, Vec<u8>), ProviderDispatchError> {
+    let mut left_prefix = Vec::new();
+    let mut right_prefix = Vec::new();
+    for offset in 0..count {
+        let left_address = left.checked_add(offset).ok_or(ProviderDispatchError::Fault(
+            "strncmp left address overflow",
+        ))?;
+        let right_address = right.checked_add(offset).ok_or(ProviderDispatchError::Fault(
+            "strncmp right address overflow",
+        ))?;
+        let mut a = [0u8; 1];
+        let mut b = [0u8; 1];
+        memory.read(left_address, &mut a)?;
+        memory.read(right_address, &mut b)?;
+        if left_prefix.len() < 64 {
+            left_prefix.push(a[0]);
+            right_prefix.push(b[0]);
+        }
+        let difference = i32::from(a[0]) - i32::from(b[0]);
+        if difference != 0 || a[0] == 0 {
+            return Ok((difference as u32, offset + 1, left_prefix, right_prefix));
+        }
+    }
+    Ok((0, count, left_prefix, right_prefix))
+}
+
 fn crt_strcase(
     memory: &mut impl GuestMemory,
     string: u32,
@@ -1732,6 +1763,7 @@ pub struct XpProcess {
     provider_thunks: Vec<u8>,
     provider_modules: Vec<ChildProvider>,
     pub call_count: u32,
+    strncmp_samples_remaining: u8,
     pub threads: Vec<ThreadObject>,
     next_tid: u32,
     next_thread_handle: u32,
@@ -1983,6 +2015,7 @@ impl XpProcess {
             provider_thunks: Vec::new(),
             provider_modules: Vec::new(),
             call_count: 0,
+            strncmp_samples_remaining: 8,
             threads: Vec::new(),
             next_tid: 2,
             next_thread_handle: THREAD_HANDLE_BASE,

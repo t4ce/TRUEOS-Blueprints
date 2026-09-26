@@ -1153,7 +1153,8 @@
                         child_loader::ProviderSymbol::Ordinal(ordinal) => format!("#{ordinal}"),
                     };
                     let last_execution = GuestThreadContext::last_execution_diagnostic();
-                    logl::log(
+                    logl::trace!(
+                        "trace-api",
                         level::IMPORTANT,
                         format_args!(
                             "WC3 PROVIDER ENTRY seq={} pid={} tid={} provider_id={} module=\"{}\" symbol=\"{}\" eip=0x{:08x} esp=0x{:08x} caller_ret=0x{:08x}",

@@ -9,6 +9,14 @@ use std::sync::{
 use tokio::sync::{mpsc, oneshot};
 use trueos::x86::{Context, DebugRegisters, Exit, ExtendedState, Registers};
 
+macro_rules! trace_api {
+    ($message:expr $(,)?) => {
+        if cfg!(feature = "trace-api") {
+            trueos::logl::log(trueos::logl::level::IMPORTANT, $message);
+        }
+    };
+}
+
 #[derive(Clone, Copy, Debug)]
 pub enum ExecutionStage {
     Idle,
@@ -175,8 +183,7 @@ impl GuestThreadContext {
             .map(|provenance| provenance.caller_ret)
             .unwrap_or(0);
         record_execution(sequence, ExecutionStage::Submit, self.pid, self.tid);
-        trueos::logl::log(
-            trueos::logl::level::IMPORTANT,
+        trace_api!(
             format_args!(
                 "WC3 EXEC SUBMIT seq={} pid={} tid={} provider={} eip=0x{:08x} esp=0x{:08x} caller_ret=0x{:08x}",
                 sequence,
@@ -229,8 +236,7 @@ impl GuestThreadContext {
             }
         };
         record_execution(sequence, ExecutionStage::Receive, self.pid, self.tid);
-        trueos::logl::log(
-            trueos::logl::level::IMPORTANT,
+        trace_api!(
             format_args!(
                 "WC3 EXEC RECEIVE seq={} pid={} tid={} result=ok",
                 sequence, self.pid, self.tid,
@@ -266,8 +272,7 @@ async fn guest_thread_task(
                         .map(|provenance| provenance.provider.as_str())
                         .unwrap_or("<initial>");
                     record_execution(sequence, ExecutionStage::Accept, pid, tid);
-                    trueos::logl::log(
-                        trueos::logl::level::IMPORTANT,
+                    trace_api!(
                         format_args!(
                             "WC3 EXEC ACCEPT seq={} pid={} tid={} provider={} stage=apply-state",
                             sequence, pid, tid, provider,
@@ -289,8 +294,7 @@ async fn guest_thread_task(
                             .map_err(|error| error.to_string())?;
                     }
                     record_execution(sequence, ExecutionStage::Enter, pid, tid);
-                    trueos::logl::log(
-                        trueos::logl::level::IMPORTANT,
+                    trace_api!(
                         format_args!(
                             "WC3 EXEC ENTER seq={} pid={} tid={} stage=x86-run",
                             sequence, pid, tid,
@@ -316,8 +320,7 @@ async fn guest_thread_task(
                         }
                     };
                     record_execution(sequence, ExecutionStage::Exit, pid, tid);
-                    trueos::logl::log(
-                        trueos::logl::level::IMPORTANT,
+                    trace_api!(
                         format_args!(
                             "WC3 EXEC EXIT seq={} pid={} tid={} kind={:?} detail=0x{:08x} eip=0x{:08x} esp=0x{:08x}",
                             sequence,
@@ -343,8 +346,7 @@ async fn guest_thread_task(
                 let state_capture = if result.is_ok() { "ok" } else { "failed" };
                 let delivered = reply.send(result).is_ok();
                 record_execution(sequence, ExecutionStage::Reply, pid, tid);
-                trueos::logl::log(
-                    trueos::logl::level::IMPORTANT,
+                trace_api!(
                     format_args!(
                         "WC3 EXEC REPLY seq={} pid={} tid={} state_capture={} delivered={}",
                         sequence,

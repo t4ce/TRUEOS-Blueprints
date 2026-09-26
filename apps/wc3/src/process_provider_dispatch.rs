@@ -738,10 +738,23 @@ impl XpProcess {
                 Ok(PersonalityAction::Return(result))
             }
             ProviderOp::CrtStrncmp => {
-                let [_, left, right, count] = arguments::<4>(memory, esp)?;
-                let left = read_c_bytes(memory, left)?;
-                let right = read_c_bytes(memory, right)?;
-                let result = staticstr::compare(&left, &right, Some(count as usize), false) as u32;
+                let [caller_ret, left, right, count] = arguments::<4>(memory, esp)?;
+                let (result, bytes_compared, left_prefix, right_prefix) =
+                    crt_strncmp_bounded(memory, left, right, count)?;
+                if self.strncmp_samples_remaining != 0 {
+                    self.strncmp_samples_remaining -= 1;
+                    logl::log(
+                        level::IMPORTANT,
+                        format_args!(
+                            "WC3 STRNCMP SAMPLE pid={pid} tid={tid} caller_ret=0x{caller_ret:08x} \
+                             left=0x{left:08x} right=0x{right:08x} count={count} \
+                             left_prefix={:?} right_prefix={:?} result_signed={} bytes_compared={bytes_compared}",
+                            String::from_utf8_lossy(&left_prefix),
+                            String::from_utf8_lossy(&right_prefix),
+                            result as i32,
+                        ),
+                    );
+                }
                 self.call_count = self
                     .call_count
                     .checked_add(1)
