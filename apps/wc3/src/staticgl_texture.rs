@@ -231,18 +231,20 @@ fn gl_texture_target(target: u32, api: &'static str) -> Result<(), ProviderDispa
     Ok(())
 }
 fn gl_texture_internal(internal: u32) -> Result<u32, &'static str> {
-    // Canonical storage keeps 8-bit components. Sized formats requiring another
-    // precision stay explicit until their conversion is implemented.
+    // GL 1.1 section 3.8.1 permits one allocation per base format. All
+    // standard sized requests use our invariant eight-bit component allocation;
+    // preserve base-format channel/alpha semantics, not requested bit packing.
     match internal {
-        1 | 0x1909 | 0x8040 => Ok(0x1909),
-        2 | 0x190a | 0x8045 => Ok(0x190a),
-        3 | 0x1907 | 0x8051 => Ok(0x1907),
-        4 | 0x1908 | 0x8058 => Ok(0x1908),
-        0x1906 | 0x803c => Ok(0x1906),
-        0x8049 | 0x804b => Ok(0x8049),
-        _ => Err("unsupported texture internal precision/format"),
+        1 | 0x1909 | 0x803f..=0x8042 => Ok(0x1909), // LUMINANCE4/8/12/16
+        2 | 0x190a | 0x8043..=0x8048 => Ok(0x190a), // LUMINANCE_ALPHA sizes
+        3 | 0x1907 | 0x2a10 | 0x804f..=0x8054 => Ok(0x1907), // R3_G3_B2, RGB4..16
+        4 | 0x1908 | 0x8055..=0x805b => Ok(0x1908), // RGBA2..16, RGB5_A1, RGB10_A2
+        0x1906 | 0x803b..=0x803e => Ok(0x1906),     // ALPHA4/8/12/16
+        0x8049..=0x804d => Ok(0x8049),              // INTENSITY and INTENSITY4/8/12/16
+        _ => Err("unsupported texture internal format"),
     }
 }
+
 fn gl_texture_convert_internal(pixel: [u8; 4], internal: u32) -> [u8; 4] {
     let [r, g, b, a] = pixel;
     match internal {
@@ -500,6 +502,7 @@ impl XpProcess {
                 format!("unsupported level={level} dimensions={width}x{height} border={border}"),
             ));
         }
+        let requested_internal = internal;
         let internal =
             gl_texture_internal(internal).map_err(|e| gl_texture_error("glTexImage2D", e))?;
         let context = self.gl_context_mut(tid, "glTexImage2D")?;
@@ -529,7 +532,7 @@ impl XpProcess {
         logl::log(
             level::IMPORTANT,
             format_args!(
-                "WC3 GL TEXTURE IMAGE tid={tid} name={} level={level} size={width}x{height} source=0x{pixels:08x} storage=owned-rgba8",
+                "WC3 GL TEXTURE IMAGE tid={tid} name={} level={level} size={width}x{height} source=0x{pixels:08x} requested_internal=0x{requested_internal:04x} base_internal=0x{internal:04x} storage=owned-rgba8",
                 context.textures.binding
             ),
         );

@@ -29,13 +29,16 @@ The delivered report records the actual checks performed in this conversation: 2
 
 ## 2. Bake with your existing C++ bakery
 
-Copy this package to `TRUEOS/tools/wc3-radiance-forge/`. Keep your current worktree; do not revert to the review revisions.
+Keep this supplied package in place. The wrapper passes its source paths to the
+TRUEOS bakery, which records that external provenance while writing only
+no-publish candidates below the TRUEOS build root. Do not create a second
+source copy or revert the current worktree.
 
 From the TRUEOS root, with your established CLANG, LLVM_SPIRV, OCLOC and OCLOC_LD_LIBRARY_PATH environment:
 
 ```sh
-python3 tools/wc3-radiance-forge/tools/bake.py --trueos-root . --dry-run
-python3 tools/wc3-radiance-forge/tools/bake.py --trueos-root .
+python3 /path/to/WC3-Radiance-Forge-RF01/tools/bake.py --trueos-root . --dry-run
+python3 /path/to/WC3-Radiance-Forge-RF01/tools/bake.py --trueos-root .
 ```
 
 The wrapper invokes the real upstream bakery CLI. It keeps the existing target, revision, SIMD16, zero-scratch/zero-SLM and reproducibility gates. It does not publish, auto-admit new packages, modify the lock or request relaxed math. Candidate outputs remain in `bld/wc3-radiance-forge/<kernel>/`.

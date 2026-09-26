@@ -50,6 +50,7 @@ impl XpProcess {
             .ok_or_else(|| gl_texture_error(API, "no UI4 frame"))?;
         let viewport = c.viewport;
         let texture_size = (image.width, image.height);
+        let internal = image.internal;
         let mut vertices = Vec::with_capacity(count as usize);
         let stride = if index_kind == GL_UNSIGNED_SHORT {
             2
@@ -99,18 +100,21 @@ impl XpProcess {
                     "projective/nonfinite texture coordinates unsupported",
                 ));
             }
-            if c.textures.env_mode == 0x2100 && c.color_array_enabled {
+            let mut primary_color = [1.0; 4];
+            if c.color_array_enabled {
                 let colors = c
                     .color_pointer
                     .ok_or_else(|| gl_texture_error(API, "missing color pointer"))?;
                 for component in 0..colors.size {
-                    if gl_array_component(memory, colors, index, component)? != 1.0 {
-                        return Err(gl_texture_error(
-                            API,
-                            "texture modulation needs vertex-color shader support",
-                        ));
-                    }
+                    primary_color[component as usize] =
+                        gl_array_component(memory, colors, index, component)?;
                 }
+            }
+            if !gl_texture_primary_color_supported(internal, c.textures.env_mode, primary_color) {
+                return Err(gl_texture_error(
+                    API,
+                    "texture environment needs primary-color/alpha shader support",
+                ));
             }
             vertices.push(staticgl_triangle::textured::TexturedVertex {
                 position: [position[0], position[1], (position[2] + 1.0) * 0.5],
@@ -192,10 +196,10 @@ fn gl_texture_draw_image(textures: &GlTextures) -> Result<&GlTextureImage, Provi
         .levels
         .get(&0)
         .ok_or_else(|| gl_texture_error(API, "texture level zero undefined"))?;
-    if image.width == 0 || image.height == 0 || image.internal != 0x1908 {
+    if image.width == 0 || image.height == 0 || !matches!(image.internal, 0x1907 | 0x1908) {
         return Err(gl_texture_error(
             API,
-            "sampled GPU needs a nonempty RGBA image",
+            "sampled GPU needs a nonempty RGB/RGBA image",
         ));
     }
     if !image.rgba.chunks_exact(4).all(|p| p[3] == 255) {
@@ -204,11 +208,25 @@ fn gl_texture_draw_image(textures: &GlTextures) -> Result<&GlTextureImage, Provi
             "sampled GPU currently requires opaque texture pixels",
         ));
     }
-    if !matches!(textures.env_mode, 0x2100 | 0x1e01) {
+    if !matches!(textures.env_mode, 0x2100 | 0x2101 | 0x1e01) {
         return Err(gl_texture_error(
             API,
             "texture environment needs additional shader combine support",
         ));
     }
     Ok(image)
+}
+
+// Called only for the admitted opaque RGB/RGBA texture. GL 1.1 tables 3.10/3.11:
+// RGB REPLACE and either DECAL preserve primary alpha; RGBA REPLACE does not.
+fn gl_texture_primary_color_supported(internal: u32, env: u32, color: [f32; 4]) -> bool {
+    if !matches!(internal, 0x1907 | 0x1908) || !color.iter().all(|v| v.is_finite()) {
+        return false;
+    }
+    match env {
+        0x2100 => color == [1.0; 4],
+        0x1e01 if internal == 0x1908 => true,
+        0x1e01 | 0x2101 => color[3] == 1.0,
+        _ => false,
+    }
 }

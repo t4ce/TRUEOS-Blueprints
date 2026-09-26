@@ -1,7 +1,7 @@
 {
-  "README.md": "876c26a94558fdeae99c95edae70a6852a845c09cf116a7b7f3f12212eb970d8",
+  "README.md": "5391ac0928f979c8f4e1985e05b77e71f86e99ae60f4c21ae8d9b66a23721b5d",
   "docs/ARCHITECTURE.md": "1c3bd7b70f99b43375bbda97421c0af93e64bd5ae6faafe6323e5b6bf3a05553",
-  "docs/INTEGRATION.md": "b6d8bbf567675557e3db7310540562e7809eda38c8432efd5fa6aaa80a49d0a4",
+  "docs/INTEGRATION.md": "7122c8991eaed648782f349c43eb2addbd9cd86c3e5dfead1df0099bdb16446c",
   "host/scene.hpp": "95ab5df4d04443601d95a38eba6368aad743a8a50f5d7b7e5665ddff5a3ef723",
   "host/test.cpp": "da6378d873bf2edf95007ccf19eec8bde3c4b04436e2eb5b4e7daac22a9045d1",
   "kernels/rf_build_light_lists.clcpp": "275d961dd9f43ba9ca6ab45493f1a6c8018d299d936820b6b32ce5e6d166dec1",
@@ -9,7 +9,7 @@
   "kernels/rf_direct.clcpp": "7395d00b547d5ca7224c59eab3f27b67a09fe30972dd62dc29b94bc0a0e3d024",
   "kernels/rf_indirect.clcpp": "0ddd16c98e0572acbfbd9b3b087fb6ab1d57ed637b6c89153cedd655da194cbc",
   "kernels/rf_water.clcpp": "03ee553aeaf1682d1685350d549816be1d641920cf738619c95475dd3d706cd2",
-  "tools/bake.py": "1b306049c9efe4d86f25ed560880ddaade3318c74e9e74cf48f243c5a7cc528b",
+  "tools/bake.py": "7fbf0ce55f6dd70869e99b3ebc482019dce164d5d49388e71c8c1f68b98e8648",
   "tools/check_local.py": "63da758e03c62cc07ac24198dc06116caf533230c6be4ece645fcd8f456209a7",
   "tools/compare_readback.py": "eab0a3502d226db9f68c1d1be6f15df5279ab248886878b97b3b6c01c42cf063",
   "validation/fixture.direct.f32": "ee8d08baf908c63e2eec2e566660cbd080c40af537902b10c0e02237b9d0617b",

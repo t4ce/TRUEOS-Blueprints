@@ -16,7 +16,11 @@ only after its complete source was read successfully. Unsigned-byte RGB/RGBA,
 BGR/BGRA, channel and luminance formats are converted into RGBA8. Alignment,
 row length and row/pixel skips are respected. The model bounds names at 65,536,
 an edge at 4,096 pixels, and owned pixels at 256 MiB per context. Unsupported
-formats, precision and borders remain explicit frontiers.
+source formats/types and borders remain explicit frontiers. All standard GL 1.1
+sized internal formats (including RGB5, RGBA4 and RGB5_A1) use the corresponding
+base format with an invariant eight-bit component allocation, as permitted by
+section 3.8.1. RGB discards source alpha on both image and subimage uploads; RGBA
+retains it. No manual quantization to the requested sized format is performed.
 
 Binary evidence: Game.dll's upload calls around `0x6f0cfd1e` and `0x6f0cfd74`
 use TEXTURE_2D and RGBA/UNSIGNED_BYTE; `0x6f0cfcd3` sets UNPACK_ROW_LENGTH from
@@ -29,7 +33,10 @@ row pitch, mip storage and interleaved client arrays are included now.
 pipeline and waiting for its timeline. Texture-enabled draws cannot accidentally
 fall through to the untextured triangle renderer. The accepted subset is opaque
 RGBA8, nearest/repeat sampling, indexed triangle lists, in-bounds affine clip
-positions, a full-surface viewport, and REPLACE or white-vertex MODULATE.
+positions, a full-surface viewport, and REPLACE, opaque DECAL or white-vertex
+MODULATE. Both RGB and RGBA base images are admitted. RGB REPLACE and both
+DECAL cases require opaque primary alpha because those GL operations preserve
+it; RGBA REPLACE takes alpha from the texture instead.
 The LOAD_COLOR submission preserves previous colour; this path does not provide
 a shared GL depth buffer.
 
@@ -49,4 +56,5 @@ sampled bridge requires a separate hardware validation.
 
 API references: [texture uploads](https://learn.microsoft.com/en-us/windows/win32/opengl/glteximage2d),
 [pixel storage](https://learn.microsoft.com/en-us/windows/win32/opengl/glpixelstorei),
-and [texture binding](https://learn.microsoft.com/en-us/windows/win32/opengl/glbindtexture).
+[texture binding](https://learn.microsoft.com/en-us/windows/win32/opengl/glbindtexture),
+and [GL 1.1 section 3.8.1 / tables 3.8, 3.10, 3.11](https://registry.khronos.org/OpenGL/specs/gl/glspec11.pdf).

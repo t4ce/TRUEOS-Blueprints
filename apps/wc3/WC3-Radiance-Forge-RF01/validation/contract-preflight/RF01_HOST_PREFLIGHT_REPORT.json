@@ -1,0 +1,162 @@
+{
+  "native_bake": false,
+  "spirv_translation": false,
+  "gpu_execution": false,
+  "baremetal_execution": false,
+  "host_compiler": "c++ (Ubuntu 15.2.0-16ubuntu1) 15.2.0",
+  "frontend_compiler": "Ubuntu clang version 21.1.8 (6ubuntu1)",
+  "host_tests_passed": 21,
+  "randomized_bvh_rays": 5000,
+  "frontend_kernels_passed": [
+    "rf_build_light_lists",
+    "rf_direct",
+    "rf_indirect",
+    "rf_water"
+  ],
+  "source_sha256": {
+    "kernels/rf_build_light_lists.clcpp": "275d961dd9f43ba9ca6ab45493f1a6c8018d299d936820b6b32ce5e6d166dec1",
+    "kernels/rf_core.hpp": "71da46350200ef542574b47f6869ad080ade77fa5ad88977918a27c6a9a21109",
+    "kernels/rf_direct.clcpp": "7395d00b547d5ca7224c59eab3f27b67a09fe30972dd62dc29b94bc0a0e3d024",
+    "kernels/rf_indirect.clcpp": "0ddd16c98e0572acbfbd9b3b087fb6ab1d57ed637b6c89153cedd655da194cbc",
+    "kernels/rf_water.clcpp": "03ee553aeaf1682d1685350d549816be1d641920cf738619c95475dd3d706cd2",
+    "host/scene.hpp": "95ab5df4d04443601d95a38eba6368aad743a8a50f5d7b7e5665ddff5a3ef723",
+    "host/test.cpp": "da6378d873bf2edf95007ccf19eec8bde3c4b04436e2eb5b4e7daac22a9045d1"
+  },
+  "commands": [
+    {
+      "argv": [
+        "/usr/bin/c++",
+        "--version"
+      ],
+      "returncode": 0,
+      "stdout": "c++ (Ubuntu 15.2.0-16ubuntu1) 15.2.0\nCopyright (C) 2025 Free Software Foundation, Inc.\nThis is free software; see the source for copying conditions.  There is NO\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.\n\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/usr/bin/clang",
+        "--version"
+      ],
+      "returncode": 0,
+      "stdout": "Ubuntu clang version 21.1.8 (6ubuntu1)\nTarget: x86_64-pc-linux-gnu\nThread model: posix\nInstalledDir: /usr/lib/llvm-21/bin\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/usr/bin/c++",
+        "-std=c++17",
+        "-O2",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "host/test.cpp",
+        "-o",
+        "/home/t4ce/Repos/TRUEOS-Blueprints/apps/wc3/WC3-Radiance-Forge-RF01/validation/contract-preflight/test"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/home/t4ce/Repos/TRUEOS-Blueprints/apps/wc3/WC3-Radiance-Forge-RF01/validation/contract-preflight/test",
+        "/home/t4ce/Repos/TRUEOS-Blueprints/apps/wc3/WC3-Radiance-Forge-RF01/validation/contract-preflight/fixture"
+      ],
+      "returncode": 0,
+      "stdout": "PASS empty scene validates\nPASS parallel AABB rays\nPASS triangle two sided and finite segment\nPASS threaded BVH matches brute force: 5000 random rays\nPASS no light means zero direct\nPASS sun shadow changes actual visibility\nPASS 65 local lights contribute, independently of GL\nPASS cluster list exactly matches direct reference\nPASS overflow does not drop lights\nPASS local light is blocked by geometry\nPASS one-bounce emission transport carries red\nPASS nonemissive red wall produces diffuse color bleed\nPASS sky bounce matches cosine-weighted irradiance\nPASS same frame gives same sample\nPASS Fresnel and absorption limits\nPASS water only shades classified surfaces\nPASS water waves change with phase\nPASS bad node links rejected before GPU\nPASS nonconservative leaf bounds rejected\nPASS nonfinite material rejected\nPASS out-of-range material rejected\nRESULT tests=21 passed=21 gpu_executed=0\nFIXTURE surfaces=129 lights=65 nodes=11 words=3084\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/usr/bin/clang",
+        "--target=spir64",
+        "-x",
+        "clcpp",
+        "-cl-std=CLC++",
+        "-cl-kernel-arg-info",
+        "-fno-discard-value-names",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-O2",
+        "-emit-llvm",
+        "-c",
+        "/home/t4ce/Repos/TRUEOS-Blueprints/apps/wc3/WC3-Radiance-Forge-RF01/kernels/rf_build_light_lists.clcpp",
+        "-o",
+        "/home/t4ce/Repos/TRUEOS-Blueprints/apps/wc3/WC3-Radiance-Forge-RF01/validation/contract-preflight/rf_build_light_lists.bc"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/usr/bin/clang",
+        "--target=spir64",
+        "-x",
+        "clcpp",
+        "-cl-std=CLC++",
+        "-cl-kernel-arg-info",
+        "-fno-discard-value-names",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-O2",
+        "-emit-llvm",
+        "-c",
+        "/home/t4ce/Repos/TRUEOS-Blueprints/apps/wc3/WC3-Radiance-Forge-RF01/kernels/rf_direct.clcpp",
+        "-o",
+        "/home/t4ce/Repos/TRUEOS-Blueprints/apps/wc3/WC3-Radiance-Forge-RF01/validation/contract-preflight/rf_direct.bc"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/usr/bin/clang",
+        "--target=spir64",
+        "-x",
+        "clcpp",
+        "-cl-std=CLC++",
+        "-cl-kernel-arg-info",
+        "-fno-discard-value-names",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-O2",
+        "-emit-llvm",
+        "-c",
+        "/home/t4ce/Repos/TRUEOS-Blueprints/apps/wc3/WC3-Radiance-Forge-RF01/kernels/rf_indirect.clcpp",
+        "-o",
+        "/home/t4ce/Repos/TRUEOS-Blueprints/apps/wc3/WC3-Radiance-Forge-RF01/validation/contract-preflight/rf_indirect.bc"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/usr/bin/clang",
+        "--target=spir64",
+        "-x",
+        "clcpp",
+        "-cl-std=CLC++",
+        "-cl-kernel-arg-info",
+        "-fno-discard-value-names",
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-O2",
+        "-emit-llvm",
+        "-c",
+        "/home/t4ce/Repos/TRUEOS-Blueprints/apps/wc3/WC3-Radiance-Forge-RF01/kernels/rf_water.clcpp",
+        "-o",
+        "/home/t4ce/Repos/TRUEOS-Blueprints/apps/wc3/WC3-Radiance-Forge-RF01/validation/contract-preflight/rf_water.bc"
+      ],
+      "returncode": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ]
+}

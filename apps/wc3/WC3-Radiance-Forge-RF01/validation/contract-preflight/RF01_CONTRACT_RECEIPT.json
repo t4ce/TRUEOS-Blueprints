@@ -1,0 +1,71 @@
+{
+  "scope": "host-only no-publish RF01 candidate contracts",
+  "runtime_admission": false,
+  "hardware_dispatch": false,
+  "publication": false,
+  "source_provenance": {
+    "package": "/home/t4ce/Repos/TRUEOS-Blueprints/apps/wc3/WC3-Radiance-Forge-RF01",
+    "integrity_before_wrapper_update": "all 20 supplied SHA256SUMS.json entries matched",
+    "current_integrity": "all SHA256SUMS.json entries matched after updating the external-source wrapper, README and integration notes"
+  },
+  "host_fixture": {
+    "check": "tools/check_local.py --build-dir validation/contract-preflight",
+    "result": "21 host tests passed; 5000 BVH-versus-brute-force rays; four SPIR64 frontend checks passed; gpu_executed=false; all five generated fixture buffers exactly match the supplied fixture hashes",
+    "scene_words_bytes": 12336,
+    "surfaces": 129,
+    "lights": 65,
+    "expected_outputs": {
+      "light_lists_u32_bytes": 408,
+      "direct_float4_bytes": 2064,
+      "indirect_float4_bytes": 2064,
+      "water_float4_bytes": 2064
+    }
+  },
+  "toolchain": {
+    "profile": "adls-4680-r0c-cpp.json",
+    "target": "8086:4680 revision 0x0c",
+    "lock": "adls-cpp-proof.lock.json",
+    "gates": ["SIMD16", "scratch=0", "SLM=0", "two-root byte reproducibility", "ocloc validate", "generated contract verification"]
+  },
+  "candidate_root": "/home/t4ce/Repos/TRUEOS/bld/wc3-radiance-forge",
+  "contracts": [
+    {
+      "kernel": "rf_build_light_lists",
+      "run_a": "rf_build_light_lists/adls/cpp-native/rf_build_light_lists/run-a",
+      "bin_sha256": "9fa91fe710dc4ecdb99c6c56a4f84b968f8c12174926fc83efd639e47ccba51c",
+      "spv_sha256": "23f8ce0c02af23cad7c5a9c85cd0a5d23781bf2a121700fe889d6037a8b509af",
+      "entry": {"section": ".text.rf_build_light_lists", "offset": 64, "size": 18416},
+      "execution": {"simd": 16, "grf": 128, "scratch": 0, "slm": 0, "cross_thread": 96, "per_thread": 96},
+      "payload": "arg0 ptr@48 readonly/stateful; arg1 ptr@56 readwrite/stateful; arg2 u32@64; arg3 u32@68"
+    },
+    {
+      "kernel": "rf_direct",
+      "run_a": "rf_direct/adls/cpp-native/rf_direct/run-a",
+      "bin_sha256": "2e2e66e21d6ebe7b3006c6fbff9c6e3380174f4147497a06dcfc1b24ca535c3c",
+      "spv_sha256": "2997a68c5177bebd743e02b82f4ea09ed90e491f7c078a3cf5d1e505a95a6cf4",
+      "entry": {"section": ".text.rf_direct", "offset": 64, "size": 23432},
+      "execution": {"simd": 16, "grf": 128, "scratch": 0, "slm": 0, "cross_thread": 96, "per_thread": 96},
+      "payload": "arg0 ptr@48 readonly/stateless; arg1 ptr@56 readwrite/stateful; arg2 ptr@64 readonly/stateless; arg3 u32@72; arg4 u32@76; implicit buffer-offset(arg0)@80"
+    },
+    {
+      "kernel": "rf_indirect",
+      "run_a": "rf_indirect/adls/cpp-native/rf_indirect/run-a",
+      "bin_sha256": "e88eaedb00291b313a815d9dac0295fdcfd09aaa93bd92b89da85915cbed0e9c",
+      "spv_sha256": "a2c68731f8d0d1232a60d950b6c909b1fec2c36bbc4bfe1b84ced6dcb0357d49",
+      "entry": {"section": ".text.rf_indirect", "offset": 64, "size": 36912},
+      "execution": {"simd": 16, "grf": 128, "scratch": 0, "slm": 0, "cross_thread": 96, "per_thread": 96},
+      "payload": "arg0 ptr@48 readonly/stateful; arg1 ptr@56 readwrite/stateful; arg2 u32@64; arg3 u32@68; implicit buffer-offset(arg0)@72"
+    },
+    {
+      "kernel": "rf_water",
+      "run_a": "rf_water/adls/cpp-native/rf_water/run-a",
+      "bin_sha256": "380a23ccb591f4f662dcfeabdc3aeee539b5f9c99712d6123d14f581d9985e93",
+      "spv_sha256": "744eee875a99a77a44b8136dcc71ee47a9b85a529a2f392565f93a25bda1f4df",
+      "entry": {"section": ".text.rf_water", "offset": 64, "size": 44712},
+      "execution": {"simd": 16, "grf": 128, "scratch": 0, "slm": 0, "cross_thread": 96, "per_thread": 96},
+      "payload": "arg0 ptr@48 readonly/stateful; arg1 ptr@56 readwrite/stateful; arg2 u32@64; arg3 u32@68; implicit buffer-offset(arg0)@72"
+    }
+  ],
+  "verification": "tools/intel-gpu-bakery/verify.py accepted all four run-a artifact quartets",
+  "tool_warning": "ocloc validate accepted each Zebin but reported .ze_info minor 62 newer than its decoder 61 and an unhandled .note.intelgt.metrics note; this is recorded, not suppressed."
+}

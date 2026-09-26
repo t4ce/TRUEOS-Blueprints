@@ -6,7 +6,7 @@ Implement a fixture compute probe first, independent of guest startup. The deliv
 
 ## A. Keep the existing compiler architecture
 
-Place this source tree in `tools/wc3-radiance-forge/`. Bake the four candidate kernels through the wrapper. Preserve the `8086:4680`, revision `0x0c`, SIMD16, zero scratch and zero SLM profile. Do not load OpenCL Kernel SPIR-V through Picasso's graphics shader path. It goes through llvm-spirv → ocloc/IGC → validated Zebin. The four native entries are:
+Keep this supplied source tree in place and bake the four candidate kernels through its wrapper; it records the external source provenance and writes no-publish candidates only below `TRUEOS/bld/wc3-radiance-forge/`. Preserve the `8086:4680`, revision `0x0c`, SIMD16, zero scratch and zero SLM profile. Do not load OpenCL Kernel SPIR-V through Picasso's graphics shader path. It goes through llvm-spirv → ocloc/IGC → validated Zebin. The four native entries are:
 
 | Kernel | Arguments, in exact source order | Output |
 |---|---|---|

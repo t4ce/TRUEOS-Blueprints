@@ -11,8 +11,11 @@ def main():
     if not all(f.is_file() for f in (bakery,lock,profile)):raise RuntimeError('expected pinned TRUEOS bakery/profile/lock not found')
     for k in KERNELS:
         source=ROOT/'kernels'/f'{k}.clcpp'
-        try:source.relative_to(repo)
-        except ValueError:raise RuntimeError('place this bundle at TRUEOS/tools/wc3-radiance-forge before baking')
+        if not source.is_file():raise RuntimeError(f'missing RF01 kernel source: {source}')
+        # The upstream bakery already records external source paths and runs
+        # Clang from source.parent for reproducibility. Keeping RF01 in its
+        # supplied Blueprint package avoids a second, diverging source copy;
+        # only no-publish candidate outputs are written under TRUEOS/bld.
         cmd=[sys.executable,str(bakery),'--source',str(source),'--artifact-name',k,'--profile',str(profile),
              '--expect-kernel',k,'--rust-symbol',k+'='+k.upper()+'_ADLS_CPP_ABI_CONTRACT',
              '--toolchain-lock',str(lock),'--repro-check','--build-root',str(repo/'bld/wc3-radiance-forge'/k)]

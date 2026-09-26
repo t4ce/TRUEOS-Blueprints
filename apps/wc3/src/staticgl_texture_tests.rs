@@ -2,6 +2,126 @@
 mod tests {
     use super::*;
 
+    #[test]
+    fn rgb5_upload_and_subimage_discard_source_alpha_and_admit_opaque_draw() {
+        let memory = Memory(vec![0, 0, 0, 0, 0x11, 0x22, 0x33, 0x44]);
+        let internal = gl_texture_internal(0x8050).unwrap();
+        assert_eq!(internal, 0x1907);
+        let rgba = gl_texture_pixels(
+            &memory,
+            4,
+            1,
+            1,
+            0x1908,
+            GL_UNSIGNED_BYTE,
+            GlUnpack::default(),
+            internal,
+        )
+        .unwrap();
+        assert_eq!(rgba, [0x11, 0x22, 0x33, 255]);
+        let mut textures = GlTextures::default();
+        textures.bind(1).unwrap();
+        textures
+            .set_image(
+                0,
+                GlTextureImage {
+                    width: 1,
+                    height: 1,
+                    internal,
+                    rgba,
+                },
+            )
+            .unwrap();
+        textures.object_mut().min_filter = 0x2600;
+        textures.object_mut().mag_filter = 0x2600;
+        textures.env_mode = 0x1e01;
+        assert!(gl_texture_draw_image(&textures).is_ok());
+        let replacement = Memory(vec![0, 0, 0, 0, 7, 8, 9, 0]);
+        textures
+            .sub_image(0, [0, 0, 1, 1], 0x1908, GL_UNSIGNED_BYTE, 4, &replacement)
+            .unwrap();
+        assert_eq!(
+            gl_texture_draw_image(&textures).unwrap().rgba,
+            [7, 8, 9, 255]
+        );
+    }
+
+    #[test]
+    fn core_sized_allocations_preserve_base_format_channel_semantics() {
+        // Every sized internal format in GL 1.1 table 3.8.
+        let families: &[(u32, &[u32], [u8; 4])] = &[
+            (
+                0x1906,
+                &[0x803b, 0x803c, 0x803d, 0x803e],
+                [255, 255, 255, 40],
+            ),
+            (0x1909, &[0x803f, 0x8040, 0x8041, 0x8042], [10, 10, 10, 255]),
+            (
+                0x190a,
+                &[0x8043, 0x8044, 0x8045, 0x8046, 0x8047, 0x8048],
+                [10, 10, 10, 40],
+            ),
+            (0x8049, &[0x804a, 0x804b, 0x804c, 0x804d], [10, 10, 10, 10]),
+            (
+                0x1907,
+                &[0x2a10, 0x804f, 0x8050, 0x8051, 0x8052, 0x8053, 0x8054],
+                [10, 20, 30, 255],
+            ),
+            (
+                0x1908,
+                &[0x8055, 0x8056, 0x8057, 0x8058, 0x8059, 0x805a, 0x805b],
+                [10, 20, 30, 40],
+            ),
+        ];
+        for &(base, formats, expected) in families {
+            for &format in formats {
+                assert_eq!(gl_texture_internal(format), Ok(base));
+                assert_eq!(
+                    gl_texture_convert_internal([10, 20, 30, 40], base),
+                    expected
+                );
+            }
+        }
+        for invalid in [0, 5, 0x804e, 0x805c, 0xdeadbeef] {
+            assert!(gl_texture_internal(invalid).is_err());
+        }
+    }
+
+    #[test]
+    fn rgb_replace_and_decal_cannot_erase_primary_alpha() {
+        let translucent = [0.2, 0.3, 0.4, 0.5];
+        assert!(!gl_texture_primary_color_supported(
+            0x1907,
+            0x1e01,
+            translucent
+        ));
+        assert!(gl_texture_primary_color_supported(
+            0x1908,
+            0x1e01,
+            translucent
+        ));
+        for internal in [0x1907, 0x1908] {
+            assert!(!gl_texture_primary_color_supported(
+                internal,
+                0x2101,
+                translucent
+            ));
+            assert!(gl_texture_primary_color_supported(
+                internal,
+                0x2101,
+                [0.2, 0.3, 0.4, 1.0]
+            ));
+            assert!(!gl_texture_primary_color_supported(
+                internal,
+                0x2100,
+                [1.0, 1.0, 1.0, 0.5]
+            ));
+            assert!(gl_texture_primary_color_supported(
+                internal, 0x2100, [1.0; 4]
+            ));
+        }
+    }
+
     struct Memory(Vec<u8>);
 
     impl GuestMemory for Memory {
@@ -273,8 +393,10 @@ mod tests {
         textures.object_mut().levels.get_mut(&0).unwrap().rgba[3] = 7;
         assert!(gl_texture_draw_image(&textures).is_err());
         textures.object_mut().levels.get_mut(&0).unwrap().rgba[3] = 255;
-        textures.env_mode = 0x2101;
+        textures.env_mode = 0x0be2; // BLEND still needs another shader combine.
         assert!(gl_texture_draw_image(&textures).is_err());
+        textures.env_mode = 0x2101;
+        assert!(gl_texture_draw_image(&textures).is_ok());
         textures.env_mode = 0x1e01;
         assert!(gl_texture_draw_image(&textures).is_ok());
     }
