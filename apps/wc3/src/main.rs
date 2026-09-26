@@ -309,6 +309,7 @@ async fn run() -> Result<(), String> {
     let mut window_rgba: HashMap<u32, Vec<u8>> = HashMap::new();
     let mut wait_deadlines: HashMap<ThreadKey, RuntimeWait> = HashMap::new();
     let mut previous_wait_timeout: Option<(ThreadKey, u32, u32)> = None;
+    let mut idle_poll_sites: HashMap<IdlePollSite, IdlePollStats> = HashMap::new();
     let mut child_get_command_line_logged = false;
     let mut active_message_box = None;
     let mut active = 0usize;
@@ -324,6 +325,7 @@ async fn run() -> Result<(), String> {
         &mut window_rgba,
         &mut wait_deadlines,
         &mut previous_wait_timeout,
+        &mut idle_poll_sites,
         &mut child_get_command_line_logged,
         &mut active_message_box,
         active,
@@ -1093,6 +1095,21 @@ struct RuntimeWait {
     timeout_ms: u32,
     handle: u32,
     resume_registers: Registers,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct IdlePollSite {
+    key: ThreadKey,
+    caller_return: u32,
+    handles: [u32; 2],
+    wait_all: u32,
+    timeout: u32,
+}
+
+struct IdlePollStats {
+    polls: u64,
+    last_reported_polls: u64,
+    last_report: tokio::time::Instant,
 }
 
 fn expire_runtime_waits(

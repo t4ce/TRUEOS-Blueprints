@@ -1494,7 +1494,7 @@
                         logl::log(
                             level::IMPORTANT,
                             format_args!(
-                                "WC3 CHILD CREATEWINDOWEXA RESULT pid={} tid={} hwnd=0x{:08x} class={:?} title={:?} wndproc=0x{:08x} icon=0x{:08x} cursor=0x{:08x} parent=0x{:08x} geometry={},{} {}x{} win32_visible={} ui4_frame={} ui4_policy=always-visible result=success cleanup=48-by-thunk",
+                                "WC3 CHILD CREATEWINDOWEXA RESULT pid={} tid={} hwnd=0x{:08x} class={:?} title={:?} wndproc=0x{:08x} icon=0x{:08x} cursor=0x{:08x} parent=0x{:08x} param=0x{:08x} geometry={},{} {}x{} win32_visible={} ui4_frame={} ui4_policy=always-visible creation_callbacks=not-delivered result=success cleanup=48-by-thunk",
                                 active_pid,
                                 active_tid,
                                 hwnd,
@@ -1504,6 +1504,7 @@
                                 window.class_icon,
                                 window.class_cursor,
                                 window.parent,
+                                window.param,
                                 window.x,
                                 window.y,
                                 window.width,
@@ -2615,28 +2616,70 @@
                                 let (result, zero_wait_handle) = if let Some(result) =
                                     session.poll_wait(&request).map_err(str::to_owned)?
                                 {
-                                    // Keep every signal/error, but sample empty zero-timeout
-                                    // polls. The guest still checks the real event every time.
-                                    use core::sync::atomic::{AtomicU64, Ordering};
-                                    static EMPTY_WAIT_POLLS: AtomicU64 = AtomicU64::new(0);
+                                    // Keep every signal/error. Empty zero-timeout polls are
+                                    // accounted per call site, so one hot site cannot hide
+                                    // another behind a process-global sampling counter.
                                     let zero_wait_handle =
                                         (result == WAIT_TIMEOUT && request.timeout == 0)
                                             .then_some(request.handles[0]);
-                                    let poll_count = if zero_wait_handle.is_some() {
-                                        EMPTY_WAIT_POLLS.fetch_add(1, Ordering::Relaxed) + 1
+                                    if let Some(handle) = zero_wait_handle {
+                                        let site = IdlePollSite {
+                                            key: request.key,
+                                            caller_return: request.return_address,
+                                            handles: request.handles,
+                                            wait_all: request.wait_all,
+                                            timeout: request.timeout,
+                                        };
+                                        let now = tokio::time::Instant::now();
+                                        let stats = idle_poll_sites.entry(site).or_insert(
+                                            IdlePollStats {
+                                                polls: 0,
+                                                last_reported_polls: 0,
+                                                last_report: now,
+                                            },
+                                        );
+                                        stats.polls += 1;
+                                        let report = stats.polls <= 4
+                                            || now.duration_since(stats.last_report)
+                                                >= Duration::from_secs(1);
+                                        if report {
+                                            let delta = stats.polls - stats.last_reported_polls;
+                                            stats.last_reported_polls = stats.polls;
+                                            stats.last_report = now;
+                                            let stack_words = read_guest_words(
+                                                &X86Memory(&child.address_space),
+                                                exit.registers.esp,
+                                                8,
+                                            )
+                                            .unwrap_or_default();
+                                            let object = session.describe_handle(request.key.pid, handle);
+                                            let event_state = session.event_state(request.key.pid, handle);
+                                            logl::log(
+                                                level::IMPORTANT,
+                                                format_args!(
+                                                    "WC3 CHILD IDLE POLL PROVENANCE pid={} tid={} handle=0x{:08x} object={} manual_reset={:?} signaled={:?} provider_return=WAIT_TIMEOUT caller_ret=0x{:08x} wait_all={} poll_count={} delta={} guest_stack_candidates={:08x?}",
+                                                    request.key.pid,
+                                                    request.key.tid,
+                                                    handle,
+                                                    object,
+                                                    event_state.map(|state| state.0),
+                                                    event_state.map(|state| state.1),
+                                                    request.return_address,
+                                                    request.wait_all,
+                                                    stats.polls,
+                                                    delta,
+                                                    stack_words,
+                                                ),
+                                            );
+                                        }
                                     } else {
-                                        0
-                                    };
-                                    if zero_wait_handle.is_none() || cfg!(feature = "trace-api")
-                                        || poll_count <= 4 || poll_count % 1024 == 0
-                                    {
                                         logl::log(
                                             level::IMPORTANT,
                                             format_args!(
-                                                "WC3 CHILD WAIT {}RETURN pid={} tid={} handle0=0x{:08x} handle1=0x{:08x} result=0x{:08x} timeout_ms={} caller_ret=0x{:08x} empty_poll_count={}",
+                                                "WC3 CHILD WAIT {}RETURN pid={} tid={} handle0=0x{:08x} handle1=0x{:08x} result=0x{:08x} timeout_ms={} caller_ret=0x{:08x}",
                                                 if is_multiple_wait { "MULTIPLE " } else { "" },
                                                 active_pid, active_tid, request.handles[0], request.handles[1], result,
-                                                request.timeout, request.return_address, poll_count,
+                                                request.timeout, request.return_address,
                                             ),
                                         );
                                     }

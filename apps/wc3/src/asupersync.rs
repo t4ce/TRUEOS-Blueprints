@@ -2473,6 +2473,7 @@ pub(super) async fn run_loop(
     window_rgba: &mut HashMap<u32, Vec<u8>>,
     mut wait_deadlines: &mut HashMap<ThreadKey, RuntimeWait>,
     mut previous_wait_timeout: &mut Option<(ThreadKey, u32, u32)>,
+    idle_poll_sites: &mut HashMap<IdlePollSite, IdlePollStats>,
     child_get_command_line_logged: &mut bool,
     active_message_box: &mut Option<ActiveMessageBox>,
     mut active: usize,
