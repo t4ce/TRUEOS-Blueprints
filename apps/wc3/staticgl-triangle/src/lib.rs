@@ -6,6 +6,8 @@
 //! Subdivide the three vertex colors into a bounded set of flat-color triangles
 //! and submit them together through the supported immediate-RGBA batch path.
 
+pub mod textured;
+
 use trueos::vgpu::{
     self, Buffer, Device, IndexedBatchDrawV2, IndexedDrawBatchV2, Queue, RenderPipeline,
     ShaderModule, TimelinePoint, Ui4Surface,

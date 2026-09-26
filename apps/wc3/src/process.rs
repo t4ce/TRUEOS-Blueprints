@@ -1897,6 +1897,7 @@ struct WglContext {
     color_array_enabled: bool,
     vertex_pointer: Option<GlArrayPointer>,
     color_pointer: Option<GlArrayPointer>,
+    textures: GlTextures,
     observed_writes: VecDeque<GlWriteNote>,
 }
 
@@ -1906,7 +1907,7 @@ struct GlWriteNote {
     description: String,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 struct GlArrayPointer {
     size: u32,
     kind: u32,
@@ -3285,6 +3286,7 @@ include!("process_provider_dispatch.rs");
 include!("process_runtime.rs");
 include!("staticgdi.rs");
 include!("staticgl.rs");
+include!("staticgl_texture.rs");
 
 
 #[derive(Clone, Debug, Eq, PartialEq)]

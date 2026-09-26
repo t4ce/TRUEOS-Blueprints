@@ -232,23 +232,23 @@ impl XpProcess {
     }
 
     static_gl_stubs!(
-        gl_enable_static => "glEnable",
+        
         gl_fogfv_static => "glFogfv",
         gl_fogf_static => "glFogf", gl_fogi_static => "glFogi",
         gl_draw_buffer_static => "glDrawBuffer", gl_depth_func_static => "glDepthFunc",
         gl_alpha_func_static => "glAlphaFunc", gl_blend_func_static => "glBlendFunc",
-        gl_tex_envi_static => "glTexEnvi",
-        gl_bind_texture_static => "glBindTexture",
+        
+        
         gl_depth_mask_static => "glDepthMask", gl_color_material_static => "glColorMaterial",
         gl_tex_geni_static => "glTexGeni",
         gl_materialfv_static => "glMaterialfv", gl_polygon_offset_static => "glPolygonOffset",
-        gl_get_integerv_static => "glGetIntegerv", wgl_get_proc_address_static => "wglGetProcAddress",
-        wgl_delete_context_static => "wglDeleteContext", gl_delete_textures_static => "glDeleteTextures",
-        gl_tex_sub_image_2d_static => "glTexSubImage2D", gl_tex_image_2d_static => "glTexImage2D",
-        gl_pixel_storei_static => "glPixelStorei", gl_tex_parameteri_static => "glTexParameteri",
-        gl_gen_textures_static => "glGenTextures", gl_normal_3fv_static => "glNormal3fv",
+         wgl_get_proc_address_static => "wglGetProcAddress",
+        wgl_delete_context_static => "wglDeleteContext", 
+         
+         
+         gl_normal_3fv_static => "glNormal3fv",
         gl_normal_pointer_static => "glNormalPointer",
-        gl_tex_coord_pointer_static => "glTexCoordPointer",
+        
 
         gl_scissor_static => "glScissor", gl_depth_range_static => "glDepthRange",
 
@@ -295,6 +295,10 @@ impl XpProcess {
         memory: &impl GuestMemory,
     ) -> Result<u32, ProviderDispatchError> {
         let [_, cap] = arguments::<2>(memory, esp)?;
+        if cap == GL_TEXTURE_2D {
+            self.gl_context_mut(tid, "glDisable")?.textures.enabled = false;
+            return Ok(0);
+        }
         if cap != GL_LIGHT0 {
             return Err(ProviderDispatchError::Frontier {
                 api: "glDisable",
@@ -400,6 +404,7 @@ impl XpProcess {
         match array {
             GL_VERTEX_ARRAY => context.vertex_array_enabled = enabled,
             GL_COLOR_ARRAY => context.color_array_enabled = enabled,
+            GL_TEXTURE_COORD_ARRAY => context.textures.coord_array_enabled = enabled,
             _ => {
                 return Err(ProviderDispatchError::Frontier {
                     api,
@@ -1007,6 +1012,7 @@ impl XpProcess {
                 color_array_enabled: false,
                 vertex_pointer: None,
                 color_pointer: None,
+                textures: GlTextures::default(),
                 observed_writes: VecDeque::new(),
             },
         );

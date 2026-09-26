@@ -200,7 +200,7 @@ impl XpProcess {
                 self.gl_disable_static(tid, esp, memory)?,
             )),
             ProviderOp::GlEnable => Ok(PersonalityAction::Return(
-                self.gl_enable_static(esp, memory)?,
+                self.gl_enable_static(tid, esp, memory)?,
             )),
             ProviderOp::GlLightfv => Ok(PersonalityAction::Return(
                 self.gl_lightfv_static(tid, esp, memory)?,
@@ -226,10 +226,10 @@ impl XpProcess {
                 self.gl_enable_client_state_static(tid, esp, memory)?,
             )),
             ProviderOp::GlTexEnvi => Ok(PersonalityAction::Return(
-                self.gl_tex_envi_static(esp, memory)?,
+                self.gl_tex_envi_static(tid, esp, memory)?,
             )),
             ProviderOp::GlBindTexture => Ok(PersonalityAction::Return(
-                self.gl_bind_texture_static(esp, memory)?,
+                self.gl_bind_texture_static(tid, esp, memory)?,
             )),
             ProviderOp::GlDisableClientState => Ok(PersonalityAction::Return(
                 self.gl_disable_client_state_static(tid, esp, memory)?,
@@ -253,7 +253,7 @@ impl XpProcess {
                 self.gl_polygon_offset_static(esp, memory)?,
             )),
             ProviderOp::GlGetIntegerv => Ok(PersonalityAction::Return(
-                self.gl_get_integerv_static(esp, memory)?,
+                self.gl_get_integerv_static(tid, esp, memory)?,
             )),
             ProviderOp::WglGetProcAddress => Ok(PersonalityAction::Return(
                 self.wgl_get_proc_address_static(esp, memory)?,
@@ -268,22 +268,22 @@ impl XpProcess {
                 self.wgl_delete_context_static(esp, memory)?,
             )),
             ProviderOp::GlDeleteTextures => Ok(PersonalityAction::Return(
-                self.gl_delete_textures_static(esp, memory)?,
+                self.gl_delete_textures_static(tid, esp, memory)?,
             )),
             ProviderOp::GlTexSubImage2D => Ok(PersonalityAction::Return(
-                self.gl_tex_sub_image_2d_static(esp, memory)?,
+                self.gl_tex_sub_image_2d_static(tid, esp, memory)?,
             )),
             ProviderOp::GlTexImage2D => Ok(PersonalityAction::Return(
-                self.gl_tex_image_2d_static(esp, memory)?,
+                self.gl_tex_image_2d_static(tid, esp, memory)?,
             )),
             ProviderOp::GlPixelStorei => Ok(PersonalityAction::Return(
-                self.gl_pixel_storei_static(esp, memory)?,
+                self.gl_pixel_storei_static(tid, esp, memory)?,
             )),
             ProviderOp::GlTexParameteri => Ok(PersonalityAction::Return(
-                self.gl_tex_parameteri_static(esp, memory)?,
+                self.gl_tex_parameteri_static(tid, esp, memory)?,
             )),
             ProviderOp::GlGenTextures => Ok(PersonalityAction::Return(
-                self.gl_gen_textures_static(esp, memory)?,
+                self.gl_gen_textures_static(tid, esp, memory)?,
             )),
             ProviderOp::GlNormal3fv => Ok(PersonalityAction::Return(
                 self.gl_normal_3fv_static(esp, memory)?,
@@ -298,7 +298,7 @@ impl XpProcess {
                 self.gl_color_pointer_static(tid, esp, memory)?,
             )),
             ProviderOp::GlTexCoordPointer => Ok(PersonalityAction::Return(
-                self.gl_tex_coord_pointer_static(esp, memory)?,
+                self.gl_tex_coord_pointer_static(tid, esp, memory)?,
             )),
             ProviderOp::GlFinish => Ok(PersonalityAction::Return(
                 self.gl_finish_static(esp, memory)?,
