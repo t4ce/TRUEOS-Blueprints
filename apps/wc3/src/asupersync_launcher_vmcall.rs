@@ -21,7 +21,7 @@
                         .xp
                         .exit_thread(exited.tid, exit.registers.eax)
                         .map_err(str::to_owned)?;
-                    logl::log(
+                    logl::log!(
                         level::INFO,
                         format_args!(
                             "wc3: x86 ThreadProc exited tid={} code=0x{:08x}",
@@ -39,7 +39,7 @@
                         .continuation
                         .take()
                         .ok_or_else(|| "guest return without continuation".to_owned())?;
-                    logl::log(
+                    logl::log!(
                         level::IMPORTANT,
                         format_args!(
                             "WC3 CALL_GUEST RETURN tid={} hwnd=0x{:08x} message=0x{:08x} wndproc=0x{:08x} result=0x{:08x}",
@@ -51,14 +51,14 @@
                         ),
                     );
                     if contexts[active].tid == 1 && continuation.hwnd == WINDOW_HANDLE_BASE {
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CALL_GUEST RETURN tid=1 hwnd=0x{:08x} wndproc=0x{:08x} message=WM_PAINT result=0x{:08x}",
                                 continuation.hwnd, continuation.wndproc, exit.registers.eax
                             ),
                         );
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 UI4 ROOT WM_PAINT RETURN hwnd=0x{:08x}",
@@ -104,7 +104,7 @@
                 let call_kind = WinCall::from_import(&import);
                 if call_kind == WinCall::BitBlt {
                     let frame = read_guest_words(&memory, exit.registers.esp, 10)?;
-                    logl::log(
+                    logl::log!(
                         level::IMPORTANT,
                         format_args!(
                             "WC3 BitBlt ret=0x{:08x} dst=0x{:08x} dst_xy={},{} size={}x{} src=0x{:08x} src_xy={},{} rop=0x{:08x}",
@@ -124,7 +124,7 @@
                 if call_kind == WinCall::DefWindowProcA {
                     let frame = read_guest_words(&memory, exit.registers.esp, 5)?;
                     if default_proc_messages.insert(frame[2]) {
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 DefWindowProcA hwnd=0x{:08x} message=0x{:08x} wparam=0x{:08x} lparam=0x{:08x}",
@@ -136,39 +136,39 @@
                 if call_kind == WinCall::RegisterClassA {
                     let frame = read_guest_words(&memory, exit.registers.esp, 2)?;
                     let fields = read_guest_words(&memory, frame[1], 10)?;
-                    logl::log(
+                    logl::log!(
                         level::IMPORTANT,
                         format_args!(
                             "WC3 RC0 tid={} ptr={:#010x}",
                             contexts[active].tid, frame[1]
                         ),
                     );
-                    logl::log(
+                    logl::log!(
                         level::IMPORTANT,
                         format_args!(
                             "WC3 RC1 style={:#010x} wndproc={:#010x}",
                             fields[0], fields[1]
                         ),
                     );
-                    logl::log(
+                    logl::log!(
                         level::IMPORTANT,
                         format_args!("WC3 RC2 cls_extra={} wnd_extra={}", fields[2], fields[3]),
                     );
-                    logl::log(
+                    logl::log!(
                         level::IMPORTANT,
                         format_args!(
                             "WC3 RC3 instance={:#010x} icon={:#010x}",
                             fields[4], fields[5]
                         ),
                     );
-                    logl::log(
+                    logl::log!(
                         level::IMPORTANT,
                         format_args!(
                             "WC3 RC4 cursor={:#010x} background={:#010x}",
                             fields[6], fields[7]
                         ),
                     );
-                    logl::log(
+                    logl::log!(
                         level::IMPORTANT,
                         format_args!(
                             "WC3 RC5 menu_ptr={:#010x} class_ptr={:#010x}",
@@ -178,33 +178,33 @@
                     if fields[9] != 0 && fields[9] >> 16 != 0 {
                         match diagnostic_ansi_string(&memory, fields[9]) {
                             Ok(value) => {
-                                logl::log(level::IMPORTANT, format_args!("WC3 RCCLASS {:?}", value))
+                                logl::log!(level::IMPORTANT, format_args!("WC3 RCCLASS {:?}", value))
                             }
-                            Err(_) => logl::log(
+                            Err(_) => logl::log!(
                                 level::IMPORTANT,
                                 format_args!("WC3 RCCLASS decode-failed ptr={:#010x}", fields[9]),
                             ),
                         }
                     } else {
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!("WC3 RCCLASS atom=0x{:04x}", fields[9] & 0xffff),
                         );
                     }
                     if fields[8] == 0 {
-                        logl::log(level::IMPORTANT, format_args!("WC3 RCMENU <null>"));
+                        logl::log!(level::IMPORTANT, format_args!("WC3 RCMENU <null>"));
                     } else if fields[8] >> 16 != 0 {
                         match diagnostic_ansi_string(&memory, fields[8]) {
                             Ok(value) => {
-                                logl::log(level::IMPORTANT, format_args!("WC3 RCMENU {:?}", value))
+                                logl::log!(level::IMPORTANT, format_args!("WC3 RCMENU {:?}", value))
                             }
-                            Err(_) => logl::log(
+                            Err(_) => logl::log!(
                                 level::IMPORTANT,
                                 format_args!("WC3 RCMENU decode-failed ptr={:#010x}", fields[8]),
                             ),
                         }
                     } else {
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!("WC3 RCMENU atom=0x{:04x}", fields[8] & 0xffff),
                         );
@@ -212,73 +212,73 @@
                 }
                 if call_kind == WinCall::CreateWindowExA {
                     let a = read_guest_words(&memory, exit.registers.esp, 13)?;
-                    logl::log(
+                    logl::log!(
                         level::IMPORTANT,
                         format_args!(
                             "WC3 CW0 tid={} esp={:#010x} ret={:#010x}",
                             contexts[active].tid, exit.registers.esp, a[0]
                         ),
                     );
-                    logl::log(
+                    logl::log!(
                         level::IMPORTANT,
                         format_args!("WC3 CW1 ex={:#010x} style={:#010x}", a[1], a[4]),
                     );
-                    logl::log(
+                    logl::log!(
                         level::IMPORTANT,
                         format_args!("WC3 CW2 class_ptr={:#010x} title_ptr={:#010x}", a[2], a[3]),
                     );
-                    logl::log(
+                    logl::log!(
                         level::IMPORTANT,
                         format_args!("WC3 CW3 x={} y={}", a[5] as i32, a[6] as i32),
                     );
-                    logl::log(
+                    logl::log!(
                         level::IMPORTANT,
                         format_args!("WC3 CW4 width={} height={}", a[7], a[8]),
                     );
-                    logl::log(
+                    logl::log!(
                         level::IMPORTANT,
                         format_args!("WC3 CW5 parent={:#010x} menu={:#010x}", a[9], a[10]),
                     );
-                    logl::log(
+                    logl::log!(
                         level::IMPORTANT,
                         format_args!("WC3 CW6 instance={:#010x} param={:#010x}", a[11], a[12]),
                     );
-                    logl::log(
+                    logl::log!(
                         level::IMPORTANT,
                         format_args!("WC3 CWA a0..a4={:?}", &a[0..5]),
                     );
-                    logl::log(
+                    logl::log!(
                         level::IMPORTANT,
                         format_args!("WC3 CWB a5..a8={:?}", &a[5..9]),
                     );
-                    logl::log(
+                    logl::log!(
                         level::IMPORTANT,
                         format_args!("WC3 CWC a9..a12={:?}", &a[9..13]),
                     );
                     if a[2] != 0 && a[2] >> 16 != 0 {
                         match diagnostic_ansi_string(&memory, a[2]) {
                             Ok(value) => {
-                                logl::log(level::IMPORTANT, format_args!("WC3 CWCLASS {:?}", value))
+                                logl::log!(level::IMPORTANT, format_args!("WC3 CWCLASS {:?}", value))
                             }
-                            Err(_) => logl::log(
+                            Err(_) => logl::log!(
                                 level::IMPORTANT,
                                 format_args!("WC3 CWCLASS decode-failed ptr={:#010x}", a[2]),
                             ),
                         }
                     } else {
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!("WC3 CWCLASS atom=0x{:04x}", a[2] & 0xffff),
                         );
                     }
                     if a[3] == 0 {
-                        logl::log(level::IMPORTANT, format_args!("WC3 CWTITLE <null>"));
+                        logl::log!(level::IMPORTANT, format_args!("WC3 CWTITLE <null>"));
                     } else {
                         match diagnostic_ansi_string(&memory, a[3]) {
                             Ok(value) => {
-                                logl::log(level::IMPORTANT, format_args!("WC3 CWTITLE {:?}", value))
+                                logl::log!(level::IMPORTANT, format_args!("WC3 CWTITLE {:?}", value))
                             }
-                            Err(_) => logl::log(
+                            Err(_) => logl::log!(
                                 level::IMPORTANT,
                                 format_args!("WC3 CWTITLE decode-failed ptr={:#010x}", a[3]),
                             ),
@@ -287,7 +287,7 @@
                 }
                 if contexts[active].tid == 2 && import.symbol == "TlsSetValue" {
                     let raw = read_guest_words(&memory, exit.registers.esp, 3)?;
-                    logl::log(
+                    logl::log!(
                         level::IMPORTANT,
                         format_args!(
                             "WC3 TID2 TlsSetValue esp=0x{:08x} return_address=0x{:08x} slot={} value=0x{:08x}",
@@ -298,18 +298,18 @@
                 if import.symbol == "DrawTextA" {
                     match read_guest_words(&memory, exit.registers.esp, 6) {
                         Ok(a) => {
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!("WC3 DT0 ret=0x{:08x} hdc=0x{:08x}", a[0], a[1]),
                             );
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 DT1 text_ptr=0x{:08x} count={}",
                                     a[2], a[3] as i32
                                 ),
                             );
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 DT2 rect_ptr=0x{:08x} format=0x{:08x}",
@@ -321,7 +321,7 @@
                                     Ok(bytes) => {
                                         let text = wc3::ThisToThat::cp1252_to_string(&bytes);
                                         let digest = Sha256::digest(&bytes);
-                                        logl::log(
+                                        logl::log!(
                                             level::IMPORTANT,
                                             format_args!(
                                                 "WC3 DTTEXT {:?} bytes_sha256={}",
@@ -330,7 +330,7 @@
                                             ),
                                         );
                                     }
-                                    Err(error) => logl::log(
+                                    Err(error) => logl::log!(
                                         level::IMPORTANT,
                                         format_args!(
                                             "WC3 DTTEXT decode-failed ptr=0x{:08x} count={} error={}",
@@ -341,7 +341,7 @@
                             }
                             if a[4] != 0 {
                                 match read_guest_words(&memory, a[4], 4) {
-                                    Ok(rect) => logl::log(
+                                    Ok(rect) => logl::log!(
                                         level::IMPORTANT,
                                         format_args!(
                                             "WC3 DTRECT in=[{},{},{},{}]",
@@ -351,7 +351,7 @@
                                             rect[3] as i32
                                         ),
                                     ),
-                                    Err(error) => logl::log(
+                                    Err(error) => logl::log!(
                                         level::IMPORTANT,
                                         format_args!(
                                             "WC3 DTRECT decode-failed ptr=0x{:08x} error={}",
@@ -361,7 +361,7 @@
                                 }
                             }
                             let flags = a[5];
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 DTFLAGS raw=0x{:08x} center={} vcenter={} wordbreak={} singleline={} calcrect={} noprefix={}",
@@ -375,7 +375,7 @@
                                 ),
                             );
                         }
-                        Err(error) => logl::log(
+                        Err(error) => logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 DT0 decode-failed esp=0x{:08x} error={}",
@@ -386,7 +386,7 @@
                 }
                 if WinCall::from_import(&import) == WinCall::LoadImageA {
                     let raw = read_guest_words(&memory, exit.registers.esp, 7)?;
-                    logl::log(
+                    logl::log!(
                         level::IMPORTANT,
                         format_args!(
                             "WC3 LoadImageA RAW esp=0x{:08x} ret=0x{:08x} module=0x{:08x} name=0x{:08x} type={} cx={} cy={} flags=0x{:08x}",
@@ -421,7 +421,7 @@
                         caption,
                         style: frame[4],
                     };
-                    logl::log(
+                    logl::log!(
                         level::IMPORTANT,
                         format_args!(
                             "WC3 MESSAGEBOXA OPEN pid={} tid={} owner=0x{:08x} text={:?} caption={:?} type=0x{:08x} buttons=[{}] topmost={} state=modal-blocked",
@@ -443,7 +443,7 @@
                     continue;
                 }
                 if WinCall::from_import(&import) == WinCall::Unsupported {
-                    logl::log(
+                    logl::log!(
                         level::IMPORTANT,
                         format_args!(
                             "WC3 LAUNCHER UNSUPPORTED pid={} tid={} module={} symbol={} esp=0x{:08x} eip=0x{:08x} stack[0..16 dwords]={:?}",
@@ -524,7 +524,7 @@
                     PersonalityAction::Return(value) => {
                         if WinCall::from_import(&import) == WinCall::TlsGetValue {
                             let frame = read_guest_words(&memory, exit.registers.esp, 2)?;
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 TLSGETVALUE pid={} tid={} slot={} value=0x{:08x} result=0x{:08x}",
@@ -534,7 +534,7 @@
                         }
                         if WinCall::from_import(&import) == WinCall::SetLastError {
                             let frame = read_guest_words(&memory, exit.registers.esp, 2)?;
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 SETLASTERROR pid={} tid={} value=0x{:08x}",
@@ -544,14 +544,14 @@
                         }
                         if let Some((frame, hdc, target)) = end_paint_input.as_ref() {
                             if value == 1 {
-                                logl::log(
+                                logl::log!(
                                     level::IMPORTANT,
                                     format_args!(
                                         "WC3 EndPaint hwnd=0x{:08x} ps=0x{:08x} hdc=0x{:08x} target={} retired=1",
                                         frame[1], frame[2], hdc, target
                                     ),
                                 );
-                                logl::log(
+                                logl::log!(
                                     level::IMPORTANT,
                                     format_args!(
                                         "WC3 paint lifecycle active_paints={} paint_hdc_0x{:08x}_live={}",
@@ -570,7 +570,7 @@
                                 None => "UNKNOWN".to_owned(),
                             };
                             let new_color = frame[2] & 0x00ff_ffff;
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 SetTextColor hdc=0x{:08x} target={} old=0x{:08x} new=0x{:08x} rgb=[{},{},{}]",
@@ -592,7 +592,7 @@
                                 None => "UNKNOWN".to_owned(),
                             };
                             let new_color = frame[2] & 0x00ff_ffff;
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 SetBkColor hdc=0x{:08x} target={} old=0x{:08x} new=0x{:08x} rgb=[{},{},{}]",
@@ -618,7 +618,7 @@
                                 2 => "OPAQUE",
                                 _ => "UNKNOWN",
                             };
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 SetBkMode hdc=0x{:08x} target={} old={} new={} old_name={} new_name={}",
@@ -633,7 +633,7 @@
                             if let Some((text_color, bk_color, bk_mode)) =
                                 session.launcher().xp.text_state(frame[1])
                             {
-                                logl::log(
+                                logl::log!(
                                     level::IMPORTANT,
                                     format_args!(
                                         "WC3 TEXT DC hdc=0x{:08x} text_color=0x{:08x} bk_color=0x{:08x} bk_mode={}",
@@ -648,7 +648,7 @@
                         if let Some((handle, Some(info), Some(stock), selected_in_dc)) =
                             delete_object_before
                         {
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 DeleteObject handle=0x{:08x} kind=BITMAP stock={} selected_in_dc={} bits_va=0x{:08x} bits_len={}",
@@ -659,7 +659,7 @@
                                     info.bits_len
                                 ),
                             );
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 DeleteObject complete handle=0x{:08x} bitmap_live={} palette_0x57437003_live={} stock_bitmap_live={}",
@@ -671,14 +671,14 @@
                             );
                         }
                         if let Some((hdc, Some(selected))) = delete_dc_selected {
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 DeleteDC hdc=0x{:08x} kind=MEMORY_DC selected_bitmap=0x{:08x}",
                                     hdc, selected
                                 ),
                             );
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 DeleteDC complete hdc=0x{:08x} remaining_bitmap_0x57437001={} remaining_stock_bitmap={} ",
@@ -699,7 +699,7 @@
                             let version = u16::from_le_bytes([header[0], header[1]]);
                             let entry0 = exact.get(..4).unwrap_or(&[]);
                             let entry255 = exact.get(255 * 4..256 * 4).unwrap_or(&[]);
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CreatePalette LOGPALETTE ptr=0x{:08x} version=0x{:04x} entries={} required_bytes={} allocation_bytes={} entry0={:?} entry255={:?} palette_sha256={} hpalette=0x{:08x}",
@@ -717,7 +717,7 @@
                             if let Some((stored_version, stored_entries)) =
                                 session.launcher().xp.palette_info(value)
                             {
-                                logl::log(
+                                logl::log!(
                                     level::INFO,
                                     format_args!(
                                         "wc3: logical palette admitted version=0x{:04x} entries={}",
@@ -752,7 +752,7 @@
                                             .ok_or_else(|| {
                                                 "palette index outside returned table".to_owned()
                                             })?;
-                                        logl::log(
+                                        logl::log!(
                                             level::IMPORTANT,
                                             format_args!(
                                                 "WC3 GetDIBColorTable hdc=0x{:08x} bitmap=0x{:08x} start={} requested={} copied={} output=0x{:08x} entry0={:?} entry255={:?} palette_sha256={} top_left_index={} top_left_rgb=[{},{},{}]",
@@ -778,7 +778,7 @@
                         if WinCall::from_import(&import) == WinCall::SelectObject {
                             let frame = read_guest_words(&memory, exit.registers.esp, 3)?;
                             if let Some(info) = session.launcher().xp.bitmap_info(frame[2]) {
-                                logl::log(
+                                logl::log!(
                                     level::IMPORTANT,
                                     format_args!(
                                         "WC3 SelectObject hdc=0x{:08x} new=0x{:08x} old=0x{:08x} new_type=BITMAP width={} height={} bpp={} bits_va=0x{:08x}",
@@ -808,7 +808,7 @@
                             if let Some((selected, width, height, bpp)) =
                                 session.launcher().xp.compatible_dc_info(value)
                             {
-                                logl::log(
+                                logl::log!(
                                     level::IMPORTANT,
                                     format_args!(
                                         "WC3 CreateCompatibleDC source=0x{:08x} source_kind={} source_hwnd={} compatibility=DISPLAY hdc=0x{:08x} target=MEMORY selected_bitmap=0x{:08x} selected_bitmap_shape={}x{}x{}",
@@ -836,7 +836,7 @@
                             };
                             let entries =
                                 session.launcher().xp.palette_entries(frame[2]).unwrap_or(0);
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 SelectPalette hdc=0x{:08x} target={} new=0x{:08x} old=0x{:08x} force_background={} entries={}",
@@ -852,7 +852,7 @@
                                 session.launcher().xp.selected_palette(0x5743_7004),
                                 session.launcher().xp.selected_bitmap(0x5743_7008),
                             ) {
-                                logl::log(
+                                logl::log!(
                                     level::IMPORTANT,
                                     format_args!(
                                         "WC3 palette state paint_hdc=0x57437004 selected_palette=0x{:08x} memory_hdc=0x57437008 selected_bitmap=0x{:08x}",
@@ -872,7 +872,7 @@
                             let entries = palette
                                 .and_then(|handle| session.launcher().xp.palette_entries(handle))
                                 .unwrap_or(0);
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 RealizePalette hdc=0x{:08x} target={} palette={} entries={} first_realization={} mapped={}",
@@ -894,7 +894,7 @@
                                     .read(info.bits_va, &mut first)
                                     .map_err(str::to_owned)?;
                                 let rgba = &info.rgba[..4];
-                                logl::log(
+                                logl::log!(
                                     level::IMPORTANT,
                                     format_args!(
                                         "WC3 GetObjectA BITMAP hbitmap=0x{:08x} buffer=0x{:08x} bytes={} width={} height={} width_bytes={} planes={} bpp={} bits_va=0x{:08x} bits_len={} first_index={} first_visual_rgba=[{},{},{},{}]",
@@ -946,7 +946,7 @@
                         {
                             Ok(decoded) => decoded,
                             Err(error) => {
-                                logl::log(
+                                logl::log!(
                                     level::IMPORTANT,
                                     format_args!(
                                         "WC3 BITMAP DECODE_REJECTED resource={} width={} height={} planes={} bpp={} compression={} dib_bytes={} decoder_error={}",
@@ -978,7 +978,7 @@
                             .get(..4)
                             .ok_or_else(|| "decoded bitmap has no top-left pixel".to_owned())?;
                         let digest = Sha256::digest(&info.rgba);
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 BITMAP resource={} width={} height={} planes={} bpp={} compression={} dib_bytes={} rgba_bytes={} rgba_top_left=[{},{},{},{}] rgba_sha256={} hbitmap=0x{:08x}",
@@ -1013,7 +1013,7 @@
                                 frame.publish(Damage::full(request.width, request.height))
                             })
                             .map_err(|error| format!("publish WC3 BitBlt: {error:?}"))?;
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 BitBlt SRCCOPY dst_hdc=0x{:08x} dst_hwnd=0x{:08x} dst=[{},{} {}x{}] src_hdc=0x{:08x} src_bitmap=0x{:08x} src=[0,0] rop=0x00cc0020 bits_va=0x{:08x} bpp=8 bottom_up={} rgba_bytes={} rgba_sha256={}",
@@ -1031,7 +1031,7 @@
                                 hex_digest(&digest)
                             ),
                         );
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 UI4 BLIT hwnd=0x{:08x} width={} height={} source_bitmap=0x{:08x} published=1",
@@ -1094,7 +1094,7 @@
                                 }
                             }
                         }
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 UI4 TEXT hwnd=0x{:08x} hdc=0x{:08x} rect=[{},{},{},{}] height={} published=1",
@@ -1111,7 +1111,7 @@
                     }
                     PersonalityAction::Session(SessionRequest::CreateProcess(request)) => {
                         let frame = request.frame;
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 BLUEPRINT FRONTIER: CreateProcessA call #{} esp=0x{:08x} ret=0x{:08x} command_line=0x{:08x} startup=0x{:08x} process_info=0x{:08x}",
@@ -1273,7 +1273,7 @@
                             },
                             execution: ChildExecutionState::Loader,
                         });
-                        logl::log(
+                        logl::log!(
                             level::INFO,
                             format_args!(
                                 "wc3: CreateProcessA succeeded pid={} tid={} process_handle=0x{:08x} thread_handle=0x{:08x}",
@@ -1291,7 +1291,7 @@
                                 memory
                                     .write(request.exit_code_pointer, &exit_code.to_le_bytes())
                                     .map_err(str::to_owned)?;
-                                logl::log(
+                                logl::log!(
                                     level::IMPORTANT,
                                     format_args!(
                                         "WC3 GETEXITCODEPROCESS pid={} tid={} handle=0x{:08x} target_pid={} exit_code=0x{:08x} result=1",
@@ -1310,7 +1310,7 @@
                                     .ok_or_else(|| "GetExitCodeProcess caller missing".to_owned())?
                                     .xp
                                     .set_last_error_for_thread(active_key.tid, 6);
-                                logl::log(
+                                logl::log!(
                                     level::IMPORTANT,
                                     format_args!(
                                         "WC3 GETEXITCODEPROCESS pid={} tid={} handle=0x{:08x} target_pid=- exit_code=- result=0 error=6",
@@ -1375,7 +1375,7 @@
                                     &mut contexts,
                                     &mut wait_deadlines,
                                 )?;
-                                logl::log(
+                                logl::log!(
                                     level::IMPORTANT,
                                     format_args!(
                                         "WC3 SETEVENT pid={} tid={} handle=0x{:08x} manual_reset={} was_signaled={} waiters_woken={} result=1",
@@ -1395,7 +1395,7 @@
                                     .ok_or_else(|| "SetEvent caller missing".to_owned())?
                                     .xp
                                     .set_last_error_for_thread(active_key.tid, 6);
-                                logl::log(
+                                logl::log!(
                                     level::IMPORTANT,
                                     format_args!(
                                         "WC3 SETEVENT pid={} tid={} handle=0x{:08x} result=0 error=6",
@@ -1411,7 +1411,7 @@
                             .create_window(request.clone())
                             .map_err(str::to_owned)?;
                         let window = session.windows.get(&hwnd).ok_or("created window missing")?;
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CreateWindowExA hwnd=0x{:08x} owner=pid{}/tid{} class={:?} title={:?} wndproc=0x{:08x} geometry={},{} {}x{} style=0x{:08x} ex_style=0x{:08x} visible={} ui4_frame=0",
@@ -1454,7 +1454,7 @@
                                     .map_err(|error| format!("resize WC3 UI4 window: {error:?}"))?;
                             }
                         }
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 SETWINDOWPOS hwnd=0x{:08x} old={},{} {}x{} applied={},{} {}x{} move_changed={} size_changed={} insert_after={} ui4_zorder_action=none ui4_position_changed={} ui4_size_changed={} ui4_visible={} win32_visible={} result=TRUE",
@@ -1537,7 +1537,7 @@
                         show,
                     }) => {
                         let result = session.show_window(hwnd, show).map_err(str::to_owned)?;
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 SHOWWINDOW hwnd=0x{:08x} requested_visible={} ui4_visible={} presentation_action=ignored",
@@ -1552,7 +1552,7 @@
                         let frame_present = frames.contains_key(&hwnd);
                         match session.destroy_window(pid, hwnd) {
                             Ok(result) => {
-                                logl::log(
+                                logl::log!(
                                     level::IMPORTANT,
                                     format_args!(
                                         "WC3 DESTROYWINDOW pid={} tid={} hwnd=0x{:08x} frame_present={} focused={} result=1",
@@ -1571,7 +1571,7 @@
                                     .ok_or_else(|| "DestroyWindow caller missing".to_owned())?
                                     .xp
                                     .set_last_error_for_thread(active_key.tid, 1400);
-                                logl::log(
+                                logl::log!(
                                     level::IMPORTANT,
                                     format_args!(
                                         "WC3 DESTROYWINDOW pid={} tid={} hwnd=0x{:08x} frame_present={} focused=- result=0 error=1400",
@@ -1608,14 +1608,14 @@
                             .xp
                             .begin_paint(hwnd, paint_struct, width, height, &mut memory)
                             .map_err(str::to_owned)?;
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 BeginPaint hwnd=0x{:08x} ps=0x{:08x} hdc=0x{:08x} target=WINDOW client={}x{} rcPaint=[0,0,{},{}] erase=0",
                                 hwnd, paint_struct, hdc, width, height, width, height
                             ),
                         );
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 PAINT HANDLES hwnd=0x{:08x} hdc=0x{:08x} distinct={}",
@@ -1657,7 +1657,7 @@
                             let description = session.describe_handle(request.key.pid, handle);
                             let state = session.event_state(request.key.pid, handle);
                             if !repeated_wait_timeout {
-                                logl::log(
+                                logl::log!(
                                     level::IMPORTANT,
                                     format_args!(
                                         "WC3 WaitForSingleObject pid={} tid={} ret=0x{:08x} handle=0x{:08x} timeout={} object={}",
@@ -1670,7 +1670,7 @@
                                     ),
                                 );
                                 if let Some((manual_reset, signaled)) = state {
-                                    logl::log(
+                                    logl::log!(
                                         level::IMPORTANT,
                                         format_args!(
                                             "WC3 WaitForSingleObject state manual_reset={} signaled={}",
@@ -1690,7 +1690,7 @@
                                     .map(|(manual_reset, signaled)| signaled && !manual_reset)
                                     .unwrap_or(false);
                                 if wait_result == WAIT_OBJECT_0 {
-                                    logl::log(
+                                    logl::log!(
                                         level::IMPORTANT,
                                         format_args!(
                                             "WC3 WAIT SIGNALED pid={} tid={} handle=0x{:08x} auto_reset_consumed={} result=0x{:08x}",
@@ -1702,7 +1702,7 @@
                                         ),
                                     );
                                 } else if wait_result == WAIT_TIMEOUT && !repeated_wait_timeout {
-                                    logl::log(
+                                    logl::log!(
                                         level::IMPORTANT,
                                         format_args!(
                                             "WC3 WAIT TIMEOUT pid={} tid={} handle=0x{:08x} elapsed_ms=0 result=0x{:08x}",
@@ -1710,7 +1710,7 @@
                                         ),
                                     );
                                 } else if wait_result == WAIT_FAILED {
-                                    logl::log(
+                                    logl::log!(
                                         level::IMPORTANT,
                                         format_args!(
                                             "WC3 WAIT FAILED pid={} tid={} handle=0x{:08x} result=0x{:08x}",
@@ -1738,7 +1738,7 @@
                                 continue;
                             }
                             if !repeated_wait_timeout {
-                                logl::log(
+                                logl::log!(
                                     level::IMPORTANT,
                                     format_args!(
                                         "WC3 WAIT BLOCK pid={} tid={} handle=0x{:08x} timeout_ms={}",
@@ -1747,7 +1747,7 @@
                                 );
                             }
                         } else {
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 RAW #90 WaitForMultipleObjects esp=0x{:08x} ret=0x{:08x} count={} handles_ptr=0x{:08x} wait_all={} timeout=0x{:08x}",
@@ -1760,7 +1760,7 @@
                                 ),
                             );
                             if request.handles_pointer != 0 && request.count <= 1024 {
-                                logl::log(
+                                logl::log!(
                                     level::IMPORTANT,
                                     format_args!(
                                         "WC3 RAW #90 handles handle0=0x{:08x} handle1=0x{:08x}",
@@ -1768,7 +1768,7 @@
                                     ),
                                 );
                             }
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 WAIT MULTIPLE pid={} tid={} call=#{} ret=0x{:08x} count={} handles_ptr=0x{:08x} handle0=0x{:08x} handle1=0x{:08x} wait_all={} timeout=0x{:08x}",
@@ -1801,7 +1801,7 @@
                                 ),
                             );
                             if request.count == 0 || request.count > 2 || request.wait_all > 1 {
-                                logl::log(
+                                logl::log!(
                                     level::IMPORTANT,
                                     format_args!(
                                         "WC3 WAIT FRONTIER reason=unsupported-shape count={} wait_all={}",
@@ -1815,7 +1815,7 @@
                             {
                                 let index = wait_result.saturating_sub(WAIT_OBJECT_0);
                                 if wait_result >= WAIT_OBJECT_0 && index < request.count {
-                                    logl::log(
+                                    logl::log!(
                                         level::IMPORTANT,
                                         format_args!(
                                             "WC3 WAIT SIGNALED pid={} tid={} handle0=0x{:08x} handle1=0x{:08x} count={} wait_all={} index={} result=0x{:08x}",
@@ -1830,7 +1830,7 @@
                                         ),
                                     );
                                 } else if wait_result == WAIT_TIMEOUT {
-                                    logl::log(
+                                    logl::log!(
                                         level::IMPORTANT,
                                         format_args!(
                                             "WC3 WAIT TIMEOUT pid={} tid={} count={} wait_all={} elapsed_ms=0 result=0x{:08x}",
@@ -1842,7 +1842,7 @@
                                         ),
                                     );
                                 } else {
-                                    logl::log(
+                                    logl::log!(
                                         level::IMPORTANT,
                                         format_args!(
                                             "WC3 WAIT FAILED pid={} tid={} count={} wait_all={} result=0x{:08x}",
@@ -1862,7 +1862,7 @@
                                     .map_err(|error| error.to_string())?;
                                 continue;
                             }
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 WAIT BLOCK pid={} tid={} handle0=0x{:08x} handle1=0x{:08x} count={} wait_all={} timeout_ms={}",
@@ -1914,7 +1914,7 @@
                                     .preload_war3(&listing)
                                     .await
                                     .map_err(|error| {
-                                        logl::log(
+                                        logl::log!(
                                             level::ERROR,
                                             format_args!(
                                     "WC3 RAM ASSET FAILED asset=\"war3.mpq\" error={error:?}"
@@ -1924,7 +1924,7 @@
                                     })?;
                             if loaded {
                                 let asset = session.assets.war3_mpq().expect("resident MPQ");
-                                logl::log(
+                                logl::log!(
                                     level::IMPORTANT,
                                     format_args!(
                                         "WC3 RAM ASSET READY asset=\"war3.mpq\" stored=\"{}\" bytes={} backing=host-ram guest_mapped=0 copies=1",
@@ -1960,7 +1960,7 @@
                                 .ok()
                                 == Some(bytes.len())
                             {
-                                logl::log(
+                                logl::log!(
                                     level::IMPORTANT,
                                     format_args!(
                                         "WC3 CHILD HOTLOOP CODE start=0x{WAR3_HOTLOOP_START:08x} bytes=\"{}\"",
@@ -1970,7 +1970,7 @@
                             }
                             map_child_thunks(&child.address_space, &surface.thunks)?;
                             map_child_controls(&child.address_space)?;
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD PROVIDERS READY pid={} modules={} imports={} named={} ordinal={} thunk_base=0x{:08x} thunk_bytes={} patched_iat={}",
@@ -1996,7 +1996,7 @@
                                 )
                                 .map_err(str::to_owned)?;
                             child.provider_thunk_bytes = initial_provider_thunk_bytes;
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD EXECUTION ROUTER READY pid={} provider_imports={} provider_thunk_bytes={} control_base=0x{:08x} provider_namespace=child memory_space=child",
@@ -2085,7 +2085,7 @@
                                             | Permissions::EXECUTE,
                                     )
                                     .map_err(|error| error.to_string())?;
-                                logl::log(
+                                logl::log!(
                                     level::IMPORTANT,
                                     format_args!(
                                         "WC3 CHILD PROVIDER THUNK GROW pid={} old_bytes={} new_bytes={}",
@@ -2122,7 +2122,7 @@
                                     )
                                     .map_err(|error| error.to_string())?;
                             }
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD NATIVE IMPORTS READY pid={} module=\"{}\" external_modules={} external_imports={} patched_iat={} provider_thunks_total={} thunk_bytes={}",
@@ -2147,7 +2147,7 @@
                                     matches!(export.target, pe32::ExportTarget::Forwarder(_))
                                 })
                                 .count();
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD NATIVE EXPORTS module=\"{}\" exports={} named={} ordinal_only={} forwarders={}",
@@ -2217,7 +2217,7 @@
                                 }
                                 resolved += 1;
                             }
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD NATIVE BIND parent=\"War3.exe\" module=\"{}\" imports={} resolved={} named={} ordinal={} forwarded=0",
@@ -2231,7 +2231,7 @@
                             if resolved != parent_imports.len() {
                                 return Err("incomplete War3 Storm binding".into());
                             }
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD NATIVE MAP pid={} module=\"{}\" preferred_base=0x{:08x} mapped_base=0x{:08x} size=0x{:08x} relocation_delta=0 relocations_applied=0",
@@ -2272,7 +2272,7 @@
                                 .last()
                                 .ok_or_else(|| "stored Storm missing".to_owned())?
                                 .initialized;
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD NATIVE MODULE READY pid={} module=\"{}\" base=0x{:08x} imports_bound={} parent_imports_resolved={} initialized={}",
@@ -2290,7 +2290,7 @@
                                 .native_requests
                                 .get(child.loader.next_native)
                                 .ok_or_else(|| "no unresolved native child module".to_owned())?;
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD NATIVE ADVANCE pid={} from=\"{}\" to=\"{}\"",
@@ -2319,7 +2319,7 @@
                             if mss_written != mss_image.image.len() {
                                 return Err("short Mss image write".into());
                             }
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD NATIVE MAP pid={} module=\"{}\" preferred_base=0x{:08x} mapped_base=0x{:08x} size=0x{:08x} relocation_delta=0 relocations_applied=0",
@@ -2342,7 +2342,7 @@
                                     matches!(export.target, pe32::ExportTarget::Forwarder(_))
                                 })
                                 .count();
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD NATIVE EXPORTS module=\"{}\" exports={} named={} ordinal_only={} forwarders={}",
@@ -2400,7 +2400,7 @@
                                 }
                                 mss_resolved += 1;
                             }
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD NATIVE BIND parent=\"War3.exe\" module=\"{}\" imports={} resolved={} named={} ordinal=0 forwarded=0",
@@ -2453,7 +2453,7 @@
                                             | Permissions::EXECUTE,
                                     )
                                     .map_err(|error| error.to_string())?;
-                                logl::log(
+                                logl::log!(
                                     level::IMPORTANT,
                                     format_args!(
                                         "WC3 CHILD PROVIDER THUNK GROW pid={} old_bytes={} new_bytes={}",
@@ -2503,7 +2503,7 @@
                                 .ok_or_else(|| "child process missing".to_owned())?
                                 .xp
                                 .provider_import_count();
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD NATIVE IMPORTS READY pid={} module=\"{}\" external_modules={} external_imports={} patched_iat={} provider_thunks_total={} thunk_bytes={}",
@@ -2535,7 +2535,7 @@
                                         (format!("#{value}"), "ordinal")
                                     }
                                 };
-                                logl::log(
+                                logl::log!(
                                     level::IMPORTANT,
                                     format_args!(
                                         "WC3 CHILD WINMM IMPORT index={} symbol=\"{}\" iat_rva=0x{:08x} kind={}",
@@ -2544,7 +2544,7 @@
                                 );
                                 winmm_total += 1;
                             }
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD WINMM SURFACE module=\"Mss32.dll\" imports={} named={} ordinal={}",
@@ -2577,7 +2577,7 @@
                                 .last()
                                 .ok_or_else(|| "stored Mss missing".to_owned())?
                                 .initialized;
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD NATIVE MODULE READY pid={} module=\"{}\" base=0x{:08x} imports_bound={} parent_imports_resolved={} initialized={}",
@@ -2589,7 +2589,7 @@
                                     initialized as u8
                                 ),
                             );
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD NATIVE LOAD COMPLETE pid={} modules={} initialized=0",
@@ -2616,7 +2616,7 @@
                                 .image_base
                                 .checked_add(storm.image.entry_rva)
                                 .ok_or_else(|| "Storm entry overflow".to_owned())?;
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD EXECUTION STATE pid={} tid={} state=dll-init-ready module=\"{}\" context_created=0",
@@ -2643,7 +2643,7 @@
                             {
                                 return Err("child primary context insertion mismatch".into());
                             }
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD CONTEXT READY pid={} tid={} state=dll-init-ready module=\"{}\" context_created=1 started=0 scheduled=0 eip=0x{:08x} esp=0x{:08x} teb=0x{:08x} stack_base=0x{:08x} stack_top=0x{:08x} return_va=0x{:08x}",
@@ -2658,7 +2658,7 @@
                                     thunk32::CHILD_DLL_RETURN_ADDRESS
                                 ),
                             );
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD DLL FRAME pid={} tid={} module=\"{}\" return=0x{:08x} hinst=0x{:08x} reason=1 reserved=0x{:08x}",
@@ -2670,14 +2670,14 @@
                                     reserved
                                 ),
                             );
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD SCHEDULER READY pid={} tid={} context_identity=thread-key runnable_selection=process-aware wait_resume=process-aware control_routing=process-aware context_created=1",
                                     child.pid, child.tid
                                 ),
                             );
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD DLL INIT FRONTIER pid={} tid={} module=\"{}\" entry_va=0x{:08x} reason=context-ready-not-scheduled",
@@ -2723,7 +2723,7 @@
                                     "child runnable queue entry missing or duplicated".into()
                                 );
                             }
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD DLL INIT SCHEDULE pid={} tid={} module=\"{}\" state=dll-init-running eip=0x{:08x} esp=0x{:08x}",
@@ -2738,7 +2738,7 @@
                                 return Err("ordinary scheduler selected non-child context".into());
                             }
                             active = selected;
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD SCHEDULED pid={} tid={} module=\"{}\" started=0",
@@ -2806,7 +2806,7 @@
                         if let Some(presentation) = session.take_window_presentation() {
                             present_window(presentation, &mut frames, window_rgba, &session)?;
                         }
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 PROCESS EXIT pid={} exit_code=0x{:08x} \\
@@ -2829,7 +2829,7 @@
                     draw_text_input.filter(|(frame, _)| frame[5] == 0x0000_0411)
                 {
                     let output = read_guest_words(&memory, frame[4], 4)?;
-                    logl::log(
+                    logl::log!(
                         level::IMPORTANT,
                         format_args!(
                             "WC3 DrawTextA CALCRECT hdc=0x{:08x} count={} format=0x{:08x} input=[{},{},{},{}] output=[{},{},{},{}] height={}",
@@ -2847,7 +2847,7 @@
                             output[3].wrapping_sub(output[1])
                         ),
                     );
-                    logl::log(
+                    logl::log!(
                         level::IMPORTANT,
                         format_args!(
                             "WC3 DrawTextA placement client=500x400 measured={}x{} expected_final_rect=[47,376,453,392]",
@@ -2881,7 +2881,7 @@
                         hwnd: call.arguments[0],
                         message: call.arguments[1],
                     });
-                    logl::log(
+                    logl::log!(
                         level::IMPORTANT,
                         format_args!(
                             "WC3 CALL_GUEST tid={} reason=UpdateWindow/WM_PAINT hwnd=0x{:08x} wndproc=0x{:08x} message=0x{:08x} wparam=0x{:08x} lparam=0x{:08x}",
@@ -2895,7 +2895,7 @@
                     );
                     if let Some(window) = session.windows.get(&call.arguments[0]) {
                         if call.arguments[0] == WINDOW_HANDLE_BASE && call.arguments[1] == 0x000f {
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 UI4 ROOT WM_PAINT ENTER hwnd=0x{:08x}",
@@ -2903,7 +2903,7 @@
                                 ),
                             );
                         }
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!("WC3 UI4 PAINT BEGIN hwnd=0x{:08x}", call.arguments[0]),
                         );

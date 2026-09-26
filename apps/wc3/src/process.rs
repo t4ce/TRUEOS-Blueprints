@@ -12,7 +12,7 @@ use std::{
 #[cfg(target_os = "trueos")]
 use trueos::clock;
 use trueos::clock::UtcDateTime;
-use trueos::logl::{self, level};
+use crate::logl::{self, level};
 use trueos::vgpu::{Capabilities, Device, Queue, QueueClass};
 
 use crate::{

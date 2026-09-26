@@ -193,7 +193,7 @@
                                     })?,
                                 )
                             };
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD GETVOLUMEINFORMATIONA CALL pid={} tid={} root={:?} volume_name=0x{:08x} volume_cap={} serial=0x{:08x} max_component=0x{:08x} fs_flags=0x{:08x} fs_name=0x{:08x} fs_name_cap={} caller_ret=0x{:08x}",
@@ -245,7 +245,7 @@
                                     .map_err(|error| format!("GetDiskFreeSpaceA root: {error}"))?,
                                 )
                             };
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD GETDISKFREESPACEA CALL pid={} tid={} root={:?} sectors_per_cluster=0x{:08x} bytes_per_sector=0x{:08x} free_clusters=0x{:08x} total_clusters=0x{:08x} caller_ret=0x{:08x}",
@@ -281,7 +281,7 @@
                                 )
                                 .map_err(|error| format!("FindFirstFileA pattern: {error}"))?
                             };
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD FINDFIRSTFILEA CALL pid={} tid={} during=\"{}\" pattern={:?} find_data=0x{:08x} caller_ret=0x{:08x}",
@@ -328,7 +328,7 @@
                                 match frame.begin_gpu_frame() {
                                     Ok(()) => {
                                         if busy_polls != 0 {
-                                            logl::log(
+                                            logl::log!(
                                                 level::IMPORTANT,
                                                 format_args!(
                                                     "WC3 GL UI4 PRODUCER RETIRED hwnd=0x{hwnd:08x} polls={busy_polls} action=resume-swap"
@@ -340,7 +340,7 @@
                                     Err(ui4_scene::Error::Busy) => {
                                         busy_polls = busy_polls.saturating_add(1);
                                         if busy_polls == 1 || busy_polls % 1024 == 0 {
-                                            logl::log(
+                                            logl::log!(
                                                 level::IMPORTANT,
                                                 format_args!(
                                                     "WC3 GL UI4 PRODUCER BUSY hwnd=0x{hwnd:08x} polls={busy_polls} action=wait-surflive-retirement"
@@ -420,7 +420,7 @@
                                             request.share_mode,
                                         )
                                         .map_err(str::to_owned)?;
-                                    logl::log(
+                                    logl::log!(
                                         level::IMPORTANT,
                                         format_args!(
                                             "WC3 CHILD CREATEFILE TRUEOSFS pid={} tid={} win_path={:?} mount=\"C:\\Warcraft III\" trueos_dir=\"/common/Warcraft III\" stored={:?} trueos_path={:?} bytes={} disposition=OPEN_EXISTING result=0x{:08x} last_error=0",
@@ -435,7 +435,7 @@
                                         .ok_or_else(|| "child process missing".to_owned())?
                                         .xp
                                         .set_last_error_for_thread(active_tid, ERROR_FILE_NOT_FOUND);
-                                    logl::log(
+                                    logl::log!(
                                         level::IMPORTANT,
                                         format_args!(
                                             "WC3 CHILD CREATEFILE TRUEOSFS pid={} tid={} win_path={:?} mount=\"C:\\Warcraft III\" trueos_dir=\"/common/Warcraft III\" stored=None disposition=OPEN_EXISTING result=0xffffffff last_error={}",
@@ -470,7 +470,7 @@
                                         .map_err(|error| format!("GL publish UI4 frame: {error:?}"))?;
                                 }
                                 if operation == child_loader::ProviderOp::GetSystemInfo {
-                                    logl::log(
+                                    logl::log!(
                                         level::IMPORTANT,
                                         format_args!(
                                             "WC3 CHILD PROVIDER RETURN pid={} tid={} module=\"{}\" symbol=\"GetSystemInfo\" eax=0x{:08x} cleanup=4-by-thunk",
@@ -489,7 +489,7 @@
                                             96,
                                         )?;
                                         child.get_system_info_consumer_logged = true;
-                                        logl::log(
+                                        logl::log!(
                                             level::IMPORTANT,
                                             format_args!(
                                                 "WC3 CHILD GETSYSTEMINFO CONSUMER output=0x{:08x} return=0x00402a5d bytes=\"{}\"",
@@ -500,7 +500,7 @@
                                     }
                                 }
                                 if let Some(buffer) = global_memory_status {
-                                    logl::log(
+                                    logl::log!(
                                         level::IMPORTANT,
                                         format_args!(
                                             "WC3 CHILD GLOBALMEMORYSTATUS pid={} tid={} buffer=0x{:08x} length=32 memory_load={} total_phys={} avail_phys={} total_pagefile={} avail_pagefile={} total_virtual={} avail_virtual={} cleanup={}-by-thunk",
@@ -524,7 +524,7 @@
                                         target,
                                         1,
                                     )?[0];
-                                    logl::log(
+                                    logl::log!(
                                         level::IMPORTANT,
                                         format_args!(
                                             "WC3 CHILD INTERLOCKEDEXCHANGE pid={} tid={} target=0x{:08x} old=0x{:08x} value=0x{:08x} after=0x{:08x} eax=0x{:08x} cleanup=8-by-thunk",
@@ -556,7 +556,7 @@
                                         ),
                                     };
                                     let cleanup = operation.stack_cleanup_bytes();
-                                    logl::log(
+                                    logl::log!(
                                         level::IMPORTANT,
                                         format_args!(
                                             "WC3 CHILD {} pid={} tid={} target=0x{:08x} old=0x{:08x} after=0x{:08x} eax=0x{:08x} cleanup={}-by-thunk",
@@ -565,7 +565,7 @@
                                     );
                                 }
                                 if let Some((destination, source, count)) = crt_memmove {
-                                    logl::log(
+                                    logl::log!(
                                         level::IMPORTANT,
                                         format_args!(
                                             "WC3 CHILD CRT MEMMOVE pid={} tid={} destination=0x{:08x} source=0x{:08x} count={} overlap={} return_eax=0x{:08x} cleanup=0-by-thunk",
@@ -585,7 +585,7 @@
                                         .ok_or_else(|| "child process missing".to_owned())?
                                         .xp
                                         .last_error();
-                                    logl::log(
+                                    logl::log!(
                                         level::IMPORTANT,
                                         format_args!(
                                             "WC3 CHILD SETFILEATTRIBUTESA path={path:?} attributes=0x{attributes:08x} exists={} result={} last_error={}",
@@ -601,7 +601,7 @@
                                         wc3::process::DRIVE_NO_ROOT_DIR => "DRIVE_NO_ROOT_DIR",
                                         _ => "UNKNOWN",
                                     };
-                                    logl::log(
+                                    logl::log!(
                                         level::IMPORTANT,
                                         format_args!(
                                             "WC3 CHILD GETDRIVETYPEA pid={} tid={} root={:?} result={} kind={} cleanup=4-by-thunk",
@@ -629,7 +629,7 @@
                                     } else {
                                         "ATOL"
                                     };
-                                    logl::log(
+                                    logl::log!(
                                         level::IMPORTANT,
                                         format_args!(
                                             "WC3 CHILD CRT {} pid={} tid={} input={:?} result={} eax=0x{:08x} overflow={} cleanup=0-by-thunk",
@@ -644,7 +644,7 @@
                                     );
                                 }
                                 if let Some(seed) = crt_srand {
-                                    logl::log(
+                                    logl::log!(
                                         level::IMPORTANT,
                                         format_args!(
                                             "WC3 CHILD CRT SRAND pid={} tid={} seed=0x{:08x} cleanup=0-by-thunk",
@@ -668,7 +668,7 @@
                                     );
                                 }
                                 if let Some(root) = get_volume_information {
-                                    logl::log(
+                                    logl::log!(
                                         level::IMPORTANT,
                                         format_args!(
                                             "WC3 CHILD GETVOLUMEINFORMATIONA RESULT root={:?} volume={:?} serial=0x{:08x} max_component={} fs_flags=0x{:08x} fs={:?} result={} cleanup=32-by-thunk",
@@ -684,7 +684,7 @@
                                 }
                                 if let Some(root) = get_disk_free_space {
                                     let geometry = wc3::process::XP_C_DISK_GEOMETRY;
-                                    logl::log(
+                                    logl::log!(
                                         level::IMPORTANT,
                                         format_args!(
                                             "WC3 CHILD GETDISKFREESPACEA RESULT root={:?} sectors_per_cluster={} bytes_per_sector={} free_clusters={} total_clusters={} capacity_bytes={} result={} cleanup=20-by-thunk",
@@ -705,7 +705,7 @@
                                         .xp
                                         .thread_library_calls_disabled(module)
                                         .unwrap_or(false);
-                                    logl::log(
+                                    logl::log!(
                                         level::IMPORTANT,
                                         format_args!(
                                             "WC3 CHILD DISABLETHREADLIBRARYCALLS pid={} tid={} during={:?} module=0x{:08x} was_disabled={} now_disabled={} result={}",
@@ -726,7 +726,7 @@
                                         unreachable!("process-memory frame has six words")
                                     };
                                     match operation {
-                                        child_loader::ProviderOp::ReadProcessMemory => logl::log(
+                                        child_loader::ProviderOp::ReadProcessMemory => logl::log!(
                                             level::IMPORTANT,
                                             format_args!(
                                                 "WC3 CHILD READPROCESSMEMORY pid={} tid={} process=0x{:08x} source=0x{:08x} destination=0x{:08x} size={} bytes_read=0x{:08x} result={}",
@@ -740,7 +740,7 @@
                                                 result,
                                             ),
                                         ),
-                                        child_loader::ProviderOp::WriteProcessMemory => logl::log(
+                                        child_loader::ProviderOp::WriteProcessMemory => logl::log!(
                                             level::IMPORTANT,
                                             format_args!(
                                                 "WC3 CHILD WRITEPROCESSMEMORY pid={} tid={} process=0x{:08x} destination=0x{:08x} source=0x{:08x} size={} bytes_written=0x{:08x} result={}",
@@ -788,7 +788,7 @@
                                                 256,
                                             )?)
                                         };
-                                        logl::log(
+                                        logl::log!(
                                             level::IMPORTANT,
                                             format_args!(
                                                 "WC3 CHILD REGISTERCLASSA RESULT pid={} tid={} class={:?} style=0x{:08x} wndproc=0x{:08x} cls_extra={} wnd_extra={} instance=0x{:08x} icon=0x{:08x} cursor=0x{:08x} background=0x{:08x} menu={:?} atom={} result=success cleanup=4-by-thunk",
@@ -836,7 +836,7 @@
                                                 256,
                                             )?)
                                         };
-                                        logl::log(
+                                        logl::log!(
                                             level::IMPORTANT,
                                             format_args!(
                                                 "WC3 CHILD REGISTERCLASSEXA pid={} tid={} cb_size={} class={:?} style=0x{:08x} wndproc=0x{:08x} instance=0x{:08x} icon=0x{:08x} cursor=0x{:08x} background=0x{:08x} menu={:?} icon_sm=0x{:08x} atom={} result=success cleanup=4-by-thunk",
@@ -861,7 +861,7 @@
                                             .process(active_pid)
                                             .and_then(|process| process.xp.user_image_cursor_result(result))
                                             .ok_or_else(|| "LoadCursorA result handle missing".to_owned())?;
-                                        logl::log(
+                                        logl::log!(
                                             level::IMPORTANT,
                                             format_args!(
                                                 "WC3 CHILD LOADCURSORA RESULT pid={} tid={} module={:?} name={:?} selected={}x{} cursor_resource_id={} hotspot={},{} resource_bytes={} handle=0x{:08x} shared={} result=success cleanup=8-by-thunk",
@@ -893,7 +893,7 @@
                                             .process(active_pid)
                                             .and_then(|process| process.xp.user_image_load_result(result))
                                             .ok_or_else(|| "LoadImageA result handle missing".to_owned())?;
-                                        logl::log(
+                                        logl::log!(
                                             level::IMPORTANT,
                                             format_args!(
                                                 "WC3 CHILD LOADIMAGEA RESULT pid={} tid={} module={:?} name={:?} type=IMAGE_ICON requested=default selected={}x{} image_resource_id={} handle=0x{:08x} result=success cleanup=24-by-thunk",
@@ -922,7 +922,7 @@
                                         let references_before = references_after
                                             .checked_add(1)
                                             .expect("successful D3D8 Release has a prior reference");
-                                        logl::log(
+                                        logl::log!(
                                             level::IMPORTANT,
                                             format_args!(
                                                 "WC3 CHILD D3D8 RELEASE pid={} tid={} this=0x{:08x} references_before={} references_after={} result={} caller_ret=0x{:08x} cleanup=4-by-thunk",
@@ -945,7 +945,7 @@
                                         else {
                                             unreachable!("D3D8 GetAdapterIdentifier frame has five words")
                                         };
-                                        logl::log(
+                                        logl::log!(
                                             level::IMPORTANT,
                                             format_args!(
                                                 "WC3 CHILD D3D8 GETADAPTERIDENTIFIER pid={} tid={} this=0x{:08x} adapter={} flags=0x{:08x} output=0x{:08x} vendor=0x{:04x} device=0x{:04x} subsys=0x{:08x} revision=0x{:02x} description=\"Intel(R) UHD Graphics 770\" result=0x{:08x} cleanup=16-by-thunk",
@@ -1013,7 +1013,7 @@
                                             })
                                             .transpose()?
                                             .map(|words| words[0]);
-                                        logl::log(
+                                        logl::log!(
                                             level::IMPORTANT,
                                             format_args!(
                                                 "WC3 CHILD ENUMDISPLAYDEVICES pid={} tid={} device={:?} index={} output=0x{:08x} cb={:?} flags=0x{:08x} kind={} name={:?} state=0x{:08x} result={} cleanup=16-by-thunk",
@@ -1079,7 +1079,7 @@
                                         } else {
                                             (0, 0)
                                         };
-                                        logl::log(
+                                        logl::log!(
                                             level::IMPORTANT,
                                             format_args!(
                                                 "WC3 CHILD ENUMDISPLAYSETTINGS pid={} tid={} device={:?} mode=0x{:08x} mode_kind={} output=0x{:08x} dm_size={:?} width={} height={} bpp=32 frequency=60 result={} cleanup=12-by-thunk",
@@ -1115,7 +1115,7 @@
                                             .ok_or_else(|| "child process missing".to_owned())?
                                             .xp
                                             .desktop_size();
-                                        logl::log(
+                                        logl::log!(
                                             level::IMPORTANT,
                                             format_args!(
                                                 "WC3 CHILD CHANGEDISPLAYSETTINGSEXA RESULT pid={} tid={} device={:?} mode={}x{}x32@60 flags={} mode_change=none-current-mode ui4_frame_unchanged=1 result=DISP_CHANGE_SUCCESSFUL cleanup=20-by-thunk",
@@ -1155,7 +1155,7 @@
                                             118 => "DESKTOPHORZRES",
                                             _ => "UNKNOWN",
                                         };
-                                        logl::log(
+                                        logl::log!(
                                             level::IMPORTANT,
                                             format_args!(
                                                 "WC3 CHILD GETDEVICECAPS RESULT pid={} tid={} hdc=0x{:08x} index={} capability={} result=0x{:08x} cleanup=8-by-thunk",
@@ -1177,7 +1177,7 @@
                                         else {
                                             unreachable!("SetPixelFormat frame has four words")
                                         };
-                                        logl::log(
+                                        logl::log!(
                                             level::IMPORTANT,
                                             format_args!(
                                                 "WC3 CHILD SETPIXELFORMAT RESULT pid={} tid={} hdc=0x{:08x} format={} ppfd=0x{:08x} window_format={} result={} cleanup=12-by-thunk",
@@ -1200,7 +1200,7 @@
                                         else {
                                             unreachable!("wglCreateContext frame has two words")
                                         };
-                                        logl::log(
+                                        logl::log!(
                                             level::IMPORTANT,
                                             format_args!(
                                                 "WC3 CHILD WGLCREATECONTEXT RESULT pid={} tid={} hdc=0x{:08x} hglrc=0x{:08x} vgpu_device=opened render_queue=created ui4_surface=not-acquired current=0 result=success cleanup=4-by-thunk",
@@ -1220,7 +1220,7 @@
                                         else {
                                             unreachable!("ReleaseDC frame has three words")
                                         };
-                                        logl::log(
+                                        logl::log!(
                                             level::IMPORTANT,
                                             format_args!(
                                                 "WC3 CHILD RELEASEDC RESULT pid={} tid={} hwnd=0x{:08x} hdc=0x{:08x} persistent=1 retained=1 result={} cleanup=8-by-thunk",
@@ -1250,7 +1250,7 @@
                                                 1,
                                             )?[0]
                                         };
-                                        logl::log(
+                                        logl::log!(
                                             level::IMPORTANT,
                                             format_args!(
                                                 "WC3 CHILD ENDPAINT pid={} tid={} hwnd=0x{:08x} ps=0x{:08x} hdc=0x{:08x} target=WINDOW_PAINT retired={} result={} cleanup=8-by-thunk",
@@ -1288,7 +1288,7 @@
                                                 words[3] as i32,
                                             ])
                                         };
-                                        logl::log(
+                                        logl::log!(
                                             level::IMPORTANT,
                                             format_args!(
                                                 "WC3 CHILD CLIPCURSOR RESULT pid={} tid={} rect_ptr=0x{:08x} rect={:?} trueos_cursor_action=ignored result={} cleanup=4-by-thunk",
@@ -1309,7 +1309,7 @@
                                         else {
                                             unreachable!("wglMakeCurrent frame has three words")
                                         };
-                                        logl::log(
+                                        logl::log!(
                                             level::IMPORTANT,
                                             format_args!(
                                                 "WC3 CHILD WGLMAKECURRENT RESULT pid={} tid={} hdc=0x{:08x} hglrc=0x{:08x} pixel_format=1 current_tid={} ui4_surface=not-acquired result={} cleanup=8-by-thunk",
@@ -1345,7 +1345,7 @@
                                         } else {
                                             "<null>".into()
                                         };
-                                        logl::log(
+                                        logl::log!(
                                             level::IMPORTANT,
                                             format_args!(
                                                 "WC3 CHILD GLGETSTRING RESULT pid={} tid={} name={} value={:?} pointer=0x{:08x} result=success cleanup=4-by-thunk",
@@ -1378,7 +1378,7 @@
                                             0x0000_1702 => "GL_TEXTURE",
                                             _ => "UNKNOWN",
                                         };
-                                        logl::log(
+                                        logl::log!(
                                             level::IMPORTANT,
                                             format_args!(
                                                 "WC3 CHILD GLMATRIXMODE RESULT pid={} tid={} hglrc=0x{:08x} mode={} stored_mode=0x{:08x} ui4_surface=not-acquired result=void cleanup=4-by-thunk",
@@ -1397,7 +1397,7 @@
                                             .xp
                                             .gl_light_model_ambient_diagnostic(active_tid)
                                             .ok_or_else(|| "current GL context missing after glLightModelfv".to_owned())?;
-                                        logl::log(
+                                        logl::log!(
                                             level::IMPORTANT,
                                             format_args!(
                                                 "WC3 CHILD GLLIGHTMODELFV RESULT pid={} tid={} hglrc=0x{:08x} pname=GL_LIGHT_MODEL_AMBIENT stored={:?} result=void cleanup=8-by-thunk",
@@ -1412,14 +1412,14 @@
                                         let args = read_guest_words(&X86Memory(&child.address_space), exit.registers.esp, 4)?;
                                         let (light, pname) = (args[1], args[2]);
                                         let stored = session.process(active_pid).ok_or("child process missing")?.xp.gl_light_diagnostic(active_tid, light, pname);
-                                        logl::log(level::IMPORTANT, format_args!(
+                                        logl::log!(level::IMPORTANT, format_args!(
                                             "WC3 CHILD GLLIGHTFV RESULT pid={} tid={} light=0x{:08x} pname=0x{:08x} stored={:?} result=void cleanup=12-by-thunk",
                                             active_pid, active_tid, light, pname, stored));
                                     }
                                     child_loader::ProviderOp::GlDisable => {
                                         let cap = read_guest_words(&X86Memory(&child.address_space), exit.registers.esp, 2)?[1];
                                         let stored = session.process(active_pid).ok_or("child process missing")?.xp.gl_cap_diagnostic(active_tid, cap);
-                                        logl::log(level::IMPORTANT, format_args!(
+                                        logl::log!(level::IMPORTANT, format_args!(
                                             "WC3 CHILD GLDISABLE RESULT pid={} tid={} cap=0x{:08x} stored={:?} result=void cleanup=4-by-thunk",
                                             active_pid, active_tid, cap, stored));
                                     }
@@ -1432,7 +1432,7 @@
                                         else {
                                             unreachable!("sscanf frame has five words")
                                         };
-                                        logl::log(
+                                        logl::log!(
                                             level::IMPORTANT,
                                             format_args!(
                                                 "WC3 CHILD SSCANF RESULT pid={} tid={} input=0x{:08x} format=0x{:08x} major=0x{:08x} minor=0x{:08x} assignments={} cleanup=0-by-thunk",
@@ -1500,7 +1500,7 @@
                                             .ok_or_else(|| "child process missing".to_owned())?
                                             .xp
                                             .last_error();
-                                        logl::log(
+                                        logl::log!(
                                             level::IMPORTANT,
                                             format_args!(
                                                 "WC3 CHILD FORMATMESSAGEA LANGUAGE pid={} tid={} flags={} requested=0x{:04x} resolved=0x{:04x} kind={}",
@@ -1522,7 +1522,7 @@
                                             )?;
                                             wc3::ThisToThat::cp1252_to_string(&bytes)
                                         };
-                                        logl::log(
+                                        logl::log!(
                                             level::IMPORTANT,
                                             format_args!(
                                                 "WC3 CHILD FORMATMESSAGEA RESULT pid={} tid={} flags={} source=0x{:08x} message_id=0x{:08x} message_name={} language_id=0x{:04x} encoding={} chars={} text={:?} eax=0x{:08x} last_error={} cleanup=28-by-thunk",
@@ -1541,7 +1541,7 @@
                                             ),
                                         );
                                     }
-                                    child_loader::ProviderOp::GetProcessHeap => logl::log(
+                                    child_loader::ProviderOp::GetProcessHeap => logl::log!(
                                         level::IMPORTANT,
                                         format_args!(
                                             "WC3 CHILD GETPROCESSHEAP pid={} tid={} during=\"{}\" handle=0x{:08x}",
@@ -1570,7 +1570,7 @@
                                         )?[..] else {
                                             unreachable!("Sleep frame has two words")
                                         };
-                                        logl::log(
+                                        logl::log!(
                                             level::IMPORTANT,
                                             format_args!(
                                                 "WC3 CHILD SLEEP pid={} tid={} during=\"{}\" requested_ms={} applied_delay_ms=0 effect=yield cleanup=4-by-thunk",
@@ -1581,14 +1581,14 @@
                                             ),
                                         );
                                     }
-                                    child_loader::ProviderOp::GetCurrentThreadId => logl::log(
+                                    child_loader::ProviderOp::GetCurrentThreadId => logl::log!(
                                         level::IMPORTANT,
                                         format_args!(
                                             "WC3 CHILD GETCURRENTTHREADID pid={} tid={} during=\"{}\" result={}",
                                             active_pid, active_tid, running_module_name, result,
                                         ),
                                     ),
-                                    child_loader::ProviderOp::TlsAlloc => logl::log(
+                                    child_loader::ProviderOp::TlsAlloc => logl::log!(
                                         level::IMPORTANT,
                                         format_args!(
                                             "WC3 CHILD TLS ALLOC pid={} tid={} during=\"{}\" slot={} result=0x{:08x}",
@@ -1607,7 +1607,7 @@
                                         )?[..] else {
                                             unreachable!("TlsSetValue frame has three words")
                                         };
-                                        logl::log(
+                                        logl::log!(
                                             level::IMPORTANT,
                                             format_args!(
                                                 "WC3 CHILD TLS SET pid={} tid={} during=\"{}\" slot={} value=0x{:08x} result={}",
@@ -1686,7 +1686,7 @@
                                                 exit.registers.esp,
                                             ) {
                                                 Ok(call) => {
-                                                    logl::log(
+                                                    logl::log!(
                                                         level::IMPORTANT,
                                                         format_args!(
                                                             "WC3 CHILD GL SIGNATURE pid={} tid={} symbol={} arguments={} caller_ret=0x{:08x} disposition={:?}",
@@ -1712,7 +1712,7 @@
                                                                 call.description,
                                                             );
                                                         if let Ok((hglrc, note_count)) = noted {
-                                                            logl::log(
+                                                            logl::log!(
                                                                 level::IMPORTANT,
                                                                 format_args!(
                                                                     "WC3 CHILD GL WRITE NOTE pid={} tid={} hglrc=0x{:08x} symbol={} notes={} modeled=0 source_frontier={:?} result=void cleanup={}-by-thunk",
@@ -1735,7 +1735,7 @@
                                                         }
                                                     }
                                                 }
-                                                Err(error) => logl::log(
+                                                Err(error) => logl::log!(
                                                     level::IMPORTANT,
                                                     format_args!(
                                                         "WC3 CHILD GL SIGNATURE DECODE pid={} tid={} symbol={} error={:?}",
@@ -1746,7 +1746,7 @@
                                         }
                                     }
                                 }
-                                logl::log(
+                                logl::log!(
                                     level::IMPORTANT,
                                     format_args!(
                                         "WC3 CHILD PROVIDER FRONTIER pid={} tid={} during=\"{}\" provider_id={} module=\"{}\" {} eip=0x{:08x} esp=0x{:08x} caller_ret=0x{:08x} api=\"{}\" detail={:?}",
@@ -1778,7 +1778,7 @@
                             exit.registers.esp,
                             8,
                         )?;
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD FORMATMESSAGEA CALL pid={} tid={} during=\"{}\" provider_id={} caller_ret=0x{:08x} flags=0x{:08x} source=0x{:08x} message_id=0x{:08x} language_id=0x{:08x} buffer=0x{:08x} capacity={} arguments=0x{:08x} cleanup=28-by-thunk",
@@ -1797,7 +1797,7 @@
                             ),
                         );
                     }
-                    logl::log(
+                    logl::log!(
                         level::IMPORTANT,
                         format_args!(
                             "WC3 CHILD PROVIDER FRONTIER pid={} tid={} during=\"{}\" provider_id={} module=\"{}\" {} eip=0x{:08x} esp=0x{:08x} caller_ret=0x{:08x}",

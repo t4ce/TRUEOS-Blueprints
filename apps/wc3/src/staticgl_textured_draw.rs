@@ -160,7 +160,7 @@ impl XpProcess {
             .device
             .wait(runtime.queue, point.value)
             .map_err(|e| gl_texture_error(API, format!("sampled wait failed code={e}")))?;
-        logl::log(
+        logl::log!(
             level::IMPORTANT,
             format_args!(
                 "WC3 GL TEXTURED DRAW tid={tid} indices={count} texture={} size={}x{} gpu=completed",

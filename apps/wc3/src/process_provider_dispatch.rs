@@ -372,7 +372,7 @@ impl XpProcess {
             ProviderOp::GetStockObject => {
                 let [_, object] = arguments::<2>(memory, esp)?;
                 let handle = self.get_stock_object_static(esp, memory)?;
-                logl::log(
+                logl::log!(
                     level::IMPORTANT,
                     format_args!(
                         "WC3 CHILD GETSTOCKOBJECT pid={} tid={} index={} name={} handle=0x{:08x} stock=1 cleanup=4-by-thunk",
@@ -458,7 +458,7 @@ impl XpProcess {
             ProviderOp::GetCursorPos => {
                 let result = self.get_cursor_pos(esp, memory)?;
                 let [_, output] = arguments::<2>(memory, esp)?;
-                logl::log(
+                logl::log!(
                     level::IMPORTANT,
                     format_args!(
                         "WC3 CHILD GETCURSORPOS RESULT pid={pid} tid={tid} output=0x{output:08x} x={} y={} result={result} cleanup=4-by-thunk",
@@ -522,7 +522,7 @@ impl XpProcess {
                     .map_err(ProviderDispatchError::Fault)?;
                 if result != 0 || cfg!(feature = "trace-api") {
                     let [_, out, hwnd, min, max, flags] = arguments::<6>(memory, esp)?;
-                    logl::log(
+                    logl::log!(
                         level::IMPORTANT,
                         format_args!(
                             "WC3 CHILD PEEKMESSAGEA pid={pid} tid={tid} output=0x{out:08x} hwnd=0x{hwnd:08x} min=0x{min:08x} max=0x{max:08x} flags=0x{flags:08x} remove={} result={result} cleanup=20-by-thunk",
@@ -540,7 +540,7 @@ impl XpProcess {
                 let [_, out, hwnd, min, max] = arguments::<5>(memory, esp)?;
                 let result = self.get_message_a(esp, memory)?;
                 let message = read_u32(memory, out + 4)?;
-                logl::log(
+                logl::log!(
                     level::IMPORTANT,
                     format_args!(
                         "WC3 CHILD GETMESSAGEA pid={pid} tid={tid} output=0x{out:08x} hwnd=0x{hwnd:08x} min=0x{min:08x} max=0x{max:08x} message=0x{message:08x} result={result} removed=1 cleanup=16-by-thunk"
@@ -570,7 +570,7 @@ impl XpProcess {
                 let wparam = read_u32(memory, message_ptr + 8)?;
                 let lparam = read_u32(memory, message_ptr + 12)?;
                 let keyboard = matches!(message, WM_KEYDOWN | WM_KEYUP | WM_SYSKEYDOWN | WM_SYSKEYUP);
-                logl::log(
+                logl::log!(
                     level::IMPORTANT,
                     format_args!(
                         "WC3 CHILD TRANSLATEMESSAGE pid={pid} tid={tid} msg=0x{message_ptr:08x} hwnd=0x{hwnd:08x} message=0x{message:08x} wparam=0x{wparam:08x} lparam=0x{lparam:08x} keyboard={} translated=0 result=0 cleanup=4-by-thunk",
@@ -772,7 +772,7 @@ impl XpProcess {
                     .call_count
                     .checked_add(1)
                     .ok_or("call count overflow")?;
-                logl::log(
+                logl::log!(
                     level::IMPORTANT,
                     format_args!(
                         "WC3 CHILD CRT ISMBCSPACE pid={pid} tid={tid} \\
@@ -801,7 +801,7 @@ impl XpProcess {
                     .call_count
                     .checked_add(1)
                     .ok_or("call count overflow")?;
-                logl::log(
+                logl::log!(
                     level::IMPORTANT,
                     format_args!(
                         "WC3 CHILD CRT ISWSPACE pid={pid} tid={tid} raw=0x{raw_character:08x} character=U+{character:04X} result=0x{result:08x} cleanup=0-by-thunk"
@@ -864,7 +864,7 @@ impl XpProcess {
                     .call_count
                     .checked_add(1)
                     .ok_or("call count overflow")?;
-                logl::log(
+                logl::log!(
                     level::IMPORTANT,
                     format_args!(
                         "WC3 CHILD CRT QSORT RESULT pid={pid} tid={tid} \
@@ -883,7 +883,7 @@ impl XpProcess {
                     .checked_add(1)
                     .ok_or("call count overflow")?;
                 if cfg!(feature = "trace-api") {
-                    logl::log(
+                    logl::log!(
                         level::IMPORTANT,
                         format_args!(
                             "WC3 CHILD CRT STRTOL pid={pid} tid={tid} \\
@@ -984,7 +984,7 @@ impl XpProcess {
                     crt_strncmp_bounded(memory, left, right, count)?;
                 if self.strncmp_samples_remaining != 0 {
                     self.strncmp_samples_remaining -= 1;
-                    logl::log(
+                    logl::log!(
                         level::IMPORTANT,
                         format_args!(
                             "WC3 STRNCMP SAMPLE pid={pid} tid={tid} caller_ret=0x{caller_ret:08x} \
@@ -1038,7 +1038,7 @@ impl XpProcess {
                     .call_count
                     .checked_add(1)
                     .ok_or("call count overflow")?;
-                if cfg!(feature = "trace-api") { logl::log(
+                if cfg!(feature = "trace-api") { logl::log!(
                     level::IMPORTANT,
                     format_args!(
                         "WC3 CHILD CRT STRNICMP pid={pid} tid={tid} \\
@@ -1465,7 +1465,7 @@ impl XpProcess {
                     .call_count
                     .checked_add(1)
                     .ok_or("call count overflow")?;
-                logl::log(
+                logl::log!(
                     level::IMPORTANT,
                     format_args!(
                         "WC3 CHILD WSASTARTUP pid={pid} tid={tid} \\
@@ -2232,7 +2232,7 @@ impl XpProcess {
                             .call_count
                             .checked_add(1)
                             .ok_or("call count overflow")?;
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD FINDFIRSTFILEA RESULT pid={pid} tid={tid} pattern={pattern:?} virtual_directory=Maps matches=0 handle=INVALID_HANDLE_VALUE last_error=ERROR_FILE_NOT_FOUND"
@@ -2261,7 +2261,7 @@ impl XpProcess {
                         .call_count
                         .checked_add(1)
                         .ok_or("call count overflow")?;
-                    logl::log(
+                    logl::log!(
                         level::IMPORTANT,
                         format_args!(
                             "WC3 CHILD FINDFIRSTFILEA RESULT pid={pid} tid={tid} pattern={pattern:?} virtual_directory=Maps matches={count} first={first_name:?} handle=0x{handle:08x} result=success"
@@ -2275,7 +2275,7 @@ impl XpProcess {
                         .call_count
                         .checked_add(1)
                         .ok_or("call count overflow")?;
-                    logl::log(
+                    logl::log!(
                         level::IMPORTANT,
                         format_args!(
                             "WC3 CHILD FINDFIRSTFILEA RESULT pid={pid} tid={tid} pattern={pattern:?} virtual_directory=FileCache matches=0 handle=INVALID_HANDLE_VALUE last_error=ERROR_FILE_NOT_FOUND find_data_written=0 cleanup=8-by-thunk",
@@ -2346,7 +2346,7 @@ impl XpProcess {
                     .call_count
                     .checked_add(1)
                     .ok_or("call count overflow")?;
-                logl::log(
+                logl::log!(
                     level::IMPORTANT,
                     format_args!(
                         "WC3 CHILD FINDNEXTFILEA pid={pid} tid={tid} handle=0x{handle:08x} name={:?} attributes=0x{:08x} result=1",
@@ -2496,7 +2496,7 @@ impl XpProcess {
             ProviderOp::CreateIoCompletionPort => {
                 let [_, file_handle, existing_port, completion_key, concurrency] =
                     arguments::<5>(memory, esp)?;
-                logl::log(
+                logl::log!(
                     level::IMPORTANT,
                     format_args!(
                         "WC3 CHILD CREATEIOCOMPLETIONPORT CALL pid={pid} tid={tid} \\

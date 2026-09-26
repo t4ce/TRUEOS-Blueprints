@@ -585,7 +585,7 @@ impl XpProcess {
         c.draw_count += 1;
         let preview = c.draw_count == 1;
         if preview || c.draw_count.is_multiple_of(128) {
-            logl::log(
+            logl::log!(
                 level::IMPORTANT,
                 format_args!(
                     "WC3 GL RASTER DRAW tid={tid} draw={} mode=0x{mode:04x} indices={count} vertices={} triangles={} pixels={} viewport={:?} scissor={:?} enabled=0x{:x} texture={} renderer=rust-fixed",
@@ -643,7 +643,7 @@ impl XpProcess {
                 return Err(gl_texture_error(API, "drawable/surface size mismatch"));
             }
             if top == 0 {
-                logl::log(
+                logl::log!(
                     level::IMPORTANT,
                     format_args!(
                         "WC3 GL PRESENT BEGIN tid={tid} reason={reason} hwnd=0x{:08x} ui4_window={window_id} drawable={width}x{height} surface_pitch={} strip_rows=256 upload_bytes={} accounting={:?}",
@@ -670,7 +670,7 @@ impl XpProcess {
             );
             let point = result.map_err(|rc| {
                 let detail = format!("frame publication failed strip_top={top} rows={rows} rc={rc} stage={:?} accounting={:?}", renderer.last_failure(), runtime.device.info());
-                logl::log(level::IMPORTANT, format_args!("WC3 GL PRESENT FAIL {detail}"));
+                logl::log!(level::IMPORTANT, format_args!("WC3 GL PRESENT FAIL {detail}"));
                 gl_texture_error(API, detail)
             })?;
             // Each submission consumes its surface lease. Wait before reusing
@@ -683,7 +683,7 @@ impl XpProcess {
                 })?;
             strips += 1;
         }
-        logl::log(
+        logl::log!(
             level::IMPORTANT,
             format_args!(
                 "WC3 GL FRAME PRESENT tid={tid} reason={reason} draws={} size={width}x{height} strips={strips} nonblack_pixels={nonblack} raster=rust-fixed gpu=completed",

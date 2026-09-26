@@ -42,7 +42,7 @@ impl DebugShell {
                     execute(command, contexts, child, launcher, session, active)
                 });
                 if let Err(error) = result {
-                    logl::log(level::IMPORTANT, format_args!("WC3 DEBUG ERROR {error}"));
+                    logl::emit(level::IMPORTANT, format_args!("WC3 DEBUG ERROR {error}"));
                 }
             }
         }
@@ -91,7 +91,7 @@ fn dump(
                 .chunks_exact(4)
                 .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
                 .collect();
-            logl::log(
+            logl::emit(
                 level::IMPORTANT,
                 format_args!(
                     "WC3 DEBUG STACK CANDIDATES pid={pid} address=0x{:08x} words={words:08x?}",
@@ -99,7 +99,7 @@ fn dump(
                 ),
             );
         } else {
-            logl::log(
+            logl::emit(
                 level::IMPORTANT,
                 format_args!(
                     "WC3 DEBUG MEMORY pid={pid} address=0x{:08x} bytes={chunk:02x?}",
@@ -119,7 +119,7 @@ fn execute(
     active: ThreadKey,
 ) -> Result<(), String> {
     match command {
-        Command::Help => logl::log(
+        Command::Help => logl::emit(
             level::IMPORTANT,
             format_args!(
                 "WC3 DEBUG HELP: debug state | debug regs PID TID | debug mem PID ADDRESS BYTES(1..256) | debug stack PID TID WORDS(1..64) | debug object PID HANDLE | debug post PID HWND MESSAGE WPARAM LPARAM (explicit queued notification experiment); numbers decimal or 0xhex"
@@ -132,11 +132,11 @@ fn execute(
             let process = session.process_mut(pid).ok_or("unknown process")?;
             if process.exit_code.is_some() { return Err("process has exited".into()); }
             process.xp.debug_post_window_message(hwnd, message, wparam, lparam)?;
-            logl::log(level::IMPORTANT, format_args!(
+            logl::emit(level::IMPORTANT, format_args!(
                 "WC3 DEBUG POST QUEUED pid={pid} tid={} hwnd=0x{hwnd:08x} message=0x{message:04x} wparam=0x{wparam:08x} lparam=0x{lparam:08x} delivery=guest-message-pump experiment=true", owner.tid));
         }
         Command::State => {
-            logl::log(
+            logl::emit(
                 level::IMPORTANT,
                 format_args!(
                     "WC3 DEBUG STATE active={active:?} contexts={} runnable={} blocked={} iocp={} critical_waiters={}",
@@ -150,7 +150,7 @@ fn execute(
             for c in contexts.iter().take(64) {
                 let r = c.context.registers()?;
                 if let Some(wait) = session.blocked.get(&c.key()) {
-                    logl::log(
+                    logl::emit(
                         level::IMPORTANT,
                         format_args!(
                             "WC3 DEBUG WAIT pid={} tid={} count={} handle0=0x{:08x} timeout={} wait_all={}",
@@ -158,7 +158,7 @@ fn execute(
                         ),
                     );
                 }
-                logl::log(
+                logl::emit(
                     level::IMPORTANT,
                     format_args!(
                         "WC3 DEBUG THREAD pid={} tid={} started={} exit_code={:?} eip=0x{:08x} esp=0x{:08x} snapshot=last-stopped",
@@ -172,7 +172,7 @@ fn execute(
                 );
             }
             for (pid, process) in session.processes.iter().take(32) {
-                logl::log(
+                logl::emit(
                     level::IMPORTANT,
                     format_args!(
                         "WC3 DEBUG PROCESS pid={pid} exit_code={:?} queued_messages={}",
@@ -182,7 +182,7 @@ fn execute(
                 );
             }
             for (hwnd, w) in session.windows.iter().take(32) {
-                logl::log(
+                logl::emit(
                     level::IMPORTANT,
                     format_args!(
                         "WC3 DEBUG WINDOW hwnd=0x{hwnd:08x} owner={:?} wndproc=0x{:08x} user_data=0x{:08x} param=0x{:08x} paint_pending={}",
@@ -193,7 +193,7 @@ fn execute(
         }
         Command::Registers { pid, tid } => {
             let r = registers(contexts, pid, tid)?;
-            logl::log(
+            logl::emit(
                 level::IMPORTANT,
                 format_args!(
                     "WC3 DEBUG REGS pid={pid} tid={tid} snapshot=last-stopped eip={:08x} esp={:08x} ebp={:08x} eax={:08x} ebx={:08x} ecx={:08x} edx={:08x} esi={:08x} edi={:08x} eflags={:08x} fs_base={:08x}",
@@ -239,7 +239,7 @@ fn execute(
             }
             dump(space, pid, r.esp, words * 4, true)?;
         }
-        Command::Object { pid, handle } => logl::log(
+        Command::Object { pid, handle } => logl::emit(
             level::IMPORTANT,
             format_args!(
                 "WC3 DEBUG OBJECT pid={pid} handle=0x{handle:08x} {}",

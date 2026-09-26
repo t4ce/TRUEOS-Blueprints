@@ -38,7 +38,7 @@
                                     .context
                                     .set_registers(registers)
                                     .map_err(|error| error.to_string())?;
-                                logl::log(
+                                logl::log!(
                                     level::IMPORTANT,
                                     format_args!(
                                         "WC3 CHILD UEF FILTER RETURN pid={} tid={} filter=0x{:08x} filter_result=0x{:08x} uef_result=0x{:08x}",
@@ -79,7 +79,7 @@
                                             .context
                                             .set_debug_registers(restored_debug)
                                             .map_err(|error| error.to_string())?;
-                                        logl::log(
+                                        logl::log!(
                                             level::IMPORTANT,
                                             format_args!(
                                                 "WC3 CHILD TOPLEVEL FILTER CONTINUE pid={} tid={} filter_result=0xffffffff old_eip=0x{:08x} new_eip=0x{:08x}",
@@ -113,7 +113,7 @@
                             .take()
                             .ok_or("SEH return without pending dispatch")?;
                         if !seh.quiet {
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD SEH RETURN pid={} tid={} registration=0x{:08x} handler=0x{:08x} disposition={}",
@@ -190,7 +190,7 @@
                                     .context
                                     .set_registers(registers)
                                     .map_err(|error| error.to_string())?;
-                                logl::log(
+                                logl::log!(
                                     level::IMPORTANT,
                                     format_args!(
                                         "WC3 CHILD SEH TOPLEVEL FILTER CALL pid={} tid={} filter=0x{:08x} exception_pointers=0x{:08x}",
@@ -251,7 +251,7 @@
                                 .context
                                 .set_registers(handler_registers)
                                 .map_err(|error| error.to_string())?;
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD SEH CONTINUE_SEARCH pid={} tid={} registration=0x{:08x} handler=0x{:08x} disposition=1",
@@ -317,7 +317,7 @@
                                     & wc3::seh::X86_EFLAGS_TF)
                                     != 0;
                             if cfg!(feature = "trace-seh") && control_changed {
-                                logl::log(
+                                logl::log!(
                                     level::IMPORTANT,
                                     format_args!(
                                         "WC3 CHILD SINGLESTEP TRANSITION old_eip=0x{:08x} new_eip=0x{:08x} old_esp=0x{:08x} new_esp=0x{:08x} old_eflags=0x{:08x} new_eflags=0x{:08x} dr6=0x{:08x} dr7=0x{:08x}",
@@ -335,7 +335,7 @@
                             child.single_step_count = child.single_step_count.saturating_add(1);
                             if child.single_step_count == 1 || child.single_step_count % 0x1000 == 0
                             {
-                                logl::log(
+                                logl::log!(
                                     level::IMPORTANT,
                                     format_args!(
                                         "WC3 CHILD SINGLESTEP HEARTBEAT count={} eip=0x{:08x} tf={} dr6=0x{:08x} dr7=0x{:08x}",
@@ -357,7 +357,7 @@
                             let get = |offset: usize| {
                                 u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap())
                             };
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD SEH DEBUG RETURN eip=0x{:08x} dr0=0x{:08x} dr1=0x{:08x} dr2=0x{:08x} dr3=0x{:08x} dr6=0x{:08x} dr7=0x{:08x}",
@@ -388,7 +388,7 @@
                                     .try_into()
                                     .unwrap(),
                             );
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD SEH CONTEXT RETURN pid={} tid={} context=0x{:08x} old_ecx=0x{:08x} saved_ecx=0x{:08x} restored_ecx=0x{:08x}",
@@ -414,7 +414,7 @@
                                 &session,
                             )
                             .await?;
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD TABLE CHECKPOINT CONTINUE reason=artifact-verified"
@@ -430,7 +430,7 @@
                             .set_debug_registers(restored_debug)
                             .map_err(|error| error.to_string())?;
                         if !seh.quiet {
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD SEH CONTINUE pid={} tid={} old_eip=0x{:08x} new_eip=0x{:08x} old_esp=0x{:08x} new_esp=0x{:08x}",
@@ -465,7 +465,7 @@
                             .ok_or_else(|| "child DLL return native index".to_owned())?;
                         let module_name = module.stored.clone();
                         let success = exit.registers.eax != 0;
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD DLL INIT RETURN pid={} tid={} module=\"{}\" eax=0x{:08x} success={}",
@@ -477,7 +477,7 @@
                             ),
                         );
                         if !success {
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD DLL INIT FAILED pid={} module=\"{}\" reason=DLL_PROCESS_ATTACH-returned-FALSE",
@@ -487,7 +487,7 @@
                             return Ok(());
                         }
                         child.native_modules[native_index].initialized = true;
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD NATIVE MODULE INITIALIZED pid={} module=\"{}\" base=0x{:08x} initialized=1",
@@ -510,7 +510,7 @@
                                 return Err("child loader completion count mismatch".into());
                             }
                             child.execution = ChildExecutionState::ImageEntryReady;
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD LOADER COMPLETE pid={} tid={} modules={} initialized={}",
@@ -525,7 +525,7 @@
                                 &mut contexts[active],
                                 exit.registers,
                             )?;
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD IMAGE ENTRY RESUME pid={} tid={} image=\"War3.exe\" base=0x{:08x} entry=0x{:08x} esp=0x{:08x} return=0x{:08x} caller_headroom={} caller_bytes={} stack_top=0x{:08x} context_reused=1 teb_preserved=1 xstate_preserved=1",
@@ -552,7 +552,7 @@
                             next_index,
                             exit.registers,
                         )?;
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD DLL REARM pid={} tid={} previous=\"{}\" next=\"{}\" context_reused=1 xstate_preserved=1 teb_preserved=1 entry=0x{:08x} esp=0x{:08x}",
@@ -564,7 +564,7 @@
                                 frame_esp
                             ),
                         );
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD DLL FRAME pid={} tid={} module=\"{}\" return=0x{:08x} hinst=0x{:08x} reason=1 reserved=0x{:08x}",
@@ -576,7 +576,7 @@
                                 child.static_load_reserved,
                             ),
                         );
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD DLL INIT RESUME pid={} tid={} module=\"{}\" state=dll-init-running context_started=1",
@@ -591,7 +591,7 @@
                                 "child image return outside image-entry-running state".into()
                             );
                         }
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD IMAGE RETURN pid={} tid={} eax=0x{:08x}",
@@ -619,7 +619,7 @@
                             &mut contexts,
                             &mut wait_deadlines,
                         )?;
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD THREAD EXIT pid={} tid={} exit_code=0x{:08x} waiters_woken={}",
@@ -655,7 +655,7 @@
                         let base = f64::from_bits((base[0] as u64) | ((base[1] as u64) << 32));
                         if !child.cipow_diagnostic_logged {
                             child.cipow_diagnostic_logged = true;
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD CRT CIPOW base={} exponent={}",
@@ -722,7 +722,7 @@
                             }
                             let wndproc_eax = exit.registers.eax;
                             let api_eax = if let Some((scratch, phase)) = pending.creation {
-                                logl::log(level::IMPORTANT, format_args!(
+                                logl::log!(level::IMPORTANT, format_args!(
                                     "WC3 CHILD CREATION CALLBACK RETURN pid={} tid={} hwnd=0x{:08x} message=0x{:08x} wndproc_eax=0x{:08x}",
                                     active_pid, active_tid, pending.hwnd, phase.message(), wndproc_eax));
                                 match phase.advance(wndproc_eax) {
@@ -730,7 +730,7 @@
                                         pending.creation = Some((scratch, next));
                                         pending.message = next.message();
                                         let registers = pending.creation_registers(child, exit.registers)?;
-                                        logl::log(level::IMPORTANT, format_args!(
+                                        logl::log!(level::IMPORTANT, format_args!(
                                             "WC3 CHILD CALL_GUEST pid={} tid={} reason=CreateWindowExA hwnd=0x{:08x} message=0x{:08x} lparam=0x{:08x}",
                                             active_pid, active_tid, pending.hwnd, next.message(), next.lparam(scratch)));
                                         child.window_callback = Some(pending);
@@ -746,7 +746,7 @@
                                             }
                                         }
                                         let result = if success { pending.hwnd } else { 0 };
-                                        logl::log(level::IMPORTANT, format_args!(
+                                        logl::log!(level::IMPORTANT, format_args!(
                                             "WC3 CHILD CREATEWINDOWEXA RESULT pid={} tid={} hwnd=0x{:08x} creation_callbacks=delivered user_data=0x{:08x} result=0x{:08x} cleanup=48-by-thunk",
                                             active_pid, active_tid, pending.hwnd, user_data, result));
                                         result
@@ -755,7 +755,7 @@
                             } else {
                                 pending.return_policy.api_result(wndproc_eax)
                             };
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD CALL_GUEST RETURN pid={} tid={} reason={} hwnd=0x{:08x} wndproc=0x{:08x} message=0x{:08x} wndproc_eax=0x{:08x} api_eax=0x{:08x}",
@@ -830,7 +830,7 @@
                                             .context
                                             .set_registers(registers)
                                             .map_err(|error| error.to_string())?;
-                                        logl::log(
+                                        logl::log!(
                                             level::IMPORTANT,
                                             format_args!(
                                                 "WC3 CHILD CRT EH3 HANDLER pid={} tid={} level={} handler=0x{:08x}",
@@ -866,7 +866,7 @@
                                             call,
                                             handler,
                                         )?;
-                                        logl::log(
+                                        logl::log!(
                                             level::IMPORTANT,
                                             format_args!(
                                                 "WC3 CHILD CRT EH3 FINALLY pid={} tid={} handler=0x{:08x}",
@@ -892,7 +892,7 @@
                                             .context
                                             .set_registers(registers)
                                             .map_err(|error| error.to_string())?;
-                                        logl::log(
+                                        logl::log!(
                                             level::IMPORTANT,
                                             format_args!(
                                                 "WC3 CHILD CRT EH3 FILTER RETURN pid={} tid={} level={} result=-1 disposition=0",
@@ -907,7 +907,7 @@
                                             result
                                         ));
                                     }
-                                    logl::log(
+                                    logl::log!(
                                         level::IMPORTANT,
                                         format_args!(
                                             "WC3 CHILD CRT EH3 FILTER RETURN pid={} tid={} level={} result={}",
@@ -951,7 +951,7 @@
                                                     .context
                                                     .set_registers(registers)
                                                     .map_err(|error| error.to_string())?;
-                                                logl::log(
+                                                logl::log!(
                                                     level::IMPORTANT,
                                                     format_args!(
                                                         "WC3 CHILD CRT EH3 HANDLER pid={} tid={} level={} handler=0x{:08x}",
@@ -978,7 +978,7 @@
                                                 .context
                                                 .set_registers(registers)
                                                 .map_err(|error| error.to_string())?;
-                                            logl::log(
+                                            logl::log!(
                                                 level::IMPORTANT,
                                                 format_args!(
                                                     "WC3 CHILD CRT EH3 SEARCH pid={} tid={} disposition=1",
@@ -1015,7 +1015,7 @@
                                                     call,
                                                     handler,
                                                 )?;
-                                                logl::log(
+                                                logl::log!(
                                                     level::IMPORTANT,
                                                     format_args!(
                                                         "WC3 CHILD CRT EH3 FINALLY pid={} tid={} handler=0x{:08x}",
@@ -1088,7 +1088,7 @@
                         }
                         if let Some(pending) = child.load_library_call.take() {
                             if exit.registers.eax == 0 {
-                                logl::log(
+                                logl::log!(
                                     level::IMPORTANT,
                                     format_args!(
                                         "WC3 CHILD LOADLIBRARY FRONTIER reason=dllmain-returned-false handle=0x{:08x}",
@@ -1154,7 +1154,7 @@
                                     .context
                                     .set_registers(registers)
                                     .map_err(|error| error.to_string())?;
-                                logl::log(
+                                logl::log!(
                                     level::IMPORTANT,
                                     format_args!(
                                         "WC3 CHILD RUNTIME NATIVE DEPENDENCY ATTACH pid={} tid={} module={:?} handle=0x{:08x}",
@@ -1174,7 +1174,7 @@
                                 .context
                                 .set_registers(registers)
                                 .map_err(|error| error.to_string())?;
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD LOADLIBRARY RETURN pid={} tid={} module={:?} handle=0x{:08x} dllmain=TRUE cleanup=4-by-thunk",
@@ -1184,7 +1184,7 @@
                             continue;
                         }
                         let scope = child_execution_scope(child).map_err(str::to_owned)?;
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD CONTROL FRONTIER pid={} tid={} during=\"{}\" kind=callback-return",

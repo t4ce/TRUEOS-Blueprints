@@ -351,7 +351,7 @@ impl XpProcess {
             .textures
             .generate(count as usize, output, memory)
             .map_err(|e| gl_texture_error("glGenTextures", e))?;
-        logl::log(
+        logl::log!(
             level::IMPORTANT,
             format_args!(
                 "WC3 GL TEXTURE NAMES tid={tid} count={count} output=0x{output:08x} storage=unallocated"
@@ -537,7 +537,7 @@ impl XpProcess {
                 },
             )
             .map_err(|e| gl_texture_error("glTexImage2D", e))?;
-        logl::log(
+        logl::log!(
             level::IMPORTANT,
             format_args!(
                 "WC3 GL TEXTURE IMAGE tid={tid} name={} level={level} size={width}x{height} source=0x{pixels:08x} requested_internal=0x{requested_internal:04x} base_internal=0x{internal:04x} storage=owned-rgba8",

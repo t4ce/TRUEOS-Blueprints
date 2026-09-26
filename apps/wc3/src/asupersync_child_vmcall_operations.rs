@@ -30,7 +30,7 @@
                         }
                         contexts.push(guest);
                         session.enqueue(key);
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD CREATETHREAD pid={} caller_tid={} tid={} handle=0x{:08x} start=0x{:08x} parameter=0x{:08x} stack_size={} flags=0x{:08x} tid_ptr=0x{:08x} caller_ret=0x{:08x} cleanup=24-by-thunk",
@@ -82,7 +82,7 @@
                                     .context
                                     .set_registers(registers)
                                     .map_err(|error| error.to_string())?;
-                                logl::log(
+                                logl::log!(
                                     level::IMPORTANT,
                                     format_args!(
                                         "WC3 CHILD GETTHREADPRIORITY pid={} caller_tid={} handle=0x{:08x} result=THREAD_PRIORITY_ERROR_RETURN last_error={} caller_ret=0x{:08x} cleanup=4-by-thunk",
@@ -129,7 +129,7 @@
                                     active = pop_runnable_context(&mut session, &contexts)
                                         .ok_or_else(|| "priority preemption lost runnable context".to_owned())?;
                                 }
-                                logl::log(
+                                logl::log!(
                                     level::IMPORTANT,
                                     format_args!(
                                         "WC3 CHILD SETTHREADPRIORITY pid={} caller_tid={} handle=0x{:08x} target_tid={} priority={} old_priority={} base_priority={} result=1 preempt={} caller_ret=0x{:08x} cleanup=8-by-thunk",
@@ -150,7 +150,7 @@
                                     .context
                                     .set_registers(registers)
                                     .map_err(|error| error.to_string())?;
-                                logl::log(
+                                logl::log!(
                                     level::IMPORTANT,
                                     format_args!(
                                         "WC3 CHILD SETTHREADPRIORITY pid={} caller_tid={} handle=0x{:08x} priority={} result=0 last_error={} caller_ret=0x{:08x} cleanup=8-by-thunk",
@@ -197,7 +197,7 @@
                         }
                         contexts.push(guest);
                         session.enqueue(key);
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD CRT BEGINTHREADEX pid={} caller_tid={} tid={} handle=0x{:08x} start=0x{:08x} argument=0x{:08x} stack_size={} flags=0x{:08x} tid_ptr=0x{:08x} caller_ret=0x{:08x} cleanup=0-by-thunk",
@@ -220,7 +220,7 @@
                             2,
                         )?;
                         let exit_code = frame[1];
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD EXITPROCESS CALL pid={} tid={} during=\"{}\" exit_code=0x{:08x} caller_ret=0x{:08x}",
@@ -277,7 +277,7 @@
                         if terminated.pid != active_pid {
                             return Err("ExitProcess child state PID mismatch".into());
                         }
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD PROCESS EXIT pid={} exit_code=0x{:08x} contexts_removed={} threads_signaled={} waiters_woken={} address_space_dropped=1 dll_detach_callbacks=0",
@@ -329,7 +329,7 @@
                         let PersonalityAction::Return(result) = action else {
                             return Err("_XcptFilter child provider did not return".into());
                         };
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD CRT XCPTFILTER pid={} tid={} exception=0x{:08x} class={} disposition=default result={} xpointers=0x{:08x} record=0x{:08x} context=0x{:08x}",
@@ -392,7 +392,7 @@
                         }
                         if !child.seh3_diagnostic_logged {
                             child.seh3_diagnostic_logged = true;
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD CRT EH3 record=0x{:08x} frame=0x{:08x} context=0x{:08x} scope=0x{:08x} trylevel={}",
@@ -406,7 +406,7 @@
                                 }
                                 let (previous, filter, handler) =
                                     child_seh3_scope_entry(child, scope, level_now)?;
-                                logl::log(
+                                logl::log!(
                                     level::IMPORTANT,
                                     format_args!(
                                         "WC3 CHILD CRT EH3 SCOPE level={} prev={} filter=0x{:08x} handler=0x{:08x}",
@@ -437,7 +437,7 @@
                                     .context
                                     .set_registers(registers)
                                     .map_err(|error| error.to_string())?;
-                                logl::log(
+                                logl::log!(
                                     level::IMPORTANT,
                                     format_args!(
                                         "WC3 CHILD CRT EH3 SEARCH pid={} tid={} disposition=1",
@@ -468,7 +468,7 @@
                                     call,
                                     filter,
                                 )?;
-                                logl::log(
+                                logl::log!(
                                     level::IMPORTANT,
                                     format_args!(
                                         "WC3 CHILD CRT EH3 FILTER pid={} tid={} level={} filter=0x{:08x} handler=0x{:08x}",
@@ -574,7 +574,7 @@
                                 .context
                                 .set_registers(resumed)
                                 .map_err(|error| error.to_string())?;
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD RTLUNWIND CONTINUE pid={} tid={} target_frame=0x{:08x} target_ip=0x{:08x} target_owner={:?} target_rva=0x{:08x} return_value=0x{:08x} old_esp=0x{:08x} new_esp=0x{:08x} fs_head=0x{:08x} handlers_called=0 frames_popped=0",
@@ -612,7 +612,7 @@
                         } else {
                             "unsupported-current-head-shape"
                         };
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD RTLUNWIND FRONTIER pid={} tid={} reason={} caller_ret=0x{:08x} target_frame=0x{:08x} target_relation={} target_relation_detail={:?} target_ip=0x{:08x} target_ip_owner={:?} target_ip_rva=0x{:08x} exception_record=0x{:08x} exception_relation={} return_value=0x{:08x} fs_head=0x{:08x} active_registration=0x{:08x} active_next=0x{:08x} active_handler=0x{:08x} active_record=0x{:08x} active_context=0x{:08x} active_depth={}",
@@ -681,7 +681,7 @@
                                 .context
                                 .set_registers(registers)
                                 .map_err(|error| error.to_string())?;
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD UEF RETURN pid={} tid={} source=default filter=0x00000000 result=0x{:08x} cleanup=4-by-thunk",
@@ -729,7 +729,7 @@
                             .context
                             .set_registers(registers)
                             .map_err(|error| error.to_string())?;
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD UEF FILTER CALL pid={} tid={} filter=0x{:08x} filter_owner={:?} filter_rva=0x{:08x} exception_pointers=0x{:08x} provider_esp=0x{:08x} callback_esp=0x{:08x}",
@@ -753,7 +753,7 @@
                         )?;
                         let name_ptr = frame[1];
                         if name_ptr == 0 {
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD LOADLIBRARY FRONTIER pid={} tid={} during=\"{}\" kind=null-name caller_ret=0x{:08x}",
@@ -777,7 +777,7 @@
                         } else {
                             "default-dll-extension"
                         };
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD LOADLIBRARY NORMALIZE pid={} tid={} requested={:?} resolved={:?} reason={}",
@@ -806,7 +806,7 @@
                                 .context
                                 .set_registers(registers)
                                 .map_err(|error| error.to_string())?;
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD LOADLIBRARY RETURN pid={} tid={} during=\"{}\" requested={:?} resolved={:?} handle=0x{:08x} already_loaded=1 references={} cleanup=4-by-thunk",
@@ -834,7 +834,7 @@
                                 .context
                                 .set_registers(registers)
                                 .map_err(|error| error.to_string())?;
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD LOADLIBRARY PROVIDER pid={} tid={} during=\"{}\" requested={:?} resolved={:?} handle=0x{:08x} already_loaded={} references={} caller_ret=0x{:08x} cleanup=4-by-thunk",
@@ -892,7 +892,7 @@
                         };
                         if let Some((source, stored, bytes, listing)) = local_image {
                             let local_sha256 = Sha256::digest(&bytes);
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD LOADLIBRARY LOCAL IMAGE source={source} requested={requested:?} resolved={resolved:?} stored={stored:?} bytes={} sha256={}",
@@ -921,7 +921,7 @@
                                     matches!(export.target, pe32::ExportTarget::Forwarder(_))
                                 })
                                 .count();
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD LOADLIBRARY LOCAL PE source={} pid={} tid={} requested={:?} resolved={:?} stored={:?} bytes={} image_base=0x{:08x} entry_rva=0x{:08x} size_of_image=0x{:08x} sections={} imports={} exports={} named_exports={} forwarders={} relocations={}",
@@ -1056,7 +1056,7 @@
                                                     .into(),
                                             );
                                         }
-                                        logl::log(
+                                        logl::log!(
                                             level::IMPORTANT,
                                             format_args!(
                                                 "WC3 CHILD RUNTIME NATIVE DEPENDENCY MAP parent={parent:?} requested={dependency_requested:?} stored={dependency_stored:?} base=0x{:08x} imports={} entry_rva=0x{:08x}",
@@ -1124,7 +1124,7 @@
                                 .context
                                 .set_registers(registers)
                                 .map_err(|error| error.to_string())?;
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD LOADLIBRARY MAP pid={} tid={} during=\"{}\" module={:?} mapped_base=0x{:08x} relocation_delta=0 imports={} entry=0x{:08x}",
@@ -1139,7 +1139,7 @@
                             );
                             continue;
                         }
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD LOADLIBRARY FRONTIER pid={} tid={} during=\"{}\" requested={:?} resolved={:?} kind=external stored=None caller_ret=0x{:08x}",
@@ -1173,7 +1173,7 @@
                                     .context
                                     .set_registers(registers)
                                     .map_err(|error| error.to_string())?;
-                                logl::log(
+                                logl::log!(
                                     level::IMPORTANT,
                                     format_args!(
                                         "WC3 CHILD FREELIBRARY pid={} tid={} during={:?} handle=0x{:08x} remaining_references={} unloaded=0 result=1 cleanup=4-by-thunk",
@@ -1189,7 +1189,7 @@
                                     .context
                                     .set_registers(registers)
                                     .map_err(|error| error.to_string())?;
-                                logl::log(
+                                logl::log!(
                                     level::IMPORTANT,
                                     format_args!(
                                         "WC3 CHILD FREELIBRARY pid={} tid={} during={:?} module={:?} handle=0x{:08x} remaining_references=0 unloaded=1 kind=external-provider result=1 cleanup=4-by-thunk",
@@ -1199,7 +1199,7 @@
                                 continue;
                             }
                             wc3::process::ModuleRelease::NativeUnloadRequired { module } => {
-                                logl::log(
+                                logl::log!(
                                     level::IMPORTANT,
                                     format_args!(
                                         "WC3 CHILD FREELIBRARY FRONTIER reason=native-zero-reference-unload module={:?} handle=0x{:08x}",
@@ -1250,7 +1250,7 @@
                                     .ok_or_else(|| "child process missing".to_owned())?
                                     .xp
                                     .set_last_error_for_thread(active_tid, ERROR_PROC_NOT_FOUND);
-                                logl::log(
+                                logl::log!(
                                     level::IMPORTANT,
                                     format_args!(
                                         "WC3 CHILD GETPROCADDRESS MISS pid={} tid={} module={:?} selector={:?} reason=export-absent error={}",
@@ -1303,7 +1303,7 @@
                                 .context
                                 .set_registers(registers)
                                 .map_err(|error| error.to_string())?;
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD GETPROCADDRESS RETURN pid={} tid={} module={:?} selector={:?} address=0x{:08x} source={} cleanup=8-by-thunk",
@@ -1336,7 +1336,7 @@
                             })
                         };
                         let Some((image, module)) = image_and_module else {
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD GETPROCADDRESS FRONTIER pid={} tid={} kind=unknown-hmodule handle=0x{:08x} selector={:?}",
@@ -1370,7 +1370,7 @@
                                 .context
                                 .set_registers(registers)
                                 .map_err(|error| error.to_string())?;
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD GETPROCADDRESS MISS pid={} tid={} module={:?} selector={:?} reason=export-not-found error={}",
@@ -1386,7 +1386,7 @@
                             let pe32::ExportTarget::Forwarder(forwarder) = &export.target else {
                                 unreachable!()
                             };
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD GETPROCADDRESS FRONTIER pid={} tid={} kind=native-forwarder module={:?} selector={:?} forwarder={:?}",
@@ -1411,7 +1411,7 @@
                             .context
                             .set_registers(registers)
                             .map_err(|error| error.to_string())?;
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD GETPROCADDRESS RETURN pid={} tid={} module={:?} selector={:?} address=0x{:08x} source=native-export cleanup=8-by-thunk",
@@ -1449,7 +1449,7 @@
                             .context
                             .set_registers(registers)
                             .map_err(|error| error.to_string())?;
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD D3D8 CREATE pid={} tid={} sdk_version={} object=0x{:08x} vtable=0x{:08x} methods={} result=0x{:08x} caller_ret=0x{:08x} cleanup=4-by-thunk",
@@ -1503,7 +1503,7 @@
                             .get(&hwnd)
                             .ok_or("created child window missing")?;
                         let ui4_frame = frames.contains_key(&hwnd);
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD CREATEWINDOWEXA BEGIN pid={} tid={} hwnd=0x{:08x} class={:?} title={:?} wndproc=0x{:08x} icon=0x{:08x} cursor=0x{:08x} parent=0x{:08x} param=0x{:08x} geometry={},{} {}x{} win32_visible={} ui4_frame={} ui4_policy=always-visible creation_callbacks=synchronous result=pending cleanup=48-by-thunk",
@@ -1535,7 +1535,7 @@
                             hwnd, wndproc: window.wndproc, message: phase.message(),
                         };
                         let registers = pending.creation_registers(child, exit.registers)?;
-                        logl::log(level::IMPORTANT, format_args!(
+                        logl::log!(level::IMPORTANT, format_args!(
                             "WC3 CHILD CALL_GUEST pid={} tid={} reason=CreateWindowExA hwnd=0x{:08x} message=0x{:08x} lparam=0x{:08x}",
                             active_pid, active_tid, hwnd, phase.message(), phase.lparam(scratch)));
                         child.window_callback = Some(pending);
@@ -1592,7 +1592,7 @@
                                     .map_err(|error| format!("resize WC3 UI4 window: {error:?}"))?;
                             }
                         }
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD SETWINDOWPOS RESULT pid={} tid={} hwnd=0x{:08x} old={},{} {}x{} requested={} applied={},{} {}x{} move_changed={} size_changed={} guest_size_requested={} wm_size_queued={} insert_after={} ui4_zorder_action=none ui4_position_changed={} ui4_size_changed={} ui4_visible={} win32_visible={} result=TRUE cleanup=28-by-thunk",
@@ -1669,7 +1669,7 @@
                         {
                             return Err("short ScreenToClient POINT write".into());
                         }
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD SCREENTOCLIENT RESULT pid={} tid={} hwnd=0x{:08x} point=0x{:08x} screen={},{} client={},{} result=TRUE cleanup=8-by-thunk",
@@ -1713,7 +1713,7 @@
                             return Err("ShowWindow produced unexpected action".into());
                         };
                         let result = session.show_window(hwnd, show).map_err(str::to_owned)?;
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD SHOWWINDOW pid={} tid={} hwnd=0x{:08x} requested_visible={} previous_visible={} ui4_visible={} presentation_action=ignored result={} cleanup=8-by-thunk",
@@ -1752,7 +1752,7 @@
                             return Err("SetFocus produced unexpected action".into());
                         };
                         let previous = session.set_focus(hwnd).map_err(str::to_owned)?;
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD SETFOCUS pid={} tid={} hwnd=0x{:08x} previous=0x{:08x} compositor_focus=unchanged result=0x{:08x} cleanup=4-by-thunk",
@@ -1795,7 +1795,7 @@
                             .map_err(str::to_owned)?;
                         let base = session.thread_base_priority(owner).unwrap_or(8);
                         let effective = session.thread_effective_priority(owner).unwrap_or(base);
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD SETFOREGROUNDWINDOW pid={} tid={} hwnd=0x{:08x} previous=0x{:08x} owner=pid{}/tid{} base_priority={} foreground_boost={} effective_priority={} focused=1 result=1 cleanup=4-by-thunk",
@@ -1847,7 +1847,7 @@
                             .ok_or("SetActiveWindow window disappeared")?
                             .owner;
                         let active_window = session.active_windows.get(&caller).copied().unwrap_or(0);
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD SETACTIVEWINDOW pid={} tid={} hwnd=0x{:08x} owner=pid{}/tid{} previous=0x{:08x} active=0x{:08x} foreground=0x{:08x} focused=0x{:08x} scheduler_change=0 result=0x{:08x} cleanup=4-by-thunk",
@@ -1904,7 +1904,7 @@
                         X86Memory(&child.address_space)
                             .write(output, &bytes)
                             .map_err(str::to_owned)?;
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD GETWINDOWRECT RESULT pid={} tid={} hwnd=0x{:08x} output=0x{:08x} rect=[{},{},{},{}] result=1 cleanup=8-by-thunk",
@@ -1934,7 +1934,7 @@
                         let PersonalityAction::Session(SessionRequest::SetWindowLongA { pid, hwnd, index, value }) = action
                             else { return Err("SetWindowLongA produced unexpected action".into()); };
                         let previous = session.set_window_long_a(pid, hwnd, index, value).map_err(str::to_owned)?;
-                        logl::log(level::IMPORTANT, format_args!(
+                        logl::log!(level::IMPORTANT, format_args!(
                             "WC3 CHILD SETWINDOWLONGA pid={} tid={} hwnd=0x{:08x} index={} previous=0x{:08x} value=0x{:08x} source=guest cleanup=12-by-thunk",
                             active_pid, active_tid, hwnd, index, previous, value));
                         let mut registers = exit.registers;
@@ -1977,7 +1977,7 @@
                             value if value >= 0 => "WINDOW_EXTRA",
                             _ => "UNKNOWN",
                         };
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD GETWINDOWLONGA pid={} tid={} hwnd=0x{:08x} index={} index_name={} result=0x{:08x} cleanup=8-by-thunk",
@@ -2028,7 +2028,7 @@
                                         &session,
                                     )?;
                                 }
-                                logl::log(
+                                logl::log!(
                                     level::IMPORTANT,
                                     format_args!(
                                         "WC3 CHILD DESTROYWINDOW RESULT pid={} tid={} hwnd=0x{:08x} frame_present={} ui4_frame=closed focused={} result=TRUE cleanup=4-by-thunk",
@@ -2047,7 +2047,7 @@
                                     .ok_or("DestroyWindow caller missing")?
                                     .xp
                                     .set_last_error_for_thread(active_tid, 1400);
-                                logl::log(
+                                logl::log!(
                                     level::IMPORTANT,
                                     format_args!(
                                         "WC3 CHILD DESTROYWINDOW RESULT pid={} tid={} hwnd=0x{:08x} frame_present={} ui4_frame=unchanged focused=- result=FALSE error=1400 cleanup=4-by-thunk",
@@ -2092,7 +2092,7 @@
                         };
                         let pending = session.update_window(hwnd).map_err(str::to_owned)?;
                         if pending == 0 {
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD UPDATEWINDOW RESULT pid={} tid={} hwnd=0x{:08x} paint_pending=0 callback=none result=0 cleanup=4-by-thunk",
@@ -2149,7 +2149,7 @@
                             wndproc,
                             message: 0x000f,
                         });
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD CALL_GUEST pid={} tid={} reason=UpdateWindow/WM_PAINT hwnd=0x{:08x} wndproc=0x{:08x} message=0x0000000f wparam=0x00000000 lparam=0x00000000",
@@ -2230,7 +2230,7 @@
                             wndproc,
                             message,
                         });
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD CALL_GUEST pid={} tid={} reason=DispatchMessageA hwnd=0x{:08x} wndproc=0x{:08x} message=0x{:08x} wparam=0x{:08x} lparam=0x{:08x} caller_ret=0x{:08x}",
@@ -2289,7 +2289,7 @@
                                 &mut X86Memory(&child.address_space),
                             )
                             .map_err(str::to_owned)?;
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD BEGINPAINT pid={} tid={} hwnd=0x{:08x} ps=0x{:08x} hdc=0x{:08x} target=WINDOW_PAINT client={}x{} rcPaint=[0,0,{},{}] erase=0 result=0x{:08x} cleanup=8-by-thunk",
@@ -2337,7 +2337,7 @@
                         let previous = session
                             .imm_associate_context(pid, hwnd, himc)
                             .map_err(str::to_owned)?;
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD IMMASSOCIATECONTEXT RESULT pid={} tid={} hwnd=0x{:08x} himc=0x{:08x} previous=0x{:08x} ime_policy=disabled keyboard_layouts=de+en ui4_input_action=none cleanup=8-by-thunk",
@@ -2381,7 +2381,7 @@
                         let (previous, changed) = session
                             .set_window_text(pid, hwnd, text)
                             .map_err(str::to_owned)?;
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD SETWINDOWTEXTA RESULT pid={} tid={} hwnd=0x{:08x} previous={:?} new={:?} changed={} ui4_frame={} ui4_title_action=none result=TRUE cleanup=8-by-thunk",
@@ -2426,7 +2426,7 @@
                             .xp
                             .get_window_dc(hwnd)
                             .map_err(str::to_owned)?;
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD GETDC RESULT pid={} tid={} hwnd=0x{:08x} hdc=0x{:08x} persistent=1 reused={} target=window result=success cleanup=4-by-thunk",
@@ -2451,7 +2451,7 @@
                             exit.registers.esp,
                             8,
                         )?;
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD DUPLICATEHANDLE CALL pid={} tid={} source_process=0x{:08x} source_handle=0x{:08x} target_process=0x{:08x} target_out=0x{:08x} desired_access=0x{:08x} inherit={} options=0x{:08x} caller_ret=0x{:08x}",
@@ -2504,7 +2504,7 @@
                                     .context
                                     .set_registers(registers)
                                     .map_err(|error| error.to_string())?;
-                                logl::log(
+                                logl::log!(
                                     level::IMPORTANT,
                                     format_args!(
                                         "WC3 CHILD DUPLICATEHANDLE RESULT pid={} tid={} result=0 error={} cleanup=28-by-thunk",
@@ -2538,7 +2538,7 @@
                             }
                             None => return Err("DuplicateHandle object disappeared".into()),
                         };
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD DUPLICATEHANDLE RESULT pid={} tid={} source_process=pid{} source_handle=0x{:08x} target_process=pid{} target_handle=0x{:08x} inherit={} same_access=1 same_object=1 object_kind={} object_owner={} result=1 cleanup=28-by-thunk",
@@ -2606,7 +2606,7 @@
                                 const ERROR_INVALID_HANDLE: u32 = 6;
                                 const WAIT_TIMEOUT_ERROR: u32 = 258;
 
-                                logl::log(
+                                logl::log!(
                                     level::IMPORTANT,
                                     format_args!(
                                         "WC3 CHILD GETQUEUEDCOMPLETIONSTATUS CALL \\
@@ -2670,7 +2670,7 @@
                                         session
                                             .block_io_completion(request.clone())
                                             .map_err(str::to_owned)?;
-                                        logl::log(
+                                        logl::log!(
                                             level::IMPORTANT,
                                             format_args!(
                                                 "WC3 CHILD IOCP BLOCK pid={} tid={} \\
@@ -2719,7 +2719,7 @@
                             }
                             PersonalityAction::Block(request) => {
                                 if is_multiple_wait {
-                                    logl::log(
+                                    logl::log!(
                                         level::IMPORTANT,
                                         format_args!(
                                             "WC3 CHILD WAIT MULTIPLE CALL pid={} tid={} count={} handles_ptr=0x{:08x} handle0=0x{:08x} handle1=0x{:08x} wait_all={} timeout=0x{:08x} caller_ret=0x{:08x}",
@@ -2771,7 +2771,7 @@
                                             .unwrap_or_default();
                                             let object = session.describe_handle(request.key.pid, handle);
                                             let event_state = session.event_state(request.key.pid, handle);
-                                            logl::log(
+                                            logl::log!(
                                                 level::IMPORTANT,
                                                 format_args!(
                                                     "WC3 CHILD IDLE POLL PROVENANCE pid={} tid={} handle=0x{:08x} object={} manual_reset={:?} signaled={:?} provider_return=WAIT_TIMEOUT caller_ret=0x{:08x} wait_all={} poll_count={} delta={} guest_stack_candidates={:08x?}",
@@ -2790,7 +2790,7 @@
                                             );
                                         }
                                     } else {
-                                        logl::log(
+                                        logl::log!(
                                             level::IMPORTANT,
                                             format_args!(
                                                 "WC3 CHILD WAIT {}RETURN pid={} tid={} handle0=0x{:08x} handle1=0x{:08x} result=0x{:08x} timeout_ms={} caller_ret=0x{:08x}",
@@ -2815,7 +2815,7 @@
                                             },
                                         );
                                     }
-                                    logl::log(
+                                    logl::log!(
                                         level::IMPORTANT,
                                         format_args!(
                                             "WC3 CHILD WAIT {}BLOCK pid={} tid={} count={} handle0=0x{:08x} handle1=0x{:08x} wait_all={} timeout_ms={}",
@@ -2890,7 +2890,7 @@
                             if let Some(next) = pop_runnable_context(&mut session, &contexts) {
                                 if next != active {
                                     let next_key = contexts[next].key();
-                                    logl::log(
+                                    logl::log!(
                                         level::IMPORTANT,
                                         format_args!(
                                             "WC3 CHILD ZERO-WAIT SCHEDULE from=pid{}/tid{} handle=0x{:08x} result=WAIT_TIMEOUT to=pid{}/tid{} reason=zero-timeout-safepoint",
@@ -2924,7 +2924,7 @@
                             return Err("FillRect produced unexpected action".into());
                         };
                         paint_window_fill_rect(&request, &mut frames, window_rgba)?;
-                        logl::log(level::IMPORTANT, format_args!(
+                        logl::log!(level::IMPORTANT, format_args!(
                             "WC3 CHILD FILLRECT pid={} tid={} hwnd=0x{:08x} hdc=0x{:08x} rect={:?} result=1 cleanup=12-by-thunk",
                             active_pid, active_tid, request.hwnd, request.hdc, request.rect,
                         ));
@@ -2967,19 +2967,19 @@
                                             .ok_or_else(|| "SetDeviceGammaRamp process missing".to_owned())?
                                             .xp.commit_gamma_ramp(request.ramp);
                                     }
-                                    logl::log(level::IMPORTANT, format_args!(
+                                    logl::log!(level::IMPORTANT, format_args!(
                                         "WC3 CHILD SETDEVICEGAMMARAMP REQUEST pid={} tid={} hwnd=0x{:08x} hdc=0x{:08x} ui4_window={} entries=256xRGB16 policy=guarded programmed={} result=1 cleanup=8-by-thunk",
                                         active_pid, active_tid, request.hwnd, request.hdc, frame.window_id(), programmed as u8,
                                     ));
                                     for (channel, values) in ["red", "green", "blue"].into_iter()
                                         .zip(request.ramp.chunks_exact(256)) {
-                                        logl::log(level::IMPORTANT, format_args!(
+                                        logl::log!(level::IMPORTANT, format_args!(
                                             "WC3 GAMMA REQUEST channel={} min={} max={} first={} middle={} last={}",
                                             channel, values.iter().min().unwrap(), values.iter().max().unwrap(),
                                             values[0], values[128], values[255],
                                         ));
                                         for (chunk, values) in values.chunks_exact(16).enumerate() {
-                                            logl::log(level::IMPORTANT, format_args!(
+                                            logl::log!(level::IMPORTANT, format_args!(
                                                 "WC3 GAMMA REQUEST channel={} start={} values={:?}",
                                                 channel, chunk * 16, values,
                                             ));

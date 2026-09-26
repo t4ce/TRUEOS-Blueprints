@@ -325,7 +325,7 @@ impl XpProcess {
             bytes[index * 2 + 1] = encoded[1];
         }
         memory.write(output, &bytes)?;
-        logl::log(
+        logl::log!(
             level::IMPORTANT,
             format_args!(
                 "WC3 CHILD GETDEVICEGAMMARAMP RESULT hwnd=0x{hwnd:08x} hdc=0x{hdc:08x} output=0x{output:08x} entries=256 channels=3 first=0x{:04x} middle=0x{:04x} last=0x{:04x} result=1 cleanup=8-by-thunk",

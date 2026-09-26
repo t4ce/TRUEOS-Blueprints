@@ -20,6 +20,8 @@ pub mod debug_command;
 pub mod event_pool;
 pub mod gl_signatures;
 pub mod imports;
+#[path = "diagnostics.rs"]
+pub mod logl;
 pub mod initterm;
 pub mod pe32;
 pub mod process;

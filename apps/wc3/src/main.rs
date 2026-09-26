@@ -22,25 +22,8 @@ mod debug_shell;
 
 use guest_actor::GuestThreadContext;
 
-mod logl {
-    // Gate argument evaluation as well as output (some traces inspect guest memory).
-    macro_rules! trace {
-        ($feature:literal, $level:expr, $message:expr $(,)?) => {
-            if cfg!(feature = $feature) {
-                $crate::logl::log($level, $message);
-            }
-        };
-    }
-    pub(super) use trace;
-
-    #[inline]
-    pub fn log(level: u8, message: core::fmt::Arguments<'_>) {
-        #[cfg(not(feature = "nolog"))]
-        trueos::logl::log(level, message);
-        #[cfg(feature = "nolog")]
-        let _ = (level, message);
-    }
-}
+#[path = "diagnostics.rs"]
+mod logl;
 
 use wc3::{
     EXPECTED_SHA256, LAUNCHER_PATH, child_loader,
@@ -86,7 +69,7 @@ fn main() {
     {
         Ok(runtime) => runtime,
         Err(error) => {
-            logl::log(
+            logl::log!(
                 level::ERROR,
                 format_args!("wc3: Tokio runtime failed: {error}"),
             );
@@ -95,7 +78,7 @@ fn main() {
     };
     if let Err(error) = runtime.block_on(run()) {
         let execution = GuestThreadContext::last_execution_diagnostic();
-        logl::log(
+        logl::log!(
             level::ERROR,
             format_args!(
                 "wc3: {error} last_exec_seq={} last_stage={:?} pid={} tid={}",
@@ -120,7 +103,7 @@ async fn ensure_registry_loaded(session: &mut Wc3Session) -> Result<(), String> 
         return Ok(());
     }
     let path = String::from_utf8_lossy(WC3_REGISTRY_IMAGE_PATH);
-    logl::log(
+    logl::log!(
         level::IMPORTANT,
         format_args!(
             "WC3 REGISTRY LOAD BEGIN path=\"{}\" trigger=\"ADVAPI32!RegOpenKeyExA\"",
@@ -130,7 +113,7 @@ async fn ensure_registry_loaded(session: &mut Wc3Session) -> Result<(), String> 
     let metadata = async_fs::metadata(WC3_REGISTRY_IMAGE_PATH)
         .await
         .map_err(|error| {
-            logl::log(
+            logl::log!(
                 level::IMPORTANT,
                 format_args!(
                     "WC3 REGISTRY LOAD FAILED phase=metadata path=\"{}\" error={error}",
@@ -139,18 +122,18 @@ async fn ensure_registry_loaded(session: &mut Wc3Session) -> Result<(), String> 
             );
             format!("registry metadata: TRUEOSFS error {error}")
         })?;
-    logl::log(
+    logl::log!(
         level::IMPORTANT,
         format_args!("WC3 REGISTRY LOAD META bytes={}", metadata.len),
     );
-    logl::log(
+    logl::log!(
         level::IMPORTANT,
         format_args!("WC3 REGISTRY LOAD READ BEGIN"),
     );
     let bytes = async_fs::read_file(WC3_REGISTRY_IMAGE_PATH)
         .await
         .map_err(|error| {
-            logl::log(
+            logl::log!(
                 level::IMPORTANT,
                 format_args!(
                     "WC3 REGISTRY LOAD FAILED phase=read path=\"{}\" error={error}",
@@ -159,11 +142,11 @@ async fn ensure_registry_loaded(session: &mut Wc3Session) -> Result<(), String> 
             );
             format!("registry read: TRUEOSFS error {error}")
         })?;
-    logl::log(
+    logl::log!(
         level::IMPORTANT,
         format_args!("WC3 REGISTRY LOAD READ COMPLETE bytes={}", bytes.len()),
     );
-    logl::log(
+    logl::log!(
         level::IMPORTANT,
         format_args!(
             "WC3 REGISTRY INDEX BEGIN bytes={} encoding={} mode=keys-only",
@@ -174,7 +157,7 @@ async fn ensure_registry_loaded(session: &mut Wc3Session) -> Result<(), String> 
     let registry_bytes = bytes.len();
     let registry_encoding = registry_encoding(&bytes);
     let image = wc3::session::RegistryImage::index(bytes, |scanned, keys| {
-        logl::log(
+        logl::log!(
             level::IMPORTANT,
             format_args!(
                 "WC3 REGISTRY INDEX PROGRESS bytes_scanned={} keys={}",
@@ -183,7 +166,7 @@ async fn ensure_registry_loaded(session: &mut Wc3Session) -> Result<(), String> 
         );
     })
     .map_err(|error| {
-        logl::log(
+        logl::log!(
             level::IMPORTANT,
             format_args!("WC3 REGISTRY LOAD FAILED phase=parse error=\"{}\"", error),
         );
@@ -191,7 +174,7 @@ async fn ensure_registry_loaded(session: &mut Wc3Session) -> Result<(), String> 
     })?;
     let (roots, keys) = image.stats();
     session.registry = wc3::session::RegistryState::Ready(image);
-    logl::log(
+    logl::log!(
         level::IMPORTANT,
         format_args!(
             "WC3 REGISTRY INDEX READY path=\"{}\" bytes={} encoding={} roots={} keys={} values=lazy representation=flat-spans backing=host-ram guest_mapped=0",
@@ -206,7 +189,7 @@ async fn discover_maps() -> Result<Option<wc3::session::MapCatalog>, String> {
     const FOLDER: &str = "/common/Warcraft III/Maps";
     match async_fs::metadata(FOLDER.as_bytes()).await {
         Err(async_fs::ERR_NOT_FOUND) => {
-            logl::log(level::WARN, format_args!("WC3 MAP CATALOG folder={FOLDER:?} status=missing"));
+            logl::log!(level::WARN, format_args!("WC3 MAP CATALOG folder={FOLDER:?} status=missing"));
             return Ok(None);
         }
         Ok(info) if info.kind == async_fs::NodeKind::Directory => {}
@@ -216,7 +199,7 @@ async fn discover_maps() -> Result<Option<wc3::session::MapCatalog>, String> {
     let selection = async_fs::select_files(
         FOLDER.as_bytes(), async_fs::ContentTypeId::WARCRAFT3_MAP, 8,
     ).await.map_err(|error| format!("select Warcraft III maps: TRUEOSFS {error}"))?;
-    logl::log(level::IMPORTANT, format_args!(
+    logl::log!(level::IMPORTANT, format_args!(
         "WC3 MAP CATALOG folder={FOLDER:?} type=WARCRAFT3_MAP files={} max_depth=8 depth_limited={} truncated={}",
         selection.files.len(), selection.depth_limited, selection.truncated,
     ));
@@ -244,14 +227,14 @@ async fn run() -> Result<(), String> {
         PreparedProcess::new(materialized).map_err(str::to_owned)?;
     let mut session = Wc3Session::new(xp);
     session.maps = maps;
-    logl::log(level::IMPORTANT, format_args!("WC3 DIAG BUILD CWEX_V2"));
+    logl::log!(level::IMPORTANT, format_args!("WC3 DIAG BUILD CWEX_V2"));
     let (desktop_width, desktop_height) = ui4_scene::output_dimensions()
         .map_err(|error| format!("query UI4 output dimensions: {error:?}"))?;
     session
         .launcher_mut()
         .xp
         .set_desktop_size(desktop_width, desktop_height);
-    logl::log(
+    logl::log!(
         level::IMPORTANT,
         format_args!(
             "WC3 desktop dimensions used by GetClientRect width={} height={}",
@@ -285,7 +268,7 @@ async fn run() -> Result<(), String> {
     };
     let context = Context::create(&address_space, registers).map_err(|error| error.to_string())?;
     let mut memory = X86Memory(&address_space);
-    logl::log(
+    logl::log!(
         level::INFO,
         format_args!(
             "wc3: launcher accepted imports={imports} entry=0x{:08x}; execution owned by Blueprint",
@@ -346,7 +329,7 @@ async fn run() -> Result<(), String> {
         .iter()
         .map(|(hwnd, frame)| format!("0x{hwnd:08x}->{}", frame.window_id()))
         .collect();
-    logl::log(
+    logl::log!(
         level::IMPORTANT,
         format_args!(
             "WC3 SESSION RETURN outcome={:?} last_exec_seq={} last_stage={:?} last_pid={} last_tid={} last_eip={} last_esp={} live_processes={} contexts={} frames={:?}",
@@ -799,7 +782,7 @@ async fn run_x86_extended_state_self_test() -> Result<(), String> {
             return Err("x86 native ceil self-test violated cdecl stack shape".into());
         }
     }
-    logl::log(
+    logl::log!(
         level::IMPORTANT,
         format_args!(
             "WC3 X86 XSTATE SELFTEST PASS contexts=2 x87=pass xmm0=pass migration=debug-sidecars-pass b0=pass deeper_stack=pass ceil=pass"
@@ -918,7 +901,7 @@ fn paint_window_fill_rect(
             .and_then(|()| frame.publish(Damage::full(frame.width(), frame.height())))
             .map_err(|error| format!("publish WC3 FillRect: {error:?}"))?;
     }
-    logl::log(level::IMPORTANT, format_args!(
+    logl::log!(level::IMPORTANT, format_args!(
         "WC3 UI4 FILLRECT hwnd=0x{:08x} hdc=0x{:08x} rect={:?} published={}",
         request.hwnd, request.hdc, request.rect, u8::from(left < right && top < bottom),
     ));
@@ -943,7 +926,7 @@ fn present_window(
                 return Ok(());
             }
             if hwnd == WINDOW_HANDLE_BASE {
-                logl::log(
+                logl::log!(
                     level::IMPORTANT,
                     format_args!("WC3 UI4 ROOT OPEN hwnd=0x{:08x}", hwnd),
                 );
@@ -955,12 +938,12 @@ fn present_window(
                 .and_then(|()| opened.publish(Damage::full(width, height)))
                 .map_err(|error| format!("publish WC3 UI4 window: {error:?}"))?;
             if hwnd == WINDOW_HANDLE_BASE {
-                logl::log(
+                logl::log!(
                     level::IMPORTANT,
                     format_args!("WC3 UI4 ROOT INITIAL PUBLISH hwnd=0x{:08x}", hwnd),
                 );
             }
-            logl::log(
+            logl::log!(
                 level::IMPORTANT,
                 format_args!(
                     "WC3 UI4 FRAME OPEN hwnd=0x{:08x} title={:?} x={} y={} width={} height={}",
@@ -981,7 +964,7 @@ fn present_window(
         WindowPresentation::Destroy { hwnd } => {
             let frame_dropped = frames.remove(&hwnd).is_some();
             let backing_dropped = window_rgba.remove(&hwnd).is_some();
-            logl::log(
+            logl::log!(
                 level::IMPORTANT,
                 format_args!(
                     "WC3 UI4 WINDOW RELEASE hwnd=0x{hwnd:08x} frame_dropped={} backing_dropped={}",
@@ -1216,7 +1199,7 @@ fn expire_runtime_waits(
             .map_err(|error| error.to_string())?;
         let repeated = *previous_wait_timeout == Some((key, wait.handle, wait.timeout_ms));
         if !repeated {
-            logl::log(
+            logl::log!(
                 level::IMPORTANT,
                 format_args!(
                     "WC3 WAIT TIMEOUT pid={} tid={} handle=0x{:08x} elapsed_ms={} result=0x{:08x}",
@@ -1880,7 +1863,7 @@ fn child_dllonexit(
         ),
     );
     let fail = |reason: &str| {
-        logl::log(
+        logl::log!(
             level::IMPORTANT,
             format_args!(
                 "WC3 CHILD CRT DLLONEXIT RESULT pid={} tid={} result=0x00000000 reason={}",
@@ -2455,7 +2438,7 @@ fn advance_child_initterm(
                 .initterm
                 .take()
                 .ok_or_else(|| "child _initterm completion state missing".to_owned())?;
-            logl::log(level::IMPORTANT, format_args!(
+            logl::log!(level::IMPORTANT, format_args!(
                 "WC3 CHILD CRT INITTERM COMPLETE pid={} tid={} callbacks={} rust_callbacks={}",
                 child.pid, child.tid, complete.callbacks_invoked, complete.rust_callbacks,
             ));
@@ -2650,7 +2633,7 @@ fn log_child_fault_precursor(
             provider_id, provider.module, provider_symbol,
         ));
         if !provider_matches_import(provider, import) {
-            logl::log(
+            logl::log!(
                 level::IMPORTANT,
                 format_args!(
                     "WC3 CHILD IAT BINDING MISMATCH iat_rva=0x{:08x} pe_module=\"{}\" pe_{} provider_module=\"{}\" provider_{} provider_id={} target=0x{:08x}",
@@ -2666,7 +2649,7 @@ fn log_child_fault_precursor(
             return Err("child IAT binding mismatch".into());
         }
     }
-    logl::log(level::IMPORTANT, format_args!("{detail}"));
+    logl::log!(level::IMPORTANT, format_args!("{detail}"));
     Ok(())
 }
 
@@ -2787,7 +2770,7 @@ fn log_native_child_image(
         .image_base
         .checked_add(image.entry_rva)
         .ok_or("native entry overflow")?;
-    logl::log(
+    logl::log!(
         level::IMPORTANT,
         format_args!(
             "WC3 CHILD NATIVE DLL parent=\"War3.exe\" requested=\"{}\" stored=\"{}\" image_base=0x{:08x} entry_rva=0x{:08x} entry_va=0x{:08x} size_of_image={} sections={} imports={} relocations={}",
@@ -2824,7 +2807,7 @@ fn log_native_child_image(
     }
     for (index, (module, imports, named, ordinal)) in dependencies.into_iter().enumerate() {
         let local = child_loader::resolve_file(listing, &module)?;
-        logl::log(
+        logl::log!(
             level::IMPORTANT,
             format_args!(
                 "WC3 CHILD NATIVE DLL DEPENDENCY parent=\"{}\" index={} module=\"{}\" imports={} named={} ordinal={} local={}{}",
@@ -2849,7 +2832,7 @@ fn log_child_handles(session: &Wc3Session, pid: u32) {
     let Some(process) = session.process(pid) else {
         return;
     };
-    logl::log(
+    logl::log!(
         level::IMPORTANT,
         format_args!(
             "WC3 CHILD HANDLES pid={} count={}",
@@ -2868,7 +2851,7 @@ fn log_child_handles(session: &Wc3Session, pid: u32) {
             Some(SessionObject::IoCompletionPort(_)) => "io-completion-port",
             None => "unknown",
         };
-        logl::log(
+        logl::log!(
             level::IMPORTANT,
             format_args!(
                 "WC3 CHILD HANDLE handle=0x{:08x} object_id={} kind={}",

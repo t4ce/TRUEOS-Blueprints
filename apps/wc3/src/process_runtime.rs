@@ -1101,7 +1101,7 @@ impl XpProcess {
         };
 
         memory.write(output, &filetime.to_le_bytes())?;
-        logl::log(
+        logl::log!(
             level::IMPORTANT,
             format_args!(
                 "WC3 CHILD SYSTEMTIMETOFILETIME RESULT pid={pid} tid={tid} input=0x{input:08x} system={:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03} day_of_week={} output=0x{output:08x} filetime=0x{filetime:016x} low=0x{:08x} high=0x{:08x} result=1 cleanup=8-by-thunk",

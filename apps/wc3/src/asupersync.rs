@@ -95,7 +95,7 @@ fn install_war3_event_pool_trap(child: &PendingChild) -> Result<bool, String> {
     if child.address_space.write(WAR3_EVENT_POOL_TRAP, &[0x0f, 0x01, 0xc1]).ok() != Some(3) {
         return Err("install War3 event pool trap failed".into());
     }
-    logl::log(level::IMPORTANT, format_args!("WC3 EVENT POOL RUST ARMED eip=0x{WAR3_EVENT_POOL_TRAP:08x}"));
+    logl::log!(level::IMPORTANT, format_args!("WC3 EVENT POOL RUST ARMED eip=0x{WAR3_EVENT_POOL_TRAP:08x}"));
     Ok(true)
 }
 
@@ -151,7 +151,7 @@ fn complete_war3_event_pool(
         && session.next_event_handle.checked_add(2048).is_some();
     if !eligible {
         context.context.set_registers(registers).map_err(|error| error.to_string())?;
-        logl::log(level::IMPORTANT, format_args!("WC3 EVENT POOL RUST BYPASS reason=state-or-code-mismatch"));
+        logl::log!(level::IMPORTANT, format_args!("WC3 EVENT POOL RUST BYPASS reason=state-or-code-mismatch"));
         return Ok(false);
     }
     // Image maps are RWX throughout this region. Confirm every page before
@@ -203,7 +203,7 @@ fn complete_war3_event_pool(
     registers.eflags = (registers.eflags & !0x8d5) | 0x44; // final CMP: equality
     registers.eip = WAR3_EVENT_POOL_TAIL;
     context.context.set_registers(registers).map_err(|error| error.to_string())?;
-    logl::log(level::IMPORTANT, format_args!("WC3 EVENT POOL RUST COMPLETE pid={} tid={} events=2048 next_handle=0x{:08x}", child.pid, child.tid, session.next_event_handle));
+    logl::log!(level::IMPORTANT, format_args!("WC3 EVENT POOL RUST COMPLETE pid={} tid={} events=2048 next_handle=0x{:08x}", child.pid, child.tid, session.next_event_handle));
     Ok(true)
 }
 
@@ -216,7 +216,7 @@ fn install_storm_record_expand_trap(address_space: &AddressSpace) -> Result<bool
     if address_space.write(STORM_EXPAND_TRAP, &[0x0f, 0x01, 0xc1]).ok() != Some(3) {
         return Err("install Storm record expansion trap failed".into());
     }
-    logl::log(level::IMPORTANT, format_args!("WC3 RECORD EXPAND RUST ARMED eip=0x{STORM_EXPAND_TRAP:08x}"));
+    logl::log!(level::IMPORTANT, format_args!("WC3 RECORD EXPAND RUST ARMED eip=0x{STORM_EXPAND_TRAP:08x}"));
     Ok(true)
 }
 
@@ -268,7 +268,7 @@ fn complete_storm_record_expand(
         && expected == Some(live.as_slice());
     let Some((count, base, source_end, output_end)) = plan.filter(|_| eligible) else {
         context.context.set_registers(registers).map_err(|error| error.to_string())?;
-        logl::log(level::IMPORTANT, format_args!("WC3 RECORD EXPAND RUST BYPASS reason=state-or-code-mismatch"));
+        logl::log!(level::IMPORTANT, format_args!("WC3 RECORD EXPAND RUST BYPASS reason=state-or-code-mismatch"));
         return Ok(false);
     };
     let mut source = vec![0u8; (source_end - base) as usize];
@@ -290,7 +290,7 @@ fn complete_storm_record_expand(
     registers.eflags = (registers.eflags & !0x8d5) | 0x44;
     registers.eip = STORM_EXPAND_TAIL;
     context.context.set_registers(registers).map_err(|error| error.to_string())?;
-    logl::log(level::IMPORTANT, format_args!("WC3 RECORD EXPAND RUST COMPLETE pid={} tid={} records={} input_bytes={} output_bytes={} output_end=0x{:08x}", child.pid, child.tid, count - 1, source.len(), output.len(), output_end));
+    logl::log!(level::IMPORTANT, format_args!("WC3 RECORD EXPAND RUST COMPLETE pid={} tid={} records={} input_bytes={} output_bytes={} output_end=0x{:08x}", child.pid, child.tid, count - 1, source.len(), output.len(), output_end));
     Ok(true)
 }
 
@@ -598,7 +598,7 @@ fn begin_table_checkpoint_capture(
         crt_heap_mapped_end: child.crt_heap_mapped_end,
         win_heap_mapped_end: child.win_heap_mapped_end,
     });
-    logl::log(
+    logl::log!(
         level::IMPORTANT,
         format_args!(
             "WC3 CHILD TABLE CHECKPOINT CAPTURE entry=0x{:08x} index=0 table=0x{:08x} pages={} call_count={}",
@@ -685,7 +685,7 @@ async fn finish_table_checkpoint_capture(
         .iter()
         .filter(|page| page.after.is_some())
         .count();
-    logl::log(
+    logl::log!(
         level::IMPORTANT,
         format_args!(
             "WC3 CHILD TABLE CHECKPOINT CREATED table=0x{:08x} pages={} changed={} bytes={}",
@@ -707,7 +707,7 @@ async fn try_restore_table_checkpoint(
     let bytes = match async_fs::read_file(TABLE_CHECKPOINT_PATH).await {
         Ok(bytes) => bytes,
         Err(error) => {
-            logl::log(
+            logl::log!(
                 level::IMPORTANT,
                 format_args!(
                     "WC3 CHILD TABLE CHECKPOINT BYPASS reason=cache-unavailable error={error}"
@@ -719,7 +719,7 @@ async fn try_restore_table_checkpoint(
     let checkpoint = match checkpoint_decode(&bytes) {
         Ok(checkpoint) => checkpoint,
         Err(reason) => {
-            logl::log(
+            logl::log!(
                 level::IMPORTANT,
                 format_args!("WC3 CHILD TABLE CHECKPOINT BYPASS reason={reason}"),
             );
@@ -727,7 +727,7 @@ async fn try_restore_table_checkpoint(
         }
     };
     let bypass = |reason: &str| {
-        logl::log(
+        logl::log!(
             level::IMPORTANT,
             format_args!("WC3 CHILD TABLE CHECKPOINT BYPASS reason={reason}"),
         );
@@ -774,7 +774,7 @@ async fn try_restore_table_checkpoint(
         .map_err(|error| error.to_string())?;
     child.single_step_count = checkpoint.after_single_step_count;
     child.dword_scan_watch = checkpoint.after_dword_scan_watch;
-    logl::log(
+    logl::log!(
         level::IMPORTANT,
         format_args!(
             "WC3 CHILD TABLE CHECKPOINT HIT from=0x{:08x} to=0x{:08x} table=0x{:08x} pages={}",
@@ -858,7 +858,7 @@ fn log_null_slot_provenance(child: &PendingChild, slot: u32, runtime_value: Opti
         .map(|value| format!("0x{value:08x}"))
         .unwrap_or_else(|| "<unreadable>".into());
     let Some(import) = child_image_import_at_rva(child, rva) else {
-        logl::log(
+        logl::log!(
             level::IMPORTANT,
             format_args!(
                 "WC3 CHILD NULL SLOT PROVENANCE slot=0x{slot:08x} rva=0x{rva:08x} kind=war3-runtime-pointer runtime_value={runtime_value}",
@@ -866,7 +866,7 @@ fn log_null_slot_provenance(child: &PendingChild, slot: u32, runtime_value: Opti
         );
         return;
     };
-    logl::log(
+    logl::log!(
         level::IMPORTANT,
         format_args!(
             "WC3 CHILD NULL SLOT PROVENANCE slot=0x{slot:08x} rva=0x{rva:08x} kind=pe-import module=\"{}\" symbol={} runtime_value={runtime_value}",
@@ -881,7 +881,7 @@ fn log_null_slot_provenance(child: &PendingChild, slot: u32, runtime_value: Opti
     } else {
         ("external-provider", "child_loader-provider-thunk-bind")
     };
-    logl::log(
+    logl::log!(
         level::IMPORTANT,
         format_args!(
             "WC3 CHILD NULL SLOT BINDING slot=0x{slot:08x} category={category} normal_path={normal_path} reason=slot-zero-after-loader",
@@ -907,7 +907,7 @@ fn log_child_slot_xrefs(child: &PendingChild, slot: u32) {
             .saturating_add(needle.len())
             .saturating_add(16)
             .min(child.image.image.len());
-        logl::log(
+        logl::log!(
             level::IMPORTANT,
             format_args!(
                 "WC3 CHILD SLOT XREF slot=0x{slot:08x} site=0x{site:08x} rva=0x{rva:08x} bytes=\"{}\"",
@@ -917,7 +917,7 @@ fn log_child_slot_xrefs(child: &PendingChild, slot: u32) {
         matches = matches.saturating_add(1);
     }
     if matches == 0 {
-        logl::log(
+        logl::log!(
             level::IMPORTANT,
             format_args!("WC3 CHILD SLOT XREF slot=0x{slot:08x} matches=0",),
         );
@@ -944,7 +944,7 @@ fn service_sync_request(
                 .ok_or_else(|| "event process missing".to_owned())?
                 .xp
                 .set_last_error_for_thread(caller_tid, if handle == 0 { 6 } else if already_exists { 183 } else { 0 });
-            logl::log(
+            logl::log!(
                 level::IMPORTANT,
                 format_args!(
                     "WC3 CHILD EVENT CREATE pid={} handle=0x{:08x} already_exists={}",
@@ -960,7 +960,7 @@ fn service_sync_request(
             name,
         } => match session.open_event(key, &name, inheritable) {
             Ok((handle, object)) => {
-                logl::log(
+                logl::log!(
                     level::IMPORTANT,
                     format_args!(
                         "WC3 CHILD OPENEVENTA RESULT pid={} tid={} desired_access=0x{:08x} access=EVENT_MODIFY_STATE inheritable={} name={:?} object={} handle=0x{:08x} result=success last_error=unchanged cleanup=12-by-thunk",
@@ -981,7 +981,7 @@ fn service_sync_request(
                     .ok_or_else(|| "OpenEventA process missing".to_owned())?
                     .xp
                     .set_last_error_for_thread(key.tid, error);
-                logl::log(
+                logl::log!(
                     level::IMPORTANT,
                     format_args!(
                         "WC3 CHILD OPENEVENTA RESULT pid={} tid={} desired_access=0x{:08x} inheritable={} name={:?} handle=NULL result=failure error={}",
@@ -1005,7 +1005,7 @@ fn service_sync_request(
                     contexts,
                     wait_deadlines,
                 )?;
-                logl::log(
+                logl::log!(
                     level::IMPORTANT,
                     format_args!(
                         "WC3 CHILD EVENT SET pid={} tid={} handle=0x{:08x} manual_reset={} was_signaled={} waiters_woken={} result=1",
@@ -1025,7 +1025,7 @@ fn service_sync_request(
                     .ok_or_else(|| "SetEvent process missing".to_owned())?
                     .xp
                     .set_last_error_for_thread(tid, 6);
-                logl::log(
+                logl::log!(
                     level::IMPORTANT,
                     format_args!(
                         "WC3 CHILD EVENT SET pid={} tid={} handle=0x{:08x} result=0 error=6",
@@ -1037,7 +1037,7 @@ fn service_sync_request(
         },
         SessionRequest::ResetEvent { pid, tid, handle } => match session.reset_event(pid, handle) {
             Ok(outcome) => {
-                logl::log(
+                logl::log!(
                     level::IMPORTANT,
                     format_args!(
                         "WC3 CHILD EVENT RESET pid={} tid={} handle=0x{:08x} manual_reset={} was_signaled={} result=1",
@@ -1056,7 +1056,7 @@ fn service_sync_request(
                     .ok_or_else(|| "ResetEvent process missing".to_owned())?
                     .xp
                     .set_last_error_for_thread(tid, 6);
-                logl::log(
+                logl::log!(
                     level::IMPORTANT,
                     format_args!(
                         "WC3 CHILD EVENT RESET pid={} tid={} handle=0x{:08x} result=0 error=6",
@@ -1076,7 +1076,7 @@ fn service_sync_request(
                 .ok_or_else(|| "mutex process missing".to_owned())?
                 .xp
                 .set_last_error_for_thread(key.tid, error);
-            logl::log(
+            logl::log!(
                 level::IMPORTANT,
                 format_args!(
                     "WC3 CHILD MUTEX CREATE pid={} tid={} handle=0x{:08x} already_exists={} error={}",
@@ -1088,7 +1088,7 @@ fn service_sync_request(
         SessionRequest::ReleaseMutex { key, handle } => match session.release_mutex(key, handle) {
             Ok(woken) => {
                 resume_completed_waiters(&woken, "release-mutex", contexts, wait_deadlines)?;
-                logl::log(
+                logl::log!(
                     level::IMPORTANT,
                     format_args!(
                         "WC3 CHILD MUTEX RELEASE pid={} tid={} handle=0x{:08x} waiters_woken={} result=1",
@@ -1114,7 +1114,7 @@ fn service_sync_request(
             concurrency,
         } => match session.create_io_completion_port(caller, concurrency) {
             Ok((handle, object)) => {
-                logl::log(
+                logl::log!(
                     level::IMPORTANT,
                     format_args!(
                         "WC3 CHILD CREATEIOCOMPLETIONPORT RESULT \\
@@ -1179,7 +1179,7 @@ fn resume_completed_waiters(
             .context
             .set_registers(registers)
             .map_err(|error| error.to_string())?;
-        logl::log(
+        logl::log!(
             level::IMPORTANT,
             format_args!(
                 "WC3 WAIT SIGNALED pid={} tid={} handle0=0x{:08x} handle1=0x{:08x} count={} wait_all={} index={} reason={} result=0x{:08x}",
@@ -1225,7 +1225,7 @@ fn terminate_launcher_thread(
     wait_deadlines.remove(&key);
     thread_calls.remove(&(key.pid, key.tid));
     resume_completed_waiters(&woken, "thread-exit", contexts, wait_deadlines)?;
-    logl::log(
+    logl::log!(
         level::IMPORTANT,
         format_args!(
             "WC3 EXITTHREAD pid={} tid={} exit_code=0x{:08x} contexts_removed=1 waiters_woken={} result=terminated",
@@ -1455,7 +1455,7 @@ fn log_war3_scan_progress(
     } else {
         "source-boundary"
     };
-    logl::log(
+    logl::log!(
         level::IMPORTANT,
         format_args!(
             "WC3 CHILD SCAN HEARTBEAT reason={} eip=0x{:08x} index={} source={} bound={} stage={} dr7=0x{:08x} tf={} checksum={} gate={} reset={} dr6=0x{:08x}",
@@ -1511,7 +1511,7 @@ fn observe_war3_dword_scan(child: &mut PendingChild, eip: u32) {
     }
     watch.last_heartbeat_index = Some(index);
     let base = child_read_u32(child, WAR3_TABLE_FILL_BASE_SLOT);
-    logl::log(
+    logl::log!(
         level::IMPORTANT,
         format_args!(
             "WC3 CHILD TABLE FILL eip=0x{:08x} index=0x{:04x} bound=0x{:04x} base={} value=0x{WAR3_TABLE_FILL_VALUE:08x}",
@@ -1546,14 +1546,14 @@ fn log_null_call_diagnostic(
     registers: Registers,
 ) -> Option<NullLoopSignature> {
     let Some(return_address) = child_fault_stack_return(child, registers) else {
-        logl::log(
+        logl::log!(
             level::IMPORTANT,
             format_args!("WC3 CHILD NULL CALL RETURN pid={pid} tid={tid} stack_ret=<unreadable>"),
         );
         return None;
     };
     if return_address == 0 {
-        logl::log(
+        logl::log!(
             level::IMPORTANT,
             format_args!("WC3 CHILD NULL CALL RETURN pid={pid} tid={tid} stack_ret=0x00000000"),
         );
@@ -1561,14 +1561,14 @@ fn log_null_call_diagnostic(
     }
     let (return_owner, return_rva) =
         child_pc_owner(child, return_address).unwrap_or(("unknown", 0));
-    logl::log(
+    logl::log!(
         level::IMPORTANT,
         format_args!(
             "WC3 CHILD NULL CALL RETURN pid={pid} tid={tid} stack_ret=0x{return_address:08x} owner=\"{return_owner}\" rva=0x{return_rva:08x}",
         ),
     );
     let Some(bytes) = code_before_return(&child.address_space, return_address) else {
-        logl::log(
+        logl::log!(
             level::IMPORTANT,
             format_args!(
                 "WC3 CHILD NULL CALL BYTES end=0x{return_address:08x} bytes=\"<unreadable>\""
@@ -1576,7 +1576,7 @@ fn log_null_call_diagnostic(
         );
         return None;
     };
-    logl::log(
+    logl::log!(
         level::IMPORTANT,
         format_args!(
             "WC3 CHILD NULL CALL BYTES end=0x{return_address:08x} bytes=\"{}\"",
@@ -1589,7 +1589,7 @@ fn log_null_call_diagnostic(
             .then(|| u32::from_le_bytes(word))
     }) {
         NullCallSource::Register { name, target } => {
-            logl::log(
+            logl::log!(
                 level::IMPORTANT,
                 format_args!(
                     "WC3 CHILD NULL CALL pid={pid} tid={tid} return=0x{return_address:08x} return_owner=\"{return_owner}\" return_rva=0x{return_rva:08x} kind=call-register register={name} target=0x{target:08x}",
@@ -1599,7 +1599,7 @@ fn log_null_call_diagnostic(
         }
         NullCallSource::AbsoluteMemory { slot, target } => {
             let (slot_owner, slot_rva) = child_pc_owner(child, slot).unwrap_or(("unknown", 0));
-            logl::log(
+            logl::log!(
                 level::IMPORTANT,
                 format_args!(
                     "WC3 CHILD NULL CALL pid={pid} tid={tid} return=0x{return_address:08x} return_owner=\"{return_owner}\" return_rva=0x{return_rva:08x} kind=call-absolute-memory slot=0x{slot:08x} slot_owner=\"{slot_owner}\" slot_rva=0x{slot_rva:08x} target={}",
@@ -1626,7 +1626,7 @@ fn log_null_call_diagnostic(
             slot,
             target,
         } => {
-            logl::log(
+            logl::log!(
                 level::IMPORTANT,
                 format_args!(
                     "WC3 CHILD NULL CALL pid={pid} tid={tid} return=0x{return_address:08x} return_owner=\"{return_owner}\" return_rva=0x{return_rva:08x} kind=call-register-memory base={name} displacement=0x{:08x} slot=0x{slot:08x} target={}",
@@ -1639,7 +1639,7 @@ fn log_null_call_diagnostic(
             None
         }
         NullCallSource::Unknown => {
-            logl::log(
+            logl::log!(
                 level::IMPORTANT,
                 format_args!(
                     "WC3 CHILD NULL CALL pid={pid} tid={tid} return=0x{return_address:08x} return_owner=\"{return_owner}\" return_rva=0x{return_rva:08x} kind=unclassified",
@@ -1813,7 +1813,7 @@ fn begin_child_seh_dispatch(
             .read(registration.handler, &mut bytes)
             .ok()
             == Some(bytes.len());
-        logl::log(
+        logl::log!(
             level::IMPORTANT,
             format_args!(
                 "WC3 CHILD SEH HANDLER DUMP pid={} tid={} handler=0x{:08x} bytes=\"{}\"",
@@ -1833,7 +1833,7 @@ fn begin_child_seh_dispatch(
         .debug_registers()
         .map_err(|error| error.to_string())?;
     if exception.vector == Some(1) && !quiet {
-        logl::log(
+        logl::log!(
             level::IMPORTANT,
             format_args!(
                 "WC3 CHILD PRE-SEH DEBUG pid={} tid={} eip=0x{:08x} dr0=0x{:08x} dr1=0x{:08x} dr2=0x{:08x} dr3=0x{:08x} dr6=0x{:08x} dr7=0x{:08x} qualification_dr6={:?}",
@@ -1948,7 +1948,7 @@ fn begin_child_seh_dispatch(
     let handler_registers =
         wc3::seh::exception_handler_registers(registers, registration.handler, frame_esp);
     if !quiet {
-        logl::log(
+        logl::log!(
             level::IMPORTANT,
             format_args!(
                 "WC3 CHILD SEH ENTER FLAGS interrupted=0x{:08x} saved_context=0x{:08x} handler_live=0x{:08x} tf_cleared={}",
@@ -1968,7 +1968,7 @@ fn begin_child_seh_dispatch(
         .map_err(|error| error.to_string())?;
     let (owner, rva) = child_pc_owner(child, registration.handler).unwrap_or(("unknown", 0));
     if !quiet {
-        logl::log(
+        logl::log!(
             level::IMPORTANT,
             format_args!(
                 "WC3 CHILD SEH DISPATCH pid={} tid={} registration=0x{:08x} next=0x{:08x} handler=0x{:08x} handler_owner={:?} handler_rva=0x{:08x} exception=0x{:08x} address=0x{:08x} kind={}",
@@ -2050,7 +2050,7 @@ fn schedule_child_seh3_filter(
         .checked_sub(4)
         .ok_or("SEH3 exception-pointers slot underflow")?;
     write_child_u32(child, xpointers_slot, pointers_va)?;
-    logl::log(
+    logl::log!(
         level::IMPORTANT,
         format_args!(
             "WC3 CHILD CRT EH3 FILTER FRAME frame=0x{:08x} anchor=0x{:08x} xpointers_slot=0x{:08x} xpointers=0x{:08x} record=0x{:08x} context=0x{:08x}",
@@ -2169,7 +2169,7 @@ fn log_get_proc_address_continuation(
 ) {
     let mut bytes = [0; 16];
     let readable = child.address_space.read(caller_return, &mut bytes).ok() == Some(bytes.len());
-    logl::log(
+    logl::log!(
         level::IMPORTANT,
         format_args!(
             "WC3 CHILD GETPROCADDRESS CALLER pid={} tid={} module={:?} selector={:?} result=0x{:08x} return=0x{:08x} after=\"{}\"",
@@ -2190,7 +2190,7 @@ fn log_get_proc_address_continuation(
         return;
     }
     if let Some(destination) = eax_absolute_store(&bytes) {
-        logl::log(
+        logl::log!(
             level::IMPORTANT,
             format_args!(
                 "WC3 CHILD GETPROCADDRESS STORE pid={} tid={} module={:?} selector={:?} result=0x{:08x} return=0x{:08x} destination=0x{:08x}",
@@ -2218,7 +2218,7 @@ fn install_child_provider_imports(
                 Permissions::READ | Permissions::WRITE | Permissions::EXECUTE,
             )
             .map_err(|error| error.to_string())?;
-        logl::log(
+        logl::log!(
             level::IMPORTANT,
             format_args!(
                 "WC3 CHILD PROVIDER THUNK GROW pid={} old_bytes={} new_bytes={}",
@@ -2377,7 +2377,7 @@ fn bind_runtime_local_image_imports(
             runtime_native_export_address(child, &import.module, &import.symbol)?
         {
             if classified.insert(import.module.clone()) {
-                logl::log(
+                logl::log!(
                     level::IMPORTANT,
                     format_args!(
                         "WC3 CHILD RUNTIME IMPORT CLASSIFY parent={parent:?} module={:?} kind=already-loaded-native target={provider:?}",
@@ -2403,7 +2403,7 @@ fn bind_runtime_local_image_imports(
             None => None,
         };
         if let Some(stored) = stored {
-            logl::log(
+            logl::log!(
                 level::IMPORTANT,
                 format_args!(
                     "WC3 CHILD RUNTIME IMPORT CLASSIFY parent={parent:?} module={:?} kind=local-native-unloaded stored={stored:?}",
@@ -2416,7 +2416,7 @@ fn bind_runtime_local_image_imports(
             });
         }
         if classified.insert(import.module.clone()) {
-            logl::log(
+            logl::log!(
                 level::IMPORTANT,
                 format_args!(
                     "WC3 CHILD RUNTIME IMPORT CLASSIFY parent={parent:?} module={:?} kind=external-provider",
@@ -2450,7 +2450,7 @@ fn bind_runtime_local_image_imports(
             .write(iat, &address.to_le_bytes())
             .map_err(|error| error.to_string())?;
     }
-    logl::log(
+    logl::log!(
         level::IMPORTANT,
         format_args!(
             "WC3 CHILD RUNTIME IMPORTS READY parent={parent:?} native_imports={native_imports} provider_imports={} patched_iat={}",
@@ -2535,7 +2535,7 @@ pub(super) async fn run_loop(
                 }
                 let leaf = exit.registers.eax;
                 let subleaf = exit.registers.ecx;
-                logl::log(level::IMPORTANT, format_args!(
+                logl::log!(level::IMPORTANT, format_args!(
                     "WC3 CHILD CPUID CALL pid={} tid={} eip=0x{:08x} leaf=0x{:08x} subleaf=0x{:08x}",
                     active_key.pid, active_key.tid, eip, leaf, subleaf,
                 ));
@@ -2547,7 +2547,7 @@ pub(super) async fn run_loop(
                 registers.edx = edx;
                 registers.eip = eip.checked_add(2).ok_or("CPUID EIP overflow")?;
                 contexts[active].context.set_registers(registers).map_err(|error| error.to_string())?;
-                logl::log(level::IMPORTANT, format_args!(
+                logl::log!(level::IMPORTANT, format_args!(
                     "WC3 CHILD CPUID RESULT pid={} tid={} leaf=0x{:08x} subleaf=0x{:08x} eax=0x{:08x} ebx=0x{:08x} ecx=0x{:08x} edx=0x{:08x} profile=xp-p3 eip=0x{:08x}->0x{:08x}",
                     active_key.pid, active_key.tid, leaf, subleaf, eax, ebx, ecx, edx, eip, registers.eip,
                 ));
@@ -2599,7 +2599,7 @@ pub(super) async fn run_loop(
                         .map(|byte| format!("{byte:02x}"))
                         .collect::<Vec<_>>()
                         .join(" ");
-                    logl::log(
+                    logl::log!(
                         level::IMPORTANT,
                         format_args!(
                             "WC3 CHILD EXEC SAMPLE pid={} tid={} during=\"War3.exe:ENTRY\" preemptions={} owner={:?} rva=0x{:08x} eip=0x{:08x} esp=0x{:08x} ebp=0x{:08x} eax=0x{:08x} same_page={} code={}",
@@ -2620,7 +2620,7 @@ pub(super) async fn run_loop(
                     let scan_source = child_read_u32(child, WAR3_SCAN_SOURCE);
                     let scan_bound = child_read_u32(child, WAR3_SCAN_BOUND);
                     let scan_count = child_read_u32(child, WAR3_SCAN_COUNT);
-                    logl::log(
+                    logl::log!(
                         level::IMPORTANT,
                         format_args!(
                             "WC3 CHILD HOTLOOP pid={} tid={} preemptions={} eip=0x{:08x} index={} source={} bound={} count={} eflags=0x{:08x}",
@@ -2644,7 +2644,7 @@ pub(super) async fn run_loop(
                         ),
                     );
                         if same_page == 1024 {
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD EXEC HOTPAGE pid={} tid={} owner={:?} page=0x{:08x} eip=0x{:08x} samples={}",
@@ -2747,7 +2747,7 @@ pub(super) async fn run_loop(
                         .as_ref()
                         .and_then(child_loader::provider_data_export_address);
 
-                    logl::log(
+                    logl::log!(
                         level::IMPORTANT,
                         format_args!(
                             "WC3 CHILD 401D0B FRONTIER \
@@ -2770,7 +2770,7 @@ pub(super) async fn run_loop(
                             hex_bytes(&ebp_bytes),
                         ),
                     );
-                    logl::log(
+                    logl::log!(
                         level::IMPORTANT,
                         format_args!(
                             "WC3 CHILD 401D0B PROVENANCE \
@@ -2797,7 +2797,7 @@ pub(super) async fn run_loop(
                 {
                     let gate = child_read_u32(child, 0x0049_a430);
                     let reset = child_read_u32(child, 0x0049_2614);
-                    logl::log(
+                    logl::log!(
                         level::IMPORTANT,
                         format_args!(
                             "WC3 CHILD DB STATUS eip=0x{:08x} dr6={:?} gate_49a430={:?} reset_492614={:?}",
@@ -2808,7 +2808,7 @@ pub(super) async fn run_loop(
                 if !quiet_exception {
                     if exception.vector == Some(6) {
                         if let Some(start) = registers.eip.checked_sub(16) {
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD EXCEPTION CODE BEFORE address=0x{:08x} bytes=\"{}\"",
@@ -2817,7 +2817,7 @@ pub(super) async fn run_loop(
                                 ),
                             );
                         }
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD EXCEPTION CODE eip=0x{:08x} bytes=\"{}\"",
@@ -2851,7 +2851,7 @@ pub(super) async fn run_loop(
                             }
                         }
                     }
-                    logl::log(
+                    logl::log!(
                         level::IMPORTANT,
                         format_args!(
                             "WC3 CHILD EXCEPTION pid={} tid={} during={:?} eip=0x{:08x} esp=0x{:08x} vector={} name=\"{}\" type={} valid={} error_valid={} error={}",
@@ -2974,7 +2974,7 @@ pub(super) async fn run_loop(
                             }
                         };
                         if count == 3 {
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD WATCH reason=repeated-null-call pid={} tid={} return=0x{:08x} slot=0x{:08x} target=0x00000000 repeats={} action=continue-seh",
@@ -3026,7 +3026,7 @@ pub(super) async fn run_loop(
                         }
                     };
                     if count >= 3 {
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD OPERATOR STOP reason=repeated-divide-error pid={} tid={} eip=0x{:08x} esp=0x{:08x} eax=0x{:08x} ecx=0x{:08x} edx=0x{:08x} table_base=0x{:08x} index=0x{:08x} state_ptr=0x{:08x} input=0x{:02x} accum=0x{:04x} repeats={}",
@@ -3060,7 +3060,7 @@ pub(super) async fn run_loop(
                         .filter(|child| child.pid == active_key.pid)
                         .ok_or_else(|| "halted child missing pending state".to_owned())?;
                     let scope = child_execution_scope(child).map_err(str::to_owned)?;
-                    logl::log(
+                    logl::log!(
                         level::IMPORTANT,
                         format_args!(
                             "WC3 CHILD EXECUTION FAULT pid={} tid={} during={:?} eip=0x{:08x} esp=0x{:08x} kind=Halted detail={}",
@@ -3075,7 +3075,7 @@ pub(super) async fn run_loop(
                     return Ok(());
                 }
                 let halted_tid = contexts.remove(active).tid;
-                logl::log(
+                logl::log!(
                     level::INFO,
                     format_args!(
                         "wc3: x86 context halted tid={halted_tid} after {} calls",
@@ -3094,7 +3094,7 @@ pub(super) async fn run_loop(
                         .filter(|child| child.pid == active_key.pid)
                         .ok_or_else(|| "faulted child missing pending state".to_owned())?;
                     let scope = child_execution_scope(child).map_err(str::to_owned)?;
-                    logl::log(
+                    logl::log!(
                         level::IMPORTANT,
                         format_args!(
                             "WC3 CHILD EXECUTION FAULT pid={} tid={} during={:?} eip=0x{:08x} esp=0x{:08x} kind={:?} detail={}",

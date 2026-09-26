@@ -5,6 +5,7 @@ edition = "2024"
 
 [package.metadata.trueos-blueprint]
 replicatable = false
+profile = "release"
 
 [[bin]]
 name = "wc3"
@@ -13,7 +14,8 @@ test = false
 bench = false
 
 [features]
-default = ["trace-seh"]
+default = []
+diagnostics = []
 nolog = []
 host-memmove = []
 host-strncmp = []

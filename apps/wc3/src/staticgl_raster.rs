@@ -385,91 +385,189 @@ impl Frame {
         let range_scale = (state.depth.range[1] - state.depth.range[0]).abs() * 0.5;
         let polygon_bias = state.polygon_offset[0] * dzdx.abs().max(dzdy.abs()) * range_scale
             + state.polygon_offset[1] / ((1u32 << 24) - 1) as f32;
-        let min_x = p
+        let mut min_x = p
             .iter()
             .map(|v| v.x)
             .fold(f32::INFINITY, f32::min)
             .floor()
             .max(0.0) as i32;
-        let max_x = p
+        let mut max_x = p
             .iter()
             .map(|v| v.x)
             .fold(f32::NEG_INFINITY, f32::max)
             .ceil()
             .min(self.width as f32 - 1.0) as i32;
-        let min_y = p
+        let mut min_y = p
             .iter()
             .map(|v| v.y)
             .fold(f32::INFINITY, f32::min)
             .floor()
             .max(0.0) as i32;
-        let max_y = p
+        let mut max_y = p
             .iter()
             .map(|v| v.y)
             .fold(f32::NEG_INFINITY, f32::max)
             .ceil()
             .min(self.height as f32 - 1.0) as i32;
+        if state.scissor_enabled {
+            let Some([left, right, top, bottom]) = scissor_bounds(self.height, state.scissor)
+            else {
+                return 0;
+            };
+            min_x = min_x.max(left);
+            max_x = max_x.min(right);
+            min_y = min_y.max(top);
+            max_y = max_y.min(bottom);
+        }
+        if min_x > max_x || min_y > max_y {
+            return 0;
+        }
+
+        // Edge functions and every interpolated value are affine in window
+        // coordinates.  Calculate their values at the first pixel centre once
+        // and then advance them across scanlines.  The former implementation
+        // rebuilt three barycentric coordinates (and repeated perspective
+        // reconstruction) for every covered pixel; WC3's full-screen menu
+        // geometry made that the overwhelmingly dominant CPU cost.
+        let edges = [
+            Edge::new(p[1], p[2]),
+            Edge::new(p[2], p[0]),
+            Edge::new(p[0], p[1]),
+        ];
+        let start = [min_x as f32 + 0.5, min_y as f32 + 0.5];
+        let edge_start = edges.map(|edge| edge.at(start));
+        let inv_area = area.recip();
+        let depth_plane = Plane::from_vertices(
+            edge_start,
+            &edges,
+            inv_area,
+            [p[0].z_ndc, p[1].z_ndc, p[2].z_ndc],
+        );
+        let inv_w_plane = Plane::from_vertices(
+            edge_start,
+            &edges,
+            inv_area,
+            [p[0].inv_w, p[1].inv_w, p[2].inv_w],
+        );
+        let color_planes: [Plane; 4] = core::array::from_fn(|i| {
+            Plane::from_vertices(
+                edge_start,
+                &edges,
+                inv_area,
+                [
+                    p[0].color_over_w[i],
+                    p[1].color_over_w[i],
+                    p[2].color_over_w[i],
+                ],
+            )
+        });
+        let uv_planes: [Plane; 4] = core::array::from_fn(|i| {
+            Plane::from_vertices(
+                edge_start,
+                &edges,
+                inv_area,
+                [p[0].uv_over_w[i], p[1].uv_over_w[i], p[2].uv_over_w[i]],
+            )
+        });
+        let fog_plane = Plane::from_vertices(
+            edge_start,
+            &edges,
+            inv_area,
+            [p[0].fog_over_w, p[1].fog_over_w, p[2].fog_over_w],
+        );
+        let edge_dx = edges.map(|edge| edge.dx);
+        let edge_dy = edges.map(|edge| edge.dy);
+        let top_left = edges.map(|edge| edge.top_left);
+        let depth_scale = state.depth.range[1] - state.depth.range[0];
         let mut shaded = 0;
+        let mut edge_row = edge_start;
+        let mut depth_row = depth_plane.value;
+        let mut inv_w_row = inv_w_plane.value;
+        let mut color_row = color_planes.map(|plane| plane.value);
+        let mut uv_row = uv_planes.map(|plane| plane.value);
+        let mut fog_row = fog_plane.value;
         for y in min_y..=max_y {
+            let mut edge = edge_row;
+            let mut z_ndc = depth_row;
+            let mut inv_w = inv_w_row;
+            let mut color_over_w = color_row;
+            let mut uv_over_w = uv_row;
+            let mut fog_over_w = fog_row;
+            let mut offset = self.top_index(min_x, y);
             for x in min_x..=max_x {
-                let at = [x as f32 + 0.5, y as f32 + 0.5];
-                let e0 = orient([p[1].x, p[1].y], [p[2].x, p[2].y], at);
-                let e1 = orient([p[2].x, p[2].y], [p[0].x, p[0].y], at);
-                let e2 = orient([p[0].x, p[0].y], [p[1].x, p[1].y], at);
-                if !edge_inside(e0, p[1], p[2])
-                    || !edge_inside(e1, p[2], p[0])
-                    || !edge_inside(e2, p[0], p[1])
+                if edge_inside_fast(edge[0], top_left[0])
+                    && edge_inside_fast(edge[1], top_left[1])
+                    && edge_inside_fast(edge[2], top_left[2])
                 {
-                    continue;
+                    let depth =
+                        (state.depth.range[0] + (z_ndc * 0.5 + 0.5) * depth_scale + polygon_bias)
+                            .clamp(0.0, 1.0);
+                    if !state.depth.enabled || compare(state.depth.func, depth, self.depth[offset])
+                    {
+                        // Perspective attributes share one reciprocal.  Texture
+                        // s/t further cancel that reciprocal against q, so the
+                        // sampler only needs the q-over-w planes.
+                        let reciprocal_w = inv_w.recip();
+                        let mut color = color_over_w.map(|value| value * reciprocal_w);
+                        if let Some(texture) = texture {
+                            let q = uv_over_w[3];
+                            let sample = sample_texture_uv(
+                                texture,
+                                uv_over_w[0] / q,
+                                uv_over_w[1] / q,
+                                (uv_over_w[0] + uv_planes[0].dx) / (q + uv_planes[3].dx),
+                                (uv_over_w[1] + uv_planes[1].dx) / (q + uv_planes[3].dx),
+                                (uv_over_w[0] + uv_planes[0].dy) / (q + uv_planes[3].dy),
+                                (uv_over_w[1] + uv_planes[1].dy) / (q + uv_planes[3].dy),
+                            );
+                            color = texenv(
+                                state.tex_env,
+                                state.tex_env_color,
+                                texture.format,
+                                color,
+                                sample,
+                            );
+                        }
+                        if state.fog.enabled {
+                            color = apply_fog(state.fog, fog_over_w * reciprocal_w, color);
+                        }
+                        color = color.map(clamp01);
+                        if !state.alpha.enabled
+                            || compare(state.alpha.func, color[3], state.alpha.reference)
+                        {
+                            if state.blend.enabled {
+                                color = blend(state.blend, color, read_pixel(&self.rgba, offset));
+                            }
+                            write_pixel(&mut self.rgba, offset, color);
+                            if state.depth.enabled && state.depth.write {
+                                self.depth[offset] = depth;
+                            }
+                            shaded += 1;
+                        }
+                    }
                 }
-                if state.scissor_enabled && !in_scissor(self.height, state.scissor, x, y) {
-                    continue;
+                edge[0] += edge_dx[0];
+                edge[1] += edge_dx[1];
+                edge[2] += edge_dx[2];
+                z_ndc += depth_plane.dx;
+                inv_w += inv_w_plane.dx;
+                for i in 0..4 {
+                    color_over_w[i] += color_planes[i].dx;
+                    uv_over_w[i] += uv_planes[i].dx;
                 }
-                let b = [e0 / area, e1 / area, e2 / area];
-                let depth = (state.depth.range[0]
-                    + ((b[0] * p[0].z_ndc + b[1] * p[1].z_ndc + b[2] * p[2].z_ndc) * 0.5 + 0.5)
-                        * (state.depth.range[1] - state.depth.range[0])
-                    + polygon_bias)
-                    .clamp(0.0, 1.0);
-                let offset = self.top_index(x, y);
-                if state.depth.enabled && !compare(state.depth.func, depth, self.depth[offset]) {
-                    continue;
-                }
-                let mut color = perspective_color(&p, b);
-                if let Some(texture) = texture {
-                    let uv = perspective_uv(&p, b);
-                    let uv_dx = perspective_uv_at(&p, [x as f32 + 1.5, y as f32 + 0.5]);
-                    let uv_dy = perspective_uv_at(&p, [x as f32 + 0.5, y as f32 + 1.5]);
-                    let sample = sample_texture(texture, uv, uv_dx, uv_dy);
-                    color = texenv(
-                        state.tex_env,
-                        state.tex_env_color,
-                        texture.format,
-                        color,
-                        sample,
-                    );
-                }
-                if state.fog.enabled {
-                    color = apply_fog(state.fog, perspective_fog(&p, b), color);
-                }
-                color = color.map(clamp01);
-                if state.alpha.enabled
-                    && !compare(state.alpha.func, color[3], state.alpha.reference)
-                {
-                    continue;
-                }
-                let dst = read_pixel(&self.rgba, offset);
-                let out = if state.blend.enabled {
-                    blend(state.blend, color, dst)
-                } else {
-                    color
-                };
-                write_pixel(&mut self.rgba, offset, out);
-                if state.depth.enabled && state.depth.write {
-                    self.depth[offset] = depth;
-                }
-                shaded += 1;
+                fog_over_w += fog_plane.dx;
+                offset += 1;
             }
+            for i in 0..3 {
+                edge_row[i] += edge_dy[i];
+            }
+            depth_row += depth_plane.dy;
+            inv_w_row += inv_w_plane.dy;
+            for i in 0..4 {
+                color_row[i] += color_planes[i].dy;
+                uv_row[i] += uv_planes[i].dy;
+            }
+            fog_row += fog_plane.dy;
         }
         shaded
     }
@@ -494,6 +592,78 @@ struct ScreenVertex {
     uv_over_w: [f32; 4],
     fog_over_w: f32,
 }
+
+#[derive(Clone, Copy)]
+struct Edge {
+    dx: f32,
+    dy: f32,
+    top_left: bool,
+    c: f32,
+}
+
+impl Edge {
+    #[inline]
+    fn new(a: ScreenVertex, b: ScreenVertex) -> Self {
+        // orient(a, b, [x, y]) = dx * x + dy * y + c.
+        Self {
+            dx: a.y - b.y,
+            dy: b.x - a.x,
+            top_left: (b.y - a.y) < 0.0 || ((b.y - a.y) == 0.0 && (b.x - a.x) > 0.0),
+            c: b.y * a.x - b.x * a.y,
+        }
+    }
+
+    #[inline]
+    fn at(self, point: [f32; 2]) -> f32 {
+        self.dx * point[0] + self.dy * point[1] + self.c
+    }
+}
+
+#[derive(Clone, Copy)]
+struct Plane {
+    value: f32,
+    dx: f32,
+    dy: f32,
+}
+
+impl Plane {
+    #[inline]
+    fn from_vertices(edge: [f32; 3], edges: &[Edge; 3], inv_area: f32, values: [f32; 3]) -> Self {
+        Self {
+            value: (edge[0] * values[0] + edge[1] * values[1] + edge[2] * values[2]) * inv_area,
+            dx: (edges[0].dx * values[0] + edges[1].dx * values[1] + edges[2].dx * values[2])
+                * inv_area,
+            dy: (edges[0].dy * values[0] + edges[1].dy * values[1] + edges[2].dy * values[2])
+                * inv_area,
+        }
+    }
+}
+
+#[inline]
+fn edge_inside_fast(edge: f32, top_left: bool) -> bool {
+    edge > 0.0 || (edge == 0.0 && top_left)
+}
+
+/// Returns an inclusive top-down rectangle, clipped to the framebuffer.
+fn scissor_bounds(frame_height: u32, scissor: [i32; 4]) -> Option<[i32; 4]> {
+    let [left, bottom, width, height] = scissor.map(i64::from);
+    if width <= 0 || height <= 0 {
+        return None;
+    }
+    let frame_height = i64::from(frame_height);
+    let right = left.saturating_add(width).saturating_sub(1);
+    let top = frame_height.saturating_sub(bottom.saturating_add(height));
+    let bottom_top = frame_height.saturating_sub(bottom).saturating_sub(1);
+    let left = left.max(0);
+    let right = right.min(i64::from(i32::MAX));
+    let top = top.max(0);
+    let bottom_top = bottom_top.min(frame_height.saturating_sub(1));
+    if left > right || top > bottom_top {
+        return None;
+    }
+    Some([left as i32, right as i32, top as i32, bottom_top as i32])
+}
+
 impl ScreenVertex {
     fn from_clip(v: ClipVertex, viewport: [i32; 4], frame_height: u32) -> Self {
         let inv_w = 1.0 / v.clip[3];
@@ -678,10 +848,35 @@ fn perspective_uv_at(p: &[ScreenVertex; 3], at: [f32; 2]) -> [f32; 4] {
     )
 }
 
-fn sample_texture(tex: TextureView<'_>, uv: [f32; 4], dx: [f32; 4], dy: [f32; 4]) -> [f32; 4] {
+/// Samples a texture from perspective-correct s/t and their one-pixel
+/// derivatives.  The rasterizer has already interpolated q-over-w, so it can
+/// form these values without reconstructing barycentrics at the neighbouring
+/// pixel centres.
+fn sample_texture_uv(
+    tex: TextureView<'_>,
+    u: f32,
+    v: f32,
+    u_dx: f32,
+    v_dx: f32,
+    u_dy: f32,
+    v_dy: f32,
+) -> [f32; 4] {
     let base = &tex.levels[0];
-    let du = ((dx[0] - uv[0]) * base.width as f32).hypot((dy[0] - uv[0]) * base.width as f32);
-    let dv = ((dx[1] - uv[1]) * base.height as f32).hypot((dy[1] - uv[1]) * base.height as f32);
+    let uv = [u, v, 0.0, 1.0];
+    // Most UI textures use the same non-mipmap filter for magnification and
+    // minification.  In that case GL's LOD has no observable effect, so avoid
+    // two hypot calls and log2 for every fragment.
+    match (tex.min_filter, tex.mag_filter) {
+        (Filter::Nearest, Filter::Nearest) => {
+            return sample_level(*base, uv, tex.wrap_s, tex.wrap_t, false);
+        }
+        (Filter::Linear, Filter::Linear) => {
+            return sample_level(*base, uv, tex.wrap_s, tex.wrap_t, true);
+        }
+        _ => {}
+    }
+    let du = ((u_dx - u) * base.width as f32).hypot((u_dy - u) * base.width as f32);
+    let dv = ((v_dx - v) * base.height as f32).hypot((v_dy - v) * base.height as f32);
     let lod = du.max(dv).max(1.0).log2();
     let mag = lod <= 0.0;
     let filter = if mag { tex.mag_filter } else { tex.min_filter };
@@ -776,7 +971,11 @@ fn wrap_index(i: i32, n: i32, w: Wrap) -> i32 {
         Wrap::MirroredRepeat => {
             let q = i.div_euclid(n);
             let r = i.rem_euclid(n);
-            if q & 1 == 0 { r } else { n - 1 - r }
+            if q & 1 == 0 {
+                r
+            } else {
+                n - 1 - r
+            }
         }
         Wrap::Clamp | Wrap::ClampToEdge => i.clamp(0, n - 1),
     }

@@ -12,7 +12,7 @@ use trueos::x86::{Context, DebugRegisters, Exit, ExtendedState, Registers};
 macro_rules! trace_api {
     ($message:expr $(,)?) => {
         if cfg!(feature = "trace-api") {
-            trueos::logl::log(trueos::logl::level::IMPORTANT, $message);
+            crate::logl::log!(trueos::logl::level::IMPORTANT, $message);
         }
     };
 }
@@ -214,7 +214,7 @@ impl GuestThreadContext {
             Ok(Ok(event)) => event,
             Ok(Err(error)) => {
                 record_execution(sequence, ExecutionStage::Receive, self.pid, self.tid);
-                trueos::logl::log(
+                crate::logl::log!(
                     trueos::logl::level::IMPORTANT,
                     format_args!(
                         "WC3 EXEC RECEIVE seq={} pid={} tid={} result=error error={:?}",
@@ -225,7 +225,7 @@ impl GuestThreadContext {
             }
             Err(_) => {
                 record_execution(sequence, ExecutionStage::Receive, self.pid, self.tid);
-                trueos::logl::log(
+                crate::logl::log!(
                     trueos::logl::level::IMPORTANT,
                     format_args!(
                         "WC3 EXEC RECEIVE seq={} pid={} tid={} result=channel-closed",
@@ -309,7 +309,7 @@ async fn guest_thread_task(
                         Ok(exit) => exit,
                         Err(error) => {
                             record_execution(sequence, ExecutionStage::Exit, pid, tid);
-                            trueos::logl::log(
+                            crate::logl::log!(
                                 trueos::logl::level::IMPORTANT,
                                 format_args!(
                                     "WC3 EXEC EXIT seq={} pid={} tid={} kind=error detail={:?} eip=<unavailable> esp=<unavailable>",

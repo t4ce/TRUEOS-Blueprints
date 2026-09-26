@@ -1,6 +1,6 @@
                     {
                     if provider.module.eq_ignore_ascii_case("OPENGL32.dll") {
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD OPENGL CALL pid={} tid={} during=\"{}\" \
@@ -76,7 +76,7 @@
                                 .map_err(|error| format!("OpenEventA name: {error}"))?,
                             )
                         };
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD OPENEVENTA CALL pid={} tid={} desired_access=0x{:08x} inherit_handle=0x{:08x} inheritable={} name_ptr=0x{:08x} name={:?} caller_ret=0x{:08x}",
@@ -127,7 +127,7 @@
                         } else {
                             "UNKNOWN"
                         };
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD LOADIMAGEA pid={} tid={} module=0x{:08x} module_name={:?} name_ptr=0x{:08x} name={:?} type={} type_name={} cx={} cy={} flags=0x{:08x} flags_name={} caller_ret=0x{:08x}",
@@ -158,7 +158,7 @@
                             exit.registers.esp,
                             3,
                         )?;
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD GETDEVICECAPS CALL pid={} tid={} hdc=0x{:08x} index={} caller_ret=0x{:08x}",
@@ -181,7 +181,7 @@
                             exit.registers.esp,
                             4,
                         )?;
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD SETPIXELFORMAT CALL pid={} tid={} hdc=0x{:08x} format={} ppfd=0x{:08x} caller_ret=0x{:08x}",
@@ -205,7 +205,7 @@
                             exit.registers.esp,
                             2,
                         )?;
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD WGLCREATECONTEXT CALL pid={} tid={} hdc=0x{:08x} caller_ret=0x{:08x}",
@@ -227,7 +227,7 @@
                             exit.registers.esp,
                             3,
                         )?;
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD WGLMAKECURRENT CALL pid={} tid={} hdc=0x{:08x} hglrc=0x{:08x} caller_ret=0x{:08x}",
@@ -250,7 +250,7 @@
                             exit.registers.esp,
                             2,
                         )?;
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD GLGETSTRING CALL pid={} tid={} name=0x{:08x} caller_ret=0x{:08x}",
@@ -278,7 +278,7 @@
                             0x0000_1702 => "GL_TEXTURE",
                             _ => "UNKNOWN",
                         };
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD GLMATRIXMODE CALL pid={} tid={} mode=0x{:08x} mode_name={} caller_ret=0x{:08x}",
@@ -319,7 +319,7 @@
                             let values = core::array::from_fn::<f32, 4, _>(|i| {
                                 f32::from_le_bytes(raw[i * 4..i * 4 + 4].try_into().unwrap())
                             });
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD GLLIGHTMODELFV CALL pid={} tid={} pname=0x{:08x} pname_name={} params=0x{:08x} values={:?} caller_ret=0x{:08x}",
@@ -333,7 +333,7 @@
                                 ),
                             );
                         } else {
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD GLLIGHTMODELFV CALL pid={} tid={} pname=0x{:08x} pname_name={} params=0x{:08x} value={} caller_ret=0x{:08x}",
@@ -369,7 +369,7 @@
                             frame[2],
                             256,
                         )?;
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD SSCANF CALL pid={} tid={} input_ptr=0x{:08x} input={:?} format_ptr=0x{:08x} format={:?} args=[0x{:08x},0x{:08x},0x{:08x},0x{:08x},0x{:08x}] caller_ret=0x{:08x}",
@@ -435,7 +435,7 @@
                             )?;
                             *value = f32::from_le_bytes(raw);
                         }
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD GLLIGHTFV CALL pid={} tid={} light=0x{:08x} light_name={} pname=0x{:08x} pname_name={} params=0x{:08x} values={:?} count={} caller_ret=0x{:08x}",
@@ -480,7 +480,7 @@
                             0x8037 => "GL_POLYGON_OFFSET_FILL",
                             _ => "UNKNOWN",
                         };
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD GLDISABLE CALL pid={} tid={} cap=0x{:08x} cap_name={} caller_ret=0x{:08x}",
@@ -510,7 +510,7 @@
                                 raw[index * 4..index * 4 + 4].try_into().unwrap(),
                             )
                         });
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD GLLOADMATRIXF CALL pid={} tid={} matrix=0x{:08x} values={:?} caller_ret=0x{:08x}",
@@ -533,7 +533,7 @@
                             exit.registers.esp,
                             3,
                         )?;
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD RELEASEDC CALL pid={} tid={} hwnd=0x{:08x} hdc=0x{:08x} caller_ret=0x{:08x}",
@@ -556,7 +556,7 @@
                             exit.registers.esp,
                             8,
                         )?;
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD SETWINDOWPOS CALL pid={} tid={} hwnd=0x{:08x} insert_after=0x{:08x} x={} y={} width={} height={} flags=0x{:08x} caller_ret=0x{:08x}",
@@ -584,7 +584,7 @@
                             exit.registers.esp,
                             2,
                         )?;
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD GETCURSORPOS CALL pid={} tid={} output=0x{:08x} caller_ret=0x{:08x}",
@@ -646,7 +646,7 @@
                                 values[4],
                             ))
                         };
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD CHANGEDISPLAYSETTINGSEXA pid={} tid={} device={:?} devmode=0x{:08x} mode={:?} hwnd=0x{:08x} flags=0x{:08x} lparam=0x{:08x} caller_ret=0x{:08x}",
@@ -684,7 +684,7 @@
                             .map_err(|error| format!("LoadCursorA name: {error}"))?;
                             format!("resource-name={name:?}")
                         };
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD LOADCURSORA pid={} tid={} module=0x{:08x} name=0x{:08x} caller_ret=0x{:08x} resolved={}",
@@ -726,7 +726,7 @@
                         } else {
                             None
                         };
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD CREATEWINDOWEXA CALL pid={} tid={} ex_style=0x{:08x} class_ptr=0x{:08x} class={:?} title_ptr=0x{:08x} title={:?} style=0x{:08x} x={} y={} width={} height={} parent=0x{:08x} menu=0x{:08x} instance=0x{:08x} param=0x{:08x} caller_ret=0x{:08x}",
@@ -764,7 +764,7 @@
                             .xp
                             .create_win_heap(exit.registers.esp, &mut child_memory)
                             .map_err(str::to_owned)?;
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD HEAP CREATE pid={} tid={} during=\"{}\" provider_id={} options=0x{:08x} initial_size=0x{:08x} maximum_size=0x{:08x} handle=0x{:08x} caller_ret=0x{:08x}",
@@ -785,7 +785,7 @@
                             .context
                             .set_registers(registers)
                             .map_err(|error| error.to_string())?;
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD HEAP CREATE RESULT pid={} tid={} handle=0x{:08x} resume_eip=0x{:08x} esp=0x{:08x} cleanup=12-by-thunk",
@@ -822,7 +822,7 @@
                             })
                             .unwrap_or_else(|| "<unsupported>".to_owned());
 
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD MESSAGEBOXA FRONTIER pid={} tid={} during=\"{}\" provider_id={} caller_ret=0x{:08x} owner=0x{:08x} text_ptr=0x{:08x} caption_ptr=0x{:08x} text={:?} caption={:?} style=0x{:08x} button_type=0x{:x} buttons=[{}] topmost={}",
@@ -859,7 +859,7 @@
                         )?;
                         let flags = frame[1];
                         let bytes = frame[2];
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD GLOBALALLOC CALL pid={} tid={} during=\"{}\" provider_id={} flags=0x{:08x} bytes={} caller_ret=0x{:08x}",
@@ -880,7 +880,7 @@
                         let allocation = match allocation {
                             Ok(value) => value,
                             Err(ProviderDispatchError::Frontier { api, detail }) => {
-                                logl::log(
+                                logl::log!(
                                     level::IMPORTANT,
                                     format_args!(
                                         "WC3 CHILD PROVIDER FRONTIER pid={} tid={} during=\"{}\" provider_id={} module=\"{}\" symbol=\"GlobalAlloc\" api=\"{}\" detail={:?}",
@@ -912,7 +912,7 @@
                                     return Err("short GlobalAlloc zero write".into());
                                 }
                             }
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD GLOBALALLOC RESULT pid={} tid={} flags=0x{:08x} requested={} pointer=0x{:08x} end=0x{:08x} mapped_end=0x{:08x} zeroed={} cleanup=8-by-thunk",
@@ -953,7 +953,7 @@
                         let heap = frame[1];
                         let flags = frame[2];
                         let bytes = frame[3];
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD HEAP ALLOC CALL pid={} tid={} during=\"{}\" provider_id={} heap=0x{:08x} flags=0x{:08x} bytes={} caller_ret=0x{:08x}",
@@ -992,7 +992,7 @@
                             {
                                 return Err("child HeapAlloc pointer verification failed".into());
                             }
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD HEAP ALLOC RESULT pid={} tid={} heap=0x{:08x} flags=0x{:08x} requested={} pointer=0x{:08x} end=0x{:08x} mapped_end=0x{:08x} zeroed={} cleanup=12-by-thunk",
@@ -1054,7 +1054,7 @@
                             ),
                         );
                         if flags != 0 {
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD HEAP FREE FRONTIER pid={} tid={} reason=unsupported-flags flags=0x{:08x}",
@@ -1070,7 +1070,7 @@
                             .free_win_heap(exit.registers.esp, &X86Memory(&child.address_space))
                             .map_err(str::to_owned)?;
                         let result = if let Some(allocation) = freed {
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD HEAP FREE RESULT pid={} tid={} heap=0x{:08x} pointer=0x{:08x} requested={} end=0x{:08x} freed=1 cleanup=12-by-thunk",
@@ -1084,7 +1084,7 @@
                             );
                             1
                         } else {
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD HEAP FREE RESULT pid={} tid={} heap=0x{:08x} pointer=0x{:08x} freed=0 cleanup=12-by-thunk",
@@ -1139,7 +1139,7 @@
                             String::from_utf8_lossy(&bytes[..bytes.len().saturating_sub(1)]);
                         if !*child_get_command_line_logged {
                             *child_get_command_line_logged = true;
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD GETCOMMANDLINEA RESULT pid={} tid={} pointer=0x{:08x} value={:?} process_private=1 stack_cleanup=none",
@@ -1193,7 +1193,7 @@
                                 "child wide environment block is not double-NUL terminated".into(),
                             );
                         }
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD GETENVIRONMENTSTRINGSW RESULT pid={} tid={} pointer=0x{:08x} environment=empty encoding=utf16le process_private=1 stack_cleanup=none",
@@ -1249,7 +1249,7 @@
                             ),
                         );
                         if code_page != 0 && code_page != XP_ANSI_CODE_PAGE {
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD WIDECHARTOMULTIBYTE FRONTIER pid={} tid={} reason=unsupported-code-page code_page={}",
@@ -1275,7 +1275,7 @@
                             return Err("WideCharToMultiByte child provider did not return".into());
                         };
                         if output == 0 {
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD WIDECHARTOMULTIBYTE RESULT pid={} tid={} mode=size-query eax={} cleanup=32-by-thunk",
@@ -1302,7 +1302,7 @@
                             if bytes.len() > 64 {
                                 preview.push_str(" ...");
                             }
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD WIDECHARTOMULTIBYTE RESULT pid={} tid={} mode=convert eax={} output=0x{:08x} bytes=\"{}\" cleanup=32-by-thunk",
@@ -1347,7 +1347,7 @@
                             ),
                         );
                         if !matches!(size, OSVERSIONINFOA_SIZE | OSVERSIONINFOEXA_SIZE) {
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD GETVERSIONEXA FRONTIER pid={} tid={} reason=unsupported-structure-size size=0x{:08x}",
@@ -1404,7 +1404,7 @@
                             .context
                             .set_registers(registers)
                             .map_err(|error| error.to_string())?;
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD GETVERSIONEXA RESULT pid={} tid={} size=0x{:08x} eax={} major={} minor={} build={} platform={} service_pack={}.{} suite=0x{:04x} product_type={} cleanup=4-by-thunk",
@@ -1472,7 +1472,7 @@
                             .context
                             .set_registers(registers)
                             .map_err(|error| error.to_string())?;
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD GETVERSION RESULT pid={} tid={} eax=0x{:08x} stack_cleanup=none",
@@ -1598,7 +1598,7 @@
                             .xp
                             .has_critical_section(critical_section);
                         if !known {
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD CRITICAL SECTION FRONTIER pid={} tid={} operation=enter reason=unknown-critical-section address=0x{:08x}",
@@ -1644,7 +1644,7 @@
                                     esp: exit.registers.esp,
                                 })
                                 .map_err(str::to_owned)?;
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD CRITICAL SECTION BLOCK pid={} tid={} address=0x{:08x} owner={}",
@@ -1728,7 +1728,7 @@
                             .xp
                             .has_critical_section(address)
                         {
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD CRITICAL SECTION FRONTIER pid={} tid={} operation=leave reason=unknown-critical-section address=0x{:08x}",
@@ -1817,7 +1817,7 @@
                                     .set_registers(resumed)
                                     .map_err(|error| error.to_string())?;
                                 session.enqueue(wait.key);
-                                logl::log(
+                                logl::log!(
                                     level::IMPORTANT,
                                     format_args!(
                                         "WC3 CHILD CRITICAL SECTION WAKE pid={} tid={} address=0x{:08x} previous_owner={}",
@@ -1897,7 +1897,7 @@
                         let PersonalityAction::Return(result) = action else {
                             return Err("SetLastError child provider did not return".into());
                         };
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD LAST ERROR SET pid={} tid={} value=0x{:08x}",
@@ -1958,7 +1958,7 @@
                                 "SetUnhandledExceptionFilter child provider did not return".into(),
                             );
                         };
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD UNHANDLED FILTER SET pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" filter=0x{:08x} previous=0x{:08x} caller_ret=0x{:08x} resume_eip=0x{:08x}",
@@ -2013,7 +2013,7 @@
                             CRT_GUI_APP => "gui",
                             _ => "unobserved",
                         };
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD CRT SET APP TYPE pid={} tid={} app_type={} kind={} cleanup=0-by-thunk",
@@ -2067,7 +2067,7 @@
                             read_guest_words(&X86Memory(&child.address_space), frame[2], 1)?[0];
                         let envp =
                             read_guest_words(&X86Memory(&child.address_space), frame[3], 1)?[0];
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD CRT GETMAINARGS pid={} tid={} argc={} argv=0x{:08x} envp=0x{:08x} wildcard={} new_mode={} cleanup=0-by-thunk",
@@ -2114,7 +2114,7 @@
                         let PersonalityAction::Return(return_value) = action else {
                             return Err("_onexit child provider did not return".into());
                         };
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD CRT ONEXIT pid={} tid={} caller_ret=0x{:08x} func=0x{:08x} entries={} return_eax=0x{:08x} cleanup=0-by-thunk",
@@ -2171,7 +2171,7 @@
                             .context
                             .set_registers(registers)
                             .map_err(|error| error.to_string())?;
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD CRT {} pid={} tid={} new=0x{:08x} mask=0x{:08x} effective_mask=0x{:08x} x87_before=0x{:04x} x87_after=0x{:04x} eax=0x{:08x} cleanup=0-by-thunk",
@@ -2225,7 +2225,7 @@
                             .context
                             .set_registers(registers)
                             .map_err(|error| error.to_string())?;
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD CRT CLEARFP pid={} tid={} caller_ret=0x{:08x} x87_before=0x{:04x} x87_after=0x{:04x} eax=0x{:08x} cleanup=0-by-thunk",
@@ -2276,7 +2276,7 @@
                             .set_registers(registers)
                             .map_err(|error| error.to_string())?;
                         if let Some(caller_ret) = diagnostic_caller_ret {
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD CRT FTOL pid={} tid={} caller_ret=0x{:08x} result={} eax=0x{:08x} edx=0x{:08x} cleanup=0-by-thunk",
@@ -2309,7 +2309,7 @@
                             .map_err(|error| error.to_string())?;
                         let size = u32::from_le_bytes(size);
                         if size == 0 {
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD PROVIDER FRONTIER pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" provider_id={} module=\"{}\" symbol=\"malloc\" reason=zero-size-unobserved",
@@ -2339,7 +2339,7 @@
                             return Err("malloc child provider did not return".into());
                         };
                         if pointer == 0 {
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD CRT MALLOC pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" size={} pointer=0x00000000 result=out-of-memory",
@@ -2361,7 +2361,7 @@
                             {
                                 return Err("child CRT malloc pointer verification failed".into());
                             }
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD CRT MALLOC pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" size={} pointer=0x{:08x} mapped_end=0x{:08x}",
@@ -2420,7 +2420,7 @@
                     );
                     if is_crt_initterm {
                         if child.initterm.is_some() {
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD CRT INITTERM FRONTIER pid={} tid={} reason=nested-initterm",
@@ -2461,7 +2461,7 @@
                                 "child _initterm range exceeds defensive bound entries={entries}"
                             ));
                         }
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD CRT INITTERM pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" provider_id={} begin=0x{:08x} end=0x{:08x} entries={} caller_ret=0x{:08x}",
@@ -2622,7 +2622,7 @@
                             .as_ref()
                             .map(|(ty, bytes)| (format!("0x{ty:08x}"), bytes.len().to_string()))
                             .unwrap_or_else(|| ("-".into(), "-".into()));
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD REGISTRY QUERY CALL pid={} tid={} hkey=0x{:08x} node={} key_path={:?} value_name={:?} reserved=0x{:08x} type_ptr=0x{:08x} data_ptr=0x{:08x} size_ptr=0x{:08x} input_capacity={} values_loaded_before={} source={} present={} value_type={} value_bytes={} caller_ret=0x{:08x} cleanup=24-by-thunk",
@@ -2697,7 +2697,7 @@
                                 (kind, bytes.len(), dword)
                             })
                             .unwrap_or(("-", 0, None));
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD REGISTRY QUERY RESULT pid={} tid={} hkey=0x{:08x} value_name={:?} source={} present={} type={} required={} capacity={} dword={} result={} cleanup=24-by-thunk",
@@ -2751,7 +2751,7 @@
                         } else {
                             ERROR_INVALID_HANDLE
                         };
-                        logl::log(
+                        logl::log!(
                             level::IMPORTANT,
                             format_args!(
                                 "WC3 CHILD REGISTRY CLOSE RESULT pid={} tid={} hkey=0x{:08x} kind={} result={} cleanup=4-by-thunk",
@@ -2808,7 +2808,7 @@
                             && frame.allocation_type == 0x0000_1000
                             && frame.protect == 0x04;
                         if !supported_reserve && !supported_commit && !supported_null_commit {
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD VIRTUALALLOC FRONTIER pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" provider_id={} caller_ret=0x{:08x} address=0x{:08x} size=0x{:08x} allocation_type=0x{:08x} protect=0x{:08x}",
@@ -2823,7 +2823,7 @@
                                     frame.protect,
                                 ),
                             );
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD VIRTUALALLOC FLAGS commit={} reserve={} top_down={} protect_name=\"{}\"",
@@ -2833,7 +2833,7 @@
                                     virtual_alloc_protect_name(frame.protect),
                                 ),
                             );
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD VIRTUALALLOC FRONTIER reason=unsupported-observed-shape"
@@ -2954,7 +2954,7 @@
                                         continue;
                                     }
                                     Err("VirtualAlloc overlapping commit") => {
-                                        logl::log(
+                                        logl::log!(
                                             level::IMPORTANT,
                                             format_args!(
                                                 "WC3 CHILD VIRTUALALLOC FRONTIER reason=overlapping-commit"
@@ -3124,7 +3124,7 @@
                             ),
                         );
                         if free_type != MEM_RELEASE {
-                            logl::log(
+                            logl::log!(
                                 level::IMPORTANT,
                                 format_args!(
                                     "WC3 CHILD VIRTUALFREE FRONTIER reason=unsupported-free-type address=0x{address:08x} size=0x{size:08x} free_type=0x{free_type:08x}"

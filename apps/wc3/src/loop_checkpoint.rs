@@ -156,7 +156,7 @@ pub(super) fn observe_exit(child: &mut PendingChild, key: ThreadKey, exit: &true
 
 fn discard(child: &mut PendingChild, reason: &str) {
     if let Some(capture) = child.loop_checkpoint_capture.take() {
-        logl::log(
+        logl::log!(
             level::IMPORTANT,
             format_args!(
                 "WC3 CHILD LOOP CHECKPOINT DISCARD region={} reason={reason}",
@@ -181,7 +181,7 @@ pub(super) async fn boundary(
             let capture = child.loop_checkpoint_capture.take().unwrap();
             let result = finish(child, context, *registers, *debug, capture).await;
             if let Err(error) = result {
-                logl::log(
+                logl::log!(
                     level::IMPORTANT,
                     format_args!(
                         "WC3 CHILD LOOP CHECKPOINT BYPASS region={} reason={error}",
@@ -210,7 +210,7 @@ pub(super) async fn boundary(
     child.loop_checkpoint_attempted |= 1 << index;
     let region = &REGIONS[index];
     if !guards(child, region, *registers) {
-        logl::log(
+        logl::log!(
             level::IMPORTANT,
             format_args!(
                 "WC3 CHILD LOOP CHECKPOINT BYPASS region={} reason=entry-guard",
@@ -222,7 +222,7 @@ pub(super) async fn boundary(
     let current = match pages(child) {
         Ok(pages) => pages,
         Err(error) => {
-            logl::log(
+            logl::log!(
                 level::IMPORTANT,
                 format_args!(
                     "WC3 CHILD LOOP CHECKPOINT BYPASS region={} reason={error}",
@@ -263,7 +263,7 @@ pub(super) async fn boundary(
         child.single_step_count = child
             .single_step_count
             .saturating_add(cached.after_single_step_count);
-        logl::log(
+        logl::log!(
             level::IMPORTANT,
             format_args!(
                 "WC3 CHILD LOOP CHECKPOINT HIT region={} from=0x{:08x} to=0x{:08x} skipped_steps={} pages={}",
@@ -295,7 +295,7 @@ pub(super) async fn boundary(
         pages: current,
         steps: child.single_step_count,
     });
-    logl::log(
+    logl::log!(
         level::IMPORTANT,
         format_args!(
             "WC3 CHILD LOOP CHECKPOINT CAPTURE region={} from=0x{:08x} to=0x{:08x}",
@@ -353,7 +353,7 @@ async fn finish(
     if readback != encoded || wc3::checkpoint::decode(&readback, region.boundary).is_err() {
         return Err("read-back".into());
     }
-    logl::log(
+    logl::log!(
         level::IMPORTANT,
         format_args!(
             "WC3 CHILD LOOP CHECKPOINT CREATED region={} steps={} pages={} bytes={}",
