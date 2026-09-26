@@ -99,20 +99,6 @@ wglSwapLayerBuffers    iat_rva=0x0070627c
 glLightf               iat_rva=0x00706280
 */
 
-macro_rules! static_gl_stubs {
-    ($($method:ident => $api:literal),+ $(,)?) => {
-        $(
-            fn $method(
-                &self,
-                _esp: u32,
-                _memory: &impl GuestMemory,
-            ) -> Result<u32, ProviderDispatchError> {
-                self.static_gl_stub($api)
-            }
-        )+
-    };
-}
-
 const GL_VERSION: u32 = 0x0000_1f02;
 const GL_EXTENSIONS: u32 = 0x0000_1f03;
 const GL_MODELVIEW: u32 = 0x0000_1700;
@@ -149,10 +135,13 @@ impl XpProcess {
         arguments: Vec<u32>,
         description: String,
     ) -> Result<(u32, usize), ProviderDispatchError> {
-        let runtime = self.gl_runtime.as_mut().ok_or_else(|| ProviderDispatchError::Frontier {
-            api: "OpenGL note",
-            detail: format!("tid={tid} has no GL runtime"),
-        })?;
+        let runtime = self
+            .gl_runtime
+            .as_mut()
+            .ok_or_else(|| ProviderDispatchError::Frontier {
+                api: "OpenGL note",
+                detail: format!("tid={tid} has no GL runtime"),
+            })?;
         let (hglrc, context) = runtime
             .contexts
             .iter_mut()
@@ -189,49 +178,66 @@ impl XpProcess {
     }
 
     pub fn gl_light_model_ambient_diagnostic(&self, tid: u32) -> Option<(u32, [f32; 4])> {
-        self.gl_runtime.as_ref()?.contexts.iter().find_map(|(hglrc, context)| {
-            (context.current_tid == Some(tid)).then_some((*hglrc, context.light_model_ambient))
-        })
+        self.gl_runtime
+            .as_ref()?
+            .contexts
+            .iter()
+            .find_map(|(hglrc, context)| {
+                (context.current_tid == Some(tid)).then_some((*hglrc, context.light_model_ambient))
+            })
     }
 
     pub fn gl_light0_specular_diagnostic(&self, tid: u32) -> Option<(u32, [f32; 4])> {
-        self.gl_runtime.as_ref()?.contexts.iter().find_map(|(hglrc, context)| {
-            (context.current_tid == Some(tid)).then_some((*hglrc, context.light0_specular))
-        })
+        self.gl_runtime
+            .as_ref()?
+            .contexts
+            .iter()
+            .find_map(|(hglrc, context)| {
+                (context.current_tid == Some(tid)).then_some((*hglrc, context.light0_specular))
+            })
     }
 
     pub fn gl_light0_ambient_diagnostic(&self, tid: u32) -> Option<(u32, [f32; 4])> {
-        self.gl_runtime.as_ref()?.contexts.iter().find_map(|(hglrc, context)| {
-            (context.current_tid == Some(tid)).then_some((*hglrc, context.light0_ambient))
-        })
+        self.gl_runtime
+            .as_ref()?
+            .contexts
+            .iter()
+            .find_map(|(hglrc, context)| {
+                (context.current_tid == Some(tid)).then_some((*hglrc, context.light0_ambient))
+            })
     }
 
     pub fn gl_light0_diffuse_diagnostic(&self, tid: u32) -> Option<(u32, [f32; 4])> {
-        self.gl_runtime.as_ref()?.contexts.iter().find_map(|(hglrc, context)| {
-            (context.current_tid == Some(tid)).then_some((*hglrc, context.light0_diffuse))
-        })
+        self.gl_runtime
+            .as_ref()?
+            .contexts
+            .iter()
+            .find_map(|(hglrc, context)| {
+                (context.current_tid == Some(tid)).then_some((*hglrc, context.light0_diffuse))
+            })
     }
 
     pub fn gl_light0_position_eye_diagnostic(&self, tid: u32) -> Option<(u32, [f32; 4])> {
-        self.gl_runtime.as_ref()?.contexts.iter().find_map(|(hglrc, context)| {
-            (context.current_tid == Some(tid)).then_some((*hglrc, context.light0_position_eye))
-        })
+        self.gl_runtime
+            .as_ref()?
+            .contexts
+            .iter()
+            .find_map(|(hglrc, context)| {
+                (context.current_tid == Some(tid)).then_some((*hglrc, context.light0_position_eye))
+            })
     }
 
     pub fn gl_light0_enabled_diagnostic(&self, tid: u32) -> Option<(u32, bool)> {
-        self.gl_runtime.as_ref()?.contexts.iter().find_map(|(hglrc, context)| {
-            (context.current_tid == Some(tid)).then_some((*hglrc, context.light0_enabled))
-        })
+        self.gl_runtime
+            .as_ref()?
+            .contexts
+            .iter()
+            .find_map(|(hglrc, context)| {
+                (context.current_tid == Some(tid)).then_some((*hglrc, context.light0_enabled))
+            })
     }
 
-    fn static_gl_stub(&self, api: &'static str) -> Result<u32, ProviderDispatchError> {
-        Err(ProviderDispatchError::Frontier {
-            api,
-            detail: "static OpenGL entry has no modeled behavior yet".into(),
-        })
-    }
-
-    pub fn bind_gl_ui4_window(&mut self, hwnd: u32, window_id: u32, width:u32, height:u32) {
+    pub fn bind_gl_ui4_window(&mut self, hwnd: u32, window_id: u32, width: u32, height: u32) {
         if let Some(runtime) = self.gl_runtime.as_mut() {
             for context in runtime
                 .contexts
@@ -239,9 +245,13 @@ impl XpProcess {
                 .filter(|context| context.hwnd == hwnd)
             {
                 context.ui4_window_id = Some(window_id);
-                context.drawable_size=[width,height];
-                if !context.viewport_set {context.viewport=[0,0,width as i32,height as i32];}
-                if !context.fixed.scissor_set {context.fixed.scissor=[0,0,width as i32,height as i32];}
+                context.drawable_size = [width, height];
+                if !context.viewport_set {
+                    context.viewport = [0, 0, width as i32, height as i32];
+                }
+                if !context.fixed.scissor_set {
+                    context.fixed.scissor = [0, 0, width as i32, height as i32];
+                }
             }
         }
     }
@@ -265,13 +275,13 @@ impl XpProcess {
             })
     }
 
-
-
-
-
-
-
-    fn gl_client_state_static(&mut self, tid: u32, esp: u32, memory: &impl GuestMemory, enabled: bool) -> Result<u32, ProviderDispatchError> {
+    fn gl_client_state_static(
+        &mut self,
+        tid: u32,
+        esp: u32,
+        memory: &impl GuestMemory,
+        enabled: bool,
+    ) -> Result<u32, ProviderDispatchError> {
         self.gl_fixed_client_state_static(tid, esp, memory, enabled)
     }
 
@@ -350,11 +360,22 @@ impl XpProcess {
         self.gl_array_pointer_static(tid, esp, memory, true)
     }
 
-    fn gl_viewport_static(&mut self,tid:u32,esp:u32,memory:&impl GuestMemory)->Result<u32,ProviderDispatchError>{
-        let [_,x,y,w,h]=arguments::<5>(memory,esp)?;
-        let c=self.gl_context_mut(tid,"glViewport")?;
-        if (w as i32)<0 || (h as i32)<0 {c.fixed.set_error(0x501);return Ok(0);}
-        c.viewport=[x as i32,y as i32,w as i32,h as i32];c.viewport_set=true;Ok(0)
+    fn gl_viewport_static(
+        &mut self,
+        tid: u32,
+        esp: u32,
+        memory: &impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
+        let [_, x, y, w, h] = arguments::<5>(memory, esp)?;
+        let c = self.gl_context_mut(tid, "glViewport")?;
+        if (w as i32) < 0 || (h as i32) < 0 {
+            c.fixed.set_error(0x501);
+            return Ok(0);
+        }
+        // Match GL_MAX_VIEWPORT_DIMS reported by glGetIntegerv.
+        c.viewport = [x as i32, y as i32, w.min(4096) as i32, h.min(4096) as i32];
+        c.viewport_set = true;
+        Ok(0)
     }
 
     fn gl_clear_color_static(
@@ -369,34 +390,73 @@ impl XpProcess {
         Ok(0)
     }
 
-    fn gl_clear_static(&mut self, tid:u32, esp:u32, memory:&impl GuestMemory)->Result<u32,ProviderDispatchError>{
-        let [_,mask]=arguments::<2>(memory,esp)?;
-        if mask & !(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT)!=0 {return Err(gl_texture_error("glClear",format!("unsupported mask0x{mask:x}")));}
-        let c=self.gl_context_mut(tid,"glClear")?;
+    fn gl_clear_static(
+        &mut self,
+        tid: u32,
+        esp: u32,
+        memory: &impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
+        let [_, mask] = arguments::<2>(memory, esp)?;
+        if mask & !(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT) != 0 {
+            return Err(gl_texture_error(
+                "glClear",
+                format!("unsupported mask0x{mask:x}"),
+            ));
+        }
+        let c = self.gl_context_mut(tid, "glClear")?;
         Self::gl_ensure_raster(c)?;
-        let scissor=if c.fixed.is_enabled(0xc11){Some(c.fixed.scissor)}else{None};
+        let scissor = if c.fixed.is_enabled(0xc11) {
+            Some(c.fixed.scissor)
+        } else {
+            None
+        };
         c.raster_frame.as_mut().unwrap().clear(
-            (mask&GL_COLOR_BUFFER_BIT!=0).then(||gl_rgba8(c.clear_color).to_le_bytes()),
-            (mask&GL_DEPTH_BUFFER_BIT!=0 && c.fixed.depth_mask).then_some(1.0),scissor);
-        if mask&GL_COLOR_BUFFER_BIT!=0 {self.gl_present_raster(tid,"clear")?;}
+            (mask & GL_COLOR_BUFFER_BIT != 0).then(|| gl_rgba8(c.clear_color).to_le_bytes()),
+            (mask & GL_DEPTH_BUFFER_BIT != 0 && c.fixed.depth_mask).then_some(1.0),
+            scissor,
+        );
+        if mask & GL_COLOR_BUFFER_BIT != 0 {
+            self.gl_present_raster(tid, "clear")?;
+        }
         Ok(0)
     }
 
-    fn gl_draw_elements_static(&mut self, tid:u32, esp:u32, memory:&impl GuestMemory)->Result<u32,ProviderDispatchError>{
-        self.gl_draw_compat_static(tid,esp,memory)
+    fn gl_draw_elements_static(
+        &mut self,
+        tid: u32,
+        esp: u32,
+        memory: &impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
+        self.gl_draw_compat_static(tid, esp, memory)
     }
 
-    fn wgl_swap_layer_buffers_static(&mut self,tid:u32,esp:u32,memory:&impl GuestMemory)->Result<u32,ProviderDispatchError>{
-        let [_,hdc,planes]=arguments::<3>(memory,esp)?;
-        let c=self.gl_context_mut(tid,"wglSwapLayerBuffers")?;
-        if c.hdc!=hdc || planes!=1 {return Err(gl_texture_error("wglSwapLayerBuffers","unsupported DC/planes"));}
-        c.swap_count+=1;
-        self.gl_present_raster(tid,"swap")?;
+    fn wgl_swap_layer_buffers_static(
+        &mut self,
+        tid: u32,
+        esp: u32,
+        memory: &impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
+        let [_, hdc, planes] = arguments::<3>(memory, esp)?;
+        let c = self.gl_context_mut(tid, "wglSwapLayerBuffers")?;
+        if c.hdc != hdc || planes != 1 {
+            return Err(gl_texture_error(
+                "wglSwapLayerBuffers",
+                "unsupported DC/planes",
+            ));
+        }
+        c.swap_count += 1;
+        self.gl_present_raster(tid, "swap")?;
         Ok(1)
     }
 
-    fn gl_finish_static(&mut self,tid:u32,_esp:u32,_memory:&impl GuestMemory)->Result<u32,ProviderDispatchError>{
-        self.gl_present_raster(tid,"finish")?; Ok(0)
+    fn gl_finish_static(
+        &mut self,
+        tid: u32,
+        _esp: u32,
+        _memory: &impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
+        self.gl_present_raster(tid, "finish")?;
+        Ok(0)
     }
 
     fn gl_load_matrixf_static(
@@ -670,41 +730,46 @@ impl XpProcess {
             .next_context
             .checked_add(1)
             .ok_or("HGLRC handle overflow")?;
-        runtime.contexts.insert(
-            hglrc,
-            WglContext {
-                hdc,
-                hwnd,
-                pixel_format,
-                current_tid: None,
-                matrix_mode: GL_MODELVIEW,
-                modelview_matrix: GL_IDENTITY_MATRIX,
-                projection_matrix: GL_IDENTITY_MATRIX,
-                texture_matrix: GL_IDENTITY_MATRIX,
-                light_model_ambient: [0.2, 0.2, 0.2, 1.0],
-                light0_specular: [1.0, 1.0, 1.0, 1.0],
-                light0_ambient: [0.0, 0.0, 0.0, 1.0],
-                light0_diffuse: [1.0, 1.0, 1.0, 1.0],
-                light0_position_eye: [0.0, 0.0, 1.0, 0.0],
-                light0_enabled: false,
-                ui4_window_id: None,
-                viewport: [0, 0, 0, 0],
-                clear_color: [0.0, 0.0, 0.0, 0.0],
-                vertex_array_enabled: false,
-                color_array_enabled: false,
-                vertex_pointer: None,
-                color_pointer: None,
-                textures: GlTextures::default(),
-                observed_writes: VecDeque::new(),
-                fixed: GlFixedState::default(),
-                raster_frame: None,
-                drawable_size: [0, 0],
-                viewport_set: false,
-                draw_count: 0,
-                swap_count: 0,
-            },
-        );
+        runtime
+            .contexts
+            .insert(hglrc, WglContext::new(hdc, hwnd, pixel_format));
         Ok(hglrc)
+    }
+}
+
+impl WglContext {
+    fn new(hdc: u32, hwnd: u32, pixel_format: u32) -> Self {
+        Self {
+            hdc,
+            hwnd,
+            pixel_format,
+            current_tid: None,
+            matrix_mode: GL_MODELVIEW,
+            modelview_matrix: GL_IDENTITY_MATRIX,
+            projection_matrix: GL_IDENTITY_MATRIX,
+            texture_matrix: GL_IDENTITY_MATRIX,
+            light_model_ambient: [0.2, 0.2, 0.2, 1.0],
+            light0_specular: [1.0, 1.0, 1.0, 1.0],
+            light0_ambient: [0.0, 0.0, 0.0, 1.0],
+            light0_diffuse: [1.0, 1.0, 1.0, 1.0],
+            light0_position_eye: [0.0, 0.0, 1.0, 0.0],
+            light0_enabled: false,
+            ui4_window_id: None,
+            viewport: [0, 0, 0, 0],
+            clear_color: [0.0, 0.0, 0.0, 0.0],
+            vertex_array_enabled: false,
+            color_array_enabled: false,
+            vertex_pointer: None,
+            color_pointer: None,
+            textures: GlTextures::default(),
+            observed_writes: VecDeque::new(),
+            fixed: GlFixedState::default(),
+            raster_frame: None,
+            drawable_size: [0, 0],
+            viewport_set: false,
+            draw_count: 0,
+            swap_count: 0,
+        }
     }
 }
 

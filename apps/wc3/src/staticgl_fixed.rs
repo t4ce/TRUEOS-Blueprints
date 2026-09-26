@@ -23,7 +23,16 @@ const FIXED_GL_TEXTURE_GEN_S: u32 = 0x0c60;
 const FIXED_GL_TEXTURE_GEN_T: u32 = 0x0c61;
 const FIXED_GL_TEXTURE_GEN_R: u32 = 0x0c62;
 const FIXED_GL_TEXTURE_GEN_Q: u32 = 0x0c63;
+const FIXED_GL_NONE: u32 = 0;
+const FIXED_GL_FRONT_LEFT: u32 = 0x0400;
+const FIXED_GL_FRONT_RIGHT: u32 = 0x0401;
+const FIXED_GL_BACK_LEFT: u32 = 0x0402;
+const FIXED_GL_BACK_RIGHT: u32 = 0x0403;
 const FIXED_GL_BACK: u32 = 0x0405;
+const FIXED_GL_LEFT: u32 = 0x0406;
+const FIXED_GL_RIGHT: u32 = 0x0407;
+const FIXED_GL_AUX0: u32 = 0x0409;
+const FIXED_GL_AUX3: u32 = 0x040c;
 const FIXED_GL_FRONT: u32 = 0x0404;
 const FIXED_GL_FRONT_AND_BACK: u32 = 0x0408;
 const FIXED_GL_CW: u32 = 0x0900;
@@ -52,6 +61,7 @@ const FIXED_GL_ONE_MINUS_CONSTANT_COLOR: u32 = 0x8002;
 const FIXED_GL_CONSTANT_ALPHA: u32 = 0x8003;
 const FIXED_GL_ONE_MINUS_CONSTANT_ALPHA: u32 = 0x8004;
 const FIXED_GL_AMBIENT_AND_DIFFUSE: u32 = 0x1602;
+const FIXED_GL_COLOR_INDEXES: u32 = 0x1603;
 const FIXED_GL_EMISSION: u32 = 0x1600;
 const FIXED_GL_SHININESS: u32 = 0x1601;
 const FIXED_GL_SPOT_DIRECTION: u32 = 0x1204;
@@ -308,6 +318,21 @@ impl GlFixedState {
         Self::capability_slot(cap).is_some_and(|slot| self.enabled & (1u64 << slot) != 0)
     }
 
+    fn is_valid_unmodeled_draw_buffer(mode: u32) -> bool {
+        matches!(
+            mode,
+            FIXED_GL_NONE
+                | FIXED_GL_FRONT_LEFT
+                | FIXED_GL_FRONT_RIGHT
+                | FIXED_GL_BACK_LEFT
+                | FIXED_GL_BACK_RIGHT
+                | FIXED_GL_FRONT
+                | FIXED_GL_LEFT
+                | FIXED_GL_RIGHT
+                | FIXED_GL_FRONT_AND_BACK
+        ) || (FIXED_GL_AUX0..=FIXED_GL_AUX3).contains(&mode)
+    }
+
     fn set_draw_buffer(&mut self, mode: u32) -> Result<(), String> {
         if mode != FIXED_GL_BACK {
             return Err(format!("unsupported draw buffer=0x{mode:08x}"));
@@ -516,7 +541,7 @@ impl GlFixedState {
                     return Err(format!(
                         "unknown material pname/arity=0x{pname:08x}/{}",
                         values.len()
-                    ))
+                    ));
                 }
             }
         }
@@ -707,7 +732,7 @@ impl XpProcess {
                     },
                     tid,
                     format!("unknown array=0x{array:08x}"),
-                ))
+                ));
             }
         }
         Ok(0)
@@ -915,7 +940,15 @@ impl XpProcess {
     ) -> Result<u32, ProviderDispatchError> {
         let [_, face, pname, params] = arguments::<4>(memory, esp)?;
         if params == 0 {
-            return Err(Self::fixed_error("glMaterialfv", tid, "null params".into()));
+            self.fixed_latch_error(tid, "invalid value: null params");
+            return Ok(0);
+        }
+        if pname == FIXED_GL_COLOR_INDEXES {
+            return Err(Self::fixed_error(
+                "glMaterialfv",
+                tid,
+                "valid but unmodeled GL_COLOR_INDEXES".into(),
+            ));
         }
         let count = if pname == FIXED_GL_SHININESS { 1 } else { 4 };
         let mut raw = vec![0; count * 4];
@@ -1017,6 +1050,13 @@ impl XpProcess {
         memory: &impl GuestMemory,
     ) -> Result<u32, ProviderDispatchError> {
         let [_, mode] = arguments::<2>(memory, esp)?;
+        if GlFixedState::is_valid_unmodeled_draw_buffer(mode) {
+            return Err(Self::fixed_error(
+                "glDrawBuffer",
+                tid,
+                format!("valid but unmodeled mode=0x{mode:08x}"),
+            ));
+        }
         let result = self
             .fixed_state_mut(tid, "glDrawBuffer")?
             .fixed

@@ -21,7 +21,7 @@ fn fixed_defaults_match_legacy_gl_and_start_disabled() {
 fn fixed_state_transitions_preserve_values_and_independent_light_slots() {
     let mut state = GlFixedState::default();
     state.set_enabled(FIXED_GL_LIGHTING, true).unwrap();
-    state.set_enabled(FIXED_GL_LIGHT3, true).unwrap();
+    state.set_enabled((FIXED_GL_LIGHT0 + 3), true).unwrap();
     state.set_enabled(FIXED_GL_BLEND, true).unwrap();
     state.set_draw_buffer(FIXED_GL_BACK).unwrap();
     state.set_depth_func(FIXED_GL_GEQUAL).unwrap();
@@ -41,11 +41,19 @@ fn fixed_state_transitions_preserve_values_and_independent_light_slots() {
     state
         .set_material(FIXED_GL_FRONT, FIXED_GL_SHININESS, &[32.0])
         .unwrap();
+    let color = [0.4, 0.5, 0.6, 0.7];
+    state
+        .set_material(
+            FIXED_GL_FRONT_AND_BACK,
+            FIXED_GL_AMBIENT_AND_DIFFUSE,
+            &color,
+        )
+        .unwrap();
     state.lights[3].diffuse = [0.1, 0.2, 0.3, 1.0];
 
     assert!(state.is_enabled(FIXED_GL_LIGHTING));
-    assert!(state.is_enabled(FIXED_GL_LIGHT3));
-    assert!(!state.is_enabled(FIXED_GL_LIGHT2));
+    assert!(state.is_enabled((FIXED_GL_LIGHT0 + 3)));
+    assert!(!state.is_enabled((FIXED_GL_LIGHT0 + 2)));
     assert_eq!(state.depth_range, [0.0, 0.5]);
     assert_eq!(state.scissor, [12, 15, 640, 480]);
     assert!(state.scissor_set);
@@ -53,6 +61,10 @@ fn fixed_state_transitions_preserve_values_and_independent_light_slots() {
     assert_eq!(state.texgen_mode[0], Some(FIXED_GL_SPHERE_MAP));
     assert_eq!(state.materials[0].shininess, 32.0);
     assert_eq!(state.materials[1].shininess, 0.0);
+    for material in state.materials {
+        assert_eq!(material.ambient, color);
+        assert_eq!(material.diffuse, color);
+    }
     assert_eq!(state.lights[3].diffuse, [0.1, 0.2, 0.3, 1.0]);
 }
 
@@ -66,14 +78,20 @@ fn fixed_validation_rejects_unknown_enums_and_bad_values_without_mutation() {
     assert!(state.set_enabled(0xdead, true).is_err());
     assert!(state.set_depth_func(0xdead).is_err());
     assert!(state.set_blend_func(0xdead, FIXED_GL_ONE).is_err());
-    assert!(state
-        .set_blend_func(FIXED_GL_ONE, FIXED_GL_SRC_ALPHA_SATURATE)
-        .is_err());
-    assert!(state
-        .set_texgen_mode(0x2000, FIXED_GL_TEXTURE_GEN_MODE, 0xdead)
-        .is_err());
-    assert!(state
-        .set_material(FIXED_GL_FRONT, FIXED_GL_SHININESS, &[129.0])
-        .is_err());
+    assert!(
+        state
+            .set_blend_func(FIXED_GL_ONE, FIXED_GL_SRC_ALPHA_SATURATE)
+            .is_err()
+    );
+    assert!(
+        state
+            .set_texgen_mode(0x2000, FIXED_GL_TEXTURE_GEN_MODE, 0xdead)
+            .is_err()
+    );
+    assert!(
+        state
+            .set_material(FIXED_GL_FRONT, FIXED_GL_SHININESS, &[129.0])
+            .is_err()
+    );
     assert_eq!(state.materials[0].shininess, 0.0);
 }

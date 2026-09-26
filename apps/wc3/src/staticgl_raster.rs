@@ -292,6 +292,12 @@ impl Frame {
             return Err(RasterError::BadIndex);
         }
         validate_state(self, state)?;
+        if state.viewport[2] == 0 || state.viewport[3] == 0 {
+            return Ok(RasterStats {
+                input_triangles: (indices.len() / 3) as u32,
+                ..RasterStats::default()
+            });
+        }
         if let Some(texture) = texture {
             validate_texture(texture)?;
             if !texenv_supported(state.tex_env, texture.format) {
@@ -343,7 +349,7 @@ impl Frame {
         texture: Option<TextureView<'_>>,
         tri: [ClipVertex; 3],
     ) -> usize {
-        let mut p = tri.map(|v| ScreenVertex::from_clip(v, state.viewport));
+        let mut p = tri.map(|v| ScreenVertex::from_clip(v, state.viewport, self.height));
         let area_gl = orient([p[0].x, -p[0].y], [p[1].x, -p[1].y], [p[2].x, -p[2].y]);
         if area_gl == 0.0 {
             return 0;
@@ -420,10 +426,11 @@ impl Frame {
                     continue;
                 }
                 let b = [e0 / area, e1 / area, e2 / area];
-                let depth = state.depth.range[0]
+                let depth = (state.depth.range[0]
                     + ((b[0] * p[0].z_ndc + b[1] * p[1].z_ndc + b[2] * p[2].z_ndc) * 0.5 + 0.5)
                         * (state.depth.range[1] - state.depth.range[0])
-                    + polygon_bias;
+                    + polygon_bias)
+                    .clamp(0.0, 1.0);
                 let offset = self.top_index(x, y);
                 if state.depth.enabled && !compare(state.depth.func, depth, self.depth[offset]) {
                     continue;
@@ -488,13 +495,13 @@ struct ScreenVertex {
     fog_over_w: f32,
 }
 impl ScreenVertex {
-    fn from_clip(v: ClipVertex, viewport: [i32; 4]) -> Self {
+    fn from_clip(v: ClipVertex, viewport: [i32; 4], frame_height: u32) -> Self {
         let inv_w = 1.0 / v.clip[3];
         let nx = v.clip[0] * inv_w;
         let ny = v.clip[1] * inv_w;
         Self {
             x: viewport[0] as f32 + (nx + 1.0) * viewport[2] as f32 * 0.5,
-            y: (viewport[1] + viewport[3]) as f32 - (ny + 1.0) * viewport[3] as f32 * 0.5,
+            y: frame_height as f32 - (viewport[1] as f32 + (ny + 1.0) * viewport[3] as f32 * 0.5),
             z_ndc: v.clip[2] * inv_w,
             inv_w,
             color_over_w: v.color.map(|c| c * inv_w),
@@ -504,16 +511,9 @@ impl ScreenVertex {
     }
 }
 
-fn validate_state(frame: &Frame, state: &RasterState) -> Result<(), RasterError> {
-    let [x, y, w, h] = state.viewport;
-    if w <= 0
-        || h <= 0
-        || x < 0
-        || y < 0
-        || x.checked_add(w).is_none_or(|v| v > frame.width as i32)
-        || y.checked_add(h).is_none_or(|v| v > frame.height as i32)
-        || !state.depth.range.iter().all(|v| v.is_finite())
-    {
+fn validate_state(_frame: &Frame, state: &RasterState) -> Result<(), RasterError> {
+    let [_, _, w, h] = state.viewport;
+    if w < 0 || h < 0 || !state.depth.range.iter().all(|v| v.is_finite()) {
         return Err(RasterError::BadViewport);
     }
     Ok(())
@@ -621,15 +621,16 @@ fn edge_inside(edge: f32, a: ScreenVertex, b: ScreenVertex) -> bool {
     edge > 0.0 || (edge == 0.0 && ((b.y - a.y) < 0.0 || ((b.y - a.y) == 0.0 && (b.x - a.x) > 0.0)))
 }
 fn in_scissor(height: u32, s: [i32; 4], x: i32, y: i32) -> bool {
-    s[2] > 0
-        && s[3] > 0
-        && x >= s[0]
-        && x < s[0] + s[2]
-        && y >= height as i32 - (s[1] + s[3])
-        && y < height as i32 - s[1]
+    in_scissor_gl(s, x, height as i32 - 1 - y)
 }
 fn in_scissor_gl(s: [i32; 4], x: i32, y: i32) -> bool {
-    s[2] > 0 && s[3] > 0 && x >= s[0] && x < s[0] + s[2] && y >= s[1] && y < s[1] + s[3]
+    let [left, bottom, width, height] = s.map(i64::from);
+    width > 0
+        && height > 0
+        && i64::from(x) >= left
+        && i64::from(x) < left + width
+        && i64::from(y) >= bottom
+        && i64::from(y) < bottom + height
 }
 fn perspective_weight(p: &[ScreenVertex; 3], b: [f32; 3]) -> [f32; 3] {
     let d = b[0] * p[0].inv_w + b[1] * p[1].inv_w + b[2] * p[2].inv_w;
@@ -1028,9 +1029,9 @@ mod tests {
     fn perspective_uv_uses_clip_w() {
         let state = state();
         let p = [
-            ScreenVertex::from_clip(v(-1., -1., 0., 1., 0., 0., [1.; 4]), state.viewport),
-            ScreenVertex::from_clip(v(1., -1., 0., 2., 1., 0., [1.; 4]), state.viewport),
-            ScreenVertex::from_clip(v(-1., 1., 0., 1., 0., 1., [1.; 4]), state.viewport),
+            ScreenVertex::from_clip(v(-1., -1., 0., 1., 0., 0., [1.; 4]), state.viewport, 8),
+            ScreenVertex::from_clip(v(1., -1., 0., 2., 1., 0., [1.; 4]), state.viewport, 8),
+            ScreenVertex::from_clip(v(-1., 1., 0., 1., 0., 1., [1.; 4]), state.viewport, 8),
         ];
         // Equal screen-space weights do not mean equal attribute weights when
         // the second vertex has w=2.
@@ -1142,6 +1143,61 @@ mod tests {
             .unwrap();
         assert!(result.clipped_triangles > 0);
         assert!(frame.depth.iter().all(|value| value.is_finite()));
+    }
+
+    #[test]
+    fn offset_viewport_uses_frame_origin_not_viewport_top() {
+        let mut frame = Frame::new(8, 8).unwrap();
+        let state = RasterState {
+            viewport: [2, 1, 4, 4],
+            ..state()
+        };
+        let quad = [
+            v(-1., -1., 0., 1., 0., 0., [1., 0., 0., 1.]),
+            v(1., -1., 0., 1., 1., 0., [1., 0., 0., 1.]),
+            v(1., 1., 0., 1., 1., 1., [1., 0., 0., 1.]),
+            v(-1., 1., 0., 1., 0., 1., [1., 0., 0., 1.]),
+        ];
+        frame
+            .draw_indexed(&state, None, &quad, &[0, 1, 2, 0, 2, 3])
+            .unwrap();
+        // `rgba` is bottom-up.  The viewport occupies x=[2,6), y=[1,5).
+        assert_eq!(frame.rgba[(1 * 8 + 2) * 4], 255);
+        assert_eq!(frame.rgba[(0 * 8 + 2) * 4], 0);
+        assert_eq!(frame.rgba[(5 * 8 + 2) * 4], 0);
+    }
+
+    #[test]
+    fn zero_and_offscreen_viewports_are_valid_noops() {
+        let vertices = [
+            v(-1., -1., 0., 1., 0., 0., [1.; 4]),
+            v(1., -1., 0., 1., 1., 0., [1.; 4]),
+            v(-1., 1., 0., 1., 0., 1., [1.; 4]),
+        ];
+        let mut frame = Frame::new(8, 8).unwrap();
+        let zero = RasterState {
+            viewport: [0, 0, 0, 8],
+            ..state()
+        };
+        assert_eq!(
+            frame
+                .draw_indexed(&zero, None, &vertices, &[0, 1, 2])
+                .unwrap()
+                .shaded_pixels,
+            0
+        );
+        let offscreen = RasterState {
+            viewport: [-20, -20, 4, 4],
+            ..state()
+        };
+        assert_eq!(
+            frame
+                .draw_indexed(&offscreen, None, &vertices, &[0, 1, 2])
+                .unwrap()
+                .shaded_pixels,
+            0
+        );
+        assert!(frame.rgba.iter().all(|&byte| byte == 0));
     }
 
     #[test]

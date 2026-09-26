@@ -313,7 +313,8 @@
                             };
                         let gl_needs_frame = matches!(operation, child_loader::ProviderOp::WglSwapLayerBuffers|child_loader::ProviderOp::GlFinish)
                             || (operation == child_loader::ProviderOp::GlDrawElements
-                                && session.process(active_pid).is_some_and(|p|p.xp.gl_preview_pending(active_tid)))
+                                && session.process(active_pid).is_some_and(|p|p.xp.gl_preview_pending(active_tid))
+                                && read_guest_words(&X86Memory(&child.address_space), exit.registers.esp, 3)?[2] != 0)
                             || (operation == child_loader::ProviderOp::GlClear
                                 && read_guest_words(&X86Memory(&child.address_space), exit.registers.esp, 2)?[1] & 0x0000_4000 != 0);
                         let gl_draw_frame = if gl_needs_frame {

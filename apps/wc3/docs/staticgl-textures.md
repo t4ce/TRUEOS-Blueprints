@@ -28,31 +28,42 @@ the source pitch. The upload loop supplies individual mip levels. Its client
 texture coordinates use two floats at byte 28 of a 36-byte vertex. This is why
 row pitch, mip storage and interleaved client arrays are included now.
 
-`staticgl_textured_draw.rs` connects a restricted draw subset to the new
-`staticgl_triangle::textured::TexturedRenderer`, using the real sampled vGPU
-pipeline and waiting for its timeline. Texture-enabled draws cannot accidentally
-fall through to the untextured triangle renderer. The accepted subset is opaque
-RGBA8, nearest/repeat sampling, indexed triangle lists, in-bounds affine clip
-positions, a full-surface viewport, and REPLACE, opaque DECAL or white-vertex
-MODULATE. Both RGB and RGBA base images are admitted. RGB REPLACE and both
-DECAL cases require opaque primary alpha because those GL operations preserve
-it; RGBA REPLACE takes alpha from the texture instead.
-The LOAD_COLOR submission preserves previous colour; this path does not provide
-a shared GL depth buffer.
+The live `glDrawElements` provider now routes through
+`staticgl_compat_draw.rs`, `staticgl_vertex.rs` and `staticgl_raster.rs`. These own
+a per-HGLRC RGBA8 color buffer and floating-point depth buffer. Client indices
+and interleaved position/normal/color/UV arrays are read and validated before
+framebuffer writes. The path retains homogeneous clip W, clips triangles, shades
+vertices using the enabled lights/materials, and rasterizes with perspective
+texture coordinates, explicit mip levels, linear/nearest filtering, scissor,
+culling, depth comparison/writes, alpha testing, blending, polygon offset and fog.
+Texture environments distinguish RGB, RGBA, alpha, luminance, luminance-alpha and
+intensity base formats. The old restricted direct-draw helper is not the live
+provider route.
 
-Linear/mip filtering, alpha/blend/depth behaviour, other texture environments,
-perspective interpolation and clipping still need implementation. Accepted
-parameter writes retain these requests; the draw rejects unsupported states
-instead of quietly sampling level zero. Any fallback `NoteWrite` permanently
-marks that context's textured drawing as unmodeled, even after the bounded note
-journal rolls over. Thus the existing WC3 state-note path will still require
-proper raster-state translation before it can use this restricted renderer.
+Fixed-function setters have real per-context state in `staticgl_fixed.rs`.
+There is no persistent first-setter blocker: disabled lighting, for example,
+does not invalidate a later draw just because light parameters were set earlier.
+Unimplemented imported calls are explicit frontiers; the signature table no
+longer admits writes as diagnostic-only success. Unsupported active two-sided
+lighting, non-triangle primitives, non-float position/normal arrays, front/aux
+buffers and unmodeled extensions remain explicit boundaries.
+
+This is a CPU compatibility rasterizer with real GPU publication, not native
+hardware fixed-function shading. It deliberately uses the already-proven sampled
+vGPU pipeline for a fullscreen quad, waits for the timeline and then publishes
+the UI4 frame. The first draw publishes a preview; subsequent draws accumulate
+until swap or finish. Color clears also publish. Presentation copies bottom-up
+GL rows into top-down texture storage and uses opaque window alpha, while the
+owned GL buffer retains its alpha for blending and readback. `glReadPixels`
+reads that owned buffer with pack row alignment/skips. See
+[first-frame validation](staticgl-first-frame.md) for receipt interpretation and
+remaining limits.
 
 Host tests validate texture ownership, namespace isolation, unpack addressing,
-format conversion, transactional updates and draw admission. GPU ABI test seams
-panic on use: host tests do not pretend to validate hardware rendering. The
-existing independent triangle demo remains the prior hardware proof; this new
-sampled bridge requires a separate hardware validation.
+format conversion, transactional updates and complete guest-array-to-pixel
+rendering. GPU ABI test seams panic on use: host tests do not pretend to validate
+hardware rendering. The independent triangle demo remains the prior hardware
+proof; this compatibility path needs its own next packed hardware run.
 
 API references: [texture uploads](https://learn.microsoft.com/en-us/windows/win32/opengl/glteximage2d),
 [pixel storage](https://learn.microsoft.com/en-us/windows/win32/opengl/glpixelstorei),

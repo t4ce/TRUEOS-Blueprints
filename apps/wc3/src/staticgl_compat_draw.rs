@@ -273,6 +273,74 @@ fn gl_compat_vertices(
     Ok((vertices, indices))
 }
 
+fn gl_rasterize_elements(
+    c: &mut WglContext,
+    memory: &impl GuestMemory,
+    guest_indices: &[u32],
+) -> Result<(raster::RasterStats, usize), ProviderDispatchError> {
+    const API: &str = "glDrawElements";
+    let state = gl_raster_state(c)?;
+    let (vertices, indices) = gl_compat_vertices(c, memory, guest_indices)?;
+    XpProcess::gl_ensure_raster(c)?;
+    let object = c.textures.object();
+    let mut levels = Vec::new();
+    let texture = if c.textures.enabled {
+        let base = object
+            .levels
+            .get(&0)
+            .ok_or("texture level zero undefined")?;
+        if base.width == 0 || base.height == 0 {
+            return Err(gl_texture_error(API, "empty texture level zero"));
+        }
+        let max_level = if matches!(object.min_filter, 0x2600 | 0x2601) {
+            0
+        } else {
+            31 - base.width.max(base.height).leading_zeros()
+        };
+        for level in 0..=max_level {
+            let image = object.levels.get(&level).ok_or("incomplete mip chain")?;
+            if image.internal != base.internal {
+                return Err(gl_texture_error(API, "inconsistent mip base format"));
+            }
+            levels.push(raster::GlRasterLevel {
+                width: image.width,
+                height: image.height,
+                rgba: &image.rgba,
+            });
+        }
+        Some(raster::GlRasterTexture {
+            levels: &levels,
+            format: match base.internal {
+                0x1907 => raster::TextureFormat::Rgb,
+                0x1908 => raster::TextureFormat::Rgba,
+                0x1906 => raster::TextureFormat::Alpha,
+                0x1909 => raster::TextureFormat::Luminance,
+                0x190a => raster::TextureFormat::LuminanceAlpha,
+                0x8049 => raster::TextureFormat::Intensity,
+                _ => {
+                    return Err(gl_texture_error(
+                        API,
+                        "raster texture base format unsupported",
+                    ));
+                }
+            },
+            wrap_s: gl_raster_wrap(object.wrap_s)?,
+            wrap_t: gl_raster_wrap(object.wrap_t)?,
+            min_filter: gl_raster_filter(object.min_filter)?,
+            mag_filter: gl_raster_filter(object.mag_filter)?,
+        })
+    } else {
+        None
+    };
+    let stats = c.raster_frame.as_mut().unwrap().draw_triangles(
+        &vertices,
+        &indices,
+        &state,
+        texture.as_ref(),
+    )?;
+    Ok((stats, vertices.len()))
+}
+
 impl XpProcess {
     fn wgl_get_proc_address_static(
         &self,
@@ -423,6 +491,10 @@ impl XpProcess {
                 format!("unsupported triangle list mode={mode} count={count} type=0x{kind:x}"),
             ));
         }
+        if count == 0 {
+            self.gl_context_mut(tid, API)?;
+            return Ok(0);
+        }
         let bytes = match kind {
             GL_UNSIGNED_BYTE => 1,
             GL_UNSIGNED_SHORT => 2,
@@ -444,62 +516,7 @@ impl XpProcess {
             })
             .collect();
         let c = self.gl_context_mut(tid, API)?;
-        let state = gl_raster_state(c)?;
-        let (vertices, indices) = gl_compat_vertices(c, memory, &guest_indices)?;
-        Self::gl_ensure_raster(c)?;
-        let object = c.textures.object();
-        let mut levels = Vec::new();
-        let texture = if c.textures.enabled {
-            let base = object
-                .levels
-                .get(&0)
-                .ok_or("texture level zero undefined")?;
-            let max_level = if matches!(object.min_filter, 0x2600 | 0x2601) {
-                0
-            } else {
-                31 - base.width.max(base.height).leading_zeros()
-            };
-            for level in 0..=max_level {
-                let image = object.levels.get(&level).ok_or("incomplete mip chain")?;
-                if image.internal != base.internal {
-                    return Err(gl_texture_error(API, "inconsistent mip base format"));
-                }
-                levels.push(raster::GlRasterLevel {
-                    width: image.width,
-                    height: image.height,
-                    rgba: &image.rgba,
-                });
-            }
-            Some(raster::GlRasterTexture {
-                levels: &levels,
-                format: match base.internal {
-                    0x1907 => raster::TextureFormat::Rgb,
-                    0x1908 => raster::TextureFormat::Rgba,
-                    0x1906 => raster::TextureFormat::Alpha,
-                    0x1909 => raster::TextureFormat::Luminance,
-                    0x190a => raster::TextureFormat::LuminanceAlpha,
-                    0x8049 => raster::TextureFormat::Intensity,
-                    _ => {
-                        return Err(gl_texture_error(
-                            API,
-                            "raster texture base format unsupported",
-                        ));
-                    }
-                },
-                wrap_s: gl_raster_wrap(object.wrap_s)?,
-                wrap_t: gl_raster_wrap(object.wrap_t)?,
-                min_filter: gl_raster_filter(object.min_filter)?,
-                mag_filter: gl_raster_filter(object.mag_filter)?,
-            })
-        } else {
-            None
-        };
-        let stats = c.raster_frame.as_mut().unwrap().draw_triangles(
-            &vertices,
-            &indices,
-            &state,
-            texture.as_ref(),
-        )?;
+        let (stats, vertex_count) = gl_rasterize_elements(c, memory, &guest_indices)?;
         c.draw_count += 1;
         let preview = c.draw_count == 1;
         if preview || c.draw_count.is_multiple_of(128) {
@@ -508,7 +525,7 @@ impl XpProcess {
                 format_args!(
                     "WC3 GL RASTER DRAW tid={tid} draw={} indices={count} vertices={} triangles={} pixels={} viewport={:?} scissor={:?} enabled=0x{:x} texture={} renderer=rust-fixed",
                     c.draw_count,
-                    vertices.len(),
+                    vertex_count,
                     stats.clipped_triangles,
                     stats.shaded_pixels,
                     c.viewport,
@@ -607,4 +624,10 @@ impl XpProcess {
         );
         Ok(())
     }
+}
+
+#[cfg(test)]
+mod staticgl_compat_tests {
+    use super::*;
+    include!("staticgl_compat_tests.rs");
 }
