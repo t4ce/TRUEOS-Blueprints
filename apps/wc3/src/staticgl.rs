@@ -231,13 +231,6 @@ impl XpProcess {
         })
     }
 
-    static_gl_stubs!(
-        wgl_get_proc_address_static => "wglGetProcAddress",
-        wgl_delete_context_static => "wglDeleteContext",
-        gl_read_pixels_static => "glReadPixels",
-        gl_read_buffer_static => "glReadBuffer",
-    );
-
     pub fn bind_gl_ui4_window(&mut self, hwnd: u32, window_id: u32, width:u32, height:u32) {
         if let Some(runtime) = self.gl_runtime.as_mut() {
             for context in runtime

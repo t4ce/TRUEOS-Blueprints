@@ -265,7 +265,7 @@ impl XpProcess {
                 self.wgl_create_context_static(esp, memory)?,
             )),
             ProviderOp::WglDeleteContext => Ok(PersonalityAction::Return(
-                self.wgl_delete_context_static(esp, memory)?,
+                self.wgl_delete_context_static(tid, esp, memory)?,
             )),
             ProviderOp::GlDeleteTextures => Ok(PersonalityAction::Return(
                 self.gl_delete_textures_static(tid, esp, memory)?,
@@ -328,10 +328,10 @@ impl XpProcess {
                 self.gl_clear_color_static(tid, esp, memory)?,
             )),
             ProviderOp::GlReadPixels => Ok(PersonalityAction::Return(
-                self.gl_read_pixels_static(esp, memory)?,
+                self.gl_read_pixels_static(tid, esp, memory)?,
             )),
             ProviderOp::GlReadBuffer => Ok(PersonalityAction::Return(
-                self.gl_read_buffer_static(esp, memory)?,
+                self.gl_read_buffer_static(tid, esp, memory)?,
             )),
             ProviderOp::WglSwapLayerBuffers => Ok(PersonalityAction::Return(
                 self.wgl_swap_layer_buffers_static(tid, esp, memory)?,

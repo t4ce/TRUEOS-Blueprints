@@ -23,8 +23,12 @@ pub(crate) struct TextureLevel<'a> {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum TextureFormat {
+    Alpha,
+    Luminance,
+    LuminanceAlpha,
     Rgb,
     Rgba,
+    Intensity,
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Wrap {
@@ -207,6 +211,7 @@ pub(crate) enum RasterError {
     BadVertex,
     BadIndex,
     BadTexture,
+    UnsupportedTexEnv,
     BadViewport,
 }
 
@@ -289,6 +294,9 @@ impl Frame {
         validate_state(self, state)?;
         if let Some(texture) = texture {
             validate_texture(texture)?;
+            if !texenv_supported(state.tex_env, texture.format) {
+                return Err(RasterError::UnsupportedTexEnv);
+            }
         }
         if vertices.iter().any(|v| !vertex_valid(*v)) {
             return Err(RasterError::BadVertex);
@@ -558,7 +566,11 @@ fn vertex_valid(v: ClipVertex) -> bool {
 }
 fn clip_triangle(input: [ClipVertex; 3]) -> Vec<ClipVertex> {
     let mut polygon = input.to_vec();
-    for plane in 0..6 {
+    // The six canonical clip half-spaces imply w >= 0.  A point exactly at
+    // the homogeneous origin satisfies them all but cannot be divided.  Clip
+    // it to a small positive-w plane before the perspective divide; this is
+    // a finite representation of the same limiting primitive.
+    for plane in 0..7 {
         if polygon.is_empty() {
             break;
         }
@@ -587,7 +599,8 @@ fn plane_distance(p: [f32; 4], n: usize) -> f32 {
         2 => p[1] + p[3],
         3 => p[3] - p[1],
         4 => p[2] + p[3],
-        _ => p[3] - p[2],
+        5 => p[3] - p[2],
+        _ => p[3] - 1.0e-6,
     }
 }
 fn lerp_vertex(a: ClipVertex, b: ClipVertex, t: f32) -> ClipVertex {
@@ -775,33 +788,69 @@ fn texenv(
     t: [f32; 4],
 ) -> [f32; 4] {
     match mode {
-        TexEnvMode::Modulate => core::array::from_fn(|i| p[i] * t[i]),
-        TexEnvMode::Replace => {
-            if fmt == TextureFormat::Rgb {
-                [t[0], t[1], t[2], p[3]]
+        TexEnvMode::Modulate => match fmt {
+            TextureFormat::Alpha => [p[0], p[1], p[2], p[3] * t[3]],
+            TextureFormat::Luminance => [p[0] * t[0], p[1] * t[0], p[2] * t[0], p[3]],
+            TextureFormat::LuminanceAlpha => [p[0] * t[0], p[1] * t[0], p[2] * t[0], p[3] * t[3]],
+            TextureFormat::Rgb => [p[0] * t[0], p[1] * t[1], p[2] * t[2], p[3]],
+            TextureFormat::Rgba => core::array::from_fn(|i| p[i] * t[i]),
+            TextureFormat::Intensity => core::array::from_fn(|i| p[i] * t[0]),
+        },
+        TexEnvMode::Replace => match fmt {
+            TextureFormat::Alpha => [p[0], p[1], p[2], t[3]],
+            TextureFormat::Luminance => [t[0], t[0], t[0], p[3]],
+            TextureFormat::LuminanceAlpha => [t[0], t[0], t[0], t[3]],
+            TextureFormat::Rgb => [t[0], t[1], t[2], p[3]],
+            TextureFormat::Rgba => t,
+            TextureFormat::Intensity => [t[0], t[0], t[0], t[0]],
+        },
+        TexEnvMode::Decal => match fmt {
+            TextureFormat::Rgb => [t[0], t[1], t[2], p[3]],
+            TextureFormat::Rgba => [
+                p[0] * (1.0 - t[3]) + t[0] * t[3],
+                p[1] * (1.0 - t[3]) + t[1] * t[3],
+                p[2] * (1.0 - t[3]) + t[2] * t[3],
+                p[3],
+            ],
+            // draw_indexed rejects these per GL 1.1 table 3.10.
+            TextureFormat::Alpha
+            | TextureFormat::Luminance
+            | TextureFormat::LuminanceAlpha
+            | TextureFormat::Intensity => p,
+        },
+        TexEnvMode::Blend => {
+            let luminance = matches!(
+                fmt,
+                TextureFormat::Luminance | TextureFormat::LuminanceAlpha | TextureFormat::Intensity
+            );
+            let alpha = match fmt {
+                TextureFormat::Alpha
+                | TextureFormat::LuminanceAlpha
+                | TextureFormat::Rgba
+                | TextureFormat::Intensity => p[3] * t[3],
+                _ => p[3],
+            };
+            if fmt == TextureFormat::Alpha {
+                [p[0], p[1], p[2], alpha]
             } else {
-                t
-            }
-        }
-        TexEnvMode::Decal => {
-            if fmt == TextureFormat::Rgb {
-                [t[0], t[1], t[2], p[3]]
-            } else {
+                let tc = if luminance {
+                    [t[0]; 3]
+                } else {
+                    [t[0], t[1], t[2]]
+                };
                 [
-                    p[0] * (1.0 - t[3]) + t[0] * t[3],
-                    p[1] * (1.0 - t[3]) + t[1] * t[3],
-                    p[2] * (1.0 - t[3]) + t[2] * t[3],
-                    p[3],
+                    p[0] * (1.0 - tc[0]) + env[0] * tc[0],
+                    p[1] * (1.0 - tc[1]) + env[1] * tc[1],
+                    p[2] * (1.0 - tc[2]) + env[2] * tc[2],
+                    alpha,
                 ]
             }
         }
-        TexEnvMode::Blend => [
-            p[0] * (1.0 - t[0]) + env[0] * t[0],
-            p[1] * (1.0 - t[1]) + env[1] * t[1],
-            p[2] * (1.0 - t[2]) + env[2] * t[2],
-            p[3] * t[3],
-        ],
     }
+}
+
+fn texenv_supported(mode: TexEnvMode, format: TextureFormat) -> bool {
+    !matches!(mode, TexEnvMode::Decal) || matches!(format, TextureFormat::Rgb | TextureFormat::Rgba)
 }
 fn apply_fog(f: FogState, z: f32, c: [f32; 4]) -> [f32; 4] {
     let q = match f.mode {
@@ -885,6 +934,7 @@ fn raster_error(error: RasterError) -> &'static str {
         RasterError::BadVertex => "raster nonfinite vertex",
         RasterError::BadIndex => "raster bad index list",
         RasterError::BadTexture => "raster bad texture",
+        RasterError::UnsupportedTexEnv => "raster undefined texture environment",
         RasterError::BadViewport => "raster bad viewport",
     }
 }
@@ -1023,6 +1073,75 @@ mod tests {
             [0.0, 0.0, 0.0, 1.0],
         );
         assert_eq!(result, [0.5, 0.0, 0.0, 0.75]);
+    }
+
+    #[test]
+    fn texture_env_base_formats_follow_gl11_tables() {
+        let p = [0.2, 0.4, 0.6, 0.8];
+        let la = [0.25, 0.25, 0.25, 0.5];
+        let rgba = [0.9, 0.7, 0.5, 0.25];
+        let env = [1.0, 0.0, 0.5, 1.0];
+        assert_eq!(
+            texenv(TexEnvMode::Modulate, env, TextureFormat::Alpha, p, la),
+            [0.2, 0.4, 0.6, 0.4]
+        );
+        assert_eq!(
+            texenv(TexEnvMode::Replace, env, TextureFormat::Alpha, p, la),
+            [0.2, 0.4, 0.6, 0.5]
+        );
+        assert_eq!(
+            texenv(TexEnvMode::Replace, env, TextureFormat::Luminance, p, la),
+            [0.25, 0.25, 0.25, 0.8]
+        );
+        assert_eq!(
+            texenv(
+                TexEnvMode::Modulate,
+                env,
+                TextureFormat::LuminanceAlpha,
+                p,
+                la
+            ),
+            [0.05, 0.1, 0.15, 0.4]
+        );
+        assert_eq!(
+            texenv(TexEnvMode::Replace, env, TextureFormat::Intensity, p, la),
+            [0.25, 0.25, 0.25, 0.25]
+        );
+        assert_eq!(
+            texenv(TexEnvMode::Replace, env, TextureFormat::Rgb, p, rgba),
+            [0.9, 0.7, 0.5, 0.8]
+        );
+        assert_eq!(
+            texenv(TexEnvMode::Replace, env, TextureFormat::Rgba, p, rgba),
+            rgba
+        );
+        assert_eq!(
+            texenv(TexEnvMode::Decal, env, TextureFormat::Rgb, p, rgba),
+            [0.9, 0.7, 0.5, 0.8]
+        );
+        assert!(!texenv_supported(
+            TexEnvMode::Decal,
+            TextureFormat::LuminanceAlpha
+        ));
+        assert!(texenv_supported(
+            TexEnvMode::Blend,
+            TextureFormat::Intensity
+        ));
+    }
+
+    #[test]
+    fn homogeneous_origin_is_clipped_to_positive_w_without_nan() {
+        let mut frame = Frame::new(8, 8).unwrap();
+        let tri = [
+            v(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, [1.; 4]),
+            v(-0.8, -0.8, 0.0, 1.0, 0.0, 0.0, [1.; 4]),
+            v(0.8, -0.8, 0.0, 1.0, 1.0, 0.0, [1.; 4]),
+        ];
+        let result = frame
+            .draw_indexed(&state(), None, &tri, &[0, 1, 2])
+            .unwrap();
+        assert!(result.clipped_triangles > 0);
+        assert!(frame.depth.iter().all(|value| value.is_finite()));
     }
 
     #[test]

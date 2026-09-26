@@ -61,6 +61,7 @@ struct GlTextures {
     binding: u32,
     default_object: GlTextureObject,
     unpack: GlUnpack,
+    pack: GlUnpack,
     enabled: bool,
     coord_array_enabled: bool,
     coord_pointer: Option<GlArrayPointer>,
@@ -75,6 +76,7 @@ impl Default for GlTextures {
             binding: 0,
             default_object: GlTextureObject::default(),
             unpack: GlUnpack::default(),
+            pack: GlUnpack::default(),
             enabled: false,
             coord_array_enabled: false,
             coord_pointer: None,
@@ -406,8 +408,14 @@ impl XpProcess {
         esp: u32,
         memory: &impl GuestMemory,
     ) -> Result<u32, ProviderDispatchError> {
-        let [_, pname, value] = arguments::<3>(memory, esp)?;
-        let unpack = &mut self.gl_context_mut(tid, "glPixelStorei")?.textures.unpack;
+        let [_, mut pname, value] = arguments::<3>(memory, esp)?;
+        let textures = &mut self.gl_context_mut(tid, "glPixelStorei")?.textures;
+        let unpack = if (0x0d00..=0x0d05).contains(&pname) {
+            pname -= 0x10;
+            &mut textures.pack
+        } else {
+            &mut textures.unpack
+        };
         match pname {
             0x0cf5 if matches!(value, 1 | 2 | 4 | 8) => unpack.alignment = value,
             0x0cf2 if value <= i32::MAX as u32 => unpack.row_length = value,
@@ -588,6 +596,18 @@ impl XpProcess {
         let c = self.gl_context_mut(tid, "glGetIntegerv")?;
         let values: Vec<u32> = match pname {
             0x0d33 => vec![GL_MAX_TEXTURE_EDGE],
+            0x0d31 => vec![8],          // MAX_LIGHTS
+            0x0d3a => vec![4096, 4096], // MAX_VIEWPORT_DIMS
+            0x0c10 => c.fixed.scissor.iter().map(|v| *v as u32).collect(),
+            0x0b74 => vec![c.fixed.depth_func],
+            0x0b72 => vec![c.fixed.depth_mask as u32],
+            0x0c01 => vec![c.fixed.draw_buffer],
+            0x0d05 => vec![c.textures.pack.alignment],
+            0x0d02 => vec![c.textures.pack.row_length],
+            0x0d03 => vec![c.textures.pack.skip_rows],
+            0x0d04 => vec![c.textures.pack.skip_pixels],
+            0x0d00 => vec![c.textures.pack.swap_bytes as u32],
+            0x0d01 => vec![c.textures.pack.lsb_first as u32],
             0x8069 => vec![c.textures.binding],
             0x0cf5 => vec![c.textures.unpack.alignment],
             0x0cf2 => vec![c.textures.unpack.row_length],

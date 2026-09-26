@@ -1203,5 +1203,6 @@ impl XpProcess {
 
 #[cfg(test)]
 mod staticgl_fixed_tests {
+    use super::*;
     include!("staticgl_fixed_tests.rs");
 }
