@@ -66,6 +66,18 @@ callback-table relocation copy is separate and still uses host transfers.
 `python3 apps/wc3/tests/test_native_memmove.py` executes the emitted helper and
 import thunk in a freestanding i386 test executable on Linux.
 
+`strncmp` and initial-C-locale `toupper` also run directly in the guest.
+`strncmp` reads unsigned bytes up to the first mismatch, NUL, or count limit;
+zero count reads neither pointer. `toupper` handles byte values and EOF locally,
+and sends out-of-domain inputs to the existing Rust provider frontier with the
+original provider id and stack. These calls avoid the provider/actor/carrier
+round trip and do not increment host provider counters. Enable `host-strncmp`
+or `host-toupper` to restore the corresponding Rust path and its diagnostics.
+The tests `tests/test_native_strncmp.py` and `tests/test_native_toupper.py`
+execute the emitted thunks on Linux IA32. The latter substitutes RET at the
+fallback VMCALL to check its provider id, stack, and register state; actual
+fallback dispatch still needs a carrier run.
+
 For the normal Blueprint workflow, add the desired features to `default = []`
 in this app's `Cargo.toml`, then rebuild. For host checks, pass
 `--features trace-seh` (or another category) to Cargo. Diagnostic features do

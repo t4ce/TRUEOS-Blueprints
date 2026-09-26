@@ -41,6 +41,29 @@ pub const CHILD_STRNCMP_OFFSET: usize = 0x500;
 pub const CHILD_STRNCMP_ADDRESS: u32 = CHILD_CONTROL_BASE + CHILD_STRNCMP_OFFSET as u32;
 pub const CHILD_TOUPPER_OFFSET: usize = 0x540;
 pub const CHILD_TOUPPER_ADDRESS: u32 = CHILD_CONTROL_BASE + CHILD_TOUPPER_OFFSET as u32;
+pub const CHILD_STRNICMP_OFFSET: usize = 0x580;
+pub const CHILD_STRNICMP_ADDRESS: u32 = CHILD_CONTROL_BASE + CHILD_STRNICMP_OFFSET as u32;
+const CHILD_CP1252_FOLD_OFFSET: usize = 0x700;
+
+// Same bounded byte loop as strncmp, with two CP1252 table loads before
+// subtraction. The absolute table operands below are CHILD_CONTROL_BASE+0x700.
+const CHILD_STRNICMP_CODE: &[u8] = &[
+    0x9c, 0x56, 0x57, 0x8b, 0x74, 0x24, 0x10, 0x8b, 0x7c, 0x24, 0x14, 0x8b,
+    0x4c, 0x24, 0x18, 0x31, 0xc0, 0x85, 0xc9, 0x74, 0x27, 0x0f, 0xb6, 0x06,
+    0x0f, 0xb6, 0x17, 0x0f, 0xb6, 0x80, 0x00, 0x07, 0x2f, 0x00, 0x0f, 0xb6,
+    0x92, 0x00, 0x07, 0x2f, 0x00, 0x29, 0xd0, 0x75, 0x0f, 0x85, 0xd2, 0x74,
+    0x0b, 0x49, 0x74, 0x08, 0x46, 0x74, 0x09, 0x47, 0x74, 0x06, 0xeb, 0xd9,
+    0x5f, 0x5e, 0x9d, 0xc3, 0x0f, 0x0b,
+];
+
+const fn cp1252_fold(byte: u8) -> u8 {
+    match byte {
+        b'A'..=b'Z' | 0xc0..=0xd6 | 0xd8..=0xde => byte + 0x20,
+        0x8a | 0x8c | 0x8e => byte + 0x10,
+        0x9f => 0xff,
+        _ => byte,
+    }
+}
 
 // Initial C locale: ASCII a-z only. EAX carries the provider id until the
 // domain guard passes. Invalid unsigned-char/EOF inputs VMCALL into the
@@ -79,6 +102,12 @@ const CHILD_MEMMOVE_CODE: &[u8] = &[
 ];
 
 pub fn install_child_controls(output: &mut [u8]) -> Result<(), &'static str> {
+    output.get_mut(CHILD_STRNICMP_OFFSET..CHILD_STRNICMP_OFFSET + CHILD_STRNICMP_CODE.len())
+        .ok_or("strnicmp helper range")?.copy_from_slice(CHILD_STRNICMP_CODE);
+    for (byte, entry) in output.get_mut(CHILD_CP1252_FOLD_OFFSET..CHILD_CP1252_FOLD_OFFSET + 256)
+        .ok_or("CP1252 fold table range")?.iter_mut().enumerate() {
+        *entry = cp1252_fold(byte as u8);
+    }
     output.get_mut(CHILD_TOUPPER_OFFSET..CHILD_TOUPPER_OFFSET + CHILD_TOUPPER_CODE.len())
         .ok_or("toupper helper range")?.copy_from_slice(CHILD_TOUPPER_CODE);
     output.get_mut(CHILD_STRNCMP_OFFSET..CHILD_STRNCMP_OFFSET + CHILD_STRNCMP_CODE.len())
@@ -136,6 +165,8 @@ pub enum Kind {
     Memmove,
     /// Cdecl guest-native unsigned byte comparison.
     Strncmp,
+    /// CP1252 case-insensitive bounded guest-native comparison.
+    Strnicmp,
     /// Initial C locale conversion, with provider fallback for invalid inputs.
     ToUpper,
 }
@@ -154,8 +185,12 @@ pub fn write(import_id: u32, kind: Kind, output: &mut [u8]) -> Result<(), &'stat
         output[6..10].copy_from_slice(&CHILD_TOUPPER_ADDRESS.wrapping_sub(next).to_le_bytes());
         return Ok(());
     }
-    if matches!(kind, Kind::Memmove | Kind::Strncmp) {
-        let target = if kind == Kind::Memmove { CHILD_MEMMOVE_ADDRESS } else { CHILD_STRNCMP_ADDRESS };
+    if matches!(kind, Kind::Memmove | Kind::Strncmp | Kind::Strnicmp) {
+        let target = match kind {
+            Kind::Memmove => CHILD_MEMMOVE_ADDRESS,
+            Kind::Strnicmp => CHILD_STRNICMP_ADDRESS,
+            _ => CHILD_STRNCMP_ADDRESS,
+        };
         let next = address(import_id).and_then(|address| address.checked_add(5))
             .ok_or("memmove thunk address overflow")?;
         output[0] = 0xe9;
@@ -173,7 +208,7 @@ pub fn write(import_id: u32, kind: Kind, output: &mut [u8]) -> Result<(), &'stat
         0xC1,
     ]);
     match kind {
-        Kind::Memmove | Kind::Strncmp | Kind::ToUpper => unreachable!(),
+        Kind::Memmove | Kind::Strncmp | Kind::Strnicmp | Kind::ToUpper => unreachable!(),
         Kind::Return => output[8] = 0xC3,
         Kind::Stdcall(bytes) => {
             output[8] = 0xC2;

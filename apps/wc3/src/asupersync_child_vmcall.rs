@@ -7146,7 +7146,7 @@
                         } else {
                             None
                         };
-                        let crt_decimal = if matches!(
+                        let crt_decimal = if cfg!(feature = "trace-api") && matches!(
                             operation,
                             child_loader::ProviderOp::CrtAtoi | child_loader::ProviderOp::CrtAtol
                         ) {
@@ -8819,6 +8819,31 @@
                                 frame[5],
                                 frame[6],
                                 frame[7],
+                            ),
+                        );
+                    }
+                    if matches!(
+                        &provider.symbol,
+                        child_loader::ProviderSymbol::Name(name)
+                            if provider.module.eq_ignore_ascii_case("MSVCRT.dll")
+                                && name == "qsort"
+                    ) {
+                        let frame = read_guest_words(
+                            &X86Memory(&child.address_space),
+                            exit.registers.esp,
+                            5,
+                        )?;
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD CRT QSORT CALL pid={} tid={} base=0x{:08x} count={} size={} comparator=0x{:08x} caller_ret=0x{:08x}",
+                                active_pid,
+                                active_tid,
+                                frame[1],
+                                frame[2],
+                                frame[3],
+                                frame[4],
+                                frame[0],
                             ),
                         );
                     }
