@@ -631,28 +631,18 @@ impl XpProcess {
             }
             let renderer = runtime.textured_renderer.as_mut().unwrap();
             let vertices = gl_present_strip_vertices(height, top, rows);
-            let result = if top == 0 {
-                renderer.draw(
-                    runtime.queue,
-                    surface,
-                    &vertices,
-                    &[0, 1, 2, 0, 2, 3],
-                    &pixels,
-                    width,
-                    rows,
-                    0xff000000,
-                )
-            } else {
-                renderer.draw_over(
-                    runtime.queue,
-                    surface,
-                    &vertices,
-                    &[0, 1, 2, 0, 2, 3],
-                    &pixels,
-                    width,
-                    rows,
-                )
-            };
+            // The owned raster frame is an opaque, full-frame publication.
+            // Every strip, including the first, preserves other rows and
+            // must not allocate an unrelated UI4 depth target.
+            let result = renderer.draw_over(
+                runtime.queue,
+                surface,
+                &vertices,
+                &[0, 1, 2, 0, 2, 3],
+                &pixels,
+                width,
+                rows,
+            );
             let point = result.map_err(|rc| {
                 let detail = format!("frame publication failed strip_top={top} rows={rows} rc={rc} stage={:?} accounting={:?}", renderer.last_failure(), runtime.device.info());
                 logl::log(level::IMPORTANT, format_args!("WC3 GL PRESENT FAIL {detail}"));

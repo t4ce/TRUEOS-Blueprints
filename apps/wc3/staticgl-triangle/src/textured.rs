@@ -22,6 +22,14 @@ pub struct TexturedVertex {
 const VERTEX_STRIDE: usize = core::mem::size_of::<TexturedVertex>();
 const NEAREST_REPEAT: u32 = vgpu::SAMPLER_ADDRESS_U_REPEAT | vgpu::SAMPLER_ADDRESS_V_REPEAT;
 
+fn indexed_draw_texture_reserved(load_color: bool) -> u32 {
+    if load_color {
+        vgpu::INDEXED_DRAW_LOAD_COLOR
+    } else {
+        0
+    }
+}
+
 /// Real RGBA8 sampled-texture renderer for one indexed triangle-list draw.
 ///
 /// `draw` starts a new UI4 frame with `clear_rgba8_srgb` and opaque depth.
@@ -204,11 +212,7 @@ impl TexturedRenderer {
                 texture_height: height,
                 texture_pitch: width * 4,
                 sampler_flags: NEAREST_REPEAT,
-                texture_reserved: if load_color {
-                    vgpu::INDEXED_DRAW_LOAD_COLOR
-                } else {
-                    0
-                },
+                texture_reserved: indexed_draw_texture_reserved(load_color),
                 ..Default::default()
             },
         );
@@ -324,5 +328,14 @@ mod tests {
         assert_eq!(texture_byte_len(3, 2), Ok(24));
         assert_eq!(texture_byte_len(0, 2), Err(vgpu::ERR_UNSUPPORTED));
         assert_eq!(texture_byte_len(u32::MAX, 1), Err(vgpu::ERR_UNSUPPORTED));
+    }
+
+    #[test]
+    fn draw_over_uses_the_load_color_submission_flag_while_draw_does_not() {
+        assert_eq!(
+            indexed_draw_texture_reserved(true),
+            vgpu::INDEXED_DRAW_LOAD_COLOR,
+        );
+        assert_eq!(indexed_draw_texture_reserved(false), 0);
     }
 }

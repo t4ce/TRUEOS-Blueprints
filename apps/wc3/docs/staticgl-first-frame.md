@@ -7,9 +7,9 @@ the old persistent `glLightf` blocker alone would not render those semantics.
 The provider now consumes that state through a Rust fixed-function rasterizer.
 Color/depth live with each HGLRC; the final image is submitted through the existing
 sampled vGPU shader and UI4 presentation path. Publication uses horizontal strips
-of at most 256 rows: the first clears the target, subsequent strips preserve color,
-and each GPU completion precedes buffer reuse and reacquisition of the same
-unpublished surface. UI4 publishes only after all strips complete.
+of at most 256 rows: every strip preserves the other rows while overwriting its
+own opaque region, and each GPU completion precedes buffer reuse and reacquisition
+of the same unpublished surface. UI4 publishes only after all strips complete.
 
 The broker creates a resident sampler copy in addition to the upload buffer.
 At 2560x1440, a surface plus two full-size textures require about 42.19 MiB,
