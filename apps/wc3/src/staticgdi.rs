@@ -157,12 +157,34 @@ impl XpProcess {
         self.static_gdi_stub("TextOutW")
     }
 
-    fn set_device_gamma_ramp_static(
+    fn set_device_gamma_ramp_request(
         &self,
-        _esp: u32,
-        _memory: &impl GuestMemory,
-    ) -> Result<u32, ProviderDispatchError> {
-        self.static_gdi_stub("SetDeviceGammaRamp")
+        pid: u32,
+        esp: u32,
+        memory: &impl GuestMemory,
+    ) -> Result<PersonalityAction, ProviderDispatchError> {
+        let [_, hdc, ramp_ptr] = arguments::<3>(memory, esp)?;
+        let Some(GdiObject::DeviceContext(DeviceContext {
+            target: DcTarget::WindowPaint { hwnd },
+            ..
+        })) = self.gdi_objects.get(&hdc)
+        else {
+            return Ok(PersonalityAction::Return(0));
+        };
+        if ramp_ptr == 0 {
+            return Ok(PersonalityAction::Return(0));
+        }
+        let mut bytes = [0u8; 3 * 256 * 2];
+        memory.read(ramp_ptr, &mut bytes)?;
+        let ramp = core::array::from_fn(|index| {
+            u16::from_le_bytes([bytes[index * 2], bytes[index * 2 + 1]])
+        });
+        Ok(PersonalityAction::WindowGammaRamp(WindowGammaRampRequest {
+            pid,
+            hwnd: *hwnd,
+            hdc,
+            ramp,
+        }))
     }
 
     fn describe_pixel_format_static(

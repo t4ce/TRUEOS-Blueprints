@@ -638,7 +638,6 @@ impl ProviderOp {
                 | Self::SetBkColor
                 | Self::SetPixelFormat
                 | Self::TextOutW
-                | Self::SetDeviceGammaRamp
                 | Self::DescribePixelFormat
                 | Self::ChoosePixelFormat
                 | Self::SetTextAlign

@@ -254,9 +254,6 @@ impl XpProcess {
             ProviderOp::TextOutW => Ok(PersonalityAction::Return(
                 self.text_out_w_static(esp, memory)?,
             )),
-            ProviderOp::SetDeviceGammaRamp => Ok(PersonalityAction::Return(
-                self.set_device_gamma_ramp_static(esp, memory)?,
-            )),
             ProviderOp::DescribePixelFormat => Ok(PersonalityAction::Return(
                 self.describe_pixel_format_static(esp, memory)?,
             )),
@@ -2161,6 +2158,7 @@ impl XpProcess {
             );
         }
         let action = match operation {
+            ProviderOp::SetDeviceGammaRamp => Some(self.set_device_gamma_ramp_request(pid, esp, memory)?),
             ProviderOp::CreateEventA => Some(PersonalityAction::Session(
                 SessionRequest::CreateEvent(self.create_event_request(esp, memory)?),
             )),

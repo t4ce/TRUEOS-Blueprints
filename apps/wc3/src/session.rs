@@ -781,6 +781,14 @@ pub struct WindowFillRectRequest {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WindowGammaRampRequest {
+    pub pid: Pid,
+    pub hwnd: u32,
+    pub hdc: u32,
+    pub ramp: [u16; 3 * 256],
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CreatedChild {
     pub pid: Pid,
     pub tid: Tid,
@@ -907,6 +915,7 @@ pub enum PersonalityAction {
     WindowBlit(WindowBlitRequest),
     WindowFillRect(WindowFillRectRequest),
     WindowText(WindowTextRequest),
+    WindowGammaRamp(WindowGammaRampRequest),
     Block(WaitRequest),
     IoCompletionWait(GetQueuedCompletionStatusRequest),
     CallGuest(GuestCall),

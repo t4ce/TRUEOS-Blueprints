@@ -6976,6 +6976,50 @@
                             .map_err(|error| error.to_string())?;
                         continue;
                     }
+                    if operation == child_loader::ProviderOp::SetDeviceGammaRamp {
+                        let action = session
+                            .process_mut(active_pid)
+                            .ok_or_else(|| "SetDeviceGammaRamp process missing".to_owned())?
+                            .xp
+                            .dispatch_provider_for_process_typed(
+                                active_pid,
+                                active_tid,
+                                provider_id,
+                                exit.registers.esp,
+                                &mut X86Memory(&child.address_space),
+                            )
+                            .map_err(|error| error.to_string())?;
+                        let result = match action {
+                            PersonalityAction::WindowGammaRamp(request) => match frames.get_mut(&request.hwnd) {
+                                Some(frame) => match frame.set_display_gamma_ramp(&request.ramp) {
+                                    Ok(()) => {
+                                        session.process_mut(request.pid)
+                                            .ok_or_else(|| "SetDeviceGammaRamp process missing".to_owned())?
+                                            .xp.commit_gamma_ramp(request.ramp);
+                                        logl::log(level::IMPORTANT, format_args!(
+                                            "WC3 CHILD SETDEVICEGAMMARAMP RESULT pid={} tid={} hwnd=0x{:08x} hdc=0x{:08x} ui4_window={} entries=256xRGB16 hardware=pipe-a-precision-gamma programmed=1 result=1 cleanup=8-by-thunk",
+                                            active_pid, active_tid, request.hwnd, request.hdc, frame.window_id(),
+                                        ));
+                                        1
+                                    }
+                                    Err(error) => {
+                                        logl::log(level::IMPORTANT, format_args!(
+                                            "WC3 UI4 GAMMA APPLY FAILED hwnd=0x{:08x} error={error:?}", request.hwnd,
+                                        ));
+                                        0
+                                    }
+                                },
+                                None => 0,
+                            },
+                            PersonalityAction::Return(result) => result,
+                            _ => return Err("SetDeviceGammaRamp produced unexpected action".into()),
+                        };
+                        let mut registers = exit.registers;
+                        registers.eax = result;
+                        contexts[active].context.set_registers(registers)
+                            .map_err(|error| error.to_string())?;
+                        continue;
+                    }
                     if operation.is_generic_process_local() {
                         let global_memory_status = if operation
                             == child_loader::ProviderOp::GlobalMemoryStatus

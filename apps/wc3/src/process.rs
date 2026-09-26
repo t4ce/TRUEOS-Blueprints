@@ -24,7 +24,7 @@ use crate::{
         CreateEventRequest, CreateMutexRequest, CreateProcessRequest, CreateWindowRequest,
         DuplicateHandleRequest,
         GetExitCodeProcessRequest, GetQueuedCompletionStatusRequest, LoadImageRequest, OpenFileRequest, PersonalityAction, SessionRequest,
-        SetWindowPosRequest, ThreadKey, WaitRequest, WindowBlitRequest, WindowFillRectRequest, WindowTextRequest,
+        SetWindowPosRequest, ThreadKey, WaitRequest, WindowBlitRequest, WindowFillRectRequest, WindowGammaRampRequest, WindowTextRequest,
     },
     staticstr,
     thunk32,
@@ -1953,6 +1953,10 @@ impl XpProcess {
 
     pub fn new_child() -> Self {
         Self::with_image(Vec::new(), ProcessImage::War3Child)
+    }
+
+    pub fn commit_gamma_ramp(&mut self, ramp: [u16; 3 * 256]) {
+        self.gamma_ramp = ramp;
     }
 
     fn with_image(imports: Vec<LauncherImport>, image: ProcessImage) -> Self {

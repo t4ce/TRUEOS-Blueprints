@@ -1044,6 +1044,18 @@ impl Frame {
         })
     }
 
+    /// Program the shared primary display's RGB transfer ramp using this
+    /// frame's ownership capability. The input is Windows GAMMARAMP order:
+    /// red[256], green[256], blue[256].
+    pub fn set_display_gamma_ramp(&mut self, ramp: &[u16; 3 * 256]) -> Result<(), Error> {
+        status(unsafe {
+            v::bp_abi::trueos_cabi_ui4_scene_set_display_gamma_ramp(
+                self.window_id,
+                ramp.as_ptr(),
+            )
+        })
+    }
+
     /// Exclude this frame from UI4 cursor selection and pointer hit testing.
     pub fn set_hit_testable(&mut self, enabled: bool) -> Result<(), Error> {
         status(unsafe {

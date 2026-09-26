@@ -1044,6 +1044,9 @@
                         paint_window_fill_rect(&request, &mut frames, window_rgba)?;
                         1
                     }
+                    PersonalityAction::WindowGammaRamp(_) => {
+                        return Err("launcher SetDeviceGammaRamp unsupported".into());
+                    }
                     PersonalityAction::WindowText(request) => {
                         let backing = window_rgba
                             .get(&request.hwnd)
