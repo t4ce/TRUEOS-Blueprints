@@ -1878,7 +1878,7 @@ mod tests_session_1 {
     }
 
     #[test]
-    fn design_time_allow_local_files_is_present_and_explicitly_zero() {
+fn design_time_allow_local_files_is_present_and_explicitly_zero() {
         let value = crate::reg::lookup(
             crate::reg::HKEY_LOCAL_MACHINE,
             "software\\BLIZZARD entertainment\\warcraft iii",
@@ -2614,6 +2614,26 @@ mod tests_session_1 {
             Some(first)
         );
     }
+}
+
+#[test]
+fn design_time_battle_net_gateways_exposes_the_rig_lan_realm() {
+    let value = crate::reg::lookup(
+        crate::reg::HKEY_CURRENT_USER,
+        "software\\BLIZZARD entertainment\\warcraft iii",
+        "BATTLE.NET GATEWAYS",
+    )
+    .unwrap();
+
+    assert_eq!(value.ty, crate::reg::REG_MULTI_SZ);
+    assert_eq!(
+        value.bytes,
+        b"1001\0\
+          01\0\
+          192.168.178.111\0\
+          0\0\
+          RoC 1.21b Realm\0\0"
+    );
 }
     };
 }

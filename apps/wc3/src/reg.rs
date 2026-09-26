@@ -6,6 +6,7 @@ use crate::process::GuestMemory;
 pub const HKEY_CURRENT_USER: u32 = 0x8000_0001;
 pub const HKEY_LOCAL_MACHINE: u32 = 0x8000_0002;
 pub const REG_DWORD: u32 = 4;
+pub const REG_MULTI_SZ: u32 = 7;
 
 pub struct OpenKeyExAFrame {
     pub caller_ret: u32,
@@ -128,7 +129,21 @@ const ALLOW_LOCAL_FILES: Definition = Definition {
     bytes: &[0, 0, 0, 0],
 };
 
-const DEFINITIONS: &[Definition] = &[ALLOW_LOCAL_FILES];
+const BATTLE_NET_GATEWAYS: Definition = Definition {
+    root: HKEY_CURRENT_USER,
+    key_path: "Software\\Blizzard Entertainment\\Warcraft III",
+    value_name: "Battle.net Gateways",
+    ty: REG_MULTI_SZ,
+    // Warcraft's gateway list begins with the version and entry count, then
+    // stores address, zone, and display name for each configured realm.
+    bytes: b"1001\0\
+        01\0\
+        192.168.178.111\0\
+        0\0\
+        RoC 1.21b Realm\0\0",
+};
+
+const DEFINITIONS: &[Definition] = &[ALLOW_LOCAL_FILES, BATTLE_NET_GATEWAYS];
 
 pub fn lookup(root: u32, key_path: &str, value_name: &str) -> Option<Definition> {
     DEFINITIONS.iter().copied().find(|definition| {
