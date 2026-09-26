@@ -8501,7 +8501,7 @@
                                         )?;
                                         let [
                                             _,
-                                            _flags,
+                                            flags,
                                             source,
                                             message_id,
                                             language_id,
@@ -8526,10 +8526,22 @@
                                                 }
                                             })
                                             .unwrap_or("none");
-                                        let (resolved_language_id, language_kind) =
+                                        let source_kind = match *flags {
+                                            0x0000_0800 => "FROM_HMODULE",
+                                            0x0000_1000 => "FROM_SYSTEM",
+                                            _ => "UNKNOWN",
+                                        };
+                                        let (resolved_language_id, language_kind) = if *flags == 0x0000_1000 {
+                                            (0, "ignored")
+                                        } else {
                                             wc3::process::format_message_language_resolution(
                                                 *language_id,
-                                            );
+                                            )
+                                        };
+                                        let message_name = match *message_id {
+                                            2 => "ERROR_FILE_NOT_FOUND",
+                                            _ => "UNKNOWN",
+                                        };
                                         let last_error = session
                                             .process(active_pid)
                                             .ok_or_else(|| "child process missing".to_owned())?
@@ -8538,9 +8550,10 @@
                                         logl::log(
                                             level::IMPORTANT,
                                             format_args!(
-                                                "WC3 CHILD FORMATMESSAGEA LANGUAGE pid={} tid={} requested=0x{:04x} resolved=0x{:04x} kind={}",
+                                                "WC3 CHILD FORMATMESSAGEA LANGUAGE pid={} tid={} flags={} requested=0x{:04x} resolved=0x{:04x} kind={}",
                                                 active_pid,
                                                 active_tid,
+                                                source_kind,
                                                 language_id,
                                                 resolved_language_id,
                                                 language_kind,
@@ -8559,11 +8572,13 @@
                                         logl::log(
                                             level::IMPORTANT,
                                             format_args!(
-                                                "WC3 CHILD FORMATMESSAGEA RESULT pid={} tid={} source=0x{:08x} module=\"Storm.dll\" message_id=0x{:08x} language_id=0x{:04x} resource_type=RT_MESSAGETABLE encoding={} chars={} text={:?} eax=0x{:08x} last_error={} cleanup=28-by-thunk",
+                                                "WC3 CHILD FORMATMESSAGEA RESULT pid={} tid={} flags={} source=0x{:08x} message_id=0x{:08x} message_name={} language_id=0x{:04x} encoding={} chars={} text={:?} eax=0x{:08x} last_error={} cleanup=28-by-thunk",
                                                 active_pid,
                                                 active_tid,
+                                                source_kind,
                                                 source,
                                                 message_id,
+                                                message_name,
                                                 language_id,
                                                 encoding,
                                                 result,

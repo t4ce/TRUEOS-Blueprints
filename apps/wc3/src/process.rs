@@ -129,6 +129,7 @@ const ERROR_RESOURCE_TYPE_NOT_FOUND: u32 = 1813;
 const ERROR_RESOURCE_LANG_NOT_FOUND: u32 = 1815;
 const ERROR_MR_MID_NOT_FOUND: u32 = 317;
 const FORMAT_MESSAGE_FROM_HMODULE: u32 = 0x0000_0800;
+const FORMAT_MESSAGE_FROM_SYSTEM: u32 = 0x0000_1000;
 const RT_MESSAGETABLE: u32 = 11;
 const LANG_USER_DEFAULT: u32 = 0x0400;
 const LANG_SYSTEM_DEFAULT: u32 = 0x0800;
@@ -146,6 +147,24 @@ pub fn format_message_language_resolution(requested: u32) -> (u32, &'static str)
         LANG_USER_DEFAULT => (XP_USER_DEFAULT_LANGID, "user-default"),
         LANG_SYSTEM_DEFAULT => (XP_SYSTEM_DEFAULT_LANGID, "system-default"),
         other => (other, "explicit"),
+    }
+}
+
+fn xp_system_message(message_id: u32) -> Option<&'static str> {
+    match message_id {
+        ERROR_FILE_NOT_FOUND => Some("The system cannot find the file specified.\r\n"),
+        ERROR_PATH_NOT_FOUND => Some("The system cannot find the path specified.\r\n"),
+        ERROR_ACCESS_DENIED => Some("Access is denied.\r\n"),
+        ERROR_INVALID_HANDLE => Some("The handle is invalid.\r\n"),
+        ERROR_NOT_ENOUGH_MEMORY => Some("Not enough storage is available to process this command.\r\n"),
+        ERROR_NO_MORE_FILES => Some("There are no more files.\r\n"),
+        ERROR_FILE_EXISTS => Some("The file exists.\r\n"),
+        87 => Some("The parameter is incorrect.\r\n"),
+        ERROR_INSUFFICIENT_BUFFER => Some("The data area passed to a system call is too small.\r\n"),
+        ERROR_MOD_NOT_FOUND => Some("The specified module could not be found.\r\n"),
+        127 => Some("The specified procedure could not be found.\r\n"),
+        ERROR_ALREADY_EXISTS => Some("Cannot create a file when that file already exists.\r\n"),
+        _ => None,
     }
 }
 

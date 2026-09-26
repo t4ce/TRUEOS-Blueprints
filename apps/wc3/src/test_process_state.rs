@@ -149,6 +149,44 @@
     }
 
     #[test]
+    fn child_format_message_a_from_system_uses_xp_text_and_preserves_last_error() {
+        let provider = ProviderImport {
+            module: "KERNEL32.dll".into(),
+            symbol: ProviderSymbol::Name("FormatMessageA".into()),
+            iat_rva: 0,
+        };
+        let base = 0x0010_0000;
+        let mut memory = Memory { base, bytes: vec![0; 0x1000] };
+        let esp = base + 0x400;
+        let buffer = base + 0x500;
+        for (index, value) in [
+            0x0040_1c67,
+            FORMAT_MESSAGE_FROM_SYSTEM,
+            0,
+            ERROR_FILE_NOT_FOUND,
+            0,
+            buffer,
+            128,
+            0,
+        ].into_iter().enumerate() {
+            write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
+        }
+
+        let mut xp = XpProcess::new_child();
+        xp.install_provider_surface(vec![provider], Vec::new(), Vec::new());
+        xp.set_last_error_for_thread(3, ERROR_FILE_NOT_FOUND);
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(44))
+        );
+        let mut output = [0; 45];
+        memory.read(buffer, &mut output).unwrap();
+        assert_eq!(output, *b"The system cannot find the file specified.\r\n\0");
+        assert_eq!(xp.last_error_for_thread(3), ERROR_FILE_NOT_FOUND);
+        assert_eq!(xp.last_format_message_encoding(), Some(MessageResourceEncoding::Ansi));
+    }
+
+    #[test]
     fn proven_create_thread_is_logical_and_suspended() {
         let imports = vec![LauncherImport {
             id: 0,
@@ -1939,4 +1977,3 @@
         assert_eq!(process.virtual_commit_state(), (1, request.size));
         assert_eq!(process.virtual_reservation_state().1, request.next_reserve);
     }
-

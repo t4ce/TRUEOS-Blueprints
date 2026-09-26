@@ -717,18 +717,10 @@ impl XpProcess {
             capacity,
             arguments,
         ] = arguments::<8>(memory, esp)?;
-        if flags != FORMAT_MESSAGE_FROM_HMODULE {
+        if buffer == 0 {
             return Err(ProviderDispatchError::Frontier {
                 api: "FormatMessageA",
-                detail: format!("unobserved flags=0x{flags:08x}"),
-            });
-        }
-        if source == 0 || language_id == 0 || buffer == 0 {
-            return Err(ProviderDispatchError::Frontier {
-                api: "FormatMessageA",
-                detail: format!(
-                    "invalid FROM_HMODULE frame source=0x{source:08x} language=0x{language_id:08x} buffer=0x{buffer:08x}"
-                ),
+                detail: "null output buffer".into(),
             });
         }
         if arguments != 0 {
@@ -737,41 +729,68 @@ impl XpProcess {
                 detail: format!("non-null argument array=0x{arguments:08x}"),
             });
         }
-
         self.last_format_message_encoding = None;
-        let (resolved_language_id, _) = format_message_language_resolution(language_id);
-        let (text, encoding) = match message_table_text(
-            memory,
-            source,
-            resolved_language_id,
-            message_id,
-        ) {
-            Ok(value) => value,
-            Err(MessageTableLookup::TypeMissing) => {
-                self.set_last_error(ERROR_RESOURCE_TYPE_NOT_FOUND);
-                self.call_count = self
-                    .call_count
-                    .checked_add(1)
-                    .ok_or("call count overflow")?;
-                return Ok(0);
+        let (text, encoding) = match flags {
+            FORMAT_MESSAGE_FROM_HMODULE => {
+                if source == 0 || language_id == 0 {
+                    return Err(ProviderDispatchError::Frontier {
+                        api: "FormatMessageA",
+                        detail: format!(
+                            "invalid FROM_HMODULE frame source=0x{source:08x} language=0x{language_id:08x}"
+                        ),
+                    });
+                }
+                let (resolved_language_id, _) = format_message_language_resolution(language_id);
+                match message_table_text(memory, source, resolved_language_id, message_id) {
+                    Ok(value) => value,
+                    Err(MessageTableLookup::TypeMissing) => {
+                        self.set_last_error(ERROR_RESOURCE_TYPE_NOT_FOUND);
+                        self.call_count = self
+                            .call_count
+                            .checked_add(1)
+                            .ok_or("call count overflow")?;
+                        return Ok(0);
+                    }
+                    Err(MessageTableLookup::LanguageMissing) => {
+                        self.set_last_error(ERROR_RESOURCE_LANG_NOT_FOUND);
+                        self.call_count = self
+                            .call_count
+                            .checked_add(1)
+                            .ok_or("call count overflow")?;
+                        return Ok(0);
+                    }
+                    Err(MessageTableLookup::MessageMissing) => {
+                        self.set_last_error(ERROR_MR_MID_NOT_FOUND);
+                        self.call_count = self
+                            .call_count
+                            .checked_add(1)
+                            .ok_or("call count overflow")?;
+                        return Ok(0);
+                    }
+                    Err(MessageTableLookup::Fault(error)) => return Err(error.into()),
+                }
             }
-            Err(MessageTableLookup::LanguageMissing) => {
-                self.set_last_error(ERROR_RESOURCE_LANG_NOT_FOUND);
-                self.call_count = self
-                    .call_count
-                    .checked_add(1)
-                    .ok_or("call count overflow")?;
-                return Ok(0);
+            FORMAT_MESSAGE_FROM_SYSTEM => {
+                let Some(text) = xp_system_message(message_id) else {
+                    self.set_last_error(ERROR_MR_MID_NOT_FOUND);
+                    self.call_count = self
+                        .call_count
+                        .checked_add(1)
+                        .ok_or("call count overflow")?;
+                    return Ok(0);
+                };
+                (text.as_bytes().to_vec(), MessageResourceEncoding::Ansi)
             }
-            Err(MessageTableLookup::MessageMissing) => {
-                self.set_last_error(ERROR_MR_MID_NOT_FOUND);
-                self.call_count = self
-                    .call_count
-                    .checked_add(1)
-                    .ok_or("call count overflow")?;
-                return Ok(0);
+            _ => {
+                return Err(ProviderDispatchError::Frontier {
+                    api: "FormatMessageA",
+                    detail: format!(
+                        "unobserved flags=0x{flags:08x} source=0x{source:08x} \
+                         message_id=0x{message_id:08x} language=0x{language_id:08x} \
+                         buffer=0x{buffer:08x} capacity={capacity} arguments=0x{arguments:08x}"
+                    ),
+                });
             }
-            Err(MessageTableLookup::Fault(error)) => return Err(error.into()),
         };
         let output = format_message_text(&text, message_id)?;
         let required = output
