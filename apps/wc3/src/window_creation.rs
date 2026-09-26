@@ -49,12 +49,12 @@ impl Phase {
     }
 }
 
-/// Default handling for the creation protocol and the observed paint fallback.
+/// Default handling for creation, paint, and the scalar size notification.
 /// Other messages remain an explicit frontier until their semantics are added.
 pub fn default_proc_result(message: u32) -> Option<u32> {
     match message {
         0x81 => Some(1),
-        1 | 2 | 0x82 | 0x83 | 0xf => Some(0),
+        1 | 2 | 5 | 0x82 | 0x83 | 0xf => Some(0),
         _ => None,
     }
 }
@@ -171,6 +171,7 @@ mod tests {
         assert_eq!(Phase::Destroy.advance(0), Advance::Call(Phase::NcDestroy));
         assert_eq!(Phase::NcDestroy.advance(99), Advance::Complete(false));
         assert_eq!(default_proc_result(0x81), Some(1));
+        assert_eq!(default_proc_result(5), Some(0));
         assert_eq!(default_proc_result(0x1234), None);
     }
 

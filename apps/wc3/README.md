@@ -272,3 +272,18 @@ execution never returns to the coordinator, a request cannot be serviced there.
 Lines longer than 160 bytes are discarded in full. Replies use `WC3 DEBUG` records
 on the normal Blueprint text/log path (subject to the existing `nolog` feature).
 An already-running older pack cannot gain these commands without a relaunch.
+
+`debug post PID HWND MESSAGE WPARAM LPARAM` is an explicit mutation for window
+notification experiments. It queues one message for the normal guest message
+pump; it does not synchronously invoke the window procedure or signal an event.
+The owner PID and live window are checked. Only scalar SIZE, ACTIVATE, SETFOCUS,
+KILLFOCUS, SHOWWINDOW, ACTIVATEAPP and NCACTIVATE notifications are accepted with
+bounded payloads. Creation, teardown, pointer messages and input are rejected.
+`WC3 DEBUG POST QUEUED` means queued, not delivered: inspect the subsequent
+PeekMessage/DispatchMessage callback and state before trying another message.
+Unhandled API semantics still stop at a frontier, including default processing
+of activation messages; this command does not bypass those frontiers.
+
+The current first experiment is WM_SIZE, using this run's recorded 2560x1440
+client dimensions: `debug post 2 0x57434003 5 0 0x05a00a00`.
+Addresses/handles are run-specific. See `docs/window-notification-probes.md`.

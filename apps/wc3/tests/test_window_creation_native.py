@@ -31,6 +31,8 @@ def read_va(va, size):
 with tempfile.TemporaryDirectory(prefix='wc3-create-') as directory:
     work = Path(directory)
     (work / 'wndproc.bin').write_bytes(read_va(0x6f0cba40, 0x203))
+    (work / 'render_gate.bin').write_bytes(read_va(0x6f0d5e90, 0x30))
+    (work / 'area_threshold.bin').write_bytes(read_va(0x6f706bf4, 4))
     (work / 'emit.rs').write_text(f'''
 #[path = "{APP / 'src/window_creation.rs'}"] mod creation;
 fn main() {{
@@ -44,6 +46,14 @@ fn main() {{
 .intel_syntax noprefix
 .section .game,"ax"
 wndproc: .incbin "wndproc.bin"
+.section .render_gate,"ax"
+render_gate: .incbin "render_gate.bin"
+.section .area_threshold,"a"
+.incbin "area_threshold.bin"
+.section .object,"aw"
+.space 4096
+.section .forward_callback,"aw"
+.long 0
 .section .iat,"aw"
 .long get_long, set_long, begin_paint, end_paint, default_proc
 .section .data
@@ -96,6 +106,31 @@ _start:
  jne fail
  cmp dword ptr [paints], 1
  jne fail
+ # The real gate rejects the zero rectangle before the size notification.
+ fninit
+ mov ecx, 0x64900c8
+ call render_gate
+ test eax, eax
+ jne fail
+ push 0x05a00a00
+ push 0
+ push 5
+ push 0x57434003
+ call wndproc
+ test eax, eax
+ jne fail
+ cmp dword ptr [0x6490cac], 0
+ jne fail
+ cmp dword ptr [0x6490cb0], 0
+ jne fail
+ cmp dword ptr [0x6490cb4], 0x44b40000 # 1440.0
+ jne fail
+ cmp dword ptr [0x6490cb8], 0x45200000 # 2560.0
+ jne fail
+ mov ecx, 0x64900c8
+ call render_gate
+ cmp eax, 1
+ jne fail
  cmp esp, [saved_sp]
  jne fail
  cmp ebx, 0x12345678
@@ -145,12 +180,16 @@ default_proc:
 ''')
     (work / 'layout.ld').write_text('''ENTRY(_start)
 SECTIONS {
+ . = 0x064900c8; .object : { *(.object) }
  . = 0x08048000; .text : { *(.text) }
  . = ALIGN(4096); .data : { *(.data) }
  . = 0x6f0cba40; .game : { *(.game) }
+ . = 0x6f0d5e90; .render_gate : { *(.render_gate) }
  . = 0x6f706480; .iat : { *(.iat) }
+ . = 0x6f706bf4; .area_threshold : { *(.area_threshold) }
+ . = 0x6f862c00; .forward_callback : { *(.forward_callback) }
 }''')
     subprocess.run(['as', '--32', 'test.s', '-o', 'test.o'], cwd=work, check=True)
     subprocess.run(['ld', '-m', 'elf_i386', '-T', 'layout.ld', 'test.o', '-o', 'test'], cwd=work, check=True)
     subprocess.run([str(work / 'test')], cwd=work, check=True)
-print('PASS: actual Game.dll creation/paint branches, guest userdata write, stdcall stack and nonvolatile registers')
+print('PASS: actual Game.dll creation/paint/size branches, zero-area render gate opens after WM_SIZE, stdcall stack and nonvolatile registers')
