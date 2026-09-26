@@ -161,6 +161,7 @@ impl XpProcess {
                 api: "OpenGL note",
                 detail: format!("tid={tid} has no current HGLRC"),
             })?;
+        context.textured_draw_blocker.get_or_insert(symbol);
         // A bounded journal of guest writes, not a claim that the renderer
         // already interprets every recorded setting.
         if context.observed_writes.len() == 256 {
@@ -232,23 +233,23 @@ impl XpProcess {
     }
 
     static_gl_stubs!(
-        
+
         gl_fogfv_static => "glFogfv",
         gl_fogf_static => "glFogf", gl_fogi_static => "glFogi",
         gl_draw_buffer_static => "glDrawBuffer", gl_depth_func_static => "glDepthFunc",
         gl_alpha_func_static => "glAlphaFunc", gl_blend_func_static => "glBlendFunc",
-        
-        
+
+
         gl_depth_mask_static => "glDepthMask", gl_color_material_static => "glColorMaterial",
         gl_tex_geni_static => "glTexGeni",
         gl_materialfv_static => "glMaterialfv", gl_polygon_offset_static => "glPolygonOffset",
          wgl_get_proc_address_static => "wglGetProcAddress",
-        wgl_delete_context_static => "wglDeleteContext", 
-         
-         
+        wgl_delete_context_static => "wglDeleteContext",
+
+
          gl_normal_3fv_static => "glNormal3fv",
         gl_normal_pointer_static => "glNormalPointer",
-        
+
 
         gl_scissor_static => "glScissor", gl_depth_range_static => "glDepthRange",
 
@@ -570,6 +571,9 @@ impl XpProcess {
         memory: &impl GuestMemory,
     ) -> Result<u32, ProviderDispatchError> {
         let [_, mode, count, index_kind, indices] = arguments::<5>(memory, esp)?;
+        if self.gl_context_mut(tid, "glDrawElements")?.textures.enabled {
+            return self.gl_draw_textured_static(tid, mode, count, index_kind, indices, memory);
+        }
         if mode != GL_TRIANGLES
             || count != 3
             || !matches!(index_kind, GL_UNSIGNED_SHORT | GL_UNSIGNED_INT)
@@ -979,6 +983,7 @@ impl XpProcess {
                 contexts: HashMap::new(),
                 next_context: HGLRC_HANDLE_BASE,
                 triangle_renderer: None,
+                textured_renderer: None,
             });
         }
 
@@ -1014,6 +1019,7 @@ impl XpProcess {
                 color_pointer: None,
                 textures: GlTextures::default(),
                 observed_writes: VecDeque::new(),
+                textured_draw_blocker: None,
             },
         );
         Ok(hglrc)

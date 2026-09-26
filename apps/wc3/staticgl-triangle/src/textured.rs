@@ -88,7 +88,7 @@ impl TexturedRenderer {
     ///
     /// This uses the vGPU's `LOAD_COLOR` path: it preserves prior colour but
     /// does not supply a shared GL depth buffer. It is therefore suitable for
-    /// painter-order UI/transparent overlays only after the caller has waited
+    /// painter-order opaque UI draws only (there is no alpha blending) after the caller has waited
     /// for the preceding UI4 submission.
     pub fn draw_over(
         &mut self,

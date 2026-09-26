@@ -3,6 +3,26 @@
 #![allow(unused_variables)]
 
 #[unsafe(no_mangle)]
+extern "C" fn trueos_cabi_vgpu_buffer_destroy(device: u64, buffer: u64) -> i32 {
+    panic!("GPU ABI called by host-only process test: trueos_cabi_vgpu_buffer_destroy");
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn trueos_cabi_vgpu_shader_module_destroy(device: u64, shader: u64) -> i32 {
+    panic!("GPU ABI called by host-only process test: trueos_cabi_vgpu_shader_module_destroy");
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn trueos_cabi_vgpu_ui4_indexed_submit(
+    device: u64,
+    queue: u64,
+    draw: *const trueos::vgpu::IndexedDraw,
+    out_point: *mut trueos::vgpu::TimelinePoint,
+) -> i32 {
+    panic!("GPU ABI called by host-only process test: trueos_cabi_vgpu_ui4_indexed_submit");
+}
+
+#[unsafe(no_mangle)]
 extern "C" fn trueos_cabi_vgpu_queue_create(device: u64, class: u32, out_queue: *mut u64) -> i32 {
     panic!("GPU ABI called by host-only process test: trueos_cabi_vgpu_queue_create");
 }

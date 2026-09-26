@@ -20,3 +20,9 @@ bounded approximation of per-fragment color interpolation.
 The demo draws once, waits for the vGPU timeline, publishes its 640×480 UI4
 frame, and keeps that frame open. The caller of `TriangleRenderer::draw` owns
 the UI4 frame, vGPU device and queue, and acquired surface.
+
+The library also exports `textured::TexturedRenderer` for RGBA8 nearest/repeat
+sampled triangle lists. Its `draw_over` path preserves prior colour but does not
+provide a shared depth buffer or general OpenGL state translation. WC3's accepted
+subset and remaining boundaries are described in
+[the texture batch notes](../docs/staticgl-textures.md).

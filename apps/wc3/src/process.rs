@@ -1899,6 +1899,8 @@ struct WglContext {
     color_pointer: Option<GlArrayPointer>,
     textures: GlTextures,
     observed_writes: VecDeque<GlWriteNote>,
+    // Unlike the bounded journal, this cannot forget an unmodeled write.
+    textured_draw_blocker: Option<&'static str>,
 }
 
 struct GlWriteNote {
@@ -1921,6 +1923,7 @@ struct GlRuntime {
     contexts: HashMap<u32, WglContext>,
     next_context: u32,
     triangle_renderer: Option<staticgl_triangle::TriangleRenderer>,
+    textured_renderer: Option<staticgl_triangle::textured::TexturedRenderer>,
 }
 
 impl XpProcess {
@@ -3287,6 +3290,7 @@ include!("process_runtime.rs");
 include!("staticgdi.rs");
 include!("staticgl.rs");
 include!("staticgl_texture.rs");
+include!("staticgl_textured_draw.rs");
 
 
 #[derive(Clone, Debug, Eq, PartialEq)]
