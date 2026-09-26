@@ -37,6 +37,31 @@ pub const CHILD_D3D8_VTABLE_OFFSET: usize = 0x400;
 pub const CHILD_D3D8_VTABLE_ADDRESS: u32 = CHILD_CONTROL_BASE + CHILD_D3D8_VTABLE_OFFSET as u32;
 pub const CHILD_D3D8_OBJECT_OFFSET: usize = 0x440;
 pub const CHILD_D3D8_OBJECT_ADDRESS: u32 = CHILD_CONTROL_BASE + CHILD_D3D8_OBJECT_OFFSET as u32;
+pub const CHILD_STRNCMP_OFFSET: usize = 0x500;
+pub const CHILD_STRNCMP_ADDRESS: u32 = CHILD_CONTROL_BASE + CHILD_STRNCMP_OFFSET as u32;
+pub const CHILD_TOUPPER_OFFSET: usize = 0x540;
+pub const CHILD_TOUPPER_ADDRESS: u32 = CHILD_CONTROL_BASE + CHILD_TOUPPER_OFFSET as u32;
+
+// Initial C locale: ASCII a-z only. EAX carries the provider id until the
+// domain guard passes. Invalid unsigned-char/EOF inputs VMCALL into the
+// existing Rust frontier with the original stack and provider id intact.
+const CHILD_TOUPPER_CODE: &[u8] = &[
+    0x9c, 0x8b, 0x54, 0x24, 0x08, 0x81, 0xfa, 0xff, 0x00, 0x00, 0x00, 0x76,
+    0x0a, 0x83, 0xfa, 0xff, 0x74, 0x05, 0x9d, 0x0f, 0x01, 0xc1, 0xc3, 0x89,
+    0xd0, 0x8d, 0x4a, 0x9f, 0x83, 0xf9, 0x19, 0x77, 0x03, 0x83, 0xe8, 0x20,
+    0x9d, 0xc3,
+];
+
+// Cdecl strncmp: byte reads only, unsigned-byte difference, stop at count,
+// first mismatch or NUL. Preserve EFLAGS/ESI/EDI and do not touch memory for
+// count=0. Reject pointer wrap before the next read. Guest faults remain faults.
+const CHILD_STRNCMP_CODE: &[u8] = &[
+    0x9c, 0x56, 0x57, 0x8b, 0x74, 0x24, 0x10, 0x8b, 0x7c, 0x24, 0x14, 0x8b,
+    0x4c, 0x24, 0x18, 0x31, 0xc0, 0x85, 0xc9, 0x74, 0x19, 0x0f, 0xb6, 0x06,
+    0x0f, 0xb6, 0x17, 0x29, 0xd0, 0x75, 0x0f, 0x85, 0xd2, 0x74, 0x0b, 0x49,
+    0x74, 0x08, 0x46, 0x74, 0x09, 0x47, 0x74, 0x06, 0xeb, 0xe7, 0x5f, 0x5e,
+    0x9d, 0xc3, 0x0f, 0x0b,
+];
 
 
 // Cdecl memmove: save EFLAGS/ESI/EDI; read dst/src/len at ESP+16/+20/+24;
@@ -54,6 +79,10 @@ const CHILD_MEMMOVE_CODE: &[u8] = &[
 ];
 
 pub fn install_child_controls(output: &mut [u8]) -> Result<(), &'static str> {
+    output.get_mut(CHILD_TOUPPER_OFFSET..CHILD_TOUPPER_OFFSET + CHILD_TOUPPER_CODE.len())
+        .ok_or("toupper helper range")?.copy_from_slice(CHILD_TOUPPER_CODE);
+    output.get_mut(CHILD_STRNCMP_OFFSET..CHILD_STRNCMP_OFFSET + CHILD_STRNCMP_CODE.len())
+        .ok_or("strncmp helper range")?.copy_from_slice(CHILD_STRNCMP_CODE);
     output.get_mut(CHILD_MEMMOVE_OFFSET..CHILD_MEMMOVE_OFFSET + CHILD_MEMMOVE_CODE.len())
         .ok_or("memmove helper range")?.copy_from_slice(CHILD_MEMMOVE_CODE);
     for offset in [0usize, 0x10, 0x20, 0x30, 0x40, 0x50] {
@@ -105,6 +134,10 @@ pub enum Kind {
     Stdcall(u8),
     /// Cdecl guest-native memory move; no provider trap or temporary buffer.
     Memmove,
+    /// Cdecl guest-native unsigned byte comparison.
+    Strncmp,
+    /// Initial C locale conversion, with provider fallback for invalid inputs.
+    ToUpper,
 }
 
 pub fn write(import_id: u32, kind: Kind, output: &mut [u8]) -> Result<(), &'static str> {
@@ -112,11 +145,21 @@ pub fn write(import_id: u32, kind: Kind, output: &mut [u8]) -> Result<(), &'stat
         return Err("wc3 thunk buffer too small");
     }
     output[..THUNK_BYTES].fill(0x90);
-    if kind == Kind::Memmove {
+    if kind == Kind::ToUpper {
+        let next = address(import_id).and_then(|address| address.checked_add(10))
+            .ok_or("toupper thunk address overflow")?;
+        output[0] = 0xb8;
+        output[1..5].copy_from_slice(&import_id.to_le_bytes());
+        output[5] = 0xe9;
+        output[6..10].copy_from_slice(&CHILD_TOUPPER_ADDRESS.wrapping_sub(next).to_le_bytes());
+        return Ok(());
+    }
+    if matches!(kind, Kind::Memmove | Kind::Strncmp) {
+        let target = if kind == Kind::Memmove { CHILD_MEMMOVE_ADDRESS } else { CHILD_STRNCMP_ADDRESS };
         let next = address(import_id).and_then(|address| address.checked_add(5))
             .ok_or("memmove thunk address overflow")?;
         output[0] = 0xe9;
-        output[1..5].copy_from_slice(&CHILD_MEMMOVE_ADDRESS.wrapping_sub(next).to_le_bytes());
+        output[1..5].copy_from_slice(&target.wrapping_sub(next).to_le_bytes());
         return Ok(());
     }
     output[..8].copy_from_slice(&[
@@ -130,7 +173,7 @@ pub fn write(import_id: u32, kind: Kind, output: &mut [u8]) -> Result<(), &'stat
         0xC1,
     ]);
     match kind {
-        Kind::Memmove => unreachable!(),
+        Kind::Memmove | Kind::Strncmp | Kind::ToUpper => unreachable!(),
         Kind::Return => output[8] = 0xC3,
         Kind::Stdcall(bytes) => {
             output[8] = 0xC2;

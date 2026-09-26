@@ -949,6 +949,12 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
 }
 
 pub fn provider_thunk_kind(import: &ProviderImport) -> thunk32::Kind {
+    if provider_op(import) == ProviderOp::CrtToUpper && !cfg!(feature = "host-toupper") {
+        return thunk32::Kind::ToUpper;
+    }
+    if provider_op(import) == ProviderOp::CrtStrncmp && !cfg!(feature = "host-strncmp") {
+        return thunk32::Kind::Strncmp;
+    }
     if provider_op(import) == ProviderOp::CrtMemmove && !cfg!(feature = "host-memmove") {
         return thunk32::Kind::Memmove;
     }
