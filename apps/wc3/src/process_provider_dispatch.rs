@@ -122,6 +122,13 @@ impl XpProcess {
         self_image_bytes: Option<&[u8]>,
     ) -> Result<PersonalityAction, ProviderDispatchError> {
         match operation {
+            ProviderOp::DefWindowProcA => {
+                let [_, _, message, _, _] = arguments::<5>(memory, esp)?;
+                let result = crate::window_creation::default_proc_result(message)
+                    .ok_or("DefWindowProcA unobserved message")?;
+                Ok(PersonalityAction::Return(result))
+            }
+
             ProviderOp::GetSystemInfo => {
                 self.call_count = self
                     .call_count
@@ -2626,6 +2633,12 @@ impl XpProcess {
                     pid,
                     hwnd,
                     output,
+                }))
+            }
+            ProviderOp::SetWindowLongA => {
+                let [_, hwnd, index, value] = arguments::<4>(memory, esp)?;
+                Some(PersonalityAction::Session(SessionRequest::SetWindowLongA {
+                    pid, hwnd, index: index as i32, value,
                 }))
             }
             ProviderOp::GetWindowLongA => {

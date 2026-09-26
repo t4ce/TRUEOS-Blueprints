@@ -711,16 +711,50 @@
                         continue;
                     }
                     if exit.registers.eip == thunk32::CHILD_CALLBACK_RETURN_AFTER_VMCALL {
-                        if let Some(pending) = child.window_callback.take() {
-                            if exit.registers.esp != pending.provider_esp {
+                        if let Some(mut pending) = child.window_callback.take() {
+                            let expected_esp = pending.creation.map_or(pending.provider_esp, |(scratch, _)| scratch);
+                            if exit.registers.esp != expected_esp {
                                 return Err(format!(
                                     "{} callback ESP mismatch expected=0x{:08x} actual=0x{:08x}",
                                     pending.reason,
-                                    pending.provider_esp, exit.registers.esp,
+                                    expected_esp, exit.registers.esp,
                                 ));
                             }
                             let wndproc_eax = exit.registers.eax;
-                            let api_eax = pending.return_policy.api_result(wndproc_eax);
+                            let api_eax = if let Some((scratch, phase)) = pending.creation {
+                                logl::log(level::IMPORTANT, format_args!(
+                                    "WC3 CHILD CREATION CALLBACK RETURN pid={} tid={} hwnd=0x{:08x} message=0x{:08x} wndproc_eax=0x{:08x}",
+                                    active_pid, active_tid, pending.hwnd, phase.message(), wndproc_eax));
+                                match phase.advance(wndproc_eax) {
+                                    wc3::window_creation::Advance::Call(next) => {
+                                        pending.creation = Some((scratch, next));
+                                        pending.message = next.message();
+                                        let registers = pending.creation_registers(child, exit.registers)?;
+                                        logl::log(level::IMPORTANT, format_args!(
+                                            "WC3 CHILD CALL_GUEST pid={} tid={} reason=CreateWindowExA hwnd=0x{:08x} message=0x{:08x} lparam=0x{:08x}",
+                                            active_pid, active_tid, pending.hwnd, next.message(), next.lparam(scratch)));
+                                        child.window_callback = Some(pending);
+                                        contexts[active].context.set_registers(registers).map_err(|error| error.to_string())?;
+                                        continue;
+                                    }
+                                    wc3::window_creation::Advance::Complete(success) => {
+                                        let user_data = session.get_window_long_a(active_pid, pending.hwnd, -21).map_err(str::to_owned)?;
+                                        if !success {
+                                            session.destroy_window(active_pid, pending.hwnd).map_err(str::to_owned)?;
+                                            if let Some(presentation) = session.take_window_presentation() {
+                                                present_window(presentation, &mut frames, window_rgba, &session)?;
+                                            }
+                                        }
+                                        let result = if success { pending.hwnd } else { 0 };
+                                        logl::log(level::IMPORTANT, format_args!(
+                                            "WC3 CHILD CREATEWINDOWEXA RESULT pid={} tid={} hwnd=0x{:08x} creation_callbacks=delivered user_data=0x{:08x} result=0x{:08x} cleanup=48-by-thunk",
+                                            active_pid, active_tid, pending.hwnd, user_data, result));
+                                        result
+                                    }
+                                }
+                            } else {
+                                pending.return_policy.api_result(wndproc_eax)
+                            };
                             logl::log(
                                 level::IMPORTANT,
                                 format_args!(

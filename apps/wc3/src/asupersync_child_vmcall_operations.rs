@@ -1466,6 +1466,18 @@
                         continue;
                     }
                     if operation == child_loader::ProviderOp::CreateWindowExA {
+                        if child.window_callback.is_some() {
+                            return Err("nested CreateWindowExA callback frontier".into());
+                        }
+                        let args: [u32; 13] = read_guest_words(
+                            &X86Memory(&child.address_space), exit.registers.esp, 13)?
+                            .try_into().map_err(|_| "creation argument count")?;
+                        let payload = wc3::window_creation::payload(&args).map_err(str::to_owned)?;
+                        let scratch = exit.registers.esp.checked_sub(payload.len() as u32)
+                            .ok_or("creation payload stack underflow")?;
+                        if child.address_space.write(scratch, &payload).map_err(|error| error.to_string())? != payload.len() {
+                            return Err("short creation payload write".into());
+                        }
                         let action = session
                             .process_mut(active_pid)
                             .ok_or_else(|| "child process missing".to_owned())?
@@ -1494,7 +1506,7 @@
                         logl::log(
                             level::IMPORTANT,
                             format_args!(
-                                "WC3 CHILD CREATEWINDOWEXA RESULT pid={} tid={} hwnd=0x{:08x} class={:?} title={:?} wndproc=0x{:08x} icon=0x{:08x} cursor=0x{:08x} parent=0x{:08x} param=0x{:08x} geometry={},{} {}x{} win32_visible={} ui4_frame={} ui4_policy=always-visible creation_callbacks=not-delivered result=success cleanup=48-by-thunk",
+                                "WC3 CHILD CREATEWINDOWEXA BEGIN pid={} tid={} hwnd=0x{:08x} class={:?} title={:?} wndproc=0x{:08x} icon=0x{:08x} cursor=0x{:08x} parent=0x{:08x} param=0x{:08x} geometry={},{} {}x{} win32_visible={} ui4_frame={} ui4_policy=always-visible creation_callbacks=synchronous result=pending cleanup=48-by-thunk",
                                 active_pid,
                                 active_tid,
                                 hwnd,
@@ -1513,8 +1525,20 @@
                                 ui4_frame as u8,
                             ),
                         );
-                        let mut registers = exit.registers;
-                        registers.eax = hwnd;
+                        let phase = wc3::window_creation::Phase::NcCreate;
+                        let pending = ChildWindowCallback {
+                            provider_resume_eip: exit.registers.eip,
+                            provider_esp: exit.registers.esp,
+                            reason: "CreateWindowExA",
+                            return_policy: WindowCallbackReturn::Fixed(hwnd),
+                            creation: Some((scratch, phase)),
+                            hwnd, wndproc: window.wndproc, message: phase.message(),
+                        };
+                        let registers = pending.creation_registers(child, exit.registers)?;
+                        logl::log(level::IMPORTANT, format_args!(
+                            "WC3 CHILD CALL_GUEST pid={} tid={} reason=CreateWindowExA hwnd=0x{:08x} message=0x{:08x} lparam=0x{:08x}",
+                            active_pid, active_tid, hwnd, phase.message(), phase.lparam(scratch)));
+                        child.window_callback = Some(pending);
                         contexts[active]
                             .context
                             .set_registers(registers)
@@ -1827,6 +1851,22 @@
                             .map_err(|error| error.to_string())?;
                         continue;
                     }
+                    if operation == child_loader::ProviderOp::SetWindowLongA {
+                        let action = session.process_mut(active_pid).ok_or("child process missing")?.xp
+                            .dispatch_provider_for_process_typed(active_pid, active_tid, provider_id,
+                                exit.registers.esp, &mut X86Memory(&child.address_space))
+                            .map_err(|error| error.to_string())?;
+                        let PersonalityAction::Session(SessionRequest::SetWindowLongA { pid, hwnd, index, value }) = action
+                            else { return Err("SetWindowLongA produced unexpected action".into()); };
+                        let previous = session.set_window_long_a(pid, hwnd, index, value).map_err(str::to_owned)?;
+                        logl::log(level::IMPORTANT, format_args!(
+                            "WC3 CHILD SETWINDOWLONGA pid={} tid={} hwnd=0x{:08x} index={} previous=0x{:08x} value=0x{:08x} source=guest cleanup=12-by-thunk",
+                            active_pid, active_tid, hwnd, index, previous, value));
+                        let mut registers = exit.registers;
+                        registers.eax = previous;
+                        contexts[active].context.set_registers(registers).map_err(|error| error.to_string())?;
+                        continue;
+                    }
                     if operation == child_loader::ProviderOp::GetWindowLongA {
                         let action = session
                             .process_mut(active_pid)
@@ -2029,6 +2069,7 @@
                             provider_esp,
                             reason: "UpdateWindow/WM_PAINT",
                             return_policy: WindowCallbackReturn::Fixed(1),
+                            creation: None,
                             hwnd,
                             wndproc,
                             message: 0x000f,
@@ -2109,6 +2150,7 @@
                             provider_esp,
                             reason: "DispatchMessageA",
                             return_policy: WindowCallbackReturn::WndProc,
+                            creation: None,
                             hwnd,
                             wndproc,
                             message,

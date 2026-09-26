@@ -236,3 +236,39 @@ Header reference: [Warcraft III map format specification](https://alanfox2000sof
 This adds the versioned `trueos_cabi_async_fs_select_files_start_v1` import;
 update the kernel and Blueprint together. Discovery does not preload map
 payloads or launch a selected map.
+
+Window creation now runs the guest's synchronous creation callbacks after opening the UI4 frame.
+The binary evidence, callback contract, regression test and next-run markers are in
+[the window-creation audit](docs/window-creation-frontier.md).
+
+### Runtime inspection
+
+The WC3 Blueprint now imports Shell2's existing command-input ABI, which enables
+command passthrough on its VM slot. After rebuilding/repacking WC3, enter commands
+without a `vmx_` prefix:
+
+```text
+debug help
+debug state
+debug regs 2 3
+debug stack 2 3 32
+debug mem 2 0x00444480 256
+debug object 2 0x5743280c
+```
+
+Numbers are decimal or `0x` hexadecimal. These commands only observe state.
+`regs` reports the selected thread's last stopped registers. `stack` validates
+ESP and the requested range against that thread's guest TIB bounds and labels
+words as candidates, not a backtrace. `mem` reads only the selected guest address
+space, with a 256-byte cap and explicit errors for incomplete reads. `object`
+resolves the process handle through the session object table. `state` reports
+queue counts, up to 64 live contexts and 32 processes/windows, with userdata and
+pending paint/message information. It does not claim to sample rendered frames.
+
+Commands are consumed at existing guest exits, at most once per 100 ms, checking
+ordinary exits in groups of 32 and also checking existing preemption exits. No
+new yield, event signal, guest write or blocking input read is introduced. If
+execution never returns to the coordinator, a request cannot be serviced there.
+Lines longer than 160 bytes are discarded in full. Replies use `WC3 DEBUG` records
+on the normal Blueprint text/log path (subject to the existing `nolog` feature).
+An already-running older pack cannot gain these commands without a relaunch.

@@ -1497,6 +1497,9 @@
 
                         1
                     }
+                    PersonalityAction::Session(SessionRequest::SetWindowLongA { pid, hwnd, index, value }) => {
+                        session.set_window_long_a(pid, hwnd, index, value).map_err(str::to_owned)?
+                    }
                     PersonalityAction::Session(SessionRequest::GetWindowLongA { .. }) => {
                         return Err("GetWindowLongA unexpectedly reached launcher dispatch".into());
                     }

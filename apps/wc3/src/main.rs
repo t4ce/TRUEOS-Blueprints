@@ -18,6 +18,7 @@ use trueos::{
 };
 mod asupersync;
 mod guest_actor;
+mod debug_shell;
 
 use guest_actor::GuestThreadContext;
 
@@ -2262,9 +2263,25 @@ struct ChildWindowCallback {
     provider_esp: u32,
     reason: &'static str,
     return_policy: WindowCallbackReturn,
+    creation: Option<(u32, wc3::window_creation::Phase)>,
     hwnd: u32,
     wndproc: u32,
     message: u32,
+}
+
+impl ChildWindowCallback {
+    fn creation_registers(&self, child: &PendingChild, mut registers: Registers) -> Result<Registers, String> {
+        let (scratch, phase) = self.creation.ok_or("missing creation callback state")?;
+        let callback_esp = scratch.checked_sub(20).ok_or("creation callback stack underflow")?;
+        let bytes = wc3::window_creation::callback_frame(
+            thunk32::CHILD_CALLBACK_RETURN_ADDRESS, self.hwnd, phase, scratch);
+        if child.address_space.write(callback_esp, &bytes).map_err(|error| error.to_string())? != bytes.len() {
+            return Err("short creation callback frame write".into());
+        }
+        registers.eip = self.wndproc;
+        registers.esp = callback_esp;
+        Ok(registers)
+    }
 }
 
 #[derive(Clone, Copy, Debug)]

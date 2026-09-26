@@ -2279,6 +2279,8 @@ impl XpProcess {
             param: a[12],
         })
     }
+    pub fn pending_message_count(&self) -> usize { self.messages.len() }
+
     fn peek_message(
         &mut self,
         esp: u32,

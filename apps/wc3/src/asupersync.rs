@@ -2478,6 +2478,7 @@ pub(super) async fn run_loop(
     active_message_box: &mut Option<ActiveMessageBox>,
     mut active: usize,
 ) -> Result<(), String> {
+    let mut debug_shell = crate::debug_shell::DebugShell::new();
     'child_run: loop {
         if let Some(child) = pending_child.as_mut() {
             if contexts[active].pid == child.pid {
@@ -2510,6 +2511,8 @@ pub(super) async fn run_loop(
             .get(active)
             .ok_or_else(|| "active guest context missing".to_owned())?
             .key();
+        debug_shell.poll(&contexts, pending_child.as_ref(), address_space, &session, active_key,
+            exit.kind == ExitKind::Other && exit.detail == 52);
         if let Some(child) = pending_child.as_mut() {
             if active_key.tid == child.tid {
                 loop_checkpoint::observe_exit(child, active_key, &exit);

@@ -16,6 +16,7 @@ pub mod ThisToThat;
 pub mod assets;
 pub mod checkpoint;
 pub mod child_loader;
+pub mod debug_command;
 pub mod event_pool;
 pub mod gl_signatures;
 pub mod imports;
@@ -28,6 +29,7 @@ pub mod seh;
 pub mod session;
 pub mod staticstr;
 pub mod thunk32;
+pub mod window_creation;
 
 pub const LAUNCHER_PATH: &str = "/common/Warcraft III/Warcraft III.exe";
 pub const EXPECTED_SHA256: [u8; 32] = [
@@ -47,3 +49,6 @@ mod host_test_abi {
         std::process::exit(1)
     }
 }
+
+#[cfg(all(test, not(target_os = "trueos")))]
+mod test_host_gpu;

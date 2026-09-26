@@ -277,7 +277,7 @@
         assert!(operation.is_modeled());
         assert!(operation.is_generic_process_local());
         assert_eq!(operation.stack_cleanup_bytes(), 16);
-        assert_eq!(provider_thunk_kind(&provider), thunk32::Kind::Stdcall(16));
+        assert_eq!(provider_thunk_kind(&get_provider), thunk32::Kind::Stdcall(16));
 
         let base = 0x0010_0000;
         let output = base + 0x500;
@@ -2142,4 +2142,49 @@
         assert_eq!(process.virtual_reservation_at(request.base).unwrap().size, request.size);
         assert_eq!(process.virtual_commit_state(), (1, request.size));
         assert_eq!(process.virtual_reservation_state().1, request.next_reserve);
+    }
+
+    #[test]
+    fn window_userdata_is_initialized_only_by_guest_setwindowlong() {
+        let mut session = crate::session::Wc3Session::new(XpProcess::new(Vec::new()));
+        let hwnd = session.create_window(crate::session::CreateWindowRequest {
+            owner: ThreadKey { pid: 1, tid: 1 },
+            class: "creation-test".into(), wndproc: 0x401000,
+            class_icon: 0, class_cursor: 0, class_icon_sm: 0, title: "test".into(),
+            ex_style: 0, style: 0, x: 0, y: 0, width: 640, height: 480,
+            parent: 0, menu: 0, instance: 0x400000, param: 0x64900c8,
+        }).unwrap();
+        assert_eq!(session.get_window_long_a(1, hwnd, -21), Ok(0));
+        assert!(session.set_window_long_a(2, hwnd, -21, 0x9999).is_err());
+        assert!(session.set_window_long_a(1, hwnd, -4, 0x9999).is_err());
+        assert_eq!(session.get_window_long_a(1, hwnd, -21), Ok(0));
+        assert_eq!(session.set_window_long_a(1, hwnd, -21, 0x64900c8), Ok(0));
+        assert_eq!(session.get_window_long_a(1, hwnd, -21), Ok(0x64900c8));
+        assert_eq!(session.set_window_long_a(1, hwnd, -21, 7), Ok(0x64900c8));
+        assert_eq!(session.windows[&hwnd].param, 0x64900c8);
+        assert_eq!(session.get_window_long_a(1, hwnd, -21), Ok(7));
+    }
+
+    #[test]
+    fn creation_user32_providers_decode_real_guest_arguments() {
+        let providers = ["DefWindowProcA", "SetWindowLongA"].map(|name| ProviderImport {
+            module: "USER32.dll".into(), symbol: ProviderSymbol::Name(name.into()), iat_rva: 0,
+        });
+        assert_eq!(crate::child_loader::provider_op(&providers[0]).stack_cleanup_bytes(), 16);
+        assert_eq!(crate::child_loader::provider_op(&providers[1]).stack_cleanup_bytes(), 12);
+        assert!(crate::child_loader::provider_op(&providers[0]).is_generic_process_local());
+        let mut xp = XpProcess::new_child();
+        xp.install_provider_surface(providers.to_vec(), Vec::new(), Vec::new());
+        let mut memory = Memory { base: STACK_BASE, bytes: vec![0; STACK_BYTES] };
+        let esp = STACK_BASE + 0x100;
+        for (index, value) in [0x6f0cbc0c, 0x57434003, 0x81, 0, 0x43ffb00].into_iter().enumerate() {
+            write_u32(&mut memory, esp + index as u32 * 4, value).unwrap();
+        }
+        assert_eq!(xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory), Ok(PersonalityAction::Return(1)));
+        write_u32(&mut memory, esp + 8, (-21i32) as u32).unwrap();
+        write_u32(&mut memory, esp + 12, 0x64900c8).unwrap();
+        assert_eq!(xp.dispatch_provider_for_process_typed(2, 3, 1, esp, &mut memory),
+            Ok(PersonalityAction::Session(SessionRequest::SetWindowLongA {
+                pid: 2, hwnd: 0x57434003, index: -21, value: 0x64900c8,
+            })));
     }

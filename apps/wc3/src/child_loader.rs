@@ -190,6 +190,8 @@ pub enum ProviderOp {
     GetDesktopWindow,
     GetWindowRect,
     GetWindowLongA,
+    SetWindowLongA,
+    DefWindowProcA,
     ImmAssociateContext,
     SetWindowTextA,
     ClipCursor,
@@ -360,6 +362,8 @@ impl ProviderOp {
             Self::GetDesktopWindow => 0,
             Self::GetWindowRect => 8,
             Self::GetWindowLongA => 8,
+            Self::SetWindowLongA => 12,
+            Self::DefWindowProcA => 16,
             Self::ImmAssociateContext => 8,
             Self::SetWindowTextA => 8,
             Self::ClipCursor => 4,
@@ -505,7 +509,8 @@ impl ProviderOp {
     pub const fn is_generic_process_local(self) -> bool {
         matches!(
             self,
-            Self::FreeEnvironmentStringsW
+            Self::DefWindowProcA
+                | Self::FreeEnvironmentStringsW
                 | Self::GetStartupInfoA
                 | Self::GetSystemInfo
                 | Self::GlobalMemoryStatus
@@ -808,6 +813,8 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "GetDesktopWindow" => ProviderOp::GetDesktopWindow,
             "GetWindowRect" => ProviderOp::GetWindowRect,
             "GetWindowLongA" => ProviderOp::GetWindowLongA,
+            "SetWindowLongA" => ProviderOp::SetWindowLongA,
+            "DefWindowProcA" => ProviderOp::DefWindowProcA,
             "SetWindowTextA" => ProviderOp::SetWindowTextA,
             "ClipCursor" => ProviderOp::ClipCursor,
             "BeginPaint" => ProviderOp::BeginPaint,
@@ -1065,7 +1072,7 @@ mod beginthreadex_tests {
             };
             let operation = provider_op(&import);
             assert_eq!(operation, expected, "{symbol}");
-            assert!(operation.is_generic_process_local(), "{symbol}");
+            assert_eq!(operation.is_generic_process_local(), symbol != "SetDeviceGammaRamp", "{symbol}");
             assert_eq!(operation.stack_cleanup_bytes(), cleanup, "{symbol}");
             assert_eq!(
                 provider_thunk_kind(&import),
@@ -1140,7 +1147,7 @@ mod beginthreadex_tests {
             assert_eq!(operation.stack_cleanup_bytes(), cleanup, "{symbol}");
             assert_eq!(
                 provider_thunk_kind(&import),
-                thunk32::Kind::Stdcall(cleanup),
+                if symbol == "glFinish" { thunk32::Kind::Return } else { thunk32::Kind::Stdcall(cleanup) },
                 "{symbol}",
             );
         }

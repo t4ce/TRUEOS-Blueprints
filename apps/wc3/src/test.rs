@@ -7,6 +7,18 @@ macro_rules! wc3_main_tests_1 {
 mod tests_main_1 {
     use super::*;
 
+    #[test]
+    fn window_callback_return_policy_preserves_wndproc_lresult_for_dispatch() {
+        assert_eq!(
+            WindowCallbackReturn::Fixed(1).api_result(0x1234_5678),
+            1
+        );
+        assert_eq!(
+            WindowCallbackReturn::WndProc.api_result(0x1234_5678),
+            0x1234_5678
+        );
+    }
+
     struct TestMemory {
         base: u32,
         bytes: Vec<u8>,
@@ -2653,17 +2665,7 @@ fn design_time_allow_local_files_is_present_and_explicitly_zero() {
         );
     }
 
-    #[test]
-    fn window_callback_return_policy_preserves_wndproc_lresult_for_dispatch() {
-        assert_eq!(
-            WindowCallbackReturn::Fixed(1).api_result(0x1234_5678),
-            1
-        );
-        assert_eq!(
-            WindowCallbackReturn::WndProc.api_result(0x1234_5678),
-            0x1234_5678
-        );
-    }
+
 }
 
 #[test]

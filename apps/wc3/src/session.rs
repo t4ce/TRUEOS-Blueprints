@@ -851,6 +851,7 @@ pub enum SessionRequest {
         hwnd: u32,
         output: u32,
     },
+    SetWindowLongA { pid: Pid, hwnd: u32, index: i32, value: u32 },
     GetWindowLongA {
         pid: Pid,
         hwnd: u32,
@@ -1467,6 +1468,14 @@ impl Wc3Session {
             .and_then(|value| i32::try_from(value).ok())
             .ok_or("GetWindowRect bottom overflow")?;
         Ok([window.x, window.y, right, bottom])
+    }
+
+    /// The guest, rather than CreateWindowEx's host shim, owns GWL_USERDATA.
+    pub fn set_window_long_a(&mut self, pid: Pid, hwnd: u32, index: i32, value: u32) -> Result<u32, &'static str> {
+        let window = self.windows.get_mut(&hwnd).ok_or("SetWindowLongA unknown window")?;
+        if window.owner.pid != pid { return Err("SetWindowLongA window owner mismatch"); }
+        if index != -21 { return Err("SetWindowLongA unobserved index"); }
+        Ok(core::mem::replace(&mut window.user_data, value))
     }
 
     pub fn get_window_long_a(
