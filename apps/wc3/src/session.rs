@@ -558,6 +558,7 @@ pub struct WindowObject {
     pub menu: u32,
     pub instance: u32,
     pub param: u32,
+    pub user_data: u32,
     pub imm_context: u32,
     pub visible: bool,
     pub paint_pending: bool,
@@ -849,6 +850,11 @@ pub enum SessionRequest {
         pid: Pid,
         hwnd: u32,
         output: u32,
+    },
+    GetWindowLongA {
+        pid: Pid,
+        hwnd: u32,
+        index: i32,
     },
     ImmAssociateContext {
         pid: Pid,
@@ -1364,6 +1370,7 @@ impl Wc3Session {
                 menu: request.menu,
                 instance: request.instance,
                 param: request.param,
+                user_data: 0,
                 imm_context: 0,
                 visible: requested_visible,
                 paint_pending: true,
@@ -1460,6 +1467,39 @@ impl Wc3Session {
             .and_then(|value| i32::try_from(value).ok())
             .ok_or("GetWindowRect bottom overflow")?;
         Ok([window.x, window.y, right, bottom])
+    }
+
+    pub fn get_window_long_a(
+        &self,
+        pid: Pid,
+        hwnd: u32,
+        index: i32,
+    ) -> Result<u32, &'static str> {
+        const GWL_WNDPROC: i32 = -4;
+        const GWL_HINSTANCE: i32 = -6;
+        const GWL_HWNDPARENT: i32 = -8;
+        const GWL_ID: i32 = -12;
+        const GWL_STYLE: i32 = -16;
+        const GWL_EXSTYLE: i32 = -20;
+        const GWL_USERDATA: i32 = -21;
+
+        let window = self
+            .windows
+            .get(&hwnd)
+            .ok_or("GetWindowLongA unknown window")?;
+        if window.owner.pid != pid {
+            return Err("GetWindowLongA window owner mismatch");
+        }
+        match index {
+            GWL_WNDPROC => Ok(window.wndproc),
+            GWL_HINSTANCE => Ok(window.instance),
+            GWL_HWNDPARENT => Ok(window.parent),
+            GWL_ID => Ok(window.menu),
+            GWL_STYLE => Ok(window.style),
+            GWL_EXSTYLE => Ok(window.ex_style),
+            GWL_USERDATA => Ok(window.user_data),
+            _ => Err("GetWindowLongA unobserved index"),
+        }
     }
 
     pub fn imm_associate_context(

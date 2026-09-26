@@ -6249,6 +6249,61 @@
                             .map_err(|error| error.to_string())?;
                         continue;
                     }
+                    if operation == child_loader::ProviderOp::GetWindowLongA {
+                        let action = session
+                            .process_mut(active_pid)
+                            .ok_or_else(|| "child process missing".to_owned())?
+                            .xp
+                            .dispatch_provider_for_process_typed(
+                                active_pid,
+                                active_tid,
+                                provider_id,
+                                exit.registers.esp,
+                                &mut X86Memory(&child.address_space),
+                            )
+                            .map_err(|error| error.to_string())?;
+                        let PersonalityAction::Session(SessionRequest::GetWindowLongA {
+                            pid,
+                            hwnd,
+                            index,
+                        }) = action
+                        else {
+                            return Err("GetWindowLongA produced unexpected action".into());
+                        };
+                        let result = session
+                            .get_window_long_a(pid, hwnd, index)
+                            .map_err(str::to_owned)?;
+                        let index_name = match index {
+                            -4 => "GWL_WNDPROC",
+                            -6 => "GWL_HINSTANCE",
+                            -8 => "GWL_HWNDPARENT",
+                            -12 => "GWL_ID",
+                            -16 => "GWL_STYLE",
+                            -20 => "GWL_EXSTYLE",
+                            -21 => "GWL_USERDATA",
+                            value if value >= 0 => "WINDOW_EXTRA",
+                            _ => "UNKNOWN",
+                        };
+                        logl::log(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD GETWINDOWLONGA pid={} tid={} hwnd=0x{:08x} index={} index_name={} result=0x{:08x} cleanup=8-by-thunk",
+                                active_pid,
+                                active_tid,
+                                hwnd,
+                                index,
+                                index_name,
+                                result,
+                            ),
+                        );
+                        let mut registers = exit.registers;
+                        registers.eax = result;
+                        contexts[active]
+                            .context
+                            .set_registers(registers)
+                            .map_err(|error| error.to_string())?;
+                        continue;
+                    }
                     if operation == child_loader::ProviderOp::DestroyWindow {
                         let action = session
                             .process_mut(active_pid)

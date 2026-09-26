@@ -1497,6 +1497,9 @@
 
                         1
                     }
+                    PersonalityAction::Session(SessionRequest::GetWindowLongA { .. }) => {
+                        return Err("GetWindowLongA unexpectedly reached launcher dispatch".into());
+                    }
                     PersonalityAction::Session(SessionRequest::SetWindowText {
                         pid,
                         hwnd,

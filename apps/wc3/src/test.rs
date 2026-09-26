@@ -2299,6 +2299,44 @@ fn design_time_allow_local_files_is_present_and_explicitly_zero() {
     }
 
     #[test]
+    fn get_window_long_a_reads_window_fields_and_zero_initialized_user_data() {
+        let mut session = Wc3Session::new(XpProcess::new(Vec::new()));
+        let hwnd = session
+            .create_window(CreateWindowRequest {
+                owner: ThreadKey {
+                    pid: LAUNCHER_PID,
+                    tid: 2,
+                },
+                class: "window-long".into(),
+                wndproc: 0x1234_5678,
+                class_icon: 0,
+                class_cursor: 0,
+                class_icon_sm: 0,
+                title: "window-long".into(),
+                ex_style: 0x0000_0008,
+                style: 0x80c0_0000,
+                x: 0,
+                y: 0,
+                width: 640,
+                height: 480,
+                parent: 0,
+                menu: 0x0000_0042,
+                instance: 0x0040_0000,
+                param: 0x0649_00c8,
+            })
+            .unwrap();
+
+        assert_eq!(session.get_window_long_a(LAUNCHER_PID, hwnd, -4), Ok(0x1234_5678));
+        assert_eq!(session.get_window_long_a(LAUNCHER_PID, hwnd, -6), Ok(0x0040_0000));
+        assert_eq!(session.get_window_long_a(LAUNCHER_PID, hwnd, -8), Ok(0));
+        assert_eq!(session.get_window_long_a(LAUNCHER_PID, hwnd, -12), Ok(0x42));
+        assert_eq!(session.get_window_long_a(LAUNCHER_PID, hwnd, -16), Ok(0x80c0_0000));
+        assert_eq!(session.get_window_long_a(LAUNCHER_PID, hwnd, -20), Ok(8));
+        assert_eq!(session.get_window_long_a(LAUNCHER_PID, hwnd, -21), Ok(0));
+        assert_eq!(session.get_window_long_a(LAUNCHER_PID, hwnd, 0), Err("GetWindowLongA unobserved index"));
+    }
+
+    #[test]
     fn set_event_manual_reset_wakes_all_blocked_waiters_and_stays_signaled() {
         let mut session = Wc3Session::new(XpProcess::new(Vec::new()));
         let (event, _) = session.create_event(

@@ -2628,6 +2628,14 @@ impl XpProcess {
                     output,
                 }))
             }
+            ProviderOp::GetWindowLongA => {
+                let [_, hwnd, index] = arguments::<3>(memory, esp)?;
+                Some(PersonalityAction::Session(SessionRequest::GetWindowLongA {
+                    pid,
+                    hwnd,
+                    index: index as i32,
+                }))
+            }
             ProviderOp::ImmAssociateContext => {
                 let [_, hwnd, himc] = arguments::<3>(memory, esp)?;
                 Some(PersonalityAction::Session(
