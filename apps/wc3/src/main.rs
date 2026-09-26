@@ -808,6 +808,80 @@ async fn run_x86_extended_state_self_test() -> Result<(), String> {
     Ok(())
 }
 
+fn pump_ui4_input(
+    frames: &mut HashMap<u32, Frame>,
+    session: &mut Wc3Session,
+) -> Result<(), String> {
+    let mice = hid::hid_hut_mice();
+
+    for (&hwnd, frame) in frames.iter_mut() {
+        while let Some(event) = frame
+            .take_pointer_event()
+            .map_err(|error| format!("WC3 UI4 pointer event: {error:?}"))?
+        {
+            session
+                .route_ui4_pointer_input(
+                    hwnd,
+                    event.x,
+                    event.y,
+                    event.local_x,
+                    event.local_y,
+                    event.buttons_down,
+                    event.buttons_pressed,
+                    event.buttons_released,
+                    event.wheel,
+                )
+                .map_err(str::to_owned)?;
+        }
+
+        while let Some(event) = frame
+            .take_keyboard_event()
+            .map_err(|error| format!("WC3 UI4 keyboard event: {error:?}"))?
+        {
+            let pressed = event.flags & input::KEYBOARD_OUTPUT_FLAG_PRESS != 0;
+            match event.kind {
+                input::KEYBOARD_OUTPUT_KIND_KEY => session
+                    .route_ui4_key_input(hwnd, event.key_code, pressed, event.t_ms)
+                    .map_err(str::to_owned)?,
+                input::KEYBOARD_OUTPUT_KIND_TEXT => session
+                    .route_ui4_text_input(hwnd, event.codepoint, pressed, event.t_ms)
+                    .map_err(str::to_owned)?,
+                _ => {}
+            }
+        }
+
+        let owner = session
+            .windows
+            .get(&hwnd)
+            .ok_or("UI4 input frame has no window")?
+            .owner;
+        let (width, height) = session
+            .process(owner.pid)
+            .ok_or("UI4 input window owner process missing")?
+            .xp
+            .desktop_size();
+        let routes = frame
+            .input_routes()
+            .map_err(|error| format!("WC3 UI4 input routes: {error:?}"))?;
+        for mouse in &mice {
+            if !routes.iter().any(|route| {
+                route.selected_for_window
+                    && route.cursor.controller_id == mouse.controller_id
+                    && route.cursor.slot_id == mouse.slot_id
+                    && route.cursor.ep_target == mouse.ep_target
+            }) {
+                continue;
+            }
+            let x = (mouse.x.clamp(0.0, 1.0) * f64::from(width.saturating_sub(1))).round() as i32;
+            let y = (mouse.y.clamp(0.0, 1.0) * f64::from(height.saturating_sub(1))).round() as i32;
+            session
+                .route_ui4_cursor_position(hwnd, x, y)
+                .map_err(str::to_owned)?;
+        }
+    }
+    Ok(())
+}
+
 fn paint_window_fill_rect(
     request: &wc3::session::WindowFillRectRequest,
     frames: &mut HashMap<u32, Frame>,

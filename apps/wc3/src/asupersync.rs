@@ -2485,6 +2485,7 @@ pub(super) async fn run_loop(
                 child.activate_thread(contexts[active].tid);
             }
         }
+        pump_ui4_input(&mut frames, &mut session)?;
         if let Some(modal) = active_message_box.as_mut() {
             if modal.request.caller.pid != LAUNCHER_PID || modal.buttons.is_empty() {
                 return Err("invalid active MessageBoxA modal state".into());

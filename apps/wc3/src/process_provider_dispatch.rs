@@ -569,18 +569,12 @@ impl XpProcess {
                 let message = read_u32(memory, message_ptr + 4)?;
                 let wparam = read_u32(memory, message_ptr + 8)?;
                 let lparam = read_u32(memory, message_ptr + 12)?;
-                if matches!(message, WM_KEYDOWN | WM_KEYUP | WM_SYSKEYDOWN | WM_SYSKEYUP) {
-                    return Err(ProviderDispatchError::Frontier {
-                        api: "TranslateMessage",
-                        detail: format!(
-                            "keyboard translation unmodeled hwnd=0x{hwnd:08x} message=0x{message:04x} wparam=0x{wparam:08x} lparam=0x{lparam:08x}"
-                        ),
-                    });
-                }
+                let keyboard = matches!(message, WM_KEYDOWN | WM_KEYUP | WM_SYSKEYDOWN | WM_SYSKEYUP);
                 logl::log(
                     level::IMPORTANT,
                     format_args!(
-                        "WC3 CHILD TRANSLATEMESSAGE pid={pid} tid={tid} msg=0x{message_ptr:08x} hwnd=0x{hwnd:08x} message=0x{message:08x} wparam=0x{wparam:08x} lparam=0x{lparam:08x} translated=0 result=0 cleanup=4-by-thunk"
+                        "WC3 CHILD TRANSLATEMESSAGE pid={pid} tid={tid} msg=0x{message_ptr:08x} hwnd=0x{hwnd:08x} message=0x{message:08x} wparam=0x{wparam:08x} lparam=0x{lparam:08x} keyboard={} translated=0 result=0 cleanup=4-by-thunk",
+                        keyboard as u8,
                     ),
                 );
                 self.call_count = self
