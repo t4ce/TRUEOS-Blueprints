@@ -4,6 +4,9 @@ This Blueprint owns the Windows XP compatibility semantics used by the
 Warcraft III 1.00 launcher. It loads the original PE32 image, patches imports
 to x86 `VMCALL` thunks, and services those traps in ordinary Rust userspace.
 
+The [static GL texture batch](docs/staticgl-textures.md) documents texture upload
+support and the current boundary of the sampled GPU draw path.
+
 The only privileged boundary is `trueos::x86`: generic address-space,
 context, memory and trap operations. The original kernel launcher remains a
 temporary parity oracle and is not called by this app.

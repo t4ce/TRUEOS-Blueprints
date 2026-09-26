@@ -119,9 +119,9 @@ mod tests {
         assert_eq!(textures.next, 1);
         assert!(textures.reserved.is_empty());
 
-        let mut memory = Memory(vec![0; 8]);
-        textures.generate(2, 0, &mut memory).unwrap();
-        assert_eq!(names(&memory, 0, 2), [1, 2]);
+        let mut memory = Memory(vec![0; 12]);
+        textures.generate(2, 4, &mut memory).unwrap();
+        assert_eq!(names(&memory, 4, 2), [1, 2]);
         assert_eq!(textures.next, 3);
     }
 
