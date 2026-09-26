@@ -200,7 +200,36 @@ async fn ensure_registry_loaded(session: &mut Wc3Session) -> Result<(), String> 
     Ok(())
 }
 
+async fn discover_maps() -> Result<Option<wc3::session::MapCatalog>, String> {
+    // The shared selector resolves /common to apps/common on the granted root.
+    const FOLDER: &str = "/common/Warcraft III/Maps";
+    match async_fs::metadata(FOLDER.as_bytes()).await {
+        Err(async_fs::ERR_NOT_FOUND) => {
+            logl::log(level::WARN, format_args!("WC3 MAP CATALOG folder={FOLDER:?} status=missing"));
+            return Ok(None);
+        }
+        Ok(info) if info.kind == async_fs::NodeKind::Directory => {}
+        Ok(_) => return Err(format!("map catalog folder is not a directory: {FOLDER}")),
+        Err(error) => return Err(format!("map catalog folder metadata: TRUEOSFS {error}")),
+    }
+    let selection = async_fs::select_files(
+        FOLDER.as_bytes(), async_fs::ContentTypeId::WARCRAFT3_MAP, 8,
+    ).await.map_err(|error| format!("select Warcraft III maps: TRUEOSFS {error}"))?;
+    logl::log(level::IMPORTANT, format_args!(
+        "WC3 MAP CATALOG folder={FOLDER:?} type=WARCRAFT3_MAP files={} max_depth=8 depth_limited={} truncated={}",
+        selection.files.len(), selection.depth_limited, selection.truncated,
+    ));
+    for path in &selection.files {
+        logl::trace!("trace-init", level::IMPORTANT, format_args!("WC3 MAP FILE path={path:?}"));
+    }
+    Ok(Some(wc3::session::MapCatalog {
+        folder: FOLDER.into(), paths: selection.files,
+        depth_limited: selection.depth_limited, truncated: selection.truncated,
+    }))
+}
+
 async fn run() -> Result<(), String> {
+    let maps = discover_maps().await?;
     run_x86_extended_state_self_test().await?;
     let bytes = async_fs::read_file(LAUNCHER_PATH.as_bytes())
         .await
@@ -213,6 +242,7 @@ async fn run() -> Result<(), String> {
     let PreparedProcess { mappings, xp } =
         PreparedProcess::new(materialized).map_err(str::to_owned)?;
     let mut session = Wc3Session::new(xp);
+    session.maps = maps;
     logl::log(level::IMPORTANT, format_args!("WC3 DIAG BUILD CWEX_V2"));
     let (desktop_width, desktop_height) = ui4_scene::output_dimensions()
         .map_err(|error| format!("query UI4 output dimensions: {error:?}"))?;

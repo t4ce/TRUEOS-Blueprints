@@ -930,7 +930,17 @@ pub struct Wc3Process {
     pub exit_code: Option<u32>,
 }
 
+/// Startup inventory; paths are relative to the shared TRUEOSFS Maps folder.
+#[derive(Clone, Debug)]
+pub struct MapCatalog {
+    pub folder: String,
+    pub paths: Vec<String>,
+    pub depth_limited: bool,
+    pub truncated: bool,
+}
+
 pub struct Wc3Session {
+    pub maps: Option<MapCatalog>,
     pub assets: crate::assets::Wc3AssetCache,
     pub registry: RegistryState,
     pub processes: HashMap<Pid, Wc3Process>,
@@ -970,6 +980,7 @@ impl Wc3Session {
         );
         Self {
             assets: crate::assets::Wc3AssetCache::default(),
+            maps: None,
             registry: RegistryState::Unloaded,
             processes,
             objects: HashMap::new(),

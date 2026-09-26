@@ -46,8 +46,9 @@ pub const CHILD_STRNICMP_ADDRESS: u32 = CHILD_CONTROL_BASE + CHILD_STRNICMP_OFFS
 const CHILD_CP1252_FOLD_OFFSET: usize = 0x700;
 pub const CHILD_DECIMAL_OFFSET: usize = 0x600;
 pub const CHILD_DECIMAL_ADDRESS: u32 = CHILD_CONTROL_BASE + CHILD_DECIMAL_OFFSET as u32;
-pub const CHILD_QSORT2_OFFSET: usize = 0x800;
-pub const CHILD_QSORT2_ADDRESS: u32 = CHILD_CONTROL_BASE + CHILD_QSORT2_OFFSET as u32;
+pub const CHILD_QSORT_DWORD_OFFSET: usize = 0x800;
+pub const CHILD_QSORT_DWORD_ADDRESS: u32 =
+    CHILD_CONTROL_BASE + CHILD_QSORT_DWORD_OFFSET as u32;
 
 // Guard a NUL-terminated ASCII string within the Rust parser's 256-byte bound,
 // then parse 1..9 leading digits. All other cases restore the original stack,
@@ -120,20 +121,43 @@ const CHILD_MEMMOVE_CODE: &[u8] = &[
     0xfd, 0xf3, 0xa4, 0x5f, 0x5e, 0x9d, 0xc3, 0x0f, 0x0b,
 ];
 
-// Cdecl qsort fast path for the observed two DWORD elements.  It calls the
-// guest comparator exactly once and swaps only when it returns a positive
-// value.  Every other shape retains EAX (the provider id) and falls back to
-// the typed Rust frontier through VMCALL.
+// Cdecl qsort fast path for a non-null DWORD array.  This is an insertion
+// sort, so it naturally fits the observed append-and-resort workload.  Every
+// comparison remains an ordinary guest cdecl call, allowing the comparator to
+// run, trap into providers, or fault under the normal guest execution model.
 //
-// Original frame: return, base, count, size, comparator.  ESI and EDI are
-// callee-saved across both this helper and the guest comparator.
-const CHILD_QSORT2_CODE: &[u8] = &[
-    0x83, 0x7c, 0x24, 0x08, 0x01, 0x76, 0x41, 0x83, 0x7c, 0x24, 0x08, 0x02,
-    0x75, 0x3b, 0x83, 0x7c, 0x24, 0x0c, 0x04, 0x75, 0x34, 0x83, 0x7c, 0x24,
-    0x04, 0x00, 0x74, 0x2d, 0x83, 0x7c, 0x24, 0x10, 0x00, 0x74, 0x26, 0x56,
-    0x57, 0x8b, 0x74, 0x24, 0x0c, 0x8b, 0x7c, 0x24, 0x18, 0x8d, 0x56, 0x04,
-    0x52, 0x56, 0xff, 0xd7, 0x83, 0xc4, 0x08, 0x85, 0xc0, 0x7e, 0x0a, 0x8b,
-    0x0e, 0x8b, 0x56, 0x04, 0x89, 0x16, 0x89, 0x4e, 0x04, 0x5f, 0x5e, 0xc3,
+// Original frame: return, base, count, size, comparator.  The guards retain
+// EAX (the provider id) and the original ESP until the fallback decision.
+const CHILD_QSORT_DWORD_CODE: &[u8] = &[
+    // count <= 1: return; otherwise only size == 4 is supported.
+    0x83, 0x7c, 0x24, 0x08, 0x01, 0x76, 0x7b,
+    0x83, 0x7c, 0x24, 0x0c, 0x04, 0x75, 0x75,
+    0x83, 0x7c, 0x24, 0x04, 0x00, 0x74, 0x6e,
+    0x83, 0x7c, 0x24, 0x10, 0x00, 0x74, 0x67,
+    // Verify base + (count - 1) * 4 + 3 cannot wrap before sorting.
+    0x81, 0x7c, 0x24, 0x08, 0x00, 0x00, 0x00, 0x40, 0x73, 0x5d,
+    0x8b, 0x54, 0x24, 0x08, 0x4a, 0xc1, 0xe2, 0x02,
+    0x03, 0x54, 0x24, 0x04, 0x72, 0x4f,
+    0x83, 0xc2, 0x03, 0x72, 0x4a,
+    // Save callee-saved registers, then cache base/count/comparator.
+    0x53, 0x56, 0x57, 0x55,
+    0x8b, 0x74, 0x24, 0x14, 0x8b, 0x7c, 0x24, 0x18,
+    0x8b, 0x6c, 0x24, 0x20, 0xbb, 0x01, 0x00, 0x00, 0x00,
+    // outer: j = i
+    0x89, 0xd9,
+    // inner: compare element[j - 1] with element[j].
+    0x85, 0xc9, 0x74, 0x24,
+    0x8d, 0x14, 0x8e, 0x8d, 0x42, 0xfc,
+    0x51, 0x52, 0x50, 0xff, 0xd5, 0x83, 0xc4, 0x08, 0x59,
+    0x85, 0xc0, 0x7e, 0x11,
+    // Comparator said left > right: swap and continue one position left.
+    0x8b, 0x14, 0x8e, 0x8b, 0x44, 0x8e, 0xfc,
+    0x89, 0x54, 0x8e, 0xfc, 0x89, 0x04, 0x8e,
+    0x49, 0xeb, 0xd8,
+    // next: proceed to the next insertion position.
+    0x43, 0x39, 0xfb, 0x72, 0xd1,
+    0x5d, 0x5f, 0x5e, 0x5b, 0xc3,
+    // count <= 1 return; unsupported shape invokes the typed provider.
     0xc3, 0x0f, 0x01, 0xc1, 0xc3,
 ];
 
@@ -152,8 +176,13 @@ pub fn install_child_controls(output: &mut [u8]) -> Result<(), &'static str> {
         .ok_or("strncmp helper range")?.copy_from_slice(CHILD_STRNCMP_CODE);
     output.get_mut(CHILD_MEMMOVE_OFFSET..CHILD_MEMMOVE_OFFSET + CHILD_MEMMOVE_CODE.len())
         .ok_or("memmove helper range")?.copy_from_slice(CHILD_MEMMOVE_CODE);
-    output.get_mut(CHILD_QSORT2_OFFSET..CHILD_QSORT2_OFFSET + CHILD_QSORT2_CODE.len())
-        .ok_or("qsort2 helper range")?.copy_from_slice(CHILD_QSORT2_CODE);
+    output
+        .get_mut(
+            CHILD_QSORT_DWORD_OFFSET
+                ..CHILD_QSORT_DWORD_OFFSET + CHILD_QSORT_DWORD_CODE.len(),
+        )
+        .ok_or("qsort DWORD helper range")?
+        .copy_from_slice(CHILD_QSORT_DWORD_CODE);
     for offset in [0usize, 0x10, 0x20, 0x30, 0x40, 0x50] {
         let trap = output
             .get_mut(offset..offset + 5)
@@ -211,8 +240,8 @@ pub enum Kind {
     ToUpper,
     /// Short unsigned decimal prefix, otherwise fall back to the Rust provider.
     Decimal,
-    /// Observed two-DWORD qsort, with a guest comparator and provider fallback.
-    Qsort2,
+    /// Guest DWORD insertion sort, with a guest comparator and provider fallback.
+    QsortDword,
 }
 
 pub fn write(import_id: u32, kind: Kind, output: &mut [u8]) -> Result<(), &'static str> {
@@ -220,11 +249,11 @@ pub fn write(import_id: u32, kind: Kind, output: &mut [u8]) -> Result<(), &'stat
         return Err("wc3 thunk buffer too small");
     }
     output[..THUNK_BYTES].fill(0x90);
-    if matches!(kind, Kind::ToUpper | Kind::Decimal | Kind::Qsort2) {
+    if matches!(kind, Kind::ToUpper | Kind::Decimal | Kind::QsortDword) {
         let target = match kind {
             Kind::ToUpper => CHILD_TOUPPER_ADDRESS,
             Kind::Decimal => CHILD_DECIMAL_ADDRESS,
-            Kind::Qsort2 => CHILD_QSORT2_ADDRESS,
+            Kind::QsortDword => CHILD_QSORT_DWORD_ADDRESS,
             _ => unreachable!(),
         };
         let next = address(import_id).and_then(|address| address.checked_add(10))
@@ -258,7 +287,7 @@ pub fn write(import_id: u32, kind: Kind, output: &mut [u8]) -> Result<(), &'stat
         0xC1,
     ]);
     match kind {
-        Kind::Memmove | Kind::Strncmp | Kind::Strnicmp | Kind::ToUpper | Kind::Decimal | Kind::Qsort2 => unreachable!(),
+        Kind::Memmove | Kind::Strncmp | Kind::Strnicmp | Kind::ToUpper | Kind::Decimal | Kind::QsortDword => unreachable!(),
         Kind::Return => output[8] = 0xC3,
         Kind::Stdcall(bytes) => {
             output[8] = 0xC2;

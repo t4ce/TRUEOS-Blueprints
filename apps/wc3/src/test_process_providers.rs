@@ -880,7 +880,7 @@
             if cfg!(feature = "host-qsort") {
                 thunk32::Kind::Return
             } else {
-                thunk32::Kind::Qsort2
+                thunk32::Kind::QsortDword
             }
         );
 
@@ -894,7 +894,7 @@
             let relative = u32::from_le_bytes(thunk[6..10].try_into().unwrap());
             assert_eq!(
                 (thunk32::address(347).unwrap() + 10).wrapping_add(relative),
-                thunk32::CHILD_QSORT2_ADDRESS,
+                thunk32::CHILD_QSORT_DWORD_ADDRESS,
             );
         }
     }
