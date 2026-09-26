@@ -13,6 +13,7 @@ serde = { version = "=1.0.228", default-features = false, features = ["alloc", "
 serde_json = { version = "=1.0.150", default-features = false, features = ["alloc"] }
 trueos-math = { path = "../trueos-math", default-features = false }
 infer = { path = "../../../TRUEOS/vendor/infer", default-features = false }
+trueos-fs = { path = "../../../TRUEOS/crates/trueos-fs" }
 
 [features]
 default = []

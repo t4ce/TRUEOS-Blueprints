@@ -199,3 +199,31 @@ runs independently of the existing native `memmove` helper.
 `python3 apps/wc3/tests/test_native_record_expand.py` executes the audited
 Storm loop as i386 code and compares its output and ending CPU state to Rust
 for 2, 3, 17, and 10,759 input records.
+
+## Map discovery at startup
+
+Before guest execution, WC3 selects `WARCRAFT3_MAP` files under the shared
+`/common/Warcraft III/Maps` selector (resolved to `apps/common/Warcraft III/Maps`).
+The catalog stays in `Wc3Session.maps`; paths are relative to that folder. The
+normal log emits one `WC3 MAP CATALOG` summary; `trace-init` prints every path.
+A missing Maps folder is reported and does not prevent startup. Selection I/O
+errors are reported as initialization errors; depth or capacity truncation is
+retained in the catalog and shown explicitly in the summary.
+
+The reusable `async_fs::select_files(folder, ContentTypeId, max_depth)` API
+accepts any registered native type, not filename globs. Depth 0 means immediate
+files; WC3 uses depth 8. Results are sorted and carry `depth_limited` and
+`truncated` flags. Selection has separate budgets of 65,536 matching files and
+4,096 directories, rather than the interactive listing's 1,024-entry cap.
+Stored types are authoritative. Old BLOB files can be recognized by reading at
+most a 4 KiB signature prefix; they are not rewritten. Prefix probing does not
+attempt whole-file UTF-8 classification and is not a full format validator.
+
+The new inference identity detects the retail HM3W map preamble followed by an
+MPQ header at byte 512. The `.w3m` and `.w3x` names describe the same container
+identity; discovery does not claim that a TFT map is playable by the RoC guest.
+Header reference: [Warcraft III map format specification](https://alanfox2000software.github.io/war3-diy/doc/w3x/index.html).
+
+This adds the versioned `trueos_cabi_async_fs_select_files_start_v1` import;
+update the kernel and Blueprint together. Discovery does not preload map
+payloads or launch a selected map.
