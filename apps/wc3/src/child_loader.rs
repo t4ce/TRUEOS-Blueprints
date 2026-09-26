@@ -151,6 +151,7 @@ pub enum ProviderOp {
     CrtVsnprintf,
     CrtMalloc,
     CrtMemmove,
+    CrtCeil,
     CrtIsDigit,
     CrtIsMbcSpace,
     CrtToUpper,
@@ -461,6 +462,7 @@ impl ProviderOp {
             | Self::CrtVsnprintf
             | Self::CrtMalloc
             | Self::CrtMemmove
+            | Self::CrtCeil
             | Self::CrtIsDigit
             | Self::CrtIsMbcSpace
             | Self::CrtToUpper
@@ -564,6 +566,7 @@ impl ProviderOp {
                 | Self::CrtOnExit
                 | Self::CrtVsnprintf
                 | Self::CrtMemmove
+                | Self::CrtCeil
                 | Self::CrtIsDigit
                 | Self::CrtIsMbcSpace
                 | Self::CrtToUpper
@@ -917,6 +920,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "_vsnprintf" => ProviderOp::CrtVsnprintf,
             "malloc" => ProviderOp::CrtMalloc,
             "memmove" => ProviderOp::CrtMemmove,
+            "ceil" => ProviderOp::CrtCeil,
             "isdigit" => ProviderOp::CrtIsDigit,
             "_ismbcspace" => ProviderOp::CrtIsMbcSpace,
             "toupper" => ProviderOp::CrtToUpper,
@@ -957,6 +961,9 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
 }
 
 pub fn provider_thunk_kind(import: &ProviderImport) -> thunk32::Kind {
+    if provider_op(import) == ProviderOp::CrtCeil {
+        return thunk32::Kind::Ceil;
+    }
     if matches!(provider_op(import), ProviderOp::CrtAtoi | ProviderOp::CrtAtol)
         && !cfg!(feature = "host-decimal") {
         return thunk32::Kind::Decimal;
@@ -1244,6 +1251,22 @@ mod beginthreadex_tests {
         assert!(!operation.is_generic_process_local());
         assert_eq!(operation.stack_cleanup_bytes(), 0);
         assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Return);
+    }
+
+    #[test]
+    fn crt_ceil_is_cdecl_and_guest_native() {
+        let import = ProviderImport {
+            module: "MSVCRT.dll".into(),
+            symbol: ProviderSymbol::Name("ceil".into()),
+            iat_rva: 0,
+        };
+
+        let operation = provider_op(&import);
+        assert_eq!(operation, ProviderOp::CrtCeil);
+        assert!(operation.is_modeled());
+        assert!(operation.is_generic_process_local());
+        assert_eq!(operation.stack_cleanup_bytes(), 0);
+        assert_eq!(provider_thunk_kind(&import), thunk32::Kind::Ceil);
     }
 
     #[test]

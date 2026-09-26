@@ -427,6 +427,8 @@ async fn run_x86_extended_state_self_test() -> Result<(), String> {
     const B_CODE: u32 = XSTATE_TEST_CODE_BASE + 0x100;
     const DEEP_CODE: u32 = XSTATE_TEST_CODE_BASE + 0x200;
     const BREAKPOINT_CODE: u32 = XSTATE_TEST_CODE_BASE + 0x300;
+    const CEIL_ENTRY: u32 = XSTATE_TEST_CODE_BASE + 0x400;
+    const CEIL_AFTER_RETURN: u32 = XSTATE_TEST_CODE_BASE + 0x420;
     const A_PATTERN: u32 = XSTATE_TEST_DATA_BASE;
     const B_PATTERN: u32 = XSTATE_TEST_DATA_BASE + 0x10;
     const A_X87_OUT: u32 = XSTATE_TEST_DATA_BASE + 0x20;
@@ -443,6 +445,12 @@ async fn run_x86_extended_state_self_test() -> Result<(), String> {
     const FINAL_RESULT: u32 = XSTATE_TEST_DATA_BASE + 0x88;
     const FINAL_SENTINEL0: u32 = XSTATE_TEST_DATA_BASE + 0x90;
     const FINAL_SENTINEL1: u32 = XSTATE_TEST_DATA_BASE + 0x98;
+    const CEIL_INPUT: u32 = XSTATE_TEST_DATA_BASE + 0xa0;
+    const CEIL_FCW: u32 = XSTATE_TEST_DATA_BASE + 0xa8;
+    const CEIL_FCW_OUT: u32 = XSTATE_TEST_DATA_BASE + 0xaa;
+    const CEIL_RESULT: u32 = XSTATE_TEST_DATA_BASE + 0xb0;
+    const CEIL_ESP_OUT: u32 = XSTATE_TEST_DATA_BASE + 0xb8;
+    const CEIL_STACK: u32 = XSTATE_TEST_DATA_BASE + 0xc00;
 
     let address_space = AddressSpace::create().map_err(|error| error.to_string())?;
     address_space
@@ -458,6 +466,18 @@ async fn run_x86_extended_state_self_test() -> Result<(), String> {
             0x1000,
             Permissions::READ | Permissions::WRITE,
         )
+        .map_err(|error| error.to_string())?;
+    address_space
+        .map(
+            thunk32::CHILD_CONTROL_BASE,
+            0x1000,
+            Permissions::READ | Permissions::WRITE | Permissions::EXECUTE,
+        )
+        .map_err(|error| error.to_string())?;
+    let mut child_controls = [0x90; 0x1000];
+    thunk32::install_child_controls(&mut child_controls).map_err(str::to_owned)?;
+    address_space
+        .write(thunk32::CHILD_CONTROL_BASE, &child_controls)
         .map_err(|error| error.to_string())?;
 
     let a_pattern = [
@@ -708,10 +728,78 @@ async fn run_x86_extended_state_self_test() -> Result<(), String> {
             ));
         }
     }
+
+    // Exercise the exact guest-native MSVCRT ceil helper.  Its input is a
+    // cdecl double at ESP+4; the return continuation records both ST(0) and
+    // the x87 control word, allowing this to cover value, cdecl stack, and
+    // FCW restoration without entering a Rust provider path.
+    let mut ceil_entry = vec![0xd9, 0x2d]; // fldcw word ptr [CEIL_FCW]
+    ceil_entry.extend_from_slice(&CEIL_FCW.to_le_bytes());
+    ceil_entry.push(0xe9);
+    ceil_entry.extend_from_slice(
+        &thunk32::CHILD_CEIL_ADDRESS
+            .wrapping_sub(CEIL_ENTRY + 11)
+            .to_le_bytes(),
+    );
+    address_space
+        .write(CEIL_ENTRY, &ceil_entry)
+        .map_err(|error| error.to_string())?;
+    let mut ceil_after = vec![0x89, 0x25]; // mov [CEIL_ESP_OUT], esp
+    ceil_after.extend_from_slice(&CEIL_ESP_OUT.to_le_bytes());
+    ceil_after.extend_from_slice(&[0xd9, 0x3d]); // fnstcw [CEIL_FCW_OUT]
+    ceil_after.extend_from_slice(&CEIL_FCW_OUT.to_le_bytes());
+    ceil_after.extend_from_slice(&[0xdd, 0x1d]); // fstp qword [CEIL_RESULT]
+    ceil_after.extend_from_slice(&CEIL_RESULT.to_le_bytes());
+    emit_vmcall(&mut ceil_after);
+    address_space
+        .write(CEIL_AFTER_RETURN, &ceil_after)
+        .map_err(|error| error.to_string())?;
+    let ceil_fcw = 0x077f_u16; // round-down proves ceil changes RC temporarily.
+    for (input, expected) in [(1.25_f64, 2.0_f64), (-1.25, -1.0), (4.0, 4.0)] {
+        address_space
+            .write(CEIL_INPUT, &input.to_bits().to_le_bytes())
+            .map_err(|error| error.to_string())?;
+        address_space
+            .write(CEIL_FCW, &ceil_fcw.to_le_bytes())
+            .map_err(|error| error.to_string())?;
+        address_space
+            .write(CEIL_STACK, &CEIL_AFTER_RETURN.to_le_bytes())
+            .map_err(|error| error.to_string())?;
+        let mut frame = [0; 8];
+        frame.copy_from_slice(&input.to_bits().to_le_bytes());
+        address_space
+            .write(CEIL_STACK + 4, &frame)
+            .map_err(|error| error.to_string())?;
+        let mut ceil_registers = registers(CEIL_ENTRY);
+        ceil_registers.esp = CEIL_STACK;
+        let mut ceil = Context::create(&address_space, ceil_registers)
+            .map_err(|error| error.to_string())?;
+        require_vmcall(
+            &ceil.run().await.map_err(|error| error.to_string())?,
+            "native ceil",
+        )?;
+        let mut bits = [0; 8];
+        read_exact_x86(&address_space, CEIL_RESULT, &mut bits)?;
+        if u64::from_le_bytes(bits) != expected.to_bits() {
+            return Err(format!(
+                "x86 native ceil self-test input={input} expected={expected}"
+            ));
+        }
+        let mut control = [0; 2];
+        read_exact_x86(&address_space, CEIL_FCW_OUT, &mut control)?;
+        if u16::from_le_bytes(control) != ceil_fcw {
+            return Err("x86 native ceil self-test changed x87 control word".into());
+        }
+        let mut esp = [0; 4];
+        read_exact_x86(&address_space, CEIL_ESP_OUT, &mut esp)?;
+        if u32::from_le_bytes(esp) != CEIL_STACK + 4 {
+            return Err("x86 native ceil self-test violated cdecl stack shape".into());
+        }
+    }
     logl::log(
         level::IMPORTANT,
         format_args!(
-            "WC3 X86 XSTATE SELFTEST PASS contexts=2 x87=pass xmm0=pass migration=debug-sidecars-pass b0=pass deeper_stack=pass"
+            "WC3 X86 XSTATE SELFTEST PASS contexts=2 x87=pass xmm0=pass migration=debug-sidecars-pass b0=pass deeper_stack=pass ceil=pass"
         ),
     );
     Ok(())
