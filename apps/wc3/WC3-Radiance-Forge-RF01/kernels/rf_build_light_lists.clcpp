@@ -1,0 +1,15 @@
+#include "rf_core.hpp"
+__attribute__((intel_reqd_sub_group_size(16)))
+__kernel void rf_build_light_lists(
+    __global const uint* scene_words,
+    __global uint* light_lists,
+    uint first_cluster,
+    uint cluster_count)
+{
+    uint lane=static_cast<uint>(get_global_id(0));
+    if(lane>=cluster_count) return;
+    uint id=first_cluster+lane;
+    uint total=scene_words[3]/rf::SURFACES_PER_CLUSTER + (scene_words[3]%rf::SURFACES_PER_CLUSTER!=0);
+    if(id<first_cluster || id>=total) return;
+    rf::build_light_list(scene_words,light_lists,id);
+}

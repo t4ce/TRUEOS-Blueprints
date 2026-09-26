@@ -1,0 +1,22 @@
+PASS empty scene validates
+PASS parallel AABB rays
+PASS triangle two sided and finite segment
+PASS threaded BVH matches brute force: 5000 random rays
+PASS no light means zero direct
+PASS sun shadow changes actual visibility
+PASS 65 local lights contribute, independently of GL
+PASS cluster list exactly matches direct reference
+PASS overflow does not drop lights
+PASS local light is blocked by geometry
+PASS one-bounce emission transport carries red
+PASS nonemissive red wall produces diffuse color bleed
+PASS sky bounce matches cosine-weighted irradiance
+PASS same frame gives same sample
+PASS Fresnel and absorption limits
+PASS water only shades classified surfaces
+PASS water waves change with phase
+PASS bad node links rejected before GPU
+PASS nonconservative leaf bounds rejected
+PASS nonfinite material rejected
+PASS out-of-range material rejected
+RESULT tests=21 passed=21 gpu_executed=0

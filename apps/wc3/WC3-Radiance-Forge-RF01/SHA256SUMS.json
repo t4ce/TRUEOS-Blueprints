@@ -1,0 +1,22 @@
+{
+  "README.md": "876c26a94558fdeae99c95edae70a6852a845c09cf116a7b7f3f12212eb970d8",
+  "docs/ARCHITECTURE.md": "1c3bd7b70f99b43375bbda97421c0af93e64bd5ae6faafe6323e5b6bf3a05553",
+  "docs/INTEGRATION.md": "b6d8bbf567675557e3db7310540562e7809eda38c8432efd5fa6aaa80a49d0a4",
+  "host/scene.hpp": "95ab5df4d04443601d95a38eba6368aad743a8a50f5d7b7e5665ddff5a3ef723",
+  "host/test.cpp": "da6378d873bf2edf95007ccf19eec8bde3c4b04436e2eb5b4e7daac22a9045d1",
+  "kernels/rf_build_light_lists.clcpp": "275d961dd9f43ba9ca6ab45493f1a6c8018d299d936820b6b32ce5e6d166dec1",
+  "kernels/rf_core.hpp": "71da46350200ef542574b47f6869ad080ade77fa5ad88977918a27c6a9a21109",
+  "kernels/rf_direct.clcpp": "7395d00b547d5ca7224c59eab3f27b67a09fe30972dd62dc29b94bc0a0e3d024",
+  "kernels/rf_indirect.clcpp": "0ddd16c98e0572acbfbd9b3b087fb6ab1d57ed637b6c89153cedd655da194cbc",
+  "kernels/rf_water.clcpp": "03ee553aeaf1682d1685350d549816be1d641920cf738619c95475dd3d706cd2",
+  "tools/bake.py": "1b306049c9efe4d86f25ed560880ddaade3318c74e9e74cf48f243c5a7cc528b",
+  "tools/check_local.py": "63da758e03c62cc07ac24198dc06116caf533230c6be4ece645fcd8f456209a7",
+  "tools/compare_readback.py": "eab0a3502d226db9f68c1d1be6f15df5279ab248886878b97b3b6c01c42cf063",
+  "validation/fixture.direct.f32": "ee8d08baf908c63e2eec2e566660cbd080c40af537902b10c0e02237b9d0617b",
+  "validation/fixture.indirect.f32": "4519246af78d397ea5458110c01e94d22786fc68c38e4ef6be1e00502d2af0f1",
+  "validation/fixture.lists.u32": "39b0eb83fd31d8c183ac083b686a6588ac43f96deb1e259e90ef076bb8b5190f",
+  "validation/fixture.scene.u32": "7bfb224b3fb7efc1edf76ef448a4ec09e87310bf606ff362a88438159eb84cd2",
+  "validation/fixture.water.f32": "7f5299425074b261eb248de96a3788c3cafde0c2add8b1686c8ae16492f1e13c",
+  "validation/report.json": "6bddba3d75093d37d993a7ca8adecd52a579ebf6077c35d23ddb184c2e81dafa",
+  "validation/sanitizers.txt": "c8409760061834fbb5641d8d33c23c34b6c5723a5b89abb1e385af5295c38e63"
+}

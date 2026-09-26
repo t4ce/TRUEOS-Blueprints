@@ -1,0 +1,15 @@
+#include "rf_core.hpp"
+__attribute__((intel_reqd_sub_group_size(16)))
+__kernel void rf_indirect(
+    __global const uint* scene_words,
+    __global float4* output,
+    uint first_surface,
+    uint surface_count)
+{
+    uint local_index=static_cast<uint>(get_global_id(0));
+    if(local_index>=surface_count) return;
+    uint id=first_surface+local_index;
+    if(id<first_surface || id>=scene_words[3]) return;
+    rf::V c=rf::indirect(scene_words,id);
+    output[id]=(float4)(c.x,c.y,c.z,1.0f);
+}
