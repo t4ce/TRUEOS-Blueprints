@@ -2,18 +2,27 @@
 fn gl_texture_draw_image(textures: &GlTextures) -> Result<&GlTextureImage, ProviderDispatchError> {
     gl_texture_draw_image_contract(textures, false)
 }
-fn gl_texture_draw_image_contract(textures: &GlTextures, fixed: bool) -> Result<&GlTextureImage, ProviderDispatchError> {
+fn gl_texture_draw_image_contract(
+    textures: &GlTextures,
+    fixed: bool,
+) -> Result<&GlTextureImage, ProviderDispatchError> {
     const API: &str = "glDrawElements";
     let object = textures.object();
-    if object.min_filter != 0x2600
-        || object.mag_filter != 0x2600
-        || object.wrap_s != 0x2901
+    if !(if fixed {
+        matches!(object.min_filter, 0x2600 | 0x2601 | 0x2700..=0x2703)
+    } else {
+        object.min_filter == 0x2600
+    }) || !(if fixed {
+        matches!(object.mag_filter, 0x2600 | 0x2601)
+    } else {
+        object.mag_filter == 0x2600
+    }) || object.wrap_s != 0x2901
         || object.wrap_t != 0x2901
     {
         return Err(gl_texture_error(
             API,
             format!(
-                "sampled GPU needs nearest/repeat; min=0x{:x} mag=0x{:x} wrap=0x{:x}/0x{:x}",
+                "sampled GPU unsupported filter/wrap; min=0x{:x} mag=0x{:x} wrap=0x{:x}/0x{:x}",
                 object.min_filter, object.mag_filter, object.wrap_s, object.wrap_t
             ),
         ));
@@ -34,7 +43,9 @@ fn gl_texture_draw_image_contract(textures: &GlTextures, fixed: bool) -> Result<
             "sampled GPU currently requires opaque texture pixels",
         ));
     }
-    if !matches!(textures.env_mode, 0x2100 | 0x2101 | 0x1e01) && !(fixed && textures.env_mode == 0xbe2) {
+    if !matches!(textures.env_mode, 0x2100 | 0x2101 | 0x1e01)
+        && !(fixed && textures.env_mode == 0xbe2)
+    {
         return Err(gl_texture_error(
             API,
             "texture environment needs additional shader combine support",

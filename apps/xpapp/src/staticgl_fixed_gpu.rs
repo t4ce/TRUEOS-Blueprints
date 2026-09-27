@@ -122,6 +122,21 @@ fn gl_fixed_gpu_state(c: &WglContext) -> Result<Option<[f32; 384]>, ProviderDisp
     s[24] = f.fog.color;
     if c.textures.enabled {
         let image = gl_texture_draw_image_contract(&c.textures, true)?;
+        let object = c.textures.object();
+        let mode = match object.min_filter {
+            0x2600 => 0,
+            0x2601 => 1,
+            n => n - 0x2700 + 2,
+        };
+        let levels = gl_fixed_gpu_mip_count(&c.textures)?;
+        s[30] = [
+            image.width as f32,
+            image.height as f32,
+            mode as f32,
+            (object.mag_filter == 0x2601) as u8 as f32,
+        ];
+        s[31][0] = (levels - 1) as f32;
+
         s[25] = [
             match c.textures.env_mode {
                 0x2100 => 1.,
@@ -356,5 +371,160 @@ mod fixed_gpu_tests {
         c.fixed.set_enabled(FIXED_GL_SCISSOR_TEST, false).unwrap();
         c.fixed.set_enabled(FIXED_GL_BLEND, true).unwrap();
         assert!(gl_fixed_gpu_state(&c).is_err());
+    }
+}
+
+// Pack authored levels into vertically stacked rows at the base-level pitch.
+// The GPU handles sampling; this copies texture bytes without resampling them.
+fn gl_fixed_gpu_mip_count(textures: &GlTextures) -> Result<u32, ProviderDispatchError> {
+    let image = gl_texture_draw_image_contract(textures, true)?;
+    let object = textures.object();
+    let count = if object.min_filter >= 0x2700 {
+        32 - image.width.max(image.height).leading_zeros()
+    } else {
+        1
+    };
+    for level in 0..count {
+        let w = (image.width >> level).max(1);
+        let h = (image.height >> level).max(1);
+        let mip = object.levels.get(&level).ok_or_else(|| {
+            gl_texture_error(
+                "glDrawElements",
+                format!("incomplete texture mip chain: missing level {level}"),
+            )
+        })?;
+        if mip.width != w
+            || mip.height != h
+            || mip.internal != image.internal
+            || (w as usize)
+                .checked_mul(h as usize)
+                .and_then(|n| n.checked_mul(4))
+                != Some(mip.rgba.len())
+        {
+            return Err(gl_texture_error(
+                "glDrawElements",
+                format!("incomplete texture mip chain: invalid level {level}"),
+            ));
+        }
+    }
+    Ok(count)
+}
+fn gl_fixed_gpu_texture(
+    textures: &GlTextures,
+) -> Result<(Vec<u8>, u32, u32), ProviderDispatchError> {
+    let levels = gl_fixed_gpu_mip_count(textures)?;
+    let object = textures.object();
+    let base = &object.levels[&0];
+    let height = (0..levels).map(|i| (base.height >> i).max(1)).sum::<u32>();
+    let pitch = (base.width as usize)
+        .checked_mul(4)
+        .ok_or("texture atlas pitch overflow")?;
+    let len = pitch
+        .checked_mul(height as usize)
+        .ok_or("texture atlas size overflow")?;
+    let mut bytes = Vec::new();
+    bytes
+        .try_reserve_exact(len)
+        .map_err(|_| "texture atlas allocation failed")?;
+    bytes.resize(len, 0);
+    let mut row = 0;
+    for level in 0..levels {
+        let image = &object.levels[&level];
+        let row_bytes = image.width as usize * 4;
+        for source in image.rgba.chunks_exact(row_bytes) {
+            bytes[row * pitch..row * pitch + row_bytes].copy_from_slice(source);
+            row += 1;
+        }
+    }
+    Ok((bytes, base.width, height))
+}
+
+#[cfg(test)]
+mod fixed_gpu_mip_tests {
+    use super::*;
+    fn texture() -> GlTextures {
+        let mut t = GlTextures::default();
+        t.bind(1).unwrap();
+        let o = t.object_mut();
+        o.min_filter = 0x2701;
+        o.mag_filter = 0x2601;
+        for (level, w, h, value) in [(0, 8, 2, 10), (1, 4, 1, 40), (2, 2, 1, 90), (3, 1, 1, 170)] {
+            o.levels.insert(
+                level,
+                GlTextureImage {
+                    width: w,
+                    height: h,
+                    internal: 0x1908,
+                    rgba: vec![value; (w * h * 4) as usize],
+                },
+            );
+        }
+        t
+    }
+    #[test]
+    fn reported_filters_keep_all_authored_levels_and_non_square_offsets() {
+        let t = texture();
+        let (atlas, w, h) = gl_fixed_gpu_texture(&t).unwrap();
+        assert_eq!((w, h), (8, 5));
+        for (level, row) in [(0, 0), (1, 2), (2, 3), (3, 4)] {
+            let image = &t.object().levels[&level];
+            for y in 0..image.height as usize {
+                let bytes = image.width as usize * 4;
+                assert_eq!(
+                    &atlas[(row + y) * 32..(row + y) * 32 + bytes],
+                    &image.rgba[y * bytes..(y + 1) * bytes]
+                );
+                assert!(
+                    atlas[(row + y) * 32 + bytes..(row + y + 1) * 32]
+                        .iter()
+                        .all(|b| *b == 0)
+                );
+            }
+        }
+        let mut c = WglContext::new(1, 2, 1);
+        c.drawable_size = [640, 480];
+        c.viewport = [0, 0, 640, 480];
+        c.textures = t;
+        c.textures.enabled = true;
+        let state = gl_fixed_gpu_state(&c).unwrap().unwrap();
+        assert_eq!(&state[120..125], &[8., 2., 3., 1., 3.]);
+    }
+    #[test]
+    fn every_minification_mode_and_both_magnification_modes_pack_distinctly() {
+        let mut c = WglContext::new(1, 2, 1);
+        c.drawable_size = [8, 8];
+        c.viewport = [0, 0, 8, 8];
+        c.textures = texture();
+        c.textures.enabled = true;
+        for (mode, filter) in [0x2600, 0x2601, 0x2700, 0x2701, 0x2702, 0x2703]
+            .into_iter()
+            .enumerate()
+        {
+            for mag in [0x2600, 0x2601] {
+                c.textures.object_mut().min_filter = filter;
+                c.textures.object_mut().mag_filter = mag;
+                let s = gl_fixed_gpu_state(&c).unwrap().unwrap();
+                assert_eq!(s[122], mode as f32);
+                assert_eq!(s[123], (mag == 0x2601) as u8 as f32);
+                assert_eq!(s[124], if mode < 2 { 0. } else { 3. });
+            }
+        }
+    }
+    #[test]
+    fn incomplete_or_mismatched_mips_are_never_silently_replaced_by_level_zero() {
+        let mut t = texture();
+        t.object_mut().levels.remove(&2);
+        assert!(gl_fixed_gpu_texture(&t).is_err());
+        t.object_mut().min_filter = 0x2601;
+        assert_eq!(gl_fixed_gpu_texture(&t).unwrap().2, 2);
+        let mut t = texture();
+        t.object_mut().levels.get_mut(&2).unwrap().width = 3;
+        assert!(gl_fixed_gpu_texture(&t).is_err());
+        let mut t = texture();
+        t.object_mut().levels.get_mut(&2).unwrap().internal = 0x1907;
+        assert!(gl_fixed_gpu_texture(&t).is_err());
+        let mut t = texture();
+        t.object_mut().levels.get_mut(&3).unwrap().rgba.clear();
+        assert!(gl_fixed_gpu_texture(&t).is_err());
     }
 }

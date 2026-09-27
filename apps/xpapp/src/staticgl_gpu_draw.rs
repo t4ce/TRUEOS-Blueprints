@@ -210,9 +210,8 @@ impl XpProcess {
             }
             let c = runtime.contexts.values().find(|c| c.current_tid == Some(tid)).ok_or("GL context missing")?;
             let (pixels, width, height) = if c.textures.enabled {
-                let image = gl_texture_draw_image_contract(&c.textures, true)?;
-                (image.rgba.as_slice(), image.width, image.height)
-            } else { ([255u8;4].as_slice(), 1, 1) };
+                gl_fixed_gpu_texture(&c.textures)?
+            } else { (vec![255u8;4], 1, 1) };
             let surface = runtime.device.acquire_ui4_surface(window)
                 .map_err(|rc| gl_texture_error(API, format!("native GPU acquire rc={rc}")))?;
             if [surface.info().width, surface.info().height] != c.drawable_size {
@@ -220,7 +219,7 @@ impl XpProcess {
             }
             let flags = gl_gpu_depth_flags(&c.fixed);
             let point = runtime.fixed_renderer.as_mut().unwrap().draw(runtime.queue, surface,
-                &geometry.vertices, &geometry.indices, &geometry.state, pixels, width, height, flags)
+                &geometry.vertices, &geometry.indices, &geometry.state, &pixels, width, height, flags)
                 .map_err(|rc| gl_texture_error(API, format!("native GPU indexed submit rc={rc}")))?;
             runtime.device.wait(runtime.queue, point.value)
                 .map_err(|rc| gl_texture_error(API, format!("native GPU wait rc={rc}")))?;

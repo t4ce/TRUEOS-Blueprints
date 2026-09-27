@@ -27,6 +27,11 @@ Guest vertices are uploaded without CPU transformation or lighting.
 
 The shader/state contract and remaining admission limits are documented in
 TRUEOS `tools/wc3-fixed-bake/README.md`. Alpha testing, blending, two-sided
-lighting, texgen, polygon offset, nondefault viewport/depth range, and sampling
-beyond nearest/repeat remain explicit frontiers. The reported `0x300f04f` mask
+lighting, texgen, polygon offset, nondefault viewport/depth range, and texture addressing
+beyond repeat remain explicit frontiers. The reported `0x300f04f` mask
 is covered by a regression test; hardware correctness and FPS are unverified.
+
+Minification supports nearest, linear, and all four mipmapped filters;
+magnification supports nearest and linear. The complete authored mip chain is
+uploaded as an atlas. Level selection and filtering run in the fragment shader.
+Missing or inconsistent mip levels are rejected explicitly.
