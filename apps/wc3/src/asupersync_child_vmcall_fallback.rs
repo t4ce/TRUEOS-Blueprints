@@ -315,6 +315,8 @@
                             || (operation == child_loader::ProviderOp::GlDrawElements
                                 && session.process(active_pid).is_some_and(|p|p.xp.gl_preview_pending(active_tid))
                                 && read_guest_words(&X86Memory(&child.address_space), exit.registers.esp, 3)?[2] >= 3);
+                        let swap_started = (!cfg!(feature = "nolog") && operation == child_loader::ProviderOp::WglSwapLayerBuffers)
+                            .then(std::time::Instant::now);
                         let gl_draw_frame = if gl_needs_frame {
                             let (_hglrc, hwnd, _mode) = session.process(active_pid)
                                 .ok_or_else(|| "GL process missing".to_owned())?
@@ -470,6 +472,12 @@
                                         .ok_or_else(|| "GL UI4 frame missing".to_owned())?
                                         .publish(Damage::full(window.width, window.height))
                                         .map_err(|error| format!("GL publish UI4 frame: {error:?}"))?;
+                                    if result != 0 {
+                                        if let Some(started) = swap_started {
+                                            session.process_mut(active_pid).ok_or("GL process missing")?
+                                                .xp.gl_frame_published(active_tid, started);
+                                        }
+                                    }
                                 }
                                 if logl::ENABLED {
                                 if operation == child_loader::ProviderOp::GetSystemInfo {

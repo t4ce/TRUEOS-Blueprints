@@ -562,6 +562,7 @@ impl XpProcess {
         memory: &impl GuestMemory,
     ) -> Result<u32, ProviderDispatchError> {
         const API: &str = "glDrawElements";
+        let draw_started = (!cfg!(feature = "nolog")).then(std::time::Instant::now);
         let [_, mode, count, kind, address] = arguments::<5>(memory, esp)?;
         if !matches!(mode, GL_TRIANGLES | GL_TRIANGLE_STRIP)
             || count > 1_000_000
@@ -600,6 +601,13 @@ impl XpProcess {
         let c = self.gl_context_mut(tid, API)?;
         let (stats, vertex_count) = gl_rasterize_elements(c, memory, &guest_indices)?;
         c.draw_count += 1;
+        if let Some(started) = draw_started {
+            let work = &mut c.heartbeat.work;
+            work.draws += 1;
+            work.triangles += stats.clipped_triangles as u64;
+            work.pixels += stats.shaded_pixels as u64;
+            work.draw_time += started.elapsed();
+        }
         let preview = cfg!(feature = "preview-first-draw") && c.draw_count == 1;
         if preview || c.draw_count.is_multiple_of(128) {
             logl::log!(

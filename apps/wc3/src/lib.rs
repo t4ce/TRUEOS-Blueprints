@@ -18,6 +18,7 @@ pub mod checkpoint;
 pub mod child_loader;
 pub mod debug_command;
 pub mod event_pool;
+mod frame_heartbeat;
 pub mod gl_signatures;
 pub mod imports;
 #[path = "diagnostics.rs"]

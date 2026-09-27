@@ -24,7 +24,9 @@ The launcher image is read from
 
 ## Release execution and diagnostics
 
-Normal builds use `default = []`: WC3 emits no routine application logs. Fatal
+Normal builds use `default = []`: routine traces are disabled. A two-line frame
+heartbeat reports the first successful swap/publication and at most once per
+second per GL context afterward (`nolog` disables it). Fatal
 errors and terminal compatibility frontiers remain visible, and a failed run
 captures stopped registers plus bounded code/stack bytes. Explicit minishell
 commands still print their replies. This does not change the kernel's own log
@@ -291,3 +293,15 @@ of activation messages; this command does not bypass those frontiers.
 The current first experiment is WM_SIZE, using this run's recorded 2560x1440
 client dimensions: `debug post 2 0x57434003 5 0 0x05a00a00`.
 Addresses/handles are run-specific. See `docs/window-notification-probes.md`.
+
+### Frame heartbeat
+
+`WC3 FRAME` reports the last published frame's draw calls, post-clip triangles
+and shaded pixels. `WC3 FRAME TIME` reports CPU draw-handler time (including
+array reads and rasterization), swap time (acquisition wait, GPU upload/completion
+and UI4 publication), total swap-to-swap wall time, and elapsed context lifetime.
+The first frame's wall interval starts at context creation. Counters reset on
+every successful publication, including frames whose heartbeat is rate-limited.
+The receipt confirms GPU completion and UI4 publication, not physical SURFLIVE
+acknowledgement. Timing uses two clock reads per draw and swap, with no per-pixel
+instrumentation or framebuffer scans.

@@ -1946,6 +1946,7 @@ struct WglContext {
     viewport_set: bool,
     draw_count: u64,
     swap_count: u64,
+    heartbeat: crate::frame_heartbeat::Heartbeat,
 }
 
 struct GlWriteNote {

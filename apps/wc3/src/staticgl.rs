@@ -128,6 +128,14 @@ const GL_IDENTITY_MATRIX: [f32; 16] = [
 ];
 
 impl XpProcess {
+    pub fn gl_frame_published(&mut self, tid: u32, swap_started: std::time::Instant) {
+        if cfg!(feature = "nolog") { return; }
+        if let Some(c) = self.gl_runtime.as_mut().and_then(|r| r.contexts.values_mut().find(|c| c.current_tid == Some(tid))) {
+            let now = std::time::Instant::now();
+            c.heartbeat.published(now, now.duration_since(swap_started), c.hwnd);
+        }
+    }
+
     pub fn gl_progress(&self) -> (u64, u64) {
         self.gl_runtime
             .as_ref()
@@ -813,6 +821,7 @@ impl WglContext {
             viewport_set: false,
             draw_count: 0,
             swap_count: 0,
+            heartbeat: crate::frame_heartbeat::Heartbeat::new(std::time::Instant::now()),
         }
     }
 }
