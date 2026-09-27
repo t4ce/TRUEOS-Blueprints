@@ -19,6 +19,14 @@ Validation: `cargo test -p xpapp --lib --offline`,
 `python3 tools/test_clip_position3_uv_texture.py` in TRUEOS, plus kernel and
 Blueprint builds. These checks do not establish hardware image correctness or FPS.
 
-The immediate shader bridge still rejects unsupported perspective, varying
-vertex color/texture combine, blending, alpha testing, lighting, fog and scissor
-state on ordinary draws. Scissored `glClear` is supported.
+Indexed draws now use the native fixed-function GPU package. The GPU applies
+modelview/projection/normal/texture transforms, all eight lights, material and
+primary colors, perspective interpolation, RGB/RGBA texture combination and
+linear/exp/exp2 fog. The kernel programs draw scissoring and back-face culling.
+Guest vertices are uploaded without CPU transformation or lighting.
+
+The shader/state contract and remaining admission limits are documented in
+TRUEOS `tools/wc3-fixed-bake/README.md`. Alpha testing, blending, two-sided
+lighting, texgen, polygon offset, nondefault viewport/depth range, and sampling
+beyond nearest/repeat remain explicit frontiers. The reported `0x300f04f` mask
+is covered by a regression test; hardware correctness and FPS are unverified.

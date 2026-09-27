@@ -70,12 +70,14 @@ fn gl_read_array(
 }
 
 
+#[cfg(test)]
 struct GlGpuGeometry {
     vertices: Vec<staticgl_triangle::textured::TexturedVertex>,
     indices: Vec<u32>,
     solid: [u8; 4],
 }
 
+#[cfg(test)]
 fn gl_gpu_geometry(
     c: &WglContext,
     memory: &impl GuestMemory,
