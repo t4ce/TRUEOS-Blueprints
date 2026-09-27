@@ -1455,6 +1455,25 @@ impl XpProcess {
                     .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(self.last_error_for_thread(tid)))
             }
+            ProviderOp::OutputDebugStringA => {
+                let [_, text_ptr] = arguments::<2>(memory, esp)?;
+                let text = if text_ptr == 0 {
+                    None
+                } else {
+                    Some(read_c_string(memory, text_ptr, 4096)?)
+                };
+                logl::log!(
+                    level::IMPORTANT,
+                    format_args!(
+                        "WC3 CHILD OUTPUTDEBUGSTRINGA pid={pid} tid={tid} text={text:?} result=void cleanup=4-by-thunk"
+                    ),
+                );
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(0))
+            }
             ProviderOp::GetTickCount => {
                 self.call_count = self
                     .call_count

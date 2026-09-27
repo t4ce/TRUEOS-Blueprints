@@ -358,12 +358,44 @@ fn gl_rasterize_elements(
     } else {
         None
     };
+    // Explicit, bounded observation only. No texture scan or formatting on the
+    // normal release path; a zero budget also cancels an unfinished capture.
+    let capture = c.debug_draws_remaining != 0;
+    if capture {
+        c.debug_draws_remaining -= 1;
+        logl::emit(level::IMPORTANT, format_args!(
+            "WC3 DEBUG DRAW seq={} remaining={} vertex={:?} color_array={} color={:?} uv={:?} indices={} lighting={} material_mode=0x{:x} ambient={:?} state={:?}",
+            c.draw_count + 1, c.debug_draws_remaining, c.vertex_pointer,
+            c.color_array_enabled, c.color_pointer, c.textures.coord_pointer,
+            indices.len(), c.fixed.is_enabled(0xb50), c.fixed.color_material_mode,
+            c.light_model_ambient, state,
+        ));
+        let raw_color = guest_indices.first().and_then(|&index| {
+            c.color_pointer.filter(|_| c.color_array_enabled)
+                .and_then(|pointer| gl_read_array(memory, pointer, index, [1.0; 4]).ok())
+        });
+        let atlas = texture.as_ref().map(|t| {
+            let base = t.levels[0];
+            let first_covered = base.rgba.chunks_exact(4).find(|p| p[3] != 0);
+            (base.width, base.height, t.format, t.min_filter, t.mag_filter, first_covered)
+        });
+        logl::emit(level::IMPORTANT, format_args!(
+            "WC3 DEBUG DRAW INPUT seq={} texture={} atlas={:?} raw_color={:?} vertices={:?}",
+            c.draw_count + 1, c.textures.binding, atlas, raw_color,
+            &vertices[..vertices.len().min(3)],
+        ));
+    }
     let stats = c.raster_frame.as_mut().unwrap().draw_triangles(
         &vertices,
         &indices,
         &state,
         texture.as_ref(),
     )?;
+    if capture {
+        logl::emit(level::IMPORTANT, format_args!(
+            "WC3 DEBUG DRAW RESULT seq={} stats={stats:?}", c.draw_count + 1,
+        ));
+    }
     Ok((stats, vertices.len()))
 }
 

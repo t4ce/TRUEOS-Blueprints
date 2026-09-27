@@ -198,6 +198,13 @@ impl XpProcess {
             })
     }
 
+    pub fn debug_capture_gl_draws(&mut self, tid: u32, count: u32) -> Result<(), String> {
+        if count > 256 { return Err("draw count exceeds 256".into()); }
+        let context = self.gl_context_mut(tid, "debug draws").map_err(|e| format!("{e:?}"))?;
+        context.debug_draws_remaining = count;
+        Ok(())
+    }
+
     pub fn gl_light_model_ambient_diagnostic(&self, tid: u32) -> Option<(u32, [f32; 4])> {
         self.gl_runtime
             .as_ref()?
@@ -816,6 +823,7 @@ impl WglContext {
             observed_writes: VecDeque::new(),
             fixed: GlFixedState::default(),
             raster_frame: None,
+            debug_draws_remaining: 0,
             present_pixels: Vec::new(),
             drawable_size: [0, 0],
             viewport_set: false,

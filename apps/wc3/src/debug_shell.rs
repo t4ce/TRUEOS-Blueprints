@@ -145,9 +145,22 @@ fn execute(
         Command::Help => logl::emit(
             level::IMPORTANT,
             format_args!(
-                "WC3 DEBUG HELP: debug perf | debug state | debug regs PID TID | debug mem PID ADDRESS BYTES(1..256) | debug stack PID TID WORDS(1..64) | debug object PID HANDLE | debug post PID HWND MESSAGE WPARAM LPARAM (explicit queued notification experiment); numbers decimal or 0xhex"
+                "WC3 DEBUG HELP: debug draws PID TID COUNT(0..256) | debug perf | debug state | debug regs PID TID | debug mem PID ADDRESS BYTES(1..256) | debug stack PID TID WORDS(1..64) | debug object PID HANDLE | debug post PID HWND MESSAGE WPARAM LPARAM (explicit queued notification experiment); numbers decimal or 0xhex"
             ),
         ),
+        Command::Draws { pid, tid, count } => {
+            session
+                .process_mut(pid)
+                .ok_or("unknown process")?
+                .xp
+                .debug_capture_gl_draws(tid, count)?;
+            logl::emit(
+                level::IMPORTANT,
+                format_args!(
+                    "WC3 DEBUG DRAWS pid={pid} tid={tid} remaining={count} capture=next-draws rendering=unchanged"
+                ),
+            );
+        }
         Command::Post {
             pid,
             hwnd,

@@ -1943,6 +1943,7 @@ struct WglContext {
     observed_writes: VecDeque<GlWriteNote>,
     fixed: GlFixedState,
     raster_frame: Option<crate::staticgl_raster::GlRasterFrame>,
+    debug_draws_remaining: u32,
     present_pixels: Vec<u8>,
     drawable_size: [u32; 2],
     viewport_set: bool,

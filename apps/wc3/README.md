@@ -277,6 +277,12 @@ on the normal Blueprint text/log path, including in quiet and `nolog` builds.
 `debug perf` establishes a baseline on its first call and reports elapsed time,
 draws, guest swaps per second and execution exits on subsequent calls. These are
 guest counters, not a physical scanout FPS measurement.
+`debug draws 2 3 256` captures the next 256 compatibility draws on PID 2,
+TID 3's current GL context (maximum 256; count 0 cancels). Each draw reports
+client pointers, raw and transformed vertex colors, clip positions, texture name
+and first covered texel, lighting, depth/alpha/blend/fog state, and raster counts.
+It automatically disarms and is silent by default. Capture logging affects timing;
+use it for correctness investigations, not performance measurements.
 An already-running older pack cannot gain these commands without a relaunch.
 
 `debug post PID HWND MESSAGE WPARAM LPARAM` is an explicit mutation for window

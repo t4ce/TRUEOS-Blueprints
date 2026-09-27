@@ -66,6 +66,7 @@ pub enum ProviderOp {
     ReadProcessMemory,
     WriteProcessMemory,
     GetLastError,
+    OutputDebugStringA,
     FormatMessageA,
     GetTickCount,
     WsaStartup,
@@ -315,6 +316,7 @@ impl ProviderOp {
             | Self::CloseHandle
             | Self::GetModuleHandleA
             | Self::GetComputerNameA
+            | Self::OutputDebugStringA
             | Self::LoadLibraryA
             | Self::FreeLibrary
             | Self::QueryPerformanceFrequency
@@ -557,6 +559,7 @@ impl ProviderOp {
                 | Self::ReadProcessMemory
                 | Self::WriteProcessMemory
                 | Self::GetLastError
+                | Self::OutputDebugStringA
                 | Self::FormatMessageA
                 | Self::GetTickCount
                 | Self::WsaStartup
@@ -755,6 +758,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "ReadProcessMemory" => ProviderOp::ReadProcessMemory,
             "WriteProcessMemory" => ProviderOp::WriteProcessMemory,
             "GetLastError" => ProviderOp::GetLastError,
+            "OutputDebugStringA" => ProviderOp::OutputDebugStringA,
             "FormatMessageA" => ProviderOp::FormatMessageA,
             "GetTickCount" => ProviderOp::GetTickCount,
             "CreateIoCompletionPort" => ProviderOp::CreateIoCompletionPort,

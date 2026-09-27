@@ -359,3 +359,37 @@ fn strip_degenerates_keep_parity_and_short_primitives_are_empty() {
     );
     assert!(gl_assemble_triangles(1, vec![0, 1, 2]).is_err());
 }
+
+#[test]
+fn glyph_foreground_replaces_shadow_after_reusing_guest_color_buffer() {
+    let mut c = WglContext::new(1, 2, 1);
+    c.drawable_size = [8, 8];
+    c.viewport = [0, 0, 8, 8];
+    c.vertex_array_enabled = true;
+    c.color_array_enabled = true;
+    c.vertex_pointer = Some(GlArrayPointer { size: 3, kind: GL_FLOAT, stride: 12, address: 4 });
+    c.color_pointer = Some(GlArrayPointer { size: 4, kind: GL_UNSIGNED_BYTE, stride: 0, address: 52 });
+    let mut memory = ArrayMemory(vec![0; 68]);
+    for (i, value) in [-1.0f32, -1., 0., 1., -1., 0., 1., 1., 0., -1., 1., 0.].into_iter().enumerate() {
+        memory.0[4 + i * 4..8 + i * 4].copy_from_slice(&value.to_le_bytes());
+    }
+    c.textures.enabled = true;
+    c.textures.bind(39).unwrap();
+    c.textures.set_image(0, GlTextureImage { width: 1, height: 1, internal: 0x1908, rgba: vec![255, 255, 255, 255] }).unwrap();
+    c.textures.object_mut().min_filter = 0x2601;
+    c.fixed.set_enabled(0xbe2, true).unwrap();
+    c.fixed.blend_factors = [0x302, 0x303];
+    c.fixed.set_enabled(0xbc0, true).unwrap();
+    c.fixed.alpha_func = 0x206;
+    c.fixed.alpha_ref = 0.0;
+    let indices = [0, 1, 2, 0, 2, 3];
+    for p in memory.0[52..68].chunks_exact_mut(4) { p.copy_from_slice(&[0, 0, 0, 255]); }
+    let shadow = gl_rasterize_elements(&mut c, &memory, &indices).unwrap().0;
+    assert_eq!(shadow.shaded_pixels, 64);
+    // WC3 binds its scratch color array before populating it, and reuses that
+    // allocation for shadow and foreground. Read colors at each actual draw.
+    for p in memory.0[52..68].chunks_exact_mut(4) { p.copy_from_slice(&[252, 210, 17, 255]); }
+    let foreground = gl_rasterize_elements(&mut c, &memory, &indices).unwrap().0;
+    assert_eq!(foreground.shaded_pixels, 64);
+    assert!(c.raster_frame.as_ref().unwrap().rgba.chunks_exact(4).all(|p| p == [252, 210, 17, 255]));
+}

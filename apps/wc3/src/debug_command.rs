@@ -4,6 +4,11 @@ pub enum Command {
     Help,
     State,
     Perf,
+    Draws {
+        pid: u32,
+        tid: u32,
+        count: u32,
+    },
     Post {
         pid: u32,
         hwnd: u32,
@@ -43,6 +48,17 @@ pub fn parse(line: &str) -> Result<Command, &'static str> {
         ["debug"] | ["debug", "help"] => Command::Help,
         ["debug", "state"] => Command::State,
         ["debug", "perf"] => Command::Perf,
+        ["debug", "draws", pid, tid, count] => {
+            let count = number(count)?;
+            if count > 256 {
+                return Err("draw count must be 0..256 (zero cancels)");
+            }
+            Command::Draws {
+                pid: number(pid)?,
+                tid: number(tid)?,
+                count,
+            }
+        }
         ["debug", "post", pid, hwnd, message, wparam, lparam] => {
             let (message, wparam, lparam) = (number(message)?, number(wparam)?, number(lparam)?);
             // Scalar-only window notifications. Never interpret arbitrary guest
@@ -210,4 +226,26 @@ mod tests {
         }
         assert_eq!(lines.push(b'\n'), Some(Ok(Command::Help)));
     }
+}
+
+#[cfg(test)]
+#[test]
+fn draw_capture_is_bounded_and_cancellable() {
+    assert_eq!(
+        parse("debug draws 2 3 256"),
+        Ok(Command::Draws {
+            pid: 2,
+            tid: 3,
+            count: 256
+        })
+    );
+    assert_eq!(
+        parse("debug draws 2 3 0"),
+        Ok(Command::Draws {
+            pid: 2,
+            tid: 3,
+            count: 0
+        })
+    );
+    assert!(parse("debug draws 2 3 257").is_err());
 }
