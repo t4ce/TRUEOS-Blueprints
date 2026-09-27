@@ -32,6 +32,7 @@ pub mod session;
 pub mod staticstr;
 mod staticgl_raster;
 pub mod thunk32;
+pub mod ui4_retry;
 pub mod window_creation;
 
 pub const LAUNCHER_PATH: &str = "/common/Warcraft III/Warcraft III.exe";

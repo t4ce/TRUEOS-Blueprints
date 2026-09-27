@@ -1006,12 +1006,11 @@
                         let frame = frames
                             .get_mut(&request.hwnd)
                             .ok_or_else(|| "BitBlt destination frame missing".to_owned())?;
-                        frame
-                            .begin(rgba(0, 0, 0, 255))
-                            .and_then(|()| frame.write_opaque_rgba8(&request.rgba))
-                            .and_then(|()| {
-                                frame.publish(Damage::full(request.width, request.height))
-                            })
+                        retry_ui4_busy(|| frame.begin(rgba(0, 0, 0, 255)))
+                            .map_err(|error| format!("begin WC3 BitBlt: {error:?}"))?;
+                        frame.write_opaque_rgba8(&request.rgba)
+                            .map_err(|error| format!("write WC3 BitBlt: {error:?}"))?;
+                        retry_ui4_busy(|| frame.publish(Damage::full(request.width, request.height)))
                             .map_err(|error| format!("publish WC3 BitBlt: {error:?}"))?;
                         logl::log!(
                             level::IMPORTANT,
@@ -1061,8 +1060,7 @@
                         if backing.len() != expected_bytes {
                             return Err("DrawTextA window backing size mismatch".into());
                         }
-                        frame
-                            .begin(rgba(0, 0, 0, 255))
+                        retry_ui4_busy(|| frame.begin(rgba(0, 0, 0, 255)))
                             .map_err(|error| format!("begin WC3 DrawTextA frame: {error:?}"))?;
                         frame
                             .write_opaque_rgba8(backing)

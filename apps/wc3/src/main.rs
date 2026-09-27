@@ -892,6 +892,15 @@ fn pump_ui4_input(
     Ok(())
 }
 
+fn retry_ui4_busy<T>(operation: impl FnMut() -> Result<T, ui4_scene::Error>) -> Result<T, ui4_scene::Error> {
+    wc3::ui4_retry::retry_busy(operation, || {
+        // Only wait on an actual producer/consumer ownership conflict. The
+        // host boundary also keeps stop requests observable during retirement.
+        trueos::vsys::poll_once();
+        trueos::vsys::sleep_ms(1);
+    })
+}
+
 fn paint_window_fill_rect(
     request: &wc3::session::WindowFillRectRequest,
     frames: &mut HashMap<u32, Frame>,
@@ -923,9 +932,12 @@ fn paint_window_fill_rect(
                 backing[offset..offset + 4].copy_from_slice(&request.rgba);
             }
         }
-        frame.begin(rgba(0, 0, 0, 255))
-            .and_then(|()| frame.write_opaque_rgba8(backing))
-            .and_then(|()| frame.publish(Damage::full(frame.width(), frame.height())))
+        retry_ui4_busy(|| frame.begin(rgba(0, 0, 0, 255)))
+            .map_err(|error| format!("begin WC3 FillRect: {error:?}"))?;
+        frame.write_opaque_rgba8(backing)
+            .map_err(|error| format!("write WC3 FillRect: {error:?}"))?;
+        let damage = Damage::full(frame.width(), frame.height());
+        retry_ui4_busy(|| frame.publish(damage))
             .map_err(|error| format!("publish WC3 FillRect: {error:?}"))?;
     }
     logl::log!(level::IMPORTANT, format_args!(
@@ -960,9 +972,9 @@ fn present_window(
             }
             let mut opened = Frame::open(x, y, width, height)
                 .map_err(|error| format!("create WC3 UI4 window: {error:?}"))?;
-            opened
-                .begin(rgba(0, 0, 0, 255))
-                .and_then(|()| opened.publish(Damage::full(width, height)))
+            retry_ui4_busy(|| opened.begin(rgba(0, 0, 0, 255)))
+                .map_err(|error| format!("begin WC3 UI4 window: {error:?}"))?;
+            retry_ui4_busy(|| opened.publish(Damage::full(width, height)))
                 .map_err(|error| format!("publish WC3 UI4 window: {error:?}"))?;
             if hwnd == WINDOW_HANDLE_BASE {
                 logl::log!(
@@ -1093,8 +1105,7 @@ fn open_message_box(
 ) -> Result<ActiveMessageBox, String> {
     let mut frame = Frame::open(180, 140, MESSAGE_BOX_WIDTH, MESSAGE_BOX_HEIGHT)
         .map_err(|error| format!("create MessageBoxA UI4 frame: {error:?}"))?;
-    frame
-        .begin(rgba(28, 32, 42, 255))
+    retry_ui4_busy(|| frame.begin(rgba(28, 32, 42, 255)))
         .map_err(|error| format!("begin MessageBoxA UI4 frame: {error:?}"))?;
     let caption = SceneTextRow {
         text: request.caption.as_str(),
