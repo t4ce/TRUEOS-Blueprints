@@ -1245,7 +1245,7 @@
         assert_eq!(COMMAND_LINE, b"\"Warcraft III.exe\"\0");
         assert_eq!(
             CHILD_COMMAND_LINE,
-            b"\"war3.exe\" -opengl -nosound -swtnl\0"
+            b"\"war3.exe\" -opengl -nosound -swtnl -window\0"
         );
         assert_eq!(crate::session::WINDOW_HANDLE_BASE, 0x5743_4001);
 

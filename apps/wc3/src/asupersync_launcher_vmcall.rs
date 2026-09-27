@@ -1191,8 +1191,8 @@
                         if acmdln_written != 4 {
                             return Err("short child CRT _acmdln write".into());
                         }
-                        let argv = [CRT_ARG0_VA, CRT_ARG1_VA, CRT_ARG2_VA, CRT_ARG3_VA, 0];
-                        let mut argv_bytes = [0u8; 20];
+                        let argv = [CRT_ARG0_VA, CRT_ARG1_VA, CRT_ARG2_VA, CRT_ARG3_VA, CRT_ARG4_VA, 0];
+                        let mut argv_bytes = [0u8; 24];
                         for (index, pointer) in argv.into_iter().enumerate() {
                             argv_bytes[index * 4..index * 4 + 4]
                                 .copy_from_slice(&pointer.to_le_bytes());
@@ -1209,6 +1209,7 @@
                             (CRT_ARG1_VA, b"-opengl\0".as_slice()),
                             (CRT_ARG2_VA, b"-nosound\0".as_slice()),
                             (CRT_ARG3_VA, b"-swtnl\0".as_slice()),
+                            (CRT_ARG4_VA, b"-window\0".as_slice()),
                         ] {
                             if child_address_space
                                 .write(address, value)

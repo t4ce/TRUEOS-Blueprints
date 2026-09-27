@@ -264,7 +264,8 @@ pub const CRT_ARG0_VA: u32 = PROCESS_DATA_VA + 0x80;
 pub const CRT_ARG1_VA: u32 = PROCESS_DATA_VA + 0x89;
 pub const CRT_ARG2_VA: u32 = PROCESS_DATA_VA + 0x91;
 pub const CRT_ARG3_VA: u32 = PROCESS_DATA_VA + 0x9a;
-pub const CRT_ARGC: u32 = 4;
+pub const CRT_ARG4_VA: u32 = PROCESS_DATA_VA + 0xa1;
+pub const CRT_ARGC: u32 = 5;
 const XP_MIN_APPLICATION_ADDRESS: u32 = 0x0001_0000;
 const XP_MAX_APPLICATION_ADDRESS: u32 = 0x7ffe_ffff;
 pub const XP_MEMORY_LOAD: u32 = 25;
@@ -287,11 +288,10 @@ pub const STACK_BASE: u32 = 0x0430_0000;
 pub const STACK_BYTES: usize = 0x10_0000;
 pub const STACK_TOP: u32 = STACK_BASE + STACK_BYTES as u32;
 pub const THUNK_PAGE_BYTES: usize = 0x1000;
-/// Process state returned by GetCommandLineA.  The launcher constructs its
-/// separate `"war3.exe" -opengl -nosound -swtnl` child command line on its
-/// native stack.
+/// Launcher process state returned by GetCommandLineA. The child receives
+/// CHILD_COMMAND_LINE and matching CRT arguments when its address space is built.
 pub const COMMAND_LINE: &[u8] = b"\"Warcraft III.exe\"\0";
-pub const CHILD_COMMAND_LINE: &[u8] = b"\"war3.exe\" -opengl -nosound -swtnl\0";
+pub const CHILD_COMMAND_LINE: &[u8] = b"\"war3.exe\" -opengl -nosound -swtnl -window\0";
 pub const LAUNCHER_IMAGE_FILENAME: &[u8] = b"C:\\Warcraft III\\Warcraft III.exe\0";
 pub const CHILD_IMAGE_FILENAME: &[u8] = b"C:\\Warcraft III\\War3.exe\0";
 const CHILD_WORKING_DIRECTORY: &str = "C:\\Warcraft III";
