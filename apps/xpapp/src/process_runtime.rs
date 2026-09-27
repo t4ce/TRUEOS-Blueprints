@@ -566,9 +566,8 @@ impl XpProcess {
             .1
             .checked_add(1)
             .ok_or("critical recursion overflow")?;
-        write_u32(memory, address + 4, entry.1 - 1)?;
-        write_u32(memory, address + 8, entry.1)?;
-        write_u32(memory, address + 12, entry.0)?;
+        let words = [entry.1 - 1, entry.1, entry.0].map(u32::to_le_bytes);
+        memory.write(address.checked_add(4).ok_or("critical section overflow")?, words.as_flattened())?;
         Ok(0)
     }
 
@@ -590,13 +589,9 @@ impl XpProcess {
         if entry.1 == 0 {
             entry.0 = 0;
         }
-        write_u32(
-            memory,
-            address + 4,
-            if entry.1 == 0 { u32::MAX } else { entry.1 - 1 },
-        )?;
-        write_u32(memory, address + 8, entry.1)?;
-        write_u32(memory, address + 12, entry.0)?;
+        let words = [if entry.1 == 0 { u32::MAX } else { entry.1 - 1 }, entry.1, entry.0]
+            .map(u32::to_le_bytes);
+        memory.write(address.checked_add(4).ok_or("critical section overflow")?, words.as_flattened())?;
         Ok(0)
     }
 

@@ -48,6 +48,9 @@ pub const EXPECTED_SHA256: [u8; 32] = [
 #[cfg(test)]
 mod host_test_abi {
     #[unsafe(no_mangle)]
+    extern "C" fn trueos_cabi_log(_: u32, _: *const u8, _: usize, _: *const u8, _: usize) -> i32 { 0 }
+
+    #[unsafe(no_mangle)]
     extern "C" fn trueos_cabi_write(_stream: u32, _bytes: *const u8, _len: usize) {}
 
     #[unsafe(no_mangle)]

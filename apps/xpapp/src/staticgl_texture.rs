@@ -55,6 +55,9 @@ impl Default for GlTextureObject {
 }
 #[derive(Debug)]
 struct GlTextures {
+    // Packed mip atlases are immutable until this texture is edited. Bound
+    // this CPU cache independently of the authored texture pixel budget.
+    fixed_atlases: std::cell::RefCell<HashMap<u32, (std::sync::Arc<[u8]>, u32, u32)>>,
     reserved: HashSet<u32>,
     objects: HashMap<u32, GlTextureObject>,
     next: u32,
@@ -70,6 +73,7 @@ struct GlTextures {
 impl Default for GlTextures {
     fn default() -> Self {
         Self {
+            fixed_atlases: std::cell::RefCell::new(HashMap::new()),
             reserved: HashSet::new(),
             objects: HashMap::new(),
             next: 1,
@@ -93,6 +97,7 @@ impl GlTextures {
         }
     }
     fn object_mut(&mut self) -> &mut GlTextureObject {
+        self.fixed_atlases.get_mut().remove(&self.binding);
         if self.binding == 0 {
             &mut self.default_object
         } else {
@@ -158,6 +163,7 @@ impl GlTextures {
             if name != 0 {
                 self.reserved.remove(&name);
                 self.objects.remove(&name);
+                self.fixed_atlases.get_mut().remove(&name);
                 if self.binding == name {
                     self.binding = 0;
                 }

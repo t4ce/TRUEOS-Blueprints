@@ -1675,6 +1675,7 @@
                         let PersonalityAction::Return(value) = action else {
                             return Err("EnterCriticalSection child provider did not return".into());
                         };
+                        if cfg!(feature = "trace-api") {
                         let mut after = [0; 16];
                         child
                             .address_space
@@ -1699,6 +1700,7 @@
                                 value,
                             ),
                         );
+                        }
                         let mut registers = exit.registers;
                         registers.eax = value;
                         contexts[active]
@@ -1739,6 +1741,7 @@
                             );
                             return Ok(());
                         }
+                        if cfg!(feature = "trace-api") {
                         let mut before = [0; 16];
                         child
                             .address_space
@@ -1766,6 +1769,7 @@
                                 owner_before
                             ),
                         );
+                        }
                         let mut child_memory = X86Memory(&child.address_space);
                         let action = session
                             .process_mut(active_pid)

@@ -10,6 +10,9 @@ pub(crate) struct FrameWork {
     pub acquire_time: Duration,
     pub submit_time: Duration,
     pub wait_time: Duration,
+    pub texture_hits: u64,
+    pub texture_uploads: u64,
+    pub texture_upload_bytes: u64,
 }
 
 pub(crate) struct Heartbeat {
@@ -59,6 +62,11 @@ impl Heartbeat {
                 frame_time.as_secs_f64() * 1000.0,
                 now.duration_since(self.started).as_secs_f64(),
             ),
+        );
+        crate::logl::emit(
+            crate::logl::level::IMPORTANT,
+            format_args!("XPAPP FRAME TEXTURES cache_hits={} uploads={} upload_bytes={}",
+                work.texture_hits, work.texture_uploads, work.texture_upload_bytes),
         );
         crate::logl::emit(
             crate::logl::level::IMPORTANT,

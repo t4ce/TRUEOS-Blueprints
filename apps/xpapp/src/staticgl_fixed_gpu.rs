@@ -495,7 +495,10 @@ fn gl_fixed_gpu_mip_count(textures: &GlTextures) -> Result<u32, ProviderDispatch
 }
 fn gl_fixed_gpu_texture(
     textures: &GlTextures,
-) -> Result<(Vec<u8>, u32, u32), ProviderDispatchError> {
+) -> Result<(std::sync::Arc<[u8]>, u32, u32), ProviderDispatchError> {
+    if let Some(atlas) = textures.fixed_atlases.borrow().get(&textures.binding) {
+        return Ok(atlas.clone());
+    }
     let levels = gl_fixed_gpu_mip_count(textures)?;
     let object = textures.object();
     let base = &object.levels[&0];
@@ -520,7 +523,15 @@ fn gl_fixed_gpu_texture(
             row += 1;
         }
     }
-    Ok((bytes, base.width, height))
+    let atlas = (std::sync::Arc::<[u8]>::from(bytes), base.width, height);
+    const CACHE_BYTES: usize = 16 * 1024 * 1024;
+    if atlas.0.len() <= CACHE_BYTES {
+        let mut cache = textures.fixed_atlases.borrow_mut();
+        let used: usize = cache.values().map(|entry| entry.0.len()).sum();
+        if cache.len() >= 64 || used + atlas.0.len() > CACHE_BYTES { cache.clear(); }
+        cache.insert(textures.binding, atlas.clone());
+    }
+    Ok(atlas)
 }
 
 #[cfg(test)]
@@ -545,6 +556,30 @@ mod fixed_gpu_mip_tests {
         }
         t
     }
+    #[test]
+    fn cached_atlas_reuses_storage_and_invalidates_on_subimage_and_delete() {
+        struct Pixel;
+        impl GuestMemory for Pixel {
+            fn read(&self, address: u32, out: &mut [u8]) -> Result<(), &'static str> {
+                if address != 1 || out.len() != 4 { return Err("unexpected read"); }
+                out.copy_from_slice(&[1, 2, 3, 255]); Ok(())
+            }
+            fn write(&mut self, _: u32, _: &[u8]) -> Result<(), &'static str> { Err("read only") }
+        }
+        let mut t = texture();
+        let first = gl_fixed_gpu_texture(&t).unwrap().0;
+        let repeated = gl_fixed_gpu_texture(&t).unwrap().0;
+        assert!(std::sync::Arc::ptr_eq(&first, &repeated));
+        t.sub_image(0, [0, 0, 1, 1], 0x1908, GL_UNSIGNED_BYTE, 1, &Pixel).unwrap();
+        let changed = gl_fixed_gpu_texture(&t).unwrap().0;
+        assert!(!std::sync::Arc::ptr_eq(&first, &changed));
+        assert_eq!(&changed[..4], &[1, 2, 3, 255]);
+        assert_eq!(&first[..4], &[10; 4]);
+        t.delete(&[1]);
+        t.bind(1).unwrap();
+        assert!(gl_fixed_gpu_texture(&t).is_err());
+    }
+
     #[test]
     fn reported_filters_keep_all_authored_levels_and_non_square_offsets() {
         let t = texture();

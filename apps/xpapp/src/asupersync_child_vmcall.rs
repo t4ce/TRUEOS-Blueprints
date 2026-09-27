@@ -1150,8 +1150,10 @@
                     // without building labels, cloning imports, reading the return
                     // address again, or walking the compatibility special cases.
                     // Draw/context/swap calls retain their UI4 coordination below.
+                    // Ordinary frame logging must not disable this path; only
+                    // explicit API tracing needs the per-call diagnostic labels.
                     let mut direct_gl_result = None;
-                    if !logl::ENABLED && child.execution == ChildExecutionState::ImageEntryRunning
+                    if !cfg!(feature = "trace-api") && child.execution == ChildExecutionState::ImageEntryRunning
                         && child.load_library_call.is_none()
                     {
                         let process = session.process_mut(active_pid).ok_or("child process missing")?;

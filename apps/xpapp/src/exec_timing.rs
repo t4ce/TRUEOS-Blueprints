@@ -4,6 +4,7 @@
 use std::sync::Mutex;
 use std::time::Duration;
 use trueos::x86::{CarrierTiming, Exit};
+use xpapp::child_loader::ProviderOp;
 
 #[derive(Default)]
 pub struct Window {
@@ -44,15 +45,15 @@ impl Window {
 #[derive(Default)]
 struct Providers {
     since: Option<std::time::Instant>, count: u64, total_ns: u64,
-    max_ns: u64, pid: u32, tid: u32, id: u32, eip: u32,
+    max_ns: u64, pid: u32, tid: u32, id: u32, eip: u32, op: Option<ProviderOp>,
 }
 static PROVIDERS: Mutex<Providers> = Mutex::new(Providers {
-    since: None, count: 0, total_ns: 0, max_ns: 0, pid: 0, tid: 0, id: 0, eip: 0,
+    since: None, count: 0, total_ns: 0, max_ns: 0, pid: 0, tid: 0, id: 0, eip: 0, op: None,
 });
-pub struct ProviderScope { start: std::time::Instant, pid: u32, tid: u32, id: u32, eip: u32 }
+pub struct ProviderScope { start: std::time::Instant, pid: u32, tid: u32, id: u32, eip: u32, op: Option<ProviderOp> }
 impl ProviderScope {
-    pub fn new(pid: u32, tid: u32, id: u32, eip: u32) -> Self {
-        Self { start: std::time::Instant::now(), pid, tid, id, eip }
+    pub fn new(pid: u32, tid: u32, id: u32, eip: u32, op: Option<ProviderOp>) -> Self {
+        Self { start: std::time::Instant::now(), pid, tid, id, eip, op }
     }
 }
 impl Drop for ProviderScope {
@@ -67,7 +68,7 @@ impl Drop for ProviderScope {
             if ns >= totals.max_ns {
                 totals.max_ns = ns;
                 totals.pid = self.pid; totals.tid = self.tid;
-                totals.id = self.id; totals.eip = self.eip;
+                totals.id = self.id; totals.eip = self.eip; totals.op = self.op;
             }
             if now.duration_since(since) >= Duration::from_secs(2) {
                 Some(std::mem::take(&mut *totals))
@@ -75,8 +76,8 @@ impl Drop for ProviderScope {
         };
         if let Some(t) = report {
             crate::logl::emit(trueos::logl::level::IMPORTANT, format_args!(
-                "XPAPP PROVIDER TIME samples={} total_us={} max_us={} max_pid={} max_tid={} max_id={} max_eip=0x{:08x} scope=vmcall-dispatch-wall-including-awaits-and-special-traps",
-                t.count, t.total_ns/1000, t.max_ns/1000, t.pid, t.tid, t.id, t.eip));
+                "XPAPP PROVIDER TIME samples={} total_us={} max_us={} max_pid={} max_tid={} max_id={} max_eip=0x{:08x} max_op={:?} scope=vmcall-dispatch-wall-including-awaits-and-special-traps",
+                t.count, t.total_ns/1000, t.max_ns/1000, t.pid, t.tid, t.id, t.eip, t.op));
         }
     }
 }

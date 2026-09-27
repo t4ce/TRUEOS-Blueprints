@@ -191,7 +191,8 @@ impl XpProcess {
             _ => u32::from_le_bytes(b.try_into().unwrap()),
         }).collect();
         let indices = gl_assemble_triangles(mode, indices)?;
-        if c.debug_draws_remaining != 0 {
+        let debug_draw = c.debug_draws_remaining != 0;
+        if debug_draw {
             c.debug_draws_remaining -= 1;
             logl::emit(level::IMPORTANT, format_args!(
                 "XPAPP DEBUG GPU DRAW seq={} remaining={} indices={} vertex={:?} color={:?} uv={:?} texture={} enabled=0x{:x} viewport={:?}",
@@ -201,8 +202,23 @@ impl XpProcess {
             ));
         }
         let geometry = gl_fixed_gpu_geometry(c, memory, &indices)?;
+        if debug_draw {
+            let mut low = [f32::INFINITY; 4];
+            let mut high = [f32::NEG_INFINITY; 4];
+            for vertex in &geometry.vertices {
+                for i in 0..4 { low[i] = low[i].min(vertex[8 + i]); high[i] = high[i].max(vertex[8 + i]); }
+            }
+            logl::emit(level::IMPORTANT, format_args!(
+                "XPAPP DEBUG GPU INPUT seq={} texture={} vertices={} color_min={:?} color_max={:?} first={:?} lighting={} fog={} env={} alpha={:?} blend={:?} depth_flags=0x{:x}",
+                c.draw_count + 1, c.textures.binding, geometry.vertices.len(), low, high,
+                geometry.vertices.first(), geometry.state[85], geometry.state[92],
+                geometry.state[100], &geometry.state[125..128], &geometry.state[352..358],
+                gl_gpu_depth_flags(&c.fixed),
+            ));
+        }
         let decoded_at = std::time::Instant::now();
         let mut phases = [std::time::Duration::ZERO; 4];
+        let mut texture_uploads = staticgl_triangle::fixed::TextureUploads::default();
         let window = c.ui4_window_id.ok_or("GL UI4 frame missing")?;
         let runtime = self.gl_runtime.as_mut().ok_or("GL runtime missing")?;
         if !geometry.indices.is_empty() {
@@ -214,7 +230,7 @@ impl XpProcess {
             let atlas_started = std::time::Instant::now();
             let (pixels, width, height) = if c.textures.enabled {
                 gl_fixed_gpu_texture(&c.textures)?
-            } else { (vec![255u8;4], 1, 1) };
+            } else { (std::sync::Arc::<[u8]>::from([255u8;4]), 1, 1) };
             phases[0] = atlas_started.elapsed();
             let acquire_started = std::time::Instant::now();
             let surface = runtime.device.acquire_ui4_surface(window)
@@ -229,6 +245,7 @@ impl XpProcess {
                 &geometry.vertices, &geometry.indices, &geometry.state, &pixels, width, height, flags)
                 .map_err(|rc| gl_texture_error(API, format!("native GPU indexed submit rc={rc}")))?;
             phases[2] = submit_started.elapsed();
+            texture_uploads = runtime.fixed_renderer.as_mut().unwrap().take_texture_uploads();
             let wait_started = std::time::Instant::now();
             runtime.device.wait(runtime.queue, point.value)
                 .map_err(|rc| gl_texture_error(API, format!("native GPU wait rc={rc}")))?;
@@ -245,6 +262,9 @@ impl XpProcess {
             c.heartbeat.work.acquire_time += phases[1];
             c.heartbeat.work.submit_time += phases[2];
             c.heartbeat.work.wait_time += phases[3];
+            c.heartbeat.work.texture_hits += texture_uploads.hits;
+            c.heartbeat.work.texture_uploads += texture_uploads.uploads;
+            c.heartbeat.work.texture_upload_bytes += texture_uploads.bytes;
         }
         Ok(0)
     }

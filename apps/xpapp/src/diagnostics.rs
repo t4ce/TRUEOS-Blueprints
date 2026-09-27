@@ -37,7 +37,9 @@ pub(crate) use trace;
 /// Explicit minishell replies and fatal diagnostics use the same retained sink.
 #[inline]
 pub fn emit(level: u8, message: core::fmt::Arguments<'_>) {
-    trueos::logl::log(level, message);
+    // Native workers do not pass stdout through the Hull's log capture.
+    // Structured records reach the host logger from either execution context.
+    let _ = trueos::logl::log_record(level, "xpapp", message);
 }
 
 #[cfg(test)]
