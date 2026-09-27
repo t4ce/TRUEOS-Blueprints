@@ -1,7 +1,10 @@
 # Native OpenGL GPU path
 
 `glClear` uses drawable-owned GPU D32 storage. A depth clear writes 1.0 through
-Render0; a depth-only clear preserves color. Color-only clears preserve depth.
+Render0; a depth-only clear preserves color. Clears use two GPU triangles
+clipped to the drawable and the lower-left GL scissor rectangle, independently
+of viewport. Empty scissors submit nothing. Pixels outside the rectangle retain
+both color and depth. Color-only clears preserve depth.
 `glDepthMask(false)` suppresses depth clears and writes, and `glDepthFunc` is
 translated to Intel comparison state. Depth survives separate draw submissions.
 The kernel charges each device for its own drawable depth allocation and retains
@@ -18,5 +21,4 @@ Blueprint builds. These checks do not establish hardware image correctness or FP
 
 The immediate shader bridge still rejects unsupported perspective, varying
 vertex color/texture combine, blending, alpha testing, lighting, fog and scissor
-states. This depth change addresses the reported `glClear` frontier, not the
-remaining fixed-function shader work.
+state on ordinary draws. Scissored `glClear` is supported.

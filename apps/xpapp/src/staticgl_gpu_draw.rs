@@ -241,26 +241,24 @@ impl XpProcess {
         let clear_depth = depth_clear_flags.is_some();
         let clear_color = mask & GL_COLOR_BUFFER_BIT != 0;
         if !clear_depth && !clear_color { return Ok(0); }
-        if c.fixed.is_enabled(FIXED_GL_SCISSOR_TEST) && c.fixed.scissor != [0, 0, c.drawable_size[0] as i32, c.drawable_size[1] as i32] {
-            return Err(gl_texture_error(API, "native GPU scissored clear required"));
-        }
+        let Some(vertices) = gl_gpu_clear_vertices(c.drawable_size,
+            c.fixed.is_enabled(FIXED_GL_SCISSOR_TEST).then_some(c.fixed.scissor)) else { return Ok(0); };
+        let drawable_size = c.drawable_size;
         let window = c.ui4_window_id.ok_or("GL UI4 frame missing")?;
         let color = gl_rgba8(c.clear_color);
         let runtime = self.gl_runtime.as_mut().ok_or("GL runtime missing")?;
-        if clear_depth && runtime.textured_renderer.is_none() {
+        if runtime.textured_renderer.is_none() {
             runtime.textured_renderer = Some(staticgl_triangle::textured::TexturedRenderer::new(runtime.device)
                 .map_err(|rc| gl_texture_error(API, format!("native GPU depth-clear pipeline rc={rc}")))?);
         }
         let surface = runtime.device.acquire_ui4_surface(window)
             .map_err(|rc| gl_texture_error(API, format!("native GPU acquire rc={rc}")))?;
-        let point = if clear_depth {
-            // The depth clear is a GPU fullscreen clear pass. This degenerate
-            // indexed primitive keeps the existing draw ABI and produces no fragments.
-            let vertex = staticgl_triangle::textured::TexturedVertex { position: [0.; 3], uv: [0.; 2] };
-            let flags = depth_clear_flags.unwrap();
-            runtime.textured_renderer.as_mut().unwrap().draw_with_flags(runtime.queue, surface,
-                &[vertex], &[0, 0, 0], &[255; 4], 1, 1, color, flags)
-        } else { runtime.device.submit_ui4_clear(runtime.queue, surface, color) }
+        if [surface.info().width, surface.info().height] != drawable_size {
+            return Err(gl_texture_error(API, "drawable/surface size mismatch"));
+        }
+        let flags = depth_clear_flags.unwrap_or(0) | trueos::vgpu::INDEXED_DRAW_GEOMETRY_CLEAR;
+        let point = runtime.textured_renderer.as_mut().unwrap().draw_with_flags(runtime.queue, surface,
+            &vertices, &[0, 1, 2, 2, 1, 3], &[255; 4], 1, 1, color, flags)
             .map_err(|rc| gl_texture_error(API, format!("native GPU clear rc={rc}")))?;
         runtime.device.wait(runtime.queue, point.value)
             .map_err(|rc| gl_texture_error(API, format!("native GPU clear wait rc={rc}")))?;
@@ -387,5 +385,74 @@ mod gl_gpu_depth_tests {
                 assert_eq!(flags & INDEXED_DRAW_DEPTH_WRITE != 0, write);
             }
         }
+    }
+}
+
+// glClear ignores viewport, transforms, depth test, texture and blend state.
+// Integer pixel boundaries become two GPU triangles. GL scissor coordinates
+// use the same lower-left origin as clip-space XY; the carrier handles Y flip.
+fn gl_gpu_clear_vertices(size: [u32; 2], scissor: Option<[i32; 4]>)
+    -> Option<[staticgl_triangle::textured::TexturedVertex; 4]>
+{
+    let [width, height] = size.map(i64::from);
+    if width == 0 || height == 0 { return None; }
+    let [x, y, w, h] = scissor.map(|r| r.map(i64::from)).unwrap_or([0, 0, width, height]);
+    if w <= 0 || h <= 0 { return None; }
+    let left = x.clamp(0, width);
+    let bottom = y.clamp(0, height);
+    let right = (x + w).clamp(0, width);
+    let top = (y + h).clamp(0, height);
+    if left >= right || bottom >= top { return None; }
+    Some([[left, bottom], [right, bottom], [left, top], [right, top]].map(|[x, y]|
+        staticgl_triangle::textured::TexturedVertex {
+            position: [2. * x as f32 / width as f32 - 1., 2. * y as f32 / height as f32 - 1., 1.],
+            uv: [0.; 2],
+        }))
+}
+
+#[cfg(test)]
+mod gl_gpu_scissor_clear_tests {
+    use super::*;
+
+    #[test]
+    fn rectangle_covers_only_lower_left_scissor_pixels() {
+        // Compare triangle coverage against GL's integer rectangle rule, with
+        // asymmetrical coordinates to catch a top-left/bottom-left inversion.
+        let [width, height] = [32, 24];
+        let vertices = gl_gpu_clear_vertices([width, height], Some([3, 2, 13, 7])).unwrap();
+        let cross = |a: [f32; 3], b: [f32; 3], p: [f32; 3]|
+            (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0]);
+        for y in 0..height {
+            for x in 0..width {
+                let p = [2. * (x as f32 + 0.5) / width as f32 - 1.,
+                    2. * (y as f32 + 0.5) / height as f32 - 1., 1.];
+                let covered = [[0, 1, 2], [2, 1, 3]].iter().any(|t| {
+                    let [a, b, c] = t.map(|i| vertices[i].position);
+                    cross(a, b, p) >= 0. && cross(b, c, p) >= 0. && cross(c, a, p) >= 0.
+                });
+                assert_eq!(covered, (3..16).contains(&x) && (2..9).contains(&y), "pixel {x},{y}");
+            }
+        }
+        assert!(vertices.iter().all(|v| v.position[2] == 1.));
+    }
+
+    #[test]
+    fn scissor_clamps_negative_origins_and_handles_integer_overflow() {
+        let positions = |r| gl_gpu_clear_vertices([640, 480], r).unwrap().map(|v| v.position);
+        assert_eq!(positions(None), [[-1., -1., 1.], [1., -1., 1.], [-1., 1., 1.], [1., 1., 1.]]);
+        assert_eq!(positions(Some([-8, -9, i32::MAX, i32::MAX])), positions(None));
+        assert_eq!(positions(Some([-160, -120, 480, 360])),
+            [[-1., -1., 1.], [0., -1., 1.], [-1., 0., 1.], [0., 0., 1.]]);
+        assert!(gl_gpu_clear_vertices([640, 480], Some([i32::MAX, 0, i32::MAX, 100])).is_none());
+    }
+
+    #[test]
+    fn empty_and_disjoint_scissors_produce_no_gpu_work() {
+        for rect in [[0, 0, 0, 480], [0, 0, 640, 0], [640, 0, 1, 1],
+            [0, 480, 1, 1], [-10, -10, 10, 10], [0, 0, -1, 480]] {
+            assert!(gl_gpu_clear_vertices([640, 480], Some(rect)).is_none());
+        }
+        assert!(gl_gpu_clear_vertices([0, 480], None).is_none());
+        assert!(gl_gpu_clear_vertices([640, 0], None).is_none());
     }
 }
