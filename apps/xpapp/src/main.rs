@@ -61,6 +61,21 @@ const MESSAGE_BOX_WIDTH: u32 = 560;
 const MESSAGE_BOX_HEIGHT: u32 = 280;
 const MESSAGE_BOX_MAX_ANSI_BYTES: usize = 4096;
 fn main() {
+    let job = match trueos::worker::spawn_x86_last_ap(run_on_dedicated_ap) {
+        Ok(job) => job,
+        Err(error) => {
+            logl::emit(level::ERROR, format_args!("XPAPP LASTAP admission failed: {error}"));
+            return;
+        }
+    };
+    let runtime = tokio::runtime::Builder::new_current_thread().enable_time().build()
+        .expect("XPAPP supervisor runtime");
+    if let Err(error) = runtime.block_on(job) {
+        logl::emit(level::ERROR, format_args!("XPAPP LASTAP worker lost: {error}"));
+    }
+}
+
+fn run_on_dedicated_ap() {
     let runtime = match tokio::runtime::Builder::new_current_thread()
         .enable_time()
         .build()

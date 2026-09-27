@@ -263,6 +263,14 @@ impl Context {
         execute_on_carrier(self.handle, true).await
     }
 
+    /// Synchronous entry for a coordinator already running on its dedicated AP.
+    pub fn run_on_current_carrier(&mut self) -> Result<Exit, Error> {
+        v::vx86::context_run(self.handle).map(Exit::from).map_err(Error::from_kernel)
+    }
+    pub fn resume_on_current_carrier(&mut self) -> Result<Exit, Error> {
+        v::vx86::context_resume(self.handle).map(Exit::from).map_err(Error::from_kernel)
+    }
+
     /// Execute on a reusable native lane, retaining ordinary exit boundaries.
     pub async fn run_on(&mut self, carrier: &ExecutionCarrier) -> Result<Exit, Error> {
         carrier.execute(self.handle, false).await

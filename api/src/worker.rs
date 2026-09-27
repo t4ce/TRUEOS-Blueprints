@@ -143,6 +143,18 @@ fn submit(job: Box<dyn FnOnce() + Send + 'static>) -> i32 {
     }
 }
 
+/// Reserve LASTAP for a complete x86 coordinator job. No general-lane fallback.
+#[cfg(feature = "wc3-x86")]
+pub fn spawn_x86_last_ap<F, R>(f: F) -> Result<JoinHandle<R>, SpawnError>
+where F: FnOnce() -> R + Send + 'static, R: Send + 'static {
+    spawn_with(f, |job| {
+        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+        { unsafe { v::worker_abi::trueos_x86_last_ap_submit_job(job) } }
+        #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+        { submit(job) }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -35,7 +35,7 @@ impl DebugShell {
         if now < self.next_poll {
             return;
         }
-        self.next_poll = now + std::time::Duration::from_millis(100);
+        self.next_poll = now + std::time::Duration::from_secs(5);
         let mut bytes = [0; 192];
         let count = trueos::vshell::attached_read_available(&mut bytes);
         for byte in &bytes[..count] {

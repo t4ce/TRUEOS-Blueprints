@@ -14,7 +14,7 @@ test = false
 bench = false
 
 [features]
-default = []
+default = ["nolog"]
 diagnostics = []
 actor-execution = []
 carrier-selftest = []

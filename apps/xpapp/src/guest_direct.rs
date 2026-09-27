@@ -1,15 +1,13 @@
-//! Direct coordinator-owned x86 contexts.  A context is resumed only through
-//! `&mut self`; `Context::run`/`resume` already await the native carrier, so
-//! no actor, channel, or response handoff is needed between ordinary exits.
+//! LASTAP coordinator-owned x86 contexts. A context is resumed through
+//! `&mut self` on the current dedicated carrier; provider dispatch and guest
+//! re-entry share the AP without an executor/channel handoff at each exit.
 
 use std::sync::{
-    Arc, Mutex, Weak,
+    Mutex,
     atomic::{AtomicU64, Ordering},
 };
 
-use trueos::x86::{Context, DebugRegisters, ExecutionCarrier, Exit, ExitKind, ExtendedState, Registers};
-
-static EXECUTION_CARRIER: Mutex<Weak<ExecutionCarrier>> = Mutex::new(Weak::new());
+use trueos::x86::{Context, DebugRegisters, Exit, ExitKind, ExtendedState, Registers};
 
 macro_rules! trace_api {
     ($message:expr $(,)?) => {
@@ -68,7 +66,6 @@ struct ExecutionProvenance {
 /// "apply at the next execution permit" behavior without an actor handoff.
 pub struct GuestThreadContext {
     context: Context,
-    carrier: Arc<ExecutionCarrier>,
     pid: u32,
     tid: u32,
     registers: Registers,
@@ -84,17 +81,8 @@ pub struct GuestThreadContext {
 impl GuestThreadContext {
     pub fn spawn(context: Context, pid: u32, tid: u32) -> Result<Self, String> {
         let registers = context.registers().map_err(|error| error.to_string())?;
-        let carrier = {
-            let mut shared = EXECUTION_CARRIER.lock().unwrap_or_else(|p| p.into_inner());
-            if let Some(carrier) = shared.upgrade() { carrier } else {
-                let carrier = Arc::new(ExecutionCarrier::new().map_err(|e| e.to_string())?);
-                *shared = Arc::downgrade(&carrier);
-                carrier
-            }
-        };
         Ok(Self {
             context,
-            carrier,
             pid,
             tid,
             registers,
@@ -209,10 +197,10 @@ impl GuestThreadContext {
         }
         record_execution(sequence, ExecutionStage::Enter, self.pid, self.tid);
         let exit = match if self.started {
-            self.context.resume_on(&self.carrier).await
+            self.context.resume_on_current_carrier()
         } else {
             self.started = true;
-            self.context.run_on(&self.carrier).await
+            self.context.run_on_current_carrier()
         } {
             Ok(exit) => exit,
             Err(error) => {
@@ -257,7 +245,7 @@ impl GuestThreadContext {
                 let elapsed = now.duration_since(self.progress_at);
                 if elapsed >= std::time::Duration::from_secs(2) {
                     crate::logl::emit(trueos::logl::level::IMPORTANT, format_args!(
-                        "XPAPP EXEC PROGRESS pid={} tid={} interval_ms={} exits={} vmcalls={} preemptions={} exceptions={} eip=0x{:08x} transport=reused-native-worker",
+                        "XPAPP EXEC PROGRESS pid={} tid={} interval_ms={} exits={} vmcalls={} preemptions={} exceptions={} eip=0x{:08x} transport=dedicated-last-ap",
                         self.pid, self.tid, elapsed.as_millis(), self.progress_counts[0],
                         self.progress_counts[1], self.progress_counts[2], self.progress_counts[3],
                         exit.registers.eip,
