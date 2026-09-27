@@ -1963,6 +1963,61 @@
                             .map_err(|error| error.to_string())?;
                         continue;
                     }
+                    if operation == child_loader::ProviderOp::GetClientRect {
+                        let action = session
+                            .process_mut(active_pid)
+                            .ok_or_else(|| "child process missing".to_owned())?
+                            .xp
+                            .dispatch_provider_for_process_typed(
+                                active_pid,
+                                active_tid,
+                                provider_id,
+                                exit.registers.esp,
+                                &mut X86Memory(&child.address_space),
+                            )
+                            .map_err(|error| error.to_string())?;
+                        let PersonalityAction::Session(SessionRequest::GetClientRect {
+                            pid,
+                            hwnd,
+                            output,
+                        }) = action
+                        else {
+                            return Err("GetClientRect produced unexpected action".into());
+                        };
+                        if output == 0 {
+                            return Err("GetClientRect null RECT frontier".into());
+                        }
+                        let rect = session.client_rect(pid, hwnd).map_err(str::to_owned)?;
+                        let mut bytes = [0u8; 16];
+                        bytes[0..4].copy_from_slice(&rect[0].to_le_bytes());
+                        bytes[4..8].copy_from_slice(&rect[1].to_le_bytes());
+                        bytes[8..12].copy_from_slice(&rect[2].to_le_bytes());
+                        bytes[12..16].copy_from_slice(&rect[3].to_le_bytes());
+                        X86Memory(&child.address_space)
+                            .write(output, &bytes)
+                            .map_err(str::to_owned)?;
+                        logl::log!(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD GETCLIENTRECT RESULT pid={} tid={} hwnd=0x{:08x} output=0x{:08x} rect=[{},{},{},{}] result=1 cleanup=8-by-thunk",
+                                active_pid,
+                                active_tid,
+                                hwnd,
+                                output,
+                                rect[0],
+                                rect[1],
+                                rect[2],
+                                rect[3],
+                            ),
+                        );
+                        let mut registers = exit.registers;
+                        registers.eax = 1;
+                        contexts[active]
+                            .context
+                            .set_registers(registers)
+                            .map_err(|error| error.to_string())?;
+                        continue;
+                    }
                     if operation == child_loader::ProviderOp::SetWindowLongA {
                         let action = session.process_mut(active_pid).ok_or("child process missing")?.xp
                             .dispatch_provider_for_process_typed(active_pid, active_tid, provider_id,

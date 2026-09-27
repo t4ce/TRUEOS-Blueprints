@@ -860,6 +860,11 @@ pub enum SessionRequest {
         hwnd: u32,
         output: u32,
     },
+    GetClientRect {
+        pid: Pid,
+        hwnd: u32,
+        output: u32,
+    },
     SetWindowLongA { pid: Pid, hwnd: u32, index: i32, value: u32 },
     GetWindowLongA {
         pid: Pid,
@@ -1479,6 +1484,32 @@ impl Wc3Session {
             .and_then(|value| i32::try_from(value).ok())
             .ok_or("GetWindowRect bottom overflow")?;
         Ok([window.x, window.y, right, bottom])
+    }
+
+    pub fn client_rect(&self, pid: Pid, hwnd: u32) -> Result<[i32; 4], &'static str> {
+        if hwnd == DESKTOP_HWND {
+            let (width, height) = self
+                .process(pid)
+                .ok_or("GetClientRect desktop process missing")?
+                .xp
+                .desktop_size();
+            return Ok([
+                0,
+                0,
+                i32::try_from(width).map_err(|_| "GetClientRect desktop width overflow")?,
+                i32::try_from(height).map_err(|_| "GetClientRect desktop height overflow")?,
+            ]);
+        }
+        let window = self.windows.get(&hwnd).ok_or("GetClientRect unknown window")?;
+        if window.owner.pid != pid {
+            return Err("GetClientRect window owner mismatch");
+        }
+        Ok([
+            0,
+            0,
+            i32::try_from(window.width).map_err(|_| "GetClientRect width overflow")?,
+            i32::try_from(window.height).map_err(|_| "GetClientRect height overflow")?,
+        ])
     }
 
     /// The guest, rather than CreateWindowEx's host shim, owns GWL_USERDATA.

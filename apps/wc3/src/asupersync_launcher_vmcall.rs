@@ -1500,6 +1500,23 @@
 
                         1
                     }
+                    PersonalityAction::Session(SessionRequest::GetClientRect {
+                        pid,
+                        hwnd,
+                        output,
+                    }) => {
+                        if output == 0 {
+                            return Err("GetClientRect null RECT frontier".into());
+                        }
+                        let rect = session.client_rect(pid, hwnd).map_err(str::to_owned)?;
+                        let mut bytes = [0u8; 16];
+                        bytes[0..4].copy_from_slice(&rect[0].to_le_bytes());
+                        bytes[4..8].copy_from_slice(&rect[1].to_le_bytes());
+                        bytes[8..12].copy_from_slice(&rect[2].to_le_bytes());
+                        bytes[12..16].copy_from_slice(&rect[3].to_le_bytes());
+                        memory.write(output, &bytes).map_err(str::to_owned)?;
+                        1
+                    }
                     PersonalityAction::Session(SessionRequest::SetWindowLongA { pid, hwnd, index, value }) => {
                         session.set_window_long_a(pid, hwnd, index, value).map_err(str::to_owned)?
                     }

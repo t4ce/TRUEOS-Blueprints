@@ -2688,6 +2688,14 @@ impl XpProcess {
                     output,
                 }))
             }
+            ProviderOp::GetClientRect => {
+                let [_, hwnd, output] = arguments::<3>(memory, esp)?;
+                Some(PersonalityAction::Session(SessionRequest::GetClientRect {
+                    pid,
+                    hwnd,
+                    output,
+                }))
+            }
             ProviderOp::SetWindowLongA => {
                 let [_, hwnd, index, value] = arguments::<4>(memory, esp)?;
                 Some(PersonalityAction::Session(SessionRequest::SetWindowLongA {
