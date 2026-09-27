@@ -198,15 +198,9 @@ impl XpProcess {
             })
     }
 
-    pub fn debug_texture_depth(&mut self, tid: u32, texture: Option<u32>) -> Result<(), String> {
-        let c = self.gl_context_mut(tid, "debug depth").map_err(|e| format!("{e:?}"))?;
-        if let Some(name) = texture {
-            if name == 0 || !c.textures.objects.contains_key(&name) {
-                return Err("select an existing nonzero texture name from debug draws".into());
-            }
-        }
-        c.debug_depth_texture = texture;
-        Ok(())
+    pub fn debug_texture_depth(&mut self, tid: u32, _texture: Option<u32>) -> Result<(), String> {
+        self.gl_context_mut(tid, "debug depth").map_err(|e| format!("{e:?}"))?;
+        Err("CPU depth override removed; native GL depth bridge is pending".into())
     }
 
     pub fn debug_capture_gl_draws(&mut self, tid: u32, count: u32) -> Result<(), String> {
@@ -473,19 +467,7 @@ impl XpProcess {
                 format!("unsupported mask0x{mask:x}"),
             ));
         }
-        let c = self.gl_context_mut(tid, "glClear")?;
-        Self::gl_ensure_raster(c)?;
-        let scissor = if c.fixed.is_enabled(0xc11) {
-            Some(c.fixed.scissor)
-        } else {
-            None
-        };
-        c.raster_frame.as_mut().unwrap().clear(
-            (mask & GL_COLOR_BUFFER_BIT != 0).then(|| gl_rgba8(c.clear_color).to_le_bytes()),
-            (mask & GL_DEPTH_BUFFER_BIT != 0 && c.fixed.depth_mask).then_some(1.0),
-            scissor,
-        );
-        Ok(0)
+        self.gl_clear_gpu(tid, mask)
     }
 
     fn gl_draw_elements_static(
@@ -494,7 +476,7 @@ impl XpProcess {
         esp: u32,
         memory: &impl GuestMemory,
     ) -> Result<u32, ProviderDispatchError> {
-        self.gl_draw_compat_static(tid, esp, memory)
+        self.gl_draw_gpu_static(tid, esp, memory)
     }
 
     fn wgl_swap_layer_buffers_static(
@@ -511,8 +493,7 @@ impl XpProcess {
                 "unsupported DC/planes",
             ));
         }
-        c.swap_count += 1;
-        self.gl_present_raster(tid, "swap")?;
+        self.gl_present_gpu(tid, "swap")?;
         Ok(1)
     }
 
@@ -522,9 +503,8 @@ impl XpProcess {
         _esp: u32,
         _memory: &impl GuestMemory,
     ) -> Result<u32, ProviderDispatchError> {
-        // UI4 submission/presentation occurs at the guest's WGL swap boundary.
-        // The swap path already waits for every strip completion, so Finish has
-        // no additional owned work to submit or producer frame to acquire.
+        // Native draw/clear calls wait for their submission before returning.
+        self.gl_context_mut(_tid, "glFinish")?;
         Ok(0)
     }
 
@@ -833,10 +813,10 @@ impl WglContext {
             textures: GlTextures::default(),
             observed_writes: VecDeque::new(),
             fixed: GlFixedState::default(),
+            #[cfg(test)]
             raster_frame: None,
             debug_draws_remaining: 0,
             debug_depth_texture: None,
-            present_pixels: Vec::new(),
             drawable_size: [0, 0],
             viewport_set: false,
             draw_count: 0,

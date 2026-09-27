@@ -283,13 +283,6 @@
                                 .map_err(str::to_owned)?;
                         let mut restored_debug =
                             wc3::seh::decode_x86_debug_registers(&bytes).map_err(str::to_owned)?;
-                        loop_checkpoint::boundary(
-                            child,
-                            &mut contexts[active].context,
-                            &mut restored,
-                            &mut restored_debug,
-                        )
-                        .await?;
                         if restored.eip == TABLE_CHECKPOINT_FROM_EIP
                             && child_read_u32(child, WAR3_DWORD_SCAN_INDEX) == Some(0)
                         {

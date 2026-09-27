@@ -359,12 +359,16 @@ pub fn parse(bytes: &[u8]) -> Result<PeImage, &'static str> {
 /// Launcher-facing materialization retains the historical import identity and
 /// applies only the launcher's policy checks outside the generic parser.
 pub fn materialize(bytes: &[u8]) -> Result<Materialized, &'static str> {
+    materialize_with_policy(bytes, true)
+}
+
+pub fn materialize_with_policy(bytes: &[u8], strict_launcher: bool) -> Result<Materialized, &'static str> {
     let parsed = parse(bytes)?;
-    if parsed.entry_rva != ENTRY_RVA
+    if strict_launcher && (parsed.entry_rva != ENTRY_RVA
         || parsed.image_base != IMAGE_BASE
         || parsed.size_of_image as usize != IMAGE_BYTES
         || parsed.size_of_headers as usize != HEADERS_BYTES
-        || !parsed.relocations.is_empty()
+        || !parsed.relocations.is_empty())
     {
         return Err("PE fixed launcher header mismatch");
     }
@@ -381,7 +385,7 @@ pub fn materialize(bytes: &[u8]) -> Result<Materialized, &'static str> {
             iat_rva: descriptor.iat_rva,
         });
     }
-    if !imports
+    if strict_launcher && !imports
         .iter()
         .any(|item| item.module.eq_ignore_ascii_case("KERNEL32.dll") && item.symbol == "GetVersion")
     {

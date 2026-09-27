@@ -1263,8 +1263,6 @@
                             scan_heartbeat_source: None,
                             dword_scan_watch: None,
                             table_checkpoint_capture: None,
-                            loop_checkpoint_capture: None,
-                            loop_checkpoint_attempted: 0,
                             loader: ChildLoaderState {
                                 prepared: false,
                                 native_requests: Vec::new(),

@@ -4,7 +4,6 @@ use std::time::{Duration, Instant};
 pub(crate) struct FrameWork {
     pub draws: u64,
     pub triangles: u64,
-    pub pixels: u64,
     pub draw_time: Duration,
 }
 
@@ -42,8 +41,8 @@ impl Heartbeat {
         crate::logl::emit(
             crate::logl::level::IMPORTANT,
             format_args!(
-                "WC3 FRAME hwnd=0x{hwnd:08x} swap={} draws={} triangles={} pixels={} gpu=completed ui4=published",
-                self.swaps, work.draws, work.triangles, work.pixels,
+                "WC3 FRAME hwnd=0x{hwnd:08x} swap={} draws={} submitted_triangles={} renderer=native-gpu gpu=completed ui4=published",
+                self.swaps, work.draws, work.triangles,
             ),
         );
         crate::logl::emit(

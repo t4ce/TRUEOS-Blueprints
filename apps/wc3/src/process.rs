@@ -1961,10 +1961,10 @@ struct WglContext {
     textures: GlTextures,
     observed_writes: VecDeque<GlWriteNote>,
     fixed: GlFixedState,
+    #[cfg(test)]
     raster_frame: Option<crate::staticgl_raster::GlRasterFrame>,
     debug_draws_remaining: u32,
     debug_depth_texture: Option<u32>,
-    present_pixels: Vec<u8>,
     drawable_size: [u32; 2],
     viewport_set: bool,
     draw_count: u64,
@@ -3493,6 +3493,7 @@ include!("staticgl_fixed.rs");
 include!("staticgl_vertex.rs");
 include!("staticgl_arrays.rs");
 include!("staticgl_compat_draw.rs");
+include!("staticgl_gpu_draw.rs");
 
 
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -2595,24 +2595,14 @@
                                 let key_path = node.and_then(|node| registry.key_identity(node));
                                 let loaded_before =
                                     node.is_some_and(|node| registry.values_loaded(node));
-                                let design_value = key_path.as_ref().and_then(|(root, path)| {
-                                    wc3::reg::lookup(
-                                        *root,
-                                        path,
-                                        frame.value_name.as_deref().unwrap_or(""),
-                                    )
-                                });
-                                let (value, value_source) = if let Some(value) = design_value {
-                                    (Some((value.ty, value.bytes.to_vec())), "design")
-                                } else if let Some(node) = node {
+                                let value = if let Some(node) = node {
                                     registry.ensure_values_loaded(node).map_err(str::to_owned)?;
-                                    let value = registry
-                                        .value(node, frame.value_name.as_deref().unwrap_or(""))
-                                        .map(|value| (value.ty, value.bytes.clone()));
-                                    (value, "backing")
+                                    registry.value(node, frame.value_name.as_deref().unwrap_or(""))
+                                        .map(|value| (value.ty, value.bytes.clone()))
                                 } else {
-                                    (None, "absent")
+                                    None
                                 };
+                                let value_source = if value.is_some() { "backing" } else { "absent" };
                                 (node, key_path, loaded_before, value, value_source)
                             }
                             wc3::session::RegistryState::Unloaded => {

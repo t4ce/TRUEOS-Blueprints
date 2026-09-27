@@ -1,6 +1,4 @@
 use super::*;
-#[path = "loop_checkpoint.rs"]
-pub(super) mod loop_checkpoint;
 
 const ERROR_PROC_NOT_FOUND: u32 = 127;
 const ERROR_SUCCESS: u32 = 0;
@@ -2521,11 +2519,6 @@ pub(super) async fn run_loop(
             .key();
         debug_shell.poll(&contexts, pending_child.as_ref(), address_space, &mut session, active_key,
             exit.kind == ExitKind::Other && exit.detail == 52);
-        if let Some(child) = pending_child.as_mut() {
-            if active_key.tid == child.tid {
-                loop_checkpoint::observe_exit(child, active_key, &exit);
-            }
-        }
         match exit.kind {
             ExitKind::Cpuid if active_key.pid != LAUNCHER_PID => {
                 let child = pending_child

@@ -341,8 +341,6 @@ mod tests_main_1 {
             scan_heartbeat_source: None,
             dword_scan_watch: None,
             table_checkpoint_capture: None,
-            loop_checkpoint_capture: None,
-            loop_checkpoint_attempted: 0,
             loader: ChildLoaderState {
                 prepared: true,
                 native_requests: Vec::new(),
@@ -446,8 +444,6 @@ mod tests_main_1 {
             scan_heartbeat_source: None,
             dword_scan_watch: None,
             table_checkpoint_capture: None,
-            loop_checkpoint_capture: None,
-            loop_checkpoint_attempted: 0,
             loader: ChildLoaderState {
                 prepared: true,
                 native_requests: Vec::new(),
@@ -745,8 +741,6 @@ mod tests_main_1 {
             scan_heartbeat_source: None,
             dword_scan_watch: None,
             table_checkpoint_capture: None,
-            loop_checkpoint_capture: None,
-            loop_checkpoint_attempted: 0,
             loader: ChildLoaderState {
                 prepared: true,
                 native_requests: Vec::new(),
@@ -1915,25 +1909,6 @@ mod tests_session_1 {
     }
 
     #[test]
-fn design_time_allow_local_files_is_present_and_explicitly_zero() {
-        let value = crate::reg::lookup(
-            crate::reg::HKEY_LOCAL_MACHINE,
-            "software\\BLIZZARD entertainment\\warcraft iii",
-            "ALLOW LOCAL FILES",
-        )
-        .unwrap();
-
-        assert_eq!(value.ty, crate::reg::REG_DWORD);
-        assert_eq!(value.bytes, [0, 0, 0, 0]);
-        assert!(crate::reg::lookup(
-            crate::reg::HKEY_CURRENT_USER,
-            "Software\\Blizzard Entertainment\\Warcraft III",
-            "Allow Local Files",
-        )
-        .is_none());
-    }
-
-    #[test]
     fn registry_root_helpers_classify_and_format_predefined_keys() {
         assert!(crate::reg::is_predefined_root(crate::reg::HKEY_CURRENT_USER));
         assert!(!crate::reg::is_predefined_root(0x5743_8201));
@@ -2693,24 +2668,5 @@ fn design_time_allow_local_files_is_present_and_explicitly_zero() {
 
 }
 
-#[test]
-fn design_time_battle_net_gateways_exposes_the_rig_lan_realm() {
-    let value = crate::reg::lookup(
-        crate::reg::HKEY_CURRENT_USER,
-        "software\\BLIZZARD entertainment\\warcraft iii",
-        "BATTLE.NET GATEWAYS",
-    )
-    .unwrap();
-
-    assert_eq!(value.ty, crate::reg::REG_MULTI_SZ);
-    assert_eq!(
-        value.bytes,
-        b"1001\0\
-          01\0\
-          192.168.178.111\0\
-          0\0\
-          RoC 1.21b Realm\0\0"
-    );
-}
     };
 }

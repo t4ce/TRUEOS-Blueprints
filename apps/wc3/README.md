@@ -1,3 +1,13 @@
+> Renderer status: guest indexed triangle lists/strips now feed the native
+> sampled GPU path directly, including GPU color clears and WGL publication.
+> This initial connection supports affine XYZ/UV, nearest/repeat opaque textures
+> with supported texture environments, and uniform opaque untextured color.
+> Perspective/vertex-color shaders, shared GL depth, blending, alpha testing,
+> fog, lighting, scissor and GPU readback still require bridge work and stop at
+> explicit frontiers. This is not yet a working WC3 renderer or an FPS result.
+> CPU rasterization and software-frame upload remain absent from the runtime;
+> the old rasterizer compiles only for host correctness tests.
+
 # Warcraft III Blueprint
 
 This Blueprint owns the Windows XP compatibility semantics used by the
@@ -277,20 +287,13 @@ on the normal Blueprint text/log path, including in quiet and `nolog` builds.
 `debug perf` establishes a baseline on its first call and reports elapsed time,
 draws, guest swaps per second and execution exits on subsequent calls. These are
 guest counters, not a physical scanout FPS measurement.
-`debug draws 2 3 256` captures the next 256 compatibility draws on PID 2,
-TID 3's current GL context (maximum 256; count 0 cancels). Each draw reports
-client pointers, raw and transformed vertex colors, clip positions, texture name
-and first covered texel, lighting, depth/alpha/blend/fog state, and raster counts.
-It automatically disarms and is silent by default. Capture logging affects timing;
-use it for correctness investigations, not performance measurements.
-For a reversible depth-ordering experiment, `debug depth 2 3 TEXTURE bypass`
-disables depth testing and writes only for draws sampling that existing texture.
-Select the actual font texture name from `debug draws`; do not assume a stable ID.
-Colors, blending, alpha testing, clipping and guest GL state are unchanged.
-`debug depth 2 3 restore` removes the override. It defaults off and lasts only
-for that GL context. A successful visual change implicates depth rejection, but
-is not a permanent rendering fix.
-An already-running older pack cannot gain these commands without a relaunch.
+`debug draws 2 3 256` captures up to 256 native draw attempts on PID 2,
+TID 3's current GL context (count 0 cancels). It records array pointers,
+texture binding, enabled GL state, viewport and index count before admission,
+including the draw that reaches an unsupported native-state frontier.
+Capture logging affects timing; use it for correctness investigations.
+The former `debug depth` CPU override is unavailable on the native path and
+returns an explicit error.
 
 `debug post PID HWND MESSAGE WPARAM LPARAM` is an explicit mutation for window
 notification experiments. It queues one message for the normal guest message
@@ -309,9 +312,9 @@ Addresses/handles are run-specific. See `docs/window-notification-probes.md`.
 
 ### Frame heartbeat
 
-`WC3 FRAME` reports the last published frame's draw calls, post-clip triangles
-and shaded pixels. `WC3 FRAME TIME` reports CPU draw-handler time (including
-array reads and rasterization), swap time (acquisition wait, GPU upload/completion
+`WC3 FRAME` reports the last published frame's draw calls and submitted
+triangles with `renderer=native-gpu`; it does not claim a shaded-pixel count. `WC3 FRAME TIME` reports CPU draw-handler time (including
+array reads, native submission and completion waits), swap time (acquisition wait, GPU upload/completion
 and UI4 publication), total swap-to-swap wall time, and elapsed context lifetime.
 The first frame's wall interval starts at context creation. Counters reset on
 every successful publication, including frames whose heartbeat is rate-limited.

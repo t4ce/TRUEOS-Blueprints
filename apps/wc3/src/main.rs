@@ -217,17 +217,31 @@ async fn discover_maps() -> Result<Option<wc3::session::MapCatalog>, String> {
 }
 
 async fn run() -> Result<(), String> {
-    let maps = discover_maps().await?;
+    let mut args = std::env::args().skip(1);
+    let launcher_path = args.next().unwrap_or_else(|| LAUNCHER_PATH.to_owned());
+    if args.next().is_some() {
+        return Err("usage: wc3 [TRUEOSFS executable path]".into());
+    }
+    if !launcher_path.starts_with('/') {
+        return Err("executable path must be an absolute TRUEOSFS path".into());
+    }
+    let default_launcher = launcher_path == LAUNCHER_PATH;
+    let maps = if default_launcher { discover_maps().await? } else { None };
     if cfg!(feature = "carrier-selftest") {
         run_x86_extended_state_self_test().await?;
     }
-    let bytes = async_fs::read_file(LAUNCHER_PATH.as_bytes())
+    let bytes = async_fs::read_file(launcher_path.as_bytes())
         .await
-        .map_err(|error| format!("read {LAUNCHER_PATH}: TRUEOSFS error {error}"))?;
-    if Sha256::digest(&bytes).as_slice() != EXPECTED_SHA256 {
+        .map_err(|error| format!("read {launcher_path}: TRUEOSFS error {error}"))?;
+    if default_launcher && Sha256::digest(&bytes).as_slice() != EXPECTED_SHA256 {
         return Err("launcher SHA-256 does not match Warcraft III RoC 1.00".into());
     }
-    let materialized = pe32::materialize(&bytes).map_err(str::to_owned)?;
+    let materialized = pe32::materialize_with_policy(&bytes, default_launcher).map_err(str::to_owned)?;
+    if materialized.image_base != pe32::IMAGE_BASE {
+        return Err("PE image base unsupported by current process mapping".into());
+    }
+    let entry_va = materialized.image_base.checked_add(materialized.entry_rva)
+        .ok_or("PE entry address overflow")?;
     let imports = materialized.imports.len();
     let PreparedProcess { mappings, xp } =
         PreparedProcess::new(materialized).map_err(str::to_owned)?;
@@ -267,7 +281,7 @@ async fn run() -> Result<(), String> {
     let esp = STACK_TOP;
     let registers = Registers {
         esp,
-        eip: pe32::IMAGE_BASE + pe32::ENTRY_RVA,
+        eip: entry_va,
         eflags: 0x202,
         fs_base: wc3::process::TEB_VA,
         ..Registers::default()
@@ -2146,8 +2160,6 @@ struct PendingChild {
     scan_heartbeat_source: Option<u32>,
     dword_scan_watch: Option<DwordScanWatch>,
     table_checkpoint_capture: Option<TableCheckpointCapture>,
-    loop_checkpoint_capture: Option<asupersync::loop_checkpoint::LoopCheckpointCapture>,
-    loop_checkpoint_attempted: u8,
     loader: ChildLoaderState,
     execution: ChildExecutionState,
 }

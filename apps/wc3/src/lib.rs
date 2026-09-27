@@ -32,6 +32,7 @@ pub mod record_expand;
 pub mod seh;
 pub mod session;
 pub mod staticstr;
+#[cfg(test)]
 mod staticgl_raster;
 pub mod thunk32;
 pub mod ui4_retry;
