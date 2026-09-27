@@ -13,6 +13,31 @@ command replies remain available, including with `nolog`.
 
 ## Execution changes
 
+### Kernel spin/yield policy
+
+The kernel previously requested PAUSE exiting for every Hull and then slept
+for 1 ms on each intercepted instruction. Rust `spin_loop` in synchronization
+and completion waits emits PAUSE, so this imposed timed sleeps on short waits
+even with application logging disabled. The kernel now lets PAUSE execute
+natively when its VMX preemption timer is available. Without that timer it keeps
+the interception fallback. `allcaps::hv::VMX_NATIVE_PAUSE_WITH_TIMER=false`
+restores PAUSE interception for comparison.
+
+Explicit host yield and zero-duration sleep now suspend for one executor turn
+without a minimum 1-ms sleep. Positive sleeps keep their duration. Hull timer
+exits also yield an executor turn for bounded same-AP fairness; the existing
+125-ms Hull timer, 500-ms x86 slice and host stop checks remain in place. XP
+zero-timeout wait results and scheduling safepoints are unchanged.
+
+These changes require a **kernel rebuild and boot**, not just a Blueprint
+repack. The existing kernel VMCS-control receipt includes actual `pause_exit`
+and `timer` values; the expected timer-backed path is `pause_exit=0 timer=1`.
+Host policy tests and a kernel check validate the code, not the hardware speedup.
+The next run must establish the combined effect. Native worker submission and
+fresh VMCS setup still occur for each x86 slice.
+
+### Blueprint path
+
 - The coordinator owns stopped x86 contexts directly. `run` and `resume` still
   await the existing native carrier, without an additional Tokio actor and
   request/response channels for every exit. Extended/debug state is read on

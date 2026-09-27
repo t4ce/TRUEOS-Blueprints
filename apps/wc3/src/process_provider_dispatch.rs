@@ -52,6 +52,29 @@ fn parse_maps_find_pattern(pattern: &str) -> Option<MapFindQuery> {
     })
 }
 
+/// The game creates its Save and Replay folders alongside Maps.  TRUEOSFS
+/// mounts both directories even when they contain no entries, so a wildcard
+/// enumeration must distinguish that normal empty-directory result from an
+/// unmodelled pathname.
+fn parse_war3_empty_directory_find_pattern(pattern: &str) -> Option<&'static str> {
+    let parts = path_components(pattern);
+    if parts.len() != 4
+        || !parts[0].eq_ignore_ascii_case("C:")
+        || !parts[1].eq_ignore_ascii_case("Warcraft III")
+        || parts[3] != "*"
+    {
+        return None;
+    }
+
+    if parts[2].eq_ignore_ascii_case("Save") {
+        Some("Save")
+    } else if parts[2].eq_ignore_ascii_case("Replay") {
+        Some("Replay")
+    } else {
+        None
+    }
+}
+
 fn prefix_eq_ignore_ascii_case(parts: &[&str], prefix: &[String]) -> bool {
     parts.len() >= prefix.len()
         && parts
@@ -2269,6 +2292,20 @@ impl XpProcess {
                     );
                     return Ok(PersonalityAction::Return(handle));
                 }
+                if let Some(directory) = parse_war3_empty_directory_find_pattern(&pattern) {
+                    self.set_last_error(ERROR_FILE_NOT_FOUND);
+                    self.call_count = self
+                        .call_count
+                        .checked_add(1)
+                        .ok_or("call count overflow")?;
+                    logl::log!(
+                        level::IMPORTANT,
+                        format_args!(
+                            "WC3 CHILD FINDFIRSTFILEA RESULT pid={pid} tid={tid} pattern={pattern:?} virtual_directory={directory} matches=0 handle=INVALID_HANDLE_VALUE last_error=ERROR_FILE_NOT_FOUND"
+                        ),
+                    );
+                    return Ok(PersonalityAction::Return(u32::MAX));
+                }
                 if is_war3_pre_cache_search(&pattern) {
                     self.set_last_error(ERROR_FILE_NOT_FOUND);
                     self.call_count = self
@@ -2664,6 +2701,9 @@ impl XpProcess {
                 pid,
                 hwnd: arguments::<2>(memory, esp)?[1],
             })),
+            ProviderOp::ReleaseCapture => Some(PersonalityAction::Session(
+                SessionRequest::ReleaseCapture { pid },
+            )),
             ProviderOp::SetForegroundWindow => {
                 let [_, hwnd] = arguments::<2>(memory, esp)?;
                 Some(PersonalityAction::Session(

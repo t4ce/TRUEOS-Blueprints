@@ -1650,6 +1650,10 @@
                         session.set_capture(pid, hwnd).map_err(str::to_owned)?;
                         hwnd
                     }
+                    PersonalityAction::Session(SessionRequest::ReleaseCapture { pid }) => {
+                        session.release_capture(pid).map_err(str::to_owned)?;
+                        1
+                    }
                     PersonalityAction::Session(SessionRequest::SetForegroundWindow {
                         caller,
                         hwnd,

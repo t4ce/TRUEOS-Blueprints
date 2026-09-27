@@ -850,6 +850,9 @@ pub enum SessionRequest {
         pid: Pid,
         hwnd: u32,
     },
+    ReleaseCapture {
+        pid: Pid,
+    },
     ScreenToClient {
         pid: Pid,
         hwnd: u32,
@@ -1683,6 +1686,16 @@ impl Wc3Session {
             return Err("SetCapture window owner mismatch");
         }
         Ok(self.mouse_capture.replace(hwnd).unwrap_or(0))
+    }
+
+    pub fn release_capture(&mut self, pid: Pid) -> Result<u32, &'static str> {
+        let hwnd = self.mouse_capture.ok_or("ReleaseCapture no capture")?;
+        let window = self.windows.get(&hwnd).ok_or("ReleaseCapture captured window missing")?;
+        if window.owner.pid != pid {
+            return Err("ReleaseCapture window owner mismatch");
+        }
+        self.mouse_capture = None;
+        Ok(hwnd)
     }
 
     pub fn screen_to_client(

@@ -1808,6 +1808,41 @@
                             .map_err(|error| error.to_string())?;
                         continue;
                     }
+                    if operation == child_loader::ProviderOp::ReleaseCapture {
+                        let action = session
+                            .process_mut(active_pid)
+                            .ok_or_else(|| "child process missing".to_owned())?
+                            .xp
+                            .dispatch_provider_for_process_typed(
+                                active_pid,
+                                active_tid,
+                                provider_id,
+                                exit.registers.esp,
+                                &mut X86Memory(&child.address_space),
+                            )
+                            .map_err(|error| error.to_string())?;
+                        let PersonalityAction::Session(SessionRequest::ReleaseCapture { pid }) = action
+                        else {
+                            return Err("ReleaseCapture produced unexpected action".into());
+                        };
+                        let released = session.release_capture(pid).map_err(str::to_owned)?;
+                        logl::log!(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD RELEASECAPTURE pid={} tid={} released=0x{:08x} result=TRUE cleanup=0-by-thunk",
+                                active_pid,
+                                active_tid,
+                                released,
+                            ),
+                        );
+                        let mut registers = exit.registers;
+                        registers.eax = 1;
+                        contexts[active]
+                            .context
+                            .set_registers(registers)
+                            .map_err(|error| error.to_string())?;
+                        continue;
+                    }
                     if operation == child_loader::ProviderOp::SetForegroundWindow {
                         let action = session
                             .process_mut(active_pid)
