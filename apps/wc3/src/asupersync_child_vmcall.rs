@@ -283,26 +283,6 @@
                                 .map_err(str::to_owned)?;
                         let mut restored_debug =
                             wc3::seh::decode_x86_debug_registers(&bytes).map_err(str::to_owned)?;
-                        if restored.eip == TABLE_CHECKPOINT_FROM_EIP
-                            && child_read_u32(child, WAR3_DWORD_SCAN_INDEX) == Some(0)
-                        {
-                            let restored_checkpoint = try_restore_table_checkpoint(
-                                child,
-                                &mut contexts[active].context,
-                                &mut restored,
-                                &mut restored_debug,
-                            )
-                            .await?;
-                            if !restored_checkpoint {
-                                begin_table_checkpoint_capture(
-                                    child,
-                                    &contexts[active].context,
-                                    restored,
-                                    restored_debug,
-                                    &session,
-                                )?;
-                            }
-                        }
                         if seh.boring_single_step {
                             let control_changed = restored.eip != seh.original_registers.eip
                                 || restored.esp != seh.original_registers.esp
@@ -391,26 +371,6 @@
                                     seh.original_registers.ecx,
                                     raw_ecx,
                                     restored.ecx,
-                                ),
-                            );
-                        }
-                        if restored.eip == TABLE_CHECKPOINT_TO_EIP
-                            && child_read_u32(child, WAR3_DWORD_SCAN_INDEX)
-                                == Some(WAR3_TABLE_FILL_BOUND)
-                            && child.table_checkpoint_capture.is_some()
-                        {
-                            finish_table_checkpoint_capture(
-                                child,
-                                &contexts[active].context,
-                                restored,
-                                restored_debug,
-                                &session,
-                            )
-                            .await?;
-                            logl::log!(
-                                level::IMPORTANT,
-                                format_args!(
-                                    "WC3 CHILD TABLE CHECKPOINT CONTINUE reason=artifact-verified"
                                 ),
                             );
                         }

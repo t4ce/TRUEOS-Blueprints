@@ -14,7 +14,6 @@ mod test;
 #[allow(non_snake_case)]
 pub mod ThisToThat;
 pub mod assets;
-pub mod checkpoint;
 pub mod child_loader;
 pub mod cursor_decode;
 pub mod debug_command;
