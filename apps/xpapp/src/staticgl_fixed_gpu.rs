@@ -44,6 +44,15 @@ fn gl_fixed_gpu_alpha_blend_factor(value: u32) -> Result<f32, ProviderDispatchEr
     })
 }
 
+fn gl_fixed_gpu_wrap(value: u32) -> Result<f32, ProviderDispatchError> {
+    match value {
+        0x2901 => Ok(0.), // REPEAT
+        0x2900 => Ok(1.), // legacy CLAMP with border color
+        0x812f => Ok(2.), // CLAMP_TO_EDGE
+        _ => Err(gl_texture_error("glDrawElements", "fixed GPU texture wrap")),
+    }
+}
+
 fn gl_fixed_gpu_state(c: &WglContext) -> Result<Option<[f32; 384]>, ProviderDispatchError> {
     const API: &str = "glDrawElements";
     let f = &c.fixed;
@@ -187,8 +196,8 @@ fn gl_fixed_gpu_state(c: &WglContext) -> Result<Option<[f32; 384]>, ProviderDisp
                 _ => return Err(gl_texture_error(API, "fixed GPU texture environment")),
             },
             (image.internal == 0x1907) as u8 as f32,
-            0.,
-            0.,
+            gl_fixed_gpu_wrap(object.wrap_s)?,
+            gl_fixed_gpu_wrap(object.wrap_t)?,
         ];
     }
     s[31][1] = f.is_enabled(FIXED_GL_ALPHA_TEST) as u8 as f32;
@@ -434,6 +443,18 @@ mod fixed_gpu_tests {
         let s = gl_fixed_gpu_state(&c).unwrap().unwrap();
         assert_eq!(&s[125..128], &[1., 4., 0.25]);
         assert_eq!(&s[352..358], &[1., 3., 19., 0., 3., 19.]);
+        c.textures.enabled = true;
+        c.textures.bind(1).unwrap();
+        c.textures.object_mut().wrap_s = 0x2901;
+        c.textures.object_mut().wrap_t = 0x2900;
+        c.textures.object_mut().levels.insert(0, GlTextureImage {
+            width: 1,
+            height: 1,
+            internal: 0x1908,
+            rgba: vec![255; 4],
+        });
+        let s = gl_fixed_gpu_state(&c).unwrap().unwrap();
+        assert_eq!(&s[102..104], &[0., 1.]);
     }
 }
 

@@ -16,8 +16,12 @@ fn gl_texture_draw_image_contract(
         matches!(object.mag_filter, 0x2600 | 0x2601)
     } else {
         object.mag_filter == 0x2600
-    }) || object.wrap_s != 0x2901
-        || object.wrap_t != 0x2901
+    }) || !(if fixed {
+        matches!(object.wrap_s, 0x2900 | 0x2901 | 0x812f)
+            && matches!(object.wrap_t, 0x2900 | 0x2901 | 0x812f)
+    } else {
+        object.wrap_s == 0x2901 && object.wrap_t == 0x2901
+    })
     {
         return Err(gl_texture_error(
             API,
