@@ -272,6 +272,13 @@ impl Context {
         carrier.execute(self.handle, true).await
     }
 
+    /// Time request delivery, native execution, and reply delivery separately.
+    pub async fn execute_on_measured(&mut self, carrier: &ExecutionCarrier, resume: bool)
+        -> Result<(Exit, CarrierTiming), Error>
+    {
+        carrier.execute_measured(self.handle, resume).await
+    }
+
     pub fn park(&self) -> Result<(), Error> {
         v::vx86::context_park(self.handle).map_err(Error::from_kernel)
     }
@@ -301,10 +308,24 @@ async fn execute_on_carrier(handle: u64, resume: bool) -> Result<Exit, Error> {
     raw.map(Exit::from).map_err(Error::from_kernel)
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+pub struct CarrierTiming {
+    pub request_ns: u64,
+    /// Includes kernel setup/cleanup as well as guest execution.
+    pub native_ns: u64,
+    pub reply_ns: u64,
+}
+
+struct CarrierReply {
+    result: Result<v::vx86::Exit, i32>,
+    accepted: tokio::time::Instant,
+    finished: tokio::time::Instant,
+}
+
 struct CarrierRequest {
     handle: u64,
     resume: bool,
-    reply: tokio::sync::oneshot::Sender<Result<v::vx86::Exit, i32>>,
+    reply: tokio::sync::oneshot::Sender<CarrierReply>,
 }
 
 /// One native worker shared by serially scheduled logical x86 contexts.
@@ -332,11 +353,22 @@ impl ExecutionCarrier {
     }
 
     async fn execute(&self, handle: u64, resume: bool) -> Result<Exit, Error> {
+        self.execute_measured(handle, resume).await.map(|(exit, _)| exit)
+    }
+
+    async fn execute_measured(&self, handle: u64, resume: bool) -> Result<(Exit, CarrierTiming), Error> {
+        let started = tokio::time::Instant::now();
         let (reply, response) = tokio::sync::oneshot::channel();
         self.requests.send(CarrierRequest { handle, resume, reply }).await
             .map_err(|_| Error::CarrierLost)?;
-        response.await.map_err(|_| Error::CarrierLost)?
-            .map(Exit::from).map_err(Error::from_kernel)
+        let response = response.await.map_err(|_| Error::CarrierLost)?;
+        let received = tokio::time::Instant::now();
+        let timing = CarrierTiming {
+            request_ns: response.accepted.saturating_duration_since(started).as_nanos() as u64,
+            native_ns: response.finished.saturating_duration_since(response.accepted).as_nanos() as u64,
+            reply_ns: received.saturating_duration_since(response.finished).as_nanos() as u64,
+        };
+        response.result.map(|raw| (Exit::from(raw), timing)).map_err(Error::from_kernel)
     }
 }
 
@@ -353,7 +385,10 @@ async fn carrier_requests(
         // A cancelled caller must not start a queued context after its owner
         // has dropped it. Already executing slices still retire normally.
         if !request.reply.is_closed() {
-            let _ = request.reply.send(execute(request.handle, request.resume));
+            let accepted = tokio::time::Instant::now();
+            let result = execute(request.handle, request.resume);
+            let finished = tokio::time::Instant::now();
+            let _ = request.reply.send(CarrierReply { result, accepted, finished });
         }
     }
 }

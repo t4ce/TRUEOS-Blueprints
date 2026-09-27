@@ -77,6 +77,7 @@ pub struct GuestThreadContext {
     pending_extended_state: Option<ExtendedState>,
     next_execution_provenance: Option<ExecutionProvenance>,
     started: bool,
+    timing: crate::exec_timing::Window,
     progress_at: std::time::Instant,
     progress_counts: [u64; 4],
 }
@@ -103,6 +104,7 @@ impl GuestThreadContext {
             pending_extended_state: None,
             next_execution_provenance: None,
             started: false,
+            timing: crate::exec_timing::Window::default(),
             progress_at: std::time::Instant::now(),
             progress_counts: [0; 4],
         })
@@ -170,6 +172,7 @@ impl GuestThreadContext {
     }
 
     async fn execute(&mut self) -> Result<Exit, String> {
+        let prepare_started = std::time::Instant::now();
         let sequence = NEXT_EXECUTION_SEQUENCE.fetch_add(1, Ordering::Relaxed);
         let provenance = self.next_execution_provenance.take();
         let provider = provenance
@@ -208,13 +211,14 @@ impl GuestThreadContext {
                 .map_err(|error| error.to_string())?;
         }
         record_execution(sequence, ExecutionStage::Enter, self.pid, self.tid);
-        let exit = match if self.started {
-            self.context.resume_on(&self.carrier).await
-        } else {
-            self.started = true;
-            self.context.run_on(&self.carrier).await
-        } {
-            Ok(exit) => exit,
+        let prepared = std::time::Instant::now();
+        let resume = self.started;
+        self.started = true;
+        let exit = match self.context.execute_on_measured(&self.carrier, resume).await {
+            Ok((exit, timing)) => {
+                self.timing.record(self.pid, self.tid, prepare_started, prepared, timing, &exit);
+                exit
+            }
             Err(error) => {
                 record_execution(sequence, ExecutionStage::Exit, self.pid, self.tid);
                 crate::logl::log!(

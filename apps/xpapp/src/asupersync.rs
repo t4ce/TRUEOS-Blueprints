@@ -2331,6 +2331,8 @@ pub(super) async fn run_loop(
                 continue;
             }
             ExitKind::VmCall => {
+                let _provider_timing = crate::exec_timing::ProviderScope::new(
+                    active_key.pid, active_key.tid, exit.registers.eax, exit.registers.eip);
                 let active_pid = active_key.pid;
                 let active_tid = active_key.tid;
                 include!("asupersync_child_vmcall.rs");

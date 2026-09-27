@@ -23,6 +23,7 @@ mod guest_actor;
 #[path = "guest_direct.rs"]
 mod guest_actor;
 mod debug_shell;
+mod exec_timing;
 
 use guest_actor::GuestThreadContext;
 
