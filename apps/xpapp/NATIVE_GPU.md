@@ -29,3 +29,9 @@ Minification supports nearest, linear, and all four mipmapped filters;
 magnification supports nearest and linear. The complete authored mip chain is
 uploaded as an atlas. Level selection and filtering run in the fragment shader.
 Missing or inconsistent mip levels are rejected explicitly.
+
+The coordinator acquires the UI4 producer lease before the first `glClear` or
+`glDrawElements`, retains it across subsequent calls, and publishes it at WGL
+swap (or the explicit first-draw preview feature). Acquisition retries only UI4
+Busy. A missing lease is not a busy condition. `glClear` is excluded from the
+nolog state-only dispatch path so it cannot bypass frame coordination.

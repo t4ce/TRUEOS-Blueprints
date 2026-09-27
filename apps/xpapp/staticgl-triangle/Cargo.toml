@@ -1,0 +1,18 @@
+[package]
+name = "staticgl-triangle"
+version = "0.1.0"
+edition = "2024"
+
+[package.metadata.trueos-blueprint]
+replicatable = false
+
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "staticgl-triangle"
+path = "src/main.rs"
+
+[dependencies]
+trueos = { path = "../../../api", features = ["ui4-scene"] }
