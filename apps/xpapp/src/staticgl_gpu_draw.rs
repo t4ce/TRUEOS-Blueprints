@@ -84,10 +84,11 @@ fn gl_gpu_geometry(
     const API: &str = "glDrawElements";
     // The immediate carrier currently has XYZ/UV and an opaque sampled PS.
     // Admit only state represented by that contract; never flatten perspective
-    // or silently drop depth, blending, fog, alpha test or lighting.
+    // or silently drop blending, fog, alpha test or lighting.
     let allowed = (1 << GlFixedState::capability_slot(FIXED_GL_DITHER).unwrap())
         | (1 << GlFixedState::capability_slot(FIXED_GL_TEXTURE_2D).unwrap())
-        | (1 << GlFixedState::capability_slot(FIXED_GL_CULL_FACE).unwrap());
+        | (1 << GlFixedState::capability_slot(FIXED_GL_CULL_FACE).unwrap())
+        | (1 << GlFixedState::capability_slot(FIXED_GL_DEPTH_TEST).unwrap());
     if c.fixed.enabled & !allowed != 0 {
         return Err(gl_texture_error(API, format!(
             "native GPU state bridge pending enabled=0x{:x} unsupported=0x{:x}",
@@ -143,11 +144,12 @@ fn gl_gpu_geometry(
         let position = [
             (2. * x as f32 + (clip[0] + 1.) * w as f32) / width as f32 - 1.,
             (2. * y as f32 + (clip[1] + 1.) * h as f32) / height as f32 - 1.,
-            (clip[2] + 1.) * 0.5,
+            (c.fixed.depth_range[0] + f64::from((clip[2] + 1.) * 0.5)
+                * (c.fixed.depth_range[1] - c.fixed.depth_range[0])) as f32,
         ];
         // The carrier clips against the full target, so non-full viewports
         // need the original homogeneous clipping before viewport mapping.
-        if c.viewport != [0, 0, width as i32, height as i32]
+        if (c.viewport != [0, 0, width as i32, height as i32] || c.fixed.depth_range != [0., 1.])
             && clip[..3].iter().any(|v| !(-1.0..=1.0).contains(v)) {
             return Err(gl_texture_error(API, "native GPU viewport clipping required"));
         }
@@ -214,8 +216,9 @@ impl XpProcess {
             if [surface.info().width, surface.info().height] != c.drawable_size {
                 return Err(gl_texture_error(API, "drawable/surface size mismatch"));
             }
-            let point = runtime.textured_renderer.as_mut().unwrap().draw_over(runtime.queue, surface,
-                &geometry.vertices, &geometry.indices, pixels, width, height)
+            let flags = gl_gpu_depth_flags(&c.fixed);
+            let point = runtime.textured_renderer.as_mut().unwrap().draw_with_flags(runtime.queue, surface,
+                &geometry.vertices, &geometry.indices, pixels, width, height, 0, flags)
                 .map_err(|rc| gl_texture_error(API, format!("native GPU indexed submit rc={rc}")))?;
             runtime.device.wait(runtime.queue, point.value)
                 .map_err(|rc| gl_texture_error(API, format!("native GPU wait rc={rc}")))?;
@@ -234,19 +237,30 @@ impl XpProcess {
         const API: &str = "glClear";
         let c = self.gl_context_mut(tid, API)?;
         if mask == 0 { return Ok(0); }
-        if mask & GL_DEPTH_BUFFER_BIT != 0 && c.fixed.depth_mask {
-            return Err(gl_texture_error(API, "native GPU shared GL depth target required"));
-        }
-        if mask & GL_COLOR_BUFFER_BIT == 0 { return Ok(0); }
+        let depth_clear_flags = gl_gpu_clear_depth_flags(mask, c.fixed.depth_mask);
+        let clear_depth = depth_clear_flags.is_some();
+        let clear_color = mask & GL_COLOR_BUFFER_BIT != 0;
+        if !clear_depth && !clear_color { return Ok(0); }
         if c.fixed.is_enabled(FIXED_GL_SCISSOR_TEST) && c.fixed.scissor != [0, 0, c.drawable_size[0] as i32, c.drawable_size[1] as i32] {
             return Err(gl_texture_error(API, "native GPU scissored clear required"));
         }
         let window = c.ui4_window_id.ok_or("GL UI4 frame missing")?;
         let color = gl_rgba8(c.clear_color);
-        let runtime = self.gl_runtime.as_ref().ok_or("GL runtime missing")?;
+        let runtime = self.gl_runtime.as_mut().ok_or("GL runtime missing")?;
+        if clear_depth && runtime.textured_renderer.is_none() {
+            runtime.textured_renderer = Some(staticgl_triangle::textured::TexturedRenderer::new(runtime.device)
+                .map_err(|rc| gl_texture_error(API, format!("native GPU depth-clear pipeline rc={rc}")))?);
+        }
         let surface = runtime.device.acquire_ui4_surface(window)
             .map_err(|rc| gl_texture_error(API, format!("native GPU acquire rc={rc}")))?;
-        let point = runtime.device.submit_ui4_clear(runtime.queue, surface, color)
+        let point = if clear_depth {
+            // The depth clear is a GPU fullscreen clear pass. This degenerate
+            // indexed primitive keeps the existing draw ABI and produces no fragments.
+            let vertex = staticgl_triangle::textured::TexturedVertex { position: [0.; 3], uv: [0.; 2] };
+            let flags = depth_clear_flags.unwrap();
+            runtime.textured_renderer.as_mut().unwrap().draw_with_flags(runtime.queue, surface,
+                &[vertex], &[0, 0, 0], &[255; 4], 1, 1, color, flags)
+        } else { runtime.device.submit_ui4_clear(runtime.queue, surface, color) }
             .map_err(|rc| gl_texture_error(API, format!("native GPU clear rc={rc}")))?;
         runtime.device.wait(runtime.queue, point.value)
             .map_err(|rc| gl_texture_error(API, format!("native GPU clear wait rc={rc}")))?;
@@ -290,13 +304,14 @@ mod staticgl_gpu_tests {
         assert!(c.raster_frame.is_none());
     }
     #[test]
-    fn gpu_bridge_does_not_flatten_perspective_or_drop_depth() {
+    fn gpu_bridge_rejects_perspective_and_carries_depth_state() {
         let (mut c, memory) = scene();
         c.projection_matrix[15] = 2.;
         assert!(gl_gpu_geometry(&c, &memory, &[0, 1, 2]).is_err());
         c.projection_matrix = GL_IDENTITY_MATRIX;
         c.fixed.set_enabled(FIXED_GL_DEPTH_TEST, true).unwrap();
-        assert!(gl_gpu_geometry(&c, &memory, &[0, 1, 2]).is_err());
+        assert!(gl_gpu_geometry(&c, &memory, &[0, 1, 2]).is_ok());
+        assert_ne!(gl_gpu_depth_flags(&c.fixed) & trueos::vgpu::INDEXED_DRAW_DEPTH_TEST, 0);
         assert!(c.raster_frame.is_none());
     }
     #[test]
@@ -324,5 +339,53 @@ mod staticgl_gpu_tests {
         c.color_array_enabled = true;
         c.color_pointer = c.vertex_pointer;
         assert!(gl_gpu_geometry(&c, &memory, &[0, 1, 2]).is_err());
+    }
+}
+
+fn gl_gpu_depth_flags(state: &GlFixedState) -> u32 {
+    use trueos::vgpu::*;
+    if !state.is_enabled(FIXED_GL_DEPTH_TEST) { return INDEXED_DRAW_LOAD_COLOR; }
+    INDEXED_DRAW_LOAD_COLOR | INDEXED_DRAW_DRAWABLE_DEPTH | INDEXED_DRAW_DEPTH_TEST
+        | if state.depth_mask { INDEXED_DRAW_DEPTH_WRITE } else { 0 }
+        | ((state.depth_func - FIXED_GL_NEVER) << INDEXED_DRAW_DEPTH_COMPARE_SHIFT)
+}
+
+fn gl_gpu_clear_depth_flags(mask: u32, depth_mask: bool) -> Option<u32> {
+    use trueos::vgpu::*;
+    (mask & GL_DEPTH_BUFFER_BIT != 0 && depth_mask).then_some(
+        INDEXED_DRAW_DRAWABLE_DEPTH | INDEXED_DRAW_CLEAR_DEPTH
+            | if mask & GL_COLOR_BUFFER_BIT == 0 { INDEXED_DRAW_LOAD_COLOR } else { 0 },
+    )
+}
+
+#[cfg(test)]
+mod gl_gpu_depth_tests {
+    use super::*;
+    use trueos::vgpu::*;
+    #[test]
+    fn depth_only_clear_preserves_color_and_respects_depth_mask() {
+        assert_eq!(gl_gpu_clear_depth_flags(GL_DEPTH_BUFFER_BIT, true),
+            Some(INDEXED_DRAW_DRAWABLE_DEPTH | INDEXED_DRAW_CLEAR_DEPTH | INDEXED_DRAW_LOAD_COLOR));
+        assert_eq!(gl_gpu_clear_depth_flags(GL_DEPTH_BUFFER_BIT | GL_COLOR_BUFFER_BIT, true),
+            Some(INDEXED_DRAW_DRAWABLE_DEPTH | INDEXED_DRAW_CLEAR_DEPTH));
+        assert_eq!(gl_gpu_clear_depth_flags(GL_COLOR_BUFFER_BIT, true), None);
+        assert_eq!(gl_gpu_clear_depth_flags(GL_DEPTH_BUFFER_BIT, false), None);
+        assert_eq!(gl_gpu_clear_depth_flags(0, true), None);
+    }
+    #[test]
+    fn depth_write_requires_test_and_each_gl_comparison_survives_the_wire() {
+        let mut state = GlFixedState::default();
+        assert_eq!(gl_gpu_depth_flags(&state), INDEXED_DRAW_LOAD_COLOR);
+        state.set_enabled(FIXED_GL_DEPTH_TEST, true).unwrap();
+        for func in FIXED_GL_NEVER..=FIXED_GL_ALWAYS {
+            state.depth_func = func;
+            for write in [false, true] {
+                state.depth_mask = write;
+                let flags = gl_gpu_depth_flags(&state);
+                assert!(indexed_draw_flags_valid(flags));
+                assert_eq!((flags & INDEXED_DRAW_DEPTH_COMPARE_MASK) >> INDEXED_DRAW_DEPTH_COMPARE_SHIFT, func - FIXED_GL_NEVER);
+                assert_eq!(flags & INDEXED_DRAW_DEPTH_WRITE != 0, write);
+            }
+        }
     }
 }

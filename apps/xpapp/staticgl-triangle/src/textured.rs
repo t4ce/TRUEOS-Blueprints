@@ -120,7 +120,7 @@ impl TexturedRenderer {
             width,
             height,
             clear_rgba8_srgb,
-            false,
+            0,
         )
     }
 
@@ -141,8 +141,19 @@ impl TexturedRenderer {
         height: u32,
     ) -> Result<TimelinePoint, i32> {
         self.submit(
-            queue, surface, vertices, indices, rgba8, width, height, 0, true,
+            queue, surface, vertices, indices, rgba8, width, height, 0, vgpu::INDEXED_DRAW_LOAD_COLOR,
         )
+    }
+
+    /// Immediate draw with drawable-owned depth and independent clear/load state.
+    /// All INDEXED_DRAW flags are validated by both client and kernel broker.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_with_flags(
+        &mut self, queue: Queue, surface: Ui4Surface,
+        vertices: &[TexturedVertex], indices: &[u32], rgba8: &[u8],
+        width: u32, height: u32, clear_rgba8_srgb: u32, flags: u32,
+    ) -> Result<TimelinePoint, i32> {
+        self.submit(queue, surface, vertices, indices, rgba8, width, height, clear_rgba8_srgb, flags)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -156,8 +167,9 @@ impl TexturedRenderer {
         width: u32,
         height: u32,
         clear_rgba8_srgb: u32,
-        load_color: bool,
+        flags: u32,
     ) -> Result<TimelinePoint, i32> {
+        if !vgpu::indexed_draw_flags_valid(flags) { return Err(vgpu::ERR_UNSUPPORTED); }
         self.last_failure = None;
         let texture_bytes = texture_byte_len(width, height)?;
         if rgba8.len() != texture_bytes
@@ -212,7 +224,7 @@ impl TexturedRenderer {
                 texture_height: height,
                 texture_pitch: width * 4,
                 sampler_flags: NEAREST_REPEAT,
-                texture_reserved: indexed_draw_texture_reserved(load_color),
+                texture_reserved: flags,
                 ..Default::default()
             },
         );

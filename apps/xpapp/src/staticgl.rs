@@ -200,7 +200,7 @@ impl XpProcess {
 
     pub fn debug_texture_depth(&mut self, tid: u32, _texture: Option<u32>) -> Result<(), String> {
         self.gl_context_mut(tid, "debug depth").map_err(|e| format!("{e:?}"))?;
-        Err("CPU depth override removed; native GL depth bridge is pending".into())
+        Err("CPU depth override removed; native depth override is not connected".into())
     }
 
     pub fn debug_capture_gl_draws(&mut self, tid: u32, count: u32) -> Result<(), String> {
