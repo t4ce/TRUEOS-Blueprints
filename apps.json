@@ -101,8 +101,8 @@
     "cubesrv",
     "superseedr",
     "webmail",
-    "wc3",
-    { "name": "staticgl-triangle", "path": "apps/wc3/staticgl-triangle" },
+    "xpapp",
+    { "name": "staticgl-triangle", "path": "apps/xpapp/staticgl-triangle" },
     {
       "name": "commander",
       "path": "buildins/commander"
