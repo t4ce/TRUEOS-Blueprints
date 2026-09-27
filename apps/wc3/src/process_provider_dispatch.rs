@@ -2756,6 +2756,13 @@ impl XpProcess {
                     SessionRequest::ImmAssociateContext { pid, hwnd, himc },
                 ))
             }
+            ProviderOp::ImmGetContext => {
+                let [_, hwnd] = arguments::<2>(memory, esp)?;
+                Some(PersonalityAction::Session(SessionRequest::ImmGetContext {
+                    pid,
+                    hwnd,
+                }))
+            }
             ProviderOp::SetWindowTextA => {
                 let [_, hwnd, text_ptr] = arguments::<3>(memory, esp)?;
                 if text_ptr == 0 {

@@ -198,6 +198,7 @@ pub enum ProviderOp {
     SetWindowLongA,
     DefWindowProcA,
     ImmAssociateContext,
+    ImmGetContext,
     SetWindowTextA,
     ClipCursor,
     BeginPaint,
@@ -375,6 +376,7 @@ impl ProviderOp {
             Self::SetWindowLongA => 12,
             Self::DefWindowProcA => 16,
             Self::ImmAssociateContext => 8,
+            Self::ImmGetContext => 4,
             Self::SetWindowTextA => 8,
             Self::ClipCursor => 4,
             Self::BeginPaint | Self::EndPaint => 8,
@@ -859,6 +861,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
     if import.module.eq_ignore_ascii_case("IMM32.dll") {
         return match symbol.as_str() {
             "ImmAssociateContext" => ProviderOp::ImmAssociateContext,
+            "ImmGetContext" => ProviderOp::ImmGetContext,
             _ => ProviderOp::Unknown,
         };
     }

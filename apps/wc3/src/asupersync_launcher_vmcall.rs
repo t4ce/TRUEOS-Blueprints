@@ -1536,6 +1536,9 @@
                     }) => session
                         .imm_associate_context(pid, hwnd, himc)
                         .map_err(str::to_owned)?,
+                    PersonalityAction::Session(SessionRequest::ImmGetContext { pid, hwnd }) => session
+                        .imm_get_context(pid, hwnd)
+                        .map_err(str::to_owned)?,
                     PersonalityAction::Session(SessionRequest::GetDC { pid, hwnd }) => {
                         session.validate_window_dc(pid, hwnd).map_err(str::to_owned)?;
                         session

@@ -879,6 +879,10 @@ pub enum SessionRequest {
         hwnd: u32,
         himc: u32,
     },
+    ImmGetContext {
+        pid: Pid,
+        hwnd: u32,
+    },
     SetWindowText {
         pid: Pid,
         hwnd: u32,
@@ -1576,6 +1580,17 @@ impl Wc3Session {
         let previous = window.imm_context;
         window.imm_context = 0;
         Ok(previous)
+    }
+
+    pub fn imm_get_context(&self, pid: Pid, hwnd: u32) -> Result<u32, &'static str> {
+        let window = self
+            .windows
+            .get(&hwnd)
+            .ok_or("ImmGetContext unknown window")?;
+        if window.owner.pid != pid {
+            return Err("ImmGetContext window owner mismatch");
+        }
+        Ok(window.imm_context)
     }
 
     pub fn set_window_text(
