@@ -5,6 +5,45 @@ struct GlFixedGpuDraw {
     indices: Vec<u32>,
     state: [f32; 384],
 }
+
+// Intel's color-buffer blend factors use the same compact numbering as Mesa's
+// PIPE_BLENDFACTOR values. Keep that hardware-independent ABI in the packed
+// fixed state so the kernel can validate it before programming the renderer.
+fn gl_fixed_gpu_blend_factor(value: u32) -> Result<f32, ProviderDispatchError> {
+    let encoded = match value {
+        FIXED_GL_ONE => 0x01,
+        FIXED_GL_SRC_COLOR => 0x02,
+        FIXED_GL_SRC_ALPHA => 0x03,
+        FIXED_GL_DST_ALPHA => 0x04,
+        FIXED_GL_DST_COLOR => 0x05,
+        FIXED_GL_SRC_ALPHA_SATURATE => 0x06,
+        FIXED_GL_CONSTANT_COLOR => 0x07,
+        FIXED_GL_CONSTANT_ALPHA => 0x08,
+        FIXED_GL_ZERO => 0x11,
+        FIXED_GL_ONE_MINUS_SRC_COLOR => 0x12,
+        FIXED_GL_ONE_MINUS_SRC_ALPHA => 0x13,
+        FIXED_GL_ONE_MINUS_DST_ALPHA => 0x14,
+        FIXED_GL_ONE_MINUS_DST_COLOR => 0x15,
+        FIXED_GL_ONE_MINUS_CONSTANT_COLOR => 0x17,
+        FIXED_GL_ONE_MINUS_CONSTANT_ALPHA => 0x18,
+        _ => return Err(gl_texture_error("glDrawElements", "fixed GPU blend factor")),
+    };
+    Ok(encoded as f32)
+}
+
+fn gl_fixed_gpu_alpha_blend_factor(value: u32) -> Result<f32, ProviderDispatchError> {
+    gl_fixed_gpu_blend_factor(match value {
+        FIXED_GL_SRC_COLOR => FIXED_GL_SRC_ALPHA,
+        FIXED_GL_ONE_MINUS_SRC_COLOR => FIXED_GL_ONE_MINUS_SRC_ALPHA,
+        FIXED_GL_DST_COLOR => FIXED_GL_DST_ALPHA,
+        FIXED_GL_ONE_MINUS_DST_COLOR => FIXED_GL_ONE_MINUS_DST_ALPHA,
+        FIXED_GL_CONSTANT_COLOR => FIXED_GL_CONSTANT_ALPHA,
+        FIXED_GL_ONE_MINUS_CONSTANT_COLOR => FIXED_GL_ONE_MINUS_CONSTANT_ALPHA,
+        FIXED_GL_SRC_ALPHA_SATURATE => FIXED_GL_ONE,
+        other => other,
+    })
+}
+
 fn gl_fixed_gpu_state(c: &WglContext) -> Result<Option<[f32; 384]>, ProviderDispatchError> {
     const API: &str = "glDrawElements";
     let f = &c.fixed;
@@ -18,6 +57,8 @@ fn gl_fixed_gpu_state(c: &WglContext) -> Result<Option<[f32; 384]>, ProviderDisp
         FIXED_GL_NORMALIZE,
         FIXED_GL_TEXTURE_2D,
         FIXED_GL_DITHER,
+        FIXED_GL_ALPHA_TEST,
+        FIXED_GL_BLEND,
     ]
     .into_iter()
     .chain(FIXED_GL_LIGHT0..=FIXED_GL_LIGHT7)
@@ -150,6 +191,21 @@ fn gl_fixed_gpu_state(c: &WglContext) -> Result<Option<[f32; 384]>, ProviderDisp
             0.,
         ];
     }
+    s[31][1] = f.is_enabled(FIXED_GL_ALPHA_TEST) as u8 as f32;
+    s[31][2] = (f.alpha_func - FIXED_GL_NEVER) as f32;
+    s[31][3] = f.alpha_ref;
+    s[88] = [
+        f.is_enabled(FIXED_GL_BLEND) as u8 as f32,
+        gl_fixed_gpu_blend_factor(f.blend_factors[0])?,
+        gl_fixed_gpu_blend_factor(f.blend_factors[1])?,
+        0.,
+    ];
+    s[89] = [
+        gl_fixed_gpu_alpha_blend_factor(f.blend_factors[0])?,
+        gl_fixed_gpu_alpha_blend_factor(f.blend_factors[1])?,
+        0.,
+        0.,
+    ];
     s[27] = [1., 1., 0., 0.];
     s[28] = [0., 1., f.is_enabled(FIXED_GL_CULL_FACE) as u8 as f32, 0.];
     s[29] = [
@@ -361,7 +417,7 @@ mod fixed_gpu_tests {
         assert!(c.raster_frame.is_none());
     }
     #[test]
-    fn empty_scissor_skips_and_unimplemented_effects_remain_explicit() {
+    fn empty_scissor_skips_and_alpha_blend_state_is_packed() {
         let mut c = WglContext::new(1, 2, 1);
         c.drawable_size = [640, 480];
         c.viewport = [0, 0, 640, 480];
@@ -370,7 +426,14 @@ mod fixed_gpu_tests {
         assert!(gl_fixed_gpu_state(&c).unwrap().is_none());
         c.fixed.set_enabled(FIXED_GL_SCISSOR_TEST, false).unwrap();
         c.fixed.set_enabled(FIXED_GL_BLEND, true).unwrap();
-        assert!(gl_fixed_gpu_state(&c).is_err());
+        c.fixed
+            .set_blend_func(FIXED_GL_SRC_ALPHA, FIXED_GL_ONE_MINUS_SRC_ALPHA)
+            .unwrap();
+        c.fixed.set_enabled(FIXED_GL_ALPHA_TEST, true).unwrap();
+        c.fixed.set_alpha_func(FIXED_GL_GREATER, 0.25).unwrap();
+        let s = gl_fixed_gpu_state(&c).unwrap().unwrap();
+        assert_eq!(&s[125..128], &[1., 4., 0.25]);
+        assert_eq!(&s[352..358], &[1., 3., 19., 0., 3., 19.]);
     }
 }
 
