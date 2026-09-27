@@ -2130,6 +2130,7 @@ pub(super) async fn run_loop(
     mut active: usize,
 ) -> Result<(), String> {
     let mut debug_shell = crate::debug_shell::DebugShell::new();
+    let mut gl_gpu_frames = xpapp::gl_frame::GlFrames::default();
     let mut next_input_poll = std::time::Instant::now();
     'child_run: loop {
         if let Some(child) = pending_child.as_mut() {

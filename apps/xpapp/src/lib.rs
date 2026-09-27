@@ -58,3 +58,5 @@ mod host_test_abi {
 
 #[cfg(all(test, not(target_os = "trueos")))]
 mod test_host_gpu;
+
+pub mod gl_frame;

@@ -311,13 +311,13 @@
                             } else {
                                 None
                             };
-                        let gl_needs_frame = operation == child_loader::ProviderOp::WglSwapLayerBuffers
+                        let gl_publishes_frame = operation == child_loader::ProviderOp::WglSwapLayerBuffers
                             || (operation == child_loader::ProviderOp::GlDrawElements
                                 && session.process(active_pid).is_some_and(|p|p.xp.gl_preview_pending(active_tid))
                                 && read_guest_words(&X86Memory(&child.address_space), exit.registers.esp, 3)?[2] >= 3);
                         let swap_started = (!cfg!(feature = "nolog") && operation == child_loader::ProviderOp::WglSwapLayerBuffers)
                             .then(std::time::Instant::now);
-                        let gl_draw_frame = if gl_needs_frame {
+                        let gl_draw_frame = if xpapp::gl_frame::needs_frame(operation) {
                             let (_hglrc, hwnd, _mode) = session.process(active_pid)
                                 .ok_or_else(|| "GL process missing".to_owned())?
                                 .xp.gl_context_diagnostic(active_tid)
@@ -326,14 +326,15 @@
                             let frame = frames.get_mut(&hwnd)
                                 .ok_or_else(|| format!("GL call hwnd=0x{hwnd:08x} has no UI4 frame"))?;
                             let mut busy_polls = 0u32;
-                            loop {
+                            while gl_gpu_frames.needs_begin(frame.window_id()) {
                                 match frame.begin_gpu_frame() {
                                     Ok(()) => {
+                                        gl_gpu_frames.began(frame.window_id());
                                         if busy_polls != 0 {
                                             logl::log!(
                                                 level::IMPORTANT,
                                                 format_args!(
-                                                    "XPAPP GL UI4 PRODUCER RETIRED hwnd=0x{hwnd:08x} polls={busy_polls} action=resume-swap"
+                                                    "XPAPP GL UI4 PRODUCER RETIRED hwnd=0x{hwnd:08x} polls={busy_polls} action=resume-render"
                                                 ),
                                             );
                                         }
@@ -349,7 +350,7 @@
                                                 ),
                                             );
                                         }
-                                        // A WGL swap may block until UI4 retires the previous
+                                        // The first draw/clear may block until UI4 retires the previous
                                         // producer buffer. Poll the compositor; never overwrite
                                         // or bypass the outstanding SURFLIVE/read lease.
                                         trueos::vsys::poll_once();
@@ -465,13 +466,14 @@
                                         }
                                     }
                                 }
-                                if let Some(hwnd) = gl_draw_frame {
+                                if let Some(hwnd) = gl_draw_frame.filter(|_| gl_publishes_frame) {
                                     let window = session.windows.get(&hwnd)
                                         .ok_or_else(|| "GL window missing".to_owned())?;
                                     frames.get_mut(&hwnd)
                                         .ok_or_else(|| "GL UI4 frame missing".to_owned())?
                                         .publish(Damage::full(window.width, window.height))
                                         .map_err(|error| format!("GL publish UI4 frame: {error:?}"))?;
+                                    gl_gpu_frames.published(frames.get(&hwnd).ok_or("GL UI4 frame missing")?.window_id());
                                     if result != 0 {
                                         if let Some(started) = swap_started {
                                             session.process_mut(active_pid).ok_or("GL process missing")?

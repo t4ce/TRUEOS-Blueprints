@@ -1159,7 +1159,7 @@
                         let direct = process.xp.provider_import(id).is_some_and(|import| {
                             import.module.eq_ignore_ascii_case("OPENGL32.dll")
                                 && matches!(&import.symbol, child_loader::ProviderSymbol::Name(name)
-                                    if name.starts_with("gl") && name != "glDrawElements")
+                                    if xpapp::gl_frame::state_only(name))
                         });
                         if direct {
                             let result = process.xp.dispatch_provider_for_process_typed_with_self_image(
