@@ -201,6 +201,8 @@ impl XpProcess {
             ));
         }
         let geometry = gl_fixed_gpu_geometry(c, memory, &indices)?;
+        let decoded_at = std::time::Instant::now();
+        let mut phases = [std::time::Duration::ZERO; 4];
         let window = c.ui4_window_id.ok_or("GL UI4 frame missing")?;
         let runtime = self.gl_runtime.as_mut().ok_or("GL runtime missing")?;
         if !geometry.indices.is_empty() {
@@ -209,20 +211,28 @@ impl XpProcess {
                     .map_err(|rc| gl_texture_error(API, format!("native GPU pipeline rc={rc}")))?);
             }
             let c = runtime.contexts.values().find(|c| c.current_tid == Some(tid)).ok_or("GL context missing")?;
+            let atlas_started = std::time::Instant::now();
             let (pixels, width, height) = if c.textures.enabled {
                 gl_fixed_gpu_texture(&c.textures)?
             } else { (vec![255u8;4], 1, 1) };
+            phases[0] = atlas_started.elapsed();
+            let acquire_started = std::time::Instant::now();
             let surface = runtime.device.acquire_ui4_surface(window)
                 .map_err(|rc| gl_texture_error(API, format!("native GPU acquire rc={rc}")))?;
             if [surface.info().width, surface.info().height] != c.drawable_size {
                 return Err(gl_texture_error(API, "drawable/surface size mismatch"));
             }
             let flags = gl_gpu_depth_flags(&c.fixed);
+            phases[1] = acquire_started.elapsed();
+            let submit_started = std::time::Instant::now();
             let point = runtime.fixed_renderer.as_mut().unwrap().draw(runtime.queue, surface,
                 &geometry.vertices, &geometry.indices, &geometry.state, &pixels, width, height, flags)
                 .map_err(|rc| gl_texture_error(API, format!("native GPU indexed submit rc={rc}")))?;
+            phases[2] = submit_started.elapsed();
+            let wait_started = std::time::Instant::now();
             runtime.device.wait(runtime.queue, point.value)
                 .map_err(|rc| gl_texture_error(API, format!("native GPU wait rc={rc}")))?;
+            phases[3] = wait_started.elapsed();
         }
         let c = self.gl_context_mut(tid, API)?;
         c.draw_count += 1;
@@ -230,6 +240,11 @@ impl XpProcess {
             c.heartbeat.work.draws += 1;
             c.heartbeat.work.triangles += geometry.indices.len() as u64 / 3;
             c.heartbeat.work.draw_time += started.elapsed();
+            c.heartbeat.work.decode_time += decoded_at.duration_since(started);
+            c.heartbeat.work.atlas_time += phases[0];
+            c.heartbeat.work.acquire_time += phases[1];
+            c.heartbeat.work.submit_time += phases[2];
+            c.heartbeat.work.wait_time += phases[3];
         }
         Ok(0)
     }

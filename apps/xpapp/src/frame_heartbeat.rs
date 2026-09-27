@@ -5,6 +5,11 @@ pub(crate) struct FrameWork {
     pub draws: u64,
     pub triangles: u64,
     pub draw_time: Duration,
+    pub decode_time: Duration,
+    pub atlas_time: Duration,
+    pub acquire_time: Duration,
+    pub submit_time: Duration,
+    pub wait_time: Duration,
 }
 
 pub(crate) struct Heartbeat {
@@ -53,6 +58,18 @@ impl Heartbeat {
                 swap_time.as_secs_f64() * 1000.0,
                 frame_time.as_secs_f64() * 1000.0,
                 now.duration_since(self.started).as_secs_f64(),
+            ),
+        );
+        crate::logl::emit(
+            crate::logl::level::IMPORTANT,
+            format_args!(
+                "XPAPP FRAME DRAW decode_ms={:.3} atlas_ms={:.3} acquire_ms={:.3} submit_ms={:.3} wait_ms={:.3} outside_draw_swap_ms={:.3}",
+                work.decode_time.as_secs_f64() * 1000.0,
+                work.atlas_time.as_secs_f64() * 1000.0,
+                work.acquire_time.as_secs_f64() * 1000.0,
+                work.submit_time.as_secs_f64() * 1000.0,
+                work.wait_time.as_secs_f64() * 1000.0,
+                frame_time.saturating_sub(work.draw_time).saturating_sub(swap_time).as_secs_f64() * 1000.0,
             ),
         );
     }
