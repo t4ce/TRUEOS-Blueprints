@@ -3,11 +3,13 @@
 //! no actor, channel, or response handoff is needed between ordinary exits.
 
 use std::sync::{
-    Mutex,
+    Arc, Mutex, Weak,
     atomic::{AtomicU64, Ordering},
 };
 
-use trueos::x86::{Context, DebugRegisters, Exit, ExtendedState, Registers};
+use trueos::x86::{Context, DebugRegisters, ExecutionCarrier, Exit, ExitKind, ExtendedState, Registers};
+
+static EXECUTION_CARRIER: Mutex<Weak<ExecutionCarrier>> = Mutex::new(Weak::new());
 
 macro_rules! trace_api {
     ($message:expr $(,)?) => {
@@ -66,6 +68,7 @@ struct ExecutionProvenance {
 /// "apply at the next execution permit" behavior without an actor handoff.
 pub struct GuestThreadContext {
     context: Context,
+    carrier: Arc<ExecutionCarrier>,
     pid: u32,
     tid: u32,
     registers: Registers,
@@ -74,13 +77,24 @@ pub struct GuestThreadContext {
     pending_extended_state: Option<ExtendedState>,
     next_execution_provenance: Option<ExecutionProvenance>,
     started: bool,
+    progress_at: std::time::Instant,
+    progress_counts: [u64; 4],
 }
 
 impl GuestThreadContext {
     pub fn spawn(context: Context, pid: u32, tid: u32) -> Result<Self, String> {
         let registers = context.registers().map_err(|error| error.to_string())?;
+        let carrier = {
+            let mut shared = EXECUTION_CARRIER.lock().unwrap_or_else(|p| p.into_inner());
+            if let Some(carrier) = shared.upgrade() { carrier } else {
+                let carrier = Arc::new(ExecutionCarrier::new().map_err(|e| e.to_string())?);
+                *shared = Arc::downgrade(&carrier);
+                carrier
+            }
+        };
         Ok(Self {
             context,
+            carrier,
             pid,
             tid,
             registers,
@@ -89,6 +103,8 @@ impl GuestThreadContext {
             pending_extended_state: None,
             next_execution_provenance: None,
             started: false,
+            progress_at: std::time::Instant::now(),
+            progress_counts: [0; 4],
         })
     }
 
@@ -193,10 +209,10 @@ impl GuestThreadContext {
         }
         record_execution(sequence, ExecutionStage::Enter, self.pid, self.tid);
         let exit = match if self.started {
-            self.context.resume().await
+            self.context.resume_on(&self.carrier).await
         } else {
             self.started = true;
-            self.context.run().await
+            self.context.run_on(&self.carrier).await
         } {
             Ok(exit) => exit,
             Err(error) => {
@@ -226,6 +242,31 @@ impl GuestThreadContext {
         self.registers_dirty = false;
         self.pending_debug_registers = None;
         self.pending_extended_state = None;
+        if !cfg!(feature = "nolog") {
+            self.progress_counts[0] += 1;
+            match exit.kind {
+                ExitKind::VmCall => self.progress_counts[1] += 1,
+                ExitKind::Other if exit.detail == 52 => self.progress_counts[2] += 1,
+                ExitKind::Exception => self.progress_counts[3] += 1,
+                _ => {}
+            }
+            // Sample the host clock only once per 64 exits. This heartbeat
+            // remains available during startup, before a GL frame exists.
+            if self.progress_counts[0] % 64 == 0 {
+                let now = std::time::Instant::now();
+                let elapsed = now.duration_since(self.progress_at);
+                if elapsed >= std::time::Duration::from_secs(2) {
+                    crate::logl::emit(trueos::logl::level::IMPORTANT, format_args!(
+                        "XPAPP EXEC PROGRESS pid={} tid={} interval_ms={} exits={} vmcalls={} preemptions={} exceptions={} eip=0x{:08x} transport=reused-native-worker",
+                        self.pid, self.tid, elapsed.as_millis(), self.progress_counts[0],
+                        self.progress_counts[1], self.progress_counts[2], self.progress_counts[3],
+                        exit.registers.eip,
+                    ));
+                    self.progress_at = now;
+                    self.progress_counts = [0; 4];
+                }
+            }
+        }
         record_execution(sequence, ExecutionStage::Reply, self.pid, self.tid);
         record_execution(sequence, ExecutionStage::Receive, self.pid, self.tid);
         trace_api!(format_args!(

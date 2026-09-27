@@ -263,6 +263,15 @@ impl Context {
         execute_on_carrier(self.handle, true).await
     }
 
+    /// Execute on a reusable native lane, retaining ordinary exit boundaries.
+    pub async fn run_on(&mut self, carrier: &ExecutionCarrier) -> Result<Exit, Error> {
+        carrier.execute(self.handle, false).await
+    }
+
+    pub async fn resume_on(&mut self, carrier: &ExecutionCarrier) -> Result<Exit, Error> {
+        carrier.execute(self.handle, true).await
+    }
+
     pub fn park(&self) -> Result<(), Error> {
         v::vx86::context_park(self.handle).map_err(Error::from_kernel)
     }
@@ -292,9 +301,105 @@ async fn execute_on_carrier(handle: u64, resume: bool) -> Result<Exit, Error> {
     raw.map(Exit::from).map_err(Error::from_kernel)
 }
 
+struct CarrierRequest {
+    handle: u64,
+    resume: bool,
+    reply: tokio::sync::oneshot::Sender<Result<v::vx86::Exit, i32>>,
+}
+
+/// One native worker shared by serially scheduled logical x86 contexts.
+/// Dropping the last sender retires the worker; forced Blueprint teardown is
+/// checked between bounded guest slices and while the worker is idle.
+pub struct ExecutionCarrier {
+    requests: tokio::sync::mpsc::Sender<CarrierRequest>,
+}
+
+impl ExecutionCarrier {
+    pub fn new() -> Result<Self, Error> {
+        let (requests, receiver) = tokio::sync::mpsc::channel(1);
+        let job = crate::worker::spawn(move || {
+            let Ok(runtime) = tokio::runtime::Builder::new_current_thread().enable_time().build() else {
+                return;
+            };
+            runtime.block_on(carrier_requests(receiver, |handle, resume| {
+                if resume { v::vx86::context_resume(handle) }
+                else { v::vx86::context_run(handle) }
+            }));
+        }).map_err(|_| Error::CarrierUnavailable)?;
+        // The request channel owns the worker lifetime, not an individual exit.
+        drop(job);
+        Ok(Self { requests })
+    }
+
+    async fn execute(&self, handle: u64, resume: bool) -> Result<Exit, Error> {
+        let (reply, response) = tokio::sync::oneshot::channel();
+        self.requests.send(CarrierRequest { handle, resume, reply }).await
+            .map_err(|_| Error::CarrierLost)?;
+        response.await.map_err(|_| Error::CarrierLost)?
+            .map(Exit::from).map_err(Error::from_kernel)
+    }
+}
+
+async fn carrier_requests(
+    mut requests: tokio::sync::mpsc::Receiver<CarrierRequest>,
+    mut execute: impl FnMut(u64, bool) -> Result<v::vx86::Exit, i32>,
+) {
+    loop {
+        if crate::worker::cancellation_requested() { break; }
+        let request = tokio::select! {
+            request = requests.recv() => match request { Some(request) => request, None => break },
+            _ = tokio::time::sleep(core::time::Duration::from_millis(8)) => continue,
+        };
+        // A cancelled caller must not start a queued context after its owner
+        // has dropped it. Already executing slices still retire normally.
+        if !request.reply.is_closed() {
+            let _ = request.reply.send(execute(request.handle, request.resume));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec::Vec;
+
+    #[tokio::test]
+    async fn reusable_carrier_orders_contexts_propagates_errors_and_retires() {
+        let (requests, receiver) = tokio::sync::mpsc::channel(1);
+        let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let observed = Arc::clone(&calls);
+        let task = tokio::spawn(carrier_requests(receiver, move |handle, resume| {
+            observed.lock().unwrap().push((handle, resume));
+            if handle == 3 {
+                let mut exit = v::vx86::Exit::default();
+                exit.kind = v::vx86::EXIT_VMCALL;
+                exit.registers.eax = 0x12345678;
+                return Ok(exit);
+            }
+            Err(if handle == 2 { -125 } else { -16 })
+        }));
+        let carrier = ExecutionCarrier { requests };
+        for handle in [1, 2, 1] {
+            let error = carrier.execute(handle, handle != 2).await.unwrap_err();
+            assert_eq!(error, if handle == 2 { Error::Cancelled } else { Error::Busy });
+        }
+        let exit = carrier.execute(3, false).await.unwrap();
+        assert_eq!(exit.kind, ExitKind::VmCall);
+        assert_eq!(exit.registers.eax, 0x12345678);
+        drop(carrier);
+        tokio::time::timeout(core::time::Duration::from_secs(1), task).await.unwrap().unwrap();
+        assert_eq!(*calls.lock().unwrap(), [(1, true), (2, false), (1, true), (3, false)]);
+    }
+
+    #[tokio::test]
+    async fn reusable_carrier_does_not_enter_abandoned_queued_context() {
+        let (requests, receiver) = tokio::sync::mpsc::channel(1);
+        let (reply, response) = tokio::sync::oneshot::channel();
+        requests.send(CarrierRequest { handle: 1, resume: true, reply }).await.unwrap();
+        drop(response);
+        drop(requests);
+        carrier_requests(receiver, |_, _| panic!("abandoned context entered")).await;
+    }
 
     #[test]
     fn permissions_compose_without_application_policy() {
