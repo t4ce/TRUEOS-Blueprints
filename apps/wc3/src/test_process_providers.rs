@@ -1090,6 +1090,8 @@
             assert_eq!(crate::child_loader::provider_thunk_kind(&provider),
                 if symbol == "strncmp" && !cfg!(feature = "host-strncmp") {
                     thunk32::Kind::Strncmp
+                } else if symbol == "_stricmp" && !cfg!(feature = "host-stricmp") {
+                    thunk32::Kind::Stricmp
                 } else { thunk32::Kind::Return });
         }
 
@@ -1138,6 +1140,28 @@
         write_u32(&mut memory, esp + 4, left).unwrap();
         write_u32(&mut memory, esp + 8, right).unwrap();
         assert_eq!(xp.dispatch_provider_for_process_typed(2, 3, 1, esp, &mut memory), Ok(PersonalityAction::Return(left + 2)));
+    }
+
+    #[test]
+    fn child_native_ctype_exports_select_guest_helpers() {
+        for (symbol, operation, kind) in [
+            ("isdigit", ProviderOp::CrtIsDigit, thunk32::Kind::IsDigit),
+            ("_ismbcspace", ProviderOp::CrtIsMbcSpace, thunk32::Kind::IsMbcSpace),
+        ] {
+            let provider = ProviderImport {
+                module: "MSVCRT.dll".into(),
+                symbol: ProviderSymbol::Name(symbol.into()),
+                iat_rva: 0,
+            };
+            assert_eq!(provider_op(&provider), operation, "{symbol}");
+            assert_eq!(operation.stack_cleanup_bytes(), 0, "{symbol}");
+            let expected = match operation {
+                ProviderOp::CrtIsDigit if !cfg!(feature = "host-isdigit") => kind,
+                ProviderOp::CrtIsMbcSpace if !cfg!(feature = "host-ismbcspace") => kind,
+                _ => thunk32::Kind::Return,
+            };
+            assert_eq!(crate::child_loader::provider_thunk_kind(&provider), expected, "{symbol}");
+        }
     }
 
     #[test]

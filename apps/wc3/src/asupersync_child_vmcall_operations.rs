@@ -613,7 +613,7 @@
                             "unsupported-current-head-shape"
                         };
                         logl::log!(
-                            level::IMPORTANT,
+                            level::ERROR,
                             format_args!(
                                 "WC3 CHILD RTLUNWIND FRONTIER pid={} tid={} reason={} caller_ret=0x{:08x} target_frame=0x{:08x} target_relation={} target_relation_detail={:?} target_ip=0x{:08x} target_ip_owner={:?} target_ip_rva=0x{:08x} exception_record=0x{:08x} exception_relation={} return_value=0x{:08x} fs_head=0x{:08x} active_registration=0x{:08x} active_next=0x{:08x} active_handler=0x{:08x} active_record=0x{:08x} active_context=0x{:08x} active_depth={}",
                                 active_pid,
@@ -754,7 +754,7 @@
                         let name_ptr = frame[1];
                         if name_ptr == 0 {
                             logl::log!(
-                                level::IMPORTANT,
+                                level::ERROR,
                                 format_args!(
                                     "WC3 CHILD LOADLIBRARY FRONTIER pid={} tid={} during=\"{}\" kind=null-name caller_ret=0x{:08x}",
                                     active_pid,
@@ -1140,7 +1140,7 @@
                             continue;
                         }
                         logl::log!(
-                            level::IMPORTANT,
+                            level::ERROR,
                             format_args!(
                                 "WC3 CHILD LOADLIBRARY FRONTIER pid={} tid={} during=\"{}\" requested={:?} resolved={:?} kind=external stored=None caller_ret=0x{:08x}",
                                 active_pid,
@@ -1200,7 +1200,7 @@
                             }
                             wc3::process::ModuleRelease::NativeUnloadRequired { module } => {
                                 logl::log!(
-                                    level::IMPORTANT,
+                                    level::ERROR,
                                     format_args!(
                                         "WC3 CHILD FREELIBRARY FRONTIER reason=native-zero-reference-unload module={:?} handle=0x{:08x}",
                                         module, handle,
@@ -1337,7 +1337,7 @@
                         };
                         let Some((image, module)) = image_and_module else {
                             logl::log!(
-                                level::IMPORTANT,
+                                level::ERROR,
                                 format_args!(
                                     "WC3 CHILD GETPROCADDRESS FRONTIER pid={} tid={} kind=unknown-hmodule handle=0x{:08x} selector={:?}",
                                     active_pid, active_tid, hmodule, selector,
@@ -1387,7 +1387,7 @@
                                 unreachable!()
                             };
                             logl::log!(
-                                level::IMPORTANT,
+                                level::ERROR,
                                 format_args!(
                                     "WC3 CHILD GETPROCADDRESS FRONTIER pid={} tid={} kind=native-forwarder module={:?} selector={:?} forwarder={:?}",
                                     active_pid, active_tid, module, selector, forwarder,
@@ -1765,6 +1765,43 @@
                         );
                         let mut registers = exit.registers;
                         registers.eax = previous;
+                        contexts[active]
+                            .context
+                            .set_registers(registers)
+                            .map_err(|error| error.to_string())?;
+                        continue;
+                    }
+                    if operation == child_loader::ProviderOp::SetCapture {
+                        let action = session
+                            .process_mut(active_pid)
+                            .ok_or_else(|| "child process missing".to_owned())?
+                            .xp
+                            .dispatch_provider_for_process_typed(
+                                active_pid,
+                                active_tid,
+                                provider_id,
+                                exit.registers.esp,
+                                &mut X86Memory(&child.address_space),
+                            )
+                            .map_err(|error| error.to_string())?;
+                        let PersonalityAction::Session(SessionRequest::SetCapture { pid, hwnd }) = action
+                        else {
+                            return Err("SetCapture produced unexpected action".into());
+                        };
+                        let previous = session.set_capture(pid, hwnd).map_err(str::to_owned)?;
+                        logl::log!(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD SETCAPTURE pid={} tid={} hwnd=0x{:08x} previous=0x{:08x} result=0x{:08x} cleanup=4-by-thunk",
+                                active_pid,
+                                active_tid,
+                                hwnd,
+                                previous,
+                                hwnd,
+                            ),
+                        );
+                        let mut registers = exit.registers;
+                        registers.eax = hwnd;
                         contexts[active]
                             .context
                             .set_registers(registers)
@@ -2739,7 +2776,7 @@
                                     let zero_wait_handle =
                                         (result == WAIT_TIMEOUT && request.timeout == 0)
                                             .then_some(request.handles[0]);
-                                    if let Some(handle) = zero_wait_handle {
+                                    if let Some(handle) = zero_wait_handle.filter(|_| logl::ENABLED) {
                                         let site = IdlePollSite {
                                             key: request.key,
                                             caller_return: request.return_address,

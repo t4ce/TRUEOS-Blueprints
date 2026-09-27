@@ -168,6 +168,7 @@ impl XpProcess {
                 .or_else(|| thunk32::address(id))
                 .ok_or("provider address")?;
             addresses.push(address);
+            self.provider_operations.push(provider_op(&import));
             self.provider_imports.push(import);
         }
         let required = self

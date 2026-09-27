@@ -53,6 +53,13 @@ pub const CHILD_CEIL_OFFSET: usize = 0x900;
 pub const CHILD_CEIL_ADDRESS: u32 = CHILD_CONTROL_BASE + CHILD_CEIL_OFFSET as u32;
 pub const CHILD_FLOOR_OFFSET: usize = 0x940;
 pub const CHILD_FLOOR_ADDRESS: u32 = CHILD_CONTROL_BASE + CHILD_FLOOR_OFFSET as u32;
+pub const CHILD_ISDIGIT_OFFSET: usize = 0xa00;
+pub const CHILD_ISDIGIT_ADDRESS: u32 = CHILD_CONTROL_BASE + CHILD_ISDIGIT_OFFSET as u32;
+pub const CHILD_ISMBCSPACE_OFFSET: usize = 0xa40;
+pub const CHILD_ISMBCSPACE_ADDRESS: u32 = CHILD_CONTROL_BASE + CHILD_ISMBCSPACE_OFFSET as u32;
+pub const CHILD_STRICMP_OFFSET: usize = 0xb00;
+pub const CHILD_STRICMP_ADDRESS: u32 = CHILD_CONTROL_BASE + CHILD_STRICMP_OFFSET as u32;
+const CHILD_ASCII_FOLD_OFFSET: usize = 0xc00;
 
 // Guard a NUL-terminated ASCII string within the Rust parser's 256-byte bound,
 // then parse 1..9 leading digits. All other cases restore the original stack,
@@ -203,6 +210,38 @@ const CHILD_FLOOR_CODE: &[u8] = &[
     0xc3,
 ];
 
+// Cdecl isdigit: the modeled initial C locale returns the MSVCRT C1_DIGIT
+// bit (0x04) solely for ASCII decimal digits.  This exact predicate also
+// covers out-of-domain `int` values, which the existing personality returns
+// as zero rather than a typed frontier.
+const CHILD_ISDIGIT_CODE: &[u8] = &[
+    0x9c, 0x8b, 0x54, 0x24, 0x08, 0x83, 0xea, 0x30, 0x83, 0xfa, 0x09, 0x0f,
+    0x96, 0xc0, 0x0f, 0xb6, 0xc0, 0xc1, 0xe0, 0x02, 0x9d, 0xc3,
+];
+
+// Cdecl _ismbcspace: the CP1252 personality recognizes only ASCII CRT
+// whitespace (HT..CR and space), returning the C1_SPACE bit (0x08).
+const CHILD_ISMBCSPACE_CODE: &[u8] = &[
+    0x9c, 0x8b, 0x54, 0x24, 0x08, 0x83, 0xfa, 0x20, 0x74, 0x11, 0x83, 0xea,
+    0x09, 0x83, 0xfa, 0x04, 0x0f, 0x96, 0xc0, 0x0f, 0xb6, 0xc0, 0xc1, 0xe0, 0x03,
+    0x9d, 0xc3, 0xb8, 0x08, 0x00, 0x00, 0x00, 0x9d, 0xc3,
+];
+
+// Cdecl _stricmp for the existing ASCII-only personality.  Preserve EFLAGS,
+// ESI and EDI, limit reads to MAX_C_STRING (1 MiB), and return through the
+// original typed provider if either address would wrap or the compatibility
+// bound is exhausted.  The provider fallback sees the original cdecl frame
+// and import id, so its ordinary guest-fault/frontier behavior is retained.
+const CHILD_STRICMP_CODE: &[u8] = &[
+    0x9c, 0x56, 0x57, 0x51, 0x50, 0x8b, 0x74, 0x24, 0x18, 0x8b, 0x7c, 0x24,
+    0x1c, 0xb9, 0x00, 0x00, 0x10, 0x00, 0x0f, 0xb6, 0x06, 0x0f, 0xb6, 0x17,
+    0x0f, 0xb6, 0x80, 0x00, 0x0c, 0x2f, 0x00, 0x0f, 0xb6, 0x92, 0x00, 0x0c,
+    0x2f, 0x00, 0x29, 0xd0, 0x75, 0x0f, 0x85, 0xd2, 0x74, 0x0b, 0x49, 0x74,
+    0x10, 0x46, 0x74, 0x0d, 0x47, 0x74, 0x0a, 0xeb, 0xd9, 0x83, 0xc4, 0x04,
+    0x59, 0x5f, 0x5e, 0x9d, 0xc3, 0x58, 0x59, 0x5f, 0x5e, 0x9d, 0x0f, 0x01,
+    0xc1, 0xc3,
+];
+
 pub fn install_child_controls(output: &mut [u8]) -> Result<(), &'static str> {
     output.get_mut(CHILD_DECIMAL_OFFSET..CHILD_DECIMAL_OFFSET + CHILD_DECIMAL_CODE.len())
         .ok_or("decimal helper range")?.copy_from_slice(CHILD_DECIMAL_CODE);
@@ -233,6 +272,30 @@ pub fn install_child_controls(output: &mut [u8]) -> Result<(), &'static str> {
         .get_mut(CHILD_FLOOR_OFFSET..CHILD_FLOOR_OFFSET + CHILD_FLOOR_CODE.len())
         .ok_or("floor helper range")?
         .copy_from_slice(CHILD_FLOOR_CODE);
+    output
+        .get_mut(CHILD_ISDIGIT_OFFSET..CHILD_ISDIGIT_OFFSET + CHILD_ISDIGIT_CODE.len())
+        .ok_or("isdigit helper range")?
+        .copy_from_slice(CHILD_ISDIGIT_CODE);
+    output
+        .get_mut(CHILD_ISMBCSPACE_OFFSET..CHILD_ISMBCSPACE_OFFSET + CHILD_ISMBCSPACE_CODE.len())
+        .ok_or("_ismbcspace helper range")?
+        .copy_from_slice(CHILD_ISMBCSPACE_CODE);
+    output
+        .get_mut(CHILD_STRICMP_OFFSET..CHILD_STRICMP_OFFSET + CHILD_STRICMP_CODE.len())
+        .ok_or("_stricmp helper range")?
+        .copy_from_slice(CHILD_STRICMP_CODE);
+    for (byte, entry) in output
+        .get_mut(CHILD_ASCII_FOLD_OFFSET..CHILD_ASCII_FOLD_OFFSET + 256)
+        .ok_or("ASCII fold table range")?
+        .iter_mut()
+        .enumerate()
+    {
+        *entry = if (b'A'..=b'Z').contains(&(byte as u8)) {
+            byte as u8 + 0x20
+        } else {
+            byte as u8
+        };
+    }
     for offset in [0usize, 0x10, 0x20, 0x30, 0x40, 0x50] {
         let trap = output
             .get_mut(offset..offset + 5)
@@ -296,6 +359,12 @@ pub enum Kind {
     Decimal,
     /// Guest DWORD insertion sort, with a guest comparator and provider fallback.
     QsortDword,
+    /// Initial C-locale digit classification with no provider boundary.
+    IsDigit,
+    /// Initial CP1252 CRT whitespace classification with no provider boundary.
+    IsMbcSpace,
+    /// ASCII-only case-insensitive unbounded comparison, with typed fallback.
+    Stricmp,
 }
 
 pub fn write(import_id: u32, kind: Kind, output: &mut [u8]) -> Result<(), &'static str> {
@@ -303,11 +372,12 @@ pub fn write(import_id: u32, kind: Kind, output: &mut [u8]) -> Result<(), &'stat
         return Err("wc3 thunk buffer too small");
     }
     output[..THUNK_BYTES].fill(0x90);
-    if matches!(kind, Kind::ToUpper | Kind::Decimal | Kind::QsortDword) {
+    if matches!(kind, Kind::ToUpper | Kind::Decimal | Kind::QsortDword | Kind::Stricmp) {
         let target = match kind {
             Kind::ToUpper => CHILD_TOUPPER_ADDRESS,
             Kind::Decimal => CHILD_DECIMAL_ADDRESS,
             Kind::QsortDword => CHILD_QSORT_DWORD_ADDRESS,
+            Kind::Stricmp => CHILD_STRICMP_ADDRESS,
             _ => unreachable!(),
         };
         let next = address(import_id).and_then(|address| address.checked_add(10))
@@ -318,13 +388,15 @@ pub fn write(import_id: u32, kind: Kind, output: &mut [u8]) -> Result<(), &'stat
         output[6..10].copy_from_slice(&target.wrapping_sub(next).to_le_bytes());
         return Ok(());
     }
-    if matches!(kind, Kind::Memmove | Kind::Strncmp | Kind::Strnicmp | Kind::Ceil | Kind::Floor) {
+    if matches!(kind, Kind::Memmove | Kind::Strncmp | Kind::Strnicmp | Kind::Ceil | Kind::Floor | Kind::IsDigit | Kind::IsMbcSpace) {
         let target = match kind {
             Kind::Memmove => CHILD_MEMMOVE_ADDRESS,
             Kind::Strncmp => CHILD_STRNCMP_ADDRESS,
             Kind::Strnicmp => CHILD_STRNICMP_ADDRESS,
             Kind::Ceil => CHILD_CEIL_ADDRESS,
             Kind::Floor => CHILD_FLOOR_ADDRESS,
+            Kind::IsDigit => CHILD_ISDIGIT_ADDRESS,
+            Kind::IsMbcSpace => CHILD_ISMBCSPACE_ADDRESS,
             _ => unreachable!(),
         };
         let next = address(import_id).and_then(|address| address.checked_add(5))
@@ -344,7 +416,7 @@ pub fn write(import_id: u32, kind: Kind, output: &mut [u8]) -> Result<(), &'stat
         0xC1,
     ]);
     match kind {
-        Kind::Memmove | Kind::Ceil | Kind::Floor | Kind::Strncmp | Kind::Strnicmp | Kind::ToUpper | Kind::Decimal | Kind::QsortDword => unreachable!(),
+        Kind::Memmove | Kind::Ceil | Kind::Floor | Kind::Strncmp | Kind::Strnicmp | Kind::ToUpper | Kind::Decimal | Kind::QsortDword | Kind::IsDigit | Kind::IsMbcSpace | Kind::Stricmp => unreachable!(),
         Kind::Return => output[8] = 0xC3,
         Kind::Stdcall(bytes) => {
             output[8] = 0xC2;

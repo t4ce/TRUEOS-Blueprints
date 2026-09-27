@@ -351,7 +351,11 @@ impl Frame {
     ) -> usize {
         let mut p = tri.map(|v| ScreenVertex::from_clip(v, state.viewport, self.height));
         let area_gl = orient([p[0].x, -p[0].y], [p[1].x, -p[1].y], [p[2].x, -p[2].y]);
-        if area_gl == 0.0 {
+        // Source vertices are finite, but an extreme finite clip coordinate
+        // can still overflow during the perspective divide.  Such a primitive
+        // has no meaningful finite coverage; rejecting it keeps NaNs out of
+        // the incremental edge and attribute planes below.
+        if !area_gl.is_finite() || area_gl == 0.0 {
             return 0;
         }
         let front = if state.front_ccw {
@@ -369,6 +373,9 @@ impl Frame {
         if area < 0.0 {
             p.swap(1, 2);
             area = -area;
+        }
+        if !area.is_finite() || area == 0.0 {
+            return 0;
         }
         // Window-depth is affine in screen coordinates.  GL's polygon offset
         // uses its maximum slope plus `units * r`, where r is one minimum
@@ -421,6 +428,29 @@ impl Frame {
         }
         if min_x > max_x || min_y > max_y {
             return 0;
+        }
+
+        // This is the dominant menu/background state: an opaque RGBA texture
+        // replacing the primary colour.  It has no observable dependency on
+        // colour, depth, fog, alpha test, or blending, so keep those planes and
+        // branches out of its inner loop altogether.
+        if texture.is_some()
+            && !state.depth.enabled
+            && !state.alpha.enabled
+            && !state.blend.enabled
+            && !state.fog.enabled
+            && state.tex_env == TexEnvMode::Replace
+            && texture.unwrap().format == TextureFormat::Rgba
+        {
+            return self.draw_opaque_rgba_replace(
+                texture.unwrap(),
+                p,
+                min_x,
+                max_x,
+                min_y,
+                max_y,
+                area,
+            );
         }
 
         // Edge functions and every interpolated value are affine in window
@@ -494,7 +524,7 @@ impl Frame {
             let mut uv_over_w = uv_row;
             let mut fog_over_w = fog_row;
             let mut offset = self.top_index(min_x, y);
-            for x in min_x..=max_x {
+            for _x in min_x..=max_x {
                 if edge_inside_fast(edge[0], top_left[0])
                     && edge_inside_fast(edge[1], top_left[1])
                     && edge_inside_fast(edge[2], top_left[2])
@@ -568,6 +598,130 @@ impl Frame {
                 uv_row[i] += uv_planes[i].dy;
             }
             fog_row += fog_plane.dy;
+        }
+        shaded
+    }
+
+    #[inline(never)]
+    fn draw_opaque_rgba_replace(
+        &mut self,
+        texture: TextureView<'_>,
+        p: [ScreenVertex; 3],
+        min_x: i32,
+        max_x: i32,
+        min_y: i32,
+        max_y: i32,
+        area: f32,
+    ) -> usize {
+        let edges = [
+            Edge::new(p[1], p[2]),
+            Edge::new(p[2], p[0]),
+            Edge::new(p[0], p[1]),
+        ];
+        let edge_dx = edges.map(|edge| edge.dx);
+        let edge_dy = edges.map(|edge| edge.dy);
+        let top_left = edges.map(|edge| edge.top_left);
+        let start = [min_x as f32 + 0.5, min_y as f32 + 0.5];
+        let edge_start = edges.map(|edge| edge.at(start));
+        let inv_area = area.recip();
+        let uv_planes: [Plane; 4] = core::array::from_fn(|i| {
+            Plane::from_vertices(
+                edge_start,
+                &edges,
+                inv_area,
+                [p[0].uv_over_w[i], p[1].uv_over_w[i], p[2].uv_over_w[i]],
+            )
+        });
+        let mut shaded = 0;
+        let mut edge_row = edge_start;
+        let mut uv_row = uv_planes.map(|plane| plane.value);
+
+        // UI quads normally have both clip W and texture Q equal to one.  Q is
+        // then a constant plane, allowing s/t and their gradients to use two
+        // multiplies rather than six per-pixel divisions.
+        if uv_planes[3].dx == 0.0
+            && uv_planes[3].dy == 0.0
+            && uv_planes[3].value.is_finite()
+            && uv_planes[3].value != 0.0
+        {
+            let inv_q = uv_planes[3].value.recip();
+            let u_dx = uv_planes[0].dx * inv_q;
+            let v_dx = uv_planes[1].dx * inv_q;
+            let u_dy = uv_planes[0].dy * inv_q;
+            let v_dy = uv_planes[1].dy * inv_q;
+            let sample_plan = texture_sample_plan(texture, u_dx, v_dx, u_dy, v_dy);
+            for y in min_y..=max_y {
+                let mut edge = edge_row;
+                let mut uv = uv_row;
+                let mut offset = self.top_index(min_x, y);
+                for _x in min_x..=max_x {
+                    if edge_inside_fast(edge[0], top_left[0])
+                        && edge_inside_fast(edge[1], top_left[1])
+                        && edge_inside_fast(edge[2], top_left[2])
+                    {
+                        write_pixel(
+                            &mut self.rgba,
+                            offset,
+                            sample_texture_plan(sample_plan, uv[0] * inv_q, uv[1] * inv_q),
+                        );
+                        shaded += 1;
+                    }
+                    edge[0] += edge_dx[0];
+                    edge[1] += edge_dx[1];
+                    edge[2] += edge_dx[2];
+                    for i in 0..4 {
+                        uv[i] += uv_planes[i].dx;
+                    }
+                    offset += 1;
+                }
+                for i in 0..3 {
+                    edge_row[i] += edge_dy[i];
+                }
+                for i in 0..4 {
+                    uv_row[i] += uv_planes[i].dy;
+                }
+            }
+        } else {
+            for y in min_y..=max_y {
+                let mut edge = edge_row;
+                let mut uv = uv_row;
+                let mut offset = self.top_index(min_x, y);
+                for _x in min_x..=max_x {
+                    if edge_inside_fast(edge[0], top_left[0])
+                        && edge_inside_fast(edge[1], top_left[1])
+                        && edge_inside_fast(edge[2], top_left[2])
+                    {
+                        let q = uv[3];
+                        write_pixel(
+                            &mut self.rgba,
+                            offset,
+                            sample_texture_uv(
+                                texture,
+                                uv[0] / q,
+                                uv[1] / q,
+                                (uv[0] + uv_planes[0].dx) / (q + uv_planes[3].dx),
+                                (uv[1] + uv_planes[1].dx) / (q + uv_planes[3].dx),
+                                (uv[0] + uv_planes[0].dy) / (q + uv_planes[3].dy),
+                                (uv[1] + uv_planes[1].dy) / (q + uv_planes[3].dy),
+                            ),
+                        );
+                        shaded += 1;
+                    }
+                    edge[0] += edge_dx[0];
+                    edge[1] += edge_dx[1];
+                    edge[2] += edge_dx[2];
+                    for i in 0..4 {
+                        uv[i] += uv_planes[i].dx;
+                    }
+                    offset += 1;
+                }
+                for i in 0..3 {
+                    edge_row[i] += edge_dy[i];
+                }
+                for i in 0..4 {
+                    uv_row[i] += uv_planes[i].dy;
+                }
+            }
         }
         shaded
     }
@@ -787,12 +941,6 @@ fn lerp4(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {
 fn orient(a: [f32; 2], b: [f32; 2], c: [f32; 2]) -> f32 {
     (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
 }
-fn edge_inside(edge: f32, a: ScreenVertex, b: ScreenVertex) -> bool {
-    edge > 0.0 || (edge == 0.0 && ((b.y - a.y) < 0.0 || ((b.y - a.y) == 0.0 && (b.x - a.x) > 0.0)))
-}
-fn in_scissor(height: u32, s: [i32; 4], x: i32, y: i32) -> bool {
-    in_scissor_gl(s, x, height as i32 - 1 - y)
-}
 fn in_scissor_gl(s: [i32; 4], x: i32, y: i32) -> bool {
     let [left, bottom, width, height] = s.map(i64::from);
     width > 0
@@ -810,20 +958,6 @@ fn perspective_weight(p: &[ScreenVertex; 3], b: [f32; 3]) -> [f32; 3] {
         b[2] * p[2].inv_w / d,
     ]
 }
-fn perspective_color(p: &[ScreenVertex; 3], b: [f32; 3]) -> [f32; 4] {
-    let w = perspective_weight(p, b);
-    core::array::from_fn(|i| {
-        w[0] * (p[0].color_over_w[i] / p[0].inv_w)
-            + w[1] * (p[1].color_over_w[i] / p[1].inv_w)
-            + w[2] * (p[2].color_over_w[i] / p[2].inv_w)
-    })
-}
-fn perspective_fog(p: &[ScreenVertex; 3], b: [f32; 3]) -> f32 {
-    let w = perspective_weight(p, b);
-    w[0] * (p[0].fog_over_w / p[0].inv_w)
-        + w[1] * (p[1].fog_over_w / p[1].inv_w)
-        + w[2] * (p[2].fog_over_w / p[2].inv_w)
-}
 fn perspective_uv(p: &[ScreenVertex; 3], b: [f32; 3]) -> [f32; 4] {
     let w = perspective_weight(p, b);
     let q: [f32; 4] = core::array::from_fn(|i| {
@@ -833,25 +967,106 @@ fn perspective_uv(p: &[ScreenVertex; 3], b: [f32; 3]) -> [f32; 4] {
     });
     [q[0] / q[3], q[1] / q[3], q[2] / q[3], q[3]]
 }
-fn perspective_uv_at(p: &[ScreenVertex; 3], at: [f32; 2]) -> [f32; 4] {
-    let area = orient([p[0].x, p[0].y], [p[1].x, p[1].y], [p[2].x, p[2].y]);
-    if area == 0.0 {
-        return [0.0; 4];
-    }
-    perspective_uv(
-        p,
-        [
-            orient([p[1].x, p[1].y], [p[2].x, p[2].y], at) / area,
-            orient([p[2].x, p[2].y], [p[0].x, p[0].y], at) / area,
-            orient([p[0].x, p[0].y], [p[1].x, p[1].y], at) / area,
-        ],
-    )
-}
-
 /// Samples a texture from perspective-correct s/t and their one-pixel
 /// derivatives.  The rasterizer has already interpolated q-over-w, so it can
 /// form these values without reconstructing barycentrics at the neighbouring
 /// pixel centres.
+#[derive(Clone, Copy)]
+enum TextureSamplePlan<'a> {
+    Single {
+        level: TextureLevel<'a>,
+        wrap_s: Wrap,
+        wrap_t: Wrap,
+        linear: bool,
+    },
+    Lerp {
+        a: TextureLevel<'a>,
+        b: TextureLevel<'a>,
+        wrap_s: Wrap,
+        wrap_t: Wrap,
+        linear: bool,
+        t: f32,
+    },
+}
+
+/// Selects the filter and mip levels once when an affine texture mapping has
+/// constant pixel derivatives.  This is valid for the Q-constant UI path and
+/// removes a pair of hypot calls and log2 from every fragment.
+fn texture_sample_plan(
+    tex: TextureView<'_>,
+    u_dx: f32,
+    v_dx: f32,
+    u_dy: f32,
+    v_dy: f32,
+) -> TextureSamplePlan<'_> {
+    let base = &tex.levels[0];
+    let lod = match (tex.min_filter, tex.mag_filter) {
+        (Filter::Nearest, Filter::Nearest) | (Filter::Linear, Filter::Linear) => 0.0,
+        _ => {
+            let du = (u_dx * base.width as f32).hypot(u_dy * base.width as f32);
+            let dv = (v_dx * base.height as f32).hypot(v_dy * base.height as f32);
+            du.max(dv).max(1.0).log2()
+        }
+    };
+    let filter = if lod <= 0.0 {
+        tex.mag_filter
+    } else {
+        tex.min_filter
+    };
+    let base_plan = |level, linear| TextureSamplePlan::Single {
+        level,
+        wrap_s: tex.wrap_s,
+        wrap_t: tex.wrap_t,
+        linear,
+    };
+    match filter {
+        Filter::Nearest => base_plan(*base, false),
+        Filter::Linear => base_plan(*base, true),
+        Filter::NearestMipmapNearest | Filter::LinearMipmapNearest => {
+            let level = (lod.round().max(0.0) as usize).min(tex.levels.len() - 1);
+            base_plan(tex.levels[level], filter == Filter::LinearMipmapNearest)
+        }
+        Filter::NearestMipmapLinear | Filter::LinearMipmapLinear => {
+            let a = lod.floor().max(0.0) as usize;
+            let a = a.min(tex.levels.len() - 1);
+            let b = (a + 1).min(tex.levels.len() - 1);
+            TextureSamplePlan::Lerp {
+                a: tex.levels[a],
+                b: tex.levels[b],
+                wrap_s: tex.wrap_s,
+                wrap_t: tex.wrap_t,
+                linear: filter == Filter::LinearMipmapLinear,
+                t: lod - a as f32,
+            }
+        }
+    }
+}
+
+#[inline]
+fn sample_texture_plan(plan: TextureSamplePlan<'_>, u: f32, v: f32) -> [f32; 4] {
+    let uv = [u, v, 0.0, 1.0];
+    match plan {
+        TextureSamplePlan::Single {
+            level,
+            wrap_s,
+            wrap_t,
+            linear,
+        } => sample_level(level, uv, wrap_s, wrap_t, linear),
+        TextureSamplePlan::Lerp {
+            a,
+            b,
+            wrap_s,
+            wrap_t,
+            linear,
+            t,
+        } => lerp4(
+            sample_level(a, uv, wrap_s, wrap_t, linear),
+            sample_level(b, uv, wrap_s, wrap_t, linear),
+            t,
+        ),
+    }
+}
+
 fn sample_texture_uv(
     tex: TextureView<'_>,
     u: f32,
@@ -913,6 +1128,17 @@ fn sample_level(
     wt: Wrap,
     linear: bool,
 ) -> [f32; 4] {
+    // WC3 UI assets are overwhelmingly power-of-two repeat textures.  Their
+    // four bilinear taps previously paid eight signed Euclidean divisions per
+    // fragment through `fetch`/`wrap_index`; masking is exactly equivalent for
+    // a positive power-of-two extent.
+    if ws == Wrap::Repeat
+        && wt == Wrap::Repeat
+        && level.width.is_power_of_two()
+        && level.height.is_power_of_two()
+    {
+        return sample_level_repeat_pow2(level, uv[0], uv[1], linear);
+    }
     let x = wrap_coord(uv[0], ws) * level.width as f32 - 0.5;
     let y = wrap_coord(uv[1], wt) * level.height as f32 - 0.5;
     if !linear {
@@ -933,6 +1159,47 @@ fn sample_level(
         fx,
     );
     lerp4(a, b, fy)
+}
+
+#[inline]
+fn sample_level_repeat_pow2(level: TextureLevel<'_>, u: f32, v: f32, linear: bool) -> [f32; 4] {
+    let x = (u - u.floor()) * level.width as f32 - 0.5;
+    let y = (v - v.floor()) * level.height as f32 - 0.5;
+    let x0 = x.floor() as i32;
+    let y0 = y.floor() as i32;
+    let x_mask = level.width as i32 - 1;
+    let y_mask = level.height as i32 - 1;
+    if !linear {
+        return fetch_repeat_pow2(level, x.round() as i32 & x_mask, y.round() as i32 & y_mask);
+    }
+    let fx = x - x0 as f32;
+    let fy = y - y0 as f32;
+    let x0 = x0 & x_mask;
+    let y0 = y0 & y_mask;
+    let x1 = (x0 + 1) & x_mask;
+    let y1 = (y0 + 1) & y_mask;
+    let a = lerp4(
+        fetch_repeat_pow2(level, x0, y0),
+        fetch_repeat_pow2(level, x1, y0),
+        fx,
+    );
+    let b = lerp4(
+        fetch_repeat_pow2(level, x0, y1),
+        fetch_repeat_pow2(level, x1, y1),
+        fx,
+    );
+    lerp4(a, b, fy)
+}
+
+#[inline]
+fn fetch_repeat_pow2(l: TextureLevel<'_>, x: i32, y: i32) -> [f32; 4] {
+    let p = &l.rgba[(y as usize * l.width as usize + x as usize) * 4..][..4];
+    [
+        p[0] as f32 / 255.0,
+        p[1] as f32 / 255.0,
+        p[2] as f32 / 255.0,
+        p[3] as f32 / 255.0,
+    ]
 }
 fn wrap_coord(v: f32, w: Wrap) -> f32 {
     match w {
@@ -1421,5 +1688,124 @@ mod tests {
         // Every covered pixel is touched once: 0.5 red, never the 0.75 a
         // duplicated shared edge would produce.
         assert!(frame.rgba.chunks_exact(4).all(|pixel| pixel[0] == 128));
+    }
+
+    #[test]
+    fn opaque_rgba_replace_kernel_matches_general_pipeline() {
+        let pixels = [
+            10, 20, 30, 255, 80, 90, 100, 255, 140, 150, 160, 255, 220, 230, 240, 255,
+        ];
+        let levels = [TextureLevel {
+            width: 2,
+            height: 2,
+            rgba: &pixels,
+        }];
+        let texture = TextureView {
+            levels: &levels,
+            format: TextureFormat::Rgba,
+            wrap_s: Wrap::Repeat,
+            wrap_t: Wrap::Repeat,
+            min_filter: Filter::Linear,
+            mag_filter: Filter::Linear,
+        };
+        let mut vertices = [
+            v(-1., -1., 0., 1., 0., 0., [1.; 4]),
+            v(1., -1., 0., 1., 1., 0., [1.; 4]),
+            v(1., 1., 0., 1., 1., 1., [1.; 4]),
+            v(-1., 1., 0., 1., 0., 1., [1.; 4]),
+        ];
+        for vertex in &mut vertices {
+            vertex.uv[3] = 3.0;
+        }
+        let indices = [0, 1, 2, 0, 2, 3];
+        let replace = RasterState {
+            viewport: [0, 0, 8, 8],
+            tex_env: TexEnvMode::Replace,
+            ..Default::default()
+        };
+        let general = RasterState {
+            depth: DepthState {
+                enabled: true,
+                func: Compare::Always,
+                write: false,
+                range: [0.0, 1.0],
+            },
+            ..replace
+        };
+        let mut fast = Frame::new(8, 8).unwrap();
+        let mut fallback = Frame::new(8, 8).unwrap();
+        fast.draw_indexed(&replace, Some(texture), &vertices, &indices)
+            .unwrap();
+        fallback
+            .draw_indexed(&general, Some(texture), &vertices, &indices)
+            .unwrap();
+        assert_eq!(fast.rgba, fallback.rgba);
+    }
+
+    /// A repeatable host-side release fixture for the hot menu case: an opaque
+    /// full-frame, linearly filtered UI texture.  It is ignored in normal
+    /// tests; invoke with `cargo test -p wc3 raster_throughput_fixture --release
+    /// -- --ignored --nocapture` to report megapixels per second.
+    #[test]
+    #[ignore = "release throughput fixture"]
+    fn raster_throughput_fixture() {
+        use std::time::Instant;
+
+        const WIDTH: u32 = 1280;
+        const HEIGHT: u32 = 720;
+        const DRAWS: u32 = 24;
+        let mut pixels = vec![0; 256 * 256 * 4];
+        for (i, pixel) in pixels.chunks_exact_mut(4).enumerate() {
+            pixel.copy_from_slice(&[
+                (i as u8).wrapping_mul(17),
+                (i as u8).wrapping_mul(31),
+                (i as u8).wrapping_mul(47),
+                255,
+            ]);
+        }
+        let levels = [TextureLevel {
+            width: 256,
+            height: 256,
+            rgba: &pixels,
+        }];
+        let texture = TextureView {
+            levels: &levels,
+            format: TextureFormat::Rgba,
+            wrap_s: Wrap::Repeat,
+            wrap_t: Wrap::Repeat,
+            min_filter: Filter::Linear,
+            mag_filter: Filter::Linear,
+        };
+        let state = RasterState {
+            viewport: [0, 0, WIDTH as i32, HEIGHT as i32],
+            tex_env: TexEnvMode::Replace,
+            ..Default::default()
+        };
+        let quad = [
+            v(-1., -1., 0., 1., 0., 0., [1.; 4]),
+            v(1., -1., 0., 1., 1., 0., [1.; 4]),
+            v(1., 1., 0., 1., 1., 1., [1.; 4]),
+            v(-1., 1., 0., 1., 0., 1., [1.; 4]),
+        ];
+        let mut frame = Frame::new(WIDTH, HEIGHT).unwrap();
+        let started = Instant::now();
+        let mut shaded = 0u64;
+        for _ in 0..DRAWS {
+            shaded += frame
+                .draw_indexed(&state, Some(texture), &quad, &[0, 1, 2, 0, 2, 3])
+                .unwrap()
+                .shaded_pixels;
+        }
+        let seconds = started.elapsed().as_secs_f64();
+        eprintln!(
+            "raster fixture: {:.1} Mpix/s ({} pixels in {:.3}s)",
+            shaded as f64 / seconds / 1_000_000.0,
+            shaded,
+            seconds,
+        );
+        assert_eq!(
+            shaded,
+            u64::from(WIDTH) * u64::from(HEIGHT) * u64::from(DRAWS)
+        );
     }
 }

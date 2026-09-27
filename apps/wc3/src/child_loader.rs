@@ -187,6 +187,7 @@ pub enum ProviderOp {
     DestroyWindow,
     UpdateWindow,
     SetFocus,
+    SetCapture,
     SetForegroundWindow,
     SetActiveWindow,
     GetDesktopWindow,
@@ -361,6 +362,7 @@ impl ProviderOp {
             Self::DestroyWindow => 4,
             Self::UpdateWindow => 4,
             Self::SetFocus => 4,
+            Self::SetCapture => 4,
             Self::SetForegroundWindow => 4,
             Self::SetActiveWindow => 4,
             Self::GetDesktopWindow => 0,
@@ -819,6 +821,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "DestroyWindow" => ProviderOp::DestroyWindow,
             "UpdateWindow" => ProviderOp::UpdateWindow,
             "SetFocus" => ProviderOp::SetFocus,
+            "SetCapture" => ProviderOp::SetCapture,
             "SetForegroundWindow" => ProviderOp::SetForegroundWindow,
             "SetActiveWindow" => ProviderOp::SetActiveWindow,
             "GetDesktopWindow" => ProviderOp::GetDesktopWindow,
@@ -1014,8 +1017,17 @@ pub fn provider_thunk_kind(import: &ProviderImport) -> thunk32::Kind {
     if provider_op(import) == ProviderOp::CrtQsort && !cfg!(feature = "host-qsort") {
         return thunk32::Kind::QsortDword;
     }
+    if provider_op(import) == ProviderOp::CrtStricmp && !cfg!(feature = "host-stricmp") {
+        return thunk32::Kind::Stricmp;
+    }
     if provider_op(import) == ProviderOp::CrtStrnicmp && !cfg!(feature = "host-strnicmp") {
         return thunk32::Kind::Strnicmp;
+    }
+    if provider_op(import) == ProviderOp::CrtIsDigit && !cfg!(feature = "host-isdigit") {
+        return thunk32::Kind::IsDigit;
+    }
+    if provider_op(import) == ProviderOp::CrtIsMbcSpace && !cfg!(feature = "host-ismbcspace") {
+        return thunk32::Kind::IsMbcSpace;
     }
     if provider_op(import) == ProviderOp::CrtToUpper && !cfg!(feature = "host-toupper") {
         return thunk32::Kind::ToUpper;

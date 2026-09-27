@@ -1089,7 +1089,7 @@
                         if let Some(pending) = child.load_library_call.take() {
                             if exit.registers.eax == 0 {
                                 logl::log!(
-                                    level::IMPORTANT,
+                                    level::ERROR,
                                     format_args!(
                                         "WC3 CHILD LOADLIBRARY FRONTIER reason=dllmain-returned-false handle=0x{:08x}",
                                         pending.module_handle,
@@ -1185,13 +1185,44 @@
                         }
                         let scope = child_execution_scope(child).map_err(str::to_owned)?;
                         logl::log!(
-                            level::IMPORTANT,
+                            level::ERROR,
                             format_args!(
                                 "WC3 CHILD CONTROL FRONTIER pid={} tid={} during=\"{}\" kind=callback-return",
                                 active_pid, active_tid, scope
                             ),
                         );
                         return Ok(());
+                    }
+                    // Most menu exits only change/query GL state. Dispatch them
+                    // without building labels, cloning imports, reading the return
+                    // address again, or walking the compatibility special cases.
+                    // Draw/context/swap calls retain their UI4 coordination below.
+                    let mut direct_gl_result = None;
+                    if !logl::ENABLED && child.execution == ChildExecutionState::ImageEntryRunning
+                        && child.load_library_call.is_none()
+                    {
+                        let process = session.process_mut(active_pid).ok_or("child process missing")?;
+                        let id = exit.registers.eax;
+                        let direct = process.xp.provider_import(id).is_some_and(|import| {
+                            import.module.eq_ignore_ascii_case("OPENGL32.dll")
+                                && matches!(&import.symbol, child_loader::ProviderSymbol::Name(name)
+                                    if name.starts_with("gl") && name != "glDrawElements")
+                        });
+                        if direct {
+                            let result = process.xp.dispatch_provider_for_process_typed_with_self_image(
+                                active_pid, active_tid, id, exit.registers.esp,
+                                &mut X86Memory(&child.address_space), Some(child.self_image_bytes.as_slice()),
+                            );
+                            if let Ok(PersonalityAction::Return(value)) = result {
+                                let mut registers = exit.registers;
+                                registers.eax = value;
+                                contexts[active].context.set_registers(registers)?;
+                                continue;
+                            }
+                            // Preserve the full existing failure/diagnostic path,
+                            // without executing a failed provider a second time.
+                            direct_gl_result = Some(result);
+                        }
                     }
                     let running_scope = child_execution_scope(child).map_err(str::to_owned)?;
                     let running_module_name = running_scope.clone();
@@ -1211,6 +1242,7 @@
                         .address_space
                         .read(exit.registers.esp, &mut caller_ret)
                         .map_err(|error| error.to_string())?;
+                    if logl::ENABLED {
                     let provider_symbol = match &provider.symbol {
                         child_loader::ProviderSymbol::Name(name) => name.clone(),
                         child_loader::ProviderSymbol::Ordinal(ordinal) => format!("#{ordinal}"),
@@ -1236,6 +1268,7 @@
                         format!("{}!{}", provider.module, provider_symbol),
                         u32::from_le_bytes(caller_ret),
                     );
+                    }
                     // Render names only for diagnostics; the common modeled
                     // provider path does not need an allocated String.
                     let symbol = || match &provider.symbol {
@@ -1246,6 +1279,15 @@
                     };
                     include!("asupersync_child_vmcall_special_cases.rs");
                     let operation = child_loader::provider_op(&provider);
+                    // Input-observing calls always see the current host queue;
+                    // state setters need not repeatedly enumerate HID/routes.
+                    if matches!(operation, child_loader::ProviderOp::PeekMessageA
+                        | child_loader::ProviderOp::GetMessageA
+                        | child_loader::ProviderOp::GetCursorPos)
+                    {
+                        pump_ui4_input(&mut frames, &mut session)?;
+                        next_input_poll = std::time::Instant::now() + Duration::from_millis(8);
+                    }
                     include!("asupersync_child_vmcall_operations.rs");
                     include!("asupersync_child_vmcall_fallback.rs");
                 }

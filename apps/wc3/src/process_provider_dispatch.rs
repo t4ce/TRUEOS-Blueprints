@@ -2473,11 +2473,7 @@ impl XpProcess {
         memory: &mut impl GuestMemory,
         self_image_bytes: Option<&[u8]>,
     ) -> Result<PersonalityAction, ProviderDispatchError> {
-        let provider = self
-            .provider_import(provider_id)
-            .cloned()
-            .ok_or("unknown child provider import")?;
-        let operation = provider_op(&provider);
+        let operation = self.provider_operation(provider_id).ok_or("unknown child provider import")?;
         if operation.is_generic_process_local() {
             return self.dispatch_process_local_provider(
                 pid,
@@ -2488,6 +2484,7 @@ impl XpProcess {
                 self_image_bytes,
             );
         }
+        let provider = self.provider_import(provider_id).cloned().ok_or("unknown child provider import")?;
         let action = match operation {
             ProviderOp::SetDeviceGammaRamp => Some(self.set_device_gamma_ramp_request(pid, esp, memory)?),
             ProviderOp::CreateEventA => Some(PersonalityAction::Session(
@@ -2660,6 +2657,10 @@ impl XpProcess {
             }
             ProviderOp::FillRect => Some(self.fill_rect_static(esp, memory)?),
             ProviderOp::SetFocus => Some(PersonalityAction::Session(SessionRequest::SetFocus {
+                pid,
+                hwnd: arguments::<2>(memory, esp)?[1],
+            })),
+            ProviderOp::SetCapture => Some(PersonalityAction::Session(SessionRequest::SetCapture {
                 pid,
                 hwnd: arguments::<2>(memory, esp)?[1],
             })),

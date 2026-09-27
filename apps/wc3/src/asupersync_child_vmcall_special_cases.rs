@@ -1,4 +1,5 @@
                     {
+                    if logl::ENABLED {
                     if provider.module.eq_ignore_ascii_case("OPENGL32.dll") {
                         logl::log!(
                             level::IMPORTANT,
@@ -750,6 +751,7 @@
                             ),
                         );
                     }
+                    }
                     let is_heap_create = matches!(
                         &provider.symbol,
                         child_loader::ProviderSymbol::Name(name)
@@ -823,7 +825,7 @@
                             .unwrap_or_else(|| "<unsupported>".to_owned());
 
                         logl::log!(
-                            level::IMPORTANT,
+                            level::ERROR,
                             format_args!(
                                 "WC3 CHILD MESSAGEBOXA FRONTIER pid={} tid={} during=\"{}\" provider_id={} caller_ret=0x{:08x} owner=0x{:08x} text_ptr=0x{:08x} caption_ptr=0x{:08x} text={:?} caption={:?} style=0x{:08x} button_type=0x{:x} buttons=[{}] topmost={}",
                                 active_pid,
@@ -881,7 +883,7 @@
                             Ok(value) => value,
                             Err(ProviderDispatchError::Frontier { api, detail }) => {
                                 logl::log!(
-                                    level::IMPORTANT,
+                                    level::ERROR,
                                     format_args!(
                                         "WC3 CHILD PROVIDER FRONTIER pid={} tid={} during=\"{}\" provider_id={} module=\"{}\" symbol=\"GlobalAlloc\" api=\"{}\" detail={:?}",
                                         active_pid,
@@ -1055,7 +1057,7 @@
                         );
                         if flags != 0 {
                             logl::log!(
-                                level::IMPORTANT,
+                                level::ERROR,
                                 format_args!(
                                     "WC3 CHILD HEAP FREE FRONTIER pid={} tid={} reason=unsupported-flags flags=0x{:08x}",
                                     active_pid, active_tid, flags,
@@ -1250,7 +1252,7 @@
                         );
                         if code_page != 0 && code_page != XP_ANSI_CODE_PAGE {
                             logl::log!(
-                                level::IMPORTANT,
+                                level::ERROR,
                                 format_args!(
                                     "WC3 CHILD WIDECHARTOMULTIBYTE FRONTIER pid={} tid={} reason=unsupported-code-page code_page={}",
                                     active_pid, active_tid, code_page,
@@ -1348,7 +1350,7 @@
                         );
                         if !matches!(size, OSVERSIONINFOA_SIZE | OSVERSIONINFOEXA_SIZE) {
                             logl::log!(
-                                level::IMPORTANT,
+                                level::ERROR,
                                 format_args!(
                                     "WC3 CHILD GETVERSIONEXA FRONTIER pid={} tid={} reason=unsupported-structure-size size=0x{:08x}",
                                     active_pid, active_tid, size,
@@ -1599,7 +1601,7 @@
                             .has_critical_section(critical_section);
                         if !known {
                             logl::log!(
-                                level::IMPORTANT,
+                                level::ERROR,
                                 format_args!(
                                     "WC3 CHILD CRITICAL SECTION FRONTIER pid={} tid={} operation=enter reason=unknown-critical-section address=0x{:08x}",
                                     active_pid, active_tid, critical_section
@@ -1729,7 +1731,7 @@
                             .has_critical_section(address)
                         {
                             logl::log!(
-                                level::IMPORTANT,
+                                level::ERROR,
                                 format_args!(
                                     "WC3 CHILD CRITICAL SECTION FRONTIER pid={} tid={} operation=leave reason=unknown-critical-section address=0x{:08x}",
                                     active_pid, active_tid, address
@@ -2310,7 +2312,7 @@
                         let size = u32::from_le_bytes(size);
                         if size == 0 {
                             logl::log!(
-                                level::IMPORTANT,
+                                level::ERROR,
                                 format_args!(
                                     "WC3 CHILD PROVIDER FRONTIER pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" provider_id={} module=\"{}\" symbol=\"malloc\" reason=zero-size-unobserved",
                                     active_pid,
@@ -2421,7 +2423,7 @@
                     if is_crt_initterm {
                         if child.initterm.is_some() {
                             logl::log!(
-                                level::IMPORTANT,
+                                level::ERROR,
                                 format_args!(
                                     "WC3 CHILD CRT INITTERM FRONTIER pid={} tid={} reason=nested-initterm",
                                     active_pid, active_tid
@@ -2809,7 +2811,7 @@
                             && frame.protect == 0x04;
                         if !supported_reserve && !supported_commit && !supported_null_commit {
                             logl::log!(
-                                level::IMPORTANT,
+                                level::ERROR,
                                 format_args!(
                                     "WC3 CHILD VIRTUALALLOC FRONTIER pid={} tid={} during=\"{}:DLL_PROCESS_ATTACH\" provider_id={} caller_ret=0x{:08x} address=0x{:08x} size=0x{:08x} allocation_type=0x{:08x} protect=0x{:08x}",
                                     active_pid,
@@ -2834,7 +2836,7 @@
                                 ),
                             );
                             logl::log!(
-                                level::IMPORTANT,
+                                level::ERROR,
                                 format_args!(
                                     "WC3 CHILD VIRTUALALLOC FRONTIER reason=unsupported-observed-shape"
                                 ),
@@ -2955,7 +2957,7 @@
                                     }
                                     Err("VirtualAlloc overlapping commit") => {
                                         logl::log!(
-                                            level::IMPORTANT,
+                                            level::ERROR,
                                             format_args!(
                                                 "WC3 CHILD VIRTUALALLOC FRONTIER reason=overlapping-commit"
                                             ),
@@ -3125,7 +3127,7 @@
                         );
                         if free_type != MEM_RELEASE {
                             logl::log!(
-                                level::IMPORTANT,
+                                level::ERROR,
                                 format_args!(
                                     "WC3 CHILD VIRTUALFREE FRONTIER reason=unsupported-free-type address=0x{address:08x} size=0x{size:08x} free_type=0x{free_type:08x}"
                                 ),

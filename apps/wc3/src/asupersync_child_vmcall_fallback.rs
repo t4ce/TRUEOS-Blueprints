@@ -1,6 +1,6 @@
                     {
                     if operation.is_generic_process_local() {
-                        let global_memory_status = if operation
+                        let global_memory_status = if logl::ENABLED && operation
                             == child_loader::ProviderOp::GlobalMemoryStatus
                         {
                             Some(read_guest_words(
@@ -11,7 +11,7 @@
                         } else {
                             None
                         };
-                        let interlocked_exchange = if operation
+                        let interlocked_exchange = if logl::ENABLED && operation
                             == child_loader::ProviderOp::InterlockedExchange
                         {
                             let frame = read_guest_words(
@@ -25,7 +25,7 @@
                         } else {
                             None
                         };
-                        let interlocked_add = if matches!(
+                        let interlocked_add = if logl::ENABLED && matches!(
                             operation,
                             child_loader::ProviderOp::InterlockedIncrement
                                 | child_loader::ProviderOp::InterlockedDecrement
@@ -41,7 +41,7 @@
                         } else {
                             None
                         };
-                        let crt_memmove = if operation == child_loader::ProviderOp::CrtMemmove {
+                        let crt_memmove = if logl::ENABLED && operation == child_loader::ProviderOp::CrtMemmove {
                             let frame = read_guest_words(
                                 &X86Memory(&child.address_space),
                                 exit.registers.esp,
@@ -51,11 +51,11 @@
                         } else {
                             None
                         };
-                        let process_memory = matches!(
+                        let process_memory = (logl::ENABLED && matches!(
                             operation,
                             child_loader::ProviderOp::ReadProcessMemory
                                 | child_loader::ProviderOp::WriteProcessMemory
-                        )
+                        ))
                         .then(|| {
                             read_guest_words(
                                 &X86Memory(&child.address_space),
@@ -64,7 +64,7 @@
                             )
                         })
                         .transpose()?;
-                        let set_file_attributes = if operation
+                        let set_file_attributes = if logl::ENABLED && operation
                             == child_loader::ProviderOp::SetFileAttributesA
                         {
                             let frame = read_guest_words(
@@ -75,7 +75,7 @@
                             let [_, filename, attributes] = frame.as_slice() else {
                                 unreachable!("SetFileAttributesA frame has three words")
                             };
-                            let path = if *filename == 0 {
+                            let path = if logl::ENABLED && *filename == 0 {
                                 "<null>".to_owned()
                             } else {
                                 wc3::process::read_c_string(
@@ -89,7 +89,7 @@
                         } else {
                             None
                         };
-                        let get_drive_type_root = if operation
+                        let get_drive_type_root = if logl::ENABLED && operation
                             == child_loader::ProviderOp::GetDriveTypeA
                         {
                             let [_, root_ptr] = read_guest_words(
@@ -114,7 +114,7 @@
                         } else {
                             None
                         };
-                        let crt_toupper = if operation == child_loader::ProviderOp::CrtToUpper {
+                        let crt_toupper = if logl::ENABLED && operation == child_loader::ProviderOp::CrtToUpper {
                             Some(
                                 read_guest_words(
                                     &X86Memory(&child.address_space),
@@ -125,7 +125,7 @@
                         } else {
                             None
                         };
-                        let crt_decimal = if cfg!(feature = "trace-api") && matches!(
+                        let crt_decimal = if logl::ENABLED && cfg!(feature = "trace-api") && matches!(
                             operation,
                             child_loader::ProviderOp::CrtAtoi | child_loader::ProviderOp::CrtAtol
                         ) {
@@ -145,7 +145,7 @@
                         } else {
                             None
                         };
-                        let crt_srand = if operation == child_loader::ProviderOp::CrtSrand {
+                        let crt_srand = if logl::ENABLED && operation == child_loader::ProviderOp::CrtSrand {
                             Some(
                                 read_guest_words(
                                     &X86Memory(&child.address_space),
@@ -157,7 +157,7 @@
                             None
                         };
                         let crt_rand = operation == child_loader::ProviderOp::CrtRand;
-                        let get_volume_information = if operation
+                        let get_volume_information = if logl::ENABLED && operation
                             == child_loader::ProviderOp::GetVolumeInformationA
                         {
                             let frame = read_guest_words(
@@ -179,7 +179,7 @@
                             else {
                                 unreachable!("GetVolumeInformationA frame has nine words")
                             };
-                            let root = if *root_ptr == 0 {
+                            let root = if logl::ENABLED && *root_ptr == 0 {
                                 None
                             } else {
                                 Some(
@@ -214,7 +214,7 @@
                         } else {
                             None
                         };
-                        let get_disk_free_space = if operation
+                        let get_disk_free_space = if logl::ENABLED && operation
                             == child_loader::ProviderOp::GetDiskFreeSpaceA
                         {
                             let frame = read_guest_words(
@@ -233,7 +233,7 @@
                             else {
                                 unreachable!("GetDiskFreeSpaceA frame has six words")
                             };
-                            let root = if *root_ptr == 0 {
+                            let root = if logl::ENABLED && *root_ptr == 0 {
                                 None
                             } else {
                                 Some(
@@ -271,7 +271,7 @@
                             )?[..] else {
                                 unreachable!("FindFirstFileA frame has three words")
                             };
-                            let pattern_text = if pattern == 0 {
+                            let pattern_text = if logl::ENABLED && pattern == 0 {
                                 "<null>".to_owned()
                             } else {
                                 wc3::process::read_c_string(
@@ -367,7 +367,9 @@
                         } else {
                             None
                         };
-                        let dispatch = {
+                        let dispatch = if let Some(result) = direct_gl_result.take() {
+                            result
+                        } else {
                             let mut child_memory = X86Memory(&child.address_space);
                             session
                                 .process_mut(active_pid)
@@ -469,6 +471,7 @@
                                         .publish(Damage::full(window.width, window.height))
                                         .map_err(|error| format!("GL publish UI4 frame: {error:?}"))?;
                                 }
+                                if logl::ENABLED {
                                 if operation == child_loader::ProviderOp::GetSystemInfo {
                                     logl::log!(
                                         level::IMPORTANT,
@@ -1658,6 +1661,7 @@
                                         operation.stack_cleanup_bytes(),
                                     ),
                                 );
+                                }
                                 let mut registers = exit.registers;
                                 registers.eax = result;
                                 contexts[active]
@@ -1747,7 +1751,7 @@
                                     }
                                 }
                                 logl::log!(
-                                    level::IMPORTANT,
+                                    level::ERROR,
                                     format_args!(
                                         "WC3 CHILD PROVIDER FRONTIER pid={} tid={} during=\"{}\" provider_id={} module=\"{}\" {} eip=0x{:08x} esp=0x{:08x} caller_ret=0x{:08x} api=\"{}\" detail={:?}",
                                         active_pid,
@@ -1798,7 +1802,7 @@
                         );
                     }
                     logl::log!(
-                        level::IMPORTANT,
+                        level::ERROR,
                         format_args!(
                             "WC3 CHILD PROVIDER FRONTIER pid={} tid={} during=\"{}\" provider_id={} module=\"{}\" {} eip=0x{:08x} esp=0x{:08x} caller_ret=0x{:08x}",
                             active_pid,

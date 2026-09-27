@@ -795,6 +795,7 @@ impl WglContext {
             observed_writes: VecDeque::new(),
             fixed: GlFixedState::default(),
             raster_frame: None,
+            present_pixels: Vec::new(),
             drawable_size: [0, 0],
             viewport_set: false,
             draw_count: 0,

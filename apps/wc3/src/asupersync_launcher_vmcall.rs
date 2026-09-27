@@ -1112,7 +1112,7 @@
                     PersonalityAction::Session(SessionRequest::CreateProcess(request)) => {
                         let frame = request.frame;
                         logl::log!(
-                            level::IMPORTANT,
+                            level::ERROR,
                             format_args!(
                                 "WC3 BLUEPRINT FRONTIER: CreateProcessA call #{} esp=0x{:08x} ret=0x{:08x} command_line=0x{:08x} startup=0x{:08x} process_info=0x{:08x}",
                                 session.launcher().xp.call_count,
@@ -1629,6 +1629,10 @@
                     PersonalityAction::Session(SessionRequest::SetFocus { pid: _, hwnd }) => {
                         session.set_focus(hwnd).map_err(str::to_owned)?
                     }
+                    PersonalityAction::Session(SessionRequest::SetCapture { pid, hwnd }) => {
+                        session.set_capture(pid, hwnd).map_err(str::to_owned)?;
+                        hwnd
+                    }
                     PersonalityAction::Session(SessionRequest::SetForegroundWindow {
                         caller,
                         hwnd,
@@ -1802,7 +1806,7 @@
                             );
                             if request.count == 0 || request.count > 2 || request.wait_all > 1 {
                                 logl::log!(
-                                    level::IMPORTANT,
+                                    level::ERROR,
                                     format_args!(
                                         "WC3 WAIT FRONTIER reason=unsupported-shape count={} wait_all={}",
                                         request.count, request.wait_all,
@@ -2678,7 +2682,7 @@
                                 ),
                             );
                             logl::log!(
-                                level::IMPORTANT,
+                                level::ERROR,
                                 format_args!(
                                     "WC3 CHILD DLL INIT FRONTIER pid={} tid={} module=\"{}\" entry_va=0x{:08x} reason=context-ready-not-scheduled",
                                     child.pid, child.tid, storm_name, storm_entry,

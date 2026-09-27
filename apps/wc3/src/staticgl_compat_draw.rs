@@ -199,11 +199,12 @@ fn gl_compat_vertices(
         } else {
             None
         };
-    let mut vertices = Vec::new();
+    let memory = &GlArraySnapshot::new(memory, c, guest_indices);
+    let mut vertices = Vec::with_capacity(guest_indices.len().min(65536));
     let mut indices = Vec::with_capacity(guest_indices.len());
-    let mut remap = HashMap::new();
+    let mut remap = GlIndexRemap::new(guest_indices);
     for &index in guest_indices {
-        if let Some(&mapped) = remap.get(&index) {
+        if let Some(mapped) = remap.get(&index) {
             indices.push(mapped);
             continue;
         }
@@ -366,15 +367,20 @@ fn gl_rasterize_elements(
     Ok((stats, vertices.len()))
 }
 
-fn gl_present_strip_pixels(rgba: &[u8], width: u32, height: u32, top: u32, rows: u32) -> Vec<u8> {
+fn gl_fill_present_strip(pixels: &mut Vec<u8>, rgba: &[u8], width: u32, height: u32, top: u32, rows: u32) {
     let stride = width as usize * 4;
-    let mut pixels = Vec::with_capacity(stride * rows as usize);
-    for y in top..top + rows {
+    pixels.resize(stride * rows as usize, 0);
+    for (destination, y) in pixels.chunks_exact_mut(stride).zip(top..top + rows) {
         let start = (height - 1 - y) as usize * stride;
-        for p in rgba[start..start + stride].chunks_exact(4) {
-            pixels.extend_from_slice(&[p[0], p[1], p[2], 255]);
-        }
+        destination.copy_from_slice(&rgba[start..start + stride]);
+        for p in destination.chunks_exact_mut(4) { p[3] = 255; }
     }
+}
+
+#[cfg(test)]
+fn gl_present_strip_pixels(rgba: &[u8], width: u32, height: u32, top: u32, rows: u32) -> Vec<u8> {
+    let mut pixels = Vec::new();
+    gl_fill_present_strip(&mut pixels, rgba, width, height, top, rows);
     pixels
 }
 
@@ -523,7 +529,7 @@ impl XpProcess {
         Ok(0)
     }
     pub fn gl_preview_pending(&self, tid: u32) -> bool {
-        self.gl_runtime
+        cfg!(feature = "preview-first-draw") && self.gl_runtime
             .as_ref()
             .and_then(|r| r.contexts.values().find(|c| c.current_tid == Some(tid)))
             .is_some_and(|c| c.draw_count == 0)
@@ -583,7 +589,7 @@ impl XpProcess {
         let c = self.gl_context_mut(tid, API)?;
         let (stats, vertex_count) = gl_rasterize_elements(c, memory, &guest_indices)?;
         c.draw_count += 1;
-        let preview = c.draw_count == 1;
+        let preview = cfg!(feature = "preview-first-draw") && c.draw_count == 1;
         if preview || c.draw_count.is_multiple_of(128) {
             logl::log!(
                 level::IMPORTANT,
@@ -617,11 +623,11 @@ impl XpProcess {
         let frame = c.raster_frame.as_ref().unwrap();
         let width = frame.width;
         let height = frame.height;
-        let nonblack = frame
+        let nonblack = if logl::ENABLED { frame
             .rgba
             .chunks_exact(4)
             .filter(|p| p[..3] != [0, 0, 0])
-            .count();
+            .count() } else { 0 };
         let window_id = c.ui4_window_id.ok_or("GL UI4 frame missing")?;
         if runtime.textured_renderer.is_none() {
             runtime.textured_renderer = Some(
@@ -634,7 +640,8 @@ impl XpProcess {
         let mut strips = 0;
         for top in (0..height).step_by(256) {
             let rows = (height - top).min(256);
-            let pixels = gl_present_strip_pixels(&frame.rgba, width, height, top, rows);
+            gl_fill_present_strip(&mut c.present_pixels, &frame.rgba, width, height, top, rows);
+            let pixels = &c.present_pixels;
             let surface = runtime.device.acquire_ui4_surface(window_id).map_err(|e| {
                 gl_texture_error(API, format!("surface acquire failed strip={top} rc={e}"))
             })?;

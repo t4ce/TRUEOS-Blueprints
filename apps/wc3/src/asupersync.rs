@@ -2479,13 +2479,20 @@ pub(super) async fn run_loop(
     mut active: usize,
 ) -> Result<(), String> {
     let mut debug_shell = crate::debug_shell::DebugShell::new();
+    let mut next_input_poll = std::time::Instant::now();
     'child_run: loop {
         if let Some(child) = pending_child.as_mut() {
             if contexts[active].pid == child.pid {
                 child.activate_thread(contexts[active].tid);
             }
         }
-        pump_ui4_input(&mut frames, &mut session)?;
+        if !frames.is_empty() {
+            let now = std::time::Instant::now();
+            if now >= next_input_poll {
+                pump_ui4_input(&mut frames, &mut session)?;
+                next_input_poll = now + Duration::from_millis(8);
+            }
+        }
         if let Some(modal) = active_message_box.as_mut() {
             if modal.request.caller.pid != LAUNCHER_PID || modal.buttons.is_empty() {
                 return Err("invalid active MessageBoxA modal state".into());
@@ -2748,7 +2755,7 @@ pub(super) async fn run_loop(
                         .and_then(child_loader::provider_data_export_address);
 
                     logl::log!(
-                        level::IMPORTANT,
+                        level::ERROR,
                         format_args!(
                             "WC3 CHILD 401D0B FRONTIER \
                              eax=0x{:08x} ebx=0x{:08x} ecx=0x{:08x} edx=0x{:08x} \

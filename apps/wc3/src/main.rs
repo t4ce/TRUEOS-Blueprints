@@ -17,6 +17,10 @@ use trueos::{
     x86::{AddressSpace, Context, DebugRegisters, ExitKind, ExtendedState, Permissions, Registers},
 };
 mod asupersync;
+#[cfg(feature = "actor-execution")]
+mod guest_actor;
+#[cfg(not(feature = "actor-execution"))]
+#[path = "guest_direct.rs"]
 mod guest_actor;
 mod debug_shell;
 
@@ -214,7 +218,9 @@ async fn discover_maps() -> Result<Option<wc3::session::MapCatalog>, String> {
 
 async fn run() -> Result<(), String> {
     let maps = discover_maps().await?;
-    run_x86_extended_state_self_test().await?;
+    if cfg!(feature = "carrier-selftest") {
+        run_x86_extended_state_self_test().await?;
+    }
     let bytes = async_fs::read_file(LAUNCHER_PATH.as_bytes())
         .await
         .map_err(|error| format!("read {LAUNCHER_PATH}: TRUEOSFS error {error}"))?;
@@ -795,6 +801,7 @@ fn pump_ui4_input(
     frames: &mut HashMap<u32, Frame>,
     session: &mut Wc3Session,
 ) -> Result<(), String> {
+    if frames.is_empty() { return Ok(()); }
     let mice = hid::hid_hut_mice();
 
     for (&hwnd, frame) in frames.iter_mut() {

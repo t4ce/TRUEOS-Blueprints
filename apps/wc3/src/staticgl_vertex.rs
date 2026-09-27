@@ -83,7 +83,9 @@ fn gl_lit_color(
             core::array::from_fn(|i| p[i] / p[3] - eye_position[i])
         };
         let distance = gl_vec_dot(delta, delta).sqrt();
-        let direction = gl_vec_normalize(delta);
+        // The point-light distance is already needed for attenuation.
+        // Reuse it instead of taking a second square root to normalize delta.
+        let direction = if distance > 0.0 { delta.map(|v| v / distance) } else { [0.0; 3] };
         let attenuation = if p[3] == 0.0 {
             1.0
         } else {
@@ -110,8 +112,10 @@ fn gl_lit_color(
             }
         };
         let diffuse = gl_vec_dot(normal, direction).max(0.0);
-        let half = gl_vec_normalize(core::array::from_fn(|i| direction[i] + viewer[i]));
-        let specular = if diffuse > 0.0 {
+        let specular = if diffuse > 0.0
+            && (0..3).any(|i| material.specular[i] != 0.0 && light.specular[i] != 0.0)
+        {
+            let half = gl_vec_normalize(core::array::from_fn(|i| direction[i] + viewer[i]));
             gl_vec_dot(normal, half).max(0.0).powf(material.shininess)
         } else {
             0.0

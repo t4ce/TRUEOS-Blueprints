@@ -1848,6 +1848,7 @@ pub struct XpProcess {
     next_provider_module_handle: u32,
     imports: Vec<LauncherImport>,
     provider_imports: Vec<ProviderImport>,
+    provider_operations: Vec<ProviderOp>,
     provider_thunks: Vec<u8>,
     provider_modules: Vec<ChildProvider>,
     pub call_count: u32,
@@ -1940,6 +1941,7 @@ struct WglContext {
     observed_writes: VecDeque<GlWriteNote>,
     fixed: GlFixedState,
     raster_frame: Option<crate::staticgl_raster::GlRasterFrame>,
+    present_pixels: Vec<u8>,
     drawable_size: [u32; 2],
     viewport_set: bool,
     draw_count: u64,
@@ -2292,6 +2294,7 @@ impl XpProcess {
             next_provider_module_handle: PROVIDER_MODULE_HANDLE_BASE,
             imports,
             provider_imports: Vec::new(),
+            provider_operations: Vec::new(),
             provider_thunks: Vec::new(),
             provider_modules: Vec::new(),
             call_count: 0,
@@ -2399,6 +2402,7 @@ impl XpProcess {
         modules: Vec<ChildProvider>,
     ) -> Result<(), &'static str> {
         self.register_external_provider_modules(&modules)?;
+        self.provider_operations = imports.iter().map(provider_op).collect();
         self.provider_imports = imports;
         self.provider_thunks = thunks;
         self.provider_modules = modules;
@@ -2609,6 +2613,10 @@ impl XpProcess {
 
     pub fn provider_import(&self, id: u32) -> Option<&ProviderImport> {
         self.provider_imports.get(id as usize)
+    }
+
+    pub fn provider_operation(&self, id: u32) -> Option<ProviderOp> {
+        self.provider_operations.get(id as usize).copied()
     }
 
     pub fn provider_modules(&self) -> &[ChildProvider] {
@@ -3459,6 +3467,7 @@ include!("staticgl_texture.rs");
 include!("staticgl_textured_draw.rs");
 include!("staticgl_fixed.rs");
 include!("staticgl_vertex.rs");
+include!("staticgl_arrays.rs");
 include!("staticgl_compat_draw.rs");
 
 

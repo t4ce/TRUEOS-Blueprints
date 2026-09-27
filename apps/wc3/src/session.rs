@@ -846,6 +846,10 @@ pub enum SessionRequest {
     LoadImage(LoadImageRequest),
     CreateWindow(CreateWindowRequest),
     SetWindowPos(SetWindowPosRequest),
+    SetCapture {
+        pid: Pid,
+        hwnd: u32,
+    },
     ScreenToClient {
         pid: Pid,
         hwnd: u32,
@@ -961,6 +965,7 @@ pub struct Wc3Session {
     pub windows: HashMap<u32, WindowObject>,
     pub focused_window: Option<u32>,
     pub foreground_window: Option<u32>,
+    pub mouse_capture: Option<u32>,
     pub active_windows: HashMap<ThreadKey, u32>,
     pub runnable: VecDeque<ThreadKey>,
     pub blocked: HashMap<ThreadKey, WaitRequest>,
@@ -1000,6 +1005,7 @@ impl Wc3Session {
             windows: HashMap::new(),
             focused_window: None,
             foreground_window: None,
+            mouse_capture: None,
             active_windows: HashMap::new(),
             runnable: VecDeque::from([ThreadKey {
                 pid: LAUNCHER_PID,
@@ -1582,6 +1588,9 @@ impl Wc3Session {
         if self.foreground_window == Some(hwnd) {
             self.foreground_window = None;
         }
+        if self.mouse_capture == Some(hwnd) {
+            self.mouse_capture = None;
+        }
         self.active_windows.retain(|_, active| *active != hwnd);
         self.window_presentation = Some(WindowPresentation::Destroy { hwnd });
         Ok(DestroyWindowResult { was_focused })
@@ -1637,6 +1646,14 @@ impl Wc3Session {
         Ok(self.focused_window.replace(hwnd).unwrap_or(0))
     }
 
+    pub fn set_capture(&mut self, pid: Pid, hwnd: u32) -> Result<u32, &'static str> {
+        let window = self.windows.get(&hwnd).ok_or("SetCapture unknown window")?;
+        if window.owner.pid != pid {
+            return Err("SetCapture window owner mismatch");
+        }
+        Ok(self.mouse_capture.replace(hwnd).unwrap_or(0))
+    }
+
     pub fn screen_to_client(
         &self,
         pid: Pid,
@@ -1656,27 +1673,31 @@ impl Wc3Session {
         hwnd: u32,
         screen_x: u32,
         screen_y: u32,
-        local_x: i32,
-        local_y: i32,
+        _local_x: i32,
+        _local_y: i32,
         buttons_down: u32,
         buttons_pressed: u32,
         buttons_released: u32,
         wheel: i16,
     ) -> Result<(), &'static str> {
-        let owner = self.windows.get(&hwnd).ok_or("UI4 pointer unknown window")?.owner;
-        self.focused_window = Some(hwnd);
-        self.foreground_window = Some(hwnd);
-        self.active_windows.insert(owner, hwnd);
+        let target = self.mouse_capture.unwrap_or(hwnd);
+        let window = self.windows.get(&target).ok_or("UI4 pointer unknown window")?;
+        let owner = window.owner;
+        let target_x = window.x;
+        let target_y = window.y;
+        self.focused_window = Some(target);
+        self.foreground_window = Some(target);
+        self.active_windows.insert(owner, target);
         self.processes
             .get_mut(&owner.pid)
             .ok_or("UI4 pointer owner process missing")?
             .xp
             .queue_ui4_pointer_input(
-                hwnd,
+                target,
                 screen_x,
                 screen_y,
-                local_x,
-                local_y,
+                (screen_x as i32).wrapping_sub(target_x),
+                (screen_y as i32).wrapping_sub(target_y),
                 buttons_down,
                 buttons_pressed,
                 buttons_released,
@@ -1691,7 +1712,8 @@ impl Wc3Session {
         x: i32,
         y: i32,
     ) -> Result<(), &'static str> {
-        let owner = self.windows.get(&hwnd).ok_or("UI4 cursor unknown window")?.owner;
+        let target = self.mouse_capture.unwrap_or(hwnd);
+        let owner = self.windows.get(&target).ok_or("UI4 cursor unknown window")?.owner;
         self.processes
             .get_mut(&owner.pid)
             .ok_or("UI4 cursor owner process missing")?
