@@ -1,11 +1,12 @@
 //! WC3 diagnostics are opt-in. Fatal reports remain available in quiet builds.
 pub use trueos::logl::level;
 
-pub const ENABLED: bool = !cfg!(feature = "nolog") && (
-    cfg!(feature = "diagnostics") || cfg!(feature = "trace-api")
-    || cfg!(feature = "trace-seh") || cfg!(feature = "trace-scan")
-    || cfg!(feature = "trace-init")
-);
+pub const ENABLED: bool = !cfg!(feature = "nolog")
+    && (cfg!(feature = "diagnostics")
+        || cfg!(feature = "trace-api")
+        || cfg!(feature = "trace-seh")
+        || cfg!(feature = "trace-scan")
+        || cfg!(feature = "trace-init"));
 
 #[inline(always)]
 pub const fn enabled(level: u8) -> bool {
@@ -51,9 +52,17 @@ mod tests {
 
     #[test]
     fn quiet_log_arguments_are_not_evaluated() {
-        if ENABLED { return; }
+        if ENABLED {
+            return;
+        }
         let evaluated = core::cell::Cell::new(false);
-        log!(level::IMPORTANT, format_args!("{}", { evaluated.set(true); 1 }));
+        log!(
+            level::IMPORTANT,
+            format_args!("{}", {
+                evaluated.set(true);
+                1
+            })
+        );
         assert!(!evaluated.get());
     }
 }

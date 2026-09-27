@@ -8,7 +8,9 @@ struct CountingArrayMemory {
 impl GuestMemory for CountingArrayMemory {
     fn read(&self, address: u32, output: &mut [u8]) -> Result<(), &'static str> {
         self.reads.set(self.reads.get() + 1);
-        if self.reject_bulk && output.len() > 16 { return Err("unmapped stride gap"); }
+        if self.reject_bulk && output.len() > 16 {
+            return Err("unmapped stride gap");
+        }
         self.memory.read(address, output)
     }
     fn write(&mut self, address: u32, input: &[u8]) -> Result<(), &'static str> {
@@ -20,13 +22,26 @@ impl GuestMemory for CountingArrayMemory {
 fn interleaved_mesh_batches_reads_and_preserves_sparse_fallback() {
     let (c, source) = scene();
     let mut bytes = vec![0; 4];
-    for _ in 0..341 { bytes.extend_from_slice(&source.0[4..]); }
-    let memory = CountingArrayMemory { memory: ArrayMemory(bytes), reads: core::cell::Cell::new(0), reject_bulk: false };
+    for _ in 0..341 {
+        bytes.extend_from_slice(&source.0[4..]);
+    }
+    let memory = CountingArrayMemory {
+        memory: ArrayMemory(bytes),
+        reads: core::cell::Cell::new(0),
+        reject_bulk: false,
+    };
     let indices: Vec<u32> = (0..1023).collect();
     let (vertices, mapped) = gl_compat_vertices(&c, &memory, &indices).unwrap();
     assert_eq!(vertices.len(), 1023);
     assert_eq!(mapped, indices);
-    assert_eq!(memory.reads.get(), if cfg!(feature = "replay-arrays") { 3069 } else { 1 });
+    assert_eq!(
+        memory.reads.get(),
+        if cfg!(feature = "replay-arrays") {
+            3069
+        } else {
+            1
+        }
+    );
     // A new draw observes new guest bytes; no address-only cross-frame cache.
     let mut memory = memory;
     memory.memory.0[4..8].copy_from_slice(&0.25f32.to_le_bytes());

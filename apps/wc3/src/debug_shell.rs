@@ -6,6 +6,7 @@ pub struct DebugShell {
     lines: Lines,
     next_poll: std::time::Instant,
     exits: u8,
+    perf_sample: Option<(std::time::Instant, u64, u64, u64)>,
 }
 impl DebugShell {
     pub fn new() -> Self {
@@ -13,6 +14,7 @@ impl DebugShell {
             lines: Lines::default(),
             next_poll: std::time::Instant::now(),
             exits: 0,
+            perf_sample: None,
         }
     }
     pub fn poll(
@@ -39,7 +41,27 @@ impl DebugShell {
         for byte in &bytes[..count] {
             if let Some(command) = self.lines.push(*byte) {
                 let result = command.map_err(str::to_owned).and_then(|command| {
-                    execute(command, contexts, child, launcher, session, active)
+                    if command == Command::Perf {
+                        let (draws, swaps) = session.processes.values().map(|p| p.xp.gl_progress())
+                            .fold((0u64, 0u64), |(d, s), (dd, ss)| (d.saturating_add(dd), s.saturating_add(ss)));
+                        let exits = GuestThreadContext::last_execution_diagnostic().sequence;
+                        let now = std::time::Instant::now();
+                        if let Some((before, old_draws, old_swaps, old_exits)) = self.perf_sample {
+                            let elapsed = now.duration_since(before).as_secs_f64();
+                            logl::emit(level::IMPORTANT, format_args!(
+                                "WC3 PERF interval_s={elapsed:.3} draws={} guest_swaps={} guest_swaps_per_s={:.3} execution_exits={} transport={}",
+                                draws.saturating_sub(old_draws), swaps.saturating_sub(old_swaps),
+                                swaps.saturating_sub(old_swaps) as f64 / elapsed.max(0.000001),
+                                exits.saturating_sub(old_exits), if cfg!(feature = "actor-execution") { "actor" } else { "direct" },
+                            ));
+                        } else {
+                            logl::emit(level::IMPORTANT, format_args!("WC3 PERF baseline draws={draws} guest_swaps={swaps} execution_exits={exits}; repeat debug perf for interval"));
+                        }
+                        self.perf_sample = Some((now, draws, swaps, exits));
+                        Ok(())
+                    } else {
+                        execute(command, contexts, child, launcher, session, active)
+                    }
                 });
                 if let Err(error) = result {
                     logl::emit(level::IMPORTANT, format_args!("WC3 DEBUG ERROR {error}"));
@@ -119,21 +141,39 @@ fn execute(
     active: ThreadKey,
 ) -> Result<(), String> {
     match command {
+        Command::Perf => return Err("performance sampling requires the live shell sampler".into()),
         Command::Help => logl::emit(
             level::IMPORTANT,
             format_args!(
                 "WC3 DEBUG HELP: debug state | debug regs PID TID | debug mem PID ADDRESS BYTES(1..256) | debug stack PID TID WORDS(1..64) | debug object PID HANDLE | debug post PID HWND MESSAGE WPARAM LPARAM (explicit queued notification experiment); numbers decimal or 0xhex"
             ),
         ),
-        Command::Post { pid, hwnd, message, wparam, lparam } => {
+        Command::Post {
+            pid,
+            hwnd,
+            message,
+            wparam,
+            lparam,
+        } => {
             let window = session.windows.get(&hwnd).ok_or("unknown live window")?;
-            if window.owner.pid != pid { return Err("window belongs to a different process".into()); }
+            if window.owner.pid != pid {
+                return Err("window belongs to a different process".into());
+            }
             let owner = window.owner;
             let process = session.process_mut(pid).ok_or("unknown process")?;
-            if process.exit_code.is_some() { return Err("process has exited".into()); }
-            process.xp.debug_post_window_message(hwnd, message, wparam, lparam)?;
-            logl::emit(level::IMPORTANT, format_args!(
-                "WC3 DEBUG POST QUEUED pid={pid} tid={} hwnd=0x{hwnd:08x} message=0x{message:04x} wparam=0x{wparam:08x} lparam=0x{lparam:08x} delivery=guest-message-pump experiment=true", owner.tid));
+            if process.exit_code.is_some() {
+                return Err("process has exited".into());
+            }
+            process
+                .xp
+                .debug_post_window_message(hwnd, message, wparam, lparam)?;
+            logl::emit(
+                level::IMPORTANT,
+                format_args!(
+                    "WC3 DEBUG POST QUEUED pid={pid} tid={} hwnd=0x{hwnd:08x} message=0x{message:04x} wparam=0x{wparam:08x} lparam=0x{lparam:08x} delivery=guest-message-pump experiment=true",
+                    owner.tid
+                ),
+            );
         }
         Command::State => {
             logl::emit(

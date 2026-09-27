@@ -367,13 +367,22 @@ fn gl_rasterize_elements(
     Ok((stats, vertices.len()))
 }
 
-fn gl_fill_present_strip(pixels: &mut Vec<u8>, rgba: &[u8], width: u32, height: u32, top: u32, rows: u32) {
+fn gl_fill_present_strip(
+    pixels: &mut Vec<u8>,
+    rgba: &[u8],
+    width: u32,
+    height: u32,
+    top: u32,
+    rows: u32,
+) {
     let stride = width as usize * 4;
     pixels.resize(stride * rows as usize, 0);
     for (destination, y) in pixels.chunks_exact_mut(stride).zip(top..top + rows) {
         let start = (height - 1 - y) as usize * stride;
         destination.copy_from_slice(&rgba[start..start + stride]);
-        for p in destination.chunks_exact_mut(4) { p[3] = 255; }
+        for p in destination.chunks_exact_mut(4) {
+            p[3] = 255;
+        }
     }
 }
 
@@ -529,10 +538,12 @@ impl XpProcess {
         Ok(0)
     }
     pub fn gl_preview_pending(&self, tid: u32) -> bool {
-        cfg!(feature = "preview-first-draw") && self.gl_runtime
-            .as_ref()
-            .and_then(|r| r.contexts.values().find(|c| c.current_tid == Some(tid)))
-            .is_some_and(|c| c.draw_count == 0)
+        cfg!(feature = "preview-first-draw")
+            && self
+                .gl_runtime
+                .as_ref()
+                .and_then(|r| r.contexts.values().find(|c| c.current_tid == Some(tid)))
+                .is_some_and(|c| c.draw_count == 0)
     }
     fn gl_ensure_raster(c: &mut WglContext) -> Result<(), ProviderDispatchError> {
         let [width, height] = c.drawable_size;
@@ -623,11 +634,15 @@ impl XpProcess {
         let frame = c.raster_frame.as_ref().unwrap();
         let width = frame.width;
         let height = frame.height;
-        let nonblack = if logl::ENABLED { frame
-            .rgba
-            .chunks_exact(4)
-            .filter(|p| p[..3] != [0, 0, 0])
-            .count() } else { 0 };
+        let nonblack = if logl::ENABLED {
+            frame
+                .rgba
+                .chunks_exact(4)
+                .filter(|p| p[..3] != [0, 0, 0])
+                .count()
+        } else {
+            0
+        };
         let window_id = c.ui4_window_id.ok_or("GL UI4 frame missing")?;
         if runtime.textured_renderer.is_none() {
             runtime.textured_renderer = Some(

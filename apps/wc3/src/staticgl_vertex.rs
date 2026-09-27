@@ -85,7 +85,11 @@ fn gl_lit_color(
         let distance = gl_vec_dot(delta, delta).sqrt();
         // The point-light distance is already needed for attenuation.
         // Reuse it instead of taking a second square root to normalize delta.
-        let direction = if distance > 0.0 { delta.map(|v| v / distance) } else { [0.0; 3] };
+        let direction = if distance > 0.0 {
+            delta.map(|v| v / distance)
+        } else {
+            [0.0; 3]
+        };
         let attenuation = if p[3] == 0.0 {
             1.0
         } else {

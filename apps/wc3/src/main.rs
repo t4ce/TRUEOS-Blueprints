@@ -355,6 +355,26 @@ async fn run() -> Result<(), String> {
             frames,
         ),
     );
+    if outcome.is_err() {
+        // Quiet builds retain a bounded stopped-guest snapshot on failure.
+        // Collect it here rather than continuously dumping healthy execution.
+        logl::log!(level::ERROR, format_args!(
+            "WC3 CRASH SNAPSHOT outcome={outcome:?} execution={execution:?} registers={last_registers:?}"
+        ));
+        if let Some(registers) = last_registers {
+            let space = if execution.pid == LAUNCHER_PID { Some(&address_space) }
+                else { pending_child.as_ref().filter(|c| c.pid == execution.pid).map(|c| &c.address_space) };
+            if let Some(space) = space {
+                for (kind, address, count) in [("code", registers.eip, 64usize), ("stack", registers.esp, 128)] {
+                    let mut bytes = vec![0; count];
+                    match space.read(address, &mut bytes) {
+                        Ok(read) => logl::log!(level::ERROR, format_args!("WC3 CRASH {kind} address=0x{address:08x} bytes={:02x?}", &bytes[..read])),
+                        Err(error) => logl::log!(level::ERROR, format_args!("WC3 CRASH {kind} address=0x{address:08x} unreadable={error}")),
+                    }
+                }
+            }
+        }
+    }
     outcome
 }
 

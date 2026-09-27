@@ -118,7 +118,10 @@ impl GuestThreadContext {
     pub fn debug_registers(&self) -> Result<DebugRegisters, String> {
         match self.pending_debug_registers {
             Some(registers) => Ok(registers),
-            None => self.context.debug_registers().map_err(|error| error.to_string()),
+            None => self
+                .context
+                .debug_registers()
+                .map_err(|error| error.to_string()),
         }
     }
 
@@ -130,7 +133,10 @@ impl GuestThreadContext {
     pub fn extended_state(&self) -> Result<ExtendedState, String> {
         match &self.pending_extended_state {
             Some(state) => Ok(state.clone()),
-            None => self.context.extended_state().map_err(|error| error.to_string()),
+            None => self
+                .context
+                .extended_state()
+                .map_err(|error| error.to_string()),
         }
     }
 
@@ -159,18 +165,16 @@ impl GuestThreadContext {
             .map(|provenance| provenance.caller_ret)
             .unwrap_or(0);
         record_execution(sequence, ExecutionStage::Submit, self.pid, self.tid);
-        trace_api!(
-            format_args!(
-                "WC3 EXEC SUBMIT seq={} pid={} tid={} provider={} eip=0x{:08x} esp=0x{:08x} caller_ret=0x{:08x}",
-                sequence,
-                self.pid,
-                self.tid,
-                provider,
-                self.registers.eip,
-                self.registers.esp,
-                caller_ret,
-            ),
-        );
+        trace_api!(format_args!(
+            "WC3 EXEC SUBMIT seq={} pid={} tid={} provider={} eip=0x{:08x} esp=0x{:08x} caller_ret=0x{:08x}",
+            sequence,
+            self.pid,
+            self.tid,
+            provider,
+            self.registers.eip,
+            self.registers.esp,
+            caller_ret,
+        ),);
         record_execution(sequence, ExecutionStage::Accept, self.pid, self.tid);
         if self.registers_dirty {
             self.context
@@ -208,30 +212,26 @@ impl GuestThreadContext {
             }
         };
         record_execution(sequence, ExecutionStage::Exit, self.pid, self.tid);
-        trace_api!(
-            format_args!(
-                "WC3 EXEC EXIT seq={} pid={} tid={} kind={:?} detail=0x{:08x} eip=0x{:08x} esp=0x{:08x}",
-                sequence,
-                self.pid,
-                self.tid,
-                exit.kind,
-                exit.detail,
-                exit.registers.eip,
-                exit.registers.esp,
-            ),
-        );
+        trace_api!(format_args!(
+            "WC3 EXEC EXIT seq={} pid={} tid={} kind={:?} detail=0x{:08x} eip=0x{:08x} esp=0x{:08x}",
+            sequence,
+            self.pid,
+            self.tid,
+            exit.kind,
+            exit.detail,
+            exit.registers.eip,
+            exit.registers.esp,
+        ),);
         self.registers = exit.registers;
         self.registers_dirty = false;
         self.pending_debug_registers = None;
         self.pending_extended_state = None;
         record_execution(sequence, ExecutionStage::Reply, self.pid, self.tid);
         record_execution(sequence, ExecutionStage::Receive, self.pid, self.tid);
-        trace_api!(
-            format_args!(
-                "WC3 EXEC RECEIVE seq={} pid={} tid={} result=ok",
-                sequence, self.pid, self.tid,
-            ),
-        );
+        trace_api!(format_args!(
+            "WC3 EXEC RECEIVE seq={} pid={} tid={} result=ok",
+            sequence, self.pid, self.tid,
+        ),);
         Ok(exit)
     }
 }

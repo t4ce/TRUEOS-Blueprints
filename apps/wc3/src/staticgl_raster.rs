@@ -262,18 +262,24 @@ impl Frame {
         depth: Option<f32>,
         scissor: Option<[i32; 4]>,
     ) {
-        for y in 0..self.height as i32 {
-            for x in 0..self.width as i32 {
-                if scissor.is_some_and(|s| !in_scissor_gl(s, x, y)) {
-                    continue;
+        if color.is_none() && depth.is_none() {
+            return;
+        }
+        let Some([left, right, bottom, top]) = clear_bounds(self.width, self.height, scissor)
+        else {
+            return;
+        };
+        let row_width = self.width as usize;
+        for y in bottom..top {
+            let start = y as usize * row_width + left as usize;
+            let end = y as usize * row_width + right as usize;
+            if let Some(color) = color {
+                for pixel in self.rgba[start * 4..end * 4].chunks_exact_mut(4) {
+                    pixel.copy_from_slice(&color);
                 }
-                let i = self.gl_index(x, y);
-                if let Some(color) = color {
-                    self.rgba[i * 4..i * 4 + 4].copy_from_slice(&color);
-                }
-                if let Some(depth) = depth {
-                    self.depth[i] = depth;
-                }
+            }
+            if let Some(depth) = depth {
+                self.depth[start..end].fill(depth);
             }
         }
     }
@@ -310,8 +316,29 @@ impl Frame {
         if indices.iter().any(|&i| i as usize >= vertices.len()) {
             return Err(RasterError::BadIndex);
         }
+        // Classify each source vertex once.  Almost all WC3 geometry is fully
+        // inside the canonical volume, so avoid allocating a polygon and
+        // running all seven clipping passes for every such triangle.
+        let clip_codes: Vec<u8> = vertices.iter().copied().map(clip_code).collect();
         let mut staged = Vec::with_capacity(indices.len() / 3);
         for tri in indices.chunks_exact(3) {
+            let codes = [
+                clip_codes[tri[0] as usize],
+                clip_codes[tri[1] as usize],
+                clip_codes[tri[2] as usize],
+            ];
+            let any_outside = codes[0] | codes[1] | codes[2];
+            if any_outside == 0 {
+                staged.push([
+                    vertices[tri[0] as usize],
+                    vertices[tri[1] as usize],
+                    vertices[tri[2] as usize],
+                ]);
+                continue;
+            }
+            if codes[0] & codes[1] & codes[2] != 0 {
+                continue;
+            }
             let polygon = clip_triangle([
                 vertices[tri[0] as usize],
                 vertices[tri[1] as usize],
@@ -731,9 +758,6 @@ impl Frame {
     fn top_index(&self, x: i32, y_top: i32) -> usize {
         (self.height as usize - 1 - y_top as usize) * self.width as usize + x as usize
     }
-    fn gl_index(&self, x: i32, y_gl: i32) -> usize {
-        y_gl as usize * self.width as usize + x as usize
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -880,6 +904,34 @@ fn validate_texture(texture: TextureView<'_>) -> Result<(), RasterError> {
     }
     Ok(())
 }
+/// Returns an exclusive lower-left rectangle clipped to the framebuffer.
+fn clear_bounds(
+    frame_width: u32,
+    frame_height: u32,
+    scissor: Option<[i32; 4]>,
+) -> Option<[i32; 4]> {
+    let width = i64::from(frame_width);
+    let height = i64::from(frame_height);
+    let [left, right, bottom, top] = match scissor {
+        None => [0, width, 0, height],
+        Some(scissor) => {
+            let [left, bottom, scissor_width, scissor_height] = scissor.map(i64::from);
+            if scissor_width <= 0 || scissor_height <= 0 {
+                return None;
+            }
+            [
+                left.max(0),
+                left.saturating_add(scissor_width).min(width),
+                bottom.max(0),
+                bottom.saturating_add(scissor_height).min(height),
+            ]
+        }
+    };
+    if left >= right || bottom >= top {
+        return None;
+    }
+    Some([left as i32, right as i32, bottom as i32, top as i32])
+}
 fn vertex_valid(v: ClipVertex) -> bool {
     v.clip
         .iter()
@@ -887,6 +939,16 @@ fn vertex_valid(v: ClipVertex) -> bool {
         .chain(v.uv.iter())
         .chain([v.fog].iter())
         .all(|x| x.is_finite())
+}
+#[inline]
+fn clip_code(v: ClipVertex) -> u8 {
+    let mut code = 0;
+    for plane in 0..7 {
+        if plane_distance(v.clip, plane) < 0.0 {
+            code |= 1 << plane;
+        }
+    }
+    code
 }
 fn clip_triangle(input: [ClipVertex; 3]) -> Vec<ClipVertex> {
     let mut polygon = input.to_vec();
@@ -940,15 +1002,6 @@ fn lerp4(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {
 }
 fn orient(a: [f32; 2], b: [f32; 2], c: [f32; 2]) -> f32 {
     (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
-}
-fn in_scissor_gl(s: [i32; 4], x: i32, y: i32) -> bool {
-    let [left, bottom, width, height] = s.map(i64::from);
-    width > 0
-        && height > 0
-        && i64::from(x) >= left
-        && i64::from(x) < left + width
-        && i64::from(y) >= bottom
-        && i64::from(y) < bottom + height
 }
 fn perspective_weight(p: &[ScreenVertex; 3], b: [f32; 3]) -> [f32; 3] {
     let d = b[0] * p[0].inv_w + b[1] * p[1].inv_w + b[2] * p[2].inv_w;

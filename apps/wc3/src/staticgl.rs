@@ -128,6 +128,19 @@ const GL_IDENTITY_MATRIX: [f32; 16] = [
 ];
 
 impl XpProcess {
+    pub fn gl_progress(&self) -> (u64, u64) {
+        self.gl_runtime
+            .as_ref()
+            .map(|r| {
+                r.contexts.values().fold((0u64, 0u64), |(draws, swaps), c| {
+                    (
+                        draws.saturating_add(c.draw_count),
+                        swaps.saturating_add(c.swap_count),
+                    )
+                })
+            })
+            .unwrap_or_default()
+    }
     pub fn note_gl_write(
         &mut self,
         tid: u32,
