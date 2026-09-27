@@ -2132,17 +2132,7 @@ pub(super) async fn run_loop(
     let mut debug_shell = crate::debug_shell::DebugShell::new();
     let mut gl_gpu_frames = xpapp::gl_frame::GlFrames::default();
     let mut next_input_poll = std::time::Instant::now();
-    let mut next_management_poll = std::time::Instant::now() + Duration::from_secs(5);
-    let mut management_exits = 0u8;
     'child_run: loop {
-        management_exits = management_exits.wrapping_add(1);
-        if management_exits == 0 {
-            let now = std::time::Instant::now();
-            if now >= next_management_poll {
-                if trueos::worker::cancellation_requested() { return Ok(()); }
-                next_management_poll = now + Duration::from_secs(5);
-            }
-        }
         if let Some(child) = pending_child.as_mut() {
             if contexts[active].pid == child.pid {
                 child.activate_thread(contexts[active].tid);

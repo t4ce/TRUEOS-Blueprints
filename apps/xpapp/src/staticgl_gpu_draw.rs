@@ -1,13 +1,6 @@
 // Native GPU bridge. CPU work is limited to decoding guest arrays and vertices.
 const GL_TRIANGLE_STRIP: u32 = 0x0005;
 
-fn gl_draw_clock() -> Option<std::time::Instant> {
-    (!cfg!(feature = "nolog")).then(std::time::Instant::now)
-}
-fn gl_draw_elapsed(start: Option<std::time::Instant>) -> std::time::Duration {
-    start.map_or(std::time::Duration::ZERO, |start| start.elapsed())
-}
-
 fn gl_assemble_triangles(mode: u32, mut indices: Vec<u32>) -> Result<Vec<u32>, &'static str> {
     match mode {
         GL_TRIANGLES => {
@@ -181,7 +174,7 @@ fn gl_gpu_geometry(
 impl XpProcess {
     fn gl_draw_gpu_static(&mut self, tid: u32, esp: u32, memory: &impl GuestMemory) -> Result<u32, ProviderDispatchError> {
         const API: &str = "glDrawElements";
-        let started = gl_draw_clock();
+        let started = std::time::Instant::now();
         let [_, mode, count, kind, address] = arguments::<5>(memory, esp)?;
         let c = self.gl_context_mut(tid, API)?;
         if !matches!(mode, GL_TRIANGLES | GL_TRIANGLE_STRIP) || count > 1_000_000 {
@@ -208,7 +201,7 @@ impl XpProcess {
             ));
         }
         let geometry = gl_fixed_gpu_geometry(c, memory, &indices)?;
-        let decoded_at = gl_draw_clock();
+        let decoded_at = std::time::Instant::now();
         let mut phases = [std::time::Duration::ZERO; 4];
         let window = c.ui4_window_id.ok_or("GL UI4 frame missing")?;
         let runtime = self.gl_runtime.as_mut().ok_or("GL runtime missing")?;
@@ -218,36 +211,36 @@ impl XpProcess {
                     .map_err(|rc| gl_texture_error(API, format!("native GPU pipeline rc={rc}")))?);
             }
             let c = runtime.contexts.values().find(|c| c.current_tid == Some(tid)).ok_or("GL context missing")?;
-            let atlas_started = gl_draw_clock();
+            let atlas_started = std::time::Instant::now();
             let (pixels, width, height) = if c.textures.enabled {
                 gl_fixed_gpu_texture(&c.textures)?
             } else { (vec![255u8;4], 1, 1) };
-            phases[0] = gl_draw_elapsed(atlas_started);
-            let acquire_started = gl_draw_clock();
+            phases[0] = atlas_started.elapsed();
+            let acquire_started = std::time::Instant::now();
             let surface = runtime.device.acquire_ui4_surface(window)
                 .map_err(|rc| gl_texture_error(API, format!("native GPU acquire rc={rc}")))?;
             if [surface.info().width, surface.info().height] != c.drawable_size {
                 return Err(gl_texture_error(API, "drawable/surface size mismatch"));
             }
             let flags = gl_gpu_depth_flags(&c.fixed);
-            phases[1] = gl_draw_elapsed(acquire_started);
-            let submit_started = gl_draw_clock();
+            phases[1] = acquire_started.elapsed();
+            let submit_started = std::time::Instant::now();
             let point = runtime.fixed_renderer.as_mut().unwrap().draw(runtime.queue, surface,
                 &geometry.vertices, &geometry.indices, &geometry.state, &pixels, width, height, flags)
                 .map_err(|rc| gl_texture_error(API, format!("native GPU indexed submit rc={rc}")))?;
-            phases[2] = gl_draw_elapsed(submit_started);
-            let wait_started = gl_draw_clock();
+            phases[2] = submit_started.elapsed();
+            let wait_started = std::time::Instant::now();
             runtime.device.wait(runtime.queue, point.value)
                 .map_err(|rc| gl_texture_error(API, format!("native GPU wait rc={rc}")))?;
-            phases[3] = gl_draw_elapsed(wait_started);
+            phases[3] = wait_started.elapsed();
         }
         let c = self.gl_context_mut(tid, API)?;
         c.draw_count += 1;
         if !cfg!(feature = "nolog") {
             c.heartbeat.work.draws += 1;
             c.heartbeat.work.triangles += geometry.indices.len() as u64 / 3;
-            c.heartbeat.work.draw_time += gl_draw_elapsed(started);
-            c.heartbeat.work.decode_time += decoded_at.unwrap().duration_since(started.unwrap());
+            c.heartbeat.work.draw_time += started.elapsed();
+            c.heartbeat.work.decode_time += decoded_at.duration_since(started);
             c.heartbeat.work.atlas_time += phases[0];
             c.heartbeat.work.acquire_time += phases[1];
             c.heartbeat.work.submit_time += phases[2];
