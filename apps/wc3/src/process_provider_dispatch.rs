@@ -2790,6 +2790,37 @@ impl XpProcess {
                     hwnd,
                 }))
             }
+            ProviderOp::CreateDirectoryA => {
+                let [_, path_ptr, security_attributes] = arguments::<3>(memory, esp)?;
+                if path_ptr == 0 {
+                    return Err(ProviderDispatchError::Frontier {
+                        api: "CreateDirectoryA",
+                        detail: "null lpPathName".into(),
+                    });
+                }
+                if security_attributes != 0 {
+                    return Err(ProviderDispatchError::Frontier {
+                        api: "CreateDirectoryA",
+                        detail: format!(
+                            "lpSecurityAttributes=0x{security_attributes:08x}"
+                        ),
+                    });
+                }
+                let win_path = read_c_string(memory, path_ptr, 1024)?;
+                let trueos_path = war3_profile_directory_path(&win_path).ok_or_else(|| {
+                    ProviderDispatchError::Frontier {
+                        api: "CreateDirectoryA",
+                        detail: format!("unmodeled path={win_path:?}"),
+                    }
+                })?;
+                Some(PersonalityAction::Session(SessionRequest::CreateDirectory(
+                    CreateDirectoryRequest {
+                        key: ThreadKey { pid, tid },
+                        win_path,
+                        trueos_path,
+                    },
+                )))
+            }
             ProviderOp::SetWindowTextA => {
                 let [_, hwnd, text_ptr] = arguments::<3>(memory, esp)?;
                 if text_ptr == 0 {

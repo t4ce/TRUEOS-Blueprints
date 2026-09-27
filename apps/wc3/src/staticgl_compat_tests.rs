@@ -392,4 +392,21 @@ fn glyph_foreground_replaces_shadow_after_reusing_guest_color_buffer() {
     let foreground = gl_rasterize_elements(&mut c, &memory, &indices).unwrap().0;
     assert_eq!(foreground.shaded_pixels, 64);
     assert!(c.raster_frame.as_ref().unwrap().rgba.chunks_exact(4).all(|p| p == [252, 210, 17, 255]));
+    // Model the suspected failure: existing depth rejects both glyph passes.
+    c.fixed.set_enabled(0xb71, true).unwrap();
+    c.fixed.depth_func = 0x201;
+    c.raster_frame.as_mut().unwrap().depth.fill(0.0);
+    c.raster_frame.as_mut().unwrap().rgba.fill(0);
+    assert_eq!(gl_rasterize_elements(&mut c, &memory, &indices).unwrap().0.shaded_pixels, 0);
+    c.debug_depth_texture = Some(39);
+    assert_eq!(gl_rasterize_elements(&mut c, &memory, &indices).unwrap().0.shaded_pixels, 64);
+    assert!(c.raster_frame.as_ref().unwrap().rgba.chunks_exact(4).all(|p| p == [252, 210, 17, 255]));
+    assert!(c.raster_frame.as_ref().unwrap().depth.iter().all(|&z| z == 0.0));
+    assert!(c.fixed.is_enabled(0xb71));
+    // A different texture is unaffected, and restore reinstates rejection.
+    c.debug_depth_texture = Some(40);
+    assert_eq!(gl_rasterize_elements(&mut c, &memory, &indices).unwrap().0.shaded_pixels, 0);
+    c.debug_depth_texture = None;
+    assert_eq!(gl_rasterize_elements(&mut c, &memory, &indices).unwrap().0.shaded_pixels, 0);
+
 }

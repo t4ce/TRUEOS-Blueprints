@@ -198,6 +198,17 @@ impl XpProcess {
             })
     }
 
+    pub fn debug_texture_depth(&mut self, tid: u32, texture: Option<u32>) -> Result<(), String> {
+        let c = self.gl_context_mut(tid, "debug depth").map_err(|e| format!("{e:?}"))?;
+        if let Some(name) = texture {
+            if name == 0 || !c.textures.objects.contains_key(&name) {
+                return Err("select an existing nonzero texture name from debug draws".into());
+            }
+        }
+        c.debug_depth_texture = texture;
+        Ok(())
+    }
+
     pub fn debug_capture_gl_draws(&mut self, tid: u32, count: u32) -> Result<(), String> {
         if count > 256 { return Err("draw count exceeds 256".into()); }
         let context = self.gl_context_mut(tid, "debug draws").map_err(|e| format!("{e:?}"))?;
@@ -824,6 +835,7 @@ impl WglContext {
             fixed: GlFixedState::default(),
             raster_frame: None,
             debug_draws_remaining: 0,
+            debug_depth_texture: None,
             present_pixels: Vec::new(),
             drawable_size: [0, 0],
             viewport_set: false,

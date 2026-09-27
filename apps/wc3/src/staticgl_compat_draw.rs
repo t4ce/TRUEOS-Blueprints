@@ -305,7 +305,13 @@ fn gl_rasterize_elements(
     guest_indices: &[u32],
 ) -> Result<(raster::RasterStats, usize), ProviderDispatchError> {
     const API: &str = "glDrawElements";
-    let state = gl_raster_state(c)?;
+    let mut state = gl_raster_state(c)?;
+    // Explicit per-texture A/B experiment. Never mutate GL state or the stored
+    // depth buffer while bypassed; restoring resumes the guest's own settings.
+    if c.textures.enabled && c.debug_depth_texture == Some(c.textures.binding) {
+        state.depth.enabled = false;
+        state.depth.write = false;
+    }
     let (vertices, indices) = gl_compat_vertices(c, memory, guest_indices)?;
     XpProcess::gl_ensure_raster(c)?;
     let object = c.textures.object();

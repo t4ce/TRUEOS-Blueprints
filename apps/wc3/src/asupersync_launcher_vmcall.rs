@@ -1539,6 +1539,40 @@
                     PersonalityAction::Session(SessionRequest::ImmGetContext { pid, hwnd }) => session
                         .imm_get_context(pid, hwnd)
                         .map_err(str::to_owned)?,
+                    PersonalityAction::Session(SessionRequest::CreateDirectory(request)) => {
+                        match async_fs::metadata(request.trueos_path.as_bytes()).await {
+                            Ok(_) => {
+                                session
+                                    .process_mut(request.key.pid)
+                                    .ok_or_else(|| "CreateDirectoryA process missing".to_owned())?
+                                    .xp
+                                    .set_last_error_for_thread(request.key.tid, 183);
+                                0
+                            }
+                            Err(async_fs::ERR_NOT_FOUND) => {
+                                async_fs::create_dir_all(request.trueos_path.as_bytes())
+                                    .await
+                                    .map_err(|error| {
+                                        format!(
+                                            "CreateDirectoryA create {:?}: TRUEOSFS {error}",
+                                            request.trueos_path,
+                                        )
+                                    })?;
+                                session
+                                    .process_mut(request.key.pid)
+                                    .ok_or_else(|| "CreateDirectoryA process missing".to_owned())?
+                                    .xp
+                                    .set_last_error_for_thread(request.key.tid, 0);
+                                1
+                            }
+                            Err(error) => {
+                                return Err(format!(
+                                    "CreateDirectoryA metadata {:?}: TRUEOSFS {error}",
+                                    request.trueos_path,
+                                ));
+                            }
+                        }
+                    }
                     PersonalityAction::Session(SessionRequest::GetDC { pid, hwnd }) => {
                         session.validate_window_dc(pid, hwnd).map_err(str::to_owned)?;
                         session

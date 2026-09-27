@@ -283,6 +283,13 @@ client pointers, raw and transformed vertex colors, clip positions, texture name
 and first covered texel, lighting, depth/alpha/blend/fog state, and raster counts.
 It automatically disarms and is silent by default. Capture logging affects timing;
 use it for correctness investigations, not performance measurements.
+For a reversible depth-ordering experiment, `debug depth 2 3 TEXTURE bypass`
+disables depth testing and writes only for draws sampling that existing texture.
+Select the actual font texture name from `debug draws`; do not assume a stable ID.
+Colors, blending, alpha testing, clipping and guest GL state are unchanged.
+`debug depth 2 3 restore` removes the override. It defaults off and lasts only
+for that GL context. A successful visual change implicates depth rejection, but
+is not a permanent rendering fix.
 An already-running older pack cannot gain these commands without a relaunch.
 
 `debug post PID HWND MESSAGE WPARAM LPARAM` is an explicit mutation for window

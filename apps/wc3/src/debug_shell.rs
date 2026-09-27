@@ -145,9 +145,22 @@ fn execute(
         Command::Help => logl::emit(
             level::IMPORTANT,
             format_args!(
-                "WC3 DEBUG HELP: debug draws PID TID COUNT(0..256) | debug perf | debug state | debug regs PID TID | debug mem PID ADDRESS BYTES(1..256) | debug stack PID TID WORDS(1..64) | debug object PID HANDLE | debug post PID HWND MESSAGE WPARAM LPARAM (explicit queued notification experiment); numbers decimal or 0xhex"
+                "WC3 DEBUG HELP: debug depth PID TID TEXTURE bypass / debug depth PID TID restore | debug draws PID TID COUNT(0..256) | debug perf | debug state | debug regs PID TID | debug mem PID ADDRESS BYTES(1..256) | debug stack PID TID WORDS(1..64) | debug object PID HANDLE | debug post PID HWND MESSAGE WPARAM LPARAM (explicit queued notification experiment); numbers decimal or 0xhex"
             ),
         ),
+        Command::Depth { pid, tid, texture } => {
+            session
+                .process_mut(pid)
+                .ok_or("unknown process")?
+                .xp
+                .debug_texture_depth(tid, texture)?;
+            logl::emit(
+                level::IMPORTANT,
+                format_args!(
+                    "WC3 DEBUG DEPTH pid={pid} tid={tid} bypass_texture={texture:?} experiment=true guest_state=unchanged"
+                ),
+            );
+        }
         Command::Draws { pid, tid, count } => {
             session
                 .process_mut(pid)

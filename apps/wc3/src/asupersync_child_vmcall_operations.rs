@@ -2524,6 +2524,77 @@
                             .map_err(|error| error.to_string())?;
                         continue;
                     }
+                    if operation == child_loader::ProviderOp::CreateDirectoryA {
+                        let action = session
+                            .process_mut(active_pid)
+                            .ok_or_else(|| "child process missing".to_owned())?
+                            .xp
+                            .dispatch_provider_for_process_typed(
+                                active_pid,
+                                active_tid,
+                                provider_id,
+                                exit.registers.esp,
+                                &mut X86Memory(&child.address_space),
+                            )
+                            .map_err(|error| error.to_string())?;
+                        let PersonalityAction::Session(SessionRequest::CreateDirectory(request)) = action
+                        else {
+                            return Err("CreateDirectoryA produced unexpected action".into());
+                        };
+                        let existed = match async_fs::metadata(request.trueos_path.as_bytes()).await {
+                            Ok(_) => true,
+                            Err(async_fs::ERR_NOT_FOUND) => false,
+                            Err(error) => {
+                                return Err(format!(
+                                    "CreateDirectoryA metadata {:?}: TRUEOSFS {error}",
+                                    request.trueos_path,
+                                ));
+                            }
+                        };
+                        let result = if existed {
+                            session
+                                .process_mut(request.key.pid)
+                                .ok_or_else(|| "CreateDirectoryA process missing".to_owned())?
+                                .xp
+                                .set_last_error_for_thread(request.key.tid, 183);
+                            0
+                        } else {
+                            async_fs::create_dir_all(request.trueos_path.as_bytes())
+                                .await
+                                .map_err(|error| {
+                                    format!(
+                                        "CreateDirectoryA create {:?}: TRUEOSFS {error}",
+                                        request.trueos_path,
+                                    )
+                                })?;
+                            session
+                                .process_mut(request.key.pid)
+                                .ok_or_else(|| "CreateDirectoryA process missing".to_owned())?
+                                .xp
+                                .set_last_error_for_thread(request.key.tid, 0);
+                            1
+                        };
+                        logl::log!(
+                            level::IMPORTANT,
+                            format_args!(
+                                "WC3 CHILD CREATEDIRECTORYA RESULT pid={} tid={} win_path={:?} trueos_path={:?} existed={} result={} last_error={} cleanup=8-by-thunk",
+                                active_pid,
+                                active_tid,
+                                request.win_path,
+                                request.trueos_path,
+                                existed as u8,
+                                result,
+                                if existed { 183 } else { 0 },
+                            ),
+                        );
+                        let mut registers = exit.registers;
+                        registers.eax = result;
+                        contexts[active]
+                            .context
+                            .set_registers(registers)
+                            .map_err(|error| error.to_string())?;
+                        continue;
+                    }
                     if operation == child_loader::ProviderOp::SetWindowTextA {
                         let action = session
                             .process_mut(active_pid)

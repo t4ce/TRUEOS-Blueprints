@@ -9,6 +9,11 @@ pub enum Command {
         tid: u32,
         count: u32,
     },
+    Depth {
+        pid: u32,
+        tid: u32,
+        texture: Option<u32>,
+    },
     Post {
         pid: u32,
         hwnd: u32,
@@ -59,6 +64,16 @@ pub fn parse(line: &str) -> Result<Command, &'static str> {
                 count,
             }
         }
+        ["debug", "depth", pid, tid, "restore"] => Command::Depth {
+            pid: number(pid)?,
+            tid: number(tid)?,
+            texture: None,
+        },
+        ["debug", "depth", pid, tid, texture, "bypass"] => Command::Depth {
+            pid: number(pid)?,
+            tid: number(tid)?,
+            texture: Some(number(texture)?),
+        },
         ["debug", "post", pid, hwnd, message, wparam, lparam] => {
             let (message, wparam, lparam) = (number(message)?, number(wparam)?, number(lparam)?);
             // Scalar-only window notifications. Never interpret arbitrary guest
@@ -248,4 +263,26 @@ fn draw_capture_is_bounded_and_cancellable() {
         })
     );
     assert!(parse("debug draws 2 3 257").is_err());
+}
+
+#[cfg(test)]
+#[test]
+fn depth_experiment_requires_explicit_texture_and_can_restore() {
+    assert_eq!(
+        parse("debug depth 2 3 39 bypass"),
+        Ok(Command::Depth {
+            pid: 2,
+            tid: 3,
+            texture: Some(39)
+        })
+    );
+    assert_eq!(
+        parse("debug depth 2 3 restore"),
+        Ok(Command::Depth {
+            pid: 2,
+            tid: 3,
+            texture: None
+        })
+    );
+    assert!(parse("debug depth 2 3 bypass").is_err());
 }

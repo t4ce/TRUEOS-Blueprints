@@ -21,7 +21,7 @@ use crate::{
     imports::{LauncherImport, WinCall},
     pe32,
     session::{
-        CreateEventRequest, CreateMutexRequest, CreateProcessRequest, CreateWindowRequest,
+        CreateDirectoryRequest, CreateEventRequest, CreateMutexRequest, CreateProcessRequest, CreateWindowRequest,
         DuplicateHandleRequest,
         GetExitCodeProcessRequest, GetQueuedCompletionStatusRequest, LoadImageRequest, OpenFileRequest, PersonalityAction, SessionRequest,
         SetWindowPosRequest, ThreadKey, WaitRequest, WindowBlitRequest, WindowFillRectRequest, WindowGammaRampRequest, WindowTextRequest,
@@ -1648,6 +1648,25 @@ fn warcraft_drive_relative_path(path: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
+/// Guest profile data may only materialize below the persistent Save or Replay
+/// mounts.  The canonicalized drive-relative path is deliberately checked
+/// segment-by-segment so a guest cannot escape the Warcraft III TRUEOSFS tree.
+fn war3_profile_directory_path(path: &str) -> Option<String> {
+    let relative = warcraft_drive_relative_path(path)?;
+    let mut parts = relative.split('\\');
+    let root = parts.next()?;
+    if !root.eq_ignore_ascii_case("save") && !root.eq_ignore_ascii_case("replay") {
+        return None;
+    }
+    if !relative
+        .split('\\')
+        .all(|part| !part.is_empty() && part != "." && part != "..")
+    {
+        return None;
+    }
+    Some(format!("/common/Warcraft III/{relative}"))
+}
+
 fn is_war3_scratch_path(path: &str) -> bool {
     matches!(
         canonical_file_path(path).as_str(),
@@ -1944,6 +1963,7 @@ struct WglContext {
     fixed: GlFixedState,
     raster_frame: Option<crate::staticgl_raster::GlRasterFrame>,
     debug_draws_remaining: u32,
+    debug_depth_texture: Option<u32>,
     present_pixels: Vec<u8>,
     drawable_size: [u32; 2],
     viewport_set: bool,

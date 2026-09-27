@@ -77,6 +77,7 @@ pub enum ProviderOp {
     SetThreadPriority,
     GetThreadPriority,
     CreateFileA,
+    CreateDirectoryA,
     GetFileSize,
     SetFilePointer,
     ReadFile,
@@ -464,6 +465,7 @@ impl ProviderOp {
             Self::SetThreadPriority => 8,
             Self::GetThreadPriority => 4,
             Self::CreateFileA | Self::FormatMessageA => 28,
+            Self::CreateDirectoryA => 8,
             Self::WideCharToMultiByte => 32,
             Self::GetModuleFileNameA
             | Self::HeapCreate
@@ -566,6 +568,7 @@ impl ProviderOp {
                 | Self::Sleep
                 | Self::DisableThreadLibraryCalls
                 | Self::CreateFileA
+                | Self::CreateDirectoryA
                 | Self::GetFileSize
                 | Self::SetFilePointer
                 | Self::ReadFile
@@ -768,6 +771,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "SetThreadPriority" => ProviderOp::SetThreadPriority,
             "GetThreadPriority" => ProviderOp::GetThreadPriority,
             "CreateFileA" => ProviderOp::CreateFileA,
+            "CreateDirectoryA" => ProviderOp::CreateDirectoryA,
             "GetFileSize" => ProviderOp::GetFileSize,
             "SetFilePointer" => ProviderOp::SetFilePointer,
             "ReadFile" => ProviderOp::ReadFile,

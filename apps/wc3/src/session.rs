@@ -713,6 +713,15 @@ pub struct CreateMutexRequest {
     pub inheritable: bool,
 }
 
+/// A persistent Warcraft profile-directory operation executed by the async
+/// TRUEOSFS coordinator.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CreateDirectoryRequest {
+    pub key: ThreadKey,
+    pub win_path: String,
+    pub trueos_path: String,
+}
+
 /// A read-only file open whose backing must be resolved by the async
 /// coordinator rather than by the process-local XP personality.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -883,6 +892,7 @@ pub enum SessionRequest {
         pid: Pid,
         hwnd: u32,
     },
+    CreateDirectory(CreateDirectoryRequest),
     SetWindowText {
         pid: Pid,
         hwnd: u32,
