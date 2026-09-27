@@ -198,27 +198,27 @@ impl XpProcess {
                 c.textures.binding, c.fixed.enabled, c.viewport,
             ));
         }
-        let geometry = gl_gpu_geometry(c, memory, &indices)?;
+        let geometry = gl_fixed_gpu_geometry(c, memory, &indices)?;
         let window = c.ui4_window_id.ok_or("GL UI4 frame missing")?;
         let runtime = self.gl_runtime.as_mut().ok_or("GL runtime missing")?;
         if !geometry.indices.is_empty() {
-            if runtime.textured_renderer.is_none() {
-                runtime.textured_renderer = Some(staticgl_triangle::textured::TexturedRenderer::new(runtime.device)
+            if runtime.fixed_renderer.is_none() {
+                runtime.fixed_renderer = Some(staticgl_triangle::fixed::FixedRenderer::new(runtime.device)
                     .map_err(|rc| gl_texture_error(API, format!("native GPU pipeline rc={rc}")))?);
             }
             let c = runtime.contexts.values().find(|c| c.current_tid == Some(tid)).ok_or("GL context missing")?;
             let (pixels, width, height) = if c.textures.enabled {
-                let image = gl_texture_draw_image(&c.textures)?;
+                let image = gl_texture_draw_image_contract(&c.textures, true)?;
                 (image.rgba.as_slice(), image.width, image.height)
-            } else { (geometry.solid.as_slice(), 1, 1) };
+            } else { ([255u8;4].as_slice(), 1, 1) };
             let surface = runtime.device.acquire_ui4_surface(window)
                 .map_err(|rc| gl_texture_error(API, format!("native GPU acquire rc={rc}")))?;
             if [surface.info().width, surface.info().height] != c.drawable_size {
                 return Err(gl_texture_error(API, "drawable/surface size mismatch"));
             }
             let flags = gl_gpu_depth_flags(&c.fixed);
-            let point = runtime.textured_renderer.as_mut().unwrap().draw_with_flags(runtime.queue, surface,
-                &geometry.vertices, &geometry.indices, pixels, width, height, 0, flags)
+            let point = runtime.fixed_renderer.as_mut().unwrap().draw(runtime.queue, surface,
+                &geometry.vertices, &geometry.indices, &geometry.state, pixels, width, height, flags)
                 .map_err(|rc| gl_texture_error(API, format!("native GPU indexed submit rc={rc}")))?;
             runtime.device.wait(runtime.queue, point.value)
                 .map_err(|rc| gl_texture_error(API, format!("native GPU wait rc={rc}")))?;

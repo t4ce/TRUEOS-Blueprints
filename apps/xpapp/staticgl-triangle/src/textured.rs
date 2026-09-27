@@ -274,7 +274,7 @@ impl TexturedRenderer {
     }
 }
 
-fn ensure_buffer(
+pub(super) fn ensure_buffer(
     device: Device,
     slot: &mut Option<(Buffer, usize)>,
     bytes: usize,
@@ -309,7 +309,7 @@ fn vertex_is_finite(vertex: &TexturedVertex) -> bool {
         .all(|value| value.is_finite())
 }
 
-fn bytes_of_slice<T>(values: &[T]) -> &[u8] {
+pub(super) fn bytes_of_slice<T>(values: &[T]) -> &[u8] {
     // `TexturedVertex` and `u32` are plain C-layout scalar values; the vGPU
     // receives their contiguous representation without an allocation.
     unsafe {

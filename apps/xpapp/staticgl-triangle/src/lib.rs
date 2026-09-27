@@ -7,6 +7,7 @@
 //! and submit them together through the supported immediate-RGBA batch path.
 
 pub mod textured;
+pub mod fixed;
 
 use trueos::vgpu::{
     self, Buffer, Device, IndexedBatchDrawV2, IndexedDrawBatchV2, Queue, RenderPipeline,

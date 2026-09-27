@@ -1993,6 +1993,7 @@ struct GlRuntime {
     next_context: u32,
     triangle_renderer: Option<staticgl_triangle::TriangleRenderer>,
     textured_renderer: Option<staticgl_triangle::textured::TexturedRenderer>,
+    fixed_renderer: Option<staticgl_triangle::fixed::FixedRenderer>,
 }
 
 impl XpProcess {
@@ -3494,6 +3495,7 @@ include!("staticgl_vertex.rs");
 include!("staticgl_arrays.rs");
 include!("staticgl_compat_draw.rs");
 include!("staticgl_gpu_draw.rs");
+include!("staticgl_fixed_gpu.rs");
 
 
 #[derive(Clone, Debug, Eq, PartialEq)]

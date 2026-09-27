@@ -770,6 +770,7 @@ impl XpProcess {
                 next_context: HGLRC_HANDLE_BASE,
                 triangle_renderer: None,
                 textured_renderer: None,
+                fixed_renderer: None,
             });
         }
 

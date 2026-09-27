@@ -1,5 +1,8 @@
 // Admission rules for the existing native sampled shader.
 fn gl_texture_draw_image(textures: &GlTextures) -> Result<&GlTextureImage, ProviderDispatchError> {
+    gl_texture_draw_image_contract(textures, false)
+}
+fn gl_texture_draw_image_contract(textures: &GlTextures, fixed: bool) -> Result<&GlTextureImage, ProviderDispatchError> {
     const API: &str = "glDrawElements";
     let object = textures.object();
     if object.min_filter != 0x2600
@@ -25,13 +28,13 @@ fn gl_texture_draw_image(textures: &GlTextures) -> Result<&GlTextureImage, Provi
             "sampled GPU needs a nonempty RGB/RGBA image",
         ));
     }
-    if !image.rgba.chunks_exact(4).all(|p| p[3] == 255) {
+    if !fixed && !image.rgba.chunks_exact(4).all(|p| p[3] == 255) {
         return Err(gl_texture_error(
             API,
             "sampled GPU currently requires opaque texture pixels",
         ));
     }
-    if !matches!(textures.env_mode, 0x2100 | 0x2101 | 0x1e01) {
+    if !matches!(textures.env_mode, 0x2100 | 0x2101 | 0x1e01) && !(fixed && textures.env_mode == 0xbe2) {
         return Err(gl_texture_error(
             API,
             "texture environment needs additional shader combine support",
