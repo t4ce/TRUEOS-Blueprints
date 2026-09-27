@@ -48,6 +48,7 @@ pub enum ProviderOp {
     LCMapStringW,
     GetModuleFileNameA,
     GetModuleHandleA,
+    GetComputerNameA,
     LoadLibraryA,
     FreeLibrary,
     GetProcAddress,
@@ -313,6 +314,7 @@ impl ProviderOp {
             | Self::ReleaseMutex
             | Self::CloseHandle
             | Self::GetModuleHandleA
+            | Self::GetComputerNameA
             | Self::LoadLibraryA
             | Self::FreeLibrary
             | Self::QueryPerformanceFrequency
@@ -540,6 +542,7 @@ impl ProviderOp {
                 | Self::LCMapStringW
                 | Self::GetModuleFileNameA
                 | Self::GetModuleHandleA
+                | Self::GetComputerNameA
                 | Self::InterlockedExchange
                 | Self::InterlockedIncrement
                 | Self::InterlockedDecrement
@@ -734,6 +737,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "LCMapStringW" => ProviderOp::LCMapStringW,
             "GetModuleFileNameA" => ProviderOp::GetModuleFileNameA,
             "GetModuleHandleA" => ProviderOp::GetModuleHandleA,
+            "GetComputerNameA" => ProviderOp::GetComputerNameA,
             "LoadLibraryA" => ProviderOp::LoadLibraryA,
             "FreeLibrary" => ProviderOp::FreeLibrary,
             "GetProcAddress" => ProviderOp::GetProcAddress,

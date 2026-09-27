@@ -991,6 +991,45 @@ impl XpProcess {
         Ok(0)
     }
 
+    fn get_computer_name_a(
+        &mut self,
+        esp: u32,
+        memory: &mut impl GuestMemory,
+    ) -> Result<u32, ProviderDispatchError> {
+        let [_, output, size_ptr] = arguments::<3>(memory, esp)?;
+        if size_ptr == 0 {
+            return Err(ProviderDispatchError::Frontier {
+                api: "GetComputerNameA",
+                detail: "null nSize".into(),
+            });
+        }
+
+        // `nSize` is input capacity in bytes, then the hostname length on
+        // success. On ERROR_BUFFER_OVERFLOW it becomes the capacity required
+        // including the terminating NUL.
+        let capacity = read_u32(memory, size_ptr)?;
+        let name_length = u32::try_from(TRUEOS_COMPUTER_NAME.len())
+            .map_err(|_| ProviderDispatchError::Fault("GetComputerNameA length"))?;
+        let required = name_length
+            .checked_add(1)
+            .ok_or(ProviderDispatchError::Fault("GetComputerNameA length"))?;
+        if output == 0 || capacity < required {
+            memory.write(size_ptr, &required.to_le_bytes())?;
+            self.set_last_error(ERROR_BUFFER_OVERFLOW);
+            return Ok(0);
+        }
+
+        memory.write(output, TRUEOS_COMPUTER_NAME)?;
+        memory.write(
+            output
+                .checked_add(name_length)
+                .ok_or(ProviderDispatchError::Fault("GetComputerNameA output"))?,
+            &[0],
+        )?;
+        memory.write(size_ptr, &name_length.to_le_bytes())?;
+        Ok(1)
+    }
+
     fn get_windows_directory_a(
         &self,
         esp: u32,

@@ -1657,7 +1657,7 @@
     fn unsupported_child_provider_does_not_mutate_memory() {
         let provider = ProviderImport {
             module: "KERNEL32.dll".into(),
-            symbol: ProviderSymbol::Name("GetComputerNameA".into()),
+            symbol: ProviderSymbol::Name("GetComputerNameW".into()),
             iat_rva: 0,
         };
         let mut pid2 = XpProcess::new(Vec::new());

@@ -16,6 +16,7 @@ pub mod ThisToThat;
 pub mod assets;
 pub mod checkpoint;
 pub mod child_loader;
+pub mod cursor_decode;
 pub mod debug_command;
 pub mod event_pool;
 mod frame_heartbeat;

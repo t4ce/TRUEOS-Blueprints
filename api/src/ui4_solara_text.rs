@@ -270,6 +270,8 @@ pub enum CursorIcon {
     AppOwned = 5,
     /// UI4 outlines the stepped cell on its software-cursor plane.
     CellOutline = 6,
+    /// The image chosen through `Frame::select_cursor_image`.
+    Custom = 7,
 }
 
 /// Frame-local presentation spacing for a software cursor. The advances use
@@ -1070,6 +1072,47 @@ impl Frame {
                 self.window_id,
                 action as u32,
             )
+        })
+    }
+
+    /// Register a cursor once, before selecting it. UI4 owns a copy and moves
+    /// it at input/compositor cadence, independently of this frame's redraws.
+    /// Pixels are top-down straight-alpha RGBA8, at most 64x64; IDs 1..=16
+    /// belong to this frame and are released when it closes. Replacing an ID
+    /// atomically updates its image. Hotspot coordinates must lie inside it.
+    ///
+    /// ```ignore
+    /// frame.register_cursor_image(1, 32, 32, 4, 2, &cursor_rgba)?;
+    /// frame.select_cursor_image(1)?;
+    /// // Movement now needs neither another upload nor frame.publish().
+    /// frame.select_cursor_image(0)?; // restore UI4's default
+    /// ```
+    pub fn register_cursor_image(
+        &mut self, id: u32, width: u32, height: u32,
+        hotspot_x: u32, hotspot_y: u32, rgba: &[u8],
+    ) -> Result<(), Error> {
+        if !(1..=16).contains(&id) || !(1..=64).contains(&width)
+            || !(1..=64).contains(&height) || hotspot_x >= width || hotspot_y >= height
+            || rgba.len() != width as usize * height as usize * 4
+        {
+            return Err(Error::Invalid);
+        }
+        let image = v::bp_abi::TrueosUi4CursorImageV1 {
+            id, width, height, hotspot_x, hotspot_y,
+        };
+        status(unsafe {
+            v::bp_abi::trueos_cabi_ui4_scene_register_cursor_image_v1(
+                self.window_id, &image, rgba.as_ptr(), rgba.len(),
+            )
+        })
+    }
+
+    /// Hand the selected frame's cursor to UI4 using an upfront registration.
+    /// This sends only the ID, not pixels. Zero restores the default cursor.
+    /// Per-source cursor-icon overrides remain authoritative.
+    pub fn select_cursor_image(&mut self, id: u32) -> Result<(), Error> {
+        status(unsafe {
+            v::bp_abi::trueos_cabi_ui4_scene_select_cursor_image_v1(self.window_id, id)
         })
     }
 

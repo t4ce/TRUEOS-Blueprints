@@ -1221,6 +1221,14 @@ impl XpProcess {
                     self.get_module_handle_a(esp, memory)?,
                 ))
             }
+            ProviderOp::GetComputerNameA => {
+                let result = self.get_computer_name_a(esp, memory)?;
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(result))
+            }
             ProviderOp::GetCurrentProcess => {
                 self.call_count = self
                     .call_count
