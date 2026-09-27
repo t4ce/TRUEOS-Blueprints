@@ -22,38 +22,35 @@ The launcher image is read from
 `/common/Warcraft III/Warcraft III.exe` and must have SHA-256
 `5a8cca727c719ae054adf8d15523a8e3099745225e2f4f9885f88774aa6f36d9`.
 
-## Frontier iteration
+## Release execution and diagnostics
 
-Default builds also omit scan observers, execution-sample dumps, detailed SEH
-traces, and selected repetitive API call/return traces. The trace gates run
-before argument formatting and diagnostic guest-memory reads. Guest code,
-SEH dispatch, provider validation, checkpoint validation, exception summaries,
-single-step heartbeats, and frontier/error reporting still run. This reduces
-instrumentation overhead; it does not skip guest instructions or restore a
-whole session.
+Normal builds use `default = []`: WC3 emits no routine application logs. Fatal
+errors and terminal compatibility frontiers remain visible, and a failed run
+captures stopped registers plus bounded code/stack bytes. Explicit minishell
+commands still print their replies. This does not change the kernel's own log
+policy. Trace gates run before formatting, allocations and diagnostic guest
+reads. Quiet builds also omit idle-site provenance accounting.
 
-The current hot-path gate also covers per-call `_ftol`, `rand`, `strtol`,
-`TlsGetValue`, registry-open, critical-section-init, and synchronization-return
-diagnostics. With `trace-api` disabled, their diagnostic-only guest reads,
-string allocations, and formatting are skipped. Exact octal `strtol("0")`
-calls use a two-byte parser shortcut; other inputs retain the general parser.
+The default coordinator owns each x86 context directly and awaits the native
+carrier. It avoids actor/channel handoffs and reads debug/x87 state only when a
+consumer needs it. Ordinary GL setters and queries take a short dispatch path
+through the same typed handlers. Wait results, event semantics, SEH handling,
+checkpoint guards and GPU completion/ownership rules are retained.
 
-The idle message loop also gates empty `PeekMessageA`, successful
-`GetThreadPriority`, `TlsSetValue`, and `ClipCursor` diagnostics behind
-`trace-api`, including diagnostic-only guest-memory reads. Messages found,
-failures, and signaled waits remain visible. Empty zero-timeout waits log the
-first four polls and every 1024th poll thereafter, with a cumulative counter,
-timeout, and caller address; `trace-api` restores every poll. This counter is
-shared across the child wait callsite. Event polling, TLS writes, message
-delivery, and scheduling are unchanged; this does not unblock offline IOCP.
+See [release performance](docs/release-performance.md) for the rendering and
+array-read optimizations, comparison switches and measured limits. Use
+`debug perf` twice to measure an interval without enabling routine traces.
 
-Re-enable only the diagnostics needed via Cargo features:
+Re-enable diagnostics via Cargo features:
 
+- `diagnostics`: general lifecycle, provider and rendering records.
 - `trace-scan`: scan/table progress observers and execution samples.
 - `trace-seh`: SEH dispatch/return details, register/code dumps and step transitions.
-- `trace-api`: the gated API call/return records.
+- `trace-api`: detailed API call/return records.
 - `trace-init`: per-initializer calls/returns, callback-table registrations and local import dumps.
-- `trace-all`: all trace categories.
+- `trace-all`: all trace categories. Each trace category also enables general diagnostics.
+- `nolog`: suppress routine diagnostics even when trace features are selected;
+  fatal reports and explicit command replies remain available.
 
 CRT exit-callback tables grow geometrically instead of reallocating and copying
 the table on almost every append. Only capacity is reserved ahead: the guest
@@ -61,7 +58,7 @@ end pointer still advances by one callback, order is unchanged, and the old
 allocation stays live until copying and pointer updates complete. If the larger
 reservation cannot fit, allocation retries with the exact required size.
 API argument frames are fetched in a single checked guest-memory read instead
-of one host crossing per word. Initializer completion counts remain visible with `trace-init` disabled.
+of one host crossing per word. Initializer completion counts are available with `diagnostics`; `trace-init` adds individual calls.
 
 MSVCRT `memmove` imports now jump to a cdecl x86 helper in the child control
 page. It copies directly with `REP MOVSB`, backwards for rightward overlap,
@@ -216,8 +213,8 @@ for 2, 3, 17, and 10,759 input records.
 
 Before guest execution, WC3 selects `WARCRAFT3_MAP` files under the shared
 `/common/Warcraft III/Maps` selector (resolved to `apps/common/Warcraft III/Maps`).
-The catalog stays in `Wc3Session.maps`; paths are relative to that folder. The
-normal log emits one `WC3 MAP CATALOG` summary; `trace-init` prints every path.
+The catalog stays in `Wc3Session.maps`; paths are relative to that folder.
+`diagnostics` emits one `WC3 MAP CATALOG` summary; `trace-init` prints every path.
 A missing Maps folder is reported and does not prevent startup. Selection I/O
 errors are reported as initialization errors; depth or capacity truncation is
 retained in the catalog and shown explicitly in the summary.
@@ -252,6 +249,7 @@ without a `vmx_` prefix:
 
 ```text
 debug help
+debug perf
 debug state
 debug regs 2 3
 debug stack 2 3 32
@@ -273,7 +271,10 @@ ordinary exits in groups of 32 and also checking existing preemption exits. No
 new yield, event signal, guest write or blocking input read is introduced. If
 execution never returns to the coordinator, a request cannot be serviced there.
 Lines longer than 160 bytes are discarded in full. Replies use `WC3 DEBUG` records
-on the normal Blueprint text/log path (subject to the existing `nolog` feature).
+on the normal Blueprint text/log path, including in quiet and `nolog` builds.
+`debug perf` establishes a baseline on its first call and reports elapsed time,
+draws, guest swaps per second and execution exits on subsequent calls. These are
+guest counters, not a physical scanout FPS measurement.
 An already-running older pack cannot gain these commands without a relaunch.
 
 `debug post PID HWND MESSAGE WPARAM LPARAM` is an explicit mutation for window

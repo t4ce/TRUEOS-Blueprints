@@ -1112,9 +1112,9 @@
                     PersonalityAction::Session(SessionRequest::CreateProcess(request)) => {
                         let frame = request.frame;
                         logl::log!(
-                            level::ERROR,
+                            level::IMPORTANT,
                             format_args!(
-                                "WC3 BLUEPRINT FRONTIER: CreateProcessA call #{} esp=0x{:08x} ret=0x{:08x} command_line=0x{:08x} startup=0x{:08x} process_info=0x{:08x}",
+                                "WC3 CREATE PROCESS: CreateProcessA call #{} esp=0x{:08x} ret=0x{:08x} command_line=0x{:08x} startup=0x{:08x} process_info=0x{:08x}",
                                 session.launcher().xp.call_count,
                                 exit.registers.esp,
                                 frame.return_address,
@@ -2682,9 +2682,9 @@
                                 ),
                             );
                             logl::log!(
-                                level::ERROR,
+                                level::IMPORTANT,
                                 format_args!(
-                                    "WC3 CHILD DLL INIT FRONTIER pid={} tid={} module=\"{}\" entry_va=0x{:08x} reason=context-ready-not-scheduled",
+                                    "WC3 CHILD DLL INIT READY pid={} tid={} module=\"{}\" entry_va=0x{:08x} reason=context-ready-not-scheduled",
                                     child.pid, child.tid, storm_name, storm_entry,
                                 ),
                             );

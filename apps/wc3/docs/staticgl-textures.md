@@ -51,8 +51,9 @@ buffers and unmodeled extensions remain explicit boundaries.
 This is a CPU compatibility rasterizer with real GPU publication, not native
 hardware fixed-function shading. It deliberately uses the already-proven sampled
 vGPU pipeline for a fullscreen quad, waits for the timeline and then publishes
-the UI4 frame. The first draw publishes a preview; subsequent draws accumulate
-until swap or finish. Color clears also publish. Presentation copies bottom-up
+the UI4 frame. Draws and clears accumulate until the guest swaps. `glFinish`
+does not publish another frame. The optional `preview-first-draw` feature adds
+one bring-up preview. Presentation copies bottom-up
 GL rows into top-down texture storage and uses opaque window alpha, while the
 owned GL buffer retains its alpha for blending and readback. `glReadPixels`
 reads that owned buffer with pack row alignment/skips. See
@@ -63,7 +64,8 @@ Host tests validate texture ownership, namespace isolation, unpack addressing,
 format conversion, transactional updates and complete guest-array-to-pixel
 rendering. GPU ABI test seams panic on use: host tests do not pretend to validate
 hardware rendering. The independent triangle demo remains the prior hardware
-proof; this compatibility path needs its own next packed hardware run.
+proof; the user has since confirmed this compatibility path renders the interactive
+game menu. Each subsequent optimization still needs a packed hardware check.
 
 API references: [texture uploads](https://learn.microsoft.com/en-us/windows/win32/opengl/glteximage2d),
 [pixel storage](https://learn.microsoft.com/en-us/windows/win32/opengl/glpixelstorei),

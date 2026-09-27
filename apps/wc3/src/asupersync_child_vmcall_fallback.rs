@@ -75,7 +75,7 @@
                             let [_, filename, attributes] = frame.as_slice() else {
                                 unreachable!("SetFileAttributesA frame has three words")
                             };
-                            let path = if logl::ENABLED && *filename == 0 {
+                            let path = if *filename == 0 {
                                 "<null>".to_owned()
                             } else {
                                 wc3::process::read_c_string(
@@ -179,7 +179,7 @@
                             else {
                                 unreachable!("GetVolumeInformationA frame has nine words")
                             };
-                            let root = if logl::ENABLED && *root_ptr == 0 {
+                            let root = if *root_ptr == 0 {
                                 None
                             } else {
                                 Some(
@@ -233,7 +233,7 @@
                             else {
                                 unreachable!("GetDiskFreeSpaceA frame has six words")
                             };
-                            let root = if logl::ENABLED && *root_ptr == 0 {
+                            let root = if *root_ptr == 0 {
                                 None
                             } else {
                                 Some(
@@ -263,7 +263,7 @@
                         } else {
                             None
                         };
-                        if operation == child_loader::ProviderOp::FindFirstFileA {
+                        if logl::ENABLED && operation == child_loader::ProviderOp::FindFirstFileA {
                             let [_, pattern, find_data] = read_guest_words(
                                 &X86Memory(&child.address_space),
                                 exit.registers.esp,
@@ -271,7 +271,7 @@
                             )?[..] else {
                                 unreachable!("FindFirstFileA frame has three words")
                             };
-                            let pattern_text = if logl::ENABLED && pattern == 0 {
+                            let pattern_text = if pattern == 0 {
                                 "<null>".to_owned()
                             } else {
                                 wc3::process::read_c_string(
@@ -295,7 +295,7 @@
                             );
                         }
                         let disable_thread_library_calls =
-                            if operation == child_loader::ProviderOp::DisableThreadLibraryCalls {
+                            if logl::ENABLED && operation == child_loader::ProviderOp::DisableThreadLibraryCalls {
                                 let module = read_guest_words(
                                     &X86Memory(&child.address_space),
                                     exit.registers.esp,
