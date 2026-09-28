@@ -913,7 +913,7 @@
         assert_eq!(operation.stack_cleanup_bytes(), 0);
         assert_eq!(
             crate::child_loader::provider_thunk_kind(&provider),
-            thunk32::Kind::Return
+            if cfg!(feature = "trace-api") { thunk32::Kind::Return } else { thunk32::Kind::StrtolZero }
         );
 
         let mut xp = XpProcess::new_child();

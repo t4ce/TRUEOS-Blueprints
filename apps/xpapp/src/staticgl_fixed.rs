@@ -637,6 +637,36 @@ fn gl_read_fixed_floats(
 }
 
 impl XpProcess {
+    /// Replay a guest-captured glLightfv at the next VM exit. The normal GL
+    /// validation and modelview transform still run in call order.
+    pub fn replay_gl_lightfv(
+        &mut self,
+        tid: u32,
+        light: u32,
+        pname: u32,
+        values: [u32; 4],
+    ) -> Result<(), ProviderDispatchError> {
+        struct Captured([u8; 32]);
+        impl GuestMemory for Captured {
+            fn read(&self, address: u32, output: &mut [u8]) -> Result<(), &'static str> {
+                let start = address as usize;
+                let end = start.checked_add(output.len()).ok_or("captured GL address overflow")?;
+                output.copy_from_slice(self.0.get(start..end).ok_or("captured GL read range")?);
+                Ok(())
+            }
+            fn write(&mut self, _: u32, _: &[u8]) -> Result<(), &'static str> {
+                Err("captured GL is read only")
+            }
+        }
+        let mut bytes = [0; 32];
+        for (slot, word) in bytes.chunks_exact_mut(4).zip(
+            [0, light, pname, 16, values[0], values[1], values[2], values[3]],
+        ) {
+            slot.copy_from_slice(&word.to_le_bytes());
+        }
+        self.gl_lightfv_static(tid, 0, &Captured(bytes))?;
+        Ok(())
+    }
     fn fixed_state_mut(
         &mut self,
         tid: u32,

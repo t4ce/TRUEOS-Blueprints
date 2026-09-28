@@ -7,6 +7,12 @@ pub const GUEST_RETURN_OFFSET: usize = 0x0fe0;
 pub const GUEST_RETURN_ADDRESS: u32 = THUNK_BASE + GUEST_RETURN_OFFSET as u32;
 pub const GUEST_RETURN_AFTER_VMCALL: u32 = GUEST_RETURN_ADDRESS + 3;
 pub const CHILD_CONTROL_BASE: u32 = 0x002f_0000;
+pub const CHILD_LIGHT_BATCH_ADDRESS: u32 = CHILD_CONTROL_BASE + 0x0e00;
+pub const CHILD_LIGHT_BATCH_AFTER_VMCALL: u32 = CHILD_LIGHT_BATCH_ADDRESS + 0x75;
+pub const CHILD_LIGHT_BATCH_CODE_BYTES: usize = include_bytes!("gl_light_batch.bin").len();
+pub const CHILD_LIGHT_BATCH_DATA: u32 = CHILD_CONTROL_BASE + 0x1000;
+pub const CHILD_LIGHT_BATCH_CAPACITY: usize = 32;
+pub const CHILD_LIGHT_BATCH_RECORD_BYTES: usize = 24;
 pub const CHILD_DLL_RETURN_ADDRESS: u32 = CHILD_CONTROL_BASE;
 pub const CHILD_DLL_RETURN_AFTER_VMCALL: u32 = CHILD_DLL_RETURN_ADDRESS + 3;
 pub const CHILD_THREAD_EXIT_ADDRESS: u32 = CHILD_CONTROL_BASE + 0x10;
@@ -60,6 +66,10 @@ pub const CHILD_ISMBCSPACE_ADDRESS: u32 = CHILD_CONTROL_BASE + CHILD_ISMBCSPACE_
 pub const CHILD_STRICMP_OFFSET: usize = 0xb00;
 pub const CHILD_STRICMP_ADDRESS: u32 = CHILD_CONTROL_BASE + CHILD_STRICMP_OFFSET as u32;
 const CHILD_ASCII_FOLD_OFFSET: usize = 0xc00;
+pub const CHILD_STRTOL_ZERO_OFFSET: usize = 0xec0;
+pub const CHILD_STRTOL_ZERO_ADDRESS: u32 = CHILD_CONTROL_BASE + CHILD_STRTOL_ZERO_OFFSET as u32;
+const _: () = assert!(0x0e00 + CHILD_LIGHT_BATCH_CODE_BYTES <= CHILD_STRTOL_ZERO_OFFSET);
+const _: () = assert!(CHILD_STRTOL_ZERO_OFFSET + CHILD_STRTOL_ZERO_CODE.len() <= 0x1000);
 pub const CHILD_FTOL_OFFSET: usize = 0xd00;
 pub const CHILD_FTOL_ADDRESS: u32 = CHILD_CONTROL_BASE + CHILD_FTOL_OFFSET as u32;
 pub const CHILD_ISWSPACE_OFFSET: usize = 0xd80;
@@ -214,6 +224,24 @@ const CHILD_FLOOR_CODE: &[u8] = &[
     0xc3,
 ];
 
+// The measured strtol("0", NULL, 8) case: identical to the provider fast path.
+// All other shapes retain the provider ID in EAX and take the original trap.
+const CHILD_STRTOL_ZERO_CODE: &[u8] = &[
+    0x83, 0x7c, 0x24, 0x0c, 0x08, // cmp dword [esp+12], 8
+    0x75, 0x1d,                   // jne fallback
+    0x83, 0x7c, 0x24, 0x08, 0x00, // cmp dword [esp+8], 0
+    0x75, 0x16,                   // jne fallback
+    0x8b, 0x54, 0x24, 0x04,       // mov edx, [esp+4]
+    0x85, 0xd2,                   // test edx, edx
+    0x74, 0x0e,                   // jz fallback
+    0x80, 0x3a, 0x30,             // cmp byte [edx], '0'
+    0x75, 0x09,                   // jne fallback
+    0x80, 0x7a, 0x01, 0x00,       // cmp byte [edx+1], 0
+    0x75, 0x03,                   // jne fallback
+    0x31, 0xc0, 0xc3,             // xor eax, eax; ret
+    0x0f, 0x01, 0xc1, 0xc3,       // fallback: vmcall; ret
+];
+
 // Cdecl _ftol: for the normal XP x87 state, where every exception is masked,
 // convert ST(0) to a signed 64-bit integer with truncation toward zero, then
 // pop it. Preserve the caller's control word and return the low/high halves in
@@ -289,6 +317,9 @@ const CHILD_STRICMP_CODE: &[u8] = &[
 ];
 
 pub fn install_child_controls(output: &mut [u8]) -> Result<(), &'static str> {
+    let code = include_bytes!("gl_light_batch.bin");
+    output.get_mut(0x0e00..0x0e00 + code.len())
+        .ok_or("light batch helper range")?.copy_from_slice(code);
     output.get_mut(CHILD_DECIMAL_OFFSET..CHILD_DECIMAL_OFFSET + CHILD_DECIMAL_CODE.len())
         .ok_or("decimal helper range")?.copy_from_slice(CHILD_DECIMAL_CODE);
     output.get_mut(CHILD_STRNICMP_OFFSET..CHILD_STRNICMP_OFFSET + CHILD_STRNICMP_CODE.len())
@@ -318,6 +349,10 @@ pub fn install_child_controls(output: &mut [u8]) -> Result<(), &'static str> {
         .get_mut(CHILD_FLOOR_OFFSET..CHILD_FLOOR_OFFSET + CHILD_FLOOR_CODE.len())
         .ok_or("floor helper range")?
         .copy_from_slice(CHILD_FLOOR_CODE);
+    output
+        .get_mut(CHILD_STRTOL_ZERO_OFFSET..CHILD_STRTOL_ZERO_OFFSET + CHILD_STRTOL_ZERO_CODE.len())
+        .ok_or("strtol zero helper range")?
+        .copy_from_slice(CHILD_STRTOL_ZERO_CODE);
     output
         .get_mut(CHILD_FTOL_OFFSET..CHILD_FTOL_OFFSET + CHILD_FTOL_CODE.len())
         .ok_or("ftol helper range")?
@@ -407,6 +442,8 @@ pub enum Kind {
     Floor,
     /// Cdecl guest-native x87 _ftol for the masked-exception CRT state.
     Ftol,
+    /// Observed octal-zero conversion, otherwise the existing provider.
+    StrtolZero,
     /// Cdecl guest-native unsigned byte comparison.
     Strncmp,
     /// CP1252 case-insensitive bounded guest-native comparison.
@@ -425,6 +462,8 @@ pub enum Kind {
     IswSpace,
     /// ASCII-only case-insensitive unbounded comparison, with typed fallback.
     Stricmp,
+    /// Copy glLightfv arguments into the guest queue and return without an exit.
+    GlLightBatch,
 }
 
 pub fn write(import_id: u32, kind: Kind, output: &mut [u8]) -> Result<(), &'static str> {
@@ -436,14 +475,16 @@ pub fn write(import_id: u32, kind: Kind, output: &mut [u8]) -> Result<(), &'stat
         output[..3].copy_from_slice(&[0xc2, bytes, 0]);
         return Ok(());
     }
-    if matches!(kind, Kind::ToUpper | Kind::Decimal | Kind::QsortDword | Kind::Stricmp | Kind::Ftol | Kind::IswSpace) {
+    if matches!(kind, Kind::ToUpper | Kind::Decimal | Kind::QsortDword | Kind::Stricmp | Kind::Ftol | Kind::StrtolZero | Kind::IswSpace | Kind::GlLightBatch) {
         let target = match kind {
             Kind::ToUpper => CHILD_TOUPPER_ADDRESS,
             Kind::Decimal => CHILD_DECIMAL_ADDRESS,
             Kind::QsortDword => CHILD_QSORT_DWORD_ADDRESS,
             Kind::Stricmp => CHILD_STRICMP_ADDRESS,
             Kind::Ftol => CHILD_FTOL_ADDRESS,
+            Kind::StrtolZero => CHILD_STRTOL_ZERO_ADDRESS,
             Kind::IswSpace => CHILD_ISWSPACE_ADDRESS,
+            Kind::GlLightBatch => CHILD_LIGHT_BATCH_ADDRESS,
             _ => unreachable!(),
         };
         let next = address(import_id).and_then(|address| address.checked_add(10))
@@ -483,7 +524,7 @@ pub fn write(import_id: u32, kind: Kind, output: &mut [u8]) -> Result<(), &'stat
     ]);
     match kind {
         Kind::NoopStdcall(_) => unreachable!(),
-        Kind::Memmove | Kind::Ceil | Kind::Floor | Kind::Ftol | Kind::Strncmp | Kind::Strnicmp | Kind::ToUpper | Kind::Decimal | Kind::QsortDword | Kind::IsDigit | Kind::IsMbcSpace | Kind::IswSpace | Kind::Stricmp => unreachable!(),
+        Kind::Memmove | Kind::Ceil | Kind::Floor | Kind::Ftol | Kind::StrtolZero | Kind::Strncmp | Kind::Strnicmp | Kind::ToUpper | Kind::Decimal | Kind::QsortDword | Kind::IsDigit | Kind::IsMbcSpace | Kind::IswSpace | Kind::Stricmp | Kind::GlLightBatch => unreachable!(),
         Kind::Return => output[8] = 0xC3,
         Kind::Stdcall(bytes) => {
             output[8] = 0xC2;

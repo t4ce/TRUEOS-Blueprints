@@ -2131,6 +2131,11 @@ pub(super) async fn run_loop(
 ) -> Result<(), String> {
     let mut debug_shell = crate::debug_shell::DebugShell::new();
     let mut gl_gpu_frames = xpapp::gl_frame::GlFrames::default();
+    let mut gl_light_batch_replayed = 0u64;
+    let mut gl_light_batch_flushes = 0u64;
+    let mut gl_light_batch_full_exits = 0u64;
+    let mut gl_light_batch_cursor = xpapp::gl_light_batch::Cursor::default();
+    let mut gl_light_batch_pid = None;
     let mut next_input_poll = std::time::Instant::now();
     'child_run: loop {
         if let Some(child) = pending_child.as_mut() {
@@ -2171,6 +2176,82 @@ pub(super) async fn run_loop(
             .get(active)
             .ok_or_else(|| "active guest context missing".to_owned())?
             .key();
+        // The running guest is the only writer. Replay newly published records
+        // before handling any exit. Keep the count until the explicit full
+        // trap: a timer exit can interrupt a partially written record, so
+        // resetting its count here would make the resumed helper publish a
+        // stale slot. The consumed watermark also supports thread switches.
+        if let Some(child) = pending_child.as_ref().filter(|child|
+            child.pid == active_key.pid && child.loader.prepared)
+        {
+            if gl_light_batch_pid != Some(child.pid) {
+                gl_light_batch_pid = Some(child.pid);
+                gl_light_batch_cursor = xpapp::gl_light_batch::Cursor::default();
+            }
+            let mut count_bytes = [0u8; 4];
+            if child.address_space.read(thunk32::CHILD_LIGHT_BATCH_DATA, &mut count_bytes)
+                .map_err(|error| format!("read child light batch count: {error}"))? != 4
+            {
+                return Err("short child light batch count read".into());
+            }
+            let count = u32::from_le_bytes(count_bytes) as usize;
+            let pending = gl_light_batch_cursor.pending(count, thunk32::CHILD_LIGHT_BATCH_CAPACITY)
+                .map_err(str::to_owned)?;
+            let new_count = pending.len();
+            if new_count != 0 {
+                let mut entries = [0u8; thunk32::CHILD_LIGHT_BATCH_CAPACITY * thunk32::CHILD_LIGHT_BATCH_RECORD_BYTES];
+                let bytes = new_count * thunk32::CHILD_LIGHT_BATCH_RECORD_BYTES;
+                let start = thunk32::CHILD_LIGHT_BATCH_DATA + 4
+                    + (pending.start * thunk32::CHILD_LIGHT_BATCH_RECORD_BYTES) as u32;
+                if child.address_space.read(start, &mut entries[..bytes])
+                    .map_err(|error| format!("read child light batch records: {error}"))? != bytes
+                {
+                    return Err("short child light batch record read".into());
+                }
+                let process = session.process_mut(active_key.pid)
+                    .ok_or_else(|| "light batch process missing".to_owned())?;
+                for entry in entries[..bytes].chunks_exact(thunk32::CHILD_LIGHT_BATCH_RECORD_BYTES) {
+                    let word = |offset| u32::from_le_bytes(entry[offset..offset + 4].try_into().unwrap());
+                    process.xp.replay_gl_lightfv(active_key.tid, word(0), word(4),
+                        [word(8), word(12), word(16), word(20)])
+                        .map_err(|error| format!("replay child glLightfv: {error}"))?;
+                }
+                gl_light_batch_replayed += new_count as u64;
+                gl_light_batch_flushes += 1;
+                if gl_light_batch_replayed / 1024 != (gl_light_batch_replayed - new_count as u64) / 1024 {
+                    logl::log!(level::IMPORTANT, format_args!(
+                        "XPAPP CHILD GL LIGHT BATCH pid={} replayed={} flushes={} full_exits={} estimated_exits_saved={}",
+                        active_key.pid, gl_light_batch_replayed, gl_light_batch_flushes,
+                        gl_light_batch_full_exits, gl_light_batch_replayed - gl_light_batch_full_exits,
+                    ));
+                }
+            }
+            if exit.kind == ExitKind::VmCall
+                && exit.registers.eip == thunk32::CHILD_LIGHT_BATCH_AFTER_VMCALL
+            {
+                gl_light_batch_cursor.commit(count, true, thunk32::CHILD_LIGHT_BATCH_CAPACITY)
+                    .map_err(str::to_owned)?;
+                if child.address_space.write(thunk32::CHILD_LIGHT_BATCH_DATA, &[0; 4])
+                    .map_err(|error| format!("reset full child light batch: {error}"))? != 4
+                {
+                    return Err("short full child light batch reset".into());
+                }
+                gl_light_batch_full_exits += 1;
+            } else {
+                gl_light_batch_cursor.commit(count, false, thunk32::CHILD_LIGHT_BATCH_CAPACITY)
+                    .map_err(str::to_owned)?;
+            }
+        }
+        let in_light_helper = active_key.pid != LAUNCHER_PID
+            && (thunk32::CHILD_LIGHT_BATCH_ADDRESS
+                ..thunk32::CHILD_LIGHT_BATCH_ADDRESS + thunk32::CHILD_LIGHT_BATCH_CODE_BYTES as u32)
+                .contains(&exit.registers.eip);
+        if in_light_helper && exit.kind == ExitKind::Exception {
+            return Err(format!("guest glLightfv capture fault at 0x{:08x}", exit.registers.eip));
+        }
+        if in_light_helper && exit.kind == ExitKind::Other && exit.detail == 52 {
+            continue;
+        }
         debug_shell.poll(&contexts, pending_child.as_ref(), address_space, &mut session, active_key,
             exit.kind == ExitKind::Other && exit.detail == 52);
         match exit.kind {
@@ -2331,6 +2412,11 @@ pub(super) async fn run_loop(
                 continue;
             }
             ExitKind::VmCall => {
+                if active_key.pid != LAUNCHER_PID
+                    && exit.registers.eip == thunk32::CHILD_LIGHT_BATCH_AFTER_VMCALL
+                {
+                    continue;
+                }
                 #[cfg(feature = "trace-execution")]
                 let _provider_timing = crate::exec_timing::ProviderScope::new(
                     active_key.pid, active_key.tid, exit.registers.eax, exit.registers.eip,

@@ -173,6 +173,32 @@ fn pixel(c: &WglContext, x: usize, y: usize) -> [u8; 4] {
 }
 
 #[test]
+fn captured_lights_use_modelview_at_replay_barrier() {
+    let (mut context, _) = scene();
+    context.current_tid = Some(3);
+    context.modelview_matrix[12] = 5.0;
+    let mut process = XpProcess::new_child();
+    process.gl_runtime = Some(GlRuntime {
+        device: unsafe { core::mem::zeroed() },
+        queue: unsafe { core::mem::zeroed() },
+        contexts: HashMap::from([(1, context)]),
+        next_context: 2,
+        triangle_renderer: None,
+        textured_renderer: None,
+        fixed_renderer: None,
+        #[cfg(feature = "gpu-raster")]
+        prepared_renderer: None,
+    });
+    let position = [1.0f32.to_bits(), 2.0f32.to_bits(), 3.0f32.to_bits(), 1.0f32.to_bits()];
+    process.replay_gl_lightfv(3, FIXED_GL_LIGHT0, GL_POSITION, position).unwrap();
+    process.gl_context_mut(3, "test").unwrap().modelview_matrix[12] = 10.0;
+    process.replay_gl_lightfv(3, FIXED_GL_LIGHT0 + 1, GL_POSITION, position).unwrap();
+    let context = process.gl_context_mut(3, "test").unwrap();
+    assert_eq!(context.fixed.lights[0].position_eye, [6.0, 2.0, 3.0, 1.0]);
+    assert_eq!(context.fixed.lights[1].position_eye, [11.0, 2.0, 3.0, 1.0]);
+}
+
+#[test]
 #[cfg(not(feature = "preview-first-draw"))]
 fn production_clear_draw_and_readback_use_the_cpu_frame() {
     let (mut context, mut memory) = scene();

@@ -9,10 +9,16 @@ ORG 0x002f0e00
 
 start:
     pushfd
+    cld                         ; preserve incoming DF while copying forward
     push eax                    ; provider id for the original fallback
     push ebx
     push esi
     push edi
+    mov ebx, [esp + 24]        ; original provider validates light first
+    cmp ebx, 0x4000
+    jb fallback
+    cmp ebx, 0x4007
+    ja fallback
     mov ecx, [esp + 28]        ; pname
     mov edx, [esp + 32]        ; params
     test edx, edx

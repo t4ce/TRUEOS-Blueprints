@@ -1673,6 +1673,13 @@ fn war3_profile_directory_path(path: &str) -> Option<String> {
     {
         return Some("/common/Warcraft III".into());
     }
+    if components.len() == 3
+        && components[0].eq_ignore_ascii_case("C:")
+        && components[1].eq_ignore_ascii_case("Warcraft III")
+        && components[2].eq_ignore_ascii_case("Maps")
+    {
+        return Some("/common/Warcraft III/Maps".into());
+    }
     let relative = canonical.strip_prefix(r"c:\warcraft iii\")?;
     let mut parts = relative.split('\\');
     let root = parts.next()?;

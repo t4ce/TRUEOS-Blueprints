@@ -1024,6 +1024,9 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
 }
 
 pub fn provider_thunk_kind(import: &ProviderImport) -> thunk32::Kind {
+    if provider_op(import) == ProviderOp::GlLightfv && !cfg!(feature = "trace-api") {
+        return thunk32::Kind::GlLightBatch;
+    }
     if cfg!(feature = "bypass-critical-sections") && matches!(
         provider_op(import), ProviderOp::EnterCriticalSection | ProviderOp::LeaveCriticalSection
     ) {
@@ -1034,6 +1037,9 @@ pub fn provider_thunk_kind(import: &ProviderImport) -> thunk32::Kind {
     }
     if provider_op(import) == ProviderOp::CrtFloor {
         return thunk32::Kind::Floor;
+    }
+    if provider_op(import) == ProviderOp::CrtStrtol && !cfg!(feature = "trace-api") {
+        return thunk32::Kind::StrtolZero;
     }
     if provider_op(import) == ProviderOp::CrtFtol && !cfg!(feature = "trace-api") {
         return thunk32::Kind::Ftol;
@@ -1227,7 +1233,9 @@ mod beginthreadex_tests {
             assert_eq!(operation.stack_cleanup_bytes(), cleanup, "{symbol}");
             assert_eq!(
                 provider_thunk_kind(&import),
-                if symbol == "glFinish" { thunk32::Kind::Return } else { thunk32::Kind::Stdcall(cleanup) },
+                if symbol == "glFinish" { thunk32::Kind::Return }
+                else if symbol == "glLightfv" && !cfg!(feature = "trace-api") { thunk32::Kind::GlLightBatch }
+                else { thunk32::Kind::Stdcall(cleanup) },
                 "{symbol}",
             );
         }

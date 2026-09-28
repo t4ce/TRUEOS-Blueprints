@@ -1877,7 +1877,7 @@ fn validate_child_private_arena_range(
         (
             "child control",
             thunk32::CHILD_CONTROL_BASE,
-            thunk32::CHILD_CONTROL_BASE + 0x1000,
+            thunk32::CHILD_LIGHT_BATCH_DATA + 0x1000,
         ),
         (
             "provider thunk",
@@ -2897,6 +2897,19 @@ fn map_child_controls(address_space: &AddressSpace) -> Result<(), String> {
         .map_err(|error| format!("write child controls: {error}"))?;
     if written != page.len() {
         return Err("short child control write".into());
+    }
+    address_space
+        .map(
+            thunk32::CHILD_LIGHT_BATCH_DATA,
+            0x1000,
+            Permissions::READ | Permissions::WRITE,
+        )
+        .map_err(|error| format!("map child light batch: {error}"))?;
+    if address_space
+        .write(thunk32::CHILD_LIGHT_BATCH_DATA, &[0; 4])
+        .map_err(|error| format!("initialize child light batch: {error}"))? != 4
+    {
+        return Err("short child light batch initialization".into());
     }
     Ok(())
 }
