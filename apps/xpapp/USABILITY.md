@@ -8,6 +8,32 @@ The shared P-core raster pool remains behind the opt-in `raster-pool` feature. D
 physical display mode setter remain unchanged. No separate guest program.
 60 FPS (16.67 ms/frame) remains unmet.
 
+## Carrier startup regression correction, 2026-09-28
+
+The user's fresh-boot capture of `c5961a3d...` stalled before normal execution
+progress and never displayed the loading splash. The reusable carrier's new
+synchronization was the affected path. Replace its Tokio `Notify` completion
+with a shared reply slot and an owned `Waker`, registered under the same lock
+as reply publication. Wake outside the lock. Contended submission/send futures
+are explicitly heap-pinned; ordinary calls use `try_lock` and `try_send`.
+This avoids exposing intrusive waiter nodes on realm-local stacks. The old
+capture does not identify the exact stalled instruction, so that mechanism
+remains an explanation of the hazard rather than a proven fault location.
+
+Published and live-tested artifact:
+`d31d0053a15846a1f9c8cc186f97c36bb7af453152abd643a7e6746a0c115da7`.
+One-time markers confirm first request, native return, publication and reply
+receipt. Warcraft reaches the animated menu scene, verified by a new screenshot.
+The old vm0 was already stop-pending; this launch used vm1 without rebooting.
+The final ten captured frames have a median of 2,761 ms; this is an observed
+run, not a controlled speedup measurement.
+
+All previous execution/provider optimizations remain. Rasterization is untouched.
+Validation: 402 XPApp tests pass with both default and `trace-api` features
+(two ignored each), 19 SDK tests and seven standalone carrier tests pass.
+4,096 warmed calls still allocate zero times, both measured and unmeasured.
+Evidence: TRUEOS `bld/xpapp-usability/carrier-splash-fix/`.
+
 ## Provider and carrier allocation reductions, 2026-09-28
 
 The current capture after the previous batch shows a median of 3,649.5 ms

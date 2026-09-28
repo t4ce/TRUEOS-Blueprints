@@ -328,25 +328,30 @@ struct CarrierRequest {
     generation: u64,
 }
 
+// One-time startup markers distinguish a worker startup stall from guest code.
+fn carrier_boot(_message: &'static str) {
+    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+    crate::logl::log_record(crate::logl::level::IMPORTANT, "xpapp-carrier", _message);
+}
+
 struct CompletionState {
     generation: u64,
     waiting: bool,
     reply: Option<CarrierReply>,
+    waker: Option<core::task::Waker>,
     closed: bool,
 }
 
 struct Completion {
     state: std::sync::Mutex<CompletionState>,
-    changed: tokio::sync::Notify,
 }
 
 impl Completion {
     fn new() -> Self {
         Self {
             state: std::sync::Mutex::new(CompletionState {
-                generation: 0, waiting: false, reply: None, closed: false,
+                generation: 0, waiting: false, reply: None, waker: None, closed: false,
             }),
-            changed: tokio::sync::Notify::new(),
         }
     }
 
@@ -365,6 +370,9 @@ impl Completion {
         if state.generation == generation {
             state.waiting = false;
             state.reply = None;
+            let waker = state.waker.take();
+            drop(state);
+            drop(waker);
         }
     }
 
@@ -375,28 +383,49 @@ impl Completion {
 
     fn publish(&self, generation: u64, reply: CarrierReply) {
         let mut state = self.state.lock().unwrap();
-        let published = state.waiting && state.generation == generation;
-        if published {
+        let waker = if state.waiting && state.generation == generation {
             state.reply = Some(reply);
-        }
+            state.waker.take()
+        } else {
+            None
+        };
         drop(state);
-        if published { self.changed.notify_one(); }
+        if let Some(waker) = waker { waker.wake(); }
     }
 
-    fn take(&self, generation: u64) -> Result<Option<CarrierReply>, Error> {
+    fn poll_reply(
+        &self,
+        generation: u64,
+        cx: &mut core::task::Context<'_>,
+    ) -> core::task::Poll<Result<CarrierReply, Error>> {
+        use core::task::Poll;
         let mut state = self.state.lock().unwrap();
         if state.generation == generation {
-            if let Some(reply) = state.reply.take() { return Ok(Some(reply)); }
+            if let Some(reply) = state.reply.take() { return Poll::Ready(Ok(reply)); }
         }
-        if state.closed { Err(Error::CarrierLost) } else { Ok(None) }
+        if state.closed { return Poll::Ready(Err(Error::CarrierLost)); }
+        // Only the Waker crosses to the native carrier, as it did with the
+        // old oneshot. Tokio Notify instead links its Notified future into
+        // an intrusive list: under block_on that node can live on a Hull
+        // stack which is not mapped into the carrier's execution realm.
+        let old = if state.waker.as_ref().is_some_and(|w| w.will_wake(cx.waker())) {
+            None
+        } else {
+            state.waker.replace(cx.waker().clone())
+        };
+        drop(state);
+        drop(old);
+        Poll::Pending
     }
 
     fn close(&self) {
         let mut state = self.state.lock().unwrap();
         state.closed = true;
+        let waker = state.waker.take();
         drop(state);
-        self.changed.notify_waiters();
+        if let Some(waker) = waker { waker.wake(); }
     }
+
 }
 
 struct CompletionWait<'a> {
@@ -432,9 +461,11 @@ impl ExecutionCarrier {
         let completion = Arc::new(Completion::new());
         let endpoint = CarrierEndpoint { requests: receiver, completion: Arc::clone(&completion) };
         let job = crate::worker::spawn(move || {
+            carrier_boot("XPAPP CARRIER worker-enter");
             let Ok(runtime) = tokio::runtime::Builder::new_current_thread().enable_time().build() else {
                 return;
             };
+            carrier_boot("XPAPP CARRIER runtime-ready");
             runtime.block_on(carrier_requests(endpoint, |handle, resume| {
                 if resume { v::vx86::context_resume(handle) }
                 else { v::vx86::context_run(handle) }
@@ -464,18 +495,29 @@ impl ExecutionCarrier {
     }
 
     async fn submit(&self, handle: u64, resume: bool, measured: bool) -> Result<CarrierReply, Error> {
-        let _serial = self.submit_lock.lock().await;
+        let _serial = match self.submit_lock.try_lock() {
+            Ok(guard) => guard,
+            // The contended mutex future also has an intrusive waiter. Put
+            // that rare waiter in shared heap memory, never a realm's stack.
+            Err(_) => alloc::boxed::Box::pin(self.submit_lock.lock()).await,
+        };
         let generation = self.completion.start()?;
         let _wait = CompletionWait { completion: &self.completion, generation };
-        self.requests.send(CarrierRequest { handle, resume, measured, generation }).await
-            .map_err(|_| Error::CarrierLost)?;
-        loop {
-            let notified = self.completion.changed.notified();
-            tokio::pin!(notified);
-            notified.as_mut().enable();
-            if let Some(reply) = self.completion.take(generation)? { return Ok(reply); }
-            notified.await;
+        let request = CarrierRequest { handle, resume, measured, generation };
+        match self.requests.try_send(request) {
+            Ok(()) => {}
+            Err(tokio::sync::mpsc::error::TrySendError::Full(request)) => {
+                // A cancelled queued call can temporarily occupy the channel.
+                // Its send-permit waiter must also stay in shared heap memory.
+                alloc::boxed::Box::pin(self.requests.send(request)).await
+                    .map_err(|_| Error::CarrierLost)?;
+            }
+            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => return Err(Error::CarrierLost),
         }
+        if generation == 1 { carrier_boot("XPAPP CARRIER first-request-sent"); }
+        let reply = core::future::poll_fn(|cx| self.completion.poll_reply(generation, cx)).await;
+        if generation == 1 { carrier_boot("XPAPP CARRIER first-reply-received"); }
+        reply
     }
 }
 
@@ -492,11 +534,14 @@ async fn carrier_requests(
         };
         // A cancelled caller must not start a queued context after its owner
         // has dropped it. Already executing slices still retire normally.
+        if request.generation == 1 { carrier_boot("XPAPP CARRIER first-request-accepted"); }
         if endpoint.completion.is_waiting(request.generation) {
             let accepted = request.measured.then(&mut now);
             let result = execute(request.handle, request.resume);
             let timing = accepted.map(|accepted| (accepted, now()));
+            if request.generation == 1 { carrier_boot("XPAPP CARRIER first-native-returned"); }
             endpoint.completion.publish(request.generation, CarrierReply { result, timing });
+            if request.generation == 1 { carrier_boot("XPAPP CARRIER first-reply-published"); }
         }
     }
 }
