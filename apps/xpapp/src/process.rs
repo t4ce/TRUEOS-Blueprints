@@ -1961,8 +1961,8 @@ struct WglContext {
     textures: GlTextures,
     observed_writes: VecDeque<GlWriteNote>,
     fixed: GlFixedState,
-    #[cfg(test)]
     raster_frame: Option<crate::staticgl_raster::GlRasterFrame>,
+    present_pixels: Vec<u8>,
     debug_draws_remaining: u32,
     debug_depth_texture: Option<u32>,
     debug_isolate_texture: Option<u32>,

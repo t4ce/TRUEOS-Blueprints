@@ -1,6 +1,5 @@
-// Test-only reference for fixed-function correctness; never compiled into XPAPP.
-// Historical fixed-function reference and presentation-layout helpers.
-// No runtime draw or publication entry point may call these helpers.
+// CPU fixed-function renderer and completed-frame presentation helpers.
+// Restored from the production CPU path preceding commit 1a99d723.
 use crate::staticgl_raster as raster;
 
 fn gl_raster_compare(value: u32) -> Result<raster::Compare, &'static str> {

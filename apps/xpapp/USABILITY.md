@@ -2,11 +2,48 @@
 
 ## Required outcome
 
-Current user direction: keep only WC3's existing text and target 60 FPS
-(16.67 ms/frame). No separate guest test program. Completion requires hardware
-timing and a fresh screenshot; 60 FPS is not met.
+Current user direction: restore the visually correct CPU-rendered WC3 scene,
+then fix execution speed and the remaining text/menu problems. GPU scene work
+returns to Picasso after that baseline is healthy. No separate guest program.
+60 FPS (16.67 ms/frame) remains unmet.
 
-## Text-only and critical-section bypass experiment
+## CPU restoration, 2026-09-28
+
+The production renderer is restored from `fc795aa55`, immediately before
+`1a99d723` removed CPU rendering (`apps/wc3` before the xpapp rename).
+Clear, indexed drawing, depth and readback use the original CPU rasterizer.
+Swap uploads the completed RGBA frame in the original 256-row strips. UI4
+producer ownership starts at swap/preview; CPU drawing retains its own buffer.
+The native GPU scene implementation remains dormant. Text isolation is disabled.
+No kernel rollback is required: its legacy sampled-texture presentation ABI
+remains compatible.
+
+Detailed per-exit and provider clock measurements now require `trace-execution`.
+Ordinary carrier execution also avoids its four profiling timestamp reads.
+Frame timings and sampled startup progress remain enabled. This removes known
+measurement overhead; it does not establish that execution speed is fixed.
+The user-requested critical-section bypass remains enabled.
+
+Validation: 391 XPApp library tests passed, one ignored; 13 API library tests
+passed. Binary checks passed with default features and `trace-execution`.
+A production dispatch test covers CPU clear, draw and readback before any GPU
+presentation. Fresh hardware capture confirms sky, logo, terrain, grass, water, shield and
+menu frames have returned. Text remains broken; the captured modal dims the
+scene. This is a visual restoration, not a pixel-identical animation comparison.
+
+Published/running Blueprint:
+`7df91093a561cb0a541efb01379b5526b44a6710d22fd3d9a7c4b198a5049deb`.
+Startup confirms `renderer=cpu execution_timing=frame-only`. Warm frames are
+about 11.7 seconds: 8.54 seconds in CPU draws, 0.17 seconds in upload/publication,
+and 3.0 seconds outside those phases. Execution speed remains unresolved.
+The next work is execution and CPU cost; text/menu follows, then Picasso GPU
+scene rendering. GPU work is not part of this restoration.
+
+Evidence in TRUEOS `bld/xpapp-usability/`: `cpu-restored.log`,
+`cpu-restored.png`, `cpu-restored-summary.json`. The summary records the fresh
+capture URL, artifact identity and measured warm frames.
+
+## Earlier text-only and critical-section bypass experiment
 
 At the user's explicit request, `bypass-critical-sections` is currently enabled
 in the default features. `EnterCriticalSection` and `LeaveCriticalSection`
@@ -17,12 +54,12 @@ an experimental bypass, not a synchronization implementation. Remove the feature
 from defaults and rebuild to restore normal calls. The thunk test passed with
 and without the feature.
 
-Deployed Blueprint:
+Earlier GPU experiment Blueprint:
 `eb879549fe60f87f1f411b1ea97a3d4eeeb93a26180e9fb2426f4b22a9dca733`.
 The running log confirms `critical_sections=bypassed enter_leave=guest-ret4`.
 The loading frame interval fell from about 208 seconds to 58.787 seconds.
 
-`debug isolate 2 3 38` is active on this run: retain texture 38 (the observed
+`debug isolate 2 3 38` was active on that run: retain texture 38 (the observed
 font texture), skip other draws before array decoding, clear to gray. Texture
 IDs vary between runs; identify the font from a bounded draw capture first.
 `debug isolate 2 3 restore` restores all draws. This removes the other rendered
@@ -37,7 +74,7 @@ TRUEOS `bld/xpapp-usability/text-only-no-critical.log` and
 `text-only-no-critical.png`. The earlier text-filter build passed 389 library
 tests; both feature configurations passed the new bypass thunk test.
 
-## Current implementation
+## Retained GPU experiment implementation
 
 - CPU mip atlases are retained in a bounded 64-entry / 16 MiB cache; texture
   edits and deletion invalidate the corresponding entry. Repeated draws reuse

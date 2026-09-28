@@ -1199,7 +1199,13 @@ macro_rules! xpapp_child_loader_tests_1 {
                 };
                 let mut bytes = [0; thunk32::THUNK_BYTES];
                 thunk32::write(435, provider_thunk_kind(&import), &mut bytes).unwrap();
-                assert_eq!(&bytes[8..11], &[0xc2, 4, 0]);
+                if cfg!(feature = "bypass-critical-sections") {
+                    assert_eq!(&bytes[..3], &[0xc2, 4, 0]);
+                    assert!(!bytes.windows(3).any(|op| op == [0x0f, 0x01, 0xc1]));
+                } else {
+                    assert_eq!(&bytes[5..8], &[0x0f, 0x01, 0xc1]);
+                    assert_eq!(&bytes[8..11], &[0xc2, 4, 0]);
+                }
             }
 
             #[test]
@@ -1211,7 +1217,13 @@ macro_rules! xpapp_child_loader_tests_1 {
                 };
                 let mut bytes = [0; thunk32::THUNK_BYTES];
                 thunk32::write(437, provider_thunk_kind(&import), &mut bytes).unwrap();
-                assert_eq!(&bytes[8..11], &[0xc2, 4, 0]);
+                if cfg!(feature = "bypass-critical-sections") {
+                    assert_eq!(&bytes[..3], &[0xc2, 4, 0]);
+                    assert!(!bytes.windows(3).any(|op| op == [0x0f, 0x01, 0xc1]));
+                } else {
+                    assert_eq!(&bytes[5..8], &[0x0f, 0x01, 0xc1]);
+                    assert_eq!(&bytes[8..11], &[0xc2, 4, 0]);
+                }
             }
 
             #[test]

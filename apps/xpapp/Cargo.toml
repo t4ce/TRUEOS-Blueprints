@@ -40,6 +40,8 @@ trace-scan = []
 trace-seh = []
 trace-api = []
 trace-init = []
+# Detailed per-exit/provider clocks perturb Hull execution; opt in to profiling.
+trace-execution = []
 trace-all = ["trace-scan", "trace-seh", "trace-api", "trace-init"]
 
 [dependencies]

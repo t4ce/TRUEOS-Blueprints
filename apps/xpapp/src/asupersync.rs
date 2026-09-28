@@ -2331,6 +2331,7 @@ pub(super) async fn run_loop(
                 continue;
             }
             ExitKind::VmCall => {
+                #[cfg(feature = "trace-execution")]
                 let _provider_timing = crate::exec_timing::ProviderScope::new(
                     active_key.pid, active_key.tid, exit.registers.eax, exit.registers.eip,
                     session.process(active_key.pid).and_then(|process|

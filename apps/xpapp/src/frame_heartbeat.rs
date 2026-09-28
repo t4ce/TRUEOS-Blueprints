@@ -6,6 +6,7 @@ pub(crate) struct FrameWork {
     pub skipped_draws: u64,
     pub clear_time: Duration,
     pub triangles: u64,
+    pub pixels: u64,
     pub draw_time: Duration,
     pub decode_time: Duration,
     pub atlas_time: Duration,
@@ -51,8 +52,8 @@ impl Heartbeat {
         crate::logl::emit(
             crate::logl::level::IMPORTANT,
             format_args!(
-                "XPAPP FRAME hwnd=0x{hwnd:08x} swap={} draws={} submitted_triangles={} renderer=native-gpu gpu=completed ui4=published skipped_draws={}",
-                self.swaps, work.draws, work.triangles, work.skipped_draws,
+                "XPAPP FRAME hwnd=0x{hwnd:08x} swap={} draws={} raster_triangles={} shaded_pixels={} renderer=cpu-rust-fixed presentation=gpu-completed ui4=published skipped_draws={}",
+                self.swaps, work.draws, work.triangles, work.pixels, work.skipped_draws,
             ),
         );
         crate::logl::emit(
@@ -67,20 +68,10 @@ impl Heartbeat {
         );
         crate::logl::emit(
             crate::logl::level::IMPORTANT,
-            format_args!("XPAPP FRAME TEXTURES cache_hits={} uploads={} upload_bytes={}",
-                work.texture_hits, work.texture_uploads, work.texture_upload_bytes),
-        );
-        crate::logl::emit(
-            crate::logl::level::IMPORTANT,
             format_args!(
-                "XPAPP FRAME DRAW decode_ms={:.3} atlas_ms={:.3} acquire_ms={:.3} submit_ms={:.3} wait_ms={:.3} outside_draw_swap_ms={:.3} clear_ms={:.3}",
-                work.decode_time.as_secs_f64() * 1000.0,
-                work.atlas_time.as_secs_f64() * 1000.0,
-                work.acquire_time.as_secs_f64() * 1000.0,
-                work.submit_time.as_secs_f64() * 1000.0,
-                work.wait_time.as_secs_f64() * 1000.0,
-                frame_time.saturating_sub(work.draw_time).saturating_sub(swap_time).as_secs_f64() * 1000.0,
+                "XPAPP FRAME CPU clear_ms={:.3} outside_draw_swap_ms={:.3}",
                 work.clear_time.as_secs_f64() * 1000.0,
+                frame_time.saturating_sub(work.draw_time).saturating_sub(swap_time).as_secs_f64() * 1000.0,
             ),
         );
     }

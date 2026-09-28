@@ -311,13 +311,13 @@
                             } else {
                                 None
                             };
-                        let gl_publishes_frame = operation == child_loader::ProviderOp::WglSwapLayerBuffers
-                            || (operation == child_loader::ProviderOp::GlDrawElements
+                        let gl_preview_draw = operation == child_loader::ProviderOp::GlDrawElements
                                 && session.process(active_pid).is_some_and(|p|p.xp.gl_preview_pending(active_tid))
-                                && read_guest_words(&X86Memory(&child.address_space), exit.registers.esp, 3)?[2] >= 3);
+                                && read_guest_words(&X86Memory(&child.address_space), exit.registers.esp, 3)?[2] >= 3;
+                        let gl_publishes_frame = xpapp::gl_frame::publishes_frame(operation, gl_preview_draw);
                         let swap_started = (!cfg!(feature = "nolog") && operation == child_loader::ProviderOp::WglSwapLayerBuffers)
                             .then(std::time::Instant::now);
-                        let gl_draw_frame = if xpapp::gl_frame::needs_frame(operation) {
+                        let gl_draw_frame = if xpapp::gl_frame::needs_drawable(operation) {
                             let (_hglrc, hwnd, _mode) = session.process(active_pid)
                                 .ok_or_else(|| "GL process missing".to_owned())?
                                 .xp.gl_context_diagnostic(active_tid)
@@ -326,7 +326,7 @@
                             let frame = frames.get_mut(&hwnd)
                                 .ok_or_else(|| format!("GL call hwnd=0x{hwnd:08x} has no UI4 frame"))?;
                             let mut busy_polls = 0u32;
-                            while gl_gpu_frames.needs_begin(frame.window_id()) {
+                            while gl_publishes_frame && gl_gpu_frames.needs_begin(frame.window_id()) {
                                 match frame.begin_gpu_frame() {
                                     Ok(()) => {
                                         gl_gpu_frames.began(frame.window_id());
@@ -350,9 +350,9 @@
                                                 ),
                                             );
                                         }
-                                        // The first draw/clear may block until UI4 retires the previous
-                                        // producer buffer. Poll the compositor; never overwrite
-                                        // or bypass the outstanding SURFLIVE/read lease.
+                                        // CPU rendering uses its own framebuffer. Acquire the UI4
+                                        // producer only when copying it for swap/preview, after
+                                        // the previous SURFLIVE/read lease has retired.
                                         trueos::vsys::poll_once();
                                         tokio::task::yield_now().await;
                                         trueos::vsys::sleep_ms(1);

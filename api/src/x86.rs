@@ -318,13 +318,13 @@ pub struct CarrierTiming {
 
 struct CarrierReply {
     result: Result<v::vx86::Exit, i32>,
-    accepted: tokio::time::Instant,
-    finished: tokio::time::Instant,
+    timing: Option<(tokio::time::Instant, tokio::time::Instant)>,
 }
 
 struct CarrierRequest {
     handle: u64,
     resume: bool,
+    measured: bool,
     reply: tokio::sync::oneshot::Sender<CarrierReply>,
 }
 
@@ -345,7 +345,7 @@ impl ExecutionCarrier {
             runtime.block_on(carrier_requests(receiver, |handle, resume| {
                 if resume { v::vx86::context_resume(handle) }
                 else { v::vx86::context_run(handle) }
-            }));
+            }, tokio::time::Instant::now));
         }).map_err(|_| Error::CarrierUnavailable)?;
         // The request channel owns the worker lifetime, not an individual exit.
         drop(job);
@@ -353,28 +353,35 @@ impl ExecutionCarrier {
     }
 
     async fn execute(&self, handle: u64, resume: bool) -> Result<Exit, Error> {
-        self.execute_measured(handle, resume).await.map(|(exit, _)| exit)
+        self.submit(handle, resume, false).await?.result
+            .map(Exit::from).map_err(Error::from_kernel)
     }
 
     async fn execute_measured(&self, handle: u64, resume: bool) -> Result<(Exit, CarrierTiming), Error> {
         let started = tokio::time::Instant::now();
-        let (reply, response) = tokio::sync::oneshot::channel();
-        self.requests.send(CarrierRequest { handle, resume, reply }).await
-            .map_err(|_| Error::CarrierLost)?;
-        let response = response.await.map_err(|_| Error::CarrierLost)?;
+        let response = self.submit(handle, resume, true).await?;
         let received = tokio::time::Instant::now();
+        let (accepted, finished) = response.timing.expect("measured carrier reply lacks timestamps");
         let timing = CarrierTiming {
-            request_ns: response.accepted.saturating_duration_since(started).as_nanos() as u64,
-            native_ns: response.finished.saturating_duration_since(response.accepted).as_nanos() as u64,
-            reply_ns: received.saturating_duration_since(response.finished).as_nanos() as u64,
+            request_ns: accepted.saturating_duration_since(started).as_nanos() as u64,
+            native_ns: finished.saturating_duration_since(accepted).as_nanos() as u64,
+            reply_ns: received.saturating_duration_since(finished).as_nanos() as u64,
         };
         response.result.map(|raw| (Exit::from(raw), timing)).map_err(Error::from_kernel)
+    }
+
+    async fn submit(&self, handle: u64, resume: bool, measured: bool) -> Result<CarrierReply, Error> {
+        let (reply, response) = tokio::sync::oneshot::channel();
+        self.requests.send(CarrierRequest { handle, resume, measured, reply }).await
+            .map_err(|_| Error::CarrierLost)?;
+        response.await.map_err(|_| Error::CarrierLost)
     }
 }
 
 async fn carrier_requests(
     mut requests: tokio::sync::mpsc::Receiver<CarrierRequest>,
     mut execute: impl FnMut(u64, bool) -> Result<v::vx86::Exit, i32>,
+    mut now: impl FnMut() -> tokio::time::Instant,
 ) {
     loop {
         if crate::worker::cancellation_requested() { break; }
@@ -385,10 +392,10 @@ async fn carrier_requests(
         // A cancelled caller must not start a queued context after its owner
         // has dropped it. Already executing slices still retire normally.
         if !request.reply.is_closed() {
-            let accepted = tokio::time::Instant::now();
+            let accepted = request.measured.then(&mut now);
             let result = execute(request.handle, request.resume);
-            let finished = tokio::time::Instant::now();
-            let _ = request.reply.send(CarrierReply { result, accepted, finished });
+            let timing = accepted.map(|accepted| (accepted, now()));
+            let _ = request.reply.send(CarrierReply { result, timing });
         }
     }
 }
@@ -397,6 +404,18 @@ async fn carrier_requests(
 mod tests {
     use super::*;
     use alloc::vec::Vec;
+
+    // The API's abort export references these kernel services even in a host
+    // test binary. Carrier fixtures must never need either service.
+    #[cfg(not(target_os = "trueos"))]
+    #[unsafe(no_mangle)]
+    extern "C" fn trueos_cabi_write(_stream: u32, _bytes: *const u8, _len: usize) {}
+
+    #[cfg(not(target_os = "trueos"))]
+    #[unsafe(no_mangle)]
+    extern "C" fn trueos_cabi_blueprint_shutdown(_bytes: *const u8, _len: usize) -> i32 {
+        std::process::exit(1)
+    }
 
     #[tokio::test]
     async fn reusable_carrier_orders_contexts_propagates_errors_and_retires() {
@@ -412,7 +431,7 @@ mod tests {
                 return Ok(exit);
             }
             Err(if handle == 2 { -125 } else { -16 })
-        }));
+        }, || panic!("ordinary execution sampled its clock")));
         let carrier = ExecutionCarrier { requests };
         for handle in [1, 2, 1] {
             let error = carrier.execute(handle, handle != 2).await.unwrap_err();
@@ -427,13 +446,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn reusable_carrier_measures_only_requested_executions() {
+        let (requests, receiver) = tokio::sync::mpsc::channel(1);
+        let samples = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let observed = Arc::clone(&samples);
+        let epoch = tokio::time::Instant::now();
+        let task = tokio::spawn(carrier_requests(receiver, |handle, resume| {
+            assert_eq!(resume, handle != 1);
+            if handle == 3 {
+                return Err(-125);
+            }
+            let mut exit = v::vx86::Exit::default();
+            exit.kind = v::vx86::EXIT_VMCALL;
+            exit.registers.eax = handle as u32;
+            Ok(exit)
+        }, move || {
+            let sample = observed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            epoch + core::time::Duration::from_nanos(sample as u64 * 250)
+        }));
+        let carrier = ExecutionCarrier { requests };
+        assert_eq!(carrier.execute(1, false).await.unwrap().registers.eax, 1);
+        assert_eq!(samples.load(std::sync::atomic::Ordering::Relaxed), 0);
+        let (exit, timing) = carrier.execute_measured(2, true).await.unwrap();
+        assert_eq!(exit.registers.eax, 2);
+        assert_eq!(timing.native_ns, 250);
+        assert_eq!(samples.load(std::sync::atomic::Ordering::Relaxed), 2);
+        assert_eq!(carrier.execute_measured(3, true).await.unwrap_err(), Error::Cancelled);
+        assert_eq!(samples.load(std::sync::atomic::Ordering::Relaxed), 4);
+        assert_eq!(carrier.execute(4, true).await.unwrap().registers.eax, 4);
+        assert_eq!(samples.load(std::sync::atomic::Ordering::Relaxed), 4);
+        drop(carrier);
+        tokio::time::timeout(core::time::Duration::from_secs(1), task).await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
     async fn reusable_carrier_does_not_enter_abandoned_queued_context() {
         let (requests, receiver) = tokio::sync::mpsc::channel(1);
         let (reply, response) = tokio::sync::oneshot::channel();
-        requests.send(CarrierRequest { handle: 1, resume: true, reply }).await.unwrap();
+        requests.send(CarrierRequest { handle: 1, resume: true, measured: true, reply }).await.unwrap();
         drop(response);
         drop(requests);
-        carrier_requests(receiver, |_, _| panic!("abandoned context entered")).await;
+        carrier_requests(receiver, |_, _| panic!("abandoned context entered"),
+            || panic!("abandoned context sampled its clock")).await;
     }
 
     #[test]

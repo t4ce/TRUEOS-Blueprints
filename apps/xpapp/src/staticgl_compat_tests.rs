@@ -173,6 +173,54 @@ fn pixel(c: &WglContext, x: usize, y: usize) -> [u8; 4] {
 }
 
 #[test]
+#[cfg(not(feature = "preview-first-draw"))]
+fn production_clear_draw_and_readback_use_the_cpu_frame() {
+    let (mut context, mut memory) = scene();
+    context.current_tid = Some(3);
+    context.clear_color = [0.125, 0.25, 0.5, 1.0];
+    // A leftover GPU isolation selection must not remove the restored scene.
+    context.debug_isolate_texture = Some(999);
+    let mut process = XpProcess::new_child();
+    process.gl_runtime = Some(GlRuntime {
+        // These types contain only integer handles. Zero is a valid Rust value,
+        // but cannot name a GPU object; no GPU call is allowed before swap.
+        device: unsafe { core::mem::zeroed() },
+        queue: unsafe { core::mem::zeroed() },
+        contexts: HashMap::from([(1, context)]),
+        next_context: 2,
+        triangle_renderer: None,
+        textured_renderer: None,
+        fixed_renderer: None,
+    });
+    memory.0.resize(1600, 0);
+    let write_call = |memory: &mut ArrayMemory, words: &[u32]| {
+        for (i, word) in words.iter().enumerate() {
+            memory.0[256 + i * 4..260 + i * 4].copy_from_slice(&word.to_le_bytes());
+        }
+    };
+    write_call(&mut memory, &[0, GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT]);
+    process.gl_clear_static(3, 256, &memory).unwrap();
+    let clear_pixels = process.gl_context_mut(3, "test").unwrap()
+        .raster_frame.as_ref().unwrap().rgba.clone();
+    assert!(clear_pixels.chunks_exact(4).all(|p| p == [32, 64, 128, 255]));
+
+    memory.0[128..131].copy_from_slice(&[0, 1, 2]);
+    write_call(&mut memory, &[0, GL_TRIANGLES, 3, GL_UNSIGNED_BYTE, 128]);
+    process.gl_draw_elements_static(3, 256, &memory).unwrap();
+    let context = process.gl_context_mut(3, "test").unwrap();
+    assert_eq!(context.draw_count, 1);
+    let rendered = context.raster_frame.as_ref().unwrap().rgba.clone();
+    assert_ne!(rendered, clear_pixels);
+
+    write_call(&mut memory, &[0, 0, 0, 16, 16, 0x1908, GL_UNSIGNED_BYTE, 512]);
+    process.gl_read_pixels_static(3, 256, &mut memory).unwrap();
+    assert_eq!(&memory.0[512..1536], rendered.as_slice());
+    let runtime = process.gl_runtime.as_ref().unwrap();
+    assert!(runtime.textured_renderer.is_none());
+    assert!(runtime.fixed_renderer.is_none());
+}
+
+#[test]
 fn guest_arrays_lighting_fog_mips_depth_and_blend_reach_owned_frame() {
     let (mut c, mut memory) = scene();
     let (stats, unique) = gl_rasterize_elements(&mut c, &memory, &[0, 1, 2]).unwrap();

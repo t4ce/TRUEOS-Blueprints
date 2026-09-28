@@ -23,6 +23,7 @@ mod guest_actor;
 #[path = "guest_direct.rs"]
 mod guest_actor;
 mod debug_shell;
+#[cfg(feature = "trace-execution")]
 mod exec_timing;
 
 use guest_actor::GuestThreadContext;
@@ -212,6 +213,10 @@ async fn discover_maps() -> Result<Option<xpapp::session::MapCatalog>, String> {
 }
 
 async fn run() -> Result<(), String> {
+    logl::emit(level::IMPORTANT, format_args!(
+        "XPAPP RUNTIME renderer=cpu execution_timing={} presentation=rgba-strips",
+        if cfg!(feature = "trace-execution") { "detailed" } else { "frame-only" },
+    ));
     if cfg!(feature = "bypass-critical-sections") {
         logl::emit(level::IMPORTANT, format_args!(
             "XPAPP EXPERIMENT critical_sections=bypassed enter_leave=guest-ret4 synchronization=disabled"
