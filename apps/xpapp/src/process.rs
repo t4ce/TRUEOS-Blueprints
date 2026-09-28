@@ -2038,6 +2038,30 @@ struct GlRuntime {
 }
 
 impl XpProcess {
+    /// Compatibility for the deprecated `IsBadWritePtr` probe. Preserve the
+    /// guest bytes while checking both endpoints so an invalid mapping or
+    /// write-protected page becomes its documented nonzero result.
+    fn is_bad_write_ptr(
+        &self,
+        pointer: u32,
+        bytes: u32,
+        memory: &mut impl GuestMemory,
+    ) -> u32 {
+        if bytes == 0 {
+            return 0;
+        }
+        let Some(final_byte) = pointer.checked_add(bytes - 1) else {
+            return 1;
+        };
+        for address in [pointer, final_byte] {
+            let mut value = [0u8; 1];
+            if memory.read(address, &mut value).is_err() || memory.write(address, &value).is_err() {
+                return 1;
+            }
+        }
+        0
+    }
+
     /// Explicit diagnostic notification, consumed by the normal guest message pump.
     /// Queuing is not synchronous SendMessage and does not force thread wakeups.
     pub fn debug_post_window_message(&mut self, hwnd: u32, message: u32, wparam: u32, lparam: u32) -> Result<(), &'static str> {

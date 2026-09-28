@@ -64,6 +64,7 @@ pub enum ProviderOp {
     GetProcessHeap,
     GetCurrentThread,
     GetCurrentThreadId,
+    IsBadWritePtr,
     ReadProcessMemory,
     WriteProcessMemory,
     GetLastError,
@@ -353,6 +354,7 @@ impl ProviderOp {
             | Self::FindNextFileA
             | Self::GlobalAlloc
             | Self::InterlockedExchange
+            | Self::IsBadWritePtr
             | Self::TlsSetValue => 8,
             Self::WaitForMultipleObjects => 16,
             Self::TlsGetValue | Self::InterlockedIncrement | Self::InterlockedDecrement => 4,
@@ -563,6 +565,7 @@ impl ProviderOp {
                 | Self::GetProcessHeap
                 | Self::GetCurrentThread
                 | Self::GetCurrentThreadId
+                | Self::IsBadWritePtr
                 | Self::ReadProcessMemory
                 | Self::WriteProcessMemory
                 | Self::GetLastError
@@ -763,6 +766,7 @@ pub fn provider_op(import: &ProviderImport) -> ProviderOp {
             "GetProcessHeap" => ProviderOp::GetProcessHeap,
             "GetCurrentThread" => ProviderOp::GetCurrentThread,
             "GetCurrentThreadId" => ProviderOp::GetCurrentThreadId,
+            "IsBadWritePtr" => ProviderOp::IsBadWritePtr,
             "ReadProcessMemory" => ProviderOp::ReadProcessMemory,
             "WriteProcessMemory" => ProviderOp::WriteProcessMemory,
             "GetLastError" => ProviderOp::GetLastError,

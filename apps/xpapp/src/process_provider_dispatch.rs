@@ -1334,6 +1334,22 @@ impl XpProcess {
                     .ok_or("call count overflow")?;
                 Ok(PersonalityAction::Return(tid))
             }
+            ProviderOp::IsBadWritePtr => {
+                let [_, pointer, bytes] = arguments::<3>(memory, esp)?;
+                let result = self.is_bad_write_ptr(pointer, bytes, memory);
+                logl::log!(
+                    level::IMPORTANT,
+                    format_args!(
+                        "XPAPP CHILD ISBADWRITEPTR pid={} tid={} pointer=0x{:08x} bytes={} result={} cleanup=8-by-thunk",
+                        pid, tid, pointer, bytes, result,
+                    ),
+                );
+                self.call_count = self
+                    .call_count
+                    .checked_add(1)
+                    .ok_or("call count overflow")?;
+                Ok(PersonalityAction::Return(result))
+            }
             ProviderOp::OpenThreadToken => {
                 let [_, thread, desired_access, open_as_self, _token_out] =
                     arguments::<5>(memory, esp)?;
