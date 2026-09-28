@@ -1126,7 +1126,7 @@
                         let PersonalityAction::Return(result) = action else {
                             return Err("GetCommandLineA child provider did not return".into());
                         };
-                        if result != PROCESS_DATA_VA {
+                        if result != CHILD_COMMAND_LINE_VA {
                             return Err("child command-line pointer mismatch".into());
                         }
                         let mut bytes = [0; CHILD_COMMAND_LINE.len()];

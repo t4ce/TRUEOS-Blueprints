@@ -36,9 +36,10 @@ use xpapp::{
     imports::WinCall,
     pe32,
     process::{
-        CHILD_COMMAND_LINE, CHILD_CRT_ARGUMENTS, CHILD_CRT_HEAP_BASE, CHILD_CRT_HEAP_LIMIT, CHILD_VIRTUAL_ALLOC_BASE,
+        CHILD_COMMAND_LINE_VA, CHILD_CRT_HEAP_BASE, CHILD_CRT_HEAP_LIMIT, CHILD_VIRTUAL_ALLOC_BASE,
         CHILD_VIRTUAL_ALLOC_LIMIT, CHILD_WIN_HEAP_BASE, CHILD_WIN_HEAP_LIMIT, CRT_ACMDLN_VA,
-        CRT_ARGV_VA, CRT_COMMODE_VA,
+        CRT_ARG0_VA, CRT_ARG1_VA, CRT_ARG2_VA, CRT_ARG3_VA, CRT_ARG4_VA, CRT_ARGV_VA,
+        CRT_COMMODE_VA,
         CRT_CONSOLE_APP, CRT_ENVP_VA, CRT_FMODE_VA, CRT_GUI_APP, CRT_UNKNOWN_APP,
         ENVIRONMENT_BLOCK_VA, GuestMemory, HEAP_GENERATE_EXCEPTIONS, HEAP_ZERO_MEMORY,
         GAME_VIEWPORT_SIZE, PROCESS_DATA_VA, PreparedProcess, ProviderDispatchError, STACK_BASE, STACK_BYTES,
@@ -62,6 +63,37 @@ const CHILD_IMAGE_ENTRY_CALLER_BYTES: usize = 0x40;
 const MESSAGE_BOX_WIDTH: u32 = 560;
 const MESSAGE_BOX_HEIGHT: u32 = 280;
 const MESSAGE_BOX_MAX_ANSI_BYTES: usize = 4096;
+
+/// Temporarily bypass Warcraft's front-end map selection and launch the known
+/// TRUEOSFS-backed Booty Bay map directly.  Set this to false to restore the
+/// ordinary front-end command line.
+const DIRECT_BOOTY_BAY_LAUNCH: bool = true;
+const BOOTY_BAY_LOADFILE: &[u8] = b"C:\\Warcraft III\\Maps\\(2)BootyBay.w3m\0";
+const CHILD_NORMAL_COMMAND_LINE: &[u8] = b"\"war3.exe\" -opengl -nosound\0";
+const CHILD_BOOTY_BAY_COMMAND_LINE: &[u8] =
+    b"\"war3.exe\" -opengl -nosound -loadfile \"C:\\Warcraft III\\Maps\\(2)BootyBay.w3m\"\0";
+const CHILD_NORMAL_CRT_ARGUMENTS: &[(u32, &[u8])] = &[
+    (CRT_ARG0_VA, b"war3.exe\0"),
+    (CRT_ARG1_VA, b"-opengl\0"),
+    (CRT_ARG2_VA, b"-nosound\0"),
+];
+const CHILD_BOOTY_BAY_CRT_ARGUMENTS: &[(u32, &[u8])] = &[
+    (CRT_ARG0_VA, b"war3.exe\0"),
+    (CRT_ARG1_VA, b"-opengl\0"),
+    (CRT_ARG2_VA, b"-nosound\0"),
+    (CRT_ARG3_VA, b"-loadfile\0"),
+    (CRT_ARG4_VA, BOOTY_BAY_LOADFILE),
+];
+const CHILD_COMMAND_LINE: &[u8] = if DIRECT_BOOTY_BAY_LAUNCH {
+    CHILD_BOOTY_BAY_COMMAND_LINE
+} else {
+    CHILD_NORMAL_COMMAND_LINE
+};
+const CHILD_CRT_ARGUMENTS: &[(u32, &[u8])] = if DIRECT_BOOTY_BAY_LAUNCH {
+    CHILD_BOOTY_BAY_CRT_ARGUMENTS
+} else {
+    CHILD_NORMAL_CRT_ARGUMENTS
+};
 fn main() {
     let runtime = match tokio::runtime::Builder::new_current_thread()
         .enable_time()

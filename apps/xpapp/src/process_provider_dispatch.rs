@@ -770,7 +770,7 @@ impl XpProcess {
                         });
                     }
                 }
-                write_u32(memory, argc_out, CRT_ARGC)?;
+                write_u32(memory, argc_out, self.crt_argc)?;
                 write_u32(memory, argv_out, CRT_ARGV_VA)?;
                 write_u32(memory, env_out, CRT_ENVP_VA)?;
                 self.call_count = self
@@ -3046,7 +3046,11 @@ impl XpProcess {
                     .call_count
                     .checked_add(1)
                     .ok_or("call count overflow")?;
-                Ok(PersonalityAction::Return(PROCESS_DATA_VA))
+                Ok(PersonalityAction::Return(if self.image == ProcessImage::War3Child {
+                    CHILD_COMMAND_LINE_VA
+                } else {
+                    PROCESS_DATA_VA
+                }))
             }
             (module, ProviderSymbol::Name(symbol))
                 if module.eq_ignore_ascii_case("KERNEL32.dll") && symbol == "GetVersionExA" =>

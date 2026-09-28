@@ -269,6 +269,8 @@ pub const CRT_ARG1_VA: u32 = PROCESS_DATA_VA + 0x89;
 pub const CRT_ARG2_VA: u32 = PROCESS_DATA_VA + 0x91;
 pub const CRT_ARG3_VA: u32 = PROCESS_DATA_VA + 0x9a;
 pub const CRT_ARG4_VA: u32 = PROCESS_DATA_VA + 0xa1;
+pub const CRT_ARG5_VA: u32 = PROCESS_DATA_VA + 0xb0;
+pub const CRT_ARG6_VA: u32 = PROCESS_DATA_VA + 0xc0;
 pub const CHILD_CRT_ARGUMENTS: &[(u32, &[u8])] = &[
     (CRT_ARG0_VA, b"war3.exe\0"),
     (CRT_ARG1_VA, b"-opengl\0"),
@@ -303,6 +305,9 @@ pub const THUNK_PAGE_BYTES: usize = 0x1000;
 /// CHILD_COMMAND_LINE and matching CRT arguments when its address space is built.
 pub const COMMAND_LINE: &[u8] = b"\"Warcraft III.exe\"\0";
 pub const CHILD_COMMAND_LINE: &[u8] = b"\"war3.exe\" -opengl -nosound -swtnl -window\0";
+/// Kept separate from the initial command-line slot so a quoted `-loadfile`
+/// path cannot overlap the child's CRT control words.
+pub const CHILD_COMMAND_LINE_VA: u32 = PROCESS_DATA_VA + 0x110;
 pub const LAUNCHER_IMAGE_FILENAME: &[u8] = b"C:\\Warcraft III\\Warcraft III.exe\0";
 pub const CHILD_IMAGE_FILENAME: &[u8] = b"C:\\Warcraft III\\War3.exe\0";
 const CHILD_WORKING_DIRECTORY: &str = "C:\\Warcraft III";
@@ -1917,6 +1922,7 @@ pub struct XpProcess {
     crt_allocations: HashMap<u32, u32>,
     crt_onexit_callbacks: Vec<u32>,
     pub crt_app_type: u32,
+    crt_argc: u32,
     crt_rng_seed: u32,
     d3d8_ref_count: u32,
     virtual_reservations: Vec<VirtualReservation>,
@@ -2293,6 +2299,17 @@ impl XpProcess {
         Self::with_image(Vec::new(), ProcessImage::War3Child)
     }
 
+    pub fn set_child_crt_argc(&mut self, argc: u32) -> Result<(), &'static str> {
+        if self.image != ProcessImage::War3Child {
+            return Err("child CRT arguments configured on launcher");
+        }
+        if argc == 0 {
+            return Err("child CRT argument list empty");
+        }
+        self.crt_argc = argc;
+        Ok(())
+    }
+
     pub fn commit_gamma_ramp(&mut self, ramp: [u16; 3 * 256]) {
         self.gamma_ramp = ramp;
     }
@@ -2373,6 +2390,7 @@ impl XpProcess {
             crt_allocations: HashMap::new(),
             crt_onexit_callbacks: Vec::new(),
             crt_app_type: CRT_UNKNOWN_APP,
+            crt_argc: CRT_ARGC,
             // MSVCRT's process-wide rand stream starts from seed one until
             // srand supplies the deterministic seed consumed by rand.
             crt_rng_seed: 1,

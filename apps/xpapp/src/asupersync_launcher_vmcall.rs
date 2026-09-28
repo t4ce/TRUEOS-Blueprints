@@ -1168,7 +1168,7 @@
                             )
                             .map_err(|error| format!("map child process data: {error}"))?;
                         let written = child_address_space
-                            .write(PROCESS_DATA_VA, CHILD_COMMAND_LINE)
+                            .write(CHILD_COMMAND_LINE_VA, CHILD_COMMAND_LINE)
                             .map_err(|error| format!("write child command line: {error}"))?;
                         if written != CHILD_COMMAND_LINE.len() {
                             return Err("short child command-line write".into());
@@ -1186,7 +1186,7 @@
                             return Err("short child CRT _commode write".into());
                         }
                         let acmdln_written = child_address_space
-                            .write(CRT_ACMDLN_VA, &PROCESS_DATA_VA.to_le_bytes())
+                            .write(CRT_ACMDLN_VA, &CHILD_COMMAND_LINE_VA.to_le_bytes())
                             .map_err(|error| format!("write child CRT _acmdln: {error}"))?;
                         if acmdln_written != 4 {
                             return Err("short child CRT _acmdln write".into());
@@ -1212,6 +1212,15 @@
                                 return Err("short child CRT argv string write".into());
                             }
                         }
+                        session
+                            .process_mut(created.pid)
+                            .ok_or("created child process missing")?
+                            .xp
+                            .set_child_crt_argc(
+                                u32::try_from(CHILD_CRT_ARGUMENTS.len())
+                                    .map_err(|_| "child CRT argc overflow")?,
+                            )
+                            .map_err(str::to_owned)?;
                         if child_address_space
                             .write(CRT_ENVP_VA, &[0, 0, 0, 0])
                             .map_err(|error| format!("write child CRT envp: {error}"))?
