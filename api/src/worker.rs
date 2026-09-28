@@ -59,6 +59,34 @@ impl<R> Future for JoinHandle<R> {
     }
 }
 
+impl<R> JoinHandle<R> {
+    /// Returns a completed native result without polling the caller's async
+    /// runtime.  CPU raster providers use this to join finite row bands while
+    /// keeping their existing synchronous dispatch contract.
+    pub fn try_take(&mut self) -> Option<Result<R, JoinError>> {
+        match self.receiver.try_recv() {
+            Ok(result) => Some(Ok(result)),
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty) => None,
+            Err(tokio::sync::oneshot::error::TryRecvError::Closed) => Some(Err(JoinError)),
+        }
+    }
+
+    /// Wait for a finite native job without spinning.  Each incomplete poll
+    /// yields the current TRUEOS executor; host tests use the normal scheduler
+    /// yield.  Submit only bounded bands and always keep a serial fallback.
+    pub fn join_blocking(mut self) -> Result<R, JoinError> {
+        loop {
+            if let Some(result) = self.try_take() {
+                return result;
+            }
+            #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+            v::vsys::poll_once();
+            #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+            std::thread::yield_now();
+        }
+    }
+}
+
 /// Advisory count of currently available native service lanes. It may be zero;
 /// concurrent submissions can consume this capacity before `spawn` is called.
 pub fn capacity() -> usize {
@@ -102,6 +130,100 @@ where
     R: Send + 'static,
 {
     spawn_with(f, submit)
+}
+
+/// Submit finite CPU work to XPAPP's sticky two-worker strict-P-core pool.
+/// This is unavailable outside TRUEOS so host raster parity tests stay scalar
+/// and deterministic.
+pub fn spawn_compute<F, R>(f: F) -> Result<JoinHandle<R>, SpawnError>
+where
+    F: FnOnce() -> R + Send + 'static,
+    R: Send + 'static,
+{
+    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+    {
+        let (sender, receiver) = oneshot::channel();
+        let mut f = Some(f);
+        let mut sender = Some(sender);
+        let job: Box<dyn FnMut() -> bool + Send + 'static> = Box::new(move || {
+            let result = f.take().expect("one-shot compute job invoked twice")();
+            let _ = sender
+                .take()
+                .expect("one-shot compute completion")
+                .send(result);
+            false
+        });
+        submit_compute(job)?;
+        Ok(JoinHandle { receiver })
+    }
+    #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+    {
+        let _ = f;
+        Err(SpawnError::Unavailable)
+    }
+}
+
+/// Submit a resumable finite compute job. Each call to `step` must finish a
+/// bounded unit of work and return `true` while more work remains. The kernel
+/// retains the same job on its selected P worker through its 4 ms work burst
+/// and the following duty cooldown; it sends completion after `false`.
+pub fn spawn_compute_resumable<F>(step: F) -> Result<JoinHandle<()>, SpawnError>
+where
+    F: FnMut() -> bool + Send + 'static,
+{
+    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+    {
+        let (sender, receiver) = oneshot::channel();
+        let mut step = step;
+        let mut sender = Some(sender);
+        let job: Box<dyn FnMut() -> bool + Send + 'static> = Box::new(move || {
+            let more = step();
+            if !more {
+                let _ = sender
+                    .take()
+                    .expect("resumable compute completion")
+                    .send(());
+            }
+            more
+        });
+        submit_compute(job)?;
+        Ok(JoinHandle { receiver })
+    }
+    #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+    {
+        let _ = step;
+        Err(SpawnError::Unavailable)
+    }
+}
+
+fn submit_compute(job: Box<dyn FnMut() -> bool + Send + 'static>) -> Result<(), SpawnError> {
+    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+    let code = unsafe { v::worker_abi::trueos_guest_compute_submit_job(job) };
+    #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+    let code = {
+        drop(job);
+        -2
+    };
+    match code {
+        0 => Ok(()),
+        -2 => Err(SpawnError::Unavailable),
+        -5 => Err(SpawnError::InvalidJob),
+        -6 => Err(SpawnError::Transport),
+        other => Err(SpawnError::Unknown(other)),
+    }
+}
+
+/// Runtime number of strict performance workers the two-worker pool can use.
+/// It is advisory; an active Hull/native lane may still make a submission fail.
+pub fn compute_capacity() -> usize {
+    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+    {
+        unsafe { v::worker_abi::trueos_guest_compute_capacity() }
+    }
+    #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+    {
+        0
+    }
 }
 
 fn spawn_with<F, R>(
@@ -207,5 +329,36 @@ mod tests {
         )
         .unwrap();
         assert_eq!(handle.receiver.try_recv().unwrap(), 13);
+    }
+
+    #[test]
+    fn resumable_completion_sender_is_moved_only_after_the_final_step() {
+        let (sender, mut receiver) = oneshot::channel();
+        let mut sender = Some(sender);
+        let mut steps = 0usize;
+        let mut job: Box<dyn FnMut() -> bool + Send> = Box::new(move || {
+            steps += 1;
+            let more = steps < 3;
+            if !more {
+                let _ = sender.take().expect("one completion").send(());
+            }
+            more
+        });
+        assert!(job());
+        assert!(job());
+        assert!(!job());
+        assert_eq!(receiver.try_recv().unwrap(), ());
+    }
+
+    #[test]
+    fn host_resumable_rejection_drops_capture_once_without_running_step() {
+        let drops = Arc::new(AtomicUsize::new(0));
+        let capture = CountDrop(drops.clone());
+        let result = spawn_compute_resumable(move || {
+            let _ = &capture;
+            panic!("unavailable compute job ran")
+        });
+        assert!(matches!(result, Err(SpawnError::Unavailable)));
+        assert_eq!(drops.load(Ordering::Acquire), 1);
     }
 }

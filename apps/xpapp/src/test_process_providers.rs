@@ -2760,6 +2760,104 @@
     }
 
     #[test]
+    fn game_viewport_is_the_default_guest_desktop() {
+        let launcher = XpProcess::new(Vec::new());
+        let child = XpProcess::new_child();
+        assert_eq!(launcher.desktop_size(), crate::process::GAME_VIEWPORT_SIZE);
+        assert_eq!(child.desktop_size(), crate::process::GAME_VIEWPORT_SIZE);
+    }
+
+    #[test]
+    fn game_viewport_drives_display_gdi_and_desktop_contracts() {
+        let providers = [
+            ("USER32.dll", "EnumDisplaySettingsA"),
+            ("USER32.dll", "ChangeDisplaySettingsExA"),
+            ("GDI32.dll", "GetDeviceCaps"),
+        ]
+        .map(|(module, symbol)| ProviderImport {
+            module: module.into(),
+            symbol: ProviderSymbol::Name(symbol.into()),
+            iat_rva: 0,
+        });
+        let mut xp = XpProcess::new_child();
+        xp.install_provider_surface(providers.to_vec(), Vec::new(), Vec::new());
+        let mut memory = Memory {
+            base: STACK_BASE,
+            bytes: vec![0; STACK_BYTES],
+        };
+        let esp = STACK_BASE + 0x100;
+        let devmode = STACK_BASE + 0x400;
+        let device = STACK_BASE + 0x700;
+        memory.write(device, b"\\\\.\\DISPLAY1\0").unwrap();
+        write_u16(&mut memory, devmode + 0x24, 0x9c).unwrap();
+        for (word, value) in [0x6f0d_0300, device, ENUM_CURRENT_SETTINGS, devmode]
+            .into_iter()
+            .enumerate()
+        {
+            write_u32(&mut memory, esp + word as u32 * 4, value).unwrap();
+        }
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 0, esp, &mut memory),
+            Ok(PersonalityAction::Return(1))
+        );
+        assert_eq!(
+            read_u32(&memory, devmode + 0x6c),
+            Ok(crate::process::GAME_VIEWPORT_WIDTH)
+        );
+        assert_eq!(
+            read_u32(&memory, devmode + 0x70),
+            Ok(crate::process::GAME_VIEWPORT_HEIGHT)
+        );
+
+        for (word, value) in [0x6f0d_0304, device, devmode, 0, 4, 0]
+            .into_iter()
+            .enumerate()
+        {
+            write_u32(&mut memory, esp + word as u32 * 4, value).unwrap();
+        }
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 1, esp, &mut memory),
+            Ok(PersonalityAction::Return(0))
+        );
+
+        let hdc = xp
+            .begin_paint(
+                0x5743_4001,
+                STACK_BASE + 0x900,
+                crate::process::GAME_VIEWPORT_WIDTH,
+                crate::process::GAME_VIEWPORT_HEIGHT,
+                &mut memory,
+            )
+            .unwrap();
+        for (word, value) in [0x6f0d_0308, hdc, 8].into_iter().enumerate() {
+            write_u32(&mut memory, esp + word as u32 * 4, value).unwrap();
+        }
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 2, esp, &mut memory),
+            Ok(PersonalityAction::Return(crate::process::GAME_VIEWPORT_WIDTH))
+        );
+        write_u32(&mut memory, esp + 8, 10).unwrap();
+        assert_eq!(
+            xp.dispatch_provider_for_process_typed(2, 3, 2, esp, &mut memory),
+            Ok(PersonalityAction::Return(crate::process::GAME_VIEWPORT_HEIGHT))
+        );
+
+        let session = crate::session::XpappSession::new(XpProcess::new(Vec::new()));
+        assert_eq!(
+            session.client_rect(
+                crate::session::LAUNCHER_PID,
+                crate::session::DESKTOP_HWND
+            ),
+            Ok([
+                0,
+                0,
+                crate::process::GAME_VIEWPORT_WIDTH as i32,
+                crate::process::GAME_VIEWPORT_HEIGHT as i32,
+            ])
+        );
+    }
+
+    #[test]
     fn child_d3d8_release_returns_post_decrement_reference_count() {
         let provider = ProviderImport {
             module: "d3d8.dll".into(),

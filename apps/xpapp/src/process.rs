@@ -54,6 +54,10 @@ pub const D3DADAPTER_IDENTIFIER8_BYTES: usize = 0x42c;
 pub const TRUEOS_D3D8_VENDOR_ID: u32 = 0x8086;
 pub const TRUEOS_D3D8_DEVICE_ID: u32 = 0xa780;
 pub const TRUEOS_DISPLAY_ADAPTER_DESCRIPTION: &str = "Intel(R) UHD Graphics 770";
+/// Logical game resolution; the physical UI4/Gamma mode is independent.
+pub const GAME_VIEWPORT_WIDTH: u32 = 1280;
+pub const GAME_VIEWPORT_HEIGHT: u32 = 720;
+pub const GAME_VIEWPORT_SIZE: (u32, u32) = (GAME_VIEWPORT_WIDTH, GAME_VIEWPORT_HEIGHT);
 pub const ENUM_CURRENT_SETTINGS: u32 = 0xffff_ffff;
 pub const ENUM_REGISTRY_SETTINGS: u32 = 0xffff_fffe;
 pub const DM_BITSPERPEL: u32 = 0x0004_0000;
@@ -265,7 +269,14 @@ pub const CRT_ARG1_VA: u32 = PROCESS_DATA_VA + 0x89;
 pub const CRT_ARG2_VA: u32 = PROCESS_DATA_VA + 0x91;
 pub const CRT_ARG3_VA: u32 = PROCESS_DATA_VA + 0x9a;
 pub const CRT_ARG4_VA: u32 = PROCESS_DATA_VA + 0xa1;
-pub const CRT_ARGC: u32 = 5;
+pub const CHILD_CRT_ARGUMENTS: &[(u32, &[u8])] = &[
+    (CRT_ARG0_VA, b"war3.exe\0"),
+    (CRT_ARG1_VA, b"-opengl\0"),
+    (CRT_ARG2_VA, b"-nosound\0"),
+    (CRT_ARG3_VA, b"-swtnl\0"),
+    (CRT_ARG4_VA, b"-window\0"),
+];
+pub const CRT_ARGC: u32 = CHILD_CRT_ARGUMENTS.len() as u32;
 const XP_MIN_APPLICATION_ADDRESS: u32 = 0x0001_0000;
 const XP_MAX_APPLICATION_ADDRESS: u32 = 0x7ffe_ffff;
 pub const XP_MEMORY_LOAD: u32 = 25;
@@ -2375,7 +2386,7 @@ impl XpProcess {
             messages: VecDeque::new(),
             cursor_position: (0, 0),
             runnable_thread: None,
-            desktop_size: (1920, 1080),
+            desktop_size: GAME_VIEWPORT_SIZE,
             gdi_objects,
             active_paints: HashMap::new(),
             window_dcs: HashMap::new(),

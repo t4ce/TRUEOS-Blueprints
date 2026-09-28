@@ -1247,6 +1247,12 @@
             CHILD_COMMAND_LINE,
             b"\"war3.exe\" -opengl -nosound -swtnl -window\0"
         );
+        assert_eq!(CRT_ARGC, 5);
+        assert_eq!(CHILD_CRT_ARGUMENTS.iter().map(|(_, value)| *value).collect::<Vec<_>>(),
+            [b"war3.exe\0".as_slice(), b"-opengl\0", b"-nosound\0", b"-swtnl\0", b"-window\0"]);
+        for pair in CHILD_CRT_ARGUMENTS.windows(2) {
+            assert!(pair[0].0 + pair[0].1.len() as u32 <= pair[1].0);
+        }
         assert_eq!(crate::session::WINDOW_HANDLE_BASE, 0x5743_4001);
 
         // This is the hardware-observed #89 frame.  Its positions are a

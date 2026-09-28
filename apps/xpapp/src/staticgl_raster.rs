@@ -192,7 +192,11 @@ impl Default for RasterState {
 #[derive(Clone, Debug)]
 pub(crate) struct Frame {
     pub width: u32,
+    /// Full framebuffer height used for GL window coordinates.
     pub height: u32,
+    /// Last global top-down row stored in this allocation.  The normal frame
+    /// owns every row; a worker band owns only an inclusive subrange.
+    storage_bottom: i32,
     pub rgba: Vec<u8>,
     pub depth: Vec<f32>,
 }
@@ -213,9 +217,32 @@ pub(crate) enum RasterError {
     BadTexture,
     UnsupportedTexEnv,
     BadViewport,
+    Worker,
 }
 
 pub(crate) const MAX_RASTER_PIXELS: usize = 1920 * 1080 * 2;
+const RASTER_ROWS_PER_STEP: i32 = 8;
+
+#[cfg(not(test))]
+fn report_worker_mode(parallel: bool) {
+    use core::sync::atomic::{AtomicU8, Ordering};
+    static REPORTED: AtomicU8 = AtomicU8::new(0);
+    let mode = if parallel { 1 } else { 2 };
+    if REPORTED.swap(mode, Ordering::AcqRel) != mode {
+        let description = if parallel {
+            "two persistent P-core row-band workers"
+        } else {
+            "scalar fallback (fewer than two P-core workers)"
+        };
+        crate::logl::emit(
+            crate::logl::level::IMPORTANT,
+            format_args!("XPAPP CPU RASTER mode={description}"),
+        );
+    }
+}
+
+#[cfg(test)]
+fn report_worker_mode(_: bool) {}
 
 // Stable bridge-facing names.  The short internal names keep the clipping and
 // sampling code readable; these are the names used by `staticgl.rs`.
@@ -249,6 +276,7 @@ impl Frame {
         Ok(Self {
             width,
             height,
+            storage_bottom: height as i32 - 1,
             rgba: vec![0; pixels.checked_mul(4).ok_or(RasterError::BadExtent)?],
             depth: vec![1.0; pixels],
         })
@@ -353,8 +381,16 @@ impl Frame {
             clipped_triangles: staged.len() as u32,
             shaded_pixels: 0,
         };
-        for tri in staged {
-            stats.shaded_pixels += self.draw_triangle(state, texture, tri) as u64;
+        if crate::staticgl_raster_pool::has_two_workers() {
+            report_worker_mode(true);
+            stats.shaded_pixels = self
+                .draw_staged_banded_pool(*state, texture, staged)
+                .map_err(|_| RasterError::Worker)? as u64;
+        } else {
+            report_worker_mode(false);
+            for tri in staged {
+                stats.shaded_pixels += self.draw_triangle(state, texture, tri) as u64;
+            }
         }
         Ok(stats)
     }
@@ -375,6 +411,22 @@ impl Frame {
         state: &RasterState,
         texture: Option<TextureView<'_>>,
         tri: [ClipVertex; 3],
+    ) -> usize {
+        self.draw_triangle_rows(state, texture, tri, i32::MIN, i32::MAX)
+    }
+
+    /// Rasterizes an inclusive top-down row interval of a triangle.  The
+    /// affine row values always start at the triangle's first visible row and
+    /// advance with the scalar `+= dy` recurrence before this interval begins.
+    /// That is deliberately different from evaluating a plane at `row_start`:
+    /// it keeps the same f32 rounding as the unsplit renderer.
+    fn draw_triangle_rows(
+        &mut self,
+        state: &RasterState,
+        texture: Option<TextureView<'_>>,
+        tri: [ClipVertex; 3],
+        row_start: i32,
+        row_end: i32,
     ) -> usize {
         let mut p = tri.map(|v| ScreenVertex::from_clip(v, state.viewport, self.height));
         let area_gl = orient([p[0].x, -p[0].y], [p[1].x, -p[1].y], [p[2].x, -p[2].y]);
@@ -456,6 +508,11 @@ impl Frame {
         if min_x > max_x || min_y > max_y {
             return 0;
         }
+        let render_min_y = min_y.max(row_start);
+        let render_max_y = max_y.min(row_end);
+        if render_min_y > render_max_y {
+            return 0;
+        }
 
         // This is the dominant menu/background state: an opaque RGBA texture
         // replacing the primary colour.  It has no observable dependency on
@@ -475,7 +532,8 @@ impl Frame {
                 min_x,
                 max_x,
                 min_y,
-                max_y,
+                render_min_y,
+                render_max_y,
                 area,
             );
         }
@@ -543,7 +601,19 @@ impl Frame {
         let mut color_row = color_planes.map(|plane| plane.value);
         let mut uv_row = uv_planes.map(|plane| plane.value);
         let mut fog_row = fog_plane.value;
-        for y in min_y..=max_y {
+        for _ in min_y..render_min_y {
+            for i in 0..3 {
+                edge_row[i] += edge_dy[i];
+            }
+            depth_row += depth_plane.dy;
+            inv_w_row += inv_w_plane.dy;
+            for i in 0..4 {
+                color_row[i] += color_planes[i].dy;
+                uv_row[i] += uv_planes[i].dy;
+            }
+            fog_row += fog_plane.dy;
+        }
+        for y in render_min_y..=render_max_y {
             let mut edge = edge_row;
             let mut z_ndc = depth_row;
             let mut inv_w = inv_w_row;
@@ -637,7 +707,8 @@ impl Frame {
         min_x: i32,
         max_x: i32,
         min_y: i32,
-        max_y: i32,
+        render_min_y: i32,
+        render_max_y: i32,
         area: f32,
     ) -> usize {
         let edges = [
@@ -662,6 +733,14 @@ impl Frame {
         let mut shaded = 0;
         let mut edge_row = edge_start;
         let mut uv_row = uv_planes.map(|plane| plane.value);
+        for _ in min_y..render_min_y {
+            for i in 0..3 {
+                edge_row[i] += edge_dy[i];
+            }
+            for i in 0..4 {
+                uv_row[i] += uv_planes[i].dy;
+            }
+        }
 
         // UI quads normally have both clip W and texture Q equal to one.  Q is
         // then a constant plane, allowing s/t and their gradients to use two
@@ -677,7 +756,7 @@ impl Frame {
             let u_dy = uv_planes[0].dy * inv_q;
             let v_dy = uv_planes[1].dy * inv_q;
             let sample_plan = texture_sample_plan(texture, u_dx, v_dx, u_dy, v_dy);
-            for y in min_y..=max_y {
+            for y in render_min_y..=render_max_y {
                 let mut edge = edge_row;
                 let mut uv = uv_row;
                 let mut offset = self.top_index(min_x, y);
@@ -709,7 +788,7 @@ impl Frame {
                 }
             }
         } else {
-            for y in min_y..=max_y {
+            for y in render_min_y..=render_max_y {
                 let mut edge = edge_row;
                 let mut uv = uv_row;
                 let mut offset = self.top_index(min_x, y);
@@ -756,7 +835,272 @@ impl Frame {
     /// Converts the raster's top-down coverage coordinate into its bottom-up
     /// GL backing row.
     fn top_index(&self, x: i32, y_top: i32) -> usize {
-        (self.height as usize - 1 - y_top as usize) * self.width as usize + x as usize
+        debug_assert!(y_top <= self.storage_bottom);
+        (self.storage_bottom as usize - y_top as usize) * self.width as usize + x as usize
+    }
+
+    fn copy_rows(&self, top: i32, bottom: i32) -> Frame {
+        let rows = (bottom - top + 1) as usize;
+        let width = self.width as usize;
+        let mut rgba = vec![0; rows * width * 4];
+        let mut depth = vec![0.0; rows * width];
+        for y in top..=bottom {
+            let source = self.top_index(0, y);
+            let destination = (bottom - y) as usize * width;
+            rgba[destination * 4..(destination + width) * 4]
+                .copy_from_slice(&self.rgba[source * 4..(source + width) * 4]);
+            depth[destination..destination + width]
+                .copy_from_slice(&self.depth[source..source + width]);
+        }
+        Frame {
+            width: self.width,
+            height: self.height,
+            storage_bottom: bottom,
+            rgba,
+            depth,
+        }
+    }
+
+    fn copy_band_back(&mut self, band: &RasterBandJob) {
+        let width = self.width as usize;
+        for y in band.band_start..=band.band_end {
+            let destination = self.top_index(0, y);
+            let source = band.frame.top_index(0, y);
+            self.rgba[destination * 4..(destination + width) * 4]
+                .copy_from_slice(&band.frame.rgba[source * 4..(source + width) * 4]);
+            self.depth[destination..destination + width]
+                .copy_from_slice(&band.frame.depth[source..source + width]);
+        }
+    }
+
+    fn draw_staged_banded_pool(
+        &mut self,
+        state: RasterState,
+        texture: Option<TextureView<'_>>,
+        triangles: Vec<[ClipVertex; 3]>,
+    ) -> Result<usize, trueos::worker::SpawnError> {
+        let triangles: std::sync::Arc<[[ClipVertex; 3]]> = triangles.into();
+        let texture = texture.map(OwnedTexture::copy_of).map(std::sync::Arc::new);
+        let split = (self.height as i32 + 1) / 2;
+        let upper = RasterBandJob::new(
+            self.copy_rows(0, split - 1),
+            state,
+            texture.clone(),
+            triangles.clone(),
+            0,
+            split - 1,
+        );
+        let lower = RasterBandJob::new(
+            self.copy_rows(split, self.height as i32 - 1),
+            state,
+            texture,
+            triangles,
+            split,
+            self.height as i32 - 1,
+        );
+        let (upper, lower) =
+            crate::staticgl_raster_pool::run_two(upper, lower, RasterBandJob::step)?;
+
+        // No parent framebuffer row is replaced before both worker handles
+        // complete.  This keeps a failed/tearing-down draw from becoming a
+        // partial visible frame.
+        let shaded = upper.shaded + lower.shaded;
+        self.copy_band_back(&upper);
+        self.copy_band_back(&lower);
+        Ok(shaded)
+    }
+
+    /// Executes the same two owned screen bands without native workers.  This
+    /// is used by exact host parity tests; production submits these jobs to
+    /// the persistent P-core pool and joins them before the draw returns.
+    #[cfg(test)]
+    fn draw_staged_banded_scalar(
+        &mut self,
+        state: RasterState,
+        texture: Option<TextureView<'_>>,
+        triangles: Vec<[ClipVertex; 3]>,
+    ) -> usize {
+        let triangles: std::sync::Arc<[[ClipVertex; 3]]> = triangles.into();
+        let texture = texture.map(OwnedTexture::copy_of).map(std::sync::Arc::new);
+        let split = (self.height as i32 + 1) / 2;
+        let mut upper = RasterBandJob::new(
+            self.copy_rows(0, split - 1),
+            state,
+            texture.clone(),
+            triangles.clone(),
+            0,
+            split - 1,
+        );
+        let mut lower = RasterBandJob::new(
+            self.copy_rows(split, self.height as i32 - 1),
+            state,
+            texture,
+            triangles,
+            split,
+            self.height as i32 - 1,
+        );
+        loop {
+            let upper_more = upper.step();
+            let lower_more = lower.step();
+            if !upper_more && !lower_more {
+                break;
+            }
+        }
+        let shaded = upper.shaded + lower.shaded;
+        self.copy_band_back(&upper);
+        self.copy_band_back(&lower);
+        shaded
+    }
+}
+
+struct RasterBandJob {
+    frame: Frame,
+    state: RasterState,
+    texture: Option<std::sync::Arc<OwnedTexture>>,
+    triangles: std::sync::Arc<[[ClipVertex; 3]]>,
+    band_start: i32,
+    band_end: i32,
+    triangle: usize,
+    next_row: i32,
+    shaded: usize,
+}
+
+impl RasterBandJob {
+    fn new(
+        frame: Frame,
+        state: RasterState,
+        texture: Option<std::sync::Arc<OwnedTexture>>,
+        triangles: std::sync::Arc<[[ClipVertex; 3]]>,
+        band_start: i32,
+        band_end: i32,
+    ) -> Self {
+        Self {
+            frame,
+            state,
+            texture,
+            triangles,
+            band_start,
+            band_end,
+            triangle: 0,
+            next_row: band_start,
+            shaded: 0,
+        }
+    }
+
+    /// Executes at most eight rows of the current triangle.  The persistent
+    /// worker requeues this same job after its four-millisecond budget; no
+    /// partially rendered triangle is observed outside this draw call.
+    fn step(&mut self) -> bool {
+        let Some(&triangle) = self.triangles.get(self.triangle) else {
+            return false;
+        };
+        let end = self
+            .next_row
+            .saturating_add(RASTER_ROWS_PER_STEP - 1)
+            .min(self.band_end);
+        self.shaded += match &self.texture {
+            Some(texture) => texture.with_view(|view| {
+                self.frame
+                    .draw_triangle_rows(&self.state, Some(view), triangle, self.next_row, end)
+            }),
+            None => self
+                .frame
+                .draw_triangle_rows(&self.state, None, triangle, self.next_row, end),
+        };
+        self.next_row = end.saturating_add(1);
+        if self.next_row > self.band_end {
+            self.triangle += 1;
+            self.next_row = self.band_start;
+        }
+        self.triangle < self.triangles.len()
+    }
+}
+
+/// Fully owned texture storage shared by the two worker jobs.  Pixel data is
+/// copied once when a draw enters the P-core path, so queued work never holds
+/// references into a mutable GL context or decoded temporary vectors.
+struct OwnedTexture {
+    levels: Vec<OwnedTextureLevel>,
+    format: TextureFormat,
+    wrap_s: Wrap,
+    wrap_t: Wrap,
+    min_filter: Filter,
+    mag_filter: Filter,
+}
+
+struct OwnedTextureLevel {
+    width: u32,
+    height: u32,
+    rgba: Vec<u8>,
+}
+
+impl OwnedTexture {
+    fn copy_of(texture: TextureView<'_>) -> Self {
+        Self {
+            levels: texture
+                .levels
+                .iter()
+                .map(|level| OwnedTextureLevel {
+                    width: level.width,
+                    height: level.height,
+                    rgba: level.rgba.to_vec(),
+                })
+                .collect(),
+            format: texture.format,
+            wrap_s: texture.wrap_s,
+            wrap_t: texture.wrap_t,
+            min_filter: texture.min_filter,
+            mag_filter: texture.mag_filter,
+        }
+    }
+
+    fn with_view<R>(&self, f: impl FnOnce(TextureView<'_>) -> R) -> R {
+        const STACK_LEVELS: usize = 32;
+        if self.levels.len() <= STACK_LEVELS {
+            // Mip chains have at most twelve levels within XPAPP's raster
+            // pixel budget. Keep their borrowed descriptors on the worker
+            // stack so each bounded row step avoids allocator traffic.
+            let mut levels = [TextureLevel {
+                width: 0,
+                height: 0,
+                rgba: &[],
+            }; STACK_LEVELS];
+            for (descriptor, level) in levels.iter_mut().zip(&self.levels) {
+                *descriptor = TextureLevel {
+                    width: level.width,
+                    height: level.height,
+                    rgba: &level.rgba,
+                };
+            }
+            f(TextureView {
+                levels: &levels[..self.levels.len()],
+                format: self.format,
+                wrap_s: self.wrap_s,
+                wrap_t: self.wrap_t,
+                min_filter: self.min_filter,
+                mag_filter: self.mag_filter,
+            })
+        } else {
+            // Retain the general GL contract for unusually deep supplied
+            // chains without burdening the bounded normal path.
+            let levels: Vec<_> = self
+                .levels
+                .iter()
+                .map(|level| TextureLevel {
+                    width: level.width,
+                    height: level.height,
+                    rgba: &level.rgba,
+                })
+                .collect();
+            f(TextureView {
+                levels: &levels,
+                format: self.format,
+                wrap_s: self.wrap_s,
+                wrap_t: self.wrap_t,
+                min_filter: self.min_filter,
+                mag_filter: self.mag_filter,
+            })
+        }
     }
 }
 
@@ -1297,11 +1641,7 @@ fn wrap_index(i: i32, n: i32, w: Wrap) -> i32 {
         Wrap::MirroredRepeat => {
             let q = i.div_euclid(n);
             let r = i.rem_euclid(n);
-            if q & 1 == 0 {
-                r
-            } else {
-                n - 1 - r
-            }
+            if q & 1 == 0 { r } else { n - 1 - r }
         }
         Wrap::Clamp | Wrap::ClampToEdge => i.clamp(0, n - 1),
     }
@@ -1462,6 +1802,7 @@ fn raster_error(error: RasterError) -> &'static str {
         RasterError::BadTexture => "raster bad texture",
         RasterError::UnsupportedTexEnv => "raster undefined texture environment",
         RasterError::BadViewport => "raster bad viewport",
+        RasterError::Worker => "raster worker unavailable",
     }
 }
 
@@ -1801,6 +2142,120 @@ mod tests {
         assert_eq!(fast.rgba, fallback.rgba);
     }
 
+    #[test]
+    fn owned_row_bands_match_scalar_rgba_and_depth_bits() {
+        let width = 127;
+        let height = 93;
+        let pixels: Vec<u8> = (0..64)
+            .flat_map(|i| {
+                [
+                    (i * 3) as u8,
+                    255u8.wrapping_sub((i * 2) as u8),
+                    (i * 5) as u8,
+                    48u8.wrapping_add((i * 3) as u8),
+                ]
+            })
+            .collect();
+        let levels = [TextureLevel {
+            width: 8,
+            height: 8,
+            rgba: &pixels,
+        }];
+        let texture = TextureView {
+            levels: &levels,
+            format: TextureFormat::Rgba,
+            wrap_s: Wrap::MirroredRepeat,
+            wrap_t: Wrap::ClampToEdge,
+            min_filter: Filter::Linear,
+            mag_filter: Filter::Linear,
+        };
+        let state = RasterState {
+            viewport: [0, 0, width, height],
+            scissor_enabled: true,
+            scissor: [11, 9, 103, 76],
+            depth: DepthState {
+                enabled: true,
+                func: Compare::Lequal,
+                write: true,
+                range: [0.03, 0.91],
+            },
+            alpha: AlphaState {
+                enabled: true,
+                func: Compare::Greater,
+                reference: 0.18,
+            },
+            blend: BlendState {
+                enabled: true,
+                src: BlendFactor::SrcAlpha,
+                dst: BlendFactor::OneMinusSrcAlpha,
+            },
+            fog: FogState {
+                enabled: true,
+                mode: FogMode::Linear,
+                color: [0.1, 0.2, 0.3, 1.0],
+                density: 0.4,
+                start: 0.2,
+                end: 3.4,
+            },
+            tex_env: TexEnvMode::Modulate,
+            ..Default::default()
+        };
+        let vertices = [
+            v(-1.0, -1.0, -0.7, 1.0, -0.8, 0.1, [1.0, 0.2, 0.1, 0.9]),
+            v(1.0, -0.8, 0.4, 1.2, 2.1, 0.3, [0.2, 1.0, 0.3, 0.7]),
+            v(0.7, 0.8, 0.1, 0.9, 1.6, 2.4, [0.3, 0.4, 1.0, 0.8]),
+            v(-0.9, 0.8, -0.4, 1.1, -1.4, 1.8, [1.0, 0.7, 0.2, 0.6]),
+        ];
+        let triangles = vec![
+            [vertices[0], vertices[1], vertices[2]],
+            [vertices[0], vertices[2], vertices[3]],
+        ];
+        let mut scalar = Frame::new(width as u32, height as u32).unwrap();
+        let mut banded = scalar.clone();
+        let mut chunked = scalar.clone();
+        scalar.clear(Some([15, 19, 31, 127]), Some(0.83), None);
+        banded.clear(Some([15, 19, 31, 127]), Some(0.83), None);
+        chunked.clear(Some([15, 19, 31, 127]), Some(0.83), None);
+        let scalar_stats = scalar
+            .draw_indexed(&state, Some(texture), &vertices, &[0, 1, 2, 0, 2, 3])
+            .unwrap();
+        for triangle in &triangles {
+            for start in (0..height).step_by(RASTER_ROWS_PER_STEP as usize) {
+                chunked.draw_triangle_rows(
+                    &state,
+                    Some(texture),
+                    *triangle,
+                    start,
+                    (start + RASTER_ROWS_PER_STEP).min(height) - 1,
+                );
+            }
+        }
+        assert_eq!(
+            chunked.rgba, scalar.rgba,
+            "row chunks diverged before band ownership"
+        );
+        let banded_shaded = banded.draw_staged_banded_scalar(state, Some(texture), triangles);
+        assert_eq!(banded_shaded as u64, scalar_stats.shaded_pixels);
+        assert!(
+            banded
+                .rgba
+                .iter()
+                .zip(&scalar.rgba)
+                .position(|(left, right)| left != right)
+                .is_none(),
+            "first differing rgba byte: {:?}",
+            banded
+                .rgba
+                .iter()
+                .zip(&scalar.rgba)
+                .position(|(left, right)| left != right),
+        );
+        assert_eq!(
+            banded.depth.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+            scalar.depth.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+        );
+    }
+
     /// A repeatable host-side release fixture for the hot menu case: an opaque
     /// full-frame, linearly filtered UI texture.  It is ignored in normal
     /// tests; invoke with `cargo test -p xpapp raster_throughput_fixture --release
@@ -1865,6 +2320,72 @@ mod tests {
         assert_eq!(
             shaded,
             u64::from(WIDTH) * u64::from(HEIGHT) * u64::from(DRAWS)
+        );
+    }
+
+    /// Measures the scalar recurrence replay cost of the owned-band plan on a
+    /// host.  TRUEOS runs these same bands concurrently; this fixture isolates
+    /// the setup/copy cost before worker scheduling is involved.
+    #[test]
+    #[ignore = "release timing fixture"]
+    fn row_band_replay_overhead_fixture() {
+        use std::time::Instant;
+
+        const WIDTH: u32 = 1280;
+        const HEIGHT: u32 = 720;
+        const DRAWS: u32 = 6;
+        let pixels: Vec<u8> = (0..256 * 256)
+            .flat_map(|i| [i as u8, (i >> 3) as u8, (i >> 7) as u8, 255])
+            .collect();
+        let levels = [TextureLevel {
+            width: 256,
+            height: 256,
+            rgba: &pixels,
+        }];
+        let texture = TextureView {
+            levels: &levels,
+            format: TextureFormat::Rgba,
+            wrap_s: Wrap::Repeat,
+            wrap_t: Wrap::Repeat,
+            min_filter: Filter::Linear,
+            mag_filter: Filter::Linear,
+        };
+        let state = RasterState {
+            viewport: [0, 0, WIDTH as i32, HEIGHT as i32],
+            tex_env: TexEnvMode::Replace,
+            ..Default::default()
+        };
+        let quad = [
+            v(-1., -1., 0., 1., 0., 0., [1.; 4]),
+            v(1., -1., 0., 1., 1., 0., [1.; 4]),
+            v(1., 1., 0., 1., 1., 1., [1.; 4]),
+            v(-1., 1., 0., 1., 0., 1., [1.; 4]),
+        ];
+        let triangles = vec![[quad[0], quad[1], quad[2]], [quad[0], quad[2], quad[3]]];
+        let mut scalar = Frame::new(WIDTH, HEIGHT).unwrap();
+        let started = Instant::now();
+        for _ in 0..DRAWS {
+            scalar
+                .draw_indexed(&state, Some(texture), &quad, &[0, 1, 2, 0, 2, 3])
+                .unwrap();
+        }
+        let scalar_elapsed = started.elapsed();
+        let mut bands = Frame::new(WIDTH, HEIGHT).unwrap();
+        let started = Instant::now();
+        for _ in 0..DRAWS {
+            bands.draw_staged_banded_scalar(state, Some(texture), triangles.clone());
+        }
+        let band_elapsed = started.elapsed();
+        assert_eq!(bands.rgba, scalar.rgba);
+        assert_eq!(
+            bands.depth.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+            scalar.depth.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+        );
+        eprintln!(
+            "row-band replay fixture: scalar_ms={:.3} banded_scalar_ms={:.3} ratio={:.2}",
+            scalar_elapsed.as_secs_f64() * 1000.0,
+            band_elapsed.as_secs_f64() * 1000.0,
+            band_elapsed.as_secs_f64() / scalar_elapsed.as_secs_f64(),
         );
     }
 }

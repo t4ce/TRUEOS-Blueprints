@@ -36,12 +36,12 @@ use xpapp::{
     imports::WinCall,
     pe32,
     process::{
-        CHILD_COMMAND_LINE, CHILD_CRT_HEAP_BASE, CHILD_CRT_HEAP_LIMIT, CHILD_VIRTUAL_ALLOC_BASE,
+        CHILD_COMMAND_LINE, CHILD_CRT_ARGUMENTS, CHILD_CRT_HEAP_BASE, CHILD_CRT_HEAP_LIMIT, CHILD_VIRTUAL_ALLOC_BASE,
         CHILD_VIRTUAL_ALLOC_LIMIT, CHILD_WIN_HEAP_BASE, CHILD_WIN_HEAP_LIMIT, CRT_ACMDLN_VA,
-        CRT_ARG0_VA, CRT_ARG1_VA, CRT_ARG2_VA, CRT_ARG3_VA, CRT_ARG4_VA, CRT_ARGV_VA, CRT_COMMODE_VA,
+        CRT_ARGV_VA, CRT_COMMODE_VA,
         CRT_CONSOLE_APP, CRT_ENVP_VA, CRT_FMODE_VA, CRT_GUI_APP, CRT_UNKNOWN_APP,
         ENVIRONMENT_BLOCK_VA, GuestMemory, HEAP_GENERATE_EXCEPTIONS, HEAP_ZERO_MEMORY,
-        PROCESS_DATA_VA, PreparedProcess, ProviderDispatchError, STACK_BASE, STACK_BYTES,
+        GAME_VIEWPORT_SIZE, PROCESS_DATA_VA, PreparedProcess, ProviderDispatchError, STACK_BASE, STACK_BYTES,
         STACK_TOP, ThreadObject, XP_ANSI_CODE_PAGE, XpProcess, OSVERSIONINFOA_SIZE,
         OSVERSIONINFOEXA_SIZE, VER_NT_WORKSTATION, bmp_file_from_dib, dib_layout,
     },
@@ -214,8 +214,12 @@ async fn discover_maps() -> Result<Option<xpapp::session::MapCatalog>, String> {
 
 async fn run() -> Result<(), String> {
     logl::emit(level::IMPORTANT, format_args!(
-        "XPAPP RUNTIME renderer=cpu execution_timing={} presentation=rgba-strips",
+        "XPAPP RUNTIME requested_graphics=opengl renderer=cpu execution_timing={} presentation=rgba-strips",
         if cfg!(feature = "trace-execution") { "detailed" } else { "frame-only" },
+    ));
+    logl::emit(level::IMPORTANT, format_args!(
+        "XPAPP CHILD ARGS argc={} command_line={:?}",
+        CHILD_CRT_ARGUMENTS.len(), String::from_utf8_lossy(&CHILD_COMMAND_LINE[..CHILD_COMMAND_LINE.len() - 1]),
     ));
     if cfg!(feature = "bypass-critical-sections") {
         logl::emit(level::IMPORTANT, format_args!(
@@ -253,17 +257,20 @@ async fn run() -> Result<(), String> {
     let mut session = XpappSession::new(xp);
     session.maps = maps;
     logl::log!(level::IMPORTANT, format_args!("XPAPP DIAG BUILD CWEX_V2"));
-    let (desktop_width, desktop_height) = ui4_scene::output_dimensions()
+    let (physical_output_width, physical_output_height) = ui4_scene::output_dimensions()
         .map_err(|error| format!("query UI4 output dimensions: {error:?}"))?;
     session
         .launcher_mut()
         .xp
-        .set_desktop_size(desktop_width, desktop_height);
+        .set_desktop_size(GAME_VIEWPORT_SIZE.0, GAME_VIEWPORT_SIZE.1);
     logl::log!(
         level::IMPORTANT,
         format_args!(
-            "XPAPP desktop dimensions used by GetClientRect width={} height={}",
-            desktop_width, desktop_height
+            "XPAPP DISPLAY physical_output={}x{} mode_change=none game_viewport={}x{} guest_contract=desktop+display-settings+gdi+gl-drawable",
+            physical_output_width,
+            physical_output_height,
+            GAME_VIEWPORT_SIZE.0,
+            GAME_VIEWPORT_SIZE.1,
         ),
     );
     let address_space = AddressSpace::create().map_err(|error| error.to_string())?;

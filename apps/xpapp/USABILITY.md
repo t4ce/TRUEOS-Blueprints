@@ -2,10 +2,98 @@
 
 ## Required outcome
 
-Current user direction: restore the visually correct CPU-rendered WC3 scene,
-then fix execution speed and the remaining text/menu problems. GPU scene work
-returns to Picasso after that baseline is healthy. No separate guest program.
+Current user direction: keep `-opengl` and the accurate CPU renderer, expose a
+1280x720 logical guest desktop, and use two shared P-core raster workers with
+a 66% work budget. DirectX bring-up is deferred. The game binary and Gamma's
+physical display mode setter remain unchanged. No separate guest program.
 60 FPS (16.67 ms/frame) remains unmet.
+
+## 720p guest display, 2026-09-28
+
+`GAME_VIEWPORT_SIZE` is the single default/runtime source for the logical
+1280x720 desktop. The physical UI4 output dimensions are queried only for the
+startup diagnostic. `EnumDisplaySettingsA`, fullscreen mode validation through
+`ChangeDisplaySettingsExA`, GDI resolution caps, and desktop client/window
+rectangles use the logical size. Children inherit it. Window presentation and
+GL drawable binding use the session's window size; guest `glViewport` calls
+retain their existing semantics.
+
+This reduces a 2560x1440 framebuffer from 3,686,400 pixels to 921,600 pixels.
+It does not establish a fourfold end-to-end speedup: guest execution and other
+costs also remain. The focused display change passed 395 library tests (one
+ignored) and a non-test binary check before worker integration.
+
+## Shared P-core raster pool, 2026-09-28
+
+CPU draws can now use two persistent P-core workers on the ordinary executors.
+Each worker measures its work against a 66% duty budget, yields after roughly
+4 ms of bounded work, and accounts for actual timer wake time. Workers retain
+their core and execution realm while active, with 250 ms of idle grace before
+release. These are shared executor workers; guest thread execution remains
+serialized. Startup records the actual worker slots and scalar fallback.
+
+Each draw is split into two owned framebuffer row bands. Draw order, blend,
+depth and scalar interpolation semantics are preserved within each band.
+Workers process bounded row steps; the caller joins both before copying results
+back. Texture and framebuffer copying still have a cost. This change targets
+CPU raster time; it does not remove guest/provider round trips.
+
+Validation: 396 XPApp library tests passed, two ignored; seven worker-budget
+tests, seven lifetime tests and the native worker ABI contract check passed.
+An independent 96-scene comparison covered 7,166,722 shaded pixels: the previous
+scalar renderer, current scalar renderer and two concurrent host band workers
+produced identical RGBA8 and exact depth bits. Evidence is in TRUEOS
+`bld/xpapp-usability/pool-parity/parity.json`. Host parity does not validate the
+live TRUEOS scheduler or establish WC3 frame rate.
+
+The release XPApp build is published as
+`fc6115a513ee41b7a08f0fbae5ee839a9111b9e7fcb95f9b9f6b3b980aab8765`.
+The matching kernel image is built at TRUEOS `bld/trueos.iso`, with ELF artifacts
+under `bld/artifacts/debug-xpapp-720p-pool/`. The new kernel must be booted before
+launching this XPApp because it adds the resumable compute worker ABI. No reboot
+or live validation was performed. Build and test logs are in
+`/tmp/xpapp-720p-pool-*.log` on the development host.
+
+## DirectX startup attempt, 2026-09-28
+
+Outcome: the user supplied a run log confirming an actual D3D8 call, stopping
+at `IDirect3D8::EnumAdapterModes` (provider 949, caller `0x6f0cc47d`). At the
+user's subsequent request, `-opengl` is restored in the command line and CRT
+argv (argc 5); CPU rendering is again selected. No D3D8 methods were added.
+The restored OpenGL build passes 393 library tests (one ignored) and is published
+as `1654354a79eb9fb75082882cdda9f4827f53ea0d662e403f938fbf0fed00b4ac`.
+It has not been launched by this change; the currently running instance is unaffected.
+The build/access notes below describe the initial attempt before that run.
+
+The child command line and CRT argv now both contain
+`"war3.exe" -nosound -swtnl -window` (argc 4). Startup records the requested
+Direct3D8 path explicitly. The CPU OpenGL renderer remains available in source.
+Blueprint commit `e9170548` is the preceding CPU launch/reference checkpoint.
+
+393 library tests passed, one ignored. Release build and publication succeeded:
+`184dbb96c142c3fdd274d78b5bb564aac76822c49766704cccbab6582eba37f8`.
+This artifact has not been launched or observed: the rig refuses Shell2 TCP
+4245 and logging TCP 1 while TRUEOSFS HTTP on port 80 still responds. No reboot
+was issued. Build/test logs are `/tmp/xpapp-d3d-build.log` and
+`/tmp/xpapp-d3d-tests.log` on the development host.
+
+The current D3D8 provider can create the IDirect3D8 object, return its adapter
+identifier, and release it. The remaining COM methods are observation thunks;
+there is no IDirect3DDevice8 renderer. The next run must establish the actual
+WC3 call sequence before extending these contracts. Removing the flag alone
+does not provide a DirectX render loop.
+
+The measured CPU frame below spends 6.222 s drawing and 3.097 s elsewhere.
+Even perfect eight-core scaling of drawing alone gives about 3.875 s/frame;
+the zero-cost raster limit is still 3.097 s/frame. CPU parallel rendering would
+need disjoint framebuffer tiles with draw order preserved within each tile.
+It cannot by itself solve the execution remainder.
+
+One unmeasured execution lead remains in `asupersync.rs::run_loop`: every guest
+exit checks the host clock for an 8 ms input deadline. Each due input pump calls
+the pointer/keyboard queues and snapshots cursor routes through host APIs.
+This needs bounded aggregate timing before attributing the remaining time or
+changing input behavior. It is not evidence of a three-second input cost.
 
 ## CPU restoration, 2026-09-28
 
