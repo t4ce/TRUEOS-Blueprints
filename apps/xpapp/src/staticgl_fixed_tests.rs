@@ -1,4 +1,45 @@
 #[test]
+fn fixed_vector_arguments_use_exact_little_endian_prefix() {
+    use std::cell::Cell;
+
+    struct Memory {
+        bytes: [u8; 16],
+        read_len: Cell<usize>,
+    }
+    impl GuestMemory for Memory {
+        fn read(&self, address: u32, output: &mut [u8]) -> Result<(), &'static str> {
+            let start = address as usize;
+            let end = start.checked_add(output.len()).ok_or("address overflow")?;
+            output.copy_from_slice(self.bytes.get(start..end).ok_or("out of range")?);
+            self.read_len.set(output.len());
+            Ok(())
+        }
+        fn write(&mut self, _: u32, _: &[u8]) -> Result<(), &'static str> {
+            Err("unexpected write")
+        }
+    }
+
+    let mut bytes = [0xa5; 16];
+    for (slot, value) in bytes.chunks_exact_mut(4).zip([1.25f32, -2.5, 0.0, 99.0]) {
+        slot.copy_from_slice(&value.to_le_bytes());
+    }
+    let memory = Memory {
+        bytes,
+        read_len: Cell::new(0),
+    };
+    assert_eq!(
+        gl_read_fixed_floats(&memory, 0, 3).unwrap(),
+        [1.25, -2.5, 0.0, 0.0]
+    );
+    assert_eq!(memory.read_len.get(), 12);
+    assert_eq!(
+        gl_read_fixed_floats(&memory, 4, 1).unwrap(),
+        [-2.5, 0.0, 0.0, 0.0]
+    );
+    assert_eq!(memory.read_len.get(), 4);
+}
+
+#[test]
 fn fixed_defaults_match_legacy_gl_and_start_disabled() {
     let state = GlFixedState::default();
     assert_eq!(state.draw_buffer, FIXED_GL_BACK);

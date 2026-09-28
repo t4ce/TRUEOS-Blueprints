@@ -622,6 +622,20 @@ fn gl_inverse_transpose_direction(
     }))
 }
 
+fn gl_read_fixed_floats(
+    memory: &impl GuestMemory,
+    address: u32,
+    count: usize,
+) -> Result<[f32; 4], ProviderDispatchError> {
+    let mut raw = [0u8; 16];
+    memory.read(address, &mut raw[..count * 4])?;
+    let mut values = [0.0; 4];
+    for (value, bytes) in values.iter_mut().zip(raw[..count * 4].chunks_exact(4)) {
+        *value = f32::from_le_bytes(bytes.try_into().unwrap());
+    }
+    Ok(values)
+}
+
 impl XpProcess {
     fn fixed_state_mut(
         &mut self,
@@ -769,13 +783,8 @@ impl XpProcess {
                 return Ok(0);
             }
         };
-        let mut raw = vec![0u8; count * 4];
-        memory.read(params, &mut raw)?;
-        let values: Vec<f32> = raw
-            .chunks_exact(4)
-            .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
-            .collect();
-        if values.iter().any(|v| !v.is_finite()) {
+        let values = gl_read_fixed_floats(memory, params, count)?;
+        if values[..count].iter().any(|v| !v.is_finite()) {
             self.fixed_latch_error(tid, "invalid value: nonfinite light value");
             return Ok(0);
         }
@@ -906,22 +915,16 @@ impl XpProcess {
             self.fixed_latch_error(tid, "invalid value: null params");
             return Ok(0);
         }
-        let mut bytes = vec![0; count * 4];
-        memory.read(params, &mut bytes)?;
-        let values: Vec<f32> = bytes
-            .chunks_exact(4)
-            .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
-            .collect();
-        if values.iter().any(|v| !v.is_finite()) {
+        let values = gl_read_fixed_floats(memory, params, count)?;
+        if values[..count].iter().any(|v| !v.is_finite()) {
             self.fixed_latch_error(tid, "invalid value: nonfinite light model value");
             return Ok(0);
         }
         let context = self.fixed_state_mut(tid, "glLightModelfv")?;
         match pname {
             GL_LIGHT_MODEL_AMBIENT => {
-                let v: [f32; 4] = values.try_into().unwrap();
-                context.fixed.light_model_ambient = v;
-                context.light_model_ambient = v;
+                context.fixed.light_model_ambient = values;
+                context.light_model_ambient = values;
             }
             FIXED_GL_LIGHT_MODEL_LOCAL_VIEWER => {
                 context.fixed.light_model_local_viewer = values[0] != 0.0
@@ -951,16 +954,11 @@ impl XpProcess {
             ));
         }
         let count = if pname == FIXED_GL_SHININESS { 1 } else { 4 };
-        let mut raw = vec![0; count * 4];
-        memory.read(params, &mut raw)?;
-        let values: Vec<f32> = raw
-            .chunks_exact(4)
-            .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
-            .collect();
+        let values = gl_read_fixed_floats(memory, params, count)?;
         let result = self
             .fixed_state_mut(tid, "glMaterialfv")?
             .fixed
-            .set_material(face, pname, &values);
+            .set_material(face, pname, &values[..count]);
         if let Err(e) = result {
             self.fixed_latch_error(tid, &e);
         }
@@ -996,16 +994,11 @@ impl XpProcess {
             return Ok(0);
         }
         let count = if pname == FIXED_GL_FOG_COLOR { 4 } else { 1 };
-        let mut raw = vec![0; count * 4];
-        memory.read(params, &mut raw)?;
-        let vals: Vec<f32> = raw
-            .chunks_exact(4)
-            .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
-            .collect();
+        let vals = gl_read_fixed_floats(memory, params, count)?;
         let result = self
             .fixed_state_mut(tid, "glFogfv")?
             .fixed
-            .set_fog_fv(pname, &vals);
+            .set_fog_fv(pname, &vals[..count]);
         if let Err(e) = result {
             self.fixed_latch_error(tid, &e);
         }
