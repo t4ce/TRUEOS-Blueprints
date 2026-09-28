@@ -19,10 +19,27 @@ fn main() {{
         thunk32::CHILD_LOAD_MATRIX_BATCH_ADDRESS] {{
         assert_eq!(code[(address - thunk32::CHILD_LIGHT_BATCH_ADDRESS) as usize], 0x9c);
     }}
+    for (address, tag) in [
+        (thunk32::CHILD_GL_ENABLE_BATCH_ADDRESS, 4u8),
+        (thunk32::CHILD_GL_DISABLE_BATCH_ADDRESS, 5),
+        (thunk32::CHILD_GL_ENABLE_CLIENT_BATCH_ADDRESS, 6),
+        (thunk32::CHILD_GL_DISABLE_CLIENT_BATCH_ADDRESS, 7),
+        (thunk32::CHILD_GL_VERTEX_POINTER_BATCH_ADDRESS, 8),
+        (thunk32::CHILD_GL_COLOR_POINTER_BATCH_ADDRESS, 9),
+        (thunk32::CHILD_GL_NORMAL_POINTER_BATCH_ADDRESS, 10),
+        (thunk32::CHILD_GL_TEXCOORD_POINTER_BATCH_ADDRESS, 11),
+    ] {{
+        let offset = (address - thunk32::CHILD_LIGHT_BATCH_ADDRESS) as usize;
+        assert_eq!(&code[offset..offset + 5], &[0xba, tag, 0, 0, 0]);
+    }}
     std::fs::write("glcode.bin", code).unwrap();
-    let mut thunks = [0x90; thunk32::THUNK_BYTES * 3];
+    let mut thunks = [0x90; thunk32::THUNK_BYTES * 11];
     for (n, kind) in [thunk32::Kind::GlLightBatch,
-        thunk32::Kind::GlMatrixModeBatch, thunk32::Kind::GlLoadMatrixBatch]
+        thunk32::Kind::GlMatrixModeBatch, thunk32::Kind::GlLoadMatrixBatch,
+        thunk32::Kind::GlEnableBatch, thunk32::Kind::GlDisableBatch,
+        thunk32::Kind::GlEnableClientBatch, thunk32::Kind::GlDisableClientBatch,
+        thunk32::Kind::GlVertexPointerBatch, thunk32::Kind::GlColorPointerBatch,
+        thunk32::Kind::GlNormalPointerBatch, thunk32::Kind::GlTexCoordPointerBatch]
         .into_iter().enumerate() {{
         thunk32::write(7 + n as u32, kind,
             &mut thunks[n * thunk32::THUNK_BYTES..(n + 1) * thunk32::THUNK_BYTES]).unwrap();
@@ -34,13 +51,13 @@ fn main() {{
     subprocess.run([str(work / "emit")], cwd=work, check=True)
     code = bytearray((work / "glcode.bin").read_bytes())
     assert code[0xe8:0xeb] == bytes.fromhex("0f01c1")
-    assert code[0x177:0x17a] == bytes.fromhex("0f01c1")
-    assert code[0x182:0x185] == bytes.fromhex("0f01c1")
+    assert code[0x189:0x18c] == bytes.fromhex("0f01c1")
+    assert code[0x194:0x197] == bytes.fromhex("0f01c1")
     # Linux cannot execute VMCALL. Leave the full trap fatal; make typed
     # fallback a no-op so its preserved EAX and stdcall cleanup can be tested.
     code[0xe8:0xeb] = bytes.fromhex("0f0b90")
-    code[0x177:0x17a] = bytes.fromhex("909090")
-    code[0x182:0x185] = bytes.fromhex("909090")
+    code[0x189:0x18c] = bytes.fromhex("909090")
+    code[0x194:0x197] = bytes.fromhex("909090")
     (work / "glcode.bin").write_bytes(code)
     (work / "layout.ld").write_text('''ENTRY(_start)
 SECTIONS {
@@ -60,6 +77,14 @@ records: .fill 4092,1,0xcc
 light_entry: .incbin "thunks.bin", 0, 12
 mode_entry: .incbin "thunks.bin", 12, 12
 load_entry: .incbin "thunks.bin", 24, 12
+enable_entry: .incbin "thunks.bin", 36, 12
+disable_entry: .incbin "thunks.bin", 48, 12
+enable_client_entry: .incbin "thunks.bin", 60, 12
+disable_client_entry: .incbin "thunks.bin", 72, 12
+vertex_entry: .incbin "thunks.bin", 84, 12
+color_entry: .incbin "thunks.bin", 96, 12
+normal_entry: .incbin "thunks.bin", 108, 12
+texcoord_entry: .incbin "thunks.bin", 120, 12
 .section .data
 saved_sp: .long 0
 values: .long 0x3f800000,0x40000000,0x40400000,0x40800000
@@ -175,8 +200,102 @@ _start:
  jne fail
  cmp dword ptr [batch_count], 5
  jne fail
+ # New state calls occupy ordered slots 5 through 12.
+ std
+ push 0x0b71
+ mov eax, 10
+ call enable_entry
+ pushfd
+ pop edx
+ cld
+ test edx, 0x400
+ jz fail
+ cmp esp, [saved_sp]
+ jne fail
+ cmp ebx, 0x12345678
+ jne fail
+ cmp esi, 0x23456789
+ jne fail
+ cmp edi, 0x3456789a
+ jne fail
+ cmp dword ptr [records+360], 4
+ jne fail
+ cmp dword ptr [records+364], 0x0b71
+ jne fail
+ push 0x0b71
+ mov eax, 11
+ call disable_entry
+ cmp dword ptr [records+432], 5
+ jne fail
+ push 0x8074
+ mov eax, 12
+ call enable_client_entry
+ cmp dword ptr [records+504], 6
+ jne fail
+ push 0x8074
+ mov eax, 13
+ call disable_client_entry
+ cmp dword ptr [records+576], 7
+ jne fail
+ # 0xdeadbeef is deliberately unmapped: declarations must only copy its
+ # address, leaving array reads to the draw that consumes it.
+ push 0xdeadbeef
+ push 16
+ push 0x1406
+ push 3
+ mov eax, 14
+ call vertex_entry
+ cmp dword ptr [records+648], 8
+ jne fail
+ cmp dword ptr [records+652], 3
+ jne fail
+ cmp dword ptr [records+656], 0x1406
+ jne fail
+ cmp dword ptr [records+660], 16
+ jne fail
+ cmp dword ptr [records+664], 0xdeadbeef
+ jne fail
+ push 0xdeadbeef
+ push 20
+ push 0x1406
+ push 4
+ mov eax, 15
+ call color_entry
+ cmp dword ptr [records+720], 9
+ jne fail
+ cmp dword ptr [records+736], 0xdeadbeef
+ jne fail
+ push 0xdeadbeef
+ push 12
+ push 0x1406
+ mov eax, 16
+ call normal_entry
+ cmp dword ptr [records+792], 10
+ jne fail
+ cmp dword ptr [records+796], 0x1406
+ jne fail
+ cmp dword ptr [records+800], 12
+ jne fail
+ cmp dword ptr [records+804], 0xdeadbeef
+ jne fail
+ push 0xdeadbeef
+ push 8
+ push 0x1406
+ push 2
+ mov eax, 17
+ call texcoord_entry
+ cmp dword ptr [records+864], 11
+ jne fail
+ cmp dword ptr [records+868], 2
+ jne fail
+ cmp dword ptr [records+880], 0xdeadbeef
+ jne fail
+ cmp esp, [saved_sp]
+ jne fail
+ cmp dword ptr [batch_count], 13
+ jne fail
  # Complete the bounded queue, then require the full-capacity trap.
- mov ecx, 27
+ mov ecx, 19
 fill:
  push ecx
  push 0x1701
@@ -200,4 +319,4 @@ fail:
     subprocess.run(["ld", "-m", "elf_i386", "-T", "layout.ld", "test.o", "-o", "test"], cwd=work, check=True)
     result = subprocess.run([str(work / "test")], cwd=work, check=False, timeout=10)
     assert result.returncode == -4, f"IA32 ordered queue exit {result.returncode}, expected capacity UD2"
-    print("PASS: ordered GL state capture, 64-byte matrix, ABI, typed fallback and capacity")
+    print("PASS: ordered GL state capture, scalar and pointer declarations, ABI, fallback and capacity")

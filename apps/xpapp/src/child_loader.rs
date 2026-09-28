@@ -1038,6 +1038,14 @@ pub fn provider_thunk_kind(import: &ProviderImport) -> thunk32::Kind {
         match provider_op(import) {
             ProviderOp::GlMatrixMode => return thunk32::Kind::GlMatrixModeBatch,
             ProviderOp::GlLoadMatrixf => return thunk32::Kind::GlLoadMatrixBatch,
+            ProviderOp::GlEnable => return thunk32::Kind::GlEnableBatch,
+            ProviderOp::GlDisable => return thunk32::Kind::GlDisableBatch,
+            ProviderOp::GlEnableClientState => return thunk32::Kind::GlEnableClientBatch,
+            ProviderOp::GlDisableClientState => return thunk32::Kind::GlDisableClientBatch,
+            ProviderOp::GlVertexPointer => return thunk32::Kind::GlVertexPointerBatch,
+            ProviderOp::GlColorPointer => return thunk32::Kind::GlColorPointerBatch,
+            ProviderOp::GlNormalPointer => return thunk32::Kind::GlNormalPointerBatch,
+            ProviderOp::GlTexCoordPointer => return thunk32::Kind::GlTexCoordPointerBatch,
             _ => {}
         }
     }
@@ -1258,6 +1266,14 @@ mod beginthreadex_tests {
                 else if symbol == "glLightfv" && !cfg!(feature = "trace-api") { thunk32::Kind::GlLightBatch }
                 else if symbol == "glMatrixMode" && !cfg!(feature = "trace-api") { thunk32::Kind::GlMatrixModeBatch }
                 else if symbol == "glLoadMatrixf" && !cfg!(feature = "trace-api") { thunk32::Kind::GlLoadMatrixBatch }
+                else if symbol == "glEnable" && !cfg!(feature = "trace-api") { thunk32::Kind::GlEnableBatch }
+                else if symbol == "glDisable" && !cfg!(feature = "trace-api") { thunk32::Kind::GlDisableBatch }
+                else if symbol == "glEnableClientState" && !cfg!(feature = "trace-api") { thunk32::Kind::GlEnableClientBatch }
+                else if symbol == "glDisableClientState" && !cfg!(feature = "trace-api") { thunk32::Kind::GlDisableClientBatch }
+                else if symbol == "glVertexPointer" && !cfg!(feature = "trace-api") { thunk32::Kind::GlVertexPointerBatch }
+                else if symbol == "glColorPointer" && !cfg!(feature = "trace-api") { thunk32::Kind::GlColorPointerBatch }
+                else if symbol == "glNormalPointer" && !cfg!(feature = "trace-api") { thunk32::Kind::GlNormalPointerBatch }
+                else if symbol == "glTexCoordPointer" && !cfg!(feature = "trace-api") { thunk32::Kind::GlTexCoordPointerBatch }
                 else { thunk32::Kind::Stdcall(cleanup) },
                 "{symbol}",
             );

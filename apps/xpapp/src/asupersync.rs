@@ -2137,6 +2137,7 @@ pub(super) async fn run_loop(
     let mut gl_batch_light_replayed = 0u64;
     let mut gl_batch_mode_replayed = 0u64;
     let mut gl_batch_load_replayed = 0u64;
+    let mut gl_batch_scalar_replayed = [0u64; 8];
     let mut gl_light_batch_flushes = 0u64;
     let mut gl_light_batch_full_exits = 0u64;
     let mut gl_light_batch_cursor = xpapp::gl_light_batch::Cursor::default();
@@ -2237,6 +2238,54 @@ pub(super) async fn run_loop(
                                 .map_err(|error| format!("replay child glLoadMatrixf: {error}"))?;
                             gl_batch_load_replayed += 1;
                         }
+                        thunk32::CHILD_GL_BATCH_TAG_ENABLE => {
+                            process.xp.replay_gl_scalar_state(active_key.tid, child_loader::ProviderOp::GlEnable,
+                                [word(4), word(8), word(12), word(16)])
+                                .map_err(|error| format!("replay child GlEnable: {error}"))?;
+                            gl_batch_scalar_replayed[0] += 1;
+                        }
+                        thunk32::CHILD_GL_BATCH_TAG_DISABLE => {
+                            process.xp.replay_gl_scalar_state(active_key.tid, child_loader::ProviderOp::GlDisable,
+                                [word(4), word(8), word(12), word(16)])
+                                .map_err(|error| format!("replay child GlDisable: {error}"))?;
+                            gl_batch_scalar_replayed[1] += 1;
+                        }
+                        thunk32::CHILD_GL_BATCH_TAG_ENABLE_CLIENT => {
+                            process.xp.replay_gl_scalar_state(active_key.tid, child_loader::ProviderOp::GlEnableClientState,
+                                [word(4), word(8), word(12), word(16)])
+                                .map_err(|error| format!("replay child GlEnableClientState: {error}"))?;
+                            gl_batch_scalar_replayed[2] += 1;
+                        }
+                        thunk32::CHILD_GL_BATCH_TAG_DISABLE_CLIENT => {
+                            process.xp.replay_gl_scalar_state(active_key.tid, child_loader::ProviderOp::GlDisableClientState,
+                                [word(4), word(8), word(12), word(16)])
+                                .map_err(|error| format!("replay child GlDisableClientState: {error}"))?;
+                            gl_batch_scalar_replayed[3] += 1;
+                        }
+                        thunk32::CHILD_GL_BATCH_TAG_VERTEX_POINTER => {
+                            process.xp.replay_gl_scalar_state(active_key.tid, child_loader::ProviderOp::GlVertexPointer,
+                                [word(4), word(8), word(12), word(16)])
+                                .map_err(|error| format!("replay child GlVertexPointer: {error}"))?;
+                            gl_batch_scalar_replayed[4] += 1;
+                        }
+                        thunk32::CHILD_GL_BATCH_TAG_COLOR_POINTER => {
+                            process.xp.replay_gl_scalar_state(active_key.tid, child_loader::ProviderOp::GlColorPointer,
+                                [word(4), word(8), word(12), word(16)])
+                                .map_err(|error| format!("replay child GlColorPointer: {error}"))?;
+                            gl_batch_scalar_replayed[5] += 1;
+                        }
+                        thunk32::CHILD_GL_BATCH_TAG_NORMAL_POINTER => {
+                            process.xp.replay_gl_scalar_state(active_key.tid, child_loader::ProviderOp::GlNormalPointer,
+                                [word(4), word(8), word(12), word(16)])
+                                .map_err(|error| format!("replay child GlNormalPointer: {error}"))?;
+                            gl_batch_scalar_replayed[6] += 1;
+                        }
+                        thunk32::CHILD_GL_BATCH_TAG_TEXCOORD_POINTER => {
+                            process.xp.replay_gl_scalar_state(active_key.tid, child_loader::ProviderOp::GlTexCoordPointer,
+                                [word(4), word(8), word(12), word(16)])
+                                .map_err(|error| format!("replay child GlTexCoordPointer: {error}"))?;
+                            gl_batch_scalar_replayed[7] += 1;
+                        }
                         tag => return Err(format!("unknown child GL batch tag {tag}").into()),
                     }
                 }
@@ -2246,9 +2295,13 @@ pub(super) async fn run_loop(
                 gl_light_batch_flushes += 1;
                 if gl_light_batch_replayed / 1024 != (gl_light_batch_replayed - new_count as u64) / 1024 {
                     logl::log!(level::IMPORTANT, format_args!(
-                        "XPAPP CHILD GL STATE BATCH pid={} replayed={} light={} mode={} load={} flushes={} full_exits={} estimated_exits_saved={}",
+                        "XPAPP CHILD GL STATE BATCH pid={} replayed={} light={} mode={} load={} enable={} disable={} enable_client={} disable_client={} vertex_pointer={} color_pointer={} normal_pointer={} texcoord_pointer={} flushes={} full_exits={} estimated_exits_saved={}",
                         active_key.pid, gl_light_batch_replayed,
                         gl_batch_light_replayed, gl_batch_mode_replayed, gl_batch_load_replayed,
+                        gl_batch_scalar_replayed[0], gl_batch_scalar_replayed[1],
+                        gl_batch_scalar_replayed[2], gl_batch_scalar_replayed[3],
+                        gl_batch_scalar_replayed[4], gl_batch_scalar_replayed[5],
+                        gl_batch_scalar_replayed[6], gl_batch_scalar_replayed[7],
                         gl_light_batch_flushes, gl_light_batch_full_exits,
                         gl_light_batch_replayed - gl_light_batch_full_exits,
                     ));

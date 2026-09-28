@@ -580,3 +580,78 @@ fn reusable_triangle_assembly_matches_existing_topology() {
         }
     }
 }
+
+#[test]
+fn scalar_state_replay_keeps_pointer_lifetimes_order_and_errors() {
+    use ProviderOp::*;
+    let (mut context, mut memory) = scene();
+    context.current_tid = Some(3);
+    let mut process = XpProcess::new_child();
+    process.gl_runtime = Some(GlRuntime {
+        device: unsafe { core::mem::zeroed() }, queue: unsafe { core::mem::zeroed() },
+        contexts: HashMap::from([(1, context)]), next_context: 2,
+        triangle_renderer: None, textured_renderer: None, fixed_renderer: None,
+        #[cfg(feature = "gpu-raster")]
+        prepared_renderer: None,
+    });
+    for cap in [FIXED_GL_TEXTURE_2D, FIXED_GL_LIGHT0] {
+        process.replay_gl_scalar_state(3, GlDisable, [cap, 0, 0, 0]).unwrap();
+        let c = process.gl_context_mut(3, "test").unwrap();
+        assert!(!c.fixed.is_enabled(cap));
+        if cap == FIXED_GL_TEXTURE_2D { assert!(!c.textures.enabled); }
+        if cap == FIXED_GL_LIGHT0 { assert!(!c.light0_enabled); }
+        process.replay_gl_scalar_state(3, GlEnable, [cap, 0, 0, 0]).unwrap();
+        let c = process.gl_context_mut(3, "test").unwrap();
+        assert!(c.fixed.is_enabled(cap));
+        if cap == FIXED_GL_TEXTURE_2D { assert!(c.textures.enabled); }
+        if cap == FIXED_GL_LIGHT0 { assert!(c.light0_enabled); }
+    }
+    for cap in [GL_VERTEX_ARRAY, GL_COLOR_ARRAY, FIXED_GL_NORMAL_ARRAY, GL_TEXTURE_COORD_ARRAY] {
+        for enabled in [false, true] {
+            process.replay_gl_scalar_state(3, if enabled { GlEnableClientState } else { GlDisableClientState }, [cap, 0, 0, 0]).unwrap();
+            let c = process.gl_context_mut(3, "test").unwrap();
+            let actual = match cap {
+                GL_VERTEX_ARRAY => c.vertex_array_enabled,
+                GL_COLOR_ARRAY => c.color_array_enabled,
+                FIXED_GL_NORMAL_ARRAY => c.fixed.normal_array_enabled,
+                _ => c.textures.coord_array_enabled,
+            };
+            assert_eq!(actual, enabled);
+        }
+    }
+    // Unmapped addresses are legal to set: the provider must not read them yet.
+    for (op, args) in [
+        (GlVertexPointer, [3, GL_FLOAT, 36, 0xfffffff0]),
+        (GlColorPointer, [4, GL_UNSIGNED_BYTE, 36, 0xfffffff0]),
+        (GlNormalPointer, [GL_FLOAT, 36, 0xfffffff0, 0]),
+        (GlTexCoordPointer, [2, GL_FLOAT, 36, 0xfffffff0]),
+    ] { process.replay_gl_scalar_state(3, op, args).unwrap(); }
+    for (op, args) in [
+        (GlVertexPointer, [3, GL_FLOAT, 36, 4]),
+        (GlColorPointer, [4, GL_UNSIGNED_BYTE, 36, 28]),
+        (GlNormalPointer, [GL_FLOAT, 36, 16, 0]),
+        (GlTexCoordPointer, [2, GL_FLOAT, 36, 32]),
+    ] { process.replay_gl_scalar_state(3, op, args).unwrap(); }
+    let c = process.gl_context_mut(3, "test").unwrap();
+    assert_eq!(c.vertex_pointer.unwrap().address, 4);
+    assert_eq!(c.color_pointer.unwrap().address, 28);
+    assert_eq!(c.fixed.normal_pointer.unwrap().address, 16);
+    assert_eq!(c.textures.coord_pointer.unwrap().address, 32);
+    let (before, _) = gl_compat_vertices(c, &memory, &[0, 1, 2]).unwrap();
+    memory.0[4..8].copy_from_slice(&0.25f32.to_le_bytes());
+    let (after, _) = gl_compat_vertices(c, &memory, &[0, 1, 2]).unwrap();
+    assert_ne!(before[0].clip, after[0].clip);
+    process.replay_gl_scalar_state(3, GlEnable, [0xffffffff, 0, 0, 0]).unwrap();
+    assert_eq!(process.gl_context_mut(3, "test").unwrap().fixed.error, 0x0500);
+    for (op, args) in [
+        (GlEnableClientState, [0xffffffff, 0, 0, 0]),
+        (GlDisableClientState, [0xffffffff, 0, 0, 0]),
+        (GlVertexPointer, [1, GL_FLOAT, 36, 4]),
+        (GlColorPointer, [2, GL_UNSIGNED_BYTE, 36, 28]),
+        (GlNormalPointer, [GL_FLOAT, u32::MAX, 16, 0]),
+        (GlTexCoordPointer, [2, GL_FLOAT, 4097, 32]),
+    ] { assert!(process.replay_gl_scalar_state(3, op, args).is_err()); }
+    assert_eq!(process.gl_context_mut(3, "test").unwrap().vertex_pointer.unwrap().address, 4);
+    assert!(process.replay_gl_scalar_state(99, GlEnable, [FIXED_GL_LIGHT0, 0, 0, 0]).is_err());
+    assert!(process.replay_gl_scalar_state(3, GlDrawElements, [0; 4]).is_err());
+}

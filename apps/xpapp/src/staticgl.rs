@@ -628,6 +628,42 @@ impl XpProcess {
         Ok(0)
     }
 
+    /// Replay scalar GL state arguments through the original provider bodies.
+    /// Array pointers remain addresses: their contents are read at draw time.
+    pub fn replay_gl_scalar_state(
+        &mut self, tid: u32, operation: ProviderOp, arguments: [u32; 4],
+    ) -> Result<(), ProviderDispatchError> {
+        struct Captured([u8; 20]);
+        impl GuestMemory for Captured {
+            fn read(&self, address: u32, output: &mut [u8]) -> Result<(), &'static str> {
+                let start = address as usize;
+                let end = start.checked_add(output.len()).ok_or("captured GL address overflow")?;
+                output.copy_from_slice(self.0.get(start..end).ok_or("captured GL read range")?);
+                Ok(())
+            }
+            fn write(&mut self, _: u32, _: &[u8]) -> Result<(), &'static str> {
+                Err("captured GL is read only")
+            }
+        }
+        let mut bytes = [0; 20];
+        for (chunk, word) in bytes[4..].chunks_exact_mut(4).zip(arguments) {
+            chunk.copy_from_slice(&word.to_le_bytes());
+        }
+        let memory = Captured(bytes);
+        match operation {
+            ProviderOp::GlEnable => self.gl_enable_static(tid, 0, &memory)?,
+            ProviderOp::GlDisable => self.gl_disable_static(tid, 0, &memory)?,
+            ProviderOp::GlEnableClientState => self.gl_enable_client_state_static(tid, 0, &memory)?,
+            ProviderOp::GlDisableClientState => self.gl_disable_client_state_static(tid, 0, &memory)?,
+            ProviderOp::GlVertexPointer => self.gl_vertex_pointer_static(tid, 0, &memory)?,
+            ProviderOp::GlColorPointer => self.gl_color_pointer_static(tid, 0, &memory)?,
+            ProviderOp::GlNormalPointer => self.gl_normal_pointer_static(tid, 0, &memory)?,
+            ProviderOp::GlTexCoordPointer => self.gl_tex_coord_pointer_static(tid, 0, &memory)?,
+            _ => return Err(gl_texture_error("GL state replay", "unsupported scalar operation")),
+        };
+        Ok(())
+    }
+
     /// Replay a captured matrix-mode call in guest order using the normal
     /// provider validation and current-context lookup.
     pub fn replay_gl_matrix_mode(

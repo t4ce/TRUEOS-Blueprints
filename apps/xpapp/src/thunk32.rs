@@ -10,6 +10,14 @@ pub const CHILD_CONTROL_BASE: u32 = 0x002f_0000;
 pub const CHILD_LIGHT_BATCH_ADDRESS: u32 = CHILD_CONTROL_BASE + 0x2000;
 pub const CHILD_MATRIX_MODE_BATCH_ADDRESS: u32 = CHILD_LIGHT_BATCH_ADDRESS + 0x8f;
 pub const CHILD_LOAD_MATRIX_BATCH_ADDRESS: u32 = CHILD_LIGHT_BATCH_ADDRESS + 0xba;
+pub const CHILD_GL_ENABLE_BATCH_ADDRESS: u32 = CHILD_LIGHT_BATCH_ADDRESS + 0x19a;
+pub const CHILD_GL_DISABLE_BATCH_ADDRESS: u32 = CHILD_LIGHT_BATCH_ADDRESS + 0x1a1;
+pub const CHILD_GL_ENABLE_CLIENT_BATCH_ADDRESS: u32 = CHILD_LIGHT_BATCH_ADDRESS + 0x1a8;
+pub const CHILD_GL_DISABLE_CLIENT_BATCH_ADDRESS: u32 = CHILD_LIGHT_BATCH_ADDRESS + 0x1af;
+pub const CHILD_GL_VERTEX_POINTER_BATCH_ADDRESS: u32 = CHILD_LIGHT_BATCH_ADDRESS + 0x1c1;
+pub const CHILD_GL_COLOR_POINTER_BATCH_ADDRESS: u32 = CHILD_LIGHT_BATCH_ADDRESS + 0x1c8;
+pub const CHILD_GL_NORMAL_POINTER_BATCH_ADDRESS: u32 = CHILD_LIGHT_BATCH_ADDRESS + 0x1cf;
+pub const CHILD_GL_TEXCOORD_POINTER_BATCH_ADDRESS: u32 = CHILD_LIGHT_BATCH_ADDRESS + 0x1d6;
 pub const CHILD_LIGHT_BATCH_AFTER_VMCALL: u32 = CHILD_LIGHT_BATCH_ADDRESS + 0xeb;
 pub const CHILD_LIGHT_BATCH_CODE_BYTES: usize = include_bytes!("gl_light_batch.bin").len();
 pub const CHILD_LIGHT_BATCH_DATA: u32 = CHILD_CONTROL_BASE + 0x1000;
@@ -18,6 +26,14 @@ pub const CHILD_LIGHT_BATCH_RECORD_BYTES: usize = 72;
 pub const CHILD_GL_BATCH_TAG_LIGHT: u32 = 1;
 pub const CHILD_GL_BATCH_TAG_MATRIX_MODE: u32 = 2;
 pub const CHILD_GL_BATCH_TAG_LOAD_MATRIX: u32 = 3;
+pub const CHILD_GL_BATCH_TAG_ENABLE: u32 = 4;
+pub const CHILD_GL_BATCH_TAG_DISABLE: u32 = 5;
+pub const CHILD_GL_BATCH_TAG_ENABLE_CLIENT: u32 = 6;
+pub const CHILD_GL_BATCH_TAG_DISABLE_CLIENT: u32 = 7;
+pub const CHILD_GL_BATCH_TAG_VERTEX_POINTER: u32 = 8;
+pub const CHILD_GL_BATCH_TAG_COLOR_POINTER: u32 = 9;
+pub const CHILD_GL_BATCH_TAG_NORMAL_POINTER: u32 = 10;
+pub const CHILD_GL_BATCH_TAG_TEXCOORD_POINTER: u32 = 11;
 pub const CHILD_DLL_RETURN_ADDRESS: u32 = CHILD_CONTROL_BASE;
 pub const CHILD_DLL_RETURN_AFTER_VMCALL: u32 = CHILD_DLL_RETURN_ADDRESS + 3;
 pub const CHILD_THREAD_EXIT_ADDRESS: u32 = CHILD_CONTROL_BASE + 0x10;
@@ -512,6 +528,14 @@ pub enum Kind {
     GlLightBatch,
     GlMatrixModeBatch,
     GlLoadMatrixBatch,
+    GlEnableBatch,
+    GlDisableBatch,
+    GlEnableClientBatch,
+    GlDisableClientBatch,
+    GlVertexPointerBatch,
+    GlColorPointerBatch,
+    GlNormalPointerBatch,
+    GlTexCoordPointerBatch,
 }
 
 pub fn write(import_id: u32, kind: Kind, output: &mut [u8]) -> Result<(), &'static str> {
@@ -523,7 +547,7 @@ pub fn write(import_id: u32, kind: Kind, output: &mut [u8]) -> Result<(), &'stat
         output[..3].copy_from_slice(&[0xc2, bytes, 0]);
         return Ok(());
     }
-    if matches!(kind, Kind::ToUpper | Kind::Decimal | Kind::QsortDword | Kind::Stricmp | Kind::Ftol | Kind::StrtolZero | Kind::IswSpace | Kind::GlLightBatch | Kind::GlMatrixModeBatch | Kind::GlLoadMatrixBatch) {
+    if matches!(kind, Kind::ToUpper | Kind::Decimal | Kind::QsortDword | Kind::Stricmp | Kind::Ftol | Kind::StrtolZero | Kind::IswSpace | Kind::GlLightBatch | Kind::GlMatrixModeBatch | Kind::GlLoadMatrixBatch | Kind::GlEnableBatch | Kind::GlDisableBatch | Kind::GlEnableClientBatch | Kind::GlDisableClientBatch | Kind::GlVertexPointerBatch | Kind::GlColorPointerBatch | Kind::GlNormalPointerBatch | Kind::GlTexCoordPointerBatch) {
         let target = match kind {
             Kind::ToUpper => CHILD_TOUPPER_ADDRESS,
             Kind::Decimal => CHILD_DECIMAL_ADDRESS,
@@ -535,6 +559,14 @@ pub fn write(import_id: u32, kind: Kind, output: &mut [u8]) -> Result<(), &'stat
             Kind::GlLightBatch => CHILD_LIGHT_BATCH_ADDRESS,
             Kind::GlMatrixModeBatch => CHILD_MATRIX_MODE_BATCH_ADDRESS,
             Kind::GlLoadMatrixBatch => CHILD_LOAD_MATRIX_BATCH_ADDRESS,
+            Kind::GlEnableBatch => CHILD_GL_ENABLE_BATCH_ADDRESS,
+            Kind::GlDisableBatch => CHILD_GL_DISABLE_BATCH_ADDRESS,
+            Kind::GlEnableClientBatch => CHILD_GL_ENABLE_CLIENT_BATCH_ADDRESS,
+            Kind::GlDisableClientBatch => CHILD_GL_DISABLE_CLIENT_BATCH_ADDRESS,
+            Kind::GlVertexPointerBatch => CHILD_GL_VERTEX_POINTER_BATCH_ADDRESS,
+            Kind::GlColorPointerBatch => CHILD_GL_COLOR_POINTER_BATCH_ADDRESS,
+            Kind::GlNormalPointerBatch => CHILD_GL_NORMAL_POINTER_BATCH_ADDRESS,
+            Kind::GlTexCoordPointerBatch => CHILD_GL_TEXCOORD_POINTER_BATCH_ADDRESS,
             _ => unreachable!(),
         };
         let next = address(import_id).and_then(|address| address.checked_add(10))
@@ -576,7 +608,7 @@ pub fn write(import_id: u32, kind: Kind, output: &mut [u8]) -> Result<(), &'stat
     ]);
     match kind {
         Kind::NoopStdcall(_) => unreachable!(),
-        Kind::Memmove | Kind::Ceil | Kind::Floor | Kind::Ftol | Kind::StrtolZero | Kind::Strncmp | Kind::Strnicmp | Kind::ToUpper | Kind::Decimal | Kind::QsortDword | Kind::IsDigit | Kind::IsMbcSpace | Kind::IswSpace | Kind::Stricmp | Kind::GlLightBatch | Kind::GlMatrixModeBatch | Kind::GlLoadMatrixBatch | Kind::Rand | Kind::Srand => unreachable!(),
+        Kind::Memmove | Kind::Ceil | Kind::Floor | Kind::Ftol | Kind::StrtolZero | Kind::Strncmp | Kind::Strnicmp | Kind::ToUpper | Kind::Decimal | Kind::QsortDword | Kind::IsDigit | Kind::IsMbcSpace | Kind::IswSpace | Kind::Stricmp | Kind::GlLightBatch | Kind::GlMatrixModeBatch | Kind::GlLoadMatrixBatch | Kind::GlEnableBatch | Kind::GlDisableBatch | Kind::GlEnableClientBatch | Kind::GlDisableClientBatch | Kind::GlVertexPointerBatch | Kind::GlColorPointerBatch | Kind::GlNormalPointerBatch | Kind::GlTexCoordPointerBatch | Kind::Rand | Kind::Srand => unreachable!(),
         Kind::Return => output[8] = 0xC3,
         Kind::Stdcall(bytes) => {
             output[8] = 0xC2;

@@ -130,6 +130,17 @@ publish:
     inc dword [count]
     cmp edx, 1
     je light_return
+    cmp edx, 8
+    jb four_return
+    cmp edx, 10
+    je light_return             ; glNormalPointer has three arguments
+    pop edi
+    pop esi
+    pop ebx
+    pop eax
+    popfd
+    ret 16                      ; vertex/color/texcoord pointers
+four_return:
     pop edi
     pop esi
     pop ebx
@@ -160,3 +171,52 @@ load_fallback:
     popfd
     vmcall
     ret 4
+
+; Scalar state changes and array pointer declarations only capture argument
+; words. Array data remains in guest memory and is read by a later draw.
+enable:
+    mov edx, 4
+    jmp one_arg
+disable:
+    mov edx, 5
+    jmp one_arg
+enable_client:
+    mov edx, 6
+    jmp one_arg
+disable_client:
+    mov edx, 7
+one_arg:
+    pushfd
+    cld
+    push eax
+    push ebx
+    push esi
+    push edi
+    xor ecx, ecx
+    jmp ready
+
+vertex_pointer:
+    mov edx, 8
+    jmp four_args
+color_pointer:
+    mov edx, 9
+    jmp four_args
+normal_pointer:
+    mov edx, 10
+    jmp three_args
+texcoord_pointer:
+    mov edx, 11
+four_args:
+    mov ecx, 3
+    jmp pointer_args
+three_args:
+    mov ecx, 2
+pointer_args:
+    pushfd
+    cld
+    push eax
+    push ebx
+    push esi
+    push edi
+    lea esi, [esp + 28]       ; copy trailing argument words, not array data
+    jmp ready
